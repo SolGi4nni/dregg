@@ -123,25 +123,8 @@ pub fn single_transfer() -> (CellState, Vec<Effect>) {
 #[cfg(feature = "prover")]
 pub struct RotatedTurn {
     pub witness: dregg_sdk::full_turn_proof::FullTurnWitness,
-    pub old_commit: BabyBear,
-    pub new_commit: BabyBear,
-}
-
-/// Read the rotated leg's bound OLD_COMMIT / NEW_COMMIT PI from a proven full-turn
-/// proof — the exact carriers `verify_full_turn` expects (the C1 reference reads
-/// them this way). Panics if the rotated leg is absent (the recursion path must
-/// produce it).
-#[cfg(feature = "prover")]
-pub fn rotated_leg_commits(proof: &dregg_sdk::full_turn_proof::FullTurnProof) -> (BabyBear, BabyBear) {
-    use dregg_circuit::effect_vm::pi;
-    let rot_pi = &proof
-        .composed
-        .sub_proofs
-        .iter()
-        .find(|sp| sp.label == "effect-vm-rotated")
-        .expect("rotated effect-vm leg present")
-        .sub_public_inputs;
-    (rot_pi[pi::OLD_COMMIT], rot_pi[pi::NEW_COMMIT])
+    pub old_commit: [BabyBear; 8],
+    pub new_commit: [BabyBear; 8],
 }
 
 /// Build a valid ROTATED full-turn witness for one outgoing transfer of `amount`
@@ -187,6 +170,13 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
     let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
 
     let rotation = RotationTurnWitness::for_effects(before_w, after_w, &vm_effects);
+
+    // WIDE FLAG-DAY: the trusted 8-felt (~124-bit) commit anchors `verify_full_turn` binds — the
+    // rotation's `wire_commit_8` before/after commits, the SAME the wide producer publishes at the
+    // rotated leg's PI tail. Derived from the rotation witness before it MOVES into the witness.
+    let (old_commit, new_commit) = rotation
+        .wide_commit_anchors(&initial_vm_state, &vm_effects, None)
+        .expect("wide_commit_anchors");
     let witness = FullTurnWitness {
         initial_cell_state: initial_vm_state,
         effects: vm_effects,
@@ -199,11 +189,6 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
         rotation: Some(rotation),
         cap_turn_identity: None,
     };
-    // Prove once to read the rotated leg's bound OLD/NEW commit carriers (what
-    // `verify_full_turn` cross-binds — a separately-recomputed v9 felt does NOT match).
-    let proof = dregg_sdk::full_turn_proof::prove_full_turn(&witness)
-        .expect("rotated full turn must prove (witness build)");
-    let (old_commit, new_commit) = rotated_leg_commits(&proof);
     RotatedTurn {
         witness,
         old_commit,

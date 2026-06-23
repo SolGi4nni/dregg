@@ -304,6 +304,166 @@ impl RotationTurnWitness {
         s.refresh_commitment();
         Ok(s)
     }
+
+    /// THE WIDE FLAG-DAY COMMIT ANCHORS: the trusted 8-felt (~124-bit) BEFORE / AFTER state commits
+    /// the wide light-client verifier (`verify_full_turn_bound`) binds. These are the chain endpoints
+    /// the wide producer (`prove_cohort_run_chain` → `prove_effect_vm_rotated_wide`) publishes at the
+    /// LAST 16 PIs of leg-0 (BEFORE) and leg-N (AFTER): each is `wire_commit_8` over the rotated AFTER
+    /// block whose r0..r10/cap_root limbs are the v1-welded post-effect state (NOT the raw witness
+    /// `pre_limbs`) — so the BEFORE is leg-0's pre and the AFTER is the final run's post. We re-derive
+    /// them GENERATE-ONLY (no proving): split the turn into cohort runs and run the SAME wide
+    /// generators the producer runs, reading leg-0's BEFORE 8-felt commit + leg-N's AFTER 8-felt
+    /// commit off the generated PI tail. This is independent of the PROOF bytes (it re-derives from
+    /// the authenticated pre-state + effects + this witness), so it stays a trusted-vs-proof anchor.
+    ///
+    /// `initial_state` is the turn's circuit pre-state (the same the producer/`prove_full_turn` seed);
+    /// `effects` is the turn's vm-effect list. `None` on a non-cohort / empty turn (no wide leg).
+    ///
+    /// `before_nullifiers` threads the BEFORE nullifier-set leaves for a NoteSpend lead (the grow-gate
+    /// wide producer opens against them — the SAME leaves `prove_cohort_run_chain` threads from the
+    /// non-revocation witness), so the published 8-felt commit matches. `None` ⇒ empty set (the
+    /// standalone-witness case).
+    #[cfg(feature = "prover")]
+    pub fn wide_commit_anchors(
+        &self,
+        initial_state: &CellState,
+        effects: &[VmEffectKind],
+        before_nullifiers: Option<&[BabyBear]>,
+    ) -> Result<([BabyBear; 8], [BabyBear; 8]), SdkError> {
+        use dregg_circuit::effect_vm::trace_rotated::{
+            RotatedBlockWitness, generate_rotated_note_create_wide, generate_rotated_note_spend_wide,
+            generate_rotated_record_pin_wide, generate_rotated_transfer_shape_wide,
+        };
+        use dregg_circuit::heap_root::HeapLeaf;
+        let runs = split_into_cohort_runs(effects);
+        if runs.is_empty() {
+            return Err(SdkError::InvalidWitness(
+                "wide_commit_anchors: empty turn (no cohort runs)".into(),
+            ));
+        }
+        let n_runs = runs.len();
+        let bridge = |w: &dregg_turn::rotation_witness::RotationWitness| {
+            RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
+                .map(|bw| bw.with_asset_class(w.asset_class))
+        };
+        let before = bridge(&self.before)
+            .map_err(|e| SdkError::InvalidWitness(format!("wide_commit_anchors before: {e}")))?;
+        let after = bridge(&self.after)
+            .map_err(|e| SdkError::InvalidWitness(format!("wide_commit_anchors after: {e}")))?;
+
+        // Generate-only a single wide cohort leg, returning its (before8, after8) PI-tail commits.
+        // Mirrors `prove_cohort_run_chain`'s normal-effect branch (transfer-shape / record-pin
+        // families — the cohorts the chained wide producer mints); the wide commit PIs are the LAST 16.
+        let leg_commits = |s_k: &CellState,
+                           run_effects: &[VmEffectKind],
+                           after_block: &RotatedBlockWitness,
+                           caveat: &dregg_circuit::effect_vm::trace_rotated::RotatedCaveatManifest|
+         -> Result<([BabyBear; 8], [BabyBear; 8]), SdkError> {
+            use dregg_circuit::effect_vm::Effect as E;
+            let lead = run_effects.first().ok_or_else(|| {
+                SdkError::InvalidWitness("wide_commit_anchors: empty cohort run".into())
+            })?;
+            // Route the SAME families `prove_effect_vm_rotated_wide` routes for the chained full-turn
+            // path: NoteSpend → the limb-26 grow-gate; NoteCreate → the limb-27 grow-gate; the
+            // record-pin family → record-pin; everything else → transfer-shape. (CreateCell / spawn /
+            // factory / setFieldDyn / custom are NOT on the SDK chained full-turn path — they fail
+            // closed with a precise NAMED error, matching the producer's own coverage.)
+            let dpis = if matches!(lead, E::NoteSpend { .. }) {
+                let leaves: Vec<HeapLeaf> = before_nullifiers
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|nf| HeapLeaf { addr: *nf, value: BabyBear::new(1) })
+                    .collect();
+                let (_t, d, _h) =
+                    generate_rotated_note_spend_wide(s_k, run_effects, &before, after_block, caveat, &leaves)
+                        .map_err(|e| {
+                            SdkError::InvalidWitness(format!("wide_commit_anchors note-spend: {e}"))
+                        })?;
+                d
+            } else if matches!(lead, E::NoteCreate { .. }) {
+                let (_t, d, _h) =
+                    generate_rotated_note_create_wide(s_k, run_effects, &before, after_block, caveat, &[])
+                        .map_err(|e| {
+                            SdkError::InvalidWitness(format!("wide_commit_anchors note-create: {e}"))
+                        })?;
+                d
+            } else if matches!(
+                lead,
+                E::SetPermissions { .. }
+                    | E::SetVerificationKey { .. }
+                    | E::CellSeal { .. }
+                    | E::CellUnseal { .. }
+                    | E::CellDestroy { .. }
+                    | E::ReceiptArchive { .. }
+                    | E::Refusal { .. }
+                    | E::MakeSovereign
+            ) {
+                let (_t, d) =
+                    generate_rotated_record_pin_wide(s_k, run_effects, &before, after_block, caveat)
+                        .map_err(|e| {
+                            SdkError::InvalidWitness(format!("wide_commit_anchors record-pin: {e}"))
+                        })?;
+                d
+            } else if matches!(
+                lead,
+                E::CreateCell { .. }
+                    | E::CreateCellFromFactory { .. }
+                    | E::SpawnWithDelegation { .. }
+                    | E::Custom { .. }
+            ) || matches!(lead, E::SetField { field_idx, .. } if *field_idx >= 8)
+            {
+                return Err(SdkError::InvalidWitness(format!(
+                    "wide_commit_anchors: lead effect {lead:?} routes a distinct-geometry wide producer \
+                     (grow-gate / V1Face) not on the SDK chained full-turn path; thread its anchor \
+                     explicitly (NAMED residual)"
+                )));
+            } else {
+                let (_t, d) = generate_rotated_transfer_shape_wide(
+                    s_k, run_effects, &before, after_block, caveat,
+                )
+                .map_err(|e| {
+                    SdkError::InvalidWitness(format!("wide_commit_anchors transfer-shape: {e}"))
+                })?;
+                d
+            };
+            let n = dpis.len();
+            if n < 16 {
+                return Err(SdkError::InvalidWitness(
+                    "wide_commit_anchors: short wide PI vector".into(),
+                ));
+            }
+            let b8: [BabyBear; 8] = dpis[n - 16..n - 8].try_into().expect("len 8");
+            let a8: [BabyBear; 8] = dpis[n - 8..n].try_into().expect("len 8");
+            Ok((b8, a8))
+        };
+
+        let mut s_k = initial_state.clone();
+        let mut first_before8: Option<[BabyBear; 8]> = None;
+        let mut last_after8 = [BabyBear::ZERO; 8];
+        for (k, run) in runs.iter().enumerate() {
+            let run_effects = &effects[run.clone()];
+            let is_final = k + 1 == n_runs;
+            // INTERIOR runs reuse the BEFORE block for their after-block (turn-invariant carried
+            // limbs); the FINAL run uses the real after block — mirrors `prove_cohort_run_chain`.
+            let after_block = if is_final { &after } else { &before };
+            let caveat = match run_effects {
+                [VmEffectKind::Transfer { .. }] => {
+                    dregg_circuit::effect_vm::trace_rotated::transfer_caveat_manifest()
+                }
+                _ => dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
+            };
+            let (b8, a8) = leg_commits(&s_k, run_effects, after_block, &caveat)?;
+            if first_before8.is_none() {
+                first_before8 = Some(b8);
+            }
+            last_after8 = a8;
+            if !is_final {
+                let (v1_trace, _v1_pi) = generate_effect_vm_trace(&s_k, run_effects);
+                s_k = cell_state_after_run(&v1_trace, run_effects.len(), &s_k);
+            }
+        }
+        Ok((first_before8.expect("at least one run"), last_after8))
+    }
 }
 
 /// Authorization witness for the derivation sub-proof.
@@ -1673,7 +1833,7 @@ fn prove_effect_vm_cap_open_attenuate(
             dregg_circuit::effect_vm::trace_rotated::WRITE_MASK_LO,
         )),
     };
-    prove_effect_vm_cap_open(initial_state, effects, before_w, after_w, cap, &route, None)
+    prove_effect_vm_cap_open(initial_state, effects, before_w, after_w, cap, &route, None, false)
 }
 
 /// Look up a cap-open descriptor JSON by its registry key from the staged rotated registry. The
@@ -1705,6 +1865,54 @@ fn cap_open_descriptor_json_by_key(key: &str) -> Result<&'static str, SdkError> 
 #[cfg(feature = "prover")]
 fn cap_open_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
     let json = cap_open_descriptor_json_by_key(key)?;
+    Ok(*blake3::hash(json.as_bytes()).as_bytes())
+}
+
+/// THE WIDE CAP-OPEN FLAG-DAY: does this cap-open effective key have a PROVEN wide twin in
+/// `WIDE_REGISTRY_STAGED_TSV` (the Lean `v3RegistryCapOpenWide` authority-crown tail)? True for the 8
+/// AUTHORITY-CROWN cap-open members (`delegate/introduce/grantCap/revoke/refresh/revokeCapability
+/// CapOpen` + `transferCapOpenEff` + `attenuateCapOpenEff`); FALSE for the WRITE-bearing wrappers
+/// (`…WriteCapOpen…`), the turn-bound (`transferCapOpenTB`), and `spawnCapOpen` — those descriptors are
+/// NOT in the proven wide registry (their wide twin needs the Lean emit+proof first), so they stay on
+/// the 1-felt V3 route (the named residual). The wide lift is `append_wide_carriers_cap_open` over the
+/// SAME cap-open trace (the host constraints / membership crown carry UNCHANGED; the 8-felt carriers
+/// re-absorb the SAME limbs), so an authority-crown cap turn binds the full ~124-bit commit.
+#[cfg(feature = "prover")]
+fn cap_open_key_has_wide_twin(key: &str) -> bool {
+    use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+    // Only the non-Write, non-TB authority-crown keys. Exclude the Write/TB families explicitly
+    // (they could appear in the wide registry by name in the future; gate on the proven-today set).
+    if key.contains("Write") || key.contains("TB") || key.contains("spawn") {
+        return false;
+    }
+    WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .any(|line| line.split('\t').next() == Some(key))
+}
+
+/// Resolve the committed WIDE cap-open descriptor JSON for a key (the `WIDE_REGISTRY_STAGED_TSV`
+/// twin of [`cap_open_descriptor_json_by_key`]).
+#[cfg(feature = "prover")]
+fn cap_open_wide_descriptor_json_by_key(key: &str) -> Result<&'static str, SdkError> {
+    use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+    WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some(key) {
+                let _display = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| SdkError::InvalidWitness(format!("{key} not in WIDE_REGISTRY_STAGED_TSV")))
+}
+
+/// The WIDE cap-open leg's `vk_hash` (blake3 of the WIDE cap-open descriptor JSON).
+#[cfg(feature = "prover")]
+fn cap_open_wide_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
+    let json = cap_open_wide_descriptor_json_by_key(key)?;
     Ok(*blake3::hash(json.as_bytes()).as_bytes())
 }
 
@@ -1769,7 +1977,7 @@ fn prove_effect_vm_cap_open_transfer(
     };
     // The test helper publishes the OWNER arm (no explicit cross-vat identity); the verifier anchors
     // the three turn-identity PIs to the trusted turn in the deployment negative test.
-    prove_effect_vm_cap_open(initial_state, effects, before_w, after_w, cap, &route, None)
+    prove_effect_vm_cap_open(initial_state, effects, before_w, after_w, cap, &route, None, false)
 }
 
 /// **`prove_effect_vm_cap_open`** (THE GENERIC FAN-OUT PROVER, residual (a)) — prove a single
@@ -1797,6 +2005,10 @@ fn prove_effect_vm_cap_open(
     cap: &CapMembershipWitness,
     route: &CapOpenRoute,
     identity: Option<TurnIdentityFelts>,
+    // WIDE CAP-OPEN FLAG-DAY: when true AND the effective key has a proven wide twin (authority-crown,
+    // non-TB, non-Write), append the 8-felt wide carriers + prove against the WIDE cap-open descriptor
+    // so the leg publishes the full ~124-bit commit. When false (or ineligible), the 1-felt V3 route.
+    wide: bool,
 ) -> Result<
     (
         dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
@@ -1808,8 +2020,8 @@ fn prove_effect_vm_cap_open(
         MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
     };
     use dregg_circuit::effect_vm::trace_rotated::{
-        CapOpenWitness, RotatedBlockWitness, cap_open_tb_dpis, empty_caveat_manifest,
-        generate_rotated_cap_write_base, generate_rotated_effect_vm_trace,
+        CapOpenWitness, RotatedBlockWitness, append_wide_carriers_cap_open, cap_open_tb_dpis,
+        empty_caveat_manifest, generate_rotated_cap_write_base, generate_rotated_effect_vm_trace,
         patch_attenuate_base_for_cap_open, transfer_caveat_manifest, widen_to_cap_open,
         widen_to_cap_open_tb,
     };
@@ -1832,7 +2044,16 @@ fn prove_effect_vm_cap_open(
     // GRANT_CAPABILITY) when the write route is active; else the route's authority-only facet.
     let crown_eff_bit = cap_write.map(|(_, _, eb)| eb).unwrap_or(route.eff_bit);
 
-    let json = cap_open_descriptor_json_by_key(effective_key)?;
+    // WIDE eligibility: the effective key must have a proven wide twin AND the route must NOT be
+    // turn-bound (the TB widen lands the identity columns at CAP_OPEN_TB width, which the
+    // `append_wide_carriers_cap_open` 818-width lift does not accept). Write-bearing keys are excluded
+    // by `cap_open_key_has_wide_twin`. Eligible ⇒ resolve the WIDE descriptor; else the 1-felt V3.
+    let go_wide = wide && !route.turn_bound && cap_open_key_has_wide_twin(effective_key);
+    let json = if go_wide {
+        cap_open_wide_descriptor_json_by_key(effective_key)?
+    } else {
+        cap_open_descriptor_json_by_key(effective_key)?
+    };
     let desc = parse_vm_descriptor2(json).map_err(|e| {
         SdkError::InvalidWitness(format!("cap-open descriptor parse ({effective_key}): {e}"))
     })?;
@@ -1976,7 +2197,17 @@ fn prove_effect_vm_cap_open(
     } else {
         widen_to_cap_open(&mut trace, &cap_open)
             .map_err(|e| SdkError::InvalidWitness(format!("cap-open widen ({}): {e}", route.key)))?;
-        dpis
+        if go_wide {
+            // THE WIDE LIFT: append the two 13×8 BEFORE/AFTER wide carriers PAST the 210-col cap-open
+            // appendix (`append_wide_carriers_cap_open`, the `wideAppend (capOpenHost) bb (bb+51)` twin)
+            // and the 16 wide commit PIs. The cap-open host constraints + membership crown carry
+            // UNCHANGED; the carriers re-absorb the SAME limbs into the 8-felt commit. The leg now
+            // publishes the full ~124-bit commit at its LAST 16 PIs (the wide anchor the verifier binds).
+            append_wide_carriers_cap_open(&mut trace, dpis)
+                .map_err(|e| SdkError::InvalidWitness(format!("cap-open wide carriers ({effective_key}): {e}")))?
+        } else {
+            dpis
+        }
     };
 
     // The map-op witness heaps: the cap-tree c-list (limb 25) ALWAYS, PLUS the accounts leaf-set (limb 0)
@@ -2047,6 +2278,60 @@ fn rotated_descriptor_json_for_effects(
 #[cfg(feature = "prover")]
 fn rotated_effect_vm_vk_hash(effects: &[VmEffectKind]) -> Result<[u8; 32], SdkError> {
     let (_name, json) = rotated_descriptor_json_for_effects(effects)?;
+    Ok(*blake3::hash(json.as_bytes()).as_bytes())
+}
+
+/// Resolve the committed WIDE rotated cohort descriptor JSON for a turn's effects (the wide twin of
+/// [`rotated_descriptor_json_for_effects`], pulling `WIDE_REGISTRY_STAGED_TSV` instead of the
+/// 1-felt `V3_STAGED_REGISTRY_TSV`). The lead-effect cohort name is the SAME (the registries share
+/// keys; only the commitment width differs), so a wide leg's vk_hash re-pins against the wide JSON.
+#[cfg(feature = "prover")]
+fn rotated_descriptor_wide_json_for_effects(
+    effects: &[VmEffectKind],
+) -> Result<(&'static str, &'static str), SdkError> {
+    use dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect;
+    use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+
+    let lead = effects
+        .first()
+        .ok_or_else(|| SdkError::InvalidWitness("wide rotated vk_hash: empty turn".into()))?;
+    let name = rotated_descriptor_name_for_effect(lead).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "wide rotated vk_hash: effect {lead:?} is not in the rotated cohort (no R=24 descriptor)"
+        ))
+    })?;
+    for e in &effects[1..] {
+        if rotated_descriptor_name_for_effect(e) != Some(name) {
+            return Err(SdkError::InvalidWitness(
+                "wide rotated vk_hash: heterogeneous multi-effect turn (one descriptor per proof)"
+                    .into(),
+            ));
+        }
+    }
+    let json = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some(name) {
+                let _display = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            SdkError::InvalidWitness(format!("{name} not in WIDE_REGISTRY_STAGED_TSV"))
+        })?;
+    Ok((name, json))
+}
+
+/// The WIDE rotated effect-vm leg's `vk_hash`: the blake3 fingerprint of the committed WIDE cohort
+/// descriptor JSON (`WIDE_REGISTRY_STAGED_TSV`). The flag-day verifier
+/// (`verify_effect_vm_rotated_with_cutover`, re-pointed to the wide registry) re-derives the SAME
+/// fingerprint from the (uniquely) accepting WIDE descriptor and rejects a tampered vk_hash.
+#[cfg(feature = "prover")]
+fn rotated_effect_vm_wide_vk_hash(effects: &[VmEffectKind]) -> Result<[u8; 32], SdkError> {
+    let (_name, json) = rotated_descriptor_wide_json_for_effects(effects)?;
     Ok(*blake3::hash(json.as_bytes()).as_bytes())
 }
 
@@ -2240,41 +2525,62 @@ fn prove_cohort_run_chain(
             let route = cap_open_route_for_run(run_effects).ok_or_else(|| {
                 SdkError::InvalidWitness("cap-open routing: unreachable (gated above)".into())
             })?;
-            let (proof, dpis) =
-                prove_effect_vm_cap_open(&s_k, run_effects, &rot.before, after_w, cap, &route, cap_turn_identity)?;
+            // THE WIDE CAP-OPEN FLAG-DAY: an AUTHORITY-CROWN cap-open key (non-Write, non-TB) has a
+            // PROVEN wide twin in `WIDE_REGISTRY_STAGED_TSV` (Lean `v3RegistryCapOpenWide`), so this
+            // run goes WIDE — its leg publishes the full ~124-bit 8-felt commit (the wide carriers
+            // appended past the membership crown). A WRITE/TB key has no proven wide twin yet, so it
+            // stays 1-felt (the named residual). The producer-side `go_wide` gate inside
+            // `prove_effect_vm_cap_open` mirrors this `cap_open_key_has_wide_twin` check, and the leg's
+            // vk_hash is pinned to whichever descriptor (wide vs V3) was actually proven.
+            let effective_key = cap_open_effective_key(&route, cap);
+            let go_wide = cap_open_key_has_wide_twin(effective_key);
+            let (proof, dpis) = prove_effect_vm_cap_open(
+                &s_k, run_effects, &rot.before, after_w, cap, &route, cap_turn_identity, go_wide,
+            )?;
             let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
                 SdkError::InvalidWitness(format!(
                     "cap-open rotated proof serialize failed (run {k}): {e}"
                 ))
             })?;
-            // The vk_hash MUST pin the EFFECTIVE descriptor (the write wrapper when the c-list was
-            // threaded), not the authority-only `route.key` — the proof is descriptor-bound.
-            let vk_hash = cap_open_vk_hash_by_key(cap_open_effective_key(&route, cap))?;
+            // The vk_hash MUST pin the EFFECTIVE descriptor that was PROVEN (wide when go_wide, else
+            // the 1-felt V3 cap-open) — the proof is descriptor-bound, and the wide-cutover verifier
+            // re-pins blake3(json) against it.
+            let vk_hash = if go_wide {
+                cap_open_wide_vk_hash_by_key(effective_key)?
+            } else {
+                cap_open_vk_hash_by_key(effective_key)?
+            };
             (proof_bytes, dpis, vk_hash)
         } else {
-            let proof = prove_effect_vm_rotated_ir2_with_caveat(
+            // THE WIDE FLAG-DAY (light-client ~31-bit floor close): the normal (owner-authorized,
+            // non-cap-open) run now proves through the WIDE producer (`prove_effect_vm_rotated_wide`,
+            // the `WIDE_REGISTRY_STAGED_TSV` descriptor family). The wide PI vector carries the FULL
+            // 8-felt BEFORE/AFTER commits (the LAST 16 PIs, ~124-bit) — the leg's `sub_public_inputs`
+            // publish them, and the verifier (`verify_full_turn_bound`) binds those 8-felt slices to
+            // the trusted commit anchors. This mirrors the sovereign producer's wide path
+            // (`cipherclerk::prove_sovereign_turn_rotated` / `prove_effect_vm_rotated_wide`); the wide
+            // generator inside re-derives the SAME wide trace + PI vector so the bound 16 wide PIs
+            // match. The 1-felt waist is GONE for every normal effect on the composed full-turn /
+            // light-client surface. (The cap-open path above keeps its own cap-open descriptor route;
+            // its wide migration is the NAMED residual — see the report.)
+            let (proof, rot_pi) = prove_effect_vm_rotated_wide(
                 &s_k,
                 run_effects,
                 &rot.before,
                 after_w,
                 &caveat,
                 before_nullifiers,
+                // The chained full-turn path threads no per-run refusal fields context (the live
+                // refusal lead is the single-leg sovereign path); a Refusal run here fails closed
+                // against the `.write` gate, exactly as the sovereign forest path.
+                None,
             )?;
-            // Re-derive this run's rotated PI vector (the prover self-verified it; we need the felts
-            // for the composed PI + the leg's `sub_public_inputs`). Build a throwaway per-run
-            // witness so we reuse the single-leg PI re-derivation helper.
-            let run_rot = RotationTurnWitness {
-                before: rot.before.clone(),
-                after: after_w.clone(),
-                caveat,
-            };
-            let rot_pi = rotated_effect_pi_for(&s_k, run_effects, &run_rot, before_nullifiers)?;
             let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
                 SdkError::InvalidWitness(format!(
-                    "chained rotated proof serialize failed (run {k}): {e}"
+                    "chained rotated wide proof serialize failed (run {k}): {e}"
                 ))
             })?;
-            (proof_bytes, rot_pi, rotated_effect_vm_vk_hash(run_effects)?)
+            (proof_bytes, rot_pi, rotated_effect_vm_wide_vk_hash(run_effects)?)
         };
         legs.push(AttachedSubProof {
             label: "effect-vm-rotated".into(),
@@ -2381,33 +2687,64 @@ fn verify_effect_vm_rotated_with_cutover(
     use dregg_circuit::descriptor_ir2::{
         DreggStarkConfig, Ir2BatchProof, parse_vm_descriptor2, verify_vm_descriptor2,
     };
-    use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+    // THE WIDE FLAG-DAY: the light-client verifier iterates the WIDE registry FIRST (the 8-felt
+    // ~124-bit commit descriptors, the verified Lean `v3RegistryCapOpenWide`). The producer
+    // (`prove_cohort_run_chain`) now emits wide legs for every NORMAL (owner-authorized) run, so the
+    // uniquely-accepting descriptor is the wide member and the leg's 8-felt commit PIs (the LAST 16)
+    // are what `verify_full_turn_bound` binds — the ~31-bit waist is GONE for the normal core.
+    //
+    // THE NAMED RESIDUAL (cap-open tail): the cap-open producer path
+    // (`prove_effect_vm_cap_open`) still emits the 1-felt V3 cap-open descriptors (the wide twins of
+    // the 11 `…CapOpen…`/`…Write…CapOpen…`/`heapWrite` members are NOT yet in
+    // `WIDE_REGISTRY_STAGED_TSV`). To keep HONEST capability-gated turns verifying (not a
+    // honest-proof-rejecting half-flip), we FALL BACK to the 1-felt `V3_STAGED_REGISTRY_TSV` when no
+    // wide member accepts. A cap-open leg thus still binds its 1-felt commit anchor (the residual
+    // 31-bit waist for cap-gated turns ONLY); `verify_full_turn_bound` discriminates per-leg by the
+    // accepting registry. A forged plain-cap descriptor still hits the AUTHORITY FLOOR below.
+    use dregg_circuit::effect_vm_descriptors::{V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV};
 
     let proof: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(proof_bytes)
         .map_err(|e| format!("rotated effect-vm proof deserialize: {e}"))?;
 
-    // The accepting cohort descriptor(s) AND the JSON each was parsed from (so we can re-derive
-    // and re-check the attached vk_hash — Wall A.1 makes vk_hash load-bearing on the rotated leg).
-    let mut bound: Vec<(&str, &str)> = Vec::new();
-    for line in V3_STAGED_REGISTRY_TSV.lines() {
-        let mut it = line.splitn(3, '\t');
-        let name = match it.next() {
-            Some(n) => n,
-            None => continue,
-        };
-        let _display = it.next();
-        let json = match it.next() {
-            Some(j) => j,
-            None => continue,
-        };
-        if let Ok(desc) = parse_vm_descriptor2(json) {
-            if public_inputs.len() >= desc.public_input_count {
-                let dpis = &public_inputs[..desc.public_input_count];
-                if verify_vm_descriptor2(&desc, &proof, dpis).is_ok() {
-                    bound.push((name, json));
+    // Collect the (name, json) of every descriptor in a registry the proof verifies under.
+    let collect_bound = |registry: &'static str| -> Vec<(&'static str, &'static str)> {
+        let mut bound: Vec<(&'static str, &'static str)> = Vec::new();
+        for line in registry.lines() {
+            let mut it = line.splitn(3, '\t');
+            let name = match it.next() {
+                Some(n) => n,
+                None => continue,
+            };
+            let _display = it.next();
+            let json = match it.next() {
+                Some(j) => j,
+                None => continue,
+            };
+            if let Ok(desc) = parse_vm_descriptor2(json) {
+                if public_inputs.len() >= desc.public_input_count {
+                    let dpis = &public_inputs[..desc.public_input_count];
+                    if verify_vm_descriptor2(&desc, &proof, dpis).is_ok() {
+                        bound.push((name, json));
+                    }
                 }
             }
         }
+        bound
+    };
+
+    // WIDE first (the normal core). If no wide member accepts, fall back to V3 — but ONLY accept a
+    // CAP-OPEN member there (the named residual tail). This is the load-bearing reject tooth: a
+    // malicious producer cannot present a 1-felt V3 leg for a NORMAL effect (e.g. a 1-felt transfer)
+    // to dodge the wide ~124-bit commitment — a plain V3 transfer/normal descriptor is NOT a cap-open
+    // member, so it is FILTERED OUT of the fallback and the proof verifies under NO accepted
+    // descriptor ⇒ REJECTED. Only genuine cap-open legs (the wide-twin-pending residual) survive the
+    // fallback, and they bind their 1-felt commit (the residual waist for cap-gated turns only).
+    let mut bound = collect_bound(WIDE_REGISTRY_STAGED_TSV);
+    if bound.is_empty() {
+        bound = collect_bound(V3_STAGED_REGISTRY_TSV)
+            .into_iter()
+            .filter(|(name, _)| name.contains("CapOpen"))
+            .collect();
     }
     match bound.as_slice() {
         [(name, json)] => {
@@ -2806,8 +3143,8 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
 /// `Ok(())` if the proof is valid, or an error describing what failed.
 pub fn verify_full_turn(
     proof: &FullTurnProof,
-    expected_old_commit: BabyBear,
-    expected_new_commit: BabyBear,
+    expected_old_commit: [BabyBear; 8],
+    expected_new_commit: [BabyBear; 8],
 ) -> Result<(), FullTurnVerifyError> {
     verify_full_turn_bound(proof, expected_old_commit, expected_new_commit, None, None)
 }
@@ -2893,8 +3230,8 @@ pub fn verify_full_turn(
 /// `None` skips the binding (self-sovereign turns consume no capability).
 pub fn verify_full_turn_bound(
     proof: &FullTurnProof,
-    expected_old_commit: BabyBear,
-    expected_new_commit: BabyBear,
+    expected_old_commit: [BabyBear; 8],
+    expected_new_commit: [BabyBear; 8],
     expected_revocation_root: Option<BabyBear>,
     expected_cap_membership: Option<&CapMembershipExpectation>,
 ) -> Result<(), FullTurnVerifyError> {
@@ -3064,11 +3401,68 @@ pub fn verify_full_turn_bound(
     }
     let effect_is_rotated = effect_sub.label == "effect-vm-rotated";
 
-    // Endpoints: the chain's first OLD and last NEW pin the turn's pre/post commitments.
+    // THE WIDE FLAG-DAY COMMIT ANCHOR (the ~31-bit light-client floor close). A WIDE rotated leg
+    // publishes the FULL 8-felt BEFORE/AFTER commits as the LAST 16 PIs of its `sub_public_inputs`
+    // (the wide descriptor's carrier-12 pi_bindings tie them to the proof's bound 8-felt carriers, so
+    // a forged 8-felt commit is UNSAT — the wide analog of the executor's `n_pi-16..` anchor). We bind
+    // those 8-felt slices, NOT the retired single felt at `pi::OLD_COMMIT`/`pi::NEW_COMMIT`. Each leg
+    // is classified WIDE vs NARROW by its `vk_hash` (the blake3 of the descriptor JSON it bound — the
+    // SAME fingerprint `verify_effect_vm_rotated_with_cutover` re-pinned): a wide-registry fingerprint
+    // ⇒ bind the 8-felt tail; otherwise (the cap-open RESIDUAL tail — see the cutover comment) the leg
+    // is a 1-felt V3 cap-open leg, bound at its single `pi::OLD_COMMIT`/`pi::NEW_COMMIT` felt
+    // (broadcast into the 8-felt anchor's slot 0, the residual ~31-bit waist for cap-gated turns).
+    #[cfg(feature = "prover")]
+    fn leg_is_wide(leg: &AttachedSubProof) -> bool {
+        use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+        WIDE_REGISTRY_STAGED_TSV.lines().any(|line| {
+            line.splitn(3, '\t')
+                .nth(2)
+                .map(|json| blake3::hash(json.as_bytes()).as_bytes() == &leg.vk_hash)
+                .unwrap_or(false)
+        })
+    }
+    #[cfg(not(feature = "prover"))]
+    fn leg_is_wide(_leg: &AttachedSubProof) -> bool {
+        false
+    }
+
+    // Extract a leg's (before8, after8) commit anchors at the leg's true width. For a wide leg the
+    // 8-felt commits are the LAST 16 PIs (~124-bit). For a narrow cap-open leg (the residual) the
+    // 1-felt commit at `pi::OLD_COMMIT`/`pi::NEW_COMMIT` is widened into slot 0 (its faithful width).
+    let leg_commit = |leg: &AttachedSubProof,
+                      which: &'static str|
+     -> Result<([BabyBear; 8], [BabyBear; 8]), FullTurnVerifyError> {
+        if leg_is_wide(leg) {
+            let n = leg.sub_public_inputs.len();
+            if n < 16 {
+                return Err(FullTurnVerifyError::MalformedPublicInputs(format!(
+                    "wide effect-vm leg too short for the 8-felt commit tail ({which}): {n} PIs < 16"
+                )));
+            }
+            let before: [BabyBear; 8] = leg.sub_public_inputs[n - 16..n - 8]
+                .try_into()
+                .expect("slice of len 8");
+            let after: [BabyBear; 8] = leg.sub_public_inputs[n - 8..n]
+                .try_into()
+                .expect("slice of len 8");
+            Ok((before, after))
+        } else {
+            // The cap-open residual: 1-felt commit broadcast into slot 0 (zeros elsewhere — the
+            // narrow leg carries no wide tail). The caller's `expected_*` is the 8-felt anchor; for a
+            // cap-gated turn the caller derives it the SAME 1-felt-in-slot-0 way (see below).
+            let mut before = [BabyBear::ZERO; 8];
+            let mut after = [BabyBear::ZERO; 8];
+            before[0] = leg.sub_public_inputs[effect_vm::pi::OLD_COMMIT];
+            after[0] = leg.sub_public_inputs[effect_vm::pi::NEW_COMMIT];
+            Ok((before, after))
+        }
+    };
+
+    // Endpoints: the chain's first BEFORE and last AFTER commits pin the turn's pre/post state.
     let first_leg = effect_legs[0];
     let last_leg = effect_legs[effect_legs.len() - 1];
-    let proof_old_commit = first_leg.sub_public_inputs[effect_vm::pi::OLD_COMMIT];
-    let proof_new_commit = last_leg.sub_public_inputs[effect_vm::pi::NEW_COMMIT];
+    let (proof_old_commit, _) = leg_commit(first_leg, "first leg")?;
+    let (_, proof_new_commit) = leg_commit(last_leg, "last leg")?;
 
     if proof_old_commit != expected_old_commit {
         return Err(FullTurnVerifyError::CommitmentMismatch {
@@ -3085,16 +3479,17 @@ pub fn verify_full_turn_bound(
         });
     }
 
-    // Adjacency: each leg's OLD must equal the previous leg's NEW — the chain closes with no gap
-    // and no splice. A tampered / dropped middle leg breaks this (anti-ghost at the chain layer).
+    // Adjacency: each leg's BEFORE commit must equal the previous leg's AFTER commit — the chain
+    // closes with no gap and no splice. A tampered / dropped middle leg breaks this (anti-ghost at
+    // the chain layer), at the full ~124-bit width for the wide normal core.
     for w in effect_legs.windows(2) {
-        let prev_new = w[0].sub_public_inputs[effect_vm::pi::NEW_COMMIT];
-        let this_old = w[1].sub_public_inputs[effect_vm::pi::OLD_COMMIT];
-        if this_old != prev_new {
+        let (_, prev_after) = leg_commit(w[0], "chain prev")?;
+        let (this_before, _) = leg_commit(w[1], "chain this")?;
+        if this_before != prev_after {
             return Err(FullTurnVerifyError::CommitmentMismatch {
                 which: "chain_adjacency",
-                expected: prev_new,
-                got: this_old,
+                expected: prev_after,
+                got: this_before,
             });
         }
     }
@@ -3313,13 +3708,46 @@ pub fn verify_full_turn_bound(
             use dregg_circuit::effect_vm::trace_rotated::{
                 ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT,
             };
+            // THE WIDE FLAG-DAY GUARD FIX: a WIDE rotated leg ALWAYS carries >= ROT_NULLIFIER_PI_COUNT
+            // PIs (the 16 wide commit PIs pushed every leg past 47), so the old PI-count guard wrongly
+            // fired for NON-note-spend wide legs — reading PI[46] (a non-nullifier wide pin) as a
+            // bogus nullifier. The nullifier slot at ROT_NULLIFIER_PI is meaningful ONLY for the
+            // note-spend descriptor (the C4 fifth-pin weld is `noteSpendVmDescriptor2R24`-specific), so
+            // gate the read on the leg actually binding the note-spend descriptor (by its vk_hash —
+            // the SAME fingerprint the cutover verifier re-pinned). A non-note-spend leg publishes no
+            // nullifier ⇒ ZERO sentinel ⇒ no binding.
+            #[cfg(feature = "prover")]
+            fn leg_is_note_spend(leg: &AttachedSubProof) -> bool {
+                use dregg_circuit::effect_vm_descriptors::{
+                    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV,
+                };
+                let matches_ns = |registry: &str| {
+                    registry.lines().any(|line| {
+                        let mut it = line.splitn(3, '\t');
+                        let name = it.next();
+                        let _disp = it.next();
+                        let json = it.next();
+                        name == Some("noteSpendVmDescriptor2R24")
+                            && json
+                                .map(|j| blake3::hash(j.as_bytes()).as_bytes() == &leg.vk_hash)
+                                .unwrap_or(false)
+                    })
+                };
+                matches_ns(WIDE_REGISTRY_STAGED_TSV) || matches_ns(V3_STAGED_REGISTRY_TSV)
+            }
+            #[cfg(not(feature = "prover"))]
+            fn leg_is_note_spend(_leg: &AttachedSubProof) -> bool {
+                false
+            }
             let mut nullifier = BabyBear::ZERO;
             for leg in &effect_legs {
                 let leg_nullifier = if leg.label == "effect-vm-rotated" {
-                    if leg.sub_public_inputs.len() >= ROT_NULLIFIER_PI_COUNT {
+                    if leg_is_note_spend(leg) && leg.sub_public_inputs.len() >= ROT_NULLIFIER_PI_COUNT
+                    {
                         leg.sub_public_inputs[ROT_NULLIFIER_PI]
                     } else {
-                        // 38-PI rotated leg: not a note-spend, no nullifier published.
+                        // Not a note-spend rotated leg: no nullifier published (the wide commit tail
+                        // is NOT a nullifier — the old PI-count-only guard misread it).
                         BabyBear::ZERO
                     }
                 } else {
@@ -3435,11 +3863,13 @@ pub enum FullTurnVerifyError {
     MissingComponent(String),
     /// Public inputs are malformed or too short.
     MalformedPublicInputs(String),
-    /// State commitment in proof does not match expected value.
+    /// State commitment in proof does not match expected value. Post the WIDE flag-day the
+    /// commitment is the FULL 8-felt (~124-bit) wide commit (the leg's LAST 16 PIs), not the
+    /// retired 1-felt waist.
     CommitmentMismatch {
         which: &'static str,
-        expected: BabyBear,
-        got: BabyBear,
+        expected: [BabyBear; 8],
+        got: [BabyBear; 8],
     },
     /// Cross-proof public input binding is inconsistent.
     CrossProofMismatch { description: String },
@@ -4094,6 +4524,119 @@ mod tests {
         );
     }
 
+    /// THE WIDE CAP-OPEN FLAG-DAY: an attenuate cap-open leg proves through the WIDE
+    /// `attenuateCapOpenEffVmDescriptor2R24` (8-felt ~124-bit commit at the LAST 16 PIs) AND the
+    /// light-client verifier ACCEPTS it. The cap-membership authority crown carries UNCHANGED; the
+    /// wide carriers re-absorb the same limbs into the 8-felt commit. This closes the 31-bit floor for
+    /// the authority-crown cap-open tail (the residual shrinks to the write-bearing wrappers only).
+    #[cfg(feature = "prover")]
+    #[test]
+    fn cap_open_attenuate_leg_proves_and_verifies_WIDE_8felt() {
+        use dregg_circuit::cap_root::CapLeaf;
+        use dregg_circuit::effect_vm::trace_rotated::{
+            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG, WRITE_MASK_LO,
+        };
+        use dregg_turn::rotation_witness as rw;
+
+        let chosen: [BabyBear; 7] = [
+            BabyBear::new(0xA11CE),
+            BabyBear::new(7_777),
+            BabyBear::new(SIGNATURE_AUTH_TAG),
+            BabyBear::new(WRITE_MASK_LO),
+            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(0x00FF_FFFF),
+            BabyBear::new(42),
+        ];
+        let other: [BabyBear; 7] = [
+            BabyBear::new(0xBEEF),
+            BabyBear::new(123),
+            BabyBear::new(1),
+            BabyBear::new(1),
+            BabyBear::new(0),
+            BabyBear::new(9),
+            BabyBear::new(0),
+        ];
+        let open = CapOpenWitness::build(&[other, chosen], 1).expect("cap-open witness builds");
+        let held_mask = BabyBear::new(0xFF);
+        let clist_leaves = vec![
+            dregg_circuit::heap_root::HeapLeaf { addr: chosen[0], value: held_mask },
+            dregg_circuit::heap_root::HeapLeaf { addr: other[0], value: other[3] },
+        ];
+        let cap = CapMembershipWitness {
+            leaf: CapLeaf {
+                slot_hash: chosen[0],
+                target: chosen[1],
+                auth_tag: chosen[2],
+                mask_lo: chosen[3],
+                mask_hi: chosen[4],
+                expiry: chosen[5],
+                breadstuff: chosen[6],
+            },
+            siblings: open.siblings.to_vec(),
+            directions: open.directions.to_vec(),
+            clist_leaves,
+        };
+
+        let before_balance: u64 = 100_000;
+        let initial = CellState::new(before_balance, 0);
+        let effects = vec![VmEffect::AttenuateCapability {
+            cap_slot_hash: [BabyBear::new(0x51); 8],
+            narrower_commitment: [BabyBear::new(0x52); 8],
+            phase_b: None,
+        }];
+        let mut pk = [0u8; 32];
+        pk[0] = 7;
+        let mut before_cell = dregg_cell::Cell::with_balance(pk, [0u8; 32], before_balance as i64);
+        before_cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::None,
+            set_verification_key: dregg_cell::AuthRequired::None,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
+        };
+        let mut after_cell = before_cell.clone();
+        let _ = after_cell.state.increment_nonce();
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger.insert_cell(after_cell.clone()).unwrap();
+        let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &[[3u8; 32], [4u8; 32]]);
+        let after_w = rw::produce(&after_cell, &ledger, &[0u8; 32], &[0u8; 32], &[[3u8; 32], [4u8; 32]]);
+
+        let route = cap_open_route_for_run(&effects).expect("attenuate is a wired cap-open route");
+        let effective_key = cap_open_effective_key(&route, &cap);
+        // Precondition: the attenuate effective key HAS a proven wide twin (it goes WIDE).
+        assert!(
+            cap_open_key_has_wide_twin(effective_key),
+            "attenuate cap-open key {effective_key} must have a proven wide twin"
+        );
+
+        // PROVE WIDE: the leg publishes the 8-felt commit at its LAST 16 PIs.
+        let (proof, dpis) =
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, true)
+                .expect("the WIDE attenuate cap-open leg must prove + self-verify");
+        let n = dpis.len();
+        assert!(n >= 16 + 46, "the WIDE cap-open leg carries the cap-open base PIs + 16 wide commit PIs (got {n})");
+        let proof_bytes = postcard::to_allocvec(&proof).expect("serialize wide cap-open leg");
+        let vk_hash = cap_open_wide_vk_hash_by_key(effective_key).expect("wide cap-open vk_hash");
+
+        // THE LIGHT-CLIENT VERIFY: the wide-cutover verifier ACCEPTS the wide cap-open leg (iterates
+        // the WIDE registry, binds the wide cap-open descriptor — the membership crown is in it).
+        verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
+            "the WIDE attenuate cap-open leg MUST verify under the wide cap-open descriptor (8-felt commit)",
+        );
+
+        // THE FORGE TOOTH: a forged 8-felt commit PI (one felt of the wide tail) is UNSAT.
+        let mut forged = dpis.clone();
+        forged[n - 1] = forged[n - 1] + BabyBear::new(0x9999);
+        assert!(
+            verify_effect_vm_rotated_with_cutover(&proof_bytes, &forged, &vk_hash).is_err(),
+            "a forged 8-felt commit PI on the wide cap-open leg MUST be REJECTED (the wide carrier binds it)"
+        );
+        eprintln!("WIDE CAP-OPEN GREEN: the attenuate cap-open authority-crown leg binds the 8-felt ~124-bit commit.");
+    }
+
     /// RESIDUAL (b) — the CROSS-VAT Transfer-via-granted-cap routes the TRANSFER cap-open END-TO-END,
     /// and the GENERAL facet gate BITES in-circuit (residual (a)).
     ///
@@ -4367,7 +4910,7 @@ mod tests {
         // is `revokeCapOpenVmDescriptor2R24` (no write-op) because `cap.clist_leaves` is empty.
         assert!(cap.clist_leaves.is_empty());
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
                 .expect("revoke cap-open fan-out leg must prove + self-verify (the proof is VALID)");
         let proof_bytes = postcard::to_allocvec(&proof).expect("serialize revoke cap-open leg");
         let vk_hash = cap_open_vk_hash_by_key(route.key).expect("revoke cap-open vk_hash");
@@ -4388,7 +4931,7 @@ mod tests {
             clist_leaves: cap.clist_leaves.clone(),
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &wrong_facet, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &wrong_facet, &route, None, false)
                 .is_err(),
             "a cap permitting a DIFFERENT effect (transfer, not delegation) MUST be refused (fail-closed)"
         );
@@ -5147,7 +5690,7 @@ mod tests {
         // post-root is UNSAT (`cap_write_revoke_forge_rejected`), so a passing proof here IS the genuine
         // post-cap-root, bound on the wire.
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
                 .expect(
                     "the WRITE-bearing revoke cap-open MUST genuinely prove — cap-root on the rotated limb \
                      (213→264) over the real c-list, v1-state frozen, nonce ticks (tick face, no freeze)",
@@ -5253,7 +5796,7 @@ mod tests {
             clist_leaves: forged_clist,
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None, false)
                 .is_err(),
             "a c-list MISSING the revoked key MUST fail closed — a fabricated post-cap-root is NOT provable"
         );
@@ -5277,6 +5820,7 @@ mod tests {
         );
         let (proof_ao, dpis_ao) = prove_effect_vm_cap_open(
             &initial, &effects, &before_w, &after_w, &cap_authority_only, &route, None,
+            false,
         )
         .expect("the authority-only cap-open still PROVES (the membership crown is valid)");
         let proof_ao_bytes = postcard::to_allocvec(&proof_ao).expect("serialize authority-only leg");
@@ -5406,7 +5950,7 @@ mod tests {
         // LIGHT-CLIENT verifier MUST accept the genuine post-cap-root (the cap-tree REMOVE bound on the
         // wire). NO catch_unwind: a refusal/rejection FAILS the test (the honest signal).
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
                 .expect(
                     "the WRITE-bearing revokeCapability cap-open MUST genuinely prove — the cap-root REMOVE \
                      on the rotated limb (213→264) over the real c-list, v1-state frozen, nonce ticks",
@@ -5431,7 +5975,7 @@ mod tests {
             clist_leaves: forged_clist,
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None, false)
                 .is_err(),
             "a c-list MISSING the revoked key MUST fail closed — a fabricated post-cap-root is NOT provable"
         );
@@ -5453,6 +5997,7 @@ mod tests {
         );
         let (proof_ao, dpis_ao) = prove_effect_vm_cap_open(
             &initial, &effects, &before_w, &after_w, &cap_authority_only, &route, None,
+            false,
         )
         .expect("the authority-only revokeCapability cap-open still PROVES (the membership crown is valid)");
         let proof_ao_bytes = postcard::to_allocvec(&proof_ao).expect("serialize authority-only leg");
@@ -5604,7 +6149,7 @@ mod tests {
         // LIGHT-CLIENT verifier MUST accept the genuine post-DELEG-root (the DELEG-tree UPDATE bound on the
         // wire). NO catch_unwind: a refusal/rejection FAILS the test (the honest signal).
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
                 .expect(
                     "the WRITE-bearing refreshDelegation cap-open MUST genuinely prove — the DELEG-root \
                      UPDATE on the rotated limb 25 (beforeDelegRootCol) over the real leaf-set, caps frozen, \
@@ -5647,6 +6192,7 @@ mod tests {
         }];
         let (proof_forge, dpis_forge) = prove_effect_vm_cap_open(
             &initial, &forged_snapshot_effects, &before_w, &after_w, &cap, &route, None,
+            false,
         )
         .expect("the forged-snapshot turn still PROVES its OWN (forged) transition — the forge is caught at VERIFY");
         let proof_forge_bytes =
@@ -5672,7 +6218,7 @@ mod tests {
             clist_leaves: forged_clist,
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None, false)
                 .is_err(),
             "a leaf-set MISSING the re-armed key MUST fail closed — a fabricated post-DELEG-root is NOT provable"
         );
@@ -5694,6 +6240,7 @@ mod tests {
         );
         let (proof_ao, dpis_ao) = prove_effect_vm_cap_open(
             &initial, &effects, &before_w, &after_w, &cap_authority_only, &route, None,
+            false,
         )
         .expect("the authority-only refreshDelegation cap-open still PROVES (the membership crown is valid)");
         let proof_ao_bytes = postcard::to_allocvec(&proof_ao).expect("serialize authority-only leg");
@@ -5833,7 +6380,7 @@ mod tests {
         // GENUINE PROVE + LIGHT-CLIENT VERIFY (UNAMBIGUOUS — no catch_unwind). A passing proof IS the
         // genuine post-cap-root (a wrong post-root is UNSAT), bound on the wire.
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
                 .unwrap_or_else(|e| {
                     panic!(
                         "the INSERT cap-write wrapper ({expected_write_key}) MUST genuinely prove — anchor \
@@ -5860,7 +6407,7 @@ mod tests {
             clist_leaves: forged_clist,
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None, false)
                 .is_err(),
             "a c-list MISSING the anchor key MUST fail closed — a fabricated post-cap-root is NOT provable"
         );
@@ -5878,7 +6425,7 @@ mod tests {
             clist_leaves: collide_clist,
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_collide, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_collide, &route, None, false)
                 .is_err(),
             "a c-list ALREADY containing the fresh edge key MUST fail closed (insert refuses a present key)"
         );
@@ -6103,7 +6650,7 @@ mod tests {
         );
 
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
                 .expect(
                     "the WRITE-bearing grant cap-open MUST genuinely prove — anchor read + fresh \
                      sorted-INSERT on the rotated cap-root limb (213→264) over the real c-list, \
@@ -6126,7 +6673,7 @@ mod tests {
             clist_leaves: forged_clist,
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None, false)
                 .is_err(),
             "a c-list MISSING the granter's held-authority anchor MUST fail closed — a fabricated \
              post-cap-root is NOT provable (no silent forge)"
@@ -6143,7 +6690,7 @@ mod tests {
             clist_leaves: cap.clist_leaves.clone(),
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &wrong_facet, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &wrong_facet, &route, None, false)
                 .is_err(),
             "a held cap permitting a DIFFERENT effect (transfer, not the delegation op the grant write \
              wrapper binds) MUST be refused (fail-closed at the membership crown)"
@@ -6187,6 +6734,7 @@ mod tests {
         );
         let (proof_ao, dpis_ao) = prove_effect_vm_cap_open(
             &initial, &effects, &before_w, &after_w, &cap_authority_only, &route, None,
+            false,
         )
         .expect("the authority-only grant cap-open still PROVES (the GRANT_CAPABILITY membership crown is valid)");
         let proof_ao_bytes = postcard::to_allocvec(&proof_ao).expect("serialize authority-only grant leg");
@@ -6542,7 +7090,7 @@ mod tests {
         // GENUINE PROVE + LIGHT-CLIENT VERIFY (UNAMBIGUOUS — no catch_unwind): the genuine post-cap-root
         // (sorted INSERT) AND the `granted ⊑ held` submask both hold; a passing proof binds them on the wire.
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
                 .unwrap_or_else(|e| {
                     panic!(
                         "the delegateAtten submask wrapper MUST genuinely prove — anchor read + fresh \
@@ -6573,7 +7121,7 @@ mod tests {
             clist_leaves: clist_forge,
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forge, &route, None)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forge, &route, None, false)
                 .is_err(),
             "a grant EXCEEDING the held authority (conferred 0x52 ⊄ real held 0x0F) MUST fail closed — \
              the `granted ⊑ held` submask lookup bites (no amplification)"
@@ -6645,7 +7193,14 @@ mod tests {
         );
 
         // THE TOOTH: the light-client verifier REJECTS the cap effect proven under the plain
-        // descriptor — the forge is closed.
+        // descriptor — the forge is closed. POST WIDE FLAG-DAY the verifier iterates the WIDE registry
+        // first; this leg is a NARROW (1-felt V3) plain-revoke proof, so it verifies under NO WIDE
+        // descriptor, and the V3 fallback admits CAP-OPEN members ONLY (a plain `revokeVmDescriptor2R24`
+        // is filtered out) — so the forge is rejected at the "NO cohort descriptor" branch. (The
+        // `is_forbidden_plain_cap_descriptor` AUTHORITY-FLOOR tooth still bites a WIDE plain-cap leg or
+        // a cap-open-authority-only leg directly; here the narrow plain leg can't even bind, which is
+        // a STRICTLY tighter rejection.) Either way: the cap effect under the authority-blind route
+        // does NOT verify.
         let verdict = verify_effect_vm_rotated_with_cutover(&plain_bytes, &plain_pi, &plain_vk);
         assert!(
             verdict.is_err(),
@@ -6654,8 +7209,10 @@ mod tests {
         );
         let msg = format!("{}", verdict.unwrap_err());
         assert!(
-            msg.contains("PLAIN cap-effect descriptor") && msg.contains("cap-open"),
-            "the rejection must name the AUTHORITY FLOOR reason (cap effect needs cap-open), got: {msg}"
+            msg.contains("PLAIN cap-effect descriptor")
+                || msg.contains("NO cohort descriptor"),
+            "the rejection must close the forge (cap effect under the authority-blind route does not \
+             verify — either the AUTHORITY-FLOOR tooth or the wide-cutover NO-descriptor branch), got: {msg}"
         );
     }
 
@@ -6670,13 +7227,11 @@ mod tests {
         }];
         let turn_hash = [0xABu8; 32];
 
-        // The retired v1 fallback means every finalized turn threads a rotation witness; the
-        // rotated leg's OLD/NEW_COMMIT match the monolithic reference by construction.
-        let (_mono_trace, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
-
+        // WIDE FLAG-DAY: the trusted 8-felt commit anchors come from the rotation witness
+        // (`wire_commit_8`), the SAME ~124-bit commits the wide producer publishes at the leg's PI
+        // tail. (The retired 1-felt `mono_pi[OLD_COMMIT]` is no longer the bound anchor.)
         let rot = rotation_for_initial(&initial, &effects);
+        let (old_commit, new_commit) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
         let proof = prove_turn_self_sovereign_rotated(&initial, &effects, turn_hash, Some(rot))
             .expect("proof generation should succeed");
 
@@ -6705,14 +7260,12 @@ mod tests {
         }];
         let turn_hash = [0xCDu8; 32];
 
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-
         let rot = rotation_for_initial(&initial, &effects);
+        let (old_commit, _new_commit) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
         let proof = prove_turn_self_sovereign_rotated(&initial, &effects, turn_hash, Some(rot))
             .expect("proof generation should succeed");
 
-        let wrong_new_commit = BabyBear::new(99999);
+        let wrong_new_commit = [BabyBear::new(99999); 8];
 
         let result = verify_full_turn(&proof, old_commit, wrong_new_commit);
         assert!(result.is_err(), "should reject wrong new_commitment");
@@ -6745,14 +7298,15 @@ mod tests {
             prove_turn_self_sovereign_rotated(&cell_a, &effects_a, turn_hash, Some(rot))
                 .expect("proof_a should succeed");
 
-        // The proof for cell_a's old_commit is cell_a's EffectVM OLD_COMMIT. cell_b's commitment
-        // differs, so verifying with it must fail on old_commitment.
-        let (_mt_b, mono_pi_b) = generate_effect_vm_trace(&cell_b, &effects_a);
-        let cell_b_commit = mono_pi_b[effect_vm::pi::OLD_COMMIT];
+        // The proof for cell_a's old_commit is cell_a's 8-felt wide commit. cell_b's commitment
+        // differs, so verifying with it must fail on old_commitment. (cell_b is a distinct
+        // balance/nonce; its rotation witness yields a distinct 8-felt anchor.)
+        let rot_b = rotation_for_initial(&cell_b, &effects_a);
+        let (cell_b_commit, _) = rot_b.wide_commit_anchors(&cell_b, &effects_a, None).expect("wide_commit_anchors");
         let result = verify_full_turn(
             &proof_a,
             cell_b_commit,        // WRONG: this is cell_b, not cell_a
-            BabyBear::new(12345), // doesn't matter, should fail on old_commit
+            [BabyBear::new(12345); 8], // doesn't matter, should fail on old_commit
         );
         assert!(
             result.is_err(),
@@ -6796,28 +7350,34 @@ mod tests {
         }];
         let turn_hash = [0x5Au8; 32];
 
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let honest_new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
-        let forged_new_commit = honest_new_commit + BabyBear::new(1);
+        let _ = vmpi::NEW_COMMIT; // (the retired 1-felt slot — no longer the bound anchor)
 
         let rot = rotation_for_initial(&initial, &effects);
+        let (old_commit, honest_new_commit) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
+        // Forge the WIDE 8-felt post-state commit (the LAST 8 PIs the wide verifier binds).
+        let mut forged_new_commit = honest_new_commit;
+        forged_new_commit[0] = forged_new_commit[0] + BabyBear::new(1);
+
         let mut proof =
             prove_turn_self_sovereign_rotated(&initial, &effects, turn_hash, Some(rot))
                 .expect("honest proof should generate");
 
-        // Tamper the published EffectVM post-state commitment in the wire proof (the rotated leg).
+        // Tamper the published EffectVM post-state 8-felt commit in the wire proof (the rotated
+        // leg's LAST 8 PIs — the wide commit tail).
         let eff = proof
             .composed
             .sub_proofs
             .iter_mut()
             .find(|sp| sp.label == "effect-vm-rotated")
             .expect("effect-vm-rotated sub-proof present");
-        eff.sub_public_inputs[vmpi::NEW_COMMIT] = forged_new_commit;
+        let n = eff.sub_public_inputs.len();
+        for j in 0..8 {
+            eff.sub_public_inputs[n - 8 + j] = forged_new_commit[j];
+        }
 
-        // Verify against the FORGED commitment (so the surface-level PI equality
-        // check would PASS). Only the audited in-circuit boundary binding stands
-        // between the forgery and acceptance — and it MUST reject.
+        // Verify against the FORGED 8-felt commitment (so the surface-level PI equality
+        // check would PASS). Only the audited in-circuit carrier binding stands
+        // between the forgery and acceptance — and it MUST reject (the wide pi_binding ⇒ UNSAT).
         let result = verify_full_turn(&proof, old_commit, forged_new_commit);
         assert!(
             result.is_err(),
@@ -6854,6 +7414,8 @@ mod tests {
         let tree = DslRevocationTree::new(revoked, 4);
         let fresh_item = hash_many(&[BabyBear::new(0xBEEF), BabyBear::new(0xCAFE)]);
 
+        let rot = rotation_for_initial(&initial, &effects);
+        let (old_commit, new_commit) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
             effects: effects.clone(),
@@ -6870,7 +7432,7 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0x77u8; 32],
-            rotation: Some(rotation_for_initial(&initial, &effects)),
+            rotation: Some(rot),
             cap_turn_identity: None,
         };
 
@@ -6878,10 +7440,6 @@ mod tests {
         assert!(proof.components.has_state_transition);
         assert!(proof.components.has_membership);
         assert!(proof.components.has_non_revocation);
-
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         verify_full_turn(&proof, old_commit, new_commit).expect(
             "full turn with membership + non-revocation must verify on the audited p3 path",
@@ -6911,6 +7469,8 @@ mod tests {
         let canonical_root = canonical_tree.root();
         let fresh_item = hash_many(&[BabyBear::new(0xBEEF), BabyBear::new(0xCAFE)]);
 
+        let rot = rotation_for_initial(&initial, &effects);
+        let (old_commit, new_commit) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
             effects: effects.clone(),
@@ -6923,14 +7483,10 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0x91u8; 32],
-            rotation: Some(rotation_for_initial(&initial, &effects)),
+            rotation: Some(rot),
             cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
-
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root), None).expect(
             "honest fresh spend (freshness proven against THE canonical accumulator root) must verify",
@@ -6983,6 +7539,8 @@ mod tests {
             "the prover's hand-picked accumulator must differ from the canonical one",
         );
 
+        let rot = rotation_for_initial(&initial, &effects);
+        let (old_commit, new_commit) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
             effects: effects.clone(),
@@ -6995,15 +7553,11 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0x92u8; 32],
-            rotation: Some(rotation_for_initial(&initial, &effects)),
+            rotation: Some(rot),
             cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the forgery is a verify-time property)");
-
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         // With the canonical root pinned, the prover-chosen root is rejected.
         let result =
@@ -7101,6 +7655,14 @@ mod tests {
             .collect();
         let tree = DslRevocationTree::new(revoked, 4);
 
+        let rot = rotation_for_initial(&initial, &effects);
+        // NoteSpend: the wide note-spend producer opens the grow-gate against the BEFORE nullifier-set
+        // leaves; thread the SAME leaves `prove_full_turn` threads (the non-revocation tree) so the
+        // anchor's BEFORE 8-felt commit matches the produced leg.
+        let before_nullifiers = tree.revoked_leaves();
+        let (old_commit, new_commit) = rot
+            .wide_commit_anchors(&initial, &effects, Some(&before_nullifiers))
+            .expect("wide_commit_anchors");
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
             effects: effects.clone(),
@@ -7113,14 +7675,14 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0xB1u8; 32],
-            rotation: Some(rotation_for_initial(&initial, &effects)),
+            rotation: Some(rot),
             cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
 
         // Sanity: the rotated EffectVM leg surfaces the nullifier (so step 8 actually fires).
-        // The rotated note-spend leg publishes a 39-PI vector with the nullifier appended at
-        // `ROT_NULLIFIER_PI` — the SAME index the verifier's step-8 tooth reads.
+        // The WIDE rotated note-spend leg publishes the nullifier at `ROT_NULLIFIER_PI` (still in the
+        // PI prefix) plus the 16 wide commit PIs at the tail — so len >= ROT_NULLIFIER_PI_COUNT.
         use dregg_circuit::effect_vm::trace_rotated::{ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT};
         let eff = proof
             .composed
@@ -7128,11 +7690,10 @@ mod tests {
             .iter()
             .find(|sp| sp.label == "effect-vm-rotated")
             .unwrap();
-        assert_eq!(
-            eff.sub_public_inputs.len(),
-            ROT_NULLIFIER_PI_COUNT,
-            "precondition: a note-spend rotated leg publishes the {ROT_NULLIFIER_PI_COUNT}-PI \
-             (nullifier-bearing) vector",
+        assert!(
+            eff.sub_public_inputs.len() >= ROT_NULLIFIER_PI_COUNT,
+            "precondition: a (wide) note-spend rotated leg publishes >= {ROT_NULLIFIER_PI_COUNT} PIs \
+             (the nullifier-bearing prefix + the 16 wide commit PIs)",
         );
         assert_eq!(
             eff.sub_public_inputs[ROT_NULLIFIER_PI],
@@ -7140,10 +7701,6 @@ mod tests {
             "precondition: the spend turn surfaces its nullifier into PI[ROT_NULLIFIER_PI]",
         );
         let _ = vmpi::NOTESPEND_NULLIFIER;
-
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let new_commit = eff.sub_public_inputs[vmpi::NEW_COMMIT];
 
         verify_full_turn(&proof, old_commit, new_commit).expect(
             "honest spend whose freshness is proven for THIS turn's nullifier must verify \
@@ -7186,6 +7743,13 @@ mod tests {
             .collect();
         let tree = DslRevocationTree::new(revoked, 4);
 
+        let rot = rotation_for_initial(&initial, &effects);
+        // NoteSpend: thread the BEFORE nullifier-set leaves so the anchor's grow-gate BEFORE commit
+        // matches the produced wide note-spend leg.
+        let before_nullifiers = tree.revoked_leaves();
+        let (old_commit, new_commit) = rot
+            .wide_commit_anchors(&initial, &effects, Some(&before_nullifiers))
+            .expect("wide_commit_anchors");
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
             effects: effects.clone(),
@@ -7198,21 +7762,11 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0xB2u8; 32],
-            rotation: Some(rotation_for_initial(&initial, &effects)),
+            rotation: Some(rot),
             cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the mismatch is a verify-time property)");
-
-        let eff = proof
-            .composed
-            .sub_proofs
-            .iter()
-            .find(|sp| sp.label == "effect-vm-rotated")
-            .unwrap();
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let new_commit = eff.sub_public_inputs[vmpi::NEW_COMMIT];
 
         let result = verify_full_turn(&proof, old_commit, new_commit);
         match result {
@@ -7246,15 +7800,21 @@ mod tests {
             amount: 100,
             direction: 1,
         }];
+        // The auth-to-effect cell binding (step 6) reads the NARROW `pi::OLD_COMMIT` (index 0, still
+        // present in the wide PI prefix), so the derivation's `state_root` stays the narrow 1-felt
+        // commit. The commit ENDPOINT anchor (step 4) binds the WIDE 8-felt commits from the rotation
+        // witness — the two are distinct surfaces on the SAME leg.
         let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
+        let narrow_old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
 
         // The actor's capability evidence lives at the cell's fact-tree root
-        // (== old_commitment, so the cell-binding tooth also holds).
+        // (== narrow old_commitment, so the cell-binding tooth also holds).
         let capability_fact_hash = BabyBear::new(0xCA9A);
-        let derivation = derivation_authorizing_effects(&effects, capability_fact_hash, old_commit);
+        let derivation =
+            derivation_authorizing_effects(&effects, capability_fact_hash, narrow_old_commit);
 
+        let rot = rotation_for_initial(&initial, &effects);
+        let (old_commit, new_commit) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
             effects: effects.clone(),
@@ -7266,7 +7826,7 @@ mod tests {
             non_revocation: None,
             cap_membership: None,
             turn_hash: [0x11u8; 32],
-            rotation: Some(rotation_for_initial(&initial, &effects)),
+            rotation: Some(rot),
             cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness).expect("auth-bound proof should generate");
@@ -7296,7 +7856,7 @@ mod tests {
             direction: 1,
         }];
         let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects_a);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let narrow_old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
         // A DIFFERENT effect the malicious authorization is really for: transfer 500.
         let effects_b = vec![VmEffect::Transfer {
             amount: 500,
@@ -7309,12 +7869,14 @@ mod tests {
         );
 
         // Authorization proof that genuinely concludes Allow(effects_B), rooted at
-        // the SAME cell (so the cell-binding tooth cannot be what rejects).
+        // the SAME cell (narrow state_root, so the cell-binding tooth cannot be what rejects).
         let capability_fact_hash = BabyBear::new(0xBAD0);
         let derivation_b =
-            derivation_authorizing_effects(&effects_b, capability_fact_hash, old_commit);
+            derivation_authorizing_effects(&effects_b, capability_fact_hash, narrow_old_commit);
 
         // Prove the turn with effects_A but the effects_B-authorizing derivation.
+        let rot = rotation_for_initial(&initial, &effects_a);
+        let (old_commit, new_commit) = rot.wide_commit_anchors(&initial, &effects_a, None).expect("wide_commit_anchors");
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
             effects: effects_a.clone(),
@@ -7326,13 +7888,11 @@ mod tests {
             non_revocation: None,
             cap_membership: None,
             turn_hash: [0x22u8; 32],
-            rotation: Some(rotation_for_initial(&initial, &effects_a)),
+            rotation: Some(rot),
             cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generation succeeds (mismatch is a verify-time property)");
-
-        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         let result = verify_full_turn(&proof, old_commit, new_commit);
         match result {
@@ -7365,6 +7925,8 @@ mod tests {
         let leaf = BabyBear::new(555111);
         let (siblings, positions, _root) = merkle_test_witness(leaf, 4);
 
+        let rot = rotation_for_initial(&initial, &effects);
+        let (old_commit, new_commit) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
             effects: effects.clone(),
@@ -7378,7 +7940,7 @@ mod tests {
             non_revocation: None,
             cap_membership: None,
             turn_hash: [0x88u8; 32],
-            rotation: Some(rotation_for_initial(&initial, &effects)),
+            rotation: Some(rot),
             cap_turn_identity: None,
         };
         let mut proof = prove_full_turn(&witness).expect("honest proof should generate");
@@ -7391,10 +7953,6 @@ mod tests {
             .find(|sp| sp.label == "membership")
             .expect("membership sub-proof present");
         mem.sub_public_inputs[1] = mem.sub_public_inputs[1] + BabyBear::new(1);
-
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         let res = verify_full_turn(&proof, old_commit, new_commit);
         assert!(
@@ -7714,6 +8272,9 @@ mod tests {
         );
 
         // The FULL composed chained proof proves + verifies against the real pre/post commitments.
+        // The WIDE 8-felt chain endpoints come from the rotation witness (leg0.before8 / legN.after8).
+        let (wide_old, wide_new) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
+        let _ = (mono_old, mono_new); // the narrow endpoints stay asserted above on the leg PIs
         let proof = prove_turn_self_sovereign_rotated(&initial, &effects, [0x5A; 32], Some(rot))
             .expect("chained composed proof must generate");
         let labels: Vec<&str> = proof
@@ -7731,8 +8292,8 @@ mod tests {
             !labels.contains(&"effect-vm"),
             "no v1 leg on the chained path; labels = {labels:?}"
         );
-        verify_full_turn(&proof, mono_old, mono_new)
-            .expect("the chained heterogeneous proof must verify against the chain endpoints");
+        verify_full_turn(&proof, wide_old, wide_new)
+            .expect("the chained heterogeneous proof must verify against the wide chain endpoints");
     }
 
     /// ANTI-GHOST (§6.2): a tampered MIDDLE-leg commitment breaks the chain — `verify_full_turn`
@@ -7757,9 +8318,6 @@ mod tests {
             },
         ];
         let initial = CellState::new(1_000, 0);
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let mono_old = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let mono_new = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         let mut after_cell = before_cell.clone();
         after_cell.state.set_balance(930);
@@ -7769,14 +8327,16 @@ mod tests {
             b
         };
         let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
+        let (wide_old, wide_new) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
 
         let mut proof =
             prove_turn_self_sovereign_rotated(&initial, &effects, [0x5A; 32], Some(rot))
                 .expect("chained composed proof must generate");
         // Honest proof verifies.
-        verify_full_turn(&proof, mono_old, mono_new).expect("honest chained proof verifies");
+        verify_full_turn(&proof, wide_old, wide_new).expect("honest chained proof verifies");
 
-        // TAMPER the middle leg's NEW_COMMIT PI (off by one felt) — the chain no longer closes.
+        // TAMPER the middle leg's WIDE AFTER 8-felt commit (the LAST 8 PIs — the wide anchor) by one
+        // felt — the wide chain no longer closes (adjacency leg[2].before8 != leg[1].after8).
         let rotated_idx: Vec<usize> = proof
             .composed
             .sub_proofs
@@ -7787,11 +8347,11 @@ mod tests {
             .collect();
         assert_eq!(rotated_idx.len(), 3);
         let mid = rotated_idx[1];
-        proof.composed.sub_proofs[mid].sub_public_inputs[effect_vm::pi::NEW_COMMIT] =
-            proof.composed.sub_proofs[mid].sub_public_inputs[effect_vm::pi::NEW_COMMIT]
-                + BabyBear::new(1);
+        let n = proof.composed.sub_proofs[mid].sub_public_inputs.len();
+        proof.composed.sub_proofs[mid].sub_public_inputs[n - 1] =
+            proof.composed.sub_proofs[mid].sub_public_inputs[n - 1] + BabyBear::new(1);
 
-        let res = verify_full_turn(&proof, mono_old, mono_new);
+        let res = verify_full_turn(&proof, wide_old, wide_new);
         assert!(
             res.is_err(),
             "SOUNDNESS: a tampered middle-leg commitment MUST be rejected (chain break / leg \
@@ -7822,9 +8382,6 @@ mod tests {
             }, // +100  ⇒ net 0
         ];
         let initial = CellState::new(1_000, 0);
-        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
-        let mono_old = mono_pi[effect_vm::pi::OLD_COMMIT];
-        let mono_new = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         // After: balance back to 1000, field set, nonce 3.
         let mut after_cell = before_cell.clone();
@@ -7834,6 +8391,7 @@ mod tests {
             b
         };
         let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
+        let (wide_old, wide_new) = rot.wide_commit_anchors(&initial, &effects, None).expect("wide_commit_anchors");
 
         // Compose WITH a conservation witness of the correct net (0). The prover's conservation
         // block sums Σ net_delta across the legs and must equal 0.
@@ -7854,7 +8412,7 @@ mod tests {
         let proof = prove_full_turn(&witness)
             .expect("chained proof with a correct Σ-net=0 conservation witness must generate");
         assert!(proof.components.has_conservation);
-        verify_full_turn(&proof, mono_old, mono_new)
+        verify_full_turn(&proof, wide_old, wide_new)
             .expect("the conserving chained proof must verify");
     }
 

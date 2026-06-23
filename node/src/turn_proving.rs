@@ -118,15 +118,25 @@ use dregg_types::CellId;
 /// "Capacity bound" note.
 pub const MAX_REVOCATION_TREE_ENTRIES: usize = (1usize << TREE_DEPTH) - 2;
 
+/// Widen a single-felt commitment into the 8-felt anchor the wide verifier compares against for a
+/// NARROW (v1 / cap-open) effect-vm leg: the verifier broadcasts such a leg's 1-felt commit into
+/// slot 0 with the remaining felts zero (`verify_full_turn_bound`'s `leg_commit`), so the caller's
+/// expected anchor for a non-rotated proof is the matching `[felt, 0, …, 0]`.
+fn wide_from_felt(felt: BabyBear) -> [BabyBear; 8] {
+    let mut wide = [BabyBear::ZERO; 8];
+    wide[0] = felt;
+    wide
+}
+
 /// A finalized turn that carries a real, re-verified full-turn STARK proof.
 #[derive(Clone, Debug)]
 pub struct ProvenFinalizedTurn {
     /// The composed full-turn proof (Effect-VM STARK), ready for wire transmission.
     pub proof: FullTurnProof,
-    /// Position-0 felt of the actor cell's pre-execution state commitment.
-    pub old_commit: BabyBear,
-    /// Position-0 felt of the proven post-execution state commitment.
-    pub new_commit: BabyBear,
+    /// The actor cell's pre-execution 8-felt wide state commitment.
+    pub old_commit: [BabyBear; 8],
+    /// The proven post-execution 8-felt wide state commitment.
+    pub new_commit: [BabyBear; 8],
 }
 
 impl ProvenFinalizedTurn {
@@ -576,12 +586,25 @@ pub fn prove_and_verify_finalized_turn(
             .map_err(FullTurnProvingError::Prove)?,
         None => CellState::new(pre_balance, pre_nonce as u32),
     };
-    let old_commit = initial_vm_state.state_commitment;
 
     // 3. Derive the proven post-state commitment from the AIR boundary public
     //    input. The prover cannot forge this without an invalid trace.
     let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
-    let new_commit = pi[dregg_circuit::effect_vm::pi::NEW_COMMIT];
+
+    // WIDE FLAG-DAY: the trusted 8-felt (~124-bit) commit anchors `verify_full_turn` binds. When a
+    // rotation witness is threaded (the wide leg), they are the rotation's `wire_commit_8` before/after
+    // anchors (the SAME commits the wide producer publishes at the leg's PI tail). Without one (the
+    // byte-identical v1 / narrow leg) the verifier broadcasts the leg's 1-felt commit into slot 0, so
+    // we match by widening the same single felts the v1 leg attests at `pi::OLD_COMMIT`/`pi::NEW_COMMIT`.
+    let (old_commit, new_commit) = match &rotation {
+        Some(rot) => rot
+            .wide_commit_anchors(&initial_vm_state, &vm_effects, None)
+            .map_err(FullTurnProvingError::Prove)?,
+        None => (
+            wide_from_felt(initial_vm_state.state_commitment),
+            wide_from_felt(pi[dregg_circuit::effect_vm::pi::NEW_COMMIT]),
+        ),
+    };
 
     // 4. Generate the real composed full-turn STARK proof. When the caller threaded the
     //    per-turn rotation producer witnesses (FLOW-B), the effect-vm leg proves through the
@@ -819,9 +842,7 @@ pub fn prove_and_verify_finalized_turn_freshness(
          effects={effects:?}, vm_effects={vm_effects:?}"
     );
     let initial_vm_state = CellState::new(pre_balance, pre_nonce as u32);
-    let old_commit = initial_vm_state.state_commitment;
     let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
-    let new_commit = pi[dregg_circuit::effect_vm::pi::NEW_COMMIT];
 
     // FLOW-B ROTATION (C4 close): a single-spend NoteSpend turn now ROTATES — the rotated
     // note-spend descriptor (`noteSpendVmDescriptor2R24`) exposes the spent nullifier at PI[38]
@@ -833,6 +854,23 @@ pub fn prove_and_verify_finalized_turn_freshness(
     // the single-nullifier freshness shape stays the invariant on BOTH legs).
     let rotation =
         rotation_witness_for_cap_less_turn(agent, pre_balance, pre_nonce, effects, &[turn_hash]);
+
+    // WIDE FLAG-DAY: the trusted 8-felt commit anchors `verify_full_turn_bound` binds — the rotation's
+    // wide chain endpoints when the spend rotates (the wide leg), else the v1 leg's single felts
+    // broadcast into slot 0 (the narrow leg the verifier widens the same way). This is a NoteSpend turn,
+    // so the wide note-spend producer opens the limb-26 grow-gate against the BEFORE nullifier-set
+    // leaves — thread the SAME canonical-tree leaves `prove_full_turn` threads (from the non-revocation
+    // witness), so the published 8-felt commit matches. Derived before the witness MOVES `tree`/`rotation`.
+    let before_nullifiers = tree.revoked_leaves();
+    let (old_commit, new_commit) = match &rotation {
+        Some(rot) => rot
+            .wide_commit_anchors(&initial_vm_state, &vm_effects, Some(&before_nullifiers))
+            .map_err(FullTurnProvingError::Prove)?,
+        None => (
+            wide_from_felt(initial_vm_state.state_commitment),
+            wide_from_felt(pi[dregg_circuit::effect_vm::pi::NEW_COMMIT]),
+        ),
+    };
 
     // Compose the full-turn proof WITH the non-revocation leg.
     let witness = FullTurnWitness {
@@ -1075,9 +1113,22 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
             .map_err(FullTurnProvingError::Prove)?,
         None => CellState::with_capability_root(pre_balance, pre_nonce as u32, pre_capability_root),
     };
-    let old_commit = initial_vm_state.state_commitment;
     let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
-    let new_commit = pi[dregg_circuit::effect_vm::pi::NEW_COMMIT];
+
+    // WIDE FLAG-DAY — THE NAMED RESIDUAL (cap-open tail). A capability-gated turn threads
+    // `cap_membership` (below), so `prove_cohort_run_chain` routes the run through the CAP-OPEN
+    // producer (`prove_effect_vm_cap_open`), which still emits the 1-felt V3 cap-open descriptor (the
+    // wide twins of the `…CapOpen…` members are NOT yet in `WIDE_REGISTRY_STAGED_TSV`). The
+    // light-client verifier's V3 fallback accepts that cap-open leg and binds its 1-felt commit
+    // broadcast into slot 0 (`leg_commit`'s narrow branch). So the trusted anchor here is the SAME
+    // 1-felt-in-slot-0 form — the residual ~31-bit waist for cap-gated turns ONLY, until the wide
+    // cap-open descriptors land. (Normal owner-authorized turns are fully wide; see
+    // `prove_and_verify_finalized_turn`.) `pi[NEW_COMMIT]` is the v1-prefix post-commit the cap-open
+    // leg also publishes at `pi::NEW_COMMIT`.
+    let (old_commit, new_commit) = (
+        wide_from_felt(initial_vm_state.state_commitment),
+        wide_from_felt(pi[dregg_circuit::effect_vm::pi::NEW_COMMIT]),
+    );
 
     // #225 TURN-IDENTITY (cross-vat close): derive the genuine `(actor, src, dst)` single-felt
     // identity from the REAL turn so a cap-gated transfer where the cap HOLDER/actor (`agent`)
@@ -1279,8 +1330,9 @@ mod tests {
         .expect("honest turn should prove");
 
         // Forge the post-state commitment: claim a DIFFERENT new state than
-        // the one the proof actually attests.
-        let forged_new_commit = proven.new_commit + BabyBear::new(1);
+        // the one the proof actually attests (perturb slot 0 of the 8-felt anchor).
+        let mut forged_new_commit = proven.new_commit;
+        forged_new_commit[0] = forged_new_commit[0] + BabyBear::new(1);
         assert_ne!(forged_new_commit, proven.new_commit);
 
         let result =
@@ -1339,7 +1391,8 @@ mod tests {
         )
         .expect("honest turn should prove");
 
-        let forged_old_commit = proven.old_commit + BabyBear::new(1);
+        let mut forged_old_commit = proven.old_commit;
+        forged_old_commit[0] = forged_old_commit[0] + BabyBear::new(1);
         let result =
             dregg_sdk::verify_full_turn(&proven.proof, forged_old_commit, proven.new_commit);
         assert!(
@@ -1556,8 +1609,9 @@ mod tests {
         )
         .expect("honest non-synthetic rotated turn must prove");
 
-        // Forge the post-state commitment the verifier is asked to accept.
-        let forged_new_commit = proven.new_commit + BabyBear::new(1);
+        // Forge the post-state commitment the verifier is asked to accept (perturb slot 0).
+        let mut forged_new_commit = proven.new_commit;
+        forged_new_commit[0] = forged_new_commit[0] + BabyBear::new(1);
         assert_ne!(forged_new_commit, proven.new_commit);
         let result =
             dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, forged_new_commit);
@@ -2061,17 +2115,20 @@ mod tests {
             .iter()
             .find(|sp| sp.label == "effect-vm-rotated")
             .expect("the single-spend freshness turn must carry the rotated effect-vm leg (C4)");
-        // The rotated note-spend leg carries the FIFTH appended pin: a 39-element PI vector.
+        // The rotated note-spend leg carries the FIFTH appended pin (nullifier@ROT_NULLIFIER_PI) PLUS
+        // the 16 WIDE commit PIs (the light-client flag-day): the wide note-spend vector is
+        // ROT_NULLIFIER_PI_COUNT + 16. The nullifier still rides the prefix slot.
         assert_eq!(
             rotated_leg.sub_public_inputs.len(),
-            ROT_NULLIFIER_PI_COUNT,
-            "a single-spend rotated leg must publish the 39-PI note-spend vector (nullifier@38)"
+            ROT_NULLIFIER_PI_COUNT + 16,
+            "a single-spend WIDE rotated leg publishes the note-spend prefix (nullifier@ROT_NULLIFIER_PI) \
+             + the 16 wide 8-felt commit PIs"
         );
-        // And PI[38] IS this turn's folded nullifier — the binding is real, not a free wire.
+        // And PI[ROT_NULLIFIER_PI] IS this turn's folded nullifier — the binding is real, not a free wire.
         assert_eq!(
             rotated_leg.sub_public_inputs[ROT_NULLIFIER_PI],
             nullifier_to_field(&n),
-            "rotated PI[38] must pin the spend row's folded nullifier (EffectVmEmitRotationV3.noteSpendV3)"
+            "rotated PI[ROT_NULLIFIER_PI] must pin the spend row's folded nullifier (EffectVmEmitRotationV3.noteSpendV3)"
         );
 
         // ── (2) FORGED: a freshness proof for a DIFFERENT item M is rejected THROUGH the rotated

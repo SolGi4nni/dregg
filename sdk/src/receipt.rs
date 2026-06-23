@@ -67,8 +67,8 @@ impl TurnProof {
     /// on the inner proof via [`Self::inner`].
     pub fn verify(
         &self,
-        expected_old_commit: dregg_circuit::BabyBear,
-        expected_new_commit: dregg_circuit::BabyBear,
+        expected_old_commit: [dregg_circuit::BabyBear; 8],
+        expected_new_commit: [dregg_circuit::BabyBear; 8],
     ) -> Result<(), FullTurnVerifyError> {
         crate::full_turn_proof::verify_full_turn(&self.0, expected_old_commit, expected_new_commit)
     }

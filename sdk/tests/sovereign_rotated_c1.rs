@@ -1389,7 +1389,6 @@ mod whole_turn_forest {
 // the transfer caveat manifest).
 // ===========================================================================
 mod wall_a {
-    use dregg_cell::commitment::{V9RotationContext, compute_canonical_state_commitment_v9_felt};
     use dregg_cell::{Cell, CellMode, Ledger};
     use dregg_circuit::effect_vm::{self, CellState};
     use dregg_sdk::full_turn_proof::{
@@ -1407,8 +1406,8 @@ mod wall_a {
         amount: u64,
     ) -> (
         FullTurnWitness,
-        dregg_circuit::field::BabyBear,
-        dregg_circuit::field::BabyBear,
+        [dregg_circuit::field::BabyBear; 8],
+        [dregg_circuit::field::BabyBear; 8],
     ) {
         let token_id = *blake3::hash(b"wallA-domain").as_bytes();
         let mut before_cell = Cell::with_balance([7u8; 32], token_id, balance as i64);
@@ -1441,28 +1440,15 @@ mod wall_a {
         let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
         let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
 
-        // The cell-side v9 commitment of the before-state == rotated PI 34; the after-state
-        // v9 == rotated PI 35 (the cross-checks the cipherclerk asserts by construction).
-        let old_commit = compute_canonical_state_commitment_v9_felt(
-            &before_cell,
-            &V9RotationContext {
-                cells_root: before_w.pre_limbs[0],
-                nullifier_root,
-                commitments_root,
-                iroot: before_w.iroot,
-            },
-        );
-        let new_commit = compute_canonical_state_commitment_v9_felt(
-            &after_cell,
-            &V9RotationContext {
-                cells_root: after_w.pre_limbs[0],
-                nullifier_root,
-                commitments_root,
-                iroot: after_w.iroot,
-            },
-        );
-
         let rotation = RotationTurnWitness::for_effects(before_w, after_w, &vm_effects);
+
+        // WIDE FLAG-DAY: the trusted 8-felt (~124-bit) commit anchors `verify_full_turn` binds, the
+        // SAME `wire_commit_8` before/after commits the wide producer publishes at the rotated leg's
+        // PI tail. Derived from the rotation witness before it MOVES into the FullTurnWitness.
+        let (old_commit, new_commit) = rotation
+            .wide_commit_anchors(&initial_vm_state, &vm_effects, None)
+            .expect("wide_commit_anchors");
+
         let witness = FullTurnWitness {
             initial_cell_state: initial_vm_state,
             effects: vm_effects,
@@ -1483,7 +1469,7 @@ mod wall_a {
     /// (A.1) and is re-checked at verify; the v1 effect-vm trace was never generated (A.3).
     #[test]
     fn rotated_full_turn_round_trips() {
-        let (witness, _old, _new) = build_rotated_transfer_witness(1000, 100);
+        let (witness, old_commit, new_commit) = build_rotated_transfer_witness(1000, 100);
         let proof = prove_full_turn(&witness).expect("rotated full-turn should prove");
 
         // The attached leg is the rotated one (not the v1 "effect-vm").
@@ -1502,9 +1488,9 @@ mod wall_a {
             "the v1 effect-vm leg must be ABSENT on the rotated path, got {labels:?}"
         );
 
-        // The verifier cross-binds OLD_COMMIT(0)/NEW_COMMIT(4) of the rotated leg's PI; those
-        // carriers are the trace's OWN before/after state-commit (NOT a separately-recomputed
-        // v9), so the expected commits ARE the proof's bound PI at those offsets.
+        // WIDE FLAG-DAY: the verifier binds the rotated leg's 8-felt (~124-bit) before/after commit
+        // anchors — the LAST 16 PIs of the wide leg (the `wire_commit_8` tail). Cross-check that the
+        // witness-derived anchors the helper returns ARE the proof's bound PI tail, then verify.
         let rot_pi = &proof
             .composed
             .sub_proofs
@@ -1512,8 +1498,14 @@ mod wall_a {
             .find(|sp| sp.label == "effect-vm-rotated")
             .expect("rotated leg present")
             .sub_public_inputs;
-        let old_commit = rot_pi[dregg_circuit::effect_vm::pi::OLD_COMMIT];
-        let new_commit = rot_pi[dregg_circuit::effect_vm::pi::NEW_COMMIT];
+        let n = rot_pi.len();
+        assert!(n >= 16, "wide rotated leg must carry the 8-felt commit tail, got {n} PIs");
+        let pi_before: [dregg_circuit::field::BabyBear; 8] =
+            rot_pi[n - 16..n - 8].try_into().expect("slice of len 8");
+        let pi_after: [dregg_circuit::field::BabyBear; 8] =
+            rot_pi[n - 8..n].try_into().expect("slice of len 8");
+        assert_eq!(pi_before, old_commit, "before anchor must equal the proof's bound PI tail");
+        assert_eq!(pi_after, new_commit, "after anchor must equal the proof's bound PI tail");
 
         verify_full_turn(&proof, old_commit, new_commit).expect("rotated full-turn should verify");
     }

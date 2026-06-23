@@ -413,3 +413,168 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
          verifies). The light-client refusal forge is closed gate→apex→deployed-prover end-to-end."
     );
 }
+
+// ============================================================================================
+// THE LIGHT-CLIENT FLAG-DAY: the composed FULL-TURN / light-client surface now binds the WIDE
+// 8-felt (~124-bit) commit, NOT the retired ~31-bit single felt. This is the close of the
+// #1-precious 31-bit light-client floor: `verify_full_turn` (the surface a light client / remote
+// peer re-verifies a NODE-SERVED turn proof on) anchors the 8-felt wide commit the executor binds.
+// ============================================================================================
+
+/// Build a rotated `FullTurnWitness` for a single outgoing transfer, plus a clone of the
+/// `RotationTurnWitness` (the FullTurnWitness's `rotation` is consumed at prove time; the returned
+/// clone gives the test the trusted `wide_commit_anchors()` + the before/after blocks for the
+/// narrow-leg splice).
+fn flagday_transfer_witness(
+    balance: u64,
+    amount: u64,
+) -> (
+    dregg_sdk::full_turn_proof::FullTurnWitness,
+    dregg_sdk::full_turn_proof::RotationTurnWitness,
+    CellState,
+    Vec<VmEffect>,
+) {
+    use dregg_sdk::full_turn_proof::{FullTurnWitness, RotationTurnWitness};
+    let token_id = *blake3::hash(b"flagday-domain").as_bytes();
+    let mut before_cell = Cell::with_balance([7u8; 32], token_id, balance as i64);
+    before_cell.mode = CellMode::Sovereign;
+    let mut after_cell = before_cell.clone();
+    after_cell
+        .state
+        .set_balance(after_cell.state.balance().saturating_sub(amount as i64));
+    let _ = after_cell.state.increment_nonce();
+
+    let initial_vm_state = CellState::with_capability_root_and_record_digest(
+        balance,
+        before_cell.state.nonce() as u32,
+        dregg_cell::compute_canonical_capability_root_felt(&before_cell.capabilities),
+        dregg_cell::compute_authority_digest_felt(&before_cell),
+    );
+    let vm_effects = vec![VmEffect::Transfer { amount, direction: 1 }];
+
+    let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
+    let receipt_hashes: Vec<[u8; 32]> = Vec::new();
+    let mut ctx_ledger = Ledger::new();
+    let _ = ctx_ledger.insert_cell(before_cell.clone());
+    let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
+    let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
+
+    let rotation = RotationTurnWitness {
+        before: before_w.clone(),
+        after: after_w.clone(),
+        caveat: dregg_circuit::effect_vm::trace_rotated::transfer_caveat_manifest(),
+    };
+    let witness = FullTurnWitness {
+        initial_cell_state: initial_vm_state.clone(),
+        effects: vm_effects.clone(),
+        authorization: None,
+        membership: None,
+        conservation: None,
+        non_revocation: None,
+        cap_membership: None,
+        turn_hash: *blake3::hash(b"flagday-turn").as_bytes(),
+        rotation: Some(rotation),
+        cap_turn_identity: None,
+    };
+    let rot_clone = RotationTurnWitness {
+        before: before_w,
+        after: after_w,
+        caveat: dregg_circuit::effect_vm::trace_rotated::transfer_caveat_manifest(),
+    };
+    (witness, rot_clone, initial_vm_state, vm_effects)
+}
+
+/// **THE FLAG-DAY: an honest WIDE full-turn proof PROVES + the light-client `verify_full_turn`
+/// ACCEPTS it at the 8-felt anchor.** `prove_full_turn` now emits a WIDE rotated leg (the 8-felt
+/// commits at the LAST 16 PIs); `verify_full_turn` binds those against the trusted
+/// `RotationTurnWitness::wide_commit_anchors()` (~124-bit). The retired 1-felt waist is GONE.
+#[test]
+fn flagday_wide_full_turn_proves_and_light_client_verifies_at_124_bit() {
+    use dregg_sdk::full_turn_proof::{prove_full_turn, verify_full_turn};
+    let (witness, rot, initial, effects) = flagday_transfer_witness(100_000, 100);
+    let (old8, new8) = rot
+        .wide_commit_anchors(&initial, &effects, None)
+        .expect("wide_commit_anchors");
+
+    let proof = prove_full_turn(&witness).expect("the honest WIDE full-turn must prove");
+
+    // The effect-vm leg is the WIDE rotated leg (its PI carries the 16 wide commit PIs at the tail).
+    let leg = proof
+        .composed
+        .sub_proofs
+        .iter()
+        .find(|sp| sp.label == "effect-vm-rotated")
+        .expect("rotated effect-vm leg present");
+    let n = leg.sub_public_inputs.len();
+    assert!(n >= 16 + 46, "the WIDE transfer leg carries the 46 base PIs + 16 wide commit PIs (got {n})");
+    let leg_after8: [BabyBear; 8] = leg.sub_public_inputs[n - 8..n].try_into().unwrap();
+    assert_eq!(
+        leg_after8, new8,
+        "the leg's published AFTER 8-felt commit == the trusted wide_commit_anchors AFTER (honest pipeline)"
+    );
+
+    // THE LIGHT-CLIENT VERIFY at the FULL 8-felt width — the close of the 31-bit floor.
+    verify_full_turn(&proof, old8, new8)
+        .expect("the light-client verifier ACCEPTS the honest wide full-turn at the 8-felt anchor");
+
+    // A forged 8-felt NEW commit (one felt off) is REJECTED (the wide anchor binds ~124-bit).
+    let mut forged_new = new8;
+    forged_new[3] = forged_new[3] + BabyBear::new(0x7777);
+    assert!(
+        verify_full_turn(&proof, old8, forged_new).is_err(),
+        "a forged 8-felt NEW commit MUST be rejected — the light-client surface binds the full ~124-bit commit"
+    );
+    eprintln!("FLAG-DAY GREEN: the composed full-turn / light-client surface binds the 8-felt (~124-bit) commit.");
+}
+
+/// **THE REJECT TOOTH: a 1-felt V3 full-turn proof is REJECTED post-cutover.** We splice a NARROW
+/// (1-felt V3 producer) transfer leg into an otherwise-honest full-turn proof. The re-pointed
+/// light-client verifier (`verify_full_turn` → `verify_effect_vm_rotated_with_cutover`, iterating
+/// the WIDE registry) finds NO accepting WIDE descriptor for the narrow leg — and the V3 fallback
+/// accepts ONLY cap-open members, so a plain narrow transfer is FILTERED OUT — ⇒ the leg verifies
+/// under no accepted descriptor ⇒ REJECTED. The honest 1-felt transfer surface can no longer pass
+/// the composed full-turn / light-client verifier (the ~31-bit waist is closed for normal effects).
+#[test]
+fn flagday_rejects_one_felt_v3_full_turn_leg() {
+    use dregg_circuit::effect_vm::trace_rotated::transfer_caveat_manifest;
+    use dregg_sdk::full_turn_proof::{
+        prove_effect_vm_rotated_ir2_with_caveat, prove_full_turn, verify_full_turn,
+    };
+
+    let (witness, rot, initial, effects) = flagday_transfer_witness(100_000, 100);
+    let (old8, new8) = rot
+        .wide_commit_anchors(&initial, &effects, None)
+        .expect("wide_commit_anchors");
+
+    // The honest WIDE proof (the scaffold we splice the narrow leg into).
+    let mut proof = prove_full_turn(&witness).expect("honest wide full-turn proves");
+
+    // Mint a NARROW (1-felt V3) transfer leg over the SAME effect/rotation — exactly what the
+    // pre-flag-day producer emitted (the ~31-bit-commit leg).
+    let caveat = transfer_caveat_manifest();
+    let narrow = prove_effect_vm_rotated_ir2_with_caveat(
+        &initial, &effects, &rot.before, &rot.after, &caveat, None,
+    )
+    .expect("the 1-felt V3 transfer leg proves (it is sound for the narrow descriptor)");
+    let narrow_bytes = postcard::to_allocvec(&narrow).expect("serialize narrow leg");
+
+    // Splice the narrow leg's proof bytes into the full-turn proof's effect-vm-rotated leg, leaving
+    // the WIDE PI vector in place (a malicious node serving the cheaper 1-felt proof).
+    let leg = proof
+        .composed
+        .sub_proofs
+        .iter_mut()
+        .find(|sp| sp.label == "effect-vm-rotated")
+        .expect("rotated leg present");
+    leg.proof_bytes = narrow_bytes;
+
+    // POST-CUTOVER: the re-pointed light-client verifier REJECTS the narrow leg (no WIDE descriptor
+    // accepts it; the V3 fallback admits cap-open members only, so a plain narrow transfer is out).
+    assert!(
+        verify_full_turn(&proof, old8, new8).is_err(),
+        "REJECT TOOTH: a 1-felt V3 transfer leg MUST be rejected by the wide-bound light-client \
+         verifier post-cutover — the ~31-bit waist is closed for normal effects"
+    );
+    eprintln!("FLAG-DAY REJECT TOOTH BITES: a 1-felt V3 full-turn leg is REJECTED post-cutover.");
+}
