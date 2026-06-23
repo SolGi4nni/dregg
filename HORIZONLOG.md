@@ -11,6 +11,24 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### CIRCUIT-SOUNDNESS pre-codex review — 3 P1/P2 findings RESOLVED + named follow-ups (2026-06-23).
+Own adversarial pass before spending codex credits: single-transition unfoolability SOLID (no forge found). The 3
+findings were all "docs claim more than the artifact" — fixed (`ccee7ea21`): **P1 cross-turn freshness CLOSED BY
+THEOREM** (`CrossTurnFreshness.no_replay` — the commitment is injective in the agent nonce ⟹ no commitment cycle ⟹
+the CAS pre-anchor opens at most once; scope also stated honestly in the apex doc); **P1 refusal RESOLVED
+deployed-forced** (the deployed TSV `map_op op=write` matches the Lean `refusalFieldsWriteV3`; the stale
+test-header/`proof_verify` comment claiming "not forced" were fixed — Lean was right); **P2 exerciseA inner-leg
+FORCED** (threaded the inner emitted witness, mutation-confirmed, 32/32 stands). + limb-count 35→37 (`8f72b0ff1`).
+NAMED FOLLOW-UPS (burn down): (1) **the `prover` feature is GONE from dregg-circuit** (moved to `dregg-circuit-prove`)
+but ~13 `circuit/tests/` (vk_epoch_*, effect_vm_selector_gate_forgery, rotation_flip, wide_roundtrip, cap_open_*_verify)
+are still `cfg(feature="prover")`-gated ⟹ they NEVER COMPILE/RUN (green-testing-nothing); closure = relocate to
+`dregg-circuit-prove` tests or add the dev-dep + re-gate. (2) registry 45-wide-vs-56-v3 routing audit (the 11
+cap-open/heapWrite variants — confirm every selector resolves to a forced wide entry). (3) the 3 epoch residuals'
+both-poles non-vacuity witnesses. (4) `CrossTurnFreshness`'s `TurnChain`-from-`Admission.runTurn` composition (over
+existing lemmas, not a new obligation). · Tightened codex prompt READY — point codex at the residual the pre-codex
+did NOT reach (joint/forest adversarial-scheduler, note-nullifier internals, the routing audit, adversarial re-verify
+of the new no-replay theorem); it should NOT re-find the 3 above.
+
 ### ONE UNIFIED BOOT landed; editor→node WRITE-BACK is the seam (2026-06-23).
 `ff7a0da0c` (`starbridge-v2/src/unified_boot.rs` + `--render-unified-boot`). One headless frame =
 live-node pane (real `dregg-node` /status+cells+receipt over the wire) + FirmamentFs editor + live PTY,
