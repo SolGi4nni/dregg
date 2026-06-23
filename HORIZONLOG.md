@@ -11,6 +11,21 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### deos-js SPIKE — JS (real mozjs) drives the substance, by running (2026-06-23).
+`38acc2fc` (new `deos-js/` crate, in the repo-root `exclude` list like servo-render/wasm). Real
+SpiderMonkey (`mozjs_sys` 140.x static archive; `evaluate_script("40+2")=42` — no stub). Tests pass:
+(a) `deos.applet({affordances})` mints ONE cell on an embedded `DreggEngine`; `app.inc(5)` etc. each
+commit a REAL cap-gated verified turn — 4 fires → 4 `TurnReceipt`s, witnessed read=6 (receipt
+`b42cf6d7…`); (b) `app.view.set(...)` leaves NO receipt (view-state ≠ turn); (c) a `Proof` affordance
+held by a `Signature` driver is REFUSED (anti-ghost); (d) a 2nd applet `transclude`d through the real
+`WebOfCells`/`TranscludedField` (content-bound provenance, finalized). Embedding gotchas resolved
+(AutoRealm, thread-bound engine, fees). Used `starbridge-web-surface` (gpui-free) for transclusion, NOT
+the off-limits `starbridge-v2`. Design spec: `docs/deos/SCRIPTING-AND-DISTRIBUTED-DOM.md` (`df227e5e`) —
+cell=codata/Moore-coalgebra, authority=production-not-spend, the Φ×WitnessMode spectrum, the gpui-free
+reflective object graph, proven-vs-open. NEXT: slice 2 = the reflective CRAWL binding (deos.world.cells/
+cell.substances/frustum/ocap) from gpui-free primitives; the moldable `present()` 7-faces live in
+`starbridge-v2` → an architecture fork (dep starbridge-v2+gpui vs extract a gpui-free `deos-reflect`
+crate) — ember's call.
 ### CIRCUIT/KERNEL CONCORDANCE — codex review closed + 5 executor triangles + 32/32 extraction (2026-06-23).
 Full circuit/kernel concordance proven for all 32 effects, axiom-clean (lake Dregg2.Claims green, 4123 jobs):
 (1) commitment binds every kernel write (record_digest realizes RH, `548ac920`/`80ebce3d`); (2) hostile-witness
@@ -4954,3 +4969,28 @@ KEY SEAMS / NEXT (real-state):
   membrane lane clears deos-matrix (collision).
 - devtools federation-config = honestly-stubbed (no live federation in embedded image) — NOT a code gap.
 - the migrate verb (Local→HostPd→Distributed), Xanadu transclusion buildout, the whole-Zed Workspace stages.
+
+## No-copy Lean↔Rust FFI (lean_object* boundary) — 2026-06-23
+- BUILT: `metatheory/Dregg2/Exec/FFIDirect.lean` (additive — `execFullForestAuthStep` UNCHANGED): ~95
+  `@[export dregg_d_*]` builder/reader primitives + `@[export dregg_exec_full_forest_auth_direct]`
+  (`execDirect`) reusing the IDENTICAL stateOfWState/liftForestG/admCtxOfHost/runGatedForestTurnStatus/
+  wstateOfState chain — no parseWWire/encodeWStatusOut. Lean #guards pin direct==JSON for the 4 demos.
+- Rust: `dregg-lean-ffi/src/lean_direct.rs` constructs the Lean WHostCtx/WState/WTurn inductives via the
+  builders (bottom-up) + reads the post-state back via readers — NO JSON either direction. C shim
+  (`lean_init.c`) gained linkable `dregg_rt_inc/dec/box/string_cstr` wrappers (the `_ref` variants UB on
+  scalar tagged-pointers — use `lean_inc/dec`) + initializes the out-of-FFI-closure FFIDirect module.
+  build.rs probes `dregg_exec_full_forest_auth_direct` → cfg(dregg_direct_present).
+- ABI LESSONS (the UB the corpus differential caught): (1) nullary Lean defs compile to DATA symbols not
+  functions → declare as `extern static`; (2) no-field enums (Auth) cross UNBOXED as u8, not lean_object*;
+  (3) readers CONSUME their arg (owned-arg convention) → inc-before-each, no spurious dec.
+- VERIFIED: `direct_vs_json_differential.rs` — 49 corpus cases (12 auth+30 action+7 structural) direct ==
+  JSON oracle BYTE-IDENTICAL. Cutover in `run_shadow_state` (exec-lean) is behavior-NEUTRAL: producer
+  suite gives identical 15/1/1 under direct vs forced-JSON; DREGG_FFI_JSON_ORACLE=1 cross-check fires
+  ZERO direct!=JSON divergences over all real turns.
+- RE-MEASURED (`dregg-lean-ffi/benches/direct_vs_json_overhead.rs` + the perf baseline): per-turn FFI
+  overhead ~100–160µs → ~6–19µs (head-to-head 13–15×; execute_via_lean path 5–7×). No longer tracks JSON
+  bytes. The marshalling tax is gone.
+- RESIDUAL (NOT mine; concurrent-churn pre-existing): producer `attenuate_capability` Rust↔Lean commit-bit
+  divergence — identical on BOTH direct + pure-JSON paths (so faithful), a live-archive attenuate semantics
+  gap to close separately. Digest credentials cross as low-64 (matches the JSON demo `Digest::from_u64`);
+  full-256-bit digest builders are a widen-later item if a real full-width credential ever needs the direct path.
