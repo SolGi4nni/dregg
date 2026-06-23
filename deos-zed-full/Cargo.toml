@@ -101,6 +101,11 @@ settings = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e
 # the project layer (`Project::test`, `LanguageRegistry::test`, the fake clock /
 # http client / node runtime) plus a `#[gpui::test]` harness.
 [dev-dependencies]
+# `postage::stream::Stream` provides `.recv().await` on the worktree scanner's
+# completion barrier (`refresh_entries_for_paths` returns a `postage::barrier::Receiver`)
+# — the exact crate + trait zed's own worktree integration tests use to await a
+# lazy directory expansion. Pinned to the same 0.5 the zed graph already carries.
+postage = { version = "0.5", features = ["futures-traits"] }
 gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
 project = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
 language = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }

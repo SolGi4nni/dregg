@@ -27,16 +27,19 @@
 //! # What's real vs stubbed in THIS slice
 //!
 //! REAL (cell-backed, receipted): `load`, `load_bytes`, `save`, `atomic_write`,
-//! `write`, `create_file`, `create_dir`, `rename`, `metadata`, `is_file`,
-//! `is_dir`, `read_dir`, `canonicalize`.
+//! `write`, `create_file`, `create_dir`, `rename`, `metadata` (with a distinct
+//! per-cell inode so the worktree RECURSES into nested cell directories),
+//! `is_file`, `is_dir`, `read_dir`, `canonicalize`, `open_handle` (a stable
+//! cell-path handle), `open_sync`.
 //!
 //! STUBBED (the editor slice does not exercise them; the FULL-Zed embed wires
 //! them — see DESIGN-FULL-ZED-EMBED.md): `watch` (returns an empty event stream
-//! + a no-op watcher — Zed's worktree falls back to a single initial scan),
-//! `open_repo`/`git_*` (no git over cells yet), `trash`/`restore`/`remove_*`
-//! beyond the namespace, `open_handle`/`open_sync`, `extract_tar_file`,
-//! `create_symlink`, `copy_file`. Each stub is an explicit, honest `bail!`/empty
-//! — never a silent wrong answer.
+//! + a no-op watcher — the worktree scan reads the cell namespace directly, so
+//! the project panel lists + recurses the cells; live cross-pane refresh off the
+//! receipt log is the follow-on), `open_repo`/`git_*` (no git over cells yet),
+//! `trash`/`restore`/`remove_*` beyond the namespace, `extract_tar_file`,
+//! `create_symlink`. Each stub is an explicit, honest `bail!`/empty — never a
+//! silent wrong answer.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -117,7 +120,15 @@ impl FirmamentZedFs {
     fn cell_metadata(&self, path: &Path) -> Option<Metadata> {
         let md = self.cell.metadata(path)?;
         Some(Metadata {
-            inode: 0,
+            // A UNIQUE, STABLE inode per path. Zed's worktree scanner guards
+            // against symlink cycles by tracking the set of ancestor inodes and
+            // refusing to enqueue a child whose inode is already an ancestor's
+            // (`enqueue_scan_dir`). A constant inode (e.g. 0) makes EVERY cell
+            // collide with the root, so no subdirectory ever gets scanned — the
+            // recursion silently stops at the top level. Deriving the inode from
+            // the path (the cell namespace has no real inodes) gives each cell a
+            // distinct value, so directory recursion proceeds.
+            inode: path_inode(path),
             mtime: MTime::from_seconds_and_nanos(0, 0),
             is_symlink: md.is_symlink,
             is_dir: md.is_dir,
@@ -134,9 +145,22 @@ impl Default for FirmamentZedFs {
     }
 }
 
-/// A no-op watcher: the cell-ledger fs has no inotify; the worktree's initial
-/// scan still populates. (The FULL embed will drive watch events off the receipt
-/// log — see the design doc.)
+/// A handle on a cell path. The cell namespace has no OS file descriptors, but a
+/// cell's path is its stable identity (a cell never relocates beneath the
+/// worktree root), so `current_path` simply reports the path the handle was
+/// opened on — which is exactly what the worktree's root-relocation check wants.
+#[derive(Debug)]
+struct CellPathHandle(PathBuf);
+impl FileHandle for CellPathHandle {
+    fn current_path(&self, _fs: &Arc<dyn Fs>) -> Result<PathBuf> {
+        Ok(self.0.clone())
+    }
+}
+
+/// A no-op watcher: the cell-ledger fs has no inotify; the worktree scan reads
+/// the cell namespace directly (and recurses — each cell has a distinct inode).
+/// (The FULL embed will drive live cross-pane refresh off the receipt log — see
+/// the design doc.)
 struct NullWatcher;
 impl Watcher for NullWatcher {
     fn add(&self, _path: &Path) -> Result<()> {
@@ -228,8 +252,13 @@ impl Fs for FirmamentZedFs {
         Ok(())
     }
 
-    async fn open_handle(&self, _path: &Path) -> Result<Arc<dyn FileHandle>> {
-        bail!("FirmamentZedFs: open_handle is not modeled over cells (this slice)")
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
+        // Zed's worktree opens a handle on the root to detect the root being
+        // renamed/deleted out from under it (its `current_path` is re-checked).
+        // The cell namespace has no inode-stable file descriptors, but a cell's
+        // path IS its stable identity — so a handle that simply reports its
+        // original path is correct: a cell never relocates beneath the worktree.
+        Ok(Arc::new(CellPathHandle(path.to_path_buf())))
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -354,6 +383,19 @@ impl Fs for FirmamentZedFs {
                 .to_string(),
         })
     }
+}
+
+/// A stable, unique inode for a cell path. The cell namespace has no real
+/// inodes, but Zed's worktree scanner needs distinct ancestor inodes to avoid
+/// its symlink-cycle guard short-circuiting directory recursion. A 64-bit hash
+/// of the path bytes gives each cell a distinct (and stable across calls) inode;
+/// `| 1` keeps it non-zero (0 is the scanner's "no inode" sentinel for the root
+/// of a single-file worktree).
+fn path_inode(path: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut h);
+    h.finish() | 1
 }
 
 // A small helper so callers can ignore the unused-import lint footprint of the
