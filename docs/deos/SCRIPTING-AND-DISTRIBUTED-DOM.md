@@ -173,15 +173,26 @@ the entire gpui-free reflective API (proven live via dregg-mcp).
 
 ## 6. The build plan
 
-- **Slice 1 — drive (the spike, in flight):** `deos-js` embeds mozjs standalone; `deos.applet({
-  state, affordances })` mints one cell (an interactive subgraph), an affordance call = a real
-  cap-gated verified turn (a receipt), view-state stays ephemeral, `transclude` composes. Proves the
-  JS↔substance *production* spine by running.
-- **Slice 2 — crawl (the reflective binding):** bind `deos.world` / `deos.cell(id)` / the 4
-  substances / `present()` (the 7 faces) / `affordances(viewer)` / `.as(viewer)` (the frustum) /
-  `ocap` / `snapshot/rewind` / `spotter` to mozjs — the fully-reflective object graph over the
-  gpui-free API. Well-bounded: the substrate is complete (§3).
-- **Slice 3 — view (the QML toolkit):** render an applet's `obs` as a gpui element tree from JS
+- **Slice 1 — drive (LANDED, green by running):** `deos-js` embeds mozjs standalone; `deos.applet({
+  affordances })` mints one cell (an interactive subgraph), an affordance call = a real cap-gated
+  verified turn (a receipt), view-state stays ephemeral, `transclude` composes through the real
+  `WebOfCells`/`TranscludedField`. The JS↔substance *production* spine, proven on real SpiderMonkey.
+- **Slice 1.5 — `deos-reflect` (LANDED):** the gpui-free reflective substrate extracted as its own
+  crate (the clean shared shape; de-bloats the eventual cockpit too). Pure functions of a
+  `dregg_cell::Ledger` + receipts: `substance` (the four substances + `Inspectable`, reading fields
+  PUBLICLY so `Committed` redacts), `graph` (`OcapGraph`: nodes/edges/reachability/layers), `frustum`
+  (the cap-bounded per-viewer crawl — unreachable = absent, never forged), `affordances` (cap-gated
+  message projection by `is_attenuation`, decoupled from the window cap onto bare `AuthRequired`),
+  `present` (the substrate-pure faces: RawFields · Graph · DomainVisual · Provenance). 5/5 tests.
+- **Slice 2 — crawl (LANDED, green by running):** `deos.world.cells()` / `deos.world.ocap()` /
+  `deos.cell(id).reflect()` (the 4 substances) / `.field(k)` / `.as(viewer)` (the frustum:
+  `.canObserve` / `.reflect`) bound to mozjs over `deos-reflect` (JSON via string-returning natives).
+  Proven by running: from JS, crawl the ledger, read a cell's `balance` substance, and confirm the
+  frustum is cap-bounded (self observable; a stranger absent + `reflect()===null`) — and the crawl
+  commits NO turns (reflection is a READ). *Still to fan out:* the moldable `present()` faces as JS
+  objects (the Rust side is done in `deos-reflect::present`), `snapshot`/`rewind` time-travel, and a
+  `spotter` fuzzy search.
+- **Slice 3 — view (the QML toolkit, next):** render an applet's `obs` as a gpui element tree from JS
   (declarative view + affordance handlers = turns), the moldable faces as inspectable surfaces. The
   per-node↔coarse dial (§4.1) is a property of how you factor applets into cells.
 - **Throughout:** language-agnostic binding (JS-first; the binding is the artifact). Reflection

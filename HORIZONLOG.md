@@ -22,10 +22,23 @@ held by a `Signature` driver is REFUSED (anti-ghost); (d) a 2nd applet `transclu
 (AutoRealm, thread-bound engine, fees). Used `starbridge-web-surface` (gpui-free) for transclusion, NOT
 the off-limits `starbridge-v2`. Design spec: `docs/deos/SCRIPTING-AND-DISTRIBUTED-DOM.md` (`df227e5e`) —
 cell=codata/Moore-coalgebra, authority=production-not-spend, the Φ×WitnessMode spectrum, the gpui-free
-reflective object graph, proven-vs-open. NEXT: slice 2 = the reflective CRAWL binding (deos.world.cells/
-cell.substances/frustum/ocap) from gpui-free primitives; the moldable `present()` 7-faces live in
-`starbridge-v2` → an architecture fork (dep starbridge-v2+gpui vs extract a gpui-free `deos-reflect`
-crate) — ember's call.
+reflective object graph, proven-vs-open.
+### deos-reflect + deos-js SLICE 2 — JS objects CRAWL the live image, by running (2026-06-23).
+The architecture fork resolved (ember: extract `deos-reflect`). `36c9f4f1` = **deos-reflect**, the
+gpui-free cap-bounded reflective substrate (a NORMAL workspace member): `substance` (4 substances +
+`Inspectable`, fields read PUBLICLY so `Committed` redacts), `graph` (`OcapGraph` over `Ledger`:
+nodes/edges/reachability/layers/cycles), `frustum` (the per-viewer cap-bounded crawl — unreachable =
+absent, never forged), `affordances` (cap-gated projection by `is_attenuation`, decoupled from the
+window cap onto bare `AuthRequired`), `present` (substrate-pure faces: RawFields·Graph·DomainVisual·
+Provenance). 5/5 tests. Algorithms ported from starbridge-v2's gpui-free reflect/graph/affordance,
+rebased off the cockpit `World` onto the bare substance (so it's reusable + de-bloats the eventual
+cockpit). `9174b966` = **deos-js slice 2**: `deos.world.cells()/.ocap()`, `deos.cell(id).reflect()`
+(the 4 substances), `.field(k)`, `.as(viewer)` frustum (`.canObserve`/`.reflect`) bound to mozjs via
+5 string-returning natives + a JSON prelude (`reflect_binding.rs`, no serde). Proven by running:
+from JS, crawl the ledger, read a cell's `balance` substance, confirm `.as(viewer)` is cap-bounded
+(self observable; a stranger absent + `reflect()===null`) — and the crawl commits NO turns
+(reflection is a READ). NEXT: fan out the moldable `present()` faces as JS objects (Rust side done in
+`deos-reflect::present`), `snapshot`/`rewind` time-travel, `spotter`; then slice 3 = the gpui view.
 ### CIRCUIT/KERNEL CONCORDANCE — codex review closed + 5 executor triangles + 32/32 extraction (2026-06-23).
 Full circuit/kernel concordance proven for all 32 effects, axiom-clean (lake Dregg2.Claims green, 4123 jobs):
 (1) commitment binds every kernel write (record_digest realizes RH, `548ac920`/`80ebce3d`); (2) hostile-witness
