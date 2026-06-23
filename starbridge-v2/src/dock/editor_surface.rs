@@ -48,6 +48,23 @@ impl EditorPane {
         EditorPane(EditorSurface::new(id, fs, root, window, cx))
     }
 
+    /// Build a SEEDED editor pane: an in-memory buffer filled with `revisions`
+    /// (the last shown; priors are on-ledger patches) under the virtual `name`
+    /// (drives syntax highlighting), plus a real file tree over `fs`/`root`. What
+    /// the headless showcase bake uses — disk-free highlighted code with a real
+    /// `N patches · on-ledger` status.
+    pub fn seeded(
+        id: u64,
+        fs: std::sync::Arc<dyn deos_zed::fs::Fs>,
+        root: std::path::PathBuf,
+        name: &str,
+        revisions: &[&str],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        EditorPane(EditorSurface::seeded(id, fs, root, name, revisions, window, cx))
+    }
+
     /// Access the underlying editor entity (host-side open/save).
     pub fn editor(&self) -> &gpui::Entity<deos_zed::editor::Editor> {
         self.0.editor()

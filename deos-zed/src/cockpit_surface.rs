@@ -69,6 +69,31 @@ impl EditorSurface {
         Self { id, editor, tree }
     }
 
+    /// Build a SEEDED editor surface: an editor whose buffer is filled in-memory
+    /// with `revisions` (the last is shown; each prior one is an on-ledger patch)
+    /// under the virtual `name` (drives the highlighter language), plus a real
+    /// file tree over `fs`/`root`. Deterministic and disk-free for the buffer —
+    /// exactly what the headless showcase bake wants (syntax-highlighted code with
+    /// a real `N patches · on-ledger` status, no file to load). The tree still
+    /// reflects `fs`/`root` so the left rail shows a real project.
+    pub fn seeded(
+        id: u64,
+        fs: Arc<dyn Fs>,
+        root: PathBuf,
+        name: &str,
+        revisions: &[&str],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut ed = Editor::new(fs.clone(), window, cx);
+            ed.seed_content(name, revisions, window, cx);
+            ed
+        });
+        let tree = Arc::new(FileTree::new(fs, root, cx));
+        Self { id, editor, tree }
+    }
+
     /// The underlying editor entity, for host-side open/save calls.
     pub fn editor(&self) -> &Entity<Editor> {
         &self.editor

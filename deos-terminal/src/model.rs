@@ -202,7 +202,10 @@ fn window_size(size: TermSize, cell_w: u16, cell_h: u16) -> WindowSize {
 /// and the listener state. Dropping it shuts the event loop down.
 pub struct Terminal {
     term: Arc<FairMutex<Term<DeosListener>>>,
-    notifier: Notifier,
+    /// The PTY notifier (input + resize). `None` for a SEEDED terminal — a grid
+    /// driven by recorded bytes with no live child process (used by the headless
+    /// showcase bake: a deterministic recorded shell session, no `$SHELL` race).
+    notifier: Option<Notifier>,
     listener: DeosListener,
     size: TermSize,
     cell_w: u16,
@@ -263,12 +266,51 @@ impl Terminal {
 
         Ok(Self {
             term,
-            notifier,
+            notifier: Some(notifier),
             listener,
             size,
             cell_w,
             cell_h,
         })
+    }
+
+    /// Build a SEEDED terminal: an alacritty `Term` grid driven by a recorded
+    /// byte stream (a captured shell session) through the VTE parser, with NO
+    /// PTY and no child process. The grid is fully populated and static — exactly
+    /// what a deterministic headless render (the showcase bake) wants: a real
+    /// terminal grid showing a real-looking `cargo`/`git` session without racing
+    /// a live `$SHELL`. `bytes` is fed verbatim (include `\r\n`, ANSI SGR, etc.).
+    pub fn seeded(size: TermSize, bytes: &[u8]) -> Self {
+        use alacritty_terminal::vte::ansi::Processor;
+
+        let listener = DeosListener::new();
+        let config = Config {
+            scrolling_history: 10_000,
+            ..Config::default()
+        };
+        let term = Term::new(config, &size, listener.clone());
+        let term = Arc::new(FairMutex::new(term));
+
+        // Drive the recorded bytes straight through the ANSI processor into the
+        // grid — the same parse the IO thread would do for live PTY output, but
+        // synchronous and with no child.
+        {
+            let mut guard = term.lock();
+            let mut processor: Processor = Processor::new();
+            for &b in bytes {
+                processor.advance(&mut *guard, &[b]);
+            }
+        }
+        listener.bump();
+
+        Self {
+            term,
+            notifier: None,
+            listener,
+            size,
+            cell_w: 8,
+            cell_h: 16,
+        }
     }
 
     /// A clone of the listener so a host can install a waker / read generation.
@@ -291,7 +333,10 @@ impl Terminal {
 
     /// Write raw bytes to the PTY (input the shell reads on its stdin).
     pub fn write(&self, bytes: impl Into<std::borrow::Cow<'static, [u8]>>) {
-        self.notifier.notify(bytes);
+        // A seeded terminal has no PTY to write to — input is a no-op.
+        if let Some(notifier) = &self.notifier {
+            notifier.notify(bytes);
+        }
     }
 
     /// Write a UTF-8 string to the PTY.
@@ -323,11 +368,13 @@ impl Terminal {
         self.cell_h = cell_h.max(1);
         self.term.lock().resize(size);
         // `Notifier` isn't `Clone`, but its inner `EventLoopSender` is; resize is
-        // just a `Msg::Resize` down that channel.
-        let _ = self
-            .notifier
-            .0
-            .send(Msg::Resize(window_size(size, self.cell_w, self.cell_h)));
+        // just a `Msg::Resize` down that channel. A seeded terminal has no PTY to
+        // resize — the grid resize above is the whole story.
+        if let Some(notifier) = &self.notifier {
+            let _ = notifier
+                .0
+                .send(Msg::Resize(window_size(size, self.cell_w, self.cell_h)));
+        }
     }
 
     pub fn size(&self) -> TermSize {
@@ -394,7 +441,9 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = self.notifier.0.send(Msg::Shutdown);
+        if let Some(notifier) = &self.notifier {
+            let _ = notifier.0.send(Msg::Shutdown);
+        }
     }
 }
 

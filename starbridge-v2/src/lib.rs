@@ -551,6 +551,11 @@ pub mod dock;
 // surfaces + the gpui-component widget set), rendering the live embedded `World`.
 #[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub mod cockpit;
+// THE SHOWCASE BAKE — a headless render of the full deos desktop with every dev
+// surface mounted + seeded (the marketing money shot). Needs the dock surface
+// wrappers (`dev-surfaces`) + gpui. See `--render-showcase` in main.rs.
+#[cfg(all(feature = "gpui-ui", feature = "dev-surfaces"))]
+pub mod showcase;
 // THE LOGIN CEREMONY surface — the boot front door; picking an identity runs the
 // real session ceremony (`crate::session`) and swaps the window root to the cockpit.
 // `gpui-ui` ONLY (native): the login surface drives the DURABLE-session-image path

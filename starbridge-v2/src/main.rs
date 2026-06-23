@@ -113,6 +113,30 @@ fn main() {
         }
     }
 
+    // `--render-showcase <out>`: THE SHOWCASE BAKE — one gorgeous high-res PNG of
+    // the full working deos desktop with EVERY dev surface mounted + seeded (chat
+    // with the membrane card, editor with on-ledger patches, a recorded terminal
+    // session, the confined-Hermes tool-call ledger) over the real cell world.
+    // The marketing money shot. Renders the same headless gpui way the cockpit
+    // bakes. Defaults to 2560x1600 (overridable via `--render-size`).
+    #[cfg(all(
+        feature = "render-capture",
+        feature = "gpui-ui",
+        feature = "dev-surfaces"
+    ))]
+    {
+        if let Some(out) = render_showcase_arg(&args) {
+            let (w, h) = render_size_arg(&args).unwrap_or((2560.0, 1600.0));
+            match render_showcase_headless(&out, w, h) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("render-showcase FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     // `--render-login <out>`: render the LOGIN CEREMONY surface offscreen (the
     // boot front door) the same headless way the cockpit bakes — the MCP-
     // screenshottable proof that the login surface lays out (the identity picker
@@ -406,6 +430,27 @@ fn render_cockpit_arg(args: &[String]) -> Option<String> {
             return it.next().cloned();
         }
         if let Some(rest) = a.strip_prefix("--render-cockpit=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Parse the `--render-showcase <out>` (or `--render-showcase=<out>`) argument —
+/// the output base path for the SHOWCASE BAKE (the full-desktop money shot).
+/// Returns `None` when absent. `<out>.png` is written.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "dev-surfaces"
+))]
+fn render_showcase_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--render-showcase" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--render-showcase=") {
             return Some(rest.to_string());
         }
     }
@@ -1024,6 +1069,70 @@ fn render_cockpit_headless(
          LIVE cockpit::Cockpit element tree, gpui Scene via lavapipe offscreen.",
         if sel4_geometry { " + .rgba" } else { "" },
         tab.map(|t| format!(", tab={t}")).unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// THE SHOWCASE BAKE — render the full deos desktop offscreen to a high-res PNG:
+/// every dev surface mounted + seeded (chat with the membrane card, editor over a
+/// seeded on-ledger document, a recorded terminal session, the confined-Hermes
+/// tool-call ledger) over the real `world::demo_world` cell image, composed into a
+/// curated multi-pane layout ([`starbridge_v2::showcase::ShowcaseView`]). Same
+/// headless gpui path the cockpit bake uses (HeadlessAppContext + gpui-component
+/// + offscreen wgpu → PNG via the `image` crate). The marketing money shot.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "dev-surfaces"
+))]
+fn render_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+
+    // Real text shaping, no system fonts (deterministic), Lilex fallback — the
+    // cockpit + every surface asks for "Menlo" and falls back to Lilex.
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+    // The surfaces use real gpui-component widgets (the editor's InputState, the
+    // kit Buttons) which read the kit Theme global at render time — init it.
+    cx.update(|cx| gpui_component::init(cx));
+
+    // The fully-seeded demo image — the real cell world the chrome reads off.
+    let (world, _anchors) = world::demo_world();
+    let shared = Rc::new(RefCell::new(world));
+
+    let window = cx.open_window(size(px(w), px(h)), |window, cx| {
+        starbridge_v2::showcase::build_root(shared.clone(), window, cx)
+    })?;
+
+    // Drive to a fully-laid-out frame, then capture the resolved gpui Scene. Two
+    // refresh+park cycles let each surface's own async repaint loop (the terminal
+    // grid, the chat list) settle before the capture.
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let captured = cx.capture_screenshot(window.into())?;
+
+    let (ww, hh) = (captured.width(), captured.height());
+    captured.save(format!("{out}.png"))?;
+    println!(
+        "OK headless SHOWCASE render -> {out}.png ({ww}x{hh}, logical {w}x{h}); \
+         LIVE deos desktop — chat+membrane / editor / terminal / agent over the real \
+         cell world, gpui Scene via lavapipe offscreen."
     );
     Ok(())
 }

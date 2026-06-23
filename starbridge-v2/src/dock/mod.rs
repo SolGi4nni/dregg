@@ -41,6 +41,8 @@ pub mod tearoff;
 // (matrix-rust-sdk's heavy async tree) is deliberately NOT statically linked here —
 // per docs/deos/DEOS-DISTRIBUTION.md it belongs in a lazily-launched confined PD.
 #[cfg(feature = "dev-surfaces")]
+pub mod chat_surface;
+#[cfg(feature = "dev-surfaces")]
 pub mod editor_surface;
 #[cfg(feature = "dev-surfaces")]
 pub mod hermes_surface;

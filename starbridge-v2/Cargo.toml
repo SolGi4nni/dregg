@@ -137,7 +137,7 @@ native-full = ["embedded-executor", "gpui-ui", "live-node", "render-capture", "w
 # dev loop: edit deos's own repos in deos-zed, run cargo/git in deos-terminal,
 # all INSIDE deos). Pulls the deos-zed + deos-terminal crates (own workspaces,
 # same gpui fork @407a6ff so one gpui resolves). gpui-ui-gated via dock/mod.rs.
-dev-surfaces = ["dep:deos-zed", "dep:deos-terminal", "dep:deos-hermes"]
+dev-surfaces = ["dep:deos-zed", "dep:deos-terminal", "dep:deos-hermes", "dep:deos-matrix"]
 
 # The LIVE-NODE connection — the real HTTP+SSE link to a running dregg node
 # (`NodeClient::Http` + the `/api/events/stream` reader). Pulls `reqwest` (its
@@ -357,6 +357,12 @@ deos-terminal = { path = "../deos-terminal", features = ["cockpit-surface"], opt
 # @407a6ff → one gpui resolves across the graph. Its `cockpit-surface` feature
 # links gpui; the gpui-free SDK core (HermesGateway/Mandate) seeds the demo model.
 deos-hermes = { path = "../deos-hermes", features = ["cockpit-surface"], optional = true }
+# The deos-pilled MATRIX CHAT as a dock pane — the MEMBRANE star: a chat message
+# can carry a cap-bounded fork of the world (a rehydratable membrane). Own
+# workspace, same gpui fork @407a6ff → one gpui resolves. `cockpit-surface`
+# pulls gpui; the `MockSource::seeded` recorded sync makes the pane real offline
+# (the showcase bake seeds it), the live MatrixHandle drops in unchanged.
+deos-matrix = { path = "../deos-matrix", default-features = false, features = ["cockpit-surface"], optional = true }
 # Signing for the consent-resolution / shared-fork signing domain (world.rs signs
 # a grant receipt the ConditionProof checks). A regular (not dev-only) dep since
 # world.rs lib code uses it, not just tests.

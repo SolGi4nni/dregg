@@ -46,6 +46,17 @@ impl TerminalSurface {
         Ok(Self { id, view })
     }
 
+    /// Mount a SEEDED terminal surface: a grid driven by a recorded byte stream
+    /// (a captured shell session) with NO live PTY. Deterministic — exactly what
+    /// the headless showcase bake wants (a real terminal grid showing a real-
+    /// looking `cargo`/`git` session, no `$SHELL` race). `bytes` is fed verbatim
+    /// through the VTE parser (include `\r\n` and ANSI SGR).
+    pub fn seeded(id: u64, cols: u16, rows: u16, bytes: &[u8], cx: &mut App) -> Self {
+        let terminal = Terminal::seeded(TermSize::new(cols as usize, rows as usize), bytes);
+        let view = cx.new(|cx| TerminalView::new(terminal, cx));
+        Self { id, view }
+    }
+
     /// The live terminal view entity (host-side input/inspection).
     pub fn view(&self) -> &Entity<TerminalView> {
         &self.view

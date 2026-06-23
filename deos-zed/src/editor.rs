@@ -246,6 +246,41 @@ impl Editor {
         Ok(())
     }
 
+    /// Seed the editor with in-memory content for a DETERMINISTIC headless render
+    /// (the showcase bake): set the buffer + the highlighter language from the
+    /// virtual `name`, and build a small on-ledger patch history so `patch_count`
+    /// and `status` read like a real, edited-and-committed document — with NO
+    /// disk/Fs round-trip. `revisions` are applied in order as successive patches
+    /// (each a committed turn), the last being what the buffer shows; pass at least
+    /// one. The status reads `<name> · <N> patches · on-ledger`.
+    pub fn seed_content(
+        &mut self,
+        name: &str,
+        revisions: &[&str],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lang = language_for_path(Path::new(name));
+        let shown = revisions.last().copied().unwrap_or("");
+        self.input.update(cx, |state, cx| {
+            state.set_highlighter(lang, cx);
+            state.set_value(shown.to_string(), window, cx);
+        });
+        // Build the durable document by replaying the revisions as patches — each
+        // `edit_rope` accrues a patch into the history (the genesis + edits), so
+        // `patch_count()` reflects a real multi-commit document.
+        let mut doc = RopeDoc::new(Granularity::Line);
+        for rev in revisions {
+            doc.edit_rope(self.author, &Rope::from_str(rev));
+        }
+        let patches = doc.history().len();
+        self.doc = Some(doc);
+        self.path = Some(PathBuf::from(name));
+        self.dirty = false;
+        self.status = SharedString::from(format!("{name} · {patches} patches · on-ledger"));
+        cx.notify();
+    }
+
     /// Save the buffer back through the [`Fs`] seam. With `RealFs` this writes
     /// disk; with `FirmamentFs` this is a receipted turn. Returns an error if no
     /// path is open or the save fails.

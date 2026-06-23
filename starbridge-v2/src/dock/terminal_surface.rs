@@ -55,6 +55,14 @@ impl TerminalPane {
         TerminalPane(TerminalSurface::from_view(id, view))
     }
 
+    /// Mount a SEEDED terminal pane: a grid driven by a recorded byte stream (a
+    /// captured shell session) with NO live PTY. Deterministic — what the
+    /// headless showcase bake uses (a real terminal grid showing a recorded
+    /// `cargo`/`git` session, no `$SHELL` race).
+    pub fn seeded(id: u64, cols: u16, rows: u16, bytes: &[u8], cx: &mut App) -> Self {
+        TerminalPane(TerminalSurface::seeded(id, cols, rows, bytes, cx))
+    }
+
     /// Access the underlying terminal view entity (host-side input/inspection).
     pub fn view(&self) -> &gpui::Entity<deos_terminal::TerminalView> {
         self.0.view()
