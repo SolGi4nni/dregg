@@ -84,3 +84,59 @@ fn sequential_saves_chain_their_receipts() {
     );
     assert_eq!(fs.load(Path::new(path)).unwrap(), "# notes\nfirst\nsecond\n");
 }
+
+/// THE IN-BROWSER FIRST SLICE — the exact path that compiles to
+/// `wasm32-unknown-unknown` (build with
+/// `--no-default-features --features firmament --target wasm32-unknown-unknown`):
+/// seed a file-cell → open (load from the cell) → edit → save (a real
+/// `TurnReceipt` + the cell content updated + CONSERVATION holds) → re-load
+/// (round-trips through the in-tab ledger, never disk). This file uses ONLY
+/// `deos_zed::fs` — no gpui — so it runs in the gpui-free core
+/// (`--no-default-features`), which is the SAME code the wasm target compiles. A
+/// native run is the executable proof of the wasm executor's save-is-a-turn; the
+/// only remaining step to run it IN A TAB is `wasm-bindgen` + a JS harness over
+/// this same `Arc<dyn Fs>` (the host's gpui_web renderer drives it).
+#[test]
+fn in_browser_first_slice_save_is_a_conserving_receipted_turn_through_the_in_tab_ledger() {
+    let firm = Arc::new(FirmamentFs::new());
+    let fs: Arc<dyn Fs> = firm.clone();
+
+    let path = PathBuf::from("/tab/src/main.rs");
+    let original = "fn main() { println!(\"in the tab\"); }\n";
+    let edited = "fn main() { println!(\"a save is a turn in the tab\"); }\n";
+
+    // Seed the file cell (genesis on the in-tab ledger).
+    firm.seed_file(&path, original).expect("seed file cell");
+    assert_eq!(fs.load(&path).unwrap(), original, "open reads from the cell");
+
+    // CONSERVATION baseline: Σ balance over the whole in-tab ledger before any save.
+    let balance_before = firm.total_balance();
+
+    // The save is a TURN in the tab's own kernel.
+    fs.save(&path, edited).expect("save commits a turn in the tab");
+
+    // 1) a genuine receipt was produced.
+    assert_eq!(firm.receipt_count(), 1, "save produced one receipt");
+    let receipt = firm.last_receipt().expect("receipt recorded");
+    assert_eq!(receipt.agent, firm.editor_id(), "the editor cell is the turn's agent");
+    assert_ne!(
+        receipt.pre_state_hash, receipt.post_state_hash,
+        "the edit moved the ledger state — it landed on-ledger, not on disk"
+    );
+
+    // 2) the cell content updated — re-load reads the turn's committed content.
+    assert_eq!(
+        fs.load(&path).unwrap(),
+        edited,
+        "re-load round-trips through the in-tab ledger, not disk"
+    );
+
+    // 3) CONSERVATION: a content SetField touches the file cell's committed
+    //    fields_map, never any balance substance, so Σ balance is INVARIANT
+    //    across the save (Σδ=0). The edit conserves value.
+    assert_eq!(
+        firm.total_balance(),
+        balance_before,
+        "the save conserves total ledger balance (Σδ=0)"
+    );
+}

@@ -110,6 +110,51 @@ What is real vs. sketched in the first slice:
 Proof: `cargo test --features firmament` (unit + `tests/firmament_fs.rs`) and
 `cargo run --features firmament --bin demo -- --firmament`.
 
+## FirmamentFs IN THE BROWSER — the in-tab executor (wasm32)
+
+The editor renders in the browser on `gpui_web` (the host's WebGPU canvas), but a
+browser tab has no `std::fs` — `RealFs` cannot back it. `FirmamentFs` can: it
+needs no disk, only an in-process `Ledger` + `TurnExecutor`, and that executor is
+**wasm-clean** (it is the same no-Lean-link verifier-shape executor
+starbridge-web drives in the tab). So the in-browser editor's `Fs` binds to a
+`FirmamentFs` running the IN-TAB executor — a file is a cell, a save is a turn, in
+the browser's own kernel.
+
+The crate is split so this compiles:
+
+- The `Fs` seam (`src/fs.rs` + `src/fs/firmament.rs`) is **gpui-free**. It is the
+  only surface gated OUT of the `gui` feature.
+- `gui` (on by default) carries the gpui editor / file-tree / doc-viewer. gpui's
+  *native* windowing (font-kit/x11/wayland) cannot link to wasm32, so the wasm
+  build is `--no-default-features --features firmament`: the executor-backed `Fs`
+  core, no gpui. The browser *renderer* is the host's `gpui_web` (starbridge-web),
+  not deos-zed's own gpui linkage — the same renderer/executor split starbridge-web
+  already rides.
+- The dregg executor crates are **target-split** (mirroring `starbridge-v2/Cargo.toml`):
+  on native they resolve with default features (the Lean-linked producer); on
+  `wasm32-unknown-unknown` they resolve `default-features = false` + `prover`
+  (no Lean archive, the verifier shape) plus the transitive wasm forcings
+  (getrandom backends, `clear_on_drop/no_cc`, `lockstitch/portable`,
+  `biscuit-auth/wasm`). The SAME `FirmamentFs` source compiles for both.
+
+Build + prove:
+
+```
+# native default (gpui editor + RealFs default) — unchanged
+cargo build
+# the in-browser Fs core, native (the executable save-is-a-turn proof)
+cargo test  --no-default-features --features firmament --test firmament_fs
+# the in-browser Fs core, FOR THE TAB
+cargo build --no-default-features --features firmament --target wasm32-unknown-unknown
+```
+
+The wasm-runtime distance: the crate **compiles to wasm32** and the
+save-is-a-turn path runs in the gpui-free core (the SAME code the wasm target
+compiles) under a native `cargo test`. The remaining step to run it literally in a
+tab is a `wasm-bindgen` shim + a JS harness that holds the `Arc<dyn Fs>` and
+drives `gpui_web` — wiring, not a substrate question (the executor is already
+proven to compile and run for the target).
+
 ## How the host wires it
 
 In starbridge-v2, the cockpit holds a live `World` with the embedded executor

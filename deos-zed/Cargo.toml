@@ -21,42 +21,98 @@ resolver = "2"
 [lib]
 name = "deos_zed"
 
+# The demos are the windowed gpui surface — they need `gui`. Declared explicitly
+# (auto-discovery would otherwise try to build them under `--no-default-features`,
+# where gpui is absent). The gpui-free `Fs` core has no bin.
+[[bin]]
+name = "demo"
+path = "src/bin/demo.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "merge_demo"
+path = "src/bin/merge_demo.rs"
+required-features = ["gui"]
+
+# `editor_as_document` exercises the GUI-side document layer (dregg-doc + ropey),
+# so it needs `gui`. `firmament_fs` exercises ONLY the `Fs` seam (gpui-free) and
+# is gated on `firmament` inside the file — it builds in the no-gui wasm-shaped
+# core, so it carries no `required-features` here.
+[[test]]
+name = "editor_as_document"
+path = "tests/editor_as_document.rs"
+required-features = ["gui"]
+
+[[test]]
+name = "firmament_fs"
+path = "tests/firmament_fs.rs"
+
 [features]
-# By default the editor builds with rust/json/toml/markdown tree-sitter grammars
-# so a real source file highlights out of the box. The editor is fully usable
-# WITHOUT any grammar (just no colour) — highlighting is purely additive.
-default = ["highlight-common", "gui-demo", "cockpit-surface", "screenshot"]
+# By default the editor builds the full windowed gpui surface with
+# rust/json/toml/markdown tree-sitter grammars so a real source file highlights
+# out of the box. The editor is fully usable WITHOUT any grammar (just no colour)
+# — highlighting is purely additive.
+default = ["gui", "highlight-common", "gui-demo", "cockpit-surface", "screenshot"]
+# THE GUI SURFACE — the gpui editor + file-tree + doc-viewer (the windowed half).
+# Pulls the heavy gpui / gpui-component / dregg-doc / ropey graph. ON by default so
+# the editor builds as it always has. Turning it OFF (`--no-default-features`)
+# strips the crate down to its gpui-free core: the `Fs` seam (`RealFs` +, under
+# `firmament`, `FirmamentFs`). That gpui-free core is what compiles to
+# `wasm32-unknown-unknown` — gpui's native windowing (font-kit/x11/wayland) cannot
+# link there, but the executor-backed `Fs` can. So: native desktop = `gui` ON; the
+# in-browser editor's *Fs backend* (the executor + ledger) = `gui` OFF +
+# `firmament` (the in-tab verified executor; the gpui_web *renderer* is the host's,
+# the same split starbridge-web rides).
+gui = [
+    "dep:gpui",
+    "dep:gpui_platform",
+    "dep:gpui-component",
+    "dep:gpui-component-assets",
+    "dep:dregg-doc",
+    "dep:ropey",
+]
 # json is a non-optional grammar in gpui-component (always compiled), so it
-# needs no feature here. rust/toml/markdown are opt-in.
+# needs no feature here. rust/toml/markdown are opt-in. (Implies `gui`.)
 highlight-common = [
+    "gui",
     "gpui-component/tree-sitter-rust",
     "gpui-component/tree-sitter-toml",
     "gpui-component/tree-sitter-markdown",
 ]
 # The full grammar set (33 languages) if a richer editor is wanted.
-highlight-all = ["gpui-component/tree-sitter-languages"]
+highlight-all = ["gui", "gpui-component/tree-sitter-languages"]
 # The windowed demo (gpui window with file tree + editor). The headless
 # `--verify` proof needs none of this. On by default so `cargo run --bin demo`
-# opens the window; the lib itself is window-free.
-gui-demo = []
+# opens the window; the lib itself is window-free. (Implies `gui`.)
+gui-demo = ["gui"]
 # The CockpitSurface adapter (mounts the editor in starbridge-v2's dock). Pure
 # Rust, no extra deps — gated only so the lib's minimal surface stays clear.
-cockpit-surface = []
+# (Implies `gui` — the adapter wraps the gpui editor.)
+cockpit-surface = ["gui"]
 # OFFSCREEN SCREENSHOT capture — drive a surface to a painted frame in a headless
 # gpui app over the offscreen wgpu renderer (lavapipe on Linux) + a no-system-fonts
 # CosmicTextSystem, then write the captured RGBA out as a PNG. This is the headless
 # path the atlas calls so a windowed-only demo can be captured where screencapture
 # is blocked. Mirrors starbridge-v2's `render-capture` (render_cockpit_headless).
 # On by default so `cargo run --bin demo -- --screenshot <out.png>` just works.
-screenshot = ["dep:image", "dep:gpui_wgpu", "gpui_wgpu/test-support", "gpui_platform/test-support"]
+screenshot = ["gui", "dep:image", "dep:gpui_wgpu", "gpui_wgpu/test-support", "gpui_platform/test-support"]
 # THE FIRMAMENT FS — the document-substrate ride: a file IS a cell, a SAVE IS a
 # receipted dregg turn (NOT just RealFs bytes on disk). OFF by default so the
 # RealFs build stays light and the lean/standalone builds are unaffected: this
 # feature pulls the REAL embedded executor (`dregg-turn`/`dregg-cell`/`dregg-types`)
-# — the same Lean-linked verified spine starbridge-v2's `World` wraps. With it on,
+# — the same verified spine starbridge-v2's `World` wraps. With it on,
 # `FirmamentFs` (src/fs/firmament.rs) is a live `Fs` impl over an in-process
 # `Ledger` + `TurnExecutor`; `cargo build`/`cargo test` WITHOUT it keep `RealFs`
 # the only backing store. See FIRMAMENT-FS-SEAM.md.
+#
+# On NATIVE the dregg crates resolve with default features (the Lean-linked
+# producer — see the `cfg(not(wasm32))` dep block). On `wasm32-unknown-unknown`
+# they resolve `default-features = false` (the no-Lean-link verifier shape — see
+# the `cfg(wasm32)` dep block), which is exactly the IN-BROWSER executor: the same
+# `Ledger`/`TurnExecutor`/`SetField`/`TurnReceipt` types, compiled for the tab.
+# So `--no-default-features --features firmament --target wasm32-unknown-unknown`
+# is the in-browser editor's Fs backend: a save is a real turn in the tab's own
+# kernel.
 firmament = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types"]
 
 [dependencies]
@@ -76,37 +132,83 @@ gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828
 # SAME version gpui-component's `Input` uses, so the seam takes the editor's real
 # buffer with no stringification. Standalone (no substrate); the firmament ride
 # stays a stub. See dregg-doc/src/rope.rs.
-dregg-doc = { path = "../dregg-doc", features = ["rope"] }
+dregg-doc = { path = "../dregg-doc", features = ["rope"], optional = true }
 
 # The rope buffer type at the editor<->document seam. The editor reads its
 # gpui-component `Input` buffer into a `ropey::Rope` and hands it to
 # `RopeDoc::edit_rope`. Pinned to the SAME version gpui-component's `Input` and
 # dregg-doc's `rope` feature use, so it's ONE `ropey` in the graph (the seam is
-# the same type on both sides, no stringify).
-ropey = "2.0.0-beta.1"
+# the same type on both sides, no stringify). GUI-side only (the editor buffer);
+# the `Fs` seam itself uses neither — so both ride the optional `gui` feature.
+ropey = { version = "2.0.0-beta.1", optional = true }
 
-# THE EMBEDDED VERIFIED EXECUTOR (gated on `firmament`). The SAME Lean-linked
-# spine starbridge-v2's `World` wraps: `dregg_turn::TurnExecutor` over a
-# `dregg_cell::Ledger`. `FirmamentFs` runs a file SAVE as a real cap-gated turn
-# through these, getting a genuine `TurnReceipt`. Path-deps the SAME `../turn`/
-# `../cell`/`../types` the rest of the workspace uses (one resolved instance);
-# default features stay ON so the verified producer path compiles. OFF unless the
-# `firmament` feature is on, so the RealFs / lean / standalone builds never link
-# the Lean archive. The `[patch]` block below replicates the transitive proof-dep
-# overrides the executor link needs (this is its own workspace).
+# Same gpui fork rev as starbridge-v2/Cargo.toml and gpui-component/Cargo.toml so
+# the whole graph resolves to ONE gpui. See the workspace-comment above. Optional
+# + gated on `gui`: gpui's NATIVE windowing (font-kit/x11/wayland) cannot link to
+# wasm32, so the gpui-free `Fs` core (the in-browser editor's executor backend)
+# drops it. The browser renderer is the HOST's gpui_web (starbridge-web), not
+# deos-zed's own gpui linkage.
+gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["font-kit", "x11", "wayland", "runtime_shaders"], optional = true }
+
+# The real widget library: rope-backed code `Input`, tree-sitter highlighter,
+# file `tree` widget, dock. Same vendored path the cockpit consumes. Optional +
+# gated on `gui` (the windowed surface).
+gpui-component = { path = "../../gpui-component/crates/ui", default-features = false, optional = true }
+gpui-component-assets = { path = "../../gpui-component/crates/assets", optional = true }
+
+# THE EMBEDDED VERIFIED EXECUTOR (gated on `firmament`) — TARGET-SPLIT so the same
+# `firmament` feature gives a Lean-linked native executor AND a no-Lean-link wasm32
+# executor (mirrors starbridge-v2/Cargo.toml's wasm32 split). The path-deps and the
+# `firmament = ["dep:dregg-turn", ...]` toggle are identical across both target
+# blocks; only the resolved feature set differs. So `FirmamentFs` is the same
+# source on both — a file is a cell, a save is a real `SetField` turn through
+# `TurnExecutor` leaving a `TurnReceipt` — compiled either for the desktop or the
+# tab. See the `cfg(not(wasm32))` / `cfg(wasm32)` blocks below.
+
+# NATIVE: default features ON → the Lean-linked verified producer spine (the SAME
+# starbridge-v2's `World` wraps). The `[patch]` blocks below replicate the
+# transitive proof-dep overrides the executor link needs (this is its own
+# workspace).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dregg-turn = { path = "../turn", optional = true }
 dregg-cell = { path = "../cell", optional = true }
 dregg-types = { path = "../types", optional = true }
 
-# Same gpui fork rev as starbridge-v2/Cargo.toml and gpui-component/Cargo.toml so
-# the whole graph resolves to ONE gpui. See the workspace-comment above.
-gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }
-gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
-
-# The real widget library: rope-backed code `Input`, tree-sitter highlighter,
-# file `tree` widget, dock. Same vendored path the cockpit consumes.
-gpui-component = { path = "../../gpui-component/crates/ui", default-features = false }
-gpui-component-assets = { path = "../../gpui-component/crates/assets" }
+# WASM32: the IN-BROWSER executor. `default-features = false` drops `dregg-turn`'s
+# `prover` + `threshold-sig` (the arkworks/circuit-prover/Lean-archive link wasm32
+# cannot do), leaving the no-Lean-link verifier shape — the SAME executor
+# starbridge-web drives in the tab. Plus the transitive wasm32 forcings the
+# executor tree needs (mirrors starbridge-v2/Cargo.toml's wasm32 block): the
+# getrandom entropy backends and the pure-Rust / portable flips for crates that
+# otherwise reach for a C toolchain or x86 intrinsics.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `default-features = false` drops `threshold-sig` (the BLS/arkworks committee
+# verifier wasm32 cannot link), but `prover` STAYS ON: `dregg-turn` references
+# `dregg_circuit_prove` UNCONDITIONALLY in `witnessed_receipt::produce_recursive_variant`
+# (it is `prover`-gated only at the Cargo dep, not in the source), so a no-prover
+# `dregg-turn` does not compile standalone. This is the SAME resolution starbridge-v2's
+# wasm build reaches (there via `dregg-sdk`'s `prover` feature unifying onto
+# `dregg-turn`); we name it directly since deos-zed does not pull `dregg-sdk`.
+# `prover` pulls `dregg-circuit-prove`, which IS wasm-clean (starbridge-web proves
+# it). The verify floor (`descriptor_ir2`) is unconditional; this is the in-browser
+# executor's prove side, no Lean archive.
+dregg-turn = { path = "../turn", optional = true, default-features = false, features = ["prover"] }
+dregg-cell = { path = "../cell", optional = true, default-features = false }
+dregg-types = { path = "../types", optional = true }
+# wasm32 entropy backends — the getrandom majors the executor dep tree pulls, each
+# forced onto its js/wasm_js backend (mirrors starbridge-v2/Cargo.toml).
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+# `clear_on_drop` (via cell crypto) — its default build invokes a C compiler with
+# no working wasm32 toolchain; `no_cc` selects the pure-Rust impl.
+clear_on_drop = { version = "0.2", features = ["no_cc"] }
+# `lockstitch` — uses x86/aarch64 AES intrinsics unless `portable` is on.
+lockstitch = { version = "0.29", features = ["portable"] }
+# `biscuit-auth` (via dregg-token's `biscuit` feature) — its wasm32 `Instant` shim
+# (`performance_now`) + `TryInto` are gated behind the crate's own `wasm` feature.
+biscuit-auth = { version = "6.0.0", features = ["wasm"] }
 
 # The gpui dep tree carries `[patch.crates-io]` overrides its host workspace
 # must replicate (see starbridge-v2/Cargo.toml). deos-zed is its own workspace,

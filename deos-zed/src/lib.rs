@@ -44,10 +44,19 @@
 //! open/edit/save/highlight + a file tree + a dock out of the box, on the SAME
 //! gpui fork the cockpit pins, so one gpui resolves across the whole graph.
 
-pub mod doc_viewer;
-pub mod editor;
-pub mod file_tree;
+// The `Fs` seam is gpui-free — it is the ONLY surface that compiles to
+// `wasm32-unknown-unknown` (the in-browser editor's executor-backed file backend;
+// see `fs::firmament::FirmamentFs` under `--features firmament`). The editor /
+// file-tree / doc-viewer below ride gpui and so are gated on `gui` (on by default;
+// off for the wasm-shaped core build).
 pub mod fs;
+
+#[cfg(feature = "gui")]
+pub mod doc_viewer;
+#[cfg(feature = "gui")]
+pub mod editor;
+#[cfg(feature = "gui")]
+pub mod file_tree;
 
 #[cfg(feature = "cockpit-surface")]
 pub mod cockpit_surface;
@@ -55,7 +64,10 @@ pub mod cockpit_surface;
 #[cfg(feature = "screenshot")]
 pub mod screenshot;
 
+#[cfg(feature = "gui")]
 pub use doc_viewer::DocViewer;
+#[cfg(feature = "gui")]
 pub use editor::Editor;
+#[cfg(feature = "gui")]
 pub use file_tree::FileTree;
 pub use fs::{DirEntry, FirmamentFs, Fs, Metadata, RealFs};

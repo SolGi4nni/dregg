@@ -335,6 +335,21 @@ mod live {
             self.inner.lock().unwrap().entries.get(path).map(|e| e.cell)
         }
 
+        /// The total balance across all cells in the in-tab ledger — the
+        /// conservation observable (Σ balance). A content `SetField` save touches
+        /// the file cell's committed `fields_map`, not any balance substance, so a
+        /// genuine save leaves this INVARIANT: the editor's edit conserves value.
+        /// A test asserts `total_balance` before == after a save (Σδ=0).
+        pub fn total_balance(&self) -> i128 {
+            self.inner
+                .lock()
+                .unwrap()
+                .ledger
+                .iter()
+                .map(|(_, c)| c.state.balance() as i128)
+                .sum()
+        }
+
         /// **Seed a file into the namespace** with initial `content`, as GENESIS
         /// (the directory-owner installing a file, like a node seeds a genesis
         /// cell): mint a file cell holding the content projection, grant the
