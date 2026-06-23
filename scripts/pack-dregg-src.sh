@@ -56,8 +56,16 @@ printf '%s\n' "${FILES[@]}" | LC_ALL=C sort > "$MANIFEST"
 N="$(wc -l < "$MANIFEST" | tr -d ' ')"
 
 # Raw (uncompressed) byte total of the payload — the "tens of MB, not GB" check.
-RAW="$(printf '%s\0' "${FILES[@]}" | xargs -0 stat -f '%z' 2>/dev/null | awk '{s+=$1} END {print s+0}' || \
-       printf '%s\0' "${FILES[@]}" | xargs -0 stat -c '%s' 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+# `stat` differs by platform: BSD/macOS uses `-f %z`, GNU/Linux uses `-c %s`. Pick
+# the flavor by probing once (a bare `stat -c %s` of this script), not by relying
+# on a `||` fallback (GNU `stat -f` means "filesystem status" and exits 0, so a
+# fallback would never fire on Linux).
+if stat -c '%s' "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
+  STAT_SIZE=(stat -c '%s')      # GNU / Linux
+else
+  STAT_SIZE=(stat -f '%z')      # BSD / macOS
+fi
+RAW="$(printf '%s\0' "${FILES[@]}" | xargs -0 "${STAT_SIZE[@]}" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
 
 # Pack under a `dregg-src/` top prefix so an extract lands at `dregg-src/<path>`
 # (a clean, self-naming root). `--files-from` reads the exact set; zstd -19 for a
@@ -74,7 +82,7 @@ else
   tar -s ',^,dregg-src/,' -cf - -T "$TAR_LIST" | zstd -19 -q -o "$OUT" -f
 fi
 
-PACKED="$(stat -f '%z' "$OUT" 2>/dev/null || stat -c '%s' "$OUT")"
+PACKED="$("${STAT_SIZE[@]}" "$OUT")"
 
 awk -v n="$N" -v raw="$RAW" -v packed="$PACKED" -v out="$OUT" 'BEGIN {
   printf "dregg-src payload assembled:\n"

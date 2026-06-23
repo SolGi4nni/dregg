@@ -1,0 +1,119 @@
+# deos-view — render a deos-js applet's view-tree into REAL gpui-component widgets.
+#
+# THE EXTRACTION (mirroring the deos-reflect extraction ember asked for): the
+# RENDERER lives in its own crate. `deos-js` stays GPUI-FREE (it produces the
+# serializable view-tree + drives the verified turns); `deos-view` holds ALL the
+# gpui and turns that data into pixels.
+#
+# What it does:
+#   1. Reads a deos-js applet's view-tree (the `deos.ui.*` serializable element-tree,
+#      produced by the REAL SpiderMonkey engine via `JSON.stringify` and read back out
+#      through the applet's public ephemeral view-state) and renders each node into a
+#      real gpui-component widget (vstack→v_flex, button→Button, text→Label, …).
+#   2. Wires handlers: a rendered button's onClick fires the applet's affordance = a
+#      REAL cap-gated verified turn (a `TurnReceipt`); a `bind(()=>s.x)` re-reads the
+#      model off the live ledger after the turn (the signal binding). Invalidation is
+#      immediate-mode for this slice (re-render the view-tree per turn).
+#   3. Renders the moldable `present()` faces through the SAME widget vocabulary
+#      (the §7 unification — the inspector and the custom view share widgets).
+#
+# STANDALONE WORKSPACE (own `[workspace]`, listed in the repo-root `exclude` like
+# `deos-js`/`starbridge-v2`/`servo-render`): it pulls BOTH the mozjs SpiderMonkey
+# elephant (via deos-js) AND the gpui native stack (windowing/GPU/font), so it must
+# never feature-unify onto the main workspace.
+#
+# Build FROM INSIDE this directory (never the repo root) — `rust-toolchain.toml`
+# pins the rolling `nightly` (gpui needs `std::hint::cold_path`):
+#   cd deos-view && cargo test --release
+[package]
+name = "deos-view"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Render a deos-js applet's view-tree into real gpui-component widgets (the renderer extraction)."
+
+[workspace]
+# Own workspace root — excluded from the repo-root members (see the repo-root
+# Cargo.toml `exclude` list) so neither mozjs nor gpui feature-unify across the tree.
+
+[dependencies]
+# THE VIEW-TREE MODEL + THE VERIFIED-TURN FIRING — the gpui-free substance crate.
+# Its `Applet` mints a sovereign cell; `fire` is a real cap-gated verified turn
+# (a `TurnReceipt`); `get_u64` is a witnessed read; the `deos.ui.*` JS prelude
+# builds the serializable element-tree this crate renders. We do NOT touch its src.
+deos-js = { path = "../deos-js" }
+# `dregg-cell` — the SAME crate deos-js path-deps (its `AuthRequired` is the authority
+# in `Applet::mint`'s signature). Naming it directly lets the render proof construct an
+# applet's affordances; cargo resolves the IDENTICAL instance deos-js already pulls.
+dregg-cell = { path = "../cell" }
+
+# THE GPUI STACK — the SAME fork rev the cockpit uses (emberian/zed@407a6ff), so
+# cargo resolves ONE gpui instance across this crate + gpui-component. `test-support`
+# lights up the HeadlessAppContext + offscreen wgpu renderer the render-capture proof
+# uses (the exact path starbridge-v2's `render_cockpit_headless` bakes through).
+gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
+# `runtime_shaders` is LOAD-BEARING on macOS (mirrors starbridge-v2): it makes gpui
+# compile its Metal shaders AT RUNTIME (via `MTLDevice::newLibraryWithSource`) instead
+# of at BUILD time (`xcrun metal`, which needs the offline Metal Toolchain component).
+# Without it the `gpui_macos` build script fails "cannot execute tool 'metal'". `x11`/
+# `wayland` light up the Linux windowing backends (inert on macOS — gpui_linux is not
+# in the macOS graph).
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["font-kit", "runtime_shaders", "test-support", "x11", "wayland"] }
+# The wgpu renderer leaf — the CosmicTextSystem text system + the offscreen renderer.
+gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
+
+# THE REAL WIDGET LIBRARY — the vendored longbridge fork the cockpit uses
+# (emberian/gpui-component@dregg-repoint, the `crates/ui` member). Button, Label,
+# v_flex/h_flex, Input, List, Table — the vocabulary the view-tree maps onto.
+gpui-component = { path = "../../gpui-component/crates/ui", default-features = false }
+
+# JSON parse of the view-tree the JS engine stringifies (and the present() faces).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The headless capture path returns `anyhow::Result<image::RgbaImage>` (gpui's
+# `capture_screenshot` signature); the `headless` module re-encodes + saves the PNG.
+# 0.25 matches gpui_wgpu's `image` (one resolved version across the graph).
+anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# ─── THE FORK SEAMS — replicated from deos-js + starbridge-v2 (the two standalone
+#     workspaces this crate path-deps). Because deos-view is its OWN workspace root,
+#     neither the repo-root `[patch]` nor deos-js's/starbridge-v2's reaches it, so the
+#     transitive dregg + gpui deps cannot re-resolve without these. They revert with
+#     the others once the forks land.
+
+[patch.crates-io]
+# ark-serialize FORK — the transitive `dregg-hints` (via dregg-turn) needs the
+# `serde_with` feature that exists only on the emberian/algebra fork (from deos-js).
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+# gpui's zed monorepo applies these `[patch.crates-io]` entries; consumers must
+# replicate them (from starbridge-v2).
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+# Vendored pathfinder_simd (transitive via gpui → font-kit → pathfinder): the scalar
+# path on aarch64 (the nightly portable-SIMD intrinsics were removed). starbridge-v2
+# vendors it at `vendor/pathfinder_simd`; we point at that same checkout.
+pathfinder_simd = { path = "../starbridge-v2/vendor/pathfinder_simd" }
+
+# plonky3-recursion FORK — the transitive `dregg-circuit` (via dregg-turn) resolves
+# `p3-recursion` from a pinned git rev lacking `RecursionInput::NativeBatchStark`;
+# point at the SAME local fork checkout. `../../plonky3-recursion` = deos-view →
+# breadstuffs → dev → plonky3-recursion (same relative depth as deos-js).
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
+
+# THE gpui FORK REDIRECT — exactly as starbridge-v2 does (its
+# `[patch."https://github.com/emberian/zed"]`). The pinned rev 407a6ff is redirected
+# to the LOCAL working checkout of that exact tree, which carries the offscreen
+# HEADLESS renderer (`HeadlessAppContext` + `gpui_platform::current_headless_renderer`
+# + `capture_screenshot`) the render-capture proof bakes through. Without this the
+# headless API does not exist on the cargo-cache rev. Dropped when the fork lands.
+[patch."https://github.com/emberian/zed"]
+gpui = { path = "../../zed-dregg-web/crates/gpui" }
+gpui_platform = { path = "../../zed-dregg-web/crates/gpui_platform" }
+gpui_wgpu = { path = "../../zed-dregg-web/crates/gpui_wgpu" }
