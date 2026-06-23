@@ -1,0 +1,96 @@
+# deos-zed-full — RECON SPIKE: mount the REAL Zed `editor`/`workspace`/`project`
+# stack over a cell-ledger Fs (FirmamentZedFs). Its OWN workspace (like deos-zed),
+# pinned at the SAME zed fork rev our gpui comes from so the patch table + gpui
+# version unify across the graph.
+[package]
+name = "deos-zed-full"
+version = "0.1.0"
+edition = "2021"
+description = "The REAL Zed editor (editor/workspace/project crates) mounted over a FirmamentFs cell-ledger — files are cells, save is a verified turn."
+publish = false
+license = "AGPL-3.0-or-later"
+
+[workspace]
+members = ["."]
+resolver = "2"
+
+[lib]
+name = "deos_zed_full"
+
+[features]
+# `full-zed` pulls the real Zed editor stack. OFF by default so a bare
+# `cargo build` stays light (the FirmamentZedFs adapter still compiles — it only
+# needs the `fs` crate, the seam).
+default = []
+full-zed = ["dep:editor", "dep:workspace", "dep:project", "dep:language"]
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+
+# THE CELL BACKING — deos-zed's gpui-free `FirmamentFs` (a file IS a cell, a save
+# IS a receipted turn over an in-process Ledger + TurnExecutor). We pull it
+# `default-features = false, features = ["firmament"]` so we get ONLY the
+# cell-ledger Fs core (no gpui graph). FirmamentZedFs (src/firmament_zed_fs.rs)
+# wraps this and adapts its synchronous cell ops to Zed's async `fs::Fs` trait.
+deos-zed = { path = "../deos-zed", default-features = false, features = ["firmament"] }
+
+# THE SEAM: Zed's `fs::Fs` trait — pulled at the SAME zed fork rev gpui comes
+# from. FirmamentZedFs implements this trait over the cell-ledger.
+fs = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }
+git = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }
+gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }
+rope = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }
+text = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }
+util = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }
+futures = "0.3"
+smol = "2"
+async-tar = "0.5.1"
+collections = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }
+
+# THE REAL ZED EDITOR STACK (gated on full-zed — the heavy graph).
+editor = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+workspace = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+project = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+language = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+
+# Replicate the zed fork's [patch.crates-io] table (the subset our graph pulls),
+# same as deos-zed/Cargo.toml carries for gpui. Plus the proof-dep overrides the
+# `firmament` cell backing pulls (deos-zed carries the identical set — see its
+# manifest): the ark-serialize serde-integration fork + the local
+# plonky3-recursion fork. (No effect on the `fs`/`gpui` half of the graph.)
+# The `project_over_cells` integration test (gated by the `full-zed` feature it
+# `cfg`s on) builds a REAL Zed `Project` over `FirmamentZedFs` and opens a
+# seeded file-cell as a real Zed `Buffer`. That needs the `test-support` shims of
+# the project layer (`Project::test`, `LanguageRegistry::test`, the fake clock /
+# http client / node runtime) plus a `#[gpui::test]` harness.
+[dev-dependencies]
+gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
+project = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
+language = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
+settings = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }
+# `project/test-support` turns on `remote/test-support` graph-wide, which makes
+# `RemoteConnectionIdentity::Mock` appear. The `workspace` crate (pulled by
+# `editor`) only matches that variant under ITS OWN `test-support` — an upstream
+# feature-unification gap in the zed fork at this rev. Enabling `workspace`'s
+# test-support here turns the matching arm on, so the unified graph compiles.
+workspace = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
+
+# The `project_over_cells` test only compiles under `--features full-zed` (it
+# `cfg`s its body on it); declared here so cargo knows it exists.
+[[test]]
+name = "project_over_cells"
+path = "tests/project_over_cells.rs"
+
+[patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+pathfinder_simd = { path = "../starbridge-v2/vendor/pathfinder_simd" }
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
