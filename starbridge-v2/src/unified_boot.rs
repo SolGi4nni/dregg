@@ -84,10 +84,22 @@ const UNIFIED_SEED: &[(&str, &str)] = &[(
      fn main() {\n    println!(\"v1\");\n}\n",
 )];
 
+/// The dev passphrase the unified-boot bake uses to unlock the attached node's
+/// operator cipherclerk. On a fresh dev node the FIRST unlock SETS this; on a
+/// re-run against the same data dir it must match (the runbook node uses this).
+/// This is the cockpit's local key custody for node writes (see
+/// [`crate::client::NodeClient::unlock`]).
+const NODE_DEV_PASSPHRASE: &str = "deos-dev-unified-boot";
+
 /// The root view mounting all three unified-boot panes.
 pub struct UnifiedBootView {
     /// A wrapped client to the attached node, so the bake can RE-READ the node's
     /// live receipt/cell count after an editor save (the write-back probe).
+    ///
+    /// When the cockpit is `--node`-attached AND the node unlocks, this client
+    /// carries the operator bearer token, so the editor save can route a real
+    /// `SetField` turn through the node's verified executor (`/turn/submit`) — the
+    /// write-back seam, closed. An unreachable/locked node leaves it read-only.
     live_node: Option<LiveNode>,
     /// The last fetched live snapshot of the attached node (status + cells).
     snapshot: Option<LiveSnapshot>,
@@ -119,7 +131,24 @@ impl UnifiedBootView {
         // cells/receipts shown are the node's, pulled over the wire right now.
         let (live_node, snapshot, receipt_view) = match node_url {
             Some(url) => {
-                let ln = LiveNode::new(crate::client::NodeClient::http(url));
+                // Read with a plain client; then UNLOCK the node's operator
+                // cipherclerk so the editor save can WRITE BACK (route a real
+                // `SetField` turn through `/turn/submit`). The unlocked, authed
+                // client replaces the plain one; if unlock fails (node locked with
+                // a different passphrase) we keep the read-only client and the
+                // write-back honestly reports it could not authenticate.
+                let plain = crate::client::NodeClient::http(url.clone());
+                let authed = match plain.unlock(NODE_DEV_PASSPHRASE) {
+                    Ok(token) => plain.with_bearer(token),
+                    Err(e) => {
+                        eprintln!(
+                            "unified-boot: node {url} unlock failed ({e:#}); editor save will \
+                             be read-only against the node (no write-back credential)"
+                        );
+                        plain
+                    }
+                };
+                let ln = LiveNode::new(authed);
                 let snap = ln.sync().ok();
                 // The latest committed receipt. `/api/receipts` returns the FULL
                 // receipt shape (a superset of the SSE-summary `ReceiptEvent`), so
@@ -175,6 +204,100 @@ impl UnifiedBootView {
     /// The local cockpit World's receipt count (the editor-save ledger).
     pub fn world_receipt_count(&self) -> usize {
         self.world.borrow().receipts().len()
+    }
+
+    /// ROUTE AN EDITOR SAVE TO THE NODE — the write-back seam, closed.
+    ///
+    /// When the cockpit is `--node`-attached and the node is unlocked, an editor
+    /// save becomes a real `SetField` turn submitted to the NODE's verified
+    /// executor (`POST /turn/submit`): the node runs it through the same
+    /// `gateOK`/conservation/authority gates as every turn, commits it to its
+    /// ledger (growing `/api/receipts`), signs it as the operator cipherclerk, and
+    /// orders/gossips it — exactly what a separate client of that node would see.
+    /// The `target` is omitted, so the node defaults it to the operator's own
+    /// agent cell (which it always has authority over); `index`/`value` carry the
+    /// save's content fingerprint into a state slot — a genuine on-ledger write.
+    ///
+    /// Returns `Ok((before, after))` node receipt counts (the empirical proof:
+    /// `after == before + 1`), or an error if the node refused the turn (in-band)
+    /// or the submit failed (e.g. no write credential). `None` if no node attached.
+    pub fn save_to_node(&self, index: usize, value: &str) -> Option<anyhow::Result<(usize, usize)>> {
+        let ln = self.live_node.as_ref()?;
+        Some(self.save_to_node_inner(ln, index, value))
+    }
+
+    fn save_to_node_inner(
+        &self,
+        ln: &LiveNode,
+        index: usize,
+        value: &str,
+    ) -> anyhow::Result<(usize, usize)> {
+        use crate::model::{SubmitTurnRequest, TurnActionSpec, TurnEffectSpec};
+
+        let client = ln.client();
+        if client.bearer().is_none() {
+            anyhow::bail!(
+                "node has no operator write credential (unlock failed at attach); the editor \
+                 save cannot write back to the node ledger"
+            );
+        }
+        let before = client.receipts_count()?;
+
+        // A real `SetField` turn: target omitted (defaults to the operator's own
+        // agent cell), one state slot set to the save's content fingerprint. This
+        // is the smallest genuine end-to-end write — a save = a verified turn on
+        // the node, not a local-only `World` commit.
+        let req = SubmitTurnRequest {
+            // Advisory only (the node derives the real signer from its cipherclerk
+            // pubkey — confused-deputy hardening). Carry the node's pubkey so the
+            // diagnostic is meaningful; it is parsed for validation, never trusted.
+            agent: self
+                .snapshot
+                .as_ref()
+                .map(|s| s.status.public_key.clone())
+                .unwrap_or_default(),
+            nonce: 0, // node auto-fills the agent cell's live nonce
+            fee: 0,
+            memo: Some("deos editor save (unified boot)".into()),
+            actions: vec![TurnActionSpec {
+                target: None,
+                method: Some("save".into()),
+                effects: vec![TurnEffectSpec::SetField {
+                    cell: None,
+                    index,
+                    value: value.to_string(),
+                }],
+            }],
+        };
+
+        let resp = client.submit_turn(&req)?;
+        if !resp.accepted {
+            anyhow::bail!(
+                "the node REFUSED the editor save turn: {}",
+                resp.error.unwrap_or_else(|| "no reason given".into())
+            );
+        }
+        let after = client.receipts_count()?;
+        Ok((before, after))
+    }
+
+    /// RE-SYNC the attached node over the wire (status + cells + chain-head
+    /// receipt) so the live-node pane reflects the post-write-back state — e.g.
+    /// the new receipt the editor save just committed shows up in the screenshot.
+    /// No-op if no node is attached.
+    pub fn refresh_node(&mut self) {
+        let Some(ln) = self.live_node.as_ref() else {
+            return;
+        };
+        if let Ok(snap) = ln.sync() {
+            self.snapshot = Some(snap);
+        }
+        self.receipt_view = ln
+            .client()
+            .receipts_raw()
+            .ok()
+            .and_then(|rs| rs.into_iter().next())
+            .map(|raw| raw_receipt_inspectable(&raw));
     }
 
     /// RE-READ the ATTACHED NODE's live receipt count over the wire — the
@@ -267,11 +390,26 @@ impl Render for UnifiedBootView {
             "its /status + cells + latest receipt, reflected live",
             self.render_node_pane(),
         );
-        let editor_pane = framed(
-            "editor · deos-zed (firmament over the cockpit's LOCAL World)",
-            "a save = a cap-gated SetField turn → a real TurnReceipt (local ledger)",
-            editor_body,
-        );
+        // When the node is attached AND unlocked (we hold its operator bearer),
+        // the editor save writes BACK to the node: a real SetField turn through
+        // the node's verified executor. Label honestly per the live credential.
+        let node_writeback = self
+            .live_node
+            .as_ref()
+            .map(|ln| ln.client().bearer().is_some())
+            .unwrap_or(false);
+        let (editor_title, editor_sub) = if node_writeback {
+            (
+                "editor · deos-zed (firmament over the LIVE NODE)",
+                "a save = a cap-gated SetField turn → committed on the NODE ledger (/turn/submit)",
+            )
+        } else {
+            (
+                "editor · deos-zed (firmament over the cockpit's LOCAL World)",
+                "a save = a cap-gated SetField turn → a real TurnReceipt (local ledger)",
+            )
+        };
+        let editor_pane = framed(editor_title, editor_sub, editor_body);
         let terminal_pane = framed(
             "terminal · deos-terminal (live alacritty PTY)",
             "real cargo/git running INSIDE deos",

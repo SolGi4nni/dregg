@@ -228,3 +228,43 @@ pub fn short_id(id: &str) -> String {
         format!("{}…{}", &id[..6], &id[id.len() - 4..])
     }
 }
+
+/// `POST /cipherclerk/unlock` response. Mirrors `api::UnlockResponse`.
+///
+/// Unlocking the node's operator cipherclerk is what lets the cockpit submit
+/// turns it will commit: the node signs every operator turn as its own cell
+/// (confused-deputy hardening), so "local key custody" on the cockpit side is
+/// the operator passphrase + the returned bearer token, which `require_auth`
+/// then checks on every write route (incl. `/turn/submit`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct UnlockResponse {
+    pub success: bool,
+    /// The API bearer token the cockpit attaches as `Authorization: Bearer …`
+    /// on every subsequent write (the node derives it from the passphrase seed).
+    #[serde(default)]
+    pub bearer_token: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// `POST /turn/submit` response. Mirrors `api::SubmitTurnResponse`.
+///
+/// `accepted` is the truth of whether the node's verified executor COMMITTED the
+/// turn to its ledger (the same `gateOK`/conservation/authority path the node
+/// uses for every turn). A refusal carries the reason in `error` / `turn_hash`
+/// (the handler reports refusals in-band with a 200 body), so the cockpit can
+/// surface an honest "the node refused this save: …" instead of a silent drop.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SubmitTurnResponse {
+    pub accepted: bool,
+    #[serde(default)]
+    pub turn_hash: Option<String>,
+    #[serde(default)]
+    pub proof_status: Option<String>,
+    #[serde(default)]
+    pub has_witness: bool,
+    #[serde(default)]
+    pub witness_count: usize,
+    #[serde(default)]
+    pub error: Option<String>,
+}

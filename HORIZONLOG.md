@@ -8,6 +8,24 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## ✅ EDITOR-SAVE WRITE-BACK TO THE NODE — the self-hosting seam CLOSED, by running (2026-06-23)
+The `--node`-attached cockpit editor save now lands on the NODE's ledger over the
+wire. Proven by running: a fresh `dregg-node` (lean producer), cockpit attached,
+editor save fired → node `/api/receipts` grew **0 → 1** (independent curl confirms
+`executor_signed:true`, 1 action). Wire: cockpit `unlock`s the node operator
+cipherclerk (`POST /cipherclerk/unlock` → bearer = the local key custody, since the
+node signs every operator turn as ITSELF — confused-deputy hardening) then submits a
+real `SetField` turn to `POST /turn/submit` (the pre-existing verified ingest:
+`execute_via_producer` → same gateOK/conservation/authority gates → commit →
+receipt-chain append → gossip/order). Code: `starbridge-v2/src/client.rs`
+(`NodeClient::{unlock,with_bearer,submit_turn}` typed + bearer-authed),
+`unified_boot.rs::UnifiedBootView::save_to_node` + `refresh_node`, the
+`--render-unified-boot` bake asserts N→N+1, screenshot `deos-unified-boot.png`
+("firmament over the LIVE NODE"). RESIDUAL (named, small): the INTERACTIVE `--node`
+cockpit editor still saves to the LOCAL `World` (`EditorPane::firmament_over`); the
+remaining wire is hooking `deos-zed`'s in-editor `save` to call `save_to_node`
+(reuses everything above). The full submit→commit→receipt path is proven E2E.
+
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 

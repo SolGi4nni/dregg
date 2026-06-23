@@ -180,26 +180,43 @@ The bake prints (and writes `/tmp/deos-unified-boot.png`, 3800x2000):
   the latest verified receipt, pulled over `/api/cells` + `/api/receipts`. This is
   what proves the attach is LIVE, not embedded.
 * **PANE (editor)** — a real save fired: the local on-ledger receipt count grew (a
-  cap-gated `SetField` turn).
+  cap-gated `SetField` turn), AND the same save is routed to the NODE.
 * **PANE (terminal)** — a live alacritty PTY ran `cargo --version` INSIDE deos.
-* **WRITE-BACK PROBE** — the node's receipt count is re-read over the wire BEFORE
-  and AFTER the editor save.
+* **WRITE-BACK** — the node's `/api/receipts` count is re-read over the wire BEFORE
+  and AFTER the editor save; it GROWS `N -> N+1` (the save committed on the node).
 
-### The honest write-back seam (what the probe measures)
+### The write-back seam, CLOSED (an editor save is a real turn on the NODE)
 
-The editor save does **NOT** reach the node ledger today — it is LOCAL-ONLY.
-`EditorPane::firmament_over` commits the `SetField` turn to the cockpit's OWN
-`World` (a `WorldSpine` over `World::commit_turn`); the `--node` attach is
-READ-ONLY-SYNCED (`LiveNode::sync` for the snapshot + the SSE pump for the live
-receipt feed). So the unified boot is real (one window, node-attached-live +
-editor + terminal), but the editor and the node are two ledgers: the node's
-receipt count is unchanged by an editor save.
+When the cockpit is `--node`-attached, the unified-boot bake routes the editor
+save to the NODE's verified executor, by running:
 
-To make a save a self-hosting write-back to the NODE, the FirmamentFs save path
-would route the turn through `NodeClient::submit_turn` (the designed-pending write
-surface on `LiveNode`) instead of (or in addition to) the local `WorldSpine` —
-which also needs local key custody to sign the turn (or routing it through the
-node operator's cipherclerk). That is the named integration seam.
+1. At attach, the cockpit **unlocks** the node's operator cipherclerk
+   (`POST /cipherclerk/unlock`, [`NodeClient::unlock`]) and holds the bearer token
+   the node mints. This is the cockpit's local key custody for node writes: the
+   node signs every operator turn as its OWN cipherclerk (confused-deputy
+   hardening, so a client never injects a signer), so the cockpit's credential is
+   the passphrase that unlocks that cipherclerk + the bearer `require_auth` checks.
+2. The editor save becomes a real `SetField` turn submitted to `POST /turn/submit`
+   ([`NodeClient::submit_turn`] → `UnifiedBootView::save_to_node`). The node runs
+   it through the SAME `gateOK`/conservation/authority gates as every turn, commits
+   it to ITS ledger (growing `/api/receipts`), signs it as the operator, and
+   gossips/orders it. The `target` is omitted, so the node defaults it to the
+   operator's own agent cell (which it always has authority over); the save's
+   content fingerprint goes into a state slot — a genuine on-ledger write.
+3. The bake **asserts** the node `/api/receipts` count grew `N -> N+1`, then
+   re-syncs the live-node pane so the new node receipt shows in the PNG, and labels
+   the editor pane "firmament over the LIVE NODE".
+
+So an editor save inside deos is a real verified turn on the running node: a
+SEPARATE client of that node would see the new receipt over `/api/receipts` and
+the SSE `/api/events/stream`. A node that fails to unlock (locked with a different
+passphrase) leaves the editor read-only against the node and the bake says so.
+
+The non-bake interactive `--node` cockpit editor still saves to the cockpit's
+LOCAL `World` (`EditorPane::firmament_over` over a `WorldSpine`); hooking
+`deos-zed`'s in-editor `save` to call back into `NodeClient::submit_turn` on every
+keystroke-save is the remaining wire (the bake proves the full submit→commit path
+end to end; the interactive hook reuses `UnifiedBootView::save_to_node`).
 
 ## A REAL two-node federation (n=2, proven by running)
 

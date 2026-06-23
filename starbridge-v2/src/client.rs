@@ -17,7 +17,7 @@
 
 use crate::model::{
     BlockInfo, CellListEntry, FederationInfo, NodeStatus, ReceiptEvent, SubmitTurnRequest,
-    TurnActionSpec, TurnEffectSpec,
+    SubmitTurnResponse, TurnActionSpec, TurnEffectSpec, UnlockResponse,
 };
 
 /// Where the shell gets its data.
@@ -26,7 +26,19 @@ pub enum NodeClient {
     /// In-process fixtures — the scaffold's default. No network.
     Mock,
     /// A real node at `base_url` (e.g. `http://127.0.0.1:8080`).
-    Http { base_url: String },
+    ///
+    /// `bearer` is the operator API token: empty until the cockpit unlocks the
+    /// node ([`NodeClient::unlock`]), then attached as `Authorization: Bearer …`
+    /// on every write route. The node's `require_auth` middleware gates
+    /// `/turn/submit` (and the rest of the write surface) on it, so a turn-submit
+    /// without it is a 401. This IS the cockpit's local key custody for node
+    /// writes: the node signs every operator turn as its OWN cipherclerk
+    /// (confused-deputy hardening), so the cockpit's "key" is the passphrase that
+    /// unlocks that cipherclerk + the bearer it mints.
+    Http {
+        base_url: String,
+        bearer: Option<String>,
+    },
 }
 
 impl NodeClient {
@@ -37,13 +49,32 @@ impl NodeClient {
     pub fn http(base_url: impl Into<String>) -> Self {
         NodeClient::Http {
             base_url: base_url.into(),
+            bearer: None,
+        }
+    }
+
+    /// An HTTP client already carrying an operator bearer token (e.g. one a prior
+    /// [`NodeClient::unlock`] minted), so its write routes authenticate.
+    pub fn http_authed(base_url: impl Into<String>, bearer: impl Into<String>) -> Self {
+        NodeClient::Http {
+            base_url: base_url.into(),
+            bearer: Some(bearer.into()),
+        }
+    }
+
+    /// The operator bearer token this client carries, if any (the unlocked-node
+    /// write credential).
+    pub fn bearer(&self) -> Option<&str> {
+        match self {
+            NodeClient::Http { bearer, .. } => bearer.as_deref(),
+            NodeClient::Mock => None,
         }
     }
 
     pub fn describe(&self) -> String {
         match self {
             NodeClient::Mock => "mock (no node)".to_string(),
-            NodeClient::Http { base_url } => base_url.clone(),
+            NodeClient::Http { base_url, .. } => base_url.clone(),
         }
     }
 
@@ -56,14 +87,14 @@ impl NodeClient {
     pub fn status(&self) -> anyhow::Result<NodeStatus> {
         match self {
             NodeClient::Mock => Ok(mock::status()),
-            NodeClient::Http { base_url } => http_get(base_url, "/status"),
+            NodeClient::Http { base_url, .. } => http_get(base_url, "/status"),
         }
     }
 
     pub fn cells(&self) -> anyhow::Result<Vec<CellListEntry>> {
         match self {
             NodeClient::Mock => Ok(mock::cells()),
-            NodeClient::Http { base_url } => http_get(base_url, "/api/cells"),
+            NodeClient::Http { base_url, .. } => http_get(base_url, "/api/cells"),
         }
     }
 
@@ -72,7 +103,7 @@ impl NodeClient {
             NodeClient::Mock => Ok(mock::receipts()),
             // The non-stream snapshot uses /api/starbridge/receipts; the
             // scaffold maps those summary fields onto ReceiptEvent.
-            NodeClient::Http { base_url } => http_get(base_url, "/api/receipts"),
+            NodeClient::Http { base_url, .. } => http_get(base_url, "/api/receipts"),
         }
     }
 
@@ -86,7 +117,7 @@ impl NodeClient {
     pub fn receipts_count(&self) -> anyhow::Result<usize> {
         match self {
             NodeClient::Mock => Ok(mock::receipts().len()),
-            NodeClient::Http { base_url } => {
+            NodeClient::Http { base_url, .. } => {
                 let arr: Vec<serde_json::Value> = http_get(base_url, "/api/receipts")?;
                 Ok(arr.len())
             }
@@ -100,21 +131,21 @@ impl NodeClient {
     pub fn receipts_raw(&self) -> anyhow::Result<Vec<serde_json::Value>> {
         match self {
             NodeClient::Mock => Ok(Vec::new()),
-            NodeClient::Http { base_url } => http_get(base_url, "/api/receipts"),
+            NodeClient::Http { base_url, .. } => http_get(base_url, "/api/receipts"),
         }
     }
 
     pub fn federations(&self) -> anyhow::Result<Vec<FederationInfo>> {
         match self {
             NodeClient::Mock => Ok(mock::federations()),
-            NodeClient::Http { base_url } => http_get(base_url, "/api/federations"),
+            NodeClient::Http { base_url, .. } => http_get(base_url, "/api/federations"),
         }
     }
 
     pub fn blocks(&self) -> anyhow::Result<Vec<BlockInfo>> {
         match self {
             NodeClient::Mock => Ok(mock::blocks()),
-            NodeClient::Http { base_url } => http_get(base_url, "/api/blocklace/blocks"),
+            NodeClient::Http { base_url, .. } => http_get(base_url, "/api/blocklace/blocks"),
         }
     }
 
@@ -126,23 +157,74 @@ impl NodeClient {
     pub fn events_stream_url(&self, _resume: Option<u64>) -> Option<String> {
         match self {
             NodeClient::Mock => None,
-            NodeClient::Http { base_url } => Some(format!("{base_url}/api/events/stream")),
+            NodeClient::Http { base_url, .. } => Some(format!("{base_url}/api/events/stream")),
         }
     }
 
     // --- writes -----------------------------------------------------------
 
-    /// Drive a turn through the node. In the scaffold the mock backend echoes
-    /// a synthetic receipt hash; the HTTP backend POSTs to `/turn/submit`
-    /// (which signs with the node operator's cipherclerk — local-custody
-    /// signing is a build-out lane).
-    pub fn submit_turn(&self, req: &SubmitTurnRequest) -> anyhow::Result<String> {
+    /// UNLOCK the node's operator cipherclerk with `passphrase` (`POST
+    /// /cipherclerk/unlock`) and return the bearer token the node mints. This is
+    /// the cockpit's local key custody for node writes: the node signs every
+    /// operator turn as its OWN cipherclerk (confused-deputy hardening), so the
+    /// cockpit's credential is the passphrase that unlocks that cipherclerk plus
+    /// the bearer token `require_auth` then checks on `/turn/submit`. On a fresh
+    /// node the first unlock SETS the passphrase; thereafter it must match.
+    ///
+    /// Returns an error if the node refuses (bad passphrase) or carries no token.
+    pub fn unlock(&self, passphrase: &str) -> anyhow::Result<String> {
         match self {
-            NodeClient::Mock => Ok(format!(
-                "mock-receipt:{}-actions",
-                req.actions.len()
-            )),
-            NodeClient::Http { base_url } => http_post(base_url, "/turn/submit", req),
+            NodeClient::Mock => Ok("mock-bearer".to_string()),
+            NodeClient::Http { base_url, .. } => {
+                let body = serde_json::json!({ "passphrase": passphrase });
+                let resp: UnlockResponse =
+                    http_post_json(base_url, "/cipherclerk/unlock", None, &body)?;
+                if !resp.success {
+                    anyhow::bail!(
+                        "node unlock refused: {}",
+                        resp.error.unwrap_or_else(|| "unknown".into())
+                    );
+                }
+                resp.bearer_token
+                    .ok_or_else(|| anyhow::anyhow!("node unlock returned no bearer token"))
+            }
+        }
+    }
+
+    /// Return a copy of this client carrying `bearer` as its operator token, so
+    /// its write routes authenticate. (`NodeClient` is by-value `Clone`; the
+    /// cockpit holds the authed copy after an [`Self::unlock`].)
+    pub fn with_bearer(&self, bearer: impl Into<String>) -> NodeClient {
+        match self {
+            NodeClient::Mock => NodeClient::Mock,
+            NodeClient::Http { base_url, .. } => NodeClient::Http {
+                base_url: base_url.clone(),
+                bearer: Some(bearer.into()),
+            },
+        }
+    }
+
+    /// SUBMIT a turn to the node's verified executor (`POST /turn/submit`) and
+    /// return the typed [`SubmitTurnResponse`]. This is the REAL ingest path: the
+    /// node runs the turn through the same `gateOK`/conservation/authority gates
+    /// it uses for every turn, commits it to its ledger (growing `/api/receipts`),
+    /// signs it as the operator cipherclerk, and gossips/orders it. A refusal is
+    /// reported IN-BAND (`accepted: false`, `error: …`) — no executor bypass.
+    ///
+    /// Requires the operator bearer token (`require_auth`): call [`Self::unlock`]
+    /// first and bind it with [`Self::with_bearer`], or use [`Self::http_authed`].
+    /// Without it the node returns 401 and this surfaces an honest error.
+    pub fn submit_turn(&self, req: &SubmitTurnRequest) -> anyhow::Result<SubmitTurnResponse> {
+        match self {
+            NodeClient::Mock => Ok(SubmitTurnResponse {
+                accepted: true,
+                turn_hash: Some(format!("mock-receipt:{}-actions", req.actions.len())),
+                proof_status: Some("not_required".into()),
+                ..Default::default()
+            }),
+            NodeClient::Http { base_url, bearer } => {
+                http_post_json(base_url, "/turn/submit", bearer.as_deref(), req)
+            }
         }
     }
 }
@@ -159,16 +241,32 @@ fn http_get<T: serde::de::DeserializeOwned>(base: &str, path: &str) -> anyhow::R
     Ok(serde_json::from_str(&body)?)
 }
 
+/// Blocking JSON POST returning a typed response, with an optional `Bearer`
+/// operator token (the unlocked-node write credential `require_auth` checks).
+///
+/// The node reports turn refusals IN-BAND with a 200 body (`accepted: false`),
+/// so we do NOT `error_for_status` on those — only a genuine transport/HTTP
+/// failure (401/403/5xx) becomes an `Err`, with the body text folded in so a
+/// 401 says "missing/expired operator token" rather than an opaque status.
 #[cfg(feature = "live-node")]
-fn http_post<T: serde::Serialize>(base: &str, path: &str, req: &T) -> anyhow::Result<String> {
+fn http_post_json<T: serde::Serialize, R: serde::de::DeserializeOwned>(
+    base: &str,
+    path: &str,
+    bearer: Option<&str>,
+    req: &T,
+) -> anyhow::Result<R> {
     let url = format!("{base}{path}");
-    let resp = reqwest::blocking::Client::new()
-        .post(&url)
-        .json(req)
-        .send()?
-        .error_for_status()?
-        .text()?;
-    Ok(resp)
+    let mut builder = reqwest::blocking::Client::new().post(&url).json(req);
+    if let Some(token) = bearer {
+        builder = builder.bearer_auth(token);
+    }
+    let resp = builder.send()?;
+    let status = resp.status();
+    let body = resp.text()?;
+    if !status.is_success() {
+        anyhow::bail!("POST {path} -> HTTP {status}: {body}");
+    }
+    Ok(serde_json::from_str(&body)?)
 }
 
 // Without `live-node` (no reqwest), an `Http` arm can't reach the network. These
@@ -181,7 +279,12 @@ fn http_get<T: serde::de::DeserializeOwned>(_base: &str, _path: &str) -> anyhow:
 }
 
 #[cfg(not(feature = "live-node"))]
-fn http_post<T: serde::Serialize>(_base: &str, _path: &str, _req: &T) -> anyhow::Result<String> {
+fn http_post_json<T: serde::Serialize, R: serde::de::DeserializeOwned>(
+    _base: &str,
+    _path: &str,
+    _bearer: Option<&str>,
+    _req: &T,
+) -> anyhow::Result<R> {
     anyhow::bail!("live-node feature is off (no reqwest); only NodeClient::Mock is available")
 }
 
@@ -399,7 +502,7 @@ impl LiveNode {
         // Only an Http backend has a stream; the reader rebuilds the URL itself
         // (and sets the Last-Event-ID resume header) per connect attempt.
         let base = match &self.client {
-            NodeClient::Http { base_url } => base_url.clone(),
+            NodeClient::Http { base_url, .. } => base_url.clone(),
             NodeClient::Mock => return None,
         };
         let (tx, rx) = std::sync::mpsc::channel::<crate::live_node::SseRecord>();
