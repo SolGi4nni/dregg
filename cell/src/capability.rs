@@ -894,7 +894,7 @@ mod revoke_tombstone_tests {
         let _ = caps.grant(cid(3), AuthRequired::None).unwrap(); // allowed_effects: None
         let s = caps.grant(cid(4), AuthRequired::Signature).unwrap();
         assert!(caps.revoke(s)); // exercise a tombstone too
-        let bytes = postcard::to_stdvec(&caps).expect("postcard serialize");
+        let bytes = postcard::to_allocvec(&caps).expect("postcard serialize");
         let back: CapabilitySet = postcard::from_bytes(&bytes).expect("postcard round-trip");
         assert_eq!(back, caps, "a cap-carrying c-list round-trips through postcard");
     }
