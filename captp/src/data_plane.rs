@@ -20,7 +20,10 @@
 //!     [`crate::custody::InboxState::from_dequeue`] reads to ACQUIT a relay /
 //!     resolve the receipt. So "queued-but-undelivered" is structurally
 //!     distinguishable from "drained" — the bb engine's receipt-identity lesson,
-//!     made unforgeable.
+//!     made unforgeable. [`Bus::drain_one`] witnesses a SINGLE box (FIFO) so a
+//!     delivery path that hands boxes to a consumer one at a time drains the spool
+//!     IN LOCKSTEP with delivery — the witness flips as the box reaches the wire,
+//!     and the inbox never accumulates a parallel, never-drained backlog.
 //!
 //! # The north star: buildr's "bb engine", matched and exceeded
 //!
@@ -477,11 +480,17 @@ impl Bus {
         let old_root = self.root_of(&recipient);
         let accept_by = now.saturating_add(self.default_deadline);
 
+        // The causal sequence of THIS box is the cursor value it ticks the
+        // channel TO — the post-tick value, so the queued message's sequence and
+        // the wake cursor a waiter observes for it agree (the first admitted
+        // enqueue is causal_sequence 1, matching `cursor == 1`). Reading the
+        // pre-tick cursor here desynchronized the two by one.
+        let causal_sequence = self.waker.cursor(name).saturating_add(1);
         let msg = QueuedMessage {
             destination: recipient,
             encrypted_payload: payload,
             sender_ephemeral_pk: [0u8; 32],
-            causal_sequence: self.waker.cursor(name),
+            causal_sequence,
             queued_at: now,
             ttl_blocks: self.default_ttl,
             priority: crate::store_forward::MessagePriority::Normal,
@@ -501,8 +510,13 @@ impl Bus {
             accept_by,
         );
 
-        // Wake-by-name: the cursor advances exactly once per admitted enqueue.
-        self.waker.tick(name.key());
+        // Wake-by-name: the cursor advances exactly once per admitted enqueue, to
+        // the value `causal_sequence` recorded above.
+        let ticked = self.waker.tick(name.key());
+        debug_assert_eq!(
+            ticked, causal_sequence,
+            "the queued box's causal_sequence must equal the cursor it ticked to"
+        );
 
         Ok(Delivery {
             receipt,
@@ -634,6 +648,23 @@ impl Bus {
             }
         }
         drained
+    }
+
+    /// **DRAIN ONE** box (FIFO) from `recipient`'s inbox, WITNESSING that single
+    /// delivery: the popped box's content hash is appended to the delivery-witness
+    /// log exactly as [`Self::drain`] would, so the matching [`Delivery::is_handled`]
+    /// flips to `true`. `None` if the inbox is empty.
+    ///
+    /// This is the lockstep companion to a delivery path that hands boxes to a
+    /// consumer one at a time (e.g. an SSE stream): each delivered box witnesses
+    /// its own drain, so the spool drains AS it delivers — it never accumulates a
+    /// parallel, never-drained backlog. "Delivered on the wire" == "drained-witnessed
+    /// on the Bus", box for box.
+    pub fn drain_one(&mut self, recipient: &FederationId) -> Option<QueuedMessage> {
+        let msg = self.relay.drain_one(recipient)?;
+        let ch = *blake3::hash(&msg.encrypted_payload).as_bytes();
+        self.delivered.entry(*recipient).or_default().push(ch);
+        Some(msg)
     }
 
     /// The recipient's authenticated log of delivered (drained) content hashes —
@@ -898,6 +929,39 @@ mod tests {
         bus.enqueue(&cap, b, &name, AuthRequired::Signature, b"m".to_vec(), 1).unwrap();
         assert_eq!(bus.cursor(&name), 1);
         assert_eq!(bus.poll_wake(&name, &b).unwrap().cursor, 1);
+    }
+
+    // ── (7b) The queued box's causal_sequence == the wake cursor it ticked to ────
+    #[test]
+    fn queued_sequence_matches_wake_cursor() {
+        let (mut bus, _relay) = fresh_bus();
+        let b = app_b();
+        let name = ChannelName::new(b"app-b/inbox");
+        let cap = inbox_cap(b, &name);
+        bus.wait(&name, b);
+
+        // First enqueue: the box's causal_sequence and the cursor a waiter sees
+        // are BOTH 1 (no off-by-one between the queued sequence and the wake).
+        bus.enqueue(&cap, b, &name, AuthRequired::Signature, b"first".to_vec(), 1)
+            .unwrap();
+        assert_eq!(bus.cursor(&name), 1, "the wake cursor is 1 after one enqueue");
+        let wake = bus.poll_wake(&name, &b).expect("woken");
+        assert_eq!(wake.cursor, 1);
+
+        // Enqueue twice more, then drain and read the queued sequences directly:
+        // they must be exactly 1,2,3 — the same numbers the cursor reports.
+        bus.enqueue(&cap, b, &name, AuthRequired::Signature, b"second".to_vec(), 1)
+            .unwrap();
+        bus.enqueue(&cap, b, &name, AuthRequired::Signature, b"third".to_vec(), 1)
+            .unwrap();
+        assert_eq!(bus.cursor(&name), 3);
+        let drained = bus.drain(&b);
+        let seqs: Vec<u64> = drained.iter().map(|m| m.causal_sequence).collect();
+        assert_eq!(
+            seqs,
+            vec![1, 2, 3],
+            "queued causal_sequence agrees with the wake cursor (no off-by-one)"
+        );
     }
 
     // ── (7) Many enqueues, one waiter: wakes coalesce to the live cursor ─────────

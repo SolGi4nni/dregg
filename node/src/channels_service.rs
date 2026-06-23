@@ -184,12 +184,16 @@ pub struct ChannelRegistry {
     /// The captp DATA PLANE under the channels service (the criticism-closing
     /// weld): one [`Bus`] backs every room's enqueue/drain/wake/subscribe, so a
     /// POST to a channel is a real [`Bus::enqueue`] (returning the custody
-    /// [`Delivery`] receipt) and a drain is a real [`Bus::drain`] (the
-    /// receipt-identity witness — "queued" is provably distinguishable from
-    /// "handled" THROUGH THE NODE). The bus uses the node's gossip identity as
-    /// its accountable relay, so the receipts it mints verify. `None` until the
-    /// first room is created (the node is unlocked and has a stable identity by
-    /// then); see [`ChannelRegistry::ensure_bus`].
+    /// [`Delivery`] receipt) and live SSE delivery is a real [`Bus::drain_one`]
+    /// (drain-on-deliver: the receipt-identity witness flips queued→handled AS the
+    /// box reaches a consumer on the wire — so "queued" is provably distinguishable
+    /// from "handled" on the DELIVERY HOT-PATH, and the inbox drains in lockstep
+    /// with delivery rather than accumulating a parallel backlog). The opt-in
+    /// `/channels/drain` endpoint drains the rest in one shot (e.g. for an offline
+    /// consumer); the relay's `BUS_MAX_*` caps bound the inbox hard regardless. The
+    /// bus uses the node's gossip identity as its accountable relay, so the receipts
+    /// it mints verify. `None` until the first room is created (the node is unlocked
+    /// and has a stable identity by then); see [`ChannelRegistry::ensure_bus`].
     bus: Option<Bus>,
 }
 
@@ -856,8 +860,9 @@ async fn post_create(
     room.keys.insert(1, key);
     inner.channels.insert_room(channel, room);
     // Spin up the data plane backing this room: one captp `Bus`, relayed by the
-    // node's gossip identity. From here a POST is a real `Bus::enqueue` and a
-    // drain a real `Bus::drain` — the data plane RUNS IN PRODUCTION.
+    // node's gossip identity. From here a POST is a real `Bus::enqueue` and live
+    // SSE delivery is a real `Bus::drain_one` (drain-on-deliver) — the witnessed
+    // drain is wired into the delivery hot-path, not an opt-in audit endpoint.
     let relay_key = inner.cclerk.gossip_signing_key();
     inner.channels.ensure_bus(relay_key);
 
@@ -1470,20 +1475,41 @@ async fn messages_stream(
     };
     let stream = futures_util::stream::unfold(cursor, |mut c| async move {
         loop {
-            // Drain the ring from the cursor before waiting again.
+            // Drain the ring from the cursor before waiting again. Delivering a
+            // ring message to this SSE client is a REAL delivery, so it WITNESSES
+            // the corresponding box's drain on the data-plane Bus (drain-on-deliver):
+            // each box the post enqueued is drained as it is handed to a consumer,
+            // flipping its custody receipt queued→handled and keeping the Bus inbox
+            // bounded (it never accumulates a parallel, never-drained backlog). The
+            // ring and the Bus are produced in lockstep by `post_message` (one push
+            // per one enqueue, FIFO), so the FIFO `drain_one` matches delivery order.
             let pending = {
-                let s = c.state.read().await;
-                let room = s.channels.room(&c.channel)?;
+                let mut s = c.state.write().await;
+                let inner = &mut *s;
+                let recipient = bus_recipient(c.channel);
+                let room = inner.channels.room(&c.channel)?;
                 // Skip past evicted history.
-                if let Some(front) = room.messages.front() {
-                    if c.next < front.seq {
-                        c.next = front.seq;
+                let front_seq = room.messages.front().map(|m| m.seq);
+                if let Some(front) = front_seq {
+                    if c.next < front {
+                        c.next = front;
                     }
                 }
-                room.messages
+                let found = room
+                    .messages
                     .iter()
                     .find(|m| m.seq >= c.next)
-                    .map(|m| (m.seq, serde_json::to_string(m)))
+                    .map(|m| (m.seq, serde_json::to_string(m)));
+                // Witness this delivery on the Bus: drain one box (no-op once the
+                // Bus inbox for this channel is already drained by an earlier
+                // consumer — the witness is sticky, so re-delivery to another SSE
+                // client does not double-count).
+                if found.is_some() {
+                    if let Some(bus) = inner.channels.bus_mut() {
+                        let _ = bus.drain_one(&recipient);
+                    }
+                }
+                found
             };
             if let Some((seq, body)) = pending {
                 c.next = seq + 1;
@@ -1865,6 +1891,94 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(again["drained"].as_array().unwrap().len(), 0);
         assert_eq!(again["pending"], 0);
+    }
+
+    /// THE DELIVERY-HOT-PATH WITNESS: live SSE delivery drains the Bus box for the
+    /// message it hands the client (drain-on-deliver). So the receipt-identity
+    /// witness flips queued→handled on the REAL delivery path (not only via the
+    /// opt-in `/channels/drain` endpoint), and the Bus inbox drains in lockstep
+    /// with delivery — it does NOT grow as a parallel, never-drained ledger.
+    #[tokio::test]
+    async fn sse_delivery_witnesses_the_bus_drain_and_bounds_the_inbox() {
+        use futures_util::StreamExt;
+
+        let (state, members, _dir) = funded_state().await;
+        let (channel, _) = create_group(&state, &members).await;
+        let channel_hex = hex_encode(channel.as_bytes());
+        let recipient = bus_recipient(channel);
+
+        // POST two ciphertexts: each is a real Bus::enqueue. Capture the content
+        // hashes so we can prove they later appear in the delivered-witness log.
+        let mut content_hashes = Vec::new();
+        for ct in ["deadbeef", "cafef00d"] {
+            let (status, posted) = post_json(
+                &state,
+                "/channels/post",
+                serde_json::json!({
+                    "channel": channel_hex,
+                    "epoch": 1,
+                    "nonce": "00112233445566778899aabb",
+                    "ciphertext": ct,
+                }),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "post: {posted}");
+            content_hashes.push(posted["delivery"]["content_hash"].as_str().unwrap().to_string());
+        }
+
+        // Two boxes queued on the Bus, NONE witnessed yet (queued ≠ handled).
+        {
+            let s = state.read().await;
+            let bus = s.channels.bus().expect("bus exists");
+            assert_eq!(bus.pending_count(&recipient), 2, "two boxes queued before delivery");
+            assert_eq!(bus.delivered_hashes(&recipient).len(), 0, "none witnessed yet");
+        }
+
+        // Open the live SSE stream and pull exactly the two delivered events. The
+        // stream is endless (it parks after the ring), so each pull is bounded by a
+        // short timeout — we only need the two real deliveries.
+        let sse = messages_stream(
+            AxumPath(channel_hex.clone()),
+            HeaderMap::new(),
+            State(state.clone()),
+        )
+        .await
+        .expect("sse stream opens");
+        // `Sse` derefs into the inner stream of events.
+        let mut stream = sse.into_response().into_body().into_data_stream();
+        let mut delivered = 0usize;
+        while delivered < 2 {
+            match tokio::time::timeout(Duration::from_secs(2), stream.next()).await {
+                Ok(Some(Ok(chunk))) => {
+                    // Each delivered envelope is one `event: ciphertext` SSE frame;
+                    // heartbeats are `:hb` comments and carry no such line.
+                    let text = String::from_utf8_lossy(&chunk);
+                    delivered += text.matches("event: ciphertext").count();
+                }
+                Ok(Some(Err(_))) | Ok(None) => break,
+                Err(_) => break, // timeout: stream parked (all ring messages delivered)
+            }
+        }
+        assert_eq!(delivered, 2, "both ciphertexts were delivered over the live SSE wire");
+
+        // Give the drain-on-deliver writes a moment to settle, then assert: the Bus
+        // inbox is DRAINED (bounded — it did not accumulate) and BOTH content hashes
+        // are in the delivered-witness log (the receipt-identity flip happened on the
+        // live delivery path).
+        let s = state.read().await;
+        let bus = s.channels.bus().expect("bus exists");
+        assert_eq!(
+            bus.pending_count(&recipient),
+            0,
+            "live SSE delivery drained the Bus inbox in lockstep (no parallel backlog)"
+        );
+        let witnessed = bus.delivered_hashes(&recipient);
+        for h in &content_hashes {
+            assert!(
+                witnessed.iter().any(|w| hex_encode(w) == *h),
+                "the posted box's content hash is WITNESSED after live delivery (queued→handled)"
+            );
+        }
     }
 
     /// The data-plane NON-AMP seam, surfaced through the node-held `Bus`: an

@@ -486,6 +486,22 @@ impl MessageRelay {
         messages
     }
 
+    /// Pop a SINGLE pending message (FIFO: earliest queued) for a destination,
+    /// leaving the rest queued. `None` if the queue is empty. Used by a delivery
+    /// path that witnesses one box at a time as it hands it to a consumer (so the
+    /// spool drains in lockstep with delivery instead of all-at-once).
+    pub fn drain_one(&mut self, destination: &FederationId) -> Option<QueuedMessage> {
+        let queue = self.queues.get_mut(destination)?;
+        let msg = queue.pop_front();
+        if msg.is_some() {
+            self.total_messages -= 1;
+        }
+        if queue.is_empty() {
+            self.queues.remove(destination);
+        }
+        msg
+    }
+
     /// Expire messages whose TTL has been exceeded.
     ///
     /// Removes any message where `current_height - queued_at >= ttl_blocks`.
