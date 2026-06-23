@@ -132,6 +132,18 @@ to a capped reader, DARKENS for an under-capped one w/ provenance surviving, re-
 BIDIRECTIONAL links (the quote registers in the `Backlinks` witness-graph → C's "what links here" lists A).
 Plus an EXECUTOR-DRIVEN variant (`DocEditor`: each edit a cap-gated turn; unauthorized edit refused in-band).
 
+### WEB-DEOS BACKENDS — terminal-over-WS wired + proven (2026-06-23).
+`2168bb6f` (`starbridge-v2/web/src/pty_ws.rs` + `tests/pty_ws_e2e.rs`). WS↔PTY bridge: native side
+(`pty-ws-server`) spawns a real `$SHELL` on a real PTY (portable-pty + tokio-tungstenite), relays bytes over
+WS; wasm `WsTransport` feeds PTY bytes through `vte` into the render grid; shared `WireMsg` codec (resize).
+E2E test (2 passed): in-process server, real shell over a real WebSocket, `echo`+`pwd` bytes return over the
+socket — the exact path the browser pane speaks. wasm + native-full green. SEAM (editor-Fs + chat-wasm-live):
+backends are wasm-REACHABLE in-tab (FirmamentFs + matrix-sdk 0.18 both wasm-compile) but NOT MOUNTED on the
+`gpui-web` build — `dev-surfaces` (pulls deos-zed/deos-matrix) is off that feature; the wire is enabling that
+graph + mounting the editor/chat views on wasm (touches the cockpit feature-graph).
+- ⚠ OPS: disk hit ~117Mi free during builds; the lane reclaimed 72G of `target/debug/incremental`. Now
+  ~44Gi free on a 100%-used volume — TIGHT. Heavy parallel rust builds can refill it; prune build caches.
+
 ### SERVO REAL PAGE — surfman ceiling BROKEN, a real page rasterizes (2026-06-23).
 `d5af70e5` (servo-render). Cleared 3 nested blockers (surfman `connection()`=None, event-loop pacing,
 SWGL `DepthFunc` SIGABRT via a 1-field vendored servo-paint fork `clear_caches_with_quads:false`). 17/17
