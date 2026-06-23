@@ -363,7 +363,22 @@ The native `starbridge-v2 --serve-ie6 <port>` LIVE frame-streaming server (the r
 browsers) is verified locally; deploying it to a host is a follow-up (it needs a running server + gpui
 offscreen, unlike the static Pages artifacts).
 
-## ✅ CUSTOM proof_bind — THE SOUNDNESS CORE CLOSED (2026-06-21, the genuine recursive verify)
+
+### ✅ WEB-DEOS + ADOS DEPTHS — both closed (2026-06-22):
+WEB-DEOS FULL (cfac7b88): the REAL cockpit::Cockpit renders in a browser tab on gpui_web — cockpit/views/dock
+lifted into the lib (gpui-ui|gpui-web union gate + extern crate self, zero cockpit-internal edits), boot_cockpit
+mounts Cockpit::with_node over the in-tab wasm executor, gpui-component compiles to wasm32 (tree-sitter grammars
+opt-in, none pulled). Both builds GREEN (wasm + native check). Remaining gap = the native-resource BACKENDS only
+(terminal-PTY-over-WS, editor-Fs-over-firmament, servo native-only) — the UIs are web-ready. "The whole verified
+OS is just a URL" is real for the shell.
+ADOS LIVE (a701a16a + 5d3893f3): the agent is a mountable cockpit pane (⌘K "Open Agent pane" → chat + tool-call
+ledger w/ receipts/refusals + mandate inspector), AND the live loop RAN END-TO-END: venv fixed (uv pip install
+agent-client-protocol==0.9.0 into the brew hermes-acp venv), then a REAL Bedrock-Hermes agent emitted a dangerous
+`terminal rm -rf` tool-call → session/request_permission → HermesGateway admitted it as a cap-gated/metered/
+receipted dregg turn (receipt 9af640b5…, mandate tool:terminal rate-5 spent 1/left 4 → allow_once). The ADOS
+thesis — every agent action a receipted gated turn — DEMONSTRATED with a real agent + real model + real tool-call.
+Live ceiling = the model provider (creds present → full loop). CI hermetic on the mock. Next edge: the web-deos
+backend wires (PTY-over-WS, Fs-over-firmament, matrix-wasm) → the whole WORKING desktop in a tab.## ✅ CUSTOM proof_bind — THE SOUNDNESS CORE CLOSED (2026-06-21, the genuine recursive verify)
 The last unprovable effect's SOUNDNESS gap is closed: `proof_bind` no longer bounds-checks — it
 VERIFIES the bound external STARK sub-proof. New `circuit/src/custom_proof_bind.rs`
 (`verify_proof_bind`): resolves the program by the bound 8-felt VK, verifies the external
