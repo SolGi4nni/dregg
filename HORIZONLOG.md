@@ -11,6 +11,13 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### DATA-PLANE BUS = THE REAL SPINE, by running (2026-06-23).
+`19ae22f1` (`captp/src/data_plane.rs` + `node/src/channels_service.rs`). `channels_service` already rides
+the `Bus` (POST→`enqueue`→drain→SSE in lockstep); a multi-party flow now proves 4 spine properties, all
+BUS-enforced: receipt-identity (Ed25519 `CustodyReceipt`, tamper flips `sig_verifies`, root chains
+`old→new`) · cap-gated enqueue (`SendCap::admits` refuses over-auth before any box/cursor/receipt — no
+phantom work) · ordered pub-sub to ≥2 subscribers (causal_sequence 1,2,3; node SSE replays seq 0,1,2) ·
+drain lockstep (`drain_one` FIFO, sticky witness → no double-delivery). 199 captp + 246 node tests green.
 ### MUD MULTI-INHABITANT — physics IS the proof, by running (2026-06-23).
 `450b30b8` (`mud.rs`). 3 inhabitants / 2 connected rooms over the real embedded executor. 4 properties
 EXECUTOR-enforced (9 tests, ~76s real proving): movement cap-gated (`move_through` writes the dest room
