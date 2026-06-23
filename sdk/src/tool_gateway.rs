@@ -44,11 +44,43 @@
 //! A granted call therefore COMMITS with a receipt and a conserved spend (the
 //! counter moves, total balance does not), and an out-of-mandate call is REFUSED
 //! in-band — the exact both-polarity shape the Lean crown proves.
+//!
+//! ## The DATA PLANE — the gateway as a ROUTER, not only a gate
+//!
+//! [`ToolGateway::invoke`] gates + meters + executes INLINE (synchronous). But a
+//! real data plane ROUTES the call: the gate is the on-ramp, not the whole road.
+//! [`ToolGateway::enqueue`] runs the SAME admission/metering gate, then ENQUEUES
+//! the admitted tool-call onto the gateway's inbox toward an EXECUTION
+//! ENVIRONMENT (the worker's executor cell), returning a non-blocking
+//! [`RoutedHandle`] (an `EventualRef`-shaped promise) INSTEAD of blocking. The
+//! executor later DRAINS the queue ([`ToolGateway::drive_executor`]), runs the
+//! metered turn, and the RESULT comes back as a resolved promise plus a
+//! [`DeliveryReceipt`] (custody-receipt-shaped: a signed-shape witness that the
+//! work was dequeued toward, and executed by, the executor). The caller
+//! [`poll`](RoutedHandle::status)s / [`resolve`](ToolGateway::resolve)s the
+//! handle to collect the [`RoutedResult`].
+//!
+//! So the full road is: **admit → enqueue → (execute elsewhere) → results-back**,
+//! with the metering + receipts intact, and a refusal short-circuiting at the
+//! on-ramp (no enqueue, no spend, no counter advance).
+//!
+//! The promise/result channel reuses the verified [`PendingTurnRegistry`] /
+//! `EventualRef` resolution shape from `dregg_turn` (the cascading
+//! resolve/broken-propagation machinery), rather than reinventing it. The queue
+//! is modelled as the gateway's in-crate inbox (`VecDeque` of routed work) toward
+//! the worker's executor cell; wiring it to the cross-crate captp `MerkleQueue` +
+//! real `CustodyReceipt` (so the route can cross a federation / a relay) is the
+//! next slice — the ENQUEUE → EXECUTE → RESULTS-BACK shape here is real and
+//! tested, not a synchronous rename.
+
+use std::collections::VecDeque;
 
 use dregg_cell::program::{field_from_u64, CellProgram, StateConstraint};
 use dregg_cell::CellId;
 use dregg_token::Attenuation;
-use dregg_turn::{Effect, TurnReceipt};
+use dregg_turn::{
+    Effect, PendingTurnRegistry, ResolutionCondition, ResolutionOutcome, TurnReceipt,
+};
 
 use crate::cipherclerk::HeldToken;
 use crate::error::SdkError;
@@ -208,6 +240,89 @@ pub struct ToolReceipt {
     pub remaining: i64,
 }
 
+/// A custody-receipt-shaped DELIVERY WITNESS: proof that a routed tool-call's
+/// work was dequeued toward — and executed by — the execution environment.
+///
+/// This is the data-plane analogue of the captp `CustodyReceipt`: where that
+/// receipt witnesses a relay accepting custody of a box into a recipient's queue
+/// (the recipient's drain witnessing delivery), THIS receipt witnesses the
+/// gateway's executor draining a routed tool-call out of the inbox and committing
+/// it. The headline fact — "this specific routed call, by its `routed_hash`, was
+/// delivered to the executor" — is a sticky, content-addressed witness, the same
+/// shape custody accountability turns on.
+///
+/// Field-for-shape with the captp receipt's accountability binding:
+/// * `routed_hash` — the content-address of the routed call (the turn hash of the
+///   enqueued metered turn); binds the receipt to a SPECIFIC routed call.
+/// * `executor_cell` — the execution environment the call was delivered TO (here
+///   the worker's executor cell; the cross-federation case binds the inbox owner).
+/// * `enqueued_at` / `delivered_at` — the height the call was enqueued and the
+///   height the executor drained + committed it (the delivery transition).
+///
+/// The next slice replaces this in-crate witness with a real, Ed25519-signed
+/// captp `CustodyReceipt` once the route crosses a relay / federation boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeliveryReceipt {
+    /// The content-address of the routed call (the enqueued turn's hash).
+    pub routed_hash: [u8; 32],
+    /// The execution environment the call was delivered to (worker executor cell).
+    pub executor_cell: CellId,
+    /// The height the call was enqueued onto the inbox.
+    pub enqueued_at: i64,
+    /// The height the executor drained and committed the call.
+    pub delivered_at: i64,
+}
+
+/// The terminal result of a ROUTED tool-call once the executor has drained the
+/// queue and run the work: the [`ToolReceipt`] (proof + conserved spend + meter),
+/// plus the [`DeliveryReceipt`] (proof the work was routed to and executed by the
+/// execution environment). This is what [`ToolGateway::resolve`] hands back when a
+/// [`RoutedHandle`] completes.
+#[derive(Clone, Debug)]
+pub struct RoutedResult {
+    /// The executor receipt + meter for the metered turn (same as the inline path).
+    pub tool_receipt: ToolReceipt,
+    /// The custody-receipt-shaped delivery witness.
+    pub delivery: DeliveryReceipt,
+}
+
+/// The status of a routed tool-call's promise (mirrors `dregg_turn::PendingStatus`,
+/// kept local so the gateway's data-plane surface is self-contained).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RoutedStatus {
+    /// Enqueued, awaiting the executor's drain.
+    Pending,
+    /// Drained + executed; the [`RoutedResult`] is available via
+    /// [`ToolGateway::resolve`].
+    Delivered,
+    /// The route broke (the executor rejected the work, or it was dropped); the
+    /// reason is available via [`ToolGateway::resolve`].
+    Broken,
+}
+
+/// A non-blocking PROMISE for a routed tool-call: the on-ramp return of
+/// [`ToolGateway::enqueue`]. `EventualRef`-shaped (it carries the source turn
+/// hash that identifies the routed work in the pending registry), it is polled via
+/// [`RoutedHandle::status`] and resolved via [`ToolGateway::resolve`] once the
+/// executor has drained the queue.
+#[derive(Clone, Debug)]
+pub struct RoutedHandle {
+    /// The hash identifying the routed call in the pending registry (the
+    /// `EventualRef::source_turn` of the promise; the routed work's turn hash).
+    pub routed_hash: [u8; 32],
+    /// The tool id the routed call presented (for audit / correlation).
+    pub tool: i64,
+    /// The height the call was enqueued (its on-ramp clock).
+    pub enqueued_at: i64,
+}
+
+impl RoutedHandle {
+    /// The routed work's content-address (the `EventualRef`-shaped promise key).
+    pub fn routed_hash(&self) -> [u8; 32] {
+        self.routed_hash
+    }
+}
+
 /// The error surface of [`ToolGateway::invoke`]: either an in-band mandate
 /// refusal, or an underlying SDK/executor error (spawn / submission failure).
 #[derive(Debug)]
@@ -256,7 +371,44 @@ pub struct ToolGateway {
     worker_cell: CellId,
     /// The rate counter, kept in lock-step with the worker cell's
     /// `calls_made` slot (advanced only on a committed invocation).
+    ///
+    /// ROUTED-PATH NOTE: admission for a routed call reserves a counter slot at
+    /// ENQUEUE time (so two concurrently-enqueued calls cannot both pass the rate
+    /// gate against the same `old`), and the executor's metered turn at DRAIN time
+    /// advances the on-ledger slot to match. `calls_made` therefore tracks the
+    /// reserved (admitted-and-routed) count, the cell's slot the committed count;
+    /// a broken route releases the reservation.
     calls_made: i64,
+    /// THE DATA-PLANE INBOX — the queue of admitted routed tool-calls awaiting the
+    /// execution environment's drain. Modelled here as an in-crate `VecDeque`
+    /// toward the worker's executor cell; the next slice routes this through the
+    /// captp `MerkleQueue` so the route can cross a relay / federation.
+    inbox: VecDeque<RoutedWork>,
+    /// THE RESULT CHANNEL — the verified `dregg_turn` promise registry. Each
+    /// routed call registers a pending entry keyed by its routed hash; the
+    /// executor's drain resolves it (Resolved → delivery, Broken → broken route),
+    /// reusing the cascading resolve/broken-propagation machinery rather than
+    /// reinventing it.
+    pending: PendingTurnRegistry,
+    /// The terminal results of drained routed calls, keyed by routed hash, awaiting
+    /// the caller's [`ToolGateway::resolve`]. A delivered route lands an
+    /// `Ok(RoutedResult)`; a broken route lands an `Err(reason)`.
+    results: std::collections::HashMap<[u8; 32], Result<RoutedResult, String>>,
+}
+
+/// One admitted routed tool-call sitting on the gateway's inbox, awaiting the
+/// execution environment's drain. Carries everything the executor needs to run the
+/// metered turn and emit the delivery witness.
+#[derive(Clone, Debug)]
+struct RoutedWork {
+    /// The routed call's content-address (the EventualRef-shaped promise key).
+    routed_hash: [u8; 32],
+    /// The new counter value this call commits (`old + 1`), reserved at enqueue.
+    new_count: i64,
+    /// The tool's actual effects (beyond the metered counter advance).
+    work: Vec<Effect>,
+    /// The height the call was enqueued (for the delivery receipt).
+    enqueued_at: i64,
 }
 
 impl ToolGateway {
@@ -303,6 +455,9 @@ impl ToolGateway {
             worker,
             worker_cell,
             calls_made: 0,
+            inbox: VecDeque::new(),
+            pending: PendingTurnRegistry::new(),
+            results: std::collections::HashMap::new(),
         })
     }
 
@@ -391,6 +546,260 @@ impl ToolGateway {
             calls_made: new,
             remaining: self.remaining(),
         })
+    }
+
+    // ── THE DATA PLANE — admit → enqueue → (execute elsewhere) → results-back ──
+
+    /// THE ROUTED ON-RAMP — admit a tool-call and ENQUEUE it (non-blocking).
+    ///
+    /// Runs the SAME admission gate as [`invoke`](Self::invoke) ([`deleg_admit`]:
+    /// SCOPE ∧ DEADLINE ∧ RATE), then — instead of executing inline — ENQUEUES the
+    /// admitted call onto the gateway's inbox toward the execution environment and
+    /// returns a non-blocking [`RoutedHandle`] (an `EventualRef`-shaped promise).
+    /// The metered counter slot is RESERVED here (so a second concurrent enqueue
+    /// gates against the reserved `old + 1`, not a stale count); the executor's
+    /// metered turn advances the on-ledger slot when it drains the call.
+    ///
+    /// * **granted** — the call is enqueued; a [`RoutedHandle`] is returned. The
+    ///   work has NOT run yet; drive it with [`drive_executor`](Self::drive_executor),
+    ///   then collect the [`RoutedResult`] with [`resolve`](Self::resolve).
+    /// * **refused** — NO enqueue, no reservation; returns
+    ///   `Err(ToolCallError::Refused(..))` naming the leg that bit (the on-ramp
+    ///   short-circuits exactly as the inline gate does).
+    pub fn enqueue(
+        &mut self,
+        tool: i64,
+        now: i64,
+        work: Vec<Effect>,
+    ) -> Result<RoutedHandle, ToolCallError> {
+        let old = self.calls_made;
+        let new = old + 1;
+
+        // §1 — IN-BAND admission, the SAME gate as the inline path. NO enqueue,
+        // no reservation on refusal (the anti-ghost tooth at the on-ramp).
+        if !deleg_admit(&self.grant, now, tool, old, new) {
+            return Err(ToolCallError::Refused(self.diagnose_refusal(tool, now, old)));
+        }
+
+        // RESERVE the counter slot: the admitted call now owns `old → new`, so a
+        // second enqueue this turn gates against `new` (no double-spend of the rate
+        // budget between enqueue and drain). A broken drain releases the reservation.
+        self.calls_made = new;
+
+        // Build the metered turn NOW (at enqueue) so the routed call's
+        // content-address IS the turn hash — the same identity the executor will
+        // commit, and the EventualRef::source_turn / pending-registry key for the
+        // result channel. The work rides this turn; the executor reruns the same
+        // shape at drain time through the cap-gated worker.
+        let mut effects = Vec::with_capacity(work.len() + 1);
+        effects.push(Effect::SetField {
+            cell: self.worker_cell,
+            index: CALLS_MADE_SLOT as usize,
+            value: field_from_u64(new as u64),
+        });
+        effects.extend(work.iter().cloned());
+        let routed_turn = self.build_routed_turn(new, effects);
+        let routed_hash = routed_turn.hash();
+
+        // §2 — register the promise in the verified pending registry (the result
+        // channel), keyed by the routed turn hash, then ENQUEUE onto the data-plane
+        // inbox toward the executor. The condition is AwaitHeight(now): the executor's
+        // drive_executor pass resolves it (mirroring how a node drives a registry
+        // entry to a real receipt), and await_routed dependents cascade off it.
+        self.pending
+            .submit_pending_at(routed_turn, ResolutionCondition::AwaitHeight(now.max(0) as u64), u64::MAX, now.max(0) as u64);
+        self.inbox.push_back(RoutedWork {
+            routed_hash,
+            new_count: new,
+            work,
+            enqueued_at: now,
+        });
+
+        Ok(RoutedHandle {
+            routed_hash,
+            tool,
+            enqueued_at: now,
+        })
+    }
+
+    /// THE EXECUTION ENVIRONMENT'S DRAIN — run every enqueued routed call.
+    ///
+    /// This is the "execute elsewhere" half of the data plane: the executor drains
+    /// the inbox, runs each admitted call's metered turn through the cap-gated
+    /// worker (the SAME executor path the inline [`invoke`](Self::invoke) uses), and
+    /// resolves the call's promise in the result channel — `Resolved` with a
+    /// [`RoutedResult`] (tool receipt + delivery witness) on commit, `Broken` if
+    /// the executor rejects the metered write (which also RELEASES the reserved
+    /// counter slot, so the rate budget is not leaked by a failed route).
+    ///
+    /// `now` is the drain height (stamped into the [`DeliveryReceipt`] as
+    /// `delivered_at`). Returns the routed hashes drained this pass. Idempotent on
+    /// an empty inbox (returns an empty vec).
+    pub fn drive_executor(&mut self, now: i64) -> Vec<[u8; 32]> {
+        let mut drained = Vec::new();
+        while let Some(item) = self.inbox.pop_front() {
+            drained.push(item.routed_hash);
+
+            // The metered write + the tool's payload ride one turn — identical to
+            // the inline path, but executed at DRAIN time, not enqueue time.
+            let mut effects = Vec::with_capacity(item.work.len() + 1);
+            effects.push(Effect::SetField {
+                cell: self.worker_cell,
+                index: CALLS_MADE_SLOT as usize,
+                value: field_from_u64(item.new_count as u64),
+            });
+            effects.extend(item.work.iter().cloned());
+
+            match self.worker.execute_method(&self.grant.tool_method, effects) {
+                Ok(receipt) => {
+                    let tool_receipt = ToolReceipt {
+                        receipt,
+                        calls_made: item.new_count,
+                        remaining: self.grant.rate_limit - item.new_count,
+                    };
+                    let delivery = DeliveryReceipt {
+                        routed_hash: item.routed_hash,
+                        executor_cell: self.worker_cell,
+                        enqueued_at: item.enqueued_at,
+                        delivered_at: now,
+                    };
+                    // Resolve the promise in the verified registry (cascades to any
+                    // dependents), then stash the terminal result for the caller's
+                    // resolve(). The registry entry is the EventualRef-shaped
+                    // promise; the stashed RoutedResult is its resolved value.
+                    let _events = self.pending.resolve(
+                        item.routed_hash,
+                        ResolutionOutcome::Resolved(tool_receipt.receipt.clone()),
+                    );
+                    self.results
+                        .insert(item.routed_hash, Ok(RoutedResult { tool_receipt, delivery }));
+                }
+                Err(e) => {
+                    // BROKEN ROUTE: release the reserved counter slot (the executor
+                    // did NOT commit, so the rate budget must not be consumed), then
+                    // mark the promise broken.
+                    if self.calls_made == item.new_count {
+                        self.calls_made = item.new_count - 1;
+                    }
+                    let reason = format!("routed execution rejected: {e}");
+                    let _events = self.pending.resolve(
+                        item.routed_hash,
+                        ResolutionOutcome::Broken(dregg_turn::BrokenReason::TurnRejected(
+                            dregg_turn::TurnError::PreconditionFailed {
+                                description: reason.clone(),
+                            },
+                        )),
+                    );
+                    self.results.insert(item.routed_hash, Err(reason));
+                }
+            }
+        }
+        drained
+    }
+
+    /// Poll a routed handle's status WITHOUT consuming the result.
+    ///
+    /// `Pending` while still on the inbox (the executor has not drained it),
+    /// `Delivered` once [`drive_executor`](Self::drive_executor) committed it (the
+    /// [`RoutedResult`] is ready for [`resolve`](Self::resolve)), `Broken` if the
+    /// route broke.
+    pub fn status(&self, handle: &RoutedHandle) -> RoutedStatus {
+        match self.results.get(&handle.routed_hash) {
+            Some(Ok(_)) => RoutedStatus::Delivered,
+            Some(Err(_)) => RoutedStatus::Broken,
+            None => RoutedStatus::Pending,
+        }
+    }
+
+    /// AWAIT / RESOLVE a routed handle — collect the [`RoutedResult`] once the
+    /// executor has delivered it (the "results-back" terminus of the data plane).
+    ///
+    /// Returns:
+    /// * `Ok(RoutedResult)` — the route delivered: the [`ToolReceipt`] (proof +
+    ///   conserved spend + advanced meter) and the [`DeliveryReceipt`] (custody
+    ///   witness that the work was routed to and executed by the executor).
+    /// * `Err(ToolCallError::Sdk(..))` — either the route broke (the executor
+    ///   rejected the metered write), or the handle is still pending / unknown.
+    ///
+    /// Consumes the stashed result (a routed call resolves once), so a second
+    /// `resolve` of the same handle reports it as no-longer-known.
+    pub fn resolve(&mut self, handle: &RoutedHandle) -> Result<RoutedResult, ToolCallError> {
+        match self.results.remove(&handle.routed_hash) {
+            Some(Ok(result)) => Ok(result),
+            Some(Err(reason)) => Err(ToolCallError::Sdk(SdkError::Rejected(reason))),
+            None => Err(ToolCallError::Sdk(SdkError::Rejected(format!(
+                "routed call {:02x}{:02x}.. not yet delivered (drive the executor first)",
+                handle.routed_hash[0], handle.routed_hash[1]
+            )))),
+        }
+    }
+
+    /// The number of routed calls currently enqueued (awaiting the executor's
+    /// drain) — the inbox depth.
+    pub fn inbox_depth(&self) -> usize {
+        self.inbox.len()
+    }
+
+    /// Build the metered turn for a routed call — its hash is the routed call's
+    /// content-address (the `EventualRef`-shaped promise key in the result channel,
+    /// and the identity the executor commits). The `reserved_count` makes each
+    /// routed call's turn distinct (it rides as the worker cell's nonce), so two
+    /// calls under one mandate get distinct promise keys.
+    ///
+    /// The turn carries the worker's method-scoped credential; the executor reruns
+    /// this same shape at drain time via [`SubAgent::execute_method`].
+    fn build_routed_turn(&self, reserved_count: i64, effects: Vec<Effect>) -> dregg_turn::Turn {
+        use crate::raw::{symbol, Action, Authorization, CallForest, CommitmentMode, DelegationMode};
+        let action = Action {
+            target: self.worker_cell,
+            method: symbol(&self.grant.tool_method),
+            args: Vec::new(),
+            authorization: Authorization::Token {
+                encoded: self.worker.cap_token().to_vec(),
+                key_ref: dregg_turn::TokenKeyRef::BiscuitIssuer {
+                    issuer_pubkey: [0u8; 32],
+                },
+                discharges: Vec::new(),
+            },
+            preconditions: Default::default(),
+            effects,
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let mut forest = CallForest::new();
+        forest.add_root(action);
+        crate::raw::Turn {
+            agent: self.worker_cell,
+            nonce: reserved_count as u64,
+            call_forest: forest,
+            fee: 5_000,
+            memo: None,
+            valid_until: None,
+            depends_on: Vec::new(),
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            previous_receipt_hash: None,
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        }
+    }
+
+    /// Register a routed call's promise in the result channel under an explicit
+    /// resolution condition. The default [`enqueue`](Self::enqueue) registers an
+    /// `AwaitHeight` placeholder resolved by the drain; this hook lets a caller
+    /// declare a routed call DEPENDS on another routed call (promise pipelining:
+    /// the dependent stays pending until its dependency's drain resolves), reusing
+    /// the verified registry's cascading resolution.
+    pub fn await_routed(&mut self, handle: &RoutedHandle, on: [u8; 32]) {
+        self.pending
+            .register_dependent(on, handle.routed_hash);
     }
 
     /// Decide which mandate leg refused a call (for the [`GatewayRefusal`]). Only

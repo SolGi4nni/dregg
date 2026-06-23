@@ -224,8 +224,8 @@ pub use runtime::{AgentRuntime, SubAgent};
 // tool-calling agent loop (the proven `delegAdmit` mandate over the cap-gated
 // executor).
 pub use tool_gateway::{
-    deleg_admit, mandate_program, GatewayRefusal, ToolCallError, ToolGateway, ToolGrant,
-    ToolReceipt, CALLS_MADE_SLOT,
+    deleg_admit, mandate_program, DeliveryReceipt, GatewayRefusal, RoutedHandle, RoutedResult,
+    RoutedStatus, ToolCallError, ToolGateway, ToolGrant, ToolReceipt, CALLS_MADE_SLOT,
 };
 
 // Receipt-chain verification (the chain the Receipt noun links into).

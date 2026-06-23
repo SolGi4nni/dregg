@@ -225,6 +225,186 @@ fn executor_rate_backstop_rejects_over_ceiling_write_bypassing_in_band() {
     );
 }
 
+// ─── THE DATA PLANE — admit → enqueue → execute-elsewhere → results-back ─────
+
+#[test]
+fn routed_invoke_loop_enqueues_executes_and_delivers_results_back() {
+    // THE ROUTED LOOP, end to end on the real executor:
+    //   admit → enqueue (non-blocking, returns a handle) → drive the executor
+    //   (drain + run) → resolve the handle → the result + delivery receipt come
+    //   back, the meter advanced, and a real Vec<Effect> side-effect rode the
+    //   routed turn. The gate is the on-ramp; the executor is the road.
+    use dregg_sdk::{DeliveryReceipt, RoutedStatus};
+    use dregg_turn::action::{symbol, Event};
+
+    let (runtime, root) = runtime_with_root();
+    let mut gw = ToolGateway::admit(&runtime, &root, demo_grant()).expect("admit worker");
+    let worker_cell = gw.worker_cell();
+
+    // The tool's actual work — a real side-effect that must ride the routed turn.
+    let work = vec![Effect::EmitEvent {
+        cell: worker_cell,
+        event: Event {
+            topic: symbol("routed-search-result"),
+            data: Vec::new(),
+        },
+    }];
+
+    // ENQUEUE — non-blocking. Returns a handle; the work has NOT run yet.
+    let handle = gw
+        .enqueue(77, 50, work)
+        .expect("a granted in-scope, in-time, within-rate call must enqueue");
+    assert_eq!(gw.inbox_depth(), 1, "the routed call sits on the inbox");
+    assert_eq!(
+        gw.status(&handle),
+        RoutedStatus::Pending,
+        "before the executor drains, the routed call is Pending"
+    );
+    // The work has NOT committed yet: the on-ledger counter slot is still 0.
+    {
+        let ledger = runtime.ledger().lock().unwrap();
+        let cell = ledger.get(&worker_cell).expect("worker cell");
+        assert_eq!(
+            cell.state.fields[dregg_sdk::CALLS_MADE_SLOT as usize][31],
+            0,
+            "enqueue does NOT execute — the counter has not advanced on-ledger"
+        );
+    }
+
+    // DRIVE THE EXECUTOR — the execution environment drains the inbox and runs it.
+    let drained = gw.drive_executor(60);
+    assert_eq!(drained, vec![handle.routed_hash()], "the one routed call drained");
+    assert_eq!(gw.inbox_depth(), 0, "the inbox is empty after the drain");
+    assert_eq!(
+        gw.status(&handle),
+        RoutedStatus::Delivered,
+        "after the drain, the routed call is Delivered"
+    );
+
+    // RESULTS BACK — resolve the handle to collect the tool receipt + delivery.
+    let result = gw
+        .resolve(&handle)
+        .expect("the delivered routed call must resolve to a result");
+    // The metered turn committed: counter 0 -> 1, meter advanced, real receipt.
+    assert_eq!(result.tool_receipt.calls_made, 1, "the meter advanced 0 -> 1");
+    assert_eq!(result.tool_receipt.remaining, 2, "two calls remain on rate-3");
+    assert_eq!(result.tool_receipt.receipt.agent, worker_cell);
+    // The tool's side-effect (EmitEvent) rode the routed turn alongside the meter.
+    assert_eq!(
+        result.tool_receipt.receipt.action_count, 1,
+        "the metered SetField + the EmitEvent rode one routed action"
+    );
+    // The custody-receipt-shaped delivery witness binds the route end to end.
+    let DeliveryReceipt {
+        routed_hash,
+        executor_cell,
+        enqueued_at,
+        delivered_at,
+    } = result.delivery;
+    assert_eq!(routed_hash, handle.routed_hash(), "delivery binds the routed call");
+    assert_eq!(executor_cell, worker_cell, "delivered to the executor cell");
+    assert_eq!(enqueued_at, 50, "enqueued at the on-ramp height");
+    assert_eq!(delivered_at, 60, "delivered at the drain height");
+
+    // The on-ledger counter now reads 1 — the routed turn really committed.
+    {
+        let ledger = runtime.ledger().lock().unwrap();
+        let cell = ledger.get(&worker_cell).expect("worker cell");
+        assert_eq!(
+            cell.state.fields[dregg_sdk::CALLS_MADE_SLOT as usize][31],
+            1,
+            "the routed turn committed the metered counter advance on-ledger"
+        );
+    }
+
+    // A routed call resolves once: a second resolve no longer knows it.
+    assert!(
+        gw.resolve(&handle).is_err(),
+        "a routed result is consumed by resolve; a second resolve is unknown"
+    );
+}
+
+#[test]
+fn routed_gate_refuses_over_budget_and_over_deadline_at_the_on_ramp() {
+    // The on-ramp gate is the SAME gate: a refusal short-circuits at enqueue (no
+    // inbox entry, no reservation), exactly as the inline path refuses.
+    let (runtime, root) = runtime_with_root();
+    let mut gw = ToolGateway::admit(&runtime, &root, demo_grant()).expect("admit worker");
+
+    // Over-deadline: refused at the on-ramp, nothing enqueued.
+    let err = gw
+        .enqueue(77, 101, vec![])
+        .expect_err("a past-deadline routed call MUST be refused at the on-ramp");
+    assert!(matches!(
+        err,
+        ToolCallError::Refused(GatewayRefusal::PastDeadline { now: 101, deadline: 100 })
+    ));
+    assert_eq!(gw.inbox_depth(), 0, "a refused enqueue puts nothing on the inbox");
+    assert_eq!(gw.calls_made(), 0, "a refused enqueue reserves no rate budget");
+
+    // Out-of-scope: refused at the on-ramp.
+    let err = gw
+        .enqueue(99, 50, vec![])
+        .expect_err("an out-of-scope routed call MUST be refused at the on-ramp");
+    assert!(matches!(
+        err,
+        ToolCallError::Refused(GatewayRefusal::OutOfScope { presented: 99, granted: 77 })
+    ));
+
+    // Now exhaust the rate budget through the ROUTED path: 3 enqueue+drives commit.
+    for n in 1..=3 {
+        let h = gw
+            .enqueue(77, 50, vec![])
+            .unwrap_or_else(|e| panic!("routed call {n} within rate must enqueue, got {e}"));
+        let r = gw.drive_executor(50);
+        assert_eq!(r.len(), 1);
+        let out = gw.resolve(&h).expect("routed call must deliver");
+        assert_eq!(out.tool_receipt.calls_made, n);
+    }
+    assert_eq!(gw.remaining(), 0, "the rate-3 mandate is exhausted");
+
+    // The 4th enqueue: over-rate, refused at the on-ramp — nothing enqueued.
+    let err = gw
+        .enqueue(77, 50, vec![])
+        .expect_err("the 4th routed call (over rate 3) MUST be refused at the on-ramp");
+    assert!(matches!(
+        err,
+        ToolCallError::Refused(GatewayRefusal::OverRate { calls_made: 3, rate_limit: 3 })
+    ));
+    assert_eq!(gw.inbox_depth(), 0, "the over-rate refusal enqueued nothing");
+}
+
+#[test]
+fn routed_pipelining_two_calls_drain_in_one_pass() {
+    // Two routed calls enqueued back-to-back (the rate gate reserves between them,
+    // so both pass against distinct counts), then a single drain pass executes
+    // both, and each resolves to its own result + delivery — the data-plane queue
+    // genuinely buffers multiple in-flight calls.
+    let (runtime, root) = runtime_with_root();
+    let mut gw = ToolGateway::admit(&runtime, &root, demo_grant()).expect("admit worker");
+
+    let h1 = gw.enqueue(77, 50, vec![]).expect("first routed call enqueues");
+    let h2 = gw.enqueue(77, 50, vec![]).expect("second routed call enqueues");
+    assert_ne!(
+        h1.routed_hash(),
+        h2.routed_hash(),
+        "distinct routed calls get distinct promise keys"
+    );
+    assert_eq!(gw.inbox_depth(), 2, "both routed calls buffered on the inbox");
+    assert_eq!(gw.calls_made(), 2, "both reserved their rate slot at enqueue");
+
+    // One drain pass executes BOTH.
+    let drained = gw.drive_executor(70);
+    assert_eq!(drained.len(), 2, "both routed calls drained in one pass");
+    assert_eq!(gw.inbox_depth(), 0);
+
+    let r1 = gw.resolve(&h1).expect("first delivers");
+    let r2 = gw.resolve(&h2).expect("second delivers");
+    assert_eq!(r1.tool_receipt.calls_made, 1, "first committed counter -> 1");
+    assert_eq!(r2.tool_receipt.calls_made, 2, "second committed counter -> 2");
+    let _ = runtime; // keep the runtime alive for the shared ledger.
+}
+
 /// Test-only access to drive the gateway's worker directly, to exercise the
 /// executor-side backstop independent of the in-band `deleg_admit` check.
 struct ToolGatewayTestAccess;
