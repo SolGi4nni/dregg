@@ -116,6 +116,25 @@ impl HermesSession {
         }
     }
 
+    /// Open a confined session over an EXPLICIT, caller-built gateway — for a
+    /// host that wants a specific confinement (a tighter per-tool rate, a
+    /// whole-tool deny) rather than the standard floors `new` installs. The
+    /// gateway must be `'static` (the live dock holds it for the app's life; the
+    /// `Box::leak`'d runtime in `new` is the canonical way to get one). The
+    /// session's clock starts at `start_clock` (the deadline-leg demo needs to
+    /// place a prompt past the mandate deadline).
+    pub fn with_gateway(
+        session_id: &str,
+        gateway: HermesGateway<'static>,
+        start_clock: i64,
+    ) -> HermesSession {
+        HermesSession {
+            gateway: Some(gateway),
+            session_id: session_id.to_string(),
+            clock: start_clock,
+        }
+    }
+
     /// Drive one prompt to completion over the in-process mock Hermes peer,
     /// returning the ordered stream of deltas (each paired with the live mandate
     /// at that moment). The reply text + the scripted tool-calls are derived from
@@ -358,6 +377,25 @@ impl AgentDockView {
         }
     }
 
+    /// Drain EVERY buffered streaming step into the model at once (no per-tick
+    /// pacing). The interactive dock uses the 24ms timer (`drain_one`) for the
+    /// streaming feel; a host that mounts this view in a non-painting context — a
+    /// headless `#[gpui::test]`, a one-shot CLI render — drives this instead to
+    /// fold the whole turn deterministically. The folded events, receipts, and
+    /// verdicts are identical either way; only the pacing differs. Returns the
+    /// number of steps drained.
+    pub fn drain_all(&mut self, cx: &mut Context<Self>) -> usize {
+        let mut n = 0;
+        while let Some((ev, mandate)) = self.pending.pop_front() {
+            self.model.apply_event(&ev, mandate.as_ref());
+            n += 1;
+        }
+        if n > 0 {
+            cx.notify();
+        }
+        n
+    }
+
     /// Replace the model (host-side push, e.g. a re-derive) and repaint.
     pub fn set_model(&mut self, model: AgentDockModel, cx: &mut Context<Self>) {
         self.model = model;
@@ -367,6 +405,15 @@ impl AgentDockView {
     /// The live model (host-side inspection).
     pub fn model(&self) -> &AgentDockModel {
         &self.model
+    }
+
+    /// The live confined session (host-side inspection). Its
+    /// [`HermesSession::mandate`] reads the gateway's CUMULATIVE counters (the
+    /// real session-wide budget), distinct from the model's per-turn animated
+    /// `mandate_rows` — a host/test that wants the whole-session depletion reads
+    /// this.
+    pub fn session(&self) -> &HermesSession {
+        &self.session
     }
 }
 

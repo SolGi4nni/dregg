@@ -51,3 +51,11 @@ pub mod zed {
 /// under `--features full-zed`.
 #[cfg(feature = "full-zed")]
 pub mod boot;
+
+/// The CONFINED-HERMES AGENT PANEL — a [`workspace::Panel`] wrapping deos-hermes's
+/// live [`AgentDockView`], docked into the real Zed [`workspace::Workspace`]
+/// alongside the project/outline/terminal panels. Every agent tool-call a
+/// cap-gated, metered, receipted dregg turn on the verified executor. Built only
+/// under `--features full-zed`.
+#[cfg(feature = "full-zed")]
+pub mod hermes_panel;

@@ -78,5 +78,12 @@ pub use acp::{PermissionOutcome, ToolCallRequest, ToolKind};
 pub use acp_client::{AcpClient, AcpError, AcpPeer, AcpTransport, PromptRun, StreamEvent};
 pub use bridge::HermesGateway;
 pub use grant_registry::{GrantRegistry, MandateKey};
+
+// Re-export the grounding SDK types a HOST needs to construct a confined gateway
+// (mint a root token, build a runtime) WITHOUT depending on `dregg-sdk` directly —
+// e.g. deos-zed-full's agent-panel mount builds its own tightly-confined
+// `HermesGateway` over these. The enforcement still lives entirely in `dregg-sdk`;
+// this is a convenience re-export of the constructor surface.
+pub use dregg_sdk::{AgentCipherclerk, AgentRuntime, HeldToken, ToolGrant};
 pub use mandate::{Mandate, MandateRow};
 pub use mock_peer::{MockHermesPeer, ScriptedCall};

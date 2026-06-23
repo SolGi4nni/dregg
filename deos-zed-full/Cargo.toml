@@ -38,6 +38,17 @@ full-zed = [
     "dep:theme",
     "dep:theme_settings",
     "dep:settings",
+    # The confined-Hermes AGENT PANEL. Pull deos-hermes with its gpui
+    # `cockpit-surface` (the live `AgentDockView` + `HermesSession` over a real,
+    # verified-executor-backed `HermesGateway`). `src/hermes_panel.rs` wraps that
+    # view in a `workspace::Panel` and docks it ALONGSIDE the project/outline/
+    # terminal panels — so the embedded IDE gets a live, receipted, cap-confined
+    # agent dev-loop. Gated here (only the full Workspace embed needs it; a bare
+    # `cargo build` stays free of the heavy Lean-linked SDK + gpui graph).
+    "dep:deos-hermes",
+    "deos-hermes/cockpit-surface",
+    # `ui` is needed to name `ui::IconName` in the agent panel's `Panel::icon`.
+    "dep:ui",
 ]
 
 [dependencies]
@@ -89,6 +100,23 @@ search = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e39
 theme = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
 theme_settings = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
 settings = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+
+# THE CONFINED-HERMES AGENT (gated on full-zed via `cockpit-surface`). Its
+# `cockpit_surface::AgentDockView` is a live gpui view over a real
+# `HermesSession` (a persistent `HermesGateway` on the verified Lean executor):
+# every tool-call a cap-gated, metered, RECEIPTED dregg turn. We pull it at the
+# SAME zed-fork gpui rev this crate uses, so the `Entity`/`Window`/`Render` types
+# are byte-identical — the view drops straight into our Workspace dock. deos-hermes
+# is its OWN standalone workspace (it embeds `dregg-sdk` defaults = the real
+# `libdregg_lean.a`), but as a PATH DEP it resolves under THIS workspace's
+# `[patch]` tables (the ark-serialize + plonky3-recursion forks below already
+# cover its proof dep-tree, identical to deos-hermes's own replicated set).
+deos-hermes = { path = "../deos-hermes", default-features = false, optional = true }
+
+# Zed's `ui` crate — only to name `ui::IconName` in the agent panel's
+# `Panel::icon` (the trait method returns `Option<ui::IconName>`). Same zed-fork
+# rev as the rest of the graph.
+ui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
 
 # Replicate the zed fork's [patch.crates-io] table (the subset our graph pulls),
 # same as deos-zed/Cargo.toml carries for gpui. Plus the proof-dep overrides the
