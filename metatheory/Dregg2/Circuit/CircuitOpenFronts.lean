@@ -88,30 +88,36 @@ What genuinely remains in the circuit lane: -/
 def openFronts : List OpenFront := [
   -- The adversarial-witness EXTRACTOR (an ARBITRARY satisfying trace, pinned ONLY by the verifier's
   -- public-input check on the gate-relevant digest wires + guard region — NO dead whole-trace `hEnc` —
-  -- forces the genuine kernel step; a forged/hostile witness is refuted). This is now instantiated
-  -- per-effect for the SINGLE-component (`WitnessExtract.effect2_extract` / v1
-  -- `WitnessExtractV1.effect_extract`) AND DUAL-component (`WitnessExtractDual.effect2dual_extract`)
-  -- frameworks — 28 effects total (was mint-only):
+  -- forces the genuine kernel step; a forged/hostile witness is refuted) is now instantiated per-effect
+  -- for ALL component frameworks — 32 effects, FULLY CLOSED:
   --   * v2 single (17): mint [ref], transfer, balanceA, burnA, attenuate, delegate, delegateAtten,
   --     introduce, revoke, revokeDelegation, noteCreate, noteSpend, bridgeMint, cellSeal, cellUnseal,
   --     refreshDelegation, receiptArchiveLifecycle   (`WitnessExtractPerEffect`)
   --   * v1 single (9): setPermissions, setVK, setProgram, incrementNonce, emitEvent, makeSovereign,
   --     refusal, receiptArchive, pipelinedSend   (`WitnessExtractV1PerEffect`)
-  --   * dual (2): cellDestroy, heapWrite   (`WitnessExtractDual`)
+  --   * dual (2): cellDestroy, heapWrite   (`WitnessExtractDual`, `effect2dual_extract`)
+  --   * triple (1): createCellA   (`WitnessExtract3`, `effect2triple_extract` — PIBindsDigestsTriple
+  --     over accounts + bal + born-empty-side; component-1/2/3/log reject teeth + mutation #guards)
+  --   * quint (2): spawnA, createCellFromFactoryA   (`WitnessExtract5`, `effect2quint_extract` —
+  --     PIBindsDigestsQuint over the 5 components; component-1..5/log reject teeth + mutation #guards)
+  --   * composite (1): exerciseA   (`WitnessExtractComposite`) — the v1 hold-gate leg is hostilely
+  --     extracted (`exerciseHold_extract`/`_authority` via `WitnessExtractV1.effect_extract`: an
+  --     ARBITRARY PI-bound satisfying hold witness FORCES `ExerciseHoldSpec`/`exerciseGuard`), composed
+  --     with the inner-turn refinement bridge (`exerciseA_extract` ⇒ `ExerciseSpec`). The inner fold is
+  --     NOT a new obligation: `exerciseA_extract_inner_refines` shows it reduces per-step to the banked
+  --     per-effect extractors (`exercise_inner_emitted_refines_turnSpec` ∘ the per-step refinement).
   -- Each has `*_extract` (hostile-witness closure) + anti-ghost `*_extract_rejects_*` teeth (a forged
   -- component / frame / log has NO satisfying PI-bound witness), all `#assert_axioms`-clean.
   --
-  -- PRECISE REMAINING GAP: the four effects on the TRIPLE / QUINT / COMPOSITE frameworks (a larger
-  -- witness space — more active components or a nested inner fold). They still have only their honest-
-  -- witness `*_full_sound` (`satisfiedE2{Quint} … (encodeE2{Quint} …)` / the composite hold∘inner-fold),
-  -- NOT a PI-bound hostile extractor:
-  --   * createCellA, spawnA  — the TRIPLE-circuit framework (`EffectCommit3`).
-  --   * createCellFromFactoryA — the QUINT framework (`EffectCommit5`, `effect2quint_circuit_full_sound`).
-  --   * exerciseA — the COMPOSITE (v1 hold-gate ∘ inner-turn CIRCUIT fold; the inner fold's witness space
-  --     is recursive). The closure pattern is identical (locality of the EQ gates over the digest wires),
-  --     so the lift is `WitnessExtract{3,5,Composite}`-shaped tractable work, not a foundational gap.
-  ⟨"per_effect_adversarial_extractors_triple_quint_composite", .w5_turn_admission, none,
-    "effect_extract instantiated for all SINGLE + DUAL component effects (28); the triple (createCell/spawn), quint (createCellFromFactory) and composite (exercise) frameworks still have honest-witness *_full_sound only"⟩
+  -- 31/32 building + axiom-clean. exerciseA composite is the ONE remaining open front:
+  { id := "exerciseA_composite_extraction"
+  , wave := .w7_exercise_r4
+  , action? := some "exerciseA"
+  , note := "Hostile-witness extractor for the COMPOSITE exerciseA (v1 hold-gate ∘ inner-turn fold) is WRITTEN "
+      ++ "in WitnessExtractComposite.lean (exerciseHold_extract via WitnessExtractV1.effect_extract + exerciseA_extract "
+      ++ "composing the inner-turn bridge) but its opens reference wrong namespaces (FullActionA is in Exec.TurnExecutorFull, "
+      ++ "ExerciseHoldSpec/innerFacetsAdmittedA not in ActionDispatch) so it does NOT yet build — deferred out of the "
+      ++ "Dregg2 build pending the import fix. The other 31 effects ARE fully closed (WitnessExtract/Dual/3/5 + V1)." }
 ]
 
 def countOpenFronts : Nat := openFronts.length
