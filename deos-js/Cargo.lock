@@ -850,6 +850,7 @@ dependencies = [
  "blake3",
  "deos-reflect",
  "dregg-cell",
+ "dregg-doc",
  "dregg-sdk",
  "dregg-turn",
  "dregg-types",
@@ -1163,6 +1164,10 @@ dependencies = [
  "postcard",
  "serde",
 ]
+
+[[package]]
+name = "dregg-doc"
+version = "0.1.0"
 
 [[package]]
 name = "dregg-dsl"

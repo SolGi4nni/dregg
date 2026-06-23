@@ -84,6 +84,18 @@ impl Doc {
         }
     }
 
+    /// A document over an EXISTING patch-history (e.g. one produced by a
+    /// [`History::stitch`] of two branches). Subsequent [`Doc::edit`]s chain off the
+    /// folded state of this history. This is the constructor the program-source weld
+    /// needs after a merge: it adopts the stitched history so the merged source stays
+    /// editable.
+    pub fn from_history(history: History, g: Granularity) -> Self {
+        Doc {
+            history,
+            granularity: g,
+        }
+    }
+
     /// The current rendered text: the clean content of the folded history. (A
     /// document with an unresolved conflict has no single linear text; this
     /// flattens the clean segments, which for the single-author text-editing path

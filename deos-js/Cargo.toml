@@ -54,6 +54,15 @@ starbridge-web-surface = { path = "../starbridge-web-surface" }
 # serializable blob stored in the cell heap, so a program becomes a portable cell-blob.
 # `serde`/`serde_json` serialize the manifest; `postcard` serializes the whole cell (the
 # SAME wire codec `dregg-cell` uses) for `to_cell_bytes`/`from_cell`.
+
+# THE PROGRAM-SOURCE-AS-DOCUMENT WELD — the applet's `view_source` is a `dregg_doc::Doc`
+# (a patch-history), so editing a gadget is a PATCH (blame attributes each line),
+# transcluding another gadget's source is a cap-gated provenanced embed (darkens out of
+# cap), and two concurrent edits MERGE (disjoint → clean fold; overlapping → a first-class
+# `ConflictRegion`). The doc's fold IS the `view_source` the runtime runs. Standalone,
+# dependency-free patch core (its OWN workspace, a cross-workspace path dep).
+dregg-doc = { path = "../dregg-doc" }
+
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 postcard = { version = "1", features = ["use-std"] }
