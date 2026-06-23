@@ -67,6 +67,15 @@ inductive CaveatPred where
   /-- **`validAfter t`** — admits a request iff its time is `≥ t` (a "not-before" / temporal floor;
   the macaroon `time >` caveat / the `DreggGrant.validAfter` dimension), as inspectable data. -/
   | validAfter (t : Time)
+  /-- **`validUntil t`** — admits a request iff its time is `≤ t` (a "not-after" / expiry CEILING; the
+  DUAL of `validAfter`, the macaroon `time <` caveat / the `DreggGrant.validUntil` dimension). Shares
+  `validAfter`'s `view : Ctx → Time` seam — no new projection. Composed with `validAfter` it is the
+  classic macaroon validity WINDOW `[lo, hi]` authored in the AST's connectives. -/
+  | validUntil (t : Time)
+  /-- **`heightLt h`** — admits a request iff its time is `< h` (a STRICT expiry / before-block-`h`
+  floor; the `DreggGrant.heightLt` dimension over a height-shaped request). The strict twin of
+  `validUntil` — distinct denotation (`< h` rejects `h` itself), same `Time` view. -/
+  | heightLt (h : Time)
   /-- Top — admits every request. -/
   | tt
   /-- Bottom — admits no request (fail-closed). -/
@@ -85,6 +94,8 @@ fold mirrors `Pred.eval`: `validAfter t` admits iff `t ≤ view ctx`; the connec
 `&&`/`||`/`!`/`true`/`false`. Decidable, computable, fail-closed (`ff` rejects). -/
 def CaveatPred.eval (view : Ctx → Time) : CaveatPred → Ctx → Bool
   | .validAfter t, ctx => decide (t ≤ view ctx)
+  | .validUntil t, ctx => decide (view ctx ≤ t)
+  | .heightLt h,   ctx => decide (view ctx < h)
   | .tt,           _   => true
   | .ff,           _   => false
   | .and l r,      ctx => l.eval view ctx && r.eval view ctx
@@ -293,6 +304,58 @@ theorem caveatPred_refines_nonvacuous :
   ⟨caveatPred_refines (by decide),
    fun hrefines => absurd (hrefines 75 (by decide)) (by decide)⟩
 
+/-! ### The fanned atoms — `validUntil` (the expiry CEILING) and `heightLt` (the STRICT before-`h`
+floor) — each with its content-level `_refines` lemma + a BOTH-pole non-vacuity witness, mirroring
+`validAfter`. Tightening a ceiling (lowering `t`) IS a refinement; tightening a strict floor
+(lowering `h`) IS a refinement. The refinement DIRECTION flips for `validUntil` vs `validAfter` —
+exactly the dual order — which is the content-level fact an opaque `Ctx → Bool` cannot expose. -/
+
+/-- **`caveatPred_validUntil_refines`** — tightening an expiry ceiling IS a refinement: `validUntil t₁`
+refines `validUntil t₂` exactly when `t₁ ≤ t₂` (an EARLIER not-after admits a subset). Note the order is
+the DUAL of `validAfter`'s (there a LATER floor refined): the content-level direction the reification
+exposes. -/
+theorem caveatPred_validUntil_refines {view : Ctx → Time} {t₁ t₂ : Time} (h : t₁ ≤ t₂) :
+    CaveatPred.refines view (.validUntil t₁) (.validUntil t₂) := by
+  intro ctx hadm
+  simp only [CaveatPred.eval, decide_eq_true_eq] at hadm ⊢
+  exact le_trans hadm h
+
+/-- **`caveatPred_validUntil_refines_nonvacuous`** — BOTH poles over the concrete `Height` view: an
+earlier ceiling refines a later one; a later ceiling does NOT refine an earlier one (height 75 is
+admitted by `validUntil 100` but rejected by `validUntil 50`). No laundered vacuity. -/
+theorem caveatPred_validUntil_refines_nonvacuous :
+    CaveatPred.refines heightView (.validUntil 50) (.validUntil 100) ∧
+    ¬ CaveatPred.refines heightView (.validUntil 100) (.validUntil 50) :=
+  ⟨caveatPred_validUntil_refines (by decide),
+   fun hrefines => absurd (hrefines 75 (by decide)) (by decide)⟩
+
+/-- **`caveatPred_heightLt_refines`** — tightening a strict before-`h` floor IS a refinement:
+`heightLt h₁` refines `heightLt h₂` exactly when `h₁ ≤ h₂` (a smaller strict ceiling admits a subset). -/
+theorem caveatPred_heightLt_refines {view : Ctx → Time} {h₁ h₂ : Time} (h : h₁ ≤ h₂) :
+    CaveatPred.refines view (.heightLt h₁) (.heightLt h₂) := by
+  intro ctx hadm
+  simp only [CaveatPred.eval, decide_eq_true_eq] at hadm ⊢
+  exact lt_of_lt_of_le hadm h
+
+/-- **`caveatPred_heightLt_refines_nonvacuous`** — BOTH poles: a smaller strict ceiling refines a
+larger one; a larger does NOT refine a smaller (height 75 passes `heightLt 100` but fails `heightLt 50`). -/
+theorem caveatPred_heightLt_refines_nonvacuous :
+    CaveatPred.refines heightView (.heightLt 50) (.heightLt 100) ∧
+    ¬ CaveatPred.refines heightView (.heightLt 100) (.heightLt 50) :=
+  ⟨caveatPred_heightLt_refines (by decide),
+   fun hrefines => absurd (hrefines 75 (by decide)) (by decide)⟩
+
+/-- A composed reified validity WINDOW `validAfter 100 ∧ validUntil 300` ≡ `[100, 300]`, authored in
+the AST's connectives over the SHARED `Time` view (now BOTH bounds are inspectable atoms, where the D6
+beachhead left the ceiling an `opaque` escape-hatch). -/
+def reifiedClosedWindow : CaveatPred := .and (.validAfter 100) (.validUntil 300)
+#guard (CaveatPred.eval heightView reifiedClosedWindow 150)            -- true  (100 ≤ 150 ≤ 300)
+#guard (CaveatPred.eval heightView reifiedClosedWindow 50)  == false   -- false (below the floor)
+#guard (CaveatPred.eval heightView reifiedClosedWindow 300)            -- true  (300 ≤ 300: ceiling inclusive)
+#guard (CaveatPred.eval heightView reifiedClosedWindow 350) == false   -- false (above the ceiling)
+example : CaveatPred.eval heightView reifiedClosedWindow 150 = true  := by decide
+example : CaveatPred.eval heightView reifiedClosedWindow 350 = false := by decide
+
 /-! ### The reified atom RUNS on the live token leg (`#guard`) — a `validAfter` caveat narrows a real
 token exactly like the opaque one did, with both admit/reject polarities. -/
 
@@ -316,6 +379,10 @@ example : CaveatPred.eval heightView reifiedBand 350 = false := by decide
 
 #assert_axioms caveatPred_refines
 #assert_axioms caveatPred_refines_nonvacuous
+#assert_axioms caveatPred_validUntil_refines
+#assert_axioms caveatPred_validUntil_refines_nonvacuous
+#assert_axioms caveatPred_heightLt_refines
+#assert_axioms caveatPred_heightLt_refines_nonvacuous
 #assert_axioms attenuate_narrows
 #assert_axioms Caveat.ok
 
