@@ -152,10 +152,17 @@ Plus an EXECUTOR-DRIVEN variant (`DocEditor`: each edit a cap-gated turn; unauth
 (`pty-ws-server`) spawns a real `$SHELL` on a real PTY (portable-pty + tokio-tungstenite), relays bytes over
 WS; wasm `WsTransport` feeds PTY bytes through `vte` into the render grid; shared `WireMsg` codec (resize).
 E2E test (2 passed): in-process server, real shell over a real WebSocket, `echo`+`pwd` bytes return over the
-socket — the exact path the browser pane speaks. wasm + native-full green. SEAM (editor-Fs + chat-wasm-live):
-backends are wasm-REACHABLE in-tab (FirmamentFs + matrix-sdk 0.18 both wasm-compile) but NOT MOUNTED on the
-`gpui-web` build — `dev-surfaces` (pulls deos-zed/deos-matrix) is off that feature; the wire is enabling that
-graph + mounting the editor/chat views on wasm (touches the cockpit feature-graph).
+socket — the exact path the browser pane speaks. wasm + native-full green. EDITOR+CHAT MOUNT CLOSED
+`ed0a615b`: the blocker was deos-zed/deos-matrix's `cockpit-surface` implying native `gui` (unlinkable on
+wasm); fix pulls only the WASM-SAFE backends (deos-zed `firmament` no-gui + deos-matrix gpui-free `source`)
+into the `gpui-web` graph + renders `WebEditorPane`/`WebChatPane`/`WebCockpitRoot` on gpui_web. Proven on
+REAL wasm32 (`wasm-pack test --node`, 2/2): a web-editor save = a receipted `SetField` turn (receipt count
+grows); a web-chat message = a turn vs a room cell (`SendReceipt`). wasm-check WITH panes + native-full
+green; bundle 28M. PAINT NUANCE (honest): the cockpit paints a FRAME in-browser (proven PNG `449b5941`,
+single-frame capture) + panes drive on wasm (proven test), but SUSTAINED interactive repaint hits a
+pre-existing `gpui_web` fork borrow (`zed-dregg-web/.../gpui_web/src/window.rs:294` RefCell-already-borrowed,
+independent of the panes — the shell alone hits it headless; being fixed in-place in the fork per the
+`[patch]` note). Live interactive web cockpit = that fork borrow fix.
 - ⚠ OPS: disk hit ~117Mi free during builds; the lane reclaimed 72G of `target/debug/incremental`. Now
   ~44Gi free on a 100%-used volume — TIGHT. Heavy parallel rust builds can refill it; prune build caches.
 
