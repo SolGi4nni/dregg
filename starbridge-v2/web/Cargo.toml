@@ -32,6 +32,16 @@ gpui-web = [
     "dep:gpui",
     "dep:gpui_platform",
     "dep:gpui-component",
+    # THE MOUNTED PANES — the wasm-safe editor + chat BACKENDS. deos-zed's
+    # `firmament` feature (NO `gui`) gives the gpui-free `FirmamentFs`/`OwnedSpine`
+    # — a save is an in-tab receipted `SetField` turn. deos-matrix's gpui-free
+    # `source` module (always compiled, default features) gives the `MockSource`
+    # `ChatSource`. We render the gpui element trees for these panes HERE
+    # (`cockpit_web::{WebEditorPane,WebChatPane}`) on the host's gpui_web — we do
+    # NOT pull deos-zed/deos-matrix's own `gui`/`cockpit-surface` (those link gpui's
+    # native windowing, which cannot reach wasm32). See docs/deos/WEB-DEOS.md.
+    "dep:deos-zed",
+    "dep:deos-matrix",
 ]
 
 [dependencies]
@@ -60,6 +70,22 @@ gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82
 # features OFF (no tree-sitter grammars), matching starbridge-v2's dep.
 gpui-component = { path = "../../../gpui-component/crates/ui", default-features = false, optional = true }
 
+# THE EDITOR PANE BACKEND — deos-zed's gpui-free `FirmamentFs`/`OwnedSpine` (the
+# `firmament` feature, NOT `gui`): a file IS a cell, a save IS a real cap-gated
+# `SetField` turn through `TurnExecutor` leaving a `TurnReceipt`, in-tab. On wasm32
+# deos-zed resolves the no-Lean-link executor (its own `cfg(wasm32)` block), exactly
+# the in-browser executor starbridge-web already drives. `default-features = false`
+# drops its `gui`/`screenshot`/`gui-demo` defaults (all gpui-native — wasm cannot
+# link them); only `firmament` is on. Optional + pulled by `gpui-web`.
+deos-zed = { path = "../../deos-zed", default-features = false, features = ["firmament"], optional = true }
+# THE CHAT PANE BACKEND — deos-matrix's gpui-free `source` module (always compiled,
+# `default = []`): the `MockSource` `ChatSource` (a recorded sync — rooms, timelines,
+# a composer that appends locally), wasm-proven (its `wasm_tests::mock_chatsource_runs_on_wasm`).
+# We do NOT enable `gui`/`cockpit-surface` (gpui-native). The live `MatrixHandle`
+# (matrix-sdk's IndexedDB+spawn_local wasm client) drops in behind the SAME trait
+# unchanged. Optional + pulled by `gpui-web`.
+deos-matrix = { path = "../../deos-matrix", default-features = false, optional = true }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
@@ -77,6 +103,15 @@ web-sys = { version = "0.3", features = [
     "Event",
     "CloseEvent",
 ] }
+
+# wasm32 test runner — `wasm-bindgen-test` executes `#[wasm_bindgen_test]` cases on
+# real wasm32 (under `wasm-pack test --node`, no browser driver). This is how the
+# MOUNTED PANES' wasm-safe backends are PROVEN to drive in-browser: the editor's
+# FirmamentFs save → a real receipt, the chat's MockSource rooms/timeline/send —
+# the data the gpui_web-rendered panes bind to, run on the wasm32 single-threaded
+# model. See tests/web_panes_wasm.rs (run under `--features gpui-web`).
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
 
 # The native PTY-over-WebSocket terminal backend server (`pty_ws::serve`). Gated
 # `cfg(not(wasm32))` so the wasm bundle never pulls a PTY/tokio/tungstenite tree.
