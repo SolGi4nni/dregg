@@ -11,6 +11,21 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### REAL NODE RUNS + COCKPIT ATTACHES — LANDED, verified by running (2026-06-23).
+`7eba16ee` + `docs/deos/DEV-NODE-RUNBOOK.md`. `dregg-node init && run --enable-faucet` serves a
+live `/status` (`state_producer:lean`, `lean_producer:true`, 21 covered effects, `consensus_live`)
+and a real verified receipt chain (`has_proof·executor_signed·has_witness`, pre→post, 497
+computrons, chained) — seen live on :8771, not just reported. `starbridge-v2 --node URL` attaches
+(LiveNode::sync over `/status`+`/api/cells`+`/api/receipts`, SSE `/api/events/stream` → `pump_live`);
+all four endpoints 200, faucet receipt pushes over SSE. The faucet enforces recipient ==
+`CellId::derive_raw(pubkey, blake3("default"))` (a bad recipient → in-band refusal, confirmed).
+- CROSS-LANE COUPLING (durable): the node links the git-tracked CLEAN SEED Lean kernel even when
+  the circuit/metatheory working tree is dirty — `dregg-lean-ffi/build.rs` now restores the seed
+  archive + skips the torn partial-`.c` splice on a `lake build` failure. CONSEQUENCE: to compile
+  FRESH Lean-kernel changes into the node, the circuit lane's proof (`#assert_axioms` on
+  `handler_refines_execFullA_attenuate`) must go green first. Their lane, not ours; the node is
+  unblocked regardless.
+
 ### WEB-SHELL REAL-PAGE RENDER — blocked on a servo-paint surfman ceiling (2026-06-23).
 Named in `384d1f68` (servo net-cap lane). The net-cap socket gate is DONE+proven (cap-denied
 origin → `RefusedByCap`, `Netlayer::dial` never called — `servo-render/src/netcap_connector.rs`
