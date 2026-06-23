@@ -145,6 +145,66 @@ fn js_spike_body() {
         1,
         "the unauthorized affordance committed NOTHING (anti-ghost)"
     );
+
+    // ── (d) THE REFLECTIVE CRAWL — JS objects crawl the live image ─────────────────
+    // Reflection is a cap-bounded, attested READ (no authority conferred), distinct
+    // from the productions above. The applet's ledger holds its sovereign cell;
+    // `deos.world`/`deos.cell` crawl it through `deos-reflect`.
+    let mut crawl_applet = counter_applet(0xD7);
+    crawl_applet.fire("inc", 42).unwrap(); // model = 42; the crawl reads it back
+    let cell_hex = crawl_applet
+        .cell()
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    set_current_applet(crawl_applet);
+
+    // (d.1) crawl every cell, read a substance off the live ledger.
+    let js_crawl = format!(
+        r#"
+        var ids = deos.world.cells();              // crawl the ledger
+        var found = ids.indexOf("{cell_hex}") >= 0; // our applet cell is present
+        var view = deos.cell("{cell_hex}").reflect(); // the four substances
+        // balance field is a real witnessed read off the ledger:
+        var bal = -1;
+        for (var i = 0; i < view.fields.length; i++)
+            if (view.fields[i].key === "balance") bal = view.fields[i].value;
+        // pack: 1 if found AND it's a Cell AND the title mentions "Cell"
+        (found && view.kind === "Cell" && view.title.indexOf("Cell") === 0) ? 1 : 0;
+    "#
+    );
+    let crawl_ok = rt.eval(&js_crawl).expect("eval (d.1) should succeed");
+    assert_eq!(crawl_ok, Some(1), "JS crawled the live image and read a cell's substances");
+
+    // (d.2) the frustum is cap-bounded: the cell observes ITSELF (it is on its own
+    // ledger); an all-zero stranger id is NOT observable (absence, not forgery).
+    let js_frustum = format!(
+        r#"
+        var c = deos.cell("{cell_hex}");
+        var self_view = c.as("{cell_hex}");
+        var sees_self = self_view.canObserve("{cell_hex}") ? 1 : 0;
+        var stranger = "{stranger}";
+        var sees_stranger = self_view.canObserve(stranger) ? 1 : 0;
+        var stranger_reflect = self_view.reflect(stranger); // null — unobservable
+        (sees_self === 1 && sees_stranger === 0 && stranger_reflect === null) ? 1 : 0;
+    "#,
+        stranger = "00".repeat(32),
+    );
+    let frustum_ok = rt.eval(&js_frustum).expect("eval (d.2) should succeed");
+    assert_eq!(
+        frustum_ok,
+        Some(1),
+        "the frustum is cap-bounded: self observable, a stranger absent (not forged)"
+    );
+
+    // The crawl is a READ — it committed NO turns (only the one inc did).
+    let crawled = take_current_applet().expect("crawl applet present");
+    assert_eq!(
+        crawled.receipt_count(),
+        1,
+        "reflection is a READ: the crawl committed NO turns"
+    );
 }
 
 #[test]

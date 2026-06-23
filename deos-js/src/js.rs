@@ -21,15 +21,18 @@ use std::str;
 
 use mozjs::context::{JSContext as SmContext, RawJSContext};
 use mozjs::jsapi::{CallArgs, OnNewGlobalHookOption, Value};
-use mozjs::jsval::{Int32Value, UndefinedValue};
+use mozjs::jsval::{Int32Value, StringValue, UndefinedValue};
 use mozjs::realm::AutoRealm;
 use mozjs::rooted;
-use mozjs::rust::wrappers2::{EncodeStringToUTF8, JS_DefineFunction, JS_NewGlobalObject};
+use mozjs::rust::wrappers2::{
+    EncodeStringToUTF8, JS_DefineFunction, JS_NewGlobalObject, JS_NewStringCopyN,
+};
 use mozjs::rust::{
     evaluate_script, CompileOptionsWrapper, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS,
 };
 
 use crate::applet::Applet;
+use crate::reflect_binding;
 
 thread_local! {
     /// The applet the native functions drive. ONE applet per runtime for the spike
@@ -83,6 +86,53 @@ const PRELUDE: &str = r#"
                 })(names[i]);
             }
             return handle;
+        },
+        // ── THE REFLECTIVE CRAWL (slice 2) — JS objects crawl the live image ──────
+        // Reflection is a cap-bounded, attested READ (confers no authority), distinct
+        // from driving (a turn). Every accessor parses JSON from a `__deos_reflect_*`
+        // native that projects the live ledger through `deos-reflect`.
+        world: {
+            // every cell id on the ledger (the unbounded crawl root)
+            cells: function() { return JSON.parse(__deos_world_cells()); },
+            cellCount: function() { return this.cells().length; },
+            // the capability web (nodes + edges)
+            ocap: function() { return JSON.parse(__deos_world_ocap()); }
+        },
+        // a reflective handle on ONE cell: its four substances + per-viewer frustum.
+        cell: function(id) {
+            var cid = String(id);
+            return {
+                id: cid,
+                // the four substances (value/authority/state/evidence) as a field tree
+                reflect: function() {
+                    var j = __deos_cell(cid);
+                    return j === "null" ? null : JSON.parse(j);
+                },
+                // a quick read of a named substance field's value
+                field: function(key) {
+                    var r = this.reflect();
+                    if (!r) return null;
+                    for (var i = 0; i < r.fields.length; i++)
+                        if (r.fields[i].key === key) return r.fields[i].value;
+                    return null;
+                },
+                // .as(viewer) → the cap-bounded view: which cells `viewer` may crawl,
+                // and a reflect() that yields null for an unobservable target.
+                as: function(viewer) {
+                    var v = String(viewer);
+                    return {
+                        frustum: function() { return JSON.parse(__deos_frustum(v)); },
+                        canObserve: function(target) {
+                            var f = this.frustum();
+                            return f.visible.indexOf(String(target)) >= 0;
+                        },
+                        reflect: function(target) {
+                            var j = __deos_frustum_reflect(v, String(target));
+                            return j === "null" ? null : JSON.parse(j);
+                        }
+                    };
+                }
+            };
         }
     };
 "#;
@@ -130,10 +180,17 @@ impl JsRuntime {
 
             // Install the native bridge functions on the realm's global.
             for (name, f, nargs) in [
+                // drive (slice 1)
                 (c"__deos_fire", native_fire as RawNative, 2u32),
                 (c"__deos_get", native_get as RawNative, 1),
                 (c"__deos_view_set", native_view_set as RawNative, 2),
                 (c"__deos_view_get", native_view_get as RawNative, 1),
+                // crawl (slice 2) — the reflective natives (return JSON strings)
+                (c"__deos_world_cells", native_world_cells as RawNative, 0),
+                (c"__deos_world_ocap", native_world_ocap as RawNative, 0),
+                (c"__deos_cell", native_cell as RawNative, 1),
+                (c"__deos_frustum", native_frustum as RawNative, 1),
+                (c"__deos_frustum_reflect", native_frustum_reflect as RawNative, 2),
             ] {
                 let defined = JS_DefineFunction(realm_cx, g, name.as_ptr(), Some(f), nargs, 0);
                 if defined.is_null() {
@@ -326,4 +383,109 @@ unsafe extern "C" fn native_view_get(
     });
     args.rval().set(Int32Value(if present { 1 } else { 0 }));
     true
+}
+
+// ── THE REFLECTIVE CRAWL natives (slice 2) — each returns a JSON STRING ────────────
+
+/// Set the rval of a native call to a freshly-allocated JS string. Returns false (the
+/// native should return false) only on allocation failure.
+unsafe fn return_string(cx: &mut SmContext, args: &CallArgs, s: &str) -> bool {
+    let js_str = JS_NewStringCopyN(cx, s.as_ptr() as *const core::ffi::c_char, s.len());
+    if js_str.is_null() {
+        record_error("JS_NewStringCopyN failed".into());
+        args.rval().set(UndefinedValue());
+        return false;
+    }
+    args.rval().set(StringValue(&*js_str));
+    true
+}
+
+/// `__deos_world_cells()` → JSON array of every cell id on the applet's ledger.
+unsafe extern "C" fn native_world_cells(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let json = CURRENT_APPLET.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|a| reflect_binding::world_cells_json(a.ledger()))
+            .unwrap_or_else(|| "[]".to_string())
+    });
+    return_string(&mut cx, &args, &json)
+}
+
+/// `__deos_world_ocap()` → JSON of the capability web (nodes + edges).
+unsafe extern "C" fn native_world_ocap(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let json = CURRENT_APPLET.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|a| reflect_binding::world_ocap_json(a.ledger()))
+            .unwrap_or_else(|| "{\"nodes\":[],\"edges\":[]}".to_string())
+    });
+    return_string(&mut cx, &args, &json)
+}
+
+/// `__deos_cell(id)` → JSON of the cell's four substances (or `"null"` if absent).
+unsafe extern "C" fn native_cell(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let id_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let json = CURRENT_APPLET.with(|c| {
+        let guard = c.borrow();
+        let applet = match guard.as_ref() {
+            Some(a) => a,
+            None => return "null".to_string(),
+        };
+        match reflect_binding::parse_cell_id(&id_hex) {
+            Some(id) => reflect_binding::cell_json(applet.ledger(), &id).unwrap_or_else(|| "null".to_string()),
+            None => "null".to_string(),
+        }
+    });
+    return_string(&mut cx, &args, &json)
+}
+
+/// `__deos_frustum(viewer)` → JSON of the cap-bounded view (which cells viewer crawls).
+unsafe extern "C" fn native_frustum(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let viewer_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let json = CURRENT_APPLET.with(|c| {
+        let guard = c.borrow();
+        let applet = match guard.as_ref() {
+            Some(a) => a,
+            None => return "{\"viewer\":\"\",\"visibleCount\":0,\"visible\":[]}".to_string(),
+        };
+        match reflect_binding::parse_cell_id(&viewer_hex) {
+            Some(viewer) => reflect_binding::frustum_json(applet.ledger(), &viewer),
+            None => "{\"viewer\":\"\",\"visibleCount\":0,\"visible\":[]}".to_string(),
+        }
+    });
+    return_string(&mut cx, &args, &json)
+}
+
+/// `__deos_frustum_reflect(viewer, target)` → the cell JSON if `viewer` may observe
+/// `target`, else `"null"` (the attested read: an unreachable cell is absent).
+unsafe extern "C" fn native_frustum_reflect(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let viewer_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let target_hex = if args.argc_ >= 2 { arg_string(&mut cx, args.get(1)) } else { String::new() };
+    let json = CURRENT_APPLET.with(|c| {
+        let guard = c.borrow();
+        let applet = match guard.as_ref() {
+            Some(a) => a,
+            None => return "null".to_string(),
+        };
+        match (
+            reflect_binding::parse_cell_id(&viewer_hex),
+            reflect_binding::parse_cell_id(&target_hex),
+        ) {
+            (Some(viewer), Some(target)) => {
+                reflect_binding::frustum_reflect_json(applet.ledger(), &viewer, &target)
+            }
+            _ => "null".to_string(),
+        }
+    });
+    return_string(&mut cx, &args, &json)
 }

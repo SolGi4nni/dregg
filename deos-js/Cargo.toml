@@ -40,6 +40,10 @@ dregg-cell = { path = "../cell" }     # Cell / CellState / AuthRequired / is_att
 dregg-turn = { path = "../turn" }     # TurnBuilder / ActionBuilder / Effect / Turn / TurnReceipt.
 dregg-types = { path = "../types" }   # CellId.
 
+# THE REFLECTIVE SUBSTRATE — cap-bounded, attested crawl of the live image (slice 2).
+# gpui-free; the JS `deos.world`/`deos.cell` object graph binds to it.
+deos-reflect = { path = "../deos-reflect" }
+
 # THE TRANSCLUSION PRIMITIVE — the cap-gated, provenanced distributed-DOM compose.
 # `WholeCellTransclusion` lives in starbridge-v2 (off-limits) but is a THIN welder over
 # this crate's REAL `WebOfCells` + `TranscludedField` (content -> commitment -> receipt

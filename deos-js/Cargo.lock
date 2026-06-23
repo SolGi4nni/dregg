@@ -848,12 +848,22 @@ name = "deos-js"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "deos-reflect",
  "dregg-cell",
  "dregg-sdk",
  "dregg-turn",
  "dregg-types",
  "mozjs",
  "starbridge-web-surface",
+]
+
+[[package]]
+name = "deos-reflect"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
 ]
 
 [[package]]

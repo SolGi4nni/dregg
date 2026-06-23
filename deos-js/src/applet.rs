@@ -190,6 +190,17 @@ impl Applet {
         self.cell
     }
 
+    /// The live ledger this applet's cell lives on (the "world" the reflective crawl
+    /// walks). A witnessed, read-only view — the SAME ledger `fire` commits onto.
+    pub fn ledger(&self) -> &dregg_cell::Ledger {
+        self.engine.ledger()
+    }
+
+    /// The receipt tape (the provenance lineage the reflective `present()` reads).
+    pub fn receipts(&self) -> &[[u8; 32]] {
+        &self.receipts
+    }
+
     /// A witnessed read of the live model off the embedded ledger (the SAME read the
     /// inspector makes). The positions of the polynomial functor.
     pub fn model(&self) -> CellModel {

@@ -15,9 +15,19 @@
 //!
 //! [`applet::Applet`] is the substance binding (engine-independent, the load-bearing
 //! factoring); [`js::JsRuntime`] is the genuine SpiderMonkey engine driving it.
+//!
+//! ## Two slices
+//!
+//! - **drive** ([`applet`]): `deos.applet`/`app.fire` — an affordance is a *production*
+//!   (a real cap-gated verified turn). View-state is ephemeral; `transclude` composes.
+//! - **crawl** ([`reflect_binding`]): `deos.world`/`deos.cell` — the fully-reflective
+//!   object graph over the live image (cells · the four substances · the ocap web ·
+//!   the cap-bounded frustum), via the gpui-free `deos-reflect`. Reflection is a READ
+//!   that confers no authority — cap-bounded and attested, *not* omniscient.
 
 pub mod applet;
 pub mod js;
+pub mod reflect_binding;
 
 pub use applet::{Affordance, Applet, CellModel, FireError, Transclusion, TranscludeError};
 pub use js::JsRuntime;
