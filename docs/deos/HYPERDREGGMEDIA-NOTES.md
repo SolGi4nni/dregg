@@ -178,8 +178,15 @@ can't *edit* them from within. The unifying truth: **every authoring gesture is 
 every affordance is a turn; every turn is a receipt.** So the whole authoring layer is one machinery
 pointed at the cells' own schemas. The eight surfaces between us and a HyperCard-of-dregg:
 
-1. **Card editor** (`card_editor.rs`) — edit a card's schema/affordances/fields *as verified turns
-   on the cell*. The keystone: turns inspection into authoring.
+1. **Card editor** (`card_editor.rs`) — edit a card's view/affordances/fields *as verified turns
+   on the cell*. The keystone: turns inspection into authoring. **BUILT** (`deos-js/src/card_editor.rs`):
+   `CardEditor::edit_view` patches a card's `view_source` document (add a button / relabel) — the
+   view re-folds and `deos-view` re-renders it (the new button reaches pixels), the edit a receipted
+   patch `blame` attributes; `set_field` is a real `SetField` verified turn; `add_affordance` welds a
+   new fireable affordance that travels in the re-minted cell. Every gesture is bounded by the
+   editor's `held` — an unauthorized card-edit is refused in-band (the cap tooth). An agent (`run_js`
+   shape) authors a card's UI through the same path, each edit a receipt attributed to the agent.
+   Proven by running (`deos-js/tests/card_editor.rs`, `deos-view/tests/card_editor_rerenders.rs`).
 2. **Multi-cell agent turns** (extend `deos-hermes/run_js`) — the agent authors stories spanning
    cells, cap-tooth-confined across vessels. (Lets a Claude build a whole stack, not one card.)
 3. **Stitcher UI** (`stitcher.rs`) — render a conflict antichain as two live alternatives; pick /

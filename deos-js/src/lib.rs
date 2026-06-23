@@ -27,6 +27,7 @@
 
 pub mod applet;
 pub mod attach;
+pub mod card_editor;
 pub mod js;
 pub mod portable;
 pub mod program_doc;
@@ -34,6 +35,7 @@ pub mod reflect_binding;
 
 pub use applet::{Affordance, Applet, CellModel, FireError, Transclusion, TranscludeError};
 pub use attach::{AttachedApplet, WorldSink};
+pub use card_editor::{CardEditor, EditError, ViewEdit, ViewPatch, ViewTree};
 pub use js::{JsRuntime, JsTarget};
 pub use portable::{AffordanceSpec, AppletManifest, ApplyOp, PortableApplet};
 pub use program_doc::{GadgetCite, ProgramSource, TranscludedFragment};

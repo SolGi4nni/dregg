@@ -57,7 +57,9 @@ pub enum ApplyOp {
 impl ApplyOp {
     /// Reconstitute the live apply closure. The closure is a pure function of the live
     /// model + the JS-supplied arg, exactly as the originally-minted affordance was.
-    fn into_closure(self) -> Box<dyn Fn(&CellModel, i64) -> Vec<(Slot, FieldElement)>> {
+    pub(crate) fn into_closure(
+        self,
+    ) -> Box<dyn Fn(&CellModel, i64) -> Vec<(Slot, FieldElement)>> {
         match self {
             ApplyOp::AddToSlot { slot } => Box::new(move |model, arg| {
                 let cur = model.field_u64(slot);

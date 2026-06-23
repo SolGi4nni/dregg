@@ -437,6 +437,17 @@ impl Applet {
         Ok(receipt)
     }
 
+    /// **Register (or replace) an affordance** on the live applet — the authoring weld.
+    ///
+    /// Adding a named direction to the polynomial-functor interface: the card gains a new
+    /// fireable affordance (a new button). Replacing an existing name (same key) swaps its
+    /// effect-template. Used by [`crate::card_editor::CardEditor`] to weld a new affordance
+    /// and to register the internal authorship/set-field gestures it fires. The fire of a
+    /// registered affordance is the SAME cap-gated verified turn [`Applet::fire`] commits.
+    pub fn register_affordance(&mut self, affordance: Affordance) {
+        self.affordances.insert(affordance.name.clone(), affordance);
+    }
+
     /// The full committed receipts (the provenance lineage).
     pub fn full_receipts(&self) -> &[TurnReceipt] {
         &self.full_receipts
