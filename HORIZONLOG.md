@@ -26,9 +26,12 @@ theory — NO host `.git`. 5 gpui tests: HEAD = patch-chain tip · `status` = mo
 live cell · `blame` attributes each line to its authoring patch (save = commit) · `show` renders a patch as
 a `CommitDetails`+`CommitDiff` · branches/committed-text from history. `open_repo` now returns the
 cell-ledger repo; `record_git_save` commits a patch on every save (git log/blame in lockstep w/ receipts).
-SEAM: the `git_ui` PANEL auto-discovery needs a `.git` worktree entry (`project/src/git_store.rs:447`); the
-cell namespace has none → the test drives the `GitRepository` object directly. Closing the panel =
-synthesize a `.git` namespace entry / inject `UpdatedGitRepository`.
+PANEL AUTO-DISCOVERY CLOSED `809a7e74`: FirmamentZedFs presents ONE synthetic `.git` dir entry at the work
+root (gated on `enable_git`) → Zed's scanner git-detection (`child_name == ".git"`) fires
+`WorktreeUpdatedGitRepositories` → `GitStore` → the already-wired `open_repo` → `CellLedgerGit` picked up as
+a real auto-discovered `Repository`. Test (`git_panel_auto_discovery`): `project.repositories` holds the
+auto-discovered repo (HEAD = cell-ledger `main`), after an edit `cached_status()` lists `main.rs` modified
+(real modified-since-HEAD through the `GitStore`). full-zed green. The git surface is now complete.
 
 ### HERMES AGENT PANEL in the Zed Workspace — live + receipted, by running (2026-06-23).
 `2d319930` (`deos-zed-full/src/hermes_panel.rs` + tiny `deos-hermes` pub exposures). A real `workspace::Panel`
