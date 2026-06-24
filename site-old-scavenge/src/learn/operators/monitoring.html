@@ -1,0 +1,55 @@
+<layout src="_layouts/default.html">
+<title>Monitoring — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/learn.html">Learn</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <a href="/learn/operators/running-a-node.html">Operators</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Monitoring</span>
+    </nav>
+<h1>Monitoring</h1>
+
+    <p>
+      dregg-node uses the <code>tracing</code> crate for structured logging. Control
+      log levels via the <code>RUST_LOG</code> environment variable.
+    </p>
+
+    <h2 id="status">Status Endpoint</h2>
+
+    <pre><code>curl http://127.0.0.1:8420/status</code></pre>
+
+    <p>Returns node health, peer count, latest attested root, and sync state.</p>
+
+    <h2 id="logging">Log Configuration</h2>
+
+    <pre><code># Default: info-level dregg logs
+RUST_LOG=dregg_node=info dregg-node run ...
+
+# Debug everything
+RUST_LOG=debug dregg-node run ...
+
+# Specific crate tracing
+RUST_LOG=dregg_node=debug,dregg_federation=info dregg-node run ...</code></pre>
+
+    <h2 id="tracing">Distributed Tracing</h2>
+
+    <p>
+      dregg-node emits <code>tracing</code> spans on every <code>turn::execute</code>,
+      federation peer exchange, and STARK verification, but does not currently
+      export them to a collector. The <code>tracing-subscriber</code> layer
+      stack is local: stdout / JSON logs only. Bridging to OTLP /
+      OpenTelemetry is on the roadmap once a deployment recipe stabilises
+      around a specific collector — until then, ingest stdout JSON with the
+      log shipper of your choice.
+    </p>
+
+  </main>
+</div>
+
+</layout>

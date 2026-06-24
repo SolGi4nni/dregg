@@ -1,0 +1,144 @@
+<layout src="_layouts/default.html">
+<title>4 · Receipts &amp; Q — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/docs.html">The Protocol</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>4 · Receipts &amp; Q</span>
+    </nav>
+
+<h1>Receipts &amp; Q: history as evidence</h1>
+
+    <p>
+      A committed turn leaves <strong>Q</strong> — the receipt: the committed postcondition of
+      the step, under one commitment scheme (a sorted-Poseidon2 Merkle commitment, all the
+      way down). The witness proves Q; disclosure dials project Q; aggregation folds Q; the
+      light client verifies only Q-chains. One object, every role.
+    </p>
+
+    <h2 id="log-is-truth">The log is the truth; the database is a cache</h2>
+
+    <p>
+      Two coupled chains record a cell's history. The <strong>receipt chain</strong> (per
+      cell, <code>prev → hash</code>) is the append-only record of <em>what was decided</em>.
+      The <strong>witness bundle</strong>, bound into each receipt by its witness hash, is
+      the <em>content</em> that makes the decision replayable. Because the witness is bound,
+      checkpoint, restore, replay, and time-travel are <em>theorems</em>, not features: you
+      re-seed the execution from a recorded witness and the same receipts fall out. Any
+      state you can display is a projection of the chain; the chain is what is true.
+    </p>
+
+    <h2 id="binds-everything">A receipt binds the whole post-state</h2>
+
+    <p>
+      The receipt's commitment is determined by — and, under collision-resistance, recovers —
+      <em>every field</em> of the post-state. There is no field a tamperer can edit while
+      keeping the receipt valid: not a third cell's slots, not the capability list, not a
+      nullifier, not the lifecycle. This is what separates a receipt from a checksum: it is
+      a binding judgment about the entire state of the system after the step, including the
+      parts the step did not touch (the frame is committed too).
+    </p>
+
+    <h2 id="memory-program">The executor is a memory program</h2>
+
+    <p>
+      "Binds <em>every</em> field" is not a slogan bolted onto the commitment — it is a
+      structural fact about how the executor moves state. Every state access the kernel makes —
+      a register read or write, a heap get or set, a capability-membership check, a nullifier
+      insert or freshness test — is one tuple in <strong>one memory multiset</strong> over a
+      single domain-tagged address space. The whole post-state has a <em>universal map</em>: a
+      total projection that lays all seventeen kernel fields, the heap, the c-list, the
+      nullifiers, and the receipt log onto one address space, and the post-state's projection
+      <em>equals</em> the fold of the verb's emitted memory trace over the pre-state's
+      projection. Every field has a universal address; nothing is off the map, so nothing can be
+      smuggled past the commitment.
+    </p>
+
+    <p>
+      This collapse pays out twice. First, it is what makes integrity <em>constructive</em>
+      rather than asserted — the commitment binds the whole state because the whole state <em>is</em>
+      the final column of one memory argument, and a single Blum multiset-balance check certifies
+      every per-domain view at once (the domain tag keeps the views disjoint: a capability check
+      cannot alias a nullifier cell). Second, it makes nullifier freshness <em>Merkle-path-free
+      inside a proof</em>: a read that returns "absent" at a nullifier address, under the
+      insert-only discipline, <em>proves</em> the nullifier was fresh — no per-access hashing, no
+      in-proof Merkle path. Cross-proof persistence still rides the published sorted-tree root
+      (the boundary view derived from the final memory cells equals today's root), so anyone
+      holding the root learns absence; the path just stops being paid intra-proof.
+    </p>
+
+    <p>
+      One thing deliberately does <em>not</em> ride the memory multiset: conservation. Σδ = 0 is a
+      <em>correlated</em> property of a paired write (value out of one balance, into another) and
+      cannot be expressed by any per-address argument — so it stays an in-row paired constraint on
+      the move row, exactly where <a href="/learn/concepts/substances.html">rung 2</a>'s linear
+      law lives.
+    </p>
+
+    <h2 id="evidence">Evidence is monotone</h2>
+
+    <p>
+      The receipt chain is the evidence substance from
+      <a href="/learn/concepts/substances.html">rung 2</a> doing its job: once a receipt
+      exists it never un-exists, and the freshness ledgers it carries only grow. A committed
+      spend inserts its nullifier; a second spend of the same nullifier fails closed — at the
+      level of the term semantics itself, not an executor side table. Non-membership ("this
+      nullifier is fresh") is itself a witnessed claim: a sorted-tree non-membership opening
+      with a circuit gate, so freshness is checkable by anyone holding the root.
+    </p>
+
+    <h2 id="grounding">Grounding</h2>
+
+    <ul>
+      <li><code>Circuit/Argus/Receipt.lean</code> — <code>argus_commits_to_one_receipt</code>
+        (the circuit term commits to exactly one receipt, determined by the post-state) and
+        <code>argus_circuit_executor_receipts_agree</code> (the circuit's receipt and the
+        executor's receipt are the same judgment — one semantics, two readings).</li>
+      <li><code>Circuit/CommitmentCrossBind.lean</code> —
+        <code>runnable_binds_same_system_roots</code> (equal commitment ⇒ equal full state)
+        and <code>chC_bad_not_bridge</code> (a commitment that drops a field is rejected as a
+        bridge — the binding has teeth).</li>
+      <li><code>Circuit/Argus/Effects/NoteSpend.lean</code> —
+        <code>noteSpendStmt_no_double_spend</code>, <code>noteSpendStmt_then_reject</code>,
+        <code>noteSpendStmt_replay_rejected</code>.</li>
+      <li><code>Crypto/NonMembership.lean</code> — <code>nonmembership_sound</code> /
+        <code>nonmembership_complete</code>.</li>
+      <li><code>Exec/UniversalBridge.lean</code> —
+        <code>uproj</code> (the universal map of the whole post-state) and
+        <code>{gwrite,move,create}_is_memory_program</code> (the post-state projection equals the
+        fold of the verb's memory trace, against the live executable steps).</li>
+      <li><code>Crypto/UniversalMemory.lean</code> — <code>universal_memory_sound</code> (one Blum
+        balance certifies every per-domain view), <code>nullifier_fresh_sound</code> /
+        <code>nullifier_fresh_binds_root</code> (intra-proof freshness with no Merkle path; the
+        root pins absence at the boundary), and
+        <code>boundary_root_derived</code> (the derived view equals today's map roots).</li>
+    </ul>
+
+    <h2 id="live">Live instance</h2>
+
+    <!-- docs→live bridge: probes this page's origin for a node and embeds one
+         REAL receipt; honest empty state when no node is reachable. -->
+    <dregg-live-strip kind="receipt"></dregg-live-strip>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>Touch it:</strong> open any turn in the <a href="/explorer/">explorer</a> and
+        walk its witness; use the explorer's time-travel view to re-seed past state from
+        receipts and watch it agree with the present chain.
+      </p>
+    </div>
+
+    <p>
+      <a href="/learn/concepts/guards.html">← 3 · Guards</a> ·
+      <a href="/learn/concepts/light-client.html">5 · The light client →</a>
+    </p>
+
+  </main>
+</div>
+
+</layout>

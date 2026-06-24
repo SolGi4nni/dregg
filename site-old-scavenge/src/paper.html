@@ -1,0 +1,118 @@
+<layout src="_layouts/default.html">
+<title>Paper — dregg</title>
+
+<main class="wrap wrap--narrow main--compact">
+  <div class="page-header">
+    <h1>The paper</h1>
+    <p>
+      <em><code>dregg</code>: a verified distributed object-capability substrate</em> — the
+      formal treatment. The source of record is markdown, one file per section, in
+      <code>paper2/</code> in the repo; citations to the mechanization are Lean declaration
+      names resolvable in <code>metatheory/Dregg2/</code>, each
+      <code>#assert_axioms</code>-pinned, so the paper's claims are checkable against the
+      build.
+    </p>
+  </div>
+
+  <section class="section section--compact">
+    <span class="section__label">Abstract</span>
+    <h2 class="section__title">What the paper says</h2>
+    <p class="paper-abstract">
+      dregg is a distributed object-capability substrate whose proofs witness the protocol's
+      correct evolution: a verifier holding one aggregate root learns that every state
+      transition in the system's history was authorized, conservative, and correctly
+      committed — re-executing nothing and trusting no executor. State lives in cells; a turn
+      is the exercise of an attenuable, proof-carrying token over owned state, leaving a
+      verifiable receipt. The kernel governs four substances — value linear, authority
+      produced under non-forgeability, evidence monotone, state guarded — through eight
+      verbs whose minimality is a theorem.
+    </p>
+    <p class="paper-abstract">
+      Authority is treated as constructive knowledge: holding a capability means being able
+      to exhibit a witness, never merely to assert. The central law is generative, not
+      monotone — authority genuinely grows, but only through authorized, receipt-disclosed
+      construction from connectivity already held. One predicate algebra serves caveats,
+      programs, preconditions, and intents, with computed coordination and disclosure
+      prices. The semantics are a Lean 4 kernel that is also the deployed executor; the
+      assurance case is organized by guarantee, with an explicit eight-carrier assumption
+      floor.
+    </p>
+  </section>
+
+  <section class="section section--compact">
+    <span class="section__label">Contents</span>
+    <h2 class="section__title">Sections</h2>
+    <div class="paper-sections">
+      <div class="paper-section">
+        <p class="paper-section__num">01</p>
+        <p class="paper-section__title">The model</p>
+        <p class="paper-section__desc">Four substances and their disciplines; cells; assets as issuer promises; the eight verbs and the compiler-checked wire cover; turns and Q.</p>
+      </div>
+      <div class="paper-section">
+        <p class="paper-section__num">02</p>
+        <p class="paper-section__title">Authority as constructive knowledge</p>
+        <p class="paper-section__desc">The verify/find asymmetry; the demand⊣supply adjunction; the production law and non-forgeability; the three logics over a step; crossing trust boundaries.</p>
+      </div>
+      <div class="paper-section">
+        <p class="paper-section__num">03</p>
+        <p class="paper-section__title">The guard algebra</p>
+        <p class="paper-section__desc">One Pred, four polarities; the relational and quantified closures with proven budgets; the coordination dial; the disclosure dial.</p>
+      </div>
+      <div class="paper-section">
+        <p class="paper-section__num">04</p>
+        <p class="paper-section__title">Receipts &amp; the light client</p>
+        <p class="paper-section__desc">Q binds the whole post-state; replay as a theorem; aggregation; <code>light_client_verifies_whole_history</code> and the anti-tamper teeth.</p>
+      </div>
+      <div class="paper-section">
+        <p class="paper-section__num">05</p>
+        <p class="paper-section__title">The assurance case</p>
+        <p class="paper-section__desc">Authority · Conservation · Integrity · Freshness · Unfoolability · the Running Entry — by guarantee, each with its apex theorem and keystone DAG; the eight-carrier floor.</p>
+      </div>
+      <div class="paper-section">
+        <p class="paper-section__num">06</p>
+        <p class="paper-section__title">The realization</p>
+        <p class="paper-section__desc">The Lean kernel as the executor (FFI to the node); the descriptor circuit (one term, two provably-agreeing readings); the factory userspace and the polis.</p>
+      </div>
+      <div class="paper-section">
+        <p class="paper-section__num">07</p>
+        <p class="paper-section__title">Related work</p>
+        <p class="paper-section__desc">Object capabilities; macaroons &amp; biscuits; seL4/l4v; Mina-style recursive light clients; Ceptre; blocklace consensus; CapTP lineages — short, honest positioning.</p>
+      </div>
+      <div class="paper-section">
+        <p class="paper-section__num">08</p>
+        <p class="paper-section__title">Limitations</p>
+        <p class="paper-section__desc">The host-context seam; composition security not yet machine-checked end-to-end; the per-issuer-global value law; guard expressibility edges; liveness exactly as strong as its carrier.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--compact">
+    <span class="section__label">Read it</span>
+    <h2 class="section__title">Source &amp; downloads</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s5);">
+      Read the sections as markdown in
+      <a href="https://github.com/emberian/dregg/tree/main/paper2">paper2/ on GitHub</a>.
+      A typeset PDF edition (Typst, from <code>paper/dregg.typ</code>) is also built by CI:
+    </p>
+    <a class="paper-download" href="/assets/dregg.pdf">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      dregg.pdf
+    </a>
+  </section>
+
+  <section class="section section--compact">
+    <span class="section__label">Companion</span>
+    <h2 class="section__title">The living docs</h2>
+    <p style="color: var(--fg-dim);">
+      The same material, taught as a ladder with live surfaces to touch at each rung — and
+      with every enumerable fact embedded from the drift-checked catalogs — is
+      <a href="/docs.html">the protocol in seven rungs</a>.
+    </p>
+  </section>
+</main>
+
+</layout>

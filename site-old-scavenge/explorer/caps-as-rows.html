@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <base href="/explorer/">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Caps as rows — dregg explorer</title>
+  <meta name="description" content="Your capabilities, expressed as the rows you may read. Present a dregg capability token and watch the cell rows narrow — the RLS gate, respected and made legible. The browser twin of the pg-dregg cap-gated query cookbook.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* caps-as-rows: a self-contained page that reuses the explorer design
+       tokens (style.css :root) but needs no node / web components. */
+    html, body { overflow: auto; }
+    .car-wrap { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem 5rem; }
+    .car-eyebrow { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--accent); margin-bottom: 0.4rem; }
+    .car-title { font-family: var(--display); font-size: 2rem; line-height: 1.15;
+      margin: 0 0 0.6rem; color: var(--text); }
+    .car-title .accent { color: var(--accent-bright); }
+    .car-lede { color: var(--text-dim); max-width: 70ch; line-height: 1.55; margin: 0 0 1.2rem; }
+    .car-lede code { font-family: var(--mono); color: var(--accent-bright); font-size: 0.92em; }
+    .car-banner { display: flex; gap: 0.6rem; align-items: flex-start;
+      background: var(--lantern-soft); border: 1px solid rgba(217,154,63,0.3);
+      border-radius: var(--radius); padding: 0.7rem 0.9rem; margin: 0 0 1.6rem;
+      color: var(--text-dim); font-size: 0.85rem; line-height: 1.5; }
+    .car-banner strong { color: var(--lantern); }
+    .car-banner .car-banner__icon { color: var(--lantern); font-size: 1.1rem; line-height: 1; }
+
+    .car-panel { background: var(--surface); border: 1px solid var(--border-2);
+      border-radius: var(--radius-lg); padding: 1.2rem 1.3rem; margin-bottom: 1.4rem; }
+    .car-panel h2 { font-family: var(--display); font-size: 1.25rem; margin: 0 0 0.3rem; color: var(--text); }
+    .car-panel h2 .num { font-family: var(--mono); color: var(--accent); font-size: 0.85rem;
+      margin-right: 0.5rem; vertical-align: middle; }
+    .car-panel p.hint { color: var(--text-muted); font-size: 0.85rem; line-height: 1.5; margin: 0 0 1rem; }
+    .car-panel p.hint code { font-family: var(--mono); color: var(--accent-bright); }
+
+    /* the token presenter */
+    .car-token-row { display: flex; flex-wrap: wrap; gap: 0.8rem 1.2rem; align-items: flex-end; }
+    .car-field { display: flex; flex-direction: column; gap: 0.3rem; }
+    .car-field label { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--text-muted); }
+    .car-field input, .car-field select {
+      font-family: var(--mono); font-size: 0.9rem; background: var(--surface-2);
+      color: var(--text); border: 1px solid var(--border-2); border-radius: var(--radius);
+      padding: 0.45rem 0.6rem; min-width: 9rem; }
+    .car-field input:focus, .car-field select:focus { outline: none; border-color: var(--accent); }
+    .car-field input.wide { min-width: 22rem; }
+    .car-presets { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.9rem; }
+    .car-preset { font-family: var(--mono); font-size: 0.78rem; background: var(--surface-2);
+      color: var(--text-dim); border: 1px solid var(--border-2); border-radius: 999px;
+      padding: 0.35rem 0.8rem; cursor: pointer; transition: all 0.12s; }
+    .car-preset:hover { border-color: var(--accent); color: var(--accent-bright); }
+    .car-preset.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-bright); }
+
+    /* the caveat readout */
+    .car-caveats { margin-top: 1rem; font-family: var(--mono); font-size: 0.82rem;
+      color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 0.7rem 0.9rem; line-height: 1.6; }
+    .car-caveats .k { color: var(--accent); }
+    .car-caveats .v { color: var(--text); }
+
+    /* the narrowing summary */
+    .car-summary { display: flex; flex-wrap: wrap; gap: 1.4rem; align-items: baseline; margin-bottom: 1rem; }
+    .car-stat { font-family: var(--mono); }
+    .car-stat .big { font-size: 1.8rem; color: var(--accent-bright); }
+    .car-stat .lbl { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-muted); display: block; }
+    .car-stat.filtered .big { color: var(--text-faint); }
+
+    /* the rows table */
+    table.car-rows { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 0.84rem; }
+    table.car-rows th { text-align: left; color: var(--text-muted); font-weight: 500;
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+      padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border-2); }
+    table.car-rows td { padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); color: var(--text-dim); }
+    table.car-rows tr.admitted td { color: var(--text); }
+    table.car-rows tr.admitted td.verdict { color: var(--accent-bright); }
+    table.car-rows tr.filtered { opacity: 0.5; }
+    table.car-rows tr.filtered td.verdict { color: var(--danger); }
+    table.car-rows tr.filtered td.cell-val { color: var(--text-faint); font-style: italic; }
+    .car-verdict-pill { display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.5rem;
+      border-radius: 999px; }
+    .car-verdict-pill.ok { background: var(--success-soft); color: var(--accent-bright); }
+    .car-verdict-pill.no { background: var(--danger-soft); color: var(--danger); }
+    .car-reason { color: var(--text-muted); font-size: 0.78rem; }
+
+    .car-foot { color: var(--text-muted); font-size: 0.82rem; line-height: 1.6; margin-top: 2rem;
+      border-top: 1px solid var(--border); padding-top: 1.2rem; }
+    .car-foot a { color: var(--accent-bright); }
+    .car-foot code { font-family: var(--mono); color: var(--accent-bright); }
+    .car-back { font-family: var(--mono); font-size: 0.82rem; color: var(--text-dim);
+      display: inline-flex; align-items: center; gap: 0.4rem; margin-bottom: 1.4rem; }
+    .car-back:hover { color: var(--accent-bright); }
+    .car-tab-toggle { display: inline-flex; gap: 0; border: 1px solid var(--border-2);
+      border-radius: var(--radius); overflow: hidden; margin-bottom: 0.9rem; }
+    .car-tab-toggle button { font-family: var(--mono); font-size: 0.8rem; padding: 0.4rem 0.9rem;
+      background: var(--surface-2); color: var(--text-dim); border: none; }
+    .car-tab-toggle button.active { background: var(--accent-soft); color: var(--accent-bright); }
+  </style>
+</head>
+<body>
+  <div class="car-wrap">
+    <a class="car-back" href="./index.html">&larr; back to the explorer</a>
+
+    <div class="car-eyebrow">pg-dregg &middot; caps as rows</div>
+    <h1 class="car-title">Your capabilities, expressed as the <span class="accent">rows you may read</span>.</h1>
+    <p class="car-lede">
+      A dregg capability <strong>is</strong> a database view. Present a token below and watch the
+      cell rows narrow — the same Row-Level-Security gate the node enforces, made
+      legible. A token confined to a resource prefix sees a <em>strict subset</em>; the
+      no-amplification property, observed, not asserted. This is the browser twin of the
+      <code>pg-dregg</code> cap-gated query cookbook (<code>sql/cookbook.sql</code>) — one
+      glass in SQL, one here.
+    </p>
+
+    <div class="car-banner">
+      <span class="car-banner__icon">&#9888;</span>
+      <span>
+        <strong>STATIC SNAPSHOT</strong> — these rows are a labeled, deterministic copy of the
+        live <code>pg_dregg_mirror</code> schema (the six seeded cells + the delegation graph from
+        <code>sql/cookbook-seed.sql</code>). The gating logic below faithfully mirrors
+        <code>dregg_cap_admits</code> (the resource-prefix, action, and time caveats). Nothing here
+        bypasses the gate: a <em>filtered</em> row's value is redacted, never shown. For the
+        live decision, run the cookbook against postgres.
+      </span>
+    </div>
+
+    <!-- ============ THE TOKEN PRESENTER ============ -->
+    <div class="car-panel">
+      <h2><span class="num">cap</span>Present a capability</h2>
+      <p class="hint">
+        A dregg token's authority is its caveats: an <code>action</code> it admits, a
+        <code>resource</code> prefix it is confined to, and an optional expiry. Build one here
+        (the shape <code>cargo run --example mint -- --action read --prefix 5e</code> produces),
+        or pick a preset.
+      </p>
+
+      <div class="car-token-row">
+        <div class="car-field">
+          <label for="car-action">action</label>
+          <select id="car-action">
+            <option value="read" selected>read</option>
+            <option value="transfer">transfer</option>
+            <option value="grant">grant</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+        <div class="car-field">
+          <label for="car-prefix">resource prefix (hex)</label>
+          <input id="car-prefix" type="text" value="5e" placeholder="(empty = all)" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="car-field">
+          <label for="car-revoked">
+            <input id="car-revoked" type="checkbox" style="min-width:auto;width:auto"> revoked
+          </label>
+        </div>
+      </div>
+
+      <div class="car-presets" id="car-presets">
+        <button class="car-preset" data-action="read" data-prefix="">operator: read / all</button>
+        <button class="car-preset active" data-action="read" data-prefix="5e">read / prefix 5e</button>
+        <button class="car-preset" data-action="read" data-prefix="aa">read / prefix aa (org)</button>
+        <button class="car-preset" data-action="transfer" data-prefix="">transfer / all</button>
+        <button class="car-preset" data-action="read" data-prefix="ff">read / prefix ff (matches none)</button>
+        <button class="car-preset" data-action="read" data-prefix="5e" data-revoked="1">read / 5e, REVOKED</button>
+      </div>
+
+      <div class="car-caveats" id="car-caveats"></div>
+    </div>
+
+    <!-- ============ THE ROWS (caps-as-rows) ============ -->
+    <div class="car-panel">
+      <h2><span class="num">6a/6b</span>The cells this capability admits</h2>
+      <div class="car-tab-toggle" id="car-tabs">
+        <button data-tab="admitted" class="active">admitted only (the gate respected)</button>
+        <button data-tab="explain">all + explain (why each row)</button>
+      </div>
+      <div class="car-summary" id="car-summary"></div>
+      <table class="car-rows">
+        <thead>
+          <tr>
+            <th>cell id</th>
+            <th>balance</th>
+            <th>lifecycle</th>
+            <th>verdict</th>
+            <th class="explain-col">reason (dregg_cap_explain)</th>
+          </tr>
+        </thead>
+        <tbody id="car-rows-body"></tbody>
+      </table>
+    </div>
+
+    <!-- ============ THE DELEGATION TREE ============ -->
+    <div class="car-panel">
+      <h2><span class="num">1</span>The delegation tree (the cap-edges)</h2>
+      <p class="hint">
+        The same <code>WITH RECURSIVE</code> walk as cookbook recipe 1, over <code>dregg.cap_edges</code>.
+        Each edge is a delegation; the chain shows how an authority reaches a cell. The
+        <span style="color:var(--danger)">red</span> edge is a deliberate <strong>amplification</strong>
+        (bob grants <code>admin</code>, which bob never held) — recipe 2's audit catches it.
+      </p>
+      <table class="car-rows">
+        <thead><tr><th>depth</th><th>grantor</th><th>delegate</th><th>granted effects</th><th>chain</th></tr></thead>
+        <tbody id="car-tree-body"></tbody>
+      </table>
+    </div>
+
+    <div class="car-foot">
+      <p>
+        <strong>The two glasses agree.</strong> This page renders the same seeded data the SQL
+        cookbook runs against. Recipe 6a (admitted rows) here is
+        <code>BEGIN; SET LOCAL ROLE dregg_reader; SELECT set_config('dregg.token', …); SELECT … FROM dregg.cells;</code>
+        in psql; recipe 6b (the reason) is <code>dregg_cap_explain(token, 'read', cell, now)</code>.
+        See <code>pg-dregg/docs/COOKBOOK.md</code> and <code>pg-dregg/sql/cookbook.sql</code>.
+      </p>
+      <p>
+        The gate is never bypassed: a filtered row is redacted, exactly as RLS makes it vanish from a
+        <code>SELECT</code>. The capability discipline — provable attenuation, instant revocation,
+        explainable denial — is the dregg decision, carried to the row.
+      </p>
+    </div>
+  </div>
+
+  <script type="module" src="./caps-as-rows.js"></script>
+</body>
+</html>

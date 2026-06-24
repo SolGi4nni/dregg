@@ -1,0 +1,81 @@
+<layout src="_layouts/default.html">
+<title>Starbridge — the shell of your polis</title>
+
+<link rel="stylesheet" href="/_includes/studio/shell/shell.css">
+
+<!--
+  The Starbridge SHELL: one persistent frame you boot into.
+
+  Left rail (always present): who you are (profile key + hosted cell), the
+  places (curated app destinations mounted in-frame), your cells, and the
+  node's receipt stream (SSE /api/events/stream with a polling fallback).
+  Main mount: #/home · #/place/<app> · #/inspect/<dregg-uri>.
+
+  Boot sequence: connect to the node → select or create an identity (24-word
+  phrase → Ed25519 key → hosted cell id; faucet materializes the cell) →
+  arrive at YOUR home. ⌘K opens the command palette.
+
+  The inspector IDE this page used to be lives on, intact, at
+  /starbridge/workbench.html — the shell links to it as a tool.
+-->
+
+<main class="shl">
+  <div class="shl__frame">
+    <aside class="shl__rail" aria-label="Shell rail">
+      <div class="shl__brand">
+        <strong>Starbridge</strong>
+        <span>the shell of your polis</span>
+      </div>
+
+      <section aria-label="Identity">
+        <h2 class="shl__section-title">Identity</h2>
+        <div id="shl-identity">
+          <div class="shl-empty">booting…</div>
+        </div>
+      </section>
+
+      <nav id="shl-places" class="shl-nav" aria-label="Places">
+        <a class="shl-nav__row" href="#/home">Home</a>
+      </nav>
+
+      <section aria-label="Your cells">
+        <h2 class="shl__section-title">Your cells</h2>
+        <div id="shl-cells" class="shl-cells">
+          <div class="shl-empty">booting…</div>
+        </div>
+      </section>
+
+      <section aria-label="Receipt stream">
+        <h2 class="shl__section-title">Receipt stream</h2>
+        <div id="shl-stream" class="shl-stream" aria-live="polite">
+          <div class="shl-empty">waiting for the node…</div>
+        </div>
+      </section>
+
+      <div id="shl-node" class="shl-node" aria-label="Node connection">
+        <span class="shl-node__dot" data-ok="false"></span>
+        <span class="shl-node__host">connecting…</span>
+      </div>
+    </aside>
+
+    <section class="shl__main" aria-label="Current place">
+      <dregg-app id="shl-app">
+        <div id="shl-mount" class="shl__mount">
+          <div class="shl-empty shl-empty--pad">booting the shell…</div>
+        </div>
+      </dregg-app>
+    </section>
+
+    <div id="shl-boot" class="shl-boot" hidden>
+      <div id="shl-boot-body" class="shl-boot__panel" role="dialog" aria-modal="true" aria-label="Boot">
+        <h2>Booting</h2>
+        <p class="shl-boot__what">waiting for the runtime…</p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script type="module" src="/_includes/runtime-bootstrap.js"></script>
+<script type="module" src="/_includes/studio/shell/shell.js"></script>
+
+</layout>

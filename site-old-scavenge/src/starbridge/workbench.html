@@ -1,0 +1,336 @@
+<layout src="_layouts/default.html">
+<title>Starbridge Workbench — the inspector IDE</title>
+
+<link rel="stylesheet" href="/_includes/studio/starbridge.css">
+
+<main class="sb">
+  <!-- The workbench narrative: one continuum, honest about what's live. -->
+  <section class="sb__manifesto" id="sb-manifesto">
+    <div class="sb__manifesto-inner">
+      <div class="sb__manifesto-lede">
+        <strong>This is the Starbridge Workbench</strong> — the inspector IDE behind the
+        <a href="/starbridge/">shell</a>. It boots a real in-browser wasm runtime —
+        <em>empty until you seed it</em> (use Start here, below) — and renders every object as a
+        <code>dregg://</code> URI. The same inspectors back its three sibling surfaces:
+        <a href="/explorer/">Explorer</a> (browse a live devnet — cells, receipts with witness/proof
+        status, receipt <em>time travel</em> per cell; offline it offers a loudly-labeled sample
+        snapshot, never silent fakes) ·
+        <a href="/playground/#turn-workbench">Playground</a> (drive the real in-browser wasm executor:
+        stage a turn by <em>verb</em>, read the verified-Lean explanation before running, prove it
+        with a real STARK, or submit the thin-HTTP fragment to a node) ·
+        <a href="/studio.html">Studio</a> (author turns, predicates, and <em>factories</em> from
+        generated-from-source catalogs — proof badges come from Lean's own axiom audit, never
+        hand-set).
+      </div>
+      <div class="sb__manifesto-honest">
+        Live tonight: in-browser wasm runtime · remote read-only node connect · generated
+        ontology/predicate/assurance catalogs · factory authoring + export.
+        Not yet: browser blocklace sync (node HTTP only) · SDK signed-envelope submit from the
+        browser (thin-HTTP fragment only).
+      </div>
+      <button class="sb__manifesto-dismiss" id="sb-manifesto-dismiss" type="button" title="hide">×</button>
+    </div>
+  </section>
+
+  <!-- First-run orientation: three concrete actions, each wired to controls
+       that already exist on this page. Dismissable; nothing here is a second
+       implementation of anything. -->
+  <section class="sb__starthere" id="sb-starthere">
+    <span class="sb__starthere-label">Start here</span>
+    <button class="sb__starthere-step" id="sb-sh-seed" type="button"
+            title="Creates the alice + bob agent cells in the in-browser runtime (same as Scripts → Seed alice + bob)">
+      <b>1</b> Seed a sandbox world
+    </button>
+    <button class="sb__starthere-step" id="sb-sh-transfer" type="button"
+            title="Executes a real transfer turn between the seeded cells (same as Scripts → Run transfer turn)">
+      <b>2</b> Run a transfer turn
+    </button>
+    <span class="sb__starthere-hint">…then click the receipt that appears under <em>Receipts</em> in the left rail.</span>
+    <button class="sb__starthere-step sb__starthere-step--alt" id="sb-sh-devnet" type="button"
+            title="Switches the Runtime picker to the remote node (read-only) pointed at the live devnet">
+      <b>or</b> Browse the live devnet
+    </button>
+    <button class="sb__manifesto-dismiss" id="sb-starthere-dismiss" type="button" title="hide">×</button>
+  </section>
+
+  <header class="sb__topbar">
+    <div class="sb__topbar-row">
+      <div class="sb__brand" aria-label="Starbridge Workbench">
+        <strong>Workbench</strong>
+        <span>Starbridge inspector IDE</span>
+      </div>
+      <label class="sb__field">
+        <span class="sb__field-label">Runtime</span>
+        <select id="sb-runtime" class="sb__select" aria-label="Runtime">
+          <option value="in-memory">In-browser (wasm)</option>
+        </select>
+      </label>
+      <label class="sb__field sb__field--grow">
+        <span class="sb__field-label">URI</span>
+        <input id="sb-uri" class="sb__input" type="text"
+               placeholder="dregg://cell/abc123…" autocomplete="off"
+               spellcheck="false">
+      </label>
+      <button id="sb-nav-back" class="sb__icon-btn" type="button" title="Back" disabled>Back</button>
+      <button id="sb-nav-forward" class="sb__icon-btn" type="button" title="Forward" disabled>Forward</button>
+      <button id="sb-go" class="sb__btn">Go</button>
+      <button id="sb-palette-open" class="sb__btn sb__btn--ghost" title="Open command palette">Palette</button>
+      <button id="sb-snapshot" class="sb__btn sb__btn--ghost" title="Export snapshot">Snapshot</button>
+      <button id="sb-toggle-map" class="sb__icon-btn" type="button" title="Toggle system map">Map</button>
+      <button id="sb-toggle-workbench" class="sb__icon-btn" type="button" title="Toggle workbench pane">Tools</button>
+      <div id="sb-status" class="sb__status" data-state="boot">booting</div>
+    </div>
+    <div id="sb-runtime-config" class="sb__topbar-row sb__topbar-row--config" hidden>
+      <label class="sb__field sb__field--grow">
+        <span class="sb__field-label">Remote URL</span>
+        <input id="sb-remote-url" class="sb__input" type="url"
+               placeholder="https://devnet.dregg.fg-goose.online"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <button id="sb-connect" class="sb__btn sb__btn--ghost">Connect</button>
+    </div>
+    <div class="sb__topbar-row sb__topbar-row--time">
+      <span class="sb__field-label">Time</span>
+      <input id="sb-cursor" class="sb__scrubber" type="range"
+             min="0" max="0" step="1" value="0" disabled
+             aria-label="block height cursor">
+      <span class="sb__cursor-readout">
+        height <span id="sb-cursor-val">0</span> of <span id="sb-cursor-max">0</span>
+      </span>
+    </div>
+    <nav class="sb__surface-strip" aria-label="Starbridge surfaces">
+      <a class="sb__surface-pill" href="/starbridge/">Shell</a>
+      <button id="sb-surface-workbench" class="sb__surface-pill" type="button" aria-current="page">
+        Workbench
+      </button>
+      <button id="sb-surface-apps" class="sb__surface-pill" type="button">
+        Apps
+      </button>
+      <button id="sb-surface-activity" class="sb__surface-pill" type="button">
+        Activity
+      </button>
+      <a class="sb__surface-pill" href="/playground/">Playground</a>
+      <a class="sb__surface-pill" href="/explorer/">Explorer</a>
+    </nav>
+  </header>
+
+  <dregg-app id="sb-app">
+    <div class="sb__panes">
+      <aside class="sb__pane sb__pane--tree" aria-label="System map">
+        <h2 class="sb__pane-title">System Map</h2>
+        <section class="sb__section">
+          <h3 class="sb__section-title">
+            Apps <span id="sb-app-count" class="sb__count">0</span>
+          </h3>
+          <dregg-app-list id="sb-app-list"></dregg-app-list>
+        </section>
+        <hr class="sb__hr">
+        <section id="sb-sim-actions" class="sb__section">
+          <h3 class="sb__section-title">Scripts</h3>
+          <button id="sb-seed-world" class="sb__btn sb__btn--small">Seed alice + bob</button>
+          <button id="sb-run-transfer" class="sb__btn sb__btn--small">Run transfer turn</button>
+          <button id="sb-create-fed" class="sb__btn sb__btn--small">Create federation block</button>
+          <button id="sb-post-intent" class="sb__btn sb__btn--small">Post storage intent</button>
+          <button id="sb-mk-alice" class="sb__btn sb__btn--small">+ agent (alice)</button>
+          <button id="sb-mk-bob" class="sb__btn sb__btn--small">+ agent (bob)</button>
+          <button id="sb-advance" class="sb__btn sb__btn--small">advance +1</button>
+        </section>
+        <hr class="sb__hr">
+        <section class="sb__section">
+          <h3 class="sb__section-title">
+            Cells <span id="sb-cell-count" class="sb__count">0</span>
+          </h3>
+          <ul id="sb-cell-list" class="sb__list"></ul>
+        </section>
+        <section class="sb__section">
+          <h3 class="sb__section-title">
+            Receipts <span id="sb-receipt-count" class="sb__count">0</span>
+          </h3>
+          <ul id="sb-receipt-list" class="sb__list"></ul>
+        </section>
+        <section class="sb__section">
+          <h3 class="sb__section-title">
+            Intents <span id="sb-intent-count" class="sb__count">0</span>
+          </h3>
+          <ul id="sb-intent-list" class="sb__list"></ul>
+        </section>
+        <section class="sb__section">
+          <h3 class="sb__section-title">
+            Capabilities <span id="sb-capability-count" class="sb__count">0</span>
+          </h3>
+          <ul id="sb-capability-list" class="sb__list"></ul>
+        </section>
+        <section class="sb__section">
+          <h3 class="sb__section-title">
+            Federations <span id="sb-federation-count" class="sb__count">0</span>
+          </h3>
+          <ul id="sb-federation-list" class="sb__list"></ul>
+        </section>
+        <section class="sb__section">
+          <h3 class="sb__section-title">
+            Blocks <span id="sb-block-count" class="sb__count">0</span>
+          </h3>
+          <ul id="sb-block-list" class="sb__list"></ul>
+        </section>
+        <section class="sb__section">
+          <h3 class="sb__section-title">
+            Activity <span id="sb-activity-count" class="sb__count">0</span>
+          </h3>
+          <ul id="sb-activity-list" class="sb__list"></ul>
+        </section>
+        <section class="sb__section">
+          <h3 class="sb__section-title">
+            Outbox <span id="sb-outbox-count" class="sb__count">0</span>
+          </h3>
+          <ul id="sb-outbox-list" class="sb__list"></ul>
+        </section>
+      </aside>
+
+      <section class="sb__pane sb__pane--inspector" aria-label="Workspace">
+        <div class="sb__workspace-head">
+          <div>
+            <h2 id="sb-workspace-title" class="sb__pane-title">Workspace</h2>
+            <div id="sb-current-uri" class="sb__current-uri">no object selected</div>
+          </div>
+          <div class="sb__workspace-actions">
+            <span id="sb-current-kind" class="sb__context-pill">Dashboard</span>
+            <button id="sb-pin-uri" class="sb__icon-btn" type="button" disabled>Pin</button>
+            <button id="sb-copy-uri" class="sb__icon-btn" type="button" disabled>Copy URI</button>
+            <a id="sb-open-explorer" class="sb__icon-link" href="/explorer/">Explorer</a>
+          </div>
+        </div>
+        <div id="sb-inspector" class="sb__inspector"></div>
+      </section>
+
+      <section class="sb__pane sb__pane--raw" aria-label="Workbench output">
+        <div class="sb__pane-head">
+          <h2 class="sb__pane-title">Workbench</h2>
+          <div class="sb__pane-head-actions">
+            <button id="sb-raw-copy" class="sb__icon-btn" type="button" title="Copy raw JSON">Copy</button>
+            <div class="sb__tool-tabs" role="tablist" aria-label="Workbench tools">
+              <button id="sb-tool-raw" type="button" role="tab" aria-selected="true" data-tool="raw">Raw</button>
+              <button id="sb-tool-console" type="button" role="tab" aria-selected="false" data-tool="console">Console</button>
+              <button id="sb-tool-activity" type="button" role="tab" aria-selected="false" data-tool="activity">Activity</button>
+            </div>
+          </div>
+        </div>
+        <input id="sb-raw-filter" class="sb__raw-filter" type="search"
+               autocomplete="off" spellcheck="false" placeholder="filter raw JSON" />
+        <pre id="sb-raw" class="sb__raw">no object selected</pre>
+        <section id="sb-console" class="sb__console" hidden>
+          <div id="sb-console-output" class="sb__console-output" aria-live="polite"></div>
+          <form id="sb-console-form" class="sb__console-form">
+            <span class="sb__console-prompt">&gt;</span>
+            <input id="sb-console-input" class="sb__console-input" type="text"
+                   autocomplete="off" spellcheck="false"
+                   placeholder="help, seed, transfer, app nameservice, inspect dregg://…" />
+          </form>
+        </section>
+        <section id="sb-activity" class="sb__activity" hidden>
+          <div class="sb__activity-head">
+            <span>Runtime activity</span>
+            <button id="sb-activity-refresh" class="sb__icon-btn" type="button">Refresh</button>
+          </div>
+          <div id="sb-activity-list-pane" class="sb__activity-list"></div>
+        </section>
+      </section>
+    </div>
+  </dregg-app>
+
+  <div id="sb-palette" class="sb__palette" role="dialog" aria-modal="true" aria-label="Command palette" hidden>
+    <div class="sb__palette-panel">
+      <div class="sb__palette-head">
+        <input id="sb-palette-input" class="sb__palette-input" type="text"
+               autocomplete="off" spellcheck="false"
+               placeholder="apps, scripts, objects, runtimes…" />
+        <button id="sb-palette-close" class="sb__palette-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="sb-palette-list" class="sb__palette-list" role="listbox"></div>
+    </div>
+  </div>
+</main>
+
+<style>
+  .sb__manifesto { border-bottom: 1px solid var(--line); background: var(--bg-raised); }
+  .sb__manifesto-inner { position: relative; padding: 10px 38px 10px 14px; }
+  .sb__manifesto-lede { font-size: 0.78rem; line-height: 1.55; color: var(--fg-dim); }
+  .sb__manifesto-lede strong { color: var(--fg); }
+  .sb__manifesto-lede a { color: var(--accent-bright, #8fddff); }
+  .sb__manifesto-honest { margin-top: 5px; font-size: 0.7rem; color: var(--fg-dim); }
+  .sb__manifesto-dismiss { position: absolute; top: 6px; right: 8px; background: none; border: 0;
+    color: var(--fg-dim); font-size: 1rem; cursor: pointer; }
+  .sb__manifesto-dismiss:hover { color: var(--fg); }
+  .sb__starthere { position: relative; display: flex; flex-wrap: wrap; align-items: center;
+    gap: 8px; padding: 8px 38px 8px 14px; border-bottom: 1px solid var(--line);
+    background: var(--bg-raised); font-size: 0.74rem; }
+  .sb__starthere-label { font-weight: 700; color: var(--accent-bright, #8fddff);
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.68rem; }
+  .sb__starthere-step { background: none; border: 1px solid var(--line); border-radius: 4px;
+    color: var(--fg); padding: 3px 10px; cursor: pointer; font-size: 0.74rem; }
+  .sb__starthere-step b { color: var(--accent-bright, #8fddff); margin-right: 4px; }
+  .sb__starthere-step:hover { border-color: var(--accent-bright, #8fddff); }
+  .sb__starthere-step--alt { margin-left: auto; }
+  .sb__starthere-hint { color: var(--fg-dim); }
+</style>
+<script>
+  (function () {
+    var KEY = 'dregg_sb_manifesto_dismissed';
+    var el = document.getElementById('sb-manifesto');
+    try { if (localStorage.getItem(KEY) === '1' && el) el.style.display = 'none'; } catch (e) {}
+    document.getElementById('sb-manifesto-dismiss')?.addEventListener('click', function () {
+      if (el) el.style.display = 'none';
+      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    });
+  })();
+
+  // Start-here strip: each step drives a control that already exists on this
+  // page (the Scripts buttons / the Runtime picker) — no parallel code paths.
+  (function () {
+    var KEY = 'dregg_sb_starthere_dismissed';
+    var el = document.getElementById('sb-starthere');
+    try { if (localStorage.getItem(KEY) === '1' && el) el.style.display = 'none'; } catch (e) {}
+    document.getElementById('sb-starthere-dismiss')?.addEventListener('click', function () {
+      if (el) el.style.display = 'none';
+      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    });
+
+    function whenReady(btn, fn) {
+      var status = document.getElementById('sb-status');
+      if (status && status.dataset.state !== 'ready') {
+        var prior = btn.innerHTML;
+        btn.textContent = 'still booting…';
+        setTimeout(function () { btn.innerHTML = prior; }, 1200);
+        return;
+      }
+      fn();
+    }
+    document.getElementById('sb-sh-seed')?.addEventListener('click', function (e) {
+      whenReady(e.currentTarget, function () {
+        document.getElementById('sb-seed-world')?.click();
+      });
+    });
+    document.getElementById('sb-sh-transfer')?.addEventListener('click', function (e) {
+      whenReady(e.currentTarget, function () {
+        document.getElementById('sb-run-transfer')?.click();
+      });
+    });
+    document.getElementById('sb-sh-devnet')?.addEventListener('click', function (e) {
+      whenReady(e.currentTarget, function () {
+        var picker = document.getElementById('sb-runtime');
+        if (!picker) return;
+        for (var i = 0; i < picker.options.length; i++) {
+          if (picker.options[i].value === 'remote') {
+            picker.value = 'remote';
+            picker.dispatchEvent(new Event('change', { bubbles: true }));
+            return;
+          }
+        }
+      });
+    });
+  })();
+</script>
+
+<script type="module" src="/_includes/runtime-bootstrap.js"></script>
+<script type="module" src="/_includes/studio/starbridge.js"></script>
+
+</layout>

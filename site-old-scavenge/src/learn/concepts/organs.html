@@ -1,0 +1,222 @@
+<layout src="_layouts/default.html">
+<title>The Organs — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/docs.html">The Protocol</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>The Organs</span>
+    </nav>
+
+<h1>The organs: services as composable cell programs</h1>
+
+    <p>
+      The kernel is eight verbs (<a href="/learn/concepts/substances.html">rung 2</a>); a real
+      application needs lines of credit, private group chat, asynchronous delivery, durable
+      storage. dregg provides these as <strong>organs</strong> — service primitives that are not
+      new kernel and not bolted-on subsystems, but <em>cell programs</em> built from the verbs
+      you already know, with the executor enforcing each organ's law on every turn. An organ is a
+      <a href="/learn/concepts/userspace.html">factory</a> with a name and a guarantee. The
+      payoff this page builds to: organs <em>compose</em> — one cell can wear four organs at once,
+      each contributing a slot caveat, and the executor enforces all four together.
+    </p>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>The design discipline.</strong> None of these organs added a verb. Each is a
+        guarantee re-expressed as a guard the executor already knows how to check — a bounded
+        relation, a write-once commitment, a monotone counter, a value split. That is what makes
+        them composable: they are all the same kind of object,
+        <a href="/learn/concepts/guards.html">a <code>Pred</code></a>, installed on one cell.
+      </p>
+    </div>
+
+    <h2 id="trustlines">Trustlines — credit as an attenuated, quantitative capability</h2>
+
+    <p>
+      "Issuer A extends holder B a line of N" is <em>granted ⊆ held made numeric</em>: B holds a
+      capability whose every exercise debits a shared counter, and the cell's installed program
+      enforces <code>drawn ≤ ceiling</code> for the life of the cell. A draw within the line
+      commits; a draw over the line is refused by the executor itself — not by app bookkeeping
+      that could be skipped. Settlement applies the net position back to the ledger as ordinary
+      <code>move</code>s, so conservation is the kernel's ordinary law with no side table. Lines
+      of credit and sub-second payment channels are <em>one</em> primitive at two settings.
+    </p>
+
+    <h2 id="channels">Channels — a group is a cell, and removal darkens two planes at once</h2>
+
+    <p>
+      A group is a <strong>cell</strong>: its membership commitment, its key-epoch counter, and
+      its epoch-key commitment all live on-cell, and joins / removals / rekeys are turns under
+      the group's program — so the whole governance algebra applies to membership. Message bodies
+      never touch the chain (control plane on-cell, ciphertext over any transport, including
+      mailboxes). The keystone is an <em>epoch unification</em>: the group's key epoch and the
+      capability-freshness epoch are <strong>the same counter</strong>, so a single
+      <code>remove(member)</code> turn darkens <em>both</em> planes at once — the removed member
+      loses the ability to read forward (the key epoch stepped) <em>and</em> the use of any
+      group-held capability (the freshness epoch stepped), atomically, in one turn. There is no
+      window in which a removed member can still act.
+    </p>
+
+    <h2 id="mailboxes">Mailboxes — accountable handoff across arbitrary delay</h2>
+
+    <p>
+      A mailbox lets A hand B a sealed turn-intent while B is <em>offline</em>. B's crank later
+      drains B's hosted relay inbox over a real HTTP route; the relay's dequeue proof anchors a
+      <em>custody receipt</em>; the executor-anchored sender gate admits A (and refuses an
+      ungranted sender, with no state change); and the intent executes as an ordinary turn on
+      B's cell. The delay-tolerant property comes for free because turns are self-certifying — a
+      turn proved correct is correct whenever it lands, so store-and-forward becomes accountable
+      across any delay without a new trust assumption.
+    </p>
+
+    <h2 id="storage-and-more">Storage, adjudication, randomness</h2>
+
+    <ul>
+      <li><strong>Storage</strong> — a content-addressed store whose admission is a verified
+        <em>storage-gateway-mandate</em> cell: an op allowlist, a path-prefix scope, and a volume
+        budget the executor enforces (<code>sgm_volume_legal_forever</code>). The read-cap /
+        write-cap / verify-cap separation lets a host prove custody of, scrub, and replicate what
+        it cannot read. Persistence is a per-collection axis — <code>attested</code> (permanent,
+        conservation-grade) · <code>retained(window)</code> (prunable after a challenge period) ·
+        <code>prunable</code> (deletion is a guarded write: who may remove is law).</li>
+      <li><strong>Adjudication</strong> — a bond lives in the disputed cell's own balance; slash
+        is an ordinary <code>move</code>; no-double-resolve is the same terminal-state discipline
+        as an escrow. The court's rule is <em>witness-first</em>: where either party can exhibit a
+        verifying witness, the exhibit decides, and tribunals enter only on the non-certifiable
+        residue.</li>
+      <li><strong>Randomness</strong> — a committee threshold-signature beacon
+        (<code>beacon_at(epoch, height)</code>) anyone holding the group public key can verify;
+        every t-subset produces the same signature, so there is nothing to grind. Consumers draw
+        juries and seed sortition deterministically.</li>
+    </ul>
+
+    <h2 id="capstone">Worked example: the escrow-market, four organs in one cell</h2>
+
+    <p>
+      Here is the whole through-line — capability → cell → turn → guard → proof — in one shipped
+      app. A buyer and a seller transact a good they don't trust each other over, with
+      <strong>no escrow agent and no off-chain coordinator</strong>. The escrow <em>is</em> a
+      single factory-born cell whose installed program is the rules, re-checked by the verified
+      executor on every turn that touches it. Its lifecycle:
+    </p>
+
+    <pre><code class="language-text">LISTED ──fund──▶ FUNDED ──ship──▶ SHIPPED ──settle──▶ SETTLED</code></pre>
+
+    <ul>
+      <li><strong>list</strong> — the seller opens a listing: writes the escrow <code>CEILING</code>
+        and <code>SELLER_HASH</code>.</li>
+      <li><strong>fund</strong> — the buyer escrows <code>amount ≤ CEILING</code>, binds
+        <code>BUYER_HASH</code>.</li>
+      <li><strong>ship</strong> — the seller commits the sealed-delivery digest (the encrypted
+        goods or turn-intent) into <code>DELIVERY_HASH</code>.</li>
+      <li><strong>settle</strong> — the deal closes: funds release to the seller and any remainder
+        refunds the buyer, atomically and value-neutrally.</li>
+    </ul>
+
+    <p>
+      Each organ's guarantee appears as a slot caveat the executor enforces — and because they are
+      all <code>Pred</code>s on one cell, the executor checks all four together on every turn:
+    </p>
+
+    <table class="comparison">
+      <thead>
+        <tr><th>Organ</th><th>The guarantee</th><th>The caveat this cell installs</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Trustline</strong></td>
+          <td>a draw never exceeds the credit line</td>
+          <td><code>FieldLteField { ESCROWED ≤ CEILING }</code> — the escrow is a bounded line;
+            the buyer cannot escrow past the listing's ceiling</td>
+        </tr>
+        <tr>
+          <td><strong>Mailbox</strong></td>
+          <td>sealed delivery, bound exactly once</td>
+          <td><code>WriteOnce(DELIVERY_HASH)</code> — the seller commits the sealed-goods digest
+            once; tamper-evident, no swap-after-ship</td>
+        </tr>
+        <tr>
+          <td><strong>Flashwell</strong></td>
+          <td>atomic, conserving settlement</td>
+          <td>no-mint <code>AffineLe { RELEASED + REFUNDED ≤ ESCROWED }</code> on every turn,
+            and exact no-burn <code>AffineEq { RELEASED + REFUNDED = ESCROWED }</code> at settle —
+            the payout neither mints nor burns</td>
+        </tr>
+        <tr>
+          <td><strong>Lifecycle</strong></td>
+          <td>one-way, no replay, no double-settle</td>
+          <td><code>StrictMonotonic(STATE)</code> —
+            <code>LISTED→FUNDED→SHIPPED→SETTLED</code>; no regress, no replay</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>The flashwell invariant, honestly split.</strong> The executor re-checks the
+        descriptor's flat constraints <em>unconditionally</em> on every turn, so the no-mint half
+        (<code>RELEASED + REFUNDED ≤ ESCROWED</code>) is a universal invariant — <strong>no party
+        can ever extract more than was escrowed.</strong> The exact no-burn equality would be false
+        before settle (escrow is held, not yet paid), so it is scoped to the settle step and upheld
+        by the balanced split the SDK emits. Both halves have teeth: a value-minting settle is
+        refused by the <code>AffineLe</code>; a value-burning settle is refused by the
+        <code>AffineEq</code>.
+      </p>
+    </div>
+
+    <p>
+      That is the claim made concrete. The buyer's bounded draw is a trustline; the seller's
+      one-shot sealed commitment is a mailbox; the conserving payout is a flashwell; the
+      irreversible march of state is a lifecycle. Each is a guarantee dregg already proves at the
+      kernel; the app does not re-prove them — it <em>inherits</em> them by installing the caveats
+      and letting the executor enforce. Built from dregg primitives only:
+      <code>FactoryDescriptor</code>, <code>Effect::SetField</code>, a real
+      <code>Authorization::Signature</code> — no domain-specific escrow effect, no unchecked
+      authorization, no placeholder signatures.
+    </p>
+
+    <h2 id="grounding">Grounding</h2>
+
+    <ul>
+      <li><code>starbridge-apps/escrow-market/src/lib.rs</code> — the capstone: the four-organ
+        cell program, its factory descriptor, and the <code>build_{list,fund,ship,settle}_action</code>
+        turn builders; <code>tests/factory_birth.rs</code> drives it through the real executor.</li>
+      <li><code>sdk/src/trustline.rs</code> — the trustline organ
+        (<code>open_escrows_the_line_and_grants_the_holder_capability</code>,
+        <code>draw_within_line_succeeds_and_over_line_refuses</code>,
+        <code>settle_moves_net_position_and_conserves</code>,
+        <code>executor_program_rejects_over_line_draw_directly</code>).</li>
+      <li><code>sdk/src/channels.rs</code> — the channel organ and the epoch-unification keystone
+        (<code>remove_is_one_turn_and_darkens_both_planes</code>,
+        <code>executor_rejects_partial_membership_turns</code>).</li>
+      <li><code>sdk/src/mailbox.rs</code> + <code>node/src/mailbox_crank_e2e.rs</code> — the mailbox
+        organ and a genuine two-node async handoff with a custody receipt.</li>
+      <li><code>docs/ORGANS.md</code> — the organ charter (the welds, the parameterization
+        discipline, the persistence axis); <code>docs/TRUSTLINES.md</code> — the trustline design
+        note.</li>
+    </ul>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>Touch it:</strong> walk the escrow-market and the other organ-composing apps in
+        the <a href="/usecases.html">use-case explorer</a>, or open the
+        <a href="/starbridge/">Starbridge</a> app surfaces. Every organ rides the same
+        <code>.turn()</code> path through the verified executor — no organ has its own executor
+        entry.
+      </p>
+    </div>
+
+    <p>
+      <a href="/learn/concepts/userspace.html">← 6 · Userspace</a> ·
+      <a href="/learn/concepts/trust-boundary.html">7 · The trust boundary →</a>
+    </p>
+
+  </main>
+</div>
+
+</layout>

@@ -1,0 +1,119 @@
+<layout src="_layouts/default.html">
+<title>Learn — dregg</title>
+
+<main class="wrap main--compact">
+  <div class="page-header">
+    <h1>Learn</h1>
+    <p>
+      Start with the big picture, then go where you need. <strong>deos</strong> is the agentic
+      desktop you work in; <strong>dregg</strong> is the verified kernel underneath; the
+      <strong>firmament</strong> is the seL4 ground it boots on. If you want the kernel from
+      first principles, read <a href="/docs.html">the protocol in seven rungs</a> — the living
+      explanation with every checkable fact embedded from the verified sources. If you have a
+      task in hand, pick your role below. Either way, the <a href="/glossary.html">glossary</a>
+      holds the nine words everything else is built from.
+    </p>
+  </div>
+
+  <section class="section section--compact">
+    <div class="link-cards">
+      <a class="link-card" href="/deos.html">
+        <span class="link-card__title">deos · the agentic desktop</span>
+        <span class="link-card__desc">A window is a capability; htmx-on-crack affordances; the rehydratable, per-viewer screenshot; the fog-of-war forcing function; the verified-desktop crown.</span>
+      </a>
+      <a class="link-card" href="/firmament.html">
+        <span class="link-card__title">The firmament · dregg-on-seL4</span>
+        <span class="link-card__desc">One capability local-to-global, the <code>n=1</code> collapse, the protection-domain assembly that boots in QEMU today, and pg-dregg verified durable state.</span>
+      </a>
+    </div>
+  </section>
+
+  <section>
+    <div class="learn-grid">
+      <a class="learn-card" href="/docs.html">
+        <span class="learn-card__label">I want to understand it</span>
+        <span class="learn-card__title">The Protocol</span>
+        <span class="learn-card__desc">
+          The concept ladder: turns, the four substances and eight verbs, guards, receipts,
+          the light client, userspace, the trust boundary. Prose, then theorems, then a place
+          to touch each idea.
+        </span>
+        <span class="learn-card__link">Climb the ladder &rarr;</span>
+      </a>
+
+      <a class="learn-card" href="/learn/users/quickstart.html">
+        <span class="learn-card__label">I want to use it</span>
+        <span class="learn-card__title">Users</span>
+        <span class="learn-card__desc">
+          Install the CLI, set up your cipherclerk, connect to a node, and start
+          sending turns. Five minutes to productive.
+        </span>
+        <span class="learn-card__link">Quickstart &rarr;</span>
+      </a>
+
+      <a class="learn-card" href="/learn/developers/building-apps.html">
+        <span class="learn-card__label">I want to build on it</span>
+        <span class="learn-card__title">Developers</span>
+        <span class="learn-card__desc">
+          Use the SDK, mint factory cells with verified programs, accept CapTP
+          connections, and prove your app's contract against the kernel's guarantees.
+        </span>
+        <span class="learn-card__link">Build apps &rarr;</span>
+      </a>
+
+      <a class="learn-card" href="/learn/operators/running-a-node.html">
+        <span class="learn-card__label">I want to run it</span>
+        <span class="learn-card__title">Operators</span>
+        <span class="learn-card__desc">
+          Run a federation node, operate a relay, monitor health,
+          and manage genesis configuration.
+        </span>
+        <span class="learn-card__link">Node setup &rarr;</span>
+      </a>
+    </div>
+  </section>
+
+  <section class="section section--compact">
+    <h2 class="section__title">Quick links</h2>
+    <div class="link-cards">
+      <a class="link-card" href="/glossary.html">
+        <span class="link-card__title">Glossary</span>
+        <span class="link-card__desc">Cell, turn, capability, verb, guard, receipt, Q, factory, polis — one breath each, linked to the rung that teaches it.</span>
+      </a>
+      <a class="link-card" href="/learn/ontology.html">
+        <span class="link-card__title">Effect &amp; Predicate Ontology</span>
+        <span class="link-card__desc">Every effect variant + the full predicate language, generated from the verified source. Searchable; compose &amp; test predicates live.</span>
+      </a>
+      <a class="link-card" href="/studio.html">
+        <span class="link-card__title">Studio (authoring IDE)</span>
+        <span class="link-card__desc">Compose a turn from the catalog with guided forms, validate &amp; simulate locally, then submit a real turn to a node.</span>
+      </a>
+      <a class="link-card" href="/explorer/">
+        <span class="link-card__title">Explorer</span>
+        <span class="link-card__desc">Walk the live chain: cells, turns, witnesses, proof tiers, time-travel.</span>
+      </a>
+      <a class="link-card" href="/learn/users/cli.html">
+        <span class="link-card__title">CLI Reference</span>
+        <span class="link-card__desc">Full dregg command: cell, turn, cap, cclerk, node, namespace, storage, proof.</span>
+      </a>
+      <a class="link-card" href="/learn/developers/sdk.html">
+        <span class="link-card__title">SDK Reference</span>
+        <span class="link-card__desc">Rust API: AgentCipherclerk, AgentRuntime, turns, proofs, privacy modes.</span>
+      </a>
+      <a class="link-card" href="/learn/users/captp.html">
+        <span class="link-card__title">CapTP Sessions</span>
+        <span class="link-card__desc">Sturdy refs, handoff certificates, distributed GC, offline delegation.</span>
+      </a>
+      <a class="link-card" href="/learn/developers/storage.html">
+        <span class="link-card__title">Storage</span>
+        <span class="link-card__desc">Programmable queues, inboxes, relay operators, erasure coding.</span>
+      </a>
+      <a class="link-card" href="/paper.html">
+        <span class="link-card__title">Paper</span>
+        <span class="link-card__desc">The formal treatment: the model, the authority logic, the guard algebra, the assurance case.</span>
+      </a>
+    </div>
+  </section>
+</main>
+
+</layout>

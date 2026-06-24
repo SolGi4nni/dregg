@@ -1,0 +1,94 @@
+<layout src="_layouts/default.html">
+<title>Effect &amp; Predicate Ontology — dregg</title>
+
+<style>
+  .onto-page { max-width: 1100px; margin: 0 auto; padding: var(--s4); }
+  .onto-page__intro { color: var(--fg-dim); line-height: 1.6; margin-bottom: var(--s4); }
+  .onto-page__intro code { color: var(--fg); }
+  .onto-page__section { margin-bottom: var(--s5, 40px); }
+  .onto-page__section > h2 { font-size: 1.35rem; margin: 0 0 6px; }
+  .onto-page__lede { color: var(--fg-dim); font-size: 0.9rem; margin: 0 0 var(--s3); line-height: 1.55; }
+  .onto-page__lede code { color: var(--fg); }
+  .onto-page__host { border: 1px solid var(--line); border-radius: 8px; padding: var(--s3); background: var(--bg); }
+  .onto-page__provenance { font-size: 0.78rem; color: var(--fg-dim); margin-top: var(--s4); padding-top: var(--s3); border-top: 1px solid var(--line); line-height: 1.6; }
+  .onto-page__provenance code { color: var(--fg); }
+  /* fallbacks if site palette tokens are absent */
+  .dregg-inspector--err { color: #d4685c; padding: 8px 12px; border: 1px solid #d4685c; border-radius: 4px; }
+</style>
+
+<main class="onto-page">
+  <nav class="docs-breadcrumb">
+    <a href="/learn.html">Learn</a>
+    <span class="docs-breadcrumb__sep">/</span>
+    <span>Ontology</span>
+  </nav>
+
+  <h1>The dregg ontology</h1>
+  <p class="onto-page__intro">
+    dregg's behavior is a small, fixed vocabulary: a turn is a list of
+    <strong>effects</strong>, and a cell guards its own state with a
+    <strong>cell program</strong> built from <strong>predicate constraints</strong>.
+    Everything below is generated <em>directly from the verified source</em> by
+    <code>site/tools/gen-ontology-catalog.js</code> — the effect set from the Lean
+    kernel (<code>FullActionA</code>), the predicate language from the Rust cell
+    evaluator (<code>cell/src/program.rs</code>) — so this page cannot drift from
+    the system it documents.
+  </p>
+
+  <section class="onto-page__section">
+    <h2>Effects — what a turn can do</h2>
+    <p class="onto-page__lede">
+      Every variant of <code>FullActionA</code>: its wire mnemonic, typed
+      arguments, one-line semantics, and the <code>Authority.Auth</code> facet
+      it requires. Search and filter by category.
+    </p>
+    <div class="onto-page__host">
+      <dregg-ontology></dregg-ontology>
+    </div>
+  </section>
+
+  <section class="onto-page__section">
+    <h2>Predicates — how a cell guards itself</h2>
+    <p class="onto-page__lede">
+      A cell's <code>CellProgram</code> decides which transitions it accepts. The
+      <strong>Language reference</strong> tab lists every <code>StateConstraint</code>,
+      the four program kinds, and the six transition guards. The
+      <strong>Compose &amp; test</strong> tab lets you model an (old&nbsp;&rarr;&nbsp;new)
+      8-slot state, stack constraints, and watch them accept or reject — evaluated
+      against a faithful mirror of the executor's field-comparison semantics
+      (witness/proof constraints are honestly labeled "needs executor").
+    </p>
+    <div class="onto-page__host">
+      <dregg-predicate-explorer></dregg-predicate-explorer>
+    </div>
+  </section>
+
+  <div class="onto-page__provenance">
+    <strong>Provenance.</strong> Effect catalog &larr;
+    <code>metatheory/Dregg2/Exec/TurnExecutorFull.lean</code> (<code>FullActionA</code>,
+    <code>requiredFacetA</code>) + <code>Dregg2/Exec/FFI.lean</code>
+    (<code>encodeActionW</code> wire codec). Predicate catalog &larr;
+    <code>cell/src/program.rs</code> (<code>CellProgram</code>,
+    <code>StateConstraint</code>, <code>TransitionGuard</code>), cross-checked
+    against <code>wasm/src/bindings.rs</code>. Regenerate with
+    <code>node site/tools/gen-ontology-catalog.js</code>; a drift check
+    (<code>--check</code>) fails the build if either catalog is stale.
+  </div>
+</main>
+
+<script type="module">
+  // Importing the inspectors barrel registers the <dregg-ontology> and
+  // <dregg-predicate-explorer> custom elements (and the rest of the studio
+  // vocabulary). No wasm / node required — these two surfaces fetch their
+  // generated JSON catalogs and render pure documentation.
+  import('/_includes/studio/inspectors.js').catch((e) => {
+    console.error('[ontology] failed to load inspectors barrel', e);
+    document.querySelectorAll('.onto-page__host').forEach((h) => {
+      h.innerHTML =
+        '<div class="dregg-inspector--err">Could not load the studio inspector ' +
+        'bundle. Rebuild the site (<code>node site/build.js</code>).</div>';
+    });
+  });
+</script>
+
+</layout>

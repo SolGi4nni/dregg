@@ -1,0 +1,152 @@
+<layout src="_layouts/default.html">
+<title>6 · Userspace — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/docs.html">The Protocol</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>6 · Userspace</span>
+    </nav>
+
+<h1>Userspace: factories, programs, and the polis</h1>
+
+    <p>
+      The kernel is eight verbs; applications are everything else — and "everything else" is
+      one pattern: a <strong>factory</strong> publishes a descriptor (a slot layout plus a
+      <code>Pred</code> program), <code>create</code> mints a cell from it, and from that
+      moment the executor enforces the program on every turn that touches the cell. An
+      application's rules are substrate-enforced, not app bookkeeping; the app cannot forget
+      to check them, because it is not the one checking.
+    </p>
+
+    <h2 id="patterns">The factory patterns</h2>
+
+    <p>
+      The recurring coordination shapes ship as verified factories — each one a cell program
+      whose safety keystones are proven against the kernel:
+    </p>
+
+    <catalog view="factory-patterns">
+
+    <p>
+      The shape is always the same: the value at stake lives in the minted cell's own balance
+      column (funding it is an ordinary <code>move</code> in; settling it is an ordinary
+      <code>move</code> out — so conservation is the ordinary kernel law, with no side
+      table), and the lifecycle is a slot governed by a <code>Pred</code> state machine.
+      An escrow, concretely: <code>OPEN</code> settles to <code>RELEASED</code> under a
+      witness gate or to <code>REFUNDED</code> under a time gate; both terminals are inert;
+      double-resolution is impossible (<code>EscrowFactory.no_double_resolve</code>,
+      <code>release_requires_condition</code>); and value can never be stranded
+      (<code>open_releasable</code> / <code>open_refundable</code>).
+    </p>
+
+    <p>
+      The recurring services an application actually wants — lines of credit, private group
+      channels, asynchronous mailboxes, durable storage — are named factory patterns called
+      <a href="/learn/concepts/organs.html">organs</a>, and because they are all just
+      <code>Pred</code>s on a cell, they <em>compose</em>: one cell can wear four organs at once.
+    </p>
+
+    <h2 id="inherit">Apps inherit theorems</h2>
+
+    <p>
+      An app proves its contract <em>by consuming receipts against descriptors</em>, not by
+      re-modeling the kernel: the Verify toolkit
+      (<code>Dregg2/Verify/{Contract,Frames,Tactics}</code> and the gated variants) lets an
+      application state "my poll's tally is monotone, one ballot one vote" and discharge it
+      from the descriptor's constraints plus the kernel's guarantees. The runtime half
+      mirrors the Lean half exactly: <code>cell/src/blueprint.rs</code> builds per-deal
+      descriptors whose <code>state_constraints</code> <em>are</em> the verified state
+      machines, and <code>sdk/src/factories.rs</code>
+      (<code>create_escrow_cell</code>, <code>release_escrow</code>,
+      <code>fulfill_obligation</code>, …) emits the corresponding turns.
+    </p>
+
+    <h2 id="polis">The polis: governance as cells</h2>
+
+    <p>
+      Governance needs no kernel support, because governance is cells all the way down.
+      The polis layer (<code>starbridge-apps/polis</code>) ships three cell families, each a
+      content-addressed factory whose <code>state_constraints</code> ARE the machine:
+    </p>
+
+    <ul>
+      <li>a <strong>council proposal</strong> is a cell running
+        DRAFT&nbsp;→&nbsp;PROPOSED&nbsp;→&nbsp;{REJECTED, APPROVED&nbsp;→&nbsp;EXECUTED}: one
+        write-once proposal hash, a monotone approval bit per member, and an
+        <code>AffineLe</code> gate so certifying demands
+        Σ&nbsp;approvals&nbsp;≥&nbsp;M in the post-state — the executor, not the operator,
+        counts the votes; terminal states have no outgoing transition row, so no double
+        execute;</li>
+      <li>a <strong>constitution</strong> is a per-version cell whose parameters are pinned
+        literals for its whole life — amendment is <em>reissue</em>: an amendment proposal
+        cell stages the successor's descriptor hash as a pinned literal, demands M-of-N
+        certification, and its ENACT step is rejected before the cooling height
+        (<code>TemporalGate</code>); the receipt chain of the ceremony is the forward
+        certification;</li>
+      <li>a <strong>worker mandate</strong> — an orchestrator's budgeted delegation to one
+        agent — is a cell whose budget slice IS its funded balance (overspend cannot commit:
+        kernel conservation, not bookkeeping), whose tool scope is a pinned commitment, and
+        whose REVOKED state is terminally inert.</li>
+    </ul>
+
+    <p>
+      A citizen can read the constitution of a polis, because it is a page of predicates, and
+      can verify that what happened obeyed it, because the receipts say so. Legibility is a
+      shipped surface, not a slogan: <code>inspect_council</code>
+      (<code>starbridge_polis::council</code>) decodes a proposal cell's machine from its 8
+      slots, and the same decoder runs in the CLI (<code>dregg polis council</code>), the
+      Discord <code>/council-status</code> command, and the explorer's
+      <a href="/explorer/">Polis inspectors</a>
+      (<code>&lt;dregg-council&gt;</code> / <code>&lt;dregg-constitution&gt;</code> /
+      <code>&lt;dregg-mandate&gt;</code>). That is the product: not a chain with apps on top,
+      but polities whose rules are checkable by the people living under them.
+    </p>
+
+    <h2 id="live">Live instances</h2>
+
+    <p>
+      These descriptors exist tonight — generated by running the real Rust constructors, not
+      written for this page:
+    </p>
+
+    <catalog view="factory-instances">
+
+    <h2 id="grounding">Grounding</h2>
+
+    <ul>
+      <li><code>metatheory/Dregg2/Apps/EscrowFactory.lean</code>,
+        <code>ObligationFactory.lean</code>, <code>BridgeCell.lean</code> — the settlement
+        keystones (<code>mintEscrowCell_installs_state_machine</code>,
+        <code>no_double_resolve</code>, <code>release_conserves</code>,
+        <code>settle_requires_live_target</code>, …).</li>
+      <li><code>cell/src/blueprint.rs</code> — the runtime descriptors, with the Lean modules
+        as their stated spec.</li>
+      <li><code>sdk/src/factories.rs</code> — the turn builders for each pattern.</li>
+      <li><code>Dregg2/Substrate/VerbRegistry.lean</code> §FACTORY-PROVENANCE — every factory
+        pattern names the module that carries its proofs.</li>
+    </ul>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>Touch it:</strong> walk the real apps in the
+        <a href="/usecases.html">use-case explorer</a>, mint a factory cell with the
+        <a href="/studio.html">Studio's factory composer</a>, or open the
+        <a href="/starbridge/">Starbridge</a> app surfaces.
+      </p>
+    </div>
+
+    <p>
+      <a href="/learn/concepts/light-client.html">← 5 · The light client</a> ·
+      <a href="/learn/concepts/organs.html">The organs →</a> ·
+      <a href="/learn/concepts/trust-boundary.html">7 · The trust boundary →</a>
+    </p>
+
+  </main>
+</div>
+
+</layout>

@@ -1,0 +1,299 @@
+<layout src="_layouts/default.html">
+<title>deos — the agentic desktop, verified all the way down</title>
+
+<!-- ==================== HERO ==================== -->
+<header class="hero">
+  <div class="hero__inner">
+    <p class="hero__eyebrow">robigalia · the agentic desktop, verified all the way down</p>
+    <h1>A desktop where a window <em>is</em> a capability.</h1>
+    <p class="hero__sub">
+      <strong>deos</strong> is the agentic desktop you work in. <strong>dregg</strong> is the
+      formally-verified capability kernel underneath it. <strong>robigalia</strong> is the
+      whole stack — and it <strong>boots on seL4</strong>. A window is not a permission a
+      session grants you; it is a <em>capability</em> — an unforgeable, attenuable reference
+      that confers exactly the authority it names and nothing more. Hand an AI agent a surface
+      and you have handed it a budget it <strong>physically cannot exceed</strong>. Share a
+      screenshot and you share a <em>rehydratable, per-viewer, attenuated</em> live surface
+      that re-expands inside its own jail. Every interaction is a verified turn the system
+      cannot lie about, and a light client checks the whole history in one step.
+    </p>
+    <div class="hero__cta">
+      <a class="btn btn--primary" href="#what-it-is">What it is — two minutes</a>
+      <a class="btn btn--secondary" href="/deos.html">See the desktop</a>
+      <a class="btn btn--secondary" href="/playground/">Open the playground</a>
+    </div>
+    <p class="hero__note">
+      Open source (AGPL-3.0-or-later) ·
+      <a href="https://github.com/emberian/dregg">github.com/emberian/dregg</a> ·
+      <strong>dregg-on-seL4 boots</strong> real Rust protection-domains in QEMU, with a real
+      on-device STARK · a live devnet runs the same node you build from the repo, and its
+      state producer <strong>is the proved Lean function</strong>, not a model of it.
+    </p>
+  </div>
+</header>
+
+<main>
+
+<!-- ==================== WHAT IT IS ==================== -->
+<section class="section wrap" id="what-it-is">
+  <span class="section__label">The stack, in one breath</span>
+  <h2 class="section__title">deos runs on dregg runs in robigalia</h2>
+  <p class="section__intro">
+    Three names, one machine. The desktop adds <strong>zero new trust</strong>: everything you
+    touch reduces to a kernel that has been proved, and the kernel runs on a microkernel that
+    has been verified. Authority is something you <em>show</em>, never something you
+    <em>claim</em>.
+  </p>
+  <div class="flow">
+    <div class="flow__step">
+      <span class="flow__n">deos</span>
+      <p class="flow__name">The agentic desktop userlayer</p>
+      <p class="flow__desc">Everything a human or AI agent touches: cap-confined surfaces, a certified compositor, the web-of-cells, the rehydratable frustum-snapshots. The web's interaction model — declarative, hypertext-driven, progressively enhanced — made <em>capability-gated and verified</em> instead of ambient-authority soup. A window is a <code>Capability{ Surface(cell), rights }</code>.</p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">dregg</span>
+      <p class="flow__name">The verified capability kernel</p>
+      <p class="flow__desc">The formally-verified distributed object-capability kernel: a Lean executor, the circuits emitted from it, and the witness-graph. One sentence carries it: <em>a <a href="/glossary.html#turn">turn</a> is the exercise of an attenuable, proof-carrying token over owned state, leaving a verifiable receipt.</em> The kernel the proofs are about is the executor the node runs.</p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">robigalia</span>
+      <p class="flow__name">The whole stack, on seL4</p>
+      <p class="flow__desc">A Rust OS personality where the dregg executor is embedded as a protection domain on the <a href="https://sel4.systems">seL4</a> microkernel — ~10kLOC of verified C as the only privileged code. The <a href="/firmament.html">firmament</a> holds the apps, gives them capabilities, and checkpoints them transparently. It boots today.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== THE THREE BIG IDEAS ==================== -->
+<section class="section wrap">
+  <span class="section__label">Why this is new</span>
+  <h2 class="section__title">Three things only this substrate can do</h2>
+  <p class="section__intro">
+    Not features ported from elsewhere — categories that require a verified witness-graph
+    <em>and</em> an object-capability substrate at once. Each is a place where the proof does
+    real work for a person.
+  </p>
+  <div class="features">
+    <div class="feature">
+      <h3>A window is a capability</h3>
+      <p style="color: var(--fg-dim);">In a normal desktop, what an app may do is decided by a session — a cookie, an ambient grant, a trust-the-process handshake. In deos a surface <em>is</em> the authority: a named, typed bundle of cap-gated affordances. An agent sees exactly the affordances its held capabilities authorize — progressive enhancement becomes progressive <em>attenuation</em> — and an unauthorized action is refused in-band by the proven <code>required ⊆ held</code> gate, not by app good behaviour. Anti-cheat is free, because the cheat is unrepresentable.</p>
+    </div>
+    <div class="feature">
+      <h3>A screenshot you can re-open, live</h3>
+      <p style="color: var(--fg-dim);">A deos snapshot is not a dead pixel grid. It is a <em>paused camera on a witnessed scene</em>: it embeds a sturdyref behind a membrane, so opening the image re-attaches a per-viewer, attenuated, liveness-typed interactive surface. Two people open "the same" screenshot and rehydrate two different views — each confined to what their capabilities authorize. The unit you shared was never the pixels; it was <em>the revocable right to renegotiate the connection</em>. This is the genuine dregg-only novelty.</p>
+    </div>
+    <div class="feature">
+      <h3>One capability, local to global</h3>
+      <p style="color: var(--fg-dim);">An seL4 capability and a dregg capability are the <em>same abstraction at two points on a distance parameter</em>. A local Robigalia install is a first-class dregg deployment with strong properties — immediate revocation, synchronous commit, consistent checkpoint — because at <code>n=1</code> the distributed bounds collapse to local ones. The moment a program reaches the network it flows into native distributed dregg with no seam: same handle, same attenuate/delegate/invoke, the bounds just relax along <code>n</code>. The <a href="/firmament.html">firmament</a> is that gradation made real.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== THE KERNEL ==================== -->
+<section class="section wrap">
+  <span class="section__label">The kernel underneath</span>
+  <h2 class="section__title">Cells, turns, receipts</h2>
+  <p class="section__intro">
+    Everything above rests on three objects. Escrows, councils, name registries, budgets,
+    windows, games — all of it is built from these, and inherits their guarantees.
+  </p>
+  <div class="flow">
+    <div class="flow__step">
+      <span class="flow__n">01 / Cells</span>
+      <p class="flow__name">Where state lives, behind its own rules</p>
+      <p class="flow__desc">A <a href="/glossary.html#cell">cell</a> holds balances, capabilities, and named slots — plus a program: a predicate over its own transitions that the substrate enforces on every change. Nothing is ownerless. A cell changes only under its own program, only by an authorized actor; a turn touching one cell leaves every other cell untouched. "A budget that cannot be exceeded" is just a cell whose program says so.</p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">02 / Turns</span>
+      <p class="flow__name">Actions that must show their warrant</p>
+      <p class="flow__desc">A <a href="/glossary.html#turn">turn</a> is an atomic batch of actions. Each action presents a capability — a token naming what it may touch and how, narrowable but never amplifiable — and must discharge every <a href="/glossary.html#guard">guard</a> in scope. The whole turn commits or none of it does. A forged credential on any leg rejects the entire turn. The lineage: macaroons → biscuit-Datalog → the proof system.</p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">03 / Receipts</span>
+      <p class="flow__name">History you can hand to a stranger</p>
+      <p class="flow__desc">A committed turn leaves <a href="/glossary.html#q">Q</a> — a <a href="/glossary.html#receipt">receipt</a> binding the entire post-state, with no field a tamperer can edit. Receipts chain; proofs fold; a light client verifies a whole history by checking one root, re-executing nothing and trusting no executor.</p>
+    </div>
+  </div>
+  <p style="text-align: center; margin-top: var(--s5);">
+    <a href="/docs.html" class="btn btn--secondary">The protocol, in seven rungs &rarr;</a>
+  </p>
+</section>
+
+<!-- ==================== PROOF / UNFOOLABILITY ==================== -->
+<section class="section wrap">
+  <span class="section__label">The proof architecture</span>
+  <h2 class="section__title">A light client cannot be fooled</h2>
+  <p class="section__intro">
+    The point of the proofs is not a badge — it is that a stranger running the smallest
+    possible check learns the truth about a whole history, and a server that lies is caught.
+    The foil has a name: <em>the pale ghost</em>, a server that presents a plausible state it
+    never legitimately produced.
+  </p>
+  <div class="features">
+    <div class="feature">
+      <h3>ARGUS — the circuit witnesses correct evolution</h3>
+      <p style="color: var(--fg-dim);">The proof does not merely attest "some valid state exists." It witnesses the protocol's <em>correct evolution</em>: every turn executed correctly, in the right order, with no drop, insert, or reorder, folding into one root. A light client checks only <code>verify(root)</code> — re-witnessing nothing — and learns Authority, Conservation, Integrity, and Freshness for the entire history. A tampered aggregate cannot bind: there is no verifying proof of a forged chain.</p>
+    </div>
+    <div class="feature">
+      <h3>The executor <em>is</em> a memory program</h3>
+      <p style="color: var(--fg-dim);">"The receipt binds the whole post-state" is a constructive fact, not a slogan. Every kernel field and the receipt log project onto one domain-tagged universal address space, and the executor's post-state <em>equals</em> the fold of the verb's emitted memory trace over the pre-state — so nothing is left off the map. Tamper with any field and the honest commitment recovers the difference. This is integrity's load-bearing leg.</p>
+    </div>
+    <div class="feature">
+      <h3>PATH-PRESERVE — every finalized turn stays proven</h3>
+      <p style="color: var(--fg-dim);">A finalized turn does not lose its proof when the history grows past it. The aggregate's seam tooth pins each step to the next (<code>new_root[i] = old_root[i+1]</code>), so the whole chain is bound, and the proof rotation keeps the cost down without breaking the binding. Circuits are emitted from proved Lean modules — Rust authors zero constraints — so the circuit that proves and the executor that runs cannot disagree about what a turn did.</p>
+    </div>
+  </div>
+  <p style="text-align: center; margin-top: var(--s5);">
+    <a href="/verify.html" class="btn btn--secondary">What is proven, and how to check it &rarr;</a>
+  </p>
+</section>
+
+<!-- ==================== GUARANTEES (generated catalog) ==================== -->
+<section class="section wrap section--feature">
+  <span class="section__label">The assurance case</span>
+  <h2 class="section__title">What is proven — in human terms</h2>
+  <p class="section__intro">
+    These cards are not marketing copy: they are embedded at build time from a catalog
+    generated out of <code>Dregg2/AssuranceCase.lean</code>, where each guarantee names an
+    apex theorem machine-pinned to the Lean kernel's three axioms. Five guarantees to a light
+    client — <strong>Authority, Conservation, Integrity, Freshness, Unfoolability</strong> —
+    plus <strong>the running entry</strong>: Authority, Conservation and Integrity hold over
+    <em>what the node actually runs</em>, because the running system calls the proved
+    function. This page cannot say more than the proofs do — the build fails if it tries.
+  </p>
+  <catalog view="guarantees">
+  <p class="guarantee-foot">
+    The guarantees are unconditional in the Lean-kernel sense <em>modulo</em> a small,
+    explicit set of cryptographic assumptions that enter as typed hypotheses, never as
+    axioms — and the present deployment seams (a single-node devnet; per-turn proving staged,
+    not yet auto-attached; the verified producer covering a named subset of effects) are
+    stated, not hidden. The full delimitation is <a href="/verify.html">the Verify page</a>,
+    <a href="/learn/concepts/trust-boundary.html">rung 7 of the protocol docs</a>, and the
+    <a href="https://github.com/emberian/dregg/blob/main/docs/ASSURANCE.md">assurance
+    specification</a>.
+  </p>
+</section>
+
+<!-- ==================== DEOS APPS / FORCING FUNCTION ==================== -->
+<section class="section wrap">
+  <span class="section__label">What it is good for</span>
+  <h2 class="section__title">Apps where the security property is the feature</h2>
+  <p class="section__intro">
+    A deos app is a set of cells exposing affordances, rendered as surfaces, over durable
+    verified state, reached by agents (human or AI), distributed across the web-of-cells, and
+    rehydratable. The framework wires those layers; the builder writes affordances and a
+    surface. The sharpest exemplar makes a <em>game mechanic into a security property</em>.
+  </p>
+  <div class="flow">
+    <div class="flow__step">
+      <span class="flow__n">Fog of war</span>
+      <p class="flow__name">You provably cannot peek</p>
+      <p class="flow__desc">In a normal game, what you can see is a rendering trick the client could cheat. In deos, fog of war <em>is</em> the membrane's per-viewer projection, backed by a real proof obligation: to see a side's tiles you must produce a proof the registry verifies, and a player holding only its own secret <em>cannot construct</em> the enemy's vision. Terrain occludes line-of-sight; moves and objective-captures are cap-gated verified turns; AI agents play to a decision through the same gate a human uses. Secure by construction, and you can play it.</p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">pg-dregg</span>
+      <p class="flow__name">Verified durable state — your node is your Postgres</p>
+      <p class="flow__desc">A PostgreSQL extension where <strong>reads are free SQL</strong> and <strong>writes are verified turns</strong>. The commit log projects into queryable tables (cells, receipts, caps, the blocklace); a row's policy reads <code>dregg_admits(token, 'read', id, …)</code> — the same decision the kernel makes, from the same capability token. Attenuation, offline delegation, time-boxing, caveats, revocation — the discipline SQL row-level-security structurally cannot express, presented once per session.</p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">The organs</span>
+      <p class="flow__name">Real systems on one verified path</p>
+      <p class="flow__desc">A line of credit is an attenuated capability (the executor refuses an over-line draw). An encrypted group is one whose membership is physics (a <code>remove(member)</code> darkens ciphertext and capabilities in one atomic turn). An asynchronous handoff delivers a sealed turn-intent to an offline peer with a checkable custody receipt. Each is an SDK noun riding the <em>same</em> verified executor — no new executor entry, each an executable test you can read.</p>
+    </div>
+  </div>
+  <p style="text-align: center; margin-top: var(--s5);">
+    <a href="/deos.html" class="btn btn--secondary">The agentic desktop &rarr;</a>
+    <a href="/build.html" class="btn btn--secondary">Build a deos app &rarr;</a>
+  </p>
+</section>
+
+<!-- ==================== START HERE ==================== -->
+<section class="section wrap" id="start-here">
+  <span class="section__label">Start here</span>
+  <h2 class="section__title">Touch it in five minutes</h2>
+  <div class="quickstart">
+    <div class="quickstart__steps">
+      <div class="quickstart__step">
+        <span class="quickstart__n">1</span>
+        <div>
+          <p><strong>Touch the live node — no install, just <code>curl</code>.</strong> The
+          public devnet is the same node the repo builds. Ask it what it is, then faucet
+          yourself a cell and read it back:</p>
+          <pre><code class="language-bash">curl -s https://devnet.dregg.fg-goose.online/status
+# → healthy, solo federation, state_producer:"lean", full_turn_proving:true
+
+CELL=$(python3 -c "import secrets;print(secrets.token_hex(32))")
+curl -s -X POST https://devnet.dregg.fg-goose.online/api/faucet \
+  -H 'content-type: application/json' -d "{\"recipient\":\"$CELL\",\"amount\":1000}"
+curl -s https://devnet.dregg.fg-goose.online/api/cell/$CELL</code></pre>
+          <p>The <code>status</code> line is the honest contract: it names that the state
+          producer is <em>Lean</em> — the proved kernel itself, not a re-implementation.</p>
+        </div>
+      </div>
+      <div class="quickstart__step">
+        <span class="quickstart__n">2</span>
+        <div>
+          <p><strong>Try to break a turn in your browser.</strong> The
+          <a href="/playground/">playground</a> runs the real executor as WebAssembly — no
+          server. Stage a transfer, run it, then overdraw a balance or replay a spent
+          authorization and watch the substrate reject you. The rejection is the product. Then
+          open the <a href="/explorer/">explorer</a> on the live federation and scrub any
+          cell's history backward — time travel is just reading receipts, because the receipts
+          <em>are</em> the history.</p>
+        </div>
+      </div>
+      <div class="quickstart__step">
+        <span class="quickstart__n">3</span>
+        <div>
+          <p><strong>Boot the kernel on seL4.</strong> Real Rust protection-domains come up on
+          the seL4 microkernel in QEMU, including a real cryptographic STARK proved and
+          verified on-device:</p>
+          <pre><code class="language-bash">git clone https://github.com/emberian/dregg && cd dregg/sel4
+./setup.sh        # Microkit SDK + toolchain (native macOS, no Docker)
+make run-stark    # a REAL on-device STARK: prove, verify, reject a tampered proof</code></pre>
+          <p>That is the verified heart organ running on the verified microkernel. The
+          <a href="/firmament.html">firmament page</a> walks the boot ladder and the
+          local-to-global capability gradation.</p>
+        </div>
+      </div>
+      <div class="quickstart__step">
+        <span class="quickstart__n">4</span>
+        <div>
+          <p><strong>Decide whether to trust it.</strong> Objects in the explorer carry a
+          verification status, never hand-set. <a href="/verify.html">The Verify page</a>
+          states exactly what is proven, the eight-carrier assumption floor it rests on, and
+          the honest deployment seams — then shows you how to check the proofs yourself by
+          building the Lean development from the repo. The longer
+          <a href="https://github.com/emberian/dregg/blob/main/docs/EVALUATION.md">evaluation
+          guide</a> is the "should I trust it, and why" companion.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== THE LADDER ==================== -->
+<section class="section wrap">
+  <span class="section__label">Go deeper</span>
+  <h2 class="section__title">Three ways down</h2>
+  <div class="flow">
+    <div class="flow__step">
+      <span class="flow__n">The desktop</span>
+      <p class="flow__name">deos · the agentic userlayer</p>
+      <p class="flow__desc">Windows-as-capabilities, htmx-on-crack affordances, the rehydratable frustum-snapshot, the fog-of-war forcing function, and the verified-desktop crown — the Lean theorems that say the desktop adds no trust. <a href="/deos.html">Read deos &rarr;</a></p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">The ground</span>
+      <p class="flow__name">The firmament · dregg-on-seL4</p>
+      <p class="flow__desc">One capability across a distance parameter, the <code>n=1</code> collapse to strong-local properties, the five-PD topology, what boots today, and verified durable state with pg-dregg. <a href="/firmament.html">Read the firmament &rarr;</a></p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">The protocol</span>
+      <p class="flow__name">The kernel, in seven rungs</p>
+      <p class="flow__desc">One sentence unfolding outward: the turn, the four substances and eight verbs, guards, receipts, the light client, userspace and the polis, the trust boundary. Prose, then theorems, then a live surface. <a href="/docs.html">Climb the ladder &rarr;</a></p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+</layout>

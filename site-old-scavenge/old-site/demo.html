@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo — dregg</title>
+  <meta name="description" content="Interactive demonstrations: WASM proof generation, browser extension cclerk, live CI results, and CLI quickstart.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name"><code>dregg</code></span>
+  <span class="nav__tag">distributed object-capability runtime</span>
+  <div class="nav__links">
+    <a class="nav__link" href="index.html">Home</a>
+    <a class="nav__link" href="/learn.html">Docs</a>
+    <a class="nav__link" href="paper.html">Paper</a>
+    <a class="nav__link nav__link--active" href="demo.html">Demo</a>
+    <a class="nav__link" href="/explorer/">Explorer</a>
+    <a class="nav__link" href="/playground/">Playground</a>
+    <a class="nav__link" href="/">New Site</a>
+    <a class="nav__link" href="https://github.com/emberian/dregg">GitHub</a>
+  </div>
+</nav>
+
+<main class="wrap">
+  <div class="page-header">
+    <h1>Demonstrations</h1>
+    <p>See dregg in action. Generate real STARK proofs in the browser, interact with the cclerk extension, view CI-generated results from the live federation, or run the CLI locally.</p>
+  </div>
+
+  <!-- Primary CTA: Unified Playground -->
+  <div class="demo-card" style="border-color: var(--accent); border-width: 2px; margin-bottom: var(--s6); padding: var(--s6);">
+    <h2 class="demo-card__title" style="font-size: 1.5rem;">Interactive Playground</h2>
+    <p class="demo-card__desc" style="font-size: 1rem;">
+      The unified playground presents everything dregg can do in a single guided experience.
+      Mint tokens, generate STARK proofs, build Merkle trees, evaluate Datalog policies,
+      transfer private notes, delegate capabilities, and bridge across federations &mdash;
+      all running client-side in WebAssembly. No server, no backend, no trust assumptions.
+    </p>
+    <a class="btn btn--primary" href="/playground/" style="display:inline-flex;align-items:center;gap:8px;font-size:0.95rem;padding:14px 28px;margin-top:var(--s4);">
+      Launch Playground &#8594;
+    </a>
+  </div>
+
+  <div class="demo-cards">
+
+    <div class="demo-card">
+      <h2 class="demo-card__title">WASM Explorer</h2>
+      <p class="demo-card__desc">
+        The classic explorer interface with state tree, action builder, and proof viewer.
+        A more compact view of the core token and proof operations.
+      </p>
+      <ul class="demo-card__features">
+        <li>Mint a root macaroon and attenuate it with caveats</li>
+        <li>Generate real STARK proofs (BabyBear field, FRI commitment)</li>
+        <li>Verify proofs, tamper with them to see verification fail</li>
+        <li>Build 4-ary BLAKE3 Merkle trees with membership proofs</li>
+        <li>Run the Datalog evaluator with standard policy rules</li>
+        <li>Demonstrate fold-chain attenuation (cryptographic narrowing)</li>
+      </ul>
+      <a class="demo-card__link" href="/explorer/">Launch Explorer &#8594;</a>
+    </div>
+
+    <div class="demo-card">
+      <h2 class="demo-card__title">Browser Extension Cipherclerk</h2>
+      <p class="demo-card__desc">
+        With the dregg cclerk extension installed, web pages request capability-based
+        authorization via <code>window.dregg</code>. The cclerk evaluates Datalog policies
+        and generates STARK proofs locally.
+      </p>
+      <ul class="demo-card__features">
+        <li>Provision a demo token into the cclerk</li>
+        <li>Request authorization at each privacy level</li>
+        <li>See exactly what the verifier learns (trusted / selective / private)</li>
+        <li>All crypto runs locally in WASM -- no server round-trip</li>
+      </ul>
+      <a class="demo-card__link" href="/extension/">Install Extension &#8594;</a>
+      <a class="demo-card__link" href="/examples/auth-demo.html" style="margin-left: var(--s4);">Launch Auth Demo &#8594;</a>
+    </div>
+
+    <div class="demo-card">
+      <h2 class="demo-card__title">Live Demo Results</h2>
+      <p class="demo-card__desc">
+        Every push to <code>main</code> runs the full demo suite in CI. Real STARK proofs,
+        real Datalog evaluation, real timing data. No simulations. 20+ authorization
+        scenarios end-to-end. 8 application demos (DeFi suite, identity, gallery).
+      </p>
+      <ul class="demo-card__features">
+        <li>Multi-org delegation with cross-domain STARK proofs</li>
+        <li>IVC attenuation chains (incremental verifiable computation)</li>
+        <li>Federation bootstrap with BFT consensus</li>
+        <li>Privacy-preserving orderbook, escrow, atomic swaps</li>
+        <li>Anonymous credential issuance and selective disclosure</li>
+        <li>Stablecoin CDP, AMM swaps, lending protocol lifecycle</li>
+        <li>RBAC Datalog policies, token revocation, budget enforcement</li>
+        <li>Full timing data -- proof generation and verification latencies</li>
+      </ul>
+      <a class="demo-card__link" href="/demos/">View Results &#8594;</a>
+    </div>
+
+    <div class="demo-card">
+      <h2 class="demo-card__title">Code Sandbox</h2>
+      <p class="demo-card__desc">
+        Write and execute JavaScript that calls the dregg WASM API directly. A code
+        editor with pre-built scenarios, live console output, timing data, and
+        federation status — all running in your browser.
+      </p>
+      <ul class="demo-card__features">
+        <li>Code editor with full dregg API available as <code>dregg.*</code></li>
+        <li>Pre-built scenarios: mint, attenuate, STARK proofs, Merkle trees, Datalog</li>
+        <li>Live federation status panel with node discovery</li>
+        <li>Admin mode: connect with root key for privileged operations</li>
+        <li>Real-time output console with timing information</li>
+      </ul>
+      <a class="demo-card__link" href="/playground/#sandbox">Sandbox in Playground &#8594;</a>
+      <a class="demo-card__link" href="/sandbox/" style="margin-left: var(--s4);">Standalone &#8594;</a>
+    </div>
+
+    <div class="demo-card">
+      <h2 class="demo-card__title">CLI Quickstart</h2>
+      <p class="demo-card__desc">
+        Run the full authorization pipeline locally. The <code>demo</code> and
+        <code>demo-agent</code> crates demonstrate minting, attenuation, proving,
+        and multi-agent cross-silo authorization. Application examples exercise the
+        full DeFi and identity stacks.
+      </p>
+      <pre><code>git clone https://github.com/emberian/dregg
+cd dregg
+cargo build --release -p demo -p demo-agent
+
+# Single-agent flow
+cargo run --release -p demo
+
+# Multi-agent cross-silo
+cargo run --release -p demo-agent
+
+# Application examples
+cargo run --release -p demo-agent --example base_anonymous_credential
+cargo run --release -p demo-agent --example base_private_transfer
+cargo run --release -p demo-agent --example intent_lifecycle</code></pre>
+      <a class="demo-card__link" href="https://github.com/emberian/dregg" style="margin-top: var(--s4);">View Source &#8594;</a>
+    </div>
+
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left"><code>dregg</code> -- distributed object-capability runtime. AGPL-3.0-or-later.</span>
+    <div class="site-foot__links">
+      <a href="index.html">Home</a>
+      <a href="/learn.html">Docs</a>
+      <a href="paper.html">Paper</a>
+      <a href="/">New Site</a>
+      <a href="https://github.com/emberian/dregg">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

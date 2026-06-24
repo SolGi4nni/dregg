@@ -1,0 +1,131 @@
+<layout src="_layouts/default.html">
+<title>3 · Guards — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/docs.html">The Protocol</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>3 · Guards</span>
+    </nav>
+
+<h1>Guards: one predicate algebra, four polarities</h1>
+
+    <p>
+      Everything that constrains a turn is the <em>same kind of object</em>: a decidable
+      predicate over the proposed step. dregg calls this algebra <strong>Pred</strong>, and it
+      shows up in four polarities that are usually four separate mechanisms in other systems:
+    </p>
+
+    <ul>
+      <li>a <strong>caveat</strong> — imposed on <em>delegated</em> power ("this token only
+        works before Friday, only on slot 3");</li>
+      <li>a <strong>program constraint</strong> — maintained on <em>yourself</em> ("my expiry
+        slot is monotone; my committee root is immutable");</li>
+      <li>a <strong>precondition</strong> — required of a <em>turn</em> ("only if the witness
+        hash matches the commitment");</li>
+      <li>an <strong>intent demand</strong> — wanted of the <em>world</em> ("I will sign
+        whatever turn gives me ≥ N of asset A").</li>
+    </ul>
+
+    <p>
+      One algebra, four places to stand. A predicate is either <em>first-party</em> (decidable
+      right now against the old/new state) or <em>witnessed</em> (a registered verifier
+      discharges it — a third-party discharge, a range proof, a zero-knowledge statement).
+      The same predicate the executor evaluates is compiled to circuit obligations, so what
+      you can <em>install</em> and what the proof <em>enforces</em> are one mechanism.
+    </p>
+
+    <h2 id="constraints">The constraint grammar</h2>
+
+    <p>
+      Cell programs are built from this constraint vocabulary — each kind a small, decidable
+      shape over the cell's slots:
+    </p>
+
+    <catalog view="constraint-kinds">
+
+    <p>
+      Beyond single-slot shapes, the relational closure admits any affine relation over the
+      post-state (<code>head ≤ tail + capacity</code>, <code>Σ slots = const</code>) as the
+      same <code>Pred</code> object — no new atom per shape
+      (<code>Authority/RelationalClosure.lean</code>, e.g.
+      <code>ofFieldLteOther_eq</code>). Bounded quantifiers compile down to the same closure
+      with a proven constraint budget
+      (<code>QuantifiedPredicate.compile_sound</code>, <code>andFold_budget</code>).
+    </p>
+
+    <h2 id="coordination-dial">The coordination dial</h2>
+
+    <p>
+      Guards carry a price tag, and the system computes it rather than hiding it. Two
+      concurrent turns can merge without coordination exactly when their guards are
+      <em>confluence-stable</em> — the invariant survives merging independently-taken steps. A
+      guard that is not confluence-stable <em>forces ordering</em>: it is the system telling
+      you that what you asked for costs consensus. The classifier is a theorem, not advice:
+    </p>
+
+    <ul>
+      <li><code>ConfluenceClassifier.keeps_iff_coordinationFree</code> — a guard preserves
+        confluence iff it runs coordination-free;</li>
+      <li><code>monotone_keeps</code> — monotone thresholds are free;</li>
+      <li><code>bounded_forces_ordering</code> — upper bounds force ordering.</li>
+    </ul>
+
+    <h2 id="disclosure-dial">The disclosure dial</h2>
+
+    <p>
+      The second dial is how much a guard <em>reveals</em> while being checked. The principle:
+      <em>what the proof does not need, it does not ask to see.</em> The ladder, from most to
+      least disclosed:
+    </p>
+
+    <ul>
+      <li><strong>cleartext</strong> — the predicate reads the values directly;</li>
+      <li><strong>committed</strong> — values live behind Pedersen commitments; conservation
+        checks homomorphically without opening them
+        (<code>PrivatePredicate.private_conservation_checks_homomorphically</code>,
+        <code>committed_iff_cleartext</code> — committed and cleartext judgments agree);</li>
+      <li><strong>range-proved</strong> — only the bound is disclosed, not the value
+        (<code>RangeProof.disclosure_only_the_bound</code>,
+        <code>committed_inequality_via_range</code>);</li>
+      <li><strong>jointly garbled</strong> — two parties evaluate a shared gate over private
+        inputs; each learns the verdict and nothing else
+        (<code>GarbledJoint.garbled_input_private</code>,
+        <code>joint_turn_private_gate</code>).</li>
+    </ul>
+
+    <h2 id="grounding">Grounding</h2>
+
+    <ul>
+      <li><code>cell/src/program.rs</code> — the canonical constraint enum the table above is
+        generated from; <code>cell/src/blueprint.rs</code> documents what programs deliberately
+        cannot see.</li>
+      <li><code>metatheory/Dregg2/Authority/{RelationalClosure,QuantifiedPredicate,ConfluenceClassifier,PrivatePredicate}.lean</code>
+        and <code>metatheory/Dregg2/Crypto/{RangeProof,GarbledJoint}.lean</code> — the
+        theorems named above.</li>
+      <li><code>metatheory/Dregg2/Laws.lean</code> — the <code>Predicate ⊣ Witness</code>
+        Galois connection the whole algebra sits on.</li>
+    </ul>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>Touch it:</strong> compose and evaluate predicates live in the
+        <a href="/learn/ontology.html">ontology page's predicate workbench</a>, or install a
+        program on a cell in the <a href="/studio.html">Studio</a> and watch the executor
+        reject a violating turn.
+      </p>
+    </div>
+
+    <p>
+      <a href="/learn/concepts/substances.html">← 2 · Cells &amp; substances</a> ·
+      <a href="/learn/concepts/receipts.html">4 · Receipts &amp; Q →</a>
+    </p>
+
+  </main>
+</div>
+
+</layout>

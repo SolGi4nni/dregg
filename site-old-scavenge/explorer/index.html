@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <base href="/explorer/">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Explorer — dregg</title>
+  <meta name="description" content="Live read-only viewport onto a dregg federation node — cells, blocks, receipts, capabilities, intents, and federations rendered through the same platform inspectors as the Studio.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="../_includes/vizzer.css">
+  <script type="module" src="../_includes/runtime-bootstrap.js"></script>
+  <script type="module" src="../_includes/studio/image-shell.js"></script>
+</head>
+<body>
+  <!-- Header -->
+  <header class="ex-header">
+    <div class="ex-header__left">
+      <a href="../index.html" class="ex-header__logo">pi</a>
+      <span class="ex-header__title">dregg <span class="accent">explorer</span></span>
+    </div>
+    <div class="ex-header__center">
+      <div class="ex-search">
+        <span class="ex-search__icon">&#9906;</span>
+        <input type="text" class="ex-search__input" id="search-input"
+               placeholder="Search by cell id, receipt hash, block height, or dregg:// URI…"
+               autocomplete="off" spellcheck="false">
+        <kbd class="ex-search__kbd">/</kbd>
+      </div>
+      <div class="ex-search__error" id="search-error" hidden></div>
+    </div>
+    <div class="ex-header__right">
+      <div class="ex-connection" id="connection-status">
+        <span class="ex-connection__dot"></span>
+        <span class="ex-connection__label">connecting…</span>
+      </div>
+      <button class="ex-header__settings-btn" id="settings-btn" title="Node settings">&#9881;</button>
+      <dregg-image-nav current="explorer"></dregg-image-nav>
+      <a class="ex-header__link" href="caps-as-rows.html" title="Your capabilities, expressed as the rows you may read — the pg-dregg cap-gated view">Caps&nbsp;as&nbsp;rows</a>
+      <a class="ex-header__link" href="../starbridge/">Starbridge</a>
+      <a class="ex-header__link" href="https://github.com/emberian/dregg">GitHub</a>
+    </div>
+  </header>
+
+  <!-- Settings modal -->
+  <div class="ex-modal" id="settings-modal" hidden>
+    <div class="ex-modal__backdrop"></div>
+    <div class="ex-modal__content">
+      <h3 class="ex-modal__title">Node Connection</h3>
+      <div class="ex-modal__field">
+        <label for="node-url-input">Node URL</label>
+        <input type="url" id="node-url-input" value="http://localhost:8420" spellcheck="false">
+      </div>
+      <div class="ex-modal__field">
+        <label class="ex-modal__checkbox-label">
+          <input type="checkbox" id="auto-refresh-toggle" checked>
+          Poll liveness (every 5s)
+        </label>
+      </div>
+      <div class="node-diagnostics" id="node-diagnostics">
+        <div class="node-diagnostics__message" id="diag-message">Run a local node: <code>cargo run -p dregg-node -- run --port 8420 --federation-size 1</code>. Remote nodes only allow localhost/extension origins by default (CORS).</div>
+      </div>
+      <div class="ex-modal__actions">
+        <button class="btn btn-secondary" id="settings-test">Test</button>
+        <button class="btn btn-secondary" id="settings-cancel">Cancel</button>
+        <button class="btn btn-primary" id="settings-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main layout. The whole app is one <dregg-app>: every object view is a
+       platform <dregg-*> inspector resolving through the live RemoteRuntime. -->
+  <dregg-app id="explorer-app">
+  <div class="ex-layout">
+    <!-- Left sidebar navigation -->
+    <nav class="ex-nav" id="ex-nav">
+      <div class="ex-nav__section">
+        <button class="ex-nav__item active" data-page="overview">
+          <span class="ex-nav__icon">&#9670;</span><span class="ex-nav__label">Overview</span>
+        </button>
+        <button class="ex-nav__item" data-page="blocks">
+          <span class="ex-nav__icon">&#9632;</span><span class="ex-nav__label">Blocks</span>
+        </button>
+        <button class="ex-nav__item" data-page="cells">
+          <span class="ex-nav__icon">&#9673;</span><span class="ex-nav__label">Cells</span>
+        </button>
+        <button class="ex-nav__item" data-page="turns">
+          <span class="ex-nav__icon">&#8634;</span><span class="ex-nav__label">Turns</span>
+        </button>
+        <button class="ex-nav__item" data-page="receipts">
+          <span class="ex-nav__icon">&#9830;</span><span class="ex-nav__label">Receipts</span>
+        </button>
+        <button class="ex-nav__item" data-page="history">
+          <span class="ex-nav__icon">&#8630;</span><span class="ex-nav__label">Time travel</span>
+        </button>
+        <button class="ex-nav__item" data-page="polis">
+          <span class="ex-nav__icon">&#9745;</span><span class="ex-nav__label">Polis</span>
+        </button>
+        <button class="ex-nav__item" data-page="capabilities">
+          <span class="ex-nav__icon">&#8669;</span><span class="ex-nav__label">Capabilities</span>
+        </button>
+        <button class="ex-nav__item" data-page="intents">
+          <span class="ex-nav__icon">&#9733;</span><span class="ex-nav__label">Intents</span>
+        </button>
+        <button class="ex-nav__item" data-page="federation">
+          <span class="ex-nav__icon">&#9678;</span><span class="ex-nav__label">Federation</span>
+        </button>
+        <button class="ex-nav__item" data-page="activity">
+          <span class="ex-nav__icon">&#9656;</span><span class="ex-nav__label">Activity</span>
+        </button>
+      </div>
+      <div class="ex-nav__footer">
+        <div class="ex-nav__height" id="nav-height">
+          <span class="ex-nav__height-label">HEIGHT</span>
+          <span class="ex-nav__height-value" id="nav-height-value">--</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main content area -->
+    <main class="ex-main" id="ex-main">
+      <!-- Offline / sample-mode banner (hidden until the node is unreachable;
+           sample mode is OPT-IN and loudly labeled — never silent substitution) -->
+      <div class="ex-sample-banner" id="sample-banner" hidden>
+        <span class="ex-sample-banner__text" id="sample-banner-text">
+          Devnet unreachable. You can browse a clearly-labeled <strong>static sample snapshot</strong>
+          to explore the inspector surfaces — nothing shown in sample mode comes from a node.
+        </span>
+        <button class="btn btn-secondary" id="sample-enter-btn">Browse sample snapshot</button>
+        <button class="btn btn-secondary" id="sample-exit-btn" hidden>Exit sample mode &amp; reconnect</button>
+      </div>
+
+      <!-- Overview -->
+      <section class="ex-page active" id="page-overview">
+        <div class="ex-page__header">
+          <h2>Federation Overview</h2>
+          <p>Live read-only viewport onto the connected dregg node. Every panel below is a platform inspector resolving real node data through the RemoteRuntime — the same components the Studio and Playground use.</p>
+        </div>
+        <div class="devnet-brief" id="devnet-brief">
+          <div class="devnet-brief__main">
+            <div class="devnet-brief__eyebrow">Connected node</div>
+            <div class="devnet-brief__title" id="devnet-node-url">--</div>
+            <div class="devnet-brief__meta" id="devnet-node-meta">connecting…</div>
+          </div>
+        </div>
+        <!-- Live receipt stream: the same SSE-with-poll-fallback link the
+             Starbridge shell uses (shell/node-link.js). The mode badge states
+             which transport is actually feeding the list — never a fabricated
+             "live". Every row cross-links into the receipt / cell inspectors. -->
+        <div class="ex-receipt-stream" id="receipt-stream">
+          <div class="ex-receipt-stream__head">
+            <h3>Receipt stream</h3>
+            <span class="ex-receipt-stream__mode" id="receipt-stream-mode" data-mode="off">off</span>
+          </div>
+          <ul class="ex-receipt-stream__list" id="receipt-stream-list" aria-live="polite"></ul>
+          <p class="ex-receipt-stream__note" id="receipt-stream-note">
+            Committed turns as the node announces them (<code>/api/events/stream</code> SSE,
+            honest poll fallback). Each entry links to its receipt — receipts carry the proof view.
+          </p>
+        </div>
+        <div class="overview-sections" id="overview-inspectors"></div>
+      </section>
+
+      <!-- Blocks -->
+      <section class="ex-page" id="page-blocks">
+        <div class="ex-page__header">
+          <h2>Blocks</h2>
+          <p>The live blocklace DAG from federation consensus — each block chains to its predecessor (real <code>prev_hash</code> linkage), rendered via <code>&lt;dregg-block-dag&gt;</code>. Click any block (or search a height) to open it in <code>&lt;dregg-block&gt;</code> below.</p>
+        </div>
+        <div id="mount-blocks"></div>
+        <div id="detail-blocks" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Cells -->
+      <section class="ex-page" id="page-cells">
+        <div class="ex-page__header">
+          <h2>Cells</h2>
+          <p>Agents in the federation ledger, via <code>&lt;dregg-cell-list&gt;</code> / <code>&lt;dregg-cell&gt;</code>.</p>
+        </div>
+        <div id="mount-cells"></div>
+        <div id="detail-cells" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Turns -->
+      <section class="ex-page" id="page-turns">
+        <div class="ex-page__header">
+          <h2>Turns</h2>
+          <p>Committed turns share their hash with receipts; <code>&lt;dregg-turn&gt;</code> renders a turn's actions and authorization.</p>
+        </div>
+        <div id="mount-turns"></div>
+        <div id="detail-turns" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Receipts -->
+      <section class="ex-page" id="page-receipts">
+        <div class="ex-page__header">
+          <h2>Receipts</h2>
+          <p>The receipt chain via <code>&lt;dregg-receipt-list&gt;</code>; open one for <code>&lt;dregg-receipt&gt;</code> + <code>&lt;dregg-witnessed-receipt&gt;</code> with its trust-tier proof view.</p>
+        </div>
+        <div id="mount-receipts"></div>
+        <div id="detail-receipts" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Time travel: walk a cell's receipt chain backward -->
+      <section class="ex-page" id="page-history">
+        <div class="ex-page__header">
+          <h2>Time travel</h2>
+          <p>Pick a cell and walk its receipt chain backward via <code>&lt;dregg-cell-history&gt;</code>:
+             each step shows the pre&nbsp;&rarr;&nbsp;post state commitments (the receipt binds the whole
+             post-state), the turn's effects, and its proof/witness status. The node serves historical
+             <em>commitments</em> — the canonical objects a verifier checks — not historical slot values.</p>
+        </div>
+        <div class="ex-history-picker" id="history-picker">
+          <input type="text" id="history-cell-input" class="ex-search__input" list="history-cell-options"
+                 placeholder="64-hex cell id (or pick a known cell)…" autocomplete="off" spellcheck="false">
+          <datalist id="history-cell-options"></datalist>
+          <button class="btn btn-primary" id="history-walk-btn">Walk the chain</button>
+        </div>
+        <div id="mount-history"></div>
+        <div id="detail-history" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Polis: governance cells (council / constitution / worker mandate) -->
+      <section class="ex-page" id="page-polis">
+        <div class="ex-page__header">
+          <h2>Polis</h2>
+          <p>Governance cells made legible: <code>&lt;dregg-council&gt;</code> decodes an M-of-N proposal
+             cell's machine from its 8 slots (the same decode as the CLI's
+             <code>dregg polis council</code> — a browser port of
+             <code>starbridge_polis::council::inspect_council</code>);
+             <code>&lt;dregg-constitution&gt;</code> shows a per-version parameter cell's pins;
+             <code>&lt;dregg-mandate&gt;</code> a worker's budget slice and revocation state.
+             The list below scans the node's cells for polis-shaped programs.</p>
+        </div>
+        <div class="ex-history-picker" id="polis-picker">
+          <input type="text" id="polis-cell-input" class="ex-search__input" list="polis-cell-options"
+                 placeholder="64-hex cell id of a council / constitution / mandate cell…" autocomplete="off" spellcheck="false">
+          <datalist id="polis-cell-options"></datalist>
+          <button class="btn btn-primary" id="polis-inspect-btn">Inspect</button>
+        </div>
+        <div class="ex-polis-scan" id="polis-scan"></div>
+        <div id="mount-polis"></div>
+        <div id="detail-polis" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Capabilities -->
+      <section class="ex-page" id="page-capabilities">
+        <div class="ex-page__header">
+          <h2>Capabilities</h2>
+          <p>Capability tokens held by the node cipherclerk, via <code>&lt;dregg-capability-list&gt;</code>.</p>
+        </div>
+        <div id="mount-capabilities"></div>
+        <div id="detail-capabilities" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Intents -->
+      <section class="ex-page" id="page-intents">
+        <div class="ex-page__header">
+          <h2>Intents</h2>
+          <p>The node's intent pool. Select one to open the platform <code>&lt;dregg-intent&gt;</code> inspector.</p>
+        </div>
+        <div id="mount-intents"></div>
+        <div id="detail-intents" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Federation -->
+      <section class="ex-page" id="page-federation">
+        <div class="ex-page__header">
+          <h2>Federation</h2>
+          <p>Known federations + committee via <code>&lt;dregg-federation-list&gt;</code> / <code>&lt;dregg-federation&gt;</code>.</p>
+        </div>
+        <div id="mount-federation"></div>
+        <div id="detail-federation" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Activity -->
+      <section class="ex-page" id="page-activity">
+        <div class="ex-page__header">
+          <h2>Activity</h2>
+          <p>Live observability feed via <code>&lt;dregg-activity&gt;</code> (node <code>/observability/stream</code> SSE).</p>
+        </div>
+        <div id="mount-activity"></div>
+      </section>
+    </main>
+  </div>
+  </dregg-app>
+
+  <script type="module">
+    import { boot } from './app.js';
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', boot);
+    } else {
+      boot();
+    }
+  </script>
+</body>
+</html>

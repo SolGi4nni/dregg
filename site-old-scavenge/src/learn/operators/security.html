@@ -1,0 +1,55 @@
+<layout src="_layouts/default.html">
+<title>Security Hardening — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/learn.html">Learn</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <a href="/learn/operators/running-a-node.html">Operators</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Security</span>
+    </nav>
+<h1>Security Hardening</h1>
+
+    <p>
+      Production dregg-node deployments should follow these hardening guidelines.
+    </p>
+
+    <h2 id="key-management">Key Management</h2>
+    <ul>
+      <li>Set <code>chmod 600</code> on <code>node.key</code></li>
+      <li>Run dregg-node as a dedicated service user (not root)</li>
+      <li>In production, integrate with OS keychain or HSM for key storage</li>
+    </ul>
+
+    <h2 id="network">Network Security</h2>
+    <ul>
+      <li>Place a TLS-terminating reverse proxy (nginx, caddy) in front of the HTTP API</li>
+      <li>Restrict federation peer ports to known IPs with firewall rules</li>
+      <li>The faucet endpoint (<code>--enable-faucet</code>) must NEVER be enabled in production</li>
+    </ul>
+
+    <h2 id="rate-limits">Rate Limiting</h2>
+    <ul>
+      <li>Apply rate limits at the reverse proxy level for public-facing endpoints</li>
+      <li>Delegated token reception validates size (64 KiB max) and structure</li>
+      <li>STARK proof verification is computationally bounded (~2ms per proof)</li>
+    </ul>
+
+    <h2 id="not-yet-documented">Out of scope here</h2>
+    <p>
+      Sample systemd unit files, container seccomp / apparmor profiles, and a
+      full deployment audit checklist ship with the operator release rather
+      than these protocol docs. The items above plus standard reverse-proxy
+      hygiene cover the practical attack surface; the missing pieces are
+      operational ergonomics, not security primitives.
+    </p>
+
+  </main>
+</div>
+
+</layout>

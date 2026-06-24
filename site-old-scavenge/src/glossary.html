@@ -1,0 +1,187 @@
+<layout src="_layouts/default.html">
+<title>Glossary — dregg</title>
+
+<main class="wrap main--compact glossary">
+  <div class="page-header">
+    <h1>Glossary</h1>
+    <p>
+      The nine words dregg cannot be explained without. Each entry says what the thing
+      <em>is</em> in one breath, then links the rung of
+      <a href="/docs.html">the protocol docs</a> that teaches it properly and a live surface
+      where you can touch one. Every other term on this site is built from these.
+    </p>
+  </div>
+
+  <dl class="glossary__list">
+
+    <div class="glossary__entry" id="cell">
+      <dt>cell</dt>
+      <dd>
+        <p>Where state lives. A cell holds balances, a capability list, and named slots —
+        plus a <em>program</em>: a predicate over its own transitions that the substrate
+        enforces on every change. Every cell has an owner; nothing is ownerless. A cell
+        changes only under its own program, only by an authorized actor, and a turn touching
+        one cell leaves every other cell untouched (the frame rule).</p>
+        <p class="glossary__links">
+          deep dive: <a href="/learn/concepts/substances.html">rung 2 · cells &amp; substances</a> ·
+          touch one: <a href="/explorer/">explorer</a>
+        </p>
+      </dd>
+    </div>
+
+    <div class="glossary__entry" id="turn">
+      <dt>turn</dt>
+      <dd>
+        <p>The unit of action: an atomic batch of effects, each presenting a capability and
+        discharging every guard in scope, committed whole or not at all. The defining
+        sentence of the protocol: <em>a turn is the exercise of an attenuable, proof-carrying
+        token over owned state, leaving a verifiable receipt.</em></p>
+        <p class="glossary__links">
+          deep dive: <a href="/learn/concepts/turn.html">rung 1 · the turn</a> ·
+          touch one: <a href="/playground/">playground</a>
+        </p>
+      </dd>
+    </div>
+
+    <div class="glossary__entry" id="capability">
+      <dt>capability</dt>
+      <dd>
+        <p>A token of authority: it names a target cell, the rights it licenses, the caveats
+        that narrow it, an expiry, and a revocation epoch. Holding one means being able to
+        <em>exhibit a witness</em> at the point of use — authority is shown, never claimed,
+        and there is no global who-may-do-what registry to consult. A holder can always make
+        a strictly weaker token (attenuation) but never a stronger one.</p>
+        <p class="glossary__links">
+          deep dive: <a href="/learn/concepts/turn.html#token">rung 1 · the token</a> ·
+          touch one: <a href="/explorer/">explorer</a>
+        </p>
+      </dd>
+    </div>
+
+    <div class="glossary__entry" id="verb">
+      <dt>verb</dt>
+      <dd>
+        <p>One of the eight operations in the kernel signature — each the structural rule of
+        one substance's discipline (value moves, authority derives, evidence accrues, state
+        steps…). Minimality is a theorem: remove any verb and something expressible becomes
+        inexpressible. Everything that looks like a richer operation is a composition of
+        verbs minted by a factory.</p>
+        <p class="glossary__links">
+          deep dive: <a href="/learn/concepts/substances.html">rung 2 · the eight verbs</a> ·
+          the roster: <a href="/learn/ontology.html">ontology catalog</a>
+        </p>
+      </dd>
+    </div>
+
+    <div class="glossary__entry" id="guard">
+      <dt>guard</dt>
+      <dd>
+        <p>A predicate that must hold for an action to be admitted. One shared algebra serves
+        four roles: <em>caveats</em> riding a capability, the cell's own <em>program</em>
+        constraints, <em>preconditions</em> a turn declares, and <em>intents</em>. The
+        executor checks every guard in scope on the commit path; a failing guard rejects the
+        whole turn.</p>
+        <p class="glossary__links">
+          deep dive: <a href="/learn/concepts/guards.html">rung 3 · guards</a> ·
+          compose one: <a href="/studio.html#predicates">studio predicate browser</a>
+        </p>
+      </dd>
+    </div>
+
+    <div class="glossary__entry" id="receipt">
+      <dt>receipt</dt>
+      <dd>
+        <p>The evidence a committed turn leaves behind: a commitment binding the entire
+        post-state, with no field a tamperer can edit. Receipts chain into a history;
+        verifying the chain re-establishes that every transition was admissible, without
+        re-running anything. The explorer's time travel is just reading receipts.</p>
+        <p class="glossary__links">
+          deep dive: <a href="/learn/concepts/receipts.html">rung 4 · receipts &amp; Q</a> ·
+          touch one: <a href="/explorer/">explorer</a>
+        </p>
+      </dd>
+    </div>
+
+    <div class="glossary__entry" id="q">
+      <dt>Q</dt>
+      <dd>
+        <p>The receipt judgment itself — the commitment a turn produces over its whole
+        post-state. Q is what makes a receipt more than a log line: it is the object proofs
+        fold over, so one aggregate root attests every turn that ever happened, correctly
+        ordered. When the docs say "the proof commits to it," Q is the commitment.</p>
+        <p class="glossary__links">
+          deep dive: <a href="/learn/concepts/receipts.html">rung 4 · receipts &amp; Q</a> ·
+          whole histories: <a href="/learn/concepts/light-client.html">rung 5 · the light client</a>
+        </p>
+      </dd>
+    </div>
+
+    <div class="glossary__entry" id="factory">
+      <dt>factory</dt>
+      <dd>
+        <p>A published descriptor — a slot layout plus guard constraints — from which cells
+        are minted. Every cell born from a factory carries the descriptor's rules in the
+        executor itself: an escrow that cannot release early, a ballot that cannot be voted
+        twice, a budget that cannot exceed its ceiling. Apps add no enforcement code; they
+        mint cells and consume receipts.</p>
+        <p class="glossary__links">
+          deep dive: <a href="/learn/concepts/userspace.html">rung 6 · userspace</a> ·
+          mint one: <a href="/studio.html#factory">studio factory composer</a>
+        </p>
+      </dd>
+    </div>
+
+    <div class="glossary__entry" id="polis">
+      <dt>polis</dt>
+      <dd>
+        <p>The civic layer built from factories: content-addressed constitutions, councils
+        whose membership and thresholds are cell state, and mandates — bounded grants of
+        authority that die when revoked. None of it is a privileged subsystem; a council is a
+        cell program like any other, which is exactly why its rules hold.</p>
+        <p class="glossary__links">
+          deep dive: <a href="/learn/concepts/userspace.html">rung 6 · userspace &amp; the polis</a> ·
+          touch one: <a href="/explorer/">explorer · polis</a>
+        </p>
+      </dd>
+    </div>
+
+    <div class="glossary__entry" id="devnet">
+      <dt>devnet</dt>
+      <dd>
+        <p>The live federation this site's surfaces connect to — running the same node you
+        can build from the repo, seeded with one of each worked example at genesis. The
+        explorer browses it; the studio submits to it; nothing on this site shows fabricated
+        data in its place (offline surfaces say so, loudly).</p>
+        <p class="glossary__links">
+          touch it: <a href="/explorer/">explorer</a> ·
+          run your own: <a href="/learn/operators/running-a-node.html">running a node</a>
+        </p>
+      </dd>
+    </div>
+
+  </dl>
+
+  <section class="section section--compact">
+    <h2 class="section__title">Everything else</h2>
+    <p style="color: var(--fg-dim);">
+      The complete machine vocabulary — every wire effect, every constraint kind, every
+      factory pattern — is generated from the verified sources and lives in the
+      <a href="/learn/ontology.html">ontology catalog</a>. If a term on this site is not in
+      this glossary and not in the catalog, that is a bug; please
+      <a href="https://github.com/emberian/dregg/issues">report it</a>.
+    </p>
+  </section>
+</main>
+
+<style>
+  .glossary__list { display: flex; flex-direction: column; gap: var(--s5); margin-top: var(--s5); }
+  .glossary__entry { scroll-margin-top: 90px; border: 1px solid var(--line); border-radius: var(--r2);
+    background: var(--bg-raised); padding: var(--s4) var(--s5); }
+  .glossary__entry dt { font-family: var(--font-mono); color: var(--accent-bright);
+    font-size: 1.05rem; margin-bottom: var(--s2); }
+  .glossary__entry dd p { color: var(--fg-dim); line-height: 1.65; }
+  .glossary__entry dd p + p { margin-top: var(--s2); }
+  .glossary__links { font-size: 0.85rem; }
+</style>
+
+</layout>

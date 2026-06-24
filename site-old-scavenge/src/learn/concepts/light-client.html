@@ -1,0 +1,93 @@
+<layout src="_layouts/default.html">
+<title>5 · The Light Client — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/docs.html">The Protocol</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>5 · The Light Client</span>
+    </nav>
+
+<h1>The light client: verify everything, re-execute nothing</h1>
+
+    <p>
+      The point of the whole construction is a reader who cannot be fooled. A
+      <strong>light client</strong> holds one aggregate root and runs one check —
+      <code>verify agg.root</code> — and from that single verification learns that
+      <em>every</em> turn in the history executed correctly, in order, under every guarantee
+      of the previous rungs: authority non-amplified, value conserved, receipts binding,
+      nullifiers fresh. It re-executes nothing, holds no witnesses, and trusts no executor.
+    </p>
+
+    <p>
+      This works because proofs <em>fold</em>: each turn's proof attests its own step plus
+      the proof before it, and the seam between steps is pinned — the post-root of step
+      <em>i</em> must be the pre-root of step <em>i+1</em>. A reordered, dropped, or spliced
+      history cannot produce a verifying aggregate; the binding fails structurally, not by
+      convention. Tampering anywhere in the past is not "detectable" — it is
+      <em>unprovable</em>.
+    </p>
+
+    <h2 id="proofs-additive">Proofs are attestation, not permission</h2>
+
+    <p>
+      Between parties that already trust each other's execution, turns flow as signed
+      receipts and nobody waits on a prover. The proof layer is <em>additive</em>: it exists
+      so that someone who was not there — a new node, a counterparty's auditor, a phone —
+      can verify the whole past at the cost of one check. Sovereign cells carry this to its
+      end: a cell whose host keeps only a commitment proves its own transitions, so a far
+      federation admits it knowing only how to check a proof, never how to re-run it.
+    </p>
+
+    <h2 id="floor">The assumption floor</h2>
+
+    <p>
+      "Verify everything" is unconditional in the Lean-kernel sense <em>modulo</em> a small,
+      explicit set of cryptographic and liveness carriers. This is the entire list — stated
+      plainly because a floor you can't enumerate is a floor you can't stand on:
+    </p>
+
+    <catalog view="assumption-floor">
+
+    <p>
+      Everything above this floor is theorem; nothing else is load-bearing. In particular
+      there is no trusted executor, no out-of-band "this was authorized" premise, and no
+      field of the post-state left uncommitted.
+    </p>
+
+    <h2 id="grounding">Grounding</h2>
+
+    <ul>
+      <li><code>Circuit/RecursiveAggregation.lean</code> —
+        <code>light_client_verifies_whole_history</code> (the headline),
+        <code>attested_history_conserves</code> (conservation lifted to the full run),
+        <code>tampered_aggregate_cannot_bind</code> and
+        <code>leaf_pairing_defeats_swap</code> (the anti-tamper teeth).</li>
+      <li><code>Distributed/HistoryAggregation.lean</code> —
+        <code>wellformed_attests_whole_history</code>, <code>root_tooth_pins_state</code>
+        (a client seeing only roots learns state continuity).</li>
+      <li><code>Dregg2/AssuranceCase.lean</code> — Guarantee E, with the floor above as its
+        only carriers.</li>
+    </ul>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>Touch it:</strong> the <a href="/explorer/">explorer</a> surfaces each turn's
+        proof and trust tier; the badges are driven by the same generated assurance catalog
+        this page embeds.
+      </p>
+    </div>
+
+    <p>
+      <a href="/learn/concepts/receipts.html">← 4 · Receipts &amp; Q</a> ·
+      <a href="/learn/concepts/userspace.html">6 · Userspace →</a>
+    </p>
+
+  </main>
+</div>
+
+</layout>

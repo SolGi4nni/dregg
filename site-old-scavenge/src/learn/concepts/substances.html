@@ -1,0 +1,161 @@
+<layout src="_layouts/default.html">
+<title>2 · Cells &amp; the Four Substances — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/docs.html">The Protocol</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>2 · Cells &amp; Substances</span>
+    </nav>
+
+<h1>Cells &amp; the four substances</h1>
+
+    <p>
+      The kernel governs four substances. Each has its own <strong>discipline of use</strong> —
+      a law about how it may move through time — and the whole kernel is the enforcement of
+      those four laws plus the birth and retirement of the bundles that carry them.
+    </p>
+
+    <ul>
+      <li><strong>Value</strong> is <em>linear</em>: it moves, it never copies and never
+        vanishes. Per asset, the sum of all balance changes in a turn is exactly zero
+        (Σδ = 0). Linear logic's "no free copy or discard" is, here, a security law: no
+        inflation, no loss.</li>
+      <li><strong>Authority</strong> is <em>produced under non-forgeability</em>. It genuinely
+        <em>grows</em> — introduction hands a third party a new edge, a sealer/unsealer pair
+        amplifies two facts into access neither names alone, a factory mints fresh authority —
+        but every generative act is itself authorized by connectivity already held, and is
+        receipt-disclosed. Miller's law: <em>only connectivity begets connectivity</em>.
+        Attenuation narrows one edge freely; it is not the law of the whole system, because a
+        system where authority only ever shrinks forbids exactly the patterns that make
+        capabilities useful.</li>
+      <li><strong>Evidence</strong> is <em>monotone</em>: once known, never unknown. The
+        nullifier and commitment ledgers only grow; a spent note stays spent.</li>
+      <li><strong>State</strong> is <em>guarded-mutable</em>: it changes only under its cell's
+        program, only by its owner, inside the frame.</li>
+    </ul>
+
+    <h2 id="cell">The cell</h2>
+
+    <p>
+      A <strong>cell</strong> is the four substances gathered behind one identity:
+      an operator, a lifecycle, a nonce, a per-asset balance column, a sorted-Merkle
+      capability list, a program (a predicate over its own transitions), and a slot record.
+      Nothing in the system is ownerless: every object <em>is</em> a cell or lives in one.
+      An asset is an issuer cell's promise — <code>AssetId</code> is the issuer's
+      <code>CellId</code>, and mint/burn are the issuer moving value from and to its own well
+      under its own program.
+    </p>
+
+    <h2 id="registers-heap">Registers are the L1; the heap is where apps live</h2>
+
+    <p>
+      A cell's programmable state is two tiers. The <strong>registers</strong> are a small,
+      fixed set of named fields — the cell's L1: lifecycle, nonce, the capability root, and a
+      handful of program slots. They are cheap, always present, and committed directly. Above
+      them sits the <strong>heap</strong>: a single register, <code>heap_root</code>, commits an
+      openable sorted-Poseidon2 Merkle map over <code>(collection, key) → value</code>. An app
+      that needs more than a few slots — an order book, a per-member tally, a content index —
+      keeps its data <em>in the heap</em>, and the cell still carries only one root.
+    </p>
+
+    <p>
+      The expressiveness uplift is that a heap key is a first-class subject of the guard
+      algebra. A program can demand <code>heap_get(collection, key) = v</code> or
+      <code>heap_contains(collection, key)</code> as a precondition, exactly as it demands a
+      register relation — so a cell's rules can range over unbounded state without growing the
+      kernel. A heap write is <em>the <code>write</code> verb</em>: it runs under the same
+      caveat-gated frame discipline as any slot write (authority, membership, lifecycle, per-slot
+      caveats), recomputes the root, and touches nothing else. The register and the heap are one
+      object — the cell, the executor, and the circuit all read <code>Heap.root</code> of the same
+      sorted leaf list — so installing the heap added <em>no</em> verb. The kernel did not grow;
+      the addressable state did. (Where the heap binds today: kernel-proven against the deployed
+      <code>circuit::heap_root</code> scheme; the per-turn in-circuit <code>heap_root</code>
+      register rides the rotation relayout — <a href="/learn/concepts/trust-boundary.html">rung 7</a>.)
+    </p>
+
+    <h2 id="verbs">The eight verbs</h2>
+
+    <p>
+      The kernel signature is eight verbs. This is not parsimony for its own sake: each verb
+      is <em>the structural rule of one substance's discipline</em>, and minimality is a
+      theorem — drop any verb and the behavior it provides has no other provider
+      (<code>VerbRegistry.each_verb_irreplaceable</code>).
+    </p>
+
+    <catalog view="verbs">
+
+    <p>
+      Every kernel verb passes <strong>two gates</strong>: <em>admission</em> (the epistemic
+      half — does the supplied witness realize the demanded predicate?) and a
+      <em>footprint law</em> (the ontic half — the update respects what its substances
+      <em>are</em>: the linear, produced, monotone, and guarded laws above, unified as one
+      frame-preserving-update shape in the resource algebra of
+      <code>Dregg2/Resource.lean</code>).
+    </p>
+
+    <h2 id="wire">The wire surface, classified</h2>
+
+    <p>
+      The wire vocabulary that turns actually carry is larger than eight — and every one of
+      its 27 live effect tags is classified onto the kernel by a total, compiler-checked cover
+      (<code>VerbRegistry.classify</code>, <code>effect_tag_count</code>): it either <em>is</em>
+      a kernel verb, or it is
+      <strong>turn structure</strong> (exercising a capability is a <em>use</em>, not a verb;
+      a refusal is an <em>outcome</em>; the nonce is prologue; pipelining is composition), or
+      it is a <strong>factory pattern</strong> — a cell program built from the surviving
+      verbs (escrows, obligations, queues, bridges, stored capabilities). Adding a wire
+      variant without classifying it is a compile error; that is what "the catalog cannot
+      drift" means. Factories are <a href="/learn/concepts/userspace.html">rung 6</a>.
+    </p>
+
+    <h2 id="grounding">Grounding</h2>
+
+    <ul>
+      <li><code>metatheory/Dregg2/Substrate/VerbRegistry.lean</code> — the reified signature:
+        <code>minimality</code>, <code>each_verb_irreplaceable</code>,
+        <code>classify_total</code>, <code>effect_tag_count</code>,
+        <code>cover_hits_both</code>, <code>factory_builtFrom_are_survivors</code>.</li>
+      <li><code>metatheory/Dregg2/Resource.lean</code> — the substance algebra: the ℕ-sum
+        camera for value, the <code>Auth</code> camera for authority and evidence
+        (<code>ConfinesAuthority</code>), <code>excl_no_dup</code>.</li>
+      <li><code>metatheory/Dregg2/Exec/RecordKernel.lean</code> — the kernel state the verbs
+        act on, and the per-asset conservation keystones
+        (<code>recTransferBal_sum_conserve_moved</code>, <code>recTransferBal_untouched</code>).</li>
+      <li><code>metatheory/Dregg2/Substrate/{Heap,HeapKernel}.lean</code> — the heap as the
+        <code>write</code> verb: the openable sorted map (<code>root_deterministic</code>,
+        <code>root_injective</code> under the named Poseidon2-CR floor) and its kernel face
+        (<code>heapStepGuarded</code>, <code>heapStep_conserves</code> = balance-neutral,
+        <code>heapStep_root_written</code> = the register binds the heap, <code>heapStep_*_frame</code>).</li>
+      <li><code>metatheory/CONSTRUCTIVE-KNOWLEDGE.md</code> §3 — why authority is production,
+        not descent.</li>
+    </ul>
+
+    <h2 id="live">Live instance</h2>
+
+    <!-- docs→live bridge: probes this page's origin for a node and links one
+         REAL cell into the explorer; honest empty state when none reachable. -->
+    <dregg-live-strip kind="cell"></dregg-live-strip>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>Touch it:</strong> inspect a live cell — its balances, c-list, program, and
+        lifecycle — in the <a href="/explorer/">explorer</a>, and browse the full wire
+        vocabulary with typed arguments in the
+        <a href="/learn/ontology.html">ontology catalog</a>.
+      </p>
+    </div>
+
+    <p>
+      <a href="/learn/concepts/turn.html">← 1 · The turn</a> ·
+      <a href="/learn/concepts/guards.html">3 · Guards →</a>
+    </p>
+
+  </main>
+</div>
+
+</layout>

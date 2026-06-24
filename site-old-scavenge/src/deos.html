@@ -1,0 +1,333 @@
+<layout src="_layouts/default.html">
+<title>deos — the agentic desktop userlayer</title>
+
+<main class="wrap main--compact">
+  <div class="page-header">
+    <h1>deos — the agentic desktop</h1>
+    <p>
+      <strong>deos</strong> is the userlayer of robigalia: everything a human or AI agent
+      touches. It is <a href="/">dregg</a> made visual, interactive, and webby — with
+      <em>zero new trust</em>. The realization underneath it is simple and total: the web's
+      interaction model is the right way to build a desktop, and a capability substrate can
+      make every piece of it gated, verified, and attenuable instead of ambient-authority
+      soup. A window is not a thing a session lets you see — a window <em>is</em> a
+      <code>Capability{ Surface(cell), rights }</code>.
+    </p>
+    <p>
+      So: <strong>deos runs on dregg runs in robigalia.</strong> Nothing in deos adds
+      authority the kernel does not already prove. The desktop's safety is not a new system to
+      audit; it is the kernel's own metatheory, restated for pixels, affordances, and
+      rehydration.
+    </p>
+  </div>
+
+  <!-- ==================== HTMX ON CRACK ==================== -->
+  <section class="section section--compact" id="affordances">
+    <span class="section__label">The interaction model</span>
+    <h2 class="section__title">htmx on crack: every element is a verified turn</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      In htmx, an element declares <code>hx-post="/x"</code> and the server returns a fragment.
+      That declarative, server-rendered, progressively-enhanced model is the right UX. deos
+      keeps it and changes what each piece <em>means</em>:
+    </p>
+    <div class="flow">
+      <div class="flow__step">
+        <span class="flow__n">The button</span>
+        <p class="flow__name">A cap-gated affordance</p>
+        <p class="flow__desc">A cell declares <strong>affordances</strong>: named, typed effect-templates. The "button" is one of them — a real <code>Effect</code> the cell offers, not a route the server interprets by convention. An affordance carries the genuine effect; whether it may fire at all is decided in-band by the proven gate.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">Who may press it</span>
+        <p class="flow__name">Held capabilities, not a cookie</p>
+        <p class="flow__desc">An affordance renders and fires only when <code>required ⊆ held</code> — the genuine <code>is_attenuation</code> check, the same proven lattice the kernel uses, never a new gate. Progressive enhancement becomes progressive <em>attenuation</em>: an agent sees exactly the affordances its capabilities authorize, and two viewers diverge over one surface.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">The fragment</span>
+        <p class="flow__name">An attested post-state surface</p>
+        <p class="flow__desc">Firing an authorized affordance yields a verified-turn intent; the returned surface is the attested post-state. An unauthorized fire is <em>refused in-band</em> — the anti-ghost tooth. Every interactive element is a turn the witness-graph records, so there is no UI claim the system did not actually produce.</p>
+      </div>
+    </div>
+    <p style="color: var(--fg-dim); margin-top: var(--s4);">
+      This is steel today in <code>starbridge-web-surface</code>: a <code>CellAffordance</code>
+      is a named <code>dregg_turn::Effect</code> template, the render/fire gate is the genuine
+      <code>is_attenuation</code>, and <code>project_for</code> returns the per-viewer
+      affordance set. The one remaining seam is dispatching a fired affordance to a live
+      <code>TurnExecutor</code> — the same serve-turn seam the web-of-cells fetch names; the
+      effect carried is the real one.
+    </p>
+  </section>
+
+  <!-- ==================== REHYDRATION ==================== -->
+  <section class="section section--compact" id="rehydration">
+    <span class="section__label">The genuine novelty</span>
+    <h2 class="section__title">A screenshot you can re-open, live</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      This is the truest thing deos offers that nothing else can — not a feature port, a
+      category only this substrate can have. A deos "screenshot" is a frame of the certified
+      compositor over the witness-graph, and what it actually embeds is a <strong>sturdyref
+      behind a membrane</strong>. Opening the image re-attaches a live — or faithfully
+      replayed — interactive surface, shaped by who you are and what you hold.
+    </p>
+    <div class="features">
+      <div class="feature">
+        <h3>Faithful by where it came from, not by retrofit</h3>
+        <p style="color: var(--fg-dim);">The naive version embeds a faithfulness proof in a PNG and asks a viewer to instantiate arbitrary author-state — an attack surface, not a feature. deos moves the proof <em>upstream and structural</em>: the frame came out of a compositor whose render pass is itself a verified turn over the witness-graph, so it can only draw what the graph authorizes. "Faithful" stops being a property you prove <em>about</em> an image and becomes a property of <em>where the image came from</em>. The screenshot rehydrates because it was never a dead artifact — it is a paused camera on a running, witnessed scene.</p>
+      </div>
+      <div class="feature">
+        <h3>Per-viewer, attenuated, revocable</h3>
+        <p style="color: var(--fg-dim);">A plain sturdyref reconnects you to <em>the thing</em>. A membrane-mediated one reconnects you to <em>a view of the thing shaped by your authority</em>. Two agents opening the same snapshot rehydrate two different surfaces — each negotiates, across the membrane, the slice their capabilities authorize. The frustum is re-derived per-viewer from (their authority) ∧ (the graph's permitted projections). "I shared a screenshot" stops being "I leaked my session" and becomes "I extended a revocable, attenuated, per-viewer right to re-view." A reshare chain A→B→C composes through the real <code>is_attenuation</code>; an amplifying hop is refused.</p>
+      </div>
+      <div class="feature">
+        <h3>The liveness cost is a type, not a promise</h3>
+        <p style="color: var(--fg-dim);">If the contexts are gone, the membrane replays from the witness-graph — and replay is only as faithful as the graph was deterministic. deos cannot wave that away, so it <em>types</em> it: every rehydration is <code>Live</code>, <code>ReplayedDeterministic</code>, or <code>ReconstructedApproximate</code>. The type is <em>derived</em>, not hand-set: a context whose every external interaction was an attested turn replays deterministically <em>by construction</em>; a context that reached outside the membrane is intrinsically approximate, because the thing that made it non-deterministic was never witnessed. Opening the image tells you which kind of true you are getting.</p>
+      </div>
+    </div>
+    <p style="color: var(--fg-dim); margin-top: var(--s4);">
+      The unit of portability was never the data or the connection — it is <em>the revocable
+      right to renegotiate the connection</em>, which is exactly a sturdyref behind a membrane.
+      The sturdyref encoding, the membrane enforcer (per-viewer projection + the
+      chained-attenuation algebra over the real <code>is_attenuation</code>), and the derived
+      liveness-type are running, tested code in <code>starbridge-web-surface</code>; the
+      certified compositor-PD and the libservo link are the frontier.
+    </p>
+  </section>
+
+  <!-- ==================== TRANSCLUSION ==================== -->
+  <section class="section section--compact" id="transclusion">
+    <span class="section__label">Implemented · interactive</span>
+    <h2 class="section__title">Transclusion: include-by-reference, verified</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      <strong>Transclusion</strong> is include-by-reference: a cell quotes a span of another cell by
+      citing its receipt, not by copying its bytes. In dregg a transclusion is a <em>verified
+      cross-cell read</em> — the quote is the value the source actually committed, drawn from the
+      ledger. Four properties follow, and each is a theorem about that one read (it reuses the
+      kernel's existing cross-cell import, <code>ImportedEq</code> — no new machinery): the quote
+      equals its source, its provenance is visible, it confers no authority over the source, and it
+      does not change when the source advances. <strong>You can play with it in the playground
+      below</strong> — transclude a span, amend the source and watch the quote track it, then try to
+      forge the quote and watch it refuse.
+    </p>
+    <figure class="catalog-embed" data-catalog="transclusion">
+      <table class="catalog-table">
+        <thead>
+          <tr><th>Guarantee</th><th>How dregg provides it</th><th>Verified by (Lean)</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>A quote that <strong>equals its source</strong></td>
+            <td>The verified cross-cell finalized read — the local field <em>is</em> the value a peer cell committed at the cited receipt; a forged value can't even be cited.</td>
+            <td><code>transclusion_provenance_faithful</code><br><code>transclusion_forge_refused</code></td>
+          </tr>
+          <tr>
+            <td><strong>Visible provenance</strong></td>
+            <td>The cited receipt + content commitment, drawn from the ledger, not the content. A transclusion admits iff the post-state carries the cited source value.</td>
+            <td><code>transclusion_is_observed_finalized_read</code></td>
+          </tr>
+          <tr>
+            <td><strong>Per-viewer confinement</strong> (a quote is not a key)</td>
+            <td>The membrane projection — a quote is a <em>read</em>, surfaced per-viewer; any reshare chain confers a subset of the held authority, and naming an unheld authority can't conjure it.</td>
+            <td><code>transclusion_no_amplify</code><br><code>transclusion_grants_no_unheld_authority</code></td>
+          </tr>
+          <tr>
+            <td>The <strong>unbreakable link</strong> (the quote never rots)</td>
+            <td>The I-confluent import — the citation pins an immutable past receipt, so the reading never changes as the source advances; staleness is faithful-but-visible, never a silent dangling pointer.</td>
+            <td><code>transclusion_stable_under_source_advance</code><br><code>stale_import_is_still_valid</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <figcaption>The four guarantees as kernel theorems, in
+      <code>Dregg2/Deos/Transclusion.lean</code> — each riding an existing
+      <code>Authority.CrossCellImport</code> / <code>Authority.ImportBinding</code> /
+      <code>Deos.Membrane</code> theorem. Every keystone is <code>#assert_all_clean</code>
+      (kernel-clean: only <code>propext</code> / <code>Classical.choice</code> /
+      <code>Quot.sound</code>), and each non-vacuity witness fires both polarities — the truthful
+      quote <em>admits</em> (<code>quote_is_faithful</code>), the forged one <em>cannot be cited</em>
+      (<code>forge_cannot_be_cited</code>), the quote <em>survives the source advancing</em>
+      (<code>quote_survives_source_advance</code>).</figcaption>
+    </figure>
+    <p style="color: var(--fg-dim); margin-top: var(--s4);">
+      The realization is the <code>dregg://</code> attested fetch:
+      <code>TranscludedField::include(web, source)</code> resolves the reference, the bytes it
+      returns are content-addressed (<code>content_hash == blake3(bytes)</code>) and carry a
+      receipt + a quorum-signed <code>AttestedRoot</code>, and
+      <code>TranscludedField::project_for</code> is the real <code>Membrane::project</code> — the
+      Lean is the spec; the Rust mirrors the named theorems. The <em>reverse</em> direction is
+      honest too: a <strong>backlink</strong> ("cell X is quoted by observer O, at
+      receipt R, of value V") is the witness graph read the other way — a verifiable claim, not a
+      hand-kept index that can drift.
+    </p>
+
+    <h3 style="font-family: var(--font-display); color: var(--chalk); margin-top: var(--s5); margin-bottom: var(--s3);">
+      The document model: an EDL of spans
+    </h3>
+    <p style="color: var(--fg-dim);">
+      A transclusion is the unit a <em>document</em> is composed from. In
+      <code>deos-web-cells</code>, a dreggverse document is not a file — it is an <strong>EDL</strong>
+      (an edit-decision-list): an ordered <code>Vec&lt;Span&gt;</code> where each span is either the
+      author's <code>Own</code> content or a <code>Transcluded</code> span of another cell
+      (<code>dregg://&lt;cell&gt;</code>, byte range <code>r</code>). The EDL <em>is</em> the
+      document — change the EDL, you re-author; change a <em>source</em>, the quoted span re-resolves
+      to the source's new finalized value (the unbreakable link), every other span untouched.
+      <code>DreggverseDocument::resolve</code> runs the real verified read per transcluded span and
+      composes them edge-to-edge with per-span provenance; <code>resolve_for</code> runs it through a
+      viewer's membrane, <strong>darkening</strong> (never forging) the spans a weaker viewer cannot
+      read — the span's citation survives, its bytes are withheld. So a weaker reader sees the
+      document's <em>shape</em> (which spans exist, cited) without the bytes it has no authority to
+      read. It is a bibliography that renders.
+    </p>
+
+    <h3 style="font-family: var(--font-display); color: var(--chalk); margin-top: var(--s5); margin-bottom: var(--s3);">
+      DreggDL is a different language — and so is "DSL"
+    </h3>
+    <p style="color: var(--fg-dim);">
+      One disambiguation, because the word is overloaded. <strong>DreggDL</strong> is dregg's
+      declarative <em>deployment</em> language: a capability <em>layout</em> (TOML/JSON) — factory
+      births, funding transfers, capability grants — lowered to the exact
+      <code>CallForest</code> the SDKs instantiate and checked, whole, for over-grant before any gas.
+      It is <em>not</em> the document model (the EDL above describes a docuverse document, not a
+      deployment), and it is <em>not</em> either thing this site elsewhere calls a "DSL": not the
+      <em>circuit-DSL</em> (the constraint-system builder the prover compiles), and not the
+      <em>predicate-language</em> (the cell-program caveat grammar a turn's guard is written in).
+      Three distinct languages: DreggDL <em>lays out capabilities to deploy</em>, the predicate-language
+      <em>constrains what a turn may do</em>, the circuit-DSL <em>builds the proof system</em>. The
+      EDL is a fourth, smaller thing entirely — the ordered list of spans a document is made of.
+    </p>
+  </section>
+
+  <!-- ==================== THE MEMBRANE AS A SETTINGS PAGE ==================== -->
+  <section class="section section--compact" id="membrane">
+    <span class="section__label">Why it is adoptable</span>
+    <h2 class="section__title">The membrane is a settings page you already understand</h2>
+    <p style="color: var(--fg-dim);">
+      The membrane's negotiation semantics are not an exotic new protocol — a GitHub
+      organization's settings page already <em>is</em> a membrane UI. Teams are capability
+      groups; repo roles (read / triage / write / maintain / admin) are the attenuation
+      lattice; visibility is projection scope; fork policy is the re-share rule; member
+      management is grant and revoke; branch protection is the constraint set on permitted
+      actions. Every membrane primitive has a boring, familiar home there — and a settings page
+      is <em>itself</em> a rendered view over the org's permission graph, the same kind of
+      object as the thing it governs. Familiar UX is what makes deos adoptable; the
+      capability-plus-proof substrate is what makes it sound.
+    </p>
+  </section>
+
+  <!-- ==================== THE FORCING FUNCTION ==================== -->
+  <section class="section section--compact" id="forcing-function">
+    <span class="section__label">The forcing function</span>
+    <h2 class="section__title">A game where the mechanic is the security property</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      The sharpest exemplar of deos is a multiplayer game, because the deos novelty <em>is</em>
+      a game mechanic made into a security property. What a player can see is exactly what its
+      capabilities authorize it to rehydrate — fog of war as a cap-confinement property, not a
+      client-side visibility flag. It runs today (two demos, agent-vs-agent matches to a
+      decision), built on the genuine cap discipline.
+    </p>
+    <div class="flow">
+      <div class="flow__step">
+        <span class="flow__n">You cannot peek</span>
+        <p class="flow__name">Fog = the membrane projection, proof-backed</p>
+        <p class="flow__desc">Two players' identities are incomparable capabilities — neither attenuates the other — so a tile gated to the enemy is structurally un-projectable. And the vision predicate is a real proof obligation: to project a side's tiles you must <em>produce a proof the registry verifies</em>. A player holding only its own secret literally cannot construct the enemy's vision, and a forged proof is rejected. Fog stops being honor-system and becomes a confinement theorem with cryptographic teeth.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">Anti-cheat is free</span>
+        <p class="flow__name">Moves are cap-gated verified turns</p>
+        <p class="flow__desc">A move is a real affordance firing a real effect; claiming an objective is another. Terrain occludes line-of-sight — a unit's vision is a cone the terrain carves, not a uniform disc. An unauthorized fire (Red firing Blue's move) is a refused turn through the <em>same</em> <code>is_attenuation</code> gate, in-band. There is no separate anti-cheat system because the cheat is unrepresentable.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">Agents are first-class</span>
+        <p class="flow__name">A smarter brain does not get a bigger cage</p>
+        <p class="flow__desc">An AI agent-player fires the <em>same</em> cap-gated affordances a human does; its action space <em>is</em> its attenuated capability set. A better policy only ranks within the fixed action set — it cannot cheat any more than a human can. Two agents play a full match to a win condition entirely through the gate, every action a real fired affordance. This is what "agentic desktop" means.</p>
+      </div>
+    </div>
+    <p style="color: var(--fg-dim); margin-top: var(--s4);">
+      Multiplayer is the web-of-cells (each player a cell, the board a shared cell), a peer
+      reaches a world by a verified attested read, and spectating is the membrane as a
+      negotiation surface — a player proposes an attenuated spectator grant (watch-my-side /
+      scoreboard-only / full-board-post-game), minted only as a genuine attenuation of what
+      they hold, fog-respecting and liveness-typed. It is htmx on crack you can play, secure
+      by construction.
+    </p>
+  </section>
+
+  <!-- ==================== THE VERIFIED-DESKTOP CROWN ==================== -->
+  <section class="section section--compact section--feature" id="verified-deos">
+    <span class="section__label">The verified-deos crown</span>
+    <h2 class="section__title">The desktop adds no trust — and that is a theorem</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      Because deos adds zero new authority, its safety is provable from the kernel's own
+      metatheory. None of these is new mathematics — each is the firmament's existing proof
+      (attenuation, the gate, the receipt chain, unfoolability) restated for the desktop. The
+      modeling lives in <code>metatheory/Dregg2/Deos/</code>:
+    </p>
+    <div class="link-cards">
+      <div class="link-card">
+        <span class="link-card__title">Surface-as-capability</span>
+        <span class="link-card__desc">A window confers no authority beyond its rights. <code>Surface(cell)</code> is a point on the existing <code>(target, rights)</code> gradation — the same shape as the kernel's "this cap confers no extra edge" theorem.</span>
+      </div>
+      <div class="link-card">
+        <span class="link-card__title">Membrane non-amplification</span>
+        <span class="link-card__desc">Rehydration composes <code>is_attenuation</code> across hops: reshare A→B→C means C's authority ⊆ B's held ⊆ A's. The membrane cannot amplify — the proven lattice law, lifted to projection composition.</span>
+      </div>
+      <div class="link-card">
+        <span class="link-card__title">Rehydration confinement</span>
+        <span class="link-card__desc">The liveness-type is a <em>proven</em> confinement readout: <code>ReplayedDeterministic</code> is exactly the confined fragment — a context whose every external interaction was an attested turn — otherwise <code>ReconstructedApproximate</code>. The "type it" discipline, lifted to a theorem.</span>
+      </div>
+      <div class="link-card">
+        <span class="link-card__title">Affordance soundness</span>
+        <span class="link-card__desc">An affordance interaction is a verified turn: an agent can only fire affordances its capabilities authorize (the gate on the affordance's effect-template), and the post-state surface binds the attested root.</span>
+      </div>
+      <div class="link-card">
+        <span class="link-card__title">Transclusion fidelity</span>
+        <span class="link-card__desc">A quote equals its source provably (<code>transclusion_provenance_faithful</code>), a forge can't be cited (<code>transclusion_forge_refused</code>), it grants no authority over the source (<code>transclusion_no_amplify</code>), and it never rots as the source advances (<code>transclusion_stable_under_source_advance</code>). Four properties, each a naming of the verified cross-cell import.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== WHERE THIS LIVES ==================== -->
+  <section class="section section--compact">
+    <span class="section__label">Where it lives</span>
+    <h2 class="section__title">Built, queued, and frontier</h2>
+    <div class="flow">
+      <div class="flow__step">
+        <span class="flow__n">Built</span>
+        <p class="flow__name">The deos UI substrate, running</p>
+        <p class="flow__desc">In <code>starbridge-web-surface</code>: the cap-confined web surface delegate, the <code>dregg://</code> web-of-cells attested fetch, the rehydration stack (sturdyref, membrane enforcer, derived liveness-type), the cell-affordances + frustum-snapshot layer, and the fog-of-war world with its proof-backed vision and agent players. Runnable demos, tested.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">Queued</span>
+        <p class="flow__name">The Lean modeling + the live wiring</p>
+        <p class="flow__desc">The four verified-deos theorems above; the membrane wired into the live CapTP sturdyref path (not just the web crate); the native cockpit embedding the affordance surfaces; the app-framework composed into a one-afternoon <code>dregg new deos-app</code> scaffold over pg-dregg durable state.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">Frontier</span>
+        <p class="flow__name">The real pixels</p>
+        <p class="flow__desc">The certified compositor protection-domain — the sole framebuffer-and-input capability holder on seL4 — and the libservo link. Today a <code>dregg://</code> attested fetch stands in for the compositor's render pass. The <a href="/firmament.html">firmament</a> is the ground it lands on.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== NEXT ==================== -->
+  <section class="section section--compact">
+    <h2 class="section__title">Keep going</h2>
+    <div class="link-cards">
+      <a class="link-card" href="/firmament.html">
+        <span class="link-card__title">The firmament &amp; dregg-on-seL4</span>
+        <span class="link-card__desc">The deterministic ground deos runs on: one capability local-to-global, the <code>n=1</code> collapse, what boots today.</span>
+      </a>
+      <a class="link-card" href="/build.html">
+        <span class="link-card__title">Build a deos app</span>
+        <span class="link-card__desc">Cells exposing affordances, rendered as surfaces, over verified state. The factory vocabulary, the worked examples, the first-app tutorial.</span>
+      </a>
+      <a class="link-card" href="/docs.html">
+        <span class="link-card__title">The kernel, in seven rungs</span>
+        <span class="link-card__desc">What dregg <em>is</em> under deos — turns, substances, guards, receipts, the light client, the trust boundary.</span>
+      </a>
+      <a class="link-card" href="/verify.html">
+        <span class="link-card__title">What is proven</span>
+        <span class="link-card__desc">The five guarantees, ARGUS and unfoolability, the assumption floor, the honest seams — and how to check it yourself.</span>
+      </a>
+    </div>
+  </section>
+</main>
+
+</layout>

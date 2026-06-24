@@ -1,0 +1,287 @@
+<layout src="_layouts/viz.html">
+<title>Cryptographic Foundations — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/learn.html">Learn</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <a href="/learn/architecture/overview.html">Architecture</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Cryptography</span>
+    </nav>
+<h1>Cryptographic Foundations</h1>
+
+    <p>
+      <code>dregg</code>'s proof system is built on the Effect VM and the constraint DSL. The Effect VM
+      proves arbitrary turns in a single STARK (the full wire-effect vocabulary &mdash; see the
+      <a href="/learn/ontology.html">generated ontology catalog</a> &mdash; with Custom dispatch for
+      application-defined logic). The constraint DSL compiles <code>CircuitDescriptor</code>
+      definitions to multiple proof systems from a single source. The base STARK path uses
+      BabyBear-field FRI with Poseidon2 as the in-circuit hash &mdash; hash-based, no
+      elliptic-curve assumptions at this layer. Recursion and EVM-verification paths use
+      Kimchi (Mina/Pasta) and SP1/Groth16 respectively, both of which depend on elliptic
+      curves; the end-to-end stack is therefore <em>not</em> post-quantum until those
+      composition layers are themselves migrated to a hash-based recursion scheme.
+    </p>
+
+    <h2 id="field">BabyBear Field</h2>
+
+    <p>
+      The BabyBear prime field (p = 2&#94;31 &minus; 2&#94;27 + 1 = 2,013,265,921) is the
+      working field for the entire STARK stack. It fits in a 32-bit machine word, so
+      addition and subtraction lower to native CPU instructions with cheap reductions.
+      A single BabyBear element carries about 31 bits of entropy &mdash; not enough on
+      its own to bind a cryptographic commitment, which is why state commitments are
+      being widened to a 4-BabyBear digest (~124-bit binding, Stage 1 in flight per
+      <code>EFFECT-VM-SHAPE-A.md</code>).
+    </p>
+
+    <h2 id="poseidon2">Poseidon2</h2>
+
+    <p>
+      Poseidon2 is the algebraic hash function used inside circuits. It operates natively
+      over BabyBear field elements, making Merkle tree operations and fact commitments
+      cheap inside the AIR (Algebraic Intermediate Representation).
+    </p>
+
+    <ul>
+      <li><code>hash_fact(predicate, terms)</code> -- Commit a Datalog fact to a single field element</li>
+      <li><code>hash_2_to_1(left, right)</code> -- Binary Merkle node hash</li>
+      <li><code>hash_many(inputs)</code> -- Variable-width sponge hash</li>
+    </ul>
+
+    <dregg-vizzer data-vizzer="merkle-tree"
+      data-dataset='{"leaves":["alice","bob","carol","dave","eve","faythe","grace","heidi"],"depth":3,"proofPath":["l-2","n-2-1","n-1-0","n-0-0"]}'>
+      <div class="vizzer-fallback">Merkle tree — depth 3, 8 leaves, with a highlighted authentication path.</div>
+    </dregg-vizzer>
+    <script type="module" src="/playground/visualizers/merkle-tree.js"></script>
+    <p class="viz-caption">Eight Poseidon2-hashed leaves climb to a single root. The amber path is the
+      authentication proof for the third leaf — log2(8) = 3 sibling hashes plus the leaf itself.</p>
+
+    <h2 id="stark">STARK Proof System</h2>
+
+    <p>
+      The STARK prover/verifier is based on FRI (Fast Reed-Solomon Interactive Oracle
+      Proofs of Proximity). Key properties:
+    </p>
+
+    <ul>
+      <li><strong>Proof size:</strong> ~24 KiB (constant regardless of computation size)</li>
+      <li><strong>Verification time:</strong> ~2ms</li>
+      <li><strong>Generation time:</strong> 200ms-500ms depending on mode</li>
+      <li><strong>Security:</strong> Hash-based at this layer (FRI + Poseidon2), 128-bit security level. End-to-end stack is not post-quantum &mdash; see recursion notes above.</li>
+      <li><strong>Transparency:</strong> No trusted setup required</li>
+    </ul>
+
+    <h2 id="effect-vm">Effect VM (Primary Proof Mechanism)</h2>
+
+    <p>
+      The Effect VM is the sovereign proof mechanism. It proves an entire turn in a single
+      STARK regardless of how many effects the turn contains. The runtime defines
+      <strong>41 effect variants</strong>; the AIR currently constrains 24, with the rest
+      tracked under the Shape A coverage plan (see callout below). Effects break down by
+      group:
+    </p>
+
+    <ul>
+      <li><strong>State / authority:</strong> SetField, CreateCell, IncrementNonce,
+        SetPermissions, SetVerificationKey, GrantCapability, RevokeCapability,
+        RevokeDelegation, SpawnWithDelegation</li>
+      <li><strong>Value:</strong> Transfer (conservation-checked), NoteCreate, NoteSpend
+        (with nullifier)</li>
+      <li><strong>Sealing:</strong> CreateSealPair, Seal, Unseal</li>
+      <li><strong>Messaging / CapTP:</strong> Introduce (three-party), PipelinedSend,
+        CreateObligation, FulfillObligation, SlashObligation, ExportSturdyRef, EnlivenRef,
+        DropRef, ValidateHandoff</li>
+      <li><strong>Bridge:</strong> BridgeLock, BridgeMint, BridgeFinalize, BridgeCancel</li>
+      <li><strong>Escrow (×6):</strong> deposit, claim, refund, dispute, resolve, expire</li>
+      <li><strong>Queues / events:</strong> EmitEvent, EnqueueMessage, DequeueMessage,
+        ResizeQueue, AtomicQueueTx, PipelineStep</li>
+      <li><strong>Sovereignty:</strong> MakeSovereign, CreateCellFromFactory,
+        ExerciseViaCapability</li>
+      <li><strong>Custom:</strong> dispatch to CellProgram-defined logic (up to
+        MAX_CUSTOM_EFFECTS per turn)</li>
+    </ul>
+
+    <p>
+      The VM enforces state continuity (each effect&rsquo;s post-state = next pre-state),
+      conservation (final accumulator = 0), authority (EffectMask subset of the actor&rsquo;s
+      c-list), and atomicity (all-or-nothing via completion flag). IVC compression chains
+      turn proofs into constant-size attestations.
+    </p>
+
+    <div class="callout callout--warning">
+      <p>
+        <strong>Coverage status.</strong> The Effect VM Shape A plan
+        (<code>EFFECT-VM-SHAPE-A.md</code>) is the canonical roadmap for full coverage.
+        Today, the executor projects 31 of 41 runtime variants to <code>NoOp</code> in
+        the AIR; seven variants have working AIR but are not wired through projection
+        (pure plumbing); 23 variants lack AIR coverage entirely. Five AIR-only orphans
+        (<code>Custom</code>, <code>ExportSturdyRef</code>, <code>EnlivenRef</code>,
+        <code>DropRef</code>, <code>ValidateHandoff</code>) have no runtime emitter yet,
+        and two of them are tautological as constraints. We&rsquo;d rather you know this
+        than read a different number on each page.
+      </p>
+    </div>
+
+    <h2 id="dsl">DSL Circuit Architecture</h2>
+
+    <p>
+      All proof logic is defined through the constraint DSL (<code>circuit/src/dsl/</code>).
+      The former standalone <code>_air.rs</code> files have been deleted -- the DSL is the
+      single source of truth. Each <code>CircuitDescriptor</code> compiles to trace generators
+      and constraint evaluators for all supported backends.
+    </p>
+
+    <p>Key circuit descriptors:</p>
+
+    <ul>
+      <li><strong>Poseidon2</strong> -- Hash permutation verification</li>
+      <li><strong>MerkleMembership</strong> -- 4-ary Merkle path proof</li>
+      <li><strong>FoldChain</strong> -- Monotonic capability attenuation</li>
+      <li><strong>MultiStepDerivation</strong> -- N-step Datalog derivation</li>
+      <li><strong>IvcAccumulation</strong> -- Fold chain compression (constant-size)</li>
+      <li><strong>NoteSpending</strong> -- Private note spending + nullifier</li>
+      <li><strong>NonRevocation</strong> -- Credential non-revocation proof</li>
+      <li><strong>RecursiveVerifier</strong> -- STARK-in-STARK recursive verification</li>
+      <li><strong>Presentation</strong> -- Full private credential presentation</li>
+      <li><strong>EffectVm</strong> -- Multi-effect turn proving</li>
+      <li><strong>SovereignTransition</strong> -- Sovereign cell state transition</li>
+      <li><strong>Predicate / Temporal / Arithmetic / Relational / Compound</strong> -- Various predicate proofs</li>
+      <li><strong>Schnorr / NativeSignature</strong> -- In-circuit signature verification</li>
+    </ul>
+
+    <p>
+      Composition operators combine multiple circuit proofs:
+      <code>compose_and</code>, <code>compose_or</code>, <code>compose_chain</code>,
+      <code>compose_aggregate</code>. Sub-proofs are cryptographically bound via VK hashes
+      and public-input linking.
+    </p>
+
+    <h2 id="backends">Three Production Provers</h2>
+
+    <table class="comparison">
+      <thead><tr><th>Prover</th><th>Field/Curve</th><th>Proof Size</th><th>PQ?</th><th>Recursion</th></tr></thead>
+      <tbody>
+        <tr><td>Custom STARK (BabyBear/FRI)</td><td>p = 2^31 - 2^27 + 1</td><td>~24 KiB</td><td>Yes</td><td>Via Plonky3</td></tr>
+        <tr><td>Plonky3 (p3-uni-stark)</td><td>BabyBear + FRI</td><td>~24 KiB</td><td>Yes</td><td>Operational</td></tr>
+        <tr><td>Kimchi/Pickles (Pasta)</td><td>Pallas/Vesta + IPA</td><td>~10 KiB</td><td>No</td><td>Native (assisted)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Additional Backends (via DSL)</h3>
+    <ul>
+      <li><strong>SP1</strong> -- Succinct's RISC-V zkVM. Groth16 wrapping for EVM verification (~200k gas)</li>
+      <li><strong>Midnight/ZKIR v3</strong> -- Compilation for Cardano/Midnight proof server</li>
+      <li><strong>Datalog</strong> -- Rule fragment for lightweight policy evaluation</li>
+      <li><strong>Rust</strong> -- Runtime evaluator function (trusted-mode fast path)</li>
+      <li><strong>AIR</strong> -- Constraint descriptor for custom STARK integration</li>
+    </ul>
+
+    <h2 id="ivc">IVC (Incrementally Verifiable Computation)</h2>
+
+    <p>
+      The IVC system compresses receipt chains to a constant-size proof. Each new turn
+      extends the IVC accumulator. The final proof covers the entire state transition
+      history regardless of chain length. Verification is O(1): check the IVC proof,
+      check the final state commitment, check nullifier freshness.
+    </p>
+
+    <h3>STARK-in-Pickles Composition</h3>
+
+    <p>
+      The STARK-in-Pickles pipeline wraps a BabyBear STARK proof in a Kimchi verifier
+      circuit (~30K gates) to produce a Pickles recursive SNARK (constant-size, Pasta curves):
+    </p>
+
+    <ol>
+      <li>Generate STARK proof over BabyBear (fast, PQ-secure, ~24 KiB)</li>
+      <li>Commit the STARK proof via Poseidon2 (pre-hash and post-hash binding)</li>
+      <li>Verify the STARK algebraically inside a Kimchi circuit (FRI folding + Fiat-Shamir replay)</li>
+      <li>Produce a Pickles recursive proof (constant-size, Mina-compatible)</li>
+    </ol>
+
+    <p>
+      <strong>Status:</strong> BabyBear hash-chain IVC is operational. Pickles assisted
+      recursion (unbounded depth) is operational for individual STARK circuits. The
+      STARK-in-Pickles wrapping path exists and produces constant-size recursive SNARKs
+      for the implemented circuits. Full heterogeneous AIR composition &mdash; derivation,
+      fold, membership, and the Effect VM together in one recursive proof &mdash; is
+      structurally supported but not yet end-to-end operational for arbitrary
+      combinations; this is gated on Effect VM Shape A landing.
+    </p>
+
+    <h2 id="signatures">Signature Schemes</h2>
+
+    <ul>
+      <li><strong>Ed25519</strong> -- Agent identity, turn signing, federation consensus messages</li>
+      <li><strong>BLS12-381</strong> -- Threshold signatures for attested roots</li>
+      <li><strong>X25519-ChaCha20Poly1305</strong> -- Sealed capabilities (encrypt under token)</li>
+      <li><strong>HMAC-SHA256</strong> -- Macaroon token chain binding</li>
+      <li><strong>BLAKE3</strong> -- Domain-separated key derivation, fast Merkle trees</li>
+    </ul>
+
+    <h2 id="bridges">Bridge Layer</h2>
+
+    <h3>EVM Bridge (SP1 Groth16)</h3>
+
+    <p>
+      The <code>dregg-chain</code> crate wraps dregg STARK proofs in SP1's zkVM to produce
+      Groth16 proofs verifiable on Base Sepolia at ~200k gas:
+    </p>
+
+    <ol>
+      <li><code>dregg</code> STARK proof (large, not EVM-friendly) is the input</li>
+      <li>SP1 guest program verifies the STARK inside a RISC-V zkVM execution</li>
+      <li>SP1 produces a compact Groth16 proof</li>
+      <li>Groth16 proof is verified by SP1 Verifier Gateway contract on Base</li>
+    </ol>
+
+    <p>
+      Includes Foundry deployment scripts, incremental Merkle tree for deposits
+      (O(log n) insertions), VK registry with governance, and commit-reveal
+      frontrunning protection. <strong>Status:</strong> Architecture complete; Foundry
+      scripts for Base Sepolia deployed. Guest program regeneration against Plonky3
+      backend in progress.
+    </p>
+
+    <h3>Midnight Bridge</h3>
+
+    <p>
+      Two-level bridge to Cardano/Midnight:
+    </p>
+
+    <ul>
+      <li><strong>Level 1 (implemented):</strong> Attestation bridge. <code>dregg</code> state roots are
+          attested on Midnight as observation-based data. Midnight validators can verify
+          that a <code>dregg</code> state existed at a given height.</li>
+      <li><strong>Level 2 (designed):</strong> Proof-carrying bridge. The DSL's ZKIR v3 backend
+          compiles <code>dregg</code> circuits into Midnight-compatible programs, enabling a Midnight
+          validator to verify <code>dregg</code> proofs natively via the FRI verifier in ZKIR.</li>
+    </ul>
+
+    <h3>Mina Bridge</h3>
+
+    <p>
+      Native Pickles recursion via the STARK-in-Pickles pipeline. A <code>dregg</code> STARK proof
+      is verified inside a Kimchi circuit, producing a Pickles recursive proof compatible
+      with Mina's verification infrastructure. Enables Mina zkApps to natively verify
+      <code>dregg</code> state transitions.
+    </p>
+
+    <p>
+      Concrete parameter rationale (FRI folding factor, blowup, query count vs.
+      claimed security bits) lives in the design notes alongside the prover
+      crate — see <code>docs/recursive-proof-architecture.md</code> for the
+      reasoning behind the choices listed above and how they trade off proof
+      size against verifier cost.
+    </p>
+
+  </main>
+</div>
+
+</layout>

@@ -1,0 +1,143 @@
+<layout src="_layouts/default.html">
+<title>1 · The Turn — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/docs.html">The Protocol</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>1 · The Turn</span>
+    </nav>
+
+<h1>The turn</h1>
+
+    <p>
+      Everything in dregg is one sentence, given algebra:
+    </p>
+
+    <blockquote>
+      <p>
+        <strong>A turn is the exercise of an attenuable, proof-carrying token over owned
+        state, leaving a verifiable receipt.</strong>
+      </p>
+    </blockquote>
+
+    <p>
+      Every word in that sentence is load-bearing, so let's take them one at a time.
+    </p>
+
+    <h2 id="token">"…an attenuable, proof-carrying token…"</h2>
+
+    <p>
+      Authority in dregg is a <strong>capability</strong>: a token naming a target cell, the
+      rights it licenses, the caveats that narrow it, an expiry, and a revocation epoch.
+      Holding one is not like holding a key that a lock silently accepts — it is holding a
+      piece of <em>constructive knowledge</em>: something you can <em>exhibit a witness for</em>
+      at the point of use. The system never consults a global registry of who-may-do-what;
+      there isn't one. Authority is established by presenting a discharging witness and
+      checking it.
+    </p>
+
+    <p>
+      This rests on a deliberate asymmetry: <strong>proof-checking is cheap and trusted;
+      proof-search is undecidable and untrusted.</strong> The protocol is organized so that
+      every trust decision is a <em>check</em>, never a search. Whoever wants to act carries
+      the burden of producing the witness; whoever guards state only ever verifies.
+    </p>
+
+    <p>
+      <em>Attenuable</em> means a holder can always make a strictly weaker token — fewer
+      rights, more caveats, shorter life — and hand that on instead. The narrowing is a
+      theorem about the token algebra, not a convention.
+    </p>
+
+    <h2 id="demand-supply">The demand ⊣ supply gate</h2>
+
+    <p>
+      Each action inside a turn is a matched pair: the target cell <em>demands</em> a
+      predicate (its <code>AuthRequired</code>), and the action <em>supplies</em> a witnessed
+      <code>Authorization</code>. Admissibility is exactly "does the supplied witness realize
+      the demanded predicate?" — the <code>Predicate ⊣ Witness</code> adjunction, evaluated as
+      <code>Verify P w</code>. Alongside the authority demand, the action must satisfy every
+      <strong>guard</strong> in scope: the cell's own program constraints, the caveats riding
+      the presented token, and any preconditions the turn declares. (Guards are one shared
+      algebra — <a href="/learn/concepts/guards.html">rung 3</a>.)
+    </p>
+
+    <p>
+      The action is also <em>bound</em>: a signature over the canonical message (federation,
+      nonce, action, effects) pins the witness to this exact step, so an authorization cannot
+      be replayed into a context it was not proved for.
+    </p>
+
+    <h2 id="owned-state">"…over owned state…"</h2>
+
+    <p>
+      All state lives in <strong>cells</strong>, and every cell has an owner and a frame: it
+      changes only under its own program, only by an authorized actor, and a turn touching
+      one cell leaves every other cell untouched. The frame rule is proven once and pays out
+      four ways — sovereignty (your cell is untouchable), joint turns (disjoint footprints
+      compose), sharding (disjoint frames commute), and offline operation (your frame
+      advances alone and merges soundly). Cells and the four substances they gather are
+      <a href="/learn/concepts/substances.html">rung 2</a>.
+    </p>
+
+    <h2 id="atomic">A turn is atomic</h2>
+
+    <p>
+      A turn is a forest of actions executed as a transaction: every action admits and every
+      effect lands, or the whole turn is rejected and the state is exactly what it was. There
+      is no partial success to reason about. Multi-party turns are the same shape — several
+      cells advance under one commitment, each contributing its own authorization.
+    </p>
+
+    <h2 id="receipt">"…leaving a verifiable receipt."</h2>
+
+    <p>
+      A committed turn produces <strong>Q</strong> — a receipt that commits the entire
+      post-state under one commitment scheme. The receipt is not a log line; it is a
+      <em>judgment</em>: anyone holding the receipt chain can verify that every transition
+      was admissible without re-running anything. Receipts are
+      <a href="/learn/concepts/receipts.html">rung 4</a>; verifying whole histories from
+      receipts alone is <a href="/learn/concepts/light-client.html">rung 5</a>.
+    </p>
+
+    <h2 id="grounding">Grounding</h2>
+
+    <p>
+      The executor entry is <code>execFullForestG</code> in
+      <code>metatheory/Dregg2/Exec/FullForestAuth.lean</code> — the credential-and-caveat-gated
+      whole-forest step the node invokes (the <code>dregg_exec_full_forest_auth</code> FFI
+      export). Its gate is two-valued and fail-closed:
+    </p>
+
+    <ul>
+      <li><code>execFullForestG_unauthorized_fails</code> — a forged credential, unauthorized
+        capability, or undischarged caveat on <em>any</em> leg rejects the <em>whole</em> forest.</li>
+      <li><code>execFullForestG_no_amplify</code> — every delegation edge in the forest is
+        non-amplifying.</li>
+      <li><code>execFullForestG_conserves_per_asset</code> — value conservation survives the gate.</li>
+      <li><code>AssuranceCase.running_entry_sound</code> — the three conjoined, stated over the
+        thing that runs, not over an abstract model.</li>
+    </ul>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>Touch it:</strong> compose and submit a real turn in the
+        <a href="/studio.html">Studio</a> (the forms are generated from the node's own submit
+        schema), or watch turns admit and reject in the
+        <a href="/playground/">playground</a>.
+      </p>
+    </div>
+
+    <p>
+      Next: <a href="/learn/concepts/substances.html">2 · Cells &amp; the four substances →</a>
+    </p>
+
+  </main>
+</div>
+
+</layout>

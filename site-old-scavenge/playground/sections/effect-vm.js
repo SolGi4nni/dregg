@@ -1,0 +1,278 @@
+/**
+ * Effect VM Playground Section — build effects, generate trace, prove, verify interactively.
+ *
+ * Users can:
+ * - Select effect types and chain them
+ * - See the execution trace table in real-time
+ * - Run constraint checks
+ * - Generate and verify proofs (via WASM)
+ */
+
+import { state, notifyStateChange, getWasm } from '../playground.js';
+import { deepLinkBanner, inspectorEmbed, onSeedReady } from '../studio-embed.js';
+
+const EFFECT_TYPES = [
+  { id: 'credit', label: 'Credit', desc: 'Add tokens to a cell', cols: ['target_bal', 'amount', 'total_supply'] },
+  { id: 'debit', label: 'Debit', desc: 'Remove tokens from a cell', cols: ['source_bal', 'amount', 'nonce'] },
+  { id: 'transfer', label: 'Transfer', desc: 'Move tokens between cells', cols: ['src_bal', 'dst_bal', 'amount', 'nonce'] },
+  { id: 'create_note', label: 'Create Note', desc: 'Produce a private note commitment', cols: ['commitment', 'value', 'blinding', 'tree_size'] },
+  { id: 'nullify', label: 'Nullify', desc: 'Spend a note (insert nullifier)', cols: ['nullifier', 'note_root', 'path_hash', 'epoch'] },
+  { id: 'delegate', label: 'Delegate', desc: 'Grant a capability', cols: ['granter_caps', 'receiver_caps', 'cap_id', 'ttl'] },
+  { id: 'revoke', label: 'Revoke', desc: 'Revoke a capability', cols: ['revocation_root', 'revoked_id', 'epoch', 'proof_size'] },
+];
+
+let trace = [];
+let proofResult = null;
+
+export function initEffectVm(wasm) {
+  const section = document.getElementById('section-effect-vm');
+  if (!section) return;
+
+  // Tier 2 (STARBRIDGE-PLAN §4.9): the canonical turn trace is the platform
+  // <dregg-turn-debugger> inspector — it reads the real get_turn_trace(handle,
+  // turn_hash) over the seeded committed turn (step-by-step AIR trace table).
+  // The interactive effect builder below is preserved as the learn carve-out.
+  section.innerHTML = `
+    <div class="pg-section__header">
+      <h2>Effect VM</h2>
+      ${deepLinkBanner(
+        [{ label: '<dregg-turn-debugger>', uri: 'dregg://turn/feed' }],
+        'real get_turn_trace step-by-step AIR trace',
+      )}
+      <p>
+        The canonical AIR trace + proof for a real committed turn is the turn debugger below
+        (it reads <code>get_turn_trace</code> over the seeded turn — every row is real). The
+        builder beneath it is an <strong>illustrative</strong> tool: pick effects to see which
+        witness columns each one populates and which AIR constraints apply. Example column values
+        are shown for shape only — to generate and verify a <em>real</em> STARK proof, use the
+        <a href="#" data-goto="proofs" style="color:var(--accent-bright);">Proofs section</a>.
+      </p>
+      ${inspectorEmbed(
+        `<dregg-turn-debugger id="evm-inspector" uri="dregg://turn/seed"></dregg-turn-debugger>`,
+        'Canonical turn debugger (real seeded turn)',
+      )}
+    </div>
+
+    <div class="effect-vm-layout">
+      <div class="effect-vm-builder">
+        <div class="effect-vm-builder__header">
+          <span class="effect-vm-builder__title">Effect Sequence</span>
+          <div class="effect-vm-builder__controls">
+            <select id="evm-effect-select" class="pg-select">
+              ${EFFECT_TYPES.map(t => `<option value="${t.id}">${t.label} — ${t.desc}</option>`).join('')}
+            </select>
+            <button class="pg-btn pg-btn--primary" id="evm-add-btn">Add</button>
+            <button class="pg-btn pg-btn--ghost" id="evm-clear-btn">Clear</button>
+          </div>
+        </div>
+        <div class="effect-vm-sequence" id="evm-sequence">
+          <div class="pg-empty">No effects yet. Add one above.</div>
+        </div>
+      </div>
+
+      <div class="effect-vm-trace">
+        <div class="effect-vm-trace__header">
+          <span>Trace columns <span style="color:var(--text-muted);font-weight:400;">(illustrative)</span></span>
+          <span class="effect-vm-trace__meta" id="evm-trace-meta">0 rows</span>
+        </div>
+        <div class="effect-vm-trace__body" id="evm-trace-table">
+          <div class="pg-empty">Trace will appear as effects are added.</div>
+        </div>
+      </div>
+
+      <div class="effect-vm-constraints">
+        <div class="effect-vm-constraints__header">
+          <span>Constraints</span>
+        </div>
+        <div class="effect-vm-constraints__body" id="evm-constraints">
+          <div class="pg-empty">Add effects to check constraints.</div>
+        </div>
+      </div>
+
+      <div class="effect-vm-proof">
+        <div class="effect-vm-proof__result" id="evm-proof-result">
+          <div class="output-entry info" style="font-size:12px;line-height:1.5;">
+            This builder illustrates the AIR <em>structure</em> — it does not mint a proof
+            (a real proof needs a real committed execution, not example columns).
+            The turn debugger above shows the real AIR trace; generate and verify an actual
+            STARK proof in the <a href="#" data-goto="proofs" style="color:var(--accent-bright);">Proofs section</a>.
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Point the embedded <dregg-turn-debugger> at the real seeded turn.
+  onSeedReady((s) => {
+    if (!s.turnHash) return;
+    const uri = `dregg://turn/${s.turnHash}`;
+    section.querySelector('#evm-inspector')?.setAttribute('uri', uri);
+    const link = section.querySelector('.pg-sb-link');
+    if (link) link.href = `/starbridge/?at=${encodeURIComponent(uri)}`;
+  });
+
+  // Wire controls
+  document.getElementById('evm-add-btn').addEventListener('click', () => {
+    const typeId = document.getElementById('evm-effect-select').value;
+    addEffect(typeId);
+  });
+
+  document.getElementById('evm-clear-btn').addEventListener('click', () => {
+    trace = [];
+    proofResult = null;
+    renderSequence();
+    renderTrace();
+    renderConstraints();
+    updateProofButtons();
+  });
+
+  // "Proofs section" deep-links navigate to the real STARK proving surface.
+  section.querySelectorAll('[data-goto]').forEach((a) => {
+    a.addEventListener('click', (e) => { e.preventDefault(); navTo(a.dataset.goto); });
+  });
+}
+
+function navTo(sectionId) {
+  const btn = document.querySelector(`.pg-nav__item[data-section="${sectionId}"]`);
+  if (btn) btn.click();
+}
+
+function addEffect(typeId) {
+  const effectType = EFFECT_TYPES.find(t => t.id === typeId);
+  if (!effectType) return;
+
+  const prev = trace.length > 0 ? trace[trace.length - 1] : {};
+  const row = {};
+
+  effectType.cols.forEach(col => {
+    switch (col) {
+      case 'src_bal':
+      case 'source_bal':
+      case 'target_bal':
+        row[col] = (prev[col] || 1000) - Math.floor(Math.random() * 50 + 10);
+        break;
+      case 'dst_bal':
+        row[col] = (prev[col] || 0) + Math.floor(Math.random() * 50 + 10);
+        break;
+      case 'amount':
+      case 'value':
+        row[col] = Math.floor(Math.random() * 100 + 1);
+        break;
+      case 'nonce':
+      case 'epoch':
+        row[col] = (prev[col] || 0) + 1;
+        break;
+      case 'total_supply':
+      case 'tree_size':
+        row[col] = (prev[col] || 10000) + (typeId === 'credit' ? row.amount || 50 : 1);
+        break;
+      default:
+        row[col] = Math.floor(Math.random() * 0xFFFF);
+    }
+  });
+
+  row._type = typeId;
+  row._label = effectType.label;
+  row._step = trace.length;
+  trace.push(row);
+
+  renderSequence();
+  renderTrace();
+  renderConstraints();
+  updateProofButtons();
+}
+
+function renderSequence() {
+  const el = document.getElementById('evm-sequence');
+  if (!trace.length) {
+    el.innerHTML = '<div class="pg-empty">No effects yet. Add one above.</div>';
+    return;
+  }
+
+  el.innerHTML = trace.map((row, idx) => `
+    <div class="effect-vm-step">
+      <span class="effect-vm-step__num">${idx}</span>
+      <span class="effect-vm-step__type">${row._label}</span>
+      <span class="effect-vm-step__cols">${Object.keys(row).filter(k => !k.startsWith('_')).join(', ')}</span>
+      <button class="effect-vm-step__remove" data-idx="${idx}" title="Remove">x</button>
+    </div>
+  `).join('');
+
+  el.querySelectorAll('.effect-vm-step__remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      trace.splice(parseInt(btn.dataset.idx), 1);
+      // Re-index steps
+      trace.forEach((r, i) => r._step = i);
+      renderSequence();
+      renderTrace();
+      renderConstraints();
+      updateProofButtons();
+    });
+  });
+}
+
+function renderTrace() {
+  const el = document.getElementById('evm-trace-table');
+  const meta = document.getElementById('evm-trace-meta');
+
+  if (!trace.length) {
+    el.innerHTML = '<div class="pg-empty">Trace will appear as effects are added.</div>';
+    meta.textContent = '0 rows';
+    return;
+  }
+
+  meta.textContent = `${trace.length} rows`;
+
+  // Collect all columns
+  const cols = [...new Set(trace.flatMap(r => Object.keys(r).filter(k => !k.startsWith('_'))))];
+
+  let html = `<table class="evm-table"><thead><tr><th>#</th><th>Type</th>`;
+  cols.forEach(c => { html += `<th>${c}</th>`; });
+  html += `</tr></thead><tbody>`;
+
+  trace.forEach((row, idx) => {
+    const prev = idx > 0 ? trace[idx - 1] : null;
+    html += `<tr>`;
+    html += `<td class="evm-table__step">${idx}</td>`;
+    html += `<td class="evm-table__type">${row._label}</td>`;
+    cols.forEach(col => {
+      const val = row[col];
+      const prevVal = prev ? prev[col] : val;
+      let cls = 'evm-table__val';
+      if (val !== undefined && prevVal !== undefined && val !== prevVal) {
+        cls += val > prevVal ? ' evm-table__val--up' : ' evm-table__val--down';
+      }
+      html += `<td class="${cls}">${val !== undefined ? val : '--'}</td>`;
+    });
+    html += `</tr>`;
+  });
+
+  html += `</tbody></table>`;
+  el.innerHTML = html;
+}
+
+function renderConstraints() {
+  const el = document.getElementById('evm-constraints');
+  if (!trace.length) {
+    el.innerHTML = '<div class="pg-empty">Add effects to check constraints.</div>';
+    return;
+  }
+
+  const checks = [
+    { label: 'Non-negative balances', pass: trace.every(r => Object.entries(r).filter(([k]) => k.includes('bal')).every(([, v]) => v >= 0)) },
+    { label: 'Monotonic nonce', pass: trace.every((r, i) => i === 0 || !r.nonce || !trace[i - 1].nonce || r.nonce > trace[i - 1].nonce) },
+    { label: 'Positive amounts', pass: trace.every(r => r.amount === undefined || r.amount > 0) },
+    { label: 'Valid step indices', pass: trace.every((r, i) => r._step === i) },
+  ];
+
+  el.innerHTML = checks.map(c => `
+    <div class="evm-constraint-row">
+      <span>${c.label}</span>
+      <span class="evm-constraint-badge ${c.pass ? 'evm-constraint-badge--pass' : 'evm-constraint-badge--fail'}">${c.pass ? 'PASS' : 'FAIL'}</span>
+    </div>
+  `).join('');
+}
+
+// The builder is illustrative; there are no proof buttons to toggle. Kept as a
+// no-op so the existing render callsites don't need to change.
+function updateProofButtons() {}

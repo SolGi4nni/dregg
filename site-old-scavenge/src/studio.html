@@ -1,0 +1,208 @@
+<layout src="_layouts/default.html">
+<title>Studio — dregg IDE</title>
+
+<style>
+  .ide { max-width: 1180px; margin: 0 auto; padding: var(--s4); }
+  .ide__intro { color: var(--fg-dim); line-height: 1.6; margin-bottom: var(--s3); }
+  .ide__intro code { color: var(--fg); }
+
+  /* Guided first-run banner (dismissable, progressive disclosure) */
+  .ide__guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s3);
+    margin: var(--s3) 0 var(--s4); }
+  .ide__guide-card { border: 1px solid var(--line); border-left: 3px solid var(--accent, #5b8a5a);
+    border-radius: 8px; padding: var(--s3); background: var(--bg-raised); }
+  .ide__guide-card h3 { margin: 0 0 4px; font-size: 0.95rem; display: flex; align-items: center; gap: 8px; }
+  .ide__guide-card .ide__guide-n { display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%; background: var(--accent, #5b8a5a); color: var(--bg);
+    font-size: 0.78rem; font-family: var(--font-mono, monospace); }
+  .ide__guide-card p { margin: 0; font-size: 0.82rem; color: var(--fg-dim); line-height: 1.5; }
+  .ide__guide-card p code { color: var(--fg); }
+
+  /* Tabs for the three authoring surfaces (progressive disclosure: one at a time) */
+  .ide__tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: var(--s4); flex-wrap: wrap; }
+  .ide__tab { padding: 9px 16px; font: inherit; font-size: 0.86rem; cursor: pointer; background: none;
+    color: var(--fg-dim); border: 0; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 8px; }
+  .ide__tab:hover { color: var(--fg); }
+  .ide__tab.is-on { color: var(--fg); border-bottom-color: var(--accent, #5b8a5a); }
+  .ide__tab small { color: var(--fg-dim); font-weight: normal; font-size: 0.74rem; }
+
+  .ide__panel { display: none; }
+  .ide__panel.is-on { display: block; }
+  .ide__panel-lede { color: var(--fg-dim); font-size: 0.88rem; line-height: 1.55; margin: 0 0 var(--s3); }
+  .ide__panel-lede code { color: var(--fg); }
+  .ide__host { border: 1px solid var(--line); border-radius: 8px; padding: var(--s3); background: var(--bg); }
+
+  .ide__provenance { font-size: 0.78rem; color: var(--fg-dim); margin-top: var(--s4);
+    padding-top: var(--s3); border-top: 1px solid var(--line); line-height: 1.6; }
+  .ide__provenance code { color: var(--fg); }
+  .dregg-inspector--err { color: #d4685c; padding: 8px 12px; border: 1px solid #d4685c; border-radius: 4px; }
+</style>
+
+<main class="ide">
+  <header>
+    <h1>Studio</h1>
+    <p class="ide__intro">
+      A guided IDE for authoring dregg <strong>turns</strong>, <strong>predicates</strong>, and
+      <strong>cell programs</strong> from the system's own vocabulary. Pick effects and constraints
+      from the catalog, compose with guided forms (not raw JSON), see live validation and a local
+      simulation, then submit a real turn to a node. Everything here is generated
+      <em>directly from the verified source</em> — the effect set from the Lean kernel
+      (<code>FullActionA</code>), the predicate language from the cell evaluator
+      (<code>cell/src/program.rs</code>), the submit shapes from the node API
+      (<code>node/src/api.rs</code>) — so it cannot drift from the running system.
+    </p>
+  </header>
+
+  <!-- Guided first-run: the four-step flow, shown once (dismiss persists). -->
+  <section class="ide__guide" id="ide-guide">
+    <div class="ide__guide-card">
+      <h3><span class="ide__guide-n">1</span> Compose</h3>
+      <p>Pick an effect from the catalog and fill its typed fields. Stack effects into a turn — no JSON by hand.</p>
+    </div>
+    <div class="ide__guide-card">
+      <h3><span class="ide__guide-n">2</span> Validate</h3>
+      <p>Each field is checked against the node's real submit schema. The flow won't advance until your turn is valid.</p>
+    </div>
+    <div class="ide__guide-card">
+      <h3><span class="ide__guide-n">3</span> Simulate</h3>
+      <p>See the (old&nbsp;&rarr;&nbsp;new) state diff for the parts modeled locally — and an honest <em>"needs executor"</em> label for the rest.</p>
+    </div>
+    <div class="ide__guide-card">
+      <h3><span class="ide__guide-n">4</span> Submit</h3>
+      <p>Send the turn to a live node and read its real accept/reject verdict. <a href="#" id="ide-guide-dismiss">Got it — hide this.</a></p>
+    </div>
+  </section>
+
+  <nav class="ide__tabs" role="tablist">
+    <button class="ide__tab is-on" data-panel="compose" role="tab">Compose a turn <small>build &amp; submit</small></button>
+    <button class="ide__tab" data-panel="factory" role="tab">Author a factory <small>cell programs at birth</small></button>
+    <button class="ide__tab" data-panel="predicates" role="tab">Cell programs &amp; predicates <small>guard logic</small></button>
+    <button class="ide__tab" data-panel="catalog" role="tab">Effect catalog <small>reference</small></button>
+  </nav>
+
+  <section class="ide__panel is-on" id="panel-compose" role="tabpanel">
+    <p class="ide__panel-lede">
+      Compose a turn from the thin-HTTP effect kinds the node accepts directly
+      (<code>set_field</code>, <code>transfer</code>, <code>emit_event</code>,
+      <code>increment_nonce</code>), validate it, simulate the field-write fragment,
+      and submit it to a node. The remaining ontology effects (30 in all) go through the
+      typed SDK signed-envelope path — browse them under <strong>Effect catalog</strong>.
+    </p>
+    <div class="ide__host">
+      <dregg-turn-composer></dregg-turn-composer>
+    </div>
+  </section>
+
+  <section class="ide__panel" id="panel-factory" role="tabpanel">
+    <p class="ide__panel-lede">
+      A <code>FactoryDescriptor</code> is how the polis grows: it mints cells born with
+      <strong>perpetual state constraints</strong> the executor enforces on every turn for the
+      cell's whole life — the pattern that replaces whole kernel-verb families (escrow,
+      obligation, bridge, council) with factory-born cells. Compose the constraint set with the
+      catalog explainer inline, watch the <strong>live proof badges</strong> (substrate guarantees
+      from the Lean assurance case; per-constraint enforcement; the source-stated limits of the
+      grammar), then export the exact descriptor JSON the runtime deploys. The escrow / obligation /
+      council / constitution worked examples are generated by running the real Rust constructors.
+    </p>
+    <div class="ide__host">
+      <dregg-factory-composer></dregg-factory-composer>
+    </div>
+  </section>
+
+  <section class="ide__panel" id="panel-predicates" role="tabpanel">
+    <p class="ide__panel-lede">
+      A cell guards its own state with a <code>CellProgram</code> built from
+      <code>StateConstraint</code> predicates. The <strong>Language reference</strong>
+      tab lists every constraint, the program kinds, and the transition guards; the
+      <strong>Compose &amp; test</strong> tab lets you stack constraints over an
+      (old&nbsp;&rarr;&nbsp;new) state and watch them accept or reject — evaluated against
+      a faithful mirror of the executor's field-comparison semantics (witness/proof
+      constraints are honestly labeled "needs executor").
+    </p>
+    <div class="ide__host">
+      <dregg-predicate-explorer></dregg-predicate-explorer>
+    </div>
+  </section>
+
+  <section class="ide__panel" id="panel-catalog" role="tabpanel">
+    <p class="ide__panel-lede">
+      Every <code>FullActionA</code> effect variant: its wire mnemonic, typed
+      arguments, one-line semantics, and the <code>Authority.Auth</code> facet it
+      requires. Search and filter by category to find the effect you need.
+    </p>
+    <div class="ide__host">
+      <dregg-ontology></dregg-ontology>
+    </div>
+  </section>
+
+  <div class="ide__provenance">
+    <strong>Provenance.</strong> Effect catalog &amp; turn composer &larr;
+    <code>metatheory/Dregg2/Exec/TurnExecutorFull.lean</code> (<code>FullActionA</code>,
+    <code>requiredFacetA</code>) + <code>Dregg2/Exec/FFI.lean</code>. Submit shapes &larr;
+    <code>node/src/api.rs</code> (<code>TurnEffectSpec</code> — the JSON
+    <code>/api/turns/submit</code> deserializes). Predicate language &larr;
+    <code>cell/src/program.rs</code>, cross-checked against <code>wasm/src/bindings.rs</code>.
+    Proof badges &larr; <code>metatheory/Dregg2/AssuranceCase.lean</code> (statements, keystone
+    DAGs, <code>#assert_axioms</code> pins — every pin certified by Lean's own
+    <code>collectAxioms</code> audit to rest only on the kernel triple). Factory worked examples
+    &larr; running <code>cell/src/blueprint.rs</code> + <code>starbridge-apps/polis</code>
+    constructors (<code>site/tools/gen-factory-samples.sh</code>).
+    Regenerate with <code>node site/tools/gen-ontology-catalog.js</code>; a drift check
+    (<code>--check</code>) fails the build if any catalog is stale. The compose / validate /
+    simulate / author steps need no node; only <strong>submit</strong> touches the network.
+  </div>
+</main>
+
+<!-- Preact/signals bootstrap for the platform inspectors the composer embeds
+     (the compose-then-inspect round trip mounts <dregg-council> etc. in
+     factory view). Fail-soft: without it the composer still works fully. -->
+<script type="module" src="/_includes/runtime-bootstrap.js"></script>
+
+<script type="module">
+  // Importing the inspectors barrel registers <dregg-turn-composer>,
+  // <dregg-predicate-explorer> and <dregg-ontology> (plus the rest of the studio
+  // vocabulary). These three authoring surfaces fetch their generated JSON
+  // catalogs and run locally — no wasm / node required to compose, validate, and
+  // simulate; only the composer's "submit" step calls a node.
+  import('/_includes/studio/inspectors.js').catch((e) => {
+    console.error('[studio] failed to load inspectors barrel', e);
+    document.querySelectorAll('.ide__host').forEach((h) => {
+      h.innerHTML =
+        '<div class="dregg-inspector--err">Could not load the studio inspector ' +
+        'bundle. Rebuild the site (<code>node site/build.js</code>).</div>';
+    });
+  });
+
+  // Tab switching (progressive disclosure: one surface at a time).
+  const tabs = document.querySelectorAll('.ide__tab');
+  const panels = document.querySelectorAll('.ide__panel');
+  function show(name) {
+    tabs.forEach((t) => t.classList.toggle('is-on', t.dataset.panel === name));
+    panels.forEach((p) => p.classList.toggle('is-on', p.id === `panel-${name}`));
+    try { history.replaceState(null, '', '#' + name); } catch {}
+  }
+  tabs.forEach((t) => t.addEventListener('click', () => show(t.dataset.panel)));
+  const initial = (location.hash || '').replace('#', '');
+  if (['compose', 'factory', 'predicates', 'catalog'].includes(initial)) show(initial);
+
+  // dregg:// deep links land here via the shared resolver (resolver.js):
+  //   dregg://factory/<vk-or-key>  → ?factory=…   (factory composer example)
+  //   dregg://constraint/<kind>    → ?constraint=… (predicate browser entry)
+  //   dregg://effect/<name>        → ?effect=…     (effect catalog search)
+  const params = new URLSearchParams(location.search);
+  if (params.has('factory')) show('factory');
+  else if (params.has('constraint')) show('predicates');
+  else if (params.has('effect')) show('catalog');
+
+  // Guided first-run banner: dismiss persists in localStorage.
+  const guide = document.getElementById('ide-guide');
+  const GUIDE_KEY = 'dregg_studio_guide_dismissed';
+  try { if (localStorage.getItem(GUIDE_KEY) === '1' && guide) guide.style.display = 'none'; } catch {}
+  document.getElementById('ide-guide-dismiss')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (guide) guide.style.display = 'none';
+    try { localStorage.setItem(GUIDE_KEY, '1'); } catch {}
+  });
+</script>
+
+</layout>

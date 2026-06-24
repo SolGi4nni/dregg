@@ -1,0 +1,150 @@
+<layout src="_layouts/default.html">
+<title>7 · The Trust Boundary — dregg</title>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <include src="_includes/sidebar-learn.html"></include>
+  </aside>
+  <main class="docs-content">
+    <nav class="docs-breadcrumb">
+      <a href="/docs.html">The Protocol</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>7 · The Trust Boundary</span>
+    </nav>
+
+<h1>The trust boundary</h1>
+
+    <p>
+      A guarantee you cannot delimit is a slogan. This page is the delimitation: what is
+      proven, what is assumed, which running code the proofs depend on, and what remains
+      your discipline as an operator or user. It embeds the machine-readable assurance
+      catalog generated from the Lean assurance case, so the claims here cannot drift from
+      the proofs.
+    </p>
+
+    <h2 id="proven">What is proven</h2>
+
+    <p>
+      The assurance case is organized by guarantee, not by module: each guarantee names an
+      apex theorem and the keystone DAG that discharges it, and every name is
+      <code>#assert_axioms</code>-pinned — the Lean build fails unless the theorem's full
+      axiom set is exactly the kernel triple.
+    </p>
+
+    <catalog view="guarantees">
+
+    <p>
+      Guarantee R deserves emphasis: it states A, B, and C over
+      <code>execFullForestG</code> — the executor body the deployed node invokes through
+      FFI — not over an abstract model. "The proofs are about the thing that runs" is itself
+      a theorem (<code>running_entry_sound</code>), not a deployment note.
+    </p>
+
+    <h2 id="assumed">What is assumed</h2>
+
+    <p>
+      Every guarantee above is unconditional modulo these carriers, which enter as
+      <code>Prop</code>-portals (hypotheses and typeclass fields), never as axioms:
+    </p>
+
+    <catalog view="assumption-floor">
+
+    <h2 id="running-code">Which running code the proofs depend on</h2>
+
+    <p>
+      The verified semantics live in <code>metatheory/Dregg2/</code> and execute through the
+      <code>dregg_exec_full_forest_auth</code> FFI export. Around that core, a soundness
+      claim additionally depends on the correctness of a specific, named set of Rust
+      components (the survey is <code>docs/DREGGRS-SEGREGATION.md</code>):
+    </p>
+
+    <ul>
+      <li><strong>the bridge</strong> — <code>dregg-lean-ffi</code>'s marshalling between wire
+        types and the Lean kernel's types;</li>
+      <li><strong>the node's admission gates</strong> — the points where the node consults the
+        verified verdict (production, finality, handoff, admission);</li>
+      <li><strong>the verifiers</strong> — <code>verifier</code> and <code>lightclient</code>,
+        the standalone and succinct proof checkers;</li>
+      <li><strong>the canonical codecs</strong> — <code>types</code>, whose encodings define
+        what is signed and committed;</li>
+      <li><strong>the token cryptography</strong> — <code>macaroon</code> / <code>token</code>
+        (HMAC caveat chains, biscuit verification) and <code>commit</code> /
+        <code>trace</code> (token-proof Merkle and Datalog semantics);</li>
+      <li><strong>consensus safety</strong> — <code>blocklace</code>, with finality gated on
+        the verified rule.</li>
+    </ul>
+
+    <p>
+      Transport, storage, and networking (<code>wire</code>, <code>net</code>,
+      <code>persist</code>) are deliberately <em>outside</em> the boundary: commitments catch
+      tampering below them, so they need to be available, not correct.
+    </p>
+
+    <h2 id="discipline">What is operator and user discipline</h2>
+
+    <ul>
+      <li><strong>Key custody.</strong> The SDK and cipherclerk are client-local: keys and
+        witness data stay on your device, which means your device's security is yours. A
+        compromised device holds your authority.</li>
+      <li><strong>What programs cannot see.</strong> The constraint grammar has stated
+        expressibility limits (quoted from source in the
+        <a href="/learn/ontology.html">ontology catalog</a>); rules outside them are SDK and
+        operational discipline, and an app's documentation must say which of its rules are
+        which.</li>
+      <li><strong>Disclosure choices.</strong> The dial (<a href="/learn/concepts/guards.html">rung 3</a>)
+        gives you projections of Q; choosing what to reveal to whom is a policy you set, not
+        a property the system can choose for you.</li>
+    </ul>
+
+    <h2 id="open">Present limitations</h2>
+
+    <p>
+      Stated plainly, as facts about the present system:
+    </p>
+
+    <ul>
+      <li><strong>The host-context seam.</strong> Some wire-effect families are executed by
+        host Rust whose verdicts are cross-checked against the Lean kernel turn-by-turn
+        rather than produced by it. For those families, that Rust is in the trust base; the
+        node reports the exact split live at <code>/api/node/producer</code>.</li>
+      <li><strong>Composition security is not machine-checked end-to-end.</strong> The
+        per-guarantee theorems are; a universal-composability statement for the whole
+        protocol stack is not yet a Lean artifact.</li>
+      <li><strong>The circuit graduation and the rotation are in progress.</strong> The
+        Lean-emitted descriptor prover is authoritative for a named set of graduated turn shapes;
+        every other shape falls back — logged, never silent — to a hand-written AIR that enforces
+        the same bindings but is test-attested, not theorem-attested. Graduating the remainder, and
+        binding the cell heap's <code>heap_root</code> in-circuit per turn, ride the one
+        VK/commitment epoch (the "rotation"); the heap is kernel-bound and scheme-pinned today, not
+        yet per-turn circuit-committed.</li>
+    </ul>
+
+    <h2 id="grounding">Grounding</h2>
+
+    <ul>
+      <li><code>metatheory/Dregg2/AssuranceCase.lean</code> — the assurance case this page
+        embeds; <code>Dregg2/Claims.lean</code> is the corpus-wide per-keystone pin net
+        behind it.</li>
+      <li><code>docs/DREGGRS-SEGREGATION.md</code> — the crate-by-crate trust survey.</li>
+      <li><code>site/tools/gen-ontology-catalog.js</code> — the generator whose drift check
+        fails the site build if any embedded fact here goes stale.</li>
+    </ul>
+
+    <div class="callout callout--note">
+      <p>
+        <strong>Touch it:</strong> ask a live node for its producer split
+        (<code>curl localhost:8420/api/node/producer</code>), and open any proof badge in the
+        <a href="/explorer/">explorer</a> — the tier it shows is computed from this same
+        assurance catalog.
+      </p>
+    </div>
+
+    <p>
+      <a href="/learn/concepts/userspace.html">← 6 · Userspace</a> ·
+      <a href="/docs.html">back to the ladder ↑</a>
+    </p>
+
+  </main>
+</div>
+
+</layout>

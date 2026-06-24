@@ -1,0 +1,117 @@
+<layout src="_layouts/default.html">
+<title>The Protocol — dregg</title>
+
+<main class="wrap main--compact">
+  <div class="page-header">
+    <h1>The protocol, in seven rungs</h1>
+    <p>
+      This is the living explanation of dregg: what the system <em>is</em>, taught from one
+      sentence outward. Each rung is prose first, then the theorems and files that ground it,
+      then a place to touch the real thing. Wherever a page states a checkable fact — the
+      verb roster, the guarantee list, the assumption floor, the constraint grammar — the
+      fact is embedded at build time from catalogs generated out of the verified sources, and
+      the build fails if they drift. The prose can age; the facts cannot.
+    </p>
+  </div>
+
+  <section>
+    <div class="link-cards">
+      <a class="link-card" href="/learn/concepts/turn.html">
+        <span class="link-card__title">1 · The turn</span>
+        <span class="link-card__desc">
+          The one sentence: an attenuable, proof-carrying token, exercised over owned state,
+          leaving a verifiable receipt. The demand⊣supply gate; the verify/find asymmetry;
+          atomicity.
+        </span>
+      </a>
+      <a class="link-card" href="/learn/concepts/substances.html">
+        <span class="link-card__title">2 · Cells &amp; the four substances</span>
+        <span class="link-card__desc">
+          Value is linear; authority is produced under non-forgeability; evidence is
+          monotone; state is guarded. The eight verbs as their structural rules — minimality
+          is a theorem.
+        </span>
+      </a>
+      <a class="link-card" href="/learn/concepts/guards.html">
+        <span class="link-card__title">3 · Guards</span>
+        <span class="link-card__desc">
+          One predicate algebra, four polarities: caveat, program, precondition, intent. The
+          coordination dial (confluence-stable guards run free) and the disclosure dial
+          (what the proof doesn't need, it doesn't see).
+        </span>
+      </a>
+      <a class="link-card" href="/learn/concepts/receipts.html">
+        <span class="link-card__title">4 · Receipts &amp; Q</span>
+        <span class="link-card__desc">
+          History as evidence: the receipt chain, the witness bundle, time-travel as a
+          theorem. A receipt binds the whole post-state — there is no field a tamperer can
+          edit.
+        </span>
+      </a>
+      <a class="link-card" href="/learn/concepts/light-client.html">
+        <span class="link-card__title">5 · The light client</span>
+        <span class="link-card__desc">
+          Verify everything, re-execute nothing: one check on one root learns the whole
+          history. The assumption floor, enumerated in full.
+        </span>
+      </a>
+      <a class="link-card" href="/learn/concepts/userspace.html">
+        <span class="link-card__title">6 · Userspace</span>
+        <span class="link-card__desc">
+          Factories, cell programs, and the polis: escrows and councils and constitutions as
+          verified cell programs. Apps inherit theorems by consuming receipts against
+          descriptors.
+        </span>
+      </a>
+      <a class="link-card" href="/learn/concepts/trust-boundary.html">
+        <span class="link-card__title">7 · The trust boundary</span>
+        <span class="link-card__desc">
+          What is proven (the guarantees, by apex theorem), what is assumed (eight carriers),
+          which running code the proofs depend on, and what stays your discipline.
+        </span>
+      </a>
+    </div>
+  </section>
+
+  <section class="section section--compact">
+    <h2 class="section__title">Above the ladder</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      The kernel taught here is the foundation. What stands on it: the agentic desktop, and the
+      verified microkernel ground it boots on.
+    </p>
+    <div class="link-cards">
+      <a class="link-card" href="/deos.html">
+        <span class="link-card__title">deos · the agentic desktop</span>
+        <span class="link-card__desc">A window is a capability; htmx-on-crack affordances; the rehydratable frustum-snapshot; the verified-desktop crown. dregg made visual, with zero new trust.</span>
+      </a>
+      <a class="link-card" href="/firmament.html">
+        <span class="link-card__title">The firmament · dregg-on-seL4</span>
+        <span class="link-card__desc">One capability local-to-global, the <code>n=1</code> collapse to strong-local properties, the protection-domain topology that boots today, and pg-dregg verified durable state.</span>
+      </a>
+    </div>
+  </section>
+
+  <section class="section section--compact">
+    <h2 class="section__title">After the ladder</h2>
+    <div class="link-cards">
+      <a class="link-card" href="/glossary.html">
+        <span class="link-card__title">The glossary</span>
+        <span class="link-card__desc">The nine words dregg cannot be explained without — cell, turn, capability, verb, guard, receipt, Q, factory, polis — each linked to its rung.</span>
+      </a>
+      <a class="link-card" href="/learn.html">
+        <span class="link-card__title">Guides by role</span>
+        <span class="link-card__desc">Use it, build on it, run it — task-oriented references for users, developers, and operators.</span>
+      </a>
+      <a class="link-card" href="/learn/ontology.html">
+        <span class="link-card__title">The ontology catalog</span>
+        <span class="link-card__desc">Every wire effect and every predicate kind, generated from the verified sources, searchable and live.</span>
+      </a>
+      <a class="link-card" href="/paper.html">
+        <span class="link-card__title">The paper</span>
+        <span class="link-card__desc">The formal treatment: the model, the authority logic, the assurance case, the realization.</span>
+      </a>
+    </div>
+  </section>
+</main>
+
+</layout>

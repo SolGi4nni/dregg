@@ -1,0 +1,141 @@
+// Overview section — introduction and architecture diagram
+
+import { navigateTo } from '../playground.js';
+
+export function initOverview() {
+  const container = document.getElementById('section-overview');
+  container.innerHTML = `
+    <div class="section-header">
+      <h2>Welcome to the Dragon's Egg Playground</h2>
+      <p>
+        Dragon's Egg is a distributed object-capability runtime that combines macaroon-style tokens,
+        STARK proofs, Merkle commitments, and Datalog policy evaluation into a single coherent
+        authorization system. The core primitives below run entirely in your browser via WebAssembly
+        — no server, no backend, no trust assumptions. The v0.3.0 <em>organs</em> (trustline, channels)
+        are node-backed services; the Organs tab drives them against a real node through the actual SDK.
+      </p>
+      <span class="next-hint" data-next="tokens">Start the tour: mint your first token &#8594;</span>
+    </div>
+
+    <div class="overview-arch">
+      <pre>
+                                  +--------------------------+
+                                  |    dregg runtime (WASM)  |
+                                  +--------------------------+
+                                             |
+                 +---------------------------+---------------------------+
+                 |               |               |               |       |
+          +------+------+ +-----+-----+ +------+------+ +------+------+ |
+          |   Tokens    | |   Proofs  | |   Merkle    | |   Datalog   | |
+          | (macaroon)  | |  (STARK)  | | (BLAKE3 4x) | |  (policy)   | |
+          +------+------+ +-----+-----+ +------+------+ +------+------+ |
+                 |               |               |               |       |
+                 +-------------- + ---- + -------+---- + --------+       |
+                                 |      |              |                  |
+                          +------+------+------+------+------+           |
+                          |         Notes & Nullifiers       |           |
+                          |  (private value transfer, UTXO)  |           |
+                          +----------------------------------+           |
+                                                                         |
+                          +----------------------------------+           |
+                          |     Capabilities & Delegation    +-----------+
+                          |  (attenuation chains, revocation)|
+                          +----------------------------------+
+                                         |
+                          +----------------------------------+
+                          |     Cross-Federation Bridge      |
+                          | (conditional turns, note bridge) |
+                          +----------------------------------+</pre>
+    </div>
+
+    <div class="overview-extension-note" style="background:var(--accent-soft);border:1px solid var(--accent);border-radius:6px;padding:12px 16px;margin-bottom:24px;">
+      <strong style="color:var(--accent-bright);">Dragon's Egg Cipherclerk Extension</strong>
+      <span style="color:var(--fg-dim);margin-left:8px;">
+        Install the browser extension to manage capabilities and generate STARK proofs from any web page.
+        <a href="../extension/" style="color:var(--accent-bright);text-decoration:underline;">Install now</a>
+      </span>
+    </div>
+
+    <div class="overview-capabilities">
+      <div class="overview-cap overview-cap--feature" data-nav="web-surface" style="grid-column:1/-1;border-color:var(--accent);background:var(--accent-soft);">
+        <div class="overview-cap__title">Web Surface — the killer demo <span style="font-size:0.7em;color:var(--accent-bright);">two tabs, one surface, the share that refuses</span></div>
+        <div class="overview-cap__desc">
+          A browser window IS a <code>Capability{ target: Surface(cell), rights }</code> rendered to a
+          <code>&lt;canvas&gt;</code>. Alice opens her cell as a pane; shares it <strong>read-only</strong>
+          with Bob (a real <code>GrantCapability</code> turn); an onward <strong>writable</strong> share is
+          <strong>REJECTED</strong> with the <code>⚠ over-share</code> banner (no-amplification at the pixel
+          layer); revoke darks the frame (n=1); then <strong>verify the whole history yourself</strong> in the
+          tab. The copy-paste web evaluation artifact — <a href="#web-surface" style="color:var(--accent-bright);text-decoration:underline;">open it &#8594;</a>
+        </div>
+      </div>
+      <div class="overview-cap" data-nav="tokens">
+        <div class="overview-cap__title">Tokens</div>
+        <div class="overview-cap__desc">Mint root macaroons, attenuate with caveats, verify against policy. HMAC-based, constant-time.</div>
+      </div>
+      <div class="overview-cap" data-nav="proofs">
+        <div class="overview-cap__title">STARK Proofs</div>
+        <div class="overview-cap__desc">Generate real zero-knowledge proofs over BabyBear (p=2^31-2^27+1). FRI commitment, transparent setup.</div>
+      </div>
+      <div class="overview-cap" data-nav="merkle">
+        <div class="overview-cap__title">Merkle Trees</div>
+        <div class="overview-cap__desc">4-ary BLAKE3 Merkle trees. Membership proofs, absence proofs, incremental updates.</div>
+      </div>
+      <div class="overview-cap" data-nav="datalog">
+        <div class="overview-cap__title">Datalog Policy</div>
+        <div class="overview-cap__desc">Evaluate authorization with declarative rules. Full derivation trace, step-by-step reasoning.</div>
+      </div>
+      <div class="overview-cap" data-nav="notes">
+        <div class="overview-cap__title">Private Notes</div>
+        <div class="overview-cap__desc">UTXO-style private value transfer. Commitments hide amounts, nullifiers prevent double-spend.</div>
+      </div>
+      <div class="overview-cap" data-nav="capabilities">
+        <div class="overview-cap__title">Capabilities</div>
+        <div class="overview-cap__desc">Delegation chains with cryptographic attenuation. Grant, narrow, revoke — monotonically reducing scope.</div>
+      </div>
+      <div class="overview-cap" data-nav="organs">
+        <div class="overview-cap__title">Organs <span style="font-size:0.7em;color:var(--accent-bright);">v0.3.0</span></div>
+        <div class="overview-cap__desc">The SDK nouns: a bilateral trustline, a group key-epoch channel, a hosted inbox, a light-client read. Driven against a real node through the actual @dregg/sdk client.</div>
+      </div>
+      <div class="overview-cap" data-nav="federation">
+        <div class="overview-cap__title">Federation</div>
+        <div class="overview-cap__desc">Multi-node consensus, block DAGs, and sovereign exits — inspect the real federation and block-dag views in Starbridge.</div>
+      </div>
+      <div class="overview-cap" data-nav="sovereign">
+        <div class="overview-cap__title">Sovereign Cells</div>
+        <div class="overview-cap__desc">Opt a cell out of consensus. Peer-to-peer exchange with STARK proofs of state validity.</div>
+      </div>
+      <div class="overview-cap" data-nav="bearer">
+        <div class="overview-cap__title">Bearer Caps</div>
+        <div class="overview-cap__desc">Proof-carrying authorization. Transfer caps off-chain, exercise instantly. No state update needed.</div>
+      </div>
+      <div class="overview-cap" data-nav="factories">
+        <div class="overview-cap__title">Cell Factories</div>
+        <div class="overview-cap__desc">Deploy templates, create cells with verified provenance. Whitelisting and compliance patterns.</div>
+      </div>
+      <div class="overview-cap" data-nav="private-transfers">
+        <div class="overview-cap__title">Private Transfers</div>
+        <div class="overview-cap__desc">Stealth addresses + Pedersen commitments. Full sender/recipient/amount privacy with conservation proof.</div>
+      </div>
+      <div class="overview-cap" data-nav="composition">
+        <div class="overview-cap__title">Proof Composition</div>
+        <div class="overview-cap__desc">Compose multiple proofs (AND/OR/Chain/Aggregate) into a single verifiable commitment.</div>
+      </div>
+      <div class="overview-cap" data-nav="gallery">
+        <div class="overview-cap__title">Gallery</div>
+        <div class="overview-cap__desc">Sealed-bid auctions and AMM swaps. Real-world scenarios composing multiple primitives end-to-end.</div>
+      </div>
+      <div class="overview-cap" data-nav="sandbox">
+        <div class="overview-cap__title">Code Sandbox</div>
+        <div class="overview-cap__desc">Write arbitrary JavaScript against the full dregg WASM API. Experiment freely.</div>
+      </div>
+    </div>
+  `;
+
+  // Navigation from overview cards
+  container.querySelectorAll('[data-nav]').forEach(el => {
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', () => navigateTo(el.dataset.nav));
+  });
+
+  container.querySelector('.next-hint').addEventListener('click', () => navigateTo('tokens'));
+}

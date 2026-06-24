@@ -1,0 +1,290 @@
+<layout src="_layouts/default.html">
+<title>The firmament — dregg on seL4</title>
+
+<main class="wrap main--compact">
+  <div class="page-header">
+    <h1>The firmament — dregg on seL4</h1>
+    <p>
+      The <strong>firmament</strong> is the deterministic ground robigalia's apps run on. It is
+      the boundary that holds them and gives them capabilities — and it embeds the verified
+      dregg executor as a protection domain on the <a href="https://sel4.systems">seL4</a>
+      microkernel. Every app turn runs <em>through</em> that domain; nothing reaches durable
+      state except through a turn it accepted. The apps inside are pure, deterministic, and
+      replayable — not by good behaviour, but because the firmament makes ambient authority
+      structurally absent.
+    </p>
+    <p>
+      The central claim is one a stranger can check by running it: <strong>an seL4 capability
+      and a dregg capability are the same abstraction at two points on a distance
+      parameter.</strong> A local install is a first-class deployment with strong properties;
+      reaching the network is seamless, not a port. And it <strong>boots today</strong>.
+    </p>
+  </div>
+
+  <!-- ==================== ONE CAPABILITY ==================== -->
+  <section class="section section--compact" id="one-capability">
+    <span class="section__label">The central thesis</span>
+    <h2 class="section__title">One capability, local to global</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      A firmament capability is a handle <code>(target, rights)</code> an app holds and may
+      invoke, attenuate (<code>rights' ⊆ rights</code>), or delegate. The interface is the
+      same whether the target is near or far — the app does not see which backing it holds:
+    </p>
+    <div class="flow">
+      <div class="flow__step">
+        <span class="flow__n">Local</span>
+        <p class="flow__name">An seL4 kernel object</p>
+        <p class="flow__desc">A CNode slot, an endpoint, a frame. The invocation is a kernel syscall; revocation is <code>seL4_CNode_Revoke</code>; granting a sub-capability is <code>seL4_CNode_Mint</code> with reduced rights. Adoption is attenuation, enforced in hardware by the MMU and the cap-derivation tree.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">Distributed</span>
+        <p class="flow__name">A dregg cell on a federation</p>
+        <p class="flow__desc">A (possibly remote) cell. The invocation is a turn through the executor; revocation is the group-key epoch lift; granting is a delegation turn gated on the proven <code>granted ⊆ held</code>. The same attenuate / delegate / invoke verbs, the same receipts and proofs.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">The router</span>
+        <p class="flow__name">Dispatch by target alone</p>
+        <p class="flow__desc">One handle type, one router. The app calls <code>resolve</code> or <code>attenuate_and_grant</code>; the router dispatches to the kernel (local) or the executor→net path (distributed) by the handle's target. A widening grant is refused identically at both backings.</p>
+      </div>
+    </div>
+    <p style="color: var(--fg-dim); margin-top: var(--s4);">
+      This is not just a design — it is a runnable crate (<code>sel4/dregg-firmament/</code>)
+      wired to the <em>real</em> dregg capability semantics, so it never reinvents
+      <code>granted ⊆ held</code>. One backing-agnostic app function invokes, attenuates, and
+      delegates both a local kernel object and a real dregg cell through one router and one
+      handle type — the real executor in the loop, tests green.
+    </p>
+  </section>
+
+  <!-- ==================== THE n=1 COLLAPSE ==================== -->
+  <section class="section section--compact" id="collapse">
+    <span class="section__label">The single-machine principle</span>
+    <h2 class="section__title">At <code>n=1</code>, the distributed bounds collapse</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      The honest bounds on a distributed capability are <em>distance</em> bounds, parametrized
+      by the topology <code>n</code> — the number of machines the target is spread across. The
+      firmament is where <code>n=1</code>: everything is on one seL4 machine, so the
+      distributed bounds become strong local properties. A local install is not "distributed
+      dregg, crippled to one box" — it is the <em>collapsed limit</em> of one model, where the
+      distance parameter is pinned to its minimum.
+    </p>
+    <table class="catalog-table">
+      <thead>
+        <tr><th>operation</th><th><code>n &gt; 1</code> (distributed)</th><th><code>n = 1</code> (firmament, local)</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Revocation</strong></td>
+          <td>eventual: the epoch lift must propagate; an in-flight invocation may still land</td>
+          <td><strong>immediate</strong>: <code>seL4_CNode_Revoke</code> is synchronous; the cap is dead the instant the syscall returns</td>
+        </tr>
+        <tr>
+          <td><strong>Checkpoint</strong></td>
+          <td>a consistent cut across machines (Chandy&ndash;Lamport); may be stale</td>
+          <td><strong>consistent</strong>: one domain's cap-state + memory captured atomically</td>
+        </tr>
+        <tr>
+          <td><strong>Commit</strong></td>
+          <td>quorum / finality latency; final only after the blocklace finalizes it</td>
+          <td><strong>synchronous</strong>: the durable store writes the commit record in one transaction before the turn returns</td>
+        </tr>
+        <tr>
+          <td><strong>Agreement</strong></td>
+          <td>FLP-bounded; needs a consensus round</td>
+          <td>trivial: one machine is its own quorum</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="color: var(--fg-dim); margin-top: var(--s4);">
+      The product promise is the <strong>fluid reach-out</strong>: an app runs first-class on
+      the local firmament with the strong <code>n=1</code> properties, and the moment one of
+      its programs reaches out to the network — invokes a capability whose target is a cell on
+      a remote federation — it flows into native distributed dregg <em>with no seam</em>. The
+      same handle, the same verbs, the same proofs; only the bounds relax as <code>n</code>
+      rises. <code>n=1</code> is a stepping stone, never a terminus: the same binary scales out
+      without a rewrite, because there was only ever one model.
+    </p>
+  </section>
+
+  <!-- ==================== THE PD TOPOLOGY ==================== -->
+  <section class="section section--compact" id="topology">
+    <span class="section__label">The boundary</span>
+    <h2 class="section__title">Where each capability and trust boundary sits</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      The firmament is a small assembly of protection domains. The seL4 capability partition
+      <em>is</em> the trust boundary: a domain can only touch what it holds a capability for.
+      The verified executor is the heart, and it holds no device and no network capability — it
+      is pure compute over bytes, and the verified semantics is the only authority over state
+      transitions.
+    </p>
+    <table class="catalog-table">
+      <thead>
+        <tr><th>protection domain</th><th>role</th><th>trust boundary</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>executor-PD</strong> <span class="catalog-tag">heart</span></td>
+          <td>runs every turn through the verified complete-turn executor</td>
+          <td>holds no device cap, no network cap — pure compute; the verified semantics is the only authority over state</td>
+        </tr>
+        <tr>
+          <td><strong>verifier-PD</strong></td>
+          <td>independent proof checking: proof-in → verdict-out</td>
+          <td>holds no prover authority, no state cap — a verifier with no callback into a prover, enforced by a missing capability</td>
+        </tr>
+        <tr>
+          <td><strong>persist-PD</strong></td>
+          <td>the durable store: commit log, checkpoints, snapshot + overlay</td>
+          <td>the <em>sole</em> holder of the storage-device cap — the only domain that can touch the disk</td>
+        </tr>
+        <tr>
+          <td><strong>net-PD</strong> <span class="catalog-tag">edge</span></td>
+          <td>the network edge: virtio-net driver; turn ingress</td>
+          <td>the <em>sole</em> holder of the NIC cap — signature-checks a turn before the executor sees it; bad signatures never reach the heart. The <code>n&gt;1</code> end of the gradation.</td>
+        </tr>
+        <tr>
+          <td><strong>app-PDs</strong></td>
+          <td>the deterministic, replayable apps</td>
+          <td>hold only the caps the firmament minted — cannot reach a clock, an RNG, a socket, a device, or another app's memory. Ambient authority is structurally absent.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ==================== CHECKPOINT/RESTORE ==================== -->
+  <section class="section section--compact" id="checkpoint">
+    <span class="section__label">Transparent checkpoint/restore</span>
+    <h2 class="section__title">A domain checkpoint <em>is</em> a dregg snapshot</h2>
+    <p style="color: var(--fg-dim);">
+      seL4 can freeze a protection domain's capability state and memory and thaw it later;
+      dregg has a snapshot model where <code>recover = checkpoint ⊕ overlay = replay</code> (a
+      verified recovery equation). The firmament marries them: a domain checkpoint <em>is</em> a
+      dregg snapshot. Because an app is deterministic — no hidden state — its entire observable
+      state is its cell forest, so the snapshot captures it completely: no torn state, no lost
+      mutation, no double-apply. And a <strong>root tooth</strong> makes the thaw unforgeable —
+      the joiner independently recomputes the reconstructed root and refuses if it does not
+      match the one the federation attested, so a server cannot ship a self-consistent snapshot
+      of a <em>different</em> ledger. Freezing and thawing an app is
+      <em>seal → ship → apply-verified → unseal</em>.
+    </p>
+  </section>
+
+  <!-- ==================== WHAT BOOTS ==================== -->
+  <section class="section section--compact section--feature" id="boots">
+    <span class="section__label">It boots</span>
+    <h2 class="section__title">Real protection-domains on seL4, in QEMU</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      This is no longer a paper scaffold. The Robigalia v0 demo brings real Rust components up
+      as seL4 protection domains, booting under QEMU on a native toolchain — no Docker, no
+      Linux VM. Serial logs from the real boots are captured. The boot ladder:
+    </p>
+    <table class="catalog-table">
+      <thead>
+        <tr><th>rung</th><th>what it is</th><th>status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>M0</strong></td><td>a Rust protection-domain prints its banner on seL4</td><td>boots (aarch64)</td></tr>
+        <tr><td><strong>M1</strong></td><td>the verifier PD: bundle-in → verify → verdict-out, with an anti-ghost reject</td><td>boots (aarch64)</td></tr>
+        <tr><td><strong>M2</strong></td><td>the rbg <code>DirectoryCell</code> PD (versioned CAS, membership ACL, factory slot-caveat) — the Robigalia heart</td><td>boots (aarch64)</td></tr>
+        <tr><td><strong>M-STARK</strong></td><td>the verifier-stark PD: a <strong>real</strong> cryptographic STARK (BabyBear + BLAKE3 + FRI + Fiat-Shamir) proved and verified on-device, with the anti-ghost tooth</td><td>boots (aarch64) — a verified heart organ</td></tr>
+        <tr><td><strong>executor-PD</strong> <span class="catalog-tag">heart</span></td><td>the Lean kernel <code>execFullForestG</code> itself — the exact gated function the node runs — inside a protection domain: a real turn executes, nonce ticks, the anti-ghost property holds</td><td>boots (aarch64) — the verified heart, running</td></tr>
+        <tr><td><strong>M3</strong></td><td>networking: the virtio-net driver PD probes a real device on the wire — <code>device_type=Network</code>, the NIC up with its MAC</td><td>driver boots; the smoltcp client PD + ring assembly remains</td></tr>
+        <tr><td><strong>M5</strong></td><td>retarget to riscv64 (OpenSBI → seL4 → userspace → the dregg PD)</td><td>boots (M0 on riscv64)</td></tr>
+      </tbody>
+    </table>
+    <p style="color: var(--fg-dim); margin-top: var(--s4);">
+      The M-STARK rung is the one to run first: it proves a real AIR, verifies it (ACCEPT),
+      and shows the teeth — a tampered proof rejects ("Trace Merkle proof failed"), a wrong
+      public input rejects ("Public inputs mismatch"). It is the genuine
+      <code>dregg-circuit</code> STARK carried into a no-std seL4 PD — byte-identical
+      prove/verify, no Lean, no libuv, no GMP, deterministic so it needs no entropy source.
+    </p>
+    <pre><code class="language-bash">git clone https://github.com/emberian/dregg && cd dregg/sel4
+./setup.sh          # Microkit SDK + toolchain (native macOS, Apple Silicon)
+make run-stark      # a REAL on-device STARK: prove, verify, reject a tampered proof
+make run            # the rbg DirectoryCell PD (M2)
+make run-riscv      # M0 on riscv64</code></pre>
+  </section>
+
+  <!-- ==================== THE HEART (running) ==================== -->
+  <section class="section section--compact" id="heart">
+    <span class="section__label">The verified heart, running</span>
+    <h2 class="section__title">The executor-PD runs the exact function the node runs</h2>
+    <p style="color: var(--fg-dim);">
+      The heart of the firmament is the Lean-compiled complete-turn executor —
+      <code>execFullForestG</code>, the same gated function the deployed node calls — embedded
+      as a protection domain. It <strong>boots</strong>: inside a real seL4 protection domain
+      under QEMU a turn arrives, the executor decodes it, runs the verified
+      <code>decode → step → encode</code>, ticks the nonce, emits the receipt, and the
+      anti-ghost property holds. The Lean-runtime port long called the <em>one true blocker</em>
+      is closed — the runtime embeds single-threaded, with no global allocator override and no
+      IO event-loop, the three properties measured rather than assumed (the Lean closure
+      recompiled to ELF, linked against an ELF Lean runtime; GMP for the target real). No model
+      of the node sits in the heart; the function the proofs are about is the function the heart
+      runs.
+    </p>
+    <p style="color: var(--fg-dim);">
+      What remains is <strong>productionization</strong>, not a wall: supplying the cryptographic
+      floor to the executor-PD from the verifier-stark PD (so the heart and the proof checker are
+      distinct authorities), and assembling the decomposed five-PD topology above into one
+      bootable image where each device cap lives only in its owning domain. Until that assembly
+      lands, the demos run the heart organs one at a time — the executor-PD (real verified turn),
+      the verifier-stark PD (real STARK), the net driver (the wire) — each a genuine seL4 boot
+      with serial captured.
+    </p>
+  </section>
+
+  <!-- ==================== PG-DREGG ==================== -->
+  <section class="section section--compact" id="pg-dregg">
+    <span class="section__label">Verified durable state</span>
+    <h2 class="section__title">pg-dregg — your node is your Postgres</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      Apps need durable state that is queryable like a database and verified like a turn.
+      <strong>pg-dregg</strong> is a PostgreSQL extension that makes
+      <strong>reads free SQL and writes verified turns</strong> — first-class from both
+      directions:
+    </p>
+    <div class="flow">
+      <div class="flow__step">
+        <span class="flow__n">From Postgres</span>
+        <p class="flow__name">Caps as row-level security</p>
+        <p class="flow__desc">An ordinary postgres-heavy app gains dregg's verified capabilities as RLS, with zero dregg infrastructure to learn beyond a token string. A policy reads <code>dregg_admits(token, 'read', id, …)</code> — the same decision the kernel makes, from the same token. Attenuation chains, offline delegation, time-boxing, caveats, and per-credential revocation arrive without leaking into the mental model beyond the policy line.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">From dregg</span>
+        <p class="flow__name">Postgres is a native dregg surface</p>
+        <p class="flow__desc">State is queryable SQL: the commit log projects into tables — cells, receipts, caps, the blocklace. The explorer becomes "your capabilities, expressed as the rows you may <code>SELECT</code>." SDKs query through pg with the bearer token they already hold. The mirror is the store.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">Why SQL can't</span>
+        <p class="flow__name">The discipline RLS structurally lacks</p>
+        <p class="flow__desc">A SQL <code>USING</code> predicate is stateless, first-party, and non-delegable by construction — a flat session string with no token, no issuer signature, no attenuation chain to reason over. The capability properties are not "hard to write" in SQL; they are <em>inexpressible</em>. pg-dregg makes the verified token the policy substrate instead.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== NEXT ==================== -->
+  <section class="section section--compact">
+    <h2 class="section__title">Keep going</h2>
+    <div class="link-cards">
+      <a class="link-card" href="/deos.html">
+        <span class="link-card__title">The agentic desktop</span>
+        <span class="link-card__desc">What runs on the firmament: windows-as-capabilities, the rehydratable snapshot, the verified-desktop crown.</span>
+      </a>
+      <a class="link-card" href="/verify.html">
+        <span class="link-card__title">What is proven</span>
+        <span class="link-card__desc">The five guarantees, ARGUS and unfoolability, the assumption floor, and how the running node reports its own producer split.</span>
+      </a>
+      <a class="link-card" href="/docs.html">
+        <span class="link-card__title">The kernel, in seven rungs</span>
+        <span class="link-card__desc">The dregg protocol from one sentence outward — the substance the firmament embeds.</span>
+      </a>
+      <a class="link-card" href="https://github.com/emberian/dregg/tree/main/sel4">
+        <span class="link-card__title">The seL4 demo</span>
+        <span class="link-card__desc">The booting protection-domains, the boot ladder, and the toolchain — <code>sel4/</code> in the repo.</span>
+      </a>
+    </div>
+  </section>
+</main>
+
+</layout>
