@@ -566,6 +566,29 @@ fn foreign_circuit_root_is_refused_by_vk_pin() {
 /// — empirically confirmed; the leaf publics are consumed in-circuit and never surfaced),
 /// so the host can verify `root-exposed publics == carried claim`.
 ///
+/// **The EXACT remaining mechanism (root-caused at source 2026-06-24).** The only
+/// host-readable, FRI-bound scalar channel a `BatchStarkProof` carries is
+/// `non_primitives[i].public_values` (host reads them off the proof; `verify_all_tables`
+/// binds them via the table's lookup argument). The binding leaf's 4 chain publics enter
+/// every layer ONLY as the parent verifier circuit's `air_public_targets`, which the fork
+/// allocates as `circuit.public_input()` (`Op::Public`) — i.e. they land in the parent's
+/// *constraint-free `Public` PRIMITIVE table*, NOT in any non-primitive `public_values`.
+/// The grandparent then allocates child-public targets solely from each child
+/// `non_primitives[].public_values.len()` (primitive-table values are never threaded), so
+/// the chain publics are CONSUMED one layer up and vanish before the root. No NPO table in
+/// the fork ever populates `public_values` non-empty (`poseidon2`/`recompose` hardcode
+/// `Vec::new()`), so the exposed-public channel is *unbuilt machinery*. A genuine REJECT
+/// therefore requires the fork to (i) add an "exposed-claim" channel — either a new
+/// constrained NPO table whose `public_values` carry the 4 chain claims, or an
+/// "expose-target-as-proof-public" hook wired through `build_verifier_circuit` →
+/// `prove_all_tables` → `non_primitives[].public_values` — emitted at the binding-leaf wrap,
+/// and (ii) re-emit + in-circuit-bind those 4 values to the verified child at EACH
+/// aggregation layer up to the root. That is multi-pass recursion-engine work on the shared
+/// fork; it was NOT landed in this pass (deliberately, to avoid destabilizing the engine all
+/// other dregg proofs depend on). The host-only fix is provably impossible: A and B share the
+/// op-list (so identical preprocessed/VK commitment) and all their distinguishing data
+/// (trace/FRI commitments) is consumed in-circuit, never surfaced at the root.
+///
 /// Two K=2 transfer chains have the SAME tree shape ⇒ the SAME root VK fingerprint, so
 /// tooth 1 cannot tell them apart. They have DIFFERENT data ⇒ different roots/digests, so
 /// the cross-paired claim is genuinely false.

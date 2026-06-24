@@ -37,6 +37,7 @@ pub mod inspector_card;
 pub mod js;
 pub mod layout_card;
 pub mod links_card;
+pub mod mailtown;
 pub mod multi_cell;
 pub mod objects_card;
 pub mod portable;

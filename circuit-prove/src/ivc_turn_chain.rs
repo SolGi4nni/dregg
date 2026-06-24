@@ -121,16 +121,42 @@
 //!     mismatches the real-row count — both UNSAT. The forge teeth
 //!     `binding_air_forged_digest_unsat` / `binding_air_forged_num_turns_unsat`
 //!     (`circuit-prove/tests/ivc_turn_chain_rotated.rs`) pin the verify→reject flip.
-//!   - **#1/#6 — binding↔root NOT linked (still open).** [`verify_turn_chain_recursive`]
-//!     checks the carried binding proof, the root VK fingerprint, and the root proof
-//!     INDEPENDENTLY — never that the carried binding proof IS the binding leaf folded
-//!     into that root. A GENUINE root for history A, paired with a GENUINE binding proof
-//!     for a DIFFERENT history B (+ B's publics), passes all three teeth. EMPIRICALLY: a
-//!     real K=2 root's `non_primitives` are only `[poseidon2_perm, recompose]`, BOTH with
-//!     ZERO public values — the binding leaf's chain publics are consumed in-circuit and
-//!     NEVER re-exposed at the root, so the host CANNOT compare `root-exposed publics ==
-//!     carried claim`. Closing it needs the fork lever below (re-expose the binding leaf's
-//!     publics at the root as a checkable output, then host-verify equality).
+//!   - **#1/#6 — binding↔root NOT linked (still open; mechanism root-caused).**
+//!     [`verify_turn_chain_recursive`] checks the carried binding proof, the root VK
+//!     fingerprint, and the root proof INDEPENDENTLY — never that the carried binding proof
+//!     IS the binding leaf folded into that root. A GENUINE root for history A, paired with a
+//!     GENUINE binding proof for a DIFFERENT history B (+ B's publics), passes all three
+//!     teeth. EMPIRICALLY: a real K=2 root's `non_primitives` are only `[poseidon2_perm,
+//!     recompose]`, BOTH with ZERO public values — the binding leaf's chain publics are
+//!     consumed in-circuit and NEVER re-exposed at the root, so the host CANNOT compare
+//!     `root-exposed publics == carried claim`.
+//!
+//!     **THE EXACT REMAINING MECHANISM (source-confirmed 2026-06-24).** The ONLY
+//!     host-readable, FRI-bound scalar channel a `BatchStarkProof` carries is
+//!     `non_primitives[i].public_values`. The 4 chain publics enter every recursion layer
+//!     ONLY as the parent verifier circuit's `air_public_targets`, which the fork allocates
+//!     via `circuit.public_input()` (an `Op::Public` → the *constraint-free `Public`
+//!     PRIMITIVE table*), NOT as any non-primitive `public_values`. The grandparent allocates
+//!     child-public targets solely from each child `non_primitives[].public_values.len()`, so
+//!     the publics are consumed ONE layer up and vanish before the root. No NPO table in the
+//!     fork populates `public_values` non-empty (`poseidon2`/`recompose` hardcode
+//!     `Vec::new()`), so the exposed-public channel is *unbuilt machinery*. The host-only fix
+//!     is provably impossible (A and B share the op-list → identical preprocessed/VK
+//!     commitment; their distinguishing trace/FRI commitments are consumed in-circuit, never
+//!     surfaced). A genuine REJECT therefore requires, in the FORK: (i) an "exposed-claim"
+//!     channel — a new constrained NPO table whose `public_values` carry the 4 chain claims,
+//!     OR an "expose-target-as-proof-public" hook wired through `build_verifier_circuit` →
+//!     `prove_all_tables` → `non_primitives[].public_values` — emitted at the binding-leaf
+//!     wrap (`prove_chain_binding_leaf_rotated` + its `build_and_prove_next_layer`); and
+//!     (ii) re-emission with an IN-CIRCUIT equality constraint to the verified child at EACH
+//!     `build_and_prove_aggregation_layer` up to the root, so the root's
+//!     `non_primitives[exposed].public_values` carry the genuine folded endpoints. Then the
+//!     host adds tooth (4): `root_exposed_publics == [genesis, final, num_turns, digest]`,
+//!     fail-closed. This is multi-pass shared-recursion-engine work; it was NOT landed in this
+//!     pass to avoid destabilizing the engine every other dregg proof depends on. The
+//!     executable witness `carried_binding_proof_unlinked_to_root_is_an_open_hole`
+//!     (`circuit-prove/tests/ivc_turn_chain_rotated.rs`) HONESTLY asserts `is_ok()` (hole
+//!     open) and flips to `is_err()` the instant the channel + tooth (4) land.
 //!
 //! ## The honest residual floor (named, not hidden)
 //!
