@@ -366,6 +366,7 @@ import Dregg2.Circuit.Witness.RevokeDelegationWitness -- revokeDelegationA witne
 import Dregg2.Circuit.Spec.balancemovement       -- balanceA: recCexecAsset_iff_spec + debit/credit/other-untouched + rejects unauthorized/overdraft/self
 import Dregg2.Circuit.Spec.supplycreation        -- mintA: per-asset supply mint spec (supply Δ = +amt at one asset, frame elsewhere)
 import Dregg2.Circuit.Spec.supplydestruction     -- burnA: per-asset supply burn spec
+import Dregg2.Circuit.Spec.SupplyAbstractBinding  -- binds MintASpec/BurnSpec to the abstract Metatheory.Dynamics laws (kernel ⟹ Spec ⟹ abstract Verb meta-law): mintVerb + mint_refines_abstract_verb (the mintAuthorizedB ⟹ AuthorizedProduction bridge + conservation Fpu), mutation tooth, non-vacuity
 import Dregg2.Circuit.Spec.cellstatefield        -- setFieldA: field-write spec + full frame
 import Dregg2.Circuit.Spec.cellstatemonotone     -- incrementNonceA: monotone nonce-bump spec
 import Dregg2.Circuit.Spec.cellstatepermissions  -- setPermissionsA: permissions-write spec
