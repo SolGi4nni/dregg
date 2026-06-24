@@ -217,18 +217,22 @@ theorem crossAbsStep_forward (A B A' B' : KernelState) (bt : BiTurn)
   · -- (A) B-side authority frame: `execGraph B'.caps = execGraph B.caps`.
     show (absOf B').authGraph = (absOf B).authGraph
     simp only [absOf]; rw [applyHalfIn_caps hib]
-  · -- (G) A-side grounding: the debit half is grounded in `execGraph A.caps`.
+  · -- (G) A-side grounding: the debit half is grounded in the `authConnects A.caps` graph (the
+    -- severed reference). `exec_authz_grounds_in_graph` grounds in `execGraph`; transport via the
+    -- `Graph.has` projection of the genuine bridge (`execGraph_has_iff_authConnects_has`).
     show bt.actorA = bt.srcA ∨ (absOf A).authGraph.has bt.actorA bt.srcA
     simp only [absOf]
-    exact exec_authz_grounds_in_graph A.caps
+    refine (exec_authz_grounds_in_graph A.caps
       { actor := bt.actorA, src := bt.srcA, dst := bt.srcA, amt := bt.amt }
-      (applyHalfOut_authz hoa)
-  · -- (G) B-side grounding: the credit half is grounded in `execGraph B.caps`.
+      (applyHalfOut_authz hoa)).imp id ?_
+    exact (Dregg2.Exec.execGraph_has_iff_authConnects_has A.caps bt.actorA bt.srcA).mp
+  · -- (G) B-side grounding: the credit half is grounded in the `authConnects B.caps` graph.
     show bt.actorB = bt.dstB ∨ (absOf B).authGraph.has bt.actorB bt.dstB
     simp only [absOf]
-    exact exec_authz_grounds_in_graph B.caps
+    refine (exec_authz_grounds_in_graph B.caps
       { actor := bt.actorB, src := bt.dstB, dst := bt.dstB, amt := bt.amt }
-      (applyHalfIn_authz hib)
+      (applyHalfIn_authz hib)).imp id ?_
+    exact (Dregg2.Exec.execGraph_has_iff_authConnects_has B.caps bt.actorB bt.dstB).mp
 
 /-- **`crossAbsStep_forward_exists`.** The turn-index-closed form: every committed
 bilateral step is matched by a `CrossAbsStep` (the `AbstractState × AbstractState`-level

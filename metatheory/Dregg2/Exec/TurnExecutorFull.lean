@@ -3865,7 +3865,12 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
   (match fa with
    | .balanceA t _       => authorizedB s.kernel.caps t = true ∧ acceptsEffects s.kernel t.dst = true
    | .delegate del rec t =>
-       Dregg2.Spec.execGraph s.kernel.caps del
+       -- AUTH-GRAPH leg SEVERED from the gate: the source-edge grounding is the INDEPENDENT
+       -- `Spec.authConnects` (the Granovetter "you can reach what you hold a cap to" relation, an
+       -- EXISTENTIAL over the cap-table), NOT the `execGraph` `.any`-lookup it would be DEF-EQ to
+       -- (`execGraph_eq_any := rfl`) — so this leg attests genuine connectivity, not a tautology.
+       -- The graph-CHANGE leg keeps `execGraph` (the `addEdge` content, proven by funext/propext).
+       Dregg2.Spec.authConnects s.kernel.caps del
          (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) ∧
        Dregg2.Spec.execGraph s'.kernel.caps
          = Dregg2.Spec.addEdge (Dregg2.Spec.execGraph s.kernel.caps) rec ⟨t, ()⟩
@@ -3915,7 +3920,7 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
        -- (a) grounds in held connectivity, (b) edits the graph by `addEdge`, (c) grants the concrete
        -- held cap selected by the executable lookup, and (d) that actual copied cap is non-amplifying.
        -- Explicit attenuation is the separate `delegateAttenA` branch.
-       Dregg2.Spec.execGraph s.kernel.caps intro
+       Dregg2.Spec.authConnects s.kernel.caps intro
          (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) ∧
        Dregg2.Spec.execGraph s'.kernel.caps
          = Dregg2.Spec.addEdge (Dregg2.Spec.execGraph s.kernel.caps) rec ⟨t, ()⟩ ∧
@@ -3932,7 +3937,7 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
        -- cap to `t` ATTENUATED to `keep` (the EXECUTED rights handoff — `recKDelegateAtten_grants`,
        -- NOT a static claim), (c) GENUINE rights non-amplification: that granted cap confers a
        -- `List Auth` SUBSET of the held cap (`is_attenuation(held, granted)`, `apply.rs:2829`).
-       Dregg2.Spec.execGraph s.kernel.caps del
+       Dregg2.Spec.authConnects s.kernel.caps del
          (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) ∧
        attenuate keep (heldCapTo s.kernel.caps del t) ∈ s'.kernel.caps rec ∧
        IsNonAmplifyingF (heldCapTo s.kernel.caps del t) (attenuate keep (heldCapTo s.kernel.caps del t))
@@ -3942,7 +3947,7 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
        -- reached by the hold-gate from which `execInnerA s1 inner = some s'` committed). NO graph-frozen
        -- claim: an inner effect MAY legitimately edit the cap-graph (e.g. an inner delegate), exactly as
        -- dregg1 `apply.rs:2647` applies each inner effect against the cap's target.
-       Dregg2.Spec.execGraph s.kernel.caps actor
+       Dregg2.Spec.authConnects s.kernel.caps actor
          (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) ∧
        (∃ s1, exerciseStepA s actor t = some s1 ∧ execInnerA s1 inner = some s')
    -- §MA-supply: createCell/spawn carry the REAL privileged-creation gate (`mintAuthorizedB` — bare
@@ -3968,7 +3973,7 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
        mintAuthorizedB s.kernel.caps actor child = true ∧
        child ∉ s.kernel.accounts ∧
        target ∈ s.kernel.accounts ∧
-       Dregg2.Spec.execGraph s.kernel.caps actor
+       Dregg2.Spec.authConnects s.kernel.caps actor
          (⟨target, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) ∧
        heldCapTo s.kernel.caps actor target ∈ s'.kernel.caps child ∧
        IsNonAmplifyingF (heldCapTo s.kernel.caps actor target) (heldCapTo s.kernel.caps actor target) ∧
@@ -4035,7 +4040,11 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
   | balanceA t a =>
       exact ⟨execFullA_balance_authorized s s' t a h, execFullA_balance_dst_live s s' t a h⟩
   | delegate del rec t =>
-      exact ⟨execFullA_delegate_grounds s s' del rec t h, execFullA_delegate_addEdge s s' del rec t h⟩
+      -- ground via the GENUINE refinement `execGraph_iff_authConnects` (the `.any` lookup IMPLIES
+      -- `authConnects`), NOT the `execGraph_eq_any := rfl` defeq.
+      exact ⟨(Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp
+               (execFullA_delegate_grounds s s' del rec t h),
+             execFullA_delegate_addEdge s s' del rec t h⟩
   | revoke holder t => exact execFullA_revoke_removeEdge s s' holder t h
   -- W1: mint/burn discharge the ISSUER gate + the live-well witness (the disclosure leg died with
   -- the supply-increment law — the Ledger conjunct is now exact conservation).
@@ -4060,18 +4069,21 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
   -- §MA-auth: discharge the 6 authority effects' REAL obligation (grounding/addEdge/removeEdge/
   -- graph-unchanged ∧ the GENUINE `capAuthConferred ⊆` non-amplification).
   | introduceA intro rec t =>
-      exact ⟨execFullA_introduceA_grounds s s' intro rec t h,
+      exact ⟨(Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp
+               (execFullA_introduceA_grounds s s' intro rec t h),
              execFullA_introduceA_addEdge s s' intro rec t h,
              execFullA_introduceA_grants_held_cap s s' intro rec t h,
              execFullA_introduceA_non_amplifying s s' intro rec t h⟩
   | delegateAttenA del rec t keep =>
-      exact ⟨execFullA_delegateAttenA_grounds s s' del rec t keep h,
+      exact ⟨(Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp
+               (execFullA_delegateAttenA_grounds s s' del rec t keep h),
              execFullA_delegateAttenA_grants s s' del rec t keep h,
              execFullA_delegateAttenA_non_amplifying s s' del rec t keep h⟩
   | attenuateA actor idx keep => exact execFullA_attenuateA_non_amplifying s s' actor idx keep h
   | revokeDelegationA holder t => exact execFullA_revokeDelegationA_removeEdge s s' holder t h
   | exerciseA actor t inner =>
-      exact ⟨execFullA_exerciseA_authorized s s' actor t inner h,
+      exact ⟨(Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp
+               (execFullA_exerciseA_authorized s s' actor t inner h),
              execFullA_exerciseA_recurses s s' actor t inner h⟩
   -- §MA-supply: discharge createCell/spawn's (privileged-creation gate ∧ freshness ∧ growth/provenance
   -- ∧ Generative disclosure) and bridgeMint's (privileged mint gate ∧ §8 Generative disclosure).
@@ -4095,7 +4107,7 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
       have hground := spawnChainA_grounds (by simpa only [execFullA] using h)
       have hsnap := spawnChainA_parent_snapshot (by simpa only [execFullA] using h)
       exact ⟨createCellChainA_authorized hc, (createCellChainA_factors hc).2.1,
-             hground.2, hground.1,
+             hground.2, (Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp hground.1,
              spawnChainA_provenance (by simpa only [execFullA] using h),
              (fun _ ha => ha),
              hsnap.1, hsnap.2,

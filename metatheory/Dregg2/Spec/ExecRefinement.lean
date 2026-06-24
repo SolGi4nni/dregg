@@ -314,6 +314,58 @@ def execGraph (caps : Caps) : Graph Label ExecRights :=
        | .endpoint t rights => (t == c.target) && rights.contains Auth.write
        | _ => false)) = true
 
+/-! ### §2.AUTH-CONNECTS — the INDEPENDENT authority-connectivity spec.
+
+`execGraph` is DEF-EQ to the executor's `.any confersEdgeTo` lookup gate (`execGraph_eq_any := rfl`),
+so a guarantee leg that uses a bare `execGraph caps h c` as a CONNECTIVITY claim attests it
+tautologically — the spec IS the gate. `authConnectsCap` / `authConnects` is the SEVERED reference:
+the SAME per-cap authority predicate the 55 passing `Circuit/Spec/*` guards use (`confersEdgeTo`'s
+two branches: a `node t` cap, or an `endpoint t` cap carrying `write`), but phrased as an EXISTENTIAL
+over LIST MEMBERSHIP (`∃ cap ∈ caps h, …`) — `Graph.has`-shaped, the Granovetter "you can reach what
+you hold a cap to" relation. This is NOT `isDefEq` to the boolean `.any … = true` fold (the gate): the
+gate is a `Bool`-coercion `(List.any …) = true`; `authConnects` is a `Prop`-level `∃ … ∧ …` over
+`List.Mem`. They are PROPOSITIONALLY equivalent (`List.any_eq_true`) but not definitionally — so
+`isDefEq` separates them, and the refinement `gate ⟹ authConnects` is a REAL proof (it must run
+`List.any_eq_true`), not `rfl`. The relation reads only the pure carriers `caps`/`confersEdgeTo`-shape
+— no executor STEP gate — so it is independent.
+
+Alignment with the `Metatheory` authority law: `authConnects` is the executable-image of
+`Graph.has` (Granovetter connectivity), the SAME object `AuthorizedProduction`/`noforge_closure`
+(`Metatheory/Open/AuthorityClosure.lean`) constrains: an edge exists only where a held cap PRODUCES
+it; no edge is forged. -/
+
+/-- **`authConnectsCap t cap`** — does `cap` confer an authority edge to target `t`? The SAME two
+branches `confersEdgeTo`/`authorizedB`/`execGraph` read (a `node t` cap, or an `endpoint t` cap
+carrying `write`), written as a `Prop` (not the `Bool` the gate folds). The per-cap atom of the
+independent connectivity spec. -/
+def authConnectsCap (t : Label) (cap : Authority.Cap) : Prop :=
+  cap = Authority.Cap.node t ∨
+  (∃ rights, cap = Authority.Cap.endpoint t rights ∧ rights.contains Auth.write = true)
+
+/-- **`authConnects caps h c`** — the INDEPENDENT authority-connectivity relation: holder `h` holds
+SOME cap in its slot conferring an authority edge to `c.target`. An EXISTENTIAL over list membership
+(`Graph.has`-shaped), NOT the executor's boolean `.any … = true` lookup gate — so it is not defeq to
+that gate, yet is provably IMPLEMENTED by it (`capLookup_refines_authConnects`). The severed
+reference the C-c1 authority-graph legs attest against. -/
+def authConnects (caps : Caps) (h : Label) (c : Spec.Cap Label ExecRights) : Prop :=
+  ∃ cap, cap ∈ caps h ∧ authConnectsCap c.target cap
+
+/-- **`authConnects_nonvacuous`** — the non-vacuity witness the linter requires: `authConnects`
+is NEITHER everywhere-true NOR everywhere-false. It ACCEPTS a holder that holds a `node 7` cap
+(connectivity to `7`), and REFUTES an EMPTY-slot holder (no cap ⇒ no edge). A vacuous accept-all
+relation could not carry the refuted half; a vacuous reject-all could not carry the accepted half. -/
+theorem authConnects_nonvacuous :
+    authConnects (fun l => if l = 0 then [Authority.Cap.node 7] else [])
+      0 (⟨7, ()⟩ : Spec.Cap Label ExecRights)
+    ∧ ¬ authConnects (fun _ => ([] : List Authority.Cap))
+          0 (⟨7, ()⟩ : Spec.Cap Label ExecRights) := by
+  refine ⟨?_, ?_⟩
+  · -- ACCEPTED: holder `0` holds `node 7`, which `authConnectsCap 7` accepts (the `node` branch).
+    exact ⟨Authority.Cap.node 7, by simp, Or.inl rfl⟩
+  · -- REFUTED: the empty slot holds no cap, so no member can confer the edge.
+    rintro ⟨cap, hmem, _⟩
+    simp at hmem
+
 /-- **`exec_owns_self_confers` (NOW OVER THE GENUINE RIGHTS LATTICE)** — the authority
 object the ownership branch lands on is the **reflexive self-conferral**, stated over the REAL
 `ExecCapRights = Finset Auth` lattice (NOT the `Unit` skeleton). When a turn is admitted via
@@ -405,14 +457,14 @@ structure AbstractState where
 and its `execGraph` (reconstructed authority graph). The simulation's abstraction function. -/
 def absOf (k : KernelState) : AbstractState :=
   { balanceTotal := total k
-    authGraph    := execGraph k.caps }
+    authGraph    := authConnects k.caps }
 
 /-- **`Refines k a`** — the simulation relation: the kernel's conserved balance total IS the
 abstract `balanceTotal`, and its reconstructed authority graph IS the abstract `authGraph`.
 (`Refines k (absOf k)` holds by `rfl`; the relation is `a = absOf k` unfolded into its two
 corresponding projections, stated as a relation so the square below reads as a diagram.) -/
 def Refines (k : KernelState) (a : AbstractState) : Prop :=
-  a.balanceTotal = total k ∧ a.authGraph = execGraph k.caps
+  a.balanceTotal = total k ∧ a.authGraph = authConnects k.caps
 
 /-- `absOf` realizes `Refines` (the abstraction function is a refinement witness). PROVED. -/
 theorem refines_absOf (k : KernelState) : Refines k (absOf k) :=

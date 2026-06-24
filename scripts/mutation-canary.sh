@@ -21,6 +21,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 META="$REPO/metatheory"
 IM="$META/Dregg2/Exec/IssuerMove.lean"
 TE="$META/Dregg2/Exec/TurnExecutorFull.lean"
+ER="$META/Dregg2/Spec/ExecRefinement.lean"
 
 TARGETS=(
   Dregg2.Exec.IssuerMove
@@ -34,7 +35,19 @@ TARGETS=(
 LOGDIR="${TMPDIR:-/tmp}/mutation-canary"
 mkdir -p "$LOGDIR"
 
-restore() { git -C "$REPO" restore "$IM" "$TE" 2>/dev/null; }
+# Restore via FILE-COPY snapshots (taken at startup), NOT `git restore` — so an UNCOMMITTED working
+# tree (the normal state during a repair) is preserved across mutations. `git restore` would discard
+# uncommitted edits to these tracked files (a swarm-/repair-unsafe operation).
+SNAPDIR="${TMPDIR:-/tmp}/mutation-canary"
+mkdir -p "$SNAPDIR"
+cp "$IM" "$SNAPDIR/IssuerMove.snap"
+cp "$TE" "$SNAPDIR/TurnExecutorFull.snap"
+cp "$ER" "$SNAPDIR/ExecRefinement.snap"
+restore() {
+  cp "$SNAPDIR/IssuerMove.snap" "$IM"
+  cp "$SNAPDIR/TurnExecutorFull.snap" "$TE"
+  cp "$SNAPDIR/ExecRefinement.snap" "$ER"
+}
 
 build_targets() {
   local log="$1"
@@ -108,17 +121,61 @@ mut_distinctness_drop() {
   perl -0pi -e 's/\xe2\x88\xa7 src \xe2\x89\xa0 issuerOf a\n      \xe2\x88\xa7 cellLifecycleLive k \(issuerOf a\) = true then/\xe2\x88\xa7 cellLifecycleLive k (issuerOf a) = true then/' "$IM"
 }
 
+# AUTH-GRAPH-DROP: trivialize the INDEPENDENT authority-connectivity spec `authConnects`
+# (`ExecRefinement.lean`) to `True` — i.e. drop the "holds a `c.target`-conferring cap" requirement
+# the C-c1 authority-graph legs attest. Post-repair this MUST go RED: the non-vacuity tooth
+# (`authConnects_nonvacuous`, which REFUTES an empty-slot connection) and the separation witness
+# (`capLookup_refines_authConnects_separates`) cannot be proved against a `True` spec, so the
+# severed authority-graph leg is empirically load-bearing, not decorative. If it stays GREEN, the
+# `execGraph`-defeq sever did not produce a constraining reference.
+mut_auth_graph_drop() {
+  perl -0pi -e 's/(def authConnects \(caps : Caps\) \(h : Label\) \(c : Spec\.Cap Label ExecRights\) : Prop :=\n)  \xe2\x88\x83 cap, cap \xe2\x88\x88 caps h \xe2\x88\xa7 authConnectsCap c\.target cap/${1}  True  -- AUTH-GRAPH-DROP mutation/' "$ER"
+}
+
 trap restore EXIT
+
+# The AUTH-GRAPH-DROP mutation is caught by the load-bearing audit's non-vacuity tooth, which lives
+# downstream of ExecRefinement — so that mutation also builds the audit module.
+AUTH_GRAPH_TARGETS=(
+  Dregg2.Spec.ExecRefinement
+  Dregg2.Exec.AuthTurn
+  Dregg2.Verify.LoadBearingAuditBroad
+)
+
+build_auth_graph() {
+  local log="$1"
+  ( cd "$META" && lake build "${AUTH_GRAPH_TARGETS[@]}" ) >"$log" 2>&1
+  local rc=$?
+  if [[ $rc -eq 0 ]] && ! grep -qE '^error:|: error:' "$log"; then return 0; fi
+  return 1
+}
+
+run_auth_graph() {
+  echo "=================================================================="
+  echo "MUTATION: AUTH-GRAPH-DROP"
+  local log="$LOGDIR/AUTH-GRAPH-DROP.log"
+  mut_auth_graph_drop
+  if build_auth_graph "$log"; then
+    echo "  RESULT: GREEN  (mutation NOT caught — authConnects leg is decorative!)"
+  else
+    echo "  RESULT: RED    (mutation caught — authConnects leg is load-bearing)"
+    grep -E ': error:|^error:' "$log" | head -3 | sed 's/^/             /'
+  fi
+  restore  # FILE-COPY snapshot restore (preserves the uncommitted tree)
+  echo ""
+}
 
 case "${1:-ALL}" in
   BASELINE)            run_one BASELINE            mut_baseline ;;
   AUTH-DROP)           run_one AUTH-DROP           mut_auth_drop ;;
+  AUTH-GRAPH-DROP)     run_auth_graph ;;
   CONSERVATION-BREAK)  run_one CONSERVATION-BREAK  mut_conservation_break ;;
   AVAILABILITY-DROP)   run_one AVAILABILITY-DROP   mut_availability_drop ;;
   DISTINCTNESS-DROP)   run_one DISTINCTNESS-DROP   mut_distinctness_drop ;;
   ALL)
     run_one BASELINE            mut_baseline
     run_one AUTH-DROP           mut_auth_drop
+    run_auth_graph
     run_one CONSERVATION-BREAK  mut_conservation_break
     run_one AVAILABILITY-DROP   mut_availability_drop
     run_one DISTINCTNESS-DROP   mut_distinctness_drop

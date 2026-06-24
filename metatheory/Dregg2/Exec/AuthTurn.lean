@@ -24,7 +24,7 @@ import Dregg2.Spec.Authority
 namespace Dregg2.Exec
 
 open Dregg2.Authority (Caps Cap Auth Label)
-open Dregg2.Spec (execGraph ExecRights addEdge removeEdge)
+open Dregg2.Spec (execGraph ExecRights addEdge removeEdge authConnects authConnectsCap)
 
 /-! ## §1 — The per-cap edge predicate `execGraph` reads, named. -/
 
@@ -41,6 +41,101 @@ def confersEdgeTo (t : Label) (cap : Cap) : Bool :=
 `h`'s slot `confersEdgeTo c.target`. A bridge for graph-change proofs. -/
 theorem execGraph_eq_any (caps : Caps) (h : Label) (c : Spec.Cap Label ExecRights) :
     execGraph caps h c = ((caps h).any (fun cap => confersEdgeTo c.target cap) = true) := rfl
+
+/-! ### §1.AUTH-CONNECTS — the GENUINE refinement onto the independent `authConnects` spec.
+
+`execGraph` is DEF-EQ to the executor's `.any confersEdgeTo` lookup gate (`execGraph_eq_any := rfl`),
+so a guarantee leg that reads `execGraph caps h c` as a CONNECTIVITY claim attests it tautologically.
+`Spec.authConnects` (`ExecRefinement.lean`) is the SEVERED reference — a `Prop`-level existential over
+list membership, NOT defeq to the boolean gate. Here we PROVE the executor's concrete c-list lookup
+IMPLEMENTS that abstract connectivity (`capLookup_refines_authConnects`), via the per-cap bridge
+`confersEdgeTo_iff_authConnectsCap` and `List.any_eq_true` — a REAL proof, not `rfl`. A wrong
+cap-lookup (one that connects where no cap confers the edge) would NOT refine — `_separates`. -/
+
+/-- **`confersEdgeTo_iff_authConnectsCap`** — the per-cap bridge: the executable boolean gate
+`confersEdgeTo t cap = true` IFF the abstract `Prop` atom `authConnectsCap t cap` (the SAME two
+branches — a `node t` cap, or an `endpoint t` cap carrying `write` — boolean vs propositional). This
+is what makes the refinement a real proof: the `Bool`-fold and the `∃ … ∧ …` `Prop` agree only after
+this case analysis on `cap`, never by `rfl`. -/
+theorem confersEdgeTo_iff_authConnectsCap (t : Label) (cap : Cap) :
+    confersEdgeTo t cap = true ↔ authConnectsCap t cap := by
+  unfold confersEdgeTo authConnectsCap
+  rw [Bool.or_eq_true, beq_iff_eq]
+  cases cap with
+  | null => simp
+  | node tn =>
+      simp only [Cap.node.injEq, reduceCtorEq, false_and, exists_const, or_false]
+  | endpoint te re =>
+      simp only [reduceCtorEq, false_or, Cap.endpoint.injEq, Bool.and_eq_true, beq_iff_eq]
+      constructor
+      · rintro ⟨hte, hw⟩; exact ⟨re, ⟨hte, rfl⟩, hw⟩
+      · rintro ⟨r, ⟨hte, hre⟩, hw⟩; subst hte; subst hre; exact ⟨rfl, hw⟩
+
+/-- **`capLookup_refines_authConnects` — THE GENUINE REFINEMENT.** The executor's concrete c-list
+authority lookup `(caps h).any (fun cap => confersEdgeTo c.target cap) = true` IMPLEMENTS the abstract
+connectivity relation `authConnects caps h c`. Proved by `List.any_eq_true` (the boolean fold names a
+WITNESS member) composed with the per-cap bridge `confersEdgeTo_iff_authConnectsCap` — reasoning about
+`confersEdgeTo`/`caps`, NOT `rfl`. A lookup that wrongly reported connectivity for a slot holding no
+`c.target`-conferring cap would FAIL to produce the existential witness (`_separates`). -/
+theorem capLookup_refines_authConnects (caps : Caps) (h : Label)
+    (c : Spec.Cap Label ExecRights)
+    (hlook : (caps h).any (fun cap => confersEdgeTo c.target cap) = true) :
+    authConnects caps h c := by
+  rw [List.any_eq_true] at hlook
+  obtain ⟨cap, hmem, hconf⟩ := hlook
+  exact ⟨cap, hmem, (confersEdgeTo_iff_authConnectsCap c.target cap).mp hconf⟩
+
+/-- **`authConnects_refines_capLookup`** — the converse: `authConnects` IMPLIES the executor's
+boolean lookup. Needed to feed an abstract `authConnects` hypothesis back into a `recKDelegate`-style
+commit (whose gate is the boolean `.any`). The two are propositionally EQUIVALENT but not defeq, so
+this is also a real proof. -/
+theorem authConnects_refines_capLookup (caps : Caps) (h : Label)
+    (c : Spec.Cap Label ExecRights)
+    (hac : authConnects caps h c) :
+    (caps h).any (fun cap => confersEdgeTo c.target cap) = true := by
+  obtain ⟨cap, hmem, hconf⟩ := hac
+  rw [List.any_eq_true]
+  exact ⟨cap, hmem, (confersEdgeTo_iff_authConnectsCap c.target cap).mpr hconf⟩
+
+/-- **`execGraph_iff_authConnects`** — `execGraph` (the gate-copy) and `authConnects` (the severed
+spec) are PROPOSITIONALLY equivalent (so retargeting a leg from `execGraph caps h c` onto
+`authConnects caps h c` loses NO content) — yet NOT definitionally equal (the linter's defeq check
+separates them). The bridge the inheritor retargets ride. -/
+theorem execGraph_iff_authConnects (caps : Caps) (h : Label) (c : Spec.Cap Label ExecRights) :
+    execGraph caps h c ↔ authConnects caps h c := by
+  rw [execGraph_eq_any]
+  exact ⟨capLookup_refines_authConnects caps h c, authConnects_refines_capLookup caps h c⟩
+
+/-- **`execGraph_has_iff_authConnects_has`** — the `Graph.has` (Granovetter connectivity, rights
+forgotten) projection of the bridge: `(execGraph caps).has h t ↔ (authConnects caps).has h t`. Lets a
+grounding leg stated over `execGraph`'s reachability transport onto the severed `authConnects` graph
+(used at the cross-cell bilateral grounding). -/
+theorem execGraph_has_iff_authConnects_has (caps : Caps) (h t : Label) :
+    Spec.Graph.has (execGraph caps) h t ↔ Spec.Graph.has (authConnects caps) h t := by
+  unfold Spec.Graph.has
+  constructor
+  · rintro ⟨r, hr⟩; exact ⟨r, (execGraph_iff_authConnects caps h ⟨t, r⟩).mp hr⟩
+  · rintro ⟨r, hr⟩; exact ⟨r, (execGraph_iff_authConnects caps h ⟨t, r⟩).mpr hr⟩
+
+/-- **`capLookup_refines_authConnects_separates` — THE MUTATION-SEPARATION WITNESS.** A cap-table
+where the holder's slot is EMPTY: the executor's lookup correctly reports `false` (no connectivity),
+and `authConnects` correctly REFUTES the edge. The pairing demonstrates the refinement has teeth: a
+mutated lookup that WRONGLY returned `true` here (connecting an empty slot) would assert
+`authConnects`, which is FALSE — the implication would be violated. So `capLookup_refines_authConnects`
+genuinely constrains the lookup, it is not vacuously true. -/
+theorem capLookup_refines_authConnects_separates :
+    ((fun (_ : Label) => ([] : List Cap)) 0).any
+        (fun cap => confersEdgeTo (7 : Label) cap) = false
+    ∧ ¬ authConnects (fun _ => ([] : List Cap)) 0 (⟨7, ()⟩ : Spec.Cap Label ExecRights) := by
+  refine ⟨rfl, ?_⟩
+  rintro ⟨cap, hmem, _⟩
+  simp at hmem
+
+#assert_axioms confersEdgeTo_iff_authConnectsCap
+#assert_axioms capLookup_refines_authConnects
+#assert_axioms authConnects_refines_capLookup
+#assert_axioms execGraph_iff_authConnects
+#assert_axioms capLookup_refines_authConnects_separates
 
 /-! ## §2 — `ExecRights = Unit`: a Spec cap is determined by its target.
 

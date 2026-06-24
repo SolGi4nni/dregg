@@ -234,13 +234,26 @@ Spec-side `execGraph` `.any` copy, so this is reported in prose; the defeq pairi
 `execGraph` itself, the source).
 =========================================================================== -/
 
--- CALIBRATION: execGraph — MUST FAIL #2 (defeq to its own `.any` gate copy).
+-- CALIBRATION: execGraph — MUST FAIL #2 (defeq to its own `.any` gate copy). It is no longer the
+-- abstract refinement TARGET (the inheritors below now ride `authConnects`); it survives ONLY as the
+-- genuine graph-CHANGE carrier (`addEdge`/`removeEdge`), where the defeq is harmless.
 #load_bearing_audit_report Dregg2.Spec.execGraph
   gate := Dregg2.Verify.LoadBearingAuditBroad.execGraphGate
 
--- the refinement abstraction-function relation:
+-- THE SEVERED SPEC: `authConnects` — the INDEPENDENT authority-connectivity reference the C-c1
+-- authority-graph legs now attest against. MUST PASS: [1] independent (no step gate, only the pure
+-- `confersEdgeTo`-shape over the cap-table), [2] NOT defeq to the gate copy (the `∃ … ∧ …` Prop vs
+-- the `.any … = true` Bool fold), [3] non-vacuous (`authConnects_nonvacuous` — accepts a held cap,
+-- refutes an empty slot).
+#load_bearing_audit_report Dregg2.Spec.authConnects
+  gate := Dregg2.Verify.LoadBearingAuditBroad.execGraphGate
+  nonvacuous := Dregg2.Spec.authConnects_nonvacuous
+
+-- the refinement abstraction-function relation (now over `authConnects`, with a non-vacuity witness):
 #load_bearing_audit_report Dregg2.Spec.Refines
+  nonvacuous := Dregg2.Spec.authConnects_nonvacuous
 #load_bearing_audit_report Dregg2.Spec.absOf
+  nonvacuous := Dregg2.Spec.authConnects_nonvacuous
 
 -- the Exec attestation invariants (guarantee C-c1): boundary + non-vacuity.
 #load_bearing_audit_report Dregg2.Exec.TurnExecutorFull.fullActionInvA
