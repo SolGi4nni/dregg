@@ -487,3 +487,32 @@ pub fn cancel_bridge(bridge: CellId, terms: &BridgeTerms) -> Vec<Effect> {
         terms.amount,
     )
 }
+
+// =============================================================================
+// Supply — the cap-gated mint entry (`docs/SUPPLY-MODEL.md`)
+// =============================================================================
+
+/// Plan a cap-gated **mint** of supply into a holder — the one authored entry
+/// for new supply (`docs/SUPPLY-MODEL.md`; the sign-flipped dual of `Burn`).
+///
+/// The minted asset is `recipient`'s own asset class (its `token_id`); the
+/// asset's deterministic per-asset **issuer well** is debited negative-capably
+/// (going more negative as supply enters) and `recipient` is credited, so the
+/// turn conserves exactly (per-turn, per-asset `Σδ=0`) and restores the
+/// standing `Σholders + well = 0` invariant.
+///
+/// **Safety contract** (enforced by the EXECUTOR, not this builder): the turn
+/// commits ONLY if the turn agent holds a control-grade **mint-cap** over the
+/// issuer well — a full (`AuthRequired::None`) capability carrying the
+/// `EFFECT_MINT` facet, the Rust image of Lean `mintAuthorizedB`. A turn with
+/// no such cap, a wrong-facet cap, or a self-mint (`agent == recipient`) is
+/// REJECTED (`TurnError::CapabilityNotHeld` / `InvalidEffect`). "A cell cannot
+/// coin its own supply" — mint authority is a cap over the issuer, not bare
+/// ownership.
+pub fn mint_supply(recipient: CellId, amount: u64) -> Vec<Effect> {
+    vec![Effect::Mint {
+        target: recipient,
+        slot: 0,
+        amount,
+    }]
+}

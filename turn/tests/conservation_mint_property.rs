@@ -17,10 +17,10 @@
 //!    REJECTED;
 //!  - a SELF-MINT (actor == recipient, or actor == well) is REJECTED.
 
-use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions, EFFECT_MINT, EFFECT_TRANSFER};
+use dregg_cell::{AuthRequired, Cell, CellId, EFFECT_MINT, EFFECT_TRANSFER, Ledger, Permissions};
 use dregg_turn::{
-    turn::{Turn, TurnResult},
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
+    turn::{Turn, TurnResult},
 };
 
 fn open_permissions() -> Permissions {
@@ -158,10 +158,29 @@ fn authorized_mint_conserves_and_restores_supply_invariant() {
     let amount = 1_000u64;
     let before = balances(&ledger);
     let executor = TurnExecutor::new(ComputronCosts::zero());
-    let result = executor.execute(&mint_turn(issuer_id, recipient_id, amount), &mut ledger);
-    assert!(
-        matches!(result, TurnResult::Committed { .. }),
-        "authorized mint must commit: {result:?}"
+    let turn = mint_turn(issuer_id, recipient_id, amount);
+    let result = executor.execute(&turn, &mut ledger);
+
+    // The cap-gated mint COMMITS a real verified turn and LEAVES A RECEIPT
+    // (the end-to-end wiring: dispatch → `apply_mint` → conserving move →
+    // committed receipt). Bind the receipt to this turn and to a genuine
+    // state transition.
+    let TurnResult::Committed { receipt, .. } = &result else {
+        panic!("authorized mint must commit: {result:?}");
+    };
+    assert_eq!(
+        receipt.agent, issuer_id,
+        "receipt records the minting issuer as the turn agent"
+    );
+    assert_eq!(
+        receipt.turn_hash,
+        turn.hash(),
+        "receipt binds the executed mint turn by hash"
+    );
+    assert_ne!(
+        receipt.pre_state_hash, receipt.post_state_hash,
+        "the mint mutated state (well debit + holder credit), so the receipt's \
+         post-state hash must differ from its pre-state hash"
     );
     let after = balances(&ledger);
 
