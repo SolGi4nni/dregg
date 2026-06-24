@@ -373,6 +373,40 @@ theorem revocation_needs_consensus
   intro v hv
   exact hgate v (hsound v hv)
 
+/-- **`revocation_needs_consensus_satisfiable` — the NON-VACUITY witness.** A CONCRETE two-vat
+revocation that takes effect under agreement: `parties = [1, 2]`, the decision advances to `epoch 1`
+with BOTH vats agreeing (`d.agreeing v := True`), and the post-revocation view treats the cap as gone
+at both (`view v _ := True`). The hypotheses hold — `CrossVatSound` (both views agree) and the gate
+(`view v d → d.agreeing v`) — AND the conclusion is EXERCISED: `Consensus [1,2] d` fires (every party
+agrees the epoch advanced). So the keystone is not vacuous: there is a real multi-vat scene where
+revocation-under-agreement takes effect. -/
+theorem revocation_needs_consensus_satisfiable :
+    ∃ (parties : List VatId) (d : RevocationDecision) (view : VatId → RevocationDecision → Prop),
+      CrossVatSound parties d view
+        ∧ (∀ v, view v d → d.agreeing v)
+        ∧ Consensus parties d := by
+  refine ⟨[1, 2], ⟨1, fun _ => True⟩, fun _ _ => True, ?_, ?_, ?_⟩
+  · intro v _; trivial
+  · intro v _; trivial
+  · -- the conclusion is EXERCISED: revocation_needs_consensus fires and yields Consensus.
+    exact revocation_needs_consensus [1, 2] ⟨1, fun _ => True⟩ (fun _ _ => True)
+      (fun v _ => trivial) (fun v _ => trivial)
+
+/-- **`revocation_needs_consensus_teeth` — the DISCRIMINATING witness (the conclusion is NOT `True`).**
+A UNILATERAL revocation where party `2` has NOT agreed the epoch advanced: `parties = [1, 2]`,
+`d.agreeing v := (v = 1)` (only vat 1 agreed). Then `Consensus [1, 2] d` is FALSE — vat `2 ∈ parties`
+but `¬ d.agreeing 2`. So `Consensus` is a two-valued predicate that genuinely FAILS when agreement is
+not unanimous: revocation does NOT take effect for a party that did not agree. This is the contrapositive
+content — "revocation REQUIRES consensus" — made concrete: drop the agreement of one party and the
+consensus conclusion collapses, exactly as the negative-lifecycle discipline demands. -/
+theorem revocation_needs_consensus_teeth :
+    ¬ Consensus [1, 2] (⟨1, fun v => v = 1⟩ : RevocationDecision) := by
+  intro hcon
+  -- vat 2 ∈ parties but did NOT agree (`2 = 1` is false), so `Consensus` cannot hold.
+  have h2 : (⟨1, fun v => v = 1⟩ : RevocationDecision).agreeing 2 :=
+    hcon 2 (by simp)
+  exact absurd h2 (by decide)
+
 /-! ## The impossibility: cross-vat GC cycles leak -/
 
 /-- **`CrossVatCycle g a b`** — a reference cycle spanning two MUTUALLY-DISTRUSTING vats:

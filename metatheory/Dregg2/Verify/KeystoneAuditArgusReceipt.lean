@@ -227,6 +227,37 @@ theorem transfer_published_index_pins_receipt_teeth
           ≠ argusReceipt compressN₀ compress2₀ Dregg2.Circuit.CommitmentCrossBind.restLimbsC (writeCell0 w) kR 0 :=
   ⟨by decide, writeCell0_receipt_observable compressN₀ compress2₀ compressN₀_inj hLE v w htail⟩
 
+/-! ## §3¾ — `published_position_pins_value` — the MMR position-binding leaf (WELDED, not terminal).
+
+The §149 PI-discharge keystone `argus_published_index_pins_receipt` (welded above) calls
+`published_position_pins_value` as its mechanism: two openings of ONE published index position pin ONE
+value, adversarial-server included (`mroot hash L' = mroot hash L`). It carries `Poseidon2SpongeCR hash`
+as a hypothesis — REALIZED here by `encodeSponge`/`encodeSponge_cr` (the SAME `hash₀` the receipt welds
+use), so it is NOT terminal: a concrete published index fires its conclusion. Satisfiable: `L = L' :=
+Lpub`, position `1` opens to `222` on both, the published roots are self-equal (`rfl`), and the
+conclusion `r' = r` (`222 = 222`) is EXERCISED. Teeth: a tampered value does NOT open at the dense
+position (`¬ Opens Lpub 1 999`), so the position-binding is a real constraint, not `:= True`. -/
+
+/-- **`published_position_pins_value_satisfiable`.** The conclusion `r' = r` FIRES on the concrete
+published index `Lpub` under the realized CR carrier `hash₀`: both opens are `Opens Lpub 1 222`, the
+roots coincide (`rfl`), and `published_position_pins_value` yields `222 = 222` — exercised on a real
+opening, not vacuous. -/
+theorem published_position_pins_value_satisfiable :
+    ∃ (L L' : List ℤ) (i : ℕ) (r' r : ℤ),
+      mroot hash₀ L' = mroot hash₀ L ∧ Opens L' i r' ∧ Opens L i r ∧ r' = r := by
+  refine ⟨Lpub, Lpub, 1, 222, 222, rfl, ?_, ?_, ?_⟩
+  · decide
+  · decide
+  · have hp' : Opens Lpub 1 222 := by decide
+    have hp : Opens Lpub 1 222 := by decide
+    exact published_position_pins_value (L := Lpub) (L' := Lpub) (i := 1) (r' := 222) (r := 222)
+      hash₀ hash₀_cr rfl hp' hp
+
+/-- **`published_position_pins_value_teeth`.** The position-binding DISCRIMINATES: a tampered value does
+NOT open at the dense position of `Lpub` (`¬ Opens Lpub 1 999`), so an opening is a real constraint on
+the prover — the keystone is two-valued, not `:= True`. -/
+theorem published_position_pins_value_teeth : ¬ Opens Lpub 1 999 := by decide
+
 /-! ## §4 — TAG the three Wave-4 HARD keystones with their welded companions. -/
 
 @[load_bearing_keystone
@@ -247,11 +278,18 @@ def argus_published_index_pins_receipt_KS :=
 def transfer_published_index_pins_receipt_KS :=
   @Dregg2.Circuit.Argus.Receipt.transfer_published_index_pins_receipt
 
+@[load_bearing_keystone
+    satisfiable := Dregg2.Verify.KeystoneAuditArgusReceipt.published_position_pins_value_satisfiable
+    teeth := Dregg2.Verify.KeystoneAuditArgusReceipt.published_position_pins_value_teeth]
+def published_position_pins_value_KS :=
+  @Dregg2.Circuit.Argus.Receipt.published_position_pins_value
+
 /-! ## §5 — RUN the audit (the CI gate over the Wave-4 HARD Argus-receipt family). -/
 
 #keystone_audit Dregg2.Verify.KeystoneAuditArgusReceipt.argus_circuit_executor_receipts_agree_KS
 #keystone_audit Dregg2.Verify.KeystoneAuditArgusReceipt.argus_published_index_pins_receipt_KS
 #keystone_audit Dregg2.Verify.KeystoneAuditArgusReceipt.transfer_published_index_pins_receipt_KS
+#keystone_audit Dregg2.Verify.KeystoneAuditArgusReceipt.published_position_pins_value_KS
 
 #keystone_audit_tagged
 
@@ -271,5 +309,8 @@ def transfer_published_index_pins_receipt_KS :=
 #assert_axioms argus_circuit_executor_receipts_agree_KS
 #assert_axioms argus_published_index_pins_receipt_KS
 #assert_axioms transfer_published_index_pins_receipt_KS
+#assert_axioms published_position_pins_value_satisfiable
+#assert_axioms published_position_pins_value_teeth
+#assert_axioms published_position_pins_value_KS
 
 end Dregg2.Verify.KeystoneAuditArgusReceipt

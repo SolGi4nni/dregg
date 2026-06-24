@@ -21,17 +21,25 @@ gate (`Argus.noteSpendStmt_*`), the sorted-neighbor non-membership bridge
 re-pinning aliases are written `:= <the keystone>` (the type is INFERRED from the keystone, so the
 attribute attaches its companions without re-stating — and without editing the home modules).
 
+ALSO covered here (the revocation-at-finality leg of guarantee D):
+  • `Dregg2.Liveness.revocation_needs_consensus` — WELDED. A genuine forward implication
+    (`CrossVatSound parties d view → (∀ v, view v d → d.agreeing v) → Consensus parties d`) whose
+    conclusion `Consensus` is a two-valued predicate, so the keystone-audit checks bite: the
+    satisfiable witness (`revocation_needs_consensus_satisfiable`) EXERCISES `Consensus` on a concrete
+    two-vat agreeing revocation, and the teeth (`revocation_needs_consensus_teeth`) REFUTES `Consensus`
+    on a unilateral revocation where one party did NOT agree — the contrapositive "revocation requires
+    consensus" made concrete (drop one party's agreement and the conclusion collapses).
+
 NOT covered here (out of this family's accept⟹produced shape):
   • `Dregg2.Liveness.dead_undecidable` — an IMPOSSIBILITY result (`¬ ∃ decider`, a halting reduction),
     not an `admit ⟹ produced` keystone; satisfiable/teeth do not apply (a satisfiable would contradict
     the theorem). It is an impossibility gate, a different discipline.
-  • `Dregg2.Liveness.revocation_needs_consensus` — its satisfiable hypothesis (`CrossVatSound` over a
-    concrete multi-vat view with the agreement gate) is not cheaply witnessed; deferred (STOP-REPORT).
 -/
 import Dregg2.Verify.KeystoneLint
 import Dregg2.Circuit.Argus.Effects.NoteSpend
 import Dregg2.Crypto.NonMembership
 import Dregg2.Apps.CapSlotFactory
+import Dregg2.Liveness
 
 open Dregg2.Verify.KeystoneLint
 
@@ -115,6 +123,15 @@ def revoke_stales_stored_cap_KS :=
 def store_then_revoke_refused_KS :=
   @Dregg2.Apps.CapSlotFactory.store_then_revoke_refused
 
+/-! ### revocation-at-finality (the consensus-bound negative lifecycle). -/
+
+-- (11) REVOCATION-NEEDS-CONSENSUS (welded: `Consensus` is exercised, and refuted on a unilateral view).
+@[load_bearing_keystone
+    satisfiable := Dregg2.Liveness.revocation_needs_consensus_satisfiable
+    teeth := Dregg2.Liveness.revocation_needs_consensus_teeth]
+def revocation_needs_consensus_KS :=
+  @Dregg2.Liveness.revocation_needs_consensus
+
 /-! ## §2 — RUN the audit (the CI gate over the freshness family). -/
 
 #keystone_audit Dregg2.Verify.KeystoneAuditFreshness.noteSpendStmt_no_double_spend_KS
@@ -127,6 +144,7 @@ def store_then_revoke_refused_KS :=
 #keystone_audit Dregg2.Verify.KeystoneAuditFreshness.no_forge_from_storage_KS
 #keystone_audit Dregg2.Verify.KeystoneAuditFreshness.revoke_stales_stored_cap_KS
 #keystone_audit Dregg2.Verify.KeystoneAuditFreshness.store_then_revoke_refused_KS
+#keystone_audit Dregg2.Verify.KeystoneAuditFreshness.revocation_needs_consensus_KS
 
 /-! ## §3 — axiom-hygiene over the re-pinned aliases (kernel-triple clean). -/
 
@@ -140,5 +158,6 @@ def store_then_revoke_refused_KS :=
 #assert_axioms no_forge_from_storage_KS
 #assert_axioms revoke_stales_stored_cap_KS
 #assert_axioms store_then_revoke_refused_KS
+#assert_axioms revocation_needs_consensus_KS
 
 end Dregg2.Verify.KeystoneAuditFreshness
