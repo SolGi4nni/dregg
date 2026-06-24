@@ -481,6 +481,29 @@ theorem handler_refines_execFullA_spawn_fresh (s s' : RecChainedState) (actor ch
   show Dregg2.Exec.TurnExecutorFull.spawnChainA s actor child target = some s'
   exact h
 
+/-- **`handler_refines_execFullA_spawn_metadata` — the SPAWN CAP-HANDOFF METADATA certified (the
+census-D4 spawn shed).** The born-empty `handler_refines_execFullA_spawn` refines `spawnA` against the
+shared account-growth core `createCellA` — which carries NO cap-handoff data, so the delegation handoff
+(the child's copied-down cap, parent pointer, c-list snapshot, epoch stamp) was UNVERIFIED by the handler
+refinement (`HandlerOpenFronts.spawn_factory_metadata`). Refined against the CHAINED, handing-off
+`spawnChainA` (= `execFullA`'s ACTUAL `.spawnA` arm, by `rfl`), this delivers the full metadata OFF the
+commit via `HandlerFloors.spawnMetadataFloor_discharges`: the child HOLDS the actor's held cap to the
+parent target (least-amplifying), records its parent, snapshots the parent's c-list, and is stamped fresh.
+The handoff dimension the born-empty refinement left implicit is now internal and certified — the cap
+metadata is no longer a silent `§DEFER`. -/
+theorem handler_refines_execFullA_spawn_metadata (s s' : RecChainedState) (actor child target : CellId)
+    (h : Dregg2.Exec.TurnExecutorFull.spawnChainA s actor child target = some s') :
+    (∃ s'', execFullA s (.spawnA actor child target) = some s'' ∧ s''.kernel = s'.kernel)
+      ∧ heldCapTo s.kernel.caps actor target ∈ s'.kernel.caps child
+      ∧ s'.kernel.delegate child = some actor
+      ∧ s'.kernel.delegations child = s.kernel.caps actor
+      ∧ s'.kernel.delegationEpochAt child = s.kernel.delegationEpoch actor := by
+  refine ⟨⟨s', ?_, rfl⟩, ?_⟩
+  · show Dregg2.Exec.TurnExecutorFull.spawnChainA s actor child target = some s'
+    exact h
+  · exact HandlerFloors.spawnMetadataFloor_discharges
+      (a := { actor := actor, child := child, target := target }) h
+
 /-- **`handler_refines_execFullA_createCellFromFactory` — the born-empty create alias.**
 `toClosedEffect` maps `createCellFromFactoryA` onto `createCellFromFactoryH` (= `createCellH`).
 Refinement is against `createCellA` — not the full `createCellFromFactoryChainA` install (`§DEFER`). -/
@@ -501,6 +524,33 @@ theorem handler_refines_execFullA_createCellFromFactory (s s' : RecChainedState)
     unfold createCellChainA
     rw [if_pos ⟨hg.1, hg.2⟩, hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+
+/-- **`handler_refines_execFullA_createCellFromFactory_metadata` — the FACTORY INSTALL METADATA certified
+(the census-D4 factory shed).** The born-empty `handler_refines_execFullA_createCellFromFactory` refines
+`createCellFromFactoryA` against the shared core `createCellA` — DROPPING the `vk`, so the factory's
+published contract (its `slotCaveats` program, the program-VK slot, the initial fields) was UNVERIFIED by
+the handler refinement (`HandlerOpenFronts.spawn_factory_metadata`). Refined against the CHAINED,
+installing `createCellFromFactoryChainA` (= `execFullA`'s ACTUAL `.createCellFromFactoryA` arm, by `rfl`),
+this delivers the full install OFF the commit via `HandlerFloors.factoryMetadataFloor_discharges`: the
+minted cell carries EXACTLY the registered factory's caveats (enforced on every later `SetField`) and the
+factory's initial-field + program-VK install. The factory-contract dimension the born-empty refinement
+left implicit is now internal and certified. -/
+theorem handler_refines_execFullA_createCellFromFactory_metadata (s s' : RecChainedState)
+    (actor newCell : CellId) (vk : Int)
+    (h : Dregg2.Exec.TurnExecutorFull.createCellFromFactoryChainA s actor newCell vk = some s') :
+    (∃ s'', execFullA s (.createCellFromFactoryA actor newCell vk) = some s'' ∧ s''.kernel = s'.kernel)
+      ∧ (∃ e s1, Dregg2.Exec.findFactory s.kernel.factories vk.toNat = some e ∧
+           Dregg2.Exec.TurnExecutorFull.createCellChainA s actor newCell = some s1 ∧
+           s'.kernel.slotCaveats newCell = e.caveats ∧
+           s'.kernel.cell newCell =
+             Dregg2.Exec.EffectsState.setField Dregg2.Exec.TurnExecutorFull.factoryVkField
+               (Dregg2.Exec.TurnExecutorFull.installInitialFields (s1.kernel.cell newCell) e.initialFields)
+               (.int e.programVk)) := by
+  refine ⟨⟨s', ?_, rfl⟩, ?_⟩
+  · show Dregg2.Exec.TurnExecutorFull.createCellFromFactoryChainA s actor newCell vk = some s'
+    exact h
+  · exact HandlerFloors.factoryMetadataFloor_discharges
+      (a := { actor := actor, newCell := newCell, vk := vk }) h
 
 /-- The handler models the LEDGER-side note-spend step (the nullifier set-transition; the §8 STARK
 spending proof is the crypto-portal face the handler does not re-run). Once the executor's §8
@@ -1321,6 +1371,8 @@ The derived global laws + the strengthening + the executor structure are all pin
 #assert_axioms handler_refines_execFullA_refreshDelegation_residual
 #assert_axioms handler_refines_execFullA_refreshDelegation
 #assert_axioms handler_refines_execFullA_spawn_fresh
+#assert_axioms handler_refines_execFullA_spawn_metadata
+#assert_axioms handler_refines_execFullA_createCellFromFactory_metadata
 #assert_axioms handler_refines_execFullA_emitEvent
 #assert_axioms handler_refines_execFullA_delegate
 #assert_axioms handler_refines_execFullA_delegateAtten

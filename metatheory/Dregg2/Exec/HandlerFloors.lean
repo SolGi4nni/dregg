@@ -57,9 +57,15 @@ open Dregg2.Exec.EffectsState (reservedField stateStepDev stateStepDev_notReserv
   incrementNonceStep incrementNonceStep_advances fieldOf)
 open Dregg2.Exec.TurnExecutorFull (spawnChainA refreshDelegationChainA parentEpoch
   spawnChainA_stamps_epoch spawnChainA_fresh_at_birth
+  spawnChainA_provenance spawnChainA_parent_snapshot spawnChainA_factors
+  createCellChainA createCellFromFactoryChainA createCellFromFactoryChainA_factors
+  createCellFromFactoryChainA_installs_program createCellFromFactoryChainA_unknown_factory_fails
+  factoryVkField installInitialFields
   refreshDelegationChainA_restamps_epoch refreshDelegationChainA_fresh
   refreshDelegationChainA_noParent_rejects
   noteSpendChainA noteSpendChainA_requires_proof noteSpendChainA_fails_without_proof)
+open Dregg2.Exec (heldCapTo findFactory)
+open Dregg2.Exec.EffectsState (setField)
 open Dregg2.Exec (delegationStale)
 open Dregg2.Substrate.HeapKernel (heapStepGuardedW heapStepW_root_pinned heapStepW_heaps
   heapRootField)
@@ -329,6 +335,114 @@ def refreshFreshnessFloor : PostFloorObligation RecChainedState RefreshFreshArgs
     intro s a s' h
     exact refreshDelegationChainA_restamps_epoch h
 
+/-! ## §4d — POC INSTANCE E (POST-CONDITION FLOORS): SPAWN cap-handoff metadata + FACTORY install,
+over the chained executor steps `spawnChainA` / `createCellFromFactoryChainA`.
+
+THE CENSUS-D4 RESIDUAL (the spawn/factory metadata front). The handler dispatch
+(`HandlerExecutor.toClosedEffect`) maps BOTH `spawnA` and `createCellFromFactoryA` onto the born-empty
+`createCellH` effect — `spawnA` DROPS its `target`, `createCellFromFactoryA` DROPS its `vk`. So the
+born-empty refinements `handler_refines_execFullA_{spawn,createCellFromFactory}` prove kernel-agreement
+only against the shared account-growth CORE (`createCellA`), NOT the metadata the FULL chained arm
+commits. This left the cap-handoff (`caps child`, `delegate`, `delegations`) and the factory install
+(`factoryVkField`, `initialFields`, `slotCaveats`) UNVERIFIED by the handler refinement.
+
+THE CLEAN DISCHARGE (the §4c case repeated). `execFullA`'s `.spawnA` arm IS `spawnChainA`, and its
+`.createCellFromFactoryA` arm IS `createCellFromFactoryChainA` (both by `rfl`) — and those chained steps
+ALREADY commit the metadata by construction. The metadata writes are EXACTLY the already-banked
+post-condition lemmas: `spawnChainA_provenance` (the child receives the actor's held cap to the parent
+target), `spawnChainA_parent_snapshot` (the `delegate`/`delegations` birth snapshot),
+`spawnChainA_stamps_epoch` (the freshness stamp); and `createCellFromFactoryChainA_installs_program` (the
+factory's `slotCaveats`), plus the field install read off `…_factors`. So the metadata floors DISCHARGE
+from the EXISTING chained step's post-condition with NO re-route — the handler-executor lane was ALREADY
+strong enough at the FULL arm; the obligation PROMOTES the latent metadata to a typed `PostFloorObligation`.
+A spawn that DROPPED the cap-handoff (the codex confinement-bypass mutation: a born child with empty caps
+under a held-cap parent), or a factory that LEFT OFF its `slotCaveats` (the program-bypass mutation),
+could NOT inhabit these structures — the missing metadata gate becomes unrepresentable. -/
+
+/-- Args for a spawn cap-handoff metadata floor: the spawner `actor` (= parent), the fresh `child`, the
+cap-source `target`. -/
+structure SpawnMetaArgs where
+  /-- The spawner — the child's parent and the held-cap source's owner. -/
+  actor : CellId
+  /-- The freshly-born child receiving the copied-down cap + delegation snapshot. -/
+  child : CellId
+  /-- The held-cap source: the parent target the actor already held an edge to. -/
+  target : CellId
+
+/-- Args for a factory install metadata floor: the `actor`, the minted `newCell`, the content-addressed
+factory `vk`. -/
+structure FactoryMetaArgs where
+  /-- The actor minting the cell (must hold creation authority). -/
+  actor : CellId
+  /-- The freshly-minted cell carrying the factory's installed program. -/
+  newCell : CellId
+  /-- The content-addressed factory VK key (the `findFactory` lookup key). -/
+  vk : Int
+
+/-- The spawn step lifted to `SpawnMetaArgs` (the chained, metadata-committing `spawnChainA` — the very
+arm `execFullA`'s `.spawnA` runs). -/
+def spawnMetaStep (s : RecChainedState) (a : SpawnMetaArgs) : Option RecChainedState :=
+  spawnChainA s a.actor a.child a.target
+
+/-- The factory step lifted to `FactoryMetaArgs` (the chained, install-committing
+`createCellFromFactoryChainA` — the very arm `execFullA`'s `.createCellFromFactoryA` runs). -/
+def factoryMetaStep (s : RecChainedState) (a : FactoryMetaArgs) : Option RecChainedState :=
+  createCellFromFactoryChainA s a.actor a.newCell a.vk
+
+/-- **`spawnMetadataFloor` — the SPAWN CAP-HANDOFF metadata floor as a `PostFloorObligation`.** Floor:
+the committed post-state installs the full delegation handoff — the child HOLDS the actor's held cap to the
+parent target (`heldCapTo … actor target ∈ s'.caps child`, the least-amplifying authority copy), records
+its parent (`delegate child = some actor`), stores the birth snapshot of the parent's c-list
+(`delegations child = s.caps actor`), AND stamps the child's epoch to the parent's current one
+(`delegationEpochAt child = delegationEpoch actor`, the freshness stamp). A post-condition (the step WRITES
+all four), so `PostFloorObligation`. Discharged on EVERY commit by the banked `spawnChainA_provenance` /
+`spawnChainA_parent_snapshot` / `spawnChainA_stamps_epoch` — the chained spawn already installs the handoff
+by construction, the §4c clean-discharge case. A spawn that left the child with empty caps (the
+confinement-bypass mutation) could NOT inhabit this. -/
+def spawnMetadataFloor : PostFloorObligation RecChainedState SpawnMetaArgs spawnMetaStep where
+  floor := fun s a s' =>
+    heldCapTo s.kernel.caps a.actor a.target ∈ s'.kernel.caps a.child ∧
+    s'.kernel.delegate a.child = some a.actor ∧
+    s'.kernel.delegations a.child = s.kernel.caps a.actor ∧
+    s'.kernel.delegationEpochAt a.child = s.kernel.delegationEpoch a.actor
+  gated := by
+    intro s a s' h
+    exact ⟨spawnChainA_provenance h, (spawnChainA_parent_snapshot h).1,
+      (spawnChainA_parent_snapshot h).2, spawnChainA_stamps_epoch h⟩
+
+/-- **`factoryMetadataFloor` — the FACTORY INSTALL metadata floor as a `PostFloorObligation`.** Floor:
+the committed post-state installs the factory's published contract onto the minted cell — its `slotCaveats`
+ARE the factory's declared caveats (`∃ e, findFactory … = some e ∧ slotCaveats newCell = e.caveats`, the
+lifetime program enforced on every later `SetField`), AND the cell carries the factory's initial fields +
+program-VK slot (the `setField factoryVkField (installInitialFields …) e.programVk` install, read off the
+factors). A post-condition (the step WRITES the install), so `PostFloorObligation`. Discharged on EVERY
+commit by the banked `createCellFromFactoryChainA_installs_program` (the slotCaveats keystone) +
+`createCellFromFactoryChainA_factors` (the field install) — the chained factory already installs the
+program by construction, the §4c clean-discharge case. A factory creation that LEFT OFF its caveats (the
+program-bypass mutation) could NOT inhabit this. -/
+def factoryMetadataFloor : PostFloorObligation RecChainedState FactoryMetaArgs factoryMetaStep where
+  floor := fun s a s' =>
+    (∃ e s1, findFactory s.kernel.factories a.vk.toNat = some e ∧
+       createCellChainA s a.actor a.newCell = some s1 ∧
+       s'.kernel.slotCaveats a.newCell = e.caveats ∧
+       s'.kernel.cell a.newCell =
+         setField factoryVkField (installInitialFields (s1.kernel.cell a.newCell) e.initialFields)
+           (.int e.programVk))
+  gated := by
+    intro s a s' h
+    obtain ⟨e, s1, hfind, _, hc, hs'⟩ := createCellFromFactoryChainA_factors h
+    refine ⟨e, s1, hfind, hc, ?_, ?_⟩
+    · subst hs'; simp
+    · -- the field+VK install over the born-empty cell, read off the factors.
+      subst hs'
+      show (if a.newCell = a.newCell then
+              setField factoryVkField (installInitialFields (s1.kernel.cell a.newCell) e.initialFields)
+                (.int e.programVk)
+            else s1.kernel.cell a.newCell)
+          = setField factoryVkField (installInitialFields (s1.kernel.cell a.newCell) e.initialFields)
+              (.int e.programVk)
+      rw [if_pos rfl]
+
 /-! ## §5 — TEETH: the floors BITE (a violating step does not commit), and DISCHARGE works.
 
 The methodology pin: a step that would VIOLATE the floor returns `none`, so `gated` is never asked to
@@ -401,6 +515,58 @@ theorem refreshFreshnessFloor_discharges {s s' : RecChainedState} {a : RefreshFr
     (h : refreshFreshStep s a = some s') :
     s'.kernel.delegationEpochAt a.child = parentEpoch s.kernel a.child :=
   refreshFreshnessFloor.discharge h
+
+/-- **`spawnMetadataFloor` DISCHARGES** — a committed spawn SUPPLIES the full cap-handoff metadata
+(cap-copy ∧ parent ∧ snapshot ∧ epoch-stamp) WITHOUT a side-hypothesis. This is the delegation handoff the
+born-empty `handler_refines_execFullA_spawn` (which refines against `createCellA`) LEFT UNVERIFIED; the
+obligation produces it from the FULL chained commit (the census-D4 spawn metadata shed). -/
+theorem spawnMetadataFloor_discharges {s s' : RecChainedState} {a : SpawnMetaArgs}
+    (h : spawnMetaStep s a = some s') :
+    heldCapTo s.kernel.caps a.actor a.target ∈ s'.kernel.caps a.child ∧
+    s'.kernel.delegate a.child = some a.actor ∧
+    s'.kernel.delegations a.child = s.kernel.caps a.actor ∧
+    s'.kernel.delegationEpochAt a.child = s.kernel.delegationEpoch a.actor :=
+  spawnMetadataFloor.discharge h
+
+/-- **`factoryMetadataFloor` DISCHARGES** — a committed factory creation SUPPLIES the full install
+(slotCaveats = the factory's program ∧ the field+VK install) WITHOUT a side-hypothesis. This is the
+factory contract the born-empty `handler_refines_execFullA_createCellFromFactory` (which refines against
+`createCellA`, DROPPING `vk`) LEFT UNVERIFIED; the obligation produces it from the FULL chained commit
+(the census-D4 factory metadata shed). -/
+theorem factoryMetadataFloor_discharges {s s' : RecChainedState} {a : FactoryMetaArgs}
+    (h : factoryMetaStep s a = some s') :
+    (∃ e s1, findFactory s.kernel.factories a.vk.toNat = some e ∧
+       createCellChainA s a.actor a.newCell = some s1 ∧
+       s'.kernel.slotCaveats a.newCell = e.caveats ∧
+       s'.kernel.cell a.newCell =
+         setField factoryVkField (installInitialFields (s1.kernel.cell a.newCell) e.initialFields)
+           (.int e.programVk)) :=
+  factoryMetadataFloor.discharge h
+
+/-! ### §4d-TEETH — the metadata floors BITE (the confinement-bypass / program-bypass mutations are
+REJECTED), so the metadata floors are load-bearing, not vacuous. -/
+
+/-- **THE CONFINEMENT-BYPASS POLE (spawn metadata floor BITES).** A spawner with NO cap conferring an
+edge to the parent `target` produces NO commit (`spawnChainA = none`) — so a child cannot be born with a
+manufactured cap to an unrelated target. The metadata floor is load-bearing: the only committing path
+copies a cap the actor REALLY held (the Granovetter premise), exactly the cap the floor's first conjunct
+witnesses. -/
+theorem spawnMetadataFloor_overgrant_rejected (s : RecChainedState) (a : SpawnMetaArgs)
+    (h : (s.kernel.caps a.actor).any (fun cap => confersEdgeTo a.target cap) = false) :
+    spawnMetaStep s a = none := by
+  unfold spawnMetaStep spawnChainA
+  rw [if_neg]; rintro ⟨ha, _⟩; rw [h] at ha; exact absurd ha (by simp)
+
+/-- **THE PROGRAM-BYPASS POLE (factory metadata floor BITES).** A factory creation against an UNKNOWN
+factory VK produces NO commit (`createCellFromFactoryChainA = none`, dregg1 `apply.rs:3140`) — so no cell
+can be minted CLAIMING a factory's program without that factory existing. The metadata floor is
+load-bearing: the only committing path installs a REGISTERED factory's caveats, exactly what the floor's
+`∃ e, findFactory … = some e ∧ slotCaveats = e.caveats` clause witnesses. -/
+theorem factoryMetadataFloor_unknown_factory_rejected (s : RecChainedState) (a : FactoryMetaArgs)
+    (h : findFactory s.kernel.factories a.vk.toNat = none) :
+    factoryMetaStep s a = none := by
+  unfold factoryMetaStep
+  exact createCellFromFactoryChainA_unknown_factory_fails s a.actor a.newCell a.vk h
 
 /-! ### §5b — the freshness floor BITES: a committed (hence stamped) child is NOT stale, AND an
 UN-stamped post IS stale (the mutation pole) — so the freshness floor is load-bearing, not vacuous. -/
@@ -589,11 +755,17 @@ theorem noteSpendNonMembershipFloor_proofless_rejected (s : RecChainedState)
 #assert_axioms authNonAmpFloor
 #assert_axioms spawnFreshnessFloor
 #assert_axioms refreshFreshnessFloor
+#assert_axioms spawnMetadataFloor
+#assert_axioms factoryMetadataFloor
 #assert_axioms reservedFieldFloor_discharges
 #assert_axioms nonceMonotoneFloor_discharges
 #assert_axioms authNonAmpFloor_discharges
 #assert_axioms spawnFreshnessFloor_discharges
 #assert_axioms refreshFreshnessFloor_discharges
+#assert_axioms spawnMetadataFloor_discharges
+#assert_axioms factoryMetadataFloor_discharges
+#assert_axioms spawnMetadataFloor_overgrant_rejected
+#assert_axioms factoryMetadataFloor_unknown_factory_rejected
 #assert_axioms reservedFieldFloor_bites
 #assert_axioms nonceMonotoneFloor_bites
 #assert_axioms authNonAmpFloor_overgrant_rejected
