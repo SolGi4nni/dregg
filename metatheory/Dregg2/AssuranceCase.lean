@@ -374,20 +374,28 @@ for every live effect:
     (transfer/burn/mint/bridgeMint/setField/incrementNonce), `proof_verify.rs` step 6b overrides the
     published limb to `compute_authority_digest_felt`/`lifecycle_felt_cell(trusted post-cell)`, so the
     gate forces `pubPost = digest(stepped pre)`, not `published == published` (both-polarity tests green).
-  • THE EPOCH/SNAPSHOT MOVES — ALL FORCED (residual era closed). The three epoch/snapshot moves are now
-    write-gate-forced, not carried residuals. `RevokeDelegationEpochResidual` is forced by `epochBumpGate`
-    on the deployed rotated `B_EPOCH = 30` limb (the parent's OWN before→after bump, a within-row force).
-    `SpawnEpochStampResidual` / `RefreshEpochStampResidual` are CROSS-CELL (`child.delegationEpochAt =
-    parent.delegationEpoch`), so they are forced NOT on the deployed single-cell row (which cannot reach
-    the parent's column) but at the ABSTRACT per-effect descriptor (`spawnE`/`refreshDelegationE`, whose
-    `view = chainView` commits over the WHOLE kernel): `delegationEpochAt` is bound in a forced PRODUCT
-    `funcComponent` `(delegations, delegationEpochAt)` whose expected value reads `before.delegationEpoch
-    parent` (`spawnEpochAtMap`/`refreshEpochAtMap`), so the injective product digest FORCES the stamp =
-    parent_epoch — the SAME mechanism the `delegations` map already uses. `spawn_circuit_refines_spec`
-    now yields `SpawnFullSpec` and `refreshDelegation_circuit_refines_spec` yields `RefreshDelegationFullSpec`
-    DIRECTLY; a stale-stamp forge violates the product `postClause` and is UNSAT
-    (`refreshDelegation_full_sat_rejects_stale_stamp`). VK-FREE (no new committed limb; the stamp was
-    already commitment-bound — this moves it from the framed face into the forced component).
+  • THE EPOCH/SNAPSHOT MOVES — ALL FORCED AT THE ABSTRACT DESCRIPTOR (residual era closed). The three
+    epoch/snapshot moves are bound in forced PRODUCT components, not carried residuals. All three are
+    CROSS-CELL or whole-registry moves (the parent's epoch / the child's snapshot+stamp), so they are
+    forced at the ABSTRACT per-effect descriptor (whose `view = chainView` commits over the WHOLE kernel),
+    each via an injective `funcComponent` PRODUCT digest reading the stepped maps off the SAME before-kernel:
+      – `spawnE` / `refreshDelegationE` bind `(delegations, delegationEpochAt)` to
+        `spawnEpochAtMap`/`refreshEpochAtMap` (the birth/restore stamp = `before.delegationEpoch parent`);
+        `spawn_circuit_refines_spec` yields `SpawnFullSpec` and `refreshDelegation_circuit_refines_spec`
+        yields `RefreshDelegationFullSpec` DIRECTLY, a stale-stamp forge UNSAT
+        (`refreshDelegation_full_sat_rejects_stale_stamp`).
+      – `revokeDelegationFullE` (the DUAL descriptor, `Inst/revokeDelegationFullA.lean`) binds the second
+        component `(delegationEpoch, delegations, delegationEpochAt)` to the full epoch step (parent `+1`,
+        child snapshot cleared, stamp reset); `revokeDelegationFull_full_sound` yields the STRENGTHENED
+        `RevokeDelegationFullSpec` DIRECTLY, a frozen-epoch forge UNSAT
+        (`revokeDelegationFull_rejects_frozen_epoch`). This SUPERSEDES the prior within-row `epochBumpGate`
+        partial-discharge (which forced only the parent bump, leaving the child clears commitment-bound):
+        all three clauses are now PROVEN-forced, the `RevokeDelegationEpochResidual` conjunct dropped from
+        every per-effect bridge (abstract `revokeDelegationCircuitStep`, emitted `revokeDelegationEmittedStep`,
+        the `TurnEmit`/`TurnEffectRefinement` revoke arms).
+    The digest is the SAME mechanism the `delegations` map already uses. VK-NOTE: the revoke descriptor
+    gains a second committed component (the epoch-triple digest folds into the state-commit), so the deployed
+    `revokeDelegationA` VK changes; spawn/refresh were already commitment-bound (VK-free move).
 =========================================================================== -/
 
 /-- **`integrity_guarantee` (NOW A REAL STATEMENT — the receipt binds the WHOLE post-state).**

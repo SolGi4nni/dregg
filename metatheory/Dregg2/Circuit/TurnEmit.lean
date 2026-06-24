@@ -284,6 +284,8 @@ def stepEmittedEncodeAgrees
     (DCaps : Caps → ℤ) (hDCaps : Function.Injective DCaps)
     (DDel : (CellId → Option CellId) → ℤ) (hDDel : Function.Injective DDel)
     (DDgs : (CellId → List Cap) × (CellId → Nat) → ℤ) (hDDgs : Function.Injective DDgs)
+    (DRevStep : (CellId → Nat) × (CellId → List Cap) × (CellId → Nat) → ℤ)
+    (hDRevStep : Function.Injective DRevStep)
     (DLife : (CellId → Nat) → ℤ) (hDLife : Function.Injective DLife)
     (DDC : (CellId → Nat) → ℤ) (hDDC : Function.Injective DDC)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
@@ -321,10 +323,12 @@ def stepEmittedEncodeAgrees
   | .revoke holder t =>
       assignmentOf sw.assignment = encodeE2 S (revokeE D_caps hD_caps) st ⟨holder, t⟩ st'
   | .revokeDelegationA holder t =>
-      -- §EPOCH: the deployed cap-edge wire CONJOINED with the NAMED epoch residual (parent epoch bump +
-      -- child snapshot stale) — the FAITHFUL emitted relation for `.revokeDelegationA`.
-      assignmentOf sw.assignment = encodeE2 S (revokeE D_caps hD_caps) st ⟨holder, t⟩ st'
-      ∧ Dregg2.Circuit.EffectRefinement.RevokeDelegationEpochResidual st holder t st'
+      -- §EPOCH: the FORCED dual wire — cap-edge `removeEdge` + the FORCED epoch step (bound by the second
+      -- component's product digest). No residual; the FAITHFUL emitted relation for `.revokeDelegationA`.
+      assignmentOf sw.assignment =
+        encodeE2Dual S
+          (Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullE D_caps hD_caps DRevStep hDRevStep)
+          st ⟨holder, t⟩ st'
   | .setFieldA actor cell f v =>
       assignmentOf sw.assignment = encodeE CS setFieldE st { actor, cell, f, v } st'
   | .emitEventA actor cell topic data =>
@@ -403,6 +407,8 @@ theorem step_emitted_refines_fullActionStep
     (DCaps : Caps → ℤ) (hDCaps : Function.Injective DCaps)
     (DDel : (CellId → Option CellId) → ℤ) (hDDel : Function.Injective DDel)
     (DDgs : (CellId → List Cap) × (CellId → Nat) → ℤ) (hDDgs : Function.Injective DDgs)
+    (DRevStep : (CellId → Nat) × (CellId → List Cap) × (CellId → Nat) → ℤ)
+    (hDRevStep : Function.Injective DRevStep)
     (DLife : (CellId → Nat) → ℤ) (hDLife : Function.Injective DLife)
     (DDC : (CellId → Nat) → ℤ) (hDDC : Function.Injective DDC)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
@@ -416,18 +422,19 @@ theorem step_emitted_refines_fullActionStep
     (hRestLifecycle : RestIffNoLifecycle S.RH)
     (hRestLifecycleDeathCert : RestIffNoLifecycleDeathCert S.RH)
     (hRestDelegations : RestIffNoDelegations S.RH)
+    (hRestRevEpoch : Dregg2.Circuit.Inst.RevokeDelegationFullA.RestIffNoCapsEpoch S.RH)
     (hRestCellHeaps : Dregg2.Circuit.Inst.HeapWriteA.RestIffNoCellHeaps S.RH)
     (hLog : logHashInjective S.LH)
     (sw : StepWitness) (st st' : RecChainedState) (fa : FullActionA)
     (h : stepEmittedSat defaultDescriptorLookup sw st st' fa)
     (hEnc : stepEmittedEncodeAgrees S D_bal hD_bal D_caps hD_caps LE_cell LE_null
       cN hN hLE_cell hLE_null CS DBal hDBal DSide hDSide DLeg hDLeg
-      DCaps hDCaps DDel hDDel DDgs hDDgs DLife hDLife DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth DHeaps hDHeaps
+      DCaps hDCaps DDel hDDel DDgs hDDgs DRevStep hDRevStep DLife hDLife DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth DHeaps hDHeaps
       sw st st' fa)
     (hcircuit :
       fullActionCircuitStepInst S D_bal hD_bal D_caps hD_caps LE_cell LE_null cN hN
         hLE_cell hLE_null CS DBal hDBal DSide hDSide DLeg hDLeg
-        DCaps hDCaps DDel hDDel DDgs hDDgs DLife hDLife DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth DHeaps hDHeaps
+        DCaps hDCaps DDel hDDel DDgs hDDgs DRevStep hDRevStep DLife hDLife DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth DHeaps hDHeaps
         st fa st') :
     fullActionStep st fa st' := by
   unfold fullActionCircuitStepInst fullActionCircuitStep at hcircuit
@@ -490,12 +497,10 @@ theorem step_emitted_refines_fullActionStep
         ((setField_emitted_equiv_circuit CS st ⟨actor, cell, f, v⟩ st').mpr hc)
   | .revokeDelegationA holder t =>
       simp only [fullActionStep]
-      -- §EPOCH: the FAITHFUL `RevokeDelegationFullSpec` from the emitted cap-edge wire PLUS the NAMED
-      -- epoch residual (`revokeDelegationEmittedStep` conjoins them).
-      obtain ⟨hwire, hresidual⟩ := hcircuit
-      exact revokeDelegation_emitted_refines_spec S D_caps hD_caps
-        (restIffNoCaps_delegate_to_revoke S.RH hRestCaps) hLog st ⟨holder, t⟩ st'
-        ⟨(revoke_emitted_equiv_circuit S D_caps hD_caps st ⟨holder, t⟩ st').mpr hwire, hresidual⟩
+      -- §EPOCH: the FAITHFUL `RevokeDelegationFullSpec` from the FORCED dual circuit step (cap-edge
+      -- `removeEdge` + the FORCED epoch step, bound by the second component's product digest). No residual.
+      exact Dregg2.Circuit.EffectRefinement.revokeDelegation_circuit_refines_spec S D_caps hD_caps
+        DRevStep hDRevStep hRestRevEpoch hLog st ⟨holder, t⟩ st' hcircuit
   | .emitEventA actor cell topic data =>
       simp only [fullActionStep]
       rcases hcircuit with ⟨hwf, hwf', hc⟩
@@ -540,10 +545,10 @@ theorem step_emitted_refines_fullActionStep
       -- CIRCUIT fold); `fullAction_circuit_refines_spec` discharges circuit ⊑ spec, and
       -- `hcircuit` is exactly that circuit acceptance.
       exact fullAction_circuit_refines_spec S D_bal hD_bal D_caps hD_caps LE_cell LE_null cN hN hLE_cell hLE_null CS hCSN hCSL hRestFrame
-        hLogCS DBal hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs DLife hDLife
+        hLogCS DBal hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs DRevStep hDRevStep DLife hDLife
         DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth DHeaps hDHeaps hRestBal hRestAccounts hRestSpawn hRestCaps hRestNull
         hRestCommitments hRestFactory
-        hRestLifecycle hRestLifecycleDeathCert hRestDelegations hRestCellHeaps hLog st (.exerciseA actor target inner)
+        hRestLifecycle hRestLifecycleDeathCert hRestDelegations hRestRevEpoch hRestCellHeaps hLog st (.exerciseA actor target inner)
         st' hcircuit
   | .createCellFromFactoryA actor newCell vk =>
       simp only [fullActionStep]

@@ -488,34 +488,52 @@ theorem revoke_emitted_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Func
     (revokeCircuitStep S D hD) revokeSpecStep (revoke_circuit_refines_spec S D hD hRest hLog)
     (fun pre args post => revoke_emitted_equiv_circuit S D hD pre args post) s args s' h
 
-/-! ## §12.EPOCH — the FAITHFUL emitted delegation-revoke (the deployed cap-edge wire + the epoch residual).
+/-! ## §12.EPOCH — the FAITHFUL emitted delegation-revoke (the FORCED dual wire — cap-edge + epoch step).
 
-`.revokeDelegationA` meets the STRENGTHENED `RevokeDelegationFullSpec`. The emitted `revokeE` wire binds the
-cap-edge `RevokeSpec`; the epoch step (parent epoch bumped + child snapshot staled) rides the NAMED
-`RevokeDelegationEpochResidual` (commitment-bound, write-gate residual). The emitted step CONJOINS them. -/
+`.revokeDelegationA` meets the STRENGTHENED `RevokeDelegationFullSpec`. The emitted wire is now the FORCED
+DUAL descriptor `revokeDelegationFullE` (`Inst/revokeDelegationFullA.lean`): the cap-edge `removeEdge`
+(`active1`) AND the FORCED epoch step (`active2` — parent epoch bumped + child snapshot cleared + stamp
+reset, bound by the second component's injective product digest). NO carried residual — the epoch step is
+gate-forced exactly as the spawn/refresh `delegationEpochAt` stamps are. -/
 
-/-- **`revokeDelegationEmittedStep`** — the emitted `revokeEmittedStep` CONJOINED with the NAMED epoch
-residual. The FAITHFUL emitted-wire relation for `.revokeDelegationA`. -/
+/-- **`revokeDelegationEmittedStep`** — the FORCED dual emitted wire for `.revokeDelegationA`
+(`effect2dualEmittedStepLocal` of `revokeDelegationFullE`). No conjoined residual. -/
 def revokeDelegationEmittedStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (DStep : (CellId → Nat) × (CellId → List Cap) × (CellId → Nat) → ℤ)
+    (hDStep : Function.Injective DStep)
     (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState) : Prop :=
-  revokeEmittedStep S D hD s args s'
-  ∧ RevokeDelegationEpochResidual s args.holder args.t s'
+  effect2dualEmittedStepLocal S
+    (Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullE D hD DStep hDStep)
+    Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullAAirName s ⟨args.holder, args.t⟩ s'
 
 /-- **`revokeDelegation_emitted_refines_spec` — emitted wire ⟹ STRENGTHENED `RevokeDelegationFullSpec`.**
-From the emitted cap-edge wire (forcing `RevokeSpec`) PLUS the NAMED epoch residual, the FAITHFUL
-`RevokeDelegationFullSpec` holds. -/
+The FORCED dual emitted wire ALONE yields the FAITHFUL `RevokeDelegationFullSpec` (cap-edge removeEdge +
+the FORCED epoch step), no residual. -/
 theorem revokeDelegation_emitted_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Dregg2.Circuit.Inst.Revoke.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (DStep : (CellId → Nat) × (CellId → List Cap) × (CellId → Nat) → ℤ)
+    (hDStep : Function.Injective DStep)
+    (hRest : Dregg2.Circuit.Inst.RevokeDelegationFullA.RestIffNoCapsEpoch S.RH)
+    (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState)
-    (h : revokeDelegationEmittedStep S D hD s args s') :
-    Dregg2.Circuit.Spec.AuthorityRevocation.RevokeDelegationFullSpec s args.holder args.t s' := by
-  obtain ⟨hemit, hep, hdgs, hstamp⟩ := h
-  have hspec : revokeSpecStep s args s' :=
-    revoke_emitted_refines_spec S D hD hRest hLog s args s' hemit
-  obtain ⟨_, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hsc, hfac, hlif,
-         hdc, hdel, _hde, _hdels, _hdea, hhp⟩ := hspec
-  exact ⟨trivial, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hsc, hfac, hlif,
-         hdc, hdel, hhp, hep, hdgs, hstamp⟩
+    (h : revokeDelegationEmittedStep S D hD DStep hDStep s args s') :
+    Dregg2.Circuit.Spec.AuthorityRevocation.RevokeDelegationFullSpec s args.holder args.t s' :=
+  effect2dual_emitted_refines_bespoke_spec S
+    (Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullE D hD DStep hDStep)
+    Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullAAirName
+    (fun pre a post =>
+      satisfiedE2Dual S (Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullE D hD DStep hDStep)
+        (encodeE2Dual S (Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullE D hD DStep hDStep)
+          pre a post))
+    (fun pre a post =>
+      Dregg2.Circuit.Spec.AuthorityRevocation.RevokeDelegationFullSpec pre a.holder a.t post)
+    (fun pre a post hc =>
+      Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFull_full_sound
+        S D hD DStep hDStep hRest hLog pre a post hc)
+    (fun pre a post =>
+      effect2dual_emitted_equiv_circuit_local S
+        (Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullE D hD DStep hDStep)
+        Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullAAirName pre a post)
+    s ⟨args.holder, args.t⟩ s' h
 
 /-! ## §16 — SetFieldA (v1 EffectCommit). -/
 

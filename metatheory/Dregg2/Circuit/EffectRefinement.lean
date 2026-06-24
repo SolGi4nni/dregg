@@ -23,6 +23,7 @@ import Dregg2.Circuit.Inst.createCellA
 import Dregg2.Circuit.Inst.spawnA
 import Dregg2.Circuit.Inst.noteCreateA
 import Dregg2.Circuit.Inst.revoke
+import Dregg2.Circuit.Inst.revokeDelegationFullA
 import Dregg2.Circuit.EffectCommit
 import Dregg2.Circuit.EffectInstances
 import Dregg2.Circuit.Inst.exerciseA
@@ -809,19 +810,16 @@ on the deployed wire. The deployed `EffectVmEmitRotationV3.revokeDelegationWrite
 limb was previously a FREE witness limb (`weldsAtNoCapRoot` does not weld it, `rotateV3CapWrite` does not
 freeze it), so the epoch move rode OFF-ROW; the gate closes that.
 
-The two REMAINING `RevokeDelegationEpochResidual` clauses stay commitment-BOUND (the child's `delegations`
-snapshot is cleared by the cap/deleg-tree REMOVE; the child's `delegationEpochAt` reset is folded into the
-opaque `record_digest`, limb 24 — it has no row-accessible scalar limb to gate against, the same shape as
-the spawn/refresh `delegationEpochAt` stamp). So the residual is now PARTIALLY discharged-at-the-wire: the
-epoch BUMP (the freshness-forgery vector) is forced; the digest-bound child clears remain the fail-closed
-data-bearing carrier. -/
+The epoch step is no longer a CARRIED residual: the dedicated DUAL descriptor `revokeDelegationFullE`
+(`Inst/revokeDelegationFullA.lean`) binds the three delegation registries as a FORCED second component, so
+the FAITHFUL `RevokeDelegationFullSpec` falls straight out of the dual apex (the SAME forcing the
+spawn/refresh `delegationEpochAt` stamps received via their product components). -/
 
-/-- **`RevokeDelegationEpochResidual`** — the NAMED epoch-step residual the deployed descriptor binds in
-the commitment (limbs 30 + 24). The parent's `delegationEpoch += 1` clause is now DEPLOYED-FORCED by the
-`epochBumpGate` (limb 30, `revokeDelegationWriteV3_forces_epoch_bump`); the remaining two clauses (the
-child's `delegations` snapshot cleared, the child's `delegationEpochAt` stamp reset — folded into the opaque
-`record_digest`, limb 24) stay commitment-BOUND. Carried as a Prop (a trace-fill identity of the committed
-delegation limbs), never an axiom. -/
+/-- **`RevokeDelegationEpochResidual`** — RETAINED only as the documentation of WHAT the forced epoch step
+delivers (the parent's `delegationEpoch += 1`, the child's `delegations` snapshot cleared, the child's
+`delegationEpochAt` stamp reset). No longer load-bearing: `revokeDelegationCircuitStep` is now the FORCED
+dual step, and `revokeDelegation_circuit_refines_spec` PROVES this Prop out of the descriptor rather than
+carrying it as a hypothesis. -/
 def RevokeDelegationEpochResidual (s : RecChainedState) (parent child : CellId)
     (s' : RecChainedState) : Prop :=
   s'.kernel.delegationEpoch
@@ -829,32 +827,32 @@ def RevokeDelegationEpochResidual (s : RecChainedState) (parent child : CellId)
   ∧ s'.kernel.delegations = (fun c => if c = child then [] else s.kernel.delegations c)
   ∧ s'.kernel.delegationEpochAt = (fun c => if c = child then 0 else s.kernel.delegationEpochAt c)
 
-/-- **`revokeDelegationCircuitStep`** — the deployed `revokeCircuitStep` (cap-edge `RevokeSpec`, forced)
-CONJOINED with the NAMED `RevokeDelegationEpochResidual` (the epoch step, commitment-bound, write-gate
-residual). The FAITHFUL circuit-side relation for `.revokeDelegationA`. -/
+/-- **`revokeDelegationCircuitStep`** — the FORCED dual circuit step for `.revokeDelegationA`:
+`satisfiedE2Dual` of `revokeDelegationFullE` (cap-edge `removeEdge` `active1` + the FORCED epoch-step
+`active2`). The epoch step is bound by the second component's injective product digest — NO conjoined
+residual. The FAITHFUL circuit-side relation for `.revokeDelegationA`. -/
 def revokeDelegationCircuitStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (DStep : (CellId → Nat) × (CellId → List Cap) × (CellId → Nat) → ℤ)
+    (hDStep : Function.Injective DStep)
     (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState) : Prop :=
-  revokeCircuitStep S D hD s args s' ∧ RevokeDelegationEpochResidual s args.holder args.t s'
+  satisfiedE2Dual S (Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullE D hD DStep hDStep)
+    (encodeE2Dual S (Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFullE D hD DStep hDStep)
+      s ⟨args.holder, args.t⟩ s')
 
-/-- **`revokeDelegation_circuit_refines_spec` — circuit ⟹ STRENGTHENED `RevokeDelegationFullSpec`.** From
-the deployed `revokeCircuitStep` (forcing the cap-edge `RevokeSpec` — the `caps` removeEdge + log + the
-thirteen-field frame; the `delegationEpoch`/`delegations`/`delegationEpochAt` frame clauses of `RevokeSpec`
-are DROPPED) PLUS the NAMED epoch residual, the FAITHFUL `RevokeDelegationFullSpec` holds (the parent epoch
-bumped + child snapshot staled). -/
+/-- **`revokeDelegation_circuit_refines_spec` — circuit ⟹ STRENGTHENED `RevokeDelegationFullSpec`.** The
+FORCED dual step ALONE yields the FAITHFUL `RevokeDelegationFullSpec` (the `caps` removeEdge + log + the
+thirteen-field frame AND the epoch step — parent epoch bumped `+1`, child snapshot cleared, stamp reset).
+The epoch step is gate-forced by the second component's product digest, no carried residual. -/
 theorem revokeDelegation_circuit_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Dregg2.Circuit.Inst.Revoke.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (DStep : (CellId → Nat) × (CellId → List Cap) × (CellId → Nat) → ℤ)
+    (hDStep : Function.Injective DStep)
+    (hRest : Dregg2.Circuit.Inst.RevokeDelegationFullA.RestIffNoCapsEpoch S.RH)
+    (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState)
-    (h : revokeDelegationCircuitStep S D hD s args s') :
-    RevokeDelegationFullSpec s args.holder args.t s' := by
-  obtain ⟨hcirc, hep, hdgs, hstamp⟩ := h
-  have hspec : RevokeSpec s args.holder args.t s' :=
-    revoke_circuit_refines_spec S D hD hRest hLog s args s' hcirc
-  -- RevokeSpec gives the cap-edge removeEdge + log + the thirteen non-epoch frame clauses; the three
-  -- epoch-step clauses come from the NAMED residual. Repackage into RevokeDelegationFullSpec.
-  obtain ⟨_, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hsc, hfac, hlif,
-         hdc, hdel, _hde, _hdels, _hdea, hhp⟩ := hspec
-  exact ⟨trivial, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hsc, hfac, hlif,
-         hdc, hdel, hhp, hep, hdgs, hstamp⟩
+    (h : revokeDelegationCircuitStep S D hD DStep hDStep s args s') :
+    RevokeDelegationFullSpec s args.holder args.t s' :=
+  Dregg2.Circuit.Inst.RevokeDelegationFullA.revokeDelegationFull_full_sound
+    S D hD DStep hDStep hRest hLog s ⟨args.holder, args.t⟩ s' h
 
 #assert_axioms revokeDelegation_circuit_refines_spec
 
