@@ -233,6 +233,14 @@ fn effect_body(effect: &Effect) -> String {
             "burn {amount} from slot {slot} of cell {} (supply reduced, disclosed)",
             hx32(target.as_bytes())
         ),
+        Effect::Mint {
+            target,
+            slot,
+            amount,
+        } => format!(
+            "mint {amount} into slot {slot} of cell {} (supply increased, disclosed)",
+            hx32(target.as_bytes())
+        ),
         Effect::AttenuateCapability { cell, slot, .. } => format!(
             "narrow (attenuate) the capability in slot {slot} of cell {}",
             hx32(cell.as_bytes())

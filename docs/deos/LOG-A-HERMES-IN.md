@@ -295,3 +295,82 @@ sandbox; the live image untouched).
   direct path above because Hermes does not yet expose `run_js` (see the seam note).
 - `starbridge-v2/src/main.rs` — `--render-live-brain`: builds the live cockpit World,
   bakes before/after, drives the real `hermes-acp` brain, and runs its chosen JS.
+
+---
+
+## DREGG IS THE HOST — the polarity inversion (dregg-as-ADOS)
+
+Everything above registers dregg's tools INTO hermes-acp's ACP session: **hermes
+is the host**, dregg's `run_js`/`terminal` are guests added *alongside* hermes's
+own base `[hermes-acp]` tools — and those base tools (an unconfined `terminal` /
+`write_file` / `web`) are the leak. The authority gate (`bridge.rs`) confines them
+at the *authority* face, but the agent **process** still runs with full ambient OS
+authority.
+
+`deos-hermes/src/host.rs` (`DreggHost`) inverts the polarity. **dregg hosts the
+agent; the agent does not host dregg.** We do NOT fork hermes — the OS jail
+neutralizes hermes's leaky base tools at the OS level, whatever its tool table
+says.
+
+### The three legs (each proven by running — `tests/dregg_hosts_the_agent.rs`)
+
+1. **The agent runs inside a dregg jail.** `DreggHost::run_hosted_agent` spawns
+   the agent body INSIDE a confined firmament PD (`confined.rs` →
+   `ProcessKernel::spawn_pd_confined_with`) whose OS sandbox (macOS Seatbelt /
+   Linux ns+seccomp+landlock) denies ambient file/exec/network + every inherited
+   fd. The agent's ONLY channel is its firmament Endpoint — the dregg control
+   channel. hermes's own base shell/file tools, run in this process, hit the jail
+   walls (`open` denied, `socket` denied, `execve` denied) and go INERT.
+
+2. **dregg's tools are the only *effective* effect-path.** The jailed agent's only
+   way to *cause* anything is a dregg request over the Endpoint, routed through
+   `McpToolHost` (cap-gated, receipted; `run_js` → a deos-js World, `terminal` → a
+   nested confined PD). Every effect lands in OUR container, never the host.
+   (Leg (a): `terminal` execs in a PD with file/net/exec denied + a dregg receipt.)
+
+3. **Structured, opt-in egress.** `egress.rs` (`EgressPolicy`) is the host's
+   standing set of granted doors — **sealed by default**. `grant_read(path)` opens
+   ONE specific host subpath, threaded into the jail's sandbox profile as a single
+   allow-rule (`spawn_pd_confined_with` carries the `Confinement`); that path — and
+   ONLY that path — becomes readable inside the jail. A SIBLING outside the grant
+   stays denied (a named door, not a hole). `revoke(path)` closes it. The agent
+   never mints its own egress; the door is the host's cap, revocable.
+
+### What is REAL vs STAND-IN (honest)
+
+REAL: the JAIL (file/net/exec/fd denied — the four base teeth + the three
+base-tool-escape teeth, proven in-PD: an unconfined shell via `execve(/bin/sh)`,
+a host-FS read via `open(/etc/passwd)`, an arbitrary `socket(AF_INET)` — each
+DENIED); the EGRESS door (granted host path readable, sibling denied, both
+proven in-PD; sealed/revoke close it); the dregg TOOL effect-path (cap-gated,
+receipted turns on the verified executor, asserted on `McpToolHost`'s tape).
+
+STAND-IN: the agent's BRAIN. A maximally-confined PD denies `execve`, so it cannot
+host a process that `execve`s a python venv (and the venv here is broken —
+`ModuleNotFoundError: No module named 'acp'`). So the jail body is a faithful
+scripted agent that does what a jailed brain's tool-loop does: reach for its base
+tools (each denied), call dregg's tools (receipted), and probe the egress door.
+**THE EXACT REMAINING WIRE:** compile hermes's agent loop into the PD body (or
+grant `execve` of exactly the agent image), so the live brain runs where the
+scripted body runs today. Everything around it — the jail, the dregg-tools-only
+effect-path, the structured egress — is built and green.
+
+### The firmament knob
+
+`sel4/dregg-firmament/src/process_kernel.rs::spawn_pd_confined_with(granted,
+confinement, body)` is the one knob this needed: it confines to a caller-supplied
+`Confinement` (the Endpoint-only jail PLUS any granted egress read-paths) instead
+of the implicit Endpoint-only one, forcing the control socket into the keep-list.
+A caller that grants nothing gets the same jail as `spawn_pd_confined`. The egress
+paths are canonicalized (symlink-resolved) before they enter the SBPL/Landlock
+profile, because the OS sandbox matches the resolved path the kernel sees after
+`open` follows symlinks (macOS `$TMPDIR` `/var/folders/…` → `/private/var/…`).
+
+### Run it
+
+```
+cd deos-hermes
+cargo test --test dregg_hosts_the_agent           # the three legs
+cargo test                                        # full suite (incl. red-team)
+cargo test --features js-agent                    # + the deos-js run_js leg
+```

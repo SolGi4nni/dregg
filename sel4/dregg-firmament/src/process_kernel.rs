@@ -1196,6 +1196,16 @@ impl std::fmt::Display for SpawnError {
 
 impl std::error::Error for SpawnError {}
 
+/// The confinement profile `spawn_pd_inner` may apply when `confine` is on: a
+/// real [`crate::sandbox::Confinement`] under `process-pd-sandbox` (so an egress
+/// grant flows into the SBPL / Landlock profile), or the unit type when the
+/// sandbox feature is off (the `confinement` arg is then always `None` and the
+/// implicit Endpoint-only path runs — no sandbox to vary).
+#[cfg(feature = "process-pd-sandbox")]
+type ConfinementProfile = crate::sandbox::Confinement;
+#[cfg(not(feature = "process-pd-sandbox"))]
+type ConfinementProfile = ();
+
 impl ProcessKernel {
     /// SPAWN a PD as a forked CHILD PROCESS — the v1 isolation upgrade's core.
     ///
@@ -1228,7 +1238,7 @@ impl ProcessKernel {
     where
         F: FnOnce(KernelClient, Vec<CapHandle>) -> i32,
     {
-        self.spawn_pd_inner(granted, body, false)
+        self.spawn_pd_inner(granted, body, false, None)
     }
 
     /// SPAWN a CONFINED PD — the SANDBOXED FIRMAMENT spawn (Phase-0). Identical
@@ -1258,7 +1268,37 @@ impl ProcessKernel {
     where
         F: FnOnce(KernelClient, Vec<CapHandle>) -> i32,
     {
-        self.spawn_pd_inner(granted, body, true)
+        self.spawn_pd_inner(granted, body, true, None)
+    }
+
+    /// SPAWN a CONFINED PD whose sandbox profile is the caller's
+    /// [`Confinement`](crate::sandbox::Confinement) (the Endpoint-only floor PLUS
+    /// any explicitly-granted egress) instead of the implicit Endpoint-only one.
+    ///
+    /// This is the **structured-egress knob**: [`Self::spawn_pd_confined`] always
+    /// confines to Endpoint-only (no file, no net, no exec — the jail). When a HOST
+    /// wants to open ONE specific, granted, revocable door to the outside (a host
+    /// read-path the agent's egress tool was granted a cap for), it passes a
+    /// [`Confinement`](crate::sandbox::Confinement) carrying that grant
+    /// (`with_read_path`), and ONLY that path becomes readable inside the PD —
+    /// every other ambient authority is still denied. The control socket is forced
+    /// into the keep-list, so the firmament Endpoint always survives.
+    ///
+    /// Off-by-default by construction: a caller that grants nothing gets the same
+    /// jail as [`Self::spawn_pd_confined`]. Fail-closed exactly the same: if the
+    /// sandbox cannot be applied, the child `_exit`s [`CONFINE_FAILED_EXIT`] before
+    /// the body runs.
+    #[cfg(all(feature = "process-pd-sandbox", unix))]
+    pub fn spawn_pd_confined_with<F>(
+        &self,
+        granted: Vec<CapHandle>,
+        confinement: crate::sandbox::Confinement,
+        body: F,
+    ) -> Result<PdProcess, SpawnError>
+    where
+        F: FnOnce(KernelClient, Vec<CapHandle>) -> i32,
+    {
+        self.spawn_pd_inner(granted, body, true, Some(confinement))
     }
 
     /// SPAWN a CONFINED PD that ALSO holds a dedicated SURFACE Endpoint — the
@@ -1415,6 +1455,12 @@ impl ProcessKernel {
         granted: Vec<CapHandle>,
         body: F,
         confine: bool,
+        // When `Some`, the child confines to THIS profile (the Endpoint-only floor
+        // plus any explicitly-granted egress — `spawn_pd_confined_with`) instead of
+        // the implicit Endpoint-only one. The control socket fd is always forced
+        // into its keep-list so the firmament Endpoint survives. `None` = the
+        // implicit Endpoint-only jail (`spawn_pd_confined` / `spawn_pd`).
+        confinement: Option<ConfinementProfile>,
     ) -> Result<PdProcess, SpawnError>
     where
         F: FnOnce(KernelClient, Vec<CapHandle>) -> i32,
@@ -1449,7 +1495,17 @@ impl ProcessKernel {
             // firmament Endpoint): no file/network/exec ambient authority.
             #[cfg(all(feature = "process-pd-sandbox", unix))]
             if confine {
-                let c = crate::sandbox::Confinement::endpoint_only(child_fd);
+                // The caller's profile (Endpoint-only floor + any granted egress)
+                // if one was passed, ELSE the implicit Endpoint-only jail. Either
+                // way the control socket is forced into the keep-list so the
+                // firmament Endpoint always survives.
+                let c = match confinement {
+                    Some(mut c) => {
+                        c = c.with_fds([child_fd]);
+                        c
+                    }
+                    None => crate::sandbox::Confinement::endpoint_only(child_fd),
+                };
                 if let Err(e) = crate::sandbox::confine_child(&c) {
                     // Fail-closed: confinement is the WHOLE point. If it could
                     // not be applied we refuse to run the body un-confined.
@@ -1460,7 +1516,10 @@ impl ProcessKernel {
                 }
             }
             #[cfg(not(all(feature = "process-pd-sandbox", unix)))]
-            let _ = confine; // no sandbox feature → no confinement available.
+            {
+                let _ = confine; // no sandbox feature → no confinement available.
+                let _ = confinement;
+            }
 
             let client = unsafe { KernelClient::from_raw_fd(child_fd) };
             // Run the PD body with its granted handles. Its return is the exit

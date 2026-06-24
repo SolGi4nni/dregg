@@ -82,6 +82,16 @@ pub mod probe {
     pub const ONLY_ENDPOINT_FD: i32 = 0x8;
     /// All four confinement teeth held.
     pub const ALL: i32 = IPC_WORKS | OPEN_DENIED | NET_DENIED | ONLY_ENDPOINT_FD;
+
+    /// EGRESS tooth — the GRANTED egress subpath WAS readable inside the PD (the
+    /// structured door is open). Only meaningful for a PD launched with an egress
+    /// grant ([`super::launch_confined_with_egress`]); the four base teeth still
+    /// assert the rest of the jail held around it.
+    pub const EGRESS_GRANTED_OPEN: i32 = 0x10;
+    /// EGRESS tooth — a path OUTSIDE the grant (a sibling of the granted door) was
+    /// STILL DENIED inside the PD. Proves the door is to a specific resource, not a
+    /// hole: granting one path does not open its neighbours.
+    pub const EGRESS_SIBLING_DENIED: i32 = 0x20;
 }
 
 /// A handle on a confined agent PD: the forked, OS-sandboxed child + the
@@ -155,6 +165,56 @@ where
         })
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
     Ok(ConfinedAgent { pd })
+}
+
+/// LAUNCH a confined agent whose jail carries the host's STRUCTURED EGRESS grant —
+/// the Endpoint-only jail PLUS exactly the read paths the [`EgressPolicy`] grants,
+/// and nothing else.
+///
+/// This is [`launch_confined`] over the firmament egress knob
+/// ([`ProcessKernel::spawn_pd_confined_with`]): the host folds its live egress
+/// grants into the PD's sandbox profile via
+/// [`EgressPolicy::confinement_for`](crate::egress::EgressPolicy::confinement_for),
+/// so a granted host subpath becomes readable inside the PD while every other
+/// ambient authority (other files, the network, exec, extra fds) stays denied.
+///
+/// A SEALED policy (the default) yields the same jail as [`launch_confined`] — no
+/// door at all. The agent never mints its own egress; the door is the host's
+/// granted, revocable capability.
+pub fn launch_confined_with_egress<F>(
+    kernel: &ProcessKernel,
+    policy: &crate::egress::EgressPolicy,
+    body: F,
+) -> std::io::Result<ConfinedAgent>
+where
+    F: FnOnce(&mut UnixStream) -> i32,
+{
+    // The host builds the profile from its grants. The control fd is forced into
+    // the keep-list by `spawn_pd_confined_with`; here we seed it with a placeholder
+    // (`-1`) the kernel overrides, so only the GRANTED read paths matter to us.
+    let confinement = policy.confinement_for(-1);
+    let pd = kernel
+        .spawn_pd_confined_with(vec![], confinement, move |_client, _granted| {
+            let fd = match recover_endpoint_fd() {
+                Some(fd) => fd,
+                None => return -1,
+            };
+            std::mem::forget(_client);
+            let mut sock = unsafe { UnixStream::from_raw_fd(fd) };
+            body(&mut sock)
+        })
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    Ok(ConfinedAgent { pd })
+}
+
+/// Probe whether a host `path` is READABLE from inside the confined PD — the
+/// egress check. Returns true iff `open(path, O_RDONLY)` succeeds. Run INSIDE a
+/// confined body: a GRANTED path returns true (the door is open), an UNGRANTED one
+/// returns false (the jail denied it). Public so a confined body can fold the
+/// egress verdict bits ([`probe::EGRESS_GRANTED_OPEN`] /
+/// [`probe::EGRESS_SIBLING_DENIED`]).
+pub fn can_read_path(path: &str) -> bool {
+    can_open(path)
 }
 
 /// LAUNCH HERMES (the stand-in ACP agent) into a confined host-PD — the

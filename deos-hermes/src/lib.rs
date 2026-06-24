@@ -66,6 +66,10 @@ pub mod bridge;
 pub mod cockpit_surface;
 #[cfg(unix)]
 pub mod confined;
+#[cfg(unix)]
+pub mod egress;
+#[cfg(unix)]
+pub mod host;
 pub mod grant_registry;
 pub mod mandate;
 pub mod mcp_server;
@@ -84,6 +88,10 @@ pub use acp_client::{
     AcpClient, AcpError, AcpPeer, AcpTransport, JsRunRecord, PromptRun, RunJsHook, StreamEvent,
 };
 pub use bridge::HermesGateway;
+#[cfg(unix)]
+pub use egress::{EgressGrant, EgressPolicy};
+#[cfg(unix)]
+pub use host::{DreggHost, HostedAgentReport};
 pub use grant_registry::{GrantRegistry, MandateKey};
 pub use mcp_server::{ConfinedToolResult, McpServer, McpToolHost, DREGG_TOOL_NAMES};
 
