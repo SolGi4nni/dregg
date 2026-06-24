@@ -143,7 +143,67 @@ impl TurnExecutor {
         // commitment. Sovereign transitions verify through `verify_vm_descriptor2`
         // (the multi-table batch verifier) — the SOLE path. The weak hand-AIR
         // `EffectVmAir` v1 floor is RETIRED.
+        // THE CUSTOM-EFFECT VERIFY-DISPATCH SEAM (house-weld): a proof-carrying
+        // turn may carry app-defined `Effect::Custom` sub-proofs in
+        // `turn.custom_program_proofs`. Each must be dispatched to its registered
+        // verifier BEFORE the state transition commits — a custom effect is only
+        // admitted if its registered verifier accepts. Fail-closed: an
+        // unregistered vk_hash rejects the whole turn (no silent pass).
+        self.enforce_custom_effect_proofs(turn)?;
+
         self.verify_and_commit_proof_rotated(cell_id, proof_bytes, turn, ledger)
+    }
+
+    /// Dispatch every `Effect::Custom` sub-proof a turn carries to its registered
+    /// verifier and enforce the verdict (the custom-effect verify-dispatch weld).
+    ///
+    /// For each [`CustomProgramProof`](crate::turn::CustomProgramProof) in
+    /// `turn.custom_program_proofs` the executor:
+    ///
+    /// 1. looks up the proof's 32-byte `vk_hash` in
+    ///    [`Self::custom_effect_registry`];
+    /// 2. **fails closed** if no verifier is registered for that vk_hash —
+    ///    an unregistered custom effect is REFUSED, never silently admitted;
+    /// 3. invokes the registered verifier on the proof's
+    ///    `(public_inputs, proof_bytes)` and rejects the turn if it rejects.
+    ///
+    /// A turn carrying no custom proofs (`None`/empty) is a no-op pass — the
+    /// overwhelmingly common case (byte-identical to the pre-weld path).
+    ///
+    /// When NO registry is configured (`custom_effect_registry == None`) the
+    /// executor cannot honor a custom effect, so any turn that carries one is
+    /// refused fail-closed; a turn with no custom proofs still passes.
+    pub(super) fn enforce_custom_effect_proofs(&self, turn: &Turn) -> Result<(), TurnError> {
+        let proofs = match &turn.custom_program_proofs {
+            Some(p) if !p.is_empty() => p,
+            _ => return Ok(()),
+        };
+
+        let registry = self.custom_effect_registry.as_ref().ok_or_else(|| {
+            TurnError::ProofVerificationFailed(
+                "turn carries custom-effect proofs but no custom-effect verifier registry is \
+                 configured — refusing fail-closed"
+                    .to_string(),
+            )
+        })?;
+
+        for (i, proof) in proofs.iter().enumerate() {
+            // Registry dispatch: VkHashNotRegistered (fail-closed), ProofMissing
+            // (empty bytes), or the verifier's own Rejected verdict all surface
+            // as a proof-verification failure that rejects the whole turn.
+            registry
+                .verify(
+                    &proof.vk_hash,
+                    &proof.public_inputs_bytes(),
+                    &proof.proof_bytes,
+                )
+                .map_err(|e| {
+                    TurnError::ProofVerificationFailed(format!(
+                        "custom-effect proof #{i} rejected: {e}"
+                    ))
+                })?;
+        }
+        Ok(())
     }
 
     /// THE ROTATED sovereign verify (cutover C1, decision #1's verify leg). The
@@ -2450,5 +2510,251 @@ impl TurnExecutor {
         } else {
             (net_delta as u32, 0u32)
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Custom-effect verify-dispatch weld — accept / reject / unregistered.
+// ─────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod custom_effect_dispatch_tests {
+    use super::*;
+    use crate::action::{Action, Authorization, DelegationMode};
+    use crate::forest::{CallForest, CallTree};
+    use crate::turn::{CustomProgramProof, Turn};
+    use crate::ComputronCosts;
+    use dregg_cell::{
+        canonical_vk_v2, CustomEffectError, CustomEffectRegistry, CustomEffectVerifier,
+        ProvingSystemId, StubCustomEffectVerifier, VerifierFingerprint, VkComponents,
+    };
+    use std::sync::Arc;
+
+    fn cell_id(seed: u8) -> CellId {
+        let mut id = [0u8; 32];
+        id[0] = seed;
+        CellId::from_bytes(id)
+    }
+
+    fn empty_turn(agent: CellId) -> Turn {
+        let action = Action {
+            target: agent,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: dregg_cell::Preconditions::default(),
+            effects: vec![],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let tree = CallTree {
+            action,
+            children: vec![],
+            hash: [0u8; 32],
+        };
+        Turn {
+            agent,
+            nonce: 0,
+            call_forest: CallForest {
+                roots: vec![tree],
+                forest_hash: [0u8; 32],
+            },
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        }
+    }
+
+    fn air_fp() -> [u8; 32] {
+        [0xA1; 32]
+    }
+    fn verifier_fp() -> VerifierFingerprint {
+        VerifierFingerprint::SourceHash([0xB2; 32])
+    }
+    fn proving_system() -> ProvingSystemId {
+        ProvingSystemId::Plonky3BabyBearFri { p3_rev: "test-rev" }
+    }
+
+    /// Register a stub verifier under canonical bytes, returning (registry, vk_hash).
+    fn registry_with_stub(canonical: &[u8]) -> (CustomEffectRegistry, [u8; 32]) {
+        let vk_hash = canonical_vk_v2(&VkComponents {
+            program_bytes: canonical,
+            air_fingerprint: air_fp(),
+            verifier_fingerprint: verifier_fp(),
+            proving_system_id: proving_system(),
+        });
+        let verifier = Arc::new(StubCustomEffectVerifier::new(vk_hash, "stub"));
+        let mut reg = CustomEffectRegistry::empty();
+        reg.register(
+            canonical.to_vec(),
+            air_fp(),
+            verifier_fp(),
+            proving_system(),
+            verifier,
+        )
+        .expect("register stub");
+        (reg, vk_hash)
+    }
+
+    fn executor_with(reg: CustomEffectRegistry) -> TurnExecutor {
+        let mut ex = TurnExecutor::new(ComputronCosts::zero());
+        ex.set_custom_effect_registry(reg);
+        ex
+    }
+
+    /// A turn with NO custom proofs always passes (the common case).
+    #[test]
+    fn no_custom_proofs_is_pass() {
+        let ex = TurnExecutor::new(ComputronCosts::zero());
+        let turn = empty_turn(cell_id(1));
+        ex.enforce_custom_effect_proofs(&turn).expect("no-custom pass");
+    }
+
+    /// A registered verifier that ACCEPTS (non-empty proof bytes) passes.
+    #[test]
+    fn registered_verifier_accepts() {
+        let (reg, vk_hash) = registry_with_stub(b"accept-program");
+        let ex = executor_with(reg);
+        let mut turn = empty_turn(cell_id(2));
+        turn.custom_program_proofs = Some(vec![CustomProgramProof {
+            vk_hash,
+            proof_bytes: b"a-genuine-proof".to_vec(),
+            public_inputs: vec![1, 2, 3],
+        }]);
+        ex.enforce_custom_effect_proofs(&turn)
+            .expect("conforming custom effect must pass");
+    }
+
+    /// A registered verifier that REJECTS makes the turn fail (the load-bearing
+    /// tooth: wiring the dispatch must let a bad custom effect actually fail).
+    #[test]
+    fn registered_verifier_rejects() {
+        // A verifier that rejects any proof whose bytes don't start with 0x42.
+        struct Picky {
+            vk: [u8; 32],
+        }
+        impl CustomEffectVerifier for Picky {
+            fn name(&self) -> &'static str {
+                "picky"
+            }
+            fn vk_hash(&self) -> [u8; 32] {
+                self.vk
+            }
+            fn verify(&self, _pi: &[u8], proof: &[u8]) -> Result<(), CustomEffectError> {
+                if proof.first() == Some(&0x42) {
+                    Ok(())
+                } else {
+                    Err(CustomEffectError::Rejected {
+                        vk_hash: self.vk,
+                        name: "picky",
+                        reason: "proof must start with 0x42".into(),
+                    })
+                }
+            }
+        }
+
+        let canonical = b"picky-program".to_vec();
+        let vk = canonical_vk_v2(&VkComponents {
+            program_bytes: &canonical,
+            air_fingerprint: air_fp(),
+            verifier_fingerprint: verifier_fp(),
+            proving_system_id: proving_system(),
+        });
+        let mut reg = CustomEffectRegistry::empty();
+        reg.register(
+            canonical,
+            air_fp(),
+            verifier_fp(),
+            proving_system(),
+            Arc::new(Picky { vk }),
+        )
+        .expect("register picky");
+        let ex = executor_with(reg);
+
+        // Conforming proof (starts with 0x42) passes.
+        let mut good = empty_turn(cell_id(3));
+        good.custom_program_proofs = Some(vec![CustomProgramProof {
+            vk_hash: vk,
+            proof_bytes: vec![0x42, 0x00, 0x01],
+            public_inputs: vec![],
+        }]);
+        ex.enforce_custom_effect_proofs(&good)
+            .expect("conforming proof accepted");
+
+        // Non-conforming proof (wrong lead byte) is REJECTED.
+        let mut bad = empty_turn(cell_id(3));
+        bad.custom_program_proofs = Some(vec![CustomProgramProof {
+            vk_hash: vk,
+            proof_bytes: vec![0x00, 0x01],
+            public_inputs: vec![],
+        }]);
+        let err = ex
+            .enforce_custom_effect_proofs(&bad)
+            .expect_err("non-conforming custom effect must be rejected");
+        assert!(matches!(err, TurnError::ProofVerificationFailed(_)), "{err:?}");
+    }
+
+    /// An UNREGISTERED vk_hash fails closed — no silent pass.
+    #[test]
+    fn unregistered_vk_hash_fails_closed() {
+        // Registry knows about program A, the turn references program B.
+        let (reg, _known_vk) = registry_with_stub(b"known-program");
+        let ex = executor_with(reg);
+        let mut turn = empty_turn(cell_id(4));
+        turn.custom_program_proofs = Some(vec![CustomProgramProof {
+            vk_hash: [0xEE; 32], // never registered
+            proof_bytes: b"some-proof".to_vec(),
+            public_inputs: vec![],
+        }]);
+        let err = ex
+            .enforce_custom_effect_proofs(&turn)
+            .expect_err("unregistered vk_hash must fail closed");
+        assert!(matches!(err, TurnError::ProofVerificationFailed(_)), "{err:?}");
+    }
+
+    /// No registry configured + a turn that carries a custom proof = fail-closed.
+    #[test]
+    fn no_registry_with_custom_proof_fails_closed() {
+        let ex = TurnExecutor::new(ComputronCosts::zero()); // no registry set
+        let mut turn = empty_turn(cell_id(5));
+        turn.custom_program_proofs = Some(vec![CustomProgramProof {
+            vk_hash: [0x11; 32],
+            proof_bytes: b"proof".to_vec(),
+            public_inputs: vec![],
+        }]);
+        let err = ex
+            .enforce_custom_effect_proofs(&turn)
+            .expect_err("custom proof with no registry must fail closed");
+        assert!(matches!(err, TurnError::ProofVerificationFailed(_)), "{err:?}");
+    }
+
+    /// Empty proof bytes are refused (the registry's ProofMissing tooth) even
+    /// for a registered vk_hash.
+    #[test]
+    fn empty_proof_bytes_refused() {
+        let (reg, vk_hash) = registry_with_stub(b"prog");
+        let ex = executor_with(reg);
+        let mut turn = empty_turn(cell_id(6));
+        turn.custom_program_proofs = Some(vec![CustomProgramProof {
+            vk_hash,
+            proof_bytes: vec![],
+            public_inputs: vec![],
+        }]);
+        let err = ex
+            .enforce_custom_effect_proofs(&turn)
+            .expect_err("empty proof bytes must be refused");
+        assert!(matches!(err, TurnError::ProofVerificationFailed(_)), "{err:?}");
     }
 }

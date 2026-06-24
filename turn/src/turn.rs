@@ -220,6 +220,14 @@ pub struct EmittedEvent {
 /// 3. Verifies proof_bytes against the custom program identified by vk_hash
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CustomProgramProof {
+    /// The 32-byte vk_hash identifying the custom-effect verifier this proof
+    /// dispatches to. The executor looks this up in its
+    /// [`CustomEffectRegistry`](dregg_cell::CustomEffectRegistry) and invokes
+    /// the registered verifier (`proof_verify::enforce_custom_effect_proofs`).
+    /// Fail-closed: an unregistered vk_hash rejects the turn. Bound into
+    /// [`Turn::hash`] so it cannot be swapped post-signature.
+    #[serde(default)]
+    pub vk_hash: [u8; 32],
     /// The serialized proof bytes for the custom program.
     pub proof_bytes: Vec<u8>,
     /// Public inputs for the custom program proof (raw u32 BabyBear values).
@@ -233,6 +241,17 @@ impl CustomProgramProof {
             .iter()
             .map(|&v| dregg_circuit::field::BabyBear::new(v))
             .collect()
+    }
+
+    /// Serialize the raw public inputs to the little-endian byte vector the
+    /// registered [`CustomEffectVerifier`](dregg_cell::CustomEffectVerifier)
+    /// consumes (4 bytes per u32, in order).
+    pub fn public_inputs_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.public_inputs.len() * 4);
+        for v in &self.public_inputs {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
     }
 }
 
@@ -480,6 +499,9 @@ impl Turn {
                 hasher.update(&[1u8]);
                 hasher.update(&(proofs.len() as u64).to_le_bytes());
                 for proof in proofs {
+                    // Bind the verifier identity (vk_hash) so the dispatched
+                    // verifier cannot be swapped after the turn is signed.
+                    hasher.update(&proof.vk_hash);
                     hasher.update(&(proof.proof_bytes.len() as u64).to_le_bytes());
                     hasher.update(&proof.proof_bytes);
                     hasher.update(&(proof.public_inputs.len() as u64).to_le_bytes());
@@ -548,9 +570,19 @@ impl Turn {
     ) -> Self {
         let proofs: Vec<CustomProgramProof> = bound
             .iter()
-            .map(|b| CustomProgramProof {
-                proof_bytes: b.proof_bytes.clone(),
-                public_inputs: b.public_inputs.iter().map(|f| f.as_u32()).collect(),
+            .map(|b| {
+                // Pack the bound proof's 8-felt vk_hash (4 bytes/felt, LE) into
+                // the 32-byte registry key the executor dispatches on.
+                let felts = b.vk_hash_felts();
+                let mut vk_hash = [0u8; 32];
+                for (i, f) in felts.iter().enumerate() {
+                    vk_hash[i * 4..i * 4 + 4].copy_from_slice(&f.as_u32().to_le_bytes());
+                }
+                CustomProgramProof {
+                    vk_hash,
+                    proof_bytes: b.proof_bytes.clone(),
+                    public_inputs: b.public_inputs.iter().map(|f| f.as_u32()).collect(),
+                }
             })
             .collect();
         self.custom_program_proofs = if proofs.is_empty() {

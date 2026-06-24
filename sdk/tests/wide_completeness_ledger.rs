@@ -468,6 +468,14 @@ fn bound_to_wire_and_back(
 ) -> dregg_circuit_prove::custom_proof_bind::BoundCustomProof {
     use dregg_circuit::field::BabyBear;
     let turn_carrier = dregg_turn::CustomProgramProof {
+        vk_hash: {
+            let felts = bound.vk_hash_felts();
+            let mut h = [0u8; 32];
+            for (i, f) in felts.iter().enumerate() {
+                h[i * 4..i * 4 + 4].copy_from_slice(&f.as_u32().to_le_bytes());
+            }
+            h
+        },
         proof_bytes: bound.proof_bytes.clone(),
         public_inputs: bound.public_inputs.iter().map(|f| f.as_u32()).collect(),
     };
