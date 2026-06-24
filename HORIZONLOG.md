@@ -5337,3 +5337,54 @@ KEY SEAMS / NEXT (real-state):
   divergence — identical on BOTH direct + pure-JSON paths (so faithful), a live-archive attenuate semantics
   gap to close separately. Digest credentials cross as low-64 (matches the JSON demo `Digest::from_u64`);
   full-256-bit digest builders are a widen-later item if a real full-width credential ever needs the direct path.
+
+## ⚑ LIVE-COPILOT-BRAIN SELECTION — the model must reliably EMIT well-formed editView JS (2026-06-24)
+Named by `nous-flex` (`297c68b52`) + the agent-inhabits arc. DONE: the agent-decides-the-edit path and the
+`run_js` fire path are fully WIRED and receipted/confined — `deos-hermes` `live_authors_card_via_run_js` runs
+the end-to-end loop ON DEMAND (a brain decides the `deos.editor.editView` JS → receipted authoring patch,
+bounded by `held`, over-reach refused). The remaining LIVE CEILING is purely model-behavioral: on the capped
+Copilot run the model answered in TEXT vs reliably emitting a well-formed `editView` JS body as its `run_js`
+payload (already noted as the tool-selection residual). NEXT STEP: run `live_authors_card_via_run_js` against
+a non-capped key / tighten the prompt+tool contract until the model reliably emits well-formed editView JS;
+this is prompt/contract work, not wiring — the seam closes when the brain's emission is reliable.
+
+## ⚑ IN-BROWSER TURN — wasm clock fix being issued (2026-06-24)
+Named by the deos-card seam (`d16b0af32`) + the WASM EXECUTOR WALL CLOCK entry above. The wasm-clock fix
+(`turn/` `Instant::now` → `web-time`, or cfg-gate the profiling fences behind `cfg(not(wasm32))`) is being
+ISSUED as a lane. NEXT STEP: once that lane is green, flip on `wasm/tests/card_fires_a_verified_turn.rs` —
+the in-tab card then fires REAL verified turns end-to-end (CardWorld::fire → SetField+IncrementNonce →
+verified turn → re-read bound slot, in a real browser module), closing the renderer-independence rung.
+
+## ⚑ SERVO — drive a full WebView into the green GPU context + cockpit web-pane plumbing (2026-06-24)
+Named by the servo spike (`6f3b2e8ee`) + `docs/desktop-os-research/SERVO-INTERACTIVE.md`. DONE: the GPU
+context is GREEN on macOS (the SWGL→GPU backend stands, input→re-render→fresh-tile spike landed, dual
+GPU/software backend designed). NEXT STEP: drive a FULL libservo WebView INTO that GPU context (beyond the
+static/spike tile) and plumb the live cockpit web-pane so the WebView is interactive in the frame — per
+`SERVO-INTERACTIVE.md`. This is the live-interactive-webview wire, the named follow-on to the static tile.
+
+## ⚑ NODE deos-host FORK-CLIENT E2E — green-sweep lane on the 0-computron budget (2026-06-24)
+Named by the node-hosts-headless-deos-js-servers keystone (`9e354b73`, `d693ae57b`) — the fork-client e2e
+(`node/src/deos_host_e2e.rs`: client GETs affordances → builds+signs a turn as its own cell → POSTs to
+`/turns/submit` → real ledger turn) was FAILING on a 0-computron budget. NEXT STEP: a green-sweep lane is on
+it — give the client-submitted turn a non-zero computron budget (or correct the budget plumbing on the
+submit path) so the e2e goes green; then the node-hosted private-server affordance loop is proven end-to-end.
+
+## ⚑ MEMBRANE CARRY FOR MULTIPLAYER CARDS — join the proven halves on the card object (2026-06-24)
+Named by the reflective-cockpit + MUD threads. BOTH halves are PROVEN SEPARATELY: the co-author/stitch is
+proven in deos-js (the membrane fork-fire is executor-real), and the full mint→carry→rehydrate is proven in
+`shared_fork`. NEXT STEP: WIRE them together on the card object — a card's co-authored membrane fork carries
+its mint, is rehydrated by the joining player, and stitches back — so multiplayer cards work end-to-end. The
+move is a WIRE (join two proven mechanisms on one object), not a new build.
+
+## ⚑ ./site ONTOLOGY-CATALOG RELOCATE — move the mcp include out of the discarded site (2026-06-24)
+Named by the `./site` discard (`e80a44ac9`) + the recover-to-scavenge (`003eabd76`,
+`site-old-scavenge/`). The stale v1 site is gone, but an ontology-catalog mcp include still references it.
+NEXT STEP: a lane is moving the mcp include out of the discarded/scavenged site into its durable home so no
+live path depends on `./site`; close once the include resolves from its new location.
+
+## ⚑ seL4 LIVE-REPAINT-ON-TURN — lane on it (2026-06-24)
+Named by the firmament repaint work (`3d091287d` WIRES + PROVES live-repaint-on-turn: a committed turn
+re-paints the focused cell on the compositor-PD framebuffer). A lane is on the remaining seL4
+live-repaint-on-turn wire (copy the net.system pattern: turn → re-paint the hosted interactive image).
+NEXT STEP: confirm the committed-turn → framebuffer-repaint loop runs live on the booted seL4 image (input
+already boots), closing the interactive-cockpit-on-seL4 rung.
