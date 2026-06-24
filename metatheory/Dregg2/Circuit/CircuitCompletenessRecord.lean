@@ -405,15 +405,17 @@ def makeSovereign_makeSovereignEncodes_construct (compressN : List ℤ → ℤ)
   frHeaps             := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2
 
 /-- **`makeSovereign_descriptorComplete_genuine` — the constructed decode realizes the GENUINE
-commitment rebind.** From `MakeSovereignSpec`, the `cell` record is rebound to EXACTLY the commitment-only
-record `[(commitmentField, .dig (stateCommitment (pre.cell cell)))]` (`makeSovereignSpec_commitment_value`
-/ `sovereignRebindMap_correct`). So the constructed witness performs the REAL sovereign rebind — not a
-degenerate no-rebind. The non-vacuity tooth. -/
+commitment rebind.** From `MakeSovereignSpec`, the `cell` record is rebound to EXACTLY the commitment-form
+record `[(commitmentField, .dig (stateCommitment (pre.cell cell))), (nonceField, .int (sovereignNonce
+(pre.cell cell)))]` (`makeSovereignSpec_commitment_value` / `sovereignRebindMap_correct`) — the value
+behind the commitment, the RESERVED replay nonce preserved. So the constructed witness performs the REAL
+sovereign rebind — not a degenerate no-rebind. The non-vacuity tooth. -/
 theorem makeSovereign_descriptorComplete_genuine
     (pre post : RecChainedState) (actor cell : CellId)
     (hspec : MakeSovereignSpec pre actor cell post) :
     post.kernel.cell cell
-      = .record [(commitmentField, .dig (stateCommitment (pre.kernel.cell cell)))] :=
+      = .record [(commitmentField, .dig (stateCommitment (pre.kernel.cell cell))),
+                 (nonceField, .int (sovereignNonce (pre.kernel.cell cell)))] :=
   makeSovereignSpec_commitment_value hspec
 
 /-- **`makeSovereign_descriptorComplete` — the makeSovereign completeness rung (dual of

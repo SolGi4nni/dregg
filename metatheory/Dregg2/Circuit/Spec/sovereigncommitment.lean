@@ -92,7 +92,8 @@ WHOLE pre-state value remains); every OTHER cell's whole record is untouched. So
 `sovereignRebind` clause encodes drop-readable-state ∧ install-commitment ∧ cell-frame. -/
 theorem sovereignRebindMap_correct (base : CellId → Value) (target : CellId) :
     sovereignRebind base target target
-        = .record [(commitmentField, .dig (stateCommitment (base target)))]
+        = .record [(commitmentField, .dig (stateCommitment (base target))),
+                   (nonceField, .int (sovereignNonce (base target)))]
     ∧ (∀ c, c ≠ target → sovereignRebind base target c = base c) := by
   refine ⟨?_, ?_⟩
   · simp only [sovereignRebind, if_pos]
@@ -197,14 +198,17 @@ These show the spec is the genuine semantics: a committed `makeSovereignA` drops
 commitment, leaves every other cell whole, and leaves every non-`cell` component untouched — derived
 from the spec, NOT the executor. -/
 
-/-- **The rebound cell IS the commitment-only record.** Off the spec: a committed `makeSovereignA`
-replaces `cell`'s record with EXACTLY `[(commitmentField, .dig (stateCommitment (pre-value)))]` — the
-readable state is GONE, only the commitment of the whole pre-state value remains. -/
+/-- **The rebound cell IS the commitment-form record.** Off the spec: a committed `makeSovereignA`
+replaces `cell`'s record with EXACTLY `[(commitmentField, .dig (stateCommitment (pre-value))),
+(nonceField, .int (sovereignNonce (pre-value)))]` — the host-readable VALUE/balance is GONE behind the
+commitment, the lone survivor being the RESERVED replay-nonce slot (the host must keep it readable +
+monotone for no-replay; the third nonce-reset vector closed). -/
 theorem makeSovereignSpec_commitment_value
     {s s' : RecChainedState} {actor cell : CellId}
     (h : MakeSovereignSpec s actor cell s') :
     s'.kernel.cell cell
-      = .record [(commitmentField, .dig (stateCommitment (s.kernel.cell cell)))] := by
+      = .record [(commitmentField, .dig (stateCommitment (s.kernel.cell cell))),
+                 (nonceField, .int (sovereignNonce (s.kernel.cell cell)))] := by
   rw [h.2.1]; exact (sovereignRebindMap_correct s.kernel.cell cell).1
 
 /-- **THE TEETH: the pre-state `balance` is no longer directly readable.** Off the spec: after a

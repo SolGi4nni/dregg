@@ -652,11 +652,14 @@ construction from intent, with the digest entering as `stateCommitment` (the nam
 and PROVE the executor's `makeSovereignKernel` equals it (the escrow pattern) — a theorem that would be
 FALSE if the executor dropped the WRONG cell, kept the record readable, or moved a 2nd field. -/
 
-/-- The commitment-only stub record the intent installs at `target`: the readable record is GONE; only
-the §8 state-commitment digest of the OLD record remains. (`stateCommitment` is the named irreducible
-commitment carrier — the digest fold; everything STRUCTURAL around it is transparent.) -/
+/-- The commitment-form stub record the intent installs at `target`: the host-readable VALUE is GONE
+behind the §8 state-commitment digest of the OLD record; the lone survivor is the RESERVED replay-nonce
+slot (the host must keep it readable + monotone for no-replay — the third nonce-reset vector closed).
+(`stateCommitment` is the named irreducible commitment carrier — the digest fold; everything STRUCTURAL
+around it is transparent.) -/
 def sovereignStub (k : RecordKernelState) (target : CellId) : Value :=
-  .record [(commitmentField, .dig (stateCommitment (k.cell target)))]
+  .record [(commitmentField, .dig (stateCommitment (k.cell target))),
+           (TurnExecutorFull.nonceField, .int (TurnExecutorFull.sovereignNonce (k.cell target)))]
 
 /-- **`makeSovereignSpec` — the INDEPENDENT declarative post-state of a make-sovereign (TRANSPARENT).**
 EXACTLY `target`'s cell record becomes the commitment-only `sovereignStub` (its readable record dropped
@@ -897,16 +900,19 @@ def sfx : RecordKernelState :=
          Dregg2.Exec.EffectsState.fieldOf "nonce" ((stateWriteSpec sfx
            { actor := 0, target := 0, field := "nonce", value := 42 }).cell 0)) == (7, 42))
 
--- MAKE-SOVEREIGN: of Live cell 0 commits; the readable record is DROPPED (no "nonce" field reads back).
+-- MAKE-SOVEREIGN: of Live cell 0 commits; the readable VALUE is DROPPED behind the commitment, but the
+-- RESERVED replay nonce is PRESERVED (the third nonce-reset vector closed — it does NOT drop to 0).
 #guard (makeSovereignStepK sfx { actor := 0, target := 0 }).isSome
--- TRANSPARENT-spec tooth (CONCRETE): the spec's target cell IS the commitment-only stub, and its
--- "nonce" scalar reads back NONE — while the pre-state's "nonce" was readable (7). So a ghost that LEFT
--- the record readable differs OBSERVABLY from the spec output ⇒ refused by `makeSovereign_antighost`.
+-- TRANSPARENT-spec tooth (CONCRETE): the spec's target cell IS the commitment-form stub; its "balance"
+-- scalar reads back NONE (value dropped) WHILE the reserved "nonce" is PRESERVED at the pre-state 7. So a
+-- ghost that LEFT the value readable, OR that RESET the nonce, differs OBSERVABLY from the spec output.
 #guard (Value.scalar (sfx.cell 0) "nonce" == some 7)
-#guard (Value.scalar ((makeSovereignSpec sfx { actor := 0, target := 0 }).cell 0) "nonce").isNone
--- the committed executor output AGREES with the transparent spec: its nonce also reads back NONE.
+#guard (Value.scalar ((makeSovereignSpec sfx { actor := 0, target := 0 }).cell 0) "balance").isNone
+#guard (Value.scalar ((makeSovereignSpec sfx { actor := 0, target := 0 }).cell 0) "nonce" == some 7)
+-- the committed executor output AGREES with the transparent spec: value dropped, nonce preserved at 7.
 #guard ((makeSovereignStepK sfx { actor := 0, target := 0 }).map
-          (fun k => (Value.scalar (k.cell 0) "nonce").isNone)) == some true
+          (fun k => (Value.scalar (k.cell 0) "balance").isNone
+                    && (Value.scalar (k.cell 0) "nonce" == some 7))) == some true
 -- and a DIFFERENT cell (cell 1) is UNTOUCHED by a make-sovereign of cell 0 (the transparent frame).
 #guard ((makeSovereignStepK sfx { actor := 0, target := 0 }).map
           (fun k => Value.scalar (k.cell 1) "nonce")) == some (some 7)

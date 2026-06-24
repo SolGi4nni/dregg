@@ -298,10 +298,10 @@ THE PER-ARM TAXONOMY (verified against `TurnExecutorFull.execFullA`, not the cen
     `newCell ∉ accounts`; with the AGENT a live member (`agent ∈ accounts`), `newCell ≠ agent`, so the
     agent's cell is FRAMED OUT — its nonce preserved. (This is the side-condition the assembly carries:
     `agent ∈ accounts`, true post-prologue, supplied by admission.)
-  * **the ONE genuine DOWN vector** `makeSovereignA agent` — see §4c″: making the AGENT self-sovereign
-    DROPS its readable nonce to `0` (the record is replaced by `[(commitment, …)]`). This is a real
-    finding: the assembly carries the honest side-condition that the turn body does not make the agent
-    self-sovereign (`¬ BodyTouchesSovereign`). -/
+  * **`makeSovereignA` — the THIRD nonce-touching arm, now CLOSED at the executor** (see §4c″): the
+    commitment-form rebind PRESERVES the reserved replay nonce (`makeSovereign_preserves_nonce`), so even
+    making the AGENT self-sovereign holds (does not raise/lower) the agent nonce. NO carve-out: the
+    formerly-needed `¬ forestTouchesSovereign` side-condition is GONE, no-replay is unconditional. -/
 
 /-- **`nonceOf_setField_of_ne` — the field-write NON-INTERFERENCE primitive (the replay teeth at the
 write level).** Writing a field `f` DISTINCT from `"nonce"` leaves the `nonce` read (`nonceOf`)
@@ -396,48 +396,36 @@ theorem recKBurnAsset_cell_frame {k k' : RecordKernelState} {actor cell : CellId
   · simp only [Option.some.injEq] at h; rw [← h]
   · exact absurd h (by simp)
 
-/-! ## §4c″ — THE `makeSovereign` DOWN-VECTOR (a real finding, verified at the source).
+/-! ## §4c″ — THE `makeSovereign` NONCE-RESET VECTOR, CLOSED AT THE EXECUTOR (the third reset vector).
 
-The census reported "only the two known nonce-touching arms"; verifying the executor surfaces a
-THIRD. `makeSovereignA actor target` (`TurnExecutorFull.makeSovereignStep`) REPLACES `target`'s entire
-cell record with the commitment-only literal `[(commitment, .dig …)]` (`makeSovereignKernel`/
-`sovereignRebind`), so AFTER it `nonceOf (cell target) = (none).getD 0 = 0`
-(`makeSovereignStep_fields_dropped`). The lifecycle is left Live, so a sovereigned agent is still an
-admissible turn author — were the AGENT made self-sovereign with a nonzero stored nonce, its readable
-nonce would DROP to `0`. So `BodyNonceNondecreasing` is genuinely FALSE for the unrestricted executor
-body, and the honest assembly excludes exactly this case (the predicate `BodyTouchesSovereign` below).
-This is the load-bearing carve-out: the lemma BITES — drop the carve-out and it is refuted by this arm. -/
+The census reported "only the two known nonce-touching arms"; verifying the executor surfaced a THIRD.
+`makeSovereignA actor target` (`TurnExecutorFull.makeSovereignStep`) drops `target`'s host-readable
+record behind a 32-byte commitment (`makeSovereignKernel`/`sovereignRebind`). The OLD model replaced
+the whole record with the commitment-ONLY literal `[(commitment, .dig …)]`, so the READABLE nonce fell
+to `0` — and since the lifecycle stays Live, a self-sovereigned agent was still an admissible turn
+author whose stored nonce had reset: a genuine replay vector.
 
-/-- The `makeSovereign` down-vector, exhibited: a committed self-sovereign step on a cell whose stored
-nonce is `n > 0` LOWERS its readable nonce to `0`. The witness that the makeSovereign carve-out is
-genuine, not a defensive over-restriction. -/
-theorem makeSovereign_drops_nonce {s s' : RecChainedState} {actor target : CellId}
+The FIX (the reserved-field discipline, exactly as `setField "nonce"` rides): the replay nonce is
+PROTOCOL-managed metadata, NOT host-readable cell state. `sovereignRebind` now PRESERVES the reserved
+nonce slot (`[(commitment, .dig …), (nonce, .int (old nonce))]`) — the host keeps the replay counter
+readable + monotone while the VALUE/balance still move behind the commitment. So `makeSovereign` is now
+nonce-PRESERVING (`makeSovereign_preserves_nonce`), `BodyNonceNondecreasing` holds for it too, and the
+former `forestTouchesSovereign` carve-out DROPS: no-replay is UNCONDITIONAL on the deployed executor. -/
+
+/-- **`makeSovereign_preserves_nonce` — the third nonce-reset vector CLOSED.** A committed self-sovereign
+step PRESERVES the target's readable nonce: `nonceOf (post target) = nonceOf (pre target)`. The
+commitment-form rebind keeps the reserved replay-nonce slot, so making a cell sovereign does NOT reset
+its replay counter (it used to drop to `0`). This is what makes `BodyNonceNondecreasing` hold for the
+`makeSovereign` arm, retiring the carve-out. -/
+theorem makeSovereign_preserves_nonce {s s' : RecChainedState} {actor target : CellId}
     (h : TurnExecutorFull.makeSovereignStep s actor target = some s') :
-    nonceOf (s'.kernel.cell target) = 0 := by
-  have hf : (s'.kernel.cell target).field EffectTransfer.nonceField = none :=
-    TurnExecutorFull.makeSovereignStep_fields_dropped (f := EffectTransfer.nonceField)
-      (by decide) h
-  unfold nonceOf Value.scalar
-  rw [hf]; rfl
-
-/-! ### `faTouchesSovereign` — the honest self-sovereign carve-out predicate (recursing into `exerciseA`).
-
-Does the action `fa` make `agent` SELF-sovereign, possibly through a nested `exerciseA` sub-forest?
-Only a `makeSovereignA _ agent` (target = agent), at the top level OR inside an `exerciseA`'s inner
-effects, can lower the agent nonce. Every other arm is nonce-nondecreasing on `agent` (proved below).
-The carve-out is kept as TIGHT as the actual vector AND recurses into `exerciseA` so the down-vector
-cannot hide inside a capability exercise. -/
-mutual
-def faTouchesSovereign (fa : FullActionA) (agent : CellId) : Bool :=
-  match fa with
-  | .makeSovereignA _ target => target == agent
-  | .exerciseA _ _ inner     => faListTouchesSovereign inner agent
-  | _                        => false
-def faListTouchesSovereign (inner : List FullActionA) (agent : CellId) : Bool :=
-  match inner with
-  | []        => false
-  | a :: rest => faTouchesSovereign a agent || faListTouchesSovereign rest agent
-end
+    nonceOf (s'.kernel.cell target) = nonceOf (s.kernel.cell target) := by
+  obtain ⟨_, hs'⟩ := TurnExecutorFull.makeSovereignStep_factors h
+  subst hs'
+  -- `nonceOf v = (v.scalar nonceField).getD 0`; the kernel lemma preserves exactly that fail-soft read
+  -- (both `nonceField`s are the literal `"nonce"`, so the kernel lemma's read matches definitionally).
+  unfold nonceOf EffectTransfer.nonceField
+  exact TurnExecutorFull.makeSovereignKernel_nonce_preserved s.kernel target
 
 /-! ### Account-set MONOTONICITY (a helper threaded through the `exerciseA` sub-fold).
 
@@ -690,16 +678,15 @@ end
 
 /-! ### `execFullA_agentNonce_nondecr` — THE PER-ARM SINGLE-STEP KEYSTONE (mutual with the sub-fold).
 
-A committed `execFullA` step, on an action that does NOT make `agent` self-sovereign
-(`faTouchesSovereign = false`, recursing into `exerciseA`) and with `agent` a live member account
-(`agent ∈ accounts` — frames out the fresh-cell creation arms), leaves `agent`'s nonce
-UNCHANGED-OR-RAISED. Discharges `BodyNonceNondecreasing` at the single-effect grain by a genuine split
-over EVERY arm against its real dispatch semantics (no arm assumed). Mutual with the `exerciseA`
-sub-forest fold (`execInnerA_agentNonce_nondecr` / `execInnerA_list_agentNonce_nondecr`). -/
+A committed `execFullA` step, with `agent` a live member account (`agent ∈ accounts` — frames out the
+fresh-cell creation arms), leaves `agent`'s nonce UNCHANGED-OR-RAISED — UNCONDITIONALLY (no
+self-sovereign carve-out: `makeSovereign` now PRESERVES the reserved nonce, so the `makeSovereignA agent`
+case is nonce-preserving like every other arm). Discharges `BodyNonceNondecreasing` at the single-effect
+grain by a genuine split over EVERY arm against its real dispatch semantics (no arm assumed). Mutual with
+the `exerciseA` sub-forest fold (`execInnerA_list_agentNonce_nondecr`). -/
 mutual
 theorem execFullA_agentNonce_nondecr (s s' : RecChainedState) (fa : FullActionA) (agent : CellId)
     (hagent : agent ∈ s.kernel.accounts)
-    (hsov : faTouchesSovereign fa agent = false)
     (h : TurnExecutorFull.execFullA s fa = some s') :
     agentNonce s.kernel agent ≤ agentNonce s'.kernel agent := by
   -- `agentNonce k agent = nonceOf (k.cell agent)`; we show ≤ for the agent cell.
@@ -833,9 +820,7 @@ theorem execFullA_agentNonce_nondecr (s s' : RecChainedState) (fa : FullActionA)
       rw [congrFun (recKRevokeDelegationFull_frame s.kernel holder t).2.2 agent]
   | exerciseA actor t inner =>
       -- the hold-gate (`exerciseStepA`, `{ s with log := … }`, kernel unchanged) then the inner fold.
-      -- the no-self-sovereign condition recurses into `inner` by definition of `faTouchesSovereign`.
-      have hlist : faListTouchesSovereign inner agent = false := by
-        simpa only [faTouchesSovereign] using hsov
+      -- UNCONDITIONAL: the inner fold is nonce-nondecreasing for ANY inner list (no carve-out).
       simp only [TurnExecutorFull.execFullA] at h
       split at h
       · cases hex : TurnExecutorFull.exerciseStepA s actor t with
@@ -848,7 +833,7 @@ theorem execFullA_agentNonce_nondecr (s s' : RecChainedState) (fa : FullActionA)
               · simp only [Option.some.injEq] at hex; subst hex; rfl
               · exact absurd hex (by simp)
             have hagent1 : agent ∈ s1.kernel.accounts := hk1 ▸ hagent
-            have hstep := execInnerA_list_agentNonce_nondecr s1 s' inner agent hagent1 hlist h
+            have hstep := execInnerA_list_agentNonce_nondecr s1 s' inner agent hagent1 h
             have heq : agentNonce s1.kernel agent = agentNonce s.kernel agent := by
               unfold agentNonce; rw [hk1]
             show agentNonce s.kernel agent ≤ agentNonce s'.kernel agent
@@ -928,19 +913,27 @@ theorem execFullA_agentNonce_nondecr (s s' : RecChainedState) (fa : FullActionA)
       unfold TurnExecutorFull.noteCreateChainA noteCreateCommitment
       exact le_refl _
   | makeSovereignA actor cell =>
-      -- EXCLUDED on the agent: `hsov` says `target ≠ agent`. On a NON-agent target the cell is frozen.
+      -- UNCONDITIONAL (the third nonce-reset vector closed): on the AGENT the commitment-form rebind
+      -- PRESERVES the reserved nonce (`makeSovereignKernel_nonce_preserved`); on a NON-agent target the
+      -- agent cell is FROZEN. Either way the agent nonce is unchanged.
       simp only [TurnExecutorFull.execFullA] at h
       obtain ⟨_, hs'⟩ := TurnExecutorFull.makeSovereignStep_factors h
       subst hs'
-      have hne : cell ≠ agent := by
-        simp only [faTouchesSovereign] at hsov
-        exact fun he => by simp [he] at hsov
       show nonceOf (s.kernel.cell agent)
         ≤ nonceOf ((TurnExecutorFull.makeSovereignKernel s.kernel cell).cell agent)
-      -- `sovereignRebind` rewrites only `cell`'s entry; `agent ≠ cell` ⇒ frozen.
-      unfold TurnExecutorFull.makeSovereignKernel TurnExecutorFull.sovereignRebind
-      have hne' : agent ≠ cell := fun he => hne he.symm
-      simp only [if_neg hne']; exact le_refl _
+      by_cases hac : agent = cell
+      · -- the sovereigned cell IS the agent: the reserved nonce survives (`nonceOf` preserved).
+        subst hac
+        have hpres : nonceOf ((TurnExecutorFull.makeSovereignKernel s.kernel agent).cell agent)
+            = nonceOf (s.kernel.cell agent) := by
+          show (((TurnExecutorFull.makeSovereignKernel s.kernel agent).cell agent).scalar
+                  EffectTransfer.nonceField).getD 0
+             = ((s.kernel.cell agent).scalar EffectTransfer.nonceField).getD 0
+          exact TurnExecutorFull.makeSovereignKernel_nonce_preserved s.kernel agent
+        rw [hpres]
+      · -- a NON-agent target: `sovereignRebind` rewrites only `cell`'s entry; `agent ≠ cell` ⇒ frozen.
+        unfold TurnExecutorFull.makeSovereignKernel TurnExecutorFull.sovereignRebind
+        simp only [if_neg hac]; exact le_refl _
   | refusalA actor cell =>
       simp only [TurnExecutorFull.execFullA] at h
       rw [nonceOf_stateStep_of_ne agent (by decide) h]
@@ -1001,12 +994,11 @@ theorem execFullA_agentNonce_nondecr (s s' : RecChainedState) (fa : FullActionA)
   termination_by sizeOf fa
 
 /-- **`execInnerA_list_agentNonce_nondecr` — the raw inner fold preserves the agent nonce.** Structural
-induction on the inner list: each element steps via `execFullA` (nondecreasing by the keystone, using
-that the element is not a self-sovereign-of-agent and that membership is preserved by
-`execFullA_accounts_mono`), and the tail recurses. The all-or-nothing fold's agent nonce only rises. -/
+induction on the inner list: each element steps via `execFullA` (nondecreasing by the keystone — now
+UNCONDITIONAL, no self-sovereign exclusion — and membership preserved by `execFullA_accounts_mono`), and
+the tail recurses. The all-or-nothing fold's agent nonce only rises. -/
 theorem execInnerA_list_agentNonce_nondecr (s s' : RecChainedState) (inner : List FullActionA)
     (agent : CellId) (hagent : agent ∈ s.kernel.accounts)
-    (hsov : faListTouchesSovereign inner agent = false)
     (h : TurnExecutorFull.execInnerA s inner = some s') :
     agentNonce s.kernel agent ≤ agentNonce s'.kernel agent := by
   cases inner with
@@ -1014,19 +1006,16 @@ theorem execInnerA_list_agentNonce_nondecr (s s' : RecChainedState) (inner : Lis
       simp only [TurnExecutorFull.execInnerA, Option.some.injEq] at h; subst h; exact le_refl _
   | cons a rest =>
       simp only [TurnExecutorFull.execInnerA] at h
-      -- `faListTouchesSovereign (a :: rest) = false` splits into BOTH `a` and `rest` being clean.
-      simp only [faListTouchesSovereign, Bool.or_eq_false_iff] at hsov
-      obtain ⟨hsa, hsr⟩ := hsov
       cases ha : TurnExecutorFull.execFullA s a with
       | none => rw [ha] at h; exact absurd h (by simp)
       | some s1 =>
           rw [ha] at h
           have hstep : agentNonce s.kernel agent ≤ agentNonce s1.kernel agent :=
-            execFullA_agentNonce_nondecr s s1 a agent hagent hsa ha
+            execFullA_agentNonce_nondecr s s1 a agent hagent ha
           have hagent1 : agent ∈ s1.kernel.accounts :=
             execFullA_accounts_mono s s1 a agent hagent ha
           have htail : agentNonce s1.kernel agent ≤ agentNonce s'.kernel agent :=
-            execInnerA_list_agentNonce_nondecr s1 s' rest agent hagent1 hsr h
+            execInnerA_list_agentNonce_nondecr s1 s' rest agent hagent1 h
           omega
   termination_by sizeOf inner
 end
@@ -1037,20 +1026,9 @@ The deployed `runTurn` body is `FullForest.execFullForestA · forest` — a TREE
 folded under real `recCDelegateAtten` delegation handoffs. We lift the single-step keystone to the whole
 forest by a mutual induction over the tree (node + delegated children). The delegation handoff
 `recCDelegateAtten` is `caps`-only (cell + accounts frozen, `recKDelegateAtten_frame`), so it disturbs
-neither the agent nonce nor membership. The carve-out is a FOREST predicate `forestTouchesSovereign`
-(recursing into every node action — itself recursing into `exerciseA` — and every child subtree). -/
-
-/-! Does the forest (any node action, recursing into `exerciseA`, or any delegated child subtree)
-make `agent` self-sovereign? The forest-level lift of `faTouchesSovereign` — the precise carve-out. -/
-mutual
-def forestTouchesSovereign (f : FullForest.FullForestA) (agent : CellId) : Bool :=
-  match f with
-  | ⟨a, kids⟩ => faTouchesSovereign a agent || childrenTouchSovereign kids agent
-def childrenTouchSovereign (kids : List FullForest.FullChildA) (agent : CellId) : Bool :=
-  match kids with
-  | []        => false
-  | ⟨_, _, _, sub⟩ :: rest => forestTouchesSovereign sub agent || childrenTouchSovereign rest agent
-end
+neither the agent nonce nor membership. UNCONDITIONAL: no self-sovereign carve-out — the
+`makeSovereignA` arm is nonce-preserving (`makeSovereign_preserves_nonce`), so the lift holds over ANY
+forest. -/
 
 /-- A committed `recCDelegateAtten` handoff freezes every cell's `nonceOf` and account membership
 (`caps`-only edit, `recKDelegateAtten_frame`). The bridge each forest child-edge reuses. -/
@@ -1116,45 +1094,40 @@ theorem execFullChildrenA_accounts_mono : ∀ (delegator : CellId) (s s' : RecCh
   termination_by delegator s s' kids => sizeOf kids
 end
 
-/-! **`execFullForestA_agentNonce_nondecr` — THE FOREST KEYSTONE.** A committed `execFullForestA` over a
-forest that does NOT make `agent` self-sovereign, with `agent` a live member account, leaves `agent`'s
-nonce UNCHANGED-OR-RAISED. The whole-executor-body discharge of `BodyNonceNondecreasing`, proved by
-mutual induction over the tree (node action via the single-step keystone, children via the handoff
-frame + recursion). -/
+/-! **`execFullForestA_agentNonce_nondecr` — THE FOREST KEYSTONE (UNCONDITIONAL).** A committed
+`execFullForestA` over ANY forest, with `agent` a live member account, leaves `agent`'s nonce
+UNCHANGED-OR-RAISED. The whole-executor-body discharge of `BodyNonceNondecreasing` — no self-sovereign
+carve-out (the `makeSovereignA` arm is now nonce-preserving), proved by mutual induction over the tree
+(node action via the single-step keystone, children via the handoff frame + recursion). -/
 mutual
 theorem execFullForestA_agentNonce_nondecr : ∀ (s s' : RecChainedState) (f : FullForest.FullForestA)
-    (agent : CellId), agent ∈ s.kernel.accounts → forestTouchesSovereign f agent = false →
+    (agent : CellId), agent ∈ s.kernel.accounts →
     FullForest.execFullForestA s f = some s' →
     agentNonce s.kernel agent ≤ agentNonce s'.kernel agent
-  | s, s', ⟨a, kids⟩, agent, hagent, hsov, h => by
-      simp only [forestTouchesSovereign, Bool.or_eq_false_iff] at hsov
-      obtain ⟨hsa, hskids⟩ := hsov
+  | s, s', ⟨a, kids⟩, agent, hagent, h => by
       simp only [FullForest.execFullForestA] at h
       cases hnode : TurnExecutorFull.execFullA s a with
       | none => rw [hnode] at h; exact absurd h (by simp)
       | some s1 =>
           rw [hnode] at h
           have hstep : agentNonce s.kernel agent ≤ agentNonce s1.kernel agent :=
-            execFullA_agentNonce_nondecr s s1 a agent hagent hsa hnode
+            execFullA_agentNonce_nondecr s s1 a agent hagent hnode
           have hagent1 : agent ∈ s1.kernel.accounts :=
             execFullA_accounts_mono s s1 a agent hagent hnode
           have htail : agentNonce s1.kernel agent ≤ agentNonce s'.kernel agent :=
-            execFullChildrenA_agentNonce_nondecr (FullForest.targetOf a) s1 s' kids agent hagent1 hskids h
+            execFullChildrenA_agentNonce_nondecr (FullForest.targetOf a) s1 s' kids agent hagent1 h
           omega
   termination_by s s' f => sizeOf f
 
 /-- The child-edge fold preserves the agent nonce: each delegation handoff (`recCDelegateAtten`,
-cell-frozen) then the child subtree (recursion), all-or-nothing. -/
+cell-frozen) then the child subtree (recursion), all-or-nothing. UNCONDITIONAL (no carve-out). -/
 theorem execFullChildrenA_agentNonce_nondecr : ∀ (delegator : CellId) (s s' : RecChainedState)
     (kids : List FullForest.FullChildA) (agent : CellId), agent ∈ s.kernel.accounts →
-    childrenTouchSovereign kids agent = false →
     FullForest.execFullChildrenA delegator s kids = some s' →
     agentNonce s.kernel agent ≤ agentNonce s'.kernel agent
-  | _, s, s', [], agent, _, _, h => by
+  | _, s, s', [], agent, _, h => by
       simp only [FullForest.execFullChildrenA, Option.some.injEq] at h; subst h; exact le_refl _
-  | delegator, s, s', ⟨holder, keep, parentCap, sub⟩ :: rest, agent, hagent, hsov, h => by
-      simp only [childrenTouchSovereign, Bool.or_eq_false_iff] at hsov
-      obtain ⟨hssub, hsrest⟩ := hsov
+  | delegator, s, s', ⟨holder, keep, parentCap, sub⟩ :: rest, agent, hagent, h => by
       simp only [FullForest.execFullChildrenA] at h
       cases hct : FullForest.capTarget parentCap with
       | some tt =>
@@ -1172,11 +1145,11 @@ theorem execFullChildrenA_agentNonce_nondecr : ∀ (delegator : CellId) (s s' : 
               | some s2 =>
                   rw [hsub] at h; simp only at h
                   have hstep : agentNonce s1.kernel agent ≤ agentNonce s2.kernel agent :=
-                    execFullForestA_agentNonce_nondecr s1 s2 sub agent hagent1 hssub hsub
+                    execFullForestA_agentNonce_nondecr s1 s2 sub agent hagent1 hsub
                   have hagent2 : agent ∈ s2.kernel.accounts :=
                     execFullForestA_accounts_mono s1 s2 sub agent hagent1 hsub
                   have htail : agentNonce s2.kernel agent ≤ agentNonce s'.kernel agent :=
-                    execFullChildrenA_agentNonce_nondecr delegator s2 s' rest agent hagent2 hsrest h
+                    execFullChildrenA_agentNonce_nondecr delegator s2 s' rest agent hagent2 h
                   omega
       | none =>
           rw [hct] at h; simp only at h
@@ -1185,11 +1158,11 @@ theorem execFullChildrenA_agentNonce_nondecr : ∀ (delegator : CellId) (s s' : 
           | some s2 =>
               rw [hsub] at h; simp only at h
               have hstep : agentNonce s.kernel agent ≤ agentNonce s2.kernel agent :=
-                execFullForestA_agentNonce_nondecr s s2 sub agent hagent hssub hsub
+                execFullForestA_agentNonce_nondecr s s2 sub agent hagent hsub
               have hagent2 : agent ∈ s2.kernel.accounts :=
                 execFullForestA_accounts_mono s s2 sub agent hagent hsub
               have htail : agentNonce s2.kernel agent ≤ agentNonce s'.kernel agent :=
-                execFullChildrenA_agentNonce_nondecr delegator s2 s' rest agent hagent2 hsrest h
+                execFullChildrenA_agentNonce_nondecr delegator s2 s' rest agent hagent2 h
               omega
   termination_by delegator s s' kids => sizeOf kids
 end
@@ -1201,11 +1174,10 @@ hypothesis `runTurn_strictly_advances_agentNonce` carries is now a THEOREM of th
 not an assumption. (The membership side-condition is supplied by admission's `AgentLive` gate, preserved
 through the committed prologue.) -/
 theorem forest_body_nonceNondecreasing (f : FullForest.FullForestA) (agent : CellId)
-    (hsov : forestTouchesSovereign f agent = false)
     (hmem : ∀ s : RecChainedState, agent ∈ s.kernel.accounts) :
     BodyNonceNondecreasing (fun s => FullForest.execFullForestA s f) agent := by
   intro s₁ s' h
-  exact execFullForestA_agentNonce_nondecr s₁ s' f agent (hmem s₁) hsov h
+  exact execFullForestA_agentNonce_nondecr s₁ s' f agent (hmem s₁) h
 
 /-- **`admissible_agentLive` — the agent is a live account in an admissible turn.** The `AgentLive`
 gate (`admissible`'s conjunct 2) forces `h.agent ∈ accounts`; `commitPrologue` preserves the account
@@ -1218,16 +1190,14 @@ theorem admissible_agentLive (ctx : Admission.AdmCtx) (h : Admission.TurnHdr) (s
   exact absurd hadm (by simp)
 
 /-- **`runTurn_forest_strictly_advances` — NO-REPLAY ADVANCE FOR THE LIVE FOREST BODY (the close).**
-On an admissible turn whose forest body does NOT make the agent self-sovereign, the deployed
-`Admission.runTurn` with that forest body STRICTLY advances the agent nonce — UNCONDITIONALLY (no
-carried `BodyNonceNondecreasing` hypothesis: it is DISCHARGED here by `execFullForestA_agentNonce_nondecr`
-at the post-prologue state, whose membership comes from admission's `AgentLive` gate). This is exactly
-the `TurnChain.monotone` obligation, now a theorem of the LIVE `runTurn`-over-`execFullForestA` executor.
-The hypothesis the no-replay theorem carries is DISCHARGED by the deployed executor. -/
+On ANY admissible turn, the deployed `Admission.runTurn` with the `execFullForestA` body STRICTLY
+advances the agent nonce — UNCONDITIONALLY (no self-sovereign carve-out, no carried
+`BodyNonceNondecreasing` hypothesis: it is DISCHARGED here by `execFullForestA_agentNonce_nondecr` at the
+post-prologue state, whose membership comes from admission's `AgentLive` gate). This is exactly the
+`TurnChain.monotone` obligation, now a theorem of the LIVE `runTurn`-over-`execFullForestA` executor. -/
 theorem runTurn_forest_strictly_advances (ctx : Admission.AdmCtx) (h : Admission.TurnHdr)
     (s : RecChainedState) (f : FullForest.FullForestA)
-    (hadm : Admission.admissible ctx h s = true)
-    (hsov : forestTouchesSovereign f h.agent = false) :
+    (hadm : Admission.admissible ctx h s = true) :
     ∀ s', Admission.runTurn ctx h s (fun s₀ => FullForest.execFullForestA s₀ f) = some s' →
       agentNonce s.kernel h.agent < agentNonce s'.kernel h.agent := by
   intro s' hrun
@@ -1250,7 +1220,7 @@ theorem runTurn_forest_strictly_advances (ctx : Admission.AdmCtx) (h : Admission
       have hbmono : agentNonce (Admission.commitPrologue s h.agent h.fee).kernel h.agent
           ≤ agentNonce sb.kernel h.agent :=
         execFullForestA_agentNonce_nondecr (Admission.commitPrologue s h.agent h.fee) sb f h.agent
-          hmem0 hsov hb
+          hmem0 hb
       rw [hrunsb] at hrun
       cases hrun
       omega
@@ -1296,55 +1266,52 @@ theorem deployed_no_replay (S : CommitSurface) (agent : CellId) (t : Turn)
 
 The `advance` witness `deployed_no_replay` takes is now a THEOREM of the live forest executor
 (`runTurn_forest_strictly_advances`), not an assumption. Given a sequence of states each produced by an
-ACCEPTED `Admission.runTurn` over a (non-self-sovereign) `execFullForestA` body, the strict per-turn
-agent-nonce advance is automatic, so the sequence IS a monotone `TurnChain` and a fixed pre-anchor opens
-the CAS gate at most once — NO REPLAY, unconditional, on the DEPLOYED forest executor. -/
+ACCEPTED `Admission.runTurn` over ANY `execFullForestA` body, the strict per-turn agent-nonce advance is
+automatic, so the sequence IS a monotone `TurnChain` and a fixed pre-anchor opens the CAS gate at most
+once — NO REPLAY, UNCONDITIONAL (the third nonce-reset vector closed: no self-sovereign carve-out). -/
 
-/-- **`forest_advance_holds` — the `advance` witness IS a theorem of the live executor.** For a
-forest-driven accepted-`runTurn` sequence (each admissible, each non-self-sovereign), the per-step strict
-agent-nonce advance is PROVED, not assumed — discharged by `runTurn_forest_strictly_advances`. This is
-exactly the `TurnChain.monotone` obligation, established OF the live executor. -/
+/-- **`forest_advance_holds` — the `advance` witness IS a theorem of the live executor.** For ANY
+forest-driven accepted-`runTurn` sequence (each admissible), the per-step strict agent-nonce advance is
+PROVED, not assumed — discharged by `runTurn_forest_strictly_advances`. This is exactly the
+`TurnChain.monotone` obligation, established OF the live executor (no self-sovereign carve-out). -/
 theorem forest_advance_holds (agent : CellId)
     (seq : Nat → RecChainedState) (ctxs : Nat → Admission.AdmCtx) (hdrs : Nat → Admission.TurnHdr)
     (fwd : Nat → FullForest.FullForestA)
     (hagent : ∀ i, (hdrs i).agent = agent)
     (hadm : ∀ i, Admission.admissible (ctxs i) (hdrs i) (seq i) = true)
-    (hsov : ∀ i, forestTouchesSovereign (fwd i) agent = false)
     (hstep : ∀ i, Admission.runTurn (ctxs i) (hdrs i) (seq i)
                     (fun s₀ => FullForest.execFullForestA s₀ (fwd i)) = some (seq (i + 1))) :
     ∀ i, agentNonce (seq i).kernel agent < agentNonce (seq (i + 1)).kernel agent := by
   intro i
-  have hsovi : forestTouchesSovereign (fwd i) (hdrs i).agent = false := by
-    rw [hagent i]; exact hsov i
-  have := runTurn_forest_strictly_advances (ctxs i) (hdrs i) (seq i) (fwd i) (hadm i) hsovi
+  have := runTurn_forest_strictly_advances (ctxs i) (hdrs i) (seq i) (fwd i) (hadm i)
     (seq (i + 1)) (hstep i)
   rwa [hagent i] at this
 
 /-- **`deployed_forest_no_replay` — NO REPLAY on the DEPLOYED FOREST executor (the whole-executor close,
-hypothesis-free).** Given indexed states `seq i` (all `AccountsWF`) each produced by an ACCEPTED
-`Admission.runTurn` over a non-self-sovereign `execFullForestA` body (`hagent`/`hadm`/`hsov`/`hstep`),
-a fixed pre-anchor opens the CAS gate at most ONCE. The monotone `advance` is DERIVED internally from the
-executor witnesses (`forest_advance_holds`) — NOT taken as a hypothesis — so no-replay is true OF the
-deployed forest `runTurn` sequence unconditionally, the assembled close of the cross-turn defense. -/
+UNCONDITIONAL).** Given indexed states `seq i` (all `AccountsWF`) each produced by an ACCEPTED
+`Admission.runTurn` over ANY `execFullForestA` body (`hagent`/`hadm`/`hstep`), a fixed pre-anchor opens
+the CAS gate at most ONCE. The monotone `advance` is DERIVED internally from the executor witnesses
+(`forest_advance_holds`) — NOT taken as a hypothesis, and with NO self-sovereign carve-out (the third
+nonce-reset vector closed at the executor) — so no-replay is true OF the deployed forest `runTurn`
+sequence unconditionally, the assembled close of the cross-turn defense. -/
 theorem deployed_forest_no_replay (S : CommitSurface) (agent : CellId) (t : Turn)
     (seq : Nat → RecChainedState) (ctxs : Nat → Admission.AdmCtx) (hdrs : Nat → Admission.TurnHdr)
     (fwd : Nat → FullForest.FullForestA)
     (wf : ∀ i, AccountsWF (seq i).kernel)
     (hagent : ∀ i, (hdrs i).agent = agent)
     (hadm : ∀ i, Admission.admissible (ctxs i) (hdrs i) (seq i) = true)
-    (hsov : ∀ i, forestTouchesSovereign (fwd i) agent = false)
     (hstep : ∀ i, Admission.runTurn (ctxs i) (hdrs i) (seq i)
                     (fun s₀ => FullForest.execFullForestA s₀ (fwd i)) = some (seq (i + 1)))
     {i j : Nat} {preCommit : ℤ}
     (hi : LiveCommitMatches
         (acceptedSeq_to_TurnChain S agent t seq wf
-          (forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hsov hstep)) i preCommit)
+          (forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hstep)) i preCommit)
     (hj : LiveCommitMatches
         (acceptedSeq_to_TurnChain S agent t seq wf
-          (forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hsov hstep)) j preCommit) :
+          (forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hstep)) j preCommit) :
     i = j :=
   no_replay (acceptedSeq_to_TurnChain S agent t seq wf
-    (forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hsov hstep)) hi hj
+    (forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hstep)) hi hj
 
 /-! ## §5 — NON-VACUITY: the no-replay machinery has TEETH (a real chain exists, both polarities).
 
@@ -1394,24 +1361,33 @@ theorem witnessChain_replay_rejected (S : CommitSurface) (agent : CellId) (t : T
     ¬ LiveCommitMatches (witnessChain S agent t base hwf hin) j preCommit :=
   replay_rejected_after_apply _ hi hlt
 
-/-! ### §5b — THE CARVE-OUT BITES: `faTouchesSovereign` flags exactly the down-vector (non-vacuity).
+/-! ### §5b — MUTATION-CONFIRM: the THIRD nonce-reset vector is CLOSED (`makeSovereign` keeps the nonce).
 
-The `forestTouchesSovereign` carve-out is not a vacuous over-restriction: it is `true` EXACTLY on the
-self-sovereign-of-agent action and `false` on the others. A `makeSovereignA _ agent` IS flagged; a
-`makeSovereignA _ other` (other ≠ agent), and every non-sovereign arm, is NOT — so the forest keystone
-admits the full executor minus precisely the one nonce-dropping vector. -/
+The carve-out is GONE — `makeSovereign` no longer drops the nonce. We confirm the vector is closed
+EXECUTABLY: a self-sovereign step on a cell with a stored nonce `n > 0` keeps the READABLE nonce at `n`
+(it used to fall to `0`). A flag/old model would read `0` here; the commitment-form-with-reserved-nonce
+rebind reads `n`. This is what makes `BodyNonceNondecreasing` hold for `makeSovereign` (no carve-out). -/
 
--- `makeSovereignA actor agent` (target = the agent) IS flagged — the down-vector is caught.
-#guard faTouchesSovereign (.makeSovereignA 5 7) 7 == true
--- `makeSovereignA actor other` (other ≠ agent) is NOT flagged — a sovereign of a DIFFERENT cell is fine.
-#guard faTouchesSovereign (.makeSovereignA 5 8) 7 == false
--- non-sovereign arms are NOT flagged (the keystone admits them): transfer / incrementNonce / setField.
-#guard faTouchesSovereign (.balanceA ⟨0, 1, 2, 0⟩ 3) 7 == false
-#guard faTouchesSovereign (.incrementNonceA 7 7 9) 7 == false
-#guard faTouchesSovereign (.setFieldA 7 7 "x" 1) 7 == false
--- the carve-out recurses INTO `exerciseA`: a self-sovereign hidden in inner effects IS still flagged.
-#guard faTouchesSovereign (.exerciseA 5 6 [.makeSovereignA 5 7]) 7 == true
-#guard faTouchesSovereign (.exerciseA 5 6 [.balanceA ⟨0, 1, 2, 0⟩ 3]) 7 == false
+/-- A concrete pre-state for the mutation-confirm: cell 0 is self-owned (empty caps ⇒ authority by
+ownership), Live, carrying a nonzero replay nonce (`nonce = 5`). -/
+def msNonceWitness : RecChainedState :=
+  { kernel :=
+      { accounts := {0}
+        cell := fun c => if c = 0 then .record [("balance", .int 42), ("nonce", .int 5)]
+                         else .record []
+        caps := fun _ => [] }
+    log := [] }
+
+-- the self-sovereign step COMMITS (actor 0 owns cell 0, Live):
+#guard (TurnExecutorFull.makeSovereignStep msNonceWitness 0 0).isSome  -- true
+-- ★ THE FIX: the rebound cell's READABLE nonce is PRESERVED at 5 (it used to drop to 0 — the vector):
+#guard (match TurnExecutorFull.makeSovereignStep msNonceWitness 0 0 with
+        | some s' => (((s'.kernel.cell 0).scalar EffectTransfer.nonceField).getD 0) == 5
+        | none    => false)  -- true (nonce PRESERVED — was the down-vector to 0)
+-- ...while the host-readable VALUE/balance is STILL gone behind the commitment (the fidelity teeth kept):
+#guard (match TurnExecutorFull.makeSovereignStep msNonceWitness 0 0 with
+        | some s' => ((s'.kernel.cell 0).scalar "balance").isNone && ((s'.kernel.cell 0).field "commitment").isSome
+        | none    => false)  -- true (value dropped, commitment present)
 
 /-! ## §6 — the RESIDUAL (named precisely): what connects this to the deployed CAS.
 
@@ -1464,7 +1440,7 @@ The genuinely-hard fact — that the commitment cannot hide a stale nonce — is
 -- The ASSEMBLY keystones (the discharged `BodyNonceNondecreasing` + the live-executor wiring) are
 -- axiom-clean: the no-replay defense holds OF the deployed forest `runTurn`, not under an assumption.
 #assert_axioms nonceOf_setField_of_ne
-#assert_axioms makeSovereign_drops_nonce
+#assert_axioms makeSovereign_preserves_nonce
 #assert_axioms execFullA_agentNonce_nondecr
 #assert_axioms execFullA_accounts_mono
 #assert_axioms execFullForestA_agentNonce_nondecr

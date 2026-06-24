@@ -144,7 +144,8 @@ dropped behind the commitment; the runtime receipt-log row is re-attached in §3
 def makeSovereignStmt (actor cell : CellId) : RecStmt :=
   RecStmt.seq (RecStmt.guard (makeSovereignGuard actor cell))
     (RecStmt.setCell ({cell} : Finset CellId)
-      (fun k _c => Value.record [(commitmentField, Value.dig (stateCommitment (k.cell cell)))]))
+      (fun k _c => Value.record [(commitmentField, Value.dig (stateCommitment (k.cell cell))),
+                     (TurnExecutorFull.nonceField, Value.int (TurnExecutorFull.sovereignNonce (k.cell cell)))]))
 
 /-! ## §2 — The cornerstone: `interp` of the makeSovereign term IS the KERNEL side of `makeSovereignStep`. -/
 
@@ -161,7 +162,8 @@ theorem makeSovereignGuard_iff (actor cell : CellId) (k : RecordKernelState) :
 this is what makes the `setCell` move equal `makeSovereignKernel`'s post-`cell` map. -/
 theorem makeSovereignCellMap_eq (cell : CellId) (k : RecordKernelState) :
     (fun c => if c ∈ ({cell} : Finset CellId)
-                then Value.record [(commitmentField, Value.dig (stateCommitment (k.cell cell)))]
+                then Value.record [(commitmentField, Value.dig (stateCommitment (k.cell cell))),
+                     (TurnExecutorFull.nonceField, Value.int (TurnExecutorFull.sovereignNonce (k.cell cell)))]
                 else k.cell c)
       = sovereignRebind k.cell cell := by
   funext c
@@ -174,7 +176,8 @@ theorem makeSovereignCellMap_eq (cell : CellId) (k : RecordKernelState) :
 the cell map agrees by `makeSovereignCellMap_eq`). -/
 theorem makeSovereign_setCell_eq_kernel (cell : CellId) (k : RecordKernelState) :
     { k with cell := fun c => if c ∈ ({cell} : Finset CellId)
-                then Value.record [(commitmentField, Value.dig (stateCommitment (k.cell cell)))]
+                then Value.record [(commitmentField, Value.dig (stateCommitment (k.cell cell))),
+                     (TurnExecutorFull.nonceField, Value.int (TurnExecutorFull.sovereignNonce (k.cell cell)))]
                 else k.cell c }
       = makeSovereignKernel k cell := by
   unfold makeSovereignKernel

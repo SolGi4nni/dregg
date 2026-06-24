@@ -829,11 +829,15 @@ def hs0Nonce7 : RecordKernelState :=
 -- balance stayed 100. NON-VACUITY: a flag handler would read `100` here; the rebind reads `0`.
 #guard ((execEffect (makeSovereignEffect 0 0) hs0).map
         (fun k => fieldOf "balance" (k.cell 0))) == some 0  --  some 0 (record dropped)
--- and the rebound cell IS the commitment-only record (proved, not `#eval`'d — `Value` has no `BEq`):
+-- and the rebound cell IS the commitment-form record (proved, not `#eval`'d — `Value` has no `BEq`):
+-- commitment of the whole pre-state value, PLUS the RESERVED replay nonce (preserved, not reset to 0 —
+-- the third nonce-reset vector closed; the host keeps the replay counter readable + monotone):
 example : (execEffect (makeSovereignEffect 0 0) hs0).map (fun k => k.cell 0)
     = some (Value.record
         [(Dregg2.Exec.TurnExecutorFull.commitmentField,
-          Value.dig (Dregg2.Exec.TurnExecutorFull.stateCommitment (hs0.cell 0)))]) := by
+          Value.dig (Dregg2.Exec.TurnExecutorFull.stateCommitment (hs0.cell 0))),
+         (Dregg2.Exec.TurnExecutorFull.nonceField,
+          Value.int (Dregg2.Exec.TurnExecutorFull.sovereignNonce (hs0.cell 0)))]) := by
   rfl
 
 /-! ## §5 — turnDelta cross-check: the SUMMED deltas match the §TEETH-10 turn.

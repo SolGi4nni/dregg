@@ -1586,13 +1586,26 @@ where
   | []             => 17
   | (_, v) :: rest => (commitFields rest) * 31 + (stateCommitment v) + 19
 
-/-- **`sovereignRebind cell target`** — REPLACE `target`'s entire cell with the commitment-only
-record `[(commitmentField, .dig (stateCommitment (cell target)))]`. The faithful kernel-level model of
-`cells.remove(id)` + `sovereign_commitments.insert(id, cell.state_commitment())`: the readable record
-is GONE; only the commitment remains. Every other cell untouched. (Contrast `writeField`, which keeps
-the record and edits ONE field — the wave-6 flag model. THIS drops the whole record.) -/
+/-- The pre-state's replay nonce, read off a cell's record (defaulting an absent/ill-typed slot to
+`0` — the same fail-soft read `EffectTransfer.nonceOf` performs). The value the sovereign rebind
+PRESERVES so the replay counter survives the drop-behind-commitment. -/
+def sovereignNonce (v : Value) : Int := (v.scalar nonceField).getD 0
+
+/-- **`sovereignRebind cell target`** — REPLACE `target`'s entire cell with the commitment-form record
+`[(commitmentField, .dig (stateCommitment (cell target))), (nonceField, .int (sovereignNonce …))]`. The
+faithful kernel-level model of `cells.remove(id)` + `sovereign_commitments.insert(id,
+cell.state_commitment())`: the host-readable VALUE/balance/permissions are GONE behind the commitment;
+only the commitment (binding the WHOLE pre-state, incl. the nonce) and the RESERVED replay-nonce slot
+remain. The nonce is replay-protection metadata, NOT host-readable cell state — the host must keep it
+readable+monotone to enforce no-replay (exactly the reserved-field discipline `setField "nonce"` rides:
+making a cell sovereign changes its host representation, it must NOT reset the replay counter). The
+commitment still binds the full pre-state (collision-resistance unchanged). Every other cell untouched.
+(Contrast `writeField`, which keeps the record and edits ONE field; THIS drops the whole record EXCEPT
+the reserved nonce.) -/
 def sovereignRebind (cell : CellId → Value) (target : CellId) : CellId → Value :=
-  fun c => if c = target then .record [(commitmentField, .dig (stateCommitment (cell target)))]
+  fun c => if c = target then
+             .record [(commitmentField, .dig (stateCommitment (cell target))),
+                      (nonceField, .int (sovereignNonce (cell target)))]
            else cell c
 
 /-- **`makeSovereignKernel k target`** — apply the value-rebind to the record kernel: the `cell`
@@ -1641,10 +1654,12 @@ the per-asset ledger): the per-asset balance is a separate domain. The exact ana
 theorem makeSovereignKernel_recTotalAsset (k : RecordKernelState) (target : CellId) (b : AssetId) :
     recTotalAsset (makeSovereignKernel k target) b = recTotalAsset k b := rfl
 
-/-- The rebound cell IS the commitment-only literal record (the bridge the teeth reuse). -/
+/-- The rebound cell IS the commitment-form literal record (commitment + the RESERVED replay nonce —
+the bridge the teeth reuse). -/
 theorem makeSovereignKernel_cell_eq (k : RecordKernelState) (target : CellId) :
     (makeSovereignKernel k target).cell target
-      = .record [(commitmentField, .dig (stateCommitment (k.cell target)))] := by
+      = .record [(commitmentField, .dig (stateCommitment (k.cell target))),
+                 (nonceField, .int (sovereignNonce (k.cell target)))] := by
   simp only [makeSovereignKernel, sovereignRebind, if_true]
 
 /-- **THE FIDELITY TEETH — the readable balance is GONE.** After a committed
@@ -1663,21 +1678,25 @@ theorem makeSovereignStep_balance_unreadable {s s' : RecChainedState} {actor tar
   -- (computes by `rfl`: the field-name match is decidable on closed strings, value irrelevant).
   rw [makeSovereignKernel_cell_eq s.kernel target]; rfl
 
-/-- **THE FIDELITY TEETH — EVERY pre-state field is dropped.** After a committed
-`makeSovereignStep`, ANY field `f` distinct from the commitment field reads `none` from the rebound
-cell — `nonce`, `permissions`, `verification_key`, the value, all gone. The general form of
-`_balance_unreadable`: the host-readable state is REPLACED, not merely flagged. -/
+/-- **THE FIDELITY TEETH — EVERY host-readable pre-state field is dropped (except the reserved nonce).**
+After a committed `makeSovereignStep`, ANY field `f` distinct from BOTH the commitment field and the
+RESERVED replay-nonce field reads `none` from the rebound cell — `balance`, `permissions`,
+`verification_key`, the value, all gone behind the commitment. The general form of `_balance_unreadable`:
+the host-readable state is REPLACED by the commitment, the lone survivor being the reserved replay-nonce
+slot the host must keep readable+monotone (no-replay). -/
 theorem makeSovereignStep_fields_dropped {s s' : RecChainedState} {actor target : CellId}
-    (f : FieldName) (hf : f ≠ commitmentField)
+    (f : FieldName) (hf : f ≠ commitmentField) (hfn : f ≠ nonceField)
     (h : makeSovereignStep s actor target = some s') :
     (s'.kernel.cell target).field f = none := by
   obtain ⟨_, hs'⟩ := makeSovereignStep_factors h
   subst hs'
-  -- the only field of the rebound record is `commitment`; any `f ≠ commitment` misses ⇒ `none`.
+  -- the rebound record's fields are exactly `commitment` and `nonce`; any `f` ≠ both misses ⇒ `none`.
   have hfb : ((commitmentField : FieldName) == f) = false :=
     beq_eq_false_iff_ne.2 (fun hc => hf hc.symm)
+  have hfb2 : ((nonceField : FieldName) == f) = false :=
+    beq_eq_false_iff_ne.2 (fun hc => hfn hc.symm)
   rw [makeSovereignKernel_cell_eq s.kernel target]
-  simp only [Value.field, List.find?_cons, hfb, List.find?_nil, Option.map_none]
+  simp only [Value.field, List.find?_cons, hfb, hfb2, List.find?_nil, Option.map_none]
 
 /-- **THE COMMITMENT IS PRESENT.** After a committed `makeSovereignStep`, the rebound cell
 carries the commitment field as a digest of the PRE-state value: `cell.state_commitment()`. The
@@ -1692,6 +1711,28 @@ theorem makeSovereignStep_commitment_present {s s' : RecChainedState} {actor tar
   -- the head field of the rebound record IS `commitment`; the lookup hits it ⇒ `some (.dig …)`
   -- (computes by `rfl`: the field-name match is decidable on closed strings).
   rw [makeSovereignKernel_cell_eq s.kernel target]; rfl
+
+/-- **THE REPLAY TEETH — the reserved replay nonce is PRESERVED.** Reading the `nonce` scalar of the
+rebound cell returns EXACTLY the pre-state nonce: `sovereignRebind` keeps the reserved replay-nonce
+slot. So making a cell sovereign changes its host representation WITHOUT resetting its replay counter —
+the fix that makes `makeSovereign` nonce-MONOTONE (it was the third nonce-reset vector; the readable
+nonce used to drop to `0`). This is what makes `BodyNonceNondecreasing` hold for `makeSovereign` too. -/
+theorem sovereignRebind_nonce_scalar (cell : CellId → Value) (target : CellId) :
+    (sovereignRebind cell target target).scalar nonceField = some (sovereignNonce (cell target)) := by
+  simp only [sovereignRebind, if_true]
+  rfl
+
+/-- The kernel-level nonce-preservation at the FAIL-SOFT read grain (`(scalar "nonce").getD 0` — the
+exact `nonceOf` measure the no-replay defense uses): after `makeSovereignKernel`, the target's read-off
+nonce equals the pre-state's. The commitment-form rebind keeps the reserved replay nonce (installing
+`some (getD 0 (pre))`), so the replay counter does NOT drop — even when the pre-state slot was absent
+(both read `0`). THIS is the fix to the third nonce-reset vector. -/
+theorem makeSovereignKernel_nonce_preserved (k : RecordKernelState) (target : CellId) :
+    (((makeSovereignKernel k target).cell target).scalar nonceField).getD 0
+      = ((k.cell target).scalar nonceField).getD 0 := by
+  show ((sovereignRebind k.cell target target).scalar nonceField).getD 0 = _
+  rw [sovereignRebind_nonce_scalar]
+  rfl
 
 /-- **`makeSovereignStep` authorized.** A committed rebind implies the actor held authority
 over `target` (dregg1's self-sovereign gate). -/
@@ -4315,6 +4356,11 @@ theorem execFullTurnA_each_attests :
 #assert_axioms makeSovereignStep_balance_unreadable
 #assert_axioms makeSovereignStep_fields_dropped
 #assert_axioms makeSovereignStep_commitment_present
+-- THE THIRD NONCE-RESET VECTOR, CLOSED: the commitment-form rebind PRESERVES the reserved replay nonce
+-- (the readable nonce no longer drops to 0 — `makeSovereign` is now nonce-MONOTONE, the fix that makes
+-- `BodyNonceNondecreasing` hold for `makeSovereign` too, dropping the no-replay carve-out).
+#assert_axioms sovereignRebind_nonce_scalar
+#assert_axioms makeSovereignKernel_nonce_preserved
 -- META-FILL B Wave 2: the 6 DISTINCT AUTHORITY effects on the per-asset dispatch. The headline
 -- NON-AMPLIFICATION (genuine `capAuthConferred ⊆` over the real `List Auth` lattice) + the
 -- teeth (amplifying grant rejected) + grounding/addEdge/removeEdge/graph-unchanged graph moves,
@@ -4879,8 +4925,12 @@ def fmaW3 : RecChainedState :=
 --     behind the commitment (a flag model leaves it readable; this is the §8-portal boundary):
 #guard ((execFullA fmaS (.makeSovereignA 0 0)).map
         (fun s => (Value.scalar (s.kernel.cell 0) "balance").isNone)) == some true  -- some none (UNREADABLE)
+-- permissions/balance/value are DROPPED behind the commitment, but the RESERVED replay nonce SURVIVES
+-- (readable + equal to the pre-state nonce) — the third nonce-reset vector closed, no-replay monotone:
 #guard ((execFullA fmaS (.makeSovereignA 0 0)).map
-        (fun s => ((s.kernel.cell 0).field "nonce").isNone && ((s.kernel.cell 0).field "permissions").isNone)) == some true  -- some (none, none) (ALL DROPPED)
+        (fun s => ((s.kernel.cell 0).field "permissions").isNone && ((s.kernel.cell 0).field "balance").isNone)) == some true  -- some (none, none) (host state DROPPED)
+#guard ((execFullA fmaS (.makeSovereignA 0 0)).map
+        (fun s => ((s.kernel.cell 0).scalar nonceField).getD 0)) == some (((fmaS.kernel.cell 0).scalar nonceField).getD 0)  -- nonce PRESERVED (not reset to 0)
 -- (c) the COMMITMENT is present — a digest of the FULL pre-state value (`cell.state_commitment()`):
 #guard (match (execFullA fmaS (.makeSovereignA 0 0)).map
               (fun s => (s.kernel.cell 0).field commitmentField) with
@@ -4889,9 +4939,9 @@ def fmaW3 : RecChainedState :=
 #guard (match sovereignRebind fmaS.kernel.cell 0 0 with
         | Value.record fs =>
           match fs.find? (fun p => p.1 == commitmentField) with
-          | some (_, Value.dig d) => d == stateCommitment (fmaS.kernel.cell 0) && fs.length == 1
+          | some (_, Value.dig d) => d == stateCommitment (fmaS.kernel.cell 0) && fs.length == 2
           | _ => false
-        | _ => false)  --  the rebound record IS commitment-only
+        | _ => false)  --  the rebound record IS commitment + reserved-nonce (length 2)
 -- ...and DISTINCT pre-states give DISTINCT commitments (the binding is a function of the whole value):
 #guard ((stateCommitment (.record [("balance", .int 0)]) == stateCommitment (.record [("balance", .int 1)]))) == false  --  false (binds value)
 -- (d) bal-NEUTRAL on the per-asset ledger (the value moves behind the commitment on the HOST, not the
