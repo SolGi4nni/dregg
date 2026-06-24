@@ -245,9 +245,10 @@ theorem forestAbsStep_forward {ι : Type v} [Fintype ι] [DecidableEq ι]
     intro i
     show ft.actorA i = ft.srcA i ∨ (absOf (cells i)).authGraph.has (ft.actorA i) (ft.srcA i)
     simp only [absOf]
-    exact exec_authz_grounds_in_graph (cells i).caps
+    refine (exec_authz_grounds_in_graph (cells i).caps
       { actor := ft.actorA i, src := ft.srcA i, dst := ft.srcA i, amt := ft.δ i }
-      (applyForestHalf_authz (hhalf i))
+      (applyForestHalf_authz (hhalf i))).imp id ?_
+    exact (Dregg2.Exec.execGraph_has_iff_authConnects_has (cells i).caps (ft.actorA i) (ft.srcA i)).mp
 
 /-- Turn-index-closed form: every committed forest step under the Σ=0 binding is matched by a
 `ForestAbsStep` (the forest turn existentially witnessed). -/
