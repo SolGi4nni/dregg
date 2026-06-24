@@ -24,6 +24,9 @@
 //! confined comms-PD will use.
 
 pub mod cell;
+// CHAT AS A HYPERDREGGMEDIA CARD — room = a cell, message = a turn, send = an
+// affordance; the timeline is the cell's history. Over the gpui-free ChatSource.
+pub mod chat_card;
 pub mod client;
 pub mod membrane;
 pub mod object;
