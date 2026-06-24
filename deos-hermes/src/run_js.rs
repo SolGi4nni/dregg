@@ -38,9 +38,12 @@
 //!   under the attenuated cap, never the World's root). THIS is "the agent's hands
 //!   on the real glass."
 
+use deos_js::card_editor::CardEditor;
+use deos_js::portable::{AppletManifest, PortableApplet};
 use deos_js::{Affordance, Applet, AttachedApplet, FireError, JsRuntime, WorldSink};
 use dregg_cell::state::FieldElement;
 use dregg_cell::{AuthRequired, CellId};
+use dregg_doc::Author;
 
 use crate::acp::{PermissionOutcome, ToolCallRequest};
 use crate::bridge::HermesGateway;
@@ -326,5 +329,188 @@ impl RunJsTool {
     pub fn fire_direct(&self, affordance: &str, arg: i64) -> Result<[u8; 32], FireError> {
         let mut applet = self.build_applet();
         applet.fire(affordance, arg).map(|r| r.receipt_hash())
+    }
+}
+
+/// The outcome of a `run_js` AUTHORING call: the gateway verdict on the
+/// *tool-call* (the accountability turn) plus what the agent-decided JS did to
+/// the card inside its cap-gated [`CardEditor`] (the receipted patches it landed,
+/// the re-folded view-source, and the blame).
+#[derive(Debug)]
+pub struct RunJsAuthorOutcome {
+    /// The gateway's verdict on the `run_js` tool-call itself — a metered,
+    /// receipted [`ToolGrant`](dregg_sdk::ToolGrant) turn (or an in-band refusal).
+    /// This is what deos returns to Hermes over ACP for the tool-call.
+    pub tool_outcome: PermissionOutcome,
+    /// The script's i32 completion value, if any (the JS `editView` paths return
+    /// the re-folded tree object; a final `?1:0`-style assertion surfaces here).
+    pub result: Option<i32>,
+    /// How many authoring gestures committed a real provenance turn on the card's
+    /// chain (the receipted-patch count — each `deos.editor.editView` that landed).
+    pub patches_committed: usize,
+    /// The provenance receipt hashes the agent's authoring left, in order (the
+    /// rewindable patch tape).
+    pub receipts: Vec<[u8; 32]>,
+    /// The card's re-folded view-source AFTER the agent's authoring (the new view a
+    /// renderer paints), iff the run completed. `None` on an engine fault.
+    pub view_source: Option<String>,
+    /// The authoring author of every view line, in blame order — the accountable-
+    /// patch face (each view line attributed to its [`Author`]). Empty on a fault.
+    pub blamed_authors: Vec<u64>,
+    /// A native/eval error from the JS run, if any (a genuine fault, NOT a cap-gate
+    /// refusal — an over-reach is the expected, JS-observable `null` from `editView`).
+    pub js_error: Option<String>,
+}
+
+impl RunJsAuthorOutcome {
+    /// Did the `run_js` tool-call itself get admitted (the accountability turn
+    /// committed)? Independent of what the JS authored inside.
+    pub fn tool_admitted(&self) -> bool {
+        self.tool_outcome.allowed()
+    }
+
+    /// Did the agent's JS actually author the card (at least one receipted patch)?
+    pub fn authored(&self) -> bool {
+        self.patches_committed > 0
+    }
+}
+
+/// THE HANDS THAT AUTHOR VIA JS — a confined agent's `run_js` tool whose script
+/// AUTHORS a card through the `deos.editor.*` surface (the SAME path the
+/// scripted `deos-view::agent_authors_a_card_live` keystone runs, now behind the
+/// proven gateway). This is the JS-decided sibling of [`CardAuthoringTool`]
+/// (which takes a structured `ViewPatch`): here the AGENT WRITES THE `editView`
+/// JS — `deos.editor.editView(card, { op: "addButton", … })` — and the runtime
+/// folds it into a receipted patch.
+///
+/// The empowered-but-accountable-but-bounded model is identical to [`RunJsTool`]:
+///   * EMPOWERED — the agent runs ARBITRARY authoring JS (real SpiderMonkey).
+///   * ACCOUNTABLE — the `run_js` tool-call is admitted by the [`HermesGateway`]
+///     as a metered, receipted [`ToolGrant`] turn; refused ⇒ no JS runs. AND each
+///     `editView` that lands leaves its own provenance receipt on the card's
+///     chain, blamed on the agent's [`Author`].
+///   * BOUNDED — the [`CardEditor`] mounts the agent's `held` against the card's
+///     `edit_authority` (the authoring cap tooth, [`dregg_cell::is_attenuation`]).
+///     An over-reach is refused IN-BAND (`editView` returns null), NO patch, NO
+///     receipt, the view untouched — the same gate a human authoring goes through.
+pub struct RunJsAuthoringTool {
+    held: AuthRequired,
+    author: Author,
+}
+
+impl RunJsAuthoringTool {
+    /// Build the agent's authoring `run_js` tool. `held` is the agent's mandate
+    /// authority (what authoring gestures are cap-checked against the card's
+    /// `edit_authority`); `author` is the agent's blame identity (every authored
+    /// line is attributed to it — the agent acts as itself).
+    pub fn new(held: AuthRequired, author: Author) -> Self {
+        RunJsAuthoringTool { held, author }
+    }
+
+    /// THE HANDS THAT AUTHOR — admit the `run_js` tool-call as a metered, receipted
+    /// gateway turn, then (iff admitted) adopt `card` (its `manifest`) for authoring
+    /// under the agent's `held` against the card's `edit_authority`, and run the
+    /// agent-decided `script` through [`JsRuntime::run_authoring`]. The script
+    /// authors the card via `deos.editor.editView(card, …)`; each gesture that lands
+    /// is a receipted provenance patch, an over-reach refused in-band.
+    ///
+    /// `rt` is a CALLER-OWNED [`JsRuntime`] (SpiderMonkey's engine init is
+    /// process-global + one-shot, so the host boots ONE and threads it here).
+    pub fn run_on(
+        &self,
+        rt: &mut JsRuntime,
+        gw: &mut HermesGateway<'_>,
+        call: &ToolCallRequest,
+        now: i64,
+        card: Applet,
+        manifest: AppletManifest,
+        edit_authority: AuthRequired,
+        script: &str,
+    ) -> RunJsAuthorOutcome {
+        // (1) THE ACCOUNTABILITY TURN — the `run_js` tool-call routes through the
+        //     gateway exactly like any other Hermes tool: a scoped, rate-limited,
+        //     receipted ToolGrant turn. `Some(vec![])` keeps the gateway turn a pure
+        //     metered admission (the editor's own patches carry the real witness).
+        let tool_outcome = gw.admit_with_work(call, now, Some(vec![]));
+        if !tool_outcome.allowed() {
+            // Refused at the membrane — no JS runs; no card is authored.
+            return RunJsAuthorOutcome {
+                tool_outcome,
+                result: None,
+                patches_committed: 0,
+                receipts: Vec::new(),
+                view_source: None,
+                blamed_authors: Vec::new(),
+                js_error: None,
+            };
+        }
+
+        // (2) THE HANDS — adopt the card under the agent's `held` against the card's
+        //     `edit_authority` (the cap tooth) and run the agent-decided authoring JS.
+        let editor = CardEditor::adopt(
+            card,
+            manifest,
+            self.author,
+            self.held.clone(),
+            edit_authority,
+        );
+
+        match rt.run_authoring(editor, script) {
+            Ok((result, editor)) => {
+                let receipts: Vec<[u8; 32]> = editor.card().receipts().to_vec();
+                let patches_committed = editor.card().receipt_count();
+                let blamed_authors: Vec<u64> =
+                    editor.view_blame().iter().map(|l| l.author.0).collect();
+                RunJsAuthorOutcome {
+                    tool_outcome,
+                    result,
+                    patches_committed,
+                    receipts,
+                    view_source: Some(editor.view_source()),
+                    blamed_authors,
+                    js_error: None,
+                }
+            }
+            // A genuine engine/eval fault (boot/compile failure) — distinct from a
+            // cap-gate refusal, which is the expected in-band `null` from editView.
+            Err(e) => RunJsAuthorOutcome {
+                tool_outcome,
+                result: None,
+                patches_committed: 0,
+                receipts: Vec::new(),
+                view_source: None,
+                blamed_authors: Vec::new(),
+                js_error: Some(e),
+            },
+        }
+    }
+
+    /// Convenience: mint a fresh card from `manifest` (cell identity
+    /// `public_key`/`token_id`), then [`RunJsAuthoringTool::run_on`] the agent's
+    /// authoring `script` against it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_on_fresh(
+        &self,
+        rt: &mut JsRuntime,
+        gw: &mut HermesGateway<'_>,
+        call: &ToolCallRequest,
+        now: i64,
+        public_key: [u8; 32],
+        token_id: [u8; 32],
+        manifest: AppletManifest,
+        edit_authority: AuthRequired,
+        script: &str,
+    ) -> RunJsAuthorOutcome {
+        let card = PortableApplet::mint(public_key, token_id, &manifest);
+        self.run_on(
+            rt,
+            gw,
+            call,
+            now,
+            card,
+            manifest,
+            edit_authority,
+            script,
+        )
     }
 }

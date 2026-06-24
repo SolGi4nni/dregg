@@ -29,13 +29,14 @@
 //! agent's `held` in `AttachedApplet::fire`; an over-reach is refused in-band, no
 //! turn reaches the World; the World's own executor is the second gate).
 
-use deos_js::{JsRuntime, WorldSink};
-use dregg_cell::CellId;
+use deos_js::portable::AppletManifest;
+use deos_js::{Applet, JsRuntime, WorldSink};
+use dregg_cell::{AuthRequired, CellId};
 
 use crate::acp::{PermissionOutcome, ToolCallRequest};
 use crate::acp_client::{JsRunRecord, RunJsHook};
 use crate::bridge::HermesGateway;
-use crate::run_js::RunJsTool;
+use crate::run_js::{RunJsAuthoringTool, RunJsTool};
 
 /// Pull the model's chosen JS out of a `run_js` tool-call's `rawInput`. The brain
 /// writes its script under `script` (the `run_js` tool's one argument). Falls back
@@ -149,6 +150,123 @@ where
     /// Consume the hands into a `run_js` [`RunJsHook`] for
     /// [`AcpClient::with_run_js_hook`](crate::acp_client::AcpClient::with_run_js_hook).
     /// Each invocation runs the model's chosen script on the live World.
+    pub fn into_hook(mut self) -> RunJsHook<'gw>
+    where
+        F: 'gw,
+    {
+        Box::new(move |call: &ToolCallRequest, now: i64| self.run_call(call, now))
+    }
+}
+
+/// THE LIVE BRAIN'S HANDS THAT AUTHOR — wire a real `hermes-acp` model's `run_js`
+/// tool-call to a real run of the model-DECIDED `deos.editor.editView(...)` JS
+/// against a card, via [`RunJsAuthoringTool`].
+///
+/// This is the authoring sibling of [`LiveJsHands`]: where that runs the model's
+/// crawl/fire script on a live World, [`LiveAuthoringHands`] runs the model's
+/// AUTHORING script — the agent, given a card + a goal ("add a reset button",
+/// "relabel the title"), WRITES the `editView` JS itself, and the edit lands as a
+/// receipted provenance patch bounded by its `held` vs the card's `edit_authority`.
+/// This closes the keystone loop with a LIVE brain deciding the edit, not a
+/// scripted snippet (the `deos-view::agent_authors_a_card_live` fixture).
+///
+/// It owns:
+///   * the agent's [`RunJsAuthoringTool`] (its `held` + blame [`Author`]);
+///   * a CARD FACTORY — a closure producing the `(card, manifest, edit_authority)`
+///     the brain authors this call. Each `run_js` adopts a fresh [`CardEditor`], so
+///     the factory hands the same card's current state (clone the cockpit's card).
+///   * a process-global [`JsRuntime`] (SpiderMonkey init is one-shot).
+///
+/// The red-team invariant holds end-to-end: EMPOWERED (the model writes arbitrary
+/// authoring JS), ACCOUNTABLE (the `run_js` tool-call is a metered, receipted
+/// gateway turn + each `editView` leaves a provenance receipt blamed on the agent),
+/// BOUNDED (the cap tooth in [`CardEditor`] refuses an over-reach in-band — no
+/// patch reaches the card).
+pub struct LiveAuthoringHands<'gw, F>
+where
+    F: FnMut() -> (Applet, AppletManifest, AuthRequired),
+{
+    tool: RunJsAuthoringTool,
+    gateway: HermesGateway<'gw>,
+    card_factory: F,
+    rt: JsRuntime,
+}
+
+impl<'gw, F> LiveAuthoringHands<'gw, F>
+where
+    F: FnMut() -> (Applet, AppletManifest, AuthRequired) + 'gw,
+{
+    /// Build the authoring hands over an agent `tool`, its accountability `gateway`,
+    /// and a `card_factory` producing the `(card, manifest, edit_authority)` the
+    /// brain authors. Boots the process-global SpiderMonkey engine — call once per
+    /// process.
+    pub fn new(
+        tool: RunJsAuthoringTool,
+        gateway: HermesGateway<'gw>,
+        card_factory: F,
+    ) -> Result<Self, String> {
+        let rt = JsRuntime::new()?;
+        Ok(Self::with_runtime(tool, gateway, card_factory, rt))
+    }
+
+    /// As [`LiveAuthoringHands::new`], but on a CALLER-OWNED [`JsRuntime`].
+    /// SpiderMonkey's engine init is process-global + one-shot, so a host (or test)
+    /// that has already booted a runtime threads it here instead of booting another
+    /// (a second `JsRuntime::new()` errors `AlreadyInitialized`).
+    pub fn with_runtime(
+        tool: RunJsAuthoringTool,
+        gateway: HermesGateway<'gw>,
+        card_factory: F,
+        rt: JsRuntime,
+    ) -> Self {
+        LiveAuthoringHands {
+            tool,
+            gateway,
+            card_factory,
+            rt,
+        }
+    }
+
+    /// Run ONE `run_js` authoring tool-call: the gateway accountability turn AND the
+    /// model-decided `editView` script against the card the factory hands back.
+    /// Returns the ACP verdict deos sends back and a record of what the brain's JS
+    /// authored (the script + the provenance receipts it landed).
+    pub fn run_call(
+        &mut self,
+        call: &ToolCallRequest,
+        now: i64,
+    ) -> (PermissionOutcome, JsRunRecord) {
+        let script = super::live_js::script_of_call(call);
+        let (card, manifest, edit_authority) = (self.card_factory)();
+
+        let mut record = JsRunRecord {
+            tool_call_id: call.tool_call_id.clone(),
+            script: script.clone(),
+            ..Default::default()
+        };
+
+        let outcome = self.tool.run_on(
+            &mut self.rt,
+            &mut self.gateway,
+            call,
+            now,
+            card,
+            manifest,
+            edit_authority,
+            &script,
+        );
+
+        record.result = outcome.result;
+        // The authoring patches the brain's JS committed (mirrors the fire tape).
+        record.fires_committed = outcome.patches_committed;
+        record.receipts = outcome.receipts.clone();
+        record.js_error = outcome.js_error.clone();
+        (outcome.tool_outcome, record)
+    }
+
+    /// Consume the hands into a `run_js` [`RunJsHook`] for
+    /// [`AcpClient::with_run_js_hook`](crate::acp_client::AcpClient::with_run_js_hook).
+    /// Each invocation runs the model-decided authoring script against the card.
     pub fn into_hook(mut self) -> RunJsHook<'gw>
     where
         F: 'gw,
