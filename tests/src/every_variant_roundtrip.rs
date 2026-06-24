@@ -345,6 +345,14 @@ fn all_effect_variants() -> Vec<Variant> {
             },
         },
         Variant {
+            label: "Mint",
+            effect: Effect::Mint {
+                target: cell_a,
+                slot: 0,
+                amount: 1,
+            },
+        },
+        Variant {
             label: "AttenuateCapability",
             effect: Effect::AttenuateCapability {
                 cell: cell_a,
@@ -405,6 +413,7 @@ fn assert_variant_coverage(e: &Effect) -> &'static str {
         Effect::CellUnseal { .. } => "CellUnseal",
         Effect::CellDestroy { .. } => "CellDestroy",
         Effect::Burn { .. } => "Burn",
+        Effect::Mint { .. } => "Mint",
         Effect::AttenuateCapability { .. } => "AttenuateCapability",
         Effect::ReceiptArchive { .. } => "ReceiptArchive",
         Effect::SetProgram { .. } => "SetProgram",

@@ -4600,6 +4600,7 @@ dependencies = [
  "dregg-federation",
  "dregg-intent",
  "dregg-sdk",
+ "dregg-sdk-net",
  "dregg-storage",
  "dregg-token",
  "dregg-turn",

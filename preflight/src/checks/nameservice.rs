@@ -1,7 +1,7 @@
 //! Name resolution checks: petnames, registration, delegation, hierarchical resolution.
 
 use dregg_captp::uri::DreggUri;
-use dregg_sdk::names::{NameError, PetnameDb, validate_name_segment};
+use dregg_sdk_net::names::{NameError, PetnameDb, validate_name_segment};
 
 use crate::report::{CheckResult, run_check};
 

@@ -15,6 +15,9 @@ path = "src/main.rs"
 
 [dependencies]
 dregg-sdk = { path = "../sdk" }
+# The petname / name-validation primitives relocated up into the networked SDK
+# layer (`dregg-sdk-net::names`); the nameservice preflight check links them here.
+dregg-sdk-net = { path = "../dregg-sdk-net" }
 dregg-circuit = { path = "../circuit" }
 dregg-turn = { path = "../turn" }
 dregg-cell = { path = "../cell" }
