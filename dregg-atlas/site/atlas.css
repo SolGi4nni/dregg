@@ -32,9 +32,8 @@ nav.tabs button.on{color:#fff;background:var(--bg2);border-color:var(--line2);
 .main{flex:1;display:flex;min-height:0}
 .view{flex:1;display:none;min-height:0}
 .view.on{display:flex}
-#cy,#cyo,#cyui,#cymap{flex:1;min-height:0;position:relative;background:
+#cy,#cyo,#cymap{flex:1;min-height:0;position:relative;background:
   radial-gradient(circle at 50% 38%,#11161f,#0a0e14)}
-#uiPanel img{width:100%;border:1px solid var(--line);border-radius:6px;margin:8px 0;background:#000}
 .panel{width:380px;border-left:1px solid var(--line);background:var(--bg3);
   overflow:auto;padding:14px}
 .panel h2{font-size:14px;margin:0 0 2px;color:var(--accent)}

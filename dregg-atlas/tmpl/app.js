@@ -1,8 +1,8 @@
-/* THE DREGG ATLAS — the SPA. A cross-linked hypermedia map of the live verified
-   ocap image: cells, surfaces, components, effects, verbs and game-tree states,
-   every object linking to every related object. Cytoscape graphs (atlas web /
-   game tree / ocap web / UI tree), a screenshot gallery, the component pillar,
-   the protocol reference and a ⌘K spotter over everything. Reads window.ATLAS. */
+/* THE DREGG ATLAS — the SPA. A map of the live verified ocap image, newcomer
+   first: the SURFACES gallery (what you'd see + touch), the CELLS & CAPS ocap
+   web, a small TURNS view (what a turn is, near-genesis — not a 600-state dump),
+   the PROTOCOL reference, the COMPONENTS pillar, and an adept WEB of typed
+   cross-links with a ⌘K spotter over everything. Reads window.ATLAS. */
 (function () {
   const A = window.ATLAS || {};
   const $ = (s, r) => (r || document).querySelector(s);
@@ -195,7 +195,6 @@
     $$(".view").forEach(x => x.classList.toggle("on", x.dataset.v === v));
     if (v === "gametree" && gt) { gt.resize(); gt.fit(null, 40); }
     if (v === "ocap" && oc) { oc.resize(); oc.fit(null, 40); }
-    if (v === "uitree" && ut) { ut.resize(); ut.fit(null, 40); }
     if (v === "map" && mp) { mp.resize(); mp.fit(null, 50); }
     if (location.hash.slice(1) !== v) history.replaceState(null, "", "#" + v);
   }
@@ -205,10 +204,8 @@
   });
   window.addEventListener("hashchange", () => activate(location.hash.slice(1) || "surfaces"));
 
-  const gtm = (A.gametree && A.gametree.meta) || {};
-  const uic = (A.uitree && A.uitree.node_count) || 0;
   $("#stat").textContent =
-    `${gtm.node_count || 0} states · ${cells.length} cells · ${surfaces.length} surfaces · ${components.length} components · ${uic} UI states`;
+    `${surfaces.length} surfaces · ${cells.length} cells · ${components.length} components`;
 
   // ═══ ATLAS WEB (the cross-linked hypermedia map) ════════════════════════
   let mp = null, mapFilter = new Set(TYPES);
@@ -321,17 +318,39 @@
     return h;
   }
 
-  // ═══ GAME TREE ══════════════════════════════════════════════════════════
+  // ═══ TURNS (what a turn is) ═══════════════════════════════════════════════
+  // The crawl reaches a large reachable state-space, but it is the SAME small
+  // move vocabulary (peek/touch/write/grant + cross-cell transfers) exploded
+  // across states — big, not illuminating. We render only the near-genesis
+  // FRONTIER: genesis, every state reachable within TURNS_HOPS committed turns
+  // (a BFS ball, not the crawler's DFS depth). That shows the whole shape of a
+  // turn — every effect, commit vs refuse, the snapshot — without a 600-node
+  // combinatorial dump. The full space stays regenerable via crawl.py; this view
+  // is for understanding, not enumeration.
+  const TURNS_HOPS = 2;
   let gt = null;
   function buildGameTree() {
     const G = A.gametree || { nodes: [], edges: [] };
+    // BFS ball of radius TURNS_HOPS from genesis over committed edges
+    const committedFrom = {};
+    G.edges.forEach(e => { if (e.outcome === "committed") (committedFrom[e.from] = committedFrom[e.from] || []).push(e.to); });
+    const root = (G.nodes.find(n => (n.depth || 0) === 0) || G.nodes[0] || {}).digest || "genesis";
+    const keepNode = new Set([root]);
+    let frontier = [root];
+    for (let hop = 0; hop < TURNS_HOPS; hop++) {
+      const next = [];
+      frontier.forEach(d => (committedFrom[d] || []).forEach(t => { if (!keepNode.has(t)) { keepNode.add(t); next.push(t); } }));
+      frontier = next;
+    }
+    const nodes = G.nodes.filter(n => keepNode.has(n.digest));
     const els = [], seen = new Set();
     const refusedBy = {}, committedBy = {};
     G.edges.forEach(e => {
+      if (!keepNode.has(e.from)) return;
       const bag = e.outcome === "committed" ? committedBy : refusedBy;
       (bag[e.from] = bag[e.from] || []).push(e);
     });
-    G.nodes.forEach(n => {
+    nodes.forEach(n => {
       seen.add(n.digest);
       const committed = committedBy[n.digest] || [];
       els.push({ data: { id: n.digest, label: n.digest === "genesis" ? "genesis" : n.digest.slice(0, 8), depth: n.depth, snap: n.snapshot, refused: refusedBy[n.digest] || [], committed, leaf: committed.length === 0 } });
@@ -339,7 +358,7 @@
     });
     let ei = 0;
     G.edges.forEach(e => {
-      if (e.outcome !== "committed" || !seen.has(e.to)) return;
+      if (e.outcome !== "committed" || !seen.has(e.from) || !seen.has(e.to)) return;
       els.push({ data: { id: "e" + (ei++), source: e.from, target: e.to, outcome: "committed", label: e.cell + " · " + e.message, info: e } });
     });
     gt = cytoscape({
@@ -423,51 +442,6 @@
       h += `<div class=prose>${esc(i.reason || "")}</div>`;
     }
     $("#gtPanel").innerHTML = h;
-  }
-
-  // ═══ UI TREE ════════════════════════════════════════════════════════════
-  let ut = null;
-  function buildUiTree() {
-    const U = A.uitree || { nodes: [], edges: [] };
-    if (!U.nodes.length) { $("#cyui").innerHTML = '<p class=muted style="padding:18px">No UI-exploration crawl yet — run --explore-ui.</p>'; return; }
-    const byKey = {}; U.nodes.forEach(n => byKey[n.key] = n);
-    const els = [];
-    U.nodes.forEach(n => {
-      const tab = n.tab || (n.key.split("|")[0]);
-      const isBase = (n.key.split("|")[1] || "") === "";
-      els.push({ data: { id: n.key, label: isBase ? tab : (n.key.split("|")[1] || tab), tab, png: n.png, base: isBase } });
-    });
-    let ei = 0;
-    U.edges.forEach(e => { if (!byKey[e.from] || !byKey[e.to] || e.from === e.to) return; els.push({ data: { id: "u" + (ei++), source: e.from, target: e.to, label: e.label } }); });
-    ut = cytoscape({
-      container: $("#cyui"), elements: els,
-      style: [
-        { selector: "node", style: { "background-color": "#1f6feb", "label": "data(label)", "color": "#8b949e", "font-size": 8, "width": 12, "height": 12, "border-width": 1, "border-color": "#30363d", "text-valign": "bottom", "text-margin-y": 2, "min-zoomed-font-size": 6 } },
-        { selector: 'node[?base]', style: { "background-color": "#3fb950", "border-color": "#56d364", "width": 20, "height": 20, "color": "#c9d1d9", "font-size": 10, "shape": "round-rectangle" } },
-        { selector: 'node[id = "HOME|"]', style: { "background-color": "#f0883e", "border-color": "#f0883e", "width": 28, "height": 28, "font-size": 12 } },
-        { selector: "edge", style: { "width": 1.1, "curve-style": "bezier", "target-arrow-shape": "triangle", "arrow-scale": 0.6, "line-color": "#30363d", "target-arrow-color": "#484f58", "font-size": 6, "color": "#6e7681", "label": "data(label)", "text-rotation": "autorotate", "min-zoomed-font-size": 9 } },
-        { selector: ".sel", style: { "border-color": "#f0883e", "border-width": 4, "background-color": "#f0883e" } },
-        { selector: ".faded", style: { "opacity": 0.1 } },
-      ],
-      layout: { name: "breadthfirst", roots: ["HOME|"], circle: true, spacingFactor: 1.4, avoidOverlap: true, animate: false },
-      wheelSensitivity: 0.3,
-    });
-    ut.on("tap", "node", ev => showUiState(ev.target));
-    ut.on("tap", ev => { if (ev.target === ut) ut.elements().removeClass("faded sel"); });
-    ut.ready(() => ut.fit(null, 40));
-    ut.one("layoutstop", () => ut.fit(null, 40));
-  }
-  function showUiState(node) {
-    ut.elements().removeClass("sel faded"); node.addClass("sel");
-    const out = node.outgoers("edge");
-    let h = `<h2>${esc(node.data("tab"))}</h2><p class=muted>${esc(node.id())}</p>`;
-    if (node.data("png")) h += `<a class=shot href="${esc(node.data("png"))}" data-light="${esc(node.data("png"))}" data-raw="1" data-cap="${esc(node.data("tab"))}"><img src="${esc(node.data("png"))}" loading=lazy></a>`;
-    const tab = (node.data("tab") || "").toLowerCase();
-    if (REG.get("surface:" + tab)) h += `<p class=minilink>${chip("surface:" + tab)}</p>`;
-    h += `<h3>Interactions from here</h3>`;
-    if (!out.length) h += `<p class=muted>(leaf — no further navigation explored)</p>`;
-    out.forEach(e => { h += `<div class=kv><span class=badge>${esc(e.data("label"))}</span> <span>→ ${esc((e.target().data("key") || e.target().id()).split("|")[1] || e.target().data("tab"))}</span></div>`; });
-    $("#uiPanel").innerHTML = h;
   }
 
   // ═══ OCAP WEB ═══════════════════════════════════════════════════════════
@@ -703,12 +677,10 @@
   function flash(el) { el.style.transition = "box-shadow .2s"; el.style.boxShadow = "0 0 0 2px #f0883e"; setTimeout(() => { el.style.boxShadow = ""; }, 900); }
 
   // ─── boot ────────────────────────────────────────────────────────────────
-  buildGameTree(); buildUiTree(); buildOcap(); buildGallery(); buildComponents(); buildProtocol(); buildAbout(); buildMap();
+  buildGameTree(); buildOcap(); buildGallery(); buildComponents(); buildProtocol(); buildAbout(); buildMap();
   activate(location.hash.slice(1) || "surfaces");
 
   const params = new URLSearchParams(location.search);
-  const uiIdx = params.get("uistate");
-  if (uiIdx != null && ut) { const n = ut.nodes()[parseInt(uiIdx, 10) || 0]; if (n) { activate("uitree"); ut.fit(n.closedNeighborhood(), 80); showUiState(n); } }
   const sel = params.get("select");
   if (sel && gt) { activate("gametree"); selectState(sel); }
   const goId = params.get("go");

@@ -9,46 +9,40 @@ mocked.
 ## Open it
 
 Open **`site/index.html`** in any browser (it is fully offline — JS is vendored,
-data is inlined). Seven views:
+data is inlined). The views, newcomer-first:
 
-- **Game Tree** — the reachable PROTOCOL state-space as a radial starburst
-  (genesis at the centre, depth as colour-graded rings). Each node is a
-  world-state (keyed by its post-state Merkle root); each edge a turn fired
-  through the verified executor. Click a state for its cell snapshot and its
-  committed/refused turns; click to highlight its reachable subtree.
-- **UI Tree** — the UI INTERACTION state-space: exploring inside and through the
-  cockpit surfaces. A radial DAG (HOME → the 28 surfaces → each surface's internal
-  navigations: cycling focus chips, picking lenses, toggling, scrubbing). Each
-  node is a distinct *rendered* UI state (screenshot); each edge the interaction
-  that reaches it. Click a state for its screenshot + the interactions out of it.
-  (Driving the real cockpit headlessly this way also shakes out render bugs —
-  260 states rendered with zero panics; four live-animated tabs are excluded, see
-  the Anomalies page.)
-- **Ocap Web** — cells + the capability grants between them; click a cell for its
-  seven presentation faces.
-- **Surfaces** — every cockpit surface screenshotted (the `Tab` enum's 30 surfaces
-  plus the dock dev panes), each with a first-principles, code-grounded explainer
-  and the components it is built from (click a card → its full page). The surfaces
-  now render inside the **coherent five-mode frame** (`cockpit/frame.rs`,
-  `docs/deos/COCKPIT-UX.md`): a persistent top bar (identity cell + cap-badge · live
-  ledger clock · ⌘K palette · ⌘J dock), a left rail of the five modes — **Inhabit ·
-  Author · Dev · Inspect · Operate** — a mode sub-nav, and a collapsible dev dock.
-  The gallery groups the surfaces by their mode; the Inspect mode's main surface is
-  the **reflective inspector card** (the inspector reborn as a live deos-js card,
-  itself an object the image renders).
+- **Surfaces** *(the default landing)* — every cockpit surface screenshotted (the
+  `Tab` enum's 30 surfaces plus the dock dev panes), each with a first-principles,
+  code-grounded explainer and the components it is built from (click a card → its
+  full page). The surfaces render inside the **coherent five-mode frame**
+  (`cockpit/frame.rs`, `docs/deos/COCKPIT-UX.md`): a persistent top bar (identity
+  cell + cap-badge · live ledger clock · ⌘K palette · ⌘J dock), a left rail of the
+  five modes — **Inhabit · Author · Dev · Inspect · Operate** — a mode sub-nav, and
+  a collapsible dev dock. The gallery groups the surfaces by their mode. This is
+  the wonder-first impression: look at the live OS before reading a word about it.
+- **Cells & Caps** — the object-capability graph read straight off the live ledger:
+  cells as nodes, capability grants as directed edges. Click a cell for its
+  balance, its affordances (the messages it understands), and its presentation
+  faces — the same moldable inspector the cockpit renders.
+- **Turns** — *what a turn is*, shown small. The near-genesis frontier: genesis,
+  every distinct move out of it, one more hop. Each node is a world-state (keyed by
+  its post-state Merkle root); each edge a turn fired through the verified executor
+  — green committed and advanced the world, red was refused (with the reason: the
+  cap-gate before any turn, or a kernel guarantee). The whole move vocabulary is
+  visible without a 600-state combinatorial dump (the full reachable space is
+  regenerable but just explodes the same handful of moves — see *honest scope*).
+- **Protocol** — the reference: the thesis, the eight verbs, the four substances +
+  conservation, the AuthRequired lattice, the refusal taxonomy, the receipt
+  structure, the presentation faces.
 - **Components** — the gpui-component widget pillar: the visual building blocks the
   cockpit is built from. Each widget names what it is, its variants, and the
   surfaces that render it; the catalog marks which are *used live in the cockpit
-  today* (a live grep of the cockpit tree) vs *available* in the palette.
-- **Protocol** — the deep reference: the thesis, the eight verbs, the four
-  substances + conservation, the AuthRequired lattice, the refusal taxonomy, the
-  receipt structure.
+  today* (a grep of the cockpit tree) vs *available* in the palette.
+- **Web** — the adept view: the cross-linked hypermedia map over every object
+  (cell · surface · component · effect · verb) with typed edges and a type filter.
+  Every object carries a stable id, so anything cross-links to anything; ⌘K jumps
+  to any object by name.
 - **About** — what this is and how it was built.
-
-The four pillars — Game Tree, Ocap Web, Surfaces, Components — plus the Atlas Web,
-the cross-linked hypermedia map over every object (cell · surface · component ·
-effect · verb · state) with a ⌘K spotter. Every object carries a stable id and
-typed edges, so anything cross-links to anything.
 
 ## Regenerate it from the live system
 
@@ -65,16 +59,17 @@ python3 crawl.py    # walk the protocol state-space + emit the hypermap (MCP `ma
                     # tool merged in) + the components pillar (a source grep)
 python3 shoot.py    # screenshot every cockpit surface (the surfaces.py census;
                     # --no-mcp emits the manifest only, for a later screenshot pass)
-# the UI tree: BFS-walk the cockpit's UI state-space, screenshot each state
-( cd ../starbridge-v2 && ZED_OFFSCREEN_PREFER_CPU=1 \
-  ATLAS_UI_NODES=260 target/release/starbridge-v2 --explore-ui ../dregg-atlas/ui-explore )
 python3 verify.py   # ORACLE: assert conservation + well-formedness across the crawled state-space
 python3 build.py    # assemble the site
 open site/index.html
 ```
 
-Tunables (env): `ATLAS_DEPTH` (game-tree depth, default 4), `ATLAS_NODES` /
-`ATLAS_EDGES` (caps), `ATLAS_XFER` (transfer amount the crawl fires).
+Tunables (env): `ATLAS_DEPTH` (crawl depth, default 4), `ATLAS_NODES` /
+`ATLAS_EDGES` (caps), `ATLAS_XFER` (transfer amount the crawl fires). The crawl
+still walks the full bounded state-space (for the oracle's conservation check);
+the **Turns** view renders only its near-genesis frontier — the full space is
+the same few moves exploded across states, so the shape of a turn is legible
+without the bloat.
 
 ## How it works
 
