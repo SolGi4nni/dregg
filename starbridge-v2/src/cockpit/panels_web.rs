@@ -1227,12 +1227,18 @@ impl Cockpit {
                 }),
             );
 
-        // The palette card.
+        // The palette card. It is a FIXED-height flex column (not merely
+        // `max_h`): the result `uniform_list` below grows into the leftover
+        // space via `flex_1`, and a virtualizing list needs a DEFINITE parent
+        // height to compute how many rows are visible. With only a `max_h` the
+        // column shrank to its content (header + footer) and the list resolved
+        // to a 0-height box — it virtualized to zero rows (the empty-palette
+        // regression). A concrete `h` gives the flex child a real main-size.
         let mut card = div()
             .id("palette-card")
             .mt(px(120.))
             .w(px(560.))
-            .max_h(px(440.))
+            .h(px(440.))
             .flex()
             .flex_col()
             .rounded_md()
@@ -1348,7 +1354,13 @@ impl Cockpit {
                 }),
             )
             .track_scroll(&self.palette_scroll)
-            .flex_grow(1.0)
+            // Take the leftover height between the query line and the footer.
+            // `flex_1` + `min_h_0` gives the list a DEFINITE resolved height
+            // inside the fixed-height card (the parent flex column), which the
+            // virtualizing `uniform_list` needs to compute its visible row
+            // window — without it the list is 0-height and renders no rows.
+            .flex_1()
+            .min_h_0()
             .py_1();
             card = card.child(list);
         }

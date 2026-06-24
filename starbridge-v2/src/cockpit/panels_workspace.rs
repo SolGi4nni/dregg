@@ -93,6 +93,64 @@ impl Cockpit {
     /// than the cockpit's `active_tab()`. The 28-arm match is unchanged; its source
     /// moved from `active_tab()` to the passed `tab`.
     pub(crate) fn panel_for_tab(&self, tab: Tab, cx: &mut Context<Self>) -> gpui::AnyElement {
+        // A surface lives in EXACTLY ONE place along the firmament distance axis:
+        // composited in the dock, OR torn off into its own window. When `tab` is
+        // torn off, the IN-DOCK render path (this one) must NOT also paint the
+        // live body — several surfaces (web-shell URL bar, editor/composer/agent
+        // prompts) embed a shared live focus-tracked kit `Entity`, and painting
+        // that SAME entity in both the dock window and the torn window the same
+        // frame is a re-entrant `Entity::update` / double `track_focus` that
+        // (post the per-window `Root` crash-fix) spins the flush loop into a HANG
+        // (the web-shell pop-out beachball). So the dock shows a placeholder; the
+        // torn window paints the real body via `panel_for_tab_forced`.
+        if self.tab_is_torn_off(tab) {
+            return self.torn_off_placeholder(tab);
+        }
+        self.panel_for_tab_forced(tab, cx)
+    }
+
+    /// The IN-DOCK placeholder for a tab that is currently torn off into its own
+    /// window — a calm "this surface is in its own window" card with a pop-back
+    /// affordance, shown WHERE the live body would be so the dock never paints a
+    /// surface that also lives in a torn window (the one-window invariant — the
+    /// web-shell pop-out beachball fix). The live body is in the torn window.
+    fn torn_off_placeholder(&self, tab: Tab) -> gpui::AnyElement {
+        let label = tab.label();
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .size_full()
+            .p_3()
+            .child(
+                div()
+                    .text_color(theme::muted())
+                    .child(SharedString::from(format!("↗ {label} is torn off"))),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .child(SharedString::from(
+                        "This surface is live in its own window. Pop it back (↩ in that \
+                         window, or the pane's ↩ control) to dock it here again.",
+                    )),
+            )
+            .into_any_element()
+    }
+
+    /// Render `tab`'s LIVE body unconditionally — used by the torn-off window's
+    /// mirror callback, which is the surface's ONE rendering site while torn (the
+    /// dock shows [`Self::torn_off_placeholder`] instead). Going through this
+    /// instead of [`Self::panel_for_tab`] is what keeps a torn surface painted in
+    /// exactly one window.
+    pub(crate) fn panel_for_tab_forced(
+        &self,
+        tab: Tab,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         match tab {
             Tab::Home => self.home_panel().into_any_element(),
             Tab::Shell => self.shell_panel(cx).into_any_element(),
@@ -827,7 +885,11 @@ impl Cockpit {
         let render = {
             let weak = weak.clone();
             move |_window: &mut Window, app: &mut App| -> gpui::AnyElement {
-                weak.update(app, |cockpit, cx| cockpit.panel_for_tab(tab, cx))
+                // The torn window is the surface's ONE rendering site while torn:
+                // force the live body here (the in-dock `panel_for_tab` shows the
+                // torn-off placeholder for this tab, so the shared live entity is
+                // painted in exactly one window — the beachball fix).
+                weak.update(app, |cockpit, cx| cockpit.panel_for_tab_forced(tab, cx))
                     .unwrap_or_else(|_| {
                         div()
                             .flex()

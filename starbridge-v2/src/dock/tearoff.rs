@@ -1032,5 +1032,77 @@ mod tests {
                 div()
             }
         }
+
+        /// THE WEB-SHELL POP-OUT BEACHBALL, FIXED BY THE MOVE: an input-bearing
+        /// surface (the web-shell URL bar — `webshell_panel` embeds the live kit
+        /// `InputState` the in-dock tab also paints) is torn off via the OWNED
+        /// (move) path, the live entity is REMOVED from the dock copy, and BOTH
+        /// the (now input-free) dock body and the torn window are driven to a
+        /// draw the same parked cycle. With the move the one entity is painted in
+        /// EXACTLY ONE window — the run parks and the draw completes.
+        ///
+        /// The MIRROR path this replaces re-entered the host to paint that SAME
+        /// live entity in BOTH windows the same frame (the re-entrant
+        /// `Entity::update` / double `track_focus`); post the per-window `Root`
+        /// crash-fix that no longer aborts but SPINS the flush loop — the
+        /// beachball. The cockpit therefore routes input/entity-bearing tabs
+        /// (web-shell/editor/terminal/composer) through `tear_off_surface`, not
+        /// `tear_off`. (A live mirror-hang reproduction would itself hang the
+        /// test harness; this asserts the move-path invariant the fix relies on.)
+        #[test]
+        fn moving_an_input_surface_out_does_not_beachball_the_main_thread() {
+            let mut cx = headless();
+            let id = SurfaceId(21);
+
+            // Mint the kit InputState inside a live (throwaway) window — exactly
+            // the cockpit's `ensure_webshell_input` shape (it needs `&mut Window`).
+            let state: Entity<InputState> = {
+                let scratch = cx
+                    .open_window(gpui::size(px(560.), px(80.)), |window, cx| {
+                        let st = cx.new(|cx| {
+                            InputState::new(window, cx).placeholder("https://… or dregg://…")
+                        });
+                        cx.new(|_| ScratchHolder(st))
+                    })
+                    .expect("open scratch window for InputState::new");
+                cx.run_until_parked();
+                let st = cx
+                    .update_window(scratch.into(), |root, _w, cx| {
+                        root.downcast::<ScratchHolder>().unwrap().read(cx).0.clone()
+                    })
+                    .expect("read the input state");
+                let _ = cx.update_window(scratch.into(), |_, w, _| w.remove_window());
+                st
+            };
+
+            // TEAR OFF the input surface via the OWNED (move) path: the surface
+            // (and its live entity) now lives ONLY in the torn window — the fix
+            // the cockpit applies for input-bearing tabs. It is painted there,
+            // once per frame, never re-entered from a dock copy.
+            let handle = cx.update(|cx| {
+                let mut reg = WindowRegistry::new();
+                let surface: Box<dyn CockpitSurface> = Box::new(InputSurface {
+                    id,
+                    state: state.clone(),
+                });
+                let h = reg
+                    .tear_off_surface(id, "web-shell", "you · abcd · 🔑 7 caps", surface, cx)
+                    .expect("move the input surface into its own window");
+                assert!(reg.is_torn_off(id));
+                h
+            });
+
+            // DRIVE THE TORN WINDOW TO A DRAW: the run parks (no flush-loop spin),
+            // the kit input paints clean. The MIRROR path would not park here.
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, _cx| window.refresh())
+                .expect("refresh the torn-off web-shell window");
+            cx.run_until_parked();
+
+            // The input state survived in the torn window (no abort, no hang).
+            cx.update(|cx| {
+                let _ = state.read(cx);
+            });
+        }
     }
 }
