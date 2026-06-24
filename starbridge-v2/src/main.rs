@@ -622,6 +622,10 @@ fn run_window(
             |window, cx| {
                 let node_url = node_url.clone();
                 let pending_seed = seed.take().expect("seed consumed once");
+                // THE WINDOW-ROOT WELD — wrap the login surface in a gpui-component
+                // `Root` so the post-login cockpit's kit text INPUTS (web-shell URL
+                // bar, editor/composer/agent prompts) paint without the `Root::read`
+                // unwrap-abort. The window root is a `Root` from boot onward.
                 let view = cx.new(|cx| {
                     let focus = cx.focus_handle();
                     login::LoginSurface::boot(
@@ -633,7 +637,7 @@ fn run_window(
                     )
                 });
                 view.update(cx, |c, cx| c.focus_on_open(window, cx));
-                view
+                cx.new(|cx| gpui_component::Root::new(gpui::AnyView::from(view), window, cx))
             },
         )
         .expect("failed to open window");
@@ -1717,8 +1721,11 @@ fn render_cockpit_headless(
     let shared = Rc::new(RefCell::new(world));
     let tab_owned = tab.map(|s| s.to_string());
 
-    // 4. Open a headless window (logical w×h) whose ROOT IS the real Cockpit, on
-    //    the requested surface (`--render-tab`). No node, no pending seed.
+    // 4. Open a headless window (logical w×h) whose ROOT IS a gpui-component `Root`
+    //    wrapping the real Cockpit, on the requested surface (`--render-tab`). The
+    //    `Root` wrap is THE window-root weld (docs/deos/COCKPIT-UX.md): without it
+    //    any kit text INPUT a surface bears (web-shell URL bar, editor/composer
+    //    prompts) aborts on paint via `Root::read(window).unwrap()`. No node, no seed.
     let window = cx.open_window(size(px(w), px(h)), |window, cx| {
         let view = cx.new(|cx| {
             let focus = cx.focus_handle();
@@ -1731,7 +1738,7 @@ fn render_cockpit_headless(
             c
         });
         view.update(cx, |c, cx| c.focus_on_open(window, cx));
-        view
+        cx.new(|cx| gpui_component::Root::new(gpui::AnyView::from(view), window, cx))
     })?;
 
     // 5. Drive to a fully-rendered frame, then capture the resolved gpui Scene.

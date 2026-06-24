@@ -59,32 +59,49 @@ impl Render for Cockpit {
             };
 
         let palette_open = self.palette.is_open();
-        div()
-            .id("cockpit-root")
-            .track_focus(&self.focus)
-            .key_context("Cockpit")
-            // ⌘K + the palette's typing/selection all flow through one handler.
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
-                this.on_key(ev, cx);
-            }))
-            .relative()
+        let dock_open = self.dock_open;
+
+        // THE COHERENT FRAME (docs/deos/COCKPIT-UX.md): one stable chrome —
+        //   TOP BAR (identity + cap-badge · ledger clock · ⌘K/⌘J)
+        //   ┌──────────┬─────────────────────────────────────────┐
+        //   │  5-MODE  │  MODE SUB-NAV (the mode's surfaces)       │
+        //   │   RAIL   │  ┌──────────┬─────────┬──────────────┐   │
+        //   │          │  │ context  │ inspect │ MAIN PANE     │   │
+        //   │          │  │ (cells)  │ +block  │ (the surface) │   │
+        //   │          │  └──────────┴─────────┴──────────────┘   │
+        //   └──────────┴─────────────────────────────────────────┘
+        //   DEV DOCK (collapsible, ⌘J) — the dev strip, any mode
+        //
+        // The three inner columns are the persistent INSPECTION CONTEXT (the cell
+        // world + the reflected object + the blocklace) wrapping the active
+        // surface — kept intact; the frame adds the top bar, the rail, the mode
+        // sub-nav, and the dock around them.
+        let body = div()
             .flex()
-            .size_full()
-            .bg(theme::bg())
-            .text_color(theme::text())
-            .font_family("Menlo")
-            // Left rail: image header + cell world + dynamics feed.
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            // Left context rail: the cell world + the live dynamics feed.
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .w(px(320.))
+                    .w(px(300.))
                     .h_full()
                     .border_r_1()
                     .border_color(theme::border())
                     .bg(theme::panel())
-                    .child(self.rail_header())
-                    .child(div().flex_1().child(self.cell_world(cx)))
+                    .child(
+                        div()
+                            .id("cockpit-scroll-cells")
+                            .flex_1()
+                            .overflow_y_scroll()
+                            // The LIVE NODE strip (only when `--node` is connected):
+                            // the remote-federation watch. Re-homed here off the old
+                            // rail header (the top bar carries identity now).
+                            .children(self.live_node_strip())
+                            .child(self.cell_world(cx)),
+                    )
                     .child(
                         div()
                             .border_t_1()
@@ -92,12 +109,12 @@ impl Render for Cockpit {
                             .child(self.dynamics_feed()),
                     ),
             )
-            // Center: inspector over blocklace.
+            // Center: the reflected object over the blocklace (the inspect context).
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .w(px(460.))
+                    .w(px(420.))
                     .h_full()
                     .border_r_1()
                     .border_color(theme::border())
@@ -119,10 +136,9 @@ impl Render for Cockpit {
                             .child(self.blocklace(cx)),
                     ),
             )
-            // Right: THE L6 PANED WORKSPACE — the nav bar over the `PaneGroup` of
-            // splittable/resizable surfaces. The un-split base case is one pane
-            // tabbed over all 28 surfaces (so it reads like the old right pane); a
-            // ⊞ split puts two surfaces side-by-side behind a draggable divider.
+            // THE MAIN PANE — the active surface for the current mode, over the
+            // L6 paned workspace (one pane tabbed over every surface; ⊞ splits).
+            // The nav bar (back/forward/pins/macro + you-are-here) rides above it.
             .child(
                 div()
                     .flex()
@@ -131,7 +147,48 @@ impl Render for Cockpit {
                     .h_full()
                     .child(self.nav_bar(cx))
                     .child(div().flex_1().overflow_hidden().child(right_pane)),
+            );
+
+        div()
+            .id("cockpit-root")
+            .track_focus(&self.focus)
+            .key_context("Cockpit")
+            // ⌘K + ⌘J + the palette's typing/selection all flow through one handler.
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
+                this.on_key(ev, cx);
+            }))
+            .relative()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(theme::bg())
+            .text_color(theme::text())
+            .font_family("Menlo")
+            // THE TOP BAR — identity + cap-badge · ledger clock · ⌘K · ⌘J.
+            .child(self.top_bar(cx))
+            // THE RAIL + the main content area.
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    // THE LEFT RAIL — the FIVE MODES (the coherence).
+                    .child(self.mode_rail(cx))
+                    // The main content: the mode sub-nav over the body.
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .child(self.mode_subnav(cx))
+                            .child(body),
+                    ),
             )
+            // THE DEV DOCK — the collapsible bottom dev strip (⌘J).
+            .when(dock_open, |root| root.child(self.dev_dock(cx)))
             // THE ⌘K COMMAND PALETTE overlay (absolute, on top) when open.
             .when(palette_open, |root| root.child(self.palette_overlay(cx)))
     }

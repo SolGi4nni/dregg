@@ -288,6 +288,10 @@ impl Cockpit {
             // live verified image (text-rich, self-describing). SHELL and the
             // other rooms are one click (or ⌘K) away.
             tab: Tab::Home,
+            // BOOT into INHABIT — Home is its primary surface (the active mode is
+            // DERIVED from the active surface via `Tab::mode`). The dev dock starts
+            // collapsed (⌘J reveals it).
+            dock_open: false,
             workspace_cell,
             tab_witness_pending: false,
             debug_turn,

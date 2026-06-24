@@ -318,7 +318,14 @@ impl SessionShell {
         let identity_for_root = identity.clone();
         let base_dir_for_root = base_dir.clone();
 
-        let shell = window.replace_root(cx, |window, cx| {
+        // THE WINDOW-ROOT WELD (docs/deos/COCKPIT-UX.md) — the window root must be a
+        // gpui-component `Root`, or any kit text INPUT a surface bears (web-shell URL
+        // bar, the editor/composer/agent prompts, …) ABORTS on first paint via
+        // `Root::read(window).unwrap()`. So the new root is a `Root` wrapping the
+        // `SessionShell`; we stash the inner shell entity (captured out of the builder)
+        // for the post-paint seeding / live-node pump tasks below.
+        let mut shell_slot: Option<Entity<SessionShell>> = None;
+        window.replace_root(cx, |window, cx| {
             // Build the cockpit over the SAME shared world the login provisioned —
             // the session's cap-tree governs what it renders.
             let cockpit = cx.new(|c_cx| {
@@ -333,20 +340,25 @@ impl SessionShell {
             });
             cockpit.update(cx, |c, c_cx| c.focus_on_open(window, c_cx));
 
-            let focus = cx.focus_handle();
-            SessionShell {
-                cockpit,
-                world: world_for_root,
-                anchors,
-                node_url: node_for_root,
-                manager: manager_for_root,
-                identities: identities_for_root,
-                session: session_for_root,
-                identity: identity_for_root,
-                base_dir: base_dir_for_root,
-                focus,
-            }
+            let session_shell = cx.new(|s_cx| {
+                let focus = s_cx.focus_handle();
+                SessionShell {
+                    cockpit,
+                    world: world_for_root,
+                    anchors,
+                    node_url: node_for_root,
+                    manager: manager_for_root,
+                    identities: identities_for_root,
+                    session: session_for_root,
+                    identity: identity_for_root,
+                    base_dir: base_dir_for_root,
+                    focus,
+                }
+            });
+            shell_slot = Some(session_shell.clone());
+            crate::cockpit::root::wrap_root(session_shell, window, cx)
         });
+        let shell = shell_slot.expect("the Root builder ran and stashed the shell");
 
         // THE POST-PAINT SEEDING TASK — drive the demo seed turns one at a time,
         // a beat between each (so each committed turn paints), against the cockpit
@@ -414,21 +426,27 @@ impl SessionShell {
         let node_url = self.node_url.clone();
         let system_principal = self.manager.system_principal;
 
-        window.replace_root(cx, |_window, cx| {
-            let focus = cx.focus_handle();
-            // The image is already seeded from the first session (the world keeps
-            // its committed history; logout darkens the session cap-tree, it does
-            // not wipe cells). The next login reuses the same system principal.
-            LoginSurface {
-                world,
-                anchors,
-                seed: None,
-                node_url,
-                manager: LoginManager::new(system_principal),
-                identities: demo_identities(),
-                focus,
-                message: Some("logged out — the session cap-tree is dark".into()),
-            }
+        window.replace_root(cx, |window, cx| {
+            // THE WINDOW-ROOT WELD — the next root is a `Root` wrapping the fresh
+            // login surface (so any kit input the login/relaunched cockpit bears
+            // paints without the `Root::read` unwrap-abort).
+            let login = cx.new(|l_cx| {
+                let focus = l_cx.focus_handle();
+                // The image is already seeded from the first session (the world keeps
+                // its committed history; logout darkens the session cap-tree, it does
+                // not wipe cells). The next login reuses the same system principal.
+                LoginSurface {
+                    world,
+                    anchors,
+                    seed: None,
+                    node_url,
+                    manager: LoginManager::new(system_principal),
+                    identities: demo_identities(),
+                    focus,
+                    message: Some("logged out — the session cap-tree is dark".into()),
+                }
+            });
+            crate::cockpit::root::wrap_root(login, window, cx)
         });
     }
 }

@@ -3,6 +3,12 @@
 use super::*;
 
 impl Cockpit {
+    /// The old left-rail header (identity + image root + the live-node strip).
+    /// SUPERSEDED by the coherent frame's TOP BAR ([`Self::top_bar`]), which now
+    /// carries the identity + cap-badge + ledger clock; the live-node strip moved
+    /// to the left context rail (see [`Self::live_node_strip`]). Kept as the
+    /// styling reference (like [`Self::tab_bar`]).
+    #[allow(dead_code)]
     pub(crate) fn rail_header(&self) -> impl IntoElement {
         let w = self.world.borrow();
         let root = reflect::short_hex(&w.state_root());

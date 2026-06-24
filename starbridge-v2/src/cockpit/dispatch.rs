@@ -271,6 +271,13 @@ impl Cockpit {
             return;
         }
 
+        // ⌘J / Ctrl-J toggles the collapsible DEV DOCK (the coherent frame's
+        // persistent dev strip, available in any mode).
+        if cmd && key == "j" {
+            self.toggle_dock(cx);
+            return;
+        }
+
         // ⌘[ / ⌘] — browser-style navigation back/forward through the UI history.
         if cmd && key == "[" {
             self.nav_back(cx);

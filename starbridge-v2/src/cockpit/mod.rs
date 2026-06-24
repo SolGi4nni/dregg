@@ -222,7 +222,7 @@ const CV_BLAME_SOURCE_PATH: &str = "starbridge-v2/src/cockpit.rs";
 
 /// Which workspace tab the right-hand pane presents. The master interface
 /// surfaces the composer alongside the four feature panels.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
     /// The LANDING portal — the warm, alive front door of the live verified
     /// image (the boot view). A text-rich greeting that names the running
@@ -562,6 +562,9 @@ pub struct Cockpit {
     /// cost). It is the *visible* aim; the witnessed (rewindable) selector rides
     /// [`Self::workspace_cell`], to which it is synced + occasionally committed.
     tab: Tab,
+    /// THE DEV DOCK — whether the collapsible bottom dev strip is open (⌘J). The
+    /// dev workspace (terminal/editor/shell), available in any mode.
+    dock_open: bool,
     /// M3 WIDEN (`docs/deos/REFLEXIVE-MIGRATION.md` §3.4 — `render(workspace_subgraph)`).
     /// The cockpit's active-tab SELECTOR self-hosted as a REAL cell: the same
     /// [`BufferCell`] two-tier split [`ViewCell`] uses, only the payload is the
@@ -1057,6 +1060,8 @@ mod actions;
 mod construct;
 mod dispatch;
 mod docs;
+mod frame;
+pub use frame::CockpitMode;
 mod live;
 mod nav;
 mod panels_devtools;
@@ -1066,5 +1071,6 @@ mod panels_web;
 mod panels_webshell;
 mod panels_workspace;
 mod render;
+pub mod root;
 mod shell_ops;
 mod time;
