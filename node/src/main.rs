@@ -31,6 +31,13 @@ mod mud_e2e;
 mod mud_client;
 #[cfg(all(test, feature = "deos-host"))]
 mod mud_client_e2e;
+// THE LIVE SHARED WORLD (`deos-host` feature): two distinct identities co-inhabit ONE
+// hosted world, each seeing the other's turns LIVE via the node's receipt event stream —
+// the first real rung of MULTI-PERSON deos. Headless engine + its co-acting e2e proof.
+#[cfg(feature = "deos-host")]
+mod shared_world;
+#[cfg(all(test, feature = "deos-host"))]
+mod shared_world_e2e;
 // The old `bridge` module is removed. Cross-group communication now happens
 // via multi_group.rs (unified blocklace cross-references + interest-based dissemination).
 // See: `dregg-node run --groups` for multi-group participation.
