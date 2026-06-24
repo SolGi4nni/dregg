@@ -91,6 +91,21 @@ pub mod web_cells;
 #[cfg(feature = "embedded-executor")]
 pub mod cell_transclusion;
 
+// The STITCHER — hyperdreggmedia authoring (NOTES §6): render a merge conflict as
+// two live alternatives, resolve by a verified patch (conflicts-as-objects).
+#[cfg(feature = "embedded-executor")]
+pub mod stitcher;
+
+// PROVENANCE NAVIGATOR (NOTES §6): blame/who-did-what over a cell's receipt-chain;
+// a turn's detail; go-to-that-point (time-travel cursor).
+#[cfg(feature = "embedded-executor")]
+pub mod provenance_navigator;
+
+// FORK / CONSENT (NOTES §6): the membrane's shared-fork tiers made visible — a
+// consent inbox of pending ConditionalTurns, upgrade requests; each grant a turn.
+#[cfg(feature = "embedded-executor")]
+pub mod fork_ui;
+
 // The DREGGVERSE navigation — "what links here", the verified per-viewer query on
 // the witness-graph. VENDORED byte-identical from the committed
 // `dregg_app_framework::dreggverse_map` (a thin pure navigation over the REAL
