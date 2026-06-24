@@ -299,7 +299,13 @@ fn captp_delivered_loop_closes_executor_accepts_and_commits() {
     use dregg_turn::executor::{ComputronCosts, TurnExecutor};
 
     let target_cell = cell(0x42);
-    let target_fed = fed(0xCA);
+    // The cert's `target_federation` MUST equal the executor's `local_federation_id` — the
+    // executor below is `TurnExecutor::new(..)` whose federation defaults to `[0; 32]`, and
+    // the canonical CapTP-delivery signing message is computed over that same federation id
+    // (line ~345). A cert targeting a different federation is rejected at step 2 of
+    // `verify_captp_delivered` (`cert.target_federation does not match local federation`)
+    // before the honest path is ever exercised. Pin them to the same value.
+    let target_fed = fed(0x00);
     let (alice_sk, alice_pk, alice_fed, bob_sk, _bob_pk, mut carol_swiss, swiss_num) =
         make_delivery_setup(target_cell, target_fed);
 

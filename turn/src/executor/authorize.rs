@@ -131,6 +131,7 @@ impl TurnExecutor {
         {
             self.verify_captp_delivered(
                 action,
+                target_cell,
                 handoff_cert,
                 introducer_pk,
                 sender_pk,
@@ -329,6 +330,7 @@ impl TurnExecutor {
     pub(super) fn verify_captp_delivered(
         &self,
         action: &Action,
+        target_cell: &Cell,
         handoff_cert: &dregg_captp::HandoffCertificate,
         introducer_pk: &[u8; 32],
         sender_pk: &[u8; 32],
@@ -436,6 +438,50 @@ impl TurnExecutor {
                         reason: format!(
                             "captp-delivered: action effects mask {effects_mask:#x} not within \
                              cert.allowed_effects {mask:#x}"
+                        ),
+                    },
+                    path.to_vec(),
+                ));
+            }
+        }
+
+        // 5b. NON-AMPLIFICATION (Granovetter / the Lean `Exec.AuthModes.captp_granted_le_held`
+        //     spec `granted.rights ≤ held.rights`). A CapTpDelivered authorization
+        //     short-circuits the per-permission lattice (`check_single_auth_requirement`) the
+        //     way every other holistic mode does — so WITHOUT this gate the cert's introducer-
+        //     asserted `permissions` are never confronted with the target cell's own authority
+        //     floor, and a self-signed cert granting a LOOSER tier than the cell requires
+        //     (e.g. `None` over a `Signature`-gated cell) amplifies authority: the recipient
+        //     performs an action no honest mode could authorize. (The cross-vat
+        //     `dregg_captp::validate_handoff` enforces `granted ≤ held` against the swiss-
+        //     registered `held`; the executor has no swiss table, so its faithful image of
+        //     `held` is the TARGET CELL's declared `AuthRequired` for each action — the floor
+        //     a legitimate cap-holder had to clear. The cert's granted tier must be
+        //     narrower-or-equal to that floor: `granted.is_narrower_or_equal(required)`.)
+        //
+        //     This is the SAME `is_narrower_or_equal` rights lattice the captp
+        //     `validate_handoff` and the verified Lean `CapTPConcrete.authNarrowerOrEqual`
+        //     agree on (`captp/tests/handoff_lattice_differential.rs`). An honest, non-
+        //     amplifying handoff (granted tier ⊆ the cell's floor) still passes.
+        // Mirror the lattice path's permission selection: the per-effect required actions, or
+        // the `Access` catch-all when no effect produced a specific permission (an empty set
+        // falls through to the general access gate in `verify_authorization`).
+        let mut floors: Vec<(dregg_cell::permissions::Action, &'static str)> =
+            self.determine_required_permissions(action);
+        if floors.is_empty() {
+            floors.push((dregg_cell::permissions::Action::Access, "Access"));
+        }
+        for (perm_action, action_name) in floors {
+            let required = target_cell.permissions.for_action(perm_action);
+            if !handoff_cert.permissions.is_narrower_or_equal(required) {
+                return Err((
+                    TurnError::InvalidAuthorization {
+                        reason: format!(
+                            "captp-delivered: handoff amplifies authority — cert grants {:?} \
+                             but action {action_name} on the target cell requires {required:?} \
+                             (granted must be narrower-or-equal to the cell's floor; \
+                             granted ⊄ held)",
+                            handoff_cert.permissions,
                         ),
                     },
                     path.to_vec(),
