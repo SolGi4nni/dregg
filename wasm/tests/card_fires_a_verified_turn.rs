@@ -23,17 +23,14 @@
 //! - **HOST target** (`cargo test -p dregg-wasm --test card_fires_a_verified_turn`): drives
 //!   `CardWorld` directly. `std::time::Instant` works here, so the FULL executor path runs
 //!   end-to-end — this is the executable proof of the loop (real turns, real receipts).
-//! - **wasm32 target** (`wasm-pack test --node`): the SAME loop in a real wasm module. NOTE
-//!   the EXACT remaining seam: the turn executor (`turn/src/executor/execute.rs`,
-//!   `execute_tree.rs`) takes unconditional `std::time::Instant::now()` profiling fences,
-//!   and `std`'s `wasm32-unknown-unknown` `Instant` panics ("time not implemented on this
-//!   platform") — it is NOT backed by `performance.now()`. So a real turn through the
-//!   in-tab executor panics on bare wasm until `turn/` adopts a wasm clock (e.g. `web-time`
-//!   feature-gated for `target_arch = "wasm32"`, or the `_pt*`/`_pf_*` fences move behind
-//!   `cfg!(not(wasm32))`). That fix is in `turn/` (out of this change's scope); the loop
-//!   itself — affordance → `CardWorld.fire` → verified turn → re-read bound slot — is proven
-//!   on the host below, and the wasm smoke (construct + read, no turn) confirms `CardWorld`
-//!   instantiates in a real wasm module.
+//! - **wasm32 target** (`wasm-pack test --node`): the SAME loop in a real wasm module —
+//!   construct → fire a `+1` turn → re-read the bound slot, end-to-end IN wasm. The clock
+//!   seam is CLOSED: the executor's profiling fences (`turn/src/executor/{execute,
+//!   execute_tree}.rs`) route through `turn_profile::Instant`, which is `web-time::Instant`
+//!   (backed by `performance.now()`) on `target_arch = "wasm32"` and `std::time::Instant`
+//!   natively — so a real cap-gated verified turn runs in the tab without the old
+//!   "time not implemented on this platform" panic. The affordance → `CardWorld.fire` →
+//!   verified turn → re-read bound slot loop is now proven on BOTH targets.
 
 /// THE FULL LOOP, EXECUTABLE (host target — the executor's `Instant` clock works here).
 /// The counter card binds model slot 0 (`{ "kind": "bind", "slot": 0 }`); a `+1` click
@@ -94,23 +91,47 @@ fn a_card_seeded_nonzero_fires_from_its_seed() {
     assert_eq!(card.fire("inc", 1).expect("fire +1"), 42, "41 + 1");
 }
 
-// ── The wasm32-target smoke ───────────────────────────────────────────────────────────
-// Under `wasm-pack test --node` this confirms `CardWorld` instantiates + the witnessed
-// read works in a REAL wasm module. It deliberately does NOT fire a turn: a real turn
-// hits the executor's `std::time::Instant::now()` profiling fence, which panics on
-// `wasm32-unknown-unknown` (see the module docs — the remaining seam is the `turn/`
-// executor's wall clock, not this card loop).
+// ── The wasm32-target loop ────────────────────────────────────────────────────────────
+// Under `wasm-pack test --node` this runs the FULL card loop in a REAL wasm module: mint
+// → witnessed read → fire a `+1` verified turn → re-read the committed bound slot. The
+// clock seam is CLOSED — the executor's profiling fences route through
+// `turn_profile::Instant` = `web-time::Instant` on wasm32 (backed by `performance.now()`),
+// so a real cap-gated turn runs in-tab without the old "time not implemented" panic.
 #[cfg(target_arch = "wasm32")]
-mod wasm_smoke {
+mod wasm_loop {
     use dregg_wasm::bindings_card::CardWorld;
     use wasm_bindgen_test::*;
 
     #[wasm_bindgen_test]
     fn card_world_instantiates_and_reads_in_a_real_wasm_module() {
-        // initial=0 takes the no-seed path (no turn), so no executor clock is touched.
+        // initial=0 takes the no-seed path (no turn). The bare construct + witnessed read.
         let card = CardWorld::new(0, 0).expect("CardWorld mints in a real wasm module");
         assert_eq!(card.read(), 0, "the witnessed read works in-tab");
         assert!(!card.cell_id().is_empty(), "the card-cell has a real id");
-        assert_eq!(card.receipt_count(), 0, "no turns fired in the smoke");
+        assert_eq!(card.receipt_count(), 0, "no turns fired before the click");
+    }
+
+    #[wasm_bindgen_test]
+    fn plus_one_click_fires_a_verified_turn_in_a_real_wasm_module() {
+        // THE BROWSER CLICK, IN WASM. Mint the counter card on its embedded executor, then
+        // fire the EXACT affordance the web renderer put on the `+1` button
+        // ({turn:"inc", arg:1}) as a real cap-gated verified turn — the clock fence now
+        // ticks off `performance.now()` instead of panicking.
+        let mut card = CardWorld::new(0, 0).expect("mint the counter card in wasm");
+        assert_eq!(card.read(), 0, "frame 0: bound count starts at 0");
+        assert_eq!(card.receipt_count(), 0, "no turns yet");
+
+        let after_one = card.fire("inc", 1).expect("the +1 click fires a verified turn in wasm");
+        assert_eq!(after_one, 1, "the fire returned the re-painted bound value 1");
+        assert_eq!(card.read(), 1, "frame 1: the in-tab ledger holds the committed count 1");
+        assert_eq!(card.receipt_count(), 1, "exactly ONE verified turn on the in-tab audit tape");
+
+        // The loop is durable across clicks.
+        assert_eq!(card.fire("inc", 5).expect("inc by 5 in wasm"), 6, "count := 1 + 5");
+        assert_eq!(card.receipt_count(), 2, "two verified turns in the tab");
+
+        // An unknown affordance commits nothing (the native `FireError::Unknown`).
+        assert!(card.fire("bogus", 1).is_err(), "an unknown affordance fires no turn");
+        assert_eq!(card.receipt_count(), 2, "the refusal left the audit tape unchanged");
     }
 }

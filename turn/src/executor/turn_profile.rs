@@ -28,7 +28,18 @@
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use std::time::Instant;
+/// Platform clock for the profiling fences. `std::time::Instant::now()` panics on
+/// `wasm32-unknown-unknown` ("time not implemented on this platform") — and the
+/// fences fire UNCONDITIONALLY (the env-gated branch only skips the `accum`, not the
+/// `now()` snapshot), so a real in-browser turn would crash even with the profiler
+/// off. `web-time::Instant` is a drop-in backed by `performance.now()`; native keeps
+/// `std::time::Instant`. Re-exported so the executor's fence call sites
+/// (`execute.rs` / `execute_tree.rs`) name one clock across both targets.
+#[cfg(target_arch = "wasm32")]
+pub(crate) use web_time::Instant;
 
 /// Cached `DREGG_TURN_PROFILE=1` check (read once; the env var is set before the run).
 pub(crate) fn enabled() -> bool {

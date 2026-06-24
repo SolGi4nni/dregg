@@ -442,7 +442,7 @@ impl TurnExecutor {
         // Bearer authorization bypasses this check: bearer caps carry their own
         // delegation proof that validates authority without requiring a c-list entry.
         let _pf = super::turn_profile::enabled();
-        let _pf_cap = std::time::Instant::now();
+        let _pf_cap = super::turn_profile::Instant::now();
         let is_bearer_auth = matches!(&action.authorization, Authorization::Bearer(_));
         if &action.target != parent_cell && !is_bearer_auth {
             let parent = ledger
@@ -557,14 +557,14 @@ impl TurnExecutor {
             .ok_or_else(|| (TurnError::CellNotFound { id: action.target }, path.clone()))?;
 
         // Check preconditions (including witnessed clauses — Block 3.5).
-        let _pf_precond = std::time::Instant::now();
+        let _pf_precond = super::turn_profile::Instant::now();
         self.check_preconditions(action, target_cell, &path)?;
         if _pf {
             super::turn_profile::accum(super::turn_profile::Phase::f_precond, _pf_precond);
         }
 
         // Verify authorization (including signature/proof verification).
-        let _pf_authz = std::time::Instant::now();
+        let _pf_authz = super::turn_profile::Instant::now();
         self.verify_authorization(action, target_cell, ledger, parent_cell, &path, turn_nonce)?;
         if _pf {
             super::turn_profile::accum(super::turn_profile::Phase::f_authz, _pf_authz);
@@ -687,7 +687,7 @@ impl TurnExecutor {
         // against its (old, new) pair — closing the "B was mutated
         // from action targeting A, but B's program was never checked"
         // gap codex flagged.
-        let _pf_snapshot = std::time::Instant::now();
+        let _pf_snapshot = super::turn_profile::Instant::now();
         let mut old_cell_states: std::collections::HashMap<CellId, dregg_cell::CellState> =
             std::collections::HashMap::new();
         for cell_id in Self::collect_touched_cells(action) {
@@ -717,7 +717,7 @@ impl TurnExecutor {
         if _pf {
             super::turn_profile::accum(super::turn_profile::Phase::f_snapshot, _pf_snapshot);
         }
-        let _pf_apply = std::time::Instant::now();
+        let _pf_apply = super::turn_profile::Instant::now();
         let (regular_effects, permission_effects): (Vec<&Effect>, Vec<&Effect>) = action
             .effects
             .iter()
@@ -898,7 +898,7 @@ impl TurnExecutor {
         if _pf {
             super::turn_profile::accum(super::turn_profile::Phase::f_apply, _pf_apply);
         }
-        let _pf_program = std::time::Instant::now();
+        let _pf_program = super::turn_profile::Instant::now();
         let parent_pk_opt: Option<[u8; 32]> = ledger.get(parent_cell).map(|p| *p.public_key());
         let effects_mask: u32 = action
             .effects
