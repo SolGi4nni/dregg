@@ -91,7 +91,7 @@ open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 VmTrace Satisfied2)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.StateCommit
   (recStateCommit recStateCommit_binds_kernel AccountsWF
-   compressInjective compressNInjective cellLeafInjective RestHashIffFrame)
+   compressInjective compressNInjective cellLeafInjective RestHashIffFrame logHashInjective)
 open Dregg2.Circuit.ActionDispatch
   (fullActionStep turnSpec execFullTurnA_iff_turnSpec actionTag)
 open Dregg2.Exec
@@ -855,6 +855,201 @@ theorem lightclient_turn_unfoolable_forest
   -- (4) the published turn-level commitments ARE the endpoint commitments (derived; §8.1).
   obtain ⟨hpre, hpost⟩ := turnDecodeChain_endpoints_commit hash S c te
   exact ⟨acts, start, fin, hexec, hpre, hpost⟩
+
+/-! ## §9 — the INTRA-TURN RECEIPT-LOG seam: binding the LOG half of `a.post = b.pre`.
+
+The kernel half of the turn-chain seam is DERIVED (`turnDecodeChain_seam_kernel_derived` /
+`stateDecodeChain_frame_continuous`): the published seam commitments FORCE `a.post.kernel = b.pre.kernel`,
+because `CommitSurface.commit` (= `recStateCommit`) BINDS the kernel. But `recStateCommit` is
+KERNEL-ONLY (`RecordKernelState → Turn → ℤ`; the `RecChainedState.log` receipt chain is NOT one of its
+inputs), so the published kernel seam says NOTHING about the `log`. The full-state `seam` field of
+`TurnDecodeChain` (`a.post = b.pre` over the WHOLE `RecChainedState`, log included) therefore carried
+its LOG half as a free residue: a prover could publish a turn-chain whose kernels chain genuinely while
+the intermediate RECEIPT-LOG an observer reads is FORGED. The dregg through-line — "a turn leaves a
+VERIFIABLE receipt" — was unforced at the composition seam.
+
+This section CLOSES that, mirroring the kernel tooth EXACTLY. The per-step published LOG commitments
+(the `EffectCommit.CommitSurface.LH` field's two published values — `effectStateCommit` already commits
+`cmb (cellDigest) (cmb (RH) (LH log))`, so the deployed surface DOES publish + bind the log) are bound
+to `pre.log`/`post.log` through the realizable `logHashInjective LH` carrier (the SAME class as the
+Poseidon/Merkle CR set — a hypothesis, never an axiom; exactly what `EffectCommit.effectCircuit_rejects_log_forge`
+realizes). A published LOG seam (`a.logPubPost = b.logPubPre`, the log column of the chained-root) then
+FORCES `a.post.log = b.pre.log` by `LH`-injectivity — the receipt-log half of the seam is CERTIFIED by
+the commitment binding, not taken on faith. Combined with the kernel tooth, the FULL `a.post = b.pre`
+seam is DERIVED: a forged intermediate receipt-log can't satisfy both the published log seam and the
+`logHashInjective` binding without a hash collision.
+
+This is the apex analog of the per-step `ClosureLog.StateDecodeLog` (which forces ONE step's
+`post.log = receipt :: pre.log`); here we force the CROSS-STEP log continuity the turn fold consumes. -/
+
+/-- **`LogDecode LH pubLogPre pubLogPost pre post`** — the published LOG commitments of one step bind
+its receipt chains through the realizable `logHashInjective LH` carrier: the published OLD/NEW log
+commitments equal `LH pre.log` / `LH post.log`. The apex-seam analog of `ClosureLog.StateDecodeLog`'s
+`logPreBinds`/`logPostBinds`. `LH` is the `EffectCommit.CommitSurface.LH` field; the two published
+values are the log column of the prover's chained-root (mirroring how `pc.pubPre`/`pubPost` are the
+kernel-root column). NO axiom: the binding is exactly the deployed `effectStateCommit`'s `LH log` leg. -/
+structure LogDecode (LH : List Turn → ℤ) (pubLogPre pubLogPost : ℤ) (pre post : RecChainedState) :
+    Prop where
+  /-- the published OLD log commitment IS `LH` of `pre.log`. -/
+  logPreBinds  : pubLogPre = LH pre.log
+  /-- the published NEW log commitment IS `LH` of `post.log`. -/
+  logPostBinds : pubLogPost = LH post.log
+
+/-- **FAITHFULNESS (log).** Two log-decodes of the SAME published log commitment force EQUAL receipt
+chains — pure `logHashInjective` binding, no admissibility. The log analog of
+`stateDecode_pre_faithful`/`stateDecode_post_faithful`. -/
+theorem logDecode_faithful (LH : List Turn → ℤ) (hLog : logHashInjective LH)
+    {p q : ℤ} {pre post pre' post' : RecChainedState}
+    (h : LogDecode LH p q pre post) (h' : LogDecode LH p q pre' post') :
+    pre.log = pre'.log :=
+  hLog pre.log pre'.log (by rw [← h.logPreBinds, ← h'.logPreBinds])
+
+/-- **The LOG-SEAM tooth (log half DERIVED, not assumed).** If two adjacent steps' published LOG
+commitments AGREE across the boundary (`a.logPubPost = b.logPubPre` — the log column of the prover's
+chained-root, equated across the seam exactly as `pubSeam` equates the kernel-root column), and each
+binds its receipt chain (`LogDecode`), then their receipt chains COINCIDE: `a.post.log = b.pre.log`.
+The receipt-log half of the seam is FORCED by the `logHashInjective` binding — a prover whose published
+log commitment disagrees with the threaded receipt chain is REJECTED. The faithful mirror of
+`stateDecodeChain_frame_continuous` (kernel half) on the log. -/
+theorem logDecodeChain_frame_continuous (LH : List Turn → ℤ) (hLog : logHashInjective LH)
+    {a b : RecChainedState} {ap aq bp bq : ℤ} {a' b' : RecChainedState}
+    (hda : LogDecode LH ap aq a a') (hdb : LogDecode LH bp bq b b')
+    (hseam : aq = bp) :
+    a'.log = b.log := by
+  -- `LH a'.log = aq = bp = LH b.log`, then `logHashInjective`.
+  apply hLog a'.log b.log
+  rw [← hda.logPostBinds, hseam, hdb.logPreBinds]
+
+/-- **`TurnDecodeChainLog`** — a `TurnDecodeChain` AUGMENTED with the per-step published LOG decode and
+the published LOG seam, so the full-state `seam` (`a.post = b.pre`, log included) is DERIVED on BOTH
+halves. `logDecode d` binds step `d`'s published log commitments to `d.pre.log`/`d.post.log`; `logPubPost`
+/`logPubPre` are the log column of the chained-root (one published `ℤ` per step boundary); `logPubSeam`
+equates them across each boundary (the log analog of `TurnDecodeChain.pubSeam`). `hLog` is the named
+realizable `logHashInjective LH` carrier. The full-state seam is then `turnDecodeChainLog_seam_full_derived`. -/
+structure TurnDecodeChainLog (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
+    {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin) where
+  /-- the named realizable log-CR floor carrier (the log-hash is injective). -/
+  hLog       : logHashInjective LH
+  /-- per step, its published OLD log commitment (the log column of the chained-root). -/
+  logPubPre  : DecodedStep S → ℤ
+  /-- per step, its published NEW log commitment. -/
+  logPubPost : DecodedStep S → ℤ
+  /-- each step's published log commitments bind its receipt chains (`LogDecode`). -/
+  logDecode  : ∀ d ∈ c.steps, LogDecode LH (logPubPre d) (logPubPost d) d.pre d.post
+  /-- the published LOG commitments AGREE across each boundary (the log column of the chained-root). -/
+  logPubSeam : List.IsChain (fun a b => logPubPost a = logPubPre b) c.steps
+
+/-- **A membership-aware chain.** Every adjacency in `l` is between two elements OF `l` — the
+`isChain_iff_getElem` readout, repackaged so per-adjacency reasoning can read both endpoints' carried
+per-step data. (Used to feed `logDecode`/the per-step decodes a proof that the adjacent steps are
+genuine list members.) -/
+private theorem isChain_mem_self {α} (l : List α) :
+    List.IsChain (fun a b => a ∈ l ∧ b ∈ l) l := by
+  rw [List.isChain_iff_getElem]
+  intro i hi
+  exact ⟨List.getElem_mem _, List.getElem_mem _⟩
+
+/-- **Combine two chains over the same list.** If `R` and `S` both chain `l`, then their conjunction
+chains `l`. The faithful zip the full-state seam (kernel ∧ log) needs. -/
+private theorem isChain_and {α} {R S : α → α → Prop} {l : List α}
+    (hR : List.IsChain R l) (hS : List.IsChain S l) :
+    List.IsChain (fun a b => R a b ∧ S a b) l := by
+  rw [List.isChain_iff_getElem] at hR hS ⊢
+  exact fun i hi => ⟨hR i hi, hS i hi⟩
+
+/-- **The LOG half of the seam is DERIVED.** For every adjacent pair in a `TurnDecodeChain` augmented by
+a `TurnDecodeChainLog`, the published LOG seam FORCES the threaded receipt chains to coincide
+(`a.post.log = b.pre.log`) — `logDecodeChain_frame_continuous` along the chain. So a prover whose
+published log commitment disagrees with the threaded receipt-log is REJECTED: the receipt-log half of
+`seam` is certified by the `logHashInjective` binding, not taken on faith. -/
+theorem turnDecodeChainLog_seam_log_derived (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
+    {start fin : RecChainedState} {c : TurnDecodeChain hash S start fin}
+    (cl : TurnDecodeChainLog hash S LH c) :
+    List.IsChain (fun a b => a.post.log = b.pre.log) c.steps := by
+  -- zip the published-log seam with the membership chain, then discharge each adjacency via the log
+  -- tooth, reading both endpoints' `LogDecode` from the carried per-step binding.
+  have hmem := isChain_and cl.logPubSeam (isChain_mem_self c.steps)
+  refine List.IsChain.imp ?_ hmem
+  intro a b hab
+  obtain ⟨hseam, ha, hb⟩ := hab
+  exact logDecodeChain_frame_continuous LH cl.hLog (cl.logDecode a ha) (cl.logDecode b hb) hseam
+
+/-- **The FULL-state seam is DERIVED (kernel ⊕ log).** Combining the kernel tooth
+(`turnDecodeChain_seam_kernel_derived`, from the published kernel-root seam) with the log tooth
+(`turnDecodeChainLog_seam_log_derived`, from the published log seam) recovers the WHOLE
+`RecChainedState` continuity `a.post = b.pre` — the `seam` field of `TurnDecodeChain`, previously
+carried with its log half as a free residue, is now CERTIFIED on both components. A forged intermediate
+receipt-log cannot satisfy both the published log seam and the `logHashInjective` binding without a
+hash collision; a forged intermediate kernel cannot satisfy the published kernel seam. So the published
+turn-chain BINDS the full state — receipts included. -/
+theorem turnDecodeChainLog_seam_full_derived (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
+    {start fin : RecChainedState} {c : TurnDecodeChain hash S start fin}
+    (cl : TurnDecodeChainLog hash S LH c) :
+    List.IsChain (fun a b => a.post = b.pre) c.steps := by
+  have hker := turnDecodeChain_seam_kernel_derived hash S c
+  have hlog := turnDecodeChainLog_seam_log_derived hash S LH cl
+  -- zip the kernel-continuity and log-continuity chains, then `a.post.kernel = b.pre.kernel ∧
+  -- a.post.log = b.pre.log ⟹ a.post = b.pre` (structure eta).
+  refine List.IsChain.imp ?_ (isChain_and hker hlog)
+  intro a b hab
+  obtain ⟨hk, hl⟩ := hab
+  -- `a.post = b.pre` from equal kernels AND equal logs (the two `RecChainedState` fields, eta).
+  calc a.post = ⟨a.post.kernel, a.post.log⟩ := rfl
+    _ = ⟨b.pre.kernel, b.pre.log⟩ := by rw [hk, hl]
+    _ = b.pre := rfl
+
+/-- **MUTATION CONFIRM — a forged intermediate receipt-log is UNSAT.** Any `TurnDecodeChainLog` whose
+published log commitments agree across the seam (`logPubSeam`) and bind each step's receipt chain
+(`logDecode`) CANNOT carry a forged intermediate boundary: if the post-log of step `i` disagreed with
+the pre-log of step `i+1` (`hforge`), `turnDecodeChainLog_seam_log_derived` forces them EQUAL — a direct
+contradiction (`False`). So no satisfying turn-chain exhibits the forge. This is the receipt-log analog
+of `effectCircuit_rejects_log_forge`, lifted to the CROSS-STEP seam: the published turn-chain binds the
+intermediate receipt-log, not just the kernels. -/
+theorem turnDecodeChainLog_rejects_forged_log (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
+    {start fin : RecChainedState} {c : TurnDecodeChain hash S start fin}
+    (cl : TurnDecodeChainLog hash S LH c)
+    {i : Nat} (hi : i + 1 < c.steps.length)
+    (hforge : (c.steps[i]'(by omega)).post.log ≠ (c.steps[i+1]'hi).pre.log) :
+    False := by
+  have hchain := turnDecodeChainLog_seam_log_derived hash S LH cl
+  -- the forged boundary `(i, i+1)` is an adjacency in `c.steps`; the derived chain forces its log
+  -- continuity, contradicting the forge.
+  rw [List.isChain_iff_getElem] at hchain
+  exact hforge (hchain i hi)
+
+/-! ### §9.1 — NON-VACUITY of the log seam (the `logHashInjective` carrier is load-bearing).
+
+The close is non-vacuous: the `hLog : logHashInjective LH` carrier is a GENUINE constraint, not free.
+A collapsing log-hash (constant `LH`) is NOT injective once two distinct receipt chains exist — so a
+prover CANNOT supply `hLog` for a degenerate `LH`, and the seam equation `logDecodeChain_frame_continuous`
+produces is a REAL receipt-chain equality, not a trivial `True`. (Mirrors the Poseidon CR set's own
+non-vacuity: a `+`-fold satisfies none of the injectivity carriers.) -/
+
+/-- A collapsing log-hash CANNOT satisfy `logHashInjective` once two distinct receipt logs exist: the
+carrier is a genuine non-trivial constraint (the don't-launder-vacuity tooth). Witnessed by the empty
+log vs. any one-receipt log (`[tr]`) — distinct (different lengths), yet both hash to `0`. -/
+example (tr : Turn) : ¬ logHashInjective (fun _ : List Turn => (0 : ℤ)) := by
+  intro hinj
+  have : ([] : List Turn) = [tr] := hinj [] [tr] rfl
+  exact (by simp : ([] : List Turn) ≠ [tr]) this
+
+/-- The log seam tooth is LOAD-BEARING: under a genuinely injective `LH`, a published log seam forces
+two SEPARATELY-NAMED boundary receipt chains EQUAL. Here `a`'s post and `b`'s pre are arbitrary distinct
+states; equal published log commitments at the seam (`LH a'.log = LH b.log`) pin `a'.log = b.log` — a
+non-trivial cross-state equality the derivation produces (not a tautology). -/
+example (LH : List Turn → ℤ) (hLog : logHashInjective LH)
+    (a a' b b' : RecChainedState) (ap aq bp bq : ℤ)
+    (hda : LogDecode LH ap aq a a') (hdb : LogDecode LH bp bq b b')
+    (hseam : aq = bp) :
+    a'.log = b.log :=
+  logDecodeChain_frame_continuous LH hLog hda hdb hseam
+
+#assert_axioms LogDecode
+#assert_axioms logDecode_faithful
+#assert_axioms logDecodeChain_frame_continuous
+#assert_axioms turnDecodeChainLog_seam_log_derived
+#assert_axioms turnDecodeChainLog_seam_full_derived
+#assert_axioms turnDecodeChainLog_rejects_forged_log
 
 #assert_axioms CommitSurface.commit_binds
 #assert_axioms stateDecode_pre_faithful
