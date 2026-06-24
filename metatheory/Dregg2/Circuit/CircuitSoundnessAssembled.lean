@@ -157,9 +157,17 @@ def v3RegistryHeap : List (String × EffectVmDescriptor2) :=
         -- the bare registry slot; the apex's `StarkSound hash Rfix` now quantifies over the crown-bearing
         -- descriptor the SDK route `exerciseViaCapabilityCapOpenVmDescriptor2R24` proves through.
         ("exerciseCapOpenVmDescriptor2R24",
-         Dregg2.Circuit.Emit.CapOpenEmit.exerciseCapOpenV3)]
+         Dregg2.Circuit.Emit.CapOpenEmit.exerciseCapOpenV3),
+        -- The DEDICATED SUPPLY-MINT descriptor (position 54, SUPPLY-MODEL.md Stage 2b): the SAME
+        -- proven credit/tick/freeze body as `mintVmDescriptor2R24` (pos 2) but gated on the DEDICATED
+        -- supply selector `sel.MINT = 14`, so the supply-creation effect `Effect::Mint` proves under
+        -- its OWN selector rather than riding BridgeMint's slot. `actionTagToPos 3` (mint) re-keys
+        -- HERE so `Rfix 3 = supplyMintV3`; tag 20 (bridgeMint) keeps pos 2 (its own descriptor).
+        -- Positions 0..53 are UNCHANGED, so every prior `Rfix_*` rfl-correspondence is preserved.
+        ("supplyMintVmDescriptor2R24",
+         Dregg2.Circuit.Emit.EffectVmEmitRotationV3.supplyMintV3)]
 
-theorem v3RegistryHeap_length : v3RegistryHeap.length = 54 := by
+theorem v3RegistryHeap_length : v3RegistryHeap.length = 55 := by
   simp [v3RegistryHeap, Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen_length]
 
 /-- The heapWrite member lands at tail position 45 — `Rfix 56` resolves THERE. -/
@@ -183,7 +191,11 @@ def actionTagToPos : EffectIdx → Nat
                --                   guarantee A circuit-bound. `.revoke holder t` and `.revokeDelegationA
                --                   holder t` lower to the SAME `RevokeSpec`/`removeEdgeCaps` kernel step,
                --                   so tag 2 rides the identical write-bearing descriptor as tag 14.)
-  | 3  => 2    -- mint            → mintVmDescriptor2R24
+  | 3  => 54   -- mint            → supplyMintVmDescriptor2R24 (the DEDICATED-selector supply-mint
+               --                   member, `v3RegistryHeap` tail pos 54, SUPPLY-MODEL.md Stage 2b;
+               --                   `Rfix 3 = supplyMintV3 = withSelectorGate sel.MINT mintV3`, the
+               --                   SAME proven body as pos 2 but on the dedicated `sel.MINT = 14`
+               --                   selector. Tag 20 (bridgeMint) keeps pos 2 for its own slot.)
   | 4  => 1    -- burn            → burnVmDescriptor2R24
   | 5  => 28   -- setField        → setFieldVmDescriptor2-0R24
   | 6  => 27   -- emitEvent       → emitEventVmDescriptor2R24
@@ -266,7 +278,10 @@ theorem Rfix_transfer : Rfix 0 = Dregg2.Circuit.RotatedKernelRefinement.transfer
 56 = 45` and `v3RegistryHeap`'s position-45 entry is the genuine Class-A `heapWriteV3` (the heap-root
 recompute, `RotatedKernelRefinementExercise.heapWrite_descriptorRefines_sat`). So `Rfix 56` is no longer
 the transfer fallback: `vkOfRegistry Rfix` / the apex's `StarkSound hash Rfix` now quantify over the
-deployed heapWrite descriptor, and the heapWrite rung discharges its refinement about the RIGHT one. -/
+deployed heapWrite descriptor, and the heapWrite rung discharges its refinement about the RIGHT one.
+What this forces is the ACCUMULATOR recompute of the `heap_root` register (anti-ghosted by the bound
+write); the genuine sorted-Merkle `heaps`-SPLICE binding (`heapsSplice ↔ Heap.root(Heap.set …)` via a
+`MapOp`) is the named Phase-E residual — see `RotatedKernelRefinementExercise` module header §heapWrite. -/
 theorem Rfix_heapWrite :
     Rfix 56 = Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3 := rfl
 
