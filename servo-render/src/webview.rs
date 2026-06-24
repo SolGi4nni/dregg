@@ -235,10 +235,12 @@ fn swgl_proc_loader(name: &str) -> *const std::os::raw::c_void {
 use std::cell::Cell;
 
 use servo::{
-    EventLoopWaker, LoadStatus, ServoBuilder, WebResourceLoad, WebResourceResponse, WebView,
-    WebViewBuilder, WebViewDelegate,
+    EventLoopWaker, InputEvent, LoadStatus, MouseButton, MouseButtonAction, MouseButtonEvent,
+    Scroll, ServoBuilder, WebResourceLoad, WebResourceResponse, WebView, WebViewBuilder,
+    WebViewDelegate, WebViewPoint, WebViewVector, WheelDelta, WheelEvent, WheelMode,
 };
 use url::Url;
+use webrender_api::units::{DevicePoint, DeviceVector2D};
 
 use starbridge_web_surface::{
     CapGatedDelegate, NavigationDecision, ResourceDecision, SurfaceCapability, WebSurfaceDelegate,
@@ -659,6 +661,161 @@ pub fn render_url_on_servo(
     (frame, last_outcome)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE INTERACTIVE SPIKE — input → re-render → fresh tile. This is the move from a
+// STATIC snapshot to a LIVE embedded WebView: the SAME `ServoSwglContext` +
+// `CapGate` the headless render uses, but driven with an INPUT EVENT between two
+// paints so the second frame reflects the input (e.g. a scrolled page). The
+// embedder-side loop is exactly the upstream `winit_minimal` pattern
+// (`notify_input_event`/`notify_scroll_event` → `spin_event_loop`* → `paint`),
+// only headless and bounded.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// An input event to deliver to a live [`WebView`] between two paints — the spike's
+/// "feed input in" half. These map 1:1 onto servo's [`InputEvent`] / `Scroll`
+/// vocabulary (`MouseButton`, `MouseMove`, `Wheel`, and the higher-level scroll),
+/// so an embedder (the cockpit web-shell, a winit window, the seL4 input PD) lowers
+/// its native events to these and the same `apply_input` drives the engine.
+#[derive(Clone, Copy, Debug)]
+pub enum WebInput {
+    /// A wheel/trackpad scroll by `(dx, dy)` CSS pixels at viewport `(x, y)`.
+    /// Positive `dy` reveals content below (servo's `WheelDelta` convention is the
+    /// opposite sign, handled inside [`apply_input`]).
+    Scroll { x: f32, y: f32, dx: f32, dy: f32 },
+    /// A left-button press-and-release ("click") at viewport `(x, y)`.
+    Click { x: f32, y: f32 },
+    /// A pointer move to viewport `(x, y)` (drives `:hover`, cursor).
+    MouseMove { x: f32, y: f32 },
+}
+
+/// Deliver one [`WebInput`] to a live `webview`. Mouse/wheel events go through
+/// `notify_input_event` (which routes point-bearing events to the paint thread for
+/// hit-testing first); the high-level page scroll uses `notify_scroll_event`. The
+/// caller then spins + repaints to obtain the post-input frame
+/// (see [`render_url_then_input_on_servo`]).
+pub fn apply_input(webview: &WebView, input: WebInput) {
+    match input {
+        WebInput::Scroll { x, y, dx, dy } => {
+            let point = WebViewPoint::Device(DevicePoint::new(x, y));
+            // A wheel event (what a trackpad/mouse wheel produces) AND a high-level
+            // scroll, mirroring how an embedder delivers a scroll gesture. Servo's
+            // `WheelDelta.y` positive reveals content ABOVE, so negate `dy` to make
+            // "scroll down `dy`px" reveal content below (the intuitive sense).
+            webview.notify_input_event(InputEvent::Wheel(WheelEvent::new(
+                WheelDelta { x: dx as f64, y: -(dy as f64), z: 0.0, mode: WheelMode::DeltaPixel },
+                point,
+            )));
+            // The high-level scroll the paint thread applies to the scroll tree:
+            // a Device-space delta vector (positive `y` reveals content below).
+            webview.notify_scroll_event(
+                Scroll::Delta(WebViewVector::Device(DeviceVector2D::new(dx, dy))),
+                point,
+            );
+        }
+        WebInput::Click { x, y } => {
+            let point = WebViewPoint::Device(DevicePoint::new(x, y));
+            webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                MouseButtonAction::Down,
+                MouseButton::Left,
+                point,
+            )));
+            webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                MouseButtonAction::Up,
+                MouseButton::Left,
+                point,
+            )));
+        }
+        WebInput::MouseMove { x, y } => {
+            let point = WebViewPoint::Device(DevicePoint::new(x, y));
+            webview.notify_input_event(InputEvent::MouseMove(
+                servo::MouseMoveEvent::new(point),
+            ));
+        }
+    }
+}
+
+/// **THE INTERACTIVITY SPIKE: prove input → re-render → a DIFFERENT tile.**
+///
+/// Load `url` on `servo` into a fresh [`ServoSwglContext`] behind the [`CapGate`],
+/// paint the loaded page (frame A), deliver `input` to the live `WebView`, pump the
+/// actor threads so the input takes effect (a scroll re-lays the scroll tree, a click
+/// runs script/handlers), repaint (frame B), and return BOTH frames. When `input`
+/// changes what is on screen (e.g. scrolling a page taller than the viewport), the two
+/// frames' `content_digest`s DIFFER — the proof that the embedded WebView is LIVE, not
+/// a static snapshot.
+///
+/// This is the headless analogue of the upstream `winit_minimal` window loop: the only
+/// difference is that a winit embedder is paced by OS redraw events, whereas here we
+/// pump `spin_event_loop` ourselves between the input and the repaint.
+pub fn render_url_then_input_on_servo(
+    servo: &servo::Servo,
+    url: &str,
+    surface: SurfaceCapability,
+    width: u32,
+    height: u32,
+    input: WebInput,
+    max_spins: usize,
+) -> Option<(RgbaFrame, RgbaFrame)> {
+    use crate::swgl_context::RenderingContext as _;
+
+    let parsed = Url::parse(url).ok()?;
+
+    let rendering_context = Rc::new(ServoSwglContext::new(width, height));
+    let _ = ServoRenderingContext::make_current(&*rendering_context);
+
+    let mut seed: Vec<String> = vec![parsed.origin().ascii_serialization()];
+    if let Some(allow) = surface_fetch_allow(&surface) {
+        seed.extend(allow);
+    }
+    let delegate = build_cap_gate(surface, &seed);
+
+    let webview = WebViewBuilder::new(servo, rendering_context.clone())
+        .url(parsed)
+        .delegate(delegate.clone())
+        .build();
+
+    // Pump until loaded + first frame ready, bounded (the same load loop as
+    // `render_url_on_servo`).
+    let mut spins = 0;
+    while spins < max_spins {
+        servo.spin_event_loop();
+        if delegate.load_complete.get() && delegate.frame_ready.get() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        spins += 1;
+    }
+    for _ in 0..16 {
+        servo.spin_event_loop();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    // FRAME A — the loaded page before any input.
+    webview.paint();
+    let (w, h) = rendering_context.inner().size();
+    let frame_a = rendering_context
+        .inner()
+        .read_to_image(crate::swgl_context::ReadRect::whole(w, h))?;
+
+    // ── DELIVER THE INPUT ──, then pump so the engine processes it (hit-test on the
+    // paint thread, scroll-tree update / script on the constellation/script threads)
+    // and produces a new built frame.
+    delegate.frame_ready.set(false);
+    apply_input(&webview, input);
+    for _ in 0..256 {
+        servo.spin_event_loop();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    // FRAME B — after the input. A scroll past the fold makes this differ from A.
+    webview.paint();
+    let frame_b = rendering_context
+        .inner()
+        .read_to_image(crate::swgl_context::ReadRect::whole(w, h))?;
+
+    Some((frame_a, frame_b))
+}
+
 /// The surface's fetch allowlist as a `Vec<String>` (for seeding reachable peers) —
 /// `None` when the surface is the wildcard root (no finite allowlist to seed beyond
 /// the navigated origin).
@@ -968,6 +1125,94 @@ mod tests {
             "WEB_RENDER_TEXT_PNG_WRITTEN path={out_path} bytes={png_len} dims={W}x{H} \
              distinct_colors={} page='data: white bg + black <h1>dregg</h1> (real glyph layout)'",
             distinct.len()
+        );
+    }
+
+    /// **THE INTERACTIVITY SPIKE, EXECUTED: a scroll input to the live `WebView`
+    /// produces a DIFFERENT tile.** This is the move from a static snapshot to a live
+    /// embedded webview — the deliverable's "two differing tiles" bar.
+    ///
+    /// We render a page TALLER than the viewport with two distinct color bands stacked
+    /// so that only the FIRST band is visible at scroll offset 0 and the SECOND becomes
+    /// visible after scrolling down. [`render_url_then_input_on_servo`] paints frame A
+    /// (top of page), delivers a downward [`WebInput::Scroll`], pumps the engine,
+    /// repaints frame B (scrolled), and returns both. A real, LIVE WebView makes B's
+    /// pixels differ from A's; a static snapshot could not. We assert the two frames'
+    /// content digests differ.
+    #[test]
+    fn a_scroll_input_re_renders_the_webview_to_a_different_tile() {
+        // A page much taller than the 200px viewport: a 600px red block followed by a
+        // 600px lime block. At offset 0 the viewport shows red; after scrolling down
+        // ~400px the lime block enters the viewport, so the painted pixels change.
+        const PAGE: &str = "data:text/html,\
+            <html><body style='margin:0'>\
+            <div style='height:600px;background:%23ff0000'></div>\
+            <div style='height:600px;background:%2300ff00'></div>\
+            </body></html>";
+        const W: u32 = 240;
+        const H: u32 = 200;
+
+        let presenter = cell_seed(11);
+        let surface = SurfaceCapability::root(presenter, AuthRequired::Either);
+
+        let (a, b) = crate::swgl_context::with_gl(|| {
+            let servo = servo::ServoBuilder::default()
+                .event_loop_waker(Box::new(super::HeadlessWaker))
+                .build();
+            super::render_url_then_input_on_servo(
+                &servo,
+                PAGE,
+                surface,
+                W,
+                H,
+                // Scroll down 450px at the viewport center — past the first block, so the
+                // lime block enters view.
+                super::WebInput::Scroll { x: 120.0, y: 100.0, dx: 0.0, dy: 450.0 },
+                4096,
+            )
+            .expect("the live WebView produced both a pre- and post-scroll frame")
+        });
+
+        assert_eq!(a.width, W);
+        assert_eq!(b.width, W);
+        assert_eq!(a.bytes.len(), (W * H * 4) as usize);
+        // The load-bearing assertion: the scroll changed what is on screen, so the two
+        // frames' content digests DIFFER — the WebView re-rendered in response to input.
+        assert_ne!(
+            a.content_digest(),
+            b.content_digest(),
+            "scrolling the live WebView produced a DIFFERENT tile (input → re-render → new frame); \
+             a static snapshot would yield the same digest"
+        );
+
+        // Stronger: frame A is dominated by red (the top block), frame B by lime — a
+        // direct witness that the SECOND block scrolled into view, not just noise.
+        fn dominant_is(frame: &RgbaFrame, r: u8, g: u8, b: u8) -> usize {
+            let mut n = 0usize;
+            for i in 0..(frame.width * frame.height) as usize {
+                let p = &frame.bytes[i * 4..i * 4 + 4];
+                // tolerate antialiasing / sub-pixel by a loose threshold
+                if (p[0] as i32 - r as i32).abs() < 48
+                    && (p[1] as i32 - g as i32).abs() < 48
+                    && (p[2] as i32 - b as i32).abs() < 48
+                {
+                    n += 1;
+                }
+            }
+            n
+        }
+        let a_red = dominant_is(&a, 255, 0, 0);
+        let b_lime = dominant_is(&b, 0, 255, 0);
+        println!(
+            "INTERACTIVE_SPIKE pre_scroll_red_px={a_red} post_scroll_lime_px={b_lime} \
+             digest_a={:#x} digest_b={:#x}",
+            a.content_digest(),
+            b.content_digest()
+        );
+        assert!(a_red > 0, "the top (red) block is visible before scrolling");
+        assert!(
+            b_lime > 0,
+            "the second (lime) block scrolled into view after the scroll input — a LIVE re-render"
         );
     }
 

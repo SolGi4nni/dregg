@@ -22,7 +22,10 @@ end-state this respects), [DISTRIBUTED-SERVO-FACETS.md](DISTRIBUTED-SERVO-FACETS
 (the compositor-PD = third device-holding sibling), and
 [../EMBEDDABLE-LEAN-RUNTIME.md](../EMBEDDABLE-LEAN-RUNTIME.md) + [../SEL4-EMBEDDING.md](../SEL4-EMBEDDING.md)
 (the proven executor-PD-on-`sel4-musl` precedent this leans on and contrasts
-against).*
+against), and [SERVO-INTERACTIVE.md](SERVO-INTERACTIVE.md) (the next axes on this
+same `RenderingContext` seam: input → re-render → fresh tile — SPIKED green, two
+differing tiles — and the GPU-accelerated-desktop / SWGL-software-fallback dual
+backend).*
 
 ---
 
