@@ -68,11 +68,13 @@ pub use allowance::{
 };
 pub use blueprint::{
     AllowanceTerms as AllowanceFactoryTerms, BlueprintError, BridgeTerms, EscrowTerms,
-    ObligationTerms, VaultCondition as VaultFactoryCondition, VaultTerms as VaultFactoryTerms,
+    ObligationTerms, StandingObligationTerms as StandingObligationFactoryTerms,
+    VaultCondition as VaultFactoryCondition, VaultTerms as VaultFactoryTerms,
     allowance_cell_program, allowance_factory_descriptor, allowance_state_constraints,
     bridge_cell_program, bridge_factory_descriptor, escrow_cell_program, escrow_factory_descriptor,
-    obligation_cell_program, obligation_factory_descriptor, vault_cell_program,
-    vault_factory_descriptor, vault_state_constraints,
+    obligation_cell_program, obligation_factory_descriptor, standing_obligation_cell_program,
+    standing_obligation_factory_descriptor, standing_obligation_state_constraints,
+    vault_cell_program, vault_factory_descriptor, vault_state_constraints,
 };
 pub use capability::{
     AttenuatedCap, CapabilityCaveat, CapabilityRef, CapabilitySet, is_attenuation,

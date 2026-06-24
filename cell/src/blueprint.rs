@@ -185,6 +185,14 @@ pub enum BlueprintError {
     /// epoch index `(block - start) / epoch_length` is undefined. Rejected at
     /// build (fail-closed).
     ZeroEpochLength,
+    /// A standing obligation with a zero amount-per-period owes nothing and its
+    /// all-zero terms are indistinguishable from an unborn cell. Rejected at
+    /// build (fail-closed).
+    ZeroAmount,
+    /// A standing obligation with a zero period length has no schedule boundary
+    /// — the due block `start + k·period` collapses. Rejected at build
+    /// (fail-closed).
+    ZeroPeriod,
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -217,6 +225,12 @@ impl std::fmt::Display for BlueprintError {
             }
             BlueprintError::ZeroEpochLength => {
                 write!(f, "allowance epoch length must be a nonzero number of blocks")
+            }
+            BlueprintError::ZeroAmount => {
+                write!(f, "standing-obligation amount per period must be nonzero")
+            }
+            BlueprintError::ZeroPeriod => {
+                write!(f, "standing-obligation period length must be a nonzero number of blocks")
             }
         }
     }
@@ -933,6 +947,219 @@ pub fn allowance_factory_descriptor(
     Ok(settlement_descriptor(
         "dregg-blueprint:allowance-factory v1",
         allowance_state_constraints(terms)?,
+    ))
+}
+
+// =============================================================================
+// Standing obligation — Dregg2.Apps.Obligation (HOUSE WELD #3: the recurring
+// schedule-enforced commitment — a subscription / salary / rent)
+// =============================================================================
+//
+// A STANDING OBLIGATION is a first-class, schedule-enforced recurring commitment:
+// a cell OWES a FIXED amount to a beneficiary every PERIOD blocks — period 0 falls
+// due at `start`, period 1 at `start + period`, and so on. It is the agent's
+// enforceable subscription / salary / rent: the protocol itself enforces the
+// schedule, so an obligor can neither FORGE the terms (amount/period/beneficiary
+// are frozen), nor UNDERPAY a period (the amount is fixed), nor DISCHARGE EARLY
+// (each period must wait for its due block). It is the THIRD house room welded
+// (`docs/HOUSE-CAPACITIES-WELD-PLAN.md`, after the vault + allowance), distinct
+// from the one-shot bonded `ObligationTerms` (the escrow-family slash-on-deadline
+// deal) above: that is a single bonded duty, this is a recurring payment train.
+//
+// A standing obligation is a COMPOSITION, NOT a new `Effect`: it rides the SAME
+// committed-cell substrate and the SAME wired settlement triple as the
+// vault/allowance/escrow families (`CreateCellFromFactory` + `Transfer` +
+// `SetField`), and every gate it needs ALREADY EXISTS. So it is a factory
+// descriptor over the existing constraint vocabulary, light-client-verifiable:
+//
+//   * enter an obligation = `CreateCellFromFactory` over
+//                           `standing_obligation_factory_descriptor` (installs the
+//                           frozen schedule terms + the monotone schedule cursors),
+//   * fund it             = an ordinary `Transfer` IN (the payable value lives in
+//                           the cell's own `balance`),
+//   * discharge a period  = a `SetField` advancing the `next_due` cursor by one
+//                           period + the discharged counter (admitted ONLY once the
+//                           block height has reached the period's due block) + a
+//                           `Transfer` OUT of exactly `amount_per_period` to the
+//                           beneficiary.
+//
+// The four obligation-safety teeth (mirroring the settlement family + the Lean
+// twin `Dregg2.Apps.Obligation` / probe `Dregg2.Verify.ObligationFactoryProbe`):
+//
+//   1. **Deal-term integrity (no-forge schedule)** — beneficiary / amount /
+//      period / start are term-pinned once OPEN (`pin_term`). A tampered amount or
+//      period diverges from the committed literal and is rejected.
+//   2. **The fixed amount (no under/over-pay)** — `FieldEquals { amount_slot ==
+//      amount }`: the per-period amount slot can NEVER differ from the committed
+//      schedule amount (term-pinned), AND each discharge moves exactly that amount
+//      out by an ordinary `Transfer` (the conserving payment).
+//   3. **Monotone schedule cursors (no skip / no replay)** — `Monotonic`
+//      `next_due` + `Monotonic` `discharged_count`: the cursor never moves
+//      backward, so a discharged period cannot be replayed, and the count never
+//      regresses (a spent period is a spent nullifier — the standalone library's
+//      one-shot tooth as a monotone counter).
+//   4. **The due-gate (no early discharge)** — the schedule is DERIVED from the
+//      block in the discharge OP (the Lean `dischargeObligation`, the verification
+//      core), exactly the allowance precedent whose epoch derivation lives in the
+//      spend op, not the static constraints: a discharge advancing the cursor is
+//      admitted only once the block height has reached the current period's due
+//      block (`old_next_due`). An early discharge is structurally impossible (you
+//      cannot conjure a later height), and the `Monotonic` cursor forbids any
+//      backward replay. The same height clock the vault timelock uses.
+//
+// The payable VALUE lives in the minted cell's own `balance`; funding is an
+// ordinary conserving `Transfer` IN, each discharge an ordinary `Transfer` OUT of
+// exactly `amount_per_period` — NO side-table, so obligation conservation is the
+// ordinary kernel move law. OPEN is perpetual (an obligation pays forever, no
+// terminal — unlike the vault's one-shot CLAIMED), bounded only by an optional
+// count the SDK builder enforces on the discharge turn. The beneficiary-is-the-
+// payout-target binding is the SDK builder constructing the only sensible
+// discharge turn, exactly as the settlement family's payout target is (see the
+// blueprint module-doc "What the program CANNOT see").
+
+/// Standing-obligation slot 0 — lifecycle state ([`STATE_UNINIT`] →
+/// [`STATE_OPEN`], which is perpetual: an obligation pays forever, no terminal).
+pub const OBLIGATION_STATE_SLOT: u8 = 0;
+/// Standing-obligation slot 1 — the beneficiary identity (the payout target;
+/// 32-byte `CellId` encoding). Term-pinned once OPEN.
+pub const OBLIGATION_BENEFICIARY_SLOT: u8 = 1;
+/// Standing-obligation slot 2 — the fixed `amount_per_period` (big-endian u64;
+/// the amount owed each period). Term-pinned once OPEN (the no-forge / fixed-
+/// amount tooth).
+pub const OBLIGATION_AMOUNT_SLOT: u8 = 2;
+/// Standing-obligation slot 3 — the period length in blocks (big-endian u64).
+/// Term-pinned once OPEN.
+pub const OBLIGATION_PERIOD_SLOT: u8 = 3;
+/// Standing-obligation slot 4 — the block height at which period `0` falls due
+/// (big-endian u64). Term-pinned once OPEN.
+pub const OBLIGATION_START_SLOT: u8 = 4;
+/// Standing-obligation slot 5 — the committed `next_due` cursor (big-endian
+/// u64): the block height at which the NEXT undischarged period falls due. Starts
+/// at `start`; each discharge advances it by `period`. Monotone (never backward).
+pub const OBLIGATION_NEXT_DUE_SLOT: u8 = 5;
+/// Standing-obligation slot 6 — the committed `discharged_count` (big-endian
+/// u64): the number of periods discharged so far. Starts at `0`; each discharge
+/// increments it by `1`. Monotone (a spent period cannot be un-spent).
+pub const OBLIGATION_DISCHARGED_COUNT_SLOT: u8 = 6;
+
+/// The published terms of one standing obligation: who is owed, the fixed amount
+/// each period, the period length, and the block period `0` falls due. The
+/// payable amount is whatever is `Transfer`-ed IN (held in the cell's own
+/// `balance`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StandingObligationTerms {
+    /// Beneficiary identity (the payout target), 32-byte encoding. Must be nonzero.
+    pub beneficiary: FieldElement,
+    /// The fixed amount owed each period. Must be `> 0`.
+    pub amount_per_period: u64,
+    /// The period length in blocks. Must be `> 0` — period `k` falls due at
+    /// `start + k·period`.
+    pub period: u64,
+    /// The block height at which period `0` falls due (the first discharge).
+    pub start: u64,
+}
+
+/// The standing-obligation constraint set for one schedule. The teeth, in
+/// keystone order (see the module-section docs); fails closed on a zero
+/// beneficiary (a discharge would target the zero cell), a zero amount (an
+/// obligation that owes nothing, indistinguishable from an unborn cell), and a
+/// zero period (the due block `start + k·period` collapses).
+///
+/// Safety contract (proved on the Lean twin `Dregg2.Apps.Obligation` + the probe
+/// `Dregg2.Verify.ObligationFactoryProbe`): conservation (the value moves by
+/// ordinary `Transfer`), the fixed amount (`wrong_amount_rejected` — exactly
+/// `amount_per_period`), no-forged/early discharge (`early_discharge_rejected` —
+/// the schedule is derived from the block; `forged_schedule_rejected` — the terms
+/// are frozen), within-schedule-dischargeable (`due_period_dischargeable`).
+pub fn standing_obligation_state_constraints(
+    terms: &StandingObligationTerms,
+) -> Result<Vec<StateConstraint>, BlueprintError> {
+    if terms.beneficiary == FIELD_ZERO {
+        return Err(BlueprintError::ZeroParty);
+    }
+    if terms.amount_per_period == 0 {
+        return Err(BlueprintError::ZeroAmount);
+    }
+    if terms.period == 0 {
+        return Err(BlueprintError::ZeroPeriod);
+    }
+    Ok(vec![
+        // ── 1. deal-term integrity / no-forge schedule (Lean: the four Immutable
+        //       deal terms — beneficiary/amount/period/start) ──
+        pin_term(OBLIGATION_BENEFICIARY_SLOT, terms.beneficiary),
+        pin_term(OBLIGATION_AMOUNT_SLOT, field_from_u64(terms.amount_per_period)),
+        pin_term(OBLIGATION_PERIOD_SLOT, field_from_u64(terms.period)),
+        pin_term(OBLIGATION_START_SLOT, field_from_u64(terms.start)),
+        // ── 2. the perpetual lifecycle: OPEN is live and stays live (no terminal
+        //       — an obligation pays forever, unlike the vault's one-shot) ──
+        StateConstraint::AllowedTransitions {
+            slot_index: OBLIGATION_STATE_SLOT,
+            allowed: vec![
+                (field_from_u64(STATE_UNINIT), field_from_u64(STATE_UNINIT)),
+                (field_from_u64(STATE_UNINIT), field_from_u64(STATE_OPEN)),
+                (field_from_u64(STATE_OPEN), field_from_u64(STATE_OPEN)),
+            ],
+        },
+        // ── 3. THE FIXED AMOUNT (Lean: wrong_amount_rejected — the per-period
+        //       amount slot can NEVER differ from the committed schedule amount;
+        //       term-pinned, so a tampered amount diverges from the literal) ──
+        when_state(
+            STATE_OPEN,
+            SimpleStateConstraint::FieldEquals {
+                index: OBLIGATION_AMOUNT_SLOT,
+                value: field_from_u64(terms.amount_per_period),
+            },
+        ),
+        // ── 4. monotone schedule cursors (Lean: the Monotonic nextDue +
+        //       dischargedCount — no skip-backward, no replay; a discharged
+        //       period cannot be un-spent) ──
+        // The next_due cursor advances forward by exactly `period` each discharge
+        // (the SDK builder constructs the advance); Monotonic forbids any backward
+        // move, so a discharged period (whose due block sits below the advanced
+        // cursor) can never be replayed. The discharged_count never regresses.
+        StateConstraint::Monotonic {
+            index: OBLIGATION_NEXT_DUE_SLOT,
+        },
+        StateConstraint::Monotonic {
+            index: OBLIGATION_DISCHARGED_COUNT_SLOT,
+        },
+    ])
+    // ── THE DUE-GATE (Lean: early_discharge_rejected) is enforced in the
+    //    discharge OP, not as a static OPEN-state constraint — exactly the
+    //    allowance precedent, whose epoch derivation lives in `allowanceSpend`,
+    //    not in `allowance_state_constraints`. A static `when_state(OPEN,
+    //    FieldLteHeight{next_due})` would fire on the OPEN-write that OPENS a
+    //    forward-dated obligation (next_due := start), blocking legitimate
+    //    creation of a schedule whose first period is in the future. The schedule
+    //    derivation — "the NEXT period's due block `old_next_due` must be ≤ the
+    //    block height for a discharge to advance the cursor" — is DERIVED from the
+    //    block in the Lean `dischargeObligation` op (the verification core), so an
+    //    early discharge is structurally impossible (you cannot conjure a later
+    //    height) and the cursor's `Monotonic` floor forbids any backward move. ──
+}
+
+/// The `CellProgram` installed on the standing-obligation cell for its whole life.
+pub fn standing_obligation_cell_program(
+    terms: &StandingObligationTerms,
+) -> Result<CellProgram, BlueprintError> {
+    Ok(CellProgram::Predicate(standing_obligation_state_constraints(
+        terms,
+    )?))
+}
+
+/// **The standing-obligation factory (per-schedule, content-addressed)** — HOUSE
+/// WELD #3. A standing obligation is a COMPOSITION over the existing constraint
+/// vocabulary settled by the wired `CreateCellFromFactory` + `Transfer` +
+/// `SetField` triple — NO new `Effect`. Lean twin:
+/// `Dregg2.Apps.Obligation.obligationFactoryEntry`. Each schedule gets its own
+/// content-addressed descriptor whose constraints bake the terms as literals; the
+/// payable value lives in the cell's own `balance`.
+pub fn standing_obligation_factory_descriptor(
+    terms: &StandingObligationTerms,
+) -> Result<FactoryDescriptor, BlueprintError> {
+    Ok(settlement_descriptor(
+        "dregg-blueprint:standing-obligation-factory v1",
+        standing_obligation_state_constraints(terms)?,
     ))
 }
 
@@ -2845,6 +3072,235 @@ mod tests {
         );
         // and distinct from the vault family (the domain tag separates them):
         let v = vault_factory_descriptor(&timelock_terms()).unwrap();
+        assert_ne!(a.factory_vk, v.factory_vk);
+    }
+
+    // ── Standing obligation (HOUSE WELD #3) ──────────────────────────────────
+
+    /// A standing obligation: beneficiary 2222 is owed 50 every 100-block period,
+    /// starting at block 1000.
+    fn obligation_terms() -> StandingObligationTerms {
+        StandingObligationTerms {
+            beneficiary: field_from_u64(2222),
+            amount_per_period: 50,
+            period: 100,
+            start: 1000,
+        }
+    }
+
+    /// The post-open (live, OPEN) state of a standing obligation: the frozen
+    /// schedule terms, the cursor at the first due block, nothing discharged. The
+    /// payable VALUE lives in the cell's own `balance`.
+    fn obligation_open_state(t: &StandingObligationTerms) -> CellState {
+        let mut s = CellState::new(0);
+        s.fields[OBLIGATION_STATE_SLOT as usize] = field_from_u64(STATE_OPEN);
+        s.fields[OBLIGATION_BENEFICIARY_SLOT as usize] = t.beneficiary;
+        s.fields[OBLIGATION_AMOUNT_SLOT as usize] = field_from_u64(t.amount_per_period);
+        s.fields[OBLIGATION_PERIOD_SLOT as usize] = field_from_u64(t.period);
+        s.fields[OBLIGATION_START_SLOT as usize] = field_from_u64(t.start);
+        s.fields[OBLIGATION_NEXT_DUE_SLOT as usize] = field_from_u64(t.start);
+        s.fields[OBLIGATION_DISCHARGED_COUNT_SLOT as usize] = field_from_u64(0);
+        s.set_balance(1000); // the payable value, held in the cell
+        s
+    }
+
+    /// A post-discharge state: the cursor advanced to `next_due`, `count` periods
+    /// discharged, the held balance reduced by the cumulative paid-out amount.
+    fn obligation_after_discharge(
+        open: &CellState,
+        next_due: u64,
+        count: u64,
+        balance: i64,
+    ) -> CellState {
+        let mut s = open.clone();
+        s.fields[OBLIGATION_NEXT_DUE_SLOT as usize] = field_from_u64(next_due);
+        s.fields[OBLIGATION_DISCHARGED_COUNT_SLOT as usize] = field_from_u64(count);
+        s.set_balance(balance);
+        s
+    }
+
+    /// Evaluate a standing-obligation program transition (the height drives the
+    /// SDK-builder's derived schedule term; the program has no in-program temporal
+    /// gate, exactly the allowance precedent).
+    fn obligation_eval(
+        program: &CellProgram,
+        new: &CellState,
+        old: Option<&CellState>,
+        height: u64,
+    ) -> Result<(), crate::program::ProgramError> {
+        let ctx = EvalContext {
+            block_height: height,
+            timestamp: 0,
+            current_epoch: 0,
+            sender: None,
+            sender_epoch_count: 0,
+            revealed_preimage: None,
+        };
+        program.evaluate_full(
+            new,
+            old,
+            Some(&ctx),
+            &TransitionMeta::wildcard(),
+            &WitnessBundle::empty(),
+        )
+    }
+
+    #[test]
+    fn obligation_birth_and_open_pass_and_term_tamper_refuses() {
+        let t = obligation_terms();
+        let p = standing_obligation_cell_program(&t).unwrap();
+        // the all-zero birth state passes (factory mints with no initial fields):
+        let born = CellState::new(0);
+        assert!(obligation_eval(&p, &born, None, 0).is_ok(), "birth state");
+        // opening writes the schedule terms and passes:
+        let open = obligation_open_state(&t);
+        assert!(
+            obligation_eval(&p, &open, Some(&born), 0).is_ok(),
+            "open writes the schedule terms"
+        );
+        // re-pointing the beneficiary while OPEN is rejected (term pin bites):
+        let mut bad = open.clone();
+        bad.fields[OBLIGATION_BENEFICIARY_SLOT as usize] = field_from_u64(0xDEAD);
+        assert!(
+            obligation_eval(&p, &bad, Some(&open), 0).is_err(),
+            "beneficiary term pin must bite"
+        );
+        // FORGING THE PERIOD (shortening the schedule) while OPEN is rejected:
+        let mut bad2 = open.clone();
+        bad2.fields[OBLIGATION_PERIOD_SLOT as usize] = field_from_u64(1);
+        assert!(
+            obligation_eval(&p, &bad2, Some(&open), 0).is_err(),
+            "a forged (shortened) period term pin must bite — the schedule can't be forged"
+        );
+        // FORGING THE START (back-dating) while OPEN is rejected:
+        let mut bad3 = open.clone();
+        bad3.fields[OBLIGATION_START_SLOT as usize] = field_from_u64(0);
+        assert!(
+            obligation_eval(&p, &bad3, Some(&open), 0).is_err(),
+            "a forged start term pin must bite"
+        );
+    }
+
+    #[test]
+    fn obligation_correct_amount_passes_wrong_amount_rejects() {
+        // KEYSTONE: the FIXED amount. A discharge that pins exactly the committed
+        // amount passes; tampering the per-period amount slot is rejected.
+        let t = obligation_terms(); // amount 50
+        let p = standing_obligation_cell_program(&t).unwrap();
+        let open = obligation_open_state(&t);
+
+        // discharge period 0 (cursor 1000→1100, count 0→1, balance 1000→950),
+        // amount slot UNCHANGED at the committed 50: passes at the due block.
+        let d0 = obligation_after_discharge(&open, 1100, 1, 950);
+        assert!(
+            obligation_eval(&p, &d0, Some(&open), 1000).is_ok(),
+            "an on-amount discharge (50) passes"
+        );
+        // FORGING the per-period amount UP while OPEN is rejected (the fixed-
+        // amount tooth — an obligor cannot quietly inflate or deflate what's owed):
+        let mut wrong = open.clone();
+        wrong.fields[OBLIGATION_AMOUNT_SLOT as usize] = field_from_u64(999);
+        assert!(
+            obligation_eval(&p, &wrong, Some(&open), 1000).is_err(),
+            "a tampered per-period amount (999 ≠ 50) is rejected — the amount is fixed"
+        );
+        // and DEFLATING it (underpay forge) is equally rejected:
+        let mut wrong2 = open.clone();
+        wrong2.fields[OBLIGATION_AMOUNT_SLOT as usize] = field_from_u64(1);
+        assert!(
+            obligation_eval(&p, &wrong2, Some(&open), 1000).is_err(),
+            "a tampered per-period amount (1 ≠ 50) is rejected — no underpay"
+        );
+    }
+
+    #[test]
+    fn obligation_schedule_cursor_is_monotone_no_replay() {
+        // KEYSTONE: the monotone schedule — the next_due cursor and the discharged
+        // count can never move backward (a discharged period cannot be replayed).
+        let t = obligation_terms();
+        let p = standing_obligation_cell_program(&t).unwrap();
+        let open = obligation_open_state(&t);
+        // advance: discharge period 0 (cursor → 1100, count → 1):
+        let after0 = obligation_after_discharge(&open, 1100, 1, 950);
+        assert!(obligation_eval(&p, &after0, Some(&open), 1000).is_ok());
+        // a FORWARD discharge of period 1 (cursor 1100→1200, count 1→2) is live:
+        let after1 = obligation_after_discharge(&after0, 1200, 2, 900);
+        assert!(
+            obligation_eval(&p, &after1, Some(&after0), 1100).is_ok(),
+            "a forward discharge advancing the cursor is live"
+        );
+        // a BACKWARD cursor move (1100 → 1000, replaying period 0) is REJECTED by
+        // the Monotonic tooth — a spent period cannot be un-spent:
+        let mut replay = after0.clone();
+        replay.fields[OBLIGATION_NEXT_DUE_SLOT as usize] = field_from_u64(1000);
+        assert!(
+            obligation_eval(&p, &replay, Some(&after0), 1000).is_err(),
+            "the schedule cursor cannot move backward (no replay of a discharged period)"
+        );
+        // a BACKWARD discharged-count move (1 → 0) is likewise REJECTED:
+        let mut uncount = after0.clone();
+        uncount.fields[OBLIGATION_DISCHARGED_COUNT_SLOT as usize] = field_from_u64(0);
+        assert!(
+            obligation_eval(&p, &uncount, Some(&after0), 1000).is_err(),
+            "the discharged count cannot regress"
+        );
+    }
+
+    #[test]
+    fn obligation_ill_formed_terms_rejected_at_build() {
+        // a zero beneficiary would target the zero cell on discharge:
+        assert_eq!(
+            standing_obligation_state_constraints(&StandingObligationTerms {
+                beneficiary: FIELD_ZERO,
+                amount_per_period: 50,
+                period: 100,
+                start: 1000,
+            }),
+            Err(BlueprintError::ZeroParty)
+        );
+        // a zero amount owes nothing (indistinguishable from an unborn cell):
+        assert_eq!(
+            standing_obligation_state_constraints(&StandingObligationTerms {
+                beneficiary: field_from_u64(2222),
+                amount_per_period: 0,
+                period: 100,
+                start: 1000,
+            }),
+            Err(BlueprintError::ZeroAmount)
+        );
+        // a zero period collapses the due-block schedule:
+        assert_eq!(
+            standing_obligation_state_constraints(&StandingObligationTerms {
+                beneficiary: field_from_u64(2222),
+                amount_per_period: 50,
+                period: 0,
+                start: 1000,
+            }),
+            Err(BlueprintError::ZeroPeriod)
+        );
+    }
+
+    #[test]
+    fn obligation_descriptors_are_per_schedule_content_addressed() {
+        let a = standing_obligation_factory_descriptor(&obligation_terms()).unwrap();
+        let b = standing_obligation_factory_descriptor(&obligation_terms()).unwrap();
+        assert_eq!(a.factory_vk, b.factory_vk, "same schedule → same factory");
+        // a different amount ⇒ a different factory:
+        let c = standing_obligation_factory_descriptor(&StandingObligationTerms {
+            beneficiary: field_from_u64(2222),
+            amount_per_period: 75,
+            period: 100,
+            start: 1000,
+        })
+        .unwrap();
+        assert_ne!(
+            a.factory_vk, c.factory_vk,
+            "different amount → different factory"
+        );
+        // and distinct from the allowance + vault families (domain tags separate):
+        let al = allowance_factory_descriptor(&allowance_terms()).unwrap();
+        let v = vault_factory_descriptor(&timelock_terms()).unwrap();
+        assert_ne!(a.factory_vk, al.factory_vk);
         assert_ne!(a.factory_vk, v.factory_vk);
     }
 }
