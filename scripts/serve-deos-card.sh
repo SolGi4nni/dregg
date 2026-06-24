@@ -4,7 +4,9 @@
 # (wasm/src/bindings_card.rs — the wasm analogs of the native Applet / inspector). Two pages
 # are baked + served:
 #
-#   /                — the COUNTER card (CardWorld): a `+1` click commits a SetField +
+#   /                — the GALLERY / card-picker (plain HTML, no wasm): clickable tiles, one
+#                      per live card — the discoverable front door that opens each card page.
+#   /counter.html    — the COUNTER card (CardWorld): a `+1` click commits a SetField +
 #                      IncrementNonce turn; the bound count re-paints from the committed ledger.
 #   /inspector.html  — the REFLECTIVE-INSPECTOR card (InspectorWorld): a cockpit surface, in a
 #                      TAB. The inspector card's view-tree (generated from a focused cell's REAL
@@ -45,7 +47,8 @@ fi
 
 echo
 echo "=== Serving the LIVE deos cards at http://localhost:$PORT ==="
-echo "  COUNTER   : http://localhost:$PORT/            — click +1 (a real cap-gated verified turn)"
+echo "  GALLERY   : http://localhost:$PORT/            — the card-picker (open a card below)"
+echo "  COUNTER   : http://localhost:$PORT/counter.html   — click +1 (a real cap-gated verified turn)"
 echo "  INSPECTOR : http://localhost:$PORT/inspector.html — a reflective cockpit surface; click an"
 echo "              affordance (tick/add/score) → a real verified turn → the bound field re-paints."
 echo "(Ctrl-C to stop.)"

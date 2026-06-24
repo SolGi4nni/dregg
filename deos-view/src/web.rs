@@ -224,6 +224,7 @@ boot();\n",
 <style>{CSS}{LIVE_CSS}</style>\n\
 </head>\n\
 <body>\n\
+<a class=\"deos-back\" href=\"./\">&lsaquo; all cards</a>\n\
 <main class=\"deos-card\">{body}<div class=\"deos-status\" id=\"deos-status\">loading the in-tab verified executor…</div></main>\n\
 <script>{JS}</script>\n\
 <script type=\"module\">{bootstrap}</script>\n\
@@ -316,6 +317,7 @@ boot();\n",
 <style>{CSS}{LIVE_CSS}</style>\n\
 </head>\n\
 <body>\n\
+<a class=\"deos-back\" href=\"./\">&lsaquo; all cards</a>\n\
 <main class=\"deos-card\">{body}<div class=\"deos-status\" id=\"deos-status\">loading the in-tab verified executor…</div></main>\n\
 <script>{JS}</script>\n\
 <script type=\"module\">{bootstrap}</script>\n\
@@ -330,9 +332,91 @@ boot();\n",
     )
 }
 
-/// Extra styling for the live page's status strip (the receipt-count audit readout).
+/// One card in the gallery: the page to open, its name, and a one-line blurb of what
+/// clicking it does. (`href` is a same-dir page in the served `dist/`, e.g.
+/// `"counter.html"`; `name`/`blurb` are the tile's title + subtitle.)
+pub struct GalleryCard<'a> {
+    /// The served page this tile opens (a sibling `.html` in the `dist/`).
+    pub href: &'a str,
+    /// The tile's title (the card's name).
+    pub name: &'a str,
+    /// A one-line description of the live card behind the tile.
+    pub blurb: &'a str,
+}
+
+/// **THE CARD-PICKER / HOME PAGE** — a discoverable landing for the served browser-native
+/// deos. Without it a visitor lands on one card and never finds the others; this page is a
+/// gallery of clickable tiles, one per live card, each opening a real card page where a click
+/// fires a cap-gated verified turn in the tab. It is plain HTML (no wasm) — the lightweight
+/// front door to the live cards (the "click around, absorb, no comprehension needed" entry).
+///
+/// `cards` are the tiles in display order (each a [`GalleryCard`] → an `<a>` to its served
+/// page). Styling matches the cockpit dark theme so the front door looks like the cards behind
+/// it. Bake it to the served `dist/`'s `index.html` so `/` is the picker.
+pub fn render_gallery_document(title: &str, cards: &[GalleryCard]) -> String {
+    let mut tiles = String::new();
+    for c in cards {
+        tiles.push_str(&format!(
+            "<a class=\"deos-tile\" href=\"{href}\">\
+<span class=\"deos-tile-name\">{name}</span>\
+<span class=\"deos-tile-blurb\">{blurb}</span>\
+<span class=\"deos-tile-go\">open the card &rsaquo;</span>\
+</a>",
+            href = escape(c.href),
+            name = escape(c.name),
+            blurb = escape(c.blurb),
+        ));
+    }
+    format!(
+        "<!doctype html>\n\
+<html lang=\"en\">\n\
+<head>\n\
+<meta charset=\"utf-8\">\n\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+<title>{title}</title>\n\
+<style>{CSS}{GALLERY_CSS}</style>\n\
+</head>\n\
+<body>\n\
+<main class=\"deos-gallery\">\n\
+<header class=\"deos-gallery-head\">\n\
+<h1>{title}</h1>\n\
+<p>Each tile is a live deos card. Open one and click an affordance — every click fires a \
+real cap-gated <em>verified turn</em> over an executor running right here in the tab, and \
+the bound field re-paints from the committed ledger.</p>\n\
+</header>\n\
+<div class=\"deos-tiles\">{tiles}</div>\n\
+</main>\n\
+</body>\n\
+</html>\n",
+        title = escape(title),
+        CSS = CSS,
+        GALLERY_CSS = GALLERY_CSS,
+        tiles = tiles,
+    )
+}
+
+/// Styling for the gallery / card-picker home page — the hero header + the tile grid. Shares
+/// the cockpit dark palette (`CSS`'s `:root` vars) so the front door matches the cards.
+const GALLERY_CSS: &str = "
+body{align-items:flex-start;}
+.deos-gallery{max-width:760px;width:100%;margin:0 auto;}
+.deos-gallery-head h1{margin:.25rem 0 .5rem;font-size:1.6rem;font-weight:700;}
+.deos-gallery-head p{margin:0 0 1.5rem;color:var(--muted);line-height:1.5;}
+.deos-gallery-head em{color:var(--fg);font-style:normal;font-weight:600;}
+.deos-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem;}
+.deos-tile{display:flex;flex-direction:column;gap:.4rem;text-decoration:none;background:#181a20;border:1px solid var(--border);border-radius:10px;padding:1.1rem;transition:border-color .12s,transform .12s;}
+.deos-tile:hover{border-color:var(--accent);transform:translateY(-2px);}
+.deos-tile-name{color:var(--fg);font-size:1.15rem;font-weight:700;}
+.deos-tile-blurb{color:var(--muted);font-size:.85rem;line-height:1.45;}
+.deos-tile-go{color:var(--accent);font-size:.8rem;font-weight:600;margin-top:.35rem;}
+";
+
+/// Extra styling for the live page's status strip (the receipt-count audit readout) + the
+/// unobtrusive back-link to the gallery (the card-picker home).
 const LIVE_CSS: &str = "
 .deos-status{margin-top:.5rem;padding:.4rem .75rem;font-size:.8rem;color:var(--muted);border-top:1px solid var(--border);}
+.deos-back{position:fixed;top:1rem;left:1rem;color:var(--muted);text-decoration:none;font-size:.85rem;}
+.deos-back:hover{color:var(--accent);}
 ";
 
 /// HTML-escape text content / attribute values (the view-tree carries author/cell data).

@@ -20,8 +20,8 @@
 use std::path::PathBuf;
 
 use deos_view::{
-    parse_view_tree, render_card_document, render_card_live_document, render_html,
-    render_inspector_live_document,
+    parse_view_tree, render_card_document, render_card_live_document, render_gallery_document,
+    render_html, render_inspector_live_document, GalleryCard,
 };
 
 /// The EXACT `JSON.stringify(tree)` shape the SpiderMonkey engine produces for the
@@ -192,8 +192,8 @@ fn main() {
         /*initial*/ 0,
         "./pkg/dregg_wasm.js",
     );
-    let plive = dist.join("index.html");
-    std::fs::write(&plive, &live).expect("write the live index.html");
+    let plive = dist.join("counter.html");
+    std::fs::write(&plive, &live).expect("write the live counter.html");
 
     // ── PROVE the live page is wired (not merely written) ────────────────────────────
     assert!(
@@ -257,10 +257,47 @@ fn main() {
         "the SAME inspector markup carries the multi-slot bind + affordance contract the wire drives"
     );
 
+    // ── 7. Bake the GALLERY / card-picker as the served home page (`/` = index.html) ──
+    // Without a front door a visitor lands on one card and never finds the others. This is
+    // a plain-HTML (no-wasm) landing of clickable tiles, one per live card — the
+    // "click around, no comprehension needed" entry that opens each real card page.
+    let gallery = render_gallery_document(
+        "deos — live cards in a browser",
+        &[
+            GalleryCard {
+                href: "counter.html",
+                name: "Counter",
+                blurb: "A deos-js counter card. Click +1 and the bound count advances — each \
+                        click is a SetField + IncrementNonce verified turn over an in-tab \
+                        executor, leaving a receipt.",
+            },
+            GalleryCard {
+                href: "inspector.html",
+                name: "Reflective Inspector",
+                blurb: "A cockpit surface, in a tab. A focused cell's real moldable faces \
+                        (state rows + affordances) render live; clicking tick/add/score fires a \
+                        cap-gated verified turn and the bound field re-paints.",
+            },
+        ],
+    );
+    let pgallery = dist.join("index.html");
+    std::fs::write(&pgallery, &gallery).expect("write the gallery index.html");
+
+    // ── PROVE the gallery is wired (not merely written) ───────────────────────────────
+    assert!(
+        gallery.contains("href=\"counter.html\"") && gallery.contains("href=\"inspector.html\""),
+        "the gallery links to BOTH live card pages (the card-picker)"
+    );
+    assert!(
+        gallery.contains("Counter") && gallery.contains("Reflective Inspector"),
+        "the gallery names both cards"
+    );
+
     eprintln!("deos-view web projection baked (gpui-free):");
     eprintln!("  counter @ count=0    : {}", p0.display());
     eprintln!("  counter @ count=1    : {}", p1.display());
     eprintln!("  inspector card       : {}", pi.display());
+    eprintln!("  LIVE gallery (home)  : {}", pgallery.display());
     eprintln!("  LIVE counter page    : {}", plive.display());
     eprintln!("  LIVE inspector page  : {}", plive_insp.display());
     eprintln!();
@@ -268,11 +305,11 @@ fn main() {
     eprintln!("  1. wasm-pack build wasm --target web --out-dir pkg --release");
     eprintln!("  2. cp -R ../wasm/pkg {}/pkg", dist.display());
     eprintln!(
-        "  3. (cd {} && python3 -m http.server 8000)  # open http://localhost:8000 (counter)",
+        "  3. (cd {} && python3 -m http.server 8000)  # open http://localhost:8000 (the gallery)",
         dist.display()
     );
     eprintln!(
-        "     …and http://localhost:8000/inspector.html (the LIVE reflective-inspector card)."
+        "     The gallery links to /counter.html and /inspector.html (the LIVE cards)."
     );
     eprintln!("Open the static .html files directly; the LIVE pages must be SERVED (module + .wasm fetch).");
 }

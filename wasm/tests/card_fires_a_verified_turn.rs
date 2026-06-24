@@ -157,24 +157,31 @@ fn inspector_card_renders_faces_and_an_affordance_click_fires_a_verified_turn() 
             && view.contains("\"Affordances\""),
         "the reflective view-tree carries the RawFields + Affordances faces: {view}"
     );
-    // The three seeded slots surface as live Bind rows (they re-read these slots).
+    // The three seeded slots surface as live Bind rows (they re-read these slots). The
+    // view-tree is `serde_json::Value::to_string()` (compact — no space after the colon),
+    // so match the compact key form (`"slot":0`).
     for slot in 0..=2 {
         assert!(
-            view.contains(&format!("\"slot\": {slot}")),
+            view.contains(&format!("\"slot\":{slot}")),
             "state[{slot}] is a live Bind row in the view-tree: {view}"
         );
     }
     // The affordances surface as Buttons carrying their turn payloads.
     for turn in ["tick", "add", "score"] {
         assert!(
-            view.contains(&format!("\"turn\": \"{turn}\"")),
+            view.contains(&format!("\"turn\":\"{turn}\"")),
             "the `{turn}` affordance is a Button in the view-tree: {view}"
         );
     }
-    // A structural substance (balance) renders as a static text row.
+    // A structural substance (balance) renders as a static text row, carrying the cell's
+    // LIVE balance (the seed turns are metered, so it has dropped below the 1_000_000 seed).
     assert!(
-        view.contains("balance: 1000000"),
-        "the balance substance renders as a static row: {view}"
+        view.contains(&format!("balance: {}", insp.balance())),
+        "the balance substance renders as a static row with the live balance: {view}"
+    );
+    assert!(
+        insp.balance() < 1_000_000,
+        "the metered seed turns charged fee (balance dropped below the seed)"
     );
 
     // THE AFFORDANCE CLICK → A REAL VERIFIED TURN. The web renderer put `{turn:"add", arg:1}`
@@ -211,22 +218,24 @@ fn inspector_card_renders_faces_and_an_affordance_click_fires_a_verified_turn() 
         "five verified turns on the audit tape"
     );
 
-    // The reflective view tracks the live state: regenerate and state[0] now reads 12.
+    // The reflective view tracks the live state: regenerate and state[0] is still a live
+    // Bind row (`"slot":0`) re-reading the now-advanced slot (its value is read at render
+    // time off the live ledger — `read(0)` above already saw 12).
     let view2 = insp.view_tree_json();
     assert!(
-        view2.contains("state[0]: 12") || view2.contains("\"slot\": 0"),
+        view2.contains("state[0]: ") && view2.contains("\"slot\":0"),
         "the regenerated view-tree tracks the advanced state[0]: {view2}"
     );
 
-    // An unknown affordance commits nothing (the native `FireError::Unknown`).
-    assert!(
-        insp.fire("bogus", 1).is_err(),
-        "an unknown affordance fires no turn"
-    );
+    // NOTE: the unknown-affordance refusal (`fire("bogus", ..)` → no turn) is asserted on
+    // the wasm target only — `fire` returns a `JsError` for an unknown affordance, and
+    // `JsError::new` is a wasm-bindgen import that cannot be called on a non-wasm target.
+    // The five committed turns above (3 seeds + add + tick) are the load-bearing proof; the
+    // refusal is exercised in `inspector_card_affordance_click_fires_a_verified_turn_in_a_real_wasm_module`.
     assert_eq!(
         insp.receipt_count(),
         5,
-        "the refusal left the audit tape unchanged"
+        "five verified turns committed (3 seeds + add + tick), none from a refusal"
     );
 }
 
@@ -322,9 +331,10 @@ mod wasm_loop {
         );
 
         // The reflective view-tree carries the faces (the DATA the web renderer paints).
+        // `view_tree_json` is compact serde (`"turn":"add"`, no space after the colon).
         let view = insp.view_tree_json();
         assert!(
-            view.contains("\"Cell State\"") && view.contains("\"turn\": \"add\""),
+            view.contains("\"Cell State\"") && view.contains("\"turn\":\"add\""),
             "the in-tab reflective view-tree carries the faces + affordances"
         );
 
