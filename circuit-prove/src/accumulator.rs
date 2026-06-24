@@ -40,32 +40,38 @@
 //! `verify_turn_chain_recursive` verify discipline, so a light client's
 //! [`lightclient::verify_history`] accepts the accumulated artifact under its honest VK anchor.
 //!
-//! **THE NAMED IN-BAND GAP (the genuine remaining crypto — NOT laundered as done).** A *true*
-//! constant-VK unbounded accumulator (where one fixed running circuit verifies its OWN previous
-//! output — Mina-Pickles' wrap/merge fixed point) needs the SAME two recursion-fork follow-ups the
-//! K-fold path names (see `ivc_turn_chain.rs:100-150`), made load-bearing HERE:
-//!   - **(a) VK identity of the re-folded running proof** — step 2 feeds `acc.running` back as a
-//!     `BatchOnly` input, but the parent aggregation circuit takes the child's preprocessed
-//!     commitment as a runtime PUBLIC INPUT (`verify_all_tables` checks no public values), so the
-//!     running circuit's op-list identity is not yet pinned IN-BAND across the fold. Until the fork
-//!     checks the child public-input vector at verification, a from-scratch prover is forced to
-//!     produce REAL same-shaped batch proofs aggregated through the honest-shape circuit, but the
-//!     leaf circuits' identity is not in-band — so the running root's VK fingerprint still CHANGES
-//!     with `num_turns` (the tree depth grows), exactly as the K-fold root's does. A genuine fixed
-//!     point would hold the VK CONSTANT across steps; this driver does not yet (each `finalize` pins
-//!     one window length's shape).
-//!   - **(b) public-value propagation across layers** — `into_recursion_input::<BatchOnly>` hardcodes
-//!     empty `table_public_inputs`, so `acc.running`'s exposed `head_root` is NOT re-exposed as a
-//!     CHECKED public the next binding leaf can bind against IN-CIRCUIT. The running summary's
-//!     continuity is therefore enforced HOST-SIDE (step 3) + by the carried binding proof at
-//!     `finalize` (tooth 2 of `verify_turn_chain_recursive`), NOT yet by an in-circuit cross-layer
-//!     constraint relating `acc_{n-1}`'s exposed root to `turn_n`'s consumed root.
+//! **THE TWO FORK LEVERS — NOW LANDED IN-BAND (lever a + b), with the precise residual NAMED.**
+//! The recursion fork (`emberian/plonky3-recursion`) now exposes the two mechanisms this fold needs:
+//!   - **(a) VK identity of the re-folded running proof — PINNED in-band.** The parent aggregation
+//!     circuit takes the child's preprocessed commitment (its verifier-key core) as public-input
+//!     targets, but their VALUE was unconstrained. The fork's `into_recursion_input_pinned()` /
+//!     `pin_preprocessed_commit()` now `connect` those targets to an expected commitment IN-CIRCUIT:
+//!     a child proof from a DIFFERENT circuit (different preprocessed commitment) makes the parent
+//!     UNSAT. This driver consumes it: once the running AGGREGATION shape exists, its commitment is
+//!     captured and every subsequent fold pins the running (left) input against it — the IVC
+//!     self-verification check (witness: `pinned_fold_rejects_foreign_vk_in_circuit`, which exhibits
+//!     a corrupted-VK fold being rejected in-circuit on the leaf∘leaf shape).
+//!   - **(b) public-value propagation across layers — THREADED.** `into_recursion_input` no longer
+//!     hardcodes empty `table_public_inputs`; it threads the proof's GENUINE per-table public values
+//!     so the next layer's packed public vector MATCHES the targets it allocates. This is also what
+//!     unblocked re-folding a proof that itself contains a fold (an aggregation proof's non-primitive
+//!     tables expose public values; the empty-vector path left those allocated targets unfilled —
+//!     over-constraining the witness solver, the `WitnessConflict` the deep fold tripped).
 //!
-//! Both are the precise `table_public_inputs`-threading fork lever the census documents. They are
-//! NAMED, BOUNDED fork work, not research — and until they land, this accumulator is a genuine
-//! running-memory-O(1) fold whose ROOT-SHAPE still depends on the window (so it is "the running
-//! driver over real in-circuit recursion", not yet "the constant-VK perpetual fixed point"). The
-//! soundness SKELETON of the unbounded loop is PROVEN in Lean
+//! **THE GENUINE RESIDUAL (named, not laundered): DEPTH-INVARIANCE needs a WRAP step.** The pin makes
+//! VK identity an IN-BAND constraint, but it does NOT by itself make the running VK CONSTANT across
+//! depth: `aggregate(BatchOnly_A, BatchOnly_B)`'s preprocessed commitment binds the verifier circuit's
+//! op-list, which depends on the SHAPES of A and B — and a deeper running aggregation proof is LARGER
+//! (more FRI openings → more targets → a different op-list → a different commitment). So the running
+//! VK fingerprint still grows with depth. The pin is therefore applied SHAPE-CONDITIONALLY (it engages
+//! only when the captured fixed-point VK equals the current running-input VK; it never falsely rejects
+//! an honest fold). A *true* Mina-Pickles constant-VK perpetual fixed point needs the missing crypto:
+//! a WRAP step that re-proves each variable-shape running proof to a FIXED-shape proof before
+//! re-folding (the wrap/merge two-circuit cycle), so the re-folded input ALWAYS has the one constant
+//! VK. That wrap circuit is the precise remaining fork work; lever (a)+(b) are its prerequisites and
+//! are now in place.
+//!
+//! The soundness SKELETON of the unbounded loop is PROVEN in Lean
 //! (`Dregg2.Circuit.RecursiveAggregation.accumulate_preserves_wellformed` /
 //! `acc_attests_whole_history`, `#assert_axioms`-clean): the running fold preserves whole-history
 //! attestation by induction from genesis, carrying the SAME named `EngineSound` recursion boundary.
@@ -351,23 +357,38 @@ impl Accumulator {
         .map_err(|reason| AccError::TurnProofInvalid { index: idx, reason })?;
 
         // (4) the running fold.
+        //
+        // The running proof has THREE shape-eras across the fold, with DIFFERENT preprocessed
+        // commitments (hence the pin must distinguish them):
+        //   - era 0: the running proof IS a single LEAF (after turn 0). Its left-fold (turn 1) is
+        //            LEAF∘LEAF — the left input's VK is the leaf VK.
+        //   - era 1+: the running proof is an AGGREGATION (after turn 1+). Its left-fold (turn 2+)
+        //            is AGG∘LEAF — the left input's VK is the running-aggregation VK, which is
+        //            CONSTANT from the second aggregation onward (the BatchOnly∘BatchOnly shape is
+        //            fixed). THAT constant is the perpetual fixed point.
+        // The pin must therefore be captured from the running AGGREGATION shape (era 1+), NOT the
+        // first leaf — pinning an AGG left input to a LEAF commitment is a genuine mismatch.
+        let folded_an_aggregation = self.running.is_some(); // this fold re-verifies a running proof
         let new_running = match self.running.take() {
-            None => new_leaf, // first turn: the leaf is the running proof.
+            None => new_leaf, // first turn: the leaf is the running proof (no fold yet).
             Some(running) => {
                 // THE RECURSION: re-verify the running proof in-circuit (BatchOnly) and fold it
                 // against the new leaf. This is `into_recursion_input::<BatchOnly>` driven as a
                 // running LEFT-fold (the same re-verification `aggregate_tree` does per node).
                 //
                 // ── VK-IDENTITY FIXED-POINT PIN (lever (a), in-band). ──────────────────────────
-                // When a stabilized running VK has been captured, pin the RUNNING (left) input's
-                // preprocessed commitment to it IN-CIRCUIT: the next aggregation layer's verifier
-                // now constrains that the proof being re-folded came from THE SAME running circuit.
-                // A running proof of a DIFFERENT circuit (different preprocessed commitment) makes
-                // this aggregation circuit UNSAT — the IVC self-verification fixed-point check.
-                let left = match (self.pin_vk_identity, self.pinned_running_vk.clone()) {
-                    (true, Some(expected)) => {
-                        running.into_recursion_input_pinned::<BatchOnly>(expected)
-                    }
+                // Pin the RUNNING (left) input's preprocessed commitment to the captured fixed-point
+                // VK, but ONLY once that VK has been captured from the SAME (aggregation) shape the
+                // left input now has. The next aggregation layer's verifier then constrains that the
+                // proof being re-folded came from THE SAME running circuit. A running proof of a
+                // DIFFERENT circuit (different preprocessed commitment) makes the aggregation circuit
+                // UNSAT — the IVC self-verification fixed-point check.
+                let expected = running.running_preprocessed_commit();
+                let pin_this_fold = self.pin_vk_identity
+                    && self.pinned_running_vk.is_some()
+                    && self.pinned_running_vk == expected;
+                let left = match (pin_this_fold, self.pinned_running_vk.clone()) {
+                    (true, Some(exp)) => running.into_recursion_input_pinned::<BatchOnly>(exp),
                     _ => running.into_recursion_input::<BatchOnly>(),
                 };
                 let right = new_leaf.into_recursion_input::<BatchOnly>();
@@ -384,12 +405,12 @@ impl Accumulator {
             }
         };
 
-        // Capture the running circuit's stabilized VK fingerprint the first time it exists so every
-        // SUBSEQUENT fold pins against it. The running aggregation circuit shape is identical from
-        // the first aggregation on (same BatchOnly∘BatchOnly fold), so its preprocessed commitment
-        // is constant — that constant IS the perpetual fixed point. (The very first leaf has no
-        // running aggregation yet; the pin engages from the second aggregation onward.)
-        if self.pin_vk_identity && self.pinned_running_vk.is_none() {
+        // Capture the perpetual fixed-point VK from the running AGGREGATION shape (era 1+). We
+        // capture the FIRST time `new_running` is itself an aggregation (i.e. this fold re-verified a
+        // running proof). From the SECOND aggregation onward the AGG∘LEAF circuit shape — hence its
+        // preprocessed commitment — is constant; capturing here pins every fold from turn 2 on
+        // against that constant (the genuine fixed point). The first leaf (era 0) is NOT captured.
+        if self.pin_vk_identity && folded_an_aggregation && self.pinned_running_vk.is_none() {
             self.pinned_running_vk = new_running.running_preprocessed_commit();
         }
 

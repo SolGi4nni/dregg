@@ -252,6 +252,66 @@ fn incremental_accumulate_verifies_whole_history() {
     );
 }
 
+/// **THE VK-IDENTITY-PIN TOOTH (lever (a), in-band).** A child proof whose VK-identity (its
+/// preprocessed commitment) does NOT match the pinned expected commitment is REJECTED IN-CIRCUIT —
+/// the parent aggregation circuit becomes UNSAT, so no folded proof is produced.
+///
+/// We fold ONE real turn so a genuine running (leaf) proof exists, then re-fold it against a fresh
+/// leaf (a leaf∘leaf aggregation) once with the pin set to its GENUINE commitment (must SUCCEED) and
+/// once with a CORRUPTED commitment (must FAIL with `AccError::RecursionFailed`). The success/failure
+/// split is decided entirely by the in-circuit `connect` constraint that pins the child's
+/// preprocessed-commitment targets to the expected value: a foreign-circuit child (different
+/// commitment) cannot satisfy it. This is the genuine witness that the IVC self-verification VK check
+/// is enforced IN-CIRCUIT, not host-side.
+///
+/// NOTE on shape: we probe after exactly ONE turn (running == a LEAF proof), so the probe is the
+/// cheapest leaf∘leaf fold that exhibits the pin. The deeper agg∘leaf fold the unbounded driver runs
+/// from turn 2 on ALSO folds cleanly with the pin engaged (see
+/// `incremental_accumulate_verifies_whole_history`, which passes PINNED end-to-end); this tooth
+/// isolates the pin's in-circuit REJECTION on the cheaper shape.
+#[test]
+#[ignore = "SLOW: one running leaf + two pinned leaf-folds (~minutes); run with --ignored"]
+fn pinned_fold_rejects_foreign_vk_in_circuit() {
+    use p3_baby_bear::BabyBear as P3BabyBear;
+    use p3_field::PrimeCharacteristicRing;
+    use p3_symmetric::MerkleCap;
+
+    // ONE continuous turn → a genuine running LEAF proof (no prior aggregation, so the probe is a
+    // clean leaf∘leaf fold).
+    let (t0, _o0, _n0) = make_turn(1000, 0, 11);
+    let mut acc = Accumulator::genesis();
+    acc.accumulate(&t0).expect("turn 0 folds (becomes the running leaf proof)");
+    assert_eq!(acc.num_turns(), 1);
+
+    // The running leaf proof's genuine VK-identity core (the preprocessed Merkle cap).
+    let genuine = acc
+        .running_vk_commit()
+        .expect("a running proof exists after 1 turn, so it has a preprocessed commitment");
+
+    // A continuous second turn to re-fold against (the probe does not mutate `acc`).
+    let (t1, _o, _n) = make_turn(1000 - 11, 1, 11);
+
+    // (1) HONEST pin: the running proof's actual VK matches `genuine` → the in-circuit check is
+    //     satisfiable, the fold SUCCEEDS.
+    acc.probe_pinned_fold(&t1, genuine.clone())
+        .expect("a pinned fold against the GENUINE running VK must succeed");
+
+    // (2) CORRUPTED pin: flip one field element of the expected commitment. The running proof's
+    //     actual VK no longer matches, so the in-circuit `connect` is UNSAT → the fold FAILS.
+    let mut roots = genuine.into_roots();
+    assert!(!roots.is_empty(), "the cap has at least one root");
+    roots[0][0] += P3BabyBear::ONE; // a different-circuit VK fingerprint
+    let corrupted = MerkleCap::new(roots);
+
+    match acc.probe_pinned_fold(&t1, corrupted) {
+        Err(AccError::RecursionFailed { .. }) => {}
+        Ok(()) => panic!(
+            "a pinned fold against a CORRUPTED (foreign-circuit) VK MUST be rejected in-circuit"
+        ),
+        Err(other) => panic!("expected RecursionFailed (UNSAT), got {other:?}"),
+    }
+}
+
 /// A forged-LINK stream is rejected by the running temporal tooth: accumulating a turn whose
 /// `old_root` does not consume the running `head_root` fails with `AccError::ChainBreak`, so no
 /// running proof for a spliced history is ever produced.
