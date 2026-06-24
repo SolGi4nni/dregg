@@ -7,6 +7,15 @@ impl Render for Cockpit {
         // LIVE: drain the node's receipt stream first so this frame reflects every
         // receipt that arrived (per-receipt `cx.notify()`, not a snapshot reload).
         self.drain_live_stream(cx);
+        // FRAME-SCOPED ONE-HOST GUARD reset: a live card `CardPane` entity may be hosted at
+        // most ONCE per frame (two split panes on the same card-tab would re-enter the
+        // entity's render lease and abort). Clear the per-frame "already hosted" record at
+        // the top of every frame; the second host this frame shows a placeholder instead.
+        #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+        {
+            self.frame_hosted_cards.borrow_mut().clear();
+            self.frame_hosted_inspector.set(false);
+        }
         // M2 DELTA LOOP: fold this frame's dynamics into per-slice invalidation so
         // the projection memo reflects exactly the cells that changed (O(changed),
         // not O(ledger)) — the producer↔consumer JOIN (EFFICIENCY-WELD-PLAN §2.1).
@@ -23,6 +32,29 @@ impl Render for Cockpit {
         // NAV HISTORY: record this frame's UI state so back/forward (← → / ⌘[ ⌘])
         // can step through wherever you've been (the nav API made navigable).
         self.record_nav();
+
+        // FIRST-RUN: a brand-new owner meets the calm, sparse first-view — a warm
+        // welcome, a few clickable cells, ONE gentle "try this" — INSTEAD of the
+        // full 5-mode wall. Returned early (before the heavy pane-group / web-shell
+        // / card-mount setup), so the first paint a first-timer sees is breathing,
+        // not a wall. The live-drain + dynamics fold above already ran, so the
+        // "try this" turn's receipt is reflected the instant the full frame reveals.
+        // Cheap: no pane group is seeded until they explore.
+        if self.first_run {
+            return div()
+                .id("cockpit-root")
+                .track_focus(&self.focus)
+                .key_context("Cockpit")
+                .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
+                    this.on_key(ev, cx);
+                }))
+                .size_full()
+                .bg(theme::bg())
+                .text_color(theme::text())
+                .font_family("Menlo")
+                .child(self.first_view(cx))
+                .into_any_element();
+        }
 
         // L6 PANED WORKSPACE: seed the right pane's `PaneGroup` on first render
         // (ONE pane holding all tabs as surfaces — the un-split base case), then
@@ -216,5 +248,6 @@ impl Render for Cockpit {
             .when(dock_open, |root| root.child(self.dev_dock(cx)))
             // THE ⌘K COMMAND PALETTE overlay (absolute, on top) when open.
             .when(palette_open, |root| root.child(self.palette_overlay(cx)))
+            .into_any_element()
     }
 }

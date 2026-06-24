@@ -1017,6 +1017,26 @@ pub struct Cockpit {
     #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
     mode_cards:
         std::collections::HashMap<starbridge_v2::dock::card_surface::ModeCard, ModeCardMount>,
+    /// **FRAME-SCOPED ONE-HOST GUARD for the live cards.** A gpui [`Entity`] may be hosted
+    /// at most ONCE per frame — rendering the same entity in two element positions in one
+    /// frame re-enters its render lease and aborts the process (the same one-window
+    /// invariant the torn-off placeholder enforces across windows, now WITHIN one window).
+    /// Every pane in the L6 [`PaneGroup`] holds ALL tabs, so two split panes can both have
+    /// the same card-tab (e.g. Objects) active at once, calling
+    /// [`Self::mode_card_surface`] / hosting the inspector card TWICE in one frame. This set
+    /// records which surfaces a `CardPane` entity has already been hosted for THIS frame
+    /// (cleared at the top of [`render`](crate::cockpit::render)); the second host shows a
+    /// calm "shown in another pane" placeholder instead of re-hosting the entity.
+    /// `RefCell` because the hosts are `&self` render helpers.
+    #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+    frame_hosted_cards:
+        std::cell::RefCell<std::collections::HashSet<starbridge_v2::dock::card_surface::ModeCard>>,
+    /// Frame-scoped one-host guard for the live INSPECTOR card (same hazard as
+    /// [`Self::frame_hosted_cards`]: two panes both showing the Moldable surface would host
+    /// the inspector `CardPane` entity twice in one frame). `true` once hosted this frame;
+    /// cleared at the top of `render`.
+    #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+    frame_hosted_inspector: std::cell::Cell<bool>,
 }
 
 /// The cockpit's live mount of a [`ModeCard`] as a mode's main-pane surface: the

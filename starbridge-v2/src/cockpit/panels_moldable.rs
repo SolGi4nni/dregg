@@ -125,6 +125,15 @@ impl Cockpit {
         let Some(mount) = self.mode_cards.get(&kind) else {
             return fallback(self, cx);
         };
+        // ONE-HOST-PER-FRAME GUARD: a `CardPane` entity may be hosted at most once per
+        // frame. Every pane in the L6 PaneGroup holds ALL tabs, so two split panes can both
+        // have this card-tab active at once — hosting the SAME entity twice in one frame
+        // re-enters its render lease and aborts the process. The first host this frame wins
+        // the live entity; a duplicate shows a calm "shown in another pane" placeholder
+        // (the within-window analogue of the torn-off placeholder's one-window invariant).
+        if !self.frame_hosted_cards.borrow_mut().insert(kind) {
+            return mirror_in_another_pane_placeholder(kind.title());
+        }
         // Immediate-mode binds re-read the live ledger at render time, so a notify each paint
         // keeps a bound row current after a fire lands (mirrors `CardSurface`).
         mount.entity.update(cx, |_card, cx| cx.notify());
@@ -139,13 +148,21 @@ impl Cockpit {
         .ghost()
         .xsmall()
         .on_click(cx.listener(move |this, _ev: &ClickEvent, _w, cx| {
-            this.mode_card_edit_view(
-                kind,
-                deos_js::card_editor::ViewPatch::AddText {
-                    text: "· reshaped from within (a receipted patch)".into(),
-                },
-                cx,
-            );
+            // GUARDED at the event boundary: this click reshapes a live card mount (the
+            // card-editor patch + entity swap). gpui dispatches it from a `nounwind`
+            // Obj-C callback, so any panic here would `process::abort` the whole cockpit;
+            // `guard_ui_event` contains it as a logged no-op (the edit-from-within path
+            // is Result-typed, but the entity-update/patch machinery must never unwind to
+            // gpui — the same discipline as the pop-out control).
+            Cockpit::guard_ui_event("mode-card-edit-from-within", || {
+                this.mode_card_edit_view(
+                    kind,
+                    deos_js::card_editor::ViewPatch::AddText {
+                        text: "· reshaped from within (a receipted patch)".into(),
+                    },
+                    cx,
+                );
+            });
         }));
         div()
             .id("mode-card-surface")
@@ -238,8 +255,17 @@ impl Cockpit {
         // World (a receipt on the cockpit's own tape). Built lazily in
         // `ensure_inspector_card` (on the paint path) and hosted here; the Rust
         // moldable presentation set below remains as the deep-reflection companion.
+        // ONE-HOST-PER-FRAME GUARD: the inspector `CardPane` entity may be hosted at most
+        // once per frame. Two split panes both showing the Moldable surface would otherwise
+        // host the SAME entity twice in one frame (re-entering its render lease → abort).
+        // The first host this frame wins the live entity; a duplicate skips it (the deep
+        // Rust moldable presentation set below still renders, so the pane is never blank).
         #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
-        if let Some(mount) = self.inspector_card.as_ref() {
+        if let Some(mount) = self
+            .inspector_card
+            .as_ref()
+            .filter(|_| !self.frame_hosted_inspector.replace(true))
+        {
             // The card's `bind` rows re-read the live ledger at render time, so a notify
             // each paint keeps them current after a fire lands (mirrors `CardSurface`).
             mount.entity.update(cx, |_card, cx| cx.notify());
@@ -2188,4 +2214,37 @@ impl Cockpit {
         });
         cx.notify();
     }
+}
+
+/// The within-window "this card is hosted in another pane" placeholder — the one-host
+/// invariant's calm second-host surface. A live `CardPane` entity may be hosted at most
+/// once per frame; when two split panes both show the same card-tab, the first host wins
+/// the live entity and the duplicate shows this (so the SAME entity is never re-entered in
+/// one frame — the within-window analogue of [`Cockpit::torn_off_placeholder`]).
+#[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+fn mirror_in_another_pane_placeholder(title: &str) -> gpui::AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .size_full()
+        .p_3()
+        .child(
+            div()
+                .text_color(theme::muted())
+                .child(SharedString::from(format!("⧉ {title}"))),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme::muted())
+                .child(SharedString::from(
+                    "This live card is shown in another pane. A card is one live object; \
+                     it paints in exactly one pane per frame. Switch this pane to a \
+                     different surface to view both.",
+                )),
+        )
+        .into_any_element()
 }

@@ -316,7 +316,7 @@ pub enum ModeCard {
 
 impl ModeCard {
     /// A short surface title (the card frame chrome).
-    fn title(self) -> &'static str {
+    pub fn title(self) -> &'static str {
         match self {
             ModeCard::Composer => "composer · live composition (deos-js card)",
             ModeCard::Objects => "objects · live cell roster (deos-js card)",

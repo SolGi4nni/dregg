@@ -149,9 +149,27 @@ impl CardPane {
                         // Fire the verified turn on the live World. A cap refusal /
                         // executor reject is surfaced to stderr (the screenshot stays
                         // honest); the live model simply does not advance.
-                        if let Err(e) = applet.borrow_mut().fire(&turn, arg) {
-                            eprintln!("card-pane: live affordance '{turn}' did not commit: {e}");
-                        }
+                        //
+                        // GUARDED at the event boundary: gpui dispatches this click from a
+                        // `nounwind` Obj-C callback, so a panic crossing it would
+                        // `process::abort` the whole cockpit. The `fire` is Result-typed,
+                        // but `applet.borrow_mut()` would PANIC if the shared applet were
+                        // already borrowed (e.g. a re-entrant fire), so contain any panic
+                        // as a logged no-op rather than abort the process.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            if let Err(e) = applet.borrow_mut().fire(&turn, arg) {
+                                eprintln!(
+                                    "card-pane: live affordance '{turn}' did not commit: {e}"
+                                );
+                            }
+                        }))
+                        .map_err(|_| {
+                            eprintln!(
+                                "card-pane: live affordance '{turn}' PANICKED — contained \
+                                 (no-op) instead of aborting (the gpui event boundary is \
+                                 nounwind)."
+                            );
+                        });
                     })
                     .into_any_element()
             }

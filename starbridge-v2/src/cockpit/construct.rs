@@ -292,6 +292,9 @@ impl Cockpit {
             // DERIVED from the active surface via `Tab::mode`). The dev dock starts
             // collapsed (⌘J reveals it).
             dock_open: false,
+            // The full frame by default; login flips this on for a brand-new image
+            // (`set_first_run`) so a first-timer meets the calm sparse first-view.
+            first_run: false,
             workspace_cell,
             tab_witness_pending: false,
             debug_turn,
@@ -456,6 +459,13 @@ impl Cockpit {
             // (`ensure_mode_card` builds each from the live ledger over the World).
             #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
             mode_cards: std::collections::HashMap::new(),
+            // The frame-scoped one-host guards (cleared at the top of `render`): a card
+            // `CardPane` entity may be hosted at most once per frame (two split panes on the
+            // same card-tab would otherwise re-enter the entity's render lease and abort).
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            frame_hosted_cards: std::cell::RefCell::new(std::collections::HashSet::new()),
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            frame_hosted_inspector: std::cell::Cell::new(false),
         }
     }
 
