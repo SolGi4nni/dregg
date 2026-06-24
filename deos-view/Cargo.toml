@@ -47,21 +47,21 @@ dregg-cell = { path = "../cell" }
 # cargo resolves ONE gpui instance across this crate + gpui-component. `test-support`
 # lights up the HeadlessAppContext + offscreen wgpu renderer the render-capture proof
 # uses (the exact path starbridge-v2's `render_cockpit_headless` bakes through).
-gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
+gpui = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", features = ["test-support"] }
 # `runtime_shaders` is LOAD-BEARING on macOS (mirrors starbridge-v2): it makes gpui
 # compile its Metal shaders AT RUNTIME (via `MTLDevice::newLibraryWithSource`) instead
 # of at BUILD time (`xcrun metal`, which needs the offline Metal Toolchain component).
 # Without it the `gpui_macos` build script fails "cannot execute tool 'metal'". `x11`/
 # `wayland` light up the Linux windowing backends (inert on macOS — gpui_linux is not
 # in the macOS graph).
-gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["font-kit", "runtime_shaders", "test-support", "x11", "wayland"] }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", features = ["font-kit", "runtime_shaders", "test-support", "x11", "wayland"] }
 # The wgpu renderer leaf — the CosmicTextSystem text system + the offscreen renderer.
-gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["test-support"] }
+gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", features = ["test-support"] }
 
 # THE REAL WIDGET LIBRARY — the vendored longbridge fork the cockpit uses
 # (emberian/gpui-component@dregg-repoint, the `crates/ui` member). Button, Label,
 # v_flex/h_flex, Input, List, Table — the vocabulary the view-tree maps onto.
-gpui-component = { path = "../../gpui-component/crates/ui", default-features = false }
+gpui-component = { git = "https://github.com/emberian/gpui-component", rev = "b2deb2aa", default-features = false }
 
 # JSON parse of the view-tree the JS engine stringifies (and the present() faces).
 serde = { version = "1", features = ["derive"] }

@@ -64,8 +64,8 @@ alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev 
 
 # The gpui view layer — our dregg-owned fork (byte-identical gpui API to the Zed
 # rev gpui-component pins). default-features off matches starbridge-v2's usage.
-gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", default-features = false }
-gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["font-kit", "runtime_shaders"] }
+gpui = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", default-features = false }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", features = ["font-kit", "runtime_shaders"] }
 
 bitflags = "2"
 parking_lot = "0.12"

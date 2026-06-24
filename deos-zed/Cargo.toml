@@ -120,7 +120,7 @@ anyhow = "1"
 # supplies the `CosmicTextSystem` platform text system + the offscreen
 # `WgpuHeadlessRenderer` wired into `current_headless_renderer` on Linux.
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
-gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
 
 # The Pijul-shaped document language core, with the rope<->patch bridge enabled.
 # The editor's buffer IS a `dregg_doc::RopeDoc`: open a file -> a Document, each
@@ -145,14 +145,14 @@ ropey = { version = "2.0.0-beta.1", optional = true }
 # wasm32, so the gpui-free `Fs` core (the in-browser editor's executor backend)
 # drops it. The browser renderer is the HOST's gpui_web (starbridge-web), not
 # deos-zed's own gpui linkage.
-gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
-gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["font-kit", "x11", "wayland", "runtime_shaders"], optional = true }
+gpui = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", features = ["font-kit", "x11", "wayland", "runtime_shaders"], optional = true }
 
 # The real widget library: rope-backed code `Input`, tree-sitter highlighter,
 # file `tree` widget, dock. Same vendored path the cockpit consumes. Optional +
 # gated on `gui` (the windowed surface).
-gpui-component = { path = "../../gpui-component/crates/ui", default-features = false, optional = true }
-gpui-component-assets = { path = "../../gpui-component/crates/assets", optional = true }
+gpui-component = { git = "https://github.com/emberian/gpui-component", rev = "b2deb2aa", default-features = false, optional = true }
+gpui-component-assets = { git = "https://github.com/emberian/gpui-component", rev = "b2deb2aa", optional = true }
 
 # THE EMBEDDED VERIFIED EXECUTOR (gated on `firmament`) — TARGET-SPLIT so the same
 # `firmament` feature gives a Lean-linked native executor AND a no-Lean-link wasm32

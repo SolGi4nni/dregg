@@ -89,16 +89,16 @@ url = "2"
 # optional + only enabled by `gui` (a NATIVE-only feature) — kept in the shared
 # `[dependencies]` (above the per-target tables) so the TOML stays well-formed;
 # the wasm build never enables `gui`, so this graph is absent from wasm32.
-gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
-gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["font-kit", "x11", "wayland", "runtime_shaders"], optional = true }
-gpui-component = { path = "../../gpui-component/crates/ui", default-features = false, optional = true }
-gpui-component-assets = { path = "../../gpui-component/crates/assets", optional = true }
+gpui = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", features = ["font-kit", "x11", "wayland", "runtime_shaders"], optional = true }
+gpui-component = { git = "https://github.com/emberian/gpui-component", rev = "b2deb2aa", default-features = false, optional = true }
+gpui-component-assets = { git = "https://github.com/emberian/gpui-component", rev = "b2deb2aa", optional = true }
 
 # The wgpu renderer leaf, pulled DIRECTLY only for the offscreen screenshot bake
 # (the `CosmicTextSystem` platform text system + the surfaceless renderer behind
 # `current_headless_renderer`). Same fork rev as gpui above so cargo resolves ONE
 # gpui instance across the graph. Gated on `gui`; absent from the lean CLI build.
-gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
 # Re-encodes the captured RGBA frame to a PNG. 0.25 matches gpui_wgpu's `image`
 # (one resolved version), exactly as starbridge-v2 pins it for its cockpit bake.
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }

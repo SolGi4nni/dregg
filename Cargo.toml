@@ -150,7 +150,7 @@ pathfinder_simd = { path = "starbridge-v2/vendor/pathfinder_simd" }
 # stylo `ToCss`-derive fork (emberian/stylo@ember-nightly-fix) — pins the `?`
 # residual error type to `core::fmt::Error`, defeating the serde_fmt ambiguity in
 # the full cockpit graph (web-shell → servo → stylo). Inert outside that graph.
-stylo_derive = { path = "../stylo/style_derive" }
+stylo_derive = { git = "https://github.com/emberian/stylo", rev = "abc53ac61" }
 # servo-paint SWGL fork (servo-render's libservo path): WebRenderOptions
 # `clear_caches_with_quads: false` so SWGL's DepthFunc assert does not SIGABRT.
 servo-paint = { path = "servo-render/vendor/servo-paint" }
@@ -158,14 +158,9 @@ servo-paint = { path = "servo-render/vendor/servo-paint" }
 # embedder ProtocolHandler for http/https (the cap-gated byte socket).
 servo-net = { path = "servo-render/vendor/servo-net" }
 
-# THE gpui FORK REDIRECT — the pinned rev emberian/zed@407a6ff redirected to the
-# LOCAL working checkout carrying the offscreen/headless wgpu renderer the
-# render-capture bakes need (it does not exist on the cargo-cache rev). Inert when
-# no gpui-bearing crate is in the build graph.
-[patch."https://github.com/emberian/zed"]
-gpui = { path = "../zed-dregg-web/crates/gpui" }
-gpui_platform = { path = "../zed-dregg-web/crates/gpui_platform" }
-gpui_wgpu = { path = "../zed-dregg-web/crates/gpui_wgpu" }
+# The gpui fork (emberian/zed) resolves directly from git at the rev pinned in
+# starbridge-v2/Cargo.toml (the offscreen/headless wgpu renderer the render-capture
+# bakes need is on that pushed rev) — no local-path [patch] override.
 
 [workspace.dependencies]
 ## Local
