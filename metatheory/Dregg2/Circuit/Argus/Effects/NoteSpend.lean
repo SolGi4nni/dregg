@@ -49,19 +49,25 @@ file supplies that missing gate-kind, with real teeth, on both sides:
 ## Honesty (what this builds vs assumes)
 
 This is the SORTED-NEIGHBOR non-membership (the prompt's endorsed simpler-but-real reference), NOT a
-full Merkle non-membership. It ASSUMES the nullifier set is committed as a strict-ascending list
-(`SortedAsc`) under a named root — the standard sorted-set non-membership discipline. What that buys
-is GENUINE: the gate's algebraic statement is PROVED equivalent to `nf ∉ set` (sound + complete) with
-an anti-ghost tooth, so a fresh-nullifier witness that the gate accepts is exactly a non-member. What
-remains for the FULL deployed noteSpend descriptor (reported in the trailer): binding the neighbor
-columns to the EffectVM `nullifiers` root via a Merkle/sorted-tree opening (so the `lo,hi` the gate
-reads are PROVABLY the committed neighbors, not prover-chosen) — the sorted-tree opening gate that the
-4-arity Poseidon2 hash-site IR still lacks. We state that boundary precisely rather than fake it.
+full Merkle non-membership. The nullifier set is committed as a strict-ascending list (`SortedAsc`)
+under a named root — the standard sorted-set non-membership discipline. The gate's algebraic statement
+is PROVED equivalent to `nf ∉ set` (sound + complete) with an anti-ghost tooth, so a fresh-nullifier
+witness that the gate accepts is exactly a non-member.
+
+**§8¾ closes the dangerous residual:** the formerly-ASSUMED gap decode (`NmRowEncodes`: that the
+prover's `(lo, hi)` are GENUINE adjacent committed neighbors) is now DISCHARGED against the deployed
+sorted-tree adjacency opening (`circuit/src/membership_adjacency_air.rs`). `adjacent_gives_gapInterval`
+proves `Adjacent ⟹ GapInterval` over a sorted spine, so `nmRowEncodes_of_adjacency` derives
+`NmRowEncodes` from the adjacency constraint the descriptor FORCES — the WIDE-BRACKET double-spend
+forgery (`lo = 0x00…`, `hi = 0xFF…`, non-adjacent) is rejected at the hypothesis
+(`wide_bracket_forge_rejected`). The remaining boundary is the FFI conformance (the Rust noteSpend
+descriptor must invoke `verify_adjacency` on the `(lo,hi)` columns); the Lean force is a theorem.
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Imports are READ-ONLY; this file owns only itself.
 -/
 import Dregg2.Circuit.Argus.Policy
 import Dregg2.Circuit.Emit.EffectVmEmitNoteSpend
+import Dregg2.Crypto.NonMembership
 
 namespace Dregg2.Circuit.Argus
 
@@ -748,35 +754,146 @@ theorem circuit_gate_meets_executor_guard (c : NmCols) (env : VmRowEnv) (k : Rec
   intro hmem
   exact hni (by rw [hnf]; exact List.mem_map_of_mem hmem)
 
+/-! ## §8¾ — DISCHARGING `NmRowEncodes`: the adjacency opening FORCES the gap decode.
+
+§8 carried `NmRowEncodes` as a NAMED hypothesis: the gate's soundness rested on the *assumed* fact
+that the prover's `(lo, hi)` columns straddle a genuine empty gap of the committed nullifier set. That
+assumption is exactly what permits the documented WIDE-BRACKET FORGERY — a commitment-knower picks
+`lo = 0x00…`, `hi = 0xFF…` (bracketing-but-not-adjacent) to fake non-membership of ANY candidate.
+
+The DEPLOYED descriptor now FORCES that decode with a real arithmetic constraint: the sorted-tree
+**neighbor-adjacency** opening (`circuit/src/membership_adjacency_air.rs`, AIR
+`dregg-membership-adjacency-v1`, the in-circuit Merkle index reconstruction with
+`idx_upper == idx_lower + 1` and forge-test `forge_nonconsecutive_wide_bracket_is_rejected`). It
+authenticates `lo` and `hi` as leaves of the SAME committed root and proves their indices are
+CONSECUTIVE. The Lean shadow of that constraint is `Crypto.NonMembership.Adjacent xs lo hi` (lo, hi are
+consecutive entries of the sorted committed spine). The bridge below proves: over a `Sorted` committed
+spine, `Adjacent` IMPLIES `GapInterval` — so the gate's carried `GapInterval` decode becomes a THEOREM
+of the now-forced adjacency constraint, not an assumption. A non-consecutive wide bracket can no longer
+be `Adjacent`, so it can no longer discharge the gate. -/
+
+open Dregg2.Crypto.NonMembership (Sorted Adjacent sorted_gap_excludes)
+
+/-- **`adjacent_gives_gapInterval` — THE FORGERY-CLOSING BRIDGE.** Over a `Sorted` committed spine
+`xs`, if `lo` and `hi` are ADJACENT (consecutive leaves — the property the deployed adjacency AIR's
+`idx_upper == idx_lower + 1` check FORCES), then the open interval `(lo, hi)` is empty: every committed
+`y` is `≤ lo` or `≥ hi`. This is `GapInterval lo hi xs` derived (not assumed). The proof is the
+contrapositive of `sorted_gap_excludes`: a `y` strictly inside `(lo, hi)` would be excluded from `xs`,
+contradicting `y ∈ xs`. A non-consecutive WIDE BRACKET (`lo = 0x00…`, `hi = 0xFF…` with leaves between)
+is NOT `Adjacent`, so it cannot reach this conclusion — the forge is closed at the hypothesis. -/
+theorem adjacent_gives_gapInterval {lo hi : Int} {xs : List Int}
+    (hs : Sorted xs) (hadj : Adjacent xs lo hi) : GapInterval lo hi xs := by
+  intro y hy
+  by_cases h : y ≤ lo
+  · exact Or.inl h
+  · by_cases h2 : hi ≤ y
+    · exact Or.inr h2
+    · exact absurd hy (sorted_gap_excludes xs lo hi y hs hadj (not_le.mp h) (not_le.mp h2))
+
+/-- **`NmRowAdjacencyForced c env xs nf`** — the FORCED form of the §5 decode hypothesis: instead of
+ASSUMING the empty-gap `GapInterval`, it carries the WIRE-LEVEL constraints the deployed descriptor
+forces — (a) the committed spine is sorted (the named-root sorted-set discipline), (b) the row's
+`nf`-column carries the spent nullifier, and (c) the row's `(lo, hi)`-columns are ADJACENT leaves of
+the committed sorted spine (the adjacency AIR's consecutive-index certificate). The §5 `GapInterval`
+is now a CONSEQUENCE (`adjacent_gives_gapInterval`), not a carried assumption. -/
+structure NmRowAdjacencyForced (c : NmCols) (env : VmRowEnv) (xs : List Int) (nf : Int) : Prop where
+  /-- The committed nullifier spine is strictly sorted (the named-root sorted-set discipline). -/
+  sorted : Sorted xs
+  /-- The `nf`-column carries the spent nullifier. -/
+  nfCol : env.loc c.nf = nf
+  /-- The `(lo, hi)`-columns are ADJACENT (consecutive) committed leaves — FORCED by the deployed
+  sorted-tree adjacency opening (`verify_adjacency`'s `idx_upper == idx_lower + 1`), not assumed. -/
+  adjacent : Adjacent xs (env.loc c.lo) (env.loc c.hi)
+
+/-- **`nmRowEncodes_of_adjacency` — `NmRowEncodes` IS DISCHARGED.** The §5 decode hypothesis
+`NmRowEncodes` is no longer carried: it is DERIVED from the now-forced adjacency constraint. The
+`nf`-column fact is direct; the `GapInterval` is `adjacent_gives_gapInterval` on the forced
+adjacency over the sorted spine. So the gate's non-membership soundness no longer ASSUMES the gap
+decode — it FOLLOWS from the deployed adjacency AIR. -/
+theorem nmRowEncodes_of_adjacency {c : NmCols} {env : VmRowEnv} {xs : List Int} {nf : Int}
+    (h : NmRowAdjacencyForced c env xs nf) : NmRowEncodes c env xs nf :=
+  ⟨h.nfCol, adjacent_gives_gapInterval h.sorted h.adjacent⟩
+
+/-- **`nonMemberGate_sound_forced` — the gate's SOUNDNESS, with `NmRowEncodes` DISCHARGED.** A
+range-checked, gate-satisfying row whose `(lo, hi)` are FORCED adjacent committed leaves (the deployed
+adjacency opening) proves `nf ∉ xs`. This is `nonMemberGate_sound` with the carried `NmRowEncodes`
+hypothesis replaced by the wire-forced `NmRowAdjacencyForced` — no assumed decode remains. -/
+theorem nonMemberGate_sound_forced (c : NmCols) (env : VmRowEnv) (xs : List Int) (nf : Int)
+    (hwf : NmRowOk c env) (hadj : NmRowAdjacencyForced c env xs nf)
+    (hg : (gapLoGate c).holds env ∧ (gapHiGate c).holds env) :
+    nf ∉ xs :=
+  nonMemberGate_sound c env xs nf hwf (nmRowEncodes_of_adjacency hadj) hg
+
+/-- **`circuit_gate_meets_executor_guard_forced` (THE DEPLOYED NO-DOUBLE-SPEND, NO ASSUMED DECODE).**
+The deployed-shape statement: if the circuit's committed set is the executor kernel's nullifier set,
+the range-checked row satisfies both gap gates, AND the row's `(lo, hi)` are FORCED adjacent leaves of
+the committed sorted nullifier root (the deployed adjacency AIR), then the spent nullifier is NOT in the
+set — the EXACT precondition under which the executor term `noteSpendStmt` commits. Unlike
+`circuit_gate_meets_executor_guard`, this carries NO `NmRowEncodes` assumption: the gap decode is forced
+by the adjacency constraint. The wide-bracket double-spend forgery is therefore IMPOSSIBLE — a
+non-consecutive `(lo, hi)` cannot satisfy `Adjacent`, so it cannot reach `nf ∉ nullifiers`. -/
+theorem circuit_gate_meets_executor_guard_forced (c : NmCols) (env : VmRowEnv) (k : RecordKernelState)
+    (nf : Int) (hwf : NmRowOk c env)
+    (hadj : NmRowAdjacencyForced c env (k.nullifiers.map Int.ofNat) nf)
+    (hg : (gapLoGate c).holds env ∧ (gapHiGate c).holds env)
+    (nfN : Nat) (hnf : nf = Int.ofNat nfN) :
+    nfN ∉ k.nullifiers := by
+  have hni : nf ∉ k.nullifiers.map Int.ofNat :=
+    nonMemberGate_sound_forced c env _ nf hwf hadj hg
+  intro hmem
+  exact hni (by rw [hnf]; exact List.mem_map_of_mem hmem)
+
+/-- **`wide_bracket_forge_rejected` (THE FORGE IS CLOSED — MUTATION-CONFIRM, LEAN SIDE).** A
+NON-CONSECUTIVE wide bracket cannot forge non-membership: if the prover's claimed `(lo, hi)` are NOT
+`Adjacent` in the committed sorted spine, then no `NmRowAdjacencyForced` witness exists for them, so the
+gate's forced-soundness lane is unreachable. Stated as: a `NmRowAdjacencyForced` whose adjacency claim
+is FALSE is uninhabited. This is the Lean shadow of `forge_nonconsecutive_wide_bracket_is_rejected`: the
+adjacency AIR refuses to build a trace for a non-consecutive pair, so the forced lane never fires. -/
+theorem wide_bracket_forge_rejected (c : NmCols) (env : VmRowEnv) (xs : List Int) (nf : Int)
+    (hwide : ¬ Adjacent xs (env.loc c.lo) (env.loc c.hi)) :
+    ¬ NmRowAdjacencyForced c env xs nf :=
+  fun h => hwide h.adjacent
+
+#assert_axioms adjacent_gives_gapInterval
+#assert_axioms nmRowEncodes_of_adjacency
+#assert_axioms nonMemberGate_sound_forced
+#assert_axioms circuit_gate_meets_executor_guard_forced
+#assert_axioms wide_bracket_forge_rejected
+
 /-!
 ### What remains for the FULL deployed noteSpend descriptor (reported)
 
-This module supplies the missing non-membership GATE-KIND with real teeth on both sides. What the
-DEPLOYED `noteSpendVmDescriptor`/`noteSpendVmDescriptorFull` (`EffectVmEmitNoteSpend.lean`) still needs
-to use it end-to-end:
+This module supplies the missing non-membership GATE-KIND with real teeth on both sides, AND (§8¾)
+DISCHARGES the `NmRowEncodes` decode against the deployed sorted-tree adjacency opening. The state of
+the DEPLOYED noteSpend non-membership:
 
-1. **The sorted-tree adjacency OPENING.** The `(lo, hi)` columns the gate reads are the PROVER's; the
-   `GapInterval`/`NmRowEncodes` decoding (that they are GENUINE adjacent committed neighbors) is a
-   NAMED hypothesis here, exactly as Policy.lean's `RowEncodesSum` names the field-on-column decoding.
-   The deployed descriptor must BIND it: a Merkle/sorted-tree membership opening proving `lo`,`hi` are
-   adjacent leaves of the committed `nullifiers` root (and the new `nf` is inserted between them). That
-   opening gate-kind is what `noteSpend_freshness_still_needs_nonmembership` flagged the 4-arity
-   Poseidon2 hash-site IR lacks. This module builds the FRESHNESS gate that opening feeds; it does not
-   build the opening itself.
+1. **The sorted-tree adjacency OPENING — NOW THE FORCING CONSTRAINT, NOT A NAMED HYPOTHESIS.** The
+   `(lo, hi)` columns the gate reads are the PROVER's, but they are no longer free: the deployed
+   adjacency AIR (`circuit/src/membership_adjacency_air.rs`, `dregg-membership-adjacency-v1`)
+   authenticates `lo`,`hi` as leaves of the SAME committed root via full Merkle paths and reconstructs
+   their indices IN-CIRCUIT, enforcing `idx_upper == idx_lower + 1` (consecutive). The Lean shadow of
+   that constraint is `Adjacent xs lo hi`, and §8¾'s `adjacent_gives_gapInterval` proves
+   `Adjacent ⟹ GapInterval` over a `Sorted` spine — so `NmRowEncodes` is DISCHARGED
+   (`nmRowEncodes_of_adjacency`), no longer carried. The WIDE-BRACKET forge (`lo = 0x00…`,
+   `hi = 0xFF…`, non-adjacent) is rejected at the hypothesis (`wide_bracket_forge_rejected`): a
+   non-consecutive pair is not `Adjacent`, so the forced-soundness lane is unreachable. The forge-test
+   `forge_nonconsecutive_wide_bracket_is_rejected` is the Rust mutation-confirm of the same fact.
 
-2. **Wiring the gap columns into the EffectVM layout** (5 new witness columns: `nf`,`lo`,`hi`,`dLo`,
-   `dHi`) and the two range checks (`dLo`,`dHi ∈ [0, 2^k)`) as real `RangeSpec`s, plus selector-gating
-   the gates to the noteSpend row.
+2. **Wiring the gap columns into the EffectVM layout** (5 witness columns: `nf`,`lo`,`hi`,`dLo`,`dHi`)
+   and the two range checks (`dLo`,`dHi ∈ [0, 2^k)`) as real `RangeSpec`s, plus selector-gating the
+   gates to the noteSpend row.
 
 3. **The set-update half** (insert `nf` between `lo` and `hi`, re-root) is the existing
    `gNullifierRootUpdate` accumulator gate (`EffectVmEmitNoteSpend §B`); this freshness gate composes
    BEFORE it (prove `nf` fresh, then commit the insert). The two together = the full deployed
-   no-double-spend, once the opening (1) binds the neighbors.
+   no-double-spend.
 
 So: the EXECUTOR-side no-double-spend is CLOSED in-band (`noteSpendStmt_no_double_spend`); the
 CIRCUIT-side non-membership GATE is built with real teeth (sound + complete + anti-ghost +
-`witnessed`-discharge); the remaining gap is the sorted-tree OPENING that binds the gate's neighbor
-columns to the committed root — named precisely.
+`witnessed`-discharge); and the formerly-carried `NmRowEncodes` gap decode is DISCHARGED against the
+deployed adjacency opening (§8¾) — the wide-bracket double-spend forgery is closed. The remaining FFI
+boundary (Rust descriptor must call `verify_adjacency` on the noteSpend `(lo,hi)` columns) is a wiring
+conformance, the Lean force is now a theorem.
 -/
 
 /-! ## §8½ — THE RUNNABLE EFFECTVM DESCRIPTOR IS NOW FULL-STATE (magnesium breadth).

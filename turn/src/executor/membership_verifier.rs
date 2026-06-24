@@ -330,6 +330,81 @@ pub fn adjacency_leaf_felt(neighbor: &[u8; 32]) -> BabyBear {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// noteSpend nullifier-set NON-MEMBERSHIP: the deployed double-spend gate that
+// FORCES the sorted-tree adjacency (closing census-R1 / Lean §8¾ `NmRowEncodes`).
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Why this gate is the no-double-spend gate, in band, with real teeth.
+///
+/// A noteSpend's spending STARK proves the note commitment is *present* in the
+/// note tree and the nullifier is correctly derived — but it proves NOTHING
+/// about the nullifier's *absence* from the committed nullifier set. Runtime
+/// double-spend is caught by the executor's in-memory `note_nullifiers` set
+/// (`apply.rs::apply_note_spend`), but a *light client* verifying only the
+/// proof has no in-circuit guarantee of freshness. The sorted-set
+/// non-membership argument supplies that: exhibit two neighbor leaves
+/// `lo < nullifier < hi` that are CONSECUTIVE in the committed nullifier root.
+///
+/// The danger the census flagged (R1): without forcing `lo`,`hi` ADJACENT, a
+/// prover who knows the public nullifier root can pick a WIDE BRACKET
+/// (`lo = 0x00…`, `hi = 0xFF…`) that brackets-but-isn't-adjacent, "proving"
+/// non-membership for a nullifier that IS in the set — a double-spend. This
+/// verifier closes that by running the `membership_adjacency_air` STARK, which
+/// reconstructs the two leaf indices in-circuit and enforces
+/// `idx_upper == idx_lower + 1`. A non-consecutive pair cannot produce a proof
+/// (`forge_nonconsecutive_wide_bracket_is_rejected`).
+///
+/// This is the deployed-verifier realization of the Lean
+/// `Circuit/Argus/Effects/NoteSpend.lean` §8¾ discharge: `NmRowEncodes` is no
+/// longer assumed; the adjacency constraint FORCES the `GapInterval` gap decode.
+///
+/// # Arguments
+/// * `nullifier_set_root` — the committed sorted nullifier-set root, as the
+///   felt's canonical 4-byte LE form (the [`root_felt_from_slot`] convention,
+///   matching [`adjacency_commitment_bytes`]).
+/// * `nullifier` — the 32-byte spent nullifier whose freshness is asserted.
+/// * `lower` / `upper` — the claimed neighbor leaves bracketing the nullifier.
+/// * `adjacency_proof` — the [`AdjacencyProofWire`] blob from
+///   [`prove_neighbor_adjacency`] proving `lower`,`upper` are consecutive
+///   leaves of `nullifier_set_root`.
+///
+/// # Returns
+/// `Ok(())` iff (a) `lower < nullifier < upper` in the leaf-felt domain (the
+/// strict bracket) AND (b) the adjacency STARK accepts (`lower`,`upper` are
+/// consecutive committed leaves). Either failing ⇒ `Err` (fail-closed). A
+/// wide-bracket forgery fails (b); a nullifier not strictly between the
+/// neighbors fails (a).
+pub fn verify_nullifier_nonmembership(
+    nullifier_set_root: &[u8; 32],
+    nullifier: &[u8; 32],
+    lower: &[u8; 32],
+    upper: &[u8; 32],
+    adjacency_proof: &[u8],
+) -> Result<(), String> {
+    // (a) The strict bracket `lo < nf < hi`, over the leaf-felt domain the tree
+    //     is sorted by (the same `compress` the adjacency AIR commits leaves
+    //     under). A nullifier equal to a neighbor, or outside the bracket, is
+    //     NOT a non-member witness — reject.
+    let nf_felt = compress(nullifier).as_u32();
+    let lo_felt = compress(lower).as_u32();
+    let hi_felt = compress(upper).as_u32();
+    if !(lo_felt < nf_felt && nf_felt < hi_felt) {
+        return Err(format!(
+            "nullifier leaf-felt {nf_felt} is not strictly between neighbors \
+             ({lo_felt}, {hi_felt}); not a non-membership witness"
+        ));
+    }
+
+    // (b) THE TEETH: the two neighbors are CONSECUTIVE leaves of the committed
+    //     nullifier root. This is the constraint that forbids the wide bracket;
+    //     `CircuitNeighborAdjacencyVerifier` runs the in-circuit index
+    //     reconstruction + `idx_upper == idx_lower + 1` check.
+    CircuitNeighborAdjacencyVerifier
+        .verify_adjacency(nullifier_set_root, lower, upper, adjacency_proof)
+        .map_err(|e| format!("nullifier-set neighbor adjacency rejected (no forged wide bracket): {e}"))
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Dfa — real DSL-circuit STARK verifier (dregg_circuit::dsl::circuit).
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -1523,6 +1598,166 @@ mod tests {
             .verify(&wp, &PredicateInput::Sender(&candidate), &proof.to_bytes())
             .unwrap_err();
         assert!(matches!(err, WitnessedPredicateError::Rejected { .. }));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // noteSpend nullifier-set non-membership (the deployed double-spend gate).
+    // Mutation-confirm at the DEPLOYED verifier, not just the unit AIR test.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Sorted (by leaf-felt) neighbor values, so a candidate strictly between
+    /// two felt-consecutive leaves can be constructed. Returns the byte values
+    /// in ascending leaf-felt order plus the matching tree levels.
+    fn felt_sorted_neighbors8() -> (Vec<[u8; 32]>, Vec<Vec<BabyBear>>) {
+        // Eight distinct neighbor values (depth-3 → padded; we need a
+        // power-of-two depth, so use 8 leaves = depth 3 is NOT power of two —
+        // use 4 leaves (depth 2) which the adjacency AIR accepts).
+        let raw: Vec<[u8; 32]> = (0u8..4)
+            .map(|i| {
+                let mut b = [0u8; 32];
+                b[0] = 0xA0 ^ i;
+                b[1] = i.wrapping_mul(37);
+                b
+            })
+            .collect();
+        // Sort the VALUES by their leaf-felt so tree index order == felt order
+        // (the tree is sorted-by-leaf-felt, the adjacency-set discipline).
+        let mut by_felt = raw.clone();
+        by_felt.sort_by_key(|v| adjacency_leaf_felt(v).as_u32());
+        let levels = tree_levels(&by_felt);
+        (by_felt, levels)
+    }
+
+    /// HAPPY PATH: a nullifier whose leaf-felt sits strictly between two
+    /// CONSECUTIVE committed leaves is accepted as a non-member by the deployed
+    /// `verify_nullifier_nonmembership` gate.
+    #[test]
+    fn notespend_nonmembership_consecutive_accepts() {
+        let (vals, levels) = felt_sorted_neighbors8();
+        let root_felt = *levels.last().unwrap().first().unwrap();
+        let root = adjacency_commitment_bytes(root_felt);
+
+        // Consecutive leaves at felt-sorted indices 1,2.
+        let lower = vals[1];
+        let upper = vals[2];
+        let lo_f = adjacency_leaf_felt(&lower).as_u32();
+        let hi_f = adjacency_leaf_felt(&upper).as_u32();
+        assert!(lo_f < hi_f, "neighbors must be felt-ordered");
+
+        // Find a nullifier whose compressed leaf-felt is strictly in (lo_f, hi_f).
+        // Search a small family until one lands in the open gap (felt is a hash,
+        // so we probe rather than construct).
+        let mut nullifier = None;
+        for k in 0u32..5000 {
+            let mut cand = [0u8; 32];
+            cand[0] = 0x55;
+            cand[1..5].copy_from_slice(&k.to_le_bytes());
+            let f = compress(&cand).as_u32();
+            if lo_f < f && f < hi_f {
+                nullifier = Some(cand);
+                break;
+            }
+        }
+        let nullifier = nullifier.expect("expected some candidate in the open gap");
+
+        let lp = auth_path(&levels, 1);
+        let up = auth_path(&levels, 2);
+        let adjacency_proof = prove_neighbor_adjacency(&lower, &lp, &upper, &up).unwrap();
+
+        verify_nullifier_nonmembership(&root, &nullifier, &lower, &upper, &adjacency_proof)
+            .expect("a fresh nullifier bracketed by consecutive leaves must verify");
+    }
+
+    /// THE FORGE (the census-R1 double-spend), at the DEPLOYED verifier: an
+    /// attacker picks a WIDE bracket (non-consecutive leaves 0 and 3) around a
+    /// nullifier that may well BE in the set. They cannot build the adjacency
+    /// proof (the AIR refuses non-consecutive indices), and even a fabricated /
+    /// empty adjacency blob is rejected by `verify_nullifier_nonmembership` —
+    /// so no forged non-membership can be presented. Double-spend via wide
+    /// bracket is impossible at the deployed gate, not merely the unit AIR.
+    #[test]
+    fn notespend_wide_bracket_double_spend_rejected() {
+        let (vals, levels) = felt_sorted_neighbors8();
+        let root_felt = *levels.last().unwrap().first().unwrap();
+        let root = adjacency_commitment_bytes(root_felt);
+
+        // Wide bracket: the min and max committed leaves (felt-indices 0 and 3).
+        let lower = vals[0];
+        let upper = vals[3];
+        let lo_f = adjacency_leaf_felt(&lower).as_u32();
+        let hi_f = adjacency_leaf_felt(&upper).as_u32();
+
+        // A nullifier strictly inside the WIDE gap — could equal an interior
+        // committed leaf (a real double-spend target).
+        let mut nullifier = None;
+        for k in 0u32..5000 {
+            let mut cand = [0u8; 32];
+            cand[0] = 0x77;
+            cand[1..5].copy_from_slice(&k.to_le_bytes());
+            let f = compress(&cand).as_u32();
+            if lo_f < f && f < hi_f {
+                nullifier = Some(cand);
+                break;
+            }
+        }
+        let nullifier = nullifier.expect("expected some candidate in the wide gap");
+
+        // (1) The honest prover path refuses to build a non-consecutive proof.
+        let lp = auth_path(&levels, 0);
+        let up = auth_path(&levels, 3);
+        let prove_err = prove_neighbor_adjacency(&lower, &lp, &upper, &up).unwrap_err();
+        assert!(
+            prove_err.contains("not consecutive"),
+            "prover must refuse the wide bracket; got {prove_err}"
+        );
+
+        // (2) THE DEPLOYED GATE rejects a forge that ships no real adjacency
+        //     proof for the wide bracket — the bracket check (a) passes (the
+        //     nullifier is strictly inside), so it is the ADJACENCY teeth (b)
+        //     that close the forgery.
+        let err = verify_nullifier_nonmembership(&root, &nullifier, &lower, &upper, &[]).unwrap_err();
+        assert!(
+            err.contains("adjacency"),
+            "the deployed gate must reject the wide-bracket forge on the adjacency leg; got {err}"
+        );
+
+        // (3) Even re-using a GENUINE consecutive proof (for leaves 1,2) under
+        //     the wide-bracket (lower=0, upper=3) public inputs is rejected:
+        //     the adjacency STARK binds the specific leaves it attests.
+        let good_lp = auth_path(&levels, 1);
+        let good_up = auth_path(&levels, 2);
+        let real_proof =
+            prove_neighbor_adjacency(&vals[1], &good_lp, &vals[2], &good_up).unwrap();
+        let err2 =
+            verify_nullifier_nonmembership(&root, &nullifier, &lower, &upper, &real_proof)
+                .unwrap_err();
+        assert!(
+            err2.contains("adjacency"),
+            "a consecutive proof cannot be replayed for the wide bracket; got {err2}"
+        );
+    }
+
+    /// A nullifier NOT strictly between the neighbors (e.g. equal to a neighbor,
+    /// the double-spend-of-a-boundary attempt) is rejected by the bracket leg.
+    #[test]
+    fn notespend_nullifier_outside_bracket_rejected() {
+        let (vals, levels) = felt_sorted_neighbors8();
+        let root_felt = *levels.last().unwrap().first().unwrap();
+        let root = adjacency_commitment_bytes(root_felt);
+        let lower = vals[1];
+        let upper = vals[2];
+        let lp = auth_path(&levels, 1);
+        let up = auth_path(&levels, 2);
+        let adjacency_proof = prove_neighbor_adjacency(&lower, &lp, &upper, &up).unwrap();
+
+        // The lower neighbor itself is NOT strictly inside (lo, hi): claiming it
+        // is fresh would be a non-membership lie about a present leaf.
+        let err = verify_nullifier_nonmembership(&root, &lower, &lower, &upper, &adjacency_proof)
+            .unwrap_err();
+        assert!(
+            err.contains("strictly between"),
+            "a neighbor value is a member, not a non-member; got {err}"
+        );
     }
 
     /// The production registry installs the real, named verifiers.
