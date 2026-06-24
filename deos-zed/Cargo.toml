@@ -6,18 +6,6 @@ description = "A real code editor as a deos surface — edit real files inside d
 publish = false
 license = "AGPL-3.0-or-later"
 
-# deos-zed is its OWN workspace (it is NOT a member of the breadstuffs root
-# workspace). That keeps the heavy gpui/tree-sitter dep tree out of the main
-# graph while still resolving to the SAME gpui instance as starbridge-v2 +
-# gpui-component: every zed-derived dep below is pinned at emberian/zed@407a6ff,
-# and gpui-component is the SAME vendored path the cockpit consumes. One gpui in
-# the graph = the editor's `Entity`/`Window` types are byte-identical to the
-# cockpit's, so the CockpitSurface adapter (src/cockpit_surface.rs) drops into
-# starbridge-v2's dock without a second gpui linkage.
-[workspace]
-members = ["."]
-resolver = "2"
-
 [lib]
 name = "deos_zed"
 
@@ -219,32 +207,3 @@ lockstitch = { version = "0.29", features = ["portable"] }
 # (`performance_now`) + `TryInto` are gated behind the crate's own `wasm` feature.
 biscuit-auth = { version = "6.0.0", features = ["wasm"] }
 
-# The gpui dep tree carries `[patch.crates-io]` overrides its host workspace
-# must replicate (see starbridge-v2/Cargo.toml). deos-zed is its own workspace,
-# so we replicate the subset our graph actually pulls: the vendored
-# pathfinder_simd 0.5.6 (the nightly portable-SIMD intrinsics were removed from
-# current toolchains; the vendored build.rs selects the scalar path), and the
-# two zed-forked async-* crates gpui depends on.
-[patch.crates-io]
-async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
-async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
-pathfinder_simd = { path = "../starbridge-v2/vendor/pathfinder_simd" }
-# The embedded executor (`firmament` feature) pulls `dregg-turn` → `dregg-circuit`,
-# whose proof dep tree needs the SAME `ark-serialize` `serde_with`-feature fork the
-# main + starbridge-v2 workspaces patch in. deos-zed is its own workspace, so we
-# replicate it so the transitive proof deps resolve identically (no effect when the
-# `firmament` feature is off — these crates are simply absent from the graph then).
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
-# THE PLONKY3-RECURSION FORK PATCH — load-bearing for the `firmament` feature's
-# executor link. `dregg-circuit` (transitive via `dregg-turn`) references the
-# recursion-fork-only `NativeBatchStark` variant the pinned git rev does NOT carry
-# (it lives only in the local fork checkout). Mirrors starbridge-v2/Cargo.toml's
-# block; the four fork crates point at the SAME local fork checkout the root +
-# starbridge-v2 do (`../../plonky3-recursion`, relative to this manifest).
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }

@@ -11,18 +11,6 @@
 # Runs on the host (the operator's terminal). It reaches the node over the
 # network the M3 PD provides — it does not itself boot on seL4.
 
-# Own workspace root: keeps dregg-tui out of the repo-root workspace members.
-[workspace]
-
-# The verify path pulls `dregg-federation` (cross-fed bundle leg), which depends
-# on ark-serialize's `serde_with` feature — present only in ember's algebra fork.
-# The repo-root workspace patches it the same way; the standalone tui workspace
-# must mirror the patch so the graph resolves to the SAME ark-serialize the rest
-# of the tree builds against (not a parallel pin).
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
 [package]
 name = "dregg-tui"
 version = "0.1.0"

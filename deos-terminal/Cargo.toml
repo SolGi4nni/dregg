@@ -1,40 +1,3 @@
-# deos-terminal — a REAL terminal emulator as a deos surface.
-#
-# ## What this is
-#
-# A working terminal emulator (alacritty_terminal-backed PTY + grid, rendered by
-# a lean gpui view) so we can run commands — cargo, git, shells — INSIDE deos.
-# This is the terminal half of the self-hosting dev loop (the editor half lives
-# in the cockpit's doc surfaces).
-#
-# The model is `alacritty_terminal` directly: a real `tty::Pty` over `$SHELL`,
-# the `EventLoop` IO thread parsing the byte stream into a `Term` grid, and the
-# `renderable_content()` snapshot we paint each frame. The view is a small gpui
-# element that draws the grid as monospace rows, owns a `FocusHandle`, and turns
-# gpui `KeyDownEvent`s into PTY bytes via a vendored copy of Zed's xterm keymap
-# (`src/keymap.rs`, adapted from `terminal/src/mappings/keys.rs`).
-#
-# We deliberately did NOT vendor Zed's `terminal`/`terminal_view` crates whole:
-# those drag `settings`/`theme`/`task`/`project`/`workspace`/`editor`/`db` — the
-# entire Zed world. The PTY+grid logic underneath is small, so we wrote a lean
-# model over `alacritty_terminal` and a lean gpui view, keeping only the pure
-# xterm key-encoding table from Zed (the one genuinely fiddly piece).
-#
-# ## Standalone workspace (the `servo-render` / `deos-matrix` pattern)
-#
-# The empty `[workspace]` table makes this crate its OWN workspace root, NOT a
-# member of the repo-root workspace. Deliberate: gpui + alacritty_terminal drag a
-# heavy native dep tree (metal/wgpu/font-kit + a unix PTY + vte parser). Keeping
-# it OUT of the repo-root workspace keeps the lean dregg/Lean lanes (and their
-# `./target`) untouched. `cd deos-terminal && cargo build` builds into THIS
-# crate's local target only.
-#
-# gpui is consumed from our fork `emberian/zed@407a6ff` (byte-identical gpui API
-# to upstream Zed at this rev, per the gpui-component scout), and
-# `alacritty_terminal` from the same fork Zed pins (`zed-industries/alacritty`),
-# so both compile against our gpui cleanly.
-[workspace]
-
 [package]
 name = "deos-terminal"
 version = "0.1.0"
@@ -138,16 +101,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
 
-# gpui → font-kit → pathfinder pulls `pathfinder_simd 0.5.6`, which fails to
-# compile on a modern toolchain (the `simd_{minimum,maximum}_number_nsz`
-# intrinsics were renamed). starbridge-v2 already vendors a fixed copy; we reuse
-# it (the same stance servo-render takes). This patch is local to THIS standalone
-# workspace; it does not affect the repo-root workspace.
-[patch.crates-io]
-pathfinder_simd = { path = "../starbridge-v2/vendor/pathfinder_simd" }
-# gpui's vendored `util` crate calls `smol::process::Child::adopt_raw_pid`, which
-# only exists on the zed-industries `async-process`/`async-task` forks the zed
-# monorepo's `[patch]` table pins. Consumers of gpui-from-git must replicate them
-# (starbridge-v2 does the same).
-async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
-async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }

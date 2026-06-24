@@ -1,0 +1,8 @@
+# discord-bot is a STANDALONE workspace (EXCLUDED from the root workspace because
+# of the sqlx `links = "sqlite3"` conflict with deos-matrix's rusqlite). It pins
+# the same ROLLING `nightly` the repo root does so its path-deps (dregg-circuit/
+# turn/sdk, members of the root workspace) compile under the identical toolchain.
+[toolchain]
+channel = "nightly"
+profile = "default"
+components = ["cargo", "clippy", "rust-analyzer", "rustc", "rustfmt"]

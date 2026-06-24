@@ -29,38 +29,6 @@
 # GENUINE one (`is_attenuation`, `AuthRequired`, `CellId`, the real
 # `TurnExecutor` via `dregg-firmament::SurfaceBacking`) — never a parallel model.
 
-# Empty [workspace] table → this crate is its OWN workspace root, NOT a member of
-# the repo-root workspace. It still path-depends on the real dregg crates; cargo
-# resolves those within the root workspace and links them into THIS crate's local
-# target.
-[workspace]
-
-# THE FORK SEAM (replicated from the breadstuffs-root `Cargo.toml`, adjusted for
-# this crate's depth). Because this crate is its OWN workspace root, the repo-root
-# `[patch]` does NOT apply here — so the transitive `dregg-circuit` (via
-# `dregg-turn`, via `dregg-firmament`) would resolve `p3-recursion` from the
-# PINNED git rev, which lacks the `RecursionInput::NativeBatchStark` variant
-# `dregg-circuit` now calls. We point the patch at the SAME local fork checkout the
-# root + `dregg-firmament` do. `../` = starbridge-web-surface → breadstuffs →
-# dev. Keep in sync with the root/firmament blocks; all revert to the git rev once
-# the fork is pushed.
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
-
-# THE ark-serialize SEAM (replicated from the breadstuffs-root `Cargo.toml` §patch,
-# mirroring the starbridge-v2 block). `dregg-hints` (transitive via `dregg-turn`)
-# depends on `ark-serialize` with the `serde_with` feature, which the published
-# `ark-serialize 0.5.0` does NOT carry — only the `emberian/algebra`
-# `serde-integration` fork does. Because this crate is its OWN workspace root the
-# repo-root `[patch]` does not apply, so we replicate it here. Keep in sync with the
-# root/starbridge-v2 blocks; reverts to crates.io once the feature lands upstream.
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
 [package]
 name = "starbridge-web-surface"
 version = "0.1.0"
@@ -138,5 +106,3 @@ stream = ["dep:futures-core"]
 [dev-dependencies]
 # (tests live inline in each module + in `tests/`)
 
-[profile.release]
-opt-level = "s"

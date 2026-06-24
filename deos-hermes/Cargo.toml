@@ -22,44 +22,6 @@
 # `nightly-2026-01-01`). The verified Lean executor `dregg-sdk` drags compiles
 # fine under rolling nightly too (starbridge-v2 embeds the SAME executor there).
 
-[workspace]
-resolver = "3"
-members = ["."]
-
-# THE PATCH TABLES — replicated from the MAIN workspace root Cargo.toml (and
-# starbridge-v2, the other standalone workspace that embeds `dregg-sdk`). A
-# standalone workspace does NOT inherit the repo-root `[patch]` tables, so the
-# proof dep tree `dregg-sdk` drags would otherwise fail to resolve. We replicate
-# them verbatim so this workspace re-resolves the federation/intent/circuit
-# transitive deps IDENTICALLY to the main workspace.
-[patch.crates-io]
-# `dregg-sdk` (default `prover`) needs the `serde_with`-feature `ark-serialize`
-# fork the root patches in (root Cargo.toml §patch).
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
-# THE GPUI FORK OVERRIDES (load-bearing only for the `cockpit-surface` /
-# `screenshot` features). The gpui dep tree carries `[patch.crates-io]` overrides
-# its host workspace must replicate (see starbridge-v2 / deos-zed): the vendored
-# pathfinder_simd 0.5.6 (current nightlies removed the portable-SIMD intrinsics;
-# the vendored build.rs selects the scalar path) and the two zed-forked async-*
-# crates gpui depends on. Replicated verbatim so the gpui graph resolves
-# identically; no effect when the gpui features are off (those crates are simply
-# absent from the graph then).
-async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
-async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
-pathfinder_simd = { path = "../starbridge-v2/vendor/pathfinder_simd" }
-
-# `dregg-circuit` (transitive via dregg-turn/dregg-sdk's default `prover`)
-# references recursion-fork-only items the PINNED git rev does not carry; point
-# the four fork crates at the SAME local checkout the main workspace + starbridge-v2
-# use (`../../plonky3-recursion` relative to this one-level-deep crate).
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
-
 [package]
 name = "deos-hermes"
 version = "0.1.0"

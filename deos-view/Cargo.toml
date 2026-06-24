@@ -32,10 +32,6 @@ edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "Render a deos-js applet's view-tree into real gpui-component widgets (the renderer extraction)."
 
-[workspace]
-# Own workspace root — excluded from the repo-root members (see the repo-root
-# Cargo.toml `exclude` list) so neither mozjs nor gpui feature-unify across the tree.
-
 [dependencies]
 # THE VIEW-TREE MODEL + THE VERIFIED-TURN FIRING — the gpui-free substance crate.
 # Its `Applet` mints a sovereign cell; `fire` is a real cap-gated verified turn
@@ -83,37 +79,3 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 #     transitive dregg + gpui deps cannot re-resolve without these. They revert with
 #     the others once the forks land.
 
-[patch.crates-io]
-# ark-serialize FORK — the transitive `dregg-hints` (via dregg-turn) needs the
-# `serde_with` feature that exists only on the emberian/algebra fork (from deos-js).
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-# gpui's zed monorepo applies these `[patch.crates-io]` entries; consumers must
-# replicate them (from starbridge-v2).
-async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
-async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
-# Vendored pathfinder_simd (transitive via gpui → font-kit → pathfinder): the scalar
-# path on aarch64 (the nightly portable-SIMD intrinsics were removed). starbridge-v2
-# vendors it at `vendor/pathfinder_simd`; we point at that same checkout.
-pathfinder_simd = { path = "../starbridge-v2/vendor/pathfinder_simd" }
-
-# plonky3-recursion FORK — the transitive `dregg-circuit` (via dregg-turn) resolves
-# `p3-recursion` from a pinned git rev lacking `RecursionInput::NativeBatchStark`;
-# point at the SAME local fork checkout. `../../plonky3-recursion` = deos-view →
-# breadstuffs → dev → plonky3-recursion (same relative depth as deos-js).
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
-
-# THE gpui FORK REDIRECT — exactly as starbridge-v2 does (its
-# `[patch."https://github.com/emberian/zed"]`). The pinned rev 407a6ff is redirected
-# to the LOCAL working checkout of that exact tree, which carries the offscreen
-# HEADLESS renderer (`HeadlessAppContext` + `gpui_platform::current_headless_renderer`
-# + `capture_screenshot`) the render-capture proof bakes through. Without this the
-# headless API does not exist on the cargo-cache rev. Dropped when the fork lands.
-[patch."https://github.com/emberian/zed"]
-gpui = { path = "../../zed-dregg-web/crates/gpui" }
-gpui_platform = { path = "../../zed-dregg-web/crates/gpui_platform" }
-gpui_wgpu = { path = "../../zed-dregg-web/crates/gpui_wgpu" }

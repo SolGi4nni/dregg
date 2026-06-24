@@ -22,42 +22,6 @@
 # `Sturdyref`/`Membrane`/`Rehydration` rehydration stack — all on the genuine
 # `dregg_cell::is_attenuation` lattice and the genuine `dregg_turn::Effect`.
 
-# Empty [workspace] table → this crate is its OWN workspace root, NOT a member of
-# the repo-root workspace (the `starbridge-web-surface` / `sel4/dregg-firmament`
-# pattern). It path-depends on `starbridge-web-surface`, which path-depends on the
-# real dregg crates; cargo resolves those within the root workspace and links them
-# into this crate's local target. Being a standalone root keeps the wasm-gated
-# feature-unification (and the Lean-path deletion the root `[workspace]` note
-# warns about) from leaking in.
-[workspace]
-
-# THE FORK SEAM (replicated from `starbridge-web-surface/Cargo.toml`, one level
-# deeper). Because this crate is its OWN workspace root, the repo-root `[patch]`
-# does NOT apply — so the transitive `dregg-circuit` (via `dregg-turn`, via
-# `dregg-firmament`, via `starbridge-web-surface`) would resolve `p3-recursion`
-# from the PINNED git rev, which lacks the `RecursionInput::NativeBatchStark`
-# variant `dregg-circuit` now calls. Point the patch at the SAME local fork
-# checkout the root + `starbridge-web-surface` + `dregg-firmament` do. `../../` =
-# deos-leptos → breadstuffs → dev. Keep in sync; all revert to the git rev once the
-# fork is pushed.
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
-
-# THE ARK-SERIALIZE FORK SEAM (replicated from the repo-root `[patch.crates-io]`).
-# Closing the executor seam pulls in `dregg-app-framework` → `dregg-sdk`/`dregg-intent`
-# → `dregg-federation`, which requires `ark-serialize` with the `serde_with` feature.
-# That feature lives only in the root's pinned fork (`emberian/algebra` branch
-# `serde-integration`); upstream `ark-serialize 0.5.0` lacks it. Because this crate is
-# its OWN workspace root, the repo-root `[patch.crates-io]` does NOT apply — so we
-# mirror it here, EXACTLY as the root does. Keep in sync with the repo-root
-# `[patch.crates-io]`; reverts once the fork lands upstream.
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
 [package]
 name = "deos-leptos"
 version = "0.1.0"

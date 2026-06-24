@@ -5,7 +5,21 @@ resolver = "3"
 # whole-workspace build (cargo test --workspace), deleting the Lean paths
 # on native. It builds standalone via wasm-pack (scripts/build-web-artifacts.sh,
 # pages.yml), which uses its manifest path directly.
-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trace", "demo", "demo-agent", "demo/sdk-consensus", "federation", "circuit", "circuit-prove", "audit", "bridge", "wire", "persist", "cell", "cell-crypto", "turn", "exec-lean", "coord", "tests", "types", "sdk", "dregg-sdk-net", "node", "intent", "net", "discharge-gateway", "teasting", "discord-bot", "app-framework", "dregg-dsl", "dregg-dsl-runtime", "dregg-dsl-tests", "dregg-dsl-differential", "blocklace", "captp", "cli", "verifier", "protocol-tests", "observability", "storage", "starbridge-apps/nameservice", "dfa", "rbg", "credentials", "directory", "starbridge-apps/identity", "starbridge-apps/subscription", "starbridge-apps/governed-namespace", "starbridge-apps/compartment-workflow-mandate", "starbridge-apps/storage-gateway-mandate", "starbridge-apps/privacy-voting", "starbridge-apps/bounty-board", "starbridge-apps/agent-provenance", "starbridge-apps/tool-access-delegation", "starbridge-apps/sealed-auction", "starbridge-apps/polis", "starbridge-apps/escrow-market", "starbridge-apps/first-room", "starbridge-apps/compute-exchange", "starbridge-apps/gallery", "starbridge-apps/swarm-orchestration", "starbridge-apps/supply-chain-provenance", "starbridge-apps/agent-orchestration", "starbridge-apps/tussle", "dregg-storage-templates", "preflight", "dregg-lean-ffi", "lightclient", "redteam", "perf", "dregg-auth", "dregg-query", "dregg-userspace-verify", "dregg-deploy", "dregg-analyzer", "deos-reflect"]
+# members += the 12 absorbed deos/starbridge elephant crates (formerly standalone
+# workspaces) so they share ONE target dir + one resolve (the disk + CI win).
+# `discord-bot` is NOT a member: it (+ deos-zed-full) pull sqlx/sqlez →
+# libsqlite3-sys 0.30, whose `links = "sqlite3"` conflicts with deos-matrix's
+# rusqlite-0.35 (matrix-sdk-sqlite). Cargo allows ONE `links="sqlite3"` per
+# workspace, so those two stay separate workspaces (discord-bot excluded below,
+# deos-zed-full still excluded). `default-members` (below) is the light protocol/
+# circuit/app set so bare `cargo build`/`cargo test` stays gpui/mozjs/servo-free.
+members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trace", "demo", "demo-agent", "demo/sdk-consensus", "federation", "circuit", "circuit-prove", "audit", "bridge", "wire", "persist", "cell", "cell-crypto", "turn", "exec-lean", "coord", "tests", "types", "sdk", "dregg-sdk-net", "node", "intent", "net", "discharge-gateway", "teasting", "app-framework", "dregg-dsl", "dregg-dsl-runtime", "dregg-dsl-tests", "dregg-dsl-differential", "blocklace", "captp", "cli", "verifier", "protocol-tests", "observability", "storage", "starbridge-apps/nameservice", "dfa", "rbg", "credentials", "directory", "starbridge-apps/identity", "starbridge-apps/subscription", "starbridge-apps/governed-namespace", "starbridge-apps/compartment-workflow-mandate", "starbridge-apps/storage-gateway-mandate", "starbridge-apps/privacy-voting", "starbridge-apps/bounty-board", "starbridge-apps/agent-provenance", "starbridge-apps/tool-access-delegation", "starbridge-apps/sealed-auction", "starbridge-apps/polis", "starbridge-apps/escrow-market", "starbridge-apps/first-room", "starbridge-apps/compute-exchange", "starbridge-apps/gallery", "starbridge-apps/swarm-orchestration", "starbridge-apps/supply-chain-provenance", "starbridge-apps/agent-orchestration", "starbridge-apps/tussle", "dregg-storage-templates", "preflight", "dregg-lean-ffi", "lightclient", "redteam", "perf", "dregg-auth", "dregg-query", "dregg-userspace-verify", "dregg-deploy", "dregg-analyzer", "deos-reflect", "starbridge-v2", "starbridge-v2/web", "deos-js", "deos-view", "deos-zed", "deos-matrix", "deos-hermes", "deos-terminal", "servo-render", "deos-web-cells", "dregg-tui", "starbridge-web-surface", "deos-leptos"]
+
+# default-members = the LIGHT protocol/circuit/app crates (members minus the 12
+# gpui/mozjs/servo elephants). A bare `cargo build`/`cargo test` (no `--workspace`,
+# no `-p <elephant>`) operates on THESE only, so the default dev loop never pulls
+# gpui/mozjs/servo. Build an elephant explicitly with `-p starbridge-v2` etc.
+default-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trace", "demo", "demo-agent", "demo/sdk-consensus", "federation", "circuit", "circuit-prove", "audit", "bridge", "wire", "persist", "cell", "cell-crypto", "turn", "exec-lean", "coord", "tests", "types", "sdk", "dregg-sdk-net", "node", "intent", "net", "discharge-gateway", "teasting", "app-framework", "dregg-dsl", "dregg-dsl-runtime", "dregg-dsl-tests", "dregg-dsl-differential", "blocklace", "captp", "cli", "verifier", "protocol-tests", "observability", "storage", "starbridge-apps/nameservice", "dfa", "rbg", "credentials", "directory", "starbridge-apps/identity", "starbridge-apps/subscription", "starbridge-apps/governed-namespace", "starbridge-apps/compartment-workflow-mandate", "starbridge-apps/storage-gateway-mandate", "starbridge-apps/privacy-voting", "starbridge-apps/bounty-board", "starbridge-apps/agent-provenance", "starbridge-apps/tool-access-delegation", "starbridge-apps/sealed-auction", "starbridge-apps/polis", "starbridge-apps/escrow-market", "starbridge-apps/first-room", "starbridge-apps/compute-exchange", "starbridge-apps/gallery", "starbridge-apps/swarm-orchestration", "starbridge-apps/supply-chain-provenance", "starbridge-apps/agent-orchestration", "starbridge-apps/tussle", "dregg-storage-templates", "preflight", "dregg-lean-ffi", "lightclient", "redteam", "perf", "dregg-auth", "dregg-query", "dregg-userspace-verify", "dregg-deploy", "dregg-analyzer", "deos-reflect"]
 
 # chain/ and chain/program/ are standalone workspaces with their own root Cargo.toml.
 # chain has a known dep conflict (sp1-core-machine pins generic-array =1.1.0,
@@ -20,7 +34,12 @@ members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trac
 # module that used to live in rbg has been promoted into `dregg-dfa`
 # per `DFA-RATIONALIZATION-DESIGN.md`; rbg/ no longer ships its own
 # routing engine.
-exclude = ["chain", "chain/program", "wasm", "sdk-py", "pg-dregg", "sel4/dregg-firmament", "deos-zed-full", "dregg-doc", "starbridge-v2", "starbridge-v2/web", "deos-js", "deos-view", "deos-zed", "deos-matrix", "deos-hermes", "deos-terminal", "servo-render", "deos-web-cells", "dregg-tui", "starbridge-web-surface", "deos-leptos"]
+# `discord-bot` + `deos-zed-full` are EXCLUDED (separate workspaces): both pull
+# sqlx/sqlez → libsqlite3-sys 0.30, whose `links = "sqlite3"` conflicts with
+# deos-matrix's rusqlite-0.35 (one `links="sqlite3"` per workspace). discord-bot
+# carries its own `[workspace]`/`[workspace.dependencies]`/`[patch]` + a
+# `rust-toolchain.toml` so it still builds standalone.
+exclude = ["chain", "chain/program", "wasm", "sdk-py", "pg-dregg", "sel4/dregg-firmament", "deos-zed-full", "dregg-doc", "discord-bot"]
 
 [workspace.package]
 version = "0.1.0"
@@ -44,12 +63,13 @@ repository = "https://github.com/emberian/dregg"
 # `repository` must resolve on each shipped package (cli adds
 # `repository.workspace = true` for this; node already inherits it).
 #
-# `starbridge-v2` (the gpui native master interface) is DELIBERATELY ABSENT: it
-# is a STANDALONE workspace (in the root `exclude` list, line above), so dist's
-# workspace metadata cannot reach it; it is also gpui/Metal host-sensitive and
-# pins a different (rolling-nightly) toolchain. Its installers are packed by the
-# bespoke `.github/workflows/starbridge-v2-installers.yml` (a separate lane), not
-# by dist.
+# `starbridge-v2` (the gpui native master interface) is now a workspace MEMBER
+# (absorbed into the root workspace for the shared target dir), but dist still
+# does NOT ship it: the workspace default is `dist = false` and starbridge-v2
+# does NOT opt in (`[package.metadata.dist] dist = true` is the only selector, and
+# it carries none), so dist reaches it via metadata yet emits no installer for it.
+# It is gpui/Metal host-sensitive; its installers are packed by the bespoke
+# `.github/workflows/starbridge-v2-installers.yml` (a separate lane), not by dist.
 #
 # TARGETS: the workspace target list is the CLI's broad set (macOS + Linux,
 # x86_64 + aarch64, plus Windows-msvc). `dregg-node` LINKS THE VERIFIED LEAN

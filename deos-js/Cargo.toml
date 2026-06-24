@@ -22,11 +22,6 @@ edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "A deos-native JavaScript scripting surface: JS drives sovereign-cell applets via cap-gated verified turns."
 
-[workspace]
-# Own workspace root: deos-js is excluded from the repo-root members (see the
-# repo-root Cargo.toml `exclude` list) so the mozjs build does not unify features
-# across the whole tree.
-
 [dependencies]
 # THE ENGINE — real SpiderMonkey. The SAME version servo-render's `libservo` path
 # resolves (mozjs 0.15.7 / mozjs_sys 0.140.8-2), so "the engine is already in the
@@ -75,19 +70,3 @@ blake3 = "1"
 #    root, the repo-root `[patch]` does NOT reach it, so the transitive dregg deps
 #    cannot re-resolve without these. They revert with the others once the forks land.
 
-# ark-serialize FORK — the transitive `dregg-hints` (via dregg-turn's threshold-sig)
-# needs ark-serialize with the `serde_with` feature, which exists ONLY on the
-# emberian/algebra fork, not crates.io 0.5.0.
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
-# plonky3-recursion FORK — the transitive `dregg-circuit` (via dregg-turn) resolves
-# `p3-recursion` from a pinned git rev lacking `RecursionInput::NativeBatchStark`;
-# point at the SAME local fork checkout the root/servo-render blocks use.
-# `../../plonky3-recursion` = deos-js → breadstuffs → dev → plonky3-recursion.
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
