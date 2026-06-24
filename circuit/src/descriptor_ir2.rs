@@ -6362,6 +6362,281 @@ mod tests {
         }
     }
 
+    /// THE ADJACENCY TOOTH, in-circuit, on a wide-bracket: the §8¾ Lean
+    /// `wide_bracket_forge_rejected` shadow at the IR-v2 raw-batch level. Build the HONEST absent
+    /// assembly for key 150 (bracketed by the GENUINE consecutive leaves 100/200), then forge ONLY
+    /// the upper-bracket DIRECTION bits (`MA_HI_DIR0`) so the two opened leaves are NO LONGER at
+    /// consecutive positions (`hi_pos − lo_pos ≠ 1`) — the literal WIDE BRACKET a commitment-knower
+    /// would invent (`lo = 0x00…`, `hi = 0xFF…`, bracketing-but-not-adjacent). The adjacency
+    /// constraint (`builder.assert_zero(is_real * (Σ dirᵢ·2ⁱ − 1))`) must refuse: a satisfying
+    /// assignment cannot keep the leaf authentic under the root AND make the positions non-adjacent.
+    /// This isolates the ADJACENCY teeth from the gap comparator (`ir2_absent_forged_bracket_refuses`
+    /// forges the key; this forges the consecutiveness).
+    #[test]
+    fn ir2_absent_forged_wide_bracket_nonadjacent_refuses() {
+        let desc = absent_desc();
+        let layout = check_descriptor2(&desc).expect("absent gauntlet checks");
+        let presence = Presence::of(&desc, &layout);
+        let mut traces = build_traces(
+            &desc,
+            &layout,
+            presence,
+            &absent_trace(150),
+            &MemBoundaryWitness::default(),
+            &[test_heap()],
+            &UMemBoundaryWitness::default(),
+            true,
+        )
+        .expect("honest absent traces");
+        // The honest upper-bracket position (leaf 200) sits at hi_pos = lo_pos + 1. Flip the lowest
+        // direction bit of the UPPER path so the reconstructed position is no longer consecutive with
+        // the lower one — the wide-bracket shape. (The `lo`/`hi` leaf digests, sibling paths and gap
+        // comparators stay honest; ONLY the consecutiveness is broken, so the adjacency gate is the
+        // sole tooth that can fire.)
+        let ma = traces.map_absent.as_mut().expect("absent table present");
+        let cur = ma[0][MA_HI_DIR0].as_u32();
+        ma[0][MA_HI_DIR0] = BabyBear::new(cur ^ 1);
+        let airs = instance_airs(&desc, layout, presence);
+        let mut matrices = vec![to_matrix(&traces.main)];
+        for t in [
+            &traces.chip,
+            &traces.byte,
+            &traces.memory,
+            &traces.boundary,
+            &traces.map_ops,
+            &traces.map_absent,
+            &traces.umemory,
+            &traces.umem_boundary,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            matrices.push(to_matrix(t));
+        }
+        let pvs: Vec<Vec<P3BabyBear>> = vec![vec![]; airs.len()];
+        let config = ir2_config();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
+                .iter()
+                .zip(matrices.iter())
+                .zip(pvs.iter())
+                .map(|((air, trace), pv)| StarkInstance {
+                    air,
+                    trace,
+                    public_values: pv.clone(),
+                })
+                .collect();
+            let prover_data = ProverData::from_instances(&config, &instances);
+            let proof = prove_batch(&config, &instances, &prover_data);
+            verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
+        }));
+        match r {
+            Err(_) => {} // the debug prover panicked on the violated adjacency / leaf-binding teeth
+            Ok(res) => assert!(
+                res.is_err(),
+                "forged NON-ADJACENT wide bracket produced an accepted proof — adjacency tooth OPEN"
+            ),
+        }
+    }
+
+    // ==== THE DEPLOYED noteSpend DESCRIPTOR — the double-spend wide-bracket close ====
+
+    /// **THE DEPLOYED-LEVEL no-double-spend mutation-confirm (D1-wire).** The Lean §8¾
+    /// (`Circuit/Argus/Effects/NoteSpend.lean`) proves `Adjacent ⟹ GapInterval` and that a
+    /// non-consecutive wide bracket cannot be `Adjacent` (`wide_bracket_forge_rejected`); the
+    /// forcing FFI it names is "the deployed noteSpend descriptor must enforce adjacency on the
+    /// `(lo,hi)` bracket columns". The deployed `noteSpendVmDescriptor2R24` discharges that through
+    /// its `.absent` map-op (`EffectVmEmitRotationV3.nullifierFreshOp`), realized by the IR-v2
+    /// `MapAbsent` AIR — which enforces, IN-CIRCUIT, that the two opened bracket leaves sit at
+    /// CONSECUTIVE positions (`hi_pos − lo_pos == 1`) AND authenticate under the committed nullifier
+    /// root AND strictly straddle the spent nullifier. So the descriptor verify cannot accept a
+    /// non-adjacent wide bracket — the forgery that "proves" non-membership of a nullifier that IS in
+    /// the set (a double-spend).
+    ///
+    /// This test confirms that AT THE DEPLOYED DESCRIPTOR LEVEL (not the standalone
+    /// `membership_verifier::verify_nullifier_nonmembership` unit, and not the synthetic
+    /// `absent_desc`): build the HONEST deployed noteSpend assembly (real before-nullifier
+    /// accumulator with ≥4 leaves; the spent nullifier brackets between two consecutive ones), prove
+    /// + verify it through the deployed descriptor (NO DOWNGRADE), then forge ONLY the map-absent
+    /// upper-bracket direction bits so the bracket is a NON-ADJACENT wide bracket, and confirm the
+    /// deployed `noteSpendVmDescriptor2R24` verify REJECTS it. The light-client noteSpend
+    /// double-spend forgery is closed end-to-end on the deployed wire.
+    #[test]
+    fn deployed_notespend_wide_bracket_double_spend_rejected() {
+        use crate::effect_vm::trace_rotated::{
+            ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
+            generate_rotated_note_spend_trace_with_nullifier_tree,
+        };
+        use crate::effect_vm::{CellState, Effect};
+
+        // Resolve the DEPLOYED noteSpend descriptor (the light-client V3-staged 47-PI shape carrying
+        // the two nullifier map-ops — `.absent` freshness + `.insert` set-insert).
+        let name = "noteSpendVmDescriptor2R24";
+        let json = crate::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV
+            .lines()
+            .find_map(|l| {
+                let mut it = l.splitn(3, '\t');
+                if it.next() == Some(name) {
+                    let _ = it.next();
+                    it.next()
+                } else {
+                    None
+                }
+            })
+            .expect("noteSpendVmDescriptor2R24 in V3_STAGED_REGISTRY_TSV");
+        let desc = parse_vm_descriptor2(json).expect("deployed noteSpend descriptor parses");
+        assert_eq!(
+            desc.public_input_count, 47,
+            "deployed noteSpend carries the nullifier-forcing pin"
+        );
+        // The descriptor genuinely carries the `.absent` freshness map-op (the adjacency-forcing leg).
+        assert!(
+            desc.constraints
+                .iter()
+                .any(|c| matches!(c, VmConstraint2::MapOp(m) if m.op == MapKind::Absent)),
+            "the deployed noteSpend descriptor must carry the `.absent` freshness map-op"
+        );
+
+        let before_balance: u64 = 90_000;
+        let value: u64 = 500;
+        let nf: u32 = 0x5050; // the spent nullifier (NOT in the BEFORE set; brackets 0x4444..0x6666)
+        let effect = Effect::NoteSpend {
+            nullifier: BabyBear::new(nf),
+            value,
+        };
+        let st = CellState::new(before_balance, 0);
+        let effects = vec![effect];
+
+        // A before-nullifier accumulator with FOUR leaves so the spent nullifier (0x5050) brackets
+        // between the consecutive pair (0x4444, 0x6666) — and a NON-consecutive leaf (0x1111) exists
+        // BELOW lo, the target of the wide-bracket forge.
+        let before_nullifiers = vec![
+            HeapLeaf {
+                addr: BabyBear::new(0x1111),
+                value: BabyBear::new(1),
+            },
+            HeapLeaf {
+                addr: BabyBear::new(0x2222),
+                value: BabyBear::new(1),
+            },
+            HeapLeaf {
+                addr: BabyBear::new(0x4444),
+                value: BabyBear::new(1),
+            },
+            HeapLeaf {
+                addr: BabyBear::new(0x6666),
+                value: BabyBear::new(1),
+            },
+        ];
+
+        // The witness-INDEPENDENT block witnesses (the verify path threads trusted commits; for a
+        // self-contained descriptor-level prove/verify the placeholder pre-limbs suffice — the
+        // generator overrides the nullifier-root limbs from the real accumulator).
+        let zero_w = RotatedBlockWitness::new(vec![BabyBear::ZERO; 37], BabyBear::ZERO)
+            .expect("37 pre-iroot limbs");
+        let caveat = empty_caveat_manifest();
+
+        let (trace, dpis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(
+            &st,
+            &effects,
+            &zero_w,
+            &zero_w,
+            &caveat,
+            &before_nullifiers,
+        )
+        .expect("deployment-real noteSpend trace builds (the spent nullifier is fresh)");
+        assert_eq!(trace[0].len(), ROT_WIDTH, "deployed rotated trace width");
+
+        // NO DOWNGRADE: the honest deployed noteSpend proves + verifies through the deployed
+        // descriptor's `.absent`/`.insert` grow-gate — the adjacency tooth ACCEPTS a genuine
+        // consecutive bracket.
+        let mem_boundary = MemBoundaryWitness::default();
+        let layout = check_descriptor2(&desc).expect("deployed noteSpend descriptor checks");
+        let presence = Presence::of(&desc, &layout);
+        let chip_laned = trace_with_chip_lanes(&desc, &trace);
+        let honest_proof =
+            prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
+                .expect("NO DOWNGRADE: the honest deployed noteSpend must prove");
+        verify_vm_descriptor2(&desc, &honest_proof, &dpis)
+            .expect("NO DOWNGRADE: the honest deployed noteSpend must verify");
+
+        // THE FORGE (the wide-bracket double-spend): assemble the honest tables, then flip the lowest
+        // upper-bracket direction bit so the two opened bracket leaves are NON-ADJACENT
+        // (`hi_pos − lo_pos ≠ 1`) — the wide bracket a commitment-knower invents to fake freshness of
+        // an already-spent nullifier. The deployed descriptor's `MapAbsent` adjacency constraint must
+        // refuse: there is no satisfying assignment that keeps both leaves authentic under the root
+        // while making their positions non-consecutive.
+        let mut traces = build_traces(
+            &desc,
+            &layout,
+            presence,
+            &chip_laned,
+            &mem_boundary,
+            &map_heaps,
+            &UMemBoundaryWitness::default(),
+            true,
+        )
+        .expect("honest deployed noteSpend tables assemble");
+        let ma = traces
+            .map_absent
+            .as_mut()
+            .expect("deployed noteSpend descriptor commits a map-absent table");
+        let cur = ma[0][MA_HI_DIR0].as_u32();
+        ma[0][MA_HI_DIR0] = BabyBear::new(cur ^ 1);
+
+        let airs = instance_airs(&desc, layout, presence);
+        let mut matrices = vec![to_matrix(&traces.main)];
+        for t in [
+            &traces.chip,
+            &traces.byte,
+            &traces.memory,
+            &traces.boundary,
+            &traces.map_ops,
+            &traces.map_absent,
+            &traces.umemory,
+            &traces.umem_boundary,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            matrices.push(to_matrix(t));
+        }
+        // The PIs ride the FIRST (Main) AIR only — the canonical `prove_vm_descriptor2_inner`
+        // assembly (`pvs = vec![pis]` then resized to the air count).
+        let pis: Vec<P3BabyBear> = dpis.iter().map(|&v| to_p3(v)).collect();
+        let mut pvs: Vec<Vec<P3BabyBear>> = vec![pis];
+        pvs.resize(airs.len(), vec![]);
+        let config = ir2_config();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
+                .iter()
+                .zip(matrices.iter())
+                .zip(pvs.iter())
+                .map(|((air, trace), pv)| StarkInstance {
+                    air,
+                    trace,
+                    public_values: pv.clone(),
+                })
+                .collect();
+            let prover_data = ProverData::from_instances(&config, &instances);
+            let proof = prove_batch(&config, &instances, &prover_data);
+            verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
+        }));
+        match r {
+            Err(_) => {} // the debug prover panicked on the violated adjacency teeth
+            Ok(res) => assert!(
+                res.is_err(),
+                "DEPLOYED noteSpend accepted a NON-ADJACENT wide-bracket non-membership witness — \
+                 the light-client double-spend forgery is OPEN on the deployed descriptor"
+            ),
+        }
+        eprintln!(
+            "DEPLOYED noteSpend D1-WIRE: honest spend proves+verifies; a NON-ADJACENT wide-bracket \
+             forged freshness witness is UNSAT through the deployed noteSpendVmDescriptor2R24 \
+             MapAbsent adjacency tooth — the light-client double-spend forgery is CLOSED end-to-end."
+        );
+    }
+
     // ==== THE ROTATION (staged) — the Lean-emitted rotated-state probe ====
     //
     // `Dregg2/Circuit/Emit/EffectVmEmitRotation.lean` emits the rotated state block
