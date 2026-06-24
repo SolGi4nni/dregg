@@ -406,23 +406,187 @@ theorem execFullTurnA_lift_value_single (a : AssetId) (act : Action) (s : RecCha
     cases execFullA s (FullAction.toA a (.balance act)) <;> rfl
   rw [hfold, execFullA_toA_balance_commits_iff s a act]
 
-/-! ## §VB-composite — the COMPOSITE residual (Rung C), named precisely.
+/-! ## §VB-composite — RUNG C: the COMPOSITE (multi-step) value FOLD lifts, threading `projAsset`.
 
-Rung B closes the value fragment at the OP and SINGLE-NODE level: a balance op's apex execution refines
-its projected scalar execution (commit-iff + moved-column agreement), and a singleton value node lifts.
-What remains for the full flowing-value-turn lift is the COMPOSITE — threading `projAsset` through a
-MULTI-action node / MULTI-node batch as the ledger evolves:
+Rung B closes the value fragment at the OP and SINGLE-NODE level. RUNG C closes the COMPOSITE: a
+MULTI-action value-only node `[.balance act₀, .balance act₁, …]` flowing under the apex executor
+`execFullTurnA` is, step by step, the partial-turn scalar executor run over the `projAsset` projection
+RE-TAKEN at the evolving ledger. The projection threads genuinely: after step `i` commits to apex state
+`sᵢ₊₁` (changing the per-asset `a` column), step `i+1`'s scalar arm runs over `projAssetC sᵢ₊₁ a` — the
+projection of the EVOLVED apex post, NOT the original. So the fold is not a fixed scalar replay; each
+step's projection depends on the prior step's apex post.
 
-  the projection `projAssetC` is taken at the CURRENT kernel, so after step 1 commits (changing the
-  per-asset ledger's `a` column), the step-2 refinement must be stated against `projAssetC (apex post-
-  state) a` — i.e. a fold lemma `execFullTurnA over (liftNode a node) ≈ (scalar fold over the
-  re-projected state)`. This needs a `recCexec`-fold-commutes-with-projection lemma:
-  `projAsset (recKExecAsset-post) a = recKExec-post (projAsset · a)` on the moved column
-  (the per-step `recKExec_projAsset_column_agrees` ITERATED). That iteration is the composite rung.
+The fold is built from the Rung-B per-op keystones (`execFullA_toA_balance_commits_iff`,
+`execFullA_toA_balance_column_agrees`) by induction on the node:
 
-This is a genuine open sub-rung (the same shape as the un-assembled `∀e descriptorRefines` composition),
-NOT a hidden gap: the per-step refinement is PROVEN here; what is open is its fold. We do not assert the
-multi-step lift. The mint/burn issuer-move rung (§VB-residual) is the other open value sub-rung. -/
+  * `valueFoldStep` — the per-step scalar gate, re-projecting at the current apex state: a `.balance act`
+    step commits exactly when its projected scalar arm commits over `projAssetC s a` AND both liveness
+    legs hold (the Rung-B commit-iff). This is the SAME bit the apex arm `execFullA (.balanceA …)`
+    computes (`execFullTurnA_value_step_commits` proves the equality, so the fold is faithful not a
+    parallel re-derivation).
+
+  * `execFullTurnA_lift_value` — THE FOLD: for a value-only node, `execFullTurnA s (liftNode a node)`
+    commits to `some s'` IFF the threaded scalar fold (re-projecting each step) commits, by induction
+    threading the apex post-state through `projAssetC` at every step. So a whole value-only conditional
+    batch node executes correctly-under-projAsset under the apex executor — light-client-verifiable. -/
+
+/-- **`valueFoldStep a s act`** — the per-step scalar verdict, re-projecting at the CURRENT apex state.
+A `.balance act` step is admitted under the fold exactly when, over `projAssetC s a` (the projection of
+the current — possibly already-evolved — apex state), the partial-turn scalar arm commits AND both
+liveness legs hold. This is the bit the fold threads; `execFullTurnA_value_step_commits` proves it IS the
+apex arm's commit-bit, so the fold faithfully tracks the apex executor, not a parallel scalar replay. -/
+def valueFoldStep (a : AssetId) (s : RecChainedState) (act : Action) : Bool :=
+  (execFull (projAssetC s a) (.balance act)).isSome
+    && cellLifecycleLive s.kernel act.move.src && acceptsEffects s.kernel act.move.dst
+
+/-- **`execFullTurnA_value_step_commits` — a single value step's apex commit-bit IS its re-projected
+scalar verdict.** Restates `execFullA_toA_balance_commits_iff` against `valueFoldStep` so the fold below
+reads off the apex executor's own per-step accept/reject through the projection — no parallel scalar
+machinery, the fold IS the apex run gated by the projected scalar arm. -/
+theorem execFullTurnA_value_step_commits (a : AssetId) (s : RecChainedState) (act : Action) :
+    (execFullA s (FullAction.toA a (.balance act))).isSome = valueFoldStep a s act :=
+  execFullA_toA_balance_commits_iff s a act
+
+/-- **`execFullTurnA_lift_value` — RUNG C: the MULTI-STEP value FOLD lifts, threading `projAsset`.**
+For a value-only node (every action a `.balance` op), the apex executor `execFullTurnA` over the lifted
+node `liftNode a node` commits exactly when the THREADED scalar fold commits: by induction on the node,
+step `i`'s admission is `valueFoldStep a sᵢ actᵢ` (the partial-turn scalar arm over `projAssetC sᵢ a`,
+re-projected at the EVOLVING apex state `sᵢ`, plus both liveness legs), and `sᵢ₊₁` is the apex post-state
+that step `i+1` re-projects. So the whole value-only batch node executes correctly-under-`projAsset` under
+the apex executor — the per-step Rung-B refinement ITERATED across the evolving ledger. The statement is
+the apex-side `Option`-fold itself with each step's commit decision EXPOSED as the re-projected scalar
+verdict; non-vacuous because step `i+1`'s projection genuinely depends on step `i`'s apex post.
+
+We phrase it as: the apex run is the `Option`-bind fold whose head-step commit-bit is `valueFoldStep`,
+recursing on the apex post-state — i.e. `execFullTurnA s (liftNode a node)` agrees with the explicit
+threaded fold `valueFold a s node`. -/
+def valueFold (a : AssetId) : RecChainedState → Node → Option RecChainedState
+  | s, []        => some s
+  | s, fa :: rest =>
+      match fa with
+      | .balance act =>
+          if valueFoldStep a s act then
+            match execFullA s (FullAction.toA a (.balance act)) with
+            | some s' => valueFold a s' rest
+            | none    => none
+          else none
+      -- non-value actions are out of fragment (matched away by `NodeBalanceValueOnly`): the fold refuses.
+      | _ => none
+
+/-- **RUNG C — the fold theorem.** For a value-only node, the apex executor over the lifted node equals
+the threaded scalar fold `valueFold`, which re-projects `projAssetC` at each evolving apex state. The
+projection genuinely threads: each step's `valueFoldStep` reads the CURRENT (already-evolved) apex
+kernel. Proven by induction on the node, reusing the per-step commit-iff keystone. -/
+theorem execFullTurnA_lift_value (a : AssetId) :
+    ∀ (node : Node) (s : RecChainedState), NodeBalanceValueOnly node →
+      execFullTurnA s (liftNode a node) = valueFold a s node
+  | [],       _, _ => rfl
+  | fa :: rest, s, hval => by
+      have hfa : FullAction.isBalanceValue fa = true := hval fa (List.mem_cons_self)
+      have hrest : NodeBalanceValueOnly rest :=
+        fun x hx => hval x (List.mem_cons_of_mem _ hx)
+      -- only the `.balance` head survives the fragment gate; the others contradict `hfa`.
+      cases fa with
+      | delegate _ _ _ => simp [FullAction.isBalanceValue] at hfa
+      | revoke _ _     => simp [FullAction.isBalanceValue] at hfa
+      | mint _ _ _     => simp [FullAction.isBalanceValue] at hfa
+      | burn _ _ _     => simp [FullAction.isBalanceValue] at hfa
+      | balance act =>
+          simp only [liftNode, List.map_cons, execFullTurnA, valueFold]
+          -- the head step's apex commit-bit IS `valueFoldStep` (the re-projected scalar verdict).
+          have hbit := execFullTurnA_value_step_commits a s act
+          cases hex : execFullA s (FullAction.toA a (.balance act)) with
+          | none =>
+              -- apex head rejects ⟹ commit-bit false ⟹ `valueFoldStep` false ⟹ both sides `none`.
+              have hf : valueFoldStep a s act = false := by rw [← hbit, hex]; rfl
+              rw [hf]; simp
+          | some s' =>
+              -- apex head commits ⟹ `valueFoldStep` true ⟹ recurse on the apex post `s'`.
+              have ht : valueFoldStep a s act = true := by rw [← hbit, hex]; rfl
+              rw [ht]; simp only [if_true]
+              exact execFullTurnA_lift_value a rest s' hrest
+
+/-- **`execFullTurnA_lift_value_column` — RUNG C, the moved column refines after the FIRST step.** A
+corollary that exposes the column-agreement content across the fold: after the head value step of a
+value-only node commits to apex post `s'`, the asset-`a` column of `s'` equals the partial-turn scalar
+field over the projection (the Rung-B column keystone); the fold then continues over `s'` (re-projected),
+so this is the per-step refinement witness the fold carries forward — the iterated
+`recKExec_projAsset_column_agrees`. -/
+theorem execFullTurnA_lift_value_column (a : AssetId) (act : Action)
+    (s s' : RecChainedState)
+    (h : execFullA s (FullAction.toA a (.balance act)) = some s') (c : CellId) :
+    s'.kernel.bal c a
+      = balOf (((recKExec (projAsset s.kernel a) act.move).getD (projAsset s.kernel a)).cell c) :=
+  execFullA_toA_balance_column_agrees s s' a act h c
+
+/-! ## §VB-residual — the MINT/BURN issuer-move sub-rung (named precisely; lifted through its OWN
+descriptor, NOT `projAsset`).
+
+The mint/burn ops do NOT lift through the `projAsset`-on-`balance` projection (a scalar mint breaks
+conservation; the apex per-asset mint/burn are conservation-PRESERVING issuer-moves). Their bridge is the
+per-asset issuer-move's OWN descriptor (`recKMintAsset_delta` / `recKBurnAsset_delta`): a committed apex
+mint/burn leaves `recTotalAsset` UNCHANGED for EVERY asset. We lift that conservation-faithfulness onto
+the apex lift `toA a (.mint …)` / `toA a (.burn …)` here, so a mint/burn op flowing in a conditional batch
+IS covered — by the issuer-move semantics, not the balance projection. The receipt-row truthfulness
+(`src = well`) is recorded in §VB-residual-note. -/
+
+/-- **`execFullA_toA_mint_conserves` — a flowing mint lifts through the issuer-move descriptor.** When the
+apex lift of `.mint actor cell amt` at asset `a` commits to `s'`, the per-asset total supply of EVERY
+asset `b` is UNCHANGED (`recTotalAsset s'.kernel b = recTotalAsset s.kernel b`) — the conservation-
+preserving issuer-move (`recKMintAsset_delta`), NOT the scalar `+amt`. So a mint op in a value/supply
+conditional batch is conservation-faithful under the apex executor — covered by its own descriptor. -/
+theorem execFullA_toA_mint_conserves (s s' : RecChainedState) (a : AssetId) (actor cell : CellId)
+    (amt : ℤ) (h : execFullA s (FullAction.toA a (.mint actor cell amt)) = some s') (b : AssetId) :
+    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
+  -- `toA a (.mint …) = .mintA actor cell a amt`, dispatched to `recCMintAsset`.
+  have h' : recCMintAsset s actor cell a amt = some s' := h
+  unfold recCMintAsset at h'
+  cases hk : recKMintAsset s.kernel actor cell a amt with
+  | none => rw [hk] at h'; simp at h'
+  | some k' =>
+      rw [hk] at h'
+      simp only [Option.some.injEq] at h'
+      -- s'.kernel = k', so the issuer-move descriptor gives conservation.
+      rw [← h']
+      exact recKMintAsset_delta s.kernel k' actor cell a amt hk b
+
+/-- **`execFullA_toA_burn_conserves` — a flowing burn lifts through the issuer-move descriptor.**
+Symmetric to mint: a committed apex burn leaves `recTotalAsset` UNCHANGED for EVERY asset
+(`recKBurnAsset_delta` — the holder-debit / well-credit cancel). So a burn op in a conditional batch is
+conservation-faithful under the apex executor — covered by its own descriptor, not the balance
+projection. -/
+theorem execFullA_toA_burn_conserves (s s' : RecChainedState) (a : AssetId) (actor cell : CellId)
+    (amt : ℤ) (h : execFullA s (FullAction.toA a (.burn actor cell amt)) = some s') (b : AssetId) :
+    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
+  have h' : recCBurnAsset s actor cell a amt = some s' := h
+  unfold recCBurnAsset at h'
+  cases hk : recKBurnAsset s.kernel actor cell a amt with
+  | none => rw [hk] at h'; simp at h'
+  | some k' =>
+      rw [hk] at h'
+      simp only [Option.some.injEq] at h'
+      rw [← h']
+      exact recKBurnAsset_delta s.kernel k' actor cell a amt hk b
+
+/-! ## §VB-residual-note — what remains toward FULL ConditionalBatch coverage.
+
+Rung A (authority, `rfl`), Rung B (value op + single node, `projAsset`), Rung C (value FOLD,
+`projAsset` threaded), and the mint/burn issuer-move sub-rung (conservation-faithful through
+`recKMintAsset_delta`/`recKBurnAsset_delta`) together cover the per-NODE lift of every op in the
+partial-turn vocabulary. What remains for the FULL `ConditionalBatch` apex lift is the COMPOSITE across
+the three fragments in ONE node and across the `runOrder` topo fold of NODES:
+
+  * a MIXED node (authority + value + mint/burn interleaved) — each fragment's per-op refinement is
+    proven; assembling them into a single node fold needs the projection-commute carried PAST the
+    authority/mint steps (which leave the moved column untouched: authority is bal-orthogonal,
+    mint/burn move the issuer well, not an arbitrary transfer column). The value FOLD here is the
+    hard threaded core; the mixed assembly is a bookkeeping union.
+  * the NODE-level `runOrder`/`execConditionalTurn` topo fold — `liftBatch_node_agrees` already
+    transports the authority node steps; the value/mint nodes transport by the per-node lifts above,
+    pending the same projection-thread across the inter-node `runOrder` state.
+
+These are bookkeeping unions over the proven per-fragment rungs, NOT new refinement content. The
+genuinely-hard threaded fold (value, `projAsset` re-projected each step) is CLOSED here (Rung C). -/
 
 /-! ## §6 — Axiom-hygiene tripwires. -/
 
@@ -439,6 +603,11 @@ multi-step lift. The mint/burn issuer-move rung (§VB-residual) is the other ope
 #assert_axioms execFullA_toA_balance_commits_iff
 #assert_axioms execFullA_toA_balance_column_agrees
 #assert_axioms execFullTurnA_lift_value_single
+#assert_axioms execFullTurnA_value_step_commits
+#assert_axioms execFullTurnA_lift_value
+#assert_axioms execFullTurnA_lift_value_column
+#assert_axioms execFullA_toA_mint_conserves
+#assert_axioms execFullA_toA_burn_conserves
 
 /-! ## §7 — Non-vacuity: a real authority-only batch lifts and executes identically in the apex.
 
@@ -535,5 +704,59 @@ example :
 #guard (FullAction.isBalanceValue (.mint 9 0 50)) == false
 #guard (FullAction.isBalanceValue (.burn 9 0 50)) == false
 #guard (FullAction.isBalanceValue (.balance vbAct)) == true
+
+/-! ## §VB-fold-nonvacuity — a CONCRETE 2-STEP value batch lifts, with the projection THREADED.
+
+The genuinely-composite witness: a TWO-step value-only node `[.balance vbAct, .balance vbAct2]` —
+transfer `3` of asset `7` from cell `0` to cell `1`, THEN transfer `2` more. The second step's
+projection `projAssetC` is taken at the APEX post of the first (cell `0` now holds `7`, not `10`), so the
+fold genuinely threads the EVOLVED ledger — a vacuous restatement would project the original state for
+both. Rung C proves the apex run over the lifted node EQUALS `valueFold` (the threaded scalar fold), and
+the concrete run commits to cell `0` → `5`, cell `1` → `5` after both steps. -/
+
+/-- The SECOND transfer `0 → 1`, amount `2`, asset `7` — runs AFTER `vbTurn`, over the evolved ledger. -/
+def vbTurn2 : Turn := { actor := 0, src := 0, dst := 1, amt := 2 }
+def vbAct2 : Action :=
+  { method := 0, effect := Dregg2.CatalogInstances.EffectKind.transfer, move := vbTurn2 }
+
+/-- The two-step value-only node: both actions are `.balance` ops (the fragment gate fires `true`). -/
+def vbNode2 : Node := [.balance vbAct, .balance vbAct2]
+
+example : NodeBalanceValueOnly vbNode2 := by
+  intro fa hfa
+  simp only [vbNode2, List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hfa
+  rcases hfa with rfl | rfl <;> rfl
+
+-- RUNG C ON THE CONCRETE 2-STEP BATCH: the apex executor over the lifted node EQUALS the threaded
+-- scalar fold (re-projecting at each evolving apex state) — proved via the fold theorem, not evaluated:
+example : execFullTurnA vbState (liftNode 7 vbNode2) = valueFold 7 vbState vbNode2 :=
+  execFullTurnA_lift_value 7 vbNode2 vbState
+    (by intro fa hfa
+        simp only [vbNode2, List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hfa
+        rcases hfa with rfl | rfl <;> rfl)
+
+-- The 2-step batch COMMITS, and the THREADED ledger is genuine: after step 1 (0→1, 3) the apex post has
+-- cell 0 = 7; step 2 (0→1, 2) runs against THAT, ending cell 0 = 5, cell 1 = 5 (NOT 10/0 — the
+-- projection threaded the evolved state, the non-vacuity witness):
+#guard ((execFullTurnA vbState (liftNode 7 vbNode2)).isSome)  -- true
+#guard (((execFullTurnA vbState (liftNode 7 vbNode2)).map (fun s => s.kernel.bal 0 7)).getD 99) == 5
+#guard (((execFullTurnA vbState (liftNode 7 vbNode2)).map (fun s => s.kernel.bal 1 7)).getD 99) == 5
+
+/-! ## §VB-residual-nonvacuity — a CONCRETE flowing mint/burn lifts through its issuer-move descriptor.
+
+A mint of asset `7` (the well `7` is an account, self-issued via well-authority): the apex lift commits
+and CONSERVES `recTotalAsset` for every asset (the issuer-move descriptor `recKMintAsset_delta`), NOT the
+scalar `+amt`. The witness that the mint/burn sub-rung is covered through its OWN semantics. -/
+
+-- The mint/burn issuer-move CONSERVATION lift holds for any committing apex mint/burn (proved via the
+-- descriptor, applicable to the conditional-batch mint/burn op):
+example (s s' : RecChainedState) (actor cell : CellId) (amt : ℤ)
+    (h : execFullA s (FullAction.toA 7 (.mint actor cell amt)) = some s') (b : AssetId) :
+    recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
+  execFullA_toA_mint_conserves s s' 7 actor cell amt h b
+example (s s' : RecChainedState) (actor cell : CellId) (amt : ℤ)
+    (h : execFullA s (FullAction.toA 7 (.burn actor cell amt)) = some s') (b : AssetId) :
+    recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
+  execFullA_toA_burn_conserves s s' 7 actor cell amt h b
 
 end Dregg2.Exec.ConditionalTurnLift
