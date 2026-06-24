@@ -35,7 +35,7 @@ use crate::views::theme;
 use starbridge_v2::reflect;
 use starbridge_v2::session::{
     demo_identities, open_session_world, provision_system_principal, session_base_dir,
-    DemoIdentity, IdentityKind, LoginManager, LoginOutcome, Session,
+    start_fresh_session_world, DemoIdentity, IdentityKind, LoginManager, LoginOutcome, Session,
 };
 use starbridge_v2::world::{self, World};
 
@@ -54,6 +54,11 @@ pub struct LoginSurface {
     focus: FocusHandle,
     /// The last refusal/error to show under the picker (the in-band "denied").
     message: Option<String>,
+    /// When opening the durable image was UNSALVAGEABLE (recovery itself failed),
+    /// the identity the owner was logging in as — so the surface can offer an
+    /// explicit "start fresh" choice (quarantine the corrupt image, provision a
+    /// new one) instead of dead-ending. `None` in the normal case.
+    fresh_offer: Option<DemoIdentity>,
 }
 
 impl LoginSurface {
@@ -81,6 +86,7 @@ impl LoginSurface {
             identities: demo_identities(),
             focus,
             message: None,
+            fresh_offer: None,
         }
     }
 
@@ -107,25 +113,84 @@ impl LoginSurface {
         // persistence). The session runs over the principal's OWN durable image
         // (`deos-session-<root>.redb`), not the shared boot/demo world: on first
         // login it is provisioned (anchors + system principal, durably mirrored);
-        // on a relaunch `World::open` recovers the exact cell graph + balances +
-        // history. The shared `Rc<RefCell<World>>` the cockpit renders is swapped
-        // to it, so the cockpit renders the resumed image.
+        // on a relaunch `World::open_recovering` recovers the exact cell graph +
+        // balances + history — and RECOVERS a torn/divergent image (truncating the
+        // divergent tail to the last consistent state) rather than refusing it, so
+        // the owner is never stranded. Only a wholly-unsalvageable image errs here,
+        // which we surface as the explicit "start fresh" choice below (never a
+        // dead-end). The shared `Rc<RefCell<World>>` the cockpit renders is swapped
+        // to it, so the cockpit renders the resumed (or recovered) image.
         let base_dir = session_base_dir();
         // The demo / desktop image meters free (matching `World::new`), so the
         // per-user durable image opens under the same zero-cost model (the receipts
         // re-derive bit-identically only under the cost model the image was made
         // with — zero here, the demo desktop's).
         let costs = dregg_turn::ComputronCosts::zero();
-        let (mut user_world, anchors, manager, fresh) =
-            match open_session_world(&base_dir, &principal, costs) {
+        let opened = open_session_world(&base_dir, &principal, costs);
+        let (user_world, anchors, manager, fresh) = match opened {
+            Ok(t) => t,
+            Err(e) => {
+                // Recovery itself was impossible — DO NOT dead-end. Offer the owner
+                // an explicit "start fresh" choice (quarantine the corrupt image,
+                // provision a new one); they can always log in.
+                self.message = Some(format!(
+                    "could not open your durable image: {e}\n\
+                     your last session couldn't be salvaged — start fresh? \
+                     (the corrupt image is kept aside for recovery)"
+                ));
+                self.fresh_offer = Some(identity);
+                cx.notify();
+                return;
+            }
+        };
+        self.fresh_offer = None;
+        self.finish_login(user_world, anchors, manager, fresh, principal, identity, window, cx);
+    }
+
+    /// Start a FRESH durable image for the picked identity after recovery was
+    /// impossible: quarantine the unsalvageable image aside and provision a new
+    /// one, then run the ceremony. The owner is never stranded — recovered when
+    /// possible (the normal `login_as` path), fresh when not (this path).
+    fn start_fresh(&mut self, identity: DemoIdentity, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(principal) = self.manager.authenticate(identity.pubkey, true) else {
+            self.message = Some(format!("authentication failed for {}", identity.name));
+            cx.notify();
+            return;
+        };
+        let base_dir = session_base_dir();
+        let costs = dregg_turn::ComputronCosts::zero();
+        let (user_world, anchors, manager, fresh) =
+            match start_fresh_session_world(&base_dir, &principal, costs) {
                 Ok(t) => t,
                 Err(e) => {
-                    self.message = Some(format!("could not open your durable image: {e}"));
+                    // A fresh provision should not fail; if it does, report honestly
+                    // (the disk/path is unwritable) — still not a silent dead-end.
+                    self.message = Some(format!("could not start a fresh durable image: {e}"));
                     cx.notify();
                     return;
                 }
             };
+        self.fresh_offer = None;
+        self.message = None;
+        self.finish_login(user_world, anchors, manager, fresh, principal, identity, window, cx);
+    }
 
+    /// The shared post-open ceremony: resume/grant the session over the (recovered,
+    /// resumed, or freshly-provisioned) durable world, attach the signing seed,
+    /// swap the shared world, and transition to the cockpit. Reached by both the
+    /// normal `login_as` and the `start_fresh` recovery branch.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_login(
+        &mut self,
+        mut user_world: World,
+        anchors: [dregg_cell::CellId; 3],
+        manager: LoginManager,
+        fresh: bool,
+        principal: starbridge_v2::session::Principal,
+        identity: DemoIdentity,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // LOGIN, RESUMABLE — resume a live durable session if the image carries
         // one (no re-grant), else run the full grant ceremony FROM the per-user
         // system principal and persist the session record. A revoked record does
@@ -160,6 +225,9 @@ impl LoginSurface {
         let seed = if fresh { self.seed.take() } else { None };
         let node_url = self.node_url.clone();
         let identities = self.identities.clone();
+        // The deos image root dir (deterministic) — where logout writes the revoked
+        // session record into the principal's durable image.
+        let base_dir = session_base_dir();
 
         SessionShell::open(
             window, cx, world, anchors, seed, node_url, manager, identities, session, identity,
@@ -263,6 +331,36 @@ impl Render for LoginSurface {
                         .text_xs()
                         .text_color(theme::bad())
                         .child(msg),
+                )
+            })
+            // THE NEVER-DEAD-END CHOICE: when the durable image was unsalvageable
+            // (recovery itself failed), offer an explicit "start fresh" button —
+            // it quarantines the corrupt image aside and provisions a new one, so
+            // the owner can ALWAYS proceed to a session.
+            .when_some(self.fresh_offer.clone(), |el, identity| {
+                let id = identity.clone();
+                el.child(
+                    div()
+                        .id("start-fresh")
+                        .w(px(420.))
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .bg(theme::panel_hi())
+                        .text_xs()
+                        .text_color(theme::warn())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _ev, window, cx| {
+                                this.start_fresh(id.clone(), window, cx);
+                            }),
+                        )
+                        .child(format!(
+                            "start fresh as {} (quarantines the corrupt image)",
+                            identity.name
+                        )),
                 )
             })
     }
@@ -444,6 +542,7 @@ impl SessionShell {
                     identities: demo_identities(),
                     focus,
                     message: Some("logged out — the session cap-tree is dark".into()),
+                    fresh_offer: None,
                 }
             });
             crate::cockpit::root::wrap_root(login, window, cx)

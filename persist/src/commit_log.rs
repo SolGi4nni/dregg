@@ -1008,6 +1008,222 @@ impl PersistentStore {
         Ok(compacted)
     }
 
+    // =========================================================================
+    // Crash recovery: recover-to-last-consistent (never strand a divergent image)
+    // =========================================================================
+
+    /// Find the highest commit ordinal whose reconstructed ledger root matches
+    /// the root that record durably claims, TRUNCATE every divergent record past
+    /// it, and return how many records were dropped (0 ⇒ the image was already
+    /// consistent — a no-op).
+    ///
+    /// # Why this exists
+    ///
+    /// The boot-recovery convergence check (`starbridge-v2::persistence::recover`,
+    /// node `state.rs`) reconstructs `checkpoint ⊕ overlay` and asserts the
+    /// resulting canonical root equals the root the LAST committed turn recorded
+    /// ([`Self::recovered_ledger_root`]). A torn or poisoned write — a process
+    /// killed between the input-turn config write and the commit-record txn, a
+    /// genesis-path mutation recorded over a turn-touched cell, or a second writer
+    /// tearing the same file — leaves the log's tail inconsistent with that
+    /// recorded root, and the check refuses the whole image. That STRANDS the
+    /// owner: a divergent tail makes the entire durable session unopenable.
+    ///
+    /// Recovery is the right answer, not refusal. Each [`CommitRecord`] carries
+    /// its OWN post-state root (`ledger_root`), so the log is self-checking at
+    /// every ordinal: reconstructing `checkpoint ⊕ overlay[..=k]` and comparing to
+    /// `record[k].ledger_root` decides whether the prefix through `k` is internally
+    /// consistent. This walks the live log in ordinal order, tracks the last `k`
+    /// that converges, and TRUNCATES `(k, cursor)` — dropping the divergent tail —
+    /// so the image opens at the last-good state and the convergence check then
+    /// PASSES at the recovered point. The recovery model is unchanged for the
+    /// surviving prefix (`CrashRecovery.recover_eq_replay`): we only discard turns
+    /// whose durable post-state cannot be reproduced, which were never safely
+    /// committed in the first place.
+    ///
+    /// # The canonical-root contract
+    ///
+    /// The per-prefix root MUST be computed with the SAME commitment the records
+    /// were written under ([`crate::canonical_ledger_root`], the `v2` whole-cell
+    /// Merkle), so a reconstructed prefix is compared byte-for-byte against the
+    /// recorded `ledger_root`. The reconstruction is `checkpoint` (the records at
+    /// or below the latest checkpoint height are already folded in) plus the
+    /// last-writer-wins overlay of every record's `touched_cells` applied in
+    /// ordinal order — identical to [`Self::recover`]'s reconstruction, evaluated
+    /// at every step instead of only the head.
+    ///
+    /// # Atomicity
+    ///
+    /// The truncation (remove the doomed records, drop their index entries, reset
+    /// the cursor, re-derive the cell index from survivors) runs in ONE redb
+    /// transaction. A crash mid-truncation leaves the pre-recovery (still
+    /// divergent-but-untouched) store in place, so recovery is itself idempotent
+    /// and crash-safe: re-running it reaches the same last-good point.
+    ///
+    /// Returns the number of divergent records truncated (0 ⇒ already consistent).
+    pub fn recover_to_last_consistent(&self) -> Result<u64> {
+        let floor = self.commit_compacted_floor()?;
+        let cursor = self.commit_cursor()?;
+        if cursor <= floor {
+            // No live records to check (fresh or fully compacted) — nothing to do.
+            return Ok(0);
+        }
+
+        // Reconstruction base: the latest full ledger checkpoint (or empty). The
+        // checkpoint already folds in every record at/below its height; the live
+        // overlay re-asserts post-checkpoint cells last-writer-wins. We walk the
+        // SAME reconstruction `recover` uses, but evaluate the canonical root after
+        // EACH record so we find the last ordinal that converges to its claim.
+        let checkpoint_height = self.latest_ledger_checkpoint_height()?;
+        let mut ledger = match self.load_latest_ledger_checkpoint()? {
+            Some((_, l)) => l,
+            None => dregg_cell::Ledger::new(),
+        };
+
+        // Scan the live log in ordinal order, applying each record's touched cells
+        // and remembering the last ordinal whose running root matches its claim.
+        let mut last_good: Option<u64> = None;
+        {
+            let read_txn = self.db.begin_read()?;
+            let log = read_txn.open_table(tables::COMMIT_LOG)?;
+            for entry in log.range(floor..)? {
+                let entry =
+                    entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+                let ordinal = entry.0.value();
+                let record: CommitRecord = postcard::from_bytes(entry.1.value())?;
+                // Apply this record's touched cells last-writer-wins. A record above
+                // the checkpoint contributes the overlay; one at/below it merely
+                // re-asserts cells the checkpoint already folded in (idempotent —
+                // same id, same post-state). Either way, after applying this record
+                // the ledger is the finalized state as of this turn, so its root is
+                // comparable to the record's recorded `ledger_root`.
+                for cell in &record.touched_cells {
+                    let _ = ledger.remove(&cell.id());
+                    let _ = ledger.insert_cell(cell.clone());
+                }
+                if crate::canonical_ledger_root(&ledger) == record.ledger_root {
+                    last_good = Some(ordinal);
+                }
+            }
+        }
+
+        // The new cursor: one past the last converging ordinal. If NOTHING
+        // converged, the entire live log is divergent — there is no salvageable
+        // last-good point in the records (the caller must start fresh; we do not
+        // silently empty the log here, that is the caller's explicit choice).
+        let Some(last_good) = last_good else {
+            return Err(StoreError::Integrity(
+                "recover_to_last_consistent: NO commit-log prefix reconstructs to its recorded \
+                 root — the image cannot be salvaged to a last-good point (start fresh)"
+                    .to_string(),
+            ));
+        };
+        let new_cursor = last_good + 1;
+        if new_cursor == cursor {
+            // The head already converges — the image is consistent, no tear.
+            return Ok(0);
+        }
+
+        // ── TRUNCATE the divergent tail `(new_cursor, cursor)` in ONE txn ──────
+        let write_txn = self.db.begin_write()?;
+        let truncated;
+        {
+            // Collect doomed records (their index keys) so we can clean the index.
+            struct Doomed {
+                ordinal: u64,
+                receipt_hash: [u8; 32],
+                turn_hash: [u8; 32],
+                hc_key: [u8; 48],
+            }
+            let mut doomed: Vec<Doomed> = Vec::new();
+            {
+                let log = write_txn.open_table(tables::COMMIT_LOG)?;
+                for entry in log.range(new_cursor..)? {
+                    let entry = entry
+                        .map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+                    let ordinal = entry.0.value();
+                    let record: CommitRecord = postcard::from_bytes(entry.1.value())?;
+                    let hc_key = CommitRecord::height_creator_key(
+                        record.height,
+                        &record.creator,
+                        ordinal,
+                    );
+                    doomed.push(Doomed {
+                        ordinal,
+                        receipt_hash: record.receipt_hash,
+                        turn_hash: record.turn_hash,
+                        hc_key,
+                    });
+                }
+            }
+            truncated = doomed.len() as u64;
+
+            // Remove the doomed records + their receipt / turn / (h,c) index entries.
+            {
+                let mut log = write_txn.open_table(tables::COMMIT_LOG)?;
+                let mut idx_receipt = write_txn.open_table(tables::IDX_RECEIPT_BY_HASH)?;
+                let mut idx_turn = write_txn.open_table(tables::IDX_TURN_BY_HASH)?;
+                let mut idx_hc = write_txn.open_table(tables::IDX_TURN_BY_HEIGHT_CREATOR)?;
+                for d in &doomed {
+                    log.remove(d.ordinal)?;
+                    idx_receipt.remove(&d.receipt_hash)?;
+                    idx_turn.remove(&d.turn_hash)?;
+                    idx_hc.remove(d.hc_key.as_slice())?;
+                }
+            }
+
+            // Re-derive the cell-by-id index from the SURVIVING records alone
+            // (last-writer-wins) — a cell whose only/latest writer was truncated
+            // drops to its checkpoint value (handled on the next recover overlay).
+            {
+                let survivors: Vec<CommitRecord> = {
+                    let log = write_txn.open_table(tables::COMMIT_LOG)?;
+                    let mut v = Vec::new();
+                    for entry in log.range(floor..)? {
+                        let entry = entry.map_err(|e: redb::StorageError| {
+                            StoreError::Database(e.to_string())
+                        })?;
+                        v.push(postcard::from_bytes::<CommitRecord>(entry.1.value())?);
+                    }
+                    v
+                };
+                let mut idx_cell = write_txn.open_table(tables::IDX_CELL_BY_ID)?;
+                let keys: Vec<[u8; 32]> = idx_cell
+                    .iter()?
+                    .filter_map(|e| e.ok().map(|e| *e.0.value()))
+                    .collect();
+                for k in keys {
+                    idx_cell.remove(&k)?;
+                }
+                for record in &survivors {
+                    for cell in &record.touched_cells {
+                        let cell_bytes = postcard::to_stdvec(cell)
+                            .map_err(|e| StoreError::Serialization(e.to_string()))?;
+                        idx_cell.insert(&cell.id().0, cell_bytes.as_slice())?;
+                    }
+                }
+            }
+
+            // Reset the durable cursor to the last-good high-water mark. Unlike
+            // compaction (which leaves the cursor as the applied high-water mark),
+            // a truncated turn was NEVER safely applied, so the cursor REGRESSES to
+            // the last-good ordinal + 1 — the recovered applied count.
+            {
+                let mut meta = write_txn.open_table(tables::METADATA)?;
+                meta.insert(tables::META_COMMIT_CURSOR, new_cursor)?;
+            }
+        }
+        write_txn.commit()?;
+        tracing::warn!(
+            cursor,
+            new_cursor,
+            truncated,
+            "recover_to_last_consistent: truncated a divergent commit-log tail to the last \
+             root-converging ordinal (recovered the image instead of refusing it)"
+        );
+        Ok(truncated)
+    }
+
     /// One-time migration: the `(height, creator)` index key gained a trailing
     /// ordinal (40 → 48 bytes) when route-level turns started committing to
     /// the log (several can share a `(height, creator)` pair). A store written
@@ -1848,5 +2064,192 @@ mod tests {
         // height 5 is REFUSED (checkpoint at 3 does not cover it).
         assert_eq!(store.compact_below(5).unwrap(), 0);
         assert_eq!(recovered_root(&store), full);
+    }
+
+    // =========================================================================
+    // recover_to_last_consistent — RECOVER a torn/divergent image, never strand
+    // =========================================================================
+
+    /// Commit `n` turns at ascending heights, each touching a DISTINCT cell, with
+    /// every record's `ledger_root` set to the canonical (v2) root of the
+    /// reconstructed prefix THROUGH that turn — i.e. a genuine, self-consistent
+    /// log where `recover_to_last_consistent` finds the head converging.
+    fn commit_canonical(store: &PersistentStore, n: u64) {
+        let mut ledger = Ledger::new();
+        for k in 0..n {
+            let c = cell(k as u8, 100 + k);
+            let _ = ledger.remove(&c.id());
+            let _ = ledger.insert_cell(c.clone());
+            let mut rec = record(k, k * 10, vec![c]);
+            rec.turn_hash[0] = 0xe0;
+            rec.turn_hash[1] = k as u8;
+            rec.receipt_hash[0] = 0xf0;
+            rec.receipt_hash[1] = k as u8;
+            // The TRUE post-state root the convergence check (and recovery) uses.
+            rec.ledger_root = crate::canonical_ledger_root(&ledger);
+            store.commit_finalized_turn(k, &rec).unwrap();
+        }
+    }
+
+    /// A consistent image is left UNTOUCHED: `recover_to_last_consistent` is a
+    /// no-op (0 truncated) when the head already reconstructs to its recorded
+    /// root, and the convergence check (last record's root == reconstruction)
+    /// holds before and after.
+    #[test]
+    fn recover_is_a_noop_on_a_consistent_image() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        commit_canonical(&store, 5);
+        let cursor_before = store.commit_cursor().unwrap();
+
+        assert_eq!(
+            store.recover_to_last_consistent().unwrap(),
+            0,
+            "a consistent image needs no truncation"
+        );
+        assert_eq!(store.commit_cursor().unwrap(), cursor_before);
+        assert!(store.verify_index_agrees_with_log().unwrap().ok());
+    }
+
+    /// THE STRAND-PREVENTION TOOTH: a TORN write leaves the log's tail
+    /// inconsistent with its recorded root (the old path would refuse the whole
+    /// image and STRAND the owner). `recover_to_last_consistent` finds the last
+    /// root-converging ordinal, TRUNCATES the divergent tail, and the image then
+    /// opens at the last-good state — recovery succeeds where refusal stranded.
+    #[test]
+    fn recover_truncates_a_divergent_tail_to_last_good() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        // Three genuine, self-consistent turns (ordinals 0,1,2).
+        commit_canonical(&store, 3);
+
+        // Model a TORN write: append two more records whose `ledger_root` does
+        // NOT match the reconstruction (a crash mid-write / a poisoned cell left
+        // the recorded root inconsistent with the post-state). They land in the
+        // log (cursor advances), but the head no longer reconstructs to its claim.
+        for k in 3..5u64 {
+            let c = cell(k as u8, 100 + k);
+            let mut bad = record(k, k * 10, vec![c]);
+            bad.turn_hash[0] = 0xe0;
+            bad.turn_hash[1] = k as u8;
+            bad.receipt_hash[0] = 0xf0;
+            bad.receipt_hash[1] = k as u8;
+            // A WRONG root — the tear: the post-state does not match this claim.
+            bad.ledger_root = [0xde; 32];
+            store.commit_finalized_turn(k, &bad).unwrap();
+        }
+        assert_eq!(store.commit_cursor().unwrap(), 5);
+        // Sanity: the head (ordinal 4) does NOT converge — the old check refuses.
+        let head_root = store.recovered_ledger_root().unwrap().unwrap();
+        assert_eq!(head_root, [0xde; 32], "the torn tail recorded a bogus root");
+
+        // RECOVER: truncate the two divergent records, land at the last-good (2).
+        let truncated = store.recover_to_last_consistent().unwrap();
+        assert_eq!(truncated, 2, "the two torn records are dropped");
+        assert_eq!(
+            store.commit_cursor().unwrap(),
+            3,
+            "cursor regresses to last-good + 1"
+        );
+        assert!(store.commit_record_at(3).unwrap().is_none(), "tail dropped");
+        assert!(store.commit_record_at(4).unwrap().is_none(), "tail dropped");
+        assert!(store.commit_record_at(2).unwrap().is_some(), "last-good kept");
+
+        // THE CONVERGENCE CHECK NOW PASSES at the recovered point: the head's
+        // recorded root equals the reconstruction (this is what `recover` asserts).
+        let mut ledger = Ledger::new();
+        for c in store.cell_overlay_since(0).unwrap() {
+            let _ = ledger.remove(&c.id());
+            let _ = ledger.insert_cell(c);
+        }
+        assert_eq!(
+            crate::canonical_ledger_root(&ledger),
+            store.recovered_ledger_root().unwrap().unwrap(),
+            "after recovery the reconstruction MATCHES the head's recorded root \
+             (the integrity check passes — the image opens instead of stranding)"
+        );
+
+        // The index agrees with the truncated log, and the recovered store is
+        // LIVE: it accepts the next turn at the recovered cursor.
+        assert!(store.verify_index_agrees_with_log().unwrap().ok());
+        let c5 = cell(5, 105);
+        let mut next = record(5, 50, vec![c5]);
+        next.turn_hash[0] = 0xe0;
+        next.turn_hash[1] = 9;
+        next.receipt_hash[0] = 0xf0;
+        next.receipt_hash[1] = 9;
+        next.ledger_root = [0x5a; 32];
+        assert_eq!(
+            store.commit_finalized_turn(3, &next).unwrap(),
+            3,
+            "the recovered store accepts the NEXT turn at the recovered cursor"
+        );
+    }
+
+    /// Recovery survives a real reopen (on-disk redb): commit a consistent
+    /// prefix, "crash" with a divergent tail, drop, reopen, `recover_to_last_
+    /// consistent`, and confirm the truncation is durable.
+    #[test]
+    fn recover_truncation_is_durable_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recover.redb");
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            commit_canonical(&store, 3);
+            // Torn tail: one bogus-root record.
+            let c = cell(3, 103);
+            let mut bad = record(3, 30, vec![c]);
+            bad.turn_hash[0] = 0xe0;
+            bad.turn_hash[1] = 3;
+            bad.receipt_hash[0] = 0xf0;
+            bad.receipt_hash[1] = 3;
+            bad.ledger_root = [0xab; 32];
+            store.commit_finalized_turn(3, &bad).unwrap();
+            drop(store);
+        }
+        let store = PersistentStore::open(&path).unwrap();
+        assert_eq!(store.commit_cursor().unwrap(), 4, "torn tail is on disk");
+        assert_eq!(store.recover_to_last_consistent().unwrap(), 1);
+        assert_eq!(store.commit_cursor().unwrap(), 3);
+        drop(store);
+
+        // The truncation persisted: a fresh reopen sees the recovered cursor.
+        let store = PersistentStore::open(&path).unwrap();
+        assert_eq!(store.commit_cursor().unwrap(), 3);
+        assert!(store.commit_record_at(3).unwrap().is_none());
+        assert!(store.verify_index_agrees_with_log().unwrap().ok());
+    }
+
+    /// THE SINGLE-WRITER GUARD (against the OTHER corruption cause — concurrent
+    /// writers): redb holds an exclusive advisory file lock per database file, so
+    /// a SECOND process/handle opening the SAME durable image while the first
+    /// holds it is REJECTED with a store error — it can never tear the file with a
+    /// racing double-write. (This is why login's logout RELEASES the durable
+    /// handle before a re-login reopens it, and why a fork is ephemeral.) A torn
+    /// commit log from two cockpit processes on one image is thus prevented at the
+    /// source: fail (the second open errors), never corrupt.
+    #[test]
+    fn a_second_concurrent_open_is_rejected_not_corrupting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("single-writer.redb");
+
+        // First handle commits a turn and stays OPEN (holding the lock).
+        let first = PersistentStore::open(&path).unwrap();
+        let mut rec = record(0, 0, vec![cell(1, 42)]);
+        rec.turn_hash[0] = 0x11;
+        first.commit_finalized_turn(0, &rec).unwrap();
+
+        // A second open of the SAME file while `first` is alive must be REFUSED —
+        // redb's single-writer lock fails-closed (no tearing double-write).
+        let second = PersistentStore::open(&path);
+        assert!(
+            second.is_err(),
+            "a concurrent open of the same durable image must be rejected (single-writer)"
+        );
+
+        // After the first handle is RELEASED, a reopen succeeds and the committed
+        // turn is intact (the rejection protected, not corrupted, the image).
+        drop(first);
+        let reopened = PersistentStore::open(&path).unwrap();
+        assert_eq!(reopened.commit_cursor().unwrap(), 1);
+        assert!(reopened.commit_record_at(0).unwrap().is_some());
     }
 }

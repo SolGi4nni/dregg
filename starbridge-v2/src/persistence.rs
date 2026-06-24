@@ -238,6 +238,18 @@ impl WorldPersist {
         }
     }
 
+    /// RECOVER a divergent/torn image to its last root-consistent commit ordinal,
+    /// truncating the divergent tail (the [`PersistentStore::recover_to_last_
+    /// consistent`] passthrough). Returns the number of divergent records dropped
+    /// (0 ⇒ the image was already consistent). After this returns `Ok`, a fresh
+    /// [`Self::recover`] converges at the recovered point — so a torn image opens
+    /// at its last-good state instead of being refused (the owner is never
+    /// stranded). Errs only when NO prefix is salvageable (the caller then offers
+    /// "start fresh").
+    pub fn recover_to_last_consistent(&self) -> Result<u64, StoreError> {
+        self.store.recover_to_last_consistent()
+    }
+
     /// The dual-write at `commit_turn` (A.2) — O(change): build the
     /// [`CommitRecord`] from the already-computed `touched` set's post-states +
     /// the canonical post-state root, commit it in ONE redb txn at the current
@@ -475,6 +487,88 @@ mod tests {
         let cells = w.cell_count();
         (treasury, user, root, cells)
         // w dropped here — the redb file persists on disk.
+    }
+
+    /// THE NEVER-STRAND TOOTH (the login front door's core, gpui-free): a durable
+    /// image with a TORN commit-log tail — a record whose recorded `ledger_root`
+    /// does NOT match the reconstruction (a crash mid-write left an inconsistent
+    /// tail) — would make `World::open` REFUSE the whole image (`OpenError::
+    /// Divergent`), STRANDING the owner. `World::open_recovering` instead truncates
+    /// the divergent tail to the last consistent commit and opens at the last-good
+    /// state. Recovery succeeds where the clean open refused.
+    #[test]
+    fn open_recovering_salvages_a_torn_tail_where_plain_open_refuses() {
+        let path = scratch_path();
+        let (treasury, user, good_root, good_cells) = make_durable_image(&path);
+
+        // Inject a TORN tail: open the store directly and append a commit record at
+        // the next ordinal with a BOGUS `ledger_root` (modeling a crash that left a
+        // record inconsistent with the post-state it claims). The image now has a
+        // divergent head, so the convergence check fails.
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            let cursor = store.commit_cursor().unwrap();
+            // Build the bad record off the last good one's coordinates.
+            let last = store.commit_record_at(cursor - 1).unwrap().unwrap();
+            let mut bad = CommitRecord {
+                ordinal: cursor,
+                height: last.height + 1,
+                block_id: [0u8; 32],
+                block_executed_up_to: last.height + 1,
+                turn_hash: [0x7e; 32],
+                creator: last.creator,
+                receipt_hash: [0x7f; 32],
+                ledger_root: [0xde; 32], // WRONG root — the tear.
+                touched_cells: vec![],
+            };
+            bad.touched_cells = vec![]; // no cells → reconstruction unchanged, root mismatches
+            store.commit_finalized_turn(cursor, &bad).unwrap();
+            // store dropped → redb lock released for the reopen below.
+        }
+
+        // A clean open REFUSES the torn image (the strand the owner used to hit).
+        let refused = World::open_with_timestamp(&path, ComputronCosts::zero(), TS);
+        assert!(
+            matches!(refused, Err(OpenError::Divergent { .. })),
+            "a torn tail must make the CLEAN open refuse (the old strand)"
+        );
+
+        // The RECOVERING open salvages it: truncates the torn record, opens at the
+        // last-good state — the owner is NOT stranded.
+        let (recovered, dropped) =
+            World::open_recovering_with_timestamp(&path, ComputronCosts::zero(), TS)
+                .expect("open_recovering must salvage a torn tail, never strand");
+        assert_eq!(dropped, 1, "exactly the one torn record is truncated");
+        assert!(recovered.is_durable());
+        // The recovered image is EXACTLY the last-good state.
+        assert_eq!(
+            canonical_ledger_root(recovered.ledger()),
+            good_root,
+            "recovered image is the last consistent state"
+        );
+        assert_eq!(recovered.cell_count(), good_cells);
+        assert_eq!(
+            recovered.ledger().get(&treasury).unwrap().state.balance(),
+            1_000_000 - 100 - 250 - 50
+        );
+        assert_eq!(
+            recovered.ledger().get(&user).unwrap().state.balance(),
+            5_000 + 100 + 250 + 50
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `open_recovering` on a CLEAN image is identical to a plain open (0 dropped).
+    #[test]
+    fn open_recovering_is_a_noop_on_a_clean_image() {
+        let path = scratch_path();
+        let (_t, _u, root, cells) = make_durable_image(&path);
+        let (w, dropped) = World::open_recovering_with_timestamp(&path, ComputronCosts::zero(), TS)
+            .expect("clean image opens");
+        assert_eq!(dropped, 0, "a clean image truncates nothing");
+        assert_eq!(canonical_ledger_root(w.ledger()), root);
+        assert_eq!(w.cell_count(), cells);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

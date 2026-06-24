@@ -695,7 +695,18 @@ pub fn open_session_world(
 ) -> Result<(World, [CellId; 3], LoginManager, bool), crate::persistence::OpenError> {
     let path = session_world_path(base_dir, principal);
     let _ = std::fs::create_dir_all(base_dir);
-    let mut world = World::open(&path, costs)?;
+    // RECOVER, NEVER STRAND: a torn/divergent durable image (a crash mid-write,
+    // a poisoned cell) is truncated to its last root-consistent ordinal and
+    // reopened at the last-good state, rather than refused — the owner can ALWAYS
+    // log in. Only a wholly-unsalvageable image errs here, which login surfaces as
+    // the explicit "start fresh?" choice (see `start_fresh_session_world`).
+    let (mut world, recovered) = World::open_recovering(&path, costs)?;
+    if recovered > 0 {
+        eprintln!(
+            "[starbridge-v2] open_session_world: recovered a divergent per-user image by \
+             truncating {recovered} torn turn(s) to the last consistent state (login proceeds)"
+        );
+    }
 
     // The deterministic anchor ids — content-addresses of the fixed seeds, the
     // SAME on a fresh provision and on a recovered image.
@@ -735,6 +746,53 @@ pub fn open_session_world(
         );
         Ok((world, anchors, LoginManager::new(system_principal), false))
     }
+}
+
+/// **Start a FRESH per-user session world**, quarantining an unsalvageable
+/// durable image — the last-resort branch of "recover, never strand".
+///
+/// [`open_session_world`] already RECOVERS a torn image (truncates the divergent
+/// tail to the last consistent state). This is for the rarer case where recovery
+/// itself is impossible (NO commit-log prefix reconstructs to its claim — e.g. a
+/// corrupt checkpoint, a damaged store file): the owner chooses to start over.
+/// The corrupt image is RENAMED aside (`<path>.corrupt-<nanos>`) rather than
+/// deleted (the prior session is preserved for forensics / manual salvage), then
+/// a brand-new image is provisioned at the canonical path. The owner is thus
+/// ALWAYS able to log in — recovered when possible, fresh when not.
+///
+/// Returns the same tuple as [`open_session_world`] (`fresh == true` always).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn start_fresh_session_world(
+    base_dir: &std::path::Path,
+    principal: &Principal,
+    costs: dregg_turn::ComputronCosts,
+) -> Result<(World, [CellId; 3], LoginManager, bool), crate::persistence::OpenError> {
+    let path = session_world_path(base_dir, principal);
+    // Quarantine the unsalvageable image aside (keep it for forensics), so the
+    // canonical path is free for a fresh provision. A missing file is fine (the
+    // image may never have existed); a rename failure is non-fatal — the fresh
+    // open below will overwrite/append, and the recovery has already truncated.
+    if path.exists() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let aside = path.with_extension(format!("redb.corrupt-{nanos}"));
+        if let Err(e) = std::fs::rename(&path, &aside) {
+            eprintln!(
+                "[starbridge-v2] start_fresh_session_world: could not quarantine the corrupt \
+                 image ({e}) — proceeding to provision a fresh one over it"
+            );
+        } else {
+            eprintln!(
+                "[starbridge-v2] start_fresh_session_world: the prior durable image was \
+                 unsalvageable; quarantined it aside at {} and provisioned a fresh session",
+                aside.display()
+            );
+        }
+    }
+    // A fresh open of the (now absent) canonical path provisions a brand-new image.
+    open_session_world(base_dir, principal, costs)
 }
 
 /// The fixed seed the per-user session world's system principal is provisioned at

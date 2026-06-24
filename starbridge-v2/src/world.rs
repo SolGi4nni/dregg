@@ -380,6 +380,60 @@ impl World {
         Ok(world)
     }
 
+    /// Open a durable image, RECOVERING a torn/divergent one instead of refusing
+    /// it (the never-strand path — the login front door uses this).
+    ///
+    /// A clean [`World::open`] fails closed with [`OpenError::Divergent`] when the
+    /// reconstructed root does not match the last committed turn's recorded root
+    /// (a crash mid-write, a poisoned cell, a torn tail). Refusing strands the
+    /// owner: a single divergent tail makes the whole durable session unopenable.
+    /// This instead TRUNCATES the divergent tail to the last root-converging
+    /// ordinal ([`WorldPersist::recover_to_last_consistent`]) and reopens at the
+    /// last-good state — the convergence check then passes at the recovered point.
+    ///
+    /// Returns `Ok((world, recovered))` where `recovered` is the number of turns
+    /// dropped to reach consistency (0 ⇒ the image was clean — identical to a
+    /// plain `open`). Errs only when the image is unsalvageable (NO prefix
+    /// reconstructs to its claim), so the caller can offer the explicit
+    /// "start fresh" choice — login is ALWAYS able to proceed (recovered or fresh).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_recovering(
+        path: &std::path::Path,
+        costs: ComputronCosts,
+    ) -> Result<(World, u64), OpenError> {
+        Self::open_recovering_with_timestamp(path, costs, now_unix())
+    }
+
+    /// [`World::open_recovering`] with the wall-clock PINNED (tests / deterministic
+    /// images), mirroring [`World::open_with_timestamp`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_recovering_with_timestamp(
+        path: &std::path::Path,
+        costs: ComputronCosts,
+        timestamp: i64,
+    ) -> Result<(World, u64), OpenError> {
+        match Self::open_with_timestamp(path, costs.clone(), timestamp) {
+            Ok(world) => Ok((world, 0)),
+            Err(OpenError::Divergent { .. }) => {
+                // The image is torn — recover it to its last consistent ordinal,
+                // then reopen. The recovery handle is released before reopen
+                // (redb single-writer per file): open a short-lived store, truncate
+                // the divergent tail, drop it, then `open` the recovered image.
+                let recovered = {
+                    let persist = WorldPersist::open(path)?;
+                    persist.recover_to_last_consistent()?
+                    // `persist` dropped here → the redb lock is released.
+                };
+                // Reopen the recovered image. If it STILL diverges, the tear was
+                // not in the commit-log tail (unsalvageable) — surface it so the
+                // caller offers "start fresh".
+                let world = Self::open_with_timestamp(path, costs, timestamp)?;
+                Ok((world, recovered))
+            }
+            Err(other) => Err(other),
+        }
+    }
+
     /// The path-backed durable World is durable iff this is `true` (it is `false`
     /// for `new`/`with_costs`/`fork`, and flips to `false` if a durable write ever
     /// failed — the loud degrade-to-ephemeral path in `commit_turn`).
