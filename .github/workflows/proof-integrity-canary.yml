@@ -1,0 +1,47 @@
+name: Proof-integrity mutation canary
+
+# The FALSIFIABILITY gate that complements the @[load_bearing] linter (which runs every push in
+# ci.yml's metatheory-no-sorry job). The linter catches a spec becoming a gate-copy or losing its
+# non-vacuity witness (structural). This canary catches the orthogonal regression: a proof that
+# stays GREEN when its implementation is mutated — i.e. a load-bearing proof decaying to decorative.
+# It MUTATES the kernel source + rebuilds the C-c1 keystone modules (several lake builds), so it runs
+# on a daily schedule, not per-push. `scripts/mutation-canary.sh GATE` exits nonzero iff the two
+# HEAD-targeting C-c1 mutations (AUTH-GRAPH-DROP, LEDGER-SPEC-DROP) fail to RED — i.e. the authConnects
+# authority leg or the fullActionInvA value leg of `deployed_system_secure` regressed to decorative.
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # daily, 07:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  mutation-canary:
+    name: C-c1 keystone falsifiability gate
+    runs-on: ubuntu-latest
+    # Same elan + pinned-mathlib setup as ci.yml's metatheory-no-sorry job (the canary needs `lake`).
+    env:
+      MATHLIB_REV: 1c2b90b13009c65b090d95a83c98e248deafb6f1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan (Lean toolchain manager)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            -o elan-init.sh
+          bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # The lakefile's mathlib require is a local path two levels above the repo root; reconstruct it
+      # at the pinned rev and pull the prebuilt .olean cache (don't recompile mathlib).
+      - name: Fetch pinned mathlib4
+        run: |
+          MATHLIB_DIR="$(cd "$GITHUB_WORKSPACE/../.." && pwd)/src/mathlib4"
+          mkdir -p "$MATHLIB_DIR"
+          git clone https://github.com/leanprover-community/mathlib4 "$MATHLIB_DIR"
+          git -C "$MATHLIB_DIR" checkout "$MATHLIB_REV"
+          ( cd "$MATHLIB_DIR" && ~/.elan/bin/lake exe cache get )
+
+      # The gate: BASELINE must be GREEN, then AUTH-GRAPH-DROP + LEDGER-SPEC-DROP must each go RED.
+      # Exits nonzero (failing the job) iff a load-bearing C-c1 proof regressed to decorative.
+      - name: Mutation canary — C-c1 keystones must stay load-bearing
+        run: bash scripts/mutation-canary.sh GATE

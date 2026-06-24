@@ -208,7 +208,50 @@ run_auth_graph() {
   echo ""
 }
 
+# GATE: the CI regression gate (nightly). Builds the C-c1 keystone modules UNMUTATED (baseline must
+# be GREEN), then applies the two HEAD-targeting proof-integrity mutations and requires BOTH to go
+# RED. A should-RED-stays-GREEN means a load-bearing proof (the C-c1 authority leg `authConnects` or
+# the value leg `fullActionInvA`) regressed to decorative — exits nonzero. (The original supply
+# mutations AUTH-DROP/CONSERVATION-BREAK/… target the PRE-Stage-3 burn gate text and need a regex
+# refresh before they can gate on HEAD; the two C-c1 mutations target the current repaired specs.)
+run_gate() {
+  local fail=0
+  echo "=================================================================="
+  echo "MUTATION GATE — C-c1 keystone falsifiability (nightly)"
+  if build_auth_graph "$LOGDIR/gate-base-ag.log" && build_ledger_spec "$LOGDIR/gate-base-ls.log"; then
+    echo "  BASELINE: GREEN ✓ (the C-c1 modules build unmutated)"
+  else
+    echo "  ⛔ BASELINE: RED — a pre-existing break; the gate cannot run. See $LOGDIR/gate-base-*.log"
+    fail=1
+  fi
+  restore
+  mut_auth_graph_drop
+  if build_auth_graph "$LOGDIR/gate-AUTH-GRAPH-DROP.log"; then
+    echo "  ⛔ AUTH-GRAPH-DROP: GREEN — the authConnects authority leg regressed to DECORATIVE"
+    fail=1
+  else
+    echo "  AUTH-GRAPH-DROP: RED ✓ (authConnects authority leg is load-bearing)"
+  fi
+  restore
+  mut_ledger_spec_drop
+  if build_ledger_spec "$LOGDIR/gate-LEDGER-SPEC-DROP.log"; then
+    echo "  ⛔ LEDGER-SPEC-DROP: GREEN — the fullActionInvA value leg regressed to DECORATIVE"
+    fail=1
+  else
+    echo "  LEDGER-SPEC-DROP: RED ✓ (fullActionInvA value leg is load-bearing)"
+  fi
+  restore
+  echo "=================================================================="
+  if [[ $fail -eq 0 ]]; then
+    echo "MUTATION GATE: PASS (C-c1 keystones load-bearing; baseline green)"
+  else
+    echo "MUTATION GATE: FAIL (a load-bearing proof regressed to decorative — see ⛔ above)"
+    exit 1
+  fi
+}
+
 case "${1:-ALL}" in
+  GATE)                run_gate ;;
   BASELINE)            run_one BASELINE            mut_baseline ;;
   AUTH-DROP)           run_one AUTH-DROP           mut_auth_drop ;;
   AUTH-GRAPH-DROP)     run_auth_graph ;;
