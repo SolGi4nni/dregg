@@ -73,12 +73,26 @@ impl HeadlessRender {
     }
 
     /// Run an update against the live `App` (e.g. notify the view to re-render), then
-    /// settle. The immediate-mode view re-reads the model off the live ledger on its
-    /// next render, so a turn fired on the shared applet (outside the view) shows up
-    /// after a `capture` (which refreshes the window).
+    /// settle. The view re-reads the model off the live ledger on its next render, so a
+    /// turn fired on the shared applet (outside the view) shows up after a `capture`
+    /// (which refreshes the window).
     pub fn update<R>(&mut self, f: impl FnOnce(&mut gpui::App) -> R) -> R {
         let r = self.cx.update(f);
         self.cx.run_until_parked();
         r
+    }
+
+    /// Reach a window's ROOT entity to update it (e.g. drive the fine-grained
+    /// `AppletView::on_committed_turn` hook after a turn), then settle. This is how a
+    /// committed turn's touched slots are fed to the renderer's signal registry so ONLY
+    /// the dirty bindings re-read on the next paint.
+    pub fn update_root<V: Render + 'static, R>(
+        &mut self,
+        window: WindowHandle<V>,
+        f: impl FnOnce(&mut V, &mut gpui::Window, &mut gpui::Context<V>) -> R,
+    ) -> anyhow::Result<R> {
+        let r = window.update(&mut self.cx, f)?;
+        self.cx.run_until_parked();
+        Ok(r)
     }
 }

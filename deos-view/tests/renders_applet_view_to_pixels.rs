@@ -157,9 +157,19 @@ fn render_proof_body() {
         "the model advanced 0 -> 1 (the bound value will re-read this)"
     );
 
-    // ── 4. Re-render — the bind re-reads the live ledger → PNG #2 (count = 1) ────────
-    // Immediate-mode: notify the app so the window re-renders; the `bind` node re-reads
-    // slot 0 (now 1) on the next render. `capture` refreshes + bakes the new frame.
+    // ── 4. Re-render — drive the FINE-GRAINED hook → PNG #2 (count = 1) ──────────────
+    // The committed turn touched slot 0. Feed that to the renderer's signal registry via
+    // `on_committed_turn(&[0])`: ONLY the slot-0 binding re-reads the live ledger into its
+    // value cache (the whole tree is NOT re-evaluated). The dirty set is exactly that one
+    // binding. `capture` then refreshes + bakes the new frame (the bind paints the cache).
+    let dirty = hr
+        .update_root(window, |view, _w, _cx| view.on_committed_turn(&[0]))
+        .expect("drive the fine-grained turn hook");
+    assert_eq!(
+        dirty,
+        vec![deos_js::signals::BindingId(0)],
+        "the +1 turn dirtied ONLY the slot-0 binding (fine-grained, not the whole tree)"
+    );
     hr.update(|cx| cx.refresh_windows());
     let frame1 = hr.capture(window.into()).expect("capture frame 1");
     let png1 = out.join("applet-count-1.png");

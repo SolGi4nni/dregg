@@ -12,8 +12,10 @@
 #      real gpui-component widget (vstack→v_flex, button→Button, text→Label, …).
 #   2. Wires handlers: a rendered button's onClick fires the applet's affordance = a
 #      REAL cap-gated verified turn (a `TurnReceipt`); a `bind(()=>s.x)` re-reads the
-#      model off the live ledger after the turn (the signal binding). Invalidation is
-#      immediate-mode for this slice (re-render the view-tree per turn).
+#      model off the live ledger (the signal binding). Invalidation is FINE-GRAINED: the
+#      renderer owns deos-js's `BindingRegistry`, registers each `bind` on its
+#      `(cell, slot)`, and a committed turn re-reads ONLY the invalidated bindings (the
+#      SolidJS-shaped re-render) — first paint fills the value cache immediate-mode.
 #   3. Renders the moldable `present()` faces through the SAME widget vocabulary
 #      (the §7 unification — the inspector and the custom view share widgets).
 #
@@ -42,6 +44,12 @@ deos-js = { path = "../deos-js" }
 # in `Applet::mint`'s signature). Naming it directly lets the render proof construct an
 # applet's affordances; cargo resolves the IDENTICAL instance deos-js already pulls.
 dregg-cell = { path = "../cell" }
+# `dregg-types` — `CellId`, the sovereignty boundary every `bind` reads `(cell, slot)`
+# of. The SAME instance deos-js path-deps (identical `../types`), so the renderer can
+# name the `CellId` it registers in deos-js's signal `BindingRegistry` without inverting
+# the dependency. (deos-js owns the registry; deos-view consumes it — the fine-grained
+# re-render hook.)
+dregg-types = { path = "../types" }
 
 # THE GPUI STACK — the SAME fork rev the cockpit uses (emberian/zed@407a6ff), so
 # cargo resolves ONE gpui instance across this crate + gpui-component. `test-support`
