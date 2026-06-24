@@ -182,7 +182,7 @@ thing the binary runs.
 
 ## Map — navigating the corpus
 
-`Dregg2/` is large (~630 Lean modules). The high-value groups:
+`Dregg2/` is large (~790 Lean modules). The high-value groups:
 
 | Group | What lives there |
 |---|---|
@@ -197,8 +197,7 @@ thing the binary runs.
 | `Metatheory/` | the candidate-independent logic of constructive knowledge + authority (the abstract theory dregg instances) |
 | `AssuranceCase.lean`, `Claims.lean`, `Tactics.lean` | the assurance artifact, the CI net, the axiom-hygiene commands |
 
-The navigation docs (`docs/NAVIGATION.md`, `docs/rebuild/_INDEX.md`, `docs/guides/`) carry the
-fuller where-is-X map.
+The navigation docs (`docs/NAVIGATION.md`, `docs/guides/`) carry the fuller where-is-X map.
 
 ---
 

@@ -1,4 +1,4 @@
-# Transclusion — Xanadu that shipped
+# Transclusion — Ted Nelson's docuverse, made honest on the verified substrate
 
 Ted Nelson's Xanadu named **transclusion**: include a piece of one document inside another
 *by reference*, so the quoted material keeps its identity and its provenance — the same bytes,

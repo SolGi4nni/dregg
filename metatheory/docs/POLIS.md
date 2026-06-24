@@ -8,11 +8,14 @@ Verified where verified, red where red — no charisma filling the gap.
 
 ```
 cd metatheory
-lake build Metatheory.Polis Metatheory.DreggPolis Metatheory.PolisNonConfusion
+lake build Polis.Polis Polis.DreggPolis Polis.PolisNonConfusion
 ```
 
-(Mathlib is cached at `~/src/mathlib4`; ~3174 jobs; exit 0.) CI-covered by the
-`Metatheory.+` glob in `lakefile.toml`.
+(Mathlib is cached at `~/src/mathlib4`; ~3174 jobs; exit 0.) The Polis theory is its own `lean_lib`
+(`name = "Polis"`, `globs = ["Polis.+"]`) and a **CI-enforced `defaultTarget`** in `lakefile.toml`
+(`defaultTargets = ["Dregg2", "Metatheory", "Polis"]`) — it builds on every `lake build`. The
+qualified theorem names are unchanged from when it lived under `Metatheory.*`; only the module path
+moved (`Metatheory.PolisX` → `Polis.PolisX`).
 
 ## Axiom budget
 
@@ -25,7 +28,7 @@ Every keystone is `#assert_axioms` / `#print axioms` within:
 Several depend on **no axioms at all** (`envelope_least_restrictive`,
 `structural_requires_proof`, `disjoint_floors_no_polis`, `dregg_shared_floor_inhabited`).
 
-## Proven (`Metatheory.Polis` · `Metatheory.DreggPolis` · `Metatheory.PolisNonConfusion`)
+## Proven (`Polis.Polis` · `Polis.DreggPolis` · `Polis.PolisNonConfusion`)
 
 | Property | Theorem |
 |---|---|

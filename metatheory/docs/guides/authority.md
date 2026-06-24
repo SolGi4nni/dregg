@@ -4,8 +4,12 @@
 generative cap-graph, caveat chains (macaroons), third-party discharge, credentials/revocation, and
 how the token gates the executor.*
 
-See also: [`../NAVIGATION.md`](../NAVIGATION.md) · [`executor.md`](executor.md) ·
-[`../rebuild/_AUTHORIZATION-COMPLETE.md`](../rebuild/_AUTHORIZATION-COMPLETE.md).
+See also: [`../NAVIGATION.md`](../NAVIGATION.md) · [`executor.md`](executor.md).
+
+> ⚠ **Stale-link note (2026-06-24):** links into `../rebuild/` (e.g. `_AUTHORIZATION-COMPLETE.md`)
+> are **dead** — that stratum was harvested into [`../HARVEST-KEEPERS.md`](../HARVEST-KEEPERS.md) and
+> removed (it lives in git history). The Lean `file:line` pointers below remain valid; line numbers
+> drift between commits, so grep the *theorem name* rather than trusting the `:NNN`.
 
 ---
 
@@ -95,7 +99,7 @@ vision):
 
 ## How the token gates the executor (the inline enforcement)
 
-The whole point of [`_AUTHORIZATION-COMPLETE.md`](../rebuild/_AUTHORIZATION-COMPLETE.md): the token
+The whole point: the token
 **gates EXECUTOR ADMISSION** and every caveat tier/operator is *executed*, not checked out-of-band.
 
 - `Dregg2/Exec/Admission.lean`, `AdmissionWire.lean` — the admission predicate.
@@ -120,5 +124,5 @@ the same gate machinery, applied to agent authority. Rust: `intent/`, `demo-agen
 
 1. `Dregg2/Spec/Guard.lean` — the ONE verify/find seam (`attenuate_narrows`).
 2. `Dregg2/Authority/CaveatChain.lean` — macaroons end to end (the five theorems above).
-3. `Dregg2/Exec/AuthTurn.lean` + `FullForestAuth.lean` — how authority gates a real turn.
-4. [`_AUTHORIZATION-COMPLETE.md`](../rebuild/_AUTHORIZATION-COMPLETE.md) — the model, end to end.
+3. `Dregg2/Exec/AuthTurn.lean` + `FullForestAuth.lean` — how authority gates a real turn (the
+   10-variant `Authorization` lives in `FullForestAuth.lean`).

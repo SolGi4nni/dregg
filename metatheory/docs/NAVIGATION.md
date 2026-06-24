@@ -1,19 +1,26 @@
 # dregg — Navigation Map (where is X?)
 
-The *where-is-X* index for the dregg tree. The repo is large — **~63 Rust workspace crates**
-(repo root) and **hundreds of Lean modules** under `metatheory/Dregg2/`. This file maps each major
-subsystem → its directory, entry-point files, and the key theorems/types, plus how the pieces
+> ⚠ **Stale-link note (2026-06-24):** the `docs/rebuild/` stratum this map links into has been
+> **harvested and removed** (it lives in git history). Its still-wanted content was lifted into
+> [`HARVEST-KEEPERS.md`](HARVEST-KEEPERS.md) (forward-looking ideas + rationale) and
+> [`DISCARD-CANDIDATES.md`](DISCARD-CANDIDATES.md) (what was safe to drop). When a link below points
+> at `rebuild/…` and 404s, look there. The subsystem → file:line table is still good; line numbers
+> drift between commits (the *theorem names* are stable — grep them, don't trust the `:NNN`).
+
+The *where-is-X* index for the dregg tree. The repo is large — **92 Rust workspace crates**
+(repo root, `Cargo.toml`) and **~790 Lean modules** under `metatheory/Dregg2/`. This file maps each
+major subsystem → its directory, entry-point files, and the key theorems/types, plus how the pieces
 connect. Paths are relative to the **repo root** (`…/breadstuffs/`) unless prefixed `metatheory/`.
 
 Companion docs:
 - **[`metatheory/README.md`](../README.md)** — what dregg2 *is* (the layer cake, honest assurance).
-- **[`docs/rebuild/_INDEX.md`](rebuild/_INDEX.md)** — index of every design/ledger doc.
 - **[`docs/guides/`](guides/)** — readable subsystem orientations (executor, circuit, distributed, authority).
 
 The mental model: **dregg = Lean-primary truth** (`metatheory/Dregg2/*` is the source of
 semantics), **dreggrs = Rust heritage** (fast shadows pinned by a Lean model + differential, or
-pure infra). The runtime is mostly Rust; the *source of truth* is the Lean kernel. See
-[`docs/rebuild/_DREGG-DREGGRS-MANIFEST.md`](rebuild/_DREGG-DREGGRS-MANIFEST.md).
+pure infra). The runtime is mostly Rust; the *source of truth* is the Lean kernel. (The dregg/dreggrs
+manifest that recorded the per-crate split was harvested away — the durable summary is at the foot of
+this file under *The Rust crates, at a glance*.)
 
 ---
 
@@ -41,19 +48,22 @@ The verified state-transition machine. dregg's ONE credential-gated turn entry.
 | **Gated turn entry** (the ONE) | `metatheory/Dregg2/Exec/FullForestAuth.lean` | `execFullForestG` / `execFullTurnG` (the credential-gated forest executor); `execFullForestG_unauthorized_fails:949` (gate is sound). |
 | **Record kernel** (verified core) | `metatheory/Dregg2/Exec/RecordKernel.lean` | `recKExec:640` (the per-turn transition); `recKExec_conserves:686`, `recKExec_authorized:703`, `recKExec_unauthorized_fails:712`, `recKExec_frame:721`; multi-asset `recKExecAsset_no_cross_asset_leak:846`. |
 | **Universe-A executor** | `metatheory/Dregg2/Exec/FullForest.lean`, `Exec/EffectsState.lean`, `Exec/Effect*.lean` | `execFullA` + the per-effect `*Spec`s (the richer abstract surface circuit emission projects from). |
-| **Effect catalog** | `metatheory/Dregg2/CatalogEffects.lean`, `Exec/Effect.lean`, `Exec/Handlers/` | The ~56 `CellEffect` constructors + their handlers. |
+| **Effect catalog** | `metatheory/Dregg2/CatalogEffects.lean`, `Exec/Effect.lean`, `Exec/Handlers/` | The 9-constructor conservation-core `CellEffect` (`Effect.lean`) + their handlers; the live wire surface is the **27-variant `EffectTag`** (`Substrate/VerbRegistry.lean`, `effect_tag_count` proves `= 27`). The doomed factory families are deleted (`no_live_factory_tags`), re-landing as `Apps/*Factory.lean`. |
 | **Concrete/efficient kernel** | `metatheory/Dregg2/Exec/ConcreteKernel.lean` | HashMap-backed; the l4v data-refinement that transfers abstract soundness to a fast runtime. |
 | **Step-completeness spine** | `metatheory/Dregg2/Exec/StepComplete.lean`, `Boundary.lean` | `stepComplete_preserves` (the proved coinductive keystone over the `νF` cell). |
 | **CapTP (object-cap transport)** | `metatheory/Dregg2/Exec/CapTP*.lean` | `CapTPHandoffSound.handoff_unforgeable:348`, `CapTPGC.captp_no_premature_reclaim:106` / `captp_gc_by_lease:94`, `CapTPConsentLace.*`. |
-| **FFI exports** | `metatheory/Dregg2/Exec/FFI.lean` | `@[export dregg_exec_full_forest_auth]:3487` (the production entry); the ungated `dregg_exec_handler_turn` export was REMOVED:3831. |
-| **Rust executor (legacy dregg1, in-flight swap)** | `turn/src/`, `cell/src/` | `TurnExecutor::execute`; `turn/src/apply.rs`. Becomes pure-dregg at cutover. |
+| **FFI exports** | `metatheory/Dregg2/Exec/FFI.lean` | `@[export dregg_exec_full_forest_auth]` (the production entry); the ungated `dregg_exec_handler_turn` export was REMOVED (the source carries a REMOVED marker). |
+| **Rust executor (legacy residual, swap is live)** | `turn/src/`, `cell/src/` | `TurnExecutor::execute` (`turn/src/apply.rs`) now serves only the *uncovered* residual; the node already routes the covered set through the Lean producer (`node/src/executor_setup.rs` → `produce_via_lean`). |
 | **The FFI bridge** | `dregg-lean-ffi/src/lib.rs` | `extern "C" fn dregg_exec_full_forest_auth_str:177`; differentials in `state_differential.rs`, `full_turn_differential.rs`. |
 
 ### 2. Circuit emission + descriptor + assurance  → guide: [`guides/circuit.md`](guides/circuit.md)
 
-Verified-by-construction emission of the EffectVM circuit from Lean.
-**Read [`docs/rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md`](rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md)
-first — assurance is NOT uniform** (~12 of ~56 effects are genuine class A; ~40 are class C).
+Verified-by-construction emission of the EffectVM circuit from Lean. The per-effect descriptor
+forces are **proven individually** as a taxonomy of classes (VALUE_FORCED · RECORD-DIGEST ANCHORED ·
+MAP-OP FORCED — each effect's stamp/root/epoch deployed-FORCED at its own rung). What is OPEN is the
+*composition* frontier (turns / turn-sequences, the seams between effects) — read
+[`COMPOSITION-SOUNDNESS-CENSUS.md`](COMPOSITION-SOUNDNESS-CENSUS.md) and
+[`SOUNDNESS-RESIDUAL-CENSUS.md`](SOUNDNESS-RESIDUAL-CENSUS.md) (both source-grounded against HEAD).
 
 | Piece | Location | Entry points / keystones |
 |---|---|---|
@@ -116,7 +126,7 @@ Constructive knowledge: to hold a capability is to exhibit a verifying witness.
 | **Primitives (Layer A)** | `metatheory/Dregg2/Crypto/{Pedersen,Merkle,NonMembership,CommitmentBinding}.lean` | Poseidon2 `compress` / Pedersen `commit`+`commit_hom` (algebraic laws proved); hardness as honest `Prop` carriers. |
 | **Verifier kernel (Layer B)** | `metatheory/Dregg2/Crypto/VerifierKernel.lean` | `verify` = "extracted circuit satisfiable"; `*_verify_sound` derived. |
 | **Predicate kernel (Layer C)** | `metatheory/Dregg2/Crypto/PredicateKernel.lean` (+ `PrivacyKernel.lean`) | per-kind `KindObligation`s wiring `EpistemicDial`. |
-| **Named crypto hyps ledger** | [`docs/rebuild/_CRYPTO-HYPOTHESIS-LEDGER.md`](rebuild/_CRYPTO-HYPOTHESIS-LEDGER.md) | every load-bearing assumption: DISCHARGED vs IRREDUCIBLE PRIMITIVE. |
+| **Named crypto hyps ledger** | `Dregg2/CryptoKernel.lean` + [`STARK-FLOOR.md`](STARK-FLOOR.md) | every load-bearing assumption: DISCHARGED vs IRREDUCIBLE PRIMITIVE (each enters as a `Prop` carrier, never an `axiom`). |
 | **Rust** | `commit/`, `hints/` (BLS12-381+KZG), `secrets/` | CR portals + crypto primitives. |
 
 ### 7. Apps (verified userspace)
@@ -125,7 +135,7 @@ Constructive knowledge: to hold a capability is to exhibit a verifying witness.
 |---|---|---|
 | **Gated app templates** | `metatheory/Dregg2/Apps/*Gated.lean` | every app runs on the credential-gated executor (template: `NameserviceGated.lean`). |
 | **Spec layer (RDII loop)** | `metatheory/Dregg2/Protocol/WorkflowGuard.lean` | authorization/ordering/attestation gates as `Spec.Guard` instances. |
-| **What "verified app" means** | [`docs/rebuild/APP-THEOREM-SUITE.md`](rebuild/APP-THEOREM-SUITE.md), `Dregg2/Apps/VERIFICATION-TOOLKIT-GUIDE.md` | |
+| **What "verified app" means** | `Dregg2/Apps/VERIFICATION-TOOLKIT-GUIDE.md` (the `VerificationToolkit.lean` framework — a new app supplies a spec, inherits the five proofs) | |
 | **Rust apps** | `starbridge-apps/*` (nameservice, identity, subscription, governed-namespace, privacy-voting, sealed-auction, …) | clients over the gated kernel. |
 
 ### 8. Program logic + DSL (making it useful to a developer)
@@ -143,14 +153,14 @@ Constructive knowledge: to hold a capability is to exhibit a verifying witness.
 |---|---|---|
 | **SDK** | `sdk/src/` | `client.rs`, `full_turn_proof.rs`, `committed_turn.rs` (full-turn proof routed through the Lean producer). |
 | **CLI / bots** | `cli/`, `discord-bot/`, `wasm/`, `app-framework/` | clients over the gated kernel. |
-| **Web surfaces** | `site/`, `web/`, `extension/` | explorer / playground / studio (reviews: `docs/rebuild/REVIEW-*.md`). |
+| **Web surfaces** | `site/`, `web/`, `extension/` | explorer / playground / studio (reviews: `docs/docs-old/REVIEW-*.md`). |
 
 ---
 
 ## The Rust crates, at a glance (dregg vs dreggrs)
 
-Full classification + LOC: [`docs/rebuild/_SILVER-COVERAGE-LEDGER.md`](rebuild/_SILVER-COVERAGE-LEDGER.md)
-and [`_DREGG-DREGGRS-MANIFEST.md`](rebuild/_DREGG-DREGGRS-MANIFEST.md).
+Full classification + LOC lived in the (now-harvested) `rebuild/` stratum; the dregg-vs-dreggrs split
+below is the durable summary. The 92 workspace members are listed in the repo-root `Cargo.toml`.
 
 - **dregg (Lean-truth / bridge / client):** `dregg-lean-ffi`, `node`, `sdk`, `intent`, `verifier`,
   `circuit`, `wire`, `cli`, `discord-bot`, `wasm`, `app-framework`, `demo*`, `starbridge-apps/*`,
@@ -171,11 +181,10 @@ workspace (`Cargo.toml` `exclude`).
 
 | Looking for… | Go to |
 |---|---|
-| The single verified turn entry | `Dregg2/Exec/FullForestAuth.lean` → `execFullForestG`; FFI `@[export dregg_exec_full_forest_auth]` in `Exec/FFI.lean:3487`. |
-| Whether the circuit really verifies effect X | [`docs/rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md`](rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md) — the per-effect class (A/B/C/D) ledger. |
+| The single verified turn entry | `Dregg2/Exec/FullForestAuth.lean` → `execFullForestG`; FFI `@[export dregg_exec_full_forest_auth]` in `Exec/FFI.lean`. |
+| Whether the circuit really verifies effect X | the per-effect welds under `Dregg2/Circuit/Argus/Effects/` + emitters `Dregg2/Circuit/Emit/EffectVmEmit*.lean`; the composition frontier in [`COMPOSITION-SOUNDNESS-CENSUS.md`](COMPOSITION-SOUNDNESS-CENSUS.md). |
 | How finality works | `Dregg2/Distributed/BlocklaceFinality.lean` + [`guides/distributed.md`](guides/distributed.md). |
-| The crypto trust assumptions | [`docs/rebuild/_CRYPTO-HYPOTHESIS-LEDGER.md`](rebuild/_CRYPTO-HYPOTHESIS-LEDGER.md), `Dregg2/CryptoKernel.lean`. |
-| What's still open / not done | the open-fronts section in [`README.md`](../README.md); `Dregg2/*/CircuitOpenFronts.lean`, `Exec/HandlerOpenFronts.lean`; [`docs/rebuild/_EXECUTOR-COMPLETENESS-GAPMAP.md`](rebuild/_EXECUTOR-COMPLETENESS-GAPMAP.md) (distance from `execFullForestG` to full execution) and [`docs/rebuild/_SWAP-COMPLETE-STATUS.md`](rebuild/_SWAP-COMPLETE-STATUS.md) (the Lean-producer boundary). |
+| The crypto trust assumptions | `Dregg2/CryptoKernel.lean`, [`STARK-FLOOR.md`](STARK-FLOOR.md), [`AXIOM-HYGIENE.md`](AXIOM-HYGIENE.md). |
+| What's still open / not done | the *Honest open items* section in [`README.md`](../README.md); `Dregg2/Circuit/CircuitOpenFronts.lean`, `Exec/HandlerOpenFronts.lean`; the source-grounded [`SOUNDNESS-RESIDUAL-CENSUS.md`](SOUNDNESS-RESIDUAL-CENSUS.md). |
 | The honesty / axiom-clean artifact | `Dregg2/Claims.lean` (`lake env lean Dregg2/Claims.lean`). |
-| Threat model / info-flow | [`docs/rebuild/_THREAT-MODEL.md`](rebuild/_THREAT-MODEL.md). |
-| What a Rust crate is / does | [`docs/rebuild/_SILVER-COVERAGE-LEDGER.md`](rebuild/_SILVER-COVERAGE-LEDGER.md). |
+| What's harvested / what was discarded | [`HARVEST-KEEPERS.md`](HARVEST-KEEPERS.md) (forward ideas + rationale lifted from the removed `rebuild/` stratum), [`DISCARD-CANDIDATES.md`](DISCARD-CANDIDATES.md). |

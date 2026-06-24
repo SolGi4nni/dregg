@@ -3,27 +3,37 @@
 *A newcomer's orientation to how dregg2 turns a verified effect into a STARK-checkable circuit —
 and, crucially, the **honest** per-effect assurance state: the circuit is NOT broadly verified.*
 
-See also: [`../NAVIGATION.md`](../NAVIGATION.md) · [`executor.md`](executor.md) ·
-[`../rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md`](../rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md) (the
-ledger this guide summarizes).
+See also: [`../NAVIGATION.md`](../NAVIGATION.md) · [`executor.md`](executor.md).
+
+> ⚠ **Headline updated (2026-06-24).** The "~12 of ~56 effects class A, ~40 class C" snapshot below
+> was the *2026-06-08 terrain map* and is **superseded**. The per-effect descriptor forces are now
+> **proven individually** as a taxonomy of classes — **VALUE_FORCED** (transfer/burn/mint/bridgeMint/
+> setField/incrementNonce), **RECORD-DIGEST ANCHORED** (setPerms/setVK/cellSeal/Unseal/Destroy/
+> receiptArchive/makeSovereign), **MAP-OP FORCED** (noteSpend/noteCreate/the cap family/spawn/refusal)
+> — each effect's stamp/root/epoch deployed-FORCED at its own rung (both polarities green). What is
+> **OPEN** is the *composition* assembly (the un-assembled `∀ e, descriptorRefines` + ~3 named
+> epoch-stamp residuals + the un-Lean-derived prover fallback), NOT 40 unverified effects. The
+> source-grounded current state lives in [`../COMPOSITION-SOUNDNESS-CENSUS.md`](../COMPOSITION-SOUNDNESS-CENSUS.md)
+> and [`../SOUNDNESS-RESIDUAL-CENSUS.md`](../SOUNDNESS-RESIDUAL-CENSUS.md). The architecture +
+> theorem-name body below is still accurate; the *class tallies* are the stale part. The
+> `rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md` ledger this guide once summarized has been harvested away.
 
 ---
 
-## Read this first: the assurance is uneven
+## Read this first (historical snapshot — see banner): the assurance is uneven
 
-The most important fact, and the one most likely to be mis-stated: **the circuit is not broadly
-class-A verified.** Out of ~56 effects:
+This was the most important fact circa 2026-06-08, and the one most likely to be mis-stated: **the
+circuit is not broadly class-A verified.** Out of the effect set, *at that time*:
 
-- **~12 are genuine class A** — `transfer` (the keystone) + the economic family (mint, burn, the
+- **~12 were genuine class A** — `transfer` (the keystone) + the economic family (mint, burn, the
   escrow/bridge-escrow family).
-- **~40 are class C** — the descriptor binds the *frozen frame* + a balance/nonce leg, **but the
+- **~40 were class C** — the descriptor binds the *frozen frame* + a balance/nonce leg, **but the
   field or side-table that IS the effect is not bound** by the deployed row's commitment.
 - **~2 A−** (one residual each), **~2 D** (unverified).
 
-The per-effect ledger ([`_CIRCUIT-ASSURANCE-PER-EFFECT.md`](../rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md))
-is the authoritative source — it cites every theorem at `file:line` and was finalized 2026-06-08.
 **A completion count is not an assurance count.** When you read "N effects emit a circuit," that says
-nothing about whether the circuit *enforces the effect's real semantics*.
+nothing about whether the circuit *enforces the effect's real semantics* — that discipline still
+holds; only the tally moved (see banner).
 
 ## The architecture, top to bottom
 
@@ -107,9 +117,9 @@ state root** per cell. The node commit path proves every finalized turn under `-
 ## The Rust circuit (and why both exist)
 
 `circuit/src/` holds hand-written Plonky3 AIRs (`effect_vm/*.rs`, `*_air.rs`). These are **kept as
-diversity**, not deleted — the verdict in
-[`_RUST-CIRCUIT-CONSOLIDATION.md`](../rebuild/_RUST-CIRCUIT-CONSOLIDATION.md) is "no blanket delete
-yet." Where a Lean descriptor and a hand-AIR agree, that **differential** (`descriptor_agrees_with_executor*`)
+diversity**, not deleted — the no-use check ran 2026-06-22 and the "no blanket delete yet" verdict
+held (both audit "dead code" findings were false positives). Where a Lean descriptor and a hand-AIR
+agree, that **differential** (`descriptor_agrees_with_executor*`)
 is an *additional cross-check on top of* a from-scratch soundness theorem — never the sole assurance
 (so class B is deliberately empty in the ledger).
 
@@ -138,7 +148,7 @@ Ordered lowest-effort-first in the ledger's GAP LIST:
 
 ## Where to start reading
 
-1. [`_CIRCUIT-ASSURANCE-PER-EFFECT.md`](../rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md) — the ledger.
-2. `Dregg2/Circuit/Emit/EffectVmEmitTransferSound.lean` — the class-A keystone, end to end.
+1. [`../COMPOSITION-SOUNDNESS-CENSUS.md`](../COMPOSITION-SOUNDNESS-CENSUS.md) + [`../SOUNDNESS-RESIDUAL-CENSUS.md`](../SOUNDNESS-RESIDUAL-CENSUS.md) — the source-grounded current assurance frontier.
+2. `Dregg2/Circuit/Emit/EffectVmEmitTransferSound.lean` — the VALUE_FORCED keystone, end to end.
 3. `Dregg2/Circuit/Emit/EffectVmEmitEscrowRoot.lean` — how a side-table root is genuinely recomputed.
 4. `Dregg2/Circuit/StateCommit.lean` — the 13-column anti-ghost commitment.

@@ -45,49 +45,56 @@ Dregg2/Exec/FullForestAuth.lean
   execFullTurnG   : …                                       -- a single gated turn
 ```
 
-The gate is *unavoidable*: `execFullForestG_unauthorized_fails:949` proves an unauthorized turn
-returns `none`. The credential model (`NodeAuth`, `GatedCaveat`, the 10-variant `Authorization`)
-lives alongside; the authority story is in [`authority.md`](authority.md).
+The gate is *unavoidable*: `execFullForestG_unauthorized_fails` (`FullForestAuth.lean`) proves an
+unauthorized turn returns `none`. The credential model (`NodeAuth`, `GatedCaveat`, the 10-variant
+`Authorization`) lives alongside; the authority story is in [`authority.md`](authority.md).
 
 The **FFI export** that the Rust runtime calls is in `Dregg2/Exec/FFI.lean`:
 
 ```
-@[export dregg_exec_full_forest_auth]    -- FFI.lean:3487  (the production entry)
+@[export dregg_exec_full_forest_auth]    -- in FFI.lean  (the production entry)
 ```
 
-The previously-existing *ungated* `dregg_exec_handler_turn` export was **removed** (`FFI.lean:3831`)
-— the symbol is absent so the Rust side cannot call an unfenced path. The Rust bridge calls it via
-`extern "C" fn dregg_exec_full_forest_auth_str` (`dregg-lean-ffi/src/lib.rs:177`).
+The previously-existing *ungated* `dregg_exec_handler_turn` export was **removed** (the source still
+carries a REMOVED marker in `FFI.lean`) — the symbol is absent so the Rust side cannot call an
+unfenced path. The Rust bridge calls it via
+`extern "C" fn dregg_exec_full_forest_auth_str` (`dregg-lean-ffi/src/lib.rs`).
 
 ## How an effect executes — the verified core (`recKExec`)
 
 `Dregg2/Exec/RecordKernel.lean`:
 
 ```
-def recKExec (k : RecordKernelState) (turn : Turn) : Option RecordKernelState := …   -- :640
+def recKExec (k : RecordKernelState) (turn : Turn) : Option RecordKernelState := …
 ```
 
-The load-bearing theorems (all `#assert_axioms`-clean) that make `recKExec` *mean something*:
+The load-bearing theorems (all `#assert_axioms`-clean) that make `recKExec` *mean something*
+(all in `RecordKernel.lean`):
 
-| Theorem | `file:line` | What it guarantees |
-|---|---|---|
-| `recKExec_conserves` | `:686` | total value is preserved (Law 1) |
-| `recKExec_authorized` | `:703` | a successful step was authorized |
-| `recKExec_unauthorized_fails` | `:712` | an unauthorized step returns `none` (fail-closed) |
-| `recKExec_frame` | `:721` | untouched fields are frozen (the frame condition) |
-| `recKExecAsset_no_cross_asset_leak` | `:846` | multi-asset: no value crosses asset boundaries |
+| Theorem | What it guarantees |
+|---|---|
+| `recKExec_conserves` | total value is preserved (Law 1) |
+| `recKExec_authorized` | a successful step was authorized |
+| `recKExec_unauthorized_fails` | an unauthorized step returns `none` (fail-closed) |
+| `recKExec_frame` | untouched fields are frozen (the frame condition) |
+| `recKExecAsset_no_cross_asset_leak` | multi-asset: no value crosses asset boundaries |
 
 The **frame condition** is the crux of "an effect touches what it says it touches and nothing else"
 — it's what makes the per-effect circuit descriptors meaningful (see [`circuit.md`](circuit.md)).
 
-## The ~56 effects
+## The effects — eight verbs, a 27-tag wire enum
 
-The kernel `CellEffect` constructors (`setField`, `transfer`, `mint`, `burn`, `grantCap`,
-`revokeCap`, `emitEvent`, `incrementNonce`, `createCell`, `createEscrow`, `noteSpend`, `seal`,
-swiss-handoff, …) are catalogued in `Dregg2/CatalogEffects.lean`; their handlers are in
-`Dregg2/Exec/Handlers/` and `Exec/Handler.lean`. Each maps many-to-one onto a circuit descriptor
-(`EffectVmEmit*`) — the per-effect circuit-assurance state is the
-[circuit guide](circuit.md) + [`../rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md`](../rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md).
+The kernel signature is **eight survivor verbs** (`Dregg2/Substrate/VerbRegistry.lean`); the live
+wire surface is the **27-variant `EffectTag`** enum (`effect_tag_count` proves `= 27`). The
+conservation-bearing core `CellEffect` (`Dregg2/Exec/Effect.lean`) is a representative 9-constructor
+slice — `setField`, `transfer`, `mint`, `burn`, `grantCap`, `revokeCap`, `emitEvent`,
+`incrementNonce`, `createCell` — whose no-`_`-arm `linearity` match makes a new constructor a
+compile error until it declares its conservation class. The *doomed* families (escrow, bridge-3phase,
+queue, seal/swiss/sturdyref…) are **deleted** from the kernel — `no_live_factory_tags` proves it —
+and re-land as verified factory cell-programs (`Dregg2/Apps/*Factory.lean`), not as live kernel
+constructors. Handlers are in `Dregg2/Exec/Handlers/` and `Exec/Handler.lean`; each effect maps
+many-to-one onto a circuit descriptor (`EffectVmEmit*`) — the per-effect circuit-assurance state is
+the [circuit guide](circuit.md) + the source-grounded [`../COMPOSITION-SOUNDNESS-CENSUS.md`](../COMPOSITION-SOUNDNESS-CENSUS.md).
 
 ## Soundness — the spine
 
@@ -108,22 +115,24 @@ The proof spine that lifts a single-step guarantee to a whole run:
 
 The object-capability transport (`Dregg2/Exec/CapTP*.lean`) is its own verified subsystem:
 
-- `CapTPHandoffSound.handoff_unforgeable:348` — a handoff cannot fabricate authority.
-- `CapTPGC.captp_no_premature_reclaim:106` / `captp_gc_by_lease:94` / `captp_leaked_handle_reclaimed_by_lease:171`
+- `CapTPHandoffSound.handoff_unforgeable` — a handoff cannot fabricate authority.
+- `CapTPGC.captp_no_premature_reclaim` / `captp_gc_by_lease` / `captp_leaked_handle_reclaimed_by_lease`
   — leased GC: live handles aren't reclaimed; leaked ones eventually are.
 - `CapTPConsentLace.*` — consent recorded on the blocklace; equivocation detectable.
 
-## The swap (the in-flight part)
+## The swap (live, partial — not pending)
 
-Today the *running* runtime is the legacy dregg1 Rust executor (`turn/src/apply.rs`,
-`TurnExecutor::execute`). THE SWAP = making the verified Lean executor *be* the runtime. The bridge
-exists (`dregg-lean-ffi`) and a **live differential** (`turn/tests/rust_lean_divergence_finder.rs`,
-output in [`../rebuild/_RUST-LEAN-DIVERGENCE-LEDGER.md`](../rebuild/_RUST-LEAN-DIVERGENCE-LEDGER.md))
-runs both side-by-side. The honest frontier (named in the README): the FFI admission context must be
-host-fed, the success-bit must distinguish a committed body from a fee-only prologue, and the cutover
-itself is a rewrite tracked separately — not a modeling gap. The differential's principle (per
-project memory): pin **kernel-vs-new-Rust**, never against the *buggy* dregg1 oracle (matching a
-buggy oracle launders the bug).
+The node already routes turns through the verified Lean executor as the authoritative state
+**producer**: `node/src/executor_setup.rs` calls `dregg_exec_lean::produce_via_lean`, logging under
+`dregg::lean_shadow::producer`. THE SWAP is the burn-down of the *covered set* — which turn shapes
+route through the Lean producer by default (`producer_covered_effects` / `producer_uncovered_effects`
+in `node/src/api.rs`) — toward total. The legacy `TurnExecutor::execute` (`turn/src/apply.rs`)
+remains for the uncovered residual. The bridge exists (`dregg-lean-ffi`) and a **live differential**
+(`turn/tests/rust_lean_divergence_finder.rs`) runs both side-by-side. The honest frontier (named in
+the README): the FFI admission context must be host-fed, the success-bit must distinguish a committed
+body from a fee-only prologue. The differential's principle (per project memory): pin
+**kernel-vs-new-Rust**, never against the *buggy* dregg1 oracle (matching a buggy oracle launders the
+bug).
 
 ## Where to start reading
 

@@ -3,9 +3,13 @@
 *A newcomer's orientation to dregg's federation — the blocklace, strands (SSB feeds), finality, the
 CRDT lace-merge, cell migration, and how the verified Lean models pin the live Rust consensus engine.*
 
-See also: [`../NAVIGATION.md`](../NAVIGATION.md) ·
-[`../rebuild/_FEDERATION-SSB-DESIGN.md`](../rebuild/_FEDERATION-SSB-DESIGN.md) (the blueprint) ·
-[`../rebuild/_CAPTP-ORIENTATION.md`](../rebuild/_CAPTP-ORIENTATION.md).
+See also: [`../NAVIGATION.md`](../NAVIGATION.md).
+
+> ⚠ **Stale-link note (2026-06-24):** links into `../rebuild/` (e.g. `_FEDERATION-SSB-DESIGN.md`,
+> `_CAPTP-ORIENTATION.md`, `_DREGG-DREGGRS-MANIFEST.md`, `CONSENSUS-GROUNDING.md`) are **dead** — that
+> stratum was harvested into [`../HARVEST-KEEPERS.md`](../HARVEST-KEEPERS.md) and removed (it lives in
+> git history). The Lean `file:line` pointers below remain valid; line numbers drift between commits
+> (`BlocklaceFinality.lean`'s in particular have shifted ~+23), so grep the *theorem name*, not `:NNN`.
 
 ---
 
@@ -22,8 +26,7 @@ degenerate scale-to-zero case, not a defer-excuse.
 The **live consensus engine is Rust** (`blocklace/`, `coord/`, `federation/`, `net/`). It is
 **dreggrs** — heritage Rust kept as a fast executable shadow — and it is now **pinned by an
 executable Lean model + golden differential** (`tau`). The **Lean is the truth**; the Rust is checked
-against it. Almost every theorem below cites the Rust `file:line` it models. See
-[`../rebuild/_DREGG-DREGGRS-MANIFEST.md`](../rebuild/_DREGG-DREGGRS-MANIFEST.md).
+against it. Almost every theorem below cites the Rust `file:line` it models.
 
 ## The core objects (and where they're modeled)
 
@@ -123,8 +126,9 @@ witness. The deeper proofs:
 - `Proof/BFT.lean` + `BFTLiveness.lean`, `Proof/{GST,Synchronizer}.lean` — quorum intersection,
   post-GST liveness (under the honest `World.gst_liveness` oracle law).
 
-Grounding papers: [`../rebuild/CONSENSUS-GROUNDING.md`](../rebuild/CONSENSUS-GROUNDING.md) (Sridhar
-resilience pair + Wong taxonomy).
+Grounding: the Sridhar resilience pair + Wong taxonomy (the prose ledger that recorded this was
+harvested into [`../HARVEST-KEEPERS.md`](../HARVEST-KEEPERS.md)); the proofs live in the
+`Proof/*.lean` modules named above.
 
 ## 9. Crash / checkpoint / catch-up / epoch
 
@@ -150,7 +154,6 @@ causal-ORDER invariant (the lace = the causal DAG) is the dregg-covered part.
 
 ## Where to start reading
 
-1. [`../rebuild/_FEDERATION-SSB-DESIGN.md`](../rebuild/_FEDERATION-SSB-DESIGN.md) — the blueprint.
-2. `Dregg2/Distributed/StrandIntegrity.lean` — the SSB-feed core (small, readable).
+1. `Dregg2/Distributed/StrandIntegrity.lean` — the SSB-feed core (small, readable).
 3. `Dregg2/Distributed/LaceMerge.lean` — the CRDT join (why catch-up converges).
 4. `Dregg2/Distributed/BlocklaceFinality.lean` — finality.
