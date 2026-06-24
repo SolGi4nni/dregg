@@ -11,19 +11,19 @@
 use std::path::Path;
 
 use matrix_sdk::{
+    Client, RoomState,
     authentication::matrix::MatrixSession,
     config::SyncSettings,
     ruma::{
-        api::client::filter::RoomEventFilter,
-        events::room::message::{MessageType, RoomMessageEventContent},
-        events::AnySyncTimelineEvent,
         OwnedRoomId, UserId,
+        api::client::filter::RoomEventFilter,
+        events::AnySyncTimelineEvent,
+        events::room::message::{MessageType, RoomMessageEventContent},
     },
-    Client, RoomState,
 };
 
-use crate::membrane::{MembraneEnvelope, MEMBRANE_EVENT_KEY};
-use crate::{session::StoredSession, Error, Result};
+use crate::membrane::{MEMBRANE_EVENT_KEY, MembraneEnvelope};
+use crate::{Error, Result, session::StoredSession};
 
 /// A native deos Matrix client over `matrix-rust-sdk`.
 pub struct MatrixClient {
@@ -229,10 +229,18 @@ impl MatrixClient {
     /// discipline; same encrypted state + olm crypto, persisted in the browser.
     pub async fn build(server: &str, store_path: &Path, passphrase: &str) -> Result<Self> {
         // The store seam is the one genuinely per-target piece of `build`: native
-        // → SQLite on disk; wasm → IndexedDB in the browser. Everything else (the
-        // homeserver URL vs server-name discovery, the async `build`) is shared.
-        #[cfg(not(target_family = "wasm"))]
+        // + `live-matrix` → SQLite on disk; native default → the in-memory store
+        // (no on-disk SQLite, so no `libsqlite3-sys` `links="sqlite3"` collision
+        // with Zed's `sqlez` in the cockpit graph); wasm → IndexedDB in the
+        // browser. Everything else (URL/server-name discovery, the async `build`)
+        // is shared. (`store_path`/`passphrase` are unused without an on-disk store.)
+        #[cfg(all(not(target_family = "wasm"), feature = "live-matrix"))]
         let builder = Client::builder().sqlite_store(store_path, Some(passphrase));
+        #[cfg(all(not(target_family = "wasm"), not(feature = "live-matrix")))]
+        let builder = {
+            let _ = (store_path, passphrase);
+            Client::builder()
+        };
         #[cfg(target_family = "wasm")]
         let builder =
             Client::builder().indexeddb_store(&store_path.to_string_lossy(), Some(passphrase));
@@ -298,9 +306,9 @@ impl MatrixClient {
         device_id: &str,
     ) -> Result<(Self, StoredSession)> {
         use matrix_sdk::{
-            authentication::{matrix::MatrixSession, SessionTokens},
-            ruma::OwnedDeviceId,
             SessionMeta,
+            authentication::{SessionTokens, matrix::MatrixSession},
+            ruma::OwnedDeviceId,
         };
         let me = Self::build(homeserver_url, store_path, passphrase).await?;
         let session = MatrixSession {

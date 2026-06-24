@@ -48,6 +48,20 @@ gui = [
 # methods here; the ~20-line forwarder ships ready-to-drop in starbridge-v2.
 cockpit-surface = ["gui"]
 
+# `live-matrix` — the ON-DISK, SQLite-persisted Matrix client (a real homeserver
+# login that survives a restart). OFF by default: the default native build uses
+# matrix-sdk's IN-MEMORY state + crypto store (`Client::builder().build()` with no
+# store seam), which is all the cockpit's seeded `MockSource` showcase needs and —
+# critically — pulls NO `matrix-sdk-sqlite` → `libsqlite3-sys`, so it does NOT
+# collide with Zed's `sqlez` `links="sqlite3"` when this crate sits in the
+# starbridge-v2 cockpit graph alongside `deos-zed-full`. Turn this on for a real
+# persisted client (and then do NOT also enable starbridge-v2's `zed-full` in the
+# same binary — the two-`links="sqlite3"` conflict returns, by design, only for
+# that exact combination). `matrix-sdk?/sqlite` re-enables the on-disk store on the
+# already-present native matrix-sdk dep; `client.rs`'s `sqlite_store` call is gated
+# on this feature, falling back to the in-memory builder when it is off.
+live-matrix = ["matrix-sdk/sqlite"]
+
 [dependencies]
 # The official Matrix client-server SDK — protocol + E2E encryption (vodozemac).
 # Default features already give us `e2e-encryption` + `sqlite` (persistent state
@@ -107,8 +121,18 @@ image = { version = "0.25", default-features = false, features = ["png"], option
 # The native build owns its own multi-thread tokio runtime (the MatrixWorker's
 # OS thread + blocking_recv facade), the SQLite-backed client, the CLI surface
 # (clap/rpassword/directories), and the env-filter log subscriber.
+# `default-features = false` DROPS matrix-sdk's default `sqlite` store (and its
+# `matrix-sdk-sqlite` → `libsqlite3-sys` `links="sqlite3"`, which would collide
+# with Zed's `sqlez` in the starbridge-v2 cockpit graph). We re-name the rest of
+# the default set explicitly — `e2e-encryption` (vodozemac olm),
+# `automatic-room-key-forwarding` (matrix-sdk's `default` set is exactly
+# `e2e-encryption` + `automatic-room-key-forwarding` + `sqlite`; TLS rides
+# reqwest's own transitive default, not a matrix-sdk feature) — plus `markdown` +
+# `sso-login`. The state + crypto store falls back to matrix-sdk's IN-MEMORY store
+# (the builder with no store seam). `live-matrix` re-adds `sqlite` for a
+# disk-persisted client.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-matrix-sdk = { version = "0.18", features = ["markdown", "sso-login"] }
+matrix-sdk = { version = "0.18", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "markdown", "sso-login"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }

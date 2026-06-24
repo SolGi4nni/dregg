@@ -8,6 +8,27 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## ⚑ FULL ZED AS THE DEFAULT DEV EDITOR — one root-workspace version conflict left (2026-06-24)
+Named by the feature-collapse + zed-full-default lane (`starbridge-v2/Cargo.toml` feature table;
+`deos-matrix/Cargo.toml` + `deos-matrix/src/client.rs`). The cockpit's Dev editor is still deos-zed's THIN
+integration, not the full Zed (`deos-zed-full`'s `ZedFullPane`, written + ready in
+`starbridge-v2/src/zed_full_pane.rs`). TWO blockers gate making the full Zed the default:
+BLOCKER 1 (`links="sqlite3"` collision: Zed's `sqlez` `libsqlite3-sys 0.30` vs matrix's
+`matrix-sdk-sqlite` `libsqlite3-sys 0.35`) — **RESOLVED**: `deos-matrix` now defaults to matrix-sdk's
+IN-MEMORY store (new `live-matrix` feature re-adds the on-disk `sqlite` store; `client.rs`'s `sqlite_store`
+call is gated on it), so matrix-sdk no longer pulls `matrix-sdk-sqlite` and `sqlez` becomes the sole
+`links="sqlite3"` package. BLOCKER 2 (a root-workspace VERSION conflict) — **STILL OPEN**: `deos-zed-full`
+→ editor → markdown → merman needs `unicode-width ^0.2.2`, but the root workspace's `dregg-tui` → `ratatui
+0.29` pins `unicode-width =0.2.0` (an exact upstream pin inside ratatui). Cargo cannot satisfy both, and
+merely DECLARING the optional `deos-zed-full` dep on the root-member `starbridge-v2` breaks WHOLE-workspace
+resolution even with the feature off — so the `deos-zed-full` dep + `zed-full`/`zed-full-pane`/
+`desktop-zed-full` features are left UNDECLARED (the exact re-add block is in `starbridge-v2/Cargo.toml`).
+CLOSURE (pick cleanest): (a) bump `ratatui` past the `=0.2.0` pin once upstream loosens it (0.29 + 0.28 both
+pin exactly 0.2.0 → needs a newer ratatui line), or (b) move `dregg-tui` (the only ratatui user) out of the
+root workspace into its own, or (c) a `[patch]` that loosens merman's `unicode-width` floor to `0.2.0`. Then
+uncomment the re-add block, fold `zed-full` into `desktop`, retire `desktop-zed-full`, and bake Dev showing
+the full Zed.
+
 ## ✎ "MAKE YOUR FIRST CARD" — repeat entry from Author mode (2026-06-24)
 Named by the onboarding commit (`12d072eff`; `starbridge-v2/src/dock/card_surface.rs::build_first_card_surface`,
 `cockpit/frame.rs::{make_first_card, first_card_view, first_card_invite}`, the `--render-first-card` bake). The
@@ -5480,3 +5501,27 @@ validated by real recursion folds):
 HONEST verdict vs Mina: more than the earlier hedge (the unbounded fold verifies + a Lean soundness proof Mina lacks), LESS
 than the celebration (not the constant-VK perpetual fixed-point — the wrap remains). The soundness induction (RecursiveAggregation
 .lean acc_attests_whole_history, 0 sorry) stands regardless.
+
+### ⚠ OPEN (IVC soundness #1/#6, root-caused 2026-06-24): binding-proof NOT linked in-band to the root proof.
+The whole-chain verifier (`ivc_turn_chain.rs::verify_turn_chain_recursive_from_parts`) checks the carried binding proof
+(tooth 2), the root VK fingerprint (tooth 1), and the root batch proof (tooth 3) INDEPENDENTLY — nothing ties the binding
+proof's claimed `(genesis, final, num_turns, digest)` to the root's ACTUAL folded history. ATTACK (executable witness
+`carried_binding_proof_unlinked_to_root_is_an_open_hole`, --ignored): a genuine root for history A + a genuine binding proof
+for a same-shape history B (+ B's publics) VERIFIES (false claim accepted). Same-shape ⇒ same VK fingerprint, so tooth 1
+cannot distinguish them; the witness HONESTLY asserts `is_ok()` (hole open) and flips to `is_err()` when closed.
+- ROOT CAUSE (source-confirmed, fork + host both read): the ONLY host-readable FRI-bound scalar channel a `BatchStarkProof`
+  exposes is `non_primitives[i].public_values`. The 4 chain publics enter every recursion layer ONLY as the parent verifier
+  circuit's `air_public_targets`, allocated via `circuit.public_input()` (`Op::Public` → the constraint-free `Public` PRIMITIVE
+  table), NOT any non-primitive `public_values`. The grandparent allocates child-public targets solely from each child
+  `non_primitives[].public_values.len()`, so the publics are consumed ONE layer up and VANISH before the root. No NPO table in
+  the fork ever populates `public_values` non-empty (`poseidon2`/`recompose` hardcode `Vec::new()`) → the exposed-public channel
+  is UNBUILT machinery. Host-only fix is PROVABLY impossible (A,B share op-list ⇒ identical preprocessed/VK commitment; their
+  distinguishing trace/FRI commitments are consumed in-circuit, never surfaced).
+- EXACT REMAINING FORK WORK (multi-pass; deliberately NOT landed this pass — destabilizes the shared recursion engine all dregg
+  proofs depend on): in `plonky3-recursion`, (i) add an "exposed-claim" channel — a constrained NPO table whose `public_values`
+  carry the 4 chain claims, OR an "expose-target-as-proof-public" hook wired through `build_verifier_circuit` →
+  `prove_all_tables` → `non_primitives[].public_values` — emitted at the binding-leaf wrap; (ii) re-emit + IN-CIRCUIT-bind those
+  4 values to the verified child at EACH `build_and_prove_aggregation_layer` up to the root; then in the host add tooth (4):
+  `root_exposed_publics == [genesis, final, num_turns, digest]`, fail-closed. THIS PASS: precise root-cause recorded in
+  `ivc_turn_chain.rs` module header + the witness doc; host/fork/lightclient build green; witness still honestly `is_ok()`
+  (open). NO fork change ⇒ no rev bump (fork clean at fc12f233).

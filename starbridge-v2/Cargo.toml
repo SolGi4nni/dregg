@@ -71,13 +71,75 @@ path = "src/bin/dregg_mcp.rs"
 required-features = ["embedded-executor"]
 
 [features]
-# DEFAULT = the master interface: embedded verified executor + gpui window.
-default = ["native-full"]
+# =============================================================================
+# TWO USER-FACING DIALS — `desktop` (the whole cockpit) and `headless` (CI bake).
+# =============================================================================
+# Everything below `desktop`/`headless`/`gpui-web`/`sel4-thin` is an INTERNAL
+# building block (the `#[cfg(feature = …)]` gate vocabulary). A USER never
+# combines them by hand — they pick ONE of:
+#   * `desktop`   (the DEFAULT)  — the full native cockpit, every surface ON.
+#   * `headless`  — the gpui-free / window-free CI + seL4-frame bake path.
+#   * `gpui-web`  — the wasm32 in-browser cockpit (consumed by `starbridge-v2/web`).
+#   * `sel4-thin` — the Lean-free thin HTTP/SSE verifier client.
+# The internal knobs (`gpui-ui`/`dev-surfaces`/`card-pane`/`web-shell`/…) are
+# folded INTO `desktop` and are no longer separate user-facing dials.
 
-# native-full pulls the embedded executor (`embedded-executor`) AND the gpui
-# renderer (`gpui-ui`) AND the LIVE-NODE connection (`live-node`, so the master
-# interface can ALSO connect to a remote node/federation). This is the headline build.
-native-full = ["embedded-executor", "app-registry", "gpui-ui", "live-node", "render-capture", "web-shell", "dev-surfaces", "card-pane"]
+# DEFAULT = the whole desktop: the master interface, every surface ON.
+default = ["desktop"]
+
+# `desktop` — THE ONE DIAL for the full native cockpit. Embedded verified
+# executor + the app registry + the gpui window + the live-node link + every
+# surface: the self-hosting editor/terminal/chat dock (`dev-surfaces` → the FULL
+# Zed via `zed-full`), the agent's hands on the glass (`agent-js`), a card as a
+# live pane (`card-pane`), the real libservo web shell (`web-shell` → `servo`),
+# and the output-buffer capture (`render-capture`, intrinsic — the MCP shot, the
+# seL4 blit, the atlas crawl). This is the headline build; `cargo build` (no
+# flags) gets all of it. The only things OUTSIDE it are deliberately-heavy opt-in
+# lanes (`live-brain` = a Claude subprocess loop; `process-pd` = OS-sandboxed
+# child PDs) and the other-target dials (`gpui-web`/`sel4-thin`).
+desktop = [
+    "embedded-executor",
+    "app-registry",
+    "gpui-ui",
+    "live-node",
+    "render-capture",
+    "dev-surfaces",
+    "web-shell",
+    "agent-js",
+    "card-pane",
+]
+
+# `desktop-zed-full` — the INTENDED default: `desktop` PLUS the full Zed editor
+# surface (`zed-full`). It is split out (rather than folded into `desktop`) ONLY
+# because the `deos-zed-full` dependency — and therefore the `zed-full` feature —
+# is currently UNDECLARED (see `zed-full` below): merely declaring the optional
+# `deos-zed-full` path-dep on this root-workspace member forces a hard
+# root-workspace `unicode-width` unification conflict (Zed's `merman` needs
+# `^0.2.2`; `dregg-tui`'s `ratatui 0.29` pins `=0.2.0`), which breaks resolution
+# for the WHOLE workspace even with the feature off. So `desktop-zed-full` is
+# itself currently UNDECLARED; once blocker 2 clears, declare the `deos-zed-full`
+# dep + the `zed-full`/`zed-full-pane`/`desktop-zed-full` features and fold
+# `zed-full` into `desktop`. (The matrix-side `links="sqlite3"` blocker — blocker
+# 1 — is already RESOLVED; see `deos-matrix/live-matrix`.)
+
+# `headless` — the WINDOW-free build for CI + the seL4 frame bake. The embedded
+# verified executor + the app registry + the gpui cockpit element tree (`gpui-ui`)
+# + the offscreen output-buffer capture (`render-capture`, gpui's `test-support`
+# offscreen wgpu path) — exactly what `--render-cockpit` needs to bake the 800x600
+# RGBA the seL4 deos-image PD blits, with NO window ever opened. It is NOT
+# gpui-FREE (the cockpit IS a gpui element tree — "headless" means no window, the
+# offscreen renderer paints it), but it deliberately DROPS the heavy windowed
+# surfaces: no `dev-surfaces` (deos-zed/terminal/chat), no `card-pane`/`agent-js`/
+# `web-shell` (their multi-GB mozjs + servo). For a build with NO gpui at all, use
+# `--no-default-features --features embedded-executor` (the gpui-free `--lib` lane)
+# or `sel4-thin` (the Lean-free thin client).
+headless = ["embedded-executor", "app-registry", "gpui-ui", "render-capture"]
+
+# BACK-COMPAT ALIASES — existing `--features native-full` / `--features
+# headless-render` invocations + CI lanes still work. `native-full` IS `desktop`
+# now (the rename); `headless-render` IS `desktop` (the old bake alias — the
+# capture path is already in `desktop`). New invocations should say `desktop`.
+native-full = ["desktop"]
 
 # dev-surfaces — mount the real editor + terminal as dock panes (the self-hosting
 # dev loop: edit deos's own repos in deos-zed, run cargo/git in deos-terminal,
@@ -87,15 +149,42 @@ native-full = ["embedded-executor", "app-registry", "gpui-ui", "live-node", "ren
 # turns), not disk — the cockpit editor is firmament-backed by default.
 dev-surfaces = ["dep:deos-zed", "dep:deos-terminal", "dep:deos-hermes", "dep:deos-matrix", "firmament"]
 
-# zed-full-pane — mount the WHOLE Zed `workspace::Workspace` over the cell-ledger
-# as a single cockpit pane — is BLOCKED at the dep-graph level by the
-# `links = "sqlite3"` conflict between `sqlez` (Zed workspace persistence, pulled by
-# deos-zed-full) and `matrix-sdk-sqlite` (already in this cockpit via deos-matrix).
-# See the `deos-zed-full` dependency comment in the `cfg(not(wasm32))` block. The
-# feature + dep are intentionally left UNDECLARED so the default build stays green;
-# the full Workspace runs + bakes its PNG standalone in `deos-zed-full`. To close
-# the seam, reconcile the two `libsqlite3-sys`, then re-add the dep + this feature +
-# `src/zed_full_pane.rs` (the `CockpitSurface` that hosts the `Entity<Workspace>`).
+# zed-full — mount the WHOLE Zed `workspace::Workspace` (the real editor /
+# workspace / project crates + every panel, over a FirmamentFs cell-ledger) as the
+# Dev editor surface (`src/zed_full_pane.rs`'s `ZedFullPane`, a `CockpitSurface`
+# hosting the live `Entity<Workspace>`). Pulls `deos-zed-full` with `full-zed`.
+# Rides `dev-surfaces` (the dock that hosts it). Enable via `desktop-zed-full`.
+#
+# BLOCKER 1 — the `links="sqlite3"` collision — RESOLVED. `deos-matrix` now
+# defaults to matrix-sdk's IN-MEMORY store (its `live-matrix` feature re-adds the
+# on-disk `sqlite` store), so matrix-sdk no longer pulls `matrix-sdk-sqlite` →
+# `libsqlite3-sys 0.35`; Zed's `workspace` → `sqlez` → `libsqlite3-sys 0.30`
+# (bundled) is then the cockpit's only `links="sqlite3"` package and the two-links
+# collision is gone. (A `deos-matrix/live-matrix` deployment must NOT also enable
+# `zed-full` in the same binary — the collision returns for that exact pair.)
+#
+# BLOCKER 2 — a root-workspace VERSION conflict — STILL OPEN (the reason this is
+# NOT yet in the default `desktop`). `deos-zed-full` → `editor` → `markdown` →
+# `mermaid_render` → `merman` requires `unicode-width ^0.2.2`, but the root
+# workspace also holds `dregg-tui` → `ratatui 0.29`, which pins `unicode-width
+# =0.2.0` (an EXACT upstream pin inside ratatui itself). Cargo cannot satisfy both
+# in one workspace. `deos-zed-full` was kept a SEPARATE (root-excluded) workspace
+# for exactly this class of whole-workspace unification; pulling it into a root
+# member surfaces the ratatui pin. The cleanest closes: (a) bump `ratatui` past
+# the `=0.2.0` pin once upstream loosens it (ratatui 0.29 + 0.28 both pin exactly
+# 0.2.0; a newer line is the real fix), or (b) move `dregg-tui` (the only ratatui
+# user) out of the root workspace into its own, or (c) carry a `[patch]` that
+# loosens merman's `unicode-width` floor to `0.2.0`. Tracked in HORIZONLOG.
+#
+# The `zed-full` + `zed-full-pane` features and the `deos-zed-full` dep are
+# therefore LEFT UNDECLARED for now (a declared-but-off optional dep still breaks
+# whole-workspace resolution). To LAND once blocker 2 clears, add back:
+#     zed-full      = ["dev-surfaces", "zed-full-pane"]
+#     zed-full-pane = ["dep:deos-zed-full"]          # the cfg-gate name lib.rs reads
+#     deos-zed-full = { path = "../deos-zed-full", features = ["full-zed"], optional = true }
+# then fold `zed-full` into `desktop` and retire `desktop-zed-full`.
+# `src/zed_full_pane.rs` (the `CockpitSurface` hosting the live `Entity<Workspace>`)
+# is written + ready; it compiles under `--features zed-full-pane` once declared.
 
 # agent-js — THE AGENT'S HANDS ON THE REAL GLASS. Binds the confined agent's
 # `run_js` (deos-js, real SpiderMonkey via mozjs) to the cockpit's LIVE `World`:
@@ -321,13 +410,21 @@ sel4-thin = ["live-node"]
 render-capture = [
     "gpui/test-support",
     "gpui_platform/test-support",
+    # `runtime_shaders` is LOAD-BEARING on macOS even for the OFFSCREEN bake: it
+    # makes gpui_macos compile its Metal shaders AT RUNTIME (via the system Metal
+    # framework) instead of at BUILD time (`xcrun metal`, which needs the offline
+    # Metal Toolchain component). `gpui-ui` already carries it for the windowed
+    # build; render-capture carries it too so the gpui-free `headless` bake lane
+    # (which does NOT enable `gpui-ui`) still builds on a Metal-Toolchain-less host.
+    "gpui_platform/runtime_shaders",
     "dep:gpui_wgpu",
     "gpui_wgpu/test-support",
     "dep:image",
 ]
-# Back-compat alias: existing `--features headless-render` invocations still work,
-# but capture is already in the default build, so you rarely need it.
-headless-render = ["native-full"]
+# Back-compat alias: existing `--features headless-render` invocations still work.
+# It maps to the full `desktop` build (capture is already in `desktop`); for the
+# gpui-free CI bake path use `headless` instead.
+headless-render = ["desktop"]
 
 [dependencies]
 # --- wire contract (always available: remote-node + sel4-thin + wasm paths) --
@@ -429,20 +526,20 @@ gpui-component = { git = "https://github.com/emberian/gpui-component", rev = "b2
 deos-zed = { path = "../deos-zed", default-features = false, features = ["cockpit-surface", "highlight-common"], optional = true }
 deos-terminal = { path = "../deos-terminal", features = ["cockpit-surface"], optional = true }
 # THE WHOLE-WORKSPACE PANE — mounting deos-zed-full (Zed's real
-# `editor`/`workspace`/`project` + all panels over the cell-ledger) as a cockpit
-# pane is BLOCKED by a HARD `links = "sqlite3"` native-library conflict, NOT by
-# gpui (the gpui patch unifies — `cargo metadata --features zed-full-pane`
-# resolves). The collision: deos-zed-full → `workspace` → `sqlez` →
-# `libsqlite3-sys 0.30` (its workspace-state DB) links `sqlite3`, and this cockpit
-# already links `sqlite3` via `deos-matrix` → `matrix-sdk` → `matrix-sdk-sqlite` →
-# `rusqlite 0.37` → `libsqlite3-sys 0.35`. Cargo forbids two packages with the same
-# `links` value in one binary, so even merely DECLARING this optional dep breaks the
-# workspace build (the `web/` member pulls the matrix sqlite path). The full
-# Workspace therefore runs + bakes its PNG STANDALONE in deos-zed-full; the precise
-# mount seam to close = reconcile the two `libsqlite3-sys` (drop `sqlez`'s sqlite
-# from the embedded `workspace` persistence, or share one libsqlite3-sys across both
-# — a real, bounded dep-graph reconciliation, tracked in HORIZONLOG). Until then the
-# dep is intentionally NOT declared here, so the default cockpit build stays green.
+# `editor`/`workspace`/`project` + all panels over the cell-ledger) as the Dev
+# editor surface (`src/zed_full_pane.rs`). Two blockers gate it:
+#   BLOCKER 1 (`links="sqlite3"`) — RESOLVED. `deos-matrix` now defaults to
+#     matrix-sdk's in-memory store (its `live-matrix` feature re-adds the on-disk
+#     `sqlite` store), so matrix-sdk no longer pulls `matrix-sdk-sqlite` →
+#     `libsqlite3-sys`; Zed's `sqlez` becomes the only `links="sqlite3"` package.
+#   BLOCKER 2 (root-workspace `unicode-width` version conflict) — STILL OPEN.
+#     `deos-zed-full` → editor → markdown → merman needs `unicode-width ^0.2.2`;
+#     the root workspace's `dregg-tui` → `ratatui 0.29` pins `=0.2.0` (an exact
+#     upstream pin). Cargo cannot satisfy both, and merely DECLARING this optional
+#     dep (even with the feature off) breaks WHOLE-workspace resolution — so it is
+#     left undeclared. To land: clear blocker 2 (bump ratatui past `=0.2.0`, move
+#     `dregg-tui` out of the root workspace, or `[patch]` merman's unicode-width
+#     floor), then uncomment + wire the `zed-full`/`zed-full-pane` features above.
 # deos-zed-full = { path = "../deos-zed-full", features = ["full-zed"], optional = true }
 # THE AGENT'S HANDS (deos-js) bound to the LIVE cockpit World — `agent-js`. Real
 # SpiderMonkey via mozjs; the `WorldSink` weld in `src/agent_attach.rs` runs the
