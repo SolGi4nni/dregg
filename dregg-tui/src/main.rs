@@ -551,7 +551,7 @@ fn draw(f: &mut Frame, app: &mut App) {
     let status = Line::from(vec![
         dot,
         Span::raw(" "),
-        Span::raw(app.status.clone()),
+        Span::raw(app.status.as_str()),
         Span::styled(help, Style::default().fg(Color::DarkGray)),
     ]);
     f.render_widget(Paragraph::new(status), chunks[2]);

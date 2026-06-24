@@ -151,7 +151,7 @@ impl ReflectedCell {
         let search_text = inspectable
             .fields
             .iter()
-            .map(|f| f.key.clone())
+            .map(|f| f.key.as_str())
             .collect::<Vec<_>>()
             .join(" ");
         Presentation {

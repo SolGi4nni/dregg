@@ -198,12 +198,14 @@ impl OcapGraph {
                 cells: Vec::new(),
             })
             .collect();
+        // `depth` is a BTreeMap keyed by CellId, so iterating it yields cells in
+        // ascending id order; each per-depth bucket is therefore already id-sorted
+        // (the previous per-layer re-sort was redundant).
         let mut by_depth: Vec<Vec<CellId>> = vec![Vec::new(); max_depth + 1];
         for (cell, d) in &depth {
             by_depth[*d].push(*cell);
         }
-        for (d, mut cells) in by_depth.into_iter().enumerate() {
-            cells.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        for (d, cells) in by_depth.into_iter().enumerate() {
             layers[d].cells = cells;
         }
         layers
@@ -239,10 +241,8 @@ impl OcapGraph {
 
     /// The roots: cells with NO inbound edge (the authority sources).
     pub fn source_roots(&self) -> Vec<CellId> {
-        let mut targeted: BTreeSet<CellId> = BTreeSet::new();
-        for e in &self.edges {
-            targeted.insert(e.target);
-        }
+        let targeted: std::collections::HashSet<CellId> =
+            self.edges.iter().map(|e| e.target).collect();
         self.nodes
             .iter()
             .map(|n| n.cell)

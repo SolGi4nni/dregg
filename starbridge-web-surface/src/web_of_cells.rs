@@ -203,9 +203,10 @@ impl OriginChrome {
     /// string). Derived entirely from ledger-read fields — the page contributes
     /// nothing.
     pub fn badge(&self) -> String {
-        let mut hex = String::new();
+        use std::fmt::Write as _;
+        let mut hex = String::with_capacity(8);
         for b in self.cell.0.iter().take(4) {
-            hex.push_str(&format!("{b:02x}"));
+            let _ = write!(hex, "{b:02x}");
         }
         let url = self
             .committed_url

@@ -619,13 +619,13 @@ pub fn rehydrate(
 ///
 /// This is purely a function of `is_attenuation` — the membrane invents no ordering
 /// of its own.
-fn meet_rights(a: &AuthRequired, b: &AuthRequired) -> Option<AuthRequired> {
+fn meet_rights<'a>(a: &'a AuthRequired, b: &'a AuthRequired) -> Option<&'a AuthRequired> {
     if is_attenuation(b, a) {
         // a ⊆ b — a is the narrower (or equal).
-        Some(a.clone())
+        Some(a)
     } else if is_attenuation(a, b) {
         // b ⊆ a — b is the narrower.
-        Some(b.clone())
+        Some(b)
     } else {
         None
     }
@@ -1182,11 +1182,11 @@ mod tests {
         // is_attenuation", or None when incomparable.
         assert_eq!(
             meet_rights(&AuthRequired::Either, &AuthRequired::Signature),
-            Some(AuthRequired::Signature) // Signature ⊆ Either
+            Some(&AuthRequired::Signature) // Signature ⊆ Either
         );
         assert_eq!(
             meet_rights(&AuthRequired::None, &AuthRequired::Either),
-            Some(AuthRequired::Either) // Either ⊆ None
+            Some(&AuthRequired::Either) // Either ⊆ None
         );
         assert_eq!(
             meet_rights(&AuthRequired::Signature, &AuthRequired::Proof),
@@ -1194,7 +1194,7 @@ mod tests {
         );
         // And it agrees with is_attenuation on the result.
         let m = meet_rights(&AuthRequired::Either, &AuthRequired::Signature).unwrap();
-        assert!(is_attenuation(&AuthRequired::Either, &m));
-        assert!(is_attenuation(&AuthRequired::Signature, &m));
+        assert!(is_attenuation(&AuthRequired::Either, m));
+        assert!(is_attenuation(&AuthRequired::Signature, m));
     }
 }

@@ -1427,9 +1427,10 @@ impl AgentPlayer {
             return None;
         }
 
-        // What enemies can the agent SEE (fog applies to the agent too)?
+        // What enemies can the agent SEE (fog applies to the agent too)? A set, so
+        // the per-candidate capture-now membership check below is O(log n), not O(n).
         let view = board.project_for(self.side, Rehydration::Live);
-        let visible_enemies: Vec<Coord> = view.visible_enemies().iter().map(|u| u.at).collect();
+        let visible_enemies: BTreeSet<Coord> = view.visible_enemies().iter().map(|u| u.at).collect();
 
         // A capture that is available RIGHT NOW is taken by every policy (a free kill,
         // especially a decapitation, is always worth it).
@@ -1457,7 +1458,7 @@ impl AgentPlayer {
     fn rank_toward_enemies<'a>(
         &self,
         candidates: &'a [CellAffordance],
-        visible_enemies: &[Coord],
+        visible_enemies: &BTreeSet<Coord>,
     ) -> Option<&'a CellAffordance> {
         if visible_enemies.is_empty() {
             return None;
@@ -1481,7 +1482,7 @@ impl AgentPlayer {
         &self,
         board: &Board,
         candidates: &'a [CellAffordance],
-        visible_enemies: &[Coord],
+        visible_enemies: &BTreeSet<Coord>,
     ) -> Option<&'a CellAffordance> {
         let targets: Vec<Coord> = board
             .objectives

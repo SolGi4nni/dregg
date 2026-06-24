@@ -455,10 +455,19 @@ fn full_source_split(uri: &DreggUri, range: SpanRange, web: &WebOfCells) -> Full
 /// Escape the HTML-special characters so source/document text renders as TEXT (never as
 /// markup) in the columns — the minimal, correct escape for the SSR string output.
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    // Single pass into a pre-sized buffer (was four sequential `.replace` passes,
+    // each allocating a fresh String). Result-identical escaping.
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// **`render_parallel_source_view`** — render the EEL (parallel source view) for a

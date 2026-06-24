@@ -287,9 +287,10 @@ impl MembraneEnvelope {
 }
 
 fn hex8(b: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
     let mut s = String::with_capacity(8);
     for byte in &b[..4] {
-        s.push_str(&format!("{byte:02x}"));
+        let _ = write!(s, "{byte:02x}");
     }
     s
 }
