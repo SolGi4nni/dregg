@@ -499,6 +499,126 @@ fn mode_card_pk(kind: ModeCard, focus: CellId) -> [u8; 32] {
     pk
 }
 
+/// **MAKE YOUR FIRST CARD** — mint a fresh, editable starter card over the cockpit's LIVE
+/// `World`, the substance being the stranger's OWN `home` cell. This is the onboarding
+/// keystone: the path from "I'm in" to "I made a thing." A first-timer clicks one
+/// affordance and THIS builds them a real card that is theirs —
+///
+///   - a friendly title, a LIVE bound count (re-reads their home cell's counter slot off
+///     the ledger), and a `+1` button that fires ONE cap-gated verified turn on a cell they
+///     own (a real receipt on their own tape), and
+///   - an editable view document (a [`CardEditor`] under their `held` authority), so the
+///     two onboarding edit affordances ("add a button", "rename the title") each apply a
+///     **receipted patch with blame** through [`ModeCardSurface::edit_view`] — the card
+///     re-folds + repaints live, and the change is an accountable patch, not a recompile.
+///
+/// The returned [`ModeCardSurface`] is the SAME type the mode cards mount, so the card
+/// inherits `edit_view` / `view_source` / the `CardPane` host for free — the onboarding
+/// card is a first-class live card, not a special case. Its `kind` is borrowed
+/// ([`ModeCard::Objects`]) only to satisfy the surface struct; nothing reads it for the
+/// first card (the view-tree is hand-authored here, never regenerated from the ledger).
+///
+/// `home` is the stranger's own cell (their `user` anchor — "your home") and `held` is the
+/// authority their affordance fires + view-edits mount under (`Signature`, the attenuated
+/// operator hand; it satisfies the card's edit_authority, so the reshape is authorized).
+#[allow(clippy::result_large_err)]
+pub fn build_first_card_surface(
+    id: u64,
+    world: Rc<RefCell<World>>,
+    home: CellId,
+    held: AuthRequired,
+    cx: &mut App,
+) -> Result<ModeCardSurface, String> {
+    // The card's affordance surface over the stranger's home cell: `bump` (Signature —
+    // held, admitted) advances the home cell's counter slot so the `+1` visibly moves the
+    // bound row. The fire commits THROUGH `World::commit_turn` onto the live ledger.
+    let affordances = vec![("bump".to_string(), AuthRequired::Signature)];
+
+    // THE STARTER VIEW — hand-authored (NOT regenerated from the ledger): a welcoming
+    // title, a live `bind` on the home cell's counter slot, and a `+1` button firing `bump`.
+    // This is the card a first-timer is handed; the onboarding edit affordances then grow it.
+    let tree_doc = ViewTree::VStack {
+        children: vec![
+            ViewTree::Text {
+                props: deos_js::card_editor::TextProps {
+                    text: "my first card".into(),
+                },
+            },
+            ViewTree::Text {
+                props: deos_js::card_editor::TextProps {
+                    text: "this card is yours — its +1 fires a real verified turn.".into(),
+                },
+            },
+            ViewTree::Bind {
+                props: deos_js::card_editor::BindProps {
+                    slot: AGENT_COUNTER_SLOT,
+                    label: "count: ".into(),
+                },
+            },
+            ViewTree::Button {
+                props: deos_js::card_editor::ButtonProps {
+                    label: "+1".into(),
+                    on_click: deos_js::card_editor::OnClick {
+                        turn: "bump".into(),
+                        arg: 1,
+                    },
+                },
+            },
+        ],
+    };
+
+    // Attach an applet to the LIVE cockpit World, focused on `home` — the card's substance
+    // is the stranger's REAL cell; a `+1` lands on the ledger their inspector reads.
+    let sink = WorldSinkAdapter::live(world);
+    let attached = attach_agent(sink, home, held.clone(), affordances);
+
+    // Bridge the starter view-tree into the renderer's `ViewNode` through the canonical JSON.
+    let view_json = tree_doc.to_json();
+    let tree: ViewNode = deos_view::parse_view_tree(&view_json)
+        .map_err(|e| format!("first-card view-tree bridge: {e}"))?;
+
+    // Adopt the view as an editable document — the onboarding edit-from-within route. A
+    // distinct provenance pk (the home cell, tagged) so the first card's authoring chain is
+    // its own. `held == edit_authority` so the stranger may reshape their own card; an
+    // unauthorized hand would be refused in-band by the same `is_attenuation` cap tooth.
+    let manifest = AppletManifest {
+        seed_fields: vec![(AGENT_COUNTER_SLOT, 0u64)],
+        affordances: Vec::new(),
+        held: held.clone(),
+        view_source: view_json,
+    };
+    let mut card_pk = [0u8; 32];
+    card_pk.copy_from_slice(home.as_bytes());
+    card_pk[0] ^= 0xF1; // the "first card" provenance tag (distinct from the mode-card pks)
+    let portable = PortableApplet::mint(card_pk, [0u8; 32], &manifest);
+    let editor = CardEditor::adopt(
+        portable,
+        manifest,
+        Author(0xF1),
+        held.clone(),
+        AuthRequired::Signature,
+    );
+
+    // Share the live attached applet so the rendered button + the bind both drive the SAME
+    // sovereign cell on the live ledger.
+    let shared: SharedAttached = Rc::new(RefCell::new(attached));
+
+    let pane_applet = shared.clone();
+    let pane_tree = tree.clone();
+    let entity = cx.new(|_cx| CardPane::new(pane_applet, pane_tree, "my first card"));
+
+    Ok(ModeCardSurface {
+        id: SurfaceId(id),
+        // The first card borrows a kind to satisfy the struct; nothing regenerates its view
+        // from the ledger (the view-tree is hand-authored above + grown by the edit route).
+        kind: ModeCard::Objects,
+        entity,
+        applet: shared,
+        editor: Rc::new(RefCell::new(editor)),
+        focus: home,
+    })
+}
+
 /// A landed card mounted as a cockpit mode's main-pane surface — the [`CardPane`] gpui
 /// entity (rendered over the live World), the shared live applet (so a fire lands on the
 /// operator's real cell), and the editable view document (a [`CardEditor`], the

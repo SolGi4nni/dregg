@@ -71,6 +71,27 @@ Design reference: [`COCKPIT-UX.md`](../deos/COCKPIT-UX.md).
 
 ## Using it
 
+### Make your first card — from "I'm in" to "I made a thing"
+
+The first time you step in, you land on a calm welcome: a few of your own cells,
+and two things to *do*. One ("try this") fires a tiny verified turn so you see the
+world move. The other — **"make your first card →"** — is the shortest path from
+*using* to *making*:
+
+1. **Click it.** A real, editable **card** is minted over your live world — its
+   substance is your own home cell, so it is genuinely *yours*, not a demo.
+2. **Press its `+1`.** That fires **one cap-gated verified turn** on your cell — a
+   real receipt lands on its tape, and the card's live count re-reads and rises.
+3. **Edit it live.** "✎ add a button" and "✎ rename the title" each apply a
+   **receipted patch with blame** — the card re-folds and repaints immediately.
+   The change is an accountable patch, not a recompile; the view is *data*.
+
+That is the whole loop: *a card that is yours → press its button (a real turn) →
+edit it live (a receipted patch) → it re-renders.* No internals needed. When you
+are ready, "explore everything →" reveals the full cockpit; your card stays minted
+on the ledger. From there, **Author** mode is where you keep making and editing
+cards.
+
 ### Click a cell → its faces
 
 Click any cell and it opens to its **faces** — the moldable inspector shows the

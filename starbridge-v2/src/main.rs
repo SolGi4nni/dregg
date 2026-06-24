@@ -161,6 +161,30 @@ fn main() {
         }
     }
 
+    // `--render-first-card <out>`: THE ONBOARDING KEYSTONE — the path from "I'm in" to
+    // "I made a thing." Boots the full cockpit (the SAME chrome a stranger logs into),
+    // drives `make_first_card` (mints a REAL editable card over the live World, its
+    // substance the stranger's own home cell), bakes `<out>.before.png` (the first-card
+    // view, the card live), then drives the onboarding affordances: `first_card_bump`
+    // (the card's +1 = ONE cap-gated verified turn on their cell, a real receipt) and
+    // `first_card_add_button` (a receipted view-patch adding a button), re-renders + bakes
+    // `<out>.after.png`. Asserts a real receipt landed, the new button is in the re-folded
+    // view, and the two frames differ — a stranger genuinely made + fired + edited a card
+    // from the UI flow alone. Default 1100x780 (the full cockpit window).
+    #[cfg(all(feature = "render-capture", feature = "gpui-ui", feature = "card-pane"))]
+    {
+        if let Some(out) = render_first_card_arg(&args) {
+            let (w, h) = render_size_arg(&args).unwrap_or((1100.0, 780.0));
+            match render_first_card_headless(&out, w, h) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("render-first-card FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     // `--render-webshell-live <out>`: THE LIVE WEB-SHELL — open the full cockpit on the
     // WEB-SHELL tab, drive the persistent live `servo::WebView` to load a tall `data:`
     // page (a real cap-gated Servo render in the pane), bake `<out>.before.png`, deliver
@@ -964,6 +988,23 @@ fn render_card_pane_arg(args: &[String]) -> Option<String> {
             return it.next().cloned();
         }
         if let Some(rest) = a.strip_prefix("--render-card-pane=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Parse the `--render-first-card <out>` (or `=<out>`) argument — the output base path
+/// for the MAKE-YOUR-FIRST-CARD onboarding bake (`<out>.before.png` / `<out>.after.png`).
+/// Returns `None` when absent.
+#[cfg(all(feature = "render-capture", feature = "gpui-ui", feature = "card-pane"))]
+fn render_first_card_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--render-first-card" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--render-first-card=") {
             return Some(rest.to_string());
         }
     }
@@ -2153,6 +2194,169 @@ fn render_card_pane_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// **THE ONBOARDING BAKE — make + fire + edit your first card from the UI flow alone.**
+///
+/// The path a NON-ember stranger takes from "I'm in" to "I made a thing", driven exactly
+/// as their clicks would, end-to-end and REAL:
+///   1. Boot the FULL cockpit (the same chrome a stranger logs into) over the live demo
+///      `World`, captured so we hold the inner `Cockpit` entity to drive.
+///   2. `make_first_card` — mint a REAL editable starter card over the live World, its
+///      substance the stranger's own `user`/home cell (the SAME mint the
+///      "make your first card →" affordance runs). The cockpit now shows the first-card
+///      view; bake `<out>.before.png`.
+///   3. `first_card_bump` — fire the card's `+1` = ONE cap-gated verified turn on their
+///      cell. Assert a real receipt landed + the home cell's counter advanced + the
+///      ledger height grew by one.
+///   4. `first_card_add_button` — a receipted view-patch adding a button. Assert the new
+///      button is in the card's re-folded `view_source` (an accountable patch, not a
+///      recompile).
+///   5. Re-render → bake `<out>.after.png`. Assert the two cockpit frames differ (the
+///      card's bound count re-read + the new button painted).
+///
+/// The load-bearing truth: a stranger genuinely made a card that is theirs, fired a real
+/// verified turn on it, and edited it live — using only the onboarding UI flow.
+#[cfg(all(feature = "render-capture", feature = "gpui-ui", feature = "card-pane"))]
+fn render_first_card_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use starbridge_v2::agent_attach::AGENT_COUNTER_SLOT;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+
+    // 1. Headless app + the kit + the dark theme (the cockpit's panels use kit widgets).
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+    cx.update(|cx| gpui_component::init(cx));
+    cx.update(|cx| apply_deos_theme(None, true, cx));
+
+    // The cockpit's real image — the SAME `World` the windowed cockpit runs. The
+    // stranger's home cell is the `user` anchor; we read its counter before/after.
+    let (world, anchors) = world::demo_world();
+    let [_treasury, _service, home] = anchors;
+    let shared = Rc::new(RefCell::new(world));
+
+    let pre_height = shared.borrow().height();
+    let pre_field = shared
+        .borrow()
+        .ledger()
+        .get(&home)
+        .and_then(|c| {
+            c.state
+                .get_field(AGENT_COUNTER_SLOT)
+                .map(deos_js::applet::unpack_u64)
+        })
+        .unwrap_or(0);
+
+    // 2. Open the full cockpit (the window-root `Root` weld), capturing the inner
+    //    `Cockpit` entity out of the builder so we can drive its onboarding methods.
+    let mut cockpit_slot: Option<gpui::Entity<cockpit::Cockpit>> = None;
+    let window = cx.open_window(size(px(w), px(h)), |window, cx| {
+        let view = cx.new(|cx| {
+            let focus = cx.focus_handle();
+            cockpit::Cockpit::with_node(shared.clone(), anchors, focus, None, None)
+        });
+        view.update(cx, |c, cx| c.focus_on_open(window, cx));
+        cockpit_slot = Some(view.clone());
+        cx.new(|cx| gpui_component::Root::new(gpui::AnyView::from(view), window, cx))
+    })?;
+    let cockpit = cockpit_slot.expect("the Root builder ran and stashed the cockpit");
+
+    // 2b. MAKE THE FIRST CARD — the exact mint the "make your first card →" click runs.
+    cx.update(|app| cockpit.update(app, |c, cx| c.make_first_card(cx)));
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let before = cx.capture_screenshot(window.into())?;
+    let (bw, bh) = (before.width(), before.height());
+    before.save(format!("{out}.before.png"))?;
+
+    // 3. FIRE THE CARD'S +1 — the onboarding "press +1" affordance = ONE cap-gated
+    //    verified turn on the stranger's own home cell (a real receipt).
+    cx.update(|app| cockpit.update(app, |c, cx| c.first_card_bump(cx)));
+    cx.run_until_parked();
+
+    let post_height = shared.borrow().height();
+    let post_field = shared
+        .borrow()
+        .ledger()
+        .get(&home)
+        .and_then(|c| {
+            c.state
+                .get_field(AGENT_COUNTER_SLOT)
+                .map(deos_js::applet::unpack_u64)
+        })
+        .unwrap_or(0);
+    // The card's +1 advances the home cell's counter by EXACTLY ONE — the precise
+    // witness that the `bump` fired one real turn on the stranger's own cell.
+    anyhow::ensure!(
+        post_field == pre_field + 1,
+        "the first card's +1 did not advance the stranger's home cell by ONE ({pre_field} -> {post_field})"
+    );
+    // A real commit reached the ledger (height grew). We assert `>` not `== +1`: the
+    // live cockpit also commits its OWN bookkeeping turns between the snapshots (e.g.
+    // the optimistic-nav `SetField` that witnesses the active tab), so the ledger
+    // height legitimately grows by more than the single card turn. The card's own
+    // receipt tape (below) is the exact "the +1 committed once" witness.
+    anyhow::ensure!(
+        post_height > pre_height,
+        "the live ledger did not grow on the first card's +1 ({pre_height} -> {post_height})"
+    );
+    // The card's OWN tape carries exactly ONE receipt — the +1's verified turn (the
+    // cockpit's bookkeeping turns land on other cells, not this card's tape).
+    let card_receipts =
+        cx.update(|app| cockpit.update(app, |c, _cx| c.first_card_receipt_count()));
+    anyhow::ensure!(
+        card_receipts == 1,
+        "expected exactly ONE receipt on the first card's tape after the +1, found {card_receipts}"
+    );
+
+    // 4. EDIT FROM WITHIN — the onboarding "add a button" affordance = a receipted
+    //    view-patch. Assert the new button is in the card's re-folded view_source.
+    cx.update(|app| cockpit.update(app, |c, cx| c.first_card_add_button(cx)));
+    cx.run_until_parked();
+    let view_source = cx
+        .update(|app| cockpit.update(app, |c, _cx| c.first_card_view_source()))
+        .ok_or_else(|| anyhow::anyhow!("the first card is not mounted after the edit"))?;
+    anyhow::ensure!(
+        view_source.contains("you added this"),
+        "the receipted view-patch did not land in the card's view_source (no added button)"
+    );
+
+    // 5. Re-render → bake the AFTER shot (the bound count advanced + the new button painted).
+    cx.update(|cx| cx.refresh_windows());
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let after = cx.capture_screenshot(window.into())?;
+    let (aw, ah) = (after.width(), after.height());
+    after.save(format!("{out}.after.png"))?;
+
+    // THE LOAD-BEARING ASSERTION: the two cockpit frames differ — the card the stranger
+    // made changed (its bound count re-read off a real turn, and the edit added a button).
+    anyhow::ensure!(
+        before.as_raw() != after.as_raw(),
+        "the first-card view did not change after the +1 + the edit (the stranger's card is static)"
+    );
+
+    println!(
+        "OK first-card render -> {out}.before.png ({bw}x{bh}) / {out}.after.png ({aw}x{ah}), \
+         logical {w}x{h}; a STRANGER made their first card from the UI flow: minted a real \
+         editable card over their own home cell, fired its +1 (a verified turn: cell slot-0 \
+         {pre_field}->{post_field}, height {pre_height}->{post_height}), and edited it live (a \
+         receipted view-patch added a button — now in the card's view_source). The AFTER frame differs."
+    );
+    Ok(())
+}
+
 /// **THE LIVE WEB-SHELL BAKE — a real page in the cockpit pane, then a scroll input
 /// causing a re-render.** Opens the full `cockpit::Cockpit` on the WEB-SHELL tab,
 /// drives the persistent live `servo::WebView` to load a tall `data:` page (a real
@@ -2264,11 +2468,56 @@ fn render_webshell_live_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
         "the cockpit frame did not change after the scroll (the web pane did not re-render live)"
     );
 
+    // 7. THE KEY-INPUT WITNESS — prove a TYPED CHARACTER reaches the focused page and
+    //    changes it (the focus/key wire the cockpit tile now carries). Navigate to a
+    //    page bearing an autofocused text `<input>`, capture the empty field
+    //    (`.key-before.png`), then CLICK the field (focus it in-page) and TYPE a
+    //    character via the SAME `WebInput::KeyChar` path the tile's `on_key_down`
+    //    routes. The character appears in the field → the tile changes (`.key-after.png`).
+    const FORM_PAGE: &str = "data:text/html,\
+        <html><body style='margin:0;background:%23101316'>\
+        <input autofocus style='position:absolute;top:40px;left:40px;width:300px;\
+        height:48px;font-size:28px;background:%23ffffff;color:%23000000' value=''>\
+        </body></html>";
+    let form_loaded =
+        cx.update(|app| cockpit_view.update(app, |c, cx| c.webshell_bake_load(FORM_PAGE, cx)));
+    anyhow::ensure!(
+        form_loaded,
+        "the live web-shell did not paint a frame for the form page (engine did not render)"
+    );
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let key_before = cx.capture_screenshot(window.into())?;
+    key_before.save(format!("{out}.key-before.png"))?;
+
+    // CLICK the input (tile-local coords, inside the 300x48 field at (40,40)) to focus
+    // it in-page, then TYPE 'A' through the live key path.
+    let _focused_field =
+        cx.update(|app| cockpit_view.update(app, |c, cx| c.webshell_bake_click(120.0, 64.0, cx)));
+    let typed = cx.update(|app| cockpit_view.update(app, |c, cx| c.webshell_bake_key('A', cx)));
+    anyhow::ensure!(
+        typed,
+        "the typed character did not change the live tile (KeyChar -> page did not fire in the cockpit)"
+    );
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let key_after = cx.capture_screenshot(window.into())?;
+    key_after.save(format!("{out}.key-after.png"))?;
+
+    // THE KEY ASSERTION: the cockpit frame changed after a TYPED CHARACTER — the keystroke
+    // reached the focused page and rendered (the 'A' entered the input). A static tile, or
+    // an unrouted key, could not change it.
+    anyhow::ensure!(
+        key_before.as_raw() != key_after.as_raw(),
+        "the cockpit frame did not change after typing (the keystroke did not reach the focused page)"
+    );
+
     println!(
         "OK webshell-live render -> {out}.before.png ({bw}x{bh}) / {out}.after.png ({aw}x{ah}), \
          logical {w}x{h}; the cockpit WEB-SHELL pane rendered a real cap-gated Servo page \
-         (persistent live WebView), and ONE scroll input through the gpui event bridge \
-         re-rendered it live (the AFTER frame differs from the BEFORE)."
+         (persistent live WebView), ONE scroll input re-rendered it live (AFTER differs from \
+         BEFORE), AND a TYPED CHARACTER reached the focused page input (key-after differs from \
+         key-before — the focus/key wire delivers keystrokes into the page)."
     );
     Ok(())
 }
