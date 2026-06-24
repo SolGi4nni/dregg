@@ -8,6 +8,27 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## ✅ CARD PANE — a hyperdreggmedia CARD is a LIVE COCKPIT SURFACE (HYPERDREGGMEDIA on the real glass), by running (2026-06-23)
+A deos-js applet's `deos.ui.*` view-tree now renders as a real gpui-component pane IN the starbridge-v2
+cockpit, backed by the cockpit's LIVE `World`. `starbridge-v2/src/card_pane.rs` (`CardPane`, a gpui
+`Render` view) walks the SAME `deos_view::ViewNode` tree (parsed by `deos_view::parse_view_tree` from the
+REAL SpiderMonkey-produced JSON) into the SAME widget vocabulary `deos_view::AppletView` uses, but binds +
+fires against a `deos_js::AttachedApplet` (the live World via `agent_attach::WorldSinkAdapter::live`): a
+`bind` re-reads the operator's real cell off the live ledger, a `button`'s onClick fires ONE cap-gated
+verified turn committed THROUGH `World::commit_turn`. `build_card_over_live` authors the tree over the live
+applet (ephemeral view-state, NO turn — asserted `fires_committed==0`). The `--render-card-pane` bake
+(main.rs, new arm only, gated on the new `card-pane` feature = `agent-js`+`gpui-ui`+`render-capture`+
+`dep:deos-view`) PROVEN BY RUNNING: a counter card renders ("hyperdreggmedia · counter card" / "live count:
+0" / a real `+1` Button) → the button's `bump` affordance fires a verified turn on the live ledger (cell
+slot-0 0→1, height 5→6, receipt 328e60f6…) → the AFTER frame re-reads "live count: 1" (the two PNGs differ).
+PNGs: `starbridge-v2/target/render-out/card-pane.{before,after}.png` (1040×720). deos-view UNTOUCHED;
+deos-js UNTOUCHED (the card-pane walker is a parallel renderer over the live attached applet, reusing
+deos-view's view-tree model + key). `cargo check --features native-full --bin starbridge-v2` green.
+RESIDUAL (named here per WE-SHIP): the card is a DEDICATED bake surface, not yet a registered cockpit
+`CockpitSurface`/dock pane the operator opens at runtime (⌘K) — the next weld is `CardPane` → a real dock
+pane (the agent-attach precedent bakes the inspector; this bakes the card). The mount mechanism (a live
+`AttachedApplet`-backed gpui `Render`) is proven; wiring it into `dock/*` is the follow-on.
+
 ## ✅ CARD EDITOR — a card is EDITABLE FROM WITHIN deos (HYPERDREGGMEDIA gap #1), by running (2026-06-23)
 The keystone of authoring: inspection becomes authoring. `deos-js/src/card_editor.rs` (`CardEditor`)
 authors a target card (an applet = a cell), each gesture a real verified turn / a receipted patch,

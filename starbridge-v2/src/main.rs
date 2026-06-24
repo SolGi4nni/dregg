@@ -136,6 +136,28 @@ fn main() {
         }
     }
 
+    // `--render-card-pane <out>`: A HYPERDREGGMEDIA CARD AS A LIVE COCKPIT PANE. Builds
+    // the cockpit's LIVE `World`, authors a counter CARD's `deos.ui.*` view-tree in real
+    // SpiderMonkey over an applet ATTACHED to that live World (via the `agent_attach`
+    // `WorldSinkAdapter::live` weld), renders the card as a real gpui-component pane
+    // (`CardPane`), bakes `<out>.before.png` (count = the live cell's slot-0), FIRES the
+    // card's button = ONE cap-gated verified turn on the live ledger, then re-renders +
+    // bakes `<out>.after.png` (the bound value advanced) — proving the card is a live
+    // cockpit surface whose button drives the operator's real cells. Default 520x360.
+    #[cfg(all(feature = "render-capture", feature = "gpui-ui", feature = "card-pane"))]
+    {
+        if let Some(out) = render_card_pane_arg(&args) {
+            let (w, h) = render_size_arg(&args).unwrap_or((520.0, 360.0));
+            match render_card_pane_headless(&out, w, h) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("render-card-pane FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     // `--render-live-brain <out>`: THE HEADLINE — a LIVE Hermes brain (a real Claude
     // over the `hermes-acp` ACP subprocess) is given a short task, DECIDES the JS
     // itself, and that JS runs `run_js` against the cockpit's LIVE `World`: a real
@@ -894,6 +916,23 @@ fn render_agent_attach_arg(args: &[String]) -> Option<String> {
             return it.next().cloned();
         }
         if let Some(rest) = a.strip_prefix("--render-agent-attach=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Parse the `--render-card-pane <out>` (or `=<out>`) argument — the output base path
+/// for the CARD-PANE bake (`<out>.before.png` / `<out>.after.png`). Returns `None` when
+/// absent.
+#[cfg(all(feature = "render-capture", feature = "gpui-ui", feature = "card-pane"))]
+fn render_card_pane_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--render-card-pane" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--render-card-pane=") {
             return Some(rest.to_string());
         }
     }
@@ -1857,6 +1896,180 @@ fn render_agent_attach_headless(out: &str, w: f32, h: f32, fork: bool) -> anyhow
     println!(
         "OK agent-attach render -> {out}.png ({ww}x{hh}, logical {w}x{h}); \
          the agent's run_js drove the {where_} — its modified cell is on the inspector glass."
+    );
+    Ok(())
+}
+
+/// THE CARD-PANE BAKE — a hyperdreggmedia CARD mounted as a LIVE cockpit surface.
+///
+/// The flow, end-to-end and REAL:
+///   1. Build the cockpit's live `World` (the same demo image the windowed cockpit
+///      runs). Attach a counter applet to it through the `agent_attach`
+///      `WorldSinkAdapter::live` weld — the card's substance is the operator's REAL
+///      `user` cell, the fire bounded by the agent's `held` (Signature, attenuated).
+///   2. Author the card's `deos.ui.*` view-tree in real SpiderMonkey (text + a `bind`
+///      on the live cell's slot 0 + a `+1` button firing the `bump` affordance). The
+///      authoring stashes the tree into ephemeral view-state — it commits NO turn.
+///   3. Open the `CardPane` over the LIVE attached applet, drive a frame, bake
+///      `<out>.before.png` (the bound value = the live cell's current slot-0).
+///   4. FIRE the card's button affordance = ONE cap-gated verified turn committed
+///      THROUGH `World::commit_turn` onto the live ledger (a real receipt). Assert the
+///      live cell advanced + the receipt landed.
+///   5. Re-render (immediate-mode: the `bind` re-reads the live ledger) + bake
+///      `<out>.after.png` — the bound value visibly advanced. Assert the two frames
+///      differ (the card tracked a real live turn).
+#[cfg(all(feature = "render-capture", feature = "gpui-ui", feature = "card-pane"))]
+fn render_card_pane_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use starbridge_v2::agent_attach::{attach_agent, WorldSinkAdapter, AGENT_COUNTER_SLOT};
+    use starbridge_v2::card_pane::{build_card_over_live, CardPane};
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+
+    // 1. The cockpit's real image — the SAME `World` the windowed cockpit runs. The card
+    //    is backed by the demo `user` cell (the agent's OWN vessel).
+    let (world, anchors) = world::demo_world();
+    let [_treasury, _service, user] = anchors;
+    let live = Rc::new(RefCell::new(world));
+
+    let agent = user;
+    let held = dregg_cell::AuthRequired::Signature;
+    // The card's affordance surface: `bump` (Signature — held, admitted). The cap tooth
+    // in deos-js checks every fire against `held` before it reaches the executor.
+    let affordances = vec![("bump".to_string(), dregg_cell::AuthRequired::Signature)];
+
+    let pre_height = live.borrow().height();
+    let pre_field = live
+        .borrow()
+        .ledger()
+        .get(&agent)
+        .and_then(|c| {
+            c.state
+                .get_field(AGENT_COUNTER_SLOT)
+                .map(deos_js::applet::unpack_u64)
+        })
+        .unwrap_or(0);
+
+    // The applet ATTACHED to the live World (the card's live substance).
+    let sink = WorldSinkAdapter::live(live.clone());
+    let attached = attach_agent(sink, agent, held, affordances);
+
+    // 2. Author the card's view-tree over the live applet (real SpiderMonkey). The bind
+    //    re-reads slot `AGENT_COUNTER_SLOT` (the live cell's counter); the button fires
+    //    `bump` (+1). The authoring commits NO turn (only ephemeral view-state).
+    let key = starbridge_v2::card_pane::view_tree_key_for_card();
+    let card_js = format!(
+        r#"
+        var app = deos.applet({{ affordances: ["bump"] }});
+        var b = deos.ui.bind(function() {{ return app.get({slot}); }});
+        b.props.slot = {slot};            // tag the slot the card re-reads off the live ledger
+        b.props.label = "live count: ";   // a human prefix on the bound value
+        var tree = deos.ui.vstack(
+            deos.ui.text("Counter card (live cockpit cell)"),
+            b,
+            deos.ui.button("+1", "bump", 1)
+        );
+        app.view.set("{key}", JSON.stringify(tree));
+        0;
+    "#,
+        slot = AGENT_COUNTER_SLOT,
+        key = key,
+    );
+
+    let mut rt = deos_js::JsRuntime::new().map_err(|e| anyhow::anyhow!("boot SpiderMonkey: {e}"))?;
+    let (attached, tree) = build_card_over_live(&mut rt, attached, &card_js)
+        .map_err(|e| anyhow::anyhow!("author the card over the live World: {e}"))?;
+
+    // Share the LIVE attached applet so the rendered button + the bind both drive the
+    // SAME sovereign cell on the live ledger.
+    let shared = Rc::new(RefCell::new(attached));
+
+    // 3. Boot the headless renderer (same offscreen-wgpu path the cockpit bakes through)
+    //    + the gpui-component theme, then open the card pane → bake the BEFORE shot.
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+    cx.update(|cx| gpui_component::init(cx));
+    cx.update(|cx| apply_deos_theme(None, true, cx));
+
+    let card_applet = shared.clone();
+    let card_tree = tree.clone();
+    let window = cx.open_window(size(px(w), px(h)), move |_window, cx| {
+        cx.new(|_cx| CardPane::new(card_applet, card_tree, "hyperdreggmedia · counter card"))
+    })?;
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let before = cx.capture_screenshot(window.into())?;
+    let (bw, bh) = (before.width(), before.height());
+    before.save(format!("{out}.before.png"))?;
+
+    // 4. FIRE the card's button affordance — a REAL cap-gated verified turn committed
+    //    THROUGH `World::commit_turn` onto the live ledger (exactly what the rendered
+    //    Button's on_click does). We invoke it on the shared live applet directly so the
+    //    bake can assert on the receipt + the live ledger.
+    let receipt = shared
+        .borrow_mut()
+        .fire("bump", 1)
+        .map_err(|e| anyhow::anyhow!("the card's button did not commit a live turn: {e}"))?;
+
+    let post_height = live.borrow().height();
+    let post_field = live
+        .borrow()
+        .ledger()
+        .get(&agent)
+        .and_then(|c| {
+            c.state
+                .get_field(AGENT_COUNTER_SLOT)
+                .map(deos_js::applet::unpack_u64)
+        })
+        .unwrap_or(0);
+    anyhow::ensure!(
+        post_field == pre_field + 1,
+        "the card's button did not advance the LIVE cell ({pre_field} -> {post_field})"
+    );
+    anyhow::ensure!(
+        post_height == pre_height + 1,
+        "the live ledger height did not grow by ONE ({pre_height} -> {post_height})"
+    );
+    anyhow::ensure!(
+        shared.borrow().receipt_count() == 1,
+        "expected exactly ONE receipt on the card's live tape"
+    );
+
+    // 5. Re-render — the bind re-reads the live ledger → bake the AFTER shot (advanced).
+    cx.update(|cx| cx.refresh_windows());
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let after = cx.capture_screenshot(window.into())?;
+    let (aw, ah) = (after.width(), after.height());
+    after.save(format!("{out}.after.png"))?;
+
+    // THE LOAD-BEARING ASSERTION: the bound value visibly changed (the live cell's slot-0
+    // advanced), so the two frames are NOT byte-identical. The card rendered REAL widgets
+    // whose bound content tracked a real verified turn on the cockpit's live ledger.
+    anyhow::ensure!(
+        before.as_raw() != after.as_raw(),
+        "the card frame did not change after the live turn (the bound count did not re-read)"
+    );
+
+    println!(
+        "OK card-pane render -> {out}.before.png ({bw}x{bh}) / {out}.after.png ({aw}x{ah}), \
+         logical {w}x{h}; a hyperdreggmedia counter CARD rendered as a LIVE cockpit pane: \
+         its button fired a verified turn on the live ledger (cell slot-0 {pre_field}->{post_field}, \
+         height {pre_height}->{post_height}, receipt {}), and the bound value re-read off the live \
+         cell (the AFTER frame differs).",
+        hex::encode(&receipt[..6]),
     );
     Ok(())
 }

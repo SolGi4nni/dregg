@@ -176,6 +176,17 @@ dev-surfaces = ["dep:deos-zed", "dep:deos-terminal", "dep:deos-hermes", "dep:deo
 # the attach test). Implies `embedded-executor` (it drives a `World`).
 agent-js = ["embedded-executor", "dep:deos-js"]
 
+# card-pane — A HYPERDREGGMEDIA CARD AS A LIVE COCKPIT SURFACE. Mounts a deos-js
+# applet's view-tree (the `deos.ui.*` element-tree) as a real gpui-component pane
+# (`src/card_pane.rs`'s `CardPane`), backed by the cockpit's LIVE `World` through the
+# `agent_attach` `WorldSinkAdapter::live` weld: a `bind` re-reads the operator's real
+# cell off the live ledger, and a button's onClick fires ONE cap-gated verified turn
+# committed onto that live ledger. Pulls `deos-view` (the gpui renderer crate, its
+# OWN standalone workspace pinning the SAME gpui fork @407a6ff) + `agent-js` (deos-js
+# + the live World). Off the default build (multi-GB mozjs). The `--render-card-pane`
+# bake (main.rs, render-capture) bakes a PNG of the card pane after a live fire.
+card-pane = ["agent-js", "gpui-ui", "render-capture", "dep:deos-view"]
+
 # live-brain — THE HEADLINE: a LIVE Hermes brain (a real Claude over the
 # `hermes-acp` ACP subprocess) drives `run_js` against the cockpit's LIVE `World`.
 # The model is given a short task, DECIDES the JS itself, and that JS runs on the
@@ -506,6 +517,12 @@ deos-terminal = { path = "../deos-terminal", features = ["cockpit-surface"], opt
 # (excluded from the root members like deos-hermes), pulling the multi-GB mozjs —
 # so it is OPTIONAL + off the default build. Non-wasm32 (mozjs is native-only).
 deos-js = { path = "../deos-js", optional = true }
+# THE CARD RENDERER (deos-view) — turns a deos-js applet's `deos.ui.*` view-tree into
+# real gpui-component widgets. Its OWN standalone workspace (root-excluded like deos-js),
+# pinning the SAME gpui fork @407a6ff so ONE gpui resolves across the cockpit + the card
+# renderer. Pulls deos-js (the view-tree model + verified-turn firing) too. Optional —
+# only the `card-pane` feature (the `--render-card-pane` bake) pulls it.
+deos-view = { path = "../deos-view", optional = true }
 # The CONFINED HERMES AGENT as a dock pane (the ADOS dev-loop made visible): a
 # chat pane + the tool-call ledger (each tool-call a cap-gated RECEIPTED turn or
 # an in-band refusal) + the live mandate inspector. Own workspace, same gpui fork

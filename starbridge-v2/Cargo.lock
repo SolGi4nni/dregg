@@ -2894,6 +2894,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "deos-view"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "deos-js",
+ "dregg-cell",
+ "gpui",
+ "gpui-component",
+ "gpui_platform",
+ "gpui_wgpu",
+ "image",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "deos-web-cells"
 version = "0.1.0"
 dependencies = [
@@ -14091,6 +14107,7 @@ dependencies = [
  "deos-js",
  "deos-matrix",
  "deos-terminal",
+ "deos-view",
  "deos-web-cells",
  "deos-zed",
  "dregg-app-framework",

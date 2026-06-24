@@ -190,6 +190,13 @@ pub mod shared_fork;
 #[cfg(feature = "agent-js")]
 pub mod agent_attach;
 
+// CARD PANE — mount a hyperdreggmedia CARD (a deos-js applet's view-tree) as a LIVE
+// cockpit surface, backed by the cockpit's REAL `World` (a `CardPane` gpui `Render`
+// view that fires verified turns on the live ledger). Gated on `card-pane` (pulls
+// deos-view's gpui renderer + deos-js via `agent-js`).
+#[cfg(feature = "card-pane")]
+pub mod card_pane;
+
 // The comms-PD chat source — the REAL, executor-backed `deos_matrix::ChatSource`
 // the interactive deos-chat surface drives: it holds a live `World` and makes the
 // chat UI's membrane affordances genuine (mint/rehydrate/drive/stitch over real
