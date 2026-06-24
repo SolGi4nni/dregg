@@ -881,8 +881,17 @@ pub struct LiveWebView {
     /// The one-per-process engine. Held for the pane's lifetime (re-navigating
     /// rebuilds the `WebView` on THIS engine, never a second `Servo`).
     servo: servo::Servo,
-    /// The held SWGL render target the live `WebView` paints into.
-    rendering_context: Rc<ServoSwglContext>,
+    /// The held render target the live `WebView` paints into — selected at runtime by
+    /// [`crate::make_rendering_context`]: the HARDWARE-GL [`crate::ServoGpuContext`]
+    /// (surfman, GPU-accelerated paint + `glReadPixels` readback) on a desktop with a
+    /// GPU, else the software SWGL [`ServoSwglContext`] fallback (no-GPU / seL4 PD /
+    /// headless). The same `Rc<dyn RenderingContext>` `WebViewBuilder` takes either
+    /// way, so the embed code below is backend-agnostic; the tile readback goes through
+    /// the trait's `read_to_image`, which both backends implement (`SERVO-INTERACTIVE.md §4`).
+    rendering_context: Rc<dyn ServoRenderingContext>,
+    /// Whether [`Self::rendering_context`] is the GPU backend (`true`) or the SWGL
+    /// fallback (`false`) — the runtime selection result, surfaced for status/logging.
+    gpu_backed: bool,
     /// The live `WebView` — `None` until [`LiveWebView::open`]/[`LiveWebView::load`]
     /// builds one. Rebuilt on navigation.
     webview: Option<WebView>,
@@ -904,10 +913,12 @@ impl Drop for LiveWebView {
 }
 
 impl LiveWebView {
-    /// Build the persistent engine + SWGL context for a `width`×`height` pane. Does
-    /// NOT load a page yet (call [`Self::load`]). Returns `Err` if a [`LiveWebView`]
-    /// already exists on this process (only one `Servo` engine is permitted — its
-    /// options are a process-wide `OnceCell`).
+    /// Build the persistent engine + render context for a `width`×`height` pane,
+    /// selecting the HARDWARE-GL backend when a GPU is available (else the SWGL
+    /// fallback) via [`crate::make_rendering_context`]. Does NOT load a page yet (call
+    /// [`Self::load`]). Returns `Err` if a [`LiveWebView`] already exists on this
+    /// process (only one `Servo` engine is permitted — its options are a process-wide
+    /// `OnceCell`).
     ///
     /// MUST be called under [`crate::with_gl`].
     pub fn new(width: u32, height: u32) -> Result<Self, &'static str> {
@@ -917,11 +928,21 @@ impl LiveWebView {
         let servo = ServoBuilder::default()
             .event_loop_waker(Box::new(HeadlessWaker))
             .build();
-        let rendering_context = Rc::new(ServoSwglContext::new(width, height));
+        // GPU-accelerated paint where a hardware GL device opens, SWGL otherwise — the
+        // §4.3 runtime selection, built INLINE so `gpu_backed` reflects the ACTUAL
+        // backend produced (not a separate `gpu_available()` probe that could disagree
+        // if the GPU device opens but its offscreen surface fails). Both yield the same
+        // `Rc<dyn RenderingContext>` the embed code drives.
+        let (rendering_context, gpu_backed): (Rc<dyn ServoRenderingContext>, bool) =
+            match crate::gpu_context::ServoGpuContext::new(width, height) {
+                Ok(gpu) => (Rc::new(gpu), true),
+                Err(_) => (Rc::new(ServoSwglContext::new(width, height)), false),
+            };
         let _ = ServoRenderingContext::make_current(&*rendering_context);
         Ok(LiveWebView {
             servo,
             rendering_context,
+            gpu_backed,
             webview: None,
             delegate: None,
             frame: None,
@@ -947,13 +968,12 @@ impl LiveWebView {
     }
 
     /// Navigate the live pane to `url` (building a fresh `WebView` on the held engine,
-    /// pointed at the held SWGL context, behind a fresh [`CapGate`] for `surface`),
-    /// pump until loaded + painted, and read back the first tile. Re-navigating drops
+    /// pointed at the held render context — GPU or SWGL — behind a fresh [`CapGate`] for
+    /// `surface`), pump until loaded + painted, and read back the first tile. Re-navigating drops
     /// the previous `WebView` and builds a new one on the SAME engine (servo's options
     /// are a process `OnceCell`, so the engine is never rebuilt). MUST be called under
     /// [`crate::with_gl`]. Returns `true` if a frame was produced.
     pub fn load(&mut self, url: &str, surface: SurfaceCapability, max_spins: usize) -> bool {
-        use crate::swgl_context::RenderingContext as _;
         let Ok(parsed) = Url::parse(url) else {
             return false;
         };
@@ -994,19 +1014,37 @@ impl LiveWebView {
         self.frame.is_some()
     }
 
-    /// Read the current page into the held tile (`WebView::paint` → SWGL back buffer →
-    /// `read_to_image`). Called after a load or an input. MUST be called under
-    /// [`crate::with_gl`].
+    /// Read the current page into the held tile (`WebView::paint` → the backend's back
+    /// buffer → `read_to_image`). Backend-agnostic: the readback goes through the servo
+    /// `RenderingContext` trait, so it is SWGL's `read_pixels` on the software path and
+    /// `glReadPixels` (route-a) on the GPU path — both yield the same [`RgbaFrame`].
+    /// Called after a load or an input. MUST be called under [`crate::with_gl`].
     fn repaint(&mut self) {
-        use crate::swgl_context::RenderingContext as _;
         let Some(webview) = self.webview.as_ref() else {
             return;
         };
         let _ = ServoRenderingContext::make_current(&*self.rendering_context);
         webview.paint();
-        let (w, h) = self.rendering_context.inner().size();
-        let rect = crate::swgl_context::ReadRect::whole(w, h);
-        self.frame = self.rendering_context.inner().read_to_image(rect);
+        self.frame = self.read_trait_frame();
+    }
+
+    /// Read the whole framebuffer back as an [`RgbaFrame`] through the servo
+    /// `RenderingContext` trait (`read_to_image`), so it works for EITHER backend (the
+    /// SWGL `ServoSwglContext` and the hardware `ServoGpuContext` both implement it).
+    /// Mirrors the standalone `read_frame` but over the trait object.
+    fn read_trait_frame(&self) -> Option<RgbaFrame> {
+        let size = self.rendering_context.size();
+        let rect = DeviceIntRect::from_origin_and_size(
+            euclid::Point2D::origin(),
+            euclid::Size2D::new(size.width as i32, size.height as i32),
+        );
+        let img = self.rendering_context.read_to_image(rect)?;
+        let (w, h) = (img.width(), img.height());
+        Some(RgbaFrame {
+            width: w,
+            height: h,
+            bytes: img.into_raw(),
+        })
     }
 
     /// **THE LIVE LOOP — feed ONE input event to the live `WebView`, pump the engine,
@@ -1070,6 +1108,22 @@ impl LiveWebView {
     /// Whether a live `WebView` is currently built (a page has been loaded).
     pub fn is_loaded(&self) -> bool {
         self.webview.is_some()
+    }
+
+    /// Whether this pane renders on the HARDWARE-GL backend (`true`, GPU-accelerated)
+    /// or the SWGL software fallback (`false`) — the runtime selection result.
+    pub fn gpu_backed(&self) -> bool {
+        self.gpu_backed
+    }
+
+    /// A short label for the active backend (`"GPU (hardware-GL)"` or `"SWGL (software)"`)
+    /// — for the cockpit status line.
+    pub fn backend_label(&self) -> &'static str {
+        if self.gpu_backed {
+            "GPU (hardware-GL)"
+        } else {
+            "SWGL (software)"
+        }
     }
 }
 
@@ -1557,5 +1611,105 @@ mod tests {
         assert_eq!(outcomes.len(), 2);
         assert!(outcomes[0].refused_by_cap());
         assert!(outcomes[1].dialed());
+    }
+
+    /// **THE LIVE WEBVIEW ON THE GPU BACKEND — a real page lays out + paints through the
+    /// HARDWARE-GL context, and a scroll input re-renders it.** This proves the GPU work
+    /// is wired all the way into the persistent [`LiveWebView`] (not just the standalone
+    /// `ServoGpuContext` spike): `LiveWebView::new` selects the hardware backend via
+    /// [`crate::gpu_context::make_rendering_context`]'s logic when a GPU is present, a
+    /// real `data:` page renders into it (read back through the trait's `glReadPixels`
+    /// route-a path), and the live-input loop ([`LiveWebView::apply_input`]) produces a
+    /// DIFFERENT tile after a scroll — the full live loop, on the GPU.
+    ///
+    /// On this macOS host a hardware surfman device opens, so `gpu_backed()` is `true`
+    /// and the page paints on the GPU. On a no-GPU box (CI/headless) `gpu_backed()` is
+    /// `false` and the SAME assertions hold over the SWGL fallback — the backend is
+    /// transparent to the live loop. Either way we assert `gpu_backed()` AGREES with
+    /// `gpu_available()` (the selection is honest) and that the page renders + re-renders.
+    #[test]
+    fn live_webview_renders_and_re_renders_on_the_selected_backend() {
+        use crate::gpu_context::gpu_available;
+
+        // A page taller than the viewport: a 600px red band over a 600px lime band, so a
+        // downward scroll flips the visible band (the same content the SWGL spike uses).
+        const PAGE: &str = "data:text/html,\
+            <html><body style='margin:0'>\
+            <div style='height:600px;background:%23ff0000'></div>\
+            <div style='height:600px;background:%2300ff00'></div>\
+            </body></html>";
+        const W: u32 = 240;
+        const H: u32 = 200;
+
+        let presenter = cell_seed(11);
+        let surface = SurfaceCapability::root(presenter, AuthRequired::Either);
+
+        crate::swgl_context::with_gl(|| {
+            let expect_gpu = gpu_available();
+
+            let mut live = super::LiveWebView::new(W, H)
+                .expect("a single LiveWebView builds (no other engine on this process)");
+
+            // THE SELECTION IS HONEST: the backend the holder reports matches the probe.
+            assert_eq!(
+                live.gpu_backed(),
+                expect_gpu,
+                "LiveWebView selected the GPU backend iff a hardware device is available \
+                 (gpu_backed={} expect_gpu={})",
+                live.gpu_backed(),
+                expect_gpu,
+            );
+
+            // A real page lays out + paints through the SELECTED backend (GPU here).
+            let painted = live.load(PAGE, surface, 4096);
+            assert!(
+                painted,
+                "the live WebView painted a frame for the data: page on the {} backend",
+                live.backend_label()
+            );
+            let frame_a = live
+                .frame()
+                .expect("a tile was read back after load")
+                .clone();
+            assert_eq!(frame_a.width, W);
+            assert_eq!(frame_a.height, H);
+            assert_eq!(frame_a.bytes.len(), (W * H * 4) as usize, "RGBA8");
+
+            // The live loop on this backend: a downward scroll re-renders to a DIFFERENT
+            // tile (the lime band enters view) — input → re-render → fresh tile, on the
+            // GPU when present.
+            let digest_a = frame_a.content_digest();
+            let changed = live.apply_input(
+                super::WebInput::Scroll {
+                    x: 120.0,
+                    y: 100.0,
+                    dx: 0.0,
+                    dy: 450.0,
+                },
+                512,
+            );
+            let frame_b = live.frame().expect("a tile after the scroll").clone();
+            let digest_b = frame_b.content_digest();
+
+            assert!(
+                changed,
+                "apply_input reported the tile changed after the scroll"
+            );
+            assert_ne!(
+                digest_a, digest_b,
+                "scrolling the live WebView produced a DIFFERENT tile on the {} backend \
+                 (input → re-render → new frame)",
+                live.backend_label()
+            );
+
+            println!(
+                "LIVE_WEBVIEW_BACKEND gpu_backed={} backend='{}' \
+                 digest_a={:#x} digest_b={:#x} — a real page rendered + re-rendered live",
+                live.gpu_backed(),
+                live.backend_label(),
+                digest_a,
+                digest_b,
+            );
+        });
     }
 }

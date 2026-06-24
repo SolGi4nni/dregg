@@ -267,10 +267,19 @@ impl Cockpit {
             });
             // Pull the live pane's current tile into the painted-tile field.
             self.sync_webshell_frame_from_live();
+            // The active render backend (GPU hardware-GL, or SWGL software fallback) —
+            // the runtime selection, surfaced so the operator sees whether the pane is
+            // GPU-accelerated on this host.
+            let backend = self
+                .webshell_live
+                .borrow()
+                .as_ref()
+                .map(|l| l.backend_label())
+                .unwrap_or("SWGL (software)");
             match (painted, &self.webshell_frame) {
                 (true, Some(f)) => {
                     self.webshell_status = format!(
-                        "rendered {}×{} of {url} · {} bytes RGBA8 · digest {:#x} · LIVE (scroll · click · type)",
+                        "rendered {}×{} of {url} · {} bytes RGBA8 · digest {:#x} · {backend} · LIVE (scroll · click · type)",
                         f.width,
                         f.height,
                         f.bytes.len(),

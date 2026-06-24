@@ -585,10 +585,16 @@ persistent `LiveWebView` instead of a per-call `render_url_to_frame`. ARTIFACT: 
 (`main.rs render_webshell_live_headless`) bakes the cockpit web-shell loading a tall data: page (`before.png`)
 then ONE scroll-down through the live loop (`after.png`); asserts the two cockpit frames differ. Green:
 `cargo check -p servo-render --features libservo` + `cargo check -p starbridge-v2 --features native-full --bin
-starbridge-v2`. GPU PATH ready (not yet wired into the live pane): `servo-render/src/gpu_context.rs`
-`ServoGpuContext` + `make_rendering_context()` (surfman hardware-GL else SWGL) is green under `libservo` — the
-`LiveWebView` builds on `ServoSwglContext` today; pointing it at `make_rendering_context` is the GPU-accel
-swap. SEAM (named, not a wall): KEY input to the tile needs a focus handle on the pane (the engine arm
+starbridge-v2`. GPU PATH WIRED into the live pane (2026-06-24): `LiveWebView::new` now selects the
+HARDWARE-GL `ServoGpuContext` (surfman, GPU-accelerated layout/paint + `glReadPixels` route-a readback) when a
+GPU device opens, else the SWGL software fallback — it holds `Rc<dyn RenderingContext>` and reads back through
+the servo trait's `read_to_image` (backend-agnostic), with `gpu_backed()`/`backend_label()` surfaced into the
+cockpit status line. PROVEN: test `live_webview_renders_and_re_renders_on_the_selected_backend`
+(`--features libservo`) — a real `data:` page renders through the SELECTED backend, `gpu_backed()` AGREES with
+`gpu_available()` (honest selection), and a scroll re-renders to a different tile (the live loop, on the GPU
+where present). The SWGL fallback is byte-identical to before (its trait `read_to_image` delegates to the same
+SWGL readback). Route (b) (zero-readback, WebRender into a gpui-composited GPU texture) stays the gpui-fork
+frontier. SEAM (named, not a wall): KEY input to the tile needs a focus handle on the pane (the engine arm
 `KeyChar` + `webshell_live_key` exist; the gpui focus-route from `on_key`→the focused tile is the remaining
 wiring — small, focus-management not engine work).
 ### FEDERATION RECONNECT/RETRY — robust late-join, by running (2026-06-23).
