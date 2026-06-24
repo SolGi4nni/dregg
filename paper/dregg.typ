@@ -1,11 +1,12 @@
 // =============================================================================
 // dregg: A Verified Distributed Object-Capability Substrate
 // =============================================================================
-// Paper of record. Compile: typst compile main.typ /tmp/paper.pdf
+// Paper of record. Compile: typst compile main.typ dregg.pdf
 //
-// Foundation sections (01–04) are rewritten to the current system and voice
-// (present tense, first principles, Lean-pinned). The remaining sections are
-// the rewrite burn-down tracked in _REWRITE-PLAN.md.
+// All sections are written to the current system and voice (present tense,
+// first principles, Lean-pinned). Every #lean("Module.name") citation resolves
+// to a declaration under metatheory/Dregg2/, #assert_axioms-pinned to the
+// kernel triple {propext, Classical.choice, Quot.sound}.
 
 #set document(
   title: "dregg: A Verified Distributed Object-Capability Substrate",

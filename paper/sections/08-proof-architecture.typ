@@ -73,7 +73,7 @@ limb: tampering with the heap root (#lean("RotationLayout.rotatedCommit_binds_he
 a named register (#lean("RotationLayout.rotatedCommit_binds_named_field")), or the
 receipt log --- by omission, reorder, extension, or truncation
 (#lean("RotationLayout.rotatedCommit_binds_log"), composing
-#lean("RotationLayout.mroot_injective")) --- produces a distinct commitment. The
+#lean("MMR.mroot_injective")) --- produces a distinct commitment. The
 chained absorption itself is the circuit-side construction `wireCommit`, proved
 collision-resistant against the same floor
 (#lean("EffectVmEmitRotation.wireCommit_binds")). This is the @sec-proofs

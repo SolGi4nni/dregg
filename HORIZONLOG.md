@@ -5388,3 +5388,26 @@ re-paints the focused cell on the compositor-PD framebuffer). A lane is on the r
 live-repaint-on-turn wire (copy the net.system pattern: turn → re-paint the hosted interactive image).
 NEXT STEP: confirm the committed-turn → framebuffer-repaint loop runs live on the booted seL4 image (input
 already boots), closing the interactive-cockpit-on-seL4 rung.
+
+## ⚑ PAPER (paper/dregg.typ) — theory manual revived + Lean-pinned; back-half realization sections are the burn-down (2026-06-24)
+The Typst theory manual (`paper/main.typ` → `dregg.typ` → `sections/*.typ`, typst 0.14.2) is the current
+"why dregg is sound" door for a verification audience. ALL 16 sections + appendix are present-tense,
+first-principles, and compile clean to `dregg.pdf` (653K). Every one of the 122 `#lean("Module.name")`
+citations resolves to a real declaration under `metatheory/Dregg2/` (set-difference verified against a
+22,093-name decl+field index). Two stale citations were FIXED this pass: `Metatheory.no_forge_step` (FABRICATED
+— never existed in the tree; the stale `paper2/02-authority.md` source carried it) → corrected to the real
+axiom-pinned `Spec.only_connectivity_begets_connectivity` (the whole-history closure, `Spec/Authority.lean:456`,
+`#assert_axioms` at :569); and `RotationLayout.mroot_injective` → `MMR.mroot_injective` (the decl lives in
+`Lightclient/MMR.lean` under `Dregg2.Lightclient.MMR` and is only `open`-ed into RotationLayout). 15 orphaned
+May/early-June section files (`05-privacy`..`19-conclusion`, carrying the banned Silver/Golden + Stage-tag +
+devnet cruft) were deleted — they were already out of the build's `#include` list. `paper/_REWRITE-PLAN.md`
+was deleted (no replacement, per directive). REMAINING BURN-DOWN (not blockers; the sections COMPILE and are
+honest, but their content depth could deepen on a later pass, NOT re-verified line-by-line for prose drift this
+pass — only every Lean citation was machine-checked): the realization back-half (§§9 firmament, 10 deos, 11
+seL4, 12 pg-dregg) leans on `Firmament.*`/`Deos.*`/`Distributed.*` keystones that resolve by name but whose
+PROSE claims (e.g. the `n=1` collapse table, the rehydration liveness-type crown) were not re-derived against
+HEAD docs this pass; §13 assurance + §15 limitations are verified current (5 guarantees + R, 8-carrier floor,
+{propext,Classical.choice,Quot.sound} all confirmed against `AssuranceCase.lean`). CLOSURE: a future pass can
+spot-verify the back-half prose against `docs/deos/*` + the `Firmament/` and `Deos/` Lean modules, the same way
+§§1-5 were checked here. The freshest markdown content-of-record is `paper2/*.md` (kept in sync on the one
+fabrication fix).

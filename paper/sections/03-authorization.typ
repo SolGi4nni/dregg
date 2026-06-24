@@ -71,7 +71,10 @@ typing forces them onto the chain, un-strippably. Authority grows, but only
 through authorized, *non-forgeable* construction. This is an epistemic
 non-forgeability invariant, not a lattice descent.
 
-Mechanized: #lean("Metatheory.no_forge_step") (the candidate-independent law);
+Mechanized: #lean("Spec.only_connectivity_begets_connectivity") (the
+whole-history closure: every edge in any reachable authority graph either was
+held initially or descends by conferral from an authorized generative step ---
+none ex nihilo);
 #lean("EffectsAuthority.introduce_non_amplifying") (a conferred capability is a
 genuine subset of the held one, over the real attenuation lattice);
 #lean("EffectsAuthority.amplifying_grant_rejected") (the teeth: a grant
