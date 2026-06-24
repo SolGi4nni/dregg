@@ -293,11 +293,12 @@ theorem refreshDelegation_circuit_refines_spec (S : Surface2)
     RefreshDelegationFullSpec s args.actor args.child s' :=
   refreshDelegationA_full_sound S DDgs hDDgs hRest hLog s args s' h
 
-/-- **`RefreshEpochStampResidual`** — DISCHARGED. The freshness-restore epoch-stamp is now WRITE-GATE-forced
-by the deployed refresh descriptor's PRODUCT component (`(delegations, delegationEpochAt)` bound to
-`(refreshDelegationsMap, refreshEpochAtMap)`), not a carried residual. Retained as the proposition the force
-delivers (`delegationEpochAt = refreshEpochAtMap`, re-stamping the child's tag to the parent's CURRENT
-epoch); `refreshDelegation_circuit_refines_spec` now proves it directly out of the descriptor. -/
+/-- **`RefreshEpochStampResidual` — CLOSED (NOT an open residual). SUPERSEDED by the deployed refresh
+descriptor's PRODUCT component** (`(delegations, delegationEpochAt)` bound to
+`(refreshDelegationsMap, refreshEpochAtMap)`): the freshness-restore epoch-stamp is PROVEN-FORCED there, and
+the conjunct was DROPPED from the refresh bridges. This `def` survives ONLY as documentation of the forced
+proposition (`delegationEpochAt = refreshEpochAtMap`, re-stamping the child's tag to the parent's CURRENT
+epoch); `refreshDelegation_circuit_refines_spec` PROVES it directly out of the descriptor. Nothing reads it. -/
 def RefreshEpochStampResidual (s : RecChainedState) (child : CellId) (s' : RecChainedState) : Prop :=
   s'.kernel.delegationEpochAt = refreshEpochAtMap s.kernel child
 

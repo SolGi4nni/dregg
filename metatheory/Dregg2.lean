@@ -555,6 +555,9 @@ import Dregg2.Verify.KeystoneAuditUnfoolability -- guarantee E (12): RecursiveAg
 import Dregg2.Verify.KeystoneAuditSupply        -- Wave 1 (5): mint/burn issuer-move (mintA_authorized + execMintA_iff_spec + recK{Mint,Burn}Asset_delta + requires_live_issuer)
 import Dregg2.Verify.KeystoneAuditConservation  -- Wave 2 (15): Conserve.* + recTransferBal/recKExec/recTransfer + monoid layer + W1 executor closure
 import Dregg2.Verify.KeystoneAuditTransport     -- Wave 3 (7): non-amp transport + writeCell0/stateCommit receipt-binding + moveAsset memory-program
+import Dregg2.Verify.KeystoneAuditRunnable      -- Wave 4 HARD (12): the COMMITTED gated forest (10 execFullForestG_* + memory-program family, real NodeAuthS) + the stepped Argus strand (argus_strand_{conserves,light_client})
+import Dregg2.Verify.KeystoneAuditSystemRoots   -- Wave 4 HARD (1): runnable_binds_same_system_roots — a concrete VmRowEnv satisfying wideHashSites over the realizable encodeSponge CR carrier
+import Dregg2.Verify.KeystoneAuditArgusReceipt  -- Wave 4 HARD (3): argus_circuit_executor_receipts_agree + {argus,transfer}_published_index_pins_receipt — concrete writeCell0 receipt + MMR opening over realized injective carriers
 
 -- REFINEMENT wave R2 (2026-06-11): THE HEAP's Lean foundation (REFINEMENT-DESIGN Decision 1).
 import Dregg2.Substrate.Heap              -- R2 keystone: the openable sorted-map semantics — the cap_root machinery generalized to a generic leaf (get/set/sorted-insert/non-membership via the REUSED sorted_gap_excludes; ext_get canonicity; root_deterministic + root_injective under the ONE named Poseidon2SpongeCR floor)

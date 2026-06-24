@@ -356,11 +356,12 @@ def spawnSpecStep (s : RecChainedState) (args : SpawnArgs) (s' : RecChainedState
 def spawnFullSpecStep (s : RecChainedState) (args : SpawnArgs) (s' : RecChainedState) : Prop :=
   SpawnFullSpec s args.actor args.child args.target s'
 
-/-- **`SpawnEpochStampResidual`** — DISCHARGED. The birth-epoch-stamp is now WRITE-GATE-forced by the
-deployed spawn descriptor's PRODUCT `active5` component (`(delegations, delegationEpochAt)` bound to
-`(spawnDelegationsMap, spawnEpochAtMap)`), not a carried residual. Retained as the proposition the force
-delivers (`delegationEpochAt = spawnEpochAtMap`, stamping the child's tag with the spawner-parent's CURRENT
-epoch); `spawn_circuit_refines_spec` now proves it directly out of the descriptor. -/
+/-- **`SpawnEpochStampResidual` — CLOSED (NOT an open residual). SUPERSEDED by the deployed `spawnE`
+descriptor's PRODUCT `active5` component** (`(delegations, delegationEpochAt)` bound to
+`(spawnDelegationsMap, spawnEpochAtMap)`): the birth-epoch-stamp is PROVEN-FORCED there, and the conjunct
+was DROPPED from the spawn bridges. This `def` survives ONLY as documentation of the forced proposition
+(`delegationEpochAt = spawnEpochAtMap`, stamping the child's tag with the spawner-parent's CURRENT epoch);
+`spawn_circuit_refines_spec` PROVES it directly out of the descriptor. Nothing reads it. -/
 def SpawnEpochStampResidual (s : RecChainedState) (actor child : CellId) (s' : RecChainedState) : Prop :=
   s'.kernel.delegationEpochAt = spawnEpochAtMap s.kernel actor child
 
@@ -815,11 +816,13 @@ The epoch step is no longer a CARRIED residual: the dedicated DUAL descriptor `r
 the FAITHFUL `RevokeDelegationFullSpec` falls straight out of the dual apex (the SAME forcing the
 spawn/refresh `delegationEpochAt` stamps received via their product components). -/
 
-/-- **`RevokeDelegationEpochResidual`** — RETAINED only as the documentation of WHAT the forced epoch step
-delivers (the parent's `delegationEpoch += 1`, the child's `delegations` snapshot cleared, the child's
-`delegationEpochAt` stamp reset). No longer load-bearing: `revokeDelegationCircuitStep` is now the FORCED
-dual step, and `revokeDelegation_circuit_refines_spec` PROVES this Prop out of the descriptor rather than
-carrying it as a hypothesis. -/
+/-- **`RevokeDelegationEpochResidual` — CLOSED (NOT an open residual). SUPERSEDED by
+`Inst.revokeDelegationFullA.revokeDelegationFullE`** (commit `34907f54f`): the epoch step is PROVEN-FORCED
+by that dual descriptor's FORCED `active2` component (the injective product digest binding parent
+`delegationEpoch += 1`, child `delegations := []`, child `delegationEpochAt := 0`), and the conjunct was
+DROPPED from every revoke bridge. This `def` survives ONLY as documentation of WHAT the force delivers; it
+is NOT carried as a hypothesis anywhere (`revokeDelegation_circuit_refines_spec` PROVES it out of the
+descriptor). Nothing reads it. -/
 def RevokeDelegationEpochResidual (s : RecChainedState) (parent child : CellId)
     (s' : RecChainedState) : Prop :=
   s'.kernel.delegationEpoch
