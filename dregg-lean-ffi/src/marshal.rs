@@ -2274,6 +2274,109 @@ pub fn conformance_output_expectations() -> Vec<ExpectedDecode> {
 // string must be consumed). Maps the empty-state sentinel to MalformedWireSentinel.
 // ===================================================================
 
+/// The theorem-backed REASON a turn was refused at admission — the legible "why" of a `false`.
+///
+/// The verified executor's admission predicate (`Dregg2.Exec.Admission.admissible`) is eight
+/// `&&`-folded gates; the FIRST failing gate's identity is the refusal reason. The Lean
+/// `AdmissionReason` ADT (`Dregg2.Exec.AdmissionReason`) names it, and `reasonCode` tags each
+/// case `0..11` for the wire; this enum is the Rust mirror, decoded from the `reason` field of
+/// the status-bearing export.
+///
+/// FAITHFULNESS (Lean `reasonCode_eq_zero_iff_admits`): `Admitted` (code 0) on the wire iff the
+/// turn genuinely passed admission — a refused turn ALWAYS carries a non-zero gate code, so the
+/// reason can never launder a refusal as an admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionReason {
+    /// Code 0: every admission gate passed — the turn was genuinely admitted (the body's
+    /// success/rollback is a SEPARATE question, read from `TurnStatus`).
+    Admitted,
+    /// Code 1: the call-forest is empty — there is nothing to execute.
+    EmptyForest,
+    /// Code 2: the agent cell is not a member account of this ledger.
+    NoSuchAgent,
+    /// Code 3: the agent cell is a member but not lifecycle-live (Destroyed/Sealed) — a dead
+    /// cell cannot author a turn.
+    DeadAgent,
+    /// Code 4: the turn's `valid_until` has passed relative to the host clock.
+    Expired,
+    /// Code 5: the turn's nonce does not match the agent's stored nonce (replay).
+    NonceMismatch,
+    /// Code 6: the declared fee is negative.
+    NegativeFee,
+    /// Code 7: the agent cannot cover the fee from its balance.
+    Underfunded,
+    /// Code 8: the agent cell is in the migration freeze-set.
+    AgentFrozen,
+    /// Code 9: some cell the forest writes is frozen.
+    WriteSetFrozen,
+    /// Code 10: the turn's `previous_receipt_hash` ≠ the agent's stored receipt-chain head.
+    ChainHeadMismatch,
+    /// Code 11: the fee exceeds the silo's Stingray budget slice.
+    OverBudget,
+}
+
+impl AdmissionReason {
+    /// Decode an `AdmissionReason` from its wire code (`Dregg2.Exec.AdmissionReason.reasonCode`).
+    /// `None` for an out-of-range code (fail-closed — never silently mis-name a gate).
+    pub fn from_code(code: u64) -> Option<Self> {
+        Some(match code {
+            0 => Self::Admitted,
+            1 => Self::EmptyForest,
+            2 => Self::NoSuchAgent,
+            3 => Self::DeadAgent,
+            4 => Self::Expired,
+            5 => Self::NonceMismatch,
+            6 => Self::NegativeFee,
+            7 => Self::Underfunded,
+            8 => Self::AgentFrozen,
+            9 => Self::WriteSetFrozen,
+            10 => Self::ChainHeadMismatch,
+            11 => Self::OverBudget,
+            _ => return None,
+        })
+    }
+
+    /// `true` iff this reason is `Admitted` (the turn passed every admission gate). By the Lean
+    /// keystone this is equivalent to `admissible = true`.
+    pub fn is_admitted(self) -> bool {
+        matches!(self, Self::Admitted)
+    }
+
+    /// A human-readable, stranger-facing explanation of the refusal — the legible "why".
+    pub fn explain(self) -> &'static str {
+        match self {
+            Self::Admitted => "the turn passed every admission gate",
+            Self::EmptyForest => "refused: the turn carries no actions (an empty call-forest)",
+            Self::NoSuchAgent => "refused: the agent cell is not an account on this ledger",
+            Self::DeadAgent => {
+                "refused: the agent cell is destroyed or sealed and cannot author a turn"
+            }
+            Self::Expired => "refused: the turn's valid-until deadline has already passed",
+            Self::NonceMismatch => {
+                "refused: the turn's nonce does not match the agent's next nonce (replay or stale turn)"
+            }
+            Self::NegativeFee => "refused: the declared fee is negative",
+            Self::Underfunded => "refused: the agent's balance cannot cover the declared fee",
+            Self::AgentFrozen => {
+                "refused: the agent cell is frozen for migration; no turns may execute against it"
+            }
+            Self::WriteSetFrozen => {
+                "refused: a cell this turn would write is frozen for migration"
+            }
+            Self::ChainHeadMismatch => {
+                "refused: the turn's previous-receipt-hash does not match the agent's receipt-chain head"
+            }
+            Self::OverBudget => "refused: the fee exceeds this silo's remaining budget slice",
+        }
+    }
+}
+
+impl core::fmt::Display for AdmissionReason {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.explain())
+    }
+}
+
 /// The three-way turn status the boundary-P1 (bug 2) status-bearing export emits.
 ///
 /// The legacy `{"state":…,"loglen":N,"ok":B}` shape collapsed
@@ -2307,6 +2410,11 @@ pub struct TurnResult {
     /// The three-way status. `None` when the (legacy, no-`status`) wire shape was decoded;
     /// `Some(_)` when the status-bearing export emitted an explicit `status` code.
     pub status: Option<TurnStatus>,
+    /// The theorem-backed admission reason (the legible "why" of a refusal). `None` for the
+    /// legacy no-`reason` wire; `Some(AdmissionReason::Admitted)` when the turn passed admission
+    /// (the body's success/rollback is then read from `status`); `Some(other)` names the FIRST
+    /// failing admission gate when the turn was rejected at the prologue (`status == Rejected`).
+    pub reason: Option<AdmissionReason>,
 }
 
 pub fn unmarshal_result(s: &str) -> Result<TurnResult, UnmarshalError> {
@@ -2335,6 +2443,23 @@ pub fn unmarshal_result(s: &str) -> Result<TurnResult, UnmarshalError> {
     } else {
         None
     };
+    // The reason-bearing export inserts `,"reason":R` between `status` and `ok` (the legible
+    // refusal reason). Optional + forward-compatible, like `status`. An out-of-range code is
+    // fail-closed (a verifier-drift bug, never silently mis-named).
+    let reason = if p.try_lit(",\"reason\":") {
+        let code = p.nat().map_err(|e| p.err(e))?;
+        match AdmissionReason::from_code(code) {
+            Some(r) => Some(r),
+            None => {
+                return Err(UnmarshalError::OutputParse {
+                    at: p.pos(),
+                    why: format!("admission-reason code {code} out of range (0..11)"),
+                });
+            }
+        }
+    } else {
+        None
+    };
     p.lit(",\"ok\":").map_err(|e| p.err(e))?;
     let ok = p.flag().map_err(|e| p.err(e))?;
     p.lit("}").map_err(|e| p.err(e))?;
@@ -2351,6 +2476,7 @@ pub fn unmarshal_result(s: &str) -> Result<TurnResult, UnmarshalError> {
         state,
         loglen,
         status,
+        reason,
     })
 }
 
@@ -2835,4 +2961,58 @@ fn parse_list<T>(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod admission_reason_decode_tests {
+    use super::*;
+
+    /// A minimal non-sentinel post-state for the decode tests (one cell so it is NOT the empty
+    /// 9-field sentinel that decodes to `MalformedWireSentinel`).
+    const STATE: &str = "{\"cells\":[[0,{\"rec\":[]}]],\"caps\":[],\"bal\":[],\"escrows\":[],\
+\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\
+\"deathCert\":[],\"delegate\":[]}";
+
+    /// The reason-bearing export wire decodes the named `AdmissionReason` (the legible "why").
+    #[test]
+    fn decodes_named_reason() {
+        // a refused turn: status:0 (rejected), reason:5 (NonceMismatch), ok:0.
+        let wire = format!("{{\"state\":{STATE},\"loglen\":0,\"status\":0,\"reason\":5,\"ok\":0}}");
+        let r = unmarshal_result(&wire).expect("reason-bearing wire decodes");
+        assert_eq!(r.status, Some(TurnStatus::Rejected));
+        assert_eq!(r.reason, Some(AdmissionReason::NonceMismatch));
+        assert!(!r.committed);
+        // the named reason is no longer a silent `false`:
+        assert_eq!(
+            r.reason.unwrap().explain(),
+            "refused: the turn's nonce does not match the agent's next nonce (replay or stale turn)"
+        );
+    }
+
+    /// An admitted+committed turn carries `reason:0` (Admitted) — the wire never lies about admission.
+    #[test]
+    fn admitted_commit_carries_reason_zero() {
+        let wire = format!("{{\"state\":{STATE},\"loglen\":1,\"status\":2,\"reason\":0,\"ok\":1}}");
+        let r = unmarshal_result(&wire).expect("committed wire decodes");
+        assert_eq!(r.status, Some(TurnStatus::BodyCommitted));
+        assert_eq!(r.reason, Some(AdmissionReason::Admitted));
+        assert!(r.committed);
+        assert!(r.reason.unwrap().is_admitted());
+    }
+
+    /// The legacy no-`reason` wire still decodes (forward-compatible): `reason == None`.
+    #[test]
+    fn legacy_no_reason_wire_decodes() {
+        let wire = format!("{{\"state\":{STATE},\"loglen\":0,\"status\":1,\"ok\":0}}");
+        let r = unmarshal_result(&wire).expect("legacy wire decodes");
+        assert_eq!(r.status, Some(TurnStatus::PrologueCommittedBodyFailed));
+        assert_eq!(r.reason, None);
+    }
+
+    /// An out-of-range reason code is fail-closed (a verifier-drift bug, never silently mis-named).
+    #[test]
+    fn out_of_range_reason_is_rejected() {
+        let wire = format!("{{\"state\":{STATE},\"loglen\":0,\"status\":0,\"reason\":99,\"ok\":0}}");
+        assert!(unmarshal_result(&wire).is_err());
+    }
 }

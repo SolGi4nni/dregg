@@ -210,6 +210,12 @@ pub use dregg_turn::{
     VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_extends,
 };
 
+/// The theorem-backed reason the verified executor refused a turn at admission — the legible "why"
+/// of a refusal (re-exported so SDK callers can match on the structured reason, not just its
+/// `Display` string). Surfaced through [`SdkError::Turn`] →
+/// [`TurnError::AdmissionRefused`](dregg_turn::TurnError::AdmissionRefused).
+pub use dregg_turn::AdmissionReason;
+
 /// Short alias for [`AgentCipherclerk`] — the "capability clerk" handle.
 ///
 /// Use in tight scopes where the full name would dominate signatures.

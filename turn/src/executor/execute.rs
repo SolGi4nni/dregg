@@ -185,15 +185,25 @@ impl TurnExecutor {
         // rejection would (no state edit).
         if obs.lean_vetoes(result.is_committed(), lean_verdict) {
             if let Some(pre) = veto_snapshot {
+                // Surface the verified executor's theorem-backed admission REASON when it carried
+                // one (a refusal at the admission prologue) — the legible "why" of the veto,
+                // replacing a bare `LeanShadowVeto`. A reason is present only when the verified
+                // refusal was an ADMISSION refusal (not `Admitted`); a body-rollback veto keeps
+                // the generic `LeanShadowVeto`.
+                let reason = match obs.admission_reason() {
+                    Some(r) if !r.is_admitted() => TurnError::AdmissionRefused { reason: r },
+                    _ => TurnError::LeanShadowVeto,
+                };
                 tracing::warn!(
                     target: "dregg::lean_shadow::veto",
                     agent = ?turn.agent,
+                    reason = %reason,
                     "THE SWAP veto: verified Lean executor REJECTED a Rust-committed turn — rolling \
                      back (the verified kernel is the authoritative rejection gate under strict mode)"
                 );
                 *ledger = pre;
                 return TurnResult::Rejected {
-                    reason: TurnError::LeanShadowVeto,
+                    reason,
                     at_action: vec![],
                 };
             }

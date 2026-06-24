@@ -29,7 +29,7 @@ pub use distributed_ffi::{
     strand_admit_available, tau_order_available, verified_2pc_decide, verified_admits,
     verified_handoff_non_amplifying, verified_happened_before, verified_tau_order, Decision2pc,
 };
-pub use marshal::{TurnStatus, WireState};
+pub use marshal::{AdmissionReason, TurnStatus, WireState};
 
 /// Decoded Lean gated-forest verdict (T9 output envelope).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +42,10 @@ pub struct ShadowVerdict {
     pub loglen: u64,
     /// The three-way status (boundary-P1 bug 2). `None` only for the legacy no-`status` wire.
     pub status: Option<TurnStatus>,
+    /// The theorem-backed admission reason — the legible "why" of a refused turn. `None` for the
+    /// legacy no-`reason` wire. When the turn was refused at admission (`status == Rejected`),
+    /// this names the FIRST failing gate; on an admitted turn it is `Some(Admitted)`.
+    pub reason: Option<AdmissionReason>,
     pub divergence_note: Option<String>,
 }
 
@@ -57,6 +61,15 @@ impl ShadowVerdict {
         match self.status {
             Some(s) => s == TurnStatus::BodyCommitted,
             None => self.committed,
+        }
+    }
+    /// The human-readable refusal reason, if the turn was rejected at admission and the wire
+    /// carried a (non-`Admitted`) reason. `None` for an admitted turn, a body-rollback (whose
+    /// "why" is the body's, not admission's), or a legacy no-`reason` wire.
+    pub fn admission_refusal(&self) -> Option<AdmissionReason> {
+        match self.reason {
+            Some(r) if !r.is_admitted() => Some(r),
+            _ => None,
         }
     }
 }
@@ -160,6 +173,7 @@ pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
             },
             loglen: r.loglen,
             status: r.status,
+            reason: r.reason,
             divergence_note: None,
         }),
         Err(e) => Err(e.to_string()),
@@ -199,8 +213,9 @@ pub fn decode_shadow_state(output: &str) -> Result<ShadowState, String> {
                 verdict: ShadowVerdict {
                     committed,
                     loglen: r.loglen,
-                    status: r.status,
-                    divergence_note: None,
+            status: r.status,
+            reason: r.reason,
+            divergence_note: None,
                 },
                 state: r.state,
             })

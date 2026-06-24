@@ -122,6 +122,19 @@ pub enum SdkError {
     },
 }
 
+impl SdkError {
+    /// The theorem-backed admission reason, if this error is a verified-executor refusal at
+    /// admission ([`TurnError::AdmissionRefused`]). `None` for every other error. Lets a caller
+    /// branch on the structured reason (e.g. retry on `NonceMismatch`, top up on `Underfunded`)
+    /// rather than parsing the `Display` string.
+    pub fn admission_reason(&self) -> Option<dregg_turn::AdmissionReason> {
+        match self {
+            SdkError::Turn(TurnError::AdmissionRefused { reason }) => Some(*reason),
+            _ => None,
+        }
+    }
+}
+
 impl From<crate::cipherclerk::ChainAppendError> for SdkError {
     fn from(value: crate::cipherclerk::ChainAppendError) -> Self {
         match value {

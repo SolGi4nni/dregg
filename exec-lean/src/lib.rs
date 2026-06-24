@@ -91,4 +91,8 @@ impl ShadowObserver for LeanShadowObserver {
     fn lean_vetoes(&self, rust_committed: bool, lean_verdict: Option<bool>) -> bool {
         lean_shadow::lean_vetoes(rust_committed, lean_verdict)
     }
+
+    fn admission_reason(&self) -> Option<dregg_turn::AdmissionReason> {
+        lean_shadow::last_admission_reason()
+    }
 }

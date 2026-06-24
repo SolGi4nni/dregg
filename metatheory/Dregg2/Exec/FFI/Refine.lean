@@ -79,10 +79,14 @@ def encodeResult (w : WWire) (sr : TurnStatus × Option RecChainedState) : Strin
   let cellIds := w.state.cells.map Prod.fst
   let capLabels := w.state.caps.map Prod.fst
   let balKeys := balKeysOf w.state
+  -- the theorem-backed refusal reason, computed from the SAME host-fed ctx/hdr/pre-state as the model
+  -- (`AdmissionReason.reasonCode (admissionReason …)`) — exactly the export's `reason` let-binding.
+  let reason := AdmissionReason.reasonCode (AdmissionReason.admissionReason
+    (runCtx w) (runHdr w) { kernel := stateOfWState w.state, log := [] })
   match sr.2 with
-  | some s' => encodeWStatusOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length sr.1
-  | none    => encodeWStatusOut (wstateOfState cellIds capLabels balKeys
-                  ({ kernel := stateOfWState w.state, log := [] } : RecChainedState).kernel) 0 sr.1
+  | some s' => encodeWStatusReasonOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length sr.1 reason
+  | none    => encodeWStatusReasonOut (wstateOfState cellIds capLabels balKeys
+                  ({ kernel := stateOfWState w.state, log := [] } : RecChainedState).kernel) 0 sr.1 reason
 
 /-! ## §R2 — the refinement theorems. -/
 
@@ -111,7 +115,7 @@ theorem export_refines_on_parseable (input : String) (w : WWire)
 /-- **The fail-closed leg.** An unparseable wire is the rejected sentinel (empty 11-field state, `status:0`,
 `ok:0`) — a malformed wire can NEVER produce a turn (`runModel` is not even reached). -/
 theorem export_rejects_unparseable (input : String) (hparse : parseWWire input = none) :
-    execFullForestAuthStep input = encodeWStatusOut emptyWState 0 TurnStatus.rejected := by
+    execFullForestAuthStep input = encodeWStatusReasonOut emptyWState 0 TurnStatus.rejected 0 := by
   unfold execFullForestAuthStep
   rw [hparse]
 

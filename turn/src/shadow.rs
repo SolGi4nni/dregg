@@ -139,6 +139,16 @@ pub trait ShadowObserver: Send + Sync {
     /// the verified Lean executor REJECTED. A `None` verdict (GAP / FFI off) NEVER vetoes (we cannot
     /// veto what we did not compare). The veto is one-directional: `lean=false ∧ rust=true` only.
     fn lean_vetoes(&self, rust_committed: bool, lean_verdict: Option<bool>) -> bool;
+
+    /// The theorem-backed admission REASON the verified executor reported for the last
+    /// [`observe`](Self::observe)d turn, if the verified wire carried one (the legible "why" of a
+    /// refusal). `None` when there is no reason to surface — the turn was not comparable
+    /// (FFI off / GAP / marshal failure), the legacy no-`reason` wire was decoded, or the turn was
+    /// admitted (the body's success/rollback is then the relevant outcome, not admission). The
+    /// default (no-op observer) returns `None` — "no reason" is then a visible platform fact.
+    fn admission_reason(&self) -> Option<crate::AdmissionReason> {
+        None
+    }
 }
 
 /// The default shadow observer for every executor that is NOT a native Lean-linked node: it

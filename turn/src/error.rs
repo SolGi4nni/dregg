@@ -428,6 +428,16 @@ pub enum TurnError {
     /// `TokenAuthorityVerifier` configured (fail-closed, mirrors the
     /// no-proof-verifier posture).
     TokenVerifierNotConfigured,
+
+    /// The VERIFIED executor refused the turn at admission, WITH its theorem-backed reason.
+    ///
+    /// The verified `Dregg2.Exec.Admission.admissible` predicate is a fold of eight named gates;
+    /// the FIRST failing gate is the [`AdmissionReason`](crate::AdmissionReason) this carries
+    /// (`reasonCode`, decoded from the verified executor's wire). This is the legible "why" of a
+    /// refusal — the dregg thesis's "refused WITH a reason" — replacing a bare `false`. The Lean
+    /// keystone `admissionReason_eq_admitted_iff` proves the reason is faithful: it is never
+    /// `Admitted` on a refused turn.
+    AdmissionRefused { reason: crate::AdmissionReason },
 }
 
 impl core::fmt::Display for TurnError {
@@ -899,6 +909,10 @@ impl core::fmt::Display for TurnError {
                     "Authorization::Token presented but no TokenAuthorityVerifier configured \
                      (fail-closed)"
                 )
+            }
+            TurnError::AdmissionRefused { reason } => {
+                // The reason renders its own stranger-facing "refused: …" explanation.
+                write!(f, "{reason}")
             }
         }
     }

@@ -15,6 +15,7 @@ import Dregg2.Exec.FullForestAuth     -- the 10-variant `Authorization` sum (MET
 import Dregg2.Exec.Admission           -- `AdmCtx` / `TurnHdr` / `runTurn` prologue
 import Dregg2.Exec.TurnAdmission      -- `runGatedForestTurn` / `runHandlerTurn` = admission ∘ body
 import Dregg2.Exec.AdmissionWire      -- write-set extraction + `TurnHdr` builders for the wire
+import Dregg2.Exec.AdmissionReason    -- the theorem-backed refusal REASON + its wire code
 import Dregg2.Exec.HandlerExecutor    -- `execHandlerTurn` = the handler-registry cutover executor
 
 namespace Dregg2.Exec.FFI
@@ -152,10 +153,17 @@ def wireOk1 (s : String) : Bool := s.endsWith "\"ok\":1}"
 def wireOk0 (s : String) : Bool := s.endsWith "\"ok\":0}"
 
 /-- CI guard helper (boundary-P1): the three-way `status:S` field carries code `n`
-(0=rejected, 1=prologue-committed-body-failed, 2=body-committed). -/
+(0=rejected, 1=prologue-committed-body-failed, 2=body-committed). Tolerant of the optional
+`,"reason":R` field that the reason-bearing export (`encodeWStatusReasonOut`) inserts after
+`status` — the trailing comma pins `n` to the WHOLE code (never a digit-prefix). -/
 def wireStatusIs (n : Nat) (s : String) : Bool :=
-  s.endsWith ("\"status\":" ++ toString n ++ ",\"ok\":1}")
-    || s.endsWith ("\"status\":" ++ toString n ++ ",\"ok\":0}")
+  -- the substring `"status":n,` occurs in `s` (the trailing comma pins the whole code).
+  ((s.splitOn ("\"status\":" ++ toString n ++ ",")).length ≥ 2)
+
+/-- CI guard helper: the wire's `reason` field carries code `r` (an `AdmissionReason.reasonCode`).
+The trailing comma pins `r` to the whole code. -/
+def wireReasonIs (r : Nat) (s : String) : Bool :=
+  ((s.splitOn ("\"reason\":" ++ toString r ++ ",")).length ≥ 2)
 
 /-! ### Decoder: a tiny recursive-descent parser over the fixed grammar.
 
@@ -3002,6 +3010,20 @@ def encodeWStatusOut (state : WState) (loglen : Nat)
     ++ ",\"status\":" ++ toString (turnStatusCode st)
     ++ ",\"ok\":" ++ (if st = .bodyCommitted then "1" else "0") ++ "}"
 
+/-- Encode the status-AND-REASON-bearing OUTPUT
+`{"state":STATEW,"loglen":N,"status":S,"reason":R,"ok":B}`. The `reason` code (`AdmissionReason`'s
+`reasonCode`, `0=admitted … 11=overBudget`) names the FIRST failing admission gate when the turn was
+REFUSED at the prologue (`status:0`); for an admitted turn (`status:1`/`status:2`) it is `0`
+(`admitted`) — by `reasonCode_eq_zero_iff_admits`, a `reason:0` on the wire means the turn genuinely
+passed admission. The Rust decoder reads `reason` optionally (forward-compatible) and surfaces a
+named `AdmissionReason` so a refused turn is no longer a silent `false`. -/
+def encodeWStatusReasonOut (state : WState) (loglen : Nat)
+    (st : Dregg2.Exec.TurnAdmission.TurnStatus) (reason : Nat) : String :=
+  "{\"state\":" ++ encodeWState state ++ ",\"loglen\":" ++ toString loglen
+    ++ ",\"status\":" ++ toString (turnStatusCode st)
+    ++ ",\"reason\":" ++ toString reason
+    ++ ",\"ok\":" ++ (if st = .bodyCommitted then "1" else "0") ++ "}"
+
 /-- The empty 9-field fail-closed sentinel state (malformed wire / rejected). Named so the export
 sites pass it as a single token (avoids the column-sensitive multi-line structure literal). -/
 def emptyWState : WState :=
@@ -3367,7 +3389,8 @@ and `ok:0` — the rollback is observable. On a malformed wire we fail-closed to
 @[export dregg_exec_full_forest_auth]
 def execFullForestAuthStep (input : String) : String :=
   match parseWWire input with
-  | none => encodeWStatusOut emptyWState 0 TurnStatus.rejected
+  -- malformed wire: there is no admission decision to name ⇒ reason `0` (no gate fired).
+  | none => encodeWStatusReasonOut emptyWState 0 TurnStatus.rejected 0
   | some w =>
     let k0 := stateOfWState w.state
     let s0 : RecChainedState := { kernel := k0, log := [] }
@@ -3378,12 +3401,16 @@ def execFullForestAuthStep (input : String) : String :=
     let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
                   w.turn.validUntil w.turn.prevHash
     let gforest : DForest := liftForestG w.turn.root
+    -- The theorem-backed refusal reason: the FIRST failing admission gate (or `admitted`).
+    -- `reasonCode_eq_zero_iff_admits` ⇒ `reason = 0` iff the turn passed admission, so a `status:0`
+    -- rejection ALWAYS carries a non-zero gate code (the legible "why"), never a bare `false`.
+    let reason := AdmissionReason.reasonCode (AdmissionReason.admissionReason ctx hdr s0)
     let (st, res) := runGatedForestTurnStatus ctx hdr s0 gforest
     match res with
     | some s' =>
-        encodeWStatusOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length st
+        encodeWStatusReasonOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length st reason
     | none =>
-        encodeWStatusOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 st
+        encodeWStatusReasonOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 st reason
 
 /-! ### §WG-eval — the GATED export round-trips, AND matches `execFullForestG` run directly.
 
@@ -3415,10 +3442,11 @@ def gatedDemoInput : String := encodeWWire { state := wideDemoState, turn := gat
          let ctx := admCtxOfHost w.host
          let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
                        w.turn.validUntil w.turn.prevHash
+         let reason := AdmissionReason.reasonCode (AdmissionReason.admissionReason ctx hdr s0)
          let (st, res) := runGatedForestTurnStatus ctx hdr s0 (liftForestG w.turn.root)
          (match res with
-          | some s' => encodeWStatusOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length st
-          | none    => encodeWStatusOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 st)
+          | some s' => encodeWStatusReasonOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length st reason
+          | none    => encodeWStatusReasonOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 st reason)
            == execFullForestAuthStep gatedDemoInput
        | none => false))  --  true (export = direct run)
 
@@ -3466,7 +3494,7 @@ def forgedGatedInput : String := encodeWWire { state := wideDemoState, turn := f
 #guard (portalVerify (liftAuthW (.signature 7 8 : AuthW))) == false  --  false (forged ⇒ rollback)
 -- malformed wire ⇒ fail-closed empty state, status:0 (rejected), ok:0:
 #guard (execFullForestAuthStep "garbage" ==
-  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[],\"delegate\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[],\"delegate\":[]},\"loglen\":0,\"status\":0,\"reason\":0,\"ok\":0}")
 
 /-! ### §WG-eval-admission — the ADMISSION prologue has teeth over the export.
 
@@ -3503,6 +3531,29 @@ def overfeeGatedTurn : WTurn :=
                          w.turn.validUntil w.turn.prevHash
            (runGatedForestTurn ctx hdr s0 (liftForestG w.turn.root)).isNone
          | none => false))  --  true (fee > balance ⇒ inadmissible)
+
+/-! ### §WG-eval-reason — the REFUSAL REASON is on the wire (the legible "why").
+
+The export now emits a `reason` code (`AdmissionReason.reasonCode`) naming the FIRST failing admission
+gate. A genuine commit carries `reason:0` (`admitted`); a refused turn carries its theorem-backed gate
+code — so a stranger's first failed turn reads its WHY, not a bare `false`. These guards exercise the
+full `execFullForestAuthStep` wire (host-fed admission), reusing the §W-status host. -/
+
+/-- The full wire for the bad-nonce turn (host-fed admission via the §W-status demo host). -/
+def badNonceInput : String := encodeWWire { state := wideDemoState, turn := badNonceGatedTurn }
+/-- The full wire for the overfee turn. -/
+def overfeeInput : String := encodeWWire { state := wideDemoState, turn := overfeeGatedTurn }
+
+-- A genuine commit carries `reason:0` (admitted) — the wire's reason never lies about admission:
+#guard (wireReasonIs 0 (execFullForestAuthStep gatedDemoInput))
+-- A wrong-nonce turn is REFUSED with the NONCE-MISMATCH reason (code 5), status:0 (rejected):
+#guard (wireStatusIs 0 (execFullForestAuthStep badNonceInput))
+#guard (wireReasonIs 5 (execFullForestAuthStep badNonceInput))   --  nonceMismatch
+-- An overfee turn is REFUSED with the UNDERFUNDED reason (code 7), status:0:
+#guard (wireStatusIs 0 (execFullForestAuthStep overfeeInput))
+#guard (wireReasonIs 7 (execFullForestAuthStep overfeeInput))    --  underfunded
+-- malformed wire ⇒ reason:0 (no admission gate fired — a marshalling bug, not a refusal):
+#guard (wireReasonIs 0 (execFullForestAuthStep "garbage"))
 
 /-! ### §WG-eval-caveat — THE CAVEAT TEETH (the violated-caveat rollback contrast).
 

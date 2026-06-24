@@ -56,6 +56,33 @@ thread_local! {
     static SHADOW_PRE: RefCell<Option<ShadowPreLedger>> = const { RefCell::new(None) };
     static SHADOW_BLOCK_HEIGHT: RefCell<u64> = const { RefCell::new(0) };
     static SHADOW_HOST: RefCell<Option<ShadowHostCtx>> = const { RefCell::new(None) };
+    /// The theorem-backed admission REASON the verified executor reported for the LAST observed
+    /// turn (the legible "why" of a refusal). Set by `run_shadow` from the decoded verdict; read
+    /// by `LeanShadowObserver::admission_reason` so the veto path can surface the named reason.
+    /// Mapped from the FFI `dregg_lean_ffi::AdmissionReason` to the FFI-free `dregg_turn` mirror.
+    static SHADOW_REASON: RefCell<Option<dregg_turn::AdmissionReason>> = const { RefCell::new(None) };
+}
+
+/// Map a decoded FFI `AdmissionReason` to the FFI-free `dregg_turn` mirror (same `&&`-ordered
+/// gate set / wire codes, proved faithful in Lean). Routed through `code()`/`from_code` so the two
+/// enums can never silently drift.
+fn map_ffi_reason(r: dregg_lean_ffi::AdmissionReason) -> Option<dregg_turn::AdmissionReason> {
+    use dregg_lean_ffi::AdmissionReason as F;
+    let code = match r {
+        F::Admitted => 0,
+        F::EmptyForest => 1,
+        F::NoSuchAgent => 2,
+        F::DeadAgent => 3,
+        F::Expired => 4,
+        F::NonceMismatch => 5,
+        F::NegativeFee => 6,
+        F::Underfunded => 7,
+        F::AgentFrozen => 8,
+        F::WriteSetFrozen => 9,
+        F::ChainHeadMismatch => 10,
+        F::OverBudget => 11,
+    };
+    dregg_turn::AdmissionReason::from_code(code)
 }
 
 /// Capture a minimal pre-state snapshot when shadow mode may run later.
@@ -150,6 +177,10 @@ pub fn maybe_shadow_turn(
     block_height: u64,
 ) -> Option<bool> {
     let _ = (ledger, block_height);
+    // Clear any stale reason from a previous turn — a non-comparable turn (FFI off / GAP / not
+    // marshallable) must surface NO reason, never a stale one. `run_shadow` re-sets it on a real
+    // comparison.
+    SHADOW_REASON.with(|r| *r.borrow_mut() = None);
     if !shadow_env_enabled() {
         SHADOW_PRE.with(|slot| slot.borrow_mut().take());
         SHADOW_BLOCK_HEIGHT.with(|h| *h.borrow_mut() = 0);
@@ -1416,7 +1447,19 @@ fn run_shadow(turn: &Turn, pre: &ShadowPreLedger, host: &ShadowHostCtx) -> Resul
         eprintln!("[shadow wire OUT] {out}");
     }
     let verdict = dregg_lean_ffi::decode_shadow_verdict(&out)?;
+    // Capture the theorem-backed admission reason (the legible "why") for the veto path to surface.
+    // `admission_refusal()` yields a reason ONLY when the turn was refused at admission with a
+    // non-`Admitted` reason; an admitted turn / legacy wire clears it.
+    let mapped = verdict.admission_refusal().and_then(map_ffi_reason);
+    SHADOW_REASON.with(|r| *r.borrow_mut() = mapped);
     Ok(verdict.committed)
+}
+
+/// The theorem-backed admission REASON the verified executor reported for the last observed turn
+/// (the legible "why" of a refusal), or `None` when there is none to surface. Read by
+/// [`LeanShadowObserver::admission_reason`].
+pub fn last_admission_reason() -> Option<dregg_turn::AdmissionReason> {
+    SHADOW_REASON.with(|r| *r.borrow())
 }
 
 /// THE SWAP state-producing path: marshal the turn, run the VERIFIED Lean executor, and return

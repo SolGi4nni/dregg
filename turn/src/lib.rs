@@ -82,6 +82,7 @@
 //! - [`builder`]: TurnBuilder, ActionBuilder
 
 pub mod action;
+pub mod admission_reason;
 pub mod aggregate_bilateral_prover;
 pub mod bilateral_schedule;
 pub mod binding_proof;
@@ -144,6 +145,7 @@ pub use encrypted::{
     ConflictBucket, EncryptedTurn, EncryptedTurnError, SubmitterAuth, TurnOrdering,
     TurnValidityProof, TurnValidityPublicInputs, order_encrypted_turns,
 };
+pub use admission_reason::AdmissionReason;
 pub use error::TurnError;
 pub use eventual::{
     CycleError, EventualRef, OutputRef, Pipeline, PipelineBuilder, PipelineError, PipelineResult,
