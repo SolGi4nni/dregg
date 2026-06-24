@@ -289,6 +289,85 @@ None of these need a new kernel/Microkit/virtio primitive. Every one is either
 "implement the handler the code already documents" or "copy `net.system`'s proven
 two-PD shared-DMA+channel topology with the device swapped for a turn queue."
 
+### 3.5 The repaint loop is WIRED + PROVEN on the semihost (the same-code path)
+
+The §3.3 loop is now **implemented and proven** on the semihost firmament — the
+host-runnable (`cargo test`, no Microkit SDK) realization of the SAME PD source
+that runs on real seL4. `sel4/dregg-firmament/` is the
+`EmulatedKernel`/`microkit_facade` model where the executor-PD
+(`src/executor_pd.rs`) and the compositor-PD (`src/compositor_pd.rs`) already run
+on ONE kernel; before this they were both green but DISCONNECTED, exactly the §3
+seam.
+
+What is wired (`sel4/dregg-firmament/src/repaint.rs`, ~9 unit + 2 boot tests):
+
+- **The projection** `project_dirty_from_turn(owner, ServedTurn) → Option<DirtyRegion>`
+  — a committed turn projects a `DirtyRegion { owner, new_source_state_root,
+  new_content_digest }` (the new state-root/digest folded from the committed
+  receipt — faithful to the binding discipline: a distinct committed state ⟹ a
+  distinct frame). A **REJECTED** turn projects `None` (fail-closed — no repaint).
+  This is the PD-boundary form of the deos `deos-js/src/signals.rs` dirty-set: a
+  touched cell ⟼ the surface that must re-present.
+- **The wire** `encode_dirty`/`decode_dirty` over a shared `repaint_out` region
+  (the third region of the §3 topology, beside `turn_in`/`commit_out`), hand-
+  rolled + dependency-free exactly like `compositor_pd::encode_present` and the
+  net-client's `[len][msg]` framing. A malformed frame decodes to `None` (no
+  repaint).
+- **The repaint** `DirtyRegion::to_present(target) → Present` — turns the dirty
+  signal into the compositor's scene-gated `present()`, declaring the GENUINE
+  owner-label (T2) and NOT claiming focus (a content advance, not an input
+  assertion). It rides the SAME compositor gate as any present.
+
+What is PROVEN (`sel4/dregg-firmament/tests/live_repaint_on_turn.rs`):
+
+- **A COMMITTED turn re-paints the focused cell** — the executor runs the genuine
+  `granted ⊆ held` gate, projects a `DirtyRegion`, writes `repaint_out`, the
+  compositor reads it and presents → **two framebuffer snapshots DIFFER at exactly
+  the focused cell's region** (tile 10 advances from blank to the turn's frame).
+- **A REJECTED turn re-paints NOTHING** — the widening turn is refused at the
+  heart, projects `None`, the compositor is never woken → **the framebuffer is
+  BYTE-IDENTICAL** (fail-closed).
+- **The scene gate still fires on a repaint** — a turn cannot re-paint a region
+  its cell does not own; a repaint targeting a foreign surface's region is REFUSED
+  (T1 — no amplification at the pixel layer), the victim's tile untouched.
+
+This adds ONLY the projection + the wire — NO new primitive. It rides the proven
+executor-PD turn path, the proven compositor-PD present gate, and the cross-PD
+`notify`/shared-region `Channel` the 2-PD notify slice (`tests/boot_pds.rs`)
+proves. The honest fidelity label travels with the code
+(`dregg_firmament::REPAINT_FIDELITY`): the loop is REAL on the semihost (a genuine
+turn drives a genuine scene-gated present advancing the framebuffer); the
+framebuffer's last hop to a scanned-out panel is the F1/F2/F3 graphics frontier
+the compositor already names, NOT solved here.
+
+### 3.6 What still needs the real-seL4 Microkit runner
+
+The semihost proves the LOOP (same PD source). To see it on the seL4 framebuffer
+(`make run-image`) needs the Microkit SDK (`MICROKIT_SDK` unset / `microkit` not
+on PATH in this environment; `qemu-system-aarch64` IS present). The remaining
+real-seL4 work, none of it a new primitive:
+
+1. **`deos-live.system`** — the §3.2 two-PD assembly (`deos-image` PD ⊕
+   `executor` PD ⊕ `turn_in`/`commit_out`/`repaint_out` DMA regions ⊕ the two
+   `<channel>`s), copied from `net.system`'s proven shared-DMA + `<channel>`
+   topology. (The net-client weld `80c9468f` already demonstrates the exact
+   `turn_in` RW-staging + `EXECUTOR.notify()` shape this needs.)
+2. **The bare-metal executor-PD handler** (`sel4/dregg-pd/executor-pd`) gains the
+   `repaint_out` write + `CH_REPAINT.notify()` after a commit — the exact code
+   `repaint.rs` proves on the semihost, transcribed to the real `memory_region_
+   symbol!` + `Channel` (the same text, per §3's same-code contract).
+3. **The deos-image PD's `notified(CH_REPAINT)` arm** — read `repaint_out`,
+   present the dirty region (the viewer's `view.rs`/`fb.rs` `paint()` is already
+   the repaint-on-change machinery; only its trigger moves to the notify).
+4. The executor-PD Lean-ELF runtime link remains the real-seL4 WALL step (it
+   idles its verified-turn path on bare metal until the runtime links — NOT a
+   blocker on the semihost, where the genuine runner runs NOW).
+
+**Run command for ember (once the Microkit SDK is on PATH):** the semihost proof
+runs anywhere with `cd sel4/dregg-firmament && cargo test --test
+live_repaint_on_turn` (2/2 green, no SDK needed). The real-seL4 framebuffer
+demonstration is `make run-image` after `deos-live.system` lands (step 1–3 above).
+
 ---
 
 ## 4. Concrete next-step PD/IPC sketch (the smallest end-to-end slice)
@@ -318,11 +397,14 @@ data-driven `view.rs` repaint, which is the honest, no-GPU-in-PD path).
 
 ### Build confidence
 
-`make build-image` is green at HEAD — `sel4/build/deos-image.img` (5.0 MB) and
-`dregg-deos-image-pd.elf` (2.06 MB) are built (Jun 15), Microkit SDK 2.2.0 and
-`qemu-system-aarch64` are present. `make run-image` boots the interactive
-keyboard-driven viewer today. The input extension (§2) is additive to a known-
-green build; the live-turn loop (§3) is new wiring of two already-green halves.
+The semihost firmament (`sel4/dregg-firmament/`) builds + tests with plain
+`cargo` (no SDK): `cargo test` is green (56 lib + all integration tests,
+including `live_repaint_on_turn`), and that is where the §3 loop is now proven
+(§3.5). The bare-metal `make build-image`/`make run-image` path needs the Microkit
+SDK on PATH (`MICROKIT_SDK`); `qemu-system-aarch64` is present. When the SDK is
+available, `make run-image` boots the interactive keyboard-driven viewer; the
+input extension (§2) is additive to that build, and the live-turn loop (§3) is the
+transcription of the now-proven semihost wiring (§3.6).
 
 ---
 
@@ -336,10 +418,26 @@ green build; the live-turn loop (§3) is new wiring of two already-green halves.
 - **The render path is one PD, ramfb + Canvas** (`fb.rs`), with the gpui cockpit
   as a build-time-baked RGBA blit (`cockpit_frame.rs`). Repaint is already cheap
   and idempotent (`paint()` re-maps the framebuffer every transition).
-- **Live-repaint-on-turn's two halves are both green but disconnected**: the
-  executor PD runs a real verified turn (`executor-pd/src/main.rs`) but has no
-  channel handler; the viewer repaints on every state change but reads a frozen
-  static snapshot. The connection is the `net.system` two-PD shared-DMA+channel
-  topology, with the device swapped for a `turn_in/receipt_out/cells_out` queue.
+- **Live-repaint-on-turn is WIRED + PROVEN on the semihost** (§3.5,
+  `sel4/dregg-firmament/src/repaint.rs` + `tests/live_repaint_on_turn.rs`, 8 unit
+  + 2 boot tests green). A committed turn through the executor-PD projects a
+  `DirtyRegion`, writes a shared `repaint_out` region, and the compositor-PD reads
+  it and runs a scene-gated `present()` — **two framebuffer snapshots differ at
+  exactly the dirty region** (the focused cell re-paints); a REJECTED turn
+  projects nothing → the framebuffer is **byte-identical** (fail-closed); and the
+  T1 gate still refuses a repaint of a region the cell does not own. This is the
+  SAME PD source that runs on real seL4; it adds ONLY the projection + the wire,
+  no new primitive — the deos `signals.rs` dirty-set → repaint-hook model lifted
+  across the PD boundary.
+- **The bare-metal seL4 demonstration still needs the Microkit SDK** (§3.6;
+  `MICROKIT_SDK` unset / `microkit` absent in this environment, `qemu-system-
+  aarch64` present). Three transcription steps remain (a `deos-live.system`
+  two-PD assembly copying `net.system`'s shared-DMA+`<channel>` topology with a
+  `turn_in/commit_out/repaint_out` queue; the bare-metal executor-PD's
+  `repaint_out` write + notify; the deos-image PD's `notified(CH_REPAINT)` arm) —
+  the exact code the semihost proves, transcribed to `memory_region_symbol!` +
+  `Channel`. Run `make run-image` after `deos-live.system` lands; the semihost
+  proof runs now with `cd sel4/dregg-firmament && cargo test --test
+  live_repaint_on_turn`.
 - **No missing kernel/Microkit/virtio primitive.** Every seam is "implement the
   handler the code already documents" or "copy the proven net.system topology."

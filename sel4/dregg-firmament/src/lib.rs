@@ -132,6 +132,23 @@ pub mod compositor_pd;
 // until the Lean ELF runtime links — WALL step 4, NOT a blocker on the semihost).
 pub mod executor_pd;
 
+// LIVE-REPAINT-ON-TURN — the executor-PD → compositor-PD repaint loop on the
+// semihost EmulatedKernel (`docs/desktop-os-research/SEL4-INTERACTIVE-COCKPIT.md
+// §3`). A committed turn through the executor-PD PROJECTS a `DirtyRegion` (which
+// surface changed + its new source-state-root/content-digest) into a shared
+// `repaint_out` region and notifies the compositor-PD; the compositor reads it,
+// builds the corresponding scene-gated `present()`, and advances the framebuffer
+// it SOLELY holds — the focused cell re-paints the instant the turn lands. A
+// REJECTED turn projects NOTHING + notifies NOTHING (fail-closed). This is the
+// SAME idea as the deos `deos-js/src/signals.rs` dirty-set → repaint-hook model,
+// lifted across the seL4 PD boundary (the dirty-set is a `DirtyRegion` in a
+// shared region; the repaint hook is the compositor's `present()` fired by an IPC
+// notify). It adds ONLY the projection (turn-commit ⟼ DirtyRegion) + the wire
+// that carries it — NO new primitive (it rides the existing executor-PD,
+// compositor-PD, and the `notify`/shared-region `Channel` the 2-PD notify slice
+// proves).
+pub mod repaint;
+
 // The v1 PROCESS-backed PD substrate (the MMU-enforced isolation upgrade). It
 // is Unix-only and behind the `process-pd` feature: PDs become forked host
 // PROCESSES so the host MMU enforces address-space separation, shared regions
@@ -168,6 +185,9 @@ pub use emulated_kernel::{
 pub use executor_pd::{
     stage_turn_into, ExecutorPd, ServedTurn, TurnRunner, LABEL_RUN_TURN, LABEL_TURN_COMMITTED,
     LABEL_TURN_REJECTED,
+};
+pub use repaint::{
+    decode_dirty, encode_dirty, project_dirty_from_turn, DirtyRegion, REPAINT_FIDELITY,
 };
 pub use local::LocalBacking;
 pub use recovery_monitor::{
