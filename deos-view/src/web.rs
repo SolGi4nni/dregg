@@ -161,6 +161,88 @@ pub fn render_card_document(title: &str, tree: &ViewNode, bind_values: &BindValu
     )
 }
 
+/// A full, browser-loadable HTML document for a card that is **LIVE** — it loads the
+/// playground wasm bundle, mints an in-tab [`crate`]-less `CardWorld` (the wasm analog of
+/// the native `Applet`, `wasm/src/bindings_card.rs`), binds it to `window.__deosCard`, and
+/// the affordance wire ([`JS`]) fires each `+1` click as a REAL cap-gated verified turn
+/// over that embedded executor and re-paints the bound slot. This is the served,
+/// browser-native deos: a deos-js card rendered via THIS renderer, firing real turns in a
+/// browser TAB, the bound value updating on click.
+///
+/// `pkg_url` is the ES-module URL of the wasm bundle's JS shim (e.g. `./pkg/dregg_wasm.js`,
+/// the `wasm-pack build --target web` output); `slot` is the model field the card's `bind`
+/// reads (the counter card binds slot 0); `initial` seeds the genesis value. It must be
+/// served over HTTP (a module-import + a `.wasm` fetch — `file://` is blocked by browser
+/// CORS), e.g. `python3 -m http.server` from the dist dir.
+pub fn render_card_live_document(
+    title: &str,
+    tree: &ViewNode,
+    slot: usize,
+    initial: u64,
+    pkg_url: &str,
+) -> String {
+    // First paint at the seeded value so the page is meaningful before wasm finishes
+    // loading; the module bootstrap then re-binds it to the live ledger and re-paints.
+    let body = render_html(tree, &[initial]);
+    let bootstrap = format!(
+        "import init, {{ CardWorld }} from '{pkg}';\n\
+async function boot() {{\n\
+  const status = document.getElementById('deos-status');\n\
+  try {{\n\
+    await init();                       // instantiate the wasm module\n\
+    const card = new CardWorld({slot}, {initial}n);  // mint the in-tab verified executor\n\
+    window.__deosCard = card;           // the affordance wire fires real turns into this\n\
+    // Re-paint every bound slot from the committed ledger (the witnessed read).\n\
+    document.querySelectorAll('.deos-bind[data-slot]').forEach(function(span) {{\n\
+      const label = span.textContent.replace(/[0-9]+$/, '');\n\
+      span.textContent = label + card.read();\n\
+    }});\n\
+    if (status) status.textContent = 'live — cell ' + card.cellId().slice(0, 10) + '… · receipts: ' + card.receiptCount();\n\
+    // Keep the receipt count fresh after every committed turn.\n\
+    document.addEventListener('deos-affordance', function() {{\n\
+      requestAnimationFrame(function() {{\n\
+        if (status && window.__deosCard) status.textContent = 'live — cell ' + window.__deosCard.cellId().slice(0, 10) + '… · receipts: ' + window.__deosCard.receiptCount();\n\
+      }});\n\
+    }});\n\
+  }} catch (e) {{\n\
+    if (status) status.textContent = 'wasm load failed: ' + e;\n\
+    console.error('deos: wasm executor failed to load', e);\n\
+  }}\n\
+}}\n\
+boot();\n",
+        pkg = pkg_url,
+        slot = slot,
+        initial = initial,
+    );
+    format!(
+        "<!doctype html>\n\
+<html lang=\"en\">\n\
+<head>\n\
+<meta charset=\"utf-8\">\n\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+<title>{title}</title>\n\
+<style>{CSS}{LIVE_CSS}</style>\n\
+</head>\n\
+<body>\n\
+<main class=\"deos-card\">{body}<div class=\"deos-status\" id=\"deos-status\">loading the in-tab verified executor…</div></main>\n\
+<script>{JS}</script>\n\
+<script type=\"module\">{bootstrap}</script>\n\
+</body>\n\
+</html>\n",
+        title = escape(title),
+        CSS = CSS,
+        LIVE_CSS = LIVE_CSS,
+        body = body,
+        JS = JS,
+        bootstrap = bootstrap,
+    )
+}
+
+/// Extra styling for the live page's status strip (the receipt-count audit readout).
+const LIVE_CSS: &str = "
+.deos-status{margin-top:.5rem;padding:.4rem .75rem;font-size:.8rem;color:var(--muted);border-top:1px solid var(--border);}
+";
+
 /// HTML-escape text content / attribute values (the view-tree carries author/cell data).
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());

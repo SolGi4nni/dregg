@@ -102,6 +102,11 @@ mod wasm_loop {
     use dregg_wasm::bindings_card::CardWorld;
     use wasm_bindgen_test::*;
 
+    // Run in a real BROWSER engine under `wasm-pack test --headless --chrome` (in addition
+    // to `--node`): the in-tab verified turn ticks the clock off the browser's
+    // `performance.now()` exactly as the served live page does.
+    wasm_bindgen_test_configure!(run_in_browser);
+
     #[wasm_bindgen_test]
     fn card_world_instantiates_and_reads_in_a_real_wasm_module() {
         // initial=0 takes the no-seed path (no turn). The bare construct + witnessed read.

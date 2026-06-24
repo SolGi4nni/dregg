@@ -19,7 +19,7 @@
 
 use std::path::PathBuf;
 
-use deos_view::{parse_view_tree, render_card_document, render_html};
+use deos_view::{parse_view_tree, render_card_document, render_card_live_document, render_html};
 
 /// The EXACT `JSON.stringify(tree)` shape the SpiderMonkey engine produces for the
 /// counter card the native test drives:
@@ -101,9 +101,18 @@ fn main() {
     // the web projection (the button carries the engine's `{turn:"inc", arg:1}`).
     let frag0 = render_html(&counter, &[0]);
     let frag1 = render_html(&counter, &[1]);
-    assert!(frag0.contains("count: 0"), "frame 0 paints the bound value 0");
-    assert!(frag1.contains("count: 1"), "frame 1 paints the bound value 1");
-    assert_ne!(frag0, frag1, "the two frames DIFFER — the bound value re-painted");
+    assert!(
+        frag0.contains("count: 0"),
+        "frame 0 paints the bound value 0"
+    );
+    assert!(
+        frag1.contains("count: 1"),
+        "frame 1 paints the bound value 1"
+    );
+    assert_ne!(
+        frag0, frag1,
+        "the two frames DIFFER — the bound value re-painted"
+    );
     assert!(
         frag0.contains("data-turn=\"inc\"") && frag0.contains("data-arg=\"1\""),
         "the button carries the REAL affordance payload {{turn:inc, arg:1}} into the DOM"
@@ -113,9 +122,55 @@ fn main() {
         "the bind carries its model slot (the signal source a browser re-read refreshes)"
     );
 
+    // ── 5. Bake the LIVE counter page — the served, browser-native deos ──────────────
+    // This page loads the playground wasm bundle (`./pkg/dregg_wasm.js`), mints an in-tab
+    // `CardWorld` (the wasm analog of the native `Applet`), binds it to `window.__deosCard`,
+    // and every `+1` click fires a REAL cap-gated verified turn over that embedded executor
+    // — the bound value updating from the COMMITTED ledger, with a live receipt count. It
+    // is baked into a `dist/` dir; the `pkg/` (wasm bundle) is copied in beside it so the
+    // page is self-contained when served (`python3 -m http.server` from `dist/`).
+    let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/web-out/dist");
+    std::fs::create_dir_all(&dist).expect("create dist dir");
+    let live = render_card_live_document(
+        "deos counter card — live",
+        &counter,
+        /*slot*/ 0,
+        /*initial*/ 0,
+        "./pkg/dregg_wasm.js",
+    );
+    let plive = dist.join("index.html");
+    std::fs::write(&plive, &live).expect("write the live index.html");
+
+    // ── PROVE the live page is wired (not merely written) ────────────────────────────
+    assert!(
+        live.contains("./pkg/dregg_wasm.js") && live.contains("import init, { CardWorld }"),
+        "the live page imports the wasm bundle's `init` + `CardWorld`"
+    );
+    assert!(
+        live.contains("new CardWorld(0, 0n)") && live.contains("window.__deosCard = card"),
+        "the live page mints the in-tab verified executor and binds it for the affordance wire"
+    );
+    assert!(
+        live.contains("card.fire(turn, arg)"),
+        "the affordance wire fires the click as a real verified turn into the in-tab executor"
+    );
+    assert!(
+        live.contains("data-turn=\"inc\"") && live.contains("data-slot=\"0\""),
+        "the SAME card markup carries the affordance + bind contract the wire drives"
+    );
+
     eprintln!("deos-view web projection baked (gpui-free):");
     eprintln!("  counter @ count=0 : {}", p0.display());
     eprintln!("  counter @ count=1 : {}", p1.display());
     eprintln!("  inspector card    : {}", pi.display());
-    eprintln!("Open any in a browser — the SAME card the native cockpit paints, in the browser.");
+    eprintln!("  LIVE counter page : {}", plive.display());
+    eprintln!();
+    eprintln!("To serve the LIVE deos (a card firing real cap-gated verified turns in a TAB):");
+    eprintln!("  1. wasm-pack build wasm --target web --out-dir pkg --release");
+    eprintln!("  2. cp -R ../wasm/pkg {}/pkg", dist.display());
+    eprintln!(
+        "  3. (cd {} && python3 -m http.server 8000)  # then open http://localhost:8000",
+        dist.display()
+    );
+    eprintln!("Open the static .html files directly; the LIVE page must be SERVED (module + .wasm fetch).");
 }

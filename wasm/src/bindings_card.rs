@@ -111,7 +111,14 @@ impl CardWorld {
     /// affordance computes its write as a pure function of the live model
     /// (`count := count + arg`) and commits it through the canonical executor. An
     /// unknown affordance commits nothing and errors (the native `FireError::Unknown`).
-    pub fn fire(&mut self, turn: &str, arg: i64) -> Result<u64, JsError> {
+    ///
+    /// `arg` is an `i32` so wasm-bindgen maps it to a plain JS `number` — the affordance
+    /// wire calls `card.fire("inc", parseInt(data-arg))`, NOT `card.fire("inc", 1n)`. (An
+    /// `i64` would map to a `BigInt` and the wire's plain number would throw "Cannot
+    /// convert N to a BigInt".) It is widened to the canonical `i64` the native
+    /// `Applet::fire` carries before being applied to the model.
+    pub fn fire(&mut self, turn: &str, arg: i32) -> Result<u64, JsError> {
+        let arg = arg as i64;
         match turn {
             "inc" => {
                 // writes = pure function of the live model — exactly the counter
