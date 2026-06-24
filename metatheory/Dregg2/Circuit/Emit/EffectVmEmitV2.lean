@@ -386,6 +386,53 @@ theorem graduateV1_sound (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
       exact Or.inr ⟨⟨w, BAL_LIMB_BITS⟩, hr, rfl⟩
     exact lookup_replaces_range BAL_LIMB_BITS t.tf hrange (envAt t i) w (hrow _ hmem)
 
+/-- **`graduateV1_satisfiedVm_of_rowConstraints`** — the `graduateV1_sound` keystone, parametric in JUST
+the row-constraint witness (the only `Satisfied2` field it consumes). A descriptor that APPENDS extra
+constraints to `graduateV1 d` (e.g. a grow-gate `MapOp`, as `noteSpendV3`/heapWrite's splice do) cannot
+build a full `Satisfied2 (graduateV1 d)` (its `mapTableFaithful` mismatches), but it CAN hand over the
+row-constraint walk restricted to `graduateV1 d`'s own constraints — which is all the v1 denotation
+needs. This lets the addr/leaf hash-site forcing survive an appended `MapOp` row. -/
+theorem graduateV1_satisfiedVm_of_rowConstraints (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
+    (t : VmTrace)
+    (hchip : ChipTableSound hash (t.tf .poseidon2))
+    (hrange : t.tf .range = rangeRows BAL_LIMB_BITS)
+    (hgrad : graduable d = true)
+    (hrow : ∀ i, i < t.rows.length → ∀ c ∈ (graduateV1 d).constraints,
+      c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length))
+    (i : Nat) (hi : i < t.rows.length) :
+    satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
+  obtain ⟨hwf, hfit, hbits⟩ := graduable_spec hgrad
+  have hrowi := hrow i hi
+  refine ⟨?_, ?_, ?_⟩
+  · intro c hc
+    have hmem : VmConstraint2.base c ∈ (graduateV1 d).constraints := by
+      unfold graduateV1
+      simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+      exact Or.inl (Or.inl ⟨c, hc, rfl⟩)
+    exact hrowi _ hmem
+  · apply siteLookups_sound hash (t.tf .poseidon2) hchip (envAt t i) d.hashSites d.traceWidth hwf
+    · intro s hs
+      exact of_decide_eq_true (List.all_eq_true.mp hfit s hs)
+    · intro j hj
+      have hmem : VmConstraint2.lookup
+          (siteLookup d.hashSites d.hashSites[j]
+            (d.traceWidth + (CHIP_OUT_LANES - 1) * j))
+          ∈ (graduateV1 d).constraints := by
+        unfold graduateV1
+        simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+        exact Or.inl (Or.inr ⟨j, hj, rfl⟩)
+      exact hrowi _ hmem
+  · intro r hr
+    obtain ⟨w, bits⟩ := r
+    have hb : bits = BAL_LIMB_BITS := hbits ⟨w, bits⟩ hr
+    subst hb
+    have hmem : VmConstraint2.lookup (rangeLookup ⟨w, BAL_LIMB_BITS⟩)
+        ∈ (graduateV1 d).constraints := by
+      unfold graduateV1
+      simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+      exact Or.inr ⟨⟨w, BAL_LIMB_BITS⟩, hr, rfl⟩
+    exact lookup_replaces_range BAL_LIMB_BITS t.tf hrange (envAt t i) w (hrowi _ hmem)
+
 /-! ## §4F — `Satisfied2Faithful`: the deployed accept-set with the chip / range soundness as
 STRUCTURAL conjuncts (not free levers), plus the COLLAPSE RECIPE.
 

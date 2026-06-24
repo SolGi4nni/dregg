@@ -160,6 +160,11 @@ def B_CAP_ROOT : Nat := 25
 def B_NULLIFIER_ROOT_OFF : Nat := 26
 /-- commitments-root offset inside a block (limb 27 — the flag-day new committed shielded-set root). -/
 def B_COMMITMENTS_ROOT : Nat := 27
+/-- delegation-epoch offset inside a block (limb 30 — the committed per-cell `delegation_epoch`,
+`commitment.rs::compute_rotated_pre_limbs` `pre[30]`; absorption order cells_root · r0..r23 · cap_root ·
+nullifier_root · commitments_root · heap_root · lifecycle · **epoch** · committed_height). The forced
+limb for `revokeDelegation`'s parent-epoch BUMP (the §14.EPOCH write-gate). -/
+def B_EPOCH : Nat := 30
 /-- The caveat region span: 29 manifest felts + 9 chain carriers + 1 commit. -/
 def C_SPAN : Nat := 39
 /-- caveat-commit offset inside the caveat region. -/
@@ -1236,14 +1241,60 @@ def introduceWriteV3 : EffectVmDescriptor2 :=
   v3OfWithCapWrite EffectVmEmitAttenuateA.attenuateVmDescriptorGenuineNoRecomputeTick
     [.mapOp (anchorReadOpRot sel.INTRODUCE), .mapOp (insertWriteOpRot sel.INTRODUCE)]
 
+/-! ### §14.EPOCH — the revokeDelegation parent-epoch BUMP write-gate (the freshness-forgery close).
+
+`revokeDelegation` does the FULL `apply_revoke_delegation`: the cap-edge `removeEdge` (the cap-tree
+REMOVE `removeWriteOpRot` forces above) COMPOSED with the parent's `delegation_epoch += 1` (the
+freshness-revocation tick — every child snapshot stamped at the OLD epoch is now stale). The committed
+per-cell `delegation_epoch` rides the rotated limb `B_EPOCH = 30` (`compute_rotated_pre_limbs` `pre[30]`),
+which `weldsAtNoCapRoot` does NOT weld and `rotateV3CapWrite` does NOT freeze — so on the deployed
+descriptor it was a FREE witness limb that only FOLDS into the committed `state_commit`. A malicious
+prover could publish a revoke whose committed AFTER epoch EQUALS the before (or is otherwise wrong): the
+cap-edge is removed, the commitment binds the wrong epoch, and a ledgerless light client accepts a
+revocation that did NOT stale the children — a FRESHNESS FORGERY (the named `RevokeDelegationEpochResidual`
+clause `delegationEpoch += 1`).
+
+`epochBumpGate sel beforeC afterC = sel · (loc afterC − loc beforeC − 1) = 0` CLOSES that on the live wire,
+mirroring `discForceGate`/`permsVKWeldGate` (the disc / perms-VK selector-gated forces): on the ACTIVE
+revoke row (`sel = 1`) it FORCES `loc afterC = loc beforeC + 1` (the committed AFTER epoch is exactly the
+genuine BUMP of the committed BEFORE epoch); on a pad row (`sel = 0`) it vanishes. A revoke whose committed
+AFTER epoch ≠ before+1 is now UNSAT for a ledgerless client — the freshness bump is in-circuit-forced. -/
+
+/-- **`epochBumpGate sel beforeC afterC`** — the selector-gated epoch-BUMP force:
+`sel · (loc afterC − loc beforeC − 1)`. On a row with `loc sel = 1` it forces the committed AFTER epoch
+limb to be exactly `loc beforeC + 1` (the genuine revoke bump); on a pad row it vanishes. -/
+def epochBumpGate (sel beforeC afterC : Nat) : VmConstraint :=
+  .gate (.mul (.var sel) (.add (.add (.var afterC) (.mul (.const (-1)) (.var beforeC))) (.const (-1))))
+
+theorem epochBumpGate_forces (env : VmRowEnv) (isFirst isLast : Bool) (hlast : isLast = false)
+    (sel beforeC afterC : Nat)
+    (hsel : env.loc sel = 1)
+    (h : (epochBumpGate sel beforeC afterC).holdsVm env isFirst isLast) :
+    env.loc afterC = env.loc beforeC + 1 := by
+  subst hlast
+  simp only [epochBumpGate, VmConstraint.holdsVm, EmittedExpr.eval] at h
+  rw [hsel] at h
+  linarith
+
+/-- The rotated BEFORE-block `delegation_epoch` limb column (limb 30 of the before block at `base = w`). -/
+def beforeEpochCol (w : Nat) : Nat := w + B_EPOCH
+
+/-- The rotated AFTER-block `delegation_epoch` limb column (limb 30 of the after block at `base = w + 51`). -/
+def afterEpochCol (w : Nat) : Nat := w + 51 + B_EPOCH
+
 /-- The rotated REVOKE-DELEGATION on the MOVING `revokeVmDescriptorGenuine` face (no `gCapPass` freeze) WITH
 the cap-crown circuit leg: held-membership read + the ZERO-value REMOVE-write (`removeWriteOp`, reused from
-`revokeCapabilityV3` — revoke deletes a slot, NO submask). The genuine recompute frees `cap_root`;
+`revokeCapabilityV3` — revoke deletes a slot, NO submask) AND the §14.EPOCH parent-epoch BUMP gate
+(`epochBumpGate` on the rotated `B_EPOCH = 30` limbs). The genuine recompute frees `cap_root`;
 `removeWriteOp` FORCES the post root to the genuine sorted REMOVE (the ZERO sentinel write) at the revoked
-edge key against the membership-opened before root. -/
+edge key against the membership-opened before root, and `epochBumpGate` FORCES the committed AFTER epoch to
+be the BEFORE epoch + 1 (the freshness tick that stales every child snapshot — the
+`RevokeDelegationEpochResidual` `delegationEpoch += 1` clause, now in-circuit-forced). -/
 def revokeDelegationWriteV3 : EffectVmDescriptor2 :=
   v3OfWithCapWrite EffectVmEmitAttenuateA.attenuateVmDescriptorGenuineNoRecomputeTick
-    [.mapOp (heldReadOpRot sel.REVOKE_DELEGATION), .mapOp (removeWriteOpRot sel.REVOKE_DELEGATION)]
+    [.mapOp (heldReadOpRot sel.REVOKE_DELEGATION), .mapOp (removeWriteOpRot sel.REVOKE_DELEGATION),
+     .base (epochBumpGate sel.REVOKE_DELEGATION
+        (beforeEpochCol EFFECT_VM_WIDTH) (afterEpochCol EFFECT_VM_WIDTH))]
 
 /-! ### The DELEGATIONS-tree WRITE op (refreshDelegation — the `DELEG` system-root move, in-circuit).
 
@@ -2369,6 +2420,18 @@ theorem mintTickFace_eq_source : mintTickFace = EffectVmEmitMint.mintVmDescripto
 
 /-- **`mintV3`** — the rotated tick-faced BridgeMint (the `mintVmDescriptor2R24` registry member). -/
 def mintV3 : EffectVmDescriptor2 := v3OfFrozen mintTickFace
+
+/-- **`supplyMintV3`** — the DEDICATED-SELECTOR supply-mint member (SUPPLY-MODEL.md Stage 2b).
+The SAME proven credit/tick/freeze body as `mintV3`/`mintVmDescriptor2R24` (`mintTickFace`,
+`mintTickFace_eq_source`), wrapped with the selector-binding tooth on the DEDICATED supply selector
+`sel.MINT = 14` rather than `selM.MINT = sel.BRIDGE_MINT = 40`. So the turn-layer `Effect::Mint`
+proves + self-verifies under its OWN selector — the supply-creation rung no longer rides BridgeMint's
+slot. The two members differ ONLY in the appended `selectorGate` operand (14 vs 40 — a single
+`.base` constraint), so every proven faithfulness / anti-ghost tooth on `mintTickFace`
+(`mintTick_rejects_wrong_nonce_delta`, `mintP1_rejects_wrong_credit`) carries verbatim, and the
+selector-gate forgery tooth (`withSelectorGate_satisfied2`) bites a `[Mint, foreign]` trace under
+THIS member exactly as it does for `mintVmDescriptor2R24`. -/
+def supplyMintV3 : EffectVmDescriptor2 := withSelectorGate sel.MINT (v3OfFrozen mintTickFace)
 
 /-- **The nonce TICK holds on a satisfying non-NoOp BridgeMint row.** -/
 theorem mintV3_pins_nonce_tick (hash : List ℤ → ℤ) (env : VmRowEnv) (isFirst isLast : Bool)
@@ -4155,11 +4218,50 @@ theorem revokeDelegationWriteV3_forces_write (hash : List ℤ → ℤ)
         ((envAt t i).loc (afterCapRootCol EFFECT_VM_WIDTH)) := by
   have hrowc := hsat.rowConstraints i hi
   have hmem : ∀ c ∈ ([.mapOp (heldReadOpRot sel.REVOKE_DELEGATION),
-      .mapOp (removeWriteOpRot sel.REVOKE_DELEGATION)] : List VmConstraint2),
+      .mapOp (removeWriteOpRot sel.REVOKE_DELEGATION),
+      .base (epochBumpGate sel.REVOKE_DELEGATION
+        (beforeEpochCol EFFECT_VM_WIDTH) (afterEpochCol EFFECT_VM_WIDTH))] : List VmConstraint2),
       c ∈ revokeDelegationWriteV3.constraints := fun c hc => List.mem_append_right _ hc
   have hread := hrowc (.mapOp (heldReadOpRot sel.REVOKE_DELEGATION)) (hmem _ (by simp))
   have hwrite := hrowc (.mapOp (removeWriteOpRot sel.REVOKE_DELEGATION)) (hmem _ (by simp))
   exact ⟨(hread hactive).1, hwrite hactive⟩
+
+/-- **`revokeDelegationWriteV3_forces_epoch_bump` — the §14.EPOCH parent-epoch BUMP is FORCED in-circuit.**
+On an active revoke row (`sel.REVOKE_DELEGATION = 1`, not the last row — pad rows follow) of a `Satisfied2
+revokeDelegationWriteV3` witness: the committed AFTER `delegation_epoch` limb (`B_EPOCH = 30` of the AFTER
+block) EQUALS the committed BEFORE epoch limb + 1. This is the deployed realization of the
+`RevokeDelegationEpochResidual` `delegationEpoch += 1` clause — the freshness tick that stales every child
+snapshot, no longer an off-row prover-supplied value. Forced from the deployed `epochBumpGate`. -/
+theorem revokeDelegationWriteV3_forces_epoch_bump (hash : List ℤ → ℤ)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2 hash revokeDelegationWriteV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hactive : (envAt t i).loc sel.REVOKE_DELEGATION = 1) :
+    (envAt t i).loc (afterEpochCol EFFECT_VM_WIDTH)
+      = (envAt t i).loc (beforeEpochCol EFFECT_VM_WIDTH) + 1 := by
+  have hrowc := hsat.rowConstraints i hi
+  have hmem : (VmConstraint2.base (epochBumpGate sel.REVOKE_DELEGATION
+      (beforeEpochCol EFFECT_VM_WIDTH) (afterEpochCol EFFECT_VM_WIDTH)))
+      ∈ revokeDelegationWriteV3.constraints :=
+    List.mem_append_right _ (by simp)
+  have hgate := hrowc _ hmem
+  exact epochBumpGate_forces (envAt t i) (i == 0) (i + 1 == t.rows.length) hnl
+    sel.REVOKE_DELEGATION (beforeEpochCol EFFECT_VM_WIDTH) (afterEpochCol EFFECT_VM_WIDTH)
+    hactive hgate
+
+/-- **TOOTH — `revokeDelegationWriteV3_rejects_wrong_epoch`.** A revoke trace whose committed AFTER epoch
+is NOT the genuine BEFORE + 1 (a frozen epoch — `after = before`, the freshness-forgery that leaves stale
+children looking current — or any wrong bump) does NOT satisfy `revokeDelegationWriteV3` on an active,
+non-last row: UNSAT for a ledgerless client, no anchor. The deployed rejection of the
+`RevokeDelegationEpochResidual` forgery. -/
+theorem revokeDelegationWriteV3_rejects_wrong_epoch (hash : List ℤ → ℤ)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hactive : (envAt t i).loc sel.REVOKE_DELEGATION = 1)
+    (hwrong : (envAt t i).loc (afterEpochCol EFFECT_VM_WIDTH)
+      ≠ (envAt t i).loc (beforeEpochCol EFFECT_VM_WIDTH) + 1) :
+    ¬ Satisfied2 hash revokeDelegationWriteV3 minit mfin maddrs t :=
+  fun hsat => hwrong (revokeDelegationWriteV3_forces_epoch_bump hash minit mfin maddrs t hsat i hi hnl hactive)
 
 /-- **`refreshDelegationWriteV3_forces_write` — the refreshDelegation DELEGATIONS-tree UPDATE is FORCED
 in-circuit.** On an active cap-graph row of a `Satisfied2 refreshDelegationWriteV3` witness: the child's
@@ -4219,6 +4321,9 @@ theorem customV3_binds_proof (hash : List ℤ → ℤ)
 #assert_axioms delegateAttenV3_non_amp
 #assert_axioms introduceWriteV3_forces_write
 #assert_axioms revokeDelegationWriteV3_forces_write
+#assert_axioms revokeDelegationWriteV3_forces_epoch_bump
+#assert_axioms revokeDelegationWriteV3_rejects_wrong_epoch
+#assert_axioms epochBumpGate_forces
 #assert_axioms refreshDelegationWriteV3_forces_write
 #assert_axioms proofBindsOf_customV3
 #assert_axioms customV3_binds_proof

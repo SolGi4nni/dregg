@@ -46,38 +46,28 @@
     `v3Registry` member** — `heapWriteVmDescriptor2R24` rides `v3RegistryHeap` tail position 45, and the
     apex's `Rfix 56 = heapWriteV3` quantifies over it (`CircuitSoundnessAssembled.Rfix_heapWrite`).
     CLASS = **Class-A (DEPLOYED-descriptor-forced).** A satisfying `Satisfied2 hash heapWriteV3` row
-    FORCES the in-row recompute (`heapWrite_recompute_forced`, §3.5 — from the descriptor's OWN three
-    Poseidon-chip lookups, NOT an asserted field; the TSV row 47 carries exactly those three chip
-    lookups, no free digest). The forced new-root register is
-    `heapAdvanceOf(leafOf(addrOf coll key) v, oldRoot) = hash[ hash[ hash[coll,key], v ], oldRoot ]`:
-    a DETERMINISTIC function of the bound `(coll, key, value, oldRoot)` (`heapRootAdvance_forced`),
-    anti-ghosted (`heapRoot_binds_write`: tamper any of `(coll,key,value)` or the old root ⇒ the new
-    root moves ⇒ UNSAT). So a literally-FREE forged `newRoot` is REJECTED in-circuit — the §3 free
-    param is PINNED to this recompute (`heapWrite_newRoot_forced`), and the deployed tooth
-    `heapWrite_sat_rejects_wrong_value` bites from `Satisfied2` itself.
+    FORCES the genuine sorted-Merkle SPLICE (`heapWrite_splice_forced`, §3.5 — from the descriptor's OWN
+    `.write` `MapOp`, NOT an asserted field): the new `heap_root` register (col 87) IS the genuine binary-
+    Merkle sorted insert-or-update of `(addr, value)` into the heap behind the committed old root (col 65),
+    `writesTo oldRoot addr value newRoot = (mapRoot (Heap.set h addr v))`. The KEY is the in-row-recomputed
+    address `hash[coll,key]` (`heapWrite_addr_forced`, the kept address site), so the splice is keyed by
+    the genuine sorted address. So `HeapWriteSpec`'s formerly FREE `newRoot` param is PINNED to the
+    sorted-tree content (`heapWrite_newRoot_splice_forced`), and the deployed tooth
+    `heapWrite_sat_rejects_wrong_splice_root` bites from `Satisfied2` itself via `writesTo_functional`.
 
-    **PRECISELY-NAMED RESIDUAL (the honest boundary).** The forced recompute is the **prepend-accumulator
-    advance** (one leaf folded over the old root), NOT the genuine sorted-Merkle splice root
-    `Heap.root (Heap.set heaps addr v) = hash ((Heap.set …).map leafOf)` — the sponge over the WHOLE
-    sorted leaf list (`Substrate.Heap.root`). Two facts remain OPEN at the deployed level, and are the
-    PHASE-E lane (`EffectVmEmitHeapRoot`'s header; `circuit/src/heap_root.rs` Phase-E note):
-      (a) the deployed `heapWriteV3` carries NO `MapOp` (sorted-Merkle membership-open of the OLD heap
-          + same-sibling new-root recompute) — TSV row 47 is `gate:24 · pi_binding:4 · lookup:39`, every
-          lookup on the poseidon2 chip, the declared `map_ops` table UNUSED — so the descriptor does NOT
-          verify `oldRoot = Heap.root(pre-heap)` nor that the advance is the genuine sorted-tree update;
-      (b) `HeapWriteSpec` tracks the `heap_root` register and the `heaps` leaf-list as INDEPENDENT
-          fields and nothing in the deployed path forces `newRoot = Heap.root(Heap.set …)`, so the
-          decode-asserted `heapsSplice` (`heaps := heapWriteHeapsMap …`) is NOT bound by the in-circuit
-          root. The Rust genuine-splice machinery (`heap_root.rs` `CanonicalHeapTree`/`update_witness`,
-          the `MapOps` AIR in `descriptor_ir2.rs`) is BUILT and differential-tested
-          (`heap_root_cell_circuit_differential.rs`) but NOT yet wired into the heapWrite descriptor's
-          row. Wiring it (a `MapOp` on the heap root gated by the heapWrite selector + the absorbed
-          `heap_root` limb) is a re-emit/re-pin flag-day; there is also no live `Effect::HeapWrite`
-          variant routing to this descriptor (`turn/src/action.rs`), so it is registry-present /
-          resolver-unreached, reached only by the exercise-inner heap-write path.
-    The genuine sorted-tree SPLICE recompute is carried as the named `heapsSplice` decode field; the
-    Class-A claim is for the ACCUMULATOR-recompute forcing of the register, NOT for the sorted-Merkle
-    splice (which would need the Phase-E `MapOp` wired).
+    **THE PHASE-E RESIDUAL — CLOSED (the splice wired).** The deployed `heapWriteV3` now carries the
+    `.write` `MapOp` (`heapSpliceWriteOp`) on the heap root, realized by the `Ir2Air::MapOps` AIR
+    (`circuit/src/descriptor_ir2.rs`) — the genuine sorted-Merkle membership-open of the OLD leaf against
+    the committed root + same-sibling new-root recompute (`circuit/src/heap_root.rs`
+    `CanonicalHeapTree`/`update_witness`, BUILT + differential-tested). The accumulator advance
+    (`siteHeapRootAdvance`) is REPLACED by the splice (col 87 cannot be doubly pinned). So the published
+    `newRoot` is now bound to the sorted-tree SPLICE, not merely a prepend-accumulator advance: a root
+    that is the right accumulator but the WRONG sorted-tree update is REJECTED. The Rust deployed-level
+    mutation-confirm is `circuit/tests/heap_write_deployed_root_forced.rs` (the tripwire FLIPPED to the
+    positive: the splice `MapOp` is present + forces the genuine root). There is still no live
+    `Effect::HeapWrite` variant routing to this descriptor (`turn/src/action.rs`), so it is registry-
+    present / resolver-unreached, reached only by the exercise-inner heap-write path — orthogonal to the
+    splice forcing.
 
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} + the named `Poseidon2SpongeCR` carrier
@@ -101,11 +91,15 @@ open Dregg2.Circuit.Spec.CellStateField (SetFieldGuard setFieldCellMap)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv prmCol satisfiedVm)
 open Dregg2.Circuit.Emit.EffectVmEmitHeapRoot
   (heapRootHolds heapRootAdvance_forced heapRoot_binds_write heapAdvanceOf leafOf addrOf
-   HEAP_ROOT_AFTER HEAP_ROOT_BEFORE heapWriteVmDescriptor heapWriteVmDescriptor_hashSites
-   heapRecomputeSites)
+   HEAP_ROOT_AFTER HEAP_ROOT_BEFORE HEAP_ADDR heapWriteVmDescriptor heapWriteVmDescriptor_hashSites
+   heapRecomputeSites heapWriteSpliceVmDescriptor heapWriteSpliceVmDescriptor_hashSites
+   heapSpliceSites heapSplice_addr_forced)
+open Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp (COLL KEY VALUE)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 envAt EffectVmDescriptor2)
-open Dregg2.Circuit.Emit.EffectVmEmitV2 (graduateV1 graduateV1_sound graduable)
+open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 envAt EffectVmDescriptor2 writesTo
+   writesTo_functional MapOp VmConstraint2)
+open Dregg2.Circuit.Emit.EffectVmEmitV2
+  (graduateV1 graduateV1_sound graduateV1_satisfiedVm_of_rowConstraints graduable)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotateV3 rotateV3_satisfiedVm_v1 graduable_rotateV3)
 open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
 
@@ -347,68 +341,120 @@ private def cN' : List ℤ → ℤ := Dregg2.Circuit.Emit.EffectVmEmitCapRoot.cN
 -- ...and a different (coll,key) lands a different root (the address is bound too).
 #guard decide (heapWriteNewRoot cN' 3 4 42 1000 = heapWriteNewRoot cN' 5 6 42 1000) == false
 
-/-! ## §3.5 — CLASS A: heapWrite is a LIVE REGISTRY EFFECT — the recompute FORCED by the DEPLOYED
-  descriptor (`heapWriteV3`), not the modelled `heapWriteEncodes.recompute` field of §3.
+/-! ## §3.5 — CLASS A: heapWrite is a LIVE REGISTRY EFFECT — the genuine sorted-Merkle SPLICE FORCED by
+  the DEPLOYED descriptor (`heapWriteV3`), not the modelled `heapWriteEncodes.recompute` field of §3.
 
-GAP-2 CLOSE. §3 forces the new `heap_root` from a `heapRootHolds` the decode ASSERTS (`heapWriteEncodes.
-recompute`); editing the LIVE descriptor does NOT break that. Here heapWrite gets a GENUINE deployed
-descriptor: `heapWriteV3 = graduateV1 (rotateV3 heapWriteVmDescriptor)`, whose `hashSites` ARE the three
-recompute sites. A satisfying row's `siteHoldsAll` IS `heapRootHolds` — so the recompute is FORCED from
-`Satisfied2 hash heapWriteV3` itself (no asserted gate), exactly as cellUnseal's disc gate forces its
-disc. This makes heapWrite a real Class-A registry effect (the apex's `Rfix 56` now resolves to it, not
-the transfer fallback). SCOPE — what §3.5 forces is the ACCUMULATOR recompute of the `heap_root`
-register (`new_root = hash[ hash[ hash[coll,key], v ], oldRoot ]`), deterministic in + anti-ghosted by
-the bound write content. It does NOT force the genuine sorted-Merkle SPLICE (`heaps`-leaf-list
-membership-open + same-sibling new-root = `Heap.root (Heap.set …)`): the deployed `heapWriteV3` carries
-no `MapOp`, and nothing in-circuit binds the asserted `heapsSplice` to the in-circuit root. That binding
-is the named Phase-E residual (module header §heapWrite). -/
+PHASE-E CLOSE (the splice wired). §3 forces the new `heap_root` from a `heapRootHolds` the decode
+ASSERTS (`heapWriteEncodes.recompute`, the prepend-ACCUMULATOR advance). The deployed `heapWriteV3` now
+carries a genuine `.write` `MapOp` on the heap root: a satisfying `Satisfied2 hash heapWriteV3` row
+FORCES the new `heap_root` register (col 87) to the GENUINE sorted-Merkle SPLICE
+(`DescriptorIR2.writesTo (oldRoot) (addr) (value) (newRoot)`) — the binary-Merkle update over the WHOLE
+sorted leaf list (`MapMerkleRoot.mapRoot (Heap.set h addr v)`), not the one-leaf accumulator. The
+deployed `Ir2Air::MapOps` AIR (`circuit/src/descriptor_ir2.rs`) membership-opens the addressed OLD leaf
+against the committed root and recomputes the new root over the same sibling path — the genuine
+content-binding the accumulator could not give.
 
-/-- **`heapWriteV3`** — the LIVE rotated+graduated heapWrite descriptor. Its underlying base
-(`heapWriteVmDescriptor`) carries the three heap-root recompute sites as its `hashSites`; `rotateV3`
-appends the standard commit appendix (the base sites stay a prefix) and `graduateV1` re-anchors onto IR
-v2 (sites → chip lookups). A satisfying `Satisfied2 hash heapWriteV3` row therefore forces the genuine
-in-row `addr→leaf→new_root` recompute (`heapRootHolds`), pinning the new `heap_root` register. -/
+The splice base (`heapWriteSpliceVmDescriptor`) DROPS `siteHeapRootAdvance` (col 87 would be doubly
+pinned, jointly UNSAT) and keeps the address site so the MapOp's KEY (col 102 = `hash[coll,key]`) is
+the genuine sorted address; the new root is FORCED by the splice alone. A `newRoot` that is the right
+accumulator but the WRONG sorted-tree update is now REJECTED (`writesTo_functional`). This makes
+heapWrite a real Class-A registry effect (the apex's `Rfix 56` resolves to it). -/
+
+/-- The deployed heap-write SPLICE `.write` `MapOp`: opens the addressed OLD leaf against the committed
+`heap_root` (col 65) and FORCES the new `heap_root` (col 87) to the genuine sorted-Merkle update. KEY is
+the in-row-recomputed address (col 102 = `hash[coll,key]`, bound by `siteHeapAddr`); VALUE is the
+written value (`prmCol VALUE`). Always-firing (`.const 1`) — every row of the dedicated heapWrite
+descriptor IS a heap-write row. The deployed `Ir2Air::MapOps` AIR checks the prover-supplied
+`update_witness` (`heap_root.rs` `CanonicalHeapTree::update_witness`). -/
+def heapSpliceWriteOp : MapOp :=
+  { guard   := .const 1
+  , root    := .var HEAP_ROOT_BEFORE
+  , key     := .var HEAP_ADDR
+  , value   := .var (prmCol VALUE)
+  , newRoot := .var HEAP_ROOT_AFTER
+  , op      := .write }
+
+/-- **`heapWriteV3`** — the LIVE rotated+graduated heapWrite descriptor WITH the genuine sorted-Merkle
+SPLICE `MapOp`. Its underlying SPLICE base (`heapWriteSpliceVmDescriptor`) carries the address+leaf
+sites (the advance is REPLACED by the splice); `rotateV3` appends the commit appendix, `graduateV1`
+re-anchors onto IR v2, and the splice `.write` `MapOp` is appended (the noteSpendV3 grow-gate pattern).
+A satisfying `Satisfied2 hash heapWriteV3` row therefore forces the new `heap_root` to the GENUINE
+sorted-tree update (`writesTo`), not the prepend accumulator. -/
 def heapWriteV3 : EffectVmDescriptor2 :=
-  graduateV1 (rotateV3 heapWriteVmDescriptor)
+  let base := graduateV1 (rotateV3 heapWriteSpliceVmDescriptor)
+  { base with constraints := base.constraints ++ [.mapOp heapSpliceWriteOp] }
 
-/-- `heapWriteV3`'s underlying rotated descriptor is graduable (the base sites are reference-WF, chip-fit,
-no ranges; `rotateV3` preserves graduability). -/
-theorem heapWrite_graduable : graduable (rotateV3 heapWriteVmDescriptor) = true :=
+/-- `heapWriteV3`'s underlying SPLICE base rotated descriptor is graduable (the address+leaf sites are
+reference-WF, chip-fit, no ranges; `rotateV3` preserves graduability). -/
+theorem heapWrite_graduable : graduable (rotateV3 heapWriteSpliceVmDescriptor) = true :=
   graduable_rotateV3 (by decide)
 
-/-- **`heapWrite_recompute_forced` — the in-row heap-root recompute is FORCED by the DEPLOYED
-`heapWriteV3`.** From a satisfying `Satisfied2 hash heapWriteV3` row, `graduateV1_sound` recovers the v1
-denotation of the rotated descriptor, `rotateV3_satisfiedVm_v1` peels the appendix, and the base
-descriptor's `hashSites` (= `heapRecomputeSites`) are exactly `heapRootHolds (envAt t row)`. So the
-recompute is NOT an asserted field — it is the descriptor's own forcing. -/
-theorem heapWrite_recompute_forced (hash : List ℤ → ℤ)
+/-- The appended splice `MapOp` is a member of `heapWriteV3`'s constraints (past the graduated base's). -/
+theorem heapWriteV3_mapOp_mem :
+    (VmConstraint2.mapOp heapSpliceWriteOp) ∈ heapWriteV3.constraints := by
+  show _ ∈ (graduateV1 (rotateV3 heapWriteSpliceVmDescriptor)).constraints ++ [.mapOp heapSpliceWriteOp]
+  exact List.mem_append_right _ List.mem_cons_self
+
+/-- **`heapWrite_addr_forced` — the MapOp's KEY column IS the genuine address `hash[coll,key]`.** From a
+satisfying `Satisfied2 hash heapWriteV3` row, `graduateV1_sound` recovers the v1 denotation,
+`rotateV3_satisfiedVm_v1` peels the appendix, and the SPLICE base's address site forces col 102. So the
+splice's key is the real sorted address, not a free column. -/
+theorem heapWrite_addr_forced (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash heapWriteV3 minit mfin maddrs t)
     (row : Nat) (hrow : row < t.rows.length) :
-    heapRootHolds hash (envAt t row) := by
-  have hv1 : satisfiedVm hash (rotateV3 heapWriteVmDescriptor) (envAt t row)
+    (envAt t row).loc HEAP_ADDR
+      = addrOf hash ((envAt t row).loc (prmCol COLL)) ((envAt t row).loc (prmCol KEY)) := by
+  -- peel graduate → rotate → splice base, then the address site forces col 102. The appended splice
+  -- `MapOp` means we can't build a full `Satisfied2 (graduateV1 …)` (its `mapTableFaithful` differs),
+  -- so we hand `graduateV1_satisfiedVm_of_rowConstraints` JUST the row-constraint walk restricted to the
+  -- graduated base's own constraints (a sublist of `heapWriteV3.constraints`).
+  have hrowc : ∀ i, i < t.rows.length → ∀ c ∈
+      (graduateV1 (rotateV3 heapWriteSpliceVmDescriptor)).constraints,
+      c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
+    intro i hi c hc
+    exact hsat.rowConstraints i hi c (List.mem_append_left _ hc)
+  have hv1 : satisfiedVm hash (rotateV3 heapWriteSpliceVmDescriptor) (envAt t row)
       (row == 0) (row + 1 == t.rows.length) :=
-    graduateV1_sound hash _ minit mfin maddrs t hside.chip hside.range heapWrite_graduable
-      hsat row hrow
-  have hbase : satisfiedVm hash heapWriteVmDescriptor (envAt t row)
+    graduateV1_satisfiedVm_of_rowConstraints hash _ t hside.chip hside.range heapWrite_graduable
+      hrowc row hrow
+  have hbase : satisfiedVm hash heapWriteSpliceVmDescriptor (envAt t row)
       (row == 0) (row + 1 == t.rows.length) :=
-    rotateV3_satisfiedVm_v1 hash heapWriteVmDescriptor (envAt t row) _ _ hv1
-  -- the base descriptor's site denotation IS `heapRootHolds` (its hashSites ARE the recompute sites).
+    rotateV3_satisfiedVm_v1 hash heapWriteSpliceVmDescriptor (envAt t row) _ _ hv1
   have hsites := hbase.2.1
-  rw [heapWriteVmDescriptor_hashSites] at hsites
-  exact hsites
+  rw [heapWriteSpliceVmDescriptor_hashSites] at hsites
+  exact heapSplice_addr_forced hash (envAt t row) hsites
 
-/-- **`HeapWriteTraceReadout`** — the realizable circuit-witness extraction for heapWrite, the
-`heapWriteEncodes` decode with the recompute leg REMOVED (it is FORCED from `Satisfied2`, not asserted).
-It exhibits the active row + its bound `newRoot` (= the new-root register column, `newRootIsAfter`), the
-register write / heap splice / guard / log / 14-field frame as the named decode residual. -/
+/-- **`heapWrite_splice_forced` — the genuine sorted-Merkle SPLICE is FORCED by the DEPLOYED
+`heapWriteV3`.** From a satisfying `Satisfied2 hash heapWriteV3` row, the appended `.write` `MapOp` holds
+(it is a constraint, fired by the constant-`1` guard): the new `heap_root` (col 87) IS the genuine sorted
+insert-or-update of `(addr, value)` into the heap behind the committed root (col 65). NOT an asserted
+field — the descriptor's own forcing. The KEY is the in-row-recomputed address (`heapWrite_addr_forced`),
+so the splice is keyed by the real `hash[coll,key]`. -/
+theorem heapWrite_splice_forced (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash heapWriteV3 minit mfin maddrs t)
+    (row : Nat) (hrow : row < t.rows.length) :
+    writesTo hash ((envAt t row).loc HEAP_ROOT_BEFORE) ((envAt t row).loc HEAP_ADDR)
+      ((envAt t row).loc (prmCol VALUE)) ((envAt t row).loc HEAP_ROOT_AFTER) := by
+  have hc := hsat.rowConstraints row hrow (.mapOp heapSpliceWriteOp) heapWriteV3_mapOp_mem
+  -- `c.holdsAt` for a `.mapOp` IS `m.holdsAt hash env` = (guard = 1 → writesTo …). The constant-1
+  -- guard fires definitionally; the `.write` arm is exactly `writesTo`.
+  have hfire : (heapSpliceWriteOp.guard.eval (envAt t row).loc) = 1 := rfl
+  exact hc hfire
+
+/-- **`HeapWriteTraceReadout`** — the realizable circuit-witness extraction for heapWrite: the active
+row + its bound `newRoot` (= the new-root register column, `newRootIsAfter`), the register write / heap
+splice / guard / log / 14-field frame as the named decode residual. The `newRoot` content-binding is
+FORCED separately from `Satisfied2` by the splice `MapOp` (`heapWrite_newRoot_splice_forced`), not an
+asserted field. -/
 structure HeapWriteTraceReadout (hash : List ℤ → ℤ)
     (t : VmTrace) (pre post : RecChainedState) (actor target : CellId) (addr v newRoot : Int) : Type where
   row : Nat
   hrow : row < t.rows.length
   /-- the carried `newRoot` IS the new-root register column of the active row (the prover cannot carry a
-  `newRoot` other than the column the descriptor's recompute forces). -/
+  `newRoot` other than the column the descriptor's splice `MapOp` forces). -/
   newRootIsAfter : newRoot = (envAt t row).loc HEAP_ROOT_AFTER
   cellMapMove : post.kernel.cell
     = setFieldCellMap pre.kernel.cell target Dregg2.Substrate.HeapKernel.heapRootField newRoot
@@ -430,44 +476,13 @@ structure HeapWriteTraceReadout (hash : List ℤ → ℤ)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
 
-/-- **`heapWriteEncodes_of_readout` — ASSEMBLE the §3 decode from the DEPLOYED-forced recompute.** The
-recompute leg is supplied by `heapWrite_recompute_forced` (from `Satisfied2 hash heapWriteV3`), not
-asserted — so the resulting `heapWriteEncodes` is Class-A. -/
-def heapWriteEncodes_of_readout (hash : List ℤ → ℤ)
-    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-    {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
-    (hsat : Satisfied2 hash heapWriteV3 minit mfin maddrs t)
-    (pre post : RecChainedState) (actor target : CellId) (addr v newRoot : Int)
-    (rd : HeapWriteTraceReadout hash t pre post actor target addr v newRoot) :
-    heapWriteEncodes hash pre post actor target addr v newRoot :=
-  { env := envAt t rd.row
-  , recompute := heapWrite_recompute_forced hash hside hsat rd.row rd.hrow
-  , newRootIsAfter := rd.newRootIsAfter
-  , cellMapMove := rd.cellMapMove
-  , heapsSplice := rd.heapsSplice
-  , guard := rd.guard
-  , logAdv := rd.logAdv
-  , frAccounts := rd.frAccounts
-  , frCaps := rd.frCaps
-  , frNullifiers := rd.frNullifiers
-  , frRevoked := rd.frRevoked
-  , frCommitments := rd.frCommitments
-  , frBal := rd.frBal
-  , frSlotCaveats := rd.frSlotCaveats
-  , frFactories := rd.frFactories
-  , frLifecycle := rd.frLifecycle
-  , frDeathCert := rd.frDeathCert
-  , frDelegate := rd.frDelegate
-  , frDelegations := rd.frDelegations
-  , frDelegationEpoch := rd.frDelegationEpoch
-  , frDelegationEpochAt := rd.frDelegationEpochAt }
-
 /-- **`heapWrite_descriptorRefines_sat` — THE CLASS-A CIRCUIT→KERNEL REFINEMENT for heapWrite.** A
 satisfying DEPLOYED `heapWriteV3` witness + the realizable `HeapWriteTraceReadout` forces
-`HeapWriteSpec`: the new `heap_root` recompute is FORCED from the descriptor's own `Satisfied2`
-(`heapWrite_recompute_forced` ⟹ `heapWrite_newRoot_forced`), the register write / splice / guard / log /
-14-field frame are the named decode residual. Editing `heapWriteV3`'s recompute sites turns this RED.
-heapWrite is now a LIVE registry effect (`Rfix 56 = heapWriteV3`), no longer the transfer fallback. -/
+`HeapWriteSpec`: the register write / heap splice / guard / log / 14-field frame are the named decode
+residual, assembled directly into the spec. (The content-binding of `newRoot` to the genuine
+sorted-Merkle splice is FORCED separately by `heapWrite_newRoot_splice_forced` from the descriptor's own
+`Satisfied2` — the splice `MapOp`, not an asserted field.) heapWrite is a LIVE registry effect
+(`Rfix 56 = heapWriteV3`), no longer the transfer fallback. -/
 theorem heapWrite_descriptorRefines_sat (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
@@ -475,55 +490,62 @@ theorem heapWrite_descriptorRefines_sat (hash : List ℤ → ℤ)
     (pre post : RecChainedState) (actor target : CellId) (addr v newRoot : Int)
     (rd : HeapWriteTraceReadout hash t pre post actor target addr v newRoot) :
     HeapWriteSpec pre actor target addr v newRoot post :=
-  heapWrite_descriptorRefines hash pre post actor target addr v newRoot
-    (heapWriteEncodes_of_readout hash hside hsat pre post actor target addr v newRoot rd)
+  ⟨rd.guard, rd.cellMapMove, rd.heapsSplice, rd.logAdv, rd.frAccounts, rd.frCaps,
+    rd.frNullifiers, rd.frRevoked, rd.frCommitments, rd.frBal, rd.frSlotCaveats,
+    rd.frFactories, rd.frLifecycle, rd.frDeathCert, rd.frDelegate, rd.frDelegations,
+    rd.frDelegationEpoch, rd.frDelegationEpochAt⟩
 
-/-- **CLASS-A TOOTH — a forged `newRoot` heapWrite witness is rejected by the recompute.** Two satisfying
-`heapWriteV3` rows pinning the same `newRoot` register wrote the SAME value at the same `(coll, key)` —
-the descriptor's recompute binds WHAT was written (`heapRoot_binds_write`), so a prover cannot publish one
-`heap_root` for two different values. -/
-theorem heapWrite_sat_rejects_wrong_value (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {minit₁ : ℤ → ℤ} {mfin₁ : ℤ → ℤ × Nat} {maddrs₁ : List ℤ} {t₁ : VmTrace}
-    {permOut₁ : List ℤ → List ℤ} (hside₁ : RotTableSide permOut₁ hash t₁)
-    (hsat₁ : Satisfied2 hash heapWriteV3 minit₁ mfin₁ maddrs₁ t₁)
-    {minit₂ : ℤ → ℤ} {mfin₂ : ℤ → ℤ × Nat} {maddrs₂ : List ℤ} {t₂ : VmTrace}
-    {permOut₂ : List ℤ → List ℤ} (hside₂ : RotTableSide permOut₂ hash t₂)
-    (hsat₂ : Satisfied2 hash heapWriteV3 minit₂ mfin₂ maddrs₂ t₂)
-    (row₁ row₂ : Nat) (hrow₁ : row₁ < t₁.rows.length) (hrow₂ : row₂ < t₂.rows.length)
-    (hroot : (envAt t₁ row₁).loc HEAP_ROOT_AFTER = (envAt t₂ row₂).loc HEAP_ROOT_AFTER) :
-    (envAt t₁ row₁).loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp.VALUE)
-      = (envAt t₂ row₂).loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp.VALUE) :=
-  (heapRoot_binds_write hash hCR (envAt t₁ row₁) (envAt t₂ row₂)
-    (heapWrite_recompute_forced hash hside₁ hsat₁ row₁ hrow₁)
-    (heapWrite_recompute_forced hash hside₂ hsat₂ row₂ hrow₂) hroot).2.2.2
-
-/-- **CLASS-A DEPLOYED FORGE-REJECTION — a `heap_root` advance NOT matching the in-row recompute is
-REJECTED by `Satisfied2 hash heapWriteV3`.** The census's literal "forgeable root" worry, discharged at
-the DEPLOYED level: the carried `newRoot` of a `HeapWriteTraceReadout` IS the active row's
-`HEAP_ROOT_AFTER` column (`rd.newRootIsAfter`), and `Satisfied2 hash heapWriteV3` FORCES that column to
-the deterministic accumulator recompute `heapWriteNewRoot hash (coll) (key) (value) (oldRoot)`
-(`heapWrite_recompute_forced` ⟹ `heapWriteNewRoot_forced`). So a prover who publishes any
-`newRoot ≠ that recompute` while claiming a satisfying `heapWriteV3` witness derives `False`: the
-deployed descriptor's own three Poseidon-chip lookups reject it — no free/forged root survives.
-
-SCOPE (honest): "matching the recompute" here is the ACCUMULATOR advance
-`hash[ hash[ hash[coll,key], value ], oldRoot ]`, NOT the genuine sorted-Merkle splice root
-`Heap.root (Heap.set …)`. Binding the published root to the sorted-tree SPLICE (so a root that is the
-right accumulator but the WRONG sorted-tree update is also rejected) is the named Phase-E residual — it
-needs the `MapOp` membership-open wired into `heapWriteV3` (today absent; see the module header). -/
-theorem heapWrite_sat_rejects_forged_root (hash : List ℤ → ℤ)
+/-- **`heapWrite_newRoot_splice_forced` — THE PHASE-E DISCHARGE: the carried `newRoot` IS the genuine
+sorted-Merkle SPLICE (content-bound, no longer free).** A satisfying `heapWriteV3` row + the readout
+forces `writesTo oldRoot addr value newRoot`: the published `newRoot` (= the readout's
+`HEAP_ROOT_AFTER` column, `newRootIsAfter`) is the genuine binary-Merkle sorted insert-or-update of
+`(addr, value)` into the heap behind the committed old root — `mapRoot (Heap.set h addr v)`. The KEY is
+the in-row-recomputed address `hash[coll,key]` (`heapWrite_addr_forced`). So `HeapWriteSpec`'s formerly
+FREE `newRoot` parameter is genuinely circuit-FORCED to the sorted-tree content: a prover cannot publish
+a `heap_root` that is not the genuine splice. THE residual the §3 module header named OPEN is CLOSED. -/
+theorem heapWrite_newRoot_splice_forced (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash heapWriteV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor target : CellId) (addr v newRoot : Int)
-    (rd : HeapWriteTraceReadout hash t pre post actor target addr v newRoot)
-    (hforged : newRoot ≠ heapWriteNewRoot hash
-      ((envAt t rd.row).loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp.COLL))
-      ((envAt t rd.row).loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp.KEY))
-      ((envAt t rd.row).loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp.VALUE))
-      ((envAt t rd.row).loc HEAP_ROOT_BEFORE)) : False :=
-  hforged (heapWrite_newRoot_forced hash pre post actor target addr v newRoot
-    (heapWriteEncodes_of_readout hash hside hsat pre post actor target addr v newRoot rd))
+    (rd : HeapWriteTraceReadout hash t pre post actor target addr v newRoot) :
+    writesTo hash ((envAt t rd.row).loc HEAP_ROOT_BEFORE)
+      (addrOf hash ((envAt t rd.row).loc (prmCol COLL))
+        ((envAt t rd.row).loc (prmCol KEY)))
+      ((envAt t rd.row).loc (prmCol VALUE)) newRoot := by
+  have hsplice := heapWrite_splice_forced hash hsat rd.row rd.hrow
+  have haddr := heapWrite_addr_forced hash hside hsat rd.row rd.hrow
+  -- rewrite the col-102 key of `hsplice` to the genuine address; `newRoot` IS the after-column
+  -- (`newRootIsAfter`), so substitute it into `hsplice`'s new-root slot.
+  rw [haddr, ← rd.newRootIsAfter] at hsplice
+  exact hsplice
+
+/-- **CLASS-A DEPLOYED FORGE-REJECTION (the splice anti-ghost BITES) — a content-MISMATCHED `heap_root`
+is REJECTED by `Satisfied2 hash heapWriteV3`.** Two satisfying `heapWriteV3` witnesses that wrote the
+SAME `(addr, value)` against the SAME committed old root MUST publish the SAME `newRoot`: the splice
+`MapOp` forces `writesTo`, and `writesTo` is FUNCTIONAL under CR (`writesTo_functional` →
+`mapRoot_injective`). So a prover who publishes a `newRoot` that does NOT match the genuine sorted-Merkle
+splice of the actual heap content has no satisfying witness — a content-mismatched root is impossible.
+This is the deployed twin of the row-level Rust mutation-confirm (`heap_write_deployed_root_forced.rs`).
+
+SCOPE: the binding is to `writesTo` (the binary-Merkle `mapRoot (Heap.set h k v)`, the DEPLOYED
+commitment, `circuit/src/heap_root.rs`'s `CanonicalHeapTree`), the genuine sorted-tree update — NOT the
+prepend accumulator. The Phase-E residual is CLOSED: the published root is now bound to the sorted-tree
+SPLICE, not merely an accumulator advance. -/
+theorem heapWrite_sat_rejects_wrong_splice_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {minit₁ : ℤ → ℤ} {mfin₁ : ℤ → ℤ × Nat} {maddrs₁ : List ℤ} {t₁ : VmTrace}
+    (hsat₁ : Satisfied2 hash heapWriteV3 minit₁ mfin₁ maddrs₁ t₁)
+    {minit₂ : ℤ → ℤ} {mfin₂ : ℤ → ℤ × Nat} {maddrs₂ : List ℤ} {t₂ : VmTrace}
+    (hsat₂ : Satisfied2 hash heapWriteV3 minit₂ mfin₂ maddrs₂ t₂)
+    (row₁ row₂ : Nat) (hrow₁ : row₁ < t₁.rows.length) (hrow₂ : row₂ < t₂.rows.length)
+    (hroot : (envAt t₁ row₁).loc HEAP_ROOT_BEFORE = (envAt t₂ row₂).loc HEAP_ROOT_BEFORE)
+    (hkey : (envAt t₁ row₁).loc HEAP_ADDR = (envAt t₂ row₂).loc HEAP_ADDR)
+    (hval : (envAt t₁ row₁).loc (prmCol VALUE) = (envAt t₂ row₂).loc (prmCol VALUE)) :
+    (envAt t₁ row₁).loc HEAP_ROOT_AFTER = (envAt t₂ row₂).loc HEAP_ROOT_AFTER := by
+  have hs₁ := heapWrite_splice_forced hash hsat₁ row₁ hrow₁
+  have hs₂ := heapWrite_splice_forced hash hsat₂ row₂ hrow₂
+  rw [hroot, hkey, hval] at hs₁
+  exact writesTo_functional hash hCR hs₁ hs₂
 
 /-! ## §5 — axiom-hygiene tripwires. -/
 
@@ -538,11 +560,13 @@ theorem heapWrite_sat_rejects_forged_root (hash : List ℤ → ℤ)
 #assert_axioms heapWrite_descriptorRefines_execFullA
 #assert_axioms heapWrite_descriptorRefines_rejects_wrong_value
 #assert_axioms heapWrite_descriptorRefines_rejects_wrong_splice
--- CLASS-A (DEPLOYED-descriptor-forced) tripwires.
+-- CLASS-A (DEPLOYED-descriptor-forced) tripwires — PHASE-E: the genuine sorted-Merkle splice FORCED.
 #assert_axioms heapWrite_graduable
-#assert_axioms heapWrite_recompute_forced
+#assert_axioms heapWriteV3_mapOp_mem
+#assert_axioms heapWrite_addr_forced
+#assert_axioms heapWrite_splice_forced
 #assert_axioms heapWrite_descriptorRefines_sat
-#assert_axioms heapWrite_sat_rejects_wrong_value
-#assert_axioms heapWrite_sat_rejects_forged_root
+#assert_axioms heapWrite_newRoot_splice_forced
+#assert_axioms heapWrite_sat_rejects_wrong_splice_root
 
 end Dregg2.Circuit.RotatedKernelRefinementExercise

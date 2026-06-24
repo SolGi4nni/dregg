@@ -820,7 +820,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "672664762a2276109dfd336aa548b67c8ba33bfe3794948c3f011f4da34131f5";
+    "61af721aa9401249d15611fbf9d1f89dc4a44002b70b65a2b69af664dc6e50d7";
 
 /// **THE FAITHFUL 8-FELT WIDE TRANSFER descriptor (STAGED-ADDITIVE slice).** The
 /// `v3RegistryWide` transfer member (`wideAppend transferV3 bb (bb+51)`, width 816 / PI 54) —
@@ -847,7 +847,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "3236bd45bf5b0cef3368c6a1e59e5fba837bfeec909f25cfa9870b5adaa3207b";
+    "d9573d0dae0b2fb0e201bea893ef908392f307cd0054ae962709ad0f6be6ea8d";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1949,15 +1949,16 @@ mod tests {
                 );
             } else if is_heap_write {
                 // heapWrite: the base carries no v1 PIs, so the rotated descriptor publishes
-                // EXACTLY the four commit pins (indices 0..=3) — no fifth pin. The recompute is
-                // forced by the three base chip lookups, not a published param.
+                // EXACTLY the four commit pins (indices 0..=3) — no fifth pin. The new heap_root is
+                // forced by the genuine sorted-Merkle SPLICE `.write` map_op (PHASE-E) + the address
+                // chip lookup that gives it the sorted KEY — not a published param.
                 assert_eq!(
                     d.public_input_count, 4,
                     "heapWrite: the four rotated commit pins, no v1 PI prefix"
                 );
                 assert!(
                     nullifier_pins.is_empty(),
-                    "heapWrite: carries no fifth pin (its recompute rides the base chip lookups)"
+                    "heapWrite: carries no fifth pin (the splice map_op rides the map_ops table)"
                 );
             } else {
                 assert_eq!(

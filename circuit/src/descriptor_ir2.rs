@@ -5124,6 +5124,147 @@ mod tests {
         }
     }
 
+    // ---- THE DEPLOYED HEAP-WRITE SPLICE: a content-mismatched root is REJECTED (PHASE-E). ----
+
+    /// The deployed heapWrite SPLICE column layout (`EffectVmEmitHeapRoot`, mirrored in the staged
+    /// registry TSV row `heapWriteVmDescriptor2R24`): the `.write` MapOp on the heap root opens the
+    /// committed root (col 65) at the recomputed address (col 102) for the written value (col 72) and
+    /// FORCES the new root (col 87). This is the SAME op the deployed descriptor carries.
+    const HW_ROOT_BEFORE: usize = 65;
+    const HW_ROOT_AFTER: usize = 87;
+    const HW_ADDR: usize = 102;
+    const HW_VALUE: usize = 72;
+
+    /// A minimal descriptor carrying EXACTLY the deployed heap-write splice `.write` MapOp (deployed
+    /// columns), gated always-on — the row constraint the deployed `heapWriteVmDescriptor2R24` relies
+    /// on, in isolation. Width 110 holds all referenced columns (max 102).
+    fn hw_splice_desc() -> EffectVmDescriptor2 {
+        EffectVmDescriptor2 {
+            name: "hw-splice-deployed".to_string(),
+            trace_width: 110,
+            public_input_count: 0,
+            tables: vec![],
+            constraints: vec![VmConstraint2::MapOp(MapOpSpec {
+                guard: LeanExpr::Const(1),
+                root: LeanExpr::Var(HW_ROOT_BEFORE),
+                key: LeanExpr::Var(HW_ADDR),
+                value: LeanExpr::Var(HW_VALUE),
+                new_root: LeanExpr::Var(HW_ROOT_AFTER),
+                op: MapKind::Write,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        }
+    }
+
+    /// The pre-write witness heap: an existing entry at `addr=100` whose value the write updates.
+    fn hw_pre_heap() -> Vec<HeapLeaf> {
+        vec![
+            HeapLeaf {
+                addr: BabyBear::new(100),
+                value: BabyBear::new(7),
+            },
+            HeapLeaf {
+                addr: BabyBear::new(250),
+                value: BabyBear::new(9),
+            },
+        ]
+    }
+
+    /// One deployed-shape heap-write row: col 65 = the committed pre-root, col 102 = the addressed
+    /// key (100), col 72 = the new value (42), col 87 = the GENUINE sorted-Merkle splice root (the
+    /// update of addr 100 to value 42). 4 rows; the op fires on every row (constant-1 guard) so the
+    /// trace carries the same genuine write each row.
+    fn hw_splice_trace(new_root: BabyBear) -> Vec<Vec<BabyBear>> {
+        let pre = CanonicalHeapTree::new(hw_pre_heap(), HEAP_TREE_DEPTH);
+        let root = pre.root();
+        let mut row = vec![BabyBear::ZERO; 110];
+        row[HW_ROOT_BEFORE] = root;
+        row[HW_ADDR] = BabyBear::new(100);
+        row[HW_VALUE] = BabyBear::new(42);
+        row[HW_ROOT_AFTER] = new_root;
+        vec![row; 4]
+    }
+
+    /// THE GENUINE splice root: the update of addr 100 → value 42 over the pre-heap.
+    fn hw_genuine_new_root() -> BabyBear {
+        let pre = CanonicalHeapTree::new(hw_pre_heap(), HEAP_TREE_DEPTH);
+        pre.update_witness(HeapLeaf {
+            addr: BabyBear::new(100),
+            value: BabyBear::new(42),
+        })
+        .expect("addr 100 is present")
+        .new_root
+    }
+
+    /// **DEPLOYED-LEVEL ACCEPTANCE.** An honest deployed-shape heap-write whose published new root IS
+    /// the genuine sorted-Merkle splice proves + verifies through the real batch prover (the MapOps
+    /// AIR opens the OLD leaf against the committed root and recomputes the new root over the same
+    /// sibling path).
+    #[test]
+    fn deployed_heap_splice_honest_proves_and_verifies() {
+        let desc = hw_splice_desc();
+        let trace = hw_splice_trace(hw_genuine_new_root());
+        let proof = prove_vm_descriptor2(
+            &desc,
+            &trace,
+            &[],
+            &MemBoundaryWitness::default(),
+            &[hw_pre_heap()],
+        )
+        .expect("honest deployed splice must prove");
+        verify_vm_descriptor2(&desc, &proof, &[]).expect("honest deployed splice must verify");
+    }
+
+    /// **THE PHASE-E BAR — a content-MISMATCHED `heap_root` is REJECTED at the deployed level.** The
+    /// prover advances the root to a value that does NOT match the genuine sorted-Merkle splice of the
+    /// actual heap content (here: the genuine root + 1). The deployed MapOps AIR has no satisfying
+    /// `update_witness` — the pre-flight replay refuses, and with the replay bypassed the in-circuit
+    /// fact-bus recompute of the new root over the membership path cannot match the forged col 87.
+    /// A content-mismatched root is now impossible. This is the deployed twin of the Lean
+    /// `heapWrite_sat_rejects_wrong_splice_root`.
+    #[test]
+    fn deployed_heap_splice_rejects_content_mismatch() {
+        let desc = hw_splice_desc();
+        let forged = hw_genuine_new_root() + BabyBear::ONE; // NOT the genuine sorted-tree update
+        assert_ne!(forged, hw_genuine_new_root());
+        let trace = hw_splice_trace(forged);
+
+        // Pre-flight replay refuses (the claimed new_root != the genuine sorted write).
+        assert!(
+            prove_vm_descriptor2(
+                &desc,
+                &trace,
+                &[],
+                &MemBoundaryWitness::default(),
+                &[hw_pre_heap()],
+            )
+            .is_err(),
+            "a content-mismatched heap_root must be refused by the deployed splice pre-flight"
+        );
+
+        // In-circuit tooth: bypass the replay; the MapOps fact-bus recompute cannot match col 87.
+        let r = std::panic::catch_unwind(|| {
+            prove_vm_descriptor2_inner(
+                &desc,
+                &hw_splice_trace(forged),
+                &[],
+                &MemBoundaryWitness::default(),
+                &[hw_pre_heap()],
+                &UMemBoundaryWitness::default(),
+                false,
+                &ir2_config(),
+            )
+        });
+        match r {
+            Err(_) => {} // debug prover panicked on the unsatisfiable bus — refused
+            Ok(res) => assert!(
+                res.is_err(),
+                "content-mismatched heap_root produced an accepted proof — the splice tooth is OPEN"
+            ),
+        }
+    }
+
     /// **Phase B-GATE anti-laundering — DISTINCTNESS.** The 8 exposed chip output lanes are
     /// genuinely 8 distinct field elements (the final permutation state), NOT `[0]×8` and NOT
     /// eight copies of the digest. Also: flipping ANY one input bit changes ALL 8 lanes

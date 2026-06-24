@@ -190,6 +190,12 @@ def REVOKE_DELEGATION    : Nat := 30  -- columns::sel::REVOKE_DELEGATION
 def INTRODUCE            : Nat := 35  -- columns::sel::INTRODUCE
 def ATTENUATE_CAPABILITY : Nat := 48  -- columns::sel::ATTENUATE_CAPABILITY
 def EXERCISE             : Nat := 34  -- columns::sel::EXERCISE_VIA_CAPABILITY
+-- The DEDICATED SUPPLY-MINT selector (`columns::sel::MINT`, SUPPLY-MODEL.md Stage 2b). A
+-- repurposed retired slot (the dissolved `ExportSturdyRef` column 14, which the IR-2 live path
+-- never pinned). The supply-creation effect `Effect::Mint` fires THIS column — distinct from
+-- `BRIDGE_MINT = 40` (the SHIELD-verb portable-proof credit), so the two mints prove + self-verify
+-- under SEPARATE selectors and a `[Mint, …]` trace cannot ride the bridgeMint descriptor.
+def MINT                 : Nat := 14  -- columns::sel::MINT (repurposed retired ExportSturdyRef slot)
 end sel
 
 /-! Transfer parameter offsets (`param::AMOUNT` / `param::DIRECTION`). -/

@@ -328,7 +328,20 @@ The deployed quint `spawnE` descriptor FREEZES `delegationEpochAt` (its RestFram
 the child's epoch at birth, meeting the STRENGTHENED `SpawnFullSpec`. The stamp the frozen-face descriptor
 does not yet WRITE-GATE-force is carried as the NAMED `SpawnEpochStampResidual` (commitment-bound via the
 `record_digest`, which folds the delegation snapshot), conjoined onto the deployed step — exactly the
-triangle-B `RevokeDelegationEpochResidual` pattern. -/
+triangle-B `RevokeDelegationEpochResidual` pattern.
+
+**Census D3 verdict (HONEST):** unlike revoke's parent-epoch BUMP — which targets the per-cell
+`delegation_epoch` (rotated scalar limb `B_EPOCH = 30`) and is now DEPLOYED-FORCED by `epochBumpGate`
+(`revokeDelegationWriteV3_forces_epoch_bump`) — the spawn/refresh stamp targets `delegationEpochAt`, which
+is NOT a standalone rotated scalar limb: it is folded into the OPAQUE `compute_authority_digest_felt`
+(`record_digest`, limb 24, `commitment.rs:828-838`, the `deleg.refreshed_at`/snapshot epoch bytes). There is
+no row-accessible column carrying `delegationEpochAt` as a value the descriptor could gate against
+`parent_epoch`. Forcing it on-row requires UN-BUILT machinery: a flag-day lifting `delegationEpochAt` out of
+the authority digest into its OWN dedicated committed limb (NUM_PRE_LIMBS 37→38, a new welded/forced scalar
+in the `B_MODE`/`B_FIELDS_ROOT` shape) PLUS the Rust witness/commitment/drift, THEN a selector-gated
+`epochAtForceGate sel epochAtCol parentEpochCol` (the `permsVKWeldGate` template). Until that flag-day, the
+spawn/refresh stamp stays the commitment-BOUND `SpawnEpochStampResidual`/`RefreshEpochStampResidual` (the
+named carrier, NOT a tripwire — it is conjoined into the faithful refinement and the executor meets it). -/
 
 def spawnExecStep (s : RecChainedState) (args : SpawnArgs) (s' : RecChainedState) : Prop :=
   execFullA s (.spawnA args.actor args.child args.target) = some s'
@@ -792,20 +805,31 @@ theorem revoke_circuit_refines_exec (S : Surface2) (D : Caps → ℤ) (hD : Func
 with the epoch bump + child-snapshot clear), so it meets the STRENGTHENED `RevokeDelegationFullSpec`, not
 the bare `RevokeSpec`. The deployed `revokeE` circuit binds the cap-edge `RevokeSpec` (its `caps`+log+frame)
 AND — in the deployed commitment — the parent's bumped `delegation_epoch` (rotated limb 30,
-`cell/src/commitment.rs:916`) and the cleared child snapshot (`record_digest` =
-`compute_authority_digest_felt`, limb 24, `commitment.rs:805-813`). What is NOT yet WRITE-GATE-forced is
-that the descriptor binds the epoch WRITE (revokeDelegation's v1 face FREEZES `cap_root`; the genuine
-epoch/snapshot move rides OFF-ROW — the precise residual named in
-`RotatedKernelRefinementCapFamily` §3.5/§3.EPOCH). So the epoch step is carried as the NAMED
-`RevokeDelegationEpochResidual` (commitment-BOUND, write-gate-RESIDUAL) — fail-closed, data-bearing — and
-the circuit step CONJOINS it onto the deployed `revokeCircuitStep`. Closing the residual is the
-moving-face V3-base descriptor cutover (a separate VK change). -/
+`cell/src/commitment.rs:940`) and the cleared child snapshot (`record_digest` =
+`compute_authority_digest_felt`, limb 24, `commitment.rs:805-813`).
+
+**§14.EPOCH UPDATE (Census D3, WIRED):** the parent's `delegationEpoch += 1` clause is now WRITE-GATE-FORCED
+on the deployed wire. The deployed `EffectVmEmitRotationV3.revokeDelegationWriteV3` carries the
+`epochBumpGate` (selector-gated on `sel.REVOKE_DELEGATION`) forcing the committed AFTER epoch limb
+(`B_EPOCH = 30`) to equal the committed BEFORE epoch + 1 — proven by
+`revokeDelegationWriteV3_forces_epoch_bump`, with the deployed forge-rejection
+`revokeDelegationWriteV3_rejects_wrong_epoch` (a frozen/wrong epoch is UNSAT for a ledgerless client). The
+limb was previously a FREE witness limb (`weldsAtNoCapRoot` does not weld it, `rotateV3CapWrite` does not
+freeze it), so the epoch move rode OFF-ROW; the gate closes that.
+
+The two REMAINING `RevokeDelegationEpochResidual` clauses stay commitment-BOUND (the child's `delegations`
+snapshot is cleared by the cap/deleg-tree REMOVE; the child's `delegationEpochAt` reset is folded into the
+opaque `record_digest`, limb 24 — it has no row-accessible scalar limb to gate against, the same shape as
+the spawn/refresh `delegationEpochAt` stamp). So the residual is now PARTIALLY discharged-at-the-wire: the
+epoch BUMP (the freshness-forgery vector) is forced; the digest-bound child clears remain the fail-closed
+data-bearing carrier. -/
 
 /-- **`RevokeDelegationEpochResidual`** — the NAMED epoch-step residual the deployed descriptor binds in
-the commitment (limbs 30 + 24) but does not yet WRITE-GATE-force (the v1 frozen-`cap_root` face): the
-parent's `delegationEpoch` bumped `+1`, the child's `delegations` snapshot cleared, the child's
-`delegationEpochAt` stamp reset. Carried as a Prop (a trace-fill identity of the committed delegation
-limbs), never an axiom. -/
+the commitment (limbs 30 + 24). The parent's `delegationEpoch += 1` clause is now DEPLOYED-FORCED by the
+`epochBumpGate` (limb 30, `revokeDelegationWriteV3_forces_epoch_bump`); the remaining two clauses (the
+child's `delegations` snapshot cleared, the child's `delegationEpochAt` stamp reset — folded into the opaque
+`record_digest`, limb 24) stay commitment-BOUND. Carried as a Prop (a trace-fill identity of the committed
+delegation limbs), never an axiom. -/
 def RevokeDelegationEpochResidual (s : RecChainedState) (parent child : CellId)
     (s' : RecChainedState) : Prop :=
   s'.kernel.delegationEpoch

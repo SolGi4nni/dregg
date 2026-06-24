@@ -1,32 +1,31 @@
-//! # HEAP-WRITE DEPLOYED ROOT FORCING — the in-circuit recompute binds `heap_root`, NOT free.
+//! # HEAP-WRITE DEPLOYED SPLICE FORCING — the in-circuit MapOp binds `heap_root` to the genuine
+//! sorted-Merkle SPLICE, NOT a free root and NOT merely an accumulator advance.
 //!
 //! Census D2 asked: can a prover publish a `heap_root` advance NOT matching the heap content (a
 //! "forgeable root")? This test answers at the DEPLOYED level — it inspects the REAL
 //! `heapWriteVmDescriptor2R24` parsed from the committed staged registry TSV (the bytes the prover
 //! and the light-client verifier both consume), not a standalone model.
 //!
-//! WHAT IS FORCED (the literal-forgery rejection):
-//!   The deployed descriptor carries the THREE Poseidon2-chip recompute lookups the Lean gadget
-//!   (`EffectVmEmitHeapRoot.{siteHeapAddr,siteHeapLeaf,siteHeapRootAdvance}`) declares, chained:
-//!     addr  = hash[ COLL(70), KEY(71)        ] → HEAP_ADDR(102)
-//!     leaf  = hash[ HEAP_ADDR(102), VALUE(72) ] → HEAP_LEAF(103)
-//!     root' = hash[ HEAP_LEAF(103), HEAP_ROOT_BEFORE(65) ] → HEAP_ROOT_AFTER(87)
-//!   So `HEAP_ROOT_AFTER` is a DETERMINISTIC chip image of the bound `(coll, key, value, old_root)` —
-//!   a free/forged `heap_root` advance has no satisfying chip rows. This is the deployed twin of the
-//!   Lean `RotatedKernelRefinementExercise.heapWrite_recompute_forced` /
-//!   `heapWrite_sat_rejects_forged_root` (the census worry, closed for the accumulator recompute).
+//! WHAT IS FORCED (the PHASE-E splice — wired):
+//!   The deployed descriptor carries the genuine sorted-Merkle SPLICE as a `.write` `MapOp` on the
+//!   heap root, realized by the `Ir2Air::MapOps` AIR (`circuit/src/descriptor_ir2.rs`):
+//!     addr     = hash[ COLL(70), KEY(71) ]               → HEAP_ADDR(102)   (the kept address site)
+//!     newRoot  = writesTo( HEAP_ROOT_BEFORE(65), addr=HEAP_ADDR(102), value=VALUE(72) )
+//!                                                        → HEAP_ROOT_AFTER(87)
+//!   So `HEAP_ROOT_AFTER` is the genuine binary-Merkle sorted insert-or-update of `(addr, value)`
+//!   into the heap behind the committed old root — `mapRoot (Heap.set h addr v)` — opened against the
+//!   committed root via a membership path (`heap_root.rs` `CanonicalHeapTree::update_witness`). A root
+//!   that is content-mismatched (the wrong sorted-tree update) has NO satisfying `update_witness`. This
+//!   is the deployed twin of the Lean `RotatedKernelRefinementExercise.heapWrite_splice_forced` /
+//!   `heapWrite_sat_rejects_wrong_splice_root` (the census worry, CLOSED for the genuine splice).
 //!
-//! WHAT IS *NOT* FORCED (the precisely-named Phase-E residual — a TRIPWIRE):
-//!   The forced quantity is the prepend-ACCUMULATOR advance `hash[leaf, old_root]`, NOT the genuine
-//!   sorted-Merkle splice root `Heap.root(Heap.set …) = hash(leaves.map leafOf)`. The deployed
-//!   descriptor carries NO `map_op` constraint — so it does NOT membership-open the OLD heap nor bind
-//!   the published root to the sorted-tree update. The genuine splice machinery
-//!   (`heap_root::CanonicalHeapTree` / the `Ir2Air::MapOps` AIR) is built + differential-tested but
-//!   NOT wired into this descriptor's row. If a future change wires the `MapOp`, the residual
-//!   assertion below FLIPS and the honest docs (`RotatedKernelRefinementExercise` module header
-//!   §heapWrite) must be updated to claim the sorted-Merkle splice forcing.
+//! The accumulator-advance site (`siteHeapRootAdvance`, `new_root = hash[leaf, old_root]`) is
+//! REPLACED by the splice (col 87 cannot be doubly pinned): the published root is now bound to the
+//! sorted-tree SPLICE, not the prepend accumulator.
 
-use dregg_circuit::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2};
+use dregg_circuit::descriptor_ir2::{
+    MapKind, MapOpSpec, VmConstraint2, parse_vm_descriptor2,
+};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 
@@ -39,7 +38,6 @@ const VALUE: usize = 72; // hp.VALUE
 const HEAP_ROOT_BEFORE: usize = 65;
 const HEAP_ROOT_AFTER: usize = 87;
 const HEAP_ADDR: usize = 102;
-const HEAP_LEAF: usize = 103;
 
 const P2_CHIP_TABLE: usize = 1; // table id of `poseidon2_chip` in the staged registry
 const CHIP_DIGEST_IDX: usize = 12; // the digest column position in the 17-wide chip tuple
@@ -79,62 +77,71 @@ fn has_chip_recompute(
     })
 }
 
-/// The deployed heapWrite descriptor binds `HEAP_ROOT_AFTER` to the in-row recompute of the bound
-/// `(coll, key, value, old_root)` — a forged free root has no satisfying chip rows. The census's
-/// "forgeable root" worry, confirmed closed at the deployed level for the accumulator recompute.
+/// The deployed heapWrite descriptor binds `HEAP_ADDR` to the in-row recompute of the bound
+/// `(coll, key)` — the address site that gives the splice MapOp its genuine sorted KEY. The
+/// accumulator advance is GONE (it is replaced by the splice); only the address site survives as a
+/// chip recompute.
 #[test]
-fn deployed_heapwrite_forces_root_recompute() {
+fn deployed_heapwrite_forces_addr_recompute() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(HEAP_WRITE_KEY))
         .expect("heapWriteVmDescriptor2R24 parses from the committed staged registry");
 
     assert!(
         has_chip_recompute(&desc, COLL, KEY, HEAP_ADDR),
-        "siteHeapAddr: addr = hash[coll, key] → HEAP_ADDR must be a deployed chip lookup"
+        "siteHeapAddr: addr = hash[coll, key] → HEAP_ADDR must be a deployed chip lookup (the \
+         splice MapOp's genuine sorted KEY)"
     );
+
+    // The advance recompute is GONE: col 87 (HEAP_ROOT_AFTER) is no longer pinned by a chip lookup
+    // `hash[leaf, old_root]` — it is pinned by the splice MapOp instead (col 87 cannot be doubly bound).
+    const HEAP_LEAF: usize = 103;
     assert!(
-        has_chip_recompute(&desc, HEAP_ADDR, VALUE, HEAP_LEAF),
-        "siteHeapLeaf: leaf = hash[addr, value] → HEAP_LEAF must be a deployed chip lookup"
-    );
-    assert!(
-        has_chip_recompute(&desc, HEAP_LEAF, HEAP_ROOT_BEFORE, HEAP_ROOT_AFTER),
-        "siteHeapRootAdvance: new_root = hash[leaf, old_root] → HEAP_ROOT_AFTER must be deployed — \
-         the chain that forces the published heap_root from the bound write content"
+        !has_chip_recompute(&desc, HEAP_LEAF, HEAP_ROOT_BEFORE, HEAP_ROOT_AFTER),
+        "the accumulator advance hash[leaf, old_root] → HEAP_ROOT_AFTER must be ABSENT (replaced by \
+         the splice MapOp — col 87 is forced by the genuine sorted-tree update, not the accumulator)"
     );
 
     eprintln!(
-        "DEPLOYED HEAP-ROOT FORCING: heapWriteVmDescriptor2R24 binds HEAP_ROOT_AFTER({HEAP_ROOT_AFTER}) \
-         = hash[ hash[ hash[coll,key], value ], old_root ] via three chained poseidon2-chip lookups. \
-         A free/forged heap_root advance is UNSAT (no satisfying chip rows)."
+        "DEPLOYED HEAP-ADDR FORCING: heapWriteVmDescriptor2R24 binds HEAP_ADDR({HEAP_ADDR}) = \
+         hash[coll, key] via a poseidon2-chip lookup; the accumulator advance is replaced by the splice."
     );
 }
 
-/// PHASE-E RESIDUAL TRIPWIRE: the deployed heapWrite descriptor carries NO `map_op` — so the forced
-/// recompute is the prepend-ACCUMULATOR advance, NOT the genuine sorted-Merkle splice root
-/// `Heap.root(Heap.set …)`. This pins the honest boundary: the published root is NOT bound to the
-/// sorted-tree leaf-list update (no membership-open of the old heap). If this assertion ever fails,
-/// the `MapOp` has been wired and the honest claim in `RotatedKernelRefinementExercise` §heapWrite
-/// must be upgraded from "accumulator recompute" to "sorted-Merkle splice forced".
+/// PHASE-E SPLICE FORCING (the residual tripwire FLIPPED to the positive): the deployed heapWrite
+/// descriptor carries the genuine sorted-Merkle SPLICE as a `.write` `MapOp` on the heap root —
+/// `writesTo( HEAP_ROOT_BEFORE, key=HEAP_ADDR, value=VALUE ) → HEAP_ROOT_AFTER`. So the published
+/// `heap_root` is bound to the sorted-tree leaf-list update (the membership-open of the OLD heap +
+/// same-sibling new root), NOT merely the prepend accumulator. The Lean discharge is
+/// `RotatedKernelRefinementExercise.heapWrite_newRoot_splice_forced`.
 #[test]
-fn deployed_heapwrite_has_no_mapop_phase_e_residual_tripwire() {
+fn deployed_heapwrite_forces_sorted_merkle_splice() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(HEAP_WRITE_KEY))
         .expect("heapWriteVmDescriptor2R24 parses");
 
-    let map_ops = desc
-        .constraints
-        .iter()
-        .filter(|c| matches!(c, VmConstraint2::MapOp(_)))
-        .count();
+    let splice = desc.constraints.iter().find_map(|c| match c {
+        VmConstraint2::MapOp(m) if m.op == MapKind::Write => Some(m),
+        _ => None,
+    });
 
+    let m: &MapOpSpec =
+        splice.expect("PHASE-E: heapWriteVmDescriptor2R24 must carry a `.write` map_op (the splice)");
+
+    // The splice op opens the committed heap root (col 65) at the in-row-recomputed address (col 102)
+    // for the written value (col 72) and FORCES the new heap root (col 87) to the genuine sorted update.
+    assert_eq!(m.root, LeanExpr::Var(HEAP_ROOT_BEFORE), "splice root must be HEAP_ROOT_BEFORE(65)");
+    assert_eq!(m.key, LeanExpr::Var(HEAP_ADDR), "splice key must be the recomputed HEAP_ADDR(102)");
+    assert_eq!(m.value, LeanExpr::Var(VALUE), "splice value must be VALUE(72)");
     assert_eq!(
-        map_ops, 0,
-        "PHASE-E RESIDUAL: heapWriteVmDescriptor2R24 must carry NO map_op today (the sorted-Merkle \
-         splice binding is unwired). If this fails, the genuine splice was wired — UPDATE the honest \
-         residual claim in RotatedKernelRefinementExercise §heapWrite (it is no longer open)."
+        m.new_root,
+        LeanExpr::Var(HEAP_ROOT_AFTER),
+        "splice new_root must be HEAP_ROOT_AFTER(87) — the published heap_root register"
     );
 
     eprintln!(
-        "PHASE-E RESIDUAL PINNED: heapWriteVmDescriptor2R24 carries 0 map_op constraints — the \
-         published heap_root is the accumulator advance, NOT bound to the sorted-tree splice. This \
-         is the precisely-named open residual, not a silent gap."
+        "PHASE-E SPLICE WIRED: heapWriteVmDescriptor2R24 carries a `.write` map_op forcing \
+         HEAP_ROOT_AFTER({HEAP_ROOT_AFTER}) = the genuine sorted-Merkle splice of (HEAP_ADDR, VALUE) \
+         into the heap behind HEAP_ROOT_BEFORE({HEAP_ROOT_BEFORE}). A content-mismatched root is UNSAT \
+         (no update_witness). The residual is CLOSED — the published root is bound to the sorted-tree \
+         update, not the accumulator."
     );
 }

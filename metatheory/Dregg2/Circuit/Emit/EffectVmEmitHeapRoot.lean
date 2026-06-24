@@ -137,6 +137,45 @@ makes a satisfying row's `siteHoldsAll` equal `heapRootHolds`). -/
 theorem heapWriteVmDescriptor_hashSites :
     heapWriteVmDescriptor.hashSites = heapRecomputeSites := rfl
 
+/-! ## §2.E — the SPLICE base descriptor (PHASE-E: the genuine sorted-Merkle splice, MapOp-forced).
+
+The accumulator advance (`siteHeapRootAdvance`, `new_root = hash[leaf, old_root]`) BINDS the new
+`heap_root` to a deterministic function of the bound write content + old root, but it is NOT the
+genuine sorted-Merkle SPLICE root `mapRoot (Heap.set h addr v)` (the binary-Merkle update over the
+WHOLE sorted leaf list). The Phase-E close REPLACES the advance with a `.write` `MapOp` on the heap
+root (`RotatedKernelRefinementExercise.heapSpliceWriteOp`): the deployed `Ir2Air::MapOps` AIR opens
+the addressed OLD leaf against the committed `heap_root` (col 65) and FORCES the new `heap_root`
+(col 87) to the genuine sorted-tree update — the binary-Merkle splice (`DescriptorIR2.writesTo`).
+
+The advance site (col 87) and the splice `MapOp` (col 87) would JOINTLY pin the SAME column to two
+DIFFERENT functions of the heap (`hash[leaf, oldRoot]` ≠ `mapRoot (set …)`), so the splice base
+DROPS `siteHeapRootAdvance` and keeps ONLY the address+leaf sites: `siteHeapAddr` binds the MapOp's
+KEY column (col 102 = `hash[coll, key]`) to the genuine sorted address; `siteHeapLeaf` binds the
+leaf carrier (informational — the MapOps AIR recomputes the leaf internally). The new root is then
+FORCED by the splice alone — the content-binding the advance could not give. -/
+
+/-- The SPLICE recompute sites: address + leaf only (the advance is replaced by the splice `MapOp`).
+`siteHeapAddr` binds the MapOp KEY (col 102 = `hash[coll, key]`); `siteHeapLeaf` binds the leaf
+carrier. The new-root advance is DROPPED — it is forced by the `.write` `MapOp` (the genuine splice),
+not the prepend accumulator. -/
+def heapSpliceSites : List VmHashSite := [ siteHeapAddr, siteHeapLeaf ]
+
+/-- **`heapWriteSpliceVmDescriptor`** — the SPLICE base heapWrite circuit: its `hashSites` are the
+address+leaf sites only (NO advance). Rotated + graduated + appended with the splice `.write` `MapOp`
+it is `RotatedKernelRefinementExercise.heapWriteV3` — the new root FORCED to the genuine sorted-Merkle
+splice (`DescriptorIR2.writesTo`), not the prepend accumulator. -/
+def heapWriteSpliceVmDescriptor : EffectVmDescriptor :=
+  { name        := "dregg-effectvm-heapWrite-splice-v1"
+  , traceWidth  := EFFECT_VM_WIDTH
+  , piCount     := 0
+  , constraints := []
+  , hashSites   := heapSpliceSites
+  , ranges      := [] }
+
+/-- The splice base descriptor's `hashSites` ARE exactly the address+leaf sites. -/
+theorem heapWriteSpliceVmDescriptor_hashSites :
+    heapWriteSpliceVmDescriptor.hashSites = heapSpliceSites := rfl
+
 /-! ## §3 — the recomputed values as pure functions (what the sites FORCE). -/
 
 /-- The address as a function of `(coll, key)` (the unique `hash` image the address site forces). -/
@@ -190,6 +229,18 @@ theorem heapRootAdvance_forced (hash : List ℤ → ℤ) (env : VmRowEnv) (h : h
     VmHashSite.resolvedInputs, HashInput.resolve, List.map_cons, List.map_nil] at h
   obtain ⟨_, _, h2, _⟩ := h
   rw [h2, hleaf]; rfl
+
+/-- **`heapSplice_addr_forced`** — the address carrier IS `hash[coll,key]` from the SPLICE sites (the
+MapOp KEY binding): a satisfying splice row binds col 102 to the genuine sorted address, so the
+`.write` MapOp's key is the real `hash[coll,key]`, not a free column. -/
+theorem heapSplice_addr_forced (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (h : siteHoldsAll hash env heapSpliceSites) :
+    env.loc HEAP_ADDR = addrOf hash (env.loc (prmCol hp.COLL)) (env.loc (prmCol hp.KEY)) := by
+  unfold heapSpliceSites siteHoldsAll at h
+  simp only [siteHoldsAll.go, siteHeapAddr, siteHeapLeaf,
+    VmHashSite.resolvedInputs, HashInput.resolve, List.map_cons, List.map_nil] at h
+  obtain ⟨h0, _⟩ := h
+  rw [h0]; rfl
 
 /-! ## §5 — THE ANTI-GHOST: the recomputed root BINDS the write content + old root. -/
 
@@ -315,5 +366,6 @@ theorem tampered_addr_moves_root :
 #assert_axioms goodHeapRow_recomputes
 #assert_axioms tampered_value_moves_root
 #assert_axioms tampered_addr_moves_root
+#assert_axioms heapSplice_addr_forced
 
 end Dregg2.Circuit.Emit.EffectVmEmitHeapRoot
