@@ -8,6 +8,20 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## ⚑ LIVE BRAIN DECIDES THE `deos.compose` STORY — the compose seam (2026-06-24)
+Named by the bounded multi-cell compose commit (`deos-hermes/tests/hermes_composes_multi_cell.rs`,
+`deos-hermes/src/live_js.rs::LiveComposeHands`). The confined agent can now decide-and-execute a genuinely
+useful, BOUNDED, MULTI-CELL task through `run_js` — `deos.compose([...])` mints a card + seeds it + grants a
+peer a cap as ONE all-or-nothing receipted gesture on the live World, refused in-band (nothing committed) on
+over-reach (`held`/scope/grant-width). PROVEN end-to-end: the direct tool AND a real `AcpClient` session with a
+scripted-brain stand-in (`MockHermesPeer`) emitting the compose JS as a `run_js` body → `LiveComposeHands` hook
+→ `run_compose` → bounded story on the live ledger (3 receipts, the collaborator holds the cap). The ONE open
+seam (identical to the authoring seam `live_authors_card_via_run_js`): a REAL `hermes-acp` brain reliably
+emitting WELL-FORMED `deos.compose([...])` JSON as its `run_js` body (provider-gated; the scripted stand-in
+proves the run_js→compose PATH, a live decide needs the model to cooperate). CLOSURE: an `#[ignore]` live test
+mirroring `live_authors_card_via_run_js` (drive the subprocess with a "stand up a shared notebook" prompt + a
+compose-API system hint), flipped on when a `hermes-acp` install + reachable provider is present.
+
 ## ⚑ WASM EXECUTOR WALL CLOCK — a real turn panics on wasm32 (`Instant::now`) (2026-06-24)
 Named by the deos-card seam-closing commit (`d16b0af32`, `wasm/tests/card_fires_a_verified_turn.rs`). The
 in-tab verified executor is drivable for everything EXCEPT a real turn: `turn/src/executor/{execute,

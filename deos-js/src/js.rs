@@ -32,7 +32,7 @@ use mozjs::rust::{
 };
 
 use crate::applet::{Applet, FireError};
-use crate::attach::AttachedApplet;
+use crate::attach::{AttachedApplet, AttachedComposer, ComposeError, ComposeStep};
 use crate::card_editor::{CardEditor, EditError, ViewPatch};
 use crate::portable::{AffordanceSpec, ApplyOp};
 use crate::reflect_binding;
@@ -220,6 +220,40 @@ thread_local! {
     /// after setup and publishes each as its OWN discoverable surface keyed by the
     /// instance cell, carrying exactly the affordances scoped to it.
     static FORK_REGISTRY: RefCell<Vec<ServerFork>> = const { RefCell::new(Vec::new()) };
+    /// THE BOUNDED MULTI-CELL COMPOSER the `deos.compose(...)` native drives — the agent's
+    /// brain composing a story spanning MULTIPLE cells (mint a card + seed it + grant a peer
+    /// a cap) on the live World as ONE all-or-nothing bounded gesture. Mounted under the
+    /// agent's ATTENUATED `held` (the cap tooth), independent of the crawl/drive target, so
+    /// `deos.compose` is reachable in an attached-live-World run. The host installs it before
+    /// the run and reads back the receipts + the refusal (if any) after.
+    static CURRENT_COMPOSER: RefCell<Option<AttachedComposer>> = const { RefCell::new(None) };
+    /// The outcome of the last `deos.compose(...)` the JS ran: the committed receipts +
+    /// minted cells on success, or the in-band OVER-REACH reason (with nothing committed) on
+    /// refusal. The host reads this back after the run (the composer commits step-wise, so
+    /// the receipts ALSO land on the live ledger directly).
+    static LAST_COMPOSE: RefCell<Option<ComposeOutcome>> = const { RefCell::new(None) };
+}
+
+/// The JS-visible outcome of a `deos.compose(...)` call: what the agent's multi-cell story
+/// did on the live World. The host reads this back after the run.
+#[derive(Clone, Debug, Default)]
+pub struct ComposeOutcome {
+    /// The committed receipt hashes, in leg order (empty on an over-reach — nothing committed).
+    pub receipts: Vec<[u8; 32]>,
+    /// The cell ids minted by `mintCard` legs, in order.
+    pub minted: Vec<dregg_types::CellId>,
+    /// The number of legs that committed (= `receipts.len()`).
+    pub committed: usize,
+    /// The in-band OVER-REACH / executor refusal reason, iff the story was refused. On an
+    /// over-reach `committed == 0` (the atomic pre-screen aborted before any turn).
+    pub refusal: Option<String>,
+}
+
+impl ComposeOutcome {
+    /// Whether the whole story committed (no refusal).
+    pub fn ok(&self) -> bool {
+        self.refusal.is_none()
+    }
 }
 
 /// One affordance a hosted server program registered via `deos.server.defineAffordance`:
@@ -281,6 +315,26 @@ pub fn set_current_editor(editor: CardEditor) {
 /// receipts, the re-mintable manifest) after a JS authoring run.
 pub fn take_current_editor() -> Option<CardEditor> {
     CURRENT_EDITOR.with(|c| c.borrow_mut().take())
+}
+
+/// Install the [`AttachedComposer`] the `deos.compose(...)` native drives — the agent's
+/// bounded multi-cell composer over the live World, mounted under its `held`. Independent
+/// of the crawl/drive target, so `deos.compose` composes against the live ledger in an
+/// attached run. Clears any stale compose outcome.
+pub fn set_current_composer(composer: AttachedComposer) {
+    LAST_COMPOSE.with(|c| *c.borrow_mut() = None);
+    CURRENT_COMPOSER.with(|c| *c.borrow_mut() = Some(composer));
+}
+
+/// Take the composer back out — to inspect its receipt tape + scope after a JS run.
+pub fn take_current_composer() -> Option<AttachedComposer> {
+    CURRENT_COMPOSER.with(|c| c.borrow_mut().take())
+}
+
+/// Read back the outcome of the last `deos.compose(...)` the JS ran (the committed receipts
+/// + minted cells, or the in-band over-reach refusal). `None` if no compose ran.
+pub fn take_last_compose() -> Option<ComposeOutcome> {
+    LAST_COMPOSE.with(|c| c.borrow_mut().take())
 }
 
 /// Install the embedded applet the native functions drive (deos-js's own engine).
@@ -530,6 +584,32 @@ const PRELUDE: &str = r#"
             getField: function(cellHex, index) {
                 return __deos_server_get_field(String(cellHex), index | 0) | 0;
             }
+        },
+        // ── THE BOUNDED MULTI-CELL COMPOSE — `deos.compose([...])` ──────────────────
+        // The agent's brain decides-and-executes a genuinely useful MULTI-CELL task as ONE
+        // all-or-nothing BOUNDED gesture on the live World: e.g. stand up a shared notebook
+        // for a collaborator = mint the cell + seed its title + grant the collaborator a cap.
+        // Unlike `deos.server.*` (the UNBOUNDED GM superpowers), every leg is checked against
+        // the agent's mandate `held` (the cap tooth) and its scope (a leg may only touch a
+        // held cell) BEFORE any turn commits — an over-reach aborts the WHOLE story in-band
+        // with NOTHING committed (no partial leg). Each leg is one cap-gated verified turn.
+        //
+        //   deos.compose(steps) — `steps` is an array of leg objects:
+        //     { op:"mintCard", seed:<label>, fields:[[slot,value],...], funding:N?, required:<auth>? }
+        //         — stand up a fresh OPEN cell (id = hash(seed)); it joins scope for later
+        //           legs. `fields` seed its genesis model. Returns its id hex in `.minted`.
+        //     { op:"setField", cell:<hex>, slot:N, value:N, required:<auth>? }
+        //         — write a field on a HELD cell (a foreign cell is the scope over-reach).
+        //     { op:"grant", from:<hex>, to:<hex>, granted:<auth>?, required:<auth>? }
+        //         — grant a cap over a HELD `from` cell to peer `to` (granted ⊑ held).
+        //   `required`/`granted`/`auth` are labels: "none"/"signature"/"proof"/"either".
+        //   Returns an object:
+        //     { ok:bool, committed:N, receipts:[hex,...], minted:[hex,...], refusal:str? }
+        //   on an over-reach `ok:false, committed:0` and `refusal` names the failed leg.
+        compose: function(steps) {
+            var json = JSON.stringify(steps || []);
+            var out = __deos_compose(json);
+            return JSON.parse(out);
         }
     };
 "#;
@@ -641,6 +721,8 @@ impl JsRuntime {
                     native_server_get_field as RawNative,
                     2,
                 ),
+                // bounded multi-cell compose (the agent's useful, atomic, held-bounded story)
+                (c"__deos_compose", native_compose as RawNative, 1),
             ] {
                 let defined = JS_DefineFunction(realm_cx, g, name.as_ptr(), Some(f), nargs, 0);
                 if defined.is_null() {
@@ -716,6 +798,51 @@ impl JsRuntime {
             Err(e) => Err(e),
         }
     }
+
+    /// THE COMPOSE RUN — install an [`AttachedComposer`] (bound to a PROVIDED live World,
+    /// mounted under the agent's `held`) as the `deos.compose(...)` target, eval `source`
+    /// (which composes one or more bounded multi-cell stories via `deos.compose([...])`),
+    /// then take the composer + the last compose outcome back out.
+    ///
+    /// The composer is INDEPENDENT of the crawl/drive target, so `deos.compose` composes
+    /// against the live ledger here while `deos.world.cells()` still crawls it (the host may
+    /// install BOTH an attached crawl target and the composer). Each composed leg is a
+    /// cap-gated verified turn on the live World; an over-reach is refused in-band with
+    /// nothing committed.
+    ///
+    /// Returns `(script_result, the_composer_back, the_compose_outcome)`.
+    pub fn run_compose(
+        &mut self,
+        composer: AttachedComposer,
+        source: &str,
+    ) -> Result<ComposeRunOutcome, String> {
+        set_current_composer(composer);
+        let eval = self.eval(source);
+        let composer = take_current_composer()
+            .ok_or_else(|| "composer vanished during run".to_string())?;
+        let compose = take_last_compose();
+        match eval {
+            Ok(result) => Ok(ComposeRunOutcome {
+                result,
+                compose,
+                composer,
+            }),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// The outcome of a [`JsRuntime::run_compose`]: what the agent's multi-cell story did on the
+/// live World.
+pub struct ComposeRunOutcome {
+    /// The script's i32 completion value, if any.
+    pub result: Option<i32>,
+    /// The outcome of the `deos.compose(...)` the JS ran (committed receipts + minted cells,
+    /// or the in-band over-reach refusal). `None` if the script ran no compose.
+    pub compose: Option<ComposeOutcome>,
+    /// The composer handed back (its `WorldSink` reads the live ledger; its receipt tape +
+    /// scope reflect what the story committed).
+    pub composer: AttachedComposer,
 }
 
 /// The outcome of a [`JsRuntime::run_attached`]: what the JS did on the live World.
@@ -1821,6 +1948,174 @@ unsafe extern "C" fn native_server_get_field(
     });
     args.rval().set(Int32Value(v));
     true
+}
+
+// ── THE BOUNDED MULTI-CELL COMPOSE native (`deos.compose`) ──────────────────────────
+//
+// The agent's brain composes a story spanning MULTIPLE cells (mint + setField + grant) as
+// ONE all-or-nothing bounded gesture on the live World. The cap tooth (`held`) + scope
+// tooth + atomic pre-screen live in `AttachedComposer::compose` (the lifted
+// `multi_cell::MultiCellAuthor` semantics); this native is the JSON↔composer bridge.
+
+/// Decode one compose leg (`{op, ...}`) from the brain's JSON into a [`ComposeStep`].
+fn parse_compose_step(v: &serde_json::Value) -> Result<ComposeStep, String> {
+    let op = v.get("op").and_then(|x| x.as_str()).unwrap_or("");
+    let required = parse_auth_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("signature"));
+    match op {
+        "mintCard" => {
+            let seed = v
+                .get("seed")
+                .and_then(|x| x.as_str())
+                .ok_or("mintCard needs a 'seed' label")?
+                .to_string();
+            let funding = v.get("funding").and_then(|x| x.as_u64()).unwrap_or(100_000);
+            let seed_fields = match v.get("fields").and_then(|x| x.as_array()) {
+                Some(arr) => arr
+                    .iter()
+                    .map(|pair| {
+                        let p = pair
+                            .as_array()
+                            .ok_or("mintCard field must be a [slot, value] pair")?;
+                        let slot = p.first().and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+                        let value = p.get(1).and_then(|x| x.as_u64()).unwrap_or(0);
+                        Ok::<_, String>((slot, crate::applet::pack_u64(value)))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                None => Vec::new(),
+            };
+            Ok(ComposeStep::MintCard {
+                seed,
+                seed_fields,
+                funding,
+                required,
+            })
+        }
+        "setField" => {
+            let cell_hex = v.get("cell").and_then(|x| x.as_str()).unwrap_or("");
+            let cell = reflect_binding::parse_cell_id(cell_hex)
+                .ok_or_else(|| format!("setField: bad cell id '{cell_hex}'"))?;
+            let slot = v.get("slot").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+            let value = v.get("value").and_then(|x| x.as_u64()).unwrap_or(0);
+            Ok(ComposeStep::SetField {
+                cell,
+                slot,
+                value,
+                required,
+            })
+        }
+        "grant" => {
+            let from_hex = v.get("from").and_then(|x| x.as_str()).unwrap_or("");
+            let from = reflect_binding::parse_cell_id(from_hex)
+                .ok_or_else(|| format!("grant: bad 'from' cell id '{from_hex}'"))?;
+            let to_hex = v.get("to").and_then(|x| x.as_str()).unwrap_or("");
+            let to = reflect_binding::parse_cell_id(to_hex)
+                .ok_or_else(|| format!("grant: bad 'to' cell id '{to_hex}'"))?;
+            let granted =
+                parse_auth_label(v.get("granted").and_then(|x| x.as_str()).unwrap_or("signature"));
+            Ok(ComposeStep::GrantCap {
+                from,
+                to,
+                granted,
+                required,
+            })
+        }
+        other => Err(format!("unknown compose op '{other}'")),
+    }
+}
+
+/// Serialize a [`ComposeOutcome`] into the JSON shape `deos.compose` hands back to JS:
+/// `{ ok, committed, receipts:[hex], minted:[hex], refusal? }`.
+fn compose_outcome_json(out: &ComposeOutcome) -> String {
+    let receipts: Vec<String> = out
+        .receipts
+        .iter()
+        .map(|h| deos_reflect::substance::hex_encode(h))
+        .collect();
+    let minted: Vec<String> = out.minted.iter().map(reflect_binding::id_hex).collect();
+    serde_json::json!({
+        "ok": out.ok(),
+        "committed": out.committed,
+        "receipts": receipts,
+        "minted": minted,
+        "refusal": out.refusal,
+    })
+    .to_string()
+}
+
+/// `__deos_compose(stepsJson)` — run the agent's bounded multi-cell story on the live World.
+/// Drives the installed [`AttachedComposer`] (mounted under the agent's `held`): the atomic
+/// pre-screen refuses any over-reach IN-BAND (nothing committed); a fully-authorized story
+/// commits each leg as a verified turn on the live ledger. Returns the outcome JSON string;
+/// also stashed in `LAST_COMPOSE` for the host. A malformed steps blob is a refusal.
+unsafe extern "C" fn native_compose(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let steps_json = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        "[]".into()
+    };
+
+    let outcome = CURRENT_COMPOSER.with(|c| {
+        let mut guard = c.borrow_mut();
+        let composer = match guard.as_mut() {
+            Some(c) => c,
+            None => {
+                return ComposeOutcome {
+                    refusal: Some("no composer attached (deos.compose needs a live World)".into()),
+                    ..Default::default()
+                };
+            }
+        };
+        // Parse the legs. A malformed leg (bad op/cell/shape) is a hard refusal BEFORE any
+        // turn — the brain produced an ill-formed story.
+        let parsed: Result<Vec<ComposeStep>, String> = (|| {
+            let v: serde_json::Value =
+                serde_json::from_str(&steps_json).map_err(|e| format!("compose JSON: {e}"))?;
+            let arr = v.as_array().ok_or("compose expects an array of legs")?;
+            arr.iter().map(parse_compose_step).collect()
+        })();
+        let steps = match parsed {
+            Ok(s) => s,
+            Err(e) => {
+                return ComposeOutcome {
+                    refusal: Some(e),
+                    ..Default::default()
+                };
+            }
+        };
+        match composer.compose(steps) {
+            Ok(comp) => ComposeOutcome {
+                receipts: comp.receipts.clone(),
+                minted: comp.minted.clone(),
+                committed: comp.receipts.len(),
+                refusal: None,
+            },
+            Err(ComposeError::OverReach { reason, .. }) => ComposeOutcome {
+                // The atomic pre-screen aborted — NOTHING committed (no partial leg).
+                refusal: Some(format!("over-reach: {reason}")),
+                ..Default::default()
+            },
+            Err(ComposeError::Executor { step, reason }) => {
+                // Legs BEFORE this one committed on the live ledger (step-wise commit).
+                let committed = composer.receipt_count();
+                ComposeOutcome {
+                    receipts: composer.receipts().to_vec(),
+                    committed,
+                    refusal: Some(format!("executor refused leg {step}: {reason}")),
+                    ..Default::default()
+                }
+            }
+        }
+    });
+
+    let json = compose_outcome_json(&outcome);
+    LAST_COMPOSE.with(|c| *c.borrow_mut() = Some(outcome));
+    return_string(&mut cx, &args, &json)
 }
 
 /// Decode 64-char hex into `out` (exact-length match required). Returns false on any

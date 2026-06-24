@@ -40,7 +40,10 @@
 
 use deos_js::card_editor::CardEditor;
 use deos_js::portable::{AppletManifest, PortableApplet};
-use deos_js::{Affordance, Applet, AttachedApplet, FireError, JsRuntime, WorldSink};
+use deos_js::{
+    Affordance, Applet, AttachedApplet, AttachedComposer, ComposeOutcome, FireError, JsRuntime,
+    WorldSink,
+};
 use dregg_cell::state::FieldElement;
 use dregg_cell::{AuthRequired, CellId};
 use dregg_doc::Author;
@@ -503,5 +506,136 @@ impl RunJsAuthoringTool {
     ) -> RunJsAuthorOutcome {
         let card = PortableApplet::mint(public_key, token_id, &manifest);
         self.run_on(rt, gw, call, now, card, manifest, edit_authority, script)
+    }
+}
+
+/// The outcome of a `run_js` COMPOSE call: the gateway verdict on the *tool-call* (the
+/// accountability turn) plus what the agent-decided JS composed across MULTIPLE cells on the
+/// live World (the receipts the bounded story landed, or the in-band over-reach refusal).
+#[derive(Debug)]
+pub struct RunJsComposeOutcome {
+    /// The gateway's verdict on the `run_js` tool-call itself — a metered, receipted
+    /// [`ToolGrant`](dregg_sdk::ToolGrant) turn (or an in-band refusal). Refused ⇒ no JS runs.
+    pub tool_outcome: PermissionOutcome,
+    /// The script's i32 completion value, if any.
+    pub result: Option<i32>,
+    /// The outcome of the agent's `deos.compose(...)` — the committed multi-cell receipts +
+    /// minted cells, or the in-band OVER-REACH refusal (with nothing committed). `None` if
+    /// the script ran no compose (or the tool-call was refused before any JS ran).
+    pub compose: Option<ComposeOutcome>,
+    /// A native/eval fault from the JS run, if any (a genuine boot/compile fault — NOT a
+    /// cap-gate over-reach, which is the expected in-band `refusal` inside `compose`).
+    pub js_error: Option<String>,
+}
+
+impl RunJsComposeOutcome {
+    /// Did the `run_js` tool-call itself get admitted (the accountability turn committed)?
+    pub fn tool_admitted(&self) -> bool {
+        self.tool_outcome.allowed()
+    }
+
+    /// How many verified turns the agent's multi-cell story committed on the live World
+    /// (0 on an over-reach — the atomic pre-screen aborted before any leg).
+    pub fn committed(&self) -> usize {
+        self.compose.as_ref().map(|c| c.committed).unwrap_or(0)
+    }
+
+    /// Whether the whole story committed (admitted, ran, and the compose was not refused).
+    pub fn composed(&self) -> bool {
+        self.compose.as_ref().map(|c| c.ok()).unwrap_or(false)
+    }
+
+    /// The in-band over-reach / executor refusal reason, iff the story was refused.
+    pub fn refusal(&self) -> Option<&str> {
+        self.compose.as_ref().and_then(|c| c.refusal.as_deref())
+    }
+}
+
+/// THE HANDS THAT COMPOSE — a confined agent's `run_js` tool whose script composes a
+/// genuinely useful, BOUNDED, MULTI-CELL story on the live World via `deos.compose([...])`
+/// (mint a card + seed it + grant a peer a cap, as ONE all-or-nothing gesture).
+///
+/// This is the multi-cell sibling of [`RunJsTool`] (one affordance fire) and
+/// [`RunJsAuthoringTool`] (one card edit): here the agent decides-and-executes a story
+/// spanning SEVERAL cells. The empowered-but-accountable-but-bounded model is identical:
+///   * EMPOWERED — the agent writes ARBITRARY compose JS (real SpiderMonkey).
+///   * ACCOUNTABLE — the `run_js` tool-call is admitted by the [`HermesGateway`] as a
+///     metered, receipted [`ToolGrant`] turn; refused ⇒ no JS runs. AND each composed leg
+///     leaves its own verified-turn receipt on the live ledger, attributed to the agent.
+///   * BOUNDED — the [`AttachedComposer`] mounts the agent's `held` (the cap tooth) + scope
+///     (a leg may only touch a held cell), atomic all-or-nothing: an over-reach (a leg whose
+///     `required` exceeds `held`, OR a leg touching a foreign cell, OR a grant wider than
+///     held) aborts the WHOLE story IN-BAND with NOTHING committed — no partial leg. The
+///     live World's own executor is the SECOND gate on every committed leg.
+pub struct RunJsComposeTool {
+    held: AuthRequired,
+    agent: CellId,
+    scope: Vec<CellId>,
+}
+
+impl RunJsComposeTool {
+    /// Build the agent's compose `run_js` tool. `held` is the agent's mandate authority (the
+    /// cap every leg's `required` is checked against); `agent` is the cell every committed
+    /// leg binds (the principal the story is attributed to); `scope` is the set of cells the
+    /// agent already holds beyond its own cell (e.g. cards pre-granted to it) — a leg
+    /// touching a cell outside `{agent} ∪ scope` (until a `mintCard` grows it) is the scope
+    /// over-reach the tooth refuses in-band.
+    pub fn new(held: AuthRequired, agent: CellId, scope: Vec<CellId>) -> Self {
+        RunJsComposeTool { held, agent, scope }
+    }
+
+    /// THE HANDS THAT COMPOSE — admit the `run_js` tool-call as a metered, receipted gateway
+    /// turn, then (iff admitted) attach a bounded [`AttachedComposer`] to the live World
+    /// (`sink`, mounted under the agent's `held` + scope) and run the agent-decided compose
+    /// `script`. The script composes via `deos.compose([...])`; a fully-authorized story
+    /// commits each leg as a verified turn on the live ledger, an over-reach is refused
+    /// in-band with nothing committed.
+    ///
+    /// `rt` is a CALLER-OWNED [`JsRuntime`] (SpiderMonkey's engine init is process-global +
+    /// one-shot, so the host boots ONE and threads it here). `sink` is the host's live World
+    /// reduced to the crawl + commit + mint surface (it MUST implement
+    /// [`WorldSink::mint_open_cell`] for `mintCard` legs).
+    pub fn run_attached_on(
+        &self,
+        rt: &mut JsRuntime,
+        sink: Box<dyn WorldSink>,
+        gw: &mut HermesGateway<'_>,
+        call: &ToolCallRequest,
+        now: i64,
+        script: &str,
+    ) -> RunJsComposeOutcome {
+        // (1) THE ACCOUNTABILITY TURN — the same metered, receipted ToolGrant the other
+        //     run_js tools route through. Refused ⇒ no JS runs; no world is touched.
+        let tool_outcome = gw.admit_with_work(call, now, Some(vec![]));
+        if !tool_outcome.allowed() {
+            return RunJsComposeOutcome {
+                tool_outcome,
+                result: None,
+                compose: None,
+                js_error: None,
+            };
+        }
+
+        // (2) THE HANDS — attach a bounded composer to the live World under the agent's
+        //     `held` + scope (the cap tooth + scope tooth, mounted under the attenuated cap,
+        //     never root) and run the agent-decided compose JS.
+        let composer = AttachedComposer::attach(sink, self.agent, self.held.clone(), &self.scope);
+
+        match rt.run_compose(composer, script) {
+            Ok(outcome) => RunJsComposeOutcome {
+                tool_outcome,
+                result: outcome.result,
+                compose: outcome.compose,
+                js_error: None,
+            },
+            // A genuine engine/eval fault (boot/compile failure) — distinct from an in-band
+            // over-reach, which surfaces as the `refusal` inside the compose outcome.
+            Err(e) => RunJsComposeOutcome {
+                tool_outcome,
+                result: None,
+                compose: None,
+                js_error: Some(e),
+            },
+        }
     }
 }

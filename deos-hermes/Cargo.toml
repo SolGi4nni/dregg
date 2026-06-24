@@ -128,3 +128,12 @@ screenshot = [
 # lockfile surface). Unix-only; on a non-Unix host `crate::confined` is cfg'd out.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Test-only: the multi-cell compose acceptance test (`hermes_composes_multi_cell`)
+# derives the deterministic cell ids its `mintCard` legs stand up (`blake3` — the
+# SAME derivation `deos_js::mint_id_of` / the node's `mint_open_cell` use) and renders
+# cell ids as the hex strings `deos.compose` consumes. Both are already in the lockfile
+# transitively (the dregg crates depend on them); dev-only, no shipped-crate surface.
+[dev-dependencies]
+blake3 = "1"
+hex = "0.4"

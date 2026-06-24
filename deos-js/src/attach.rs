@@ -26,6 +26,9 @@
 //! the live `World` is reached through this trait, not a direct type — the host
 //! crate (or deos-hermes) supplies the `impl WorldSink`.
 
+use std::collections::BTreeSet;
+
+use dregg_cell::capability::CapabilityRef;
 use dregg_cell::state::FieldElement;
 use dregg_cell::{AuthRequired, Ledger};
 use dregg_turn::action::Effect;
@@ -382,4 +385,368 @@ impl AttachedApplet {
     pub fn get_view(&self, key: &str) -> Option<&str> {
         self.view.get(key).map(|s| s.as_str())
     }
+}
+
+// ───────────────────────── the bounded multi-cell composer ──────────────────
+//
+// `multi_cell::MultiCellAuthor` composes a multi-cell story (mint + setField + grant)
+// on its OWN embedded engine. THE COMPOSE PATH lifts that exact tooth — the cap tooth
+// (`is_attenuation`), the scope tooth (a leg may only touch a held cell), and the
+// atomic all-or-nothing PRE-SCREEN — onto a PROVIDED live World, so the agent's brain
+// can decide-and-execute a genuinely useful multi-cell task (e.g. "stand up a shared
+// notebook for me and a collaborator" = mint the cell + seed its title + grant the
+// collaborator a cap) as ONE bounded, receipted gesture on the cockpit's real ledger.
+//
+// This is the bounded sibling of the `deos.server.*` GM superpowers (`fire_raw_effects`):
+// those act AS each governed cell with NO `held` bound (the GM's own-world privilege);
+// the composer is mounted under the agent's ATTENUATED `held` and refuses an over-reach
+// (or a foreign-cell touch) IN-BAND, with NOTHING committed — the same red-team invariant
+// `AttachedApplet::fire` keeps, generalised to a multi-leg story.
+
+/// One leg of a multi-cell story committed on the live World. Each leg names the cell(s)
+/// it touches (so the scope tooth can refuse a leg reaching past the agent's scope) and
+/// carries the authority it `required`s (so the cap tooth can refuse a leg whose `required`
+/// over-reaches `held`).
+pub enum ComposeStep {
+    /// **Mint a card** — stand up a fresh OPEN, funded cell (via [`WorldSink::mint_open_cell`])
+    /// the agent becomes capped over. The new cell joins the agent's scope for later legs in
+    /// the SAME story (so a story may mint-then-seed its own new cell). Reported in
+    /// [`LiveComposition::minted`].
+    MintCard {
+        /// The deterministic seed the new cell's id derives from (`hash(seed)`).
+        seed: String,
+        /// The genesis model fields written into the new cell right after it is minted.
+        seed_fields: Vec<(Slot, FieldElement)>,
+        /// The funding stipend the minted cell carries (to pay its own self-stamp fees).
+        funding: u64,
+        /// The authority minting requires (the cap tooth checks `held ⊒ required`).
+        required: AuthRequired,
+    },
+    /// **Set a field** on a cell in the agent's scope — a real `SetField` verified turn.
+    /// `cell` must be held (a SetField on a foreign vessel's cell is the scope over-reach).
+    SetField {
+        /// The cell whose model field is written (must be in scope).
+        cell: CellId,
+        /// The model slot.
+        slot: Slot,
+        /// The new value (a u64 packed into a field element).
+        value: u64,
+        /// The authority the write requires.
+        required: AuthRequired,
+    },
+    /// **Grant a capability** over one of the agent's held cells TO a peer. The `from` cell
+    /// must be in the agent's scope (you may only grant FROM a cell you hold); `to` may be
+    /// any peer (granting OUTWARD is the point). The granted authority is itself cap-checked
+    /// against `held` (you cannot grant authority you do not hold).
+    GrantCap {
+        /// The held cell the grant issues FROM (must be in scope).
+        from: CellId,
+        /// The peer cell receiving the capability (need NOT be in scope — the outward reach).
+        to: CellId,
+        /// The authority handed over (cap-checked against `held` — no granting what you lack).
+        granted: AuthRequired,
+        /// The authority issuing the grant requires.
+        required: AuthRequired,
+    },
+}
+
+impl ComposeStep {
+    fn required(&self) -> &AuthRequired {
+        match self {
+            ComposeStep::MintCard { required, .. }
+            | ComposeStep::SetField { required, .. }
+            | ComposeStep::GrantCap { required, .. } => required,
+        }
+    }
+
+    fn method(&self) -> &'static str {
+        match self {
+            ComposeStep::MintCard { .. } => "mint_card",
+            ComposeStep::SetField { .. } => "set_field",
+            ComposeStep::GrantCap { .. } => "grant_cap",
+        }
+    }
+}
+
+/// Why a live multi-cell composition was refused. An over-reach is reported IN-BAND with
+/// NOTHING committed (the pre-screen held before any turn reached the live executor).
+#[derive(Debug)]
+pub enum ComposeError {
+    /// The cap/scope tooth refused a leg: its `required` is not narrower-or-equal to `held`,
+    /// OR it touches a cell outside the agent's scope, OR it grants authority the agent does
+    /// not hold. Carries the 0-based leg index and a reason. NO turn committed for ANY leg —
+    /// no partial commit of an unauthorized leg.
+    OverReach { step: usize, reason: String },
+    /// A leg cleared the tooth but the live executor rejected its turn. The legs committed
+    /// BEFORE it have landed (step-wise commit on the live ledger); this names the failed
+    /// leg + the executor's reason (the residual executor-side surface, e.g. fee/budget).
+    Executor { step: usize, reason: String },
+}
+
+impl std::fmt::Display for ComposeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ComposeError::OverReach { step, reason } => {
+                write!(f, "step {step} over-reaches the agent's held authority: {reason}")
+            }
+            ComposeError::Executor { step, reason } => {
+                write!(f, "step {step} refused by the live executor: {reason}")
+            }
+        }
+    }
+}
+impl std::error::Error for ComposeError {}
+
+/// The record of a multi-cell story committed on the live World: every leg's receipt hash
+/// (in order, all under the agent cell) and the ids of any cells minted along the way.
+#[derive(Debug, Clone, Default)]
+pub struct LiveComposition {
+    /// The committed receipt hash of each leg, in step order. One leg = one verified turn.
+    pub receipts: Vec<[u8; 32]>,
+    /// The cell ids minted by `MintCard` legs, in order (each now in the agent's scope).
+    pub minted: Vec<CellId>,
+}
+
+impl LiveComposition {
+    /// The number of verified turns the story committed (= the number of legs).
+    pub fn len(&self) -> usize {
+        self.receipts.len()
+    }
+    /// Whether the story was empty (no legs).
+    pub fn is_empty(&self) -> bool {
+        self.receipts.is_empty()
+    }
+}
+
+/// A **bounded multi-cell composer** over a PROVIDED live World — the brain composes a
+/// story spanning the agent's held cells (and reaching OUTWARD via grants) as a sequence
+/// of cap-gated verified turns on the cockpit's real ledger.
+///
+/// It carries the agent's identity (`agent`), its `held` authority (the cap the runtime is
+/// mounted under — the red-team invariant: the attenuated cap, never the World's root), and
+/// the agent's authority SCOPE (`held_cells` — the cells it may touch). The tooth lives
+/// HERE, exactly as in [`AttachedApplet::fire`] and `multi_cell::MultiCellAuthor::compose`.
+pub struct AttachedComposer {
+    sink: Box<dyn WorldSink>,
+    /// The agent cell — the agent of every committed turn (the principal the story is
+    /// attributed to). It is itself in `held_cells`.
+    agent: CellId,
+    /// The held authority the agent wields (every leg's `required` is checked against this;
+    /// every granted authority is checked against this).
+    held: AuthRequired,
+    /// The agent's authority SCOPE — the cells it may touch. A leg touching a cell outside
+    /// this set is the scope over-reach the tooth refuses. `MintCard` grows it.
+    held_cells: BTreeSet<CellId>,
+    /// Every committed receipt hash, in order (the audit tape across the whole story).
+    receipts: Vec<[u8; 32]>,
+}
+
+impl AttachedComposer {
+    /// Build a composer over a live World (`sink`), driving `agent` under `held`, whose
+    /// initial scope is `{agent} ∪ scope` (the cells the agent already holds — its own cell
+    /// plus any cards pre-granted to it). A `MintCard` leg grows the scope with the cell it
+    /// stands up.
+    pub fn attach(
+        sink: Box<dyn WorldSink>,
+        agent: CellId,
+        held: AuthRequired,
+        scope: &[CellId],
+    ) -> Self {
+        let mut held_cells = BTreeSet::new();
+        held_cells.insert(agent);
+        for c in scope {
+            held_cells.insert(*c);
+        }
+        AttachedComposer {
+            sink,
+            agent,
+            held,
+            held_cells,
+            receipts: Vec::new(),
+        }
+    }
+
+    /// The agent cell (the agent of every committed turn).
+    pub fn agent(&self) -> CellId {
+        self.agent
+    }
+
+    /// The held authority.
+    pub fn held(&self) -> &AuthRequired {
+        &self.held
+    }
+
+    /// Whether `cell` is in the agent's scope (the cells it may touch).
+    pub fn holds_cell(&self, cell: &CellId) -> bool {
+        self.held_cells.contains(cell)
+    }
+
+    /// The committed receipt tape across every story (in order).
+    pub fn receipts(&self) -> &[[u8; 32]] {
+        &self.receipts
+    }
+
+    /// The number of verified turns committed in total.
+    pub fn receipt_count(&self) -> usize {
+        self.receipts.len()
+    }
+
+    /// Read a model field of any cell in the World as a u64 (the scalar shape) — a witnessed
+    /// read off the live ledger.
+    pub fn get_u64(&self, cell: &CellId, slot: Slot) -> u64 {
+        let mut v = 0u64;
+        self.sink
+            .with_ledger(&mut |l| v = CellModel::field_u64_direct(l, cell, slot));
+        v
+    }
+
+    /// **Compose a multi-cell story on the live World** — author `steps` spanning the agent's
+    /// cells (and reaching outward via grants) as cap-gated verified turns on the real ledger.
+    ///
+    /// THE TOOTH, generalised + ATOMIC pre-screen (the all-or-nothing face):
+    ///
+    /// 1. PRE-SCREEN every leg against `held` (the authority tooth — [`dregg_cell::is_attenuation`])
+    ///    AND the agent's scope (the scope tooth — every touched cell must be held; a
+    ///    `MintCard` grows the PROJECTED scope so a later leg may touch the cell it will
+    ///    mint). A granted authority is ALSO checked against `held`. ANY over-reach ⇒
+    ///    [`ComposeError::OverReach`] and NOTHING is committed — no turn for ANY leg.
+    /// 2. Only when EVERY leg clears, commit each as its OWN verified turn through the
+    ///    [`WorldSink`] (agent = the agent cell), collecting the live receipts. A `MintCard`
+    ///    mints its OPEN funded cell and adds it to the live scope.
+    pub fn compose(&mut self, steps: Vec<ComposeStep>) -> Result<LiveComposition, ComposeError> {
+        // ── (1) ATOMIC PRE-SCREEN — refuse any over-reach before ANY turn commits. ──
+        // The projected scope grows with each MintCard (the cell it WILL create), so a
+        // story may mint-then-write its own new cell, but may NOT touch a foreign cell.
+        let mut projected: BTreeSet<CellId> = self.held_cells.clone();
+        for (i, step) in steps.iter().enumerate() {
+            // 1a. authority tooth: required ⊑ held.
+            if !dregg_cell::is_attenuation(&self.held, step.required()) {
+                return Err(ComposeError::OverReach {
+                    step: i,
+                    reason: format!(
+                        "step '{}' requires an authority not narrower-or-equal to held",
+                        step.method()
+                    ),
+                });
+            }
+            // 1b. scope tooth + leg-specific checks.
+            match step {
+                ComposeStep::MintCard { seed, .. } => {
+                    projected.insert(mint_id_of(seed));
+                }
+                ComposeStep::SetField { cell, .. } => {
+                    if !projected.contains(cell) {
+                        return Err(ComposeError::OverReach {
+                            step: i,
+                            reason: format!(
+                                "set_field touches cell {cell} outside the agent's held scope"
+                            ),
+                        });
+                    }
+                }
+                ComposeStep::GrantCap { from, granted, .. } => {
+                    if !projected.contains(from) {
+                        return Err(ComposeError::OverReach {
+                            step: i,
+                            reason: format!(
+                                "grant issues FROM cell {from} outside the agent's held scope"
+                            ),
+                        });
+                    }
+                    if !dregg_cell::is_attenuation(&self.held, granted) {
+                        return Err(ComposeError::OverReach {
+                            step: i,
+                            reason: "grant hands over an authority wider than held".into(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // ── (2) COMMIT — every leg cleared; commit each as its own verified turn. ──
+        let mut comp = LiveComposition::default();
+        for (i, step) in steps.into_iter().enumerate() {
+            let (rh, new_cell) = self
+                .commit_step(step)
+                .map_err(|reason| ComposeError::Executor { step: i, reason })?;
+            if let Some(id) = new_cell {
+                self.held_cells.insert(id);
+                comp.minted.push(id);
+            }
+            self.receipts.push(rh);
+            comp.receipts.push(rh);
+        }
+        Ok(comp)
+    }
+
+    /// Commit ONE leg as a real verified turn on the live World. The tooth has ALREADY
+    /// cleared in the pre-screen. Returns the receipt hash and, for a `MintCard`, the new
+    /// cell id. A `MintCard` mints an OPEN funded cell (so a later in-story `SetField` on it
+    /// authorizes); a `SetField`/`GrantCap` commits the matching effect AS the touched cell
+    /// (the open-perms self-write/self-grant the live executor admits — the same shape the
+    /// `deos.server.*` superpowers use, here bounded by the pre-screen).
+    fn commit_step(&mut self, step: ComposeStep) -> Result<([u8; 32], Option<CellId>), String> {
+        match step {
+            ComposeStep::MintCard {
+                seed,
+                seed_fields,
+                funding,
+                ..
+            } => {
+                let id = self.sink.mint_open_cell(&seed, funding)?;
+                // Seed the genesis model: one SetField per field, committed AS the new
+                // (open) cell. An empty seed still bumps the agent's nonce so the mint leg
+                // leaves a receipt of its own.
+                let mut effects: Vec<Effect> = seed_fields
+                    .into_iter()
+                    .map(|(index, value)| Effect::SetField { cell: id, index, value })
+                    .collect();
+                effects.push(Effect::IncrementNonce { cell: id });
+                let rh = self.sink.fire_effects(id, "mint_card", effects)?;
+                Ok((rh, Some(id)))
+            }
+            ComposeStep::SetField {
+                cell, slot, value, ..
+            } => {
+                let effects = vec![
+                    Effect::SetField {
+                        cell,
+                        index: slot,
+                        value: crate::applet::pack_u64(value),
+                    },
+                    Effect::IncrementNonce { cell },
+                ];
+                let rh = self.sink.fire_effects(cell, "set_field", effects)?;
+                Ok((rh, None))
+            }
+            ComposeStep::GrantCap {
+                from, to, granted, ..
+            } => {
+                let cap = CapabilityRef {
+                    target: from,
+                    slot: 0,
+                    permissions: granted,
+                    breadstuff: None,
+                    expires_at: None,
+                    allowed_effects: None,
+                    stored_epoch: None,
+                };
+                // Commit the grant AS the `from` cell (a self-grant: from == actor == target),
+                // whose `delegate` permission the executor checks. For an open held cell this
+                // authorizes; the pre-screen has already bounded `granted` ⊑ `held`.
+                let effects = vec![Effect::GrantCapability { from, to, cap }];
+                let rh = self.sink.fire_effects(from, "grant_cap", effects)?;
+                Ok((rh, None))
+            }
+        }
+    }
+}
+
+/// The deterministic cell id a `MintCard { seed }` leg stands up: `hash(seed)` against the
+/// host's default token domain — the SAME derivation [`WorldSink::mint_open_cell`] uses, so
+/// the pre-screen can project the minted cell into scope before the mint commits.
+pub fn mint_id_of(seed: &str) -> CellId {
+    let public_key = *blake3::hash(seed.as_bytes()).as_bytes();
+    let token_id = *blake3::hash(b"default").as_bytes();
+    CellId::derive_raw(&public_key, &token_id)
 }

@@ -46,7 +46,11 @@ pub mod signals;
 
 pub use agent_card::{AgentAction, AgentCard, MandateEdge, AGENT_NONCE_SLOT};
 pub use applet::{Affordance, Applet, CellModel, FireError, TranscludeError, Transclusion};
-pub use attach::{AttachedAffordance, AttachedApplet, WorldSink};
+pub use attach::{
+    mint_id_of, AttachedAffordance, AttachedApplet, AttachedComposer, ComposeError, ComposeStep,
+    LiveComposition, WorldSink,
+};
+pub use reflect_binding::id_hex;
 pub use card_editor::Author;
 pub use card_editor::{CardEditor, EditError, ViewEdit, ViewPatch, ViewTree};
 pub use coauthored_card::{CardFork, CardStitch, SharedCard, COUNT_SLOT};
@@ -54,7 +58,10 @@ pub use composer_card::{ComposedChild, ComposerCard, ComposerViewEdit, Role as C
 pub use dynamics_card::{DynamicsCard, FeedEntry, FEED_LEN_SLOT};
 pub use graph_card::{GraphCard, GraphRow, GRAPH_AUTHORSHIP_SLOT};
 pub use inspector_card::{InspectorCard, INSPECTOR_AUTHORSHIP_SLOT};
-pub use js::{set_current_editor, take_current_editor, JsRuntime, JsTarget};
+pub use js::{
+    set_current_composer, set_current_editor, take_current_composer, take_current_editor,
+    take_last_compose, ComposeOutcome, ComposeRunOutcome, JsRuntime, JsTarget,
+};
 pub use layout_card::{LayoutCard, LayoutMode, LayoutModel, LayoutPatch, LAYOUT_AUTHORSHIP_SLOT};
 pub use links_card::{BacklinkRow, LinksCard, LINK_COUNT_SLOT};
 pub use objects_card::{ObjectRow, ObjectsCard, OBJECTS_AUTHORSHIP_SLOT};

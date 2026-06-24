@@ -36,7 +36,7 @@ use dregg_cell::{AuthRequired, CellId};
 use crate::acp::{PermissionOutcome, ToolCallRequest};
 use crate::acp_client::{JsRunRecord, RunJsHook};
 use crate::bridge::HermesGateway;
-use crate::run_js::{RunJsAuthoringTool, RunJsTool};
+use crate::run_js::{RunJsAuthoringTool, RunJsComposeTool, RunJsTool};
 
 /// Pull the model's chosen JS out of a `run_js` tool-call's `rawInput`. The brain
 /// writes its script under `script` (the `run_js` tool's one argument). Falls back
@@ -269,6 +269,110 @@ where
     /// Consume the hands into a `run_js` [`RunJsHook`] for
     /// [`AcpClient::with_run_js_hook`](crate::acp_client::AcpClient::with_run_js_hook).
     /// Each invocation runs the model-decided authoring script against the card.
+    pub fn into_hook(mut self) -> RunJsHook<'gw>
+    where
+        F: 'gw,
+    {
+        Box::new(move |call: &ToolCallRequest, now: i64| self.run_call(call, now))
+    }
+}
+
+/// THE LIVE BRAIN'S HANDS THAT COMPOSE — wire a real `hermes-acp` model's `run_js`
+/// tool-call to a real run of the model-DECIDED `deos.compose([...])` JS against the
+/// live World, via [`RunJsComposeTool`].
+///
+/// This is the multi-cell sibling of [`LiveJsHands`] (one affordance fire) and
+/// [`LiveAuthoringHands`] (one card edit): where those run the model's single-leg
+/// script, [`LiveComposeHands`] runs the model's MULTI-CELL story — the agent, given a
+/// goal ("stand up a shared notebook for my collaborator"), WRITES the `deos.compose`
+/// JS itself, and the whole story commits as ONE bounded, atomic, receipted gesture on
+/// the live ledger (or is refused in-band on over-reach, with nothing committed).
+///
+/// It owns the agent's [`RunJsComposeTool`] (its `held` + scope — the cap/scope tooth)
+/// + its accountability [`HermesGateway`] + a SINK FACTORY (a fresh `Box<dyn WorldSink>`
+/// over the SAME live World each call; it MUST implement
+/// [`WorldSink::mint_open_cell`](deos_js::WorldSink::mint_open_cell) for `mintCard`
+/// legs) + a process-global [`JsRuntime`].
+///
+/// The red-team invariant holds end-to-end: EMPOWERED (the model writes arbitrary compose
+/// JS), ACCOUNTABLE (the `run_js` tool-call is a metered, receipted gateway turn + each
+/// committed leg leaves a verified-turn receipt), BOUNDED (the [`deos_js::AttachedComposer`]
+/// refuses an over-reaching/foreign-touching/over-granting story in-band — nothing committed).
+pub struct LiveComposeHands<'gw, F>
+where
+    F: FnMut() -> Box<dyn WorldSink>,
+{
+    tool: RunJsComposeTool,
+    gateway: HermesGateway<'gw>,
+    sink_factory: F,
+    rt: JsRuntime,
+}
+
+impl<'gw, F> LiveComposeHands<'gw, F>
+where
+    F: FnMut() -> Box<dyn WorldSink> + 'gw,
+{
+    /// Build the compose hands over an agent `tool`, its accountability `gateway`, and a
+    /// `sink_factory` producing fresh live sinks over the SAME World. Boots the
+    /// process-global SpiderMonkey engine (one-shot) — call once per process.
+    pub fn new(
+        tool: RunJsComposeTool,
+        gateway: HermesGateway<'gw>,
+        sink_factory: F,
+    ) -> Result<Self, String> {
+        let rt = JsRuntime::new()?;
+        Ok(Self::with_runtime(tool, gateway, sink_factory, rt))
+    }
+
+    /// As [`LiveComposeHands::new`], but on a CALLER-OWNED [`JsRuntime`] (SpiderMonkey's
+    /// engine init is process-global + one-shot, so a host that already booted a runtime
+    /// threads it here instead of booting another).
+    pub fn with_runtime(
+        tool: RunJsComposeTool,
+        gateway: HermesGateway<'gw>,
+        sink_factory: F,
+        rt: JsRuntime,
+    ) -> Self {
+        LiveComposeHands {
+            tool,
+            gateway,
+            sink_factory,
+            rt,
+        }
+    }
+
+    /// Run ONE `run_js` compose tool-call: the gateway accountability turn AND the
+    /// model-decided `deos.compose([...])` story against the live World. Returns the ACP
+    /// verdict deos sends back and a record of what the brain composed (the script + the
+    /// receipts the bounded story landed; on an over-reach the receipts are empty and the
+    /// in-band refusal rides the record's `js_error`-free `result`).
+    pub fn run_call(&mut self, call: &ToolCallRequest, now: i64) -> (PermissionOutcome, JsRunRecord) {
+        let sink = (self.sink_factory)();
+        let mut record = JsRunRecord {
+            tool_call_id: call.tool_call_id.clone(),
+            script: super::live_js::script_of_call(call),
+            ..Default::default()
+        };
+
+        let outcome = self
+            .tool
+            .run_attached_on(&mut self.rt, sink, &mut self.gateway, call, now, &record.script);
+
+        record.result = outcome.result;
+        // The committed legs the brain's compose landed (the multi-cell receipt tape).
+        record.fires_committed = outcome.committed();
+        if let Some(compose) = &outcome.compose {
+            record.receipts = compose.receipts.clone();
+        }
+        // A genuine engine fault (boot/compile) surfaces as the JS error; an in-band
+        // over-reach is NOT a fault (it is the expected `refusal` — `fires_committed == 0`).
+        record.js_error = outcome.js_error.clone();
+        (outcome.tool_outcome, record)
+    }
+
+    /// Consume the hands into a `run_js` [`RunJsHook`] for
+    /// [`AcpClient::with_run_js_hook`](crate::acp_client::AcpClient::with_run_js_hook).
+    /// Each invocation runs the model-decided compose story against the live World.
     pub fn into_hook(mut self) -> RunJsHook<'gw>
     where
         F: 'gw,

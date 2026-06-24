@@ -106,8 +106,11 @@ pub use mcp_server::{ConfinedToolResult, DREGG_TOOL_NAMES, McpServer, McpToolHos
 pub use card_authoring::{AuthorCardOutcome, CardAuthoringTool};
 pub use dregg_sdk::{AgentCipherclerk, AgentRuntime, HeldToken, ToolGrant};
 #[cfg(feature = "js-agent")]
-pub use live_js::{LiveAuthoringHands, LiveJsHands, script_of_call};
+pub use live_js::{LiveAuthoringHands, LiveComposeHands, LiveJsHands, script_of_call};
 pub use mandate::{Mandate, MandateRow};
 pub use mock_peer::{MockHermesPeer, ScriptedCall};
 #[cfg(feature = "js-agent")]
-pub use run_js::{RunJsAuthorOutcome, RunJsAuthoringTool, RunJsError, RunJsOutcome, RunJsTool};
+pub use run_js::{
+    RunJsAuthorOutcome, RunJsAuthoringTool, RunJsComposeOutcome, RunJsComposeTool, RunJsError,
+    RunJsOutcome, RunJsTool,
+};
