@@ -8,6 +8,17 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## ✎ "MAKE YOUR FIRST CARD" — repeat entry from Author mode (2026-06-24)
+Named by the onboarding commit (`12d072eff`; `starbridge-v2/src/dock/card_surface.rs::build_first_card_surface`,
+`cockpit/frame.rs::{make_first_card, first_card_view, first_card_invite}`, the `--render-first-card` bake). The
+"make your first card →" invite + the dedicated first-card view (mint → +1 a real turn → two receipted edit
+affordances → re-render, all PROVEN by the bake: home-cell slot-0 0→1, card tape = 1 receipt, the added button in
+the card's view_source, the before/after frames differ) close the FIRST-card gap on the Inhabit landing. CLOSURE
+(small): the invite is first-run-only — a returning user who wants ANOTHER fresh card has no repeat entry (the
+card stays minted + findable, and Author mode holds the card-editor, but there is no "+ new card" affordance from
+within the full frame). Lane: surface a "+ new card" in Author mode reusing `build_first_card_surface` (the mint is
+already a clean function; this is a button + a mount, not new machinery).
+
 ## ⚑ LIVE BRAIN DECIDES THE `deos.compose` STORY — the compose seam (2026-06-24)
 Named by the bounded multi-cell compose commit (`deos-hermes/tests/hermes_composes_multi_cell.rs`,
 `deos-hermes/src/live_js.rs::LiveComposeHands`). The confined agent can now decide-and-execute a genuinely
