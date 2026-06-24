@@ -423,7 +423,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "gallery",
                     "Sealed Gallery",
-                    
+
                         "A juried art gallery with sealed (commit-reveal) submissions — \
                          artists commit, the curator closes, artists reveal, the curator features.",
                     starbridge_gallery::gallery_app,
@@ -484,7 +484,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "sealed-auction",
                     "Sealed Auction",
-                    
+
                         "A sealed-bid (commit-reveal) auction — bidders commit hashed bids, \
                          the seller closes commits, bidders reveal, the seller resolves the winner.",
                     starbridge_sealed_auction::auction_app,
@@ -542,7 +542,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "bounty-board",
                     "Bounty Board",
-                    
+
                         "A bounty with an escrowed reward — a worker claims it, submits work, \
                          and the poster pays out (each step a cap-gated state-machine turn).",
                     starbridge_bounty_board::bounty_app,
@@ -600,7 +600,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "tussle",
                     "Tussle",
-                    
+
                         "A two-figure simultaneous-move game — each player commits a sealed move, \
                          both reveal, the frame resolves (a typed set-membership reveal gate).",
                     starbridge_tussle::tussle_app,
@@ -713,7 +713,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "agent-orchestration",
                     "Agent Orchestration",
-                    
+
                         "A coordinator board with a shared per-worker spend budget — a worker fires one \
                          metered step, advancing the no-replay epoch (the Σspend ≤ budget gate bites).",
                     starbridge_agent_orchestration::deos::orchestration_app,
@@ -808,7 +808,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "agent-provenance",
                     "Agent Provenance",
-                    
+
                         "A hash-linked provenance log — a recorder appends one entry that chains to the \
                          prior tip (the link-hash chain the executor's WriteOnce board re-enforces).",
                     starbridge_agent_provenance::provenance_app,
@@ -870,7 +870,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "compartment-workflow-mandate",
                     "Compartment Workflow Mandate",
-                    
+
                         "A clearance-gated workflow charter (review → redact → sign) — an officer advances \
                          one step, presenting a clearance that must dominate the entered step's compartment.",
                     starbridge_compartment_workflow_mandate::workflow_app,
@@ -958,7 +958,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "compute-exchange",
                     "Compute Exchange",
-                    
+
                         "A compute-job market (post → bid → settle) — a provider bids on the posted job, \
                          advancing the job state machine (the settle conservation AffineEq waits downstream).",
                     starbridge_compute_exchange::job_app,
@@ -1026,7 +1026,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "escrow-market",
                     "Escrow Market",
-                    
+
                         "A two-party escrow marketplace (list → fund → ship → settle) — a buyer funds the \
                          listed item into escrow (the settle release+refund=escrowed conservation waits downstream).",
                     starbridge_escrow_market::escrow_app,
@@ -1090,7 +1090,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "nameservice",
                     "Name Service",
-                    
+
                         "A registered-name record (owner / expiry / revocation) — the owner renews the name, \
                          advancing the expiry (the executor re-enforces Monotonic(EXPIRY) + WriteOnce(NAME)).",
                     starbridge_nameservice::name_app,
@@ -1165,7 +1165,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "privacy-voting",
                     "Privacy Voting",
-                    
+
                         "A public-tally poll — an administrator records one vote onto the poll's running tally \
                          (the executor re-enforces the poll invariants; the poll stays open until closed).",
                     starbridge_privacy_voting::voting_app,
@@ -1243,7 +1243,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "storage-gateway-mandate",
                     "Storage Gateway Mandate",
-                    
+
                         "A metered storage gateway (put / get / list under a volume ceiling) — a writer puts \
                          an object, debiting the volume meter (the executor re-enforces volume_spent ≤ ceiling).",
                     starbridge_storage_gateway_mandate::gateway_app,
@@ -1337,7 +1337,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "subscription",
                     "Subscription Feed",
-                    
+
                         "A publish/consume message feed under a capacity bound — a publisher publishes one \
                          message, advancing the head cursor + folding the message-commitment root.",
                     starbridge_subscription::subscription_deos_app,
@@ -1410,7 +1410,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "swarm-orchestration",
                     "Swarm Orchestration",
-                    
+
                         "A swarm dispatch board with a per-worker spend budget — the lead dispatches one task \
                          to a worker, debiting its meter + advancing the no-replay epoch (Σspend ≤ budget bites).",
                     starbridge_swarm_orchestration::board_app,
@@ -1495,7 +1495,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "tool-access-delegation",
                     "Tool Access Delegation",
-                    
+
                         "A rate-limited tool-access mandate — a worker invokes the tool once, ticking the \
                          call counter (the executor re-enforces calls_made ≤ rate_limit + the deadline gate).",
                     starbridge_tool_access_delegation::tad_app,
@@ -1562,7 +1562,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "supply-chain-provenance",
                     "Supply-Chain Provenance",
-                    
+
                         "A custody-chain item (mint → handoff) — the incoming custodian accepts custody, \
                          advancing the actor-bound baton (the SenderInSlot(CUSTODIAN) tooth bites).",
                     starbridge_supply_chain_provenance::item_app,
@@ -1675,7 +1675,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "identity",
                     "Identity / Credentials",
-                    
+
                         "A credential issuer (issue → revoke) — an authorized issuer issues one credential, \
                          advancing the issuance sequence (the SenderAuthorized membership tooth bites).",
                     starbridge_identity::identity_app,
@@ -1766,7 +1766,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "governed-namespace",
                     "Governed Namespace",
-                    
+
                         "A constitutionally-governed route table (propose → vote → commit) — a committee \
                          member opens a proposal, advancing the pending root (the SenderAuthorized committee tooth bites).",
                     starbridge_governed_namespace::governance_app,
