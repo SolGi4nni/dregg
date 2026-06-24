@@ -168,6 +168,184 @@ impl Cockpit {
         cx.notify();
     }
 
+    /// Mark this cockpit as a FIRST RUN — show the calm sparse first-view (a warm
+    /// welcome + a few cells + ONE "try this") instead of the full 5-mode wall.
+    /// Login calls this for a brand-new image; the headless bake calls it to
+    /// capture the first-view. Idempotent; takes effect on the next paint.
+    pub fn set_first_run(&mut self, first_run: bool) {
+        self.first_run = first_run;
+    }
+
+    /// DISMISS the first-run overlay — the operator chose "explore" (or fired the
+    /// "try this" affordance and is ready for the full frame). Reveals the full
+    /// 5-mode chrome. One-way: the wall is now familiar.
+    pub(crate) fn dismiss_first_run(&mut self, cx: &mut Context<Self>) {
+        self.first_run = false;
+        cx.notify();
+    }
+
+    /// THE CALM FIRST-VIEW — what a first-timer meets in their brand-new world:
+    /// not the 30-surface wall, but a breathing landing. A warm welcome, a FEW of
+    /// their own cells as friendly clickable rows, ONE gentle "try this" (fire it
+    /// → a real verified turn happens → delight), and a quiet "explore everything"
+    /// that reveals the full frame. Progressive disclosure — the five modes + dev
+    /// tooling are discoverable, not dumped. Rendered as the whole window body when
+    /// [`Self::first_run`]; the full frame returns the instant they explore.
+    pub(crate) fn first_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // A FEW of the owner's cells (the curated handful, not the full ledger) —
+        // their three anchors, named for a first-timer (their home, the treasury,
+        // a service they hold). Friendly, clickable, balance-bearing.
+        let [treasury, service, user] = self.anchors;
+        let w = self.world.borrow();
+        // A bullet from the covered ASCII set — renders in the windowed build AND
+        // the headless fallback font, so the welcome reads calm everywhere (no
+        // tofu). The friendly NAME carries the meaning; the dot just anchors the row.
+        let curated: Vec<(CellId, &'static str, &'static str)> = vec![
+            (user, "•", "your home"),
+            (treasury, "•", "the treasury"),
+            (service, "•", "a service you hold"),
+        ];
+        let mut cell_cards = div().flex().flex_col().gap_2();
+        for (id, glyph, name) in curated {
+            let bal = w.ledger().get(&id).map(|c| c.state.balance()).unwrap_or(0);
+            cell_cards = cell_cards.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "first-cell-{}",
+                        reflect::short_hex(id.as_bytes())
+                    )))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .w(px(360.))
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .bg(theme::panel())
+                    .border_1()
+                    .border_color(theme::border())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::panel_hi()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev, _w, cx| {
+                            // Clicking a cell selects it AND reveals the full frame
+                            // (the inspector shows what they clicked) — a gentle slide
+                            // into the world rather than a wall up front.
+                            this.selection = Selection::Cell(id);
+                            this.first_run = false;
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_lg().child(SharedString::from(glyph)))
+                            .child(
+                                div()
+                                    .text_color(theme::text())
+                                    .child(SharedString::from(name)),
+                            ),
+                    )
+                    .child(pill(format!("{bal}"), theme::muted())),
+            );
+        }
+        drop(w);
+
+        div()
+            .id("first-view")
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_6()
+            .bg(theme::bg())
+            .text_color(theme::text())
+            // The warm welcome — "this is your world".
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_2xl()
+                            .text_color(theme::accent())
+                            .child("welcome to your world"),
+                    )
+                    .child(
+                        div()
+                            .max_w(px(440.))
+                            .text_sm()
+                            .text_color(theme::muted())
+                            .child(
+                                "everything here is yours — living objects you can click, \
+                                 hold, and change. nothing is set in stone; every change \
+                                 is a verified move you can always trace.",
+                            ),
+                    ),
+            )
+            // A FEW of their cells (the curated handful) — click to meet one.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::muted())
+                            .child("a few things you hold —"),
+                    )
+                    .child(cell_cards),
+            )
+            // ONE gentle "try this" — fires a REAL verified turn (treasury → home)
+            // on the live World, then reveals the full frame so they SEE it land.
+            .child(
+                div()
+                    .id("first-try-this")
+                    .px(px(24.))
+                    .py(px(10.))
+                    .rounded_md()
+                    .bg(theme::accent())
+                    .text_color(theme::bg())
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.9))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _w, cx| {
+                            // A real cap-gated turn through the embedded executor —
+                            // the delight is that it genuinely HAPPENS (a receipt,
+                            // a balance moved) — then the full frame reveals so they
+                            // watch it land in the live image.
+                            this.run_demo_transfer(cx);
+                            this.first_run = false;
+                            cx.notify();
+                        }),
+                    )
+                    .child("try this — move a little value into your home  →"),
+            )
+            // The quiet door to everything else — present, not shoved.
+            .child(
+                div()
+                    .id("first-explore")
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme::accent()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _w, cx| this.dismiss_first_run(cx)),
+                    )
+                    .child("explore everything →"),
+            )
+    }
+
     // === THE TOP BAR =====================================================
 
     /// The persistent TOP BAR — the identity cell + its cap-badge, the live
@@ -344,12 +522,7 @@ impl Cockpit {
                             })
                             .child(SharedString::from(format!("{} {}", m.glyph(), m.label()))),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::muted())
-                            .child(m.blurb()),
-                    ),
+                    .child(div().text_xs().text_color(theme::muted()).child(m.blurb())),
             );
         }
         rail

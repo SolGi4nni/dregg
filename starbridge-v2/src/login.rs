@@ -59,6 +59,25 @@ pub struct LoginSurface {
     /// explicit "start fresh" choice (quarantine the corrupt image, provision a
     /// new one) instead of dead-ending. `None` in the normal case.
     fresh_offer: Option<DemoIdentity>,
+    /// THE FRONT DOOR vs the FULL PICKER. A first-timer should not meet a debug
+    /// roster — they meet a warm welcome with ONE inviting way in (`Welcome`).
+    /// The roster (ember / guest / Hermes) is still *reachable*, one quiet click
+    /// away (`Picker`) — the power reveals progressively, it is not shoved.
+    stage: WelcomeStage,
+}
+
+/// Which face the login surface is showing. The boot face is the warm `Welcome`
+/// (one inviting "begin"); a quiet "other ways in" reveals the full `Picker`
+/// (the ember / guest / Hermes roster) for those who want it. The Jobs/Woz bar:
+/// a first-timer is greeted, not handed a control panel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WelcomeStage {
+    /// The warm front door — a greeting + one "begin"/"welcome back" affordance,
+    /// plus a quiet link to the roster.
+    Welcome,
+    /// The full identity roster (the held-key stand-in picker) — reachable, not
+    /// shoved. The recovery / "start fresh" choices live here too.
+    Picker,
 }
 
 impl LoginSurface {
@@ -87,7 +106,32 @@ impl LoginSurface {
             focus,
             message: None,
             fresh_offer: None,
+            // Boot into the warm front door — the welcome, not the roster.
+            stage: WelcomeStage::Welcome,
         }
+    }
+
+    /// The PRIMARY identity the warm "begin" mints/resumes — the human owner
+    /// (`@ember`, the first user in the roster). A first-timer needs ONE door, not
+    /// a chooser; the rest of the roster is reachable via the quiet "other ways in".
+    fn primary_identity(&self) -> DemoIdentity {
+        self.identities
+            .iter()
+            .find(|i| matches!(i.kind, IdentityKind::User))
+            .cloned()
+            .unwrap_or_else(|| self.identities[0].clone())
+    }
+
+    /// Whether the primary identity has a durable image on disk already — i.e. this
+    /// is a RETURNING owner (greet "welcome back" + resume) rather than a brand-new
+    /// one (greet "this is your world" + mint). Checked *before* login so the front
+    /// door's words fit. A missing file (or no addressable home dir) reads as new —
+    /// the inviting default. Never fails: it only chooses a greeting.
+    fn is_returning(&self) -> bool {
+        let id = self.primary_identity();
+        let principal = starbridge_v2::session::Principal { pubkey: id.pubkey };
+        let path = starbridge_v2::session::session_world_path(&session_base_dir(), &principal);
+        path.exists()
     }
 
     /// Focus the login surface on open so it receives keystrokes.
@@ -144,7 +188,9 @@ impl LoginSurface {
             }
         };
         self.fresh_offer = None;
-        self.finish_login(user_world, anchors, manager, fresh, principal, identity, window, cx);
+        self.finish_login(
+            user_world, anchors, manager, fresh, principal, identity, window, cx,
+        );
     }
 
     /// Start a FRESH durable image for the picked identity after recovery was
@@ -172,7 +218,9 @@ impl LoginSurface {
             };
         self.fresh_offer = None;
         self.message = None;
-        self.finish_login(user_world, anchors, manager, fresh, principal, identity, window, cx);
+        self.finish_login(
+            user_world, anchors, manager, fresh, principal, identity, window, cx,
+        );
     }
 
     /// The shared post-open ceremony: resume/grant the session over the (recovered,
@@ -231,7 +279,7 @@ impl LoginSurface {
 
         SessionShell::open(
             window, cx, world, anchors, seed, node_url, manager, identities, session, identity,
-            base_dir,
+            base_dir, fresh,
         );
     }
 
@@ -279,8 +327,130 @@ impl LoginSurface {
     }
 }
 
-impl Render for LoginSurface {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl LoginSurface {
+    /// THE WARM FRONT DOOR (`WelcomeStage::Welcome`) — what a first-timer meets:
+    /// not a debug roster, but a greeting + ONE inviting way in. A NEW owner is
+    /// told "this is your world" and offered **Begin** (which mints their identity
+    /// and root capability under the hood). A RETURNING owner is greeted **Welcome
+    /// back** and resumes their durable image. The full roster (guest / Hermes /
+    /// explicit ember) is one quiet "other ways in" click away — reachable, not
+    /// shoved. The recovery / "start fresh" choice, when present, is surfaced here
+    /// too (never a dead-end).
+    fn welcome_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let returning = self.is_returning();
+        let primary = self.primary_identity();
+        let (greeting, sub, begin_label) = if returning {
+            (
+                "welcome back",
+                "your world is as you left it — receive it again.",
+                "welcome back",
+            )
+        } else {
+            (
+                "this is your world",
+                "a sovereign, verifiable place that is yours alone. step in.",
+                "begin",
+            )
+        };
+
+        div()
+            .key_context("Login")
+            .track_focus(&self.focus)
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_6()
+            .bg(theme::bg())
+            .text_color(theme::text())
+            // The mark + the one-line spirit (login = receiving your world).
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_3xl().text_color(theme::accent()).child("deos"))
+                    .child(
+                        div()
+                            .text_xl()
+                            .text_color(theme::text())
+                            .child(SharedString::from(greeting)),
+                    )
+                    .child(
+                        div()
+                            .max_w(px(420.))
+                            .text_sm()
+                            .text_color(theme::muted())
+                            .child(SharedString::from(sub)),
+                    ),
+            )
+            // THE ONE INVITING WAY IN — Begin / Welcome back. A single warm button
+            // (mints or resumes the owner's identity under the hood). The whole
+            // ceremony runs from this click; no chooser is in the way.
+            .child(
+                div()
+                    .id("welcome-begin")
+                    .px(px(28.))
+                    .py(px(12.))
+                    .rounded_md()
+                    .bg(theme::accent())
+                    .text_color(theme::bg())
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.9))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev, window, cx| {
+                            this.login_as(primary.clone(), window, cx);
+                        }),
+                    )
+                    .child(SharedString::from(begin_label)),
+            )
+            // The quiet door to the full roster — present, not shoved (progressive
+            // disclosure: the power is one click away when wanted).
+            .child(
+                div()
+                    .id("welcome-other-ways")
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme::accent()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _w, cx| {
+                            this.stage = WelcomeStage::Picker;
+                            cx.notify();
+                        }),
+                    )
+                    .child("other ways in · guest · an agent →"),
+            )
+            // A refusal / recovery message stays visible on the welcome face too.
+            .when_some(self.message.clone(), |el, msg| {
+                el.child(
+                    div()
+                        .max_w(px(420.))
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .bg(theme::panel())
+                        .text_xs()
+                        .text_color(theme::bad())
+                        .child(msg),
+                )
+            })
+            // THE NEVER-DEAD-END CHOICE — when recovery itself was impossible, the
+            // explicit "start fresh" affordance is surfaced here too.
+            .when_some(self.fresh_offer.clone(), |el, identity| {
+                el.child(self.start_fresh_button(identity, cx))
+            })
+    }
+
+    /// THE FULL PICKER (`WelcomeStage::Picker`) — the identity roster (the held-key
+    /// stand-in). Reachable from the warm welcome via "other ways in"; carries a
+    /// quiet "← back" to the front door. This is the original boot face, now one
+    /// layer of disclosure deeper.
+    fn picker_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let cards: Vec<_> = self
             .identities
             .clone()
@@ -313,6 +483,23 @@ impl Render for LoginSurface {
                             .child("login = receiving your root capability"),
                     ),
             )
+            // A quiet "← back" to the warm front door.
+            .child(
+                div()
+                    .id("picker-back")
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme::accent()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _w, cx| {
+                            this.stage = WelcomeStage::Welcome;
+                            cx.notify();
+                        }),
+                    )
+                    .child("← back"),
+            )
             .child(
                 div()
                     .text_xs()
@@ -338,31 +525,48 @@ impl Render for LoginSurface {
             // it quarantines the corrupt image aside and provisions a new one, so
             // the owner can ALWAYS proceed to a session.
             .when_some(self.fresh_offer.clone(), |el, identity| {
-                let id = identity.clone();
-                el.child(
-                    div()
-                        .id("start-fresh")
-                        .w(px(420.))
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .bg(theme::panel_hi())
-                        .text_xs()
-                        .text_color(theme::warn())
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::border()))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _ev, window, cx| {
-                                this.start_fresh(id.clone(), window, cx);
-                            }),
-                        )
-                        .child(format!(
-                            "start fresh as {} (quarantines the corrupt image)",
-                            identity.name
-                        )),
-                )
+                el.child(self.start_fresh_button(identity, cx))
             })
+    }
+
+    /// The explicit "start fresh" button (the never-dead-end recovery choice) —
+    /// shared by both the welcome and the picker faces.
+    fn start_fresh_button(
+        &self,
+        identity: DemoIdentity,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id = identity.clone();
+        div()
+            .id("start-fresh")
+            .w(px(420.))
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .bg(theme::panel_hi())
+            .text_xs()
+            .text_color(theme::warn())
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::border()))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev, window, cx| {
+                    this.start_fresh(id.clone(), window, cx);
+                }),
+            )
+            .child(format!(
+                "start fresh as {} (quarantines the corrupt image)",
+                identity.name
+            ))
+    }
+}
+
+impl Render for LoginSurface {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        match self.stage {
+            WelcomeStage::Welcome => self.welcome_view(cx).into_any_element(),
+            WelcomeStage::Picker => self.picker_view(cx).into_any_element(),
+        }
     }
 }
 
@@ -407,6 +611,10 @@ impl SessionShell {
         session: Session,
         identity: DemoIdentity,
         base_dir: std::path::PathBuf,
+        // FIRST RUN — `true` on a brand-new image (this principal's first login),
+        // so the cockpit boots into the calm sparse first-view rather than the full
+        // 5-mode wall. A returning owner's wall is familiar (`false`).
+        first_run: bool,
     ) {
         let world_for_root = world.clone();
         let node_for_root = node_url.clone();
@@ -436,6 +644,10 @@ impl SessionShell {
                     seed,
                 )
             });
+            // FIRST RUN — flip the cockpit into the calm sparse first-view for a
+            // brand-new owner (the warm landing, not the wall). One click ("explore"
+            // / a cell / "try this") reveals the full frame.
+            cockpit.update(cx, |c, _c_cx| c.set_first_run(first_run));
             cockpit.update(cx, |c, c_cx| c.focus_on_open(window, c_cx));
 
             let session_shell = cx.new(|s_cx| {
@@ -543,6 +755,9 @@ impl SessionShell {
                     focus,
                     message: Some("logged out — the session cap-tree is dark".into()),
                     fresh_offer: None,
+                    // A logout returns to the warm front door, not the roster — the
+                    // owner is greeted "welcome back", one click from in again.
+                    stage: WelcomeStage::Welcome,
                 }
             });
             crate::cockpit::root::wrap_root(login, window, cx)
