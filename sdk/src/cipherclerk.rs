@@ -2718,14 +2718,16 @@ impl AgentCipherclerk {
     ///
     /// # Validity proof
     ///
-    /// Per AUDIT-privacy.md §11.2, this Phase-1 helper packs an empty
-    /// validity proof whose public inputs bind to the actual turn
-    /// commitment / agent commitment / conflict-set commitment so
-    /// `EncryptedTurn::verify_metadata` succeeds at the executor. The
-    /// STARK proof itself is the responsibility of a future phase
-    /// (Phase-2 STARK-validity ceremony) — callers wanting real proof
-    /// validation should construct the `TurnValidityProof` themselves
-    /// and use `EncryptedTurn::encrypt_for_executor` directly.
+    /// Per AUDIT-privacy.md §11.2, this Phase-1 helper packs a validity proof
+    /// whose public inputs bind to the actual turn commitment / agent
+    /// commitment / conflict-set commitment (so `EncryptedTurn::verify_metadata`
+    /// succeeds) and whose `submitter_auth` is a genuine Ed25519 signature by
+    /// this cipherclerk's identity over those public inputs. That submitter
+    /// authentication is what `EncryptedTurn::verify_stark` checks at ingress —
+    /// it lets a node reject an unauthenticated encrypted blob *before*
+    /// decrypting, closing the fee-DoS seam. The full nonce/fee validity STARK
+    /// (`proof_bytes`) remains a future phase (Phase-2 STARK-validity ceremony);
+    /// it is left empty here.
     ///
     /// # Boundary (BOUNDARIES.md §5)
     ///
@@ -2765,9 +2767,23 @@ impl AgentCipherclerk {
             conflict_set_commitment: conflict_set.commitment(),
         };
 
+        // Phase-1 submitter authentication: sign the public-input digest with
+        // this cipherclerk's identity. The node's `verify_stark` checks this
+        // signature + the key→agent binding before decrypting, so only the agent
+        // that controls this key can make the node spend decrypt/execute work.
+        let submitter_auth = {
+            use ed25519_dalek::Signer;
+            let signature = self.signing_key.sign(&public_inputs.signing_message()).to_bytes();
+            Some(dregg_turn::SubmitterAuth {
+                submitter_public: self.signing_key.verifying_key().to_bytes(),
+                signature,
+            })
+        };
+
         let validity_proof = TurnValidityProof {
             proof_bytes: Vec::new(),
             public_inputs,
+            submitter_auth,
         };
 
         EncryptedTurn::encrypt_for_executor(

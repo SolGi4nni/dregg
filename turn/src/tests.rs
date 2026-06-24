@@ -9159,6 +9159,10 @@ mod privacy_wiring {
                 min_fee: 0,
                 conflict_set_commitment: conflict_set.commitment(),
             },
+            // Unauthenticated by default: the gated path rejects this (the
+            // fee-DoS tooth). Tests needing the gate to PASS build a signed
+            // `submitter_auth` (see `build_authenticated_encrypted_turn`).
+            submitter_auth: None,
         };
         EncryptedTurn::encrypt_for_executor(
             turn,
@@ -9227,11 +9231,71 @@ mod privacy_wiring {
         }
     }
 
+    /// Build an EncryptedTurn whose agent cell is `derive_raw(key, default)` and
+    /// whose `submitter_auth` is a genuine Ed25519 signature over the validity
+    /// public inputs — the shape `verify_stark` accepts. Returns the envelope +
+    /// the agent CellId so the caller can fund the matching cell.
+    fn build_authenticated_encrypted_turn(
+        seed: u8,
+        fee: u64,
+        executor_pub: &[u8; 32],
+    ) -> (EncryptedTurn, CellId) {
+        use crate::encrypted::SubmitterAuth;
+        let signing_key = SigningKey::from_bytes(&[seed; 32]);
+        let submitter_public = signing_key.verifying_key().to_bytes();
+        let default_token = *blake3::hash(b"default").as_bytes();
+        let agent = CellId::derive_raw(&submitter_public, &default_token);
+
+        let mut builder = TurnBuilder::new(agent, 0);
+        {
+            let action = ActionBuilder::new(agent, "noop", agent)
+                .signed_by([0u8; 64])
+                .build();
+            builder.add_action(action);
+        }
+        let turn = builder.fee(fee).build();
+
+        let conflict_set = ConflictSet::new();
+        let plaintext = serde_json::to_vec(&turn).unwrap();
+        let expected_commit = {
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-encrypted-turn-commitment v1");
+            hasher.update(&plaintext);
+            *hasher.finalize().as_bytes()
+        };
+        let public_inputs = TurnValidityPublicInputs {
+            turn_commitment: expected_commit,
+            agent_commitment: TurnValidityPublicInputs::compute_agent_commitment(&agent),
+            claimed_nonce: turn.nonce,
+            min_fee: 0,
+            conflict_set_commitment: conflict_set.commitment(),
+        };
+        let signature = signing_key.sign(&public_inputs.signing_message()).to_bytes();
+        let validity_proof = TurnValidityProof {
+            proof_bytes: vec![],
+            public_inputs,
+            submitter_auth: Some(SubmitterAuth {
+                submitter_public,
+                signature,
+            }),
+        };
+        let encrypted = EncryptedTurn::encrypt_for_executor(
+            &turn,
+            agent,
+            executor_pub,
+            conflict_set,
+            validity_proof,
+            0,
+        )
+        .expect("encrypt OK");
+        (encrypted, agent)
+    }
+
     /// P3 fee-DoS gate: when the executor requires validity proofs, an
-    /// EncryptedTurn carrying an (always-empty, producer-unwired) validity proof
-    /// is rejected BEFORE decryption, surfacing InvalidValidityProof. With the
-    /// gate OFF (default, asserted by `encrypted_turn_decrypts_to_original`) the
-    /// same envelope is admitted — so the closure is additive.
+    /// EncryptedTurn carrying NO submitter authentication (the Phase-0
+    /// placeholder a stranger would POST) is rejected BEFORE decryption,
+    /// surfacing InvalidValidityProof. With the gate OFF (default, asserted by
+    /// `encrypted_turn_decrypts_to_original`) the same envelope is admitted — so
+    /// the closure is additive.
     #[test]
     fn encrypted_turn_requires_validity_proof_when_gated() {
         let mut ledger = Ledger::new();
@@ -9268,6 +9332,56 @@ mod privacy_wiring {
             msg.contains("validity proof") && msg.contains("InvalidValidityProof"),
             "expected an InvalidValidityProof rejection, got: {msg}"
         );
+    }
+
+    /// P3 fee-DoS gate, positive side: a GENUINE encrypted turn — signed by the
+    /// key that controls the agent cell — passes the gated executor (the DoS fix
+    /// does NOT break real traffic). Companion to
+    /// `encrypted_turn_requires_validity_proof_when_gated`.
+    #[test]
+    fn encrypted_turn_accepts_authenticated_when_gated() {
+        let mut ledger = Ledger::new();
+
+        let decrypt_secret = [0x3Bu8; 32];
+        let mut executor = TurnExecutor::new(ComputronCosts::default());
+        executor.set_turn_decryption_secret(decrypt_secret);
+        executor.set_require_validity_proof(true); // gate ON
+        let executor_pub = executor.turn_decryption_public().unwrap();
+
+        // The agent cell is derived from the signing key the same way the
+        // ingress binding expects (derive_raw(key, blake3("default"))).
+        let (encrypted, agent_id) =
+            build_authenticated_encrypted_turn(0x42, 500, &executor_pub);
+
+        // Fund the matching agent cell with open permissions so execution can
+        // reach commit (we are testing the validity GATE, not authorization).
+        let token_id = *blake3::hash(b"default").as_bytes();
+        let pubkey = SigningKey::from_bytes(&[0x42u8; 32]).verifying_key().to_bytes();
+        let mut cell = Cell::with_balance(pubkey, token_id, 1_000_000);
+        cell.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+        assert_eq!(cell.id(), agent_id, "derived agent cell id must match");
+        ledger.insert_cell(cell).unwrap();
+
+        // The validity gate passes (authenticated): the turn is NOT rejected for
+        // a validity-proof reason. (It may still commit or be rejected for other
+        // execution reasons, but never for InvalidValidityProof.)
+        let result = executor.execute_encrypted_turn(&encrypted, &mut ledger);
+        if let TurnResult::Rejected { reason, .. } = &result {
+            let msg = format!("{reason:?}");
+            assert!(
+                !msg.contains("InvalidValidityProof"),
+                "authenticated encrypted turn must NOT be rejected by the validity gate, got: {msg}"
+            );
+        }
     }
 
     /// Adversarial: an EncryptedTurn whose ciphertext is tampered with

@@ -141,8 +141,8 @@ pub use conditional::{
 pub use conflict::{ConflictSet, build_conflict_set, extract_access_sets};
 pub use economics::{EpochMinter, MintResult, MintingPolicy};
 pub use encrypted::{
-    ConflictBucket, EncryptedTurn, EncryptedTurnError, TurnOrdering, TurnValidityProof,
-    TurnValidityPublicInputs, order_encrypted_turns,
+    ConflictBucket, EncryptedTurn, EncryptedTurnError, SubmitterAuth, TurnOrdering,
+    TurnValidityProof, TurnValidityPublicInputs, order_encrypted_turns,
 };
 pub use error::TurnError;
 pub use eventual::{

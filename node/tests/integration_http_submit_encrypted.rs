@@ -20,6 +20,94 @@ use zeroize::Zeroizing;
 const TURN_UNSEALER_DOMAIN: &str = "dregg-turn-unsealer-v1";
 
 // ---------------------------------------------------------------------------
+// F-DOS-PRIV: the live ingress validity gate (verify_stark before decrypt).
+//
+// `POST /turns/submit-encrypted` now calls `encrypted.verify_stark()` BEFORE
+// doing any X25519-decrypt / execute work. These tests assert the gate's two
+// load-bearing behaviors at the envelope level (the exact check the handler
+// runs at ingress):
+//   - an UNAUTHENTICATED envelope (no submitter_auth, the shape a stranger
+//     would POST) is REJECTED — no decrypt work is spent (fee-DoS closed).
+//   - a GENUINE envelope built by the SDK's `make_encrypted_turn` (which signs
+//     the validity public inputs with the sender's identity) is ACCEPTED.
+// ---------------------------------------------------------------------------
+
+/// A stranger's unauthenticated encrypted blob is rejected by the ingress gate
+/// (`verify_stark`) before the node decrypts — the fee-DoS is closed.
+#[test]
+fn unauthenticated_encrypted_turn_rejected_at_ingress() {
+    use dregg_turn::{
+        ConflictSet, EncryptedTurn, TurnValidityProof, TurnValidityPublicInputs,
+    };
+
+    let executor_cclerk = make_cclerk("ingress-gate-executor");
+    let sealer_secret = executor_cclerk.derive_symmetric_key(TURN_UNSEALER_DOMAIN);
+    let sealer_public = {
+        let pk = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(sealer_secret));
+        *pk.as_bytes()
+    };
+
+    let sender_cclerk = make_cclerk("ingress-gate-sender");
+    let agent = sender_cclerk.cell_id("default");
+    let turn = valid_turn(agent, 0);
+
+    // Hand-build an envelope with NO submitter authentication (the Phase-0
+    // placeholder), as a flooding attacker would.
+    let conflict_set = ConflictSet::new();
+    let public_inputs = TurnValidityPublicInputs {
+        turn_commitment: [0u8; 32], // (irrelevant: gate trips before metadata)
+        agent_commitment: TurnValidityPublicInputs::compute_agent_commitment(&agent),
+        claimed_nonce: turn.nonce,
+        min_fee: 0,
+        conflict_set_commitment: conflict_set.commitment(),
+    };
+    let encrypted = EncryptedTurn::encrypt_for_executor(
+        &turn,
+        agent,
+        &sealer_public,
+        conflict_set,
+        TurnValidityProof {
+            proof_bytes: vec![],
+            public_inputs,
+            submitter_auth: None, // unauthenticated
+        },
+        0,
+    )
+    .expect("encrypt OK");
+
+    // The ingress gate (the exact pre-decrypt check the handler runs).
+    assert!(
+        encrypted.verify_stark().is_err(),
+        "an unauthenticated encrypted turn must be rejected at ingress (fee-DoS)"
+    );
+}
+
+/// A genuine SDK-built encrypted turn passes the ingress gate (real traffic is
+/// not broken by the DoS fix).
+#[test]
+fn authenticated_encrypted_turn_passes_ingress() {
+    let executor_cclerk = make_cclerk("ingress-pass-executor");
+    let sealer_secret = executor_cclerk.derive_symmetric_key(TURN_UNSEALER_DOMAIN);
+    let sealer_public = {
+        let pk = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(sealer_secret));
+        *pk.as_bytes()
+    };
+
+    let sender_cclerk = make_cclerk("ingress-pass-sender");
+    // The agent is the sender's default cell — the binding `verify_stark` checks.
+    let agent = sender_cclerk.cell_id("default");
+    let turn = valid_turn(agent, 0);
+    let encrypted = sender_cclerk
+        .make_encrypted_turn(&turn, &sealer_public, 0)
+        .expect("make_encrypted_turn must succeed");
+
+    assert!(
+        encrypted.verify_stark().is_ok(),
+        "a genuine SDK-built encrypted turn must pass the ingress validity gate"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
 

@@ -3535,6 +3535,29 @@ async fn post_submit_encrypted_turn(
         Err(_) => return Err(StatusCode::BAD_REQUEST),
     };
 
+    // F-DOS-PRIV: validity gate BEFORE any decrypt/execute work. An
+    // `EncryptedTurn` envelope carries no signature of its own; without this
+    // check a stranger could POST any postcard blob and force the node to
+    // X25519-decrypt + execute it (a fee-DoS — the cleartext `/turns/submit`
+    // path avoids this by `signer.verify`-ing before doing work). `verify_stark`
+    // checks the Phase-1 submitter authentication (Ed25519 over the public
+    // inputs + key→agent binding) fail-closed, so an unauthenticated or forged
+    // envelope is rejected here — before the node spends decrypt work.
+    if let Err(err) = encrypted.verify_stark() {
+        crate::metrics::inc_turns_executed("rejected");
+        return Ok(Json(SubmitEncryptedTurnResponse {
+            accepted: false,
+            turn_hash: Some(format!(
+                "rejected: encrypted turn validity proof invalid: {err:?}"
+            )),
+            was_encrypted: false,
+            proof_status: ActivityProofStatus::NotCommitted,
+            has_witness: false,
+            witness_count: 0,
+            error: Some(format!("encrypted turn validity proof invalid: {err:?}")),
+        }));
+    }
+
     let mut s = state.write().await;
     if !s.unlocked {
         return Err(StatusCode::FORBIDDEN);
@@ -3565,7 +3588,10 @@ async fn post_submit_encrypted_turn(
             }
         };
 
-    let executor = crate::executor_setup::new_submit_executor(&s);
+    let mut executor = crate::executor_setup::new_submit_executor(&s);
+    // Defense-in-depth: the executor's own encrypted-turn path re-runs the
+    // validity gate (the handler already gated above before decrypting).
+    executor.set_require_validity_proof(true);
     let expected_prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
     seed_executor_receipt_head(&executor, encrypted.agent, expected_prev);
 
