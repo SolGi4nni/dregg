@@ -44,6 +44,11 @@ postcard = { version = "1", features = ["alloc"] }
 # NOTE: circuit's dependency on cell is dev-only, so this (cell → circuit)
 # direction is acyclic.
 dregg-circuit = { path = "../circuit" }
+# Real `WitnessedPredicateKind::Dfa` verifier: the out-of-circuit re-check of a
+# serialized `AirTrace` (`dregg_dfa::verify_acceptance`). Default features only
+# (the `federation-verifier` feature is NOT pulled), so this is acyclic —
+# dregg-dfa's default deps are blake3/serde/postcard, none of which reach cell.
+dregg-dfa = { path = "../dfa" }
 dregg-commit = { path = "../commit", optional = true }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime", optional = true }
 dregg-types = { path = "../types" }

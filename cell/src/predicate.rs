@@ -496,7 +496,8 @@ impl std::error::Error for WitnessedPredicateError {}
 /// The trait is intentionally object-safe so the registry can hold
 /// `Arc<dyn WitnessedPredicateVerifier>` and dispatch by kind at
 /// runtime. Implementations live wherever the underlying algebra
-/// lives — `circuit::dsl::circuit` for the DFA AIR,
+/// lives — `dregg_dfa::verify_acceptance` for the DFA AIR (installed
+/// cell-side as [`DfaAcceptanceVerifier`]),
 /// `circuit::temporal_predicate_dsl` for Temporal, etc. — and register
 /// themselves via [`WitnessedPredicateRegistry::register_builtin`] or
 /// [`WitnessedPredicateRegistry::register_custom`].
@@ -883,8 +884,12 @@ impl WitnessedPredicateRegistry {
     /// whose underlying cryptographic algebra is not yet wired into the
     /// cell crate. Concretely:
     ///
-    /// - `Dfa`, `Temporal`, `MerkleMembership`, `BlindedSet`,
-    ///   `BridgePredicate`, `PedersenEquality` →
+    /// - `Dfa` → [`DfaAcceptanceVerifier`]: the **real** verifier, an
+    ///   out-of-circuit re-check of a serialized `dregg_dfa::AirTrace` bound to
+    ///   the predicate `commitment` (route-table root). Available cell-side
+    ///   because `dregg-dfa` is dependency-light (no circuit cycle).
+    /// - `Temporal`, `MerkleMembership`, `BlindedSet`, `BridgePredicate`,
+    ///   `PedersenEquality` →
     ///   [`NotYetWiredVerifier`]: every `verify(...)` returns
     ///   [`WitnessedPredicateError::Rejected`] with a `not yet wired`
     ///   reason regardless of proof bytes.
@@ -925,7 +930,13 @@ impl WitnessedPredicateRegistry {
     ///   from the default — it now rejects forged proofs out of the box.
     pub fn default_builtins() -> Self {
         let mut r = Self::empty();
-        r.register_builtin(Arc::new(NotYetWiredVerifier::dfa()));
+        // `Dfa` ships the REAL verifier (`DfaAcceptanceVerifier` →
+        // `dregg_dfa::verify_acceptance`): the out-of-circuit re-check of a
+        // serialized `AirTrace`, bound to the predicate `commitment` (route
+        // table root). This is the only built-in whose real verifier lives in
+        // a dependency-light crate (`dregg-dfa`, no circuit) and so can be
+        // installed cell-side by default rather than host-injected.
+        r.register_builtin(Arc::new(DfaAcceptanceVerifier));
         r.register_builtin(Arc::new(NotYetWiredVerifier::temporal()));
         r.register_builtin(Arc::new(NotYetWiredVerifier::merkle_membership()));
         // NonMembership / BlindedSet ship real verifiers, but they now REQUIRE
@@ -1421,11 +1432,13 @@ impl WitnessedPredicateVerifier for StubVerifier {
 ///
 /// # Why this exists
 ///
-/// The cell crate cannot depend on `dregg-circuit` (cycle). The real
-/// per-kind verifiers (`dsl::circuit` for Dfa, `dsl::membership` for
+/// The real per-kind STARK verifiers live in upstream crates the cell crate
+/// cannot reach without a dependency cycle (`dsl::membership` for
 /// Merkle/BlindedSet, `temporal_predicate_dsl` for Temporal,
 /// `bridge::present::verify_predicate_proof` for BridgePredicate,
-/// Schnorr/Bulletproof for PedersenEquality) live in upstream crates.
+/// Schnorr/Bulletproof for PedersenEquality). (`Dfa` is the exception — its
+/// verifier lives in dependency-light `dregg-dfa` and is installed cell-side
+/// as [`DfaAcceptanceVerifier`], so it is NOT a `NotYetWiredVerifier`.)
 /// Production hosts MUST install those verifiers via
 /// [`WitnessedPredicateRegistry::register_builtin`] before any
 /// `Witnessed { wp }` caveat is evaluated.
@@ -1453,13 +1466,6 @@ struct NotYetWiredVerifier {
 }
 
 impl NotYetWiredVerifier {
-    fn dfa() -> Self {
-        Self {
-            kind: WitnessedPredicateKind::Dfa,
-            name: "not-yet-wired-dfa",
-            upstream: "dregg_circuit::dsl::circuit",
-        }
-    }
     fn temporal() -> Self {
         Self {
             kind: WitnessedPredicateKind::Temporal,
@@ -1514,6 +1520,89 @@ impl WitnessedPredicateVerifier for NotYetWiredVerifier {
                 self.upstream
             ),
         })
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DfaAcceptanceVerifier — the REAL `WitnessedPredicateKind::Dfa` verifier.
+// ─────────────────────────────────────────────────────────────────────
+
+/// The real verifier for [`WitnessedPredicateKind::Dfa`].
+///
+/// A `Dfa` witnessed predicate proves "the classified `input` was accepted by
+/// the route-table whose BLAKE3 commitment is `commitment`". The proof bytes
+/// are a postcard-encoded `dregg_dfa::AirTrace`; this verifier re-checks the
+/// trace out of circuit via [`dregg_dfa::verify_acceptance`]:
+///
+/// 1. the trace decodes,
+/// 2. its embedded `router_root` equals the predicate `commitment` (so the
+///    proof is bound to exactly the constitution-bound route table),
+/// 3. the trace's `input` is a prefix of the supplied `input` (longest-match
+///    boundary for `prefix/*` routes; equal for exact routes),
+/// 4. every transition row matches the trace's embedded table, and
+/// 5. the final state is accepting.
+///
+/// This is the out-of-circuit twin of the in-circuit DFA AIR
+/// (`dregg-dfa-routing-v1`). It replaces the prior `NotYetWiredVerifier::dfa()`
+/// registration, which rejected every `Dfa` predicate unconditionally.
+///
+/// `commitment` binds the route table; `verify_acceptance` rejects any trace
+/// whose `router_root` differs, so a prover cannot swap in a table of its own.
+struct DfaAcceptanceVerifier;
+
+impl DfaAcceptanceVerifier {
+    /// Extract the classified input bytes from the predicate input. `Dfa`
+    /// predicates classify either a raw byte witness (`InputRef::Witness`) or a
+    /// 32-byte slot value (`InputRef::Slot`).
+    fn input_bytes<'a>(
+        input: &'a PredicateInput<'a>,
+    ) -> Result<&'a [u8], WitnessedPredicateError> {
+        match input {
+            PredicateInput::Bytes(b) => Ok(b),
+            PredicateInput::Slot(s) => Ok(&s[..]),
+            PredicateInput::Sender(s) => Ok(&s[..]),
+            PredicateInput::SigningMessage(b) => Ok(b),
+            PredicateInput::AuthContext {
+                signing_message, ..
+            } => Ok(signing_message),
+            PredicateInput::PublicInput(_) => Err(WitnessedPredicateError::InputShapeMismatch {
+                kind_name: "dfa-acceptance",
+                expected: "byte-bearing input (Bytes/Slot/Sender/SigningMessage)",
+                actual: "PublicInput (felt array, not a DFA byte input)",
+            }),
+        }
+    }
+}
+
+impl WitnessedPredicateVerifier for DfaAcceptanceVerifier {
+    fn name(&self) -> &'static str {
+        "dfa-acceptance"
+    }
+
+    fn kind(&self) -> WitnessedPredicateKind {
+        WitnessedPredicateKind::Dfa
+    }
+
+    fn verify(
+        &self,
+        commitment: &[u8; 32],
+        input: &PredicateInput<'_>,
+        proof_bytes: &[u8],
+    ) -> Result<(), WitnessedPredicateError> {
+        let input_bytes = Self::input_bytes(input)?;
+        match dregg_dfa::verify_acceptance(*commitment, input_bytes, proof_bytes) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(WitnessedPredicateError::Rejected {
+                kind_name: "dfa-acceptance",
+                reason: "DFA trace verified but the input did not land on an \
+                         accepting state"
+                    .to_string(),
+            }),
+            Err(e) => Err(WitnessedPredicateError::Rejected {
+                kind_name: "dfa-acceptance",
+                reason: format!("DFA acceptance proof rejected: {e}"),
+            }),
+        }
     }
 }
 
@@ -3115,6 +3204,52 @@ mod tests {
             ),
             "Dfa",
         );
+    }
+
+    /// The REAL `DfaAcceptanceVerifier` in `default_builtins()`:
+    /// an honest `AirTrace` over the route-table bound by the predicate
+    /// `commitment` ACCEPTS; a trace bound to a DIFFERENT table (forged
+    /// `commitment`) and a non-accepting input both REJECT.
+    #[test]
+    fn dfa_acceptance_verifier_accepts_honest_trace_rejects_forgery() {
+        use dregg_dfa::{RouteTableBuilder, RouteTarget, compile_to_air_from_table};
+
+        let reg = WitnessedPredicateRegistry::default_builtins();
+
+        let table = RouteTableBuilder::new()
+            .route("/cells/alpha/*", RouteTarget::handler("alpha"))
+            .compile();
+        let root = table.commitment;
+        let path = b"/cells/alpha/transfer";
+
+        // Honest proof: AirTrace produced against `table`, predicate commitment
+        // == table root, input == the classified path → ACCEPT.
+        let air = compile_to_air_from_table(&table, path);
+        let proof = air.to_proof_bytes();
+        let wp = WitnessedPredicate::dfa(root, InputRef::Witness { index: 0 }, 0);
+        let input = PredicateInput::Bytes(path);
+        reg.verify(&wp, &input, &proof)
+            .expect("honest DFA acceptance proof must verify");
+
+        // Forged commitment: same honest trace, but the predicate claims a
+        // DIFFERENT route-table root → the trace's embedded router_root no
+        // longer matches → REJECT.
+        let wp_forged = WitnessedPredicate::dfa([0u8; 32], InputRef::Witness { index: 0 }, 0);
+        assert!(matches!(
+            reg.verify(&wp_forged, &input, &proof),
+            Err(WitnessedPredicateError::Rejected { .. })
+        ));
+
+        // Non-accepting input: a path the table does NOT route → REJECT
+        // (the trace ends in a non-accepting state).
+        let miss = b"/nope/here";
+        let air_miss = compile_to_air_from_table(&table, miss);
+        let proof_miss = air_miss.to_proof_bytes();
+        let input_miss = PredicateInput::Bytes(miss);
+        assert!(matches!(
+            reg.verify(&wp, &input_miss, &proof_miss),
+            Err(WitnessedPredicateError::Rejected { .. })
+        ));
     }
 
     #[test]

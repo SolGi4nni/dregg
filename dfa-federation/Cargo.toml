@@ -1,0 +1,22 @@
+[package]
+name = "dregg-dfa-federation"
+version.workspace = true
+edition.workspace = true
+description = "Federation threshold-signature ThresholdVerifier for dregg-dfa governed route-table swaps"
+
+# This crate exists to keep `dregg-dfa` dependency-light. The real governance
+# verifier (`FederationQcVerifier`) needs the federation KZG/BLS stack
+# (`dregg-federation`), which transitively reaches `dregg-cell`
+# (federation -> captp -> cell). Were that dependency carried by `dregg-dfa`
+# itself, `dregg-cell` could not depend on `dregg-dfa` for the real `Dfa`
+# predicate verifier (it would close a `cell -> dfa -> federation -> ... -> cell`
+# cycle). Splitting the federation verifier into its own crate keeps the core
+# `dregg-dfa` cycle-free.
+
+[dependencies]
+dregg-dfa = { path = "../dfa" }
+dregg-federation = { path = "../federation" }
+postcard = { version = "1", features = ["use-std"] }
+
+[lints]
+workspace = true

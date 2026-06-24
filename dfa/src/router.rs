@@ -597,11 +597,16 @@ pub trait ThresholdVerifier: Send + Sync {
 
 /// Stub verifier that accepts any non-empty `proof_data` and rejects an empty
 /// one. The accompanying commitment-CAS in [`GovernedRouter::update_routes`]
-/// is the load-bearing safety net while a real verifier is wired in.
+/// is the only check this path performs — **`StubVerifier` does NO
+/// cryptographic threshold check.**
 ///
-/// In production, replace this with a wrapper around
-/// `federation::FederationCommittee::verify` (`hints` BLS aggregate
-/// signature) or whatever Lane M's federation unification settles on.
+/// This is suitable for in-process apps and tests where the route table is
+/// not under adversarial governance. **Production deployments that bind a
+/// route table to a federation committee MUST use
+/// `dregg_dfa_federation::governed_router_with_committee`**, which installs the
+/// real `FederationQcVerifier` (`hints` BLS aggregate threshold signature). A
+/// `GovernedRouter::new(..)` router will accept any CAS-correct swap carrying
+/// one non-empty proof byte.
 #[derive(Clone, Debug, Default)]
 pub struct StubVerifier;
 
@@ -667,9 +672,13 @@ impl Clone for GovernedRouter {
 }
 
 impl GovernedRouter {
-    /// Build a `GovernedRouter` with the default `StubVerifier`. Suitable for
-    /// in-process apps and tests; production deployments should use
-    /// [`GovernedRouter::with_verifier`].
+    /// Build a `GovernedRouter` with the default `StubVerifier` (CAS-only, **no
+    /// cryptographic threshold check**). Suitable for in-process apps and tests.
+    ///
+    /// Production deployments that bind the table to a federation committee
+    /// must use `dregg_dfa_federation::governed_router_with_committee` (real
+    /// threshold gate) or [`GovernedRouter::with_verifier`] with a real
+    /// [`ThresholdVerifier`]; see [`StubVerifier`] for the safety contract.
     pub fn new(table: RouteTable) -> Self {
         let commitment = table.commitment;
         GovernedRouter {
@@ -681,6 +690,13 @@ impl GovernedRouter {
     }
 
     /// Build a `GovernedRouter` with a caller-supplied threshold verifier.
+    ///
+    /// For the **real** federation threshold-signature gate
+    /// (`ThresholdQC` over `old_commitment ‖ new_commitment`), use
+    /// `dregg_dfa_federation::governed_router_with_committee` — it installs the
+    /// production `FederationQcVerifier` so a CAS-correct-but-unsigned swap is
+    /// rejected. (That verifier lives in the separate `dregg-dfa-federation`
+    /// crate to keep this crate free of the federation KZG/BLS stack.)
     pub fn with_verifier(table: RouteTable, verifier: Arc<dyn ThresholdVerifier>) -> Self {
         let commitment = table.commitment;
         GovernedRouter {

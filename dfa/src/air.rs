@@ -84,8 +84,12 @@ use crate::router::{RouteTable, Router};
 /// transition vector (needed in-circuit as the lookup table).
 ///
 /// The slot-caveat predicate kind `WitnessedPredicateKind::Dfa` (in `cell/`)
-/// produces one of these via [`compile_to_air`] when proving "input `I` was
-/// classified by route-table-commitment `C` and landed on an accepting state."
+/// proves "input `I` was classified by route-table-commitment `C` and landed
+/// on an accepting state." A prover produces one of these via
+/// [`compile_to_air`] / [`compile_to_air_from_table`]; the cell-side
+/// `DfaAcceptanceVerifier` (registered by
+/// `WitnessedPredicateRegistry::default_builtins`) re-checks it via
+/// [`verify_acceptance`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AirTrace {
     /// BLAKE3 commitment of the route table the trace was produced against.
@@ -210,8 +214,9 @@ pub fn compile_to_air_from_table(table: &RouteTable, input: &[u8]) -> AirTrace {
 
 /// In-executor verification of a serialized [`AirTrace`].
 ///
-/// Stable signature (do not change — `cell::program::WitnessedPredicateKind::Dfa`
-/// invokes this through a fixed dispatch table):
+/// Stable signature (do not change — the cell-side `DfaAcceptanceVerifier` for
+/// `WitnessedPredicateKind::Dfa` in `dregg-cell/src/predicate.rs` calls this
+/// directly, mapping `Ok(true)` → accept and `Ok(false)`/`Err(_)` → reject):
 ///
 /// ```text
 /// verify_acceptance(router_root: [u8;32], input: &[u8], proof_bytes: &[u8])

@@ -6,17 +6,16 @@ description = "Canonical DFA routing engine and userspace dispatch primitive for
 
 [features]
 default = []
-# Wires a `ThresholdVerifier` implementation backed by
-# `dregg-federation::FederationCommittee::verify(ThresholdQC, message)`. Adds
-# the full federation KZG/BLS stack; only enable in deployments that need
-# governance-bound DFA table swaps.
-federation-verifier = ["dep:dregg-federation"]
 
 [dependencies]
 blake3 = "1"
 serde = { workspace = true, features = ["derive", "alloc"] }
 postcard = { version = "1", features = ["use-std"] }
-dregg-federation = { path = "../federation", optional = true }
+# NOTE: the real federation threshold `ThresholdVerifier` for governed
+# route-table swaps lives in the separate `dregg-dfa-federation` crate — NOT
+# here. Keeping `dregg-federation` (which transitively reaches `dregg-cell`)
+# out of this crate is what lets `dregg-cell` depend on `dregg-dfa` for the
+# real `Dfa` predicate verifier without closing a dependency cycle.
 
 [dev-dependencies]
 serde_json = { workspace = true }

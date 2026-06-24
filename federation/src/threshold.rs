@@ -21,10 +21,13 @@ use ark_std::rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 
 use hints::{
-    self, Aggregator, GlobalData, Hint, HintsError, PartialSignature, PublicKey as BlsPublicKey,
+    self, Aggregator, GlobalData, Hint, HintsError, PublicKey as BlsPublicKey,
     SecretKey as BlsSecretKey, Signature as BlsSignature, UniverseSetup, Verifier, generate_hint,
     setup_universe, sign as bls_sign, sign_aggregate, snark::F, verify_aggregate,
 };
+// Re-exported so external callers (e.g. `dregg_dfa::federation_verifier`) that
+// collect `sign_share` results to hand to `aggregate` can name the share type.
+pub use hints::PartialSignature;
 
 // =============================================================================
 // FederationCommittee

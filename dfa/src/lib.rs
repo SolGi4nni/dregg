@@ -58,8 +58,6 @@
 
 pub mod air;
 pub mod compiler;
-#[cfg(feature = "federation-verifier")]
-pub mod federation_verifier;
 pub mod filter;
 pub mod router;
 
