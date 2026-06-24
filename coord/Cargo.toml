@@ -17,6 +17,7 @@ dregg-types = { path = "../types" }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["alloc"] }
 
 # FFI-FREE BY CONSTRUCTION: the coordinator's 2PC / causal-order / shared-budget decisions route
 # through the `verified_gate` SEAM (`CoordVerifiedGate`), never `dregg-lean-ffi` directly. A native

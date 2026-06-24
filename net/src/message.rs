@@ -89,6 +89,30 @@ pub enum PeerMessage {
     },
 }
 
+/// Constructors for the co-turn coordination variants.
+impl PeerMessage {
+    /// Build a `ProposeAtomicTurn` from a forest hash, its participants, and the
+    /// canonically-encoded forest payload (`dregg_coord::AtomicForest::encode_for_wire`).
+    ///
+    /// THE BROADCAST FIX (send side): the previous mesh path wrapped a 2-field
+    /// JSON stub `{"type":"atomic_proposal",...}` and gossiped it as a `PublishTurn`,
+    /// which the receiver could not decode into a forest and dropped. This builds the
+    /// dedicated richer variant carrying the FULL forest, so a receiving participant
+    /// can reconstruct and evaluate the proposal against its own ledger
+    /// (`node::blocklace_sync` no longer drops it on `_ => return`).
+    pub fn propose_atomic_turn(
+        forest_hash: [u8; 32],
+        participants: Vec<[u8; 32]>,
+        forest_data: Vec<u8>,
+    ) -> Self {
+        PeerMessage::ProposeAtomicTurn {
+            forest_hash,
+            participants,
+            forest_data,
+        }
+    }
+}
+
 /// Length-prefixed framing for messages over QUIC streams.
 impl PeerMessage {
     /// Serialize this message with a 4-byte big-endian length prefix.

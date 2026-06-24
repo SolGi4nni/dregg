@@ -115,6 +115,29 @@ impl AtomicForest {
         // Each action has a base cost and at least one effect.
         action_count.saturating_mul(costs.action_base.saturating_add(costs.effect_base))
     }
+
+    /// The canonical wire encoding of an atomic forest — the `forest_data` payload
+    /// of a `PeerMessage::ProposeAtomicTurn`.
+    ///
+    /// THE BROADCAST FIX (coord half): the previous mesh path wrapped a 2-field
+    /// JSON stub `{"type":"atomic_proposal","proposal_id":...}` and gossiped it via
+    /// `PublishTurn` — the receiving peer could not reconstruct the forest from it
+    /// (no participants, no preconditions, no call forest), so it dropped on decode
+    /// (`blocklace_sync.rs`'s `_ => return`). This is the RICHER payload: the full,
+    /// self-describing forest a receiving participant needs to evaluate the proposal
+    /// against its own local ledger. Postcard-framed (the same codec `dregg-net`
+    /// uses for the enclosing `PeerMessage`).
+    pub fn encode_for_wire(&self) -> Vec<u8> {
+        postcard::to_stdvec(self).expect("AtomicForest serialization cannot fail")
+    }
+
+    /// Reconstruct an atomic forest from the `forest_data` of a received
+    /// `PeerMessage::ProposeAtomicTurn`. The receive-side counterpart of
+    /// [`Self::encode_for_wire`]; the funnel calls this to lift the gossiped
+    /// proposal back into the in-process coord engine instead of dropping it.
+    pub fn decode_from_wire(bytes: &[u8]) -> Result<Self, CoordError> {
+        postcard::from_bytes(bytes).map_err(|e| CoordError::WireDecode(e.to_string()))
+    }
 }
 
 // ─── Vote ──────────────────────────────────────────────────────────────────────

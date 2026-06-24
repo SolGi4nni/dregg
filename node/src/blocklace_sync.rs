@@ -1733,6 +1733,64 @@ async fn handle_blocklace_message(
 ) {
     let turn_data = match message {
         PeerMessage::PublishTurn { turn_data, .. } => turn_data,
+
+        // ─── Co-turn flow: a proposed atomic turn from a peer ───────────────
+        //
+        // WIRE 2 OF THE LIQUID FRONTIER. Previously every non-`PublishTurn`
+        // variant hit `_ => return` and was dropped — the dedicated co-turn
+        // vocabulary (`ProposeAtomicTurn`/…) was defined but DEAD on receive. We
+        // now lift a received proposal back into the in-process `dregg_coord`
+        // engine: the node acts as a 2PC *participant*, reconstructs the full
+        // forest, and evaluates it against its OWN local ledger via
+        // `Participant::evaluate_proposal` — the SAME engine the local
+        // `/turn/atomic/vote` path drives. A co-turn proposed on node A now
+        // genuinely flows into node B's engine instead of being dropped.
+        PeerMessage::ProposeAtomicTurn {
+            forest_hash,
+            forest_data,
+            ..
+        } => {
+            let local_ledger = {
+                let s = state.read().await;
+                s.ledger.clone()
+            };
+            let (node_id, signing_key) = {
+                let s = state.read().await;
+                (s.silo_id, s.cclerk.gossip_signing_key().to_bytes())
+            };
+            match dispatch_atomic_proposal(
+                &forest_data,
+                forest_hash,
+                node_id,
+                signing_key,
+                local_ledger,
+            ) {
+                Ok(vote) => {
+                    debug!(
+                        from = %from,
+                        forest = ?&forest_hash[..4],
+                        vote = if vote.is_yes() { "yes" } else { "no" },
+                        "co-turn: evaluated received atomic proposal as participant"
+                    );
+                    // NOTE — REMAINING 2PC PLUMBING (out of this weld's scope):
+                    // the locally-produced `vote` should now be gossiped back to
+                    // the coordinator as `PeerMessage::VoteAtomicTurn` and the
+                    // received proposal persisted in node state so a later
+                    // `CommitAtomicTurn` can be applied. That send/persist path
+                    // lives in `node/src/api.rs` (the coordinator broadcast +
+                    // `state::received_proposals`) — owned elsewhere. The flow is
+                    // now LIVE on receive (the variant reaches the engine and a
+                    // real vote is produced); closing the loop is the named
+                    // follow-up.
+                    let _ = vote;
+                }
+                Err(e) => {
+                    debug!(from = %from, error = %e, "co-turn: dropped malformed atomic proposal");
+                }
+            }
+            return;
+        }
+
         _ => return,
     };
 
@@ -1782,6 +1840,52 @@ async fn handle_blocklace_message(
             handle_finalization_vote(handle, from, vote).await;
         }
     }
+}
+
+/// Dispatch a received `ProposeAtomicTurn` into the in-process `dregg_coord`
+/// engine — the receive-side weld that makes a co-turn FLOW between nodes.
+///
+/// The node receiving a proposal acts as a 2PC **participant**: it reconstructs
+/// the full `AtomicForest` from the gossiped `forest_data`, then evaluates it
+/// against its OWN local ledger via [`dregg_coord::Participant::evaluate_proposal`]
+/// — the same engine the local `/turn/atomic/vote` path drives. The result is a
+/// real, signed `Vote` (Yes if our preconditions hold, No with a reason
+/// otherwise), NOT a no-op: the variable that previously hit `_ => return` now
+/// reaches the engine and produces a vote.
+///
+/// The participant's `cell_id` is the node's own sovereign cell (`CellId(node_id)`),
+/// so the preconditions keyed to our cell are checked against our local view.
+///
+/// Returns the produced `Vote`, or a `CoordError` if the `forest_data` does not
+/// decode into a well-formed forest (the only "drop" left — a malformed payload,
+/// logged at the call site).
+fn dispatch_atomic_proposal(
+    forest_data: &[u8],
+    forest_hash: [u8; 32],
+    node_id: [u8; 32],
+    signing_key: [u8; 32],
+    ledger: dregg_cell::Ledger,
+) -> Result<dregg_coord::Vote, dregg_coord::CoordError> {
+    // Reconstruct the full forest from the richer wire payload.
+    let forest = dregg_coord::AtomicForest::decode_from_wire(forest_data)?;
+
+    // The proposal id is bound to (forest, coordinator) on the coordinator side;
+    // here we bind our vote to the forest hash carried on the wire, which the
+    // coordinator can match against its own `forest.hash`. (Cross-checking the
+    // decoded forest's hash against the announced `forest_hash` rejects a payload
+    // whose body was swapped under a stale hash.)
+    if forest.hash != forest_hash {
+        return Err(dregg_coord::CoordError::HashMismatch {
+            claimed: forest_hash,
+            computed: forest.hash,
+        });
+    }
+
+    // Build the participant over our local ledger view and evaluate. This is the
+    // in-process coord engine reached: real precondition checks against our cells.
+    let cell_id = dregg_cell::CellId(node_id);
+    let mut participant = dregg_coord::Participant::new(cell_id, node_id, signing_key, ledger);
+    Ok(participant.evaluate_proposal(&forest_hash, &forest))
 }
 
 /// Record ONE finalization vote into the collector and fire the consensus-wide
@@ -5181,6 +5285,127 @@ mod tests {
         // Idempotent: re-announcing C's address learns nothing new.
         let again = handle_peer_addrs(&handle, &state, from, vec![(pk_c.0, addr_c)]).await;
         assert_eq!(again, 0, "re-announcing a known address learns nothing new");
+    }
+
+    // ─── Co-turn flow: a ProposeAtomicTurn reaches the engine, not the drop ──
+    //
+    // THE BAR for Wire 2: a co-turn variant gossiped from one node is RECEIVED +
+    // dispatched into the in-process coord engine on another — not dropped at the
+    // funnel's `_ => return`. These tests drive `dispatch_atomic_proposal` (the
+    // exact function the receive funnel calls for `PeerMessage::ProposeAtomicTurn`)
+    // and prove the variant produces a REAL vote from `Participant::evaluate_proposal`
+    // against a local ledger, rather than no-op'ing.
+
+    /// Build a 2-participant atomic forest moving value from `a` to `b`, as a
+    /// coordinator on node A would.
+    fn make_atomic_forest(a: [u8; 32], b: [u8; 32]) -> dregg_coord::AtomicForest {
+        let from = dregg_cell::CellId(a);
+        let to = dregg_cell::CellId(b);
+        // A minimal action carrying the transfer (atomic forests are bound by the
+        // QC, not the action signature, on commit — mirrors coord's own test helpers).
+        let action = dregg_turn::Action {
+            target: from,
+            method: *blake3::hash(b"transfer").as_bytes(),
+            args: vec![],
+            authorization: dregg_turn::Authorization::Unchecked,
+            preconditions: dregg_cell::Preconditions::default(),
+            effects: vec![dregg_turn::Effect::Transfer { from, to, amount: 10 }],
+            may_delegate: dregg_turn::DelegationMode::None,
+            commitment_mode: dregg_turn::CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let mut forest = dregg_turn::CallForest::new();
+        forest.add_root(action);
+        dregg_coord::AtomicForest::new(
+            vec![a, b],
+            forest,
+            vec![], // no explicit preconditions: the participant validates locally
+            from,
+            0,
+        )
+    }
+
+    #[test]
+    fn co_turn_propose_reaches_engine_not_dropped() {
+        // Node B's identity + its local ledger (B holds its own funded cell).
+        let node_b = [0x0b; 32];
+        let node_a = [0x0a; 32];
+        let signing_key = [0x42; 32];
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger
+            .insert_cell(dregg_cell::Cell::with_balance(node_b, [0u8; 32], 1_000))
+            .expect("B's cell");
+        ledger
+            .insert_cell(dregg_cell::Cell::with_balance(node_a, [0u8; 32], 1_000))
+            .expect("A's cell");
+
+        // A proposes an atomic turn; the richer wire payload (the broadcast fix).
+        let forest = make_atomic_forest(node_a, node_b);
+        let forest_hash = forest.hash;
+        let wire = forest.encode_for_wire();
+        assert!(!wire.is_empty(), "the richer payload is non-empty");
+
+        // B receives it: the funnel dispatches into the in-process coord engine
+        // instead of `_ => return`. This produces a REAL vote, not a no-op.
+        let vote = dispatch_atomic_proposal(&wire, forest_hash, node_b, signing_key, ledger)
+            .expect("a well-formed proposal must reach the engine and produce a vote");
+
+        // With no failing precondition keyed to B's cell, B's participant votes Yes
+        // — and the signature is bound to (forest_hash, forest.hash), provable by
+        // the coordinator. The point: the variant FLOWED into the engine.
+        assert!(
+            vote.is_yes(),
+            "B's participant should approve (preconditions hold on its local ledger)"
+        );
+        let sig = match vote {
+            dregg_coord::Vote::Yes { signature } => signature,
+            dregg_coord::Vote::No { .. } => unreachable!(),
+        };
+        let pubkey = dregg_coord::Vote::public_key_from_signing_key(&signing_key);
+        assert!(
+            dregg_coord::Vote::verify_yes(&sig, &forest_hash, &forest_hash, &pubkey),
+            "the produced vote must be a genuine engine-signed vote"
+        );
+    }
+
+    #[test]
+    fn co_turn_propose_rejects_malformed_payload() {
+        // The ONLY drop left: a payload that does not decode into a forest. This is
+        // a genuine decode failure, not the old blanket `_ => return`.
+        let err = dispatch_atomic_proposal(
+            &[0xff, 0x00, 0x13, 0x37],
+            [0u8; 32],
+            [0x0b; 32],
+            [0x42; 32],
+            dregg_cell::Ledger::new(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, dregg_coord::CoordError::WireDecode(_)),
+            "a malformed forest payload is reported, not silently dropped: {err}"
+        );
+    }
+
+    #[test]
+    fn co_turn_propose_rejects_hash_mismatch() {
+        // A payload whose body was swapped under a stale announced hash is rejected
+        // (anti-tamper): the decoded forest hash must match the wire `forest_hash`.
+        let node_a = [0x0a; 32];
+        let node_b = [0x0b; 32];
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger
+            .insert_cell(dregg_cell::Cell::with_balance(node_b, [0u8; 32], 1_000))
+            .expect("B's cell");
+        let forest = make_atomic_forest(node_a, node_b);
+        let wire = forest.encode_for_wire();
+        let wrong_hash = [0x99; 32];
+        let err = dispatch_atomic_proposal(&wire, wrong_hash, node_b, [0x42; 32], ledger)
+            .unwrap_err();
+        assert!(
+            matches!(err, dregg_coord::CoordError::HashMismatch { .. }),
+            "a forest whose hash disagrees with the announced hash is rejected: {err}"
+        );
     }
 }
 
