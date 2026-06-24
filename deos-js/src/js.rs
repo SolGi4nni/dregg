@@ -546,7 +546,10 @@ impl JsRuntime {
     pub fn new() -> Result<Self, String> {
         let engine = JSEngine::init().map_err(|e| format!("JSEngine::init: {e:?}"))?;
         let rt = Runtime::new(engine.handle());
-        Ok(JsRuntime { rt, _engine: engine })
+        Ok(JsRuntime {
+            rt,
+            _engine: engine,
+        })
     }
 
     /// Evaluate a JS program against a fresh global that has the `deos` binding. The
@@ -586,7 +589,11 @@ impl JsRuntime {
                 (c"__deos_world_ocap", native_world_ocap as RawNative, 0),
                 (c"__deos_cell", native_cell as RawNative, 1),
                 (c"__deos_frustum", native_frustum as RawNative, 1),
-                (c"__deos_frustum_reflect", native_frustum_reflect as RawNative, 2),
+                (
+                    c"__deos_frustum_reflect",
+                    native_frustum_reflect as RawNative,
+                    2,
+                ),
                 // fan-out — present faces · affordances · snapshot/rewind · spotter
                 (c"__deos_present", native_present as RawNative, 1),
                 (c"__deos_affordances", native_affordances as RawNative, 1),
@@ -595,16 +602,44 @@ impl JsRuntime {
                 (c"__deos_search", native_search as RawNative, 1),
                 // author (the card editor) — view/field/affordance, cap-gated
                 (c"__deos_editor_card", native_editor_card as RawNative, 0),
-                (c"__deos_editor_edit_view", native_editor_edit_view as RawNative, 2),
-                (c"__deos_editor_set_field", native_editor_set_field as RawNative, 3),
-                (c"__deos_editor_add_affordance", native_editor_add_affordance as RawNative, 2),
+                (
+                    c"__deos_editor_edit_view",
+                    native_editor_edit_view as RawNative,
+                    2,
+                ),
+                (
+                    c"__deos_editor_set_field",
+                    native_editor_set_field as RawNative,
+                    3,
+                ),
+                (
+                    c"__deos_editor_add_affordance",
+                    native_editor_add_affordance as RawNative,
+                    2,
+                ),
                 // private server (the deos-host surface) — define / spawn / grant
-                (c"__deos_server_define_affordance", native_server_define_affordance as RawNative, 1),
+                (
+                    c"__deos_server_define_affordance",
+                    native_server_define_affordance as RawNative,
+                    1,
+                ),
                 (c"__deos_server_fork", native_server_fork as RawNative, 1),
-                (c"__deos_server_spawn_cell", native_server_spawn_cell as RawNative, 2),
+                (
+                    c"__deos_server_spawn_cell",
+                    native_server_spawn_cell as RawNative,
+                    2,
+                ),
                 (c"__deos_server_grant", native_server_grant as RawNative, 3),
-                (c"__deos_server_set_field", native_server_set_field as RawNative, 3),
-                (c"__deos_server_get_field", native_server_get_field as RawNative, 2),
+                (
+                    c"__deos_server_set_field",
+                    native_server_set_field as RawNative,
+                    3,
+                ),
+                (
+                    c"__deos_server_get_field",
+                    native_server_get_field as RawNative,
+                    2,
+                ),
             ] {
                 let defined = JS_DefineFunction(realm_cx, g, name.as_ptr(), Some(f), nargs, 0);
                 if defined.is_null() {
@@ -673,8 +708,8 @@ impl JsRuntime {
     ) -> Result<(Option<i32>, CardEditor), String> {
         set_current_editor(editor);
         let eval = self.eval(source);
-        let editor = take_current_editor()
-            .ok_or_else(|| "card editor vanished during run".to_string())?;
+        let editor =
+            take_current_editor().ok_or_else(|| "card editor vanished during run".to_string())?;
         match eval {
             Ok(result) => Ok((result, editor)),
             Err(e) => Err(e),
@@ -885,7 +920,11 @@ unsafe fn return_string(cx: &mut SmContext, args: &CallArgs, s: &str) -> bool {
 }
 
 /// `__deos_world_cells()` → JSON array of every cell id on the applet's ledger.
-unsafe extern "C" fn native_world_cells(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_world_cells(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
     let json = CURRENT_APPLET.with(|c| {
@@ -899,7 +938,11 @@ unsafe extern "C" fn native_world_cells(context: *mut RawJSContext, argc: u32, v
 }
 
 /// `__deos_world_ocap()` → JSON of the capability web (nodes + edges).
-unsafe extern "C" fn native_world_ocap(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_world_ocap(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
     let json = CURRENT_APPLET.with(|c| {
@@ -916,7 +959,11 @@ unsafe extern "C" fn native_world_ocap(context: *mut RawJSContext, argc: u32, vp
 unsafe extern "C" fn native_cell(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let id_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let id_hex = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
     let json = CURRENT_APPLET.with(|c| {
         let guard = c.borrow();
         let applet = match guard.as_ref() {
@@ -941,7 +988,11 @@ unsafe extern "C" fn native_cell(context: *mut RawJSContext, argc: u32, vp: *mut
 unsafe extern "C" fn native_frustum(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let viewer_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let viewer_hex = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
     let json = CURRENT_APPLET.with(|c| {
         let guard = c.borrow();
         let applet = match guard.as_ref() {
@@ -962,11 +1013,23 @@ unsafe extern "C" fn native_frustum(context: *mut RawJSContext, argc: u32, vp: *
 
 /// `__deos_frustum_reflect(viewer, target)` → the cell JSON if `viewer` may observe
 /// `target`, else `"null"` (the attested read: an unreachable cell is absent).
-unsafe extern "C" fn native_frustum_reflect(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_frustum_reflect(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let viewer_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
-    let target_hex = if args.argc_ >= 2 { arg_string(&mut cx, args.get(1)) } else { String::new() };
+    let viewer_hex = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
+    let target_hex = if args.argc_ >= 2 {
+        arg_string(&mut cx, args.get(1))
+    } else {
+        String::new()
+    };
     let json = CURRENT_APPLET.with(|c| {
         let guard = c.borrow();
         let applet = match guard.as_ref() {
@@ -997,7 +1060,11 @@ unsafe extern "C" fn native_frustum_reflect(context: *mut RawJSContext, argc: u3
 unsafe extern "C" fn native_present(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let id_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let id_hex = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
     let json = CURRENT_APPLET.with(|c| {
         let guard = c.borrow();
         let applet = match guard.as_ref() {
@@ -1022,15 +1089,25 @@ unsafe extern "C" fn native_present(context: *mut RawJSContext, argc: u32, vp: *
 
 /// `__deos_affordances(viewerAuthLabel)` → the cap-gated message list the holder of
 /// that authority may fire, as JSON. The label is "none"/"signature"/"proof"/"either".
-unsafe extern "C" fn native_affordances(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_affordances(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let label = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { "none".into() };
+    let label = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        "none".into()
+    };
     let held = parse_auth_label(&label);
     let json = CURRENT_APPLET.with(|c| {
         let guard = c.borrow();
         match guard.as_ref() {
-            Some(a) => reflect_binding::cell_affordances_json(&a.cell(), &a.affordance_specs(), &held),
+            Some(a) => {
+                reflect_binding::cell_affordances_json(&a.cell(), &a.affordance_specs(), &held)
+            }
             None => "[]".to_string(),
         }
     });
@@ -1038,7 +1115,11 @@ unsafe extern "C" fn native_affordances(context: *mut RawJSContext, argc: u32, v
 }
 
 /// `__deos_snapshot()` → an integer token denoting the saved ledger state (for rewind).
-unsafe extern "C" fn native_snapshot(_context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_snapshot(
+    _context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let args = CallArgs::from_vp(vp, argc);
     let token = CURRENT_APPLET.with(|c| {
         let guard = c.borrow();
@@ -1061,16 +1142,18 @@ unsafe extern "C" fn native_snapshot(_context: *mut RawJSContext, argc: u32, vp:
 unsafe extern "C" fn native_rewind(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
     let _cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let token = if args.argc_ >= 1 { arg_i32(args.get(0)) } else { -1 };
+    let token = if args.argc_ >= 1 {
+        arg_i32(args.get(0))
+    } else {
+        -1
+    };
     let ok = CURRENT_APPLET.with(|c| {
         let mut guard = c.borrow_mut();
         let applet = match guard.as_mut() {
             Some(a) => a,
             None => return false,
         };
-        let snap = SNAPSHOTS.with(|s| {
-            s.borrow().get(token as usize).cloned()
-        });
+        let snap = SNAPSHOTS.with(|s| s.borrow().get(token as usize).cloned());
         match snap {
             Some((bytes, count)) => applet.restore(&bytes, count).is_ok(),
             None => false,
@@ -1084,7 +1167,11 @@ unsafe extern "C" fn native_rewind(context: *mut RawJSContext, argc: u32, vp: *m
 unsafe extern "C" fn native_search(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let q = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let q = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
     let json = CURRENT_APPLET.with(|c| {
         let mut out = "[]".to_string();
         if let Some(a) = c.borrow().as_ref() {
@@ -1123,7 +1210,11 @@ fn editor_card_matches(editor: &CardEditor, card_id_hex: &str) -> bool {
 }
 
 /// `__deos_editor_card()` → the editor's card id hex, or `""` if no editor installed.
-unsafe extern "C" fn native_editor_card(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_editor_card(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
     let id = CURRENT_EDITOR.with(|c| {
@@ -1161,11 +1252,23 @@ fn parse_view_patch(spec_json: &str) -> Result<ViewPatch, String> {
 /// `__deos_editor_edit_view(cardId, patchSpec)` → the re-folded view-tree JSON on a
 /// committed patch, else `"null"` (refused: unauthorized / wrong card / no-op / bad
 /// spec). A view-patch leaves a receipted patch + blame on the card's chain.
-unsafe extern "C" fn native_editor_edit_view(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_editor_edit_view(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let card_id = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
-    let spec_json = if args.argc_ >= 2 { arg_string(&mut cx, args.get(1)) } else { String::new() };
+    let card_id = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
+    let spec_json = if args.argc_ >= 2 {
+        arg_string(&mut cx, args.get(1))
+    } else {
+        String::new()
+    };
     let json = CURRENT_EDITOR.with(|c| {
         let mut guard = c.borrow_mut();
         let editor = match guard.as_mut() {
@@ -1196,12 +1299,28 @@ unsafe extern "C" fn native_editor_edit_view(context: *mut RawJSContext, argc: u
 
 /// `__deos_editor_set_field(cardId, slot, value)` → 1 on a committed `SetField` turn,
 /// -1 on refusal (unauthorized / wrong card). A re-read reflects the new value.
-unsafe extern "C" fn native_editor_set_field(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_editor_set_field(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let card_id = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
-    let slot = if args.argc_ >= 2 { arg_i32(args.get(1)).max(0) as usize } else { 0 };
-    let value = if args.argc_ >= 3 { arg_i32(args.get(2)).max(0) as u64 } else { 0 };
+    let card_id = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
+    let slot = if args.argc_ >= 2 {
+        arg_i32(args.get(1)).max(0) as usize
+    } else {
+        0
+    };
+    let value = if args.argc_ >= 3 {
+        arg_i32(args.get(2)).max(0) as u64
+    } else {
+        0
+    };
     let ok = CURRENT_EDITOR.with(|c| {
         let mut guard = c.borrow_mut();
         let editor = match guard.as_mut() {
@@ -1228,7 +1347,11 @@ unsafe extern "C" fn native_editor_set_field(context: *mut RawJSContext, argc: u
 fn parse_affordance_spec(spec_json: &str) -> Result<AffordanceSpec, String> {
     let v: serde_json::Value =
         serde_json::from_str(spec_json).map_err(|e| format!("affordance spec JSON: {e}"))?;
-    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let name = v
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     if name.is_empty() {
         return Err("affordance spec needs a name".into());
     }
@@ -1246,11 +1369,23 @@ fn parse_affordance_spec(spec_json: &str) -> Result<AffordanceSpec, String> {
 
 /// `__deos_editor_add_affordance(cardId, spec)` → 1 on a committed weld (the card gains
 /// a new fireable affordance + a provenance receipt), -1 on refusal.
-unsafe extern "C" fn native_editor_add_affordance(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_editor_add_affordance(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let card_id = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
-    let spec_json = if args.argc_ >= 2 { arg_string(&mut cx, args.get(1)) } else { String::new() };
+    let card_id = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
+    let spec_json = if args.argc_ >= 2 {
+        arg_string(&mut cx, args.get(1))
+    } else {
+        String::new()
+    };
     let ok = CURRENT_EDITOR.with(|c| {
         let mut guard = c.borrow_mut();
         let editor = match guard.as_mut() {
@@ -1309,18 +1444,31 @@ fn parse_effect_descriptor(v: &serde_json::Value) -> Result<dregg_turn::action::
 
 /// `__deos_server_define_affordance(specJson)` — register a cap-gated affordance carrying
 /// arbitrary effects into the server registry. Returns 1 on register, -1 on a bad spec.
-unsafe extern "C" fn native_server_define_affordance(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_server_define_affordance(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let spec_json = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let spec_json = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
     let parsed = (|| -> Result<ServerAffordanceDef, String> {
         let v: serde_json::Value =
             serde_json::from_str(&spec_json).map_err(|e| format!("defineAffordance JSON: {e}"))?;
-        let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let name = v
+            .get("name")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
         if name.is_empty() {
             return Err("defineAffordance needs a name".into());
         }
-        let required = parse_auth_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("none"));
+        let required =
+            parse_auth_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("none"));
         let effects = match v.get("effects").and_then(|x| x.as_array()) {
             Some(arr) => arr
                 .iter()
@@ -1338,7 +1486,12 @@ unsafe extern "C" fn native_server_define_affordance(context: *mut RawJSContext,
             ),
             _ => None,
         };
-        Ok(ServerAffordanceDef { name, required, effects, instance })
+        Ok(ServerAffordanceDef {
+            name,
+            required,
+            effects,
+            instance,
+        })
     })();
     let ok = match parsed {
         Ok(def) => {
@@ -1360,10 +1513,18 @@ unsafe extern "C" fn native_server_define_affordance(context: *mut RawJSContext,
 /// key clients connect to), or `""` on refusal. A cap-bounded fork for a party/session
 /// (the membrane-fork): affordances scoped to it (`defineAffordance({…, instance})`)
 /// publish as the fork's OWN surface, isolated from the root + sibling instances.
-unsafe extern "C" fn native_server_fork(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_server_fork(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let seed = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let seed = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
     if seed.trim().is_empty() {
         record_error("server.fork: a seed label is required".into());
         return return_string(&mut cx, &args, "");
@@ -1414,11 +1575,23 @@ unsafe extern "C" fn native_server_fork(context: *mut RawJSContext, argc: u32, v
 /// signature-gated write would be unreachable). A non-"open" spawn instead commits a bare
 /// `CreateCell` verified turn, leaving the cell at the default user permissions
 /// (unreachable by a player without further grants).
-unsafe extern "C" fn native_server_spawn_cell(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_server_spawn_cell(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let seed_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
-    let perms = if args.argc_ >= 2 { arg_string(&mut cx, args.get(1)) } else { "open".into() };
+    let seed_hex = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
+    let perms = if args.argc_ >= 2 {
+        arg_string(&mut cx, args.get(1))
+    } else {
+        "open".into()
+    };
     let open = perms.trim() == "open" || perms.trim().is_empty();
 
     let mut public_key = [0u8; 32];
@@ -1476,12 +1649,28 @@ unsafe extern "C" fn native_server_spawn_cell(context: *mut RawJSContext, argc: 
 /// `__deos_server_grant(toHex, onHex, required)` — GM superpower: grant a capability over
 /// `on` to `to` via a real `GrantCapability` verified turn. Returns 1 on commit, -1 on
 /// refusal.
-unsafe extern "C" fn native_server_grant(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_server_grant(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let to_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
-    let on_hex = if args.argc_ >= 2 { arg_string(&mut cx, args.get(1)) } else { String::new() };
-    let req_label = if args.argc_ >= 3 { arg_string(&mut cx, args.get(2)) } else { "signature".into() };
+    let to_hex = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
+    let on_hex = if args.argc_ >= 2 {
+        arg_string(&mut cx, args.get(1))
+    } else {
+        String::new()
+    };
+    let req_label = if args.argc_ >= 3 {
+        arg_string(&mut cx, args.get(2))
+    } else {
+        "signature".into()
+    };
     let ok = (|| -> bool {
         let to = match reflect_binding::parse_cell_id(&to_hex) {
             Some(c) => c,
@@ -1529,12 +1718,28 @@ unsafe extern "C" fn native_server_grant(context: *mut RawJSContext, argc: u32, 
 /// NOW on a cell the GM governs (a real verified turn committed AS that cell through the
 /// attached World). The GM uses this to stamp spawned cells' stats, fire NPC reactions,
 /// and apply LEVEL-UPs. Returns 1 on commit, -1 on refusal.
-unsafe extern "C" fn native_server_set_field(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_server_set_field(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let cell_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
-    let index = if args.argc_ >= 2 { arg_i32(args.get(1)).max(0) as usize } else { 0 };
-    let value = if args.argc_ >= 3 { arg_i32(args.get(2)).max(0) as u64 } else { 0 };
+    let cell_hex = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
+    let index = if args.argc_ >= 2 {
+        arg_i32(args.get(1)).max(0) as usize
+    } else {
+        0
+    };
+    let value = if args.argc_ >= 3 {
+        arg_i32(args.get(2)).max(0) as u64
+    } else {
+        0
+    };
     let ok = (|| -> bool {
         let cell = match reflect_binding::parse_cell_id(&cell_hex) {
             Some(c) => c,
@@ -1569,11 +1774,23 @@ unsafe extern "C" fn native_server_set_field(context: *mut RawJSContext, argc: u
 /// `__deos_server_get_field(cellHex, index)` — read a u64 field off the live ledger (the
 /// GM observing a player's character — e.g. its XP). Returns the value as an i32, or -1 if
 /// the cell/field is absent.
-unsafe extern "C" fn native_server_get_field(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn native_server_get_field(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
-    let cell_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
-    let index = if args.argc_ >= 2 { arg_i32(args.get(1)).max(0) as usize } else { 0 };
+    let cell_hex = if args.argc_ >= 1 {
+        arg_string(&mut cx, args.get(0))
+    } else {
+        String::new()
+    };
+    let index = if args.argc_ >= 2 {
+        arg_i32(args.get(1)).max(0) as usize
+    } else {
+        0
+    };
     let v = CURRENT_APPLET.with(|c| {
         let guard = c.borrow();
         let applet = match guard.as_ref() {

@@ -12,16 +12,18 @@ mod catchup;
 mod channels_service;
 // THE DEOS-HOST (opt-in `deos-host` feature): the node hosts a headless userspace
 // deos-js "private server" program. Pulls in mozjs via deos-js, so it is feature-gated.
+pub mod config;
+mod coord_gate;
 #[cfg(feature = "deos-host")]
 mod deos_host;
 #[cfg(all(test, feature = "deos-host"))]
 mod deos_host_e2e;
 #[cfg(all(test, feature = "deos-host"))]
-mod mud_e2e;
-pub mod config;
-mod coord_gate;
+mod deos_host_fork_client_e2e;
 mod dkg_service;
 mod finality_gate;
+#[cfg(all(test, feature = "deos-host"))]
+mod mud_e2e;
 // The old `bridge` module is removed. Cross-group communication now happens
 // via multi_group.rs (unified blocklace cross-references + interest-based dissemination).
 // See: `dregg-node run --groups` for multi-group participation.
@@ -955,9 +957,13 @@ async fn run_node(
                      GET /api/server/{}/affordances",
                     dregg_types::hex_encode(server_cell.as_bytes())
                 ),
-                Err(e) => error!(error = %e, program = %program_path, "DEOS-HOST: failed to host program"),
+                Err(e) => {
+                    error!(error = %e, program = %program_path, "DEOS-HOST: failed to host program")
+                }
             },
-            Err(e) => error!(error = %e, program = %program_path, "DEOS-HOST: cannot read program file"),
+            Err(e) => {
+                error!(error = %e, program = %program_path, "DEOS-HOST: cannot read program file")
+            }
         }
     }
     #[cfg(not(feature = "deos-host"))]

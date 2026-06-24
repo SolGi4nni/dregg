@@ -333,7 +333,11 @@ impl AttachedApplet {
     /// There is NO affordance-level cap tooth here (the caller IS the agent driving its
     /// own surface, e.g. the GM program's privileged setup) — the executor's authority
     /// gate is the binding check on every effect.
-    pub fn fire_raw_effects(&mut self, method: &str, effects: Vec<Effect>) -> Result<[u8; 32], FireError> {
+    pub fn fire_raw_effects(
+        &mut self,
+        method: &str,
+        effects: Vec<Effect>,
+    ) -> Result<[u8; 32], FireError> {
         self.fire_raw_effects_as(self.agent, method, effects)
     }
 

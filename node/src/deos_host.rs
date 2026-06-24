@@ -24,8 +24,8 @@
 //! committed world cells live on the ledger; a client fires an affordance through the
 //! node's `/turns/submit` ingress (a real turn).
 
-use std::sync::mpsc;
 use std::sync::OnceLock;
+use std::sync::mpsc;
 use std::thread;
 
 use dregg_cell::{AuthRequired, Cell, CellId, Permissions};
@@ -83,7 +83,14 @@ fn host_thread() -> &'static mpsc::Sender<HostJob> {
                     }
                 };
                 while let Ok(job) = rx.recv() {
-                    let result = run_program(&mut rt, job.state, job.handle, job.server_cell, job.held, &job.program_js);
+                    let result = run_program(
+                        &mut rt,
+                        job.state,
+                        job.handle,
+                        job.server_cell,
+                        job.held,
+                        &job.program_js,
+                    );
                     let _ = job.reply.send(result);
                 }
             })
@@ -279,13 +286,7 @@ fn run_program(
     // The server program's GM superpowers (spawnCell/grant/fork) commit through this sink;
     // defineAffordance accumulates into the thread-local server registry.
     let sink = NodeWorldSink::new(state, handle);
-    let applet = AttachedApplet::attach_with(
-        Box::new(sink),
-        server_cell,
-        held,
-        Vec::new(),
-        0,
-    );
+    let applet = AttachedApplet::attach_with(Box::new(sink), server_cell, held, Vec::new(), 0);
     deos_js::js::set_current_target(deos_js::JsTarget::Attached(applet));
 
     let eval = rt.eval(program_js);
