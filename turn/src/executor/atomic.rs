@@ -2566,27 +2566,25 @@ mod hardening_tests {
         let mut ledger = Ledger::new();
         let agent = make_permissive_cell(0xA3, 1_000);
         let agent_id = agent.id();
-        let mut victim = make_permissive_cell(0xB3, 5_000);
-        // Burn requires the target's permissions to allow set_balance and
-        // increment_nonce; permissive cells already grant both.
-        victim.permissions = permissive();
-        let victim_id = victim.id();
+        // The agent burns its OWN balance (self-redeem); permissive cells grant
+        // the set_balance + increment_nonce the burn writes.
         ledger.insert_cell(agent).unwrap();
-        ledger.insert_cell(victim).unwrap();
 
         let executor = TurnExecutor::new(ComputronCosts::zero());
-        // SUPPLY-MODEL Stage 1: a single-action hosted Burn now CONSERVES — the
-        // burned value moves holder→well (the per-asset well lazily
-        // materialized), so this turn commits with per-asset Σδ=0. No balancing
-        // sovereign side is needed.
+        // SUPPLY-MODEL: a single-action hosted Burn now CONSERVES — the burned
+        // value moves holder→well (the per-asset well lazily materialized), so
+        // this turn commits with per-asset Σδ=0. Stage 3: this is a SELF-REDEEM
+        // (the agent burns its OWN balance, `actor == target`), which is
+        // permissionless — burning the victim's balance (no cap to reach it) is
+        // now correctly REJECTED, so the test exercises the legitimate self-burn.
         let burn_action = Action {
-            target: victim_id,
+            target: agent_id,
             method: [0u8; 32],
             args: vec![],
             authorization: Authorization::Unchecked,
             preconditions: Preconditions::default(),
             effects: vec![Effect::Burn {
-                target: victim_id,
+                target: agent_id,
                 slot: 0,
                 amount: 100,
             }],
@@ -2611,7 +2609,7 @@ mod hardening_tests {
         let burn_receipt = result
             .receipts
             .iter()
-            .find(|rc| rc.agent == victim_id)
+            .find(|rc| rc.agent == agent_id)
             .expect("a receipt for the burn target");
         assert!(
             burn_receipt.was_burn,
@@ -2621,8 +2619,8 @@ mod hardening_tests {
         // Conservation: the holder was debited 100 and the per-asset well was
         // lazily created carrying the +100 credit (the default asset's well).
         assert_eq!(
-            ledger.get(&victim_id).unwrap().state.balance(),
-            5_000 - 100,
+            ledger.get(&agent_id).unwrap().state.balance(),
+            1_000 - 100,
             "holder debited by the burn amount"
         );
         let (_pk, well_id) = TurnExecutor::derive_issuer_well(&[0u8; 32]);

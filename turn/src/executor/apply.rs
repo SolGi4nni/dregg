@@ -2578,7 +2578,15 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
-        if target != action_target {
+        // KERNEL ALIGNMENT (supply-model Stage 3): burning is holder→well. A holder
+        // reducing its OWN balance (`actor == target`) is permissionless self-redeem;
+        // burning ANOTHER cell's balance requires authority over that holding. Burn has
+        // NO action-level permission (`determine_required_permissions` has no Burn arm),
+        // and the old guard was `target != action_target` — so `actor != target ==
+        // action_target` (an agent targeting a victim) destroyed the victim's balance
+        // with ZERO authority. Gate on `actor != target` instead, matching the verified
+        // kernel's `actor = cell ∨ <authority>` (Dregg2.Exec recKBurnAsset, Stage 3).
+        if actor != target {
             self.check_cross_cell_permission(
                 ledger,
                 actor,
