@@ -10,6 +10,12 @@ mod api;
 mod blocklace_sync;
 mod catchup;
 mod channels_service;
+// THE DEOS-HOST (opt-in `deos-host` feature): the node hosts a headless userspace
+// deos-js "private server" program. Pulls in mozjs via deos-js, so it is feature-gated.
+#[cfg(feature = "deos-host")]
+mod deos_host;
+#[cfg(all(test, feature = "deos-host"))]
+mod deos_host_e2e;
 pub mod config;
 mod coord_gate;
 mod dkg_service;
@@ -38,6 +44,7 @@ mod pg_mirror;
 mod prove_pool;
 mod relay_service;
 mod routing_table;
+mod self_cell;
 mod starbridge_seed;
 mod state;
 mod storage_service;

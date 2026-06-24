@@ -180,6 +180,78 @@ pub fn execute_via_producer(
     result
 }
 
+/// COMMIT ARBITRARY EFFECTS AS `agent` — the factored core of the signed-turn
+/// commit path, callable WITHOUT an HTTP envelope.
+///
+/// The signed-turn ingress (`api.rs::post_submit_signed_turn`) verifies a caller
+/// signature, derives the agent, then runs exactly this core: build a `Turn`
+/// carrying `effects` under `agent`'s current nonce + chain head, execute it
+/// through the ONE producer gate (`execute_via_producer`), and append the
+/// committed `TurnReceipt` to the cipherclerk chain. This helper is that core,
+/// without the signature/HTTP/gossip/proving shell — so an IN-PROCESS host (the
+/// `deos-host` server program, which owns the agent cell and decides its effects
+/// directly) commits a real verified turn on the node's ledger by the same path.
+///
+/// Returns the committed receipt hash, or a rejection reason. The receipt lands
+/// on `s.cclerk`'s chain and the ledger is mutated in place — identical to the
+/// HTTP path's committed-turn semantics, minus the wire shell.
+pub fn commit_effects_as(
+    s: &mut crate::state::NodeStateInner,
+    agent: dregg_cell::CellId,
+    method: &str,
+    effects: Vec<dregg_turn::action::Effect>,
+) -> Result<[u8; 32], String> {
+    use dregg_turn::{CallForest, Turn};
+
+    let exec_federation_id = federation_id_for_executor(s);
+    let nonce = s.ledger.get(&agent).map(|c| c.state.nonce()).unwrap_or(0);
+    let prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
+
+    let action = s
+        .cclerk
+        .make_action(agent, method, effects, &exec_federation_id);
+    let mut call_forest = CallForest::new();
+    call_forest.add_root(action);
+
+    let mut turn = Turn {
+        agent,
+        nonce,
+        fee: 0,
+        memo: Some(format!("deos_host:{method}")),
+        valid_until: Some(i64::MAX / 2),
+        call_forest,
+        depends_on: vec![],
+        previous_receipt_hash: prev,
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
+    };
+
+    let executor = new_submit_executor(s);
+    // Size the fee to the estimated computron cost so the executor budget gate passes.
+    turn.fee = executor.estimate_cost(&turn);
+
+    crate::api::seed_executor_receipt_head(&executor, agent, prev);
+    let lean_producer_enabled = s.lean_producer_enabled;
+    match execute_via_producer(&executor, &turn, &mut s.ledger, lean_producer_enabled) {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
+            let rh = receipt.receipt_hash();
+            s.cclerk
+                .append_receipt(receipt)
+                .map_err(|e| format!("append_receipt: {e}"))?;
+            Ok(rh)
+        }
+        dregg_turn::TurnResult::Rejected { reason, .. } => Err(format!("rejected: {reason}")),
+        other => Err(format!("turn did not commit: {other:?}")),
+    }
+}
+
 /// Build a fresh executor configured for turn submission (height = attested + 1).
 ///
 /// The verified-Lean shadow/gate observer (`dregg_exec_lean::LeanShadowObserver`) is injected

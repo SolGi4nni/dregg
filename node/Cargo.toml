@@ -42,6 +42,17 @@ dregg-storage-templates = { path = "../dregg-storage-templates" }
 dregg-captp = { path = "../captp" }
 dregg-app-framework = { path = "../app-framework" }
 dregg-credentials = { path = "../credentials" }
+# The gpui-free reflective substrate (deos-reflect): `reflect_cell` over any
+# `Ledger`. The node uses the SAME reflector deos-js's crawl calls to surface its
+# OWN runtime state AS A CELL (`self_cell.rs` — the reflexive-image Hearth step).
+# This is the lean, starbridge-free, SpiderMonkey-free crate the design factors
+# out (deos-js depends on it; the node does too — neither pulls the other).
+deos-reflect = { path = "../deos-reflect" }
+# THE DEOS-HOST (optional, `deos-host` feature): the node hosts a headless userspace
+# deos-js "private server" program. deos-js links SpiderMonkey (mozjs), so it is OFF by
+# default — a bare `cargo build -p dregg-node` stays mozjs-free (deos-js is a workspace
+# member but NOT a default-member; nothing in the default node graph references it).
+deos-js = { path = "../deos-js", optional = true }
 starbridge-nameservice = { path = "../starbridge-apps/nameservice" }
 starbridge-identity = { path = "../starbridge-apps/identity" }
 starbridge-subscription = { path = "../starbridge-apps/subscription" }
@@ -103,6 +114,12 @@ tokio-postgres = { version = "0.7", optional = true, features = ["with-serde_jso
 # node build keeps the v1 floor (the MCP standalone-effect-VM demo tools).
 default = ["prover"]
 prover = ["dregg-sdk/prover", "dregg-turn/prover", "dregg-cell/prover"]
+
+# THE DEOS-HOST: the node hosts a headless userspace deos-js "private server" program
+# (`--deos-program <path.js>`), running fully without gpui. Pulls in `mozjs` via deos-js,
+# so it is opt-in (NOT in `default`). With it OFF, the deos-host module is absent and the
+# node graph carries no SpiderMonkey.
+deos-host = ["dep:deos-js"]
 
 # Off by default: the node ships verified-turn MirrorBatches to a live pg18 ONLY when
 # this is on AND DREGG_PG_MIRROR_URL is set. With it off, the pg-mirror module still

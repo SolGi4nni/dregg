@@ -354,6 +354,13 @@ pub struct NodeStateInner {
     /// longer a separate runtime mode enum — the presence of this state
     /// (and the inner `is_solo` flag) is the operational signal.
     pub solo_consensus: Option<dregg_federation::solo::SoloConsensusState>,
+    /// THE DEOS-HOST published surfaces (the `deos-host` feature): per hosted private
+    /// server cell, its cap-gated affordance surface `(name, required)`, published by the
+    /// deos-host thread after the server program's setup ran. The discovery route
+    /// (`GET /api/server/{cell}/affordances`) projects this per-viewer. Plain data (no
+    /// mozjs/gpui) so it lives in the lean node state unconditionally.
+    pub deos_server_surfaces:
+        HashMap<CellId, Vec<(String, dregg_cell::AuthRequired)>>,
     /// Blocklace consensus handle (set after federation sync starts).
     pub blocklace_handle: Option<crate::blocklace_sync::BlocklaceHandle>,
     /// Storage gateway service (ORGANS §3 weld): the content-addressed store
@@ -858,6 +865,7 @@ impl NodeState {
                 proof_pending: HashSet::new(),
                 proof_pending_order: VecDeque::new(),
                 solo_consensus: None,
+                deos_server_surfaces: HashMap::new(),
                 blocklace_handle: None,
                 storage_gateway: crate::storage_service::StorageGatewayService::from_env(),
                 trustlines,
@@ -1015,6 +1023,7 @@ impl NodeState {
                 proof_pending: HashSet::new(),
                 proof_pending_order: VecDeque::new(),
                 solo_consensus: None,
+                deos_server_surfaces: HashMap::new(),
                 blocklace_handle: None,
                 storage_gateway: crate::storage_service::StorageGatewayService::from_env(),
                 trustlines,
@@ -1143,6 +1152,33 @@ impl NodeState {
                 tracing::warn!(error = %e, "failed to persist ledger checkpoint on shutdown");
             }
         }
+    }
+
+    /// THE REFLEXIVE IMAGE — project the node's OWN live runtime state AS A CELL.
+    ///
+    /// Reads the blocklace DAG facts (its own async lock, exactly as `api::get_status`
+    /// does), then the inner state under the read lock, and collects the already-served
+    /// self-status (`/api/node/identity` + `/api/node/producer` + `/status`) onto ONE
+    /// cell-shaped view: a real `dregg_cell::Cell` in a one-cell ledger, reflectable by
+    /// the SAME `deos_reflect::reflect_cell` deos-js's crawl uses. The node stops being
+    /// an opaque server and becomes an inspectable cell (`crate::self_cell`).
+    ///
+    /// Every field is LIVE — re-call after a turn and the cell view moves
+    /// (`ledger_height`, the operator balance/nonce, `block_count`, the producer mode).
+    // Consumed by the `GET /api/node/self` route in `api.rs` (a parallel lane); the
+    // projection it returns is covered by `self_cell` unit tests.
+    #[allow(dead_code)]
+    pub async fn self_cell(&self) -> crate::self_cell::NodeSelfCell {
+        let dag = match self.blocklace().await {
+            Some(handle) => crate::self_cell::BlocklaceFacts {
+                dag_height: handle.dag_height().await,
+                block_count: handle.block_count().await as u64,
+                consensus_live: true,
+            },
+            None => crate::self_cell::BlocklaceFacts::default(),
+        };
+        let inner = self.inner.read().await;
+        crate::self_cell::NodeSelfCell::project(&inner, dag)
     }
 }
 
