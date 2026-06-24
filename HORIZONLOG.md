@@ -8,6 +8,27 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## ✅ REVOKE-DELEGATION EPOCH STEP — FORCED at the abstract descriptor (the last per-effect epoch residual closed) (2026-06-24)
+The `RevokeDelegationEpochResidual` (parent epoch `+1`, child snapshot cleared, child stamp reset) is no
+longer a carried fail-closed conjunct in any per-effect bridge. NEW dedicated DUAL descriptor
+`Dregg2/Circuit/Inst/revokeDelegationFullA.lean` (`revokeDelegationFullE`): `active1 = caps` removeEdge,
+`active2 = delegationStepComponent` binds the PRODUCT `(delegationEpoch, delegations, delegationEpochAt)` to
+its stepped value via an injective `funcComponent` digest (the SAME spawn/refresh `delegationEpochAt`
+forcing) — `revokeDelegationFull_full_sound` yields the STRENGTHENED `RevokeDelegationFullSpec` DIRECTLY,
+forge-rejection `revokeDelegationFull_rejects_frozen_epoch`. Re-wired the per-effect bridges to the forced
+step (dropping the residual conjunct): `revokeDelegationCircuitStep`/`revokeDelegation_circuit_refines_spec`
+(EffectRefinement), `revokeDelegationEmittedStep`/`_emitted_refines_spec` (EffectEmittedRefinement), the
+`TurnEffectRefinement` + `TurnEmit` revoke arms (threaded a `DRevStep` triple-digest + a `RestIffNoCapsEpoch`
+portal hyp through `fullActionCircuitStep`/`Inst`/the 2 mutual soundness theorems + the 3 turn wrappers +
+the emitted `stepEmittedEncodeAgrees`/`step_emitted_refines_fullActionStep`). Spawn/refresh were ALREADY
+forced (their `active5`/product components — verified, not re-touched). Apex (`ClosureFinal`,
+`CircuitSoundnessAssembled`, `AssuranceCase`) + full `Dregg2` aggregate GREEN (4143 jobs), axiom-clean
+(`#assert_axioms` whitelist + `#assert_all_clean: 12 keystones`). VK-NOTE: the revoke descriptor gains a
+second committed component → deployed `revokeDelegationA` VK changes (no devnet). NOT committed.
+Residue: the `epochBumpGate`/`B_EPOCH=30` within-row partial-force narrative in `EffectVmEmitRotationV3.lean`
+(lines ~1244–1296, 4229–4264) is now SUPERSEDED by the abstract forcing — comments could be refreshed
+(low-priority, the gate still HOLDS, just no longer the load-bearing path).
+
 ## ✅ CARD PANE — a hyperdreggmedia CARD is a LIVE COCKPIT SURFACE (HYPERDREGGMEDIA on the real glass), by running (2026-06-23)
 A deos-js applet's `deos.ui.*` view-tree now renders as a real gpui-component pane IN the starbridge-v2
 cockpit, backed by the cockpit's LIVE `World`. `starbridge-v2/src/card_pane.rs` (`CardPane`, a gpui

@@ -647,7 +647,7 @@ impl Cockpit {
     /// pane, so uniqueness only needs to hold across simultaneously-open dev
     /// panes, which a growing pane count provides.
     #[cfg(feature = "dev-surfaces")]
-    fn next_dev_surface_id(&self) -> u64 {
+    pub(crate) fn next_dev_surface_id(&self) -> u64 {
         let panes = self
             .pane_group
             .as_ref()

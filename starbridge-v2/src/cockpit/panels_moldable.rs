@@ -3,6 +3,62 @@
 use super::*;
 
 impl Cockpit {
+    /// The cell the Inspect surface is focused on — the inspector's camera-aim read
+    /// off its own view cell (the §3.4 selector), falling back to the first cell. The
+    /// SAME focus the moldable panel renders and the live inspector card is built over.
+    pub(crate) fn inspector_focus_cell(&self) -> Option<CellId> {
+        self.inspector_view
+            .doc()
+            .focus()
+            .or_else(|| self.cells.first().copied())
+    }
+
+    /// **ENSURE THE LIVE INSPECTOR CARD (rung 2) is built for the current focus.** Called
+    /// on the paint path (where a live `&mut Context` is in hand to mint the gpui entity).
+    /// Builds the deos-js [`InspectorCard`](deos_js::inspector_card) over the cockpit's
+    /// LIVE `World`, focused on [`Self::inspector_focus_cell`] — a [`CardPane`] entity whose
+    /// rendered faces re-read the operator's real cell and whose affordance buttons fire
+    /// real verified turns on the live ledger. Rebuilt when the focus moves; fail-soft (a
+    /// build error keeps the Rust moldable inspector as the surface). Idempotent.
+    #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+    pub(crate) fn ensure_inspector_card(&mut self, cx: &mut Context<Self>) {
+        use starbridge_v2::dock::card_surface::build_inspector_card_surface;
+
+        let Some(focus) = self.inspector_focus_cell() else {
+            return;
+        };
+        // Already built for this focus → nothing to do (the entity re-reads the live
+        // ledger every paint, so it stays current without a rebuild).
+        if self
+            .inspector_card
+            .as_ref()
+            .is_some_and(|m| m.focus == focus)
+        {
+            return;
+        }
+
+        let id = self.next_dev_surface_id();
+        // The operator's authority the affordance fires mount under — `Signature` (the
+        // attenuated operator hand the agent-attach + card-pane paths use), so the cap
+        // tooth genuinely refuses the `escalate` over-reach (Proof ⊄ Signature).
+        let held = dregg_cell::AuthRequired::Signature;
+        match build_inspector_card_surface(id, self.world.clone(), focus, held, cx) {
+            Ok(surface) => {
+                self.inspector_card = Some(super::InspectorCardMount {
+                    entity: surface.entity_handle(),
+                    applet: surface.applet(),
+                    focus,
+                });
+            }
+            Err(e) => {
+                eprintln!(
+                    "ensure_inspector_card: could not build the live inspector card \
+                     (keeping the Rust moldable inspector): {e:#}"
+                );
+            }
+        }
+    }
+
     /// THE MOLDABLE INSPECTOR — pick a focused object, render its `Registry`-resolved
     /// presentation SET as a tab-strip (one sub-tab per `Presentation`) through the
     /// generic renderer, with the `Halo` ring + a `Spotter` search box that re-focuses.
@@ -28,6 +84,37 @@ impl Cockpit {
         col = col.child(section_title(
             "INSPECTOR · the moldable presentation set (Registry · Spotter · Halo)",
         ));
+
+        // ── THE LIVE INSPECTOR CARD (rung 2) ───────────────────────────────────────
+        // The Inspect surface IS a deos-js card: the focused cell's moldable faces,
+        // generated into a view-tree and rendered by `CardPane` over the cockpit's
+        // LIVE `World`. The RawFields rows re-read the operator's real cell off the
+        // live ledger; an affordance button fires ONE cap-gated verified turn on that
+        // World (a receipt on the cockpit's own tape). Built lazily in
+        // `ensure_inspector_card` (on the paint path) and hosted here; the Rust
+        // moldable presentation set below remains as the deep-reflection companion.
+        #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+        if let Some(mount) = self.inspector_card.as_ref() {
+            // The card's `bind` rows re-read the live ledger at render time, so a notify
+            // each paint keeps them current after a fire lands (mirrors `CardSurface`).
+            mount.entity.update(cx, |_card, cx| cx.notify());
+            col = col.child(
+                div()
+                    .min_h(px(220.))
+                    .border_1()
+                    .border_color(theme::accent())
+                    .rounded_md()
+                    .bg(theme::panel())
+                    .child(mount.entity.clone()),
+            );
+            col = col.child(div().text_xs().text_color(theme::muted()).child(
+                "↑ the Inspect surface, reborn as a deos-js card: the focused cell's faces \
+                 over the LIVE World. An affordance button fires a real verified turn; a \
+                 bound row re-reads the advanced value. Editable from within (the \
+                 card-editor `edit_view` patch path) — the view is data, not compiled code.",
+            ));
+        }
+
         // The reflexive toggle — turn the inspector ON ITSELF (inspect the inspector).
         {
             let reflexive = self.inspector_reflexive;

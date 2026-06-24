@@ -988,6 +988,27 @@ pub struct Cockpit {
     /// the viewed URL; applied + cleared in [`Self::ensure_webshell_input`]. `None`
     /// while the bar already reflects the cursor (so user typing is never stomped).
     webshell_input_pending: Option<String>,
+    /// **THE LIVE INSPECTOR CARD** (rung 2) — the cockpit's Inspect-mode main surface
+    /// reborn as a deos-js card. LAZY: `None` until the Inspect surface first paints,
+    /// then built by [`Self::ensure_inspector_card`] from the focused cell's moldable
+    /// faces over the LIVE `World` (a [`CardPane`] entity + its shared attached applet),
+    /// and rebuilt when the focus changes. Hosting the entity in `moldable_panel`
+    /// renders the focused cell's faces live; an affordance button fires a real turn on
+    /// the cockpit's World. `None` on the gpui-free / `card-pane`-off build (which keeps
+    /// the Rust moldable inspector as the surface).
+    #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+    inspector_card: Option<InspectorCardMount>,
+}
+
+/// The cockpit's live inspector-card mount: the [`CardPane`] gpui entity, the shared
+/// live attached applet the rendered widgets drive (so a fire lands on the operator's
+/// real cell + a `bind` re-reads it), and the focused cell the view-tree was generated
+/// for (so [`Cockpit::ensure_inspector_card`] rebuilds when the focus moves).
+#[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+pub(crate) struct InspectorCardMount {
+    pub(crate) entity: Entity<starbridge_v2::card_pane::CardPane>,
+    pub(crate) applet: starbridge_v2::card_pane::SharedAttached,
+    pub(crate) focus: CellId,
 }
 
 /// A navigation action over the cockpit's pure-navigation controls — the edge

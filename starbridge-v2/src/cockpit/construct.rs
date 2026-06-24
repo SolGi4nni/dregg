@@ -448,6 +448,10 @@ impl Cockpit {
             #[cfg(feature = "servo")]
             webshell_frame: None,
             webshell_input_pending: None,
+            // The live inspector card mounts lazily on the first Inspect-surface paint
+            // (`ensure_inspector_card` builds it from the focused cell over the World).
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            inspector_card: None,
         }
     }
 

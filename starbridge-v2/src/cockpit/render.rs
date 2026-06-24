@@ -43,6 +43,12 @@ impl Render for Cockpit {
         // first paint (it needs a live `&mut Window` + the Enter subscription), so
         // the browser surface has its real address bar ready when navigated to.
         self.ensure_webshell_input(window, cx);
+        // THE LIVE INSPECTOR CARD — build (or rebuild on a focus change) the deos-js
+        // card that IS the Inspect-mode surface, over the cockpit's live `World`. Done
+        // here on the paint path (entity creation needs a live `&mut Context`), so the
+        // moldable panel can host the cached `CardPane` entity this very frame.
+        #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+        self.ensure_inspector_card(cx);
         // Build the right pane's element: the `PaneGroup` rendered with the
         // active-pane decorator (a 2px accent border on the focused pane). Built
         // before the root `div()` so the `&self.pane_group` + `&self.active_pane`

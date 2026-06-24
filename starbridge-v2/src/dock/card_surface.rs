@@ -124,6 +124,78 @@ pub fn build_card_surface(
     })
 }
 
+/// **Build the REFLECTIVE INSPECTOR card over the cockpit's LIVE World** — the
+/// rung-2 mount. Where [`build_card_surface`] hosts a hand-authored counter card,
+/// this hosts the [`deos_js::inspector_card`] card: a view-tree GENERATED IN RUST
+/// from `focus`'s moldable faces (RawFields rows → live `Bind`s + labeled `Text`,
+/// Affordances → cap-gated `Button`s), rendered by the SAME [`CardPane`] over the
+/// SAME live attached applet. So the cockpit's Inspect-mode surface IS a deos-js
+/// card: the focused cell's faces render live off the operator's real ledger, an
+/// affordance button fires ONE cap-gated verified turn on the live `World`, and a
+/// bound field row re-reads the advanced value on the next paint.
+///
+/// No SpiderMonkey is needed — the inspector view-tree is a pure function of the
+/// faces ([`deos_js::inspector_card::inspector_view_over_attached`]), built directly
+/// in Rust, then converted to the renderer's [`ViewNode`] through the canonical JSON
+/// bridge ([`deos_view::parse_view_tree`] of [`deos_js::card_editor::ViewTree::to_json`]).
+///
+/// `held` is the operator's authority the affordance fires are mounted under (the
+/// cap tooth checks every fire against it). A build error is returned for the caller
+/// to surface fail-soft (the cockpit keeps the Rust moldable inspector as fallback).
+#[allow(clippy::result_large_err)]
+pub fn build_inspector_card_surface(
+    id: u64,
+    world: Rc<RefCell<World>>,
+    focus: CellId,
+    held: AuthRequired,
+    cx: &mut App,
+) -> Result<CardSurface, String> {
+    // The inspector's affordance surface over the focused cell: `bump` (Signature —
+    // held, admitted) advances a state slot so a fired button visibly moves a bound
+    // row, and `escalate` (Proof — an OVER-REACH the operator's Signature does not
+    // satisfy) is present so the cap tooth is genuinely exercised: it is REFUSED
+    // in-band and the reflective `project_for(held)` never even surfaces it as a
+    // button. The fire commits THROUGH `World::commit_turn` onto the live ledger.
+    let affordances = vec![
+        ("bump".to_string(), AuthRequired::Signature),
+        ("escalate".to_string(), AuthRequired::Proof),
+    ];
+
+    // Attach an applet to the LIVE cockpit World, focused on `focus` — the card's
+    // substance is the operator's REAL cell; a fire lands on the ledger the inspector
+    // reads. (The counter slot the bump writes is `AGENT_COUNTER_SLOT`.)
+    let sink = WorldSinkAdapter::live(world);
+    let attached = attach_agent(sink, focus, held.clone(), affordances);
+
+    // GENERATE the inspector view-tree IN RUST from the focused cell's live faces
+    // (RawFields + the cap-gated affordances `held` may fire), then bridge it into
+    // the renderer's `ViewNode` through the canonical JSON shape both sides share.
+    let inspector_tree = deos_js::inspector_card::inspector_view_over_attached(&attached, &held);
+    let tree: ViewNode = deos_view::parse_view_tree(&inspector_tree.to_json())
+        .map_err(|e| format!("inspector view-tree bridge: {e}"))?;
+
+    // Share the live attached applet so the rendered buttons + the binds both drive
+    // the SAME sovereign cell on the live ledger.
+    let shared: SharedAttached = Rc::new(RefCell::new(attached));
+
+    let pane_applet = shared.clone();
+    let pane_tree = tree.clone();
+    let entity = cx.new(|_cx| {
+        CardPane::new(
+            pane_applet,
+            pane_tree,
+            "inspector · live cell (deos-js card)",
+        )
+    });
+
+    Ok(CardSurface {
+        id: SurfaceId(id),
+        entity,
+        applet: shared,
+        focus: cx.focus_handle(),
+    })
+}
+
 /// A dock-hostable wrapper around a [`CardPane`] gpui entity — a hyperdreggmedia
 /// card as a live cockpit surface. Holds the shared live applet handle so the host
 /// can read the live receipt count after a button fires (the SAME applet the
@@ -146,6 +218,13 @@ impl CardSurface {
     /// committed by the card's button) — the honest "N fires" truth.
     pub fn receipt_count(&self) -> usize {
         self.applet.borrow().receipt_count()
+    }
+
+    /// The [`CardPane`] gpui entity handle (for a host that mounts the card's body
+    /// directly as a panel child rather than wrapping it in the dock surface — the
+    /// inspector-card-as-Inspect-surface mount).
+    pub fn entity_handle(&self) -> Entity<CardPane> {
+        self.entity.clone()
     }
 }
 

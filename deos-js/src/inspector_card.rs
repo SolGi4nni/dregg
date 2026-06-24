@@ -40,7 +40,7 @@
 //! An unauthorized reshape is refused in-band — no patch, no receipt.
 
 use dregg_cell::state::FieldElement;
-use dregg_cell::AuthRequired;
+use dregg_cell::{AuthRequired, CellId, Ledger};
 use dregg_doc::{Author, BlameLine};
 use dregg_turn::TurnReceipt;
 
@@ -48,6 +48,7 @@ use deos_reflect::present::PresentationBody;
 use deos_reflect::substance::FieldValue;
 use deos_reflect::{AffordanceSurface, ReflectedCell};
 
+use crate::attach::AttachedApplet;
 use crate::applet::{pack_u64, Affordance, Applet, Slot};
 use crate::card_editor::{
     BindProps, ButtonProps, EditError, OnClick, TextProps, ViewEdit, ViewPatch, ViewTree,
@@ -303,14 +304,54 @@ fn relabel_text(tree: &mut ViewTree, from: &str, to: &str) -> bool {
     }
 }
 
-/// **Generate the inspector view-tree** from a focused cell's moldable faces.
-///
-/// Reads the RawFields + Affordances faces off the live ledger via [`deos_reflect`] and lifts
-/// them into the [`ViewTree`] vocabulary: a titled column with a RawFields section (a live
-/// `Bind` row per scalar state slot, a labeled `Text` per structural substance) and an
-/// Affordances section (a `Button` per cap-gated affordance the holder of `held` may fire).
+/// **Generate the inspector view-tree** from a focused cell's moldable faces (the embedded
+/// [`Applet`] shape — rung 1). Delegates to [`inspector_view_for`], the substance-agnostic
+/// core that reads the same RawFields + Affordances faces off any [`Ledger`].
 fn generate_view(card: &Applet, held: &AuthRequired) -> ViewTree {
-    let id = card.cell();
+    inspector_view_for(
+        card.cell(),
+        card.ledger(),
+        &card.affordance_specs(),
+        held,
+    )
+}
+
+/// **Generate the inspector view-tree over an ATTACHED LIVE WORLD** — the rung-2 entry.
+///
+/// The inspector card's view-tree is a pure function of a focused cell's moldable faces;
+/// this reads those faces off the cockpit's REAL ledger (through the [`AttachedApplet`]'s
+/// [`WorldSink`](crate::attach::WorldSink), the same one a fire commits onto) and the live
+/// affordance surface, lifting them into the [`ViewTree`] vocabulary — a `Bind` row per
+/// scalar slot (the renderer re-reads it off the live ledger so a landed turn updates it in
+/// place) and a cap-gated `Button` per affordance the holder of `held` may fire.
+///
+/// The returned tree is the inspector card's `view_source`: serialize it
+/// ([`ViewTree::to_json`]) and a renderer (`deos-view`) paints it over the live attached
+/// applet — the focused cell's faces render live, affordance buttons fire REAL turns, and a
+/// bound field updates when a turn lands. This is the additive constructor the cockpit mount
+/// uses; the embedded [`InspectorCard::focus`] is kept for the rung-1 tests.
+pub fn inspector_view_over_attached(attached: &AttachedApplet, held: &AuthRequired) -> ViewTree {
+    let id = attached.cell();
+    let specs = attached.affordance_specs();
+    let mut tree = ViewTree::root();
+    attached.with_ledger(&mut |ledger| {
+        tree = inspector_view_for(id, ledger, &specs, held);
+    });
+    tree
+}
+
+/// **The substance-agnostic inspector view-tree core.** Reads the RawFields + Affordances
+/// faces of `id` off `ledger` via [`deos_reflect`] and lifts them into the [`ViewTree`]
+/// vocabulary: a titled column with a RawFields section (a live `Bind` row per scalar state
+/// slot, a labeled `Text` per structural substance) and an Affordances section (a `Button`
+/// per cap-gated affordance the holder of `held` may fire). Used over BOTH the embedded
+/// [`Applet`] ledger (rung 1) and the cockpit's live attached World (rung 2).
+pub fn inspector_view_for(
+    id: CellId,
+    ledger: &Ledger,
+    affordance_specs: &[(String, AuthRequired)],
+    held: &AuthRequired,
+) -> ViewTree {
     let mut children: Vec<ViewTree> = Vec::new();
 
     // Title.
@@ -326,7 +367,7 @@ fn generate_view(card: &Applet, held: &AuthRequired) -> ViewTree {
             text: "Cell State".into(),
         },
     }];
-    let rows = card.ledger().get(&id).map(|cell| {
+    let rows = ledger.get(&id).map(|cell| {
         let reflected = ReflectedCell {
             id,
             cell: cell.clone(),
@@ -354,10 +395,10 @@ fn generate_view(card: &Applet, held: &AuthRequired) -> ViewTree {
         },
     }];
     let mut surface = AffordanceSurface::new(id);
-    for (name, required) in card.affordance_specs() {
+    for (name, required) in affordance_specs {
         surface = surface.declare(deos_reflect::Affordance::new(
-            name,
-            required,
+            name.clone(),
+            required.clone(),
             dregg_turn::action::Effect::IncrementNonce { cell: id },
         ));
     }
