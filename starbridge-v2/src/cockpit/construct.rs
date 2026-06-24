@@ -387,6 +387,7 @@ impl Cockpit {
             macro_outcome: None,
             moldable_query: String::new(),
             moldable_lens: MoldableLens::Cell,
+            moldable_show_native: false,
 
             // THE INSPECT→ACT loop boots on the treasury too.
             inspect_act_focus: Some(treasury),

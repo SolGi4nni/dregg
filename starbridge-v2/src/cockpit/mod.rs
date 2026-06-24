@@ -25,9 +25,9 @@ pub(crate) use std::cell::RefCell;
 pub(crate) use std::rc::Rc;
 
 pub(crate) use gpui::{
-    div, prelude::*, px, uniform_list, AnyElement, App, Context, Entity, FocusHandle, Hsla,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, ScrollStrategy, SharedString,
-    Styled, UniformListScrollHandle, WeakEntity, Window,
+    AnyElement, App, Context, Entity, FocusHandle, Hsla, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement, Render, ScrollStrategy, SharedString, Styled, UniformListScrollHandle,
+    WeakEntity, Window, div, prelude::*, px, uniform_list,
 };
 
 pub(crate) use dregg_cell::CellId;
@@ -64,7 +64,7 @@ pub(crate) use starbridge_v2::world::{self, CommitOutcome, ResumeMode, World};
 // THE ⤳ SHARE surface — the frustum / snapshot editor (cull + pare + verify + share).
 pub(crate) use starbridge_v2::affordance::{AffordanceSurface, CellAffordance};
 pub(crate) use starbridge_v2::snapshot_editor::{
-    recipient_window_cap, PareOutcome, ShareError, SnapshotEditor,
+    PareOutcome, ShareError, SnapshotEditor, recipient_window_cap,
 };
 // The L1 PRESENTATION SPINE + the moldable inspector framework primitives.
 pub(crate) use starbridge_v2::cv_provenance::CvProvenance;
@@ -887,6 +887,15 @@ pub struct Cockpit {
     /// picker that makes the L4–L10 inspector lanes reachable; `Cell` rides the
     /// `Registry` spine, the rest build their lane `Presentable` off the focus).
     moldable_lens: MoldableLens,
+    /// Whether the DEEP native moldable presentation set (Registry · Spotter · Halo ·
+    /// lens-strip · RawFields) is REVEALED below the live inspector card. Default
+    /// `false`: when the deos-js inspector card is mounted, it IS the Inspect surface
+    /// and the native presentation set does NOT also draw in the same bounds (NOTHING
+    /// DRAWS TWICE). A deliberate "⊕ deep reflection (native presentation set)" toggle
+    /// opens it as a distinct, scrolled-to companion face below the card — never an
+    /// underlay. When NO card is mounted (fail-soft / card-pane off), the native set is
+    /// the surface and renders unconditionally.
+    moldable_show_native: bool,
 
     // --- THE INSPECT→ACT loop -----------------------------------------------
     /// The cell the inspect→act loop is focused on. `None` focuses the first cell.

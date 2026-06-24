@@ -7,10 +7,16 @@ impl Cockpit {
         let w = self.world.borrow();
         let mut col = div().flex().flex_col().gap_0p5().p_2();
         col = col.child(section_title("DYNAMICS · live").mb_1());
-        // INHABIT/DEV · the live dynamics-feed card AS a surface — the deos-js feed card
-        // over the live World (the header + a live entry-count bind + recent rows),
-        // hosted above the plain text tail. Built on the paint path (`ensure_mode_card`);
-        // absent on the gpui-free / card-pane-off build (the text feed below stands alone).
+        // INHABIT/DEV · the live dynamics-feed card AS the surface — the deos-js feed card
+        // over the live World (the header + a live entry-count bind + recent rows). Built on
+        // the paint path (`ensure_mode_card`).
+        //
+        // NOTHING DRAWS TWICE (HIG). When the dynamics card mounts it REPLACES the native
+        // text feed in these bounds — the plain-text tail below is gated so it draws ONLY
+        // when the card is NOT mounted (an early return after hosting the card). So exactly
+        // ONE dynamics view draws here, never the card stacked over the native feed.
+        // Fail-soft: on the gpui-free / card-pane-off build (or a build error → no mount),
+        // the text feed renders as the surface, so the strip is never blank.
         #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
         if let Some(mount) = self
             .mode_cards
@@ -20,13 +26,13 @@ impl Cockpit {
             col = col.child(
                 div()
                     .min_h(px(120.))
-                    .mb_1()
                     .border_1()
                     .border_color(theme::accent())
                     .rounded_md()
                     .bg(theme::panel())
                     .child(mount.entity.clone()),
             );
+            return col;
         }
         let _ = cx;
         let tail = w.dynamics().tail(12);
@@ -2796,7 +2802,7 @@ impl Cockpit {
 #[cfg(all(test, feature = "render-capture"))]
 mod popout_crash_repro {
     use super::*;
-    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui::{AppContext, HeadlessAppContext, PlatformTextSystem, px, size};
     use gpui_wgpu::CosmicTextSystem;
     use std::borrow::Cow;
     use std::cell::RefCell;

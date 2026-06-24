@@ -253,13 +253,23 @@ impl Cockpit {
         // LIVE `World`. The RawFields rows re-read the operator's real cell off the
         // live ledger; an affordance button fires ONE cap-gated verified turn on that
         // World (a receipt on the cockpit's own tape). Built lazily in
-        // `ensure_inspector_card` (on the paint path) and hosted here; the Rust
-        // moldable presentation set below remains as the deep-reflection companion.
+        // `ensure_inspector_card` (on the paint path) and hosted here.
+        //
+        // NOTHING DRAWS TWICE (HIG). When the card mounts it REPLACES the native
+        // presentation set in this same pane — the deep native Registry/Spotter/Halo/
+        // RawFields below is gated behind the `moldable_show_native` toggle, so by
+        // default exactly ONE object (the card) draws in these bounds (no z-fight with
+        // the old native inspector). A deliberate "⊕ deep reflection" toggle reveals the
+        // native set as a distinct companion face BELOW the card (a scrolled-to region,
+        // never an underlay). Fail-soft: if no card mounted (build error / card-pane
+        // off / a duplicate-pane host that skips the entity), `card_is_surface` is false
+        // and the native set renders as the surface, so the pane is never blank.
+        //
         // ONE-HOST-PER-FRAME GUARD: the inspector `CardPane` entity may be hosted at most
         // once per frame. Two split panes both showing the Moldable surface would otherwise
         // host the SAME entity twice in one frame (re-entering its render lease → abort).
-        // The first host this frame wins the live entity; a duplicate skips it (the deep
-        // Rust moldable presentation set below still renders, so the pane is never blank).
+        // The first host this frame wins the live entity; a duplicate skips it (and falls
+        // through to the native set, which is safe to host twice).
         #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
         if let Some(mount) = self
             .inspector_card
@@ -278,12 +288,53 @@ impl Cockpit {
                     .bg(theme::panel())
                     .child(mount.entity.clone()),
             );
-            col = col.child(div().text_xs().text_color(theme::muted()).child(
-                "↑ the Inspect surface, reborn as a deos-js card: the focused cell's faces \
-                 over the LIVE World. An affordance button fires a real verified turn; a \
-                 bound row re-reads the advanced value. Editable from within (the \
-                 card-editor `edit_view` patch path) — the view is data, not compiled code.",
-            ));
+            // The deep-reflection toggle: reveal/hide the native presentation set as a
+            // distinct companion BELOW (never stacked in the card's bounds).
+            let show_native = self.moldable_show_native;
+            col = col.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_xs().text_color(theme::muted()).child(
+                        "↑ the Inspect surface, reborn as a deos-js card: the focused cell's \
+                         faces over the LIVE World. An affordance button fires a real verified \
+                         turn; a bound row re-reads the advanced value. Editable from within.",
+                    ))
+                    .child(cycle_chip(
+                        cx,
+                        "mold-deep",
+                        if show_native {
+                            "⊖ hide deep reflection".to_string()
+                        } else {
+                            "⊕ deep reflection (native presentation set)".to_string()
+                        },
+                        if show_native {
+                            theme::accent()
+                        } else {
+                            theme::good()
+                        },
+                        Cockpit::moldable_toggle_native,
+                    )),
+            );
+            // The card is the surface; the native set draws ONLY when deliberately
+            // revealed — and then below, as a divided companion region, not an underlay.
+            if !show_native {
+                return col.into_any_element();
+            }
+            col = col.child(
+                div()
+                    .mt_2()
+                    .pt_2()
+                    .border_t_1()
+                    .border_color(theme::border())
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .child(
+                        "── deep reflection · the native moldable presentation set (a distinct \
+                         companion view below the card, not an overlay) ──",
+                    ),
+            );
         }
 
         // The reflexive toggle — turn the inspector ON ITSELF (inspect the inspector).
@@ -2063,6 +2114,15 @@ impl Cockpit {
     /// the reflexive loop through the SAME `Registry::present` dispatch.
     pub(crate) fn moldable_toggle_reflexive(&mut self, cx: &mut Context<Self>) {
         self.inspector_reflexive = !self.inspector_reflexive;
+        cx.notify();
+    }
+
+    /// Reveal/hide the DEEP native moldable presentation set below the live inspector
+    /// card. Default-hidden so the card alone IS the Inspect surface (NOTHING DRAWS
+    /// TWICE); this toggle opens the native Registry/Spotter/Halo/RawFields as a
+    /// distinct companion face below the card — never an underlay in the same bounds.
+    pub(crate) fn moldable_toggle_native(&mut self, cx: &mut Context<Self>) {
+        self.moldable_show_native = !self.moldable_show_native;
         cx.notify();
     }
 
