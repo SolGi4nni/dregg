@@ -63,6 +63,30 @@ pub trait WorldSink {
         method: &str,
         effects: Vec<Effect>,
     ) -> Result<[u8; 32], String>;
+
+    /// **Mint an OPEN, funded world cell** — the GM superpower of standing up a fresh
+    /// vessel in its world (a room, a player character, an NPC, a dungeon-instance room).
+    ///
+    /// The cell is derived deterministically from `seed` (hashed to the cell pubkey
+    /// against the host's token domain), minted with `funding` balance and fully-open
+    /// permissions (every action `AuthRequired::None`). OPEN is the load-bearing choice:
+    /// a spawned cell's pubkey is `hash(seed)` (not a signable Ed25519 key), so the only
+    /// way the GM can later stamp its stats — and the only way a player holding a granted
+    /// cap can write it — is for the cell to require NO signature (`set_state: None`). The
+    /// funding lets the cell pay the computron fee on its own self-stamp turns.
+    ///
+    /// This is the GM's BROAD authority over its world made concrete: minting a world
+    /// vessel is the host operator's privilege (the same direct open-perms mint a node
+    /// does at genesis), distinct from a player's cap-bounded signed turn. The cells it
+    /// produces then transact through REAL verified turns (the GM's self-stamps, the
+    /// player's signed move/gain-xp, the GM's level-up) — only the vessel's creation is
+    /// the privileged superpower. Idempotent: re-minting an existing id is a no-op.
+    ///
+    /// Returns the new cell id. The default errs (an embedded engine has no host ledger
+    /// to mint into); the attach host (`NodeWorldSink`) implements it.
+    fn mint_open_cell(&mut self, _seed: &str, _funding: u64) -> Result<CellId, String> {
+        Err("mint_open_cell requires an attached host ledger".into())
+    }
 }
 
 /// One affordance on an attached applet: its name, the authority a viewer must HOLD
@@ -329,6 +353,14 @@ impl AttachedApplet {
             .map_err(FireError::Executor)?;
         self.receipts.push(rh);
         Ok(rh)
+    }
+
+    /// Mint an OPEN, funded world cell through the host (the GM superpower — see
+    /// [`WorldSink::mint_open_cell`]). Returns the new cell id.
+    pub fn mint_open_cell(&mut self, seed: &str, funding: u64) -> Result<CellId, FireError> {
+        self.sink
+            .mint_open_cell(seed, funding)
+            .map_err(FireError::Executor)
     }
 
     /// Set ephemeral view-state — a plain in-memory change (NO turn, NO receipt).

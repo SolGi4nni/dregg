@@ -96,6 +96,20 @@ impl JsTarget {
             )),
         }
     }
+    /// Mint an OPEN, funded world cell through the host (the GM superpower) — only the
+    /// attach path has a host ledger to mint into.
+    pub fn mint_open_cell(
+        &mut self,
+        seed: &str,
+        funding: u64,
+    ) -> Result<dregg_types::CellId, FireError> {
+        match self {
+            JsTarget::Attached(a) => a.mint_open_cell(seed, funding),
+            JsTarget::Embedded(_) => Err(FireError::Executor(
+                "mint_open_cell requires an attached live World".into(),
+            )),
+        }
+    }
     /// The agent cell driving this target (the actor of every committed turn).
     pub fn agent_cell(&self) -> dregg_types::CellId {
         self.cell()
@@ -199,28 +213,59 @@ thread_local! {
     /// to publish the surface clients discover + fire. Each entry carries a real
     /// `Vec<Effect>` (the generalized affordance shape, not a hardcoded counter-bump).
     static SERVER_REGISTRY: RefCell<Vec<ServerAffordanceDef>> = const { RefCell::new(Vec::new()) };
+    /// THE FORK REGISTRY — the forked INSTANCES a server program stood up via
+    /// `deos.server.fork(seed)`. Each is a fresh OPEN cell minted on the live ledger (a
+    /// cap-bounded fork of the server's world for a party/session); the host drains this
+    /// after setup and publishes each as its OWN discoverable surface keyed by the
+    /// instance cell, carrying exactly the affordances scoped to it.
+    static FORK_REGISTRY: RefCell<Vec<ServerFork>> = const { RefCell::new(Vec::new()) };
 }
 
 /// One affordance a hosted server program registered via `deos.server.defineAffordance`:
-/// a name, the authority a player must hold to fire it, and the real effects the fire
-/// commits. The host publishes these into its [`crate::AffordanceSurface`] so a client
-/// discovers + fires them.
+/// a name, the authority a player must hold to fire it, the real effects the fire
+/// commits, and an OPTIONAL instance cell it is scoped to (a fork — see [`ServerFork`]).
+/// `instance == None` ⇒ the root server surface; `Some(cell)` ⇒ the affordance belongs
+/// to that forked instance's own published surface. The host publishes the root + each
+/// fork as a distinct discoverable surface so a client connects to a specific
+/// party/session instance.
 #[derive(Clone, Debug)]
 pub struct ServerAffordanceDef {
     pub name: String,
     pub required: dregg_cell::AuthRequired,
     pub effects: Vec<dregg_turn::action::Effect>,
+    /// The forked instance this affordance is scoped to (`None` ⇒ the root surface).
+    pub instance: Option<dregg_types::CellId>,
 }
 
-/// Reset the server registry before running a program's setup (so a fresh boot starts
-/// from an empty published surface).
+/// A FORKED INSTANCE the server stood up via `deos.server.fork(seed)` — a cap-bounded
+/// fork of the server's world for a party/session (the membrane-fork). Each fork is a
+/// fresh OPEN cell minted on the live ledger; affordances scoped to it
+/// (`defineAffordance({…, instance})`) publish as the fork's OWN discoverable surface,
+/// so a client connects + fires into THAT instance, isolated from the root + siblings.
+#[derive(Clone, Debug)]
+pub struct ServerFork {
+    /// The seed label the fork was derived from (the instance's name).
+    pub seed: String,
+    /// The minted instance cell (the discovery key + the surface root).
+    pub cell: dregg_types::CellId,
+}
+
+/// Reset the server registry (affordances + forks) before running a program's setup (so
+/// a fresh boot starts from an empty published surface).
 pub fn reset_server_registry() {
     SERVER_REGISTRY.with(|r| r.borrow_mut().clear());
+    FORK_REGISTRY.with(|r| r.borrow_mut().clear());
 }
 
 /// Drain the affordances a hosted server program registered (after its setup ran).
 pub fn take_server_registry() -> Vec<ServerAffordanceDef> {
     SERVER_REGISTRY.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// Drain the forked instances a hosted server program stood up (after its setup ran).
+/// The host publishes each as its own discoverable surface keyed by the instance cell.
+pub fn take_fork_registry() -> Vec<ServerFork> {
+    FORK_REGISTRY.with(|r| std::mem::take(&mut *r.borrow_mut()))
 }
 
 /// Install the [`CardEditor`] the `deos.editor.*` natives author through. The editor is
@@ -433,22 +478,43 @@ const PRELUDE: &str = r#"
         // offers cap-gated affordances players connect to + fire. The program's setup
         // registers its surface here; the HOST publishes it for client discovery.
         //
-        //   defineAffordance({name, required, effects:[...]})  — register a cap-gated
-        //     affordance carrying ARBITRARY effects (the keystone). `required` is an
-        //     authority label ("none"/"signature"/"proof"/"either"). Each effect is a
-        //     small object the host decodes into a real `Effect`:
+        //   defineAffordance({name, required, effects:[...], instance:<hex>?})  — register
+        //     a cap-gated affordance carrying ARBITRARY effects (the keystone). `required`
+        //     is an authority label ("none"/"signature"/"proof"/"either"). Each effect is
+        //     a small object the host decodes into a real `Effect`:
         //       {type:"setField", cell:<hex>, index:N, value:N}
         //       {type:"incrementNonce", cell:<hex>}
+        //     `instance` (optional) scopes the affordance to a forked instance (a cell hex
+        //     returned by `fork()`); omit it to register on the root server surface.
         //     Returns 1 on register, -1 on a malformed spec.
+        //   fork(seedLabel) — INSTANCE the server's world: mint a fresh OPEN instance cell
+        //     (a real verified turn through the host) — a cap-bounded fork for a party or
+        //     session (the membrane-fork). Returns the instance cell id hex (the discovery
+        //     key clients connect to), or "" on refusal. Scope affordances to it by passing
+        //     its hex as `defineAffordance`'s `instance`.
         //   spawnCell(seedHex, perms) — GM superpower: mint a fresh cell (a real
         //     CreateCell turn through the host) under the server's authority. Returns
         //     the new cell id hex, or "" on refusal. `perms` is "open" (default) for a
         //     fully-open cell.
         //   grant(toCellHex, onCellHex, required) — GM superpower: grant a capability
         //     over `onCell` to `toCell` (a real GrantCapability turn). Returns 1/-1.
+        //   setField(cellHex, index, value) — GM superpower: commit a `SetField` NOW on
+        //     any cell the GM governs (a real verified turn through the host). The GM
+        //     uses this to stamp a freshly-spawned cell's stats (level/xp/room), to fire
+        //     an NPC reaction, and to apply a LEVEL-UP after observing XP cross a
+        //     threshold. Returns 1 on commit, -1 on refusal. (Players can't reach this —
+        //     it is a server-side native; a player drives the world only via signed
+        //     turns over the caps the GM granted them.)
+        //   getField(cellHex, index) — read a u64 field off the live ledger (the GM
+        //     observing a player's character, e.g. its XP). Returns the value, or -1 if
+        //     the cell/field is absent.
         server: {
             defineAffordance: function(spec) {
                 return __deos_server_define_affordance(JSON.stringify(spec || {})) | 0;
+            },
+            fork: function(seedLabel) {
+                var c = __deos_server_fork(String(seedLabel || ""));
+                return c === "" ? null : c;
             },
             spawnCell: function(seedHex, perms) {
                 var c = __deos_server_spawn_cell(String(seedHex || ""), String(perms || "open"));
@@ -456,6 +522,12 @@ const PRELUDE: &str = r#"
             },
             grant: function(toCellHex, onCellHex, required) {
                 return __deos_server_grant(String(toCellHex), String(onCellHex), String(required || "signature")) | 0;
+            },
+            setField: function(cellHex, index, value) {
+                return __deos_server_set_field(String(cellHex), index | 0, value | 0) | 0;
+            },
+            getField: function(cellHex, index) {
+                return __deos_server_get_field(String(cellHex), index | 0) | 0;
             }
         }
     };
@@ -528,8 +600,11 @@ impl JsRuntime {
                 (c"__deos_editor_add_affordance", native_editor_add_affordance as RawNative, 2),
                 // private server (the deos-host surface) — define / spawn / grant
                 (c"__deos_server_define_affordance", native_server_define_affordance as RawNative, 1),
+                (c"__deos_server_fork", native_server_fork as RawNative, 1),
                 (c"__deos_server_spawn_cell", native_server_spawn_cell as RawNative, 2),
                 (c"__deos_server_grant", native_server_grant as RawNative, 3),
+                (c"__deos_server_set_field", native_server_set_field as RawNative, 3),
+                (c"__deos_server_get_field", native_server_get_field as RawNative, 2),
             ] {
                 let defined = JS_DefineFunction(realm_cx, g, name.as_ptr(), Some(f), nargs, 0);
                 if defined.is_null() {
@@ -1253,7 +1328,17 @@ unsafe extern "C" fn native_server_define_affordance(context: *mut RawJSContext,
                 .collect::<Result<Vec<_>, _>>()?,
             None => Vec::new(),
         };
-        Ok(ServerAffordanceDef { name, required, effects })
+        // Optional `instance`: scope this affordance to a forked instance (a cell hex
+        // `fork()` returned). A present-but-malformed instance hex is a hard error (the
+        // program meant to scope it but named no valid cell).
+        let instance = match v.get("instance").and_then(|x| x.as_str()) {
+            Some(hex) if !hex.trim().is_empty() => Some(
+                reflect_binding::parse_cell_id(hex)
+                    .ok_or_else(|| format!("defineAffordance: bad instance cell '{hex}'"))?,
+            ),
+            _ => None,
+        };
+        Ok(ServerAffordanceDef { name, required, effects, instance })
     })();
     let ok = match parsed {
         Ok(def) => {
@@ -1269,14 +1354,72 @@ unsafe extern "C" fn native_server_define_affordance(context: *mut RawJSContext,
     true
 }
 
+/// `__deos_server_fork(seedLabel)` — INSTANCE the server's world: mint a fresh OPEN
+/// instance cell through the attached host (the SAME open-perms mint `spawnCell` uses)
+/// and record it in the fork registry. Returns the instance cell id hex (the discovery
+/// key clients connect to), or `""` on refusal. A cap-bounded fork for a party/session
+/// (the membrane-fork): affordances scoped to it (`defineAffordance({…, instance})`)
+/// publish as the fork's OWN surface, isolated from the root + sibling instances.
+unsafe extern "C" fn native_server_fork(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let seed = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    if seed.trim().is_empty() {
+        record_error("server.fork: a seed label is required".into());
+        return return_string(&mut cx, &args, "");
+    }
+
+    // A funding stipend so the instance can pay its own self-stamp turns' computron fees
+    // (the same sizing `spawnCell`'s OPEN path uses).
+    const FORK_FUNDING: u64 = 100_000;
+
+    let id_hex = CURRENT_APPLET.with(|c| {
+        let mut guard = c.borrow_mut();
+        let target = match guard.as_mut() {
+            Some(t) => t,
+            None => {
+                record_error("server.fork: no attached World".into());
+                return String::new();
+            }
+        };
+        match target.mint_open_cell(&seed, FORK_FUNDING) {
+            Ok(id) => {
+                FORK_REGISTRY.with(|r| {
+                    r.borrow_mut().push(ServerFork {
+                        seed: seed.clone(),
+                        cell: id,
+                    })
+                });
+                reflect_binding::id_hex(&id)
+            }
+            Err(e) => {
+                record_error(format!("server.fork: {e}"));
+                String::new()
+            }
+        }
+    });
+    return_string(&mut cx, &args, &id_hex)
+}
+
 /// `__deos_server_spawn_cell(seedHex, perms)` — GM superpower: mint a fresh cell via a
 /// real `CreateCell` verified turn through the attached World. Returns the new cell id
 /// hex (its deterministic derivation), or `""` on refusal.
+///
+/// When `perms == "open"` (the default), the cell is minted OPEN + funded directly on the
+/// host ledger (the GM superpower [`WorldSink::mint_open_cell`]): every action
+/// `AuthRequired::None`, with a funding stipend. An open, funded cell can then (a) be
+/// self-stamped by the GM's `setField` superpower and (b) be written cross-cell by a
+/// player holding a granted cap — the two motions the living world needs (OPEN is
+/// load-bearing: the cell's pubkey is `hash(seed)`, not a signable Ed25519 key, so any
+/// signature-gated write would be unreachable). A non-"open" spawn instead commits a bare
+/// `CreateCell` verified turn, leaving the cell at the default user permissions
+/// (unreachable by a player without further grants).
 unsafe extern "C" fn native_server_spawn_cell(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
     let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
     let seed_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
-    let _perms = if args.argc_ >= 2 { arg_string(&mut cx, args.get(1)) } else { "open".into() };
+    let perms = if args.argc_ >= 2 { arg_string(&mut cx, args.get(1)) } else { "open".into() };
+    let open = perms.trim() == "open" || perms.trim().is_empty();
 
     let mut public_key = [0u8; 32];
     if !hex_decode_into(&seed_hex, &mut public_key) {
@@ -1285,24 +1428,45 @@ unsafe extern "C" fn native_server_spawn_cell(context: *mut RawJSContext, argc: 
     let token_id = *blake3::hash(b"default").as_bytes();
     let new_id = dregg_types::CellId::derive_raw(&public_key, &token_id);
 
-    let effect = dregg_turn::action::Effect::CreateCell {
-        public_key,
-        token_id,
-        balance: 0,
-    };
+    // A funding stipend so an OPEN spawned cell can pay its own self-stamp turns'
+    // computron fees. Sized to comfortably cover a handful of single-effect turns.
+    const SPAWN_FUNDING: u64 = 100_000;
+
     let id_hex = CURRENT_APPLET.with(|c| {
         let mut guard = c.borrow_mut();
-        match guard.as_mut() {
-            Some(target) => match target.fire_raw_effects("spawnCell", vec![effect]) {
+        let target = match guard.as_mut() {
+            Some(t) => t,
+            None => {
+                record_error("server.spawnCell: no attached World".into());
+                return String::new();
+            }
+        };
+        if open {
+            // OPEN spawn: the GM superpower — mint an open, funded world vessel through
+            // the host. OPEN is required: the cell's pubkey (hash(seed)) is not a signable
+            // Ed25519 key, so the GM's later self-stamps + a player's cap-bounded writes
+            // can only authorize if the cell needs NO signature (`set_state: None`).
+            match target.mint_open_cell(&seed_hex, SPAWN_FUNDING) {
+                Ok(id) => reflect_binding::id_hex(&id),
+                Err(e) => {
+                    record_error(format!("server.spawnCell: {e}"));
+                    String::new()
+                }
+            }
+        } else {
+            // Non-open spawn: a bare `CreateCell` verified turn as the GM agent (the cell
+            // keeps default user permissions — unreachable by a player without grants).
+            let create = dregg_turn::action::Effect::CreateCell {
+                public_key,
+                token_id,
+                balance: 0,
+            };
+            match target.fire_raw_effects("spawnCell", vec![create]) {
                 Ok(_rh) => reflect_binding::id_hex(&new_id),
                 Err(e) => {
                     record_error(format!("server.spawnCell: {e}"));
                     String::new()
                 }
-            },
-            None => {
-                record_error("server.spawnCell: no attached World".into());
-                String::new()
             }
         }
     });
@@ -1340,7 +1504,13 @@ unsafe extern "C" fn native_server_grant(context: *mut RawJSContext, argc: u32, 
         CURRENT_APPLET.with(|c| {
             let mut guard = c.borrow_mut();
             match guard.as_mut() {
-                Some(target) => match target.fire_raw_effects("grant", vec![effect]) {
+                // Commit the grant AS the `on` cell — a SELF-grant (from == actor ==
+                // action target). GrantCapability's authority is checked against `on`'s
+                // `delegate` permission; for an OPEN world cell (`delegate: None`) the
+                // self-grant authorizes with no signature, which is essential because the
+                // spawned cell's pubkey is not a signable Ed25519 key. (This mirrors the
+                // deos-host spike's door self-grant.)
+                Some(target) => match target.fire_raw_effects_as(on, "grant", vec![effect]) {
                     Ok(_rh) => true,
                     Err(e) => {
                         record_error(format!("server.grant: {e}"));
@@ -1352,6 +1522,81 @@ unsafe extern "C" fn native_server_grant(context: *mut RawJSContext, argc: u32, 
         })
     })();
     args.rval().set(Int32Value(if ok { 1 } else { -1 }));
+    true
+}
+
+/// `__deos_server_set_field(cellHex, index, value)` — GM superpower: commit a `SetField`
+/// NOW on a cell the GM governs (a real verified turn committed AS that cell through the
+/// attached World). The GM uses this to stamp spawned cells' stats, fire NPC reactions,
+/// and apply LEVEL-UPs. Returns 1 on commit, -1 on refusal.
+unsafe extern "C" fn native_server_set_field(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let cell_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let index = if args.argc_ >= 2 { arg_i32(args.get(1)).max(0) as usize } else { 0 };
+    let value = if args.argc_ >= 3 { arg_i32(args.get(2)).max(0) as u64 } else { 0 };
+    let ok = (|| -> bool {
+        let cell = match reflect_binding::parse_cell_id(&cell_hex) {
+            Some(c) => c,
+            None => return false,
+        };
+        let effect = dregg_turn::action::Effect::SetField {
+            cell,
+            index,
+            value: crate::applet::pack_u64(value),
+        };
+        // Commit AS the governed cell (the GM acting on a cell of its own world — the
+        // executor's authority gate is the binding check; the open-perms cells the GM
+        // spawned admit the self-write).
+        CURRENT_APPLET.with(|c| {
+            let mut guard = c.borrow_mut();
+            match guard.as_mut() {
+                Some(target) => match target.fire_raw_effects_as(cell, "setField", vec![effect]) {
+                    Ok(_rh) => true,
+                    Err(e) => {
+                        record_error(format!("server.setField: {e}"));
+                        false
+                    }
+                },
+                None => false,
+            }
+        })
+    })();
+    args.rval().set(Int32Value(if ok { 1 } else { -1 }));
+    true
+}
+
+/// `__deos_server_get_field(cellHex, index)` — read a u64 field off the live ledger (the
+/// GM observing a player's character — e.g. its XP). Returns the value as an i32, or -1 if
+/// the cell/field is absent.
+unsafe extern "C" fn native_server_get_field(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let cell_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let index = if args.argc_ >= 2 { arg_i32(args.get(1)).max(0) as usize } else { 0 };
+    let v = CURRENT_APPLET.with(|c| {
+        let guard = c.borrow();
+        let applet = match guard.as_ref() {
+            Some(a) => a,
+            None => return -1i32,
+        };
+        let cell = match reflect_binding::parse_cell_id(&cell_hex) {
+            Some(c) => c,
+            None => return -1i32,
+        };
+        let mut out = -1i32;
+        applet.with_ledger(&mut |l| {
+            if let Some(cell_ref) = l.get(&cell) {
+                if let Some(fe) = cell_ref.state.get_field(index) {
+                    let mut b = [0u8; 8];
+                    b.copy_from_slice(&fe[..8]);
+                    out = u64::from_le_bytes(b) as i32;
+                }
+            }
+        });
+        out
+    });
+    args.rval().set(Int32Value(v));
     true
 }
 

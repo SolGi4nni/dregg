@@ -3,15 +3,28 @@
 //! Installs a Prometheus recorder and exposes a `/metrics` HTTP handler
 //! that renders the exposition format.
 
+use std::sync::OnceLock;
+
 use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 
-/// Install the Prometheus metrics recorder. Returns the handle used to render
-/// the exposition-format output from the `/metrics` endpoint.
+/// The process-global Prometheus handle. The recorder may only be installed ONCE per
+/// process (a second `install_recorder()` errors — the global recorder is already set),
+/// so we install on first call and hand back a clone of the same handle thereafter. This
+/// makes `install_recorder()` idempotent, which matters when several in-process tests (or
+/// a re-entrant boot) each ask for the recorder.
+static RECORDER: OnceLock<PrometheusHandle> = OnceLock::new();
+
+/// Install the Prometheus metrics recorder (idempotent). Returns the handle used to
+/// render the exposition-format output from the `/metrics` endpoint.
 pub fn install_recorder() -> PrometheusHandle {
-    PrometheusBuilder::new()
-        .install_recorder()
-        .expect("failed to install Prometheus metrics recorder")
+    RECORDER
+        .get_or_init(|| {
+            PrometheusBuilder::new()
+                .install_recorder()
+                .expect("failed to install Prometheus metrics recorder")
+        })
+        .clone()
 }
 
 /// Axum handler for GET /metrics.

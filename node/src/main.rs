@@ -16,6 +16,10 @@ mod channels_service;
 mod deos_host;
 #[cfg(all(test, feature = "deos-host"))]
 mod deos_host_e2e;
+#[cfg(all(test, feature = "deos-host"))]
+mod deos_host_fork_client_e2e;
+#[cfg(all(test, feature = "deos-host"))]
+mod mud_e2e;
 pub mod config;
 mod coord_gate;
 mod dkg_service;

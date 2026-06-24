@@ -8,6 +8,19 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## ⚑ WASM EXECUTOR WALL CLOCK — a real turn panics on wasm32 (`Instant::now`) (2026-06-24)
+Named by the deos-card seam-closing commit (`d16b0af32`, `wasm/tests/card_fires_a_verified_turn.rs`). The
+in-tab verified executor is drivable for everything EXCEPT a real turn: `turn/src/executor/{execute,
+execute_tree}.rs` take unconditional `std::time::Instant::now()` profiling fences (`_pt*`/`_pf_*`, used only
+under `DREGG_TURN_PROFILE`), and std's `wasm32-unknown-unknown` `Instant` is unbacked — it PANICS ("time not
+implemented on this platform"), NOT routed through `performance.now()`, so the real browser playground hits
+it on any `execute_turn` too (no existing wasm test fired a turn, which is why it was unsurfaced). The card
+loop (`CardWorld::fire` → SetField+IncrementNonce → verified turn → re-read bound slot) is PROVEN on the host
+target; the wasm32 smoke proves CardWorld instantiates + reads in a real module. CLOSURE: give `turn/` a wasm
+clock — `web-time` gated on `target_arch="wasm32"`, or move the `_pt*`/`_pf_*` fences behind
+`cfg(not(target_arch="wasm32"))` (they are measurement-only). Then the wasm32 `fire` test (+ the unknown-
+affordance refusal) flips on and the in-tab card fires real turns end-to-end.
+
 ## ✅ REVOKE-DELEGATION EPOCH STEP — FORCED at the abstract descriptor (the last per-effect epoch residual closed) (2026-06-24)
 The `RevokeDelegationEpochResidual` (parent epoch `+1`, child snapshot cleared, child stamp reset) is no
 longer a carried fail-closed conjunct in any per-effect bridge. NEW dedicated DUAL descriptor
