@@ -1202,29 +1202,66 @@ impl LiveWebView {
     /// `pump` bounds how many `spin_event_loop` iterations to drive between the input
     /// and the repaint (a scroll needs only a handful; a click that runs script may
     /// want more). The spike uses 256; a live pane uses fewer for responsiveness.
+    ///
+    /// SCROLL SETTLE: a [`WebInput::Scroll`] posts `notify_scroll_event` to the PAINT
+    /// thread, which updates the scroll tree asynchronously; the FIRST `frame_ready`
+    /// after the input can fire from a coalesced repaint of the still-UNSCROLLED scene
+    /// (the scroll-tree delta + the rebuilt WebRender scene land a beat later). So for a
+    /// scroll we do NOT trust the first frame; we keep pumping a short settle window
+    /// past it before reading back — otherwise the read captures the pre-scroll tile and
+    /// the pane appears not to scroll. A click/move/key mutates synchronously on the
+    /// script thread, so the first frame already reflects it and the early-out stands.
     pub fn apply_input(&mut self, input: WebInput, pump: usize) -> bool {
         let Some(webview) = self.webview.as_ref() else {
             return false;
         };
         let before = self.frame.as_ref().map(|f| f.content_digest());
 
+        // A scroll's first post-input frame may still be the pre-scroll scene (the
+        // scroll tree updates on the paint thread asynchronously). Pump a SETTLE floor
+        // past the first `frame_ready` for a scroll; other inputs settle on first frame.
+        let is_scroll = matches!(input, WebInput::Scroll { .. });
+        let settle_after_ready: usize = if is_scroll { 24 } else { 0 };
+
         if let Some(d) = self.delegate.as_ref() {
             d.frame_ready.set(false);
         }
         apply_input(webview, input);
+        let mut spins_since_ready: Option<usize> = None;
         for _ in 0..pump {
             self.servo.spin_event_loop();
             // A short yield lets servo's worker threads make progress between spins
             // (the same pacing the headless loops use). Cheap; bounded by `pump`.
             std::thread::sleep(std::time::Duration::from_millis(1));
-            // Early-out once the engine reports a fresh frame is ready to read back.
-            if self
+            let ready = self
                 .delegate
                 .as_ref()
                 .map(|d| d.frame_ready.get())
-                .unwrap_or(false)
-            {
-                break;
+                .unwrap_or(false);
+            if ready {
+                // First frame ready: for a non-scroll input, that frame already
+                // reflects the change — break now (responsive). For a scroll, keep
+                // pumping a short settle window so the scroll-tree delta + rebuilt
+                // scene land before the readback.
+                match spins_since_ready.as_mut() {
+                    None => {
+                        if settle_after_ready == 0 {
+                            break;
+                        }
+                        spins_since_ready = Some(0);
+                    }
+                    Some(n) => {
+                        *n += 1;
+                        if *n >= settle_after_ready {
+                            break;
+                        }
+                        // The paint thread clears `frame_ready` when it next repaints;
+                        // re-arm so a settled scroll frame re-trips it within the window.
+                        if let Some(d) = self.delegate.as_ref() {
+                            d.frame_ready.set(false);
+                        }
+                    }
+                }
             }
         }
         self.repaint();

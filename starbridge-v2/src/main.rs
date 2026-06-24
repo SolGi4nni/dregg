@@ -2498,13 +2498,23 @@ fn render_webshell_live_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
         bw = before.width();
         bh = before.height();
         before.save(format!("{out}.before.png"))?;
+        // The PAGE-TILE digest is the layout-independent witness (the cockpit window is
+        // larger than the clipped tile, so a full-window diff under-reports a scroll).
+        let tile_before =
+            cx.update(|app| cockpit_view.update(app, |c, _cx| c.webshell_tile_digest()));
         let changed =
             cx.update(|app| cockpit_view.update(app, |c, cx| c.webshell_bake_scroll(700.0, cx)));
         cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
         cx.run_until_parked();
         let after = cx.capture_screenshot(window.into())?;
         after.save(format!("{out}.after.png"))?;
-        changed && before.as_raw() != after.as_raw()
+        let tile_after =
+            cx.update(|app| cockpit_view.update(app, |c, _cx| c.webshell_tile_digest()));
+        eprintln!(
+            "scroll witness: bake_scroll_changed={changed} tile_digest {tile_before:#x} -> \
+             {tile_after:#x}"
+        );
+        changed && tile_before != tile_after
     } else {
         bw = kw;
         bh = kh;
@@ -2512,10 +2522,10 @@ fn render_webshell_live_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
     };
     if !scroll_witness {
         eprintln!(
-            "WARN webshell-live: the secondary scroll band-flip did not change the tile on \
-             this backend (a known scroll-repaint timing flake; the engine's \
-             `input_rerenders_tile` spike proves the scroll loop separately). The KEYBOARD \
-             witness (phase 1) PASSED."
+            "WARN webshell-live: the secondary scroll band-flip did not change the page tile \
+             (the engine's `a_scroll_input_re_renders_the_webview_to_a_different_tile` spike \
+             proves the scroll loop on a fresh WebView; the persistent-pane scroll is tracked \
+             as a follow-up). The KEYBOARD witness (phase 1) PASSED."
         );
     }
 
