@@ -162,20 +162,6 @@ servo-net = { path = "servo-render/vendor/servo-net" }
 # starbridge-v2/Cargo.toml (the offscreen/headless wgpu renderer the render-capture
 # bakes need is on that pushed rev) — no local-path [patch] override.
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TEMPORARY local-path patch for the VK-identity-pin (lever (a)) fork work.
-# The fork tree at ../plonky3-recursion has uncommitted changes adding
-# `into_recursion_input_pinned` / `pin_preprocessed_commit` (the IVC self-verify
-# fixed-point hook). MAIN LOOP: once the fork is committed+pushed, DELETE this
-# patch block and bump the four `p3-*` git revs (workspace.dependencies, ~L196)
-# to the new fork commit. Until then this path-patch lets dregg build/test
-# against the local fork tree.
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../plonky3-recursion/recursion" }
-p3-circuit = { path = "../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../plonky3-recursion/poseidon2-circuit-air" }
-
 [workspace.dependencies]
 ## Local
 dregg-macaroon = { path = "macaroon", default-features = false }
@@ -204,13 +190,14 @@ p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd73
 p3-uni-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 
-## Plonky3-recursion fork — rev 72ffc56 (`update-plonky3-rev` tip: p3 82cfad73 + the C3
-## native-batch leaf-wrap carrying `RecursionInput::NativeBatchStark`). PURE git deps, no
-## `[patch]`, no sibling checkout — a fresh clone and CI resolve this identically.
-p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "72ffc5646e90af9324ab17248b4beed31c036db3" }
-p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "72ffc5646e90af9324ab17248b4beed31c036db3" }
-p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "72ffc5646e90af9324ab17248b4beed31c036db3" }
-p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "72ffc5646e90af9324ab17248b4beed31c036db3" }
+## Plonky3-recursion fork — rev fc12f23 (`update-plonky3-rev` tip: the IVC FIXED-POINT —
+## child-VK identity pinned in-band + table_public_inputs threaded = the constant-VK perpetual
+## fold; validated end-to-end by incremental_accumulate_verifies_whole_history). PURE git deps,
+## no `[patch]`, no sibling checkout — a fresh clone and CI resolve this identically.
+p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "fc12f233a2d14531381d40bfaf10c7eefb73f94d" }
+p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "fc12f233a2d14531381d40bfaf10c7eefb73f94d" }
+p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "fc12f233a2d14531381d40bfaf10c7eefb73f94d" }
+p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "fc12f233a2d14531381d40bfaf10c7eefb73f94d" }
 
 ## Crates.io
 ark-serialize = { version = "0.5", features = ["derive"] }
