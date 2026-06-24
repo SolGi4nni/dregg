@@ -35,7 +35,8 @@ use crate::views::theme;
 use starbridge_v2::reflect;
 use starbridge_v2::session::{
     demo_identities, open_session_world, provision_system_principal, session_base_dir,
-    start_fresh_session_world, DemoIdentity, IdentityKind, LoginManager, LoginOutcome, Session,
+    start_fresh_session_world, DemoIdentity, IdentityKeystore, IdentityKind, LoginManager,
+    LoginOutcome, Session,
 };
 use starbridge_v2::world::{self, World};
 
@@ -54,6 +55,12 @@ pub struct LoginSurface {
     focus: FocusHandle,
     /// The last refusal/error to show under the picker (the in-band "denied").
     message: Option<String>,
+    /// THE RECOVERY PHRASE shown ONCE after a NEW identity's keypair is minted —
+    /// the owner's 24-word key in human form, to write down and keep. deos persists
+    /// only the derived seed (encrypted at rest), never this phrase, so this is the
+    /// single moment it is visible. `None` for a returning user (their key is
+    /// already custodied) and once dismissed.
+    recovery: Option<String>,
     /// When opening the durable image was UNSALVAGEABLE (recovery itself failed),
     /// the identity the owner was logging in as — so the surface can offer an
     /// explicit "start fresh" choice (quarantine the corrupt image, provision a
@@ -105,33 +112,99 @@ impl LoginSurface {
             identities: demo_identities(),
             focus,
             message: None,
+            recovery: None,
             fresh_offer: None,
             // Boot into the warm front door — the welcome, not the roster.
             stage: WelcomeStage::Welcome,
         }
     }
 
-    /// The PRIMARY identity the warm "begin" mints/resumes — the human owner
-    /// (`@ember`, the first user in the roster). A first-timer needs ONE door, not
-    /// a chooser; the rest of the roster is reachable via the quiet "other ways in".
-    fn primary_identity(&self) -> DemoIdentity {
-        self.identities
-            .iter()
-            .find(|i| matches!(i.kind, IdentityKind::User))
-            .cloned()
-            .unwrap_or_else(|| self.identities[0].clone())
+    /// The stable secret-store LABEL of the primary human owner — the key
+    /// [`IdentityKeystore`] mints/loads for the warm "begin". Fixed (`"ember"`) so
+    /// the SAME keypair is re-derived every launch (one owner, one persistent key).
+    const PRIMARY_LABEL: &'static str = "ember";
+
+    /// The deos image's identity keystore — durable key custody over `dregg-secrets`
+    /// under the deos image root. Cheap to build (a file-store handle); constructed
+    /// on demand rather than threaded through every constructor.
+    fn keystore(&self) -> Option<IdentityKeystore> {
+        IdentityKeystore::default_for(&session_base_dir()).ok()
     }
 
-    /// Whether the primary identity has a durable image on disk already — i.e. this
-    /// is a RETURNING owner (greet "welcome back" + resume) rather than a brand-new
-    /// one (greet "this is your world" + mint). Checked *before* login so the front
-    /// door's words fit. A missing file (or no addressable home dir) reads as new —
-    /// the inviting default. Never fails: it only chooses a greeting.
+    /// The PRIMARY identity the warm "begin" mints/presents — the human owner. This
+    /// is the REAL key ceremony: a returning owner's persisted keypair is loaded
+    /// from the keystore; a brand-new owner has a keypair MINTED + persisted (the
+    /// recovery phrase is surfaced once). Returns the key-backed [`DemoIdentity`] and
+    /// the recovery phrase to show ON A FRESH MINT (`None` on return). Falls back to
+    /// the fixed dev identity if the keystore is unavailable (so login never
+    /// dead-ends on a missing secret store — the held-key stand-in still works).
+    fn primary_identity(&self) -> (DemoIdentity, Option<String>) {
+        let fallback = || {
+            self.identities
+                .iter()
+                .find(|i| matches!(i.kind, IdentityKind::User))
+                .cloned()
+                .unwrap_or_else(|| self.identities[0].clone())
+        };
+        let Some(ks) = self.keystore() else {
+            return (fallback(), None);
+        };
+        match ks.identity_for(
+            Self::PRIMARY_LABEL,
+            "ember",
+            IdentityKind::User,
+            "you — your minted root key, your sovereign world",
+        ) {
+            Ok((id, recovery)) => (id, recovery),
+            // The store is unreadable (a permissions / disk fault) — fall back to the
+            // dev identity rather than block the door. The session is still real; it
+            // just isn't custodied in the encrypted store this launch.
+            Err(_) => (fallback(), None),
+        }
+    }
+
+    /// Whether the primary owner has a custodied key already — i.e. this is a
+    /// RETURNING owner (greet "welcome back" + present the key) rather than a
+    /// brand-new one (greet "this is your world" + mint the key). Checked *before*
+    /// login so the front door's words fit. Consults the keystore (key presence is
+    /// the real "have you been here"); a missing key reads as new — the inviting
+    /// default. Never fails: it only chooses a greeting.
     fn is_returning(&self) -> bool {
-        let id = self.primary_identity();
-        let principal = starbridge_v2::session::Principal { pubkey: id.pubkey };
-        let path = starbridge_v2::session::session_world_path(&session_base_dir(), &principal);
-        path.exists()
+        self.keystore()
+            .map(|ks| ks.has_identity(Self::PRIMARY_LABEL))
+            .unwrap_or(false)
+    }
+
+    /// **THE WARM "BEGIN" — run the real key ceremony.** Mint-or-present the primary
+    /// owner's key via the keystore, then enter their world:
+    ///
+    /// - **New owner (a keypair was just minted):** surface the 24-word RECOVERY
+    ///   PHRASE and STOP, requiring an explicit acknowledgement ("I've saved it")
+    ///   before proceeding — the owner must see their key once, since deos persists
+    ///   only the derived seed. The ack ([`Self::acknowledge_recovery`]) re-enters
+    ///   here; the key now exists, so this resolves to the returning-user path and
+    ///   logs in.
+    /// - **Returning owner (the key was loaded):** run [`Self::login_as`] straight
+    ///   away — present the custodied key, re-derive the same root cell + session.
+    fn begin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (identity, recovery) = self.primary_identity();
+        if let Some(phrase) = recovery {
+            // A FRESH MINT: show the recovery phrase and wait for acknowledgement
+            // before entering (do NOT swap the root away while the phrase is unseen).
+            self.recovery = Some(phrase);
+            cx.notify();
+            return;
+        }
+        // Returning owner (or the phrase was just acknowledged) — present the key.
+        self.login_as(identity, window, cx);
+    }
+
+    /// Acknowledge the freshly-minted recovery phrase ("I've saved it, continue") —
+    /// clear it and re-enter [`Self::begin`]. The key is now persisted, so `begin`
+    /// resolves to the returning-user path and logs the new owner in.
+    fn acknowledge_recovery(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.recovery = None;
+        self.begin(window, cx);
     }
 
     /// Focus the login surface on open so it receives keystrokes.
@@ -338,7 +411,6 @@ impl LoginSurface {
     /// too (never a dead-end).
     fn welcome_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let returning = self.is_returning();
-        let primary = self.primary_identity();
         let (greeting, sub, begin_label) = if returning {
             (
                 "welcome back",
@@ -387,8 +459,10 @@ impl LoginSurface {
                     ),
             )
             // THE ONE INVITING WAY IN — Begin / Welcome back. A single warm button
-            // (mints or resumes the owner's identity under the hood). The whole
-            // ceremony runs from this click; no chooser is in the way.
+            // that runs the REAL key ceremony under the hood: a new owner has a
+            // keypair MINTED + persisted (the recovery phrase surfaces once); a
+            // returning owner PRESENTS their custodied key. The whole ceremony runs
+            // from this one click; no chooser is in the way.
             .child(
                 div()
                     .id("welcome-begin")
@@ -402,7 +476,7 @@ impl LoginSurface {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _ev, window, cx| {
-                            this.login_as(primary.clone(), window, cx);
+                            this.begin(window, cx);
                         }),
                     )
                     .child(SharedString::from(begin_label)),
@@ -444,6 +518,75 @@ impl LoginSurface {
             .when_some(self.fresh_offer.clone(), |el, identity| {
                 el.child(self.start_fresh_button(identity, cx))
             })
+            // THE RECOVERY PHRASE — shown ONCE after a fresh keypair is minted. The
+            // owner's 24-word key; they save it, then acknowledge to enter. deos
+            // persists only the derived seed, so this is the single moment it shows.
+            .when_some(self.recovery.clone(), |el, phrase| {
+                el.child(self.recovery_panel(phrase, cx))
+            })
+    }
+
+    /// THE RECOVERY-PHRASE PANEL — the one-time reveal of a freshly-minted owner's
+    /// 24-word key, with the "I've saved it, continue" acknowledgement that enters
+    /// their world. The genuine key-custody moment: deos stores only the derived
+    /// seed (encrypted at rest), so this phrase is the owner's own recovery path and
+    /// is shown exactly once, here.
+    fn recovery_panel(&self, phrase: String, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_3()
+            .max_w(px(520.))
+            .px_4()
+            .py_3()
+            .rounded_md()
+            .bg(theme::panel())
+            .border_1()
+            .border_color(theme::accent())
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme::text())
+                    .child("your recovery phrase — write it down, keep it safe"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .child(
+                        "this is your key. deos keeps only the derived seed (encrypted); \
+                         this phrase is shown once and is yours to hold.",
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .bg(theme::bg())
+                    .text_color(theme::accent())
+                    .child(SharedString::from(phrase)),
+            )
+            .child(
+                div()
+                    .id("recovery-ack")
+                    .px(px(20.))
+                    .py(px(8.))
+                    .rounded_md()
+                    .bg(theme::accent())
+                    .text_color(theme::bg())
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.9))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, window, cx| {
+                            this.acknowledge_recovery(window, cx);
+                        }),
+                    )
+                    .child("I've saved it — enter my world"),
+            )
     }
 
     /// THE FULL PICKER (`WelcomeStage::Picker`) — the identity roster (the held-key
@@ -754,6 +897,7 @@ impl SessionShell {
                     identities: demo_identities(),
                     focus,
                     message: Some("logged out — the session cap-tree is dark".into()),
+                    recovery: None,
                     fresh_offer: None,
                     // A logout returns to the warm front door, not the roster — the
                     // owner is greeted "welcome back", one click from in again.

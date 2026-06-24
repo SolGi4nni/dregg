@@ -180,7 +180,7 @@ live-node = ["dep:reqwest"]
 # builds get the registry via `native-full` (or pass `--features app-registry`
 # alongside `embedded-executor` for the gpui-free native test path); the wasm
 # build omits it cleanly.
-embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-cell-crypto", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells", "dep:dregg-persist", "dep:dregg-doc", "dep:dregg-captp"]
+embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-cell-crypto", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells", "dep:dregg-persist", "dep:dregg-doc", "dep:dregg-captp", "dep:dregg-secrets"]
 
 # THE APP REGISTRY — wire `dregg-app-framework` + a STARTER SET of pre-built
 # starbridge-apps (gallery / tussle / sealed-auction / bounty-board) into the
@@ -572,6 +572,13 @@ deos-web-cells = { path = "../deos-web-cells", optional = true }
 # already pulls, so cargo resolves IDENTICAL crate instances (its `Cell` IS our
 # `Cell`, its `CommitRecord.touched_cells` ARE our ledger cells).
 dregg-persist = { path = "../persist", optional = true }
+# IDENTITY KEY CUSTODY — the durable half of the real login key ceremony. A new
+# user's signing seed is persisted (AES-256-GCM, encrypted at rest) and loaded back
+# on return (`session::IdentityKeystore`). `default-features = false` drops the OS
+# keychain (keyring) backend so headless CI has no Secret Service dependency; the
+# portable encrypted-file store is the default custody. (A deployment re-enables
+# `keychain` to front it with the OS credential manager.)
+dregg-secrets = { path = "../secrets", optional = true, default-features = false }
 # THE CapTP NETLAYER — the REAL wire the reflexive distributed image (n>1) dials.
 # `dregg-captp`'s `netlayer::{InProcessNetlayer, NetConnection, NetSession}` (the
 # OCapN/Goblins transport abstraction + its in-process instance) is what

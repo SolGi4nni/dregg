@@ -42,6 +42,7 @@
 
 use dregg_cell::{AuthRequired, CellId};
 use dregg_sdk::cipherclerk::AgentCipherclerk;
+use dregg_sdk::{PublicKey, Signature};
 use dregg_turn::action::Effect;
 use dregg_turn::turn::TurnReceipt;
 
@@ -249,6 +250,63 @@ impl LoginOutcome {
     }
 }
 
+/// The domain-separation tag prefixed to a [`Challenge`]'s signed message, so an
+/// authentication signature can never be confused with a signature over a turn, a
+/// receipt, or any other protocol message — a login proof is a login proof alone.
+const CHALLENGE_DOMAIN: &[u8] = b"deos-login-challenge-v1\0";
+
+/// **A login CHALLENGE** — the fresh nonce a returning user signs to prove
+/// possession of their key (real challenge–response). It is single-use (a fresh
+/// random nonce per attempt) and domain-separated (the signed bytes are
+/// `CHALLENGE_DOMAIN || nonce`), so a passing signature is bound to *this* login
+/// and cannot be a signature lifted from elsewhere.
+///
+/// The ceremony: [`LoginManager::issue_challenge`] mints one, the holder signs
+/// [`Challenge::message`] with their clerk, and [`LoginManager::authenticate_signed`]
+/// verifies it against the claimed public key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Challenge {
+    /// The random 32-byte nonce — unique per authentication attempt.
+    pub nonce: [u8; 32],
+}
+
+impl Challenge {
+    /// Mint a fresh challenge from OS entropy (via the SDK's keygen entropy path,
+    /// so no extra randomness dependency is pulled into the cockpit). Each call is
+    /// a new, unguessable nonce.
+    pub fn fresh() -> Self {
+        // Reuse the SDK's audited entropy path (`generate_mnemonic` draws 256 bits
+        // of OS entropy); hash the phrase to a 32-byte nonce. The phrase itself is
+        // discarded — only its entropy seeds the nonce.
+        let phrase = dregg_sdk::mnemonic::generate_mnemonic();
+        let nonce = *blake3::hash(phrase.as_bytes()).as_bytes();
+        Challenge { nonce }
+    }
+
+    /// Construct a challenge from an explicit nonce (deterministic — for tests and
+    /// for a caller that already drew its own entropy).
+    pub fn from_nonce(nonce: [u8; 32]) -> Self {
+        Challenge { nonce }
+    }
+
+    /// The exact bytes a holder signs to answer this challenge:
+    /// `CHALLENGE_DOMAIN || nonce`. The domain prefix makes the signature
+    /// unmistakably a login proof (it cannot collide with a turn-signing message).
+    pub fn message(&self) -> Vec<u8> {
+        let mut m = Vec::with_capacity(CHALLENGE_DOMAIN.len() + 32);
+        m.extend_from_slice(CHALLENGE_DOMAIN);
+        m.extend_from_slice(&self.nonce);
+        m
+    }
+
+    /// Sign this challenge with `clerk` — the holder's side of the ceremony. The
+    /// returned [`Signature`] is what [`LoginManager::authenticate_signed`] verifies.
+    /// A convenience over `clerk.sign_bytes(&challenge.message())`.
+    pub fn sign_with(&self, clerk: &AgentCipherclerk) -> Signature {
+        clerk.sign_bytes(&self.message())
+    }
+}
+
 /// **THE LOGIN MANAGER — the trusted L6-adjacent session cell.**
 ///
 /// It holds the **system principal**: the deos image's root identity, the only
@@ -272,15 +330,54 @@ impl LoginManager {
         LoginManager { system_principal }
     }
 
-    /// **AUTHENTICATE** — prove possession of the principal's key. In the live
-    /// manager this is challenge–response (sign a nonce) or KERI pre-rotation
-    /// against the identity app. The sketch's stand-in: the principal proves
-    /// possession by exhibiting that its claimed pubkey is the one whose secret
-    /// half signed `proof_ok` — modeled as the boolean a real signature check
-    /// would produce, so the *flow* (auth gates everything downstream) is exact.
+    /// **AUTHENTICATE (real challenge–response)** — prove possession of the
+    /// secret half of `pubkey` by exhibiting a genuine Ed25519 signature over a
+    /// fresh [`Challenge`] this manager issued. This is the live key ceremony,
+    /// not a stand-in: the signature is verified with `verify_strict`
+    /// (`dregg_types::PublicKey::verify`), so only the holder of the actual
+    /// secret key passes — a wrong key, a replayed signature over a *different*
+    /// challenge, or a forged `[0u8; 64]` is refused.
     ///
-    /// Returns a [`Principal`] ONLY on a passing check, so holding one is a
-    /// proof of authentication.
+    /// Returns a [`Principal`] ONLY on a passing verification, so holding one is
+    /// a cryptographic proof of authentication (login = *presenting* the key).
+    ///
+    /// The flow a returning user runs: the surface calls [`Self::issue_challenge`],
+    /// the holder signs `challenge.message()` with their clerk
+    /// (`AgentCipherclerk::sign_bytes`), and this verifies it. The challenge is
+    /// single-use and domain-separated (it cannot be a signature captured from a
+    /// turn or another session).
+    pub fn authenticate_signed(
+        &self,
+        pubkey: [u8; 32],
+        challenge: &Challenge,
+        signature: &Signature,
+    ) -> Option<Principal> {
+        // Real Ed25519 verification: the claimed pubkey's verifying key must have
+        // signed THIS challenge's domain-separated message. `verify` uses
+        // `verify_strict` (rejects non-canonical S — no malleability).
+        if PublicKey(pubkey).verify(&challenge.message(), signature) {
+            Some(Principal { pubkey })
+        } else {
+            None
+        }
+    }
+
+    /// Issue a fresh, single-use [`Challenge`] for a login attempt — the nonce the
+    /// returning user signs to prove key possession. Random + domain-separated, so
+    /// a signature over it is bound to *this* authentication and cannot be a
+    /// signature lifted from a turn, a receipt, or another session.
+    pub fn issue_challenge(&self) -> Challenge {
+        Challenge::fresh()
+    }
+
+    /// **AUTHENTICATE (demo held-key stand-in)** — the picker path: clicking an
+    /// identity *is* the claim "I hold this key". `proof_ok` models the boolean a
+    /// real signature check would produce, so the *flow* (auth gates everything
+    /// downstream) is exact even on the demo roster. The production / returning-user
+    /// path is [`Self::authenticate_signed`], a real challenge–response.
+    ///
+    /// Returns a [`Principal`] ONLY on a passing check, so holding one is a proof
+    /// of authentication (under the stand-in's assumption that the click is honest).
     pub fn authenticate(&self, pubkey: [u8; 32], proof_ok: bool) -> Option<Principal> {
         if proof_ok {
             Some(Principal { pubkey })
@@ -599,6 +696,237 @@ impl LoginManager {
 }
 
 // ===========================================================================
+// IDENTITY KEY CUSTODY — the REAL key ceremony's durable half. A NEW user has an
+// Ed25519 keypair MINTED (24-word mnemonic → 64-byte seed → clerk) and its seed
+// PERSISTED into the OS-encrypted secret store (`dregg-secrets`: keychain first,
+// AES-256-GCM file fallback). A RETURNING user PRESENTS their key — the seed is
+// loaded back, the exact clerk reconstructed, and a fresh [`Challenge`] signed
+// (real challenge–response). "Receive your world" becomes literal: the keypair is
+// the root capability over the user's own world, generated + held, not picked.
+//
+// Native-only (the secret store is filesystem/keychain-backed); the browser image
+// keeps the ephemeral demo roster.
+// ===========================================================================
+
+/// The secret-store namespace under which a deos inhabitant's signing seed lives.
+/// Keyed by the human label (`"ember"`, `"guest"`, …), one seed per inhabitant.
+#[cfg(not(target_arch = "wasm32"))]
+pub const IDENTITY_SECRET_NAMESPACE: &str = "deos-identity";
+
+/// A freshly MINTED identity — the output of [`IdentityKeystore::mint`]. Carries
+/// the reconstructable clerk (so the caller can client-sign immediately), the
+/// 64-byte seed it persisted, and the 24-word RECOVERY MNEMONIC to show the owner
+/// ONCE (their key out-of-band; deos never stores the phrase, only the seed).
+#[cfg(not(target_arch = "wasm32"))]
+pub struct MintedIdentity {
+    /// The newly-generated signing clerk (real Ed25519). Its public key is the
+    /// identity; its root cell is `derive_raw(pubkey, ROOT_TOKEN)`.
+    pub clerk: AgentCipherclerk,
+    /// The 64-byte seed that was persisted to the secret store (reconstructs the
+    /// exact clerk on return via `AgentCipherclerk::from_seed`).
+    pub seed: [u8; 64],
+    /// The 24-word recovery phrase — the owner's key in human form, to be shown
+    /// ONCE and then theirs to keep. deos persists only the derived seed, so this
+    /// phrase is the user's own recovery path (it is never written to disk by deos).
+    pub mnemonic: String,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl MintedIdentity {
+    /// The minted identity's public key (the identity proper).
+    pub fn pubkey(&self) -> [u8; 32] {
+        self.clerk.public_key().0
+    }
+
+    /// The minted identity's root capability cell — `derive_raw(pubkey, ROOT_TOKEN)`.
+    /// This is "your world": the genesis sovereign cell the grant ceremony births.
+    pub fn root_cell(&self) -> CellId {
+        CellId::derive_raw(&self.clerk.public_key().0, &ROOT_TOKEN)
+    }
+}
+
+/// **THE IDENTITY KEYSTORE — durable key custody over `dregg-secrets`.**
+///
+/// The persistent half of the real key ceremony. It mints a brand-new Ed25519
+/// identity (generating a recovery mnemonic and persisting the derived seed
+/// encrypted at rest) and loads a returning identity's seed back to reconstruct
+/// the exact clerk. It holds NO authority of its own — it is the key *custodian*,
+/// distinct from the [`LoginManager`] (which grants caps): possession of the key
+/// is what the manager then verifies via challenge–response.
+///
+/// Backed by a [`dregg_secrets::SecretStore`] — by default a [`CompositeStore`]
+/// of the OS keychain (primary) and an AES-256-GCM encrypted file (fallback), so
+/// a seed survives across launches the way the durable image does.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct IdentityKeystore {
+    store: Box<dyn dregg_secrets::SecretStore>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl IdentityKeystore {
+    /// A keystore over an explicit secret store (test / custom-backend injection).
+    pub fn new(store: Box<dyn dregg_secrets::SecretStore>) -> Self {
+        IdentityKeystore { store }
+    }
+
+    /// The default deos keystore: an AES-256-GCM encrypted file store under the
+    /// deos image root (`<base_dir>/secrets/`), the portable at-rest custody that
+    /// works on every desktop (incl. headless CI, where no OS Secret Service
+    /// exists). The file backend's master key is derived deterministically from the
+    /// image root path's fixed device context, so the same desktop re-derives the
+    /// same KEK across launches.
+    ///
+    /// This is an honest single-device-desktop convenience, NOT a password-derived
+    /// KEK: a deployment hardens it by (a) deriving the KEK from a user passphrase
+    /// / TPM and (b) fronting the file store with the OS keychain
+    /// ([`dregg_secrets::KeychainStore`], a one-line [`CompositeStore`] addition).
+    pub fn default_for(base_dir: &std::path::Path) -> Result<Self, dregg_secrets::SecretStoreError> {
+        let secrets_dir = base_dir.join("secrets");
+        // A per-image device master key: derived from a fixed context + the image
+        // root path, so the same desktop re-derives the same KEK across launches.
+        let kek = blake3::derive_key(
+            "deos-identity-keystore-file-kek-v1",
+            secrets_dir.to_string_lossy().as_bytes(),
+        );
+        let file = dregg_secrets::EncryptedFileStore::new(secrets_dir, kek);
+        Ok(IdentityKeystore {
+            store: Box::new(file),
+        })
+    }
+
+    /// The secret id a `label`'s signing seed is stored under.
+    fn seed_id(label: &str) -> dregg_secrets::SecretId {
+        dregg_secrets::SecretId::new(IDENTITY_SECRET_NAMESPACE, format!("{label}:seed"))
+    }
+
+    /// Does a persisted identity already exist for `label`? `true` ⟹ a RETURNING
+    /// user (present the key); `false` ⟹ a NEW user (mint one).
+    pub fn has_identity(&self, label: &str) -> bool {
+        self.store
+            .exists(&Self::seed_id(label))
+            .unwrap_or(false)
+    }
+
+    /// **MINT a new identity** for `label`: generate a fresh Ed25519 keypair (via a
+    /// 24-word recovery mnemonic), persist its derived 64-byte seed into the secret
+    /// store (encrypted at rest), and return the reconstructable clerk + the
+    /// recovery phrase to show the owner ONCE. This is the genuine "your keypair is
+    /// born" step — the root capability over the user's own world.
+    ///
+    /// Refuses to overwrite an existing identity (mint is for a NEW user; a
+    /// returning user [`Self::present`]s). The persisted material is ONLY the seed
+    /// — never the mnemonic, which is the owner's to keep.
+    pub fn mint(&self, label: &str) -> Result<MintedIdentity, dregg_secrets::SecretStoreError> {
+        if self.has_identity(label) {
+            return Err(dregg_secrets::SecretStoreError::StorePath(format!(
+                "identity {label:?} already exists — present its key, do not re-mint"
+            )));
+        }
+        // Generate from OS entropy: a 24-word mnemonic → its 64-byte seed → the
+        // clerk. The mnemonic is the owner's recovery path; the SEED is what we
+        // persist (so the exact clerk reconstructs on return).
+        let mnemonic = dregg_sdk::mnemonic::generate_mnemonic();
+        let seed = dregg_sdk::mnemonic::mnemonic_to_seed(&mnemonic, "")
+            .map_err(|e| dregg_secrets::SecretStoreError::Crypto(e.to_string()))?;
+        let clerk = AgentCipherclerk::from_seed(seed);
+
+        // Persist the seed encrypted at rest (keychain / AES-256-GCM file).
+        self.store.put(&Self::seed_id(label), &seed)?;
+
+        Ok(MintedIdentity {
+            clerk,
+            seed,
+            mnemonic,
+        })
+    }
+
+    /// **PRESENT a returning identity** for `label`: load its persisted seed and
+    /// reconstruct the EXACT signing clerk. The returned clerk re-derives the same
+    /// public key → the same root cell → the same world. Returns `None` if no
+    /// identity is stored for `label` (the caller then mints one).
+    ///
+    /// This is the load half of "present your key": the holder proves possession by
+    /// signing a [`Challenge`] with the reconstructed clerk (the manager verifies).
+    pub fn present(&self, label: &str) -> Result<Option<AgentCipherclerk>, dregg_secrets::SecretStoreError> {
+        let Some(value) = self.store.get(&Self::seed_id(label))? else {
+            return Ok(None);
+        };
+        let bytes = value.as_bytes();
+        if bytes.len() != 64 {
+            return Err(dregg_secrets::SecretStoreError::Crypto(format!(
+                "stored seed for {label:?} is {} bytes, expected 64",
+                bytes.len()
+            )));
+        }
+        let mut seed = [0u8; 64];
+        seed.copy_from_slice(bytes);
+        Ok(Some(AgentCipherclerk::from_seed(seed)))
+    }
+
+    /// **MINT-OR-PRESENT** — the one call the login surface makes per inhabitant:
+    /// reconstruct the existing key if `label` is a returning user, else mint a
+    /// fresh one. Returns the live clerk plus, on a mint, the recovery mnemonic to
+    /// show ONCE (`None` for a returning user — their phrase is already theirs).
+    pub fn mint_or_present(
+        &self,
+        label: &str,
+    ) -> Result<(AgentCipherclerk, Option<String>), dregg_secrets::SecretStoreError> {
+        if let Some(clerk) = self.present(label)? {
+            Ok((clerk, None))
+        } else {
+            let minted = self.mint(label)?;
+            Ok((minted.clerk, Some(minted.mnemonic)))
+        }
+    }
+
+    /// The seed bytes for `label`, minting (and persisting) a fresh keypair if none
+    /// exists. The login surface uses this to thread the REAL custodied seed into a
+    /// [`DemoIdentity`] (so the session client-signs as the persisted key). Returns
+    /// `(seed, recovery_phrase_on_mint)` — `Some(phrase)` only when a NEW keypair was
+    /// minted (show it once), `None` for a returning user.
+    pub fn seed_or_mint(
+        &self,
+        label: &str,
+    ) -> Result<([u8; 64], Option<String>), dregg_secrets::SecretStoreError> {
+        if let Some(value) = self.store.get(&Self::seed_id(label))? {
+            let bytes = value.as_bytes();
+            if bytes.len() != 64 {
+                return Err(dregg_secrets::SecretStoreError::Crypto(format!(
+                    "stored seed for {label:?} is {} bytes, expected 64",
+                    bytes.len()
+                )));
+            }
+            let mut seed = [0u8; 64];
+            seed.copy_from_slice(bytes);
+            Ok((seed, None))
+        } else {
+            let minted = self.mint(label)?;
+            Ok((minted.seed, Some(minted.mnemonic)))
+        }
+    }
+
+    /// **Mint-or-present a key-backed [`DemoIdentity`]** — the one call the login
+    /// surface makes to turn a fixed roster slot (its `'static` name / kind / blurb)
+    /// into a REAL custodied identity: load the persisted seed if `label` is a
+    /// returning user, else mint + persist a fresh keypair. Returns the
+    /// `DemoIdentity` (carrying the genuine seed, so it client-signs as the real key)
+    /// and the recovery phrase to show ONCE on a fresh mint (`None` on return).
+    pub fn identity_for(
+        &self,
+        label: &str,
+        name: &'static str,
+        kind: IdentityKind,
+        blurb: &'static str,
+    ) -> Result<(DemoIdentity, Option<String>), dregg_secrets::SecretStoreError> {
+        let (seed, recovery) = self.seed_or_mint(label)?;
+        Ok((
+            DemoIdentity::from_seed_material(name, seed, kind, blurb),
+            recovery,
+        ))
+    }
+}
+
+// ===========================================================================
 // THE DEOS LOGIN CEREMONY — the provisioning + identity seeds the RUNNING login
 // surface drives. These are gpui-free so `cargo test` exercises the EXACT flow
 // the (gpui-gated) `crate::login` surface runs on click: a real grant turn from
@@ -894,6 +1222,29 @@ impl DemoIdentity {
             name,
             pubkey,
             dev_seed,
+            kind,
+            blurb,
+        }
+    }
+
+    /// Construct an identity from a REAL persisted 64-byte seed (the key-ceremony
+    /// path, not the fixed dev-label path). Used by [`IdentityKeystore`]: a minted
+    /// or presented identity carries its actual signing seed, so the resulting
+    /// `DemoIdentity` client-signs as that real key and derives that real root cell.
+    /// The `dev_seed` field name is historical — here it holds genuine custodied
+    /// key material from the encrypted store, not a label-derived dev seed.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_seed_material(
+        name: &'static str,
+        seed: [u8; 64],
+        kind: IdentityKind,
+        blurb: &'static str,
+    ) -> Self {
+        let pubkey = AgentCipherclerk::from_seed(seed).public_key().0;
+        DemoIdentity {
+            name,
+            pubkey,
+            dev_seed: seed,
             kind,
             blurb,
         }
