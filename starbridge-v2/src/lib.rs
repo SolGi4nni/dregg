@@ -106,6 +106,12 @@ pub mod provenance_navigator;
 #[cfg(feature = "embedded-executor")]
 pub mod fork_ui;
 
+// DESKTOP AUTHORING (NOTES §6): open/close/raise/lower the desktop layout as
+// witnessed SetField turns — the layout itself a rewindable cell (a layout
+// commitment in its own slot, like the torn-tab bitset).
+#[cfg(feature = "embedded-executor")]
+pub mod desktop_authoring;
+
 // The DREGGVERSE navigation — "what links here", the verified per-viewer query on
 // the witness-graph. VENDORED byte-identical from the committed
 // `dregg_app_framework::dreggverse_map` (a thin pure navigation over the REAL
@@ -422,6 +428,14 @@ pub mod doc_lens;
 // WELD between the scene graph and the patch core (docs/deos/DOC-CELL-COMPOSITION.md).
 #[cfg(feature = "embedded-executor")]
 pub mod desktop_doc;
+// THE DOCUMENT COMPOSER — author a document COMPOSED FROM cells, by hand
+// (HYPERDREGGMEDIA-NOTES.md §6, authoring surface #7): add an embed (a cell), reorder
+// children, remove one, set a child's role — each a real composition patch on the
+// document cell's layout (`Op::Embed`/`Order`/`Remove`), returning its receipt. The
+// AUTHORING face to the embed algebra `cell_transclusion`/`desktop_doc` already READ.
+// gpui-free logic core over `dregg_doc::composition`; cargo-testable.
+#[cfg(feature = "embedded-executor")]
+pub mod document_composer;
 // THE HISTORY / UNDO lens — per-cell reversibility welded onto the landed
 // `dregg_turn::reversible` organ (M-REV-0): the reversibility map (each change-kind
 // classified by the real Effect::invert over the live ledger into clean/contextual/
