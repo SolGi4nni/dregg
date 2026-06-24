@@ -67,9 +67,10 @@ pub use allowance::{
     is_allowance, open_allowance, remaining_at as allowance_remaining_at, spend as spend_allowance,
 };
 pub use blueprint::{
-    BlueprintError, BridgeTerms, EscrowTerms, ObligationTerms,
-    VaultCondition as VaultFactoryCondition, VaultTerms as VaultFactoryTerms, bridge_cell_program,
-    bridge_factory_descriptor, escrow_cell_program, escrow_factory_descriptor,
+    AllowanceTerms as AllowanceFactoryTerms, BlueprintError, BridgeTerms, EscrowTerms,
+    ObligationTerms, VaultCondition as VaultFactoryCondition, VaultTerms as VaultFactoryTerms,
+    allowance_cell_program, allowance_factory_descriptor, allowance_state_constraints,
+    bridge_cell_program, bridge_factory_descriptor, escrow_cell_program, escrow_factory_descriptor,
     obligation_cell_program, obligation_factory_descriptor, vault_cell_program,
     vault_factory_descriptor, vault_state_constraints,
 };

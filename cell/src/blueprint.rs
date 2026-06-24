@@ -177,6 +177,14 @@ pub enum BlueprintError {
     /// A channel group tag of zero is indistinguishable from an unborn
     /// cell's empty slot. Rejected at build (fail-closed).
     ZeroTag,
+    /// An allowance with a zero per-epoch ceiling is unspendable and its
+    /// all-zero terms are indistinguishable from an unborn cell. Rejected at
+    /// build (fail-closed).
+    ZeroCeiling,
+    /// An allowance with a zero epoch length has no period boundary — the
+    /// epoch index `(block - start) / epoch_length` is undefined. Rejected at
+    /// build (fail-closed).
+    ZeroEpochLength,
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -203,6 +211,12 @@ impl std::fmt::Display for BlueprintError {
             }
             BlueprintError::ZeroTag => {
                 write!(f, "channel group tag must be nonzero")
+            }
+            BlueprintError::ZeroCeiling => {
+                write!(f, "allowance per-epoch ceiling must be nonzero")
+            }
+            BlueprintError::ZeroEpochLength => {
+                write!(f, "allowance epoch length must be a nonzero number of blocks")
             }
         }
     }
@@ -735,6 +749,190 @@ pub fn vault_factory_descriptor(terms: &VaultTerms) -> Result<FactoryDescriptor,
     Ok(settlement_descriptor(
         "dregg-blueprint:vault-factory v1",
         vault_state_constraints(terms)?,
+    ))
+}
+
+// =============================================================================
+// Allowance — Dregg2.Apps.Allowance (HOUSE WELD #2: the rate-limited allowance)
+// =============================================================================
+//
+// An ALLOWANCE is a sub-capability that may spend up to a fixed CEILING of value
+// per epoch, the ceiling enforced so it can be neither EXCEEDED nor FORGED,
+// refilling each epoch — pocket money an agent hands a sub-agent that the
+// sub-agent literally CANNOT overspend within an epoch. It is the SECOND house
+// room welded (`docs/HOUSE-CAPACITIES-WELD-PLAN.md`, after the vault).
+//
+// An allowance is a COMPOSITION, NOT a new `Effect`: it rides the SAME
+// committed-cell substrate and the SAME wired settlement triple as the
+// vault/escrow families (`CreateCellFromFactory` + `Transfer` + `SetField`), and
+// every gate it needs ALREADY EXISTS. So it is a factory descriptor over the
+// existing constraint vocabulary, light-client-verifiable:
+//
+//   * create an allowance = `CreateCellFromFactory` over
+//                           `allowance_factory_descriptor` (installs the frozen
+//                           ceiling/epoch terms + the per-epoch ceiling teeth),
+//   * fund the budget     = an ordinary `Transfer` IN (the spendable value lives
+//                           in the cell's own `balance`),
+//   * spend it            = a `SetField` advancing the epoch cursor + the spent
+//                           counter (admitted ONLY when the post-spend running
+//                           total stays under the ceiling) + a `Transfer` OUT to
+//                           the beneficiary.
+//
+// The four allowance-safety teeth (mirroring the settlement family + the Lean
+// twin `Dregg2.Apps.Allowance` / probe `Dregg2.Verify.AllowanceFactoryProbe`):
+//
+//   1. **Deal-term integrity (no-forge ceiling)** — beneficiary / ceiling /
+//      epoch-length / start are term-pinned once OPEN (`pin_term`). A tampered
+//      ceiling diverges from the committed literal and is rejected.
+//   2. **The ceiling (no over-limit)** — `FieldLteField { spent ≤ ceiling }`: the
+//      committed `spent_this_epoch` counter can NEVER exceed the per-epoch
+//      ceiling (the exact trustline `drawn ≤ ceiling` shape), AND the
+//      executor-side `RateLimitBySum { slot: spent, max_sum: ceiling, window:
+//      epoch_length }` binds the cumulative value added to the spent slot within
+//      a window to the ceiling — cumulative spend per epoch ≤ ceiling.
+//   3. **Monotone epoch cursor (no stale/backward refill)** — `Monotonic`
+//      `current_epoch`: the cursor never moves backward, so a backdated spend
+//      cannot reach into a closed epoch's headroom.
+//   4. **Perpetual lifecycle** — `AllowedTransitions` admits
+//      `(UNINIT,UNINIT), (UNINIT,OPEN), (OPEN,OPEN)`. OPEN is the live state and
+//      stays live (an allowance refills forever — no terminal, unlike the vault's
+//      one-shot CLAIMED).
+//
+// The spendable VALUE lives in the minted cell's own `balance`; funding is an
+// ordinary conserving `Transfer` IN, spending an ordinary `Transfer` OUT — NO
+// side-table, so allowance conservation is the ordinary kernel move law. The
+// epoch rollover (resetting `spent_this_epoch` to 0 when a genuinely later epoch
+// is crossed) is the SDK builder constructing the only sensible spend turn — the
+// epoch is DERIVED from the block, so an early reset is structurally impossible
+// (the same off-program target binding the settlement family's payout has — see
+// the blueprint module-doc "What the program CANNOT see").
+
+/// Allowance slot 0 — lifecycle state ([`STATE_UNINIT`] → [`STATE_OPEN`], which
+/// is perpetual: an allowance refills forever, no terminal).
+pub const ALLOWANCE_STATE_SLOT: u8 = 0;
+/// Allowance slot 1 — the beneficiary identity (the spend target; 32-byte
+/// `CellId` encoding). Term-pinned once OPEN.
+pub const ALLOWANCE_BENEFICIARY_SLOT: u8 = 1;
+/// Allowance slot 2 — the per-epoch CEILING `limit_per_epoch` (big-endian u64;
+/// the maximum value spendable within a single epoch). Term-pinned once OPEN
+/// (the no-forge tooth).
+pub const ALLOWANCE_LIMIT_SLOT: u8 = 2;
+/// Allowance slot 3 — the epoch length in blocks (big-endian u64). Term-pinned
+/// once OPEN.
+pub const ALLOWANCE_EPOCH_LENGTH_SLOT: u8 = 3;
+/// Allowance slot 4 — the block height at which epoch `0` begins (big-endian
+/// u64). Term-pinned once OPEN.
+pub const ALLOWANCE_START_SLOT: u8 = 4;
+/// Allowance slot 5 — the committed `current_epoch` cursor (big-endian u64). The
+/// epoch the spent counter belongs to; monotone (never moves backward).
+pub const ALLOWANCE_CURRENT_EPOCH_SLOT: u8 = 5;
+/// Allowance slot 6 — the committed `spent_this_epoch` counter (big-endian u64).
+/// Bounded at or below the ceiling; the epoch rollover resets it to `0` when a
+/// genuinely later epoch is crossed.
+pub const ALLOWANCE_SPENT_SLOT: u8 = 6;
+
+/// The published terms of one rate-limited allowance: who may spend, the
+/// per-epoch ceiling, the epoch length, and the block epoch `0` begins. The
+/// spendable amount is whatever is `Transfer`-ed IN (held in the cell's own
+/// `balance`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AllowanceTerms {
+    /// Beneficiary identity (the spend target), 32-byte encoding. Must be nonzero.
+    pub beneficiary: FieldElement,
+    /// The maximum value spendable within a single epoch. Must be `> 0`.
+    pub limit_per_epoch: u64,
+    /// The epoch length in blocks. Must be `> 0` — epoch `k` spans
+    /// `[start + k·epoch_length, start + (k+1)·epoch_length)`.
+    pub epoch_length: u64,
+    /// The block height at which epoch `0` begins.
+    pub start: u64,
+}
+
+/// The allowance constraint set for one budget. The teeth, in keystone order (see
+/// the module-section docs); fails closed on a zero beneficiary (a spend would
+/// target the zero cell), a zero ceiling (an unspendable budget whose all-zero
+/// terms are indistinguishable from an unborn cell), and a zero epoch length (the
+/// epoch index is undefined).
+///
+/// Safety contract (proved on the Lean twin `Dregg2.Apps.Allowance` + the probe
+/// `Dregg2.Verify.AllowanceFactoryProbe`): conservation (the value moves by
+/// ordinary `Transfer`), the ceiling (`over_ceiling_rejected` — `spent ≤ limit`),
+/// no-forged/early refill (`stale_epoch_rejected` / `no_early_refill` — the epoch
+/// is derived from the block), within-budget-spendable (`within_budget_spendable`).
+pub fn allowance_state_constraints(
+    terms: &AllowanceTerms,
+) -> Result<Vec<StateConstraint>, BlueprintError> {
+    if terms.beneficiary == FIELD_ZERO {
+        return Err(BlueprintError::ZeroParty);
+    }
+    if terms.limit_per_epoch == 0 {
+        return Err(BlueprintError::ZeroCeiling);
+    }
+    if terms.epoch_length == 0 {
+        return Err(BlueprintError::ZeroEpochLength);
+    }
+    Ok(vec![
+        // ── 1. deal-term integrity / no-forge ceiling (Lean: the four Immutable
+        //       deal terms — beneficiary/limit/epochLength/start) ──
+        pin_term(ALLOWANCE_BENEFICIARY_SLOT, terms.beneficiary),
+        pin_term(ALLOWANCE_LIMIT_SLOT, field_from_u64(terms.limit_per_epoch)),
+        pin_term(
+            ALLOWANCE_EPOCH_LENGTH_SLOT,
+            field_from_u64(terms.epoch_length),
+        ),
+        pin_term(ALLOWANCE_START_SLOT, field_from_u64(terms.start)),
+        // ── 2. the perpetual lifecycle: OPEN is live and stays live (no terminal
+        //       — an allowance refills forever, unlike the vault's one-shot) ──
+        StateConstraint::AllowedTransitions {
+            slot_index: ALLOWANCE_STATE_SLOT,
+            allowed: vec![
+                (field_from_u64(STATE_UNINIT), field_from_u64(STATE_UNINIT)),
+                (field_from_u64(STATE_UNINIT), field_from_u64(STATE_OPEN)),
+                (field_from_u64(STATE_OPEN), field_from_u64(STATE_OPEN)),
+            ],
+        },
+        // ── 3. THE CEILING (Lean: over_ceiling_rejected — spent ≤ limit) ──
+        // The committed spent_this_epoch counter can NEVER exceed the per-epoch
+        // ceiling — the exact trustline `drawn ≤ ceiling` shape.
+        StateConstraint::FieldLteField {
+            left_index: ALLOWANCE_SPENT_SLOT,
+            right_index: ALLOWANCE_LIMIT_SLOT,
+        },
+        // ── 4. the per-epoch SUM ceiling (executor-side cumulative bound) ──
+        // The value added to the spent slot within an epoch_length window cannot
+        // exceed the ceiling: cumulative spend per epoch ≤ ceiling, the rate the
+        // budget caveat's `(limit, window)` always wanted but couldn't commit.
+        StateConstraint::RateLimitBySum {
+            slot_index: ALLOWANCE_SPENT_SLOT,
+            max_sum_per_epoch: terms.limit_per_epoch,
+            epoch_duration: terms.epoch_length,
+        },
+        // ── 5. the monotone epoch cursor (Lean: the Monotonic currentEpoch —
+        //       no stale/backward refill; a backdated spend can't reuse a closed
+        //       epoch's headroom) ──
+        StateConstraint::Monotonic {
+            index: ALLOWANCE_CURRENT_EPOCH_SLOT,
+        },
+    ])
+}
+
+/// The `CellProgram` installed on the allowance cell for its whole life.
+pub fn allowance_cell_program(terms: &AllowanceTerms) -> Result<CellProgram, BlueprintError> {
+    Ok(CellProgram::Predicate(allowance_state_constraints(terms)?))
+}
+
+/// **The allowance factory (per-budget, content-addressed)** — HOUSE WELD #2. An
+/// allowance is a COMPOSITION over the existing constraint vocabulary settled by
+/// the wired `CreateCellFromFactory` + `Transfer` + `SetField` triple — NO new
+/// `Effect`. Lean twin: `Dregg2.Apps.Allowance.allowanceFactoryEntry`. Each
+/// budget gets its own content-addressed descriptor whose constraints bake the
+/// terms as literals; the spendable value lives in the cell's own `balance`.
+pub fn allowance_factory_descriptor(
+    terms: &AllowanceTerms,
+) -> Result<FactoryDescriptor, BlueprintError> {
+    Ok(settlement_descriptor(
+        "dregg-blueprint:allowance-factory v1",
+        allowance_state_constraints(terms)?,
     ))
 }
 
@@ -2417,6 +2615,237 @@ mod tests {
         // and distinct from the escrow family (the domain tag separates them):
         let esc = escrow_factory_descriptor(&terms()).unwrap();
         assert_ne!(a.factory_vk, esc.factory_vk);
+    }
+
+    // =========================================================================
+    // Allowance — HOUSE WELD #2 (the rate-limited allowance as a factory cell).
+    // The four allowance-safety teeth, on the program the executor installs:
+    // term integrity (no-forge ceiling), the ceiling (spent ≤ limit, no
+    // over-limit), the monotone epoch cursor (no stale/backward refill), and the
+    // perpetual lifecycle. The Lean twin is `Dregg2.Apps.Allowance` (+ probe
+    // `AllowanceFactoryProbe`).
+    // =========================================================================
+
+    /// An allowance: beneficiary 1111 may spend up to 100 per 1000-block epoch,
+    /// starting at block 10_000.
+    fn allowance_terms() -> AllowanceTerms {
+        AllowanceTerms {
+            beneficiary: field_from_u64(1111),
+            limit_per_epoch: 100,
+            epoch_length: 1000,
+            start: 10_000,
+        }
+    }
+
+    /// The post-open (live, OPEN) state of an allowance: the frozen terms, the
+    /// cursor at epoch 0, nothing spent. The spendable VALUE lives in the cell's
+    /// own `balance`.
+    fn allowance_open_state(t: &AllowanceTerms) -> CellState {
+        let mut s = CellState::new(0);
+        s.fields[ALLOWANCE_STATE_SLOT as usize] = field_from_u64(STATE_OPEN);
+        s.fields[ALLOWANCE_BENEFICIARY_SLOT as usize] = t.beneficiary;
+        s.fields[ALLOWANCE_LIMIT_SLOT as usize] = field_from_u64(t.limit_per_epoch);
+        s.fields[ALLOWANCE_EPOCH_LENGTH_SLOT as usize] = field_from_u64(t.epoch_length);
+        s.fields[ALLOWANCE_START_SLOT as usize] = field_from_u64(t.start);
+        s.fields[ALLOWANCE_CURRENT_EPOCH_SLOT as usize] = field_from_u64(0);
+        s.fields[ALLOWANCE_SPENT_SLOT as usize] = field_from_u64(0);
+        s.set_balance(1000); // the spendable value, held in the cell
+        s
+    }
+
+    /// A post-spend state: the spent counter advanced to `spent`, the cursor at
+    /// `epoch`, the held balance reduced by the cumulative spend.
+    fn allowance_after_spend(open: &CellState, epoch: u64, spent: u64, balance: i64) -> CellState {
+        let mut s = open.clone();
+        s.fields[ALLOWANCE_CURRENT_EPOCH_SLOT as usize] = field_from_u64(epoch);
+        s.fields[ALLOWANCE_SPENT_SLOT as usize] = field_from_u64(spent);
+        s.set_balance(balance);
+        s
+    }
+
+    /// Evaluate an allowance program transition (no preimage; the height drives
+    /// any temporal gate — the allowance has none in-program, the epoch is the
+    /// SDK builder's derived term).
+    fn allowance_eval(
+        program: &CellProgram,
+        new: &CellState,
+        old: Option<&CellState>,
+        height: u64,
+    ) -> Result<(), crate::program::ProgramError> {
+        let ctx = EvalContext {
+            block_height: height,
+            timestamp: 0,
+            current_epoch: 0,
+            sender: None,
+            sender_epoch_count: 0,
+            revealed_preimage: None,
+        };
+        program.evaluate_full(
+            new,
+            old,
+            Some(&ctx),
+            &TransitionMeta::wildcard(),
+            &WitnessBundle::empty(),
+        )
+    }
+
+    #[test]
+    fn allowance_birth_and_open_pass_and_term_tamper_refuses() {
+        let t = allowance_terms();
+        let p = allowance_cell_program(&t).unwrap();
+        // the all-zero birth state passes (factory mints with no initial fields):
+        let born = CellState::new(0);
+        assert!(allowance_eval(&p, &born, None, 0).is_ok(), "birth state");
+        // opening writes the budget terms and passes:
+        let open = allowance_open_state(&t);
+        assert!(
+            allowance_eval(&p, &open, Some(&born), 0).is_ok(),
+            "open writes the budget terms"
+        );
+        // re-pointing the beneficiary while OPEN is rejected (term pin bites):
+        let mut bad = open.clone();
+        bad.fields[ALLOWANCE_BENEFICIARY_SLOT as usize] = field_from_u64(0xDEAD);
+        assert!(
+            allowance_eval(&p, &bad, Some(&open), 0).is_err(),
+            "beneficiary term pin must bite"
+        );
+        // FORGING THE CEILING up while OPEN is rejected (the no-forge tooth):
+        let mut bad2 = open.clone();
+        bad2.fields[ALLOWANCE_LIMIT_SLOT as usize] = field_from_u64(999_999);
+        assert!(
+            allowance_eval(&p, &bad2, Some(&open), 0).is_err(),
+            "a forged-up ceiling term pin must bite"
+        );
+    }
+
+    #[test]
+    fn allowance_spend_within_ceiling_passes_over_rejects() {
+        // KEYSTONE (b): the ceiling — spent ≤ limit. A spend within budget passes;
+        // a committed spent counter over the ceiling is rejected.
+        let t = allowance_terms(); // ceiling 100
+        let p = allowance_cell_program(&t).unwrap();
+        let open = allowance_open_state(&t);
+
+        // spend 40 of the 100 ceiling (spent 0→40, balance 1000→960): passes.
+        let s40 = allowance_after_spend(&open, 0, 40, 960);
+        assert!(
+            allowance_eval(&p, &s40, Some(&open), 10_500).is_ok(),
+            "a within-budget spend (40 ≤ 100) passes"
+        );
+        // spend EXACTLY the ceiling (100) is the live boundary (non-vacuity):
+        let s100 = allowance_after_spend(&open, 0, 100, 900);
+        assert!(
+            allowance_eval(&p, &s100, Some(&open), 10_500).is_ok(),
+            "spending exactly the ceiling (100 ≤ 100) is live"
+        );
+        // a committed spent counter OVER the ceiling (101) is REJECTED:
+        let s101 = allowance_after_spend(&open, 0, 101, 899);
+        assert!(
+            allowance_eval(&p, &s101, Some(&open), 10_500).is_err(),
+            "a spent counter over the ceiling (101 > 100) is rejected — no over-limit"
+        );
+    }
+
+    #[test]
+    fn allowance_epoch_cursor_is_monotone_no_backward_refill() {
+        // KEYSTONE (c): the monotone cursor — a backdated spend cannot move the
+        // committed epoch cursor backward (no reaching into a closed epoch's
+        // headroom). The cursor at epoch 2 cannot regress to epoch 0.
+        let t = allowance_terms();
+        let p = allowance_cell_program(&t).unwrap();
+        // a state already advanced into epoch 2:
+        let open = allowance_open_state(&t);
+        let at_epoch2 = allowance_after_spend(&open, 2, 30, 970);
+        // a CURRENT-epoch (2) spend is live (non-vacuity):
+        let fwd = allowance_after_spend(&at_epoch2, 2, 60, 940);
+        assert!(
+            allowance_eval(&p, &fwd, Some(&at_epoch2), 12_600).is_ok(),
+            "a current-epoch spend advancing the counter is live"
+        );
+        // a BACKWARD cursor move (epoch 2 → 0) is REJECTED by the Monotonic tooth:
+        let mut backdated = at_epoch2.clone();
+        backdated.fields[ALLOWANCE_CURRENT_EPOCH_SLOT as usize] = field_from_u64(0);
+        backdated.fields[ALLOWANCE_SPENT_SLOT as usize] = field_from_u64(5);
+        assert!(
+            allowance_eval(&p, &backdated, Some(&at_epoch2), 10_500).is_err(),
+            "the epoch cursor cannot move backward (no stale-epoch refill)"
+        );
+    }
+
+    #[test]
+    fn allowance_epoch_rollover_refills_to_full_ceiling() {
+        // The genuine rollover: at a later epoch the cursor advances and the spent
+        // counter resets to a fresh value within the ceiling. Spend the full 100
+        // in epoch 0, then a fresh 100 in epoch 1 — both within the ceiling.
+        let t = allowance_terms();
+        let p = allowance_cell_program(&t).unwrap();
+        let open = allowance_open_state(&t);
+        // exhaust epoch 0 (spent 100, cursor 0):
+        let e0 = allowance_after_spend(&open, 0, 100, 900);
+        assert!(allowance_eval(&p, &e0, Some(&open), 10_500).is_ok());
+        // epoch 1 (block 11_000): cursor 0→1 (forward, monotone), spent resets to
+        // a fresh 100 — within the ceiling, the refilled budget:
+        let e1 = allowance_after_spend(&e0, 1, 100, 800);
+        assert!(
+            allowance_eval(&p, &e1, Some(&e0), 11_000).is_ok(),
+            "the genuine epoch rollover refills the budget (cursor 0→1, spent reset within ceiling)"
+        );
+    }
+
+    #[test]
+    fn allowance_ill_formed_terms_rejected_at_build() {
+        // a zero beneficiary would target the zero cell on spend:
+        assert_eq!(
+            allowance_state_constraints(&AllowanceTerms {
+                beneficiary: FIELD_ZERO,
+                limit_per_epoch: 100,
+                epoch_length: 1000,
+                start: 10_000,
+            }),
+            Err(BlueprintError::ZeroParty)
+        );
+        // a zero ceiling is an unspendable budget:
+        assert_eq!(
+            allowance_state_constraints(&AllowanceTerms {
+                beneficiary: field_from_u64(1111),
+                limit_per_epoch: 0,
+                epoch_length: 1000,
+                start: 10_000,
+            }),
+            Err(BlueprintError::ZeroCeiling)
+        );
+        // a zero epoch length leaves the epoch index undefined:
+        assert_eq!(
+            allowance_state_constraints(&AllowanceTerms {
+                beneficiary: field_from_u64(1111),
+                limit_per_epoch: 100,
+                epoch_length: 0,
+                start: 10_000,
+            }),
+            Err(BlueprintError::ZeroEpochLength)
+        );
+    }
+
+    #[test]
+    fn allowance_descriptors_are_per_budget_content_addressed() {
+        let a = allowance_factory_descriptor(&allowance_terms()).unwrap();
+        let b = allowance_factory_descriptor(&allowance_terms()).unwrap();
+        assert_eq!(a.factory_vk, b.factory_vk, "same budget → same factory");
+        // a different ceiling ⇒ a different factory:
+        let c = allowance_factory_descriptor(&AllowanceTerms {
+            beneficiary: field_from_u64(1111),
+            limit_per_epoch: 500,
+            epoch_length: 1000,
+            start: 10_000,
+        })
+        .unwrap();
+        assert_ne!(
+            a.factory_vk, c.factory_vk,
+            "different ceiling → different factory"
+        );
+        // and distinct from the vault family (the domain tag separates them):
+        let v = vault_factory_descriptor(&timelock_terms()).unwrap();
+        assert_ne!(a.factory_vk, v.factory_vk);
     }
 }
 
