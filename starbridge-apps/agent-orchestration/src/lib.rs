@@ -835,9 +835,7 @@ pub fn recover(
     log: &OrchestrationLog,
 ) -> Result<RecoveredState, AuditError> {
     // Re-validate the receipt window `[open] ++ committed steps` — the self-checking store.
-    let mut chain = Vec::with_capacity(log.len() + 1);
-    chain.push(open_receipt.clone());
-    chain.extend(log.receipts());
+    let chain = receipt_window(open_receipt, log);
     verify_receipt_window(&chain).map_err(AuditError::ChainBroken)?;
 
     // Re-derive the per-worker running spend + the next epoch from the log post-images.
@@ -965,9 +963,7 @@ pub fn audit_run(
     }
 
     // (2) Chain integrity over [open] ++ steps — a tampered receipt breaks this.
-    let mut chain = Vec::with_capacity(log.len() + 1);
-    chain.push(open_receipt.clone());
-    chain.extend(log.receipts());
+    let chain = receipt_window(open_receipt, log);
     verify_receipt_window(&chain).map_err(AuditError::ChainBroken)?;
 
     // (3) Per-step mandate re-check — re-derive each worker's running spend from the log.
