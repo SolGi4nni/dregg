@@ -32,11 +32,23 @@ const PK_LEN: usize = 32;
 const SIG_LEN: usize = 64;
 const HEADER_LEN: usize = ENVELOPE_MAGIC.len() + PK_LEN + SIG_LEN; // 4 + 32 + 64 = 100
 
-/// Decide what an arriving chunk is and produce the reply bytes.
-pub fn handle_chunk(chunk: &[u8]) -> Vec<u8> {
+/// The outcome of deciding what an arriving chunk is: the bytes to reply over the
+/// wire, and — on an ACCEPTED SignedTurn — the verified message bytes the caller
+/// must STAGE into turn_in and hand to the executor. `accepted` is `Some(msg)`
+/// only after `verify_strict` passes, so a bad signature can NEVER produce turn
+/// bytes for the heart (the firmament-boundary invariant, in the type).
+pub struct GateOutcome {
+    pub reply: Vec<u8>,
+    pub accepted: Option<Vec<u8>>,
+}
+
+/// Decide what an arriving chunk is, producing the wire reply and — on accept —
+/// the verified turn message to stage for the executor.
+pub fn handle_chunk(chunk: &[u8]) -> GateOutcome {
     if is_envelope(chunk) {
         match verify_envelope(chunk) {
-            Ok(msg_len) => {
+            Ok(msg) => {
+                let msg_len = msg.len();
                 sel4_microkit::debug_println!(
                     "[net-client] SignedTurn ACCEPTED at the edge: sig verified over {} msg bytes — handing to the executor boundary",
                     msg_len
@@ -45,7 +57,7 @@ pub fn handle_chunk(chunk: &[u8]) -> Vec<u8> {
                 reply.extend_from_slice(b"TURN-ACCEPTED ");
                 push_usize(&mut reply, msg_len);
                 reply.extend_from_slice(b"\n");
-                reply
+                GateOutcome { reply, accepted: Some(msg.to_vec()) }
             }
             Err(why) => {
                 sel4_microkit::debug_println!(
@@ -56,13 +68,13 @@ pub fn handle_chunk(chunk: &[u8]) -> Vec<u8> {
                 reply.extend_from_slice(b"TURN-REFUSED ");
                 reply.extend_from_slice(why.as_bytes());
                 reply.extend_from_slice(b"\n");
-                reply
+                GateOutcome { reply, accepted: None }
             }
         }
     } else {
-        // Plain echo — the bare smoke test.
+        // Plain echo — the bare smoke test. Never an accepted turn.
         sel4_microkit::debug_println!("[net-client] echo {} bytes", chunk.len());
-        chunk.to_vec()
+        GateOutcome { reply: chunk.to_vec(), accepted: None }
     }
 }
 
@@ -70,9 +82,9 @@ fn is_envelope(chunk: &[u8]) -> bool {
     chunk.len() >= HEADER_LEN && &chunk[..ENVELOPE_MAGIC.len()] == ENVELOPE_MAGIC
 }
 
-/// Verify a SignedTurn envelope. Returns the message length on success, or a
-/// static reason string on refusal. NEVER panics on adversarial bytes.
-fn verify_envelope(chunk: &[u8]) -> Result<usize, &'static str> {
+/// Verify a SignedTurn envelope. Returns the (borrowed) message bytes on success,
+/// or a static reason string on refusal. NEVER panics on adversarial bytes.
+fn verify_envelope(chunk: &[u8]) -> Result<&[u8], &'static str> {
     if chunk.len() < HEADER_LEN {
         return Err("short-envelope");
     }
@@ -92,7 +104,7 @@ fn verify_envelope(chunk: &[u8]) -> Result<usize, &'static str> {
     // verify_strict: the cofactorless, malleability-resistant check (the one
     // dalek and the dregg verifier path use).
     vk.verify_strict(msg, &sig).map_err(|_| "sig-mismatch")?;
-    Ok(msg.len())
+    Ok(msg)
 }
 
 fn push_usize(out: &mut Vec<u8>, mut n: usize) {

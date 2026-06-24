@@ -1,13 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  dregg.system — THE 5-PD firmament assembly. The §1 "decomposed system" of
-  docs/SEL4-EMBEDDING.md, realized as a REAL booting multi-PD seL4 image: five
+  dregg.system — THE 6-PD firmament assembly. The §1 "decomposed system" of
+  docs/SEL4-EMBEDDING.md, realized as a REAL booting multi-PD seL4 image: six
   protection domains whose seL4 capability partition IS the trust boundary the
   node's crate-split gestures at ("capabilities all the way down",
   docs/FIRMAMENT.md §2).
 
+  THE INGRESS PATH IS CLOSED (2026-06-24): a SignedTurn arriving on TCP :5555 is
+  Ed25519-checked by the net_client (ingress) PD, staged into turn_in, and handed
+  to the verified executor — network-reachable, with bad signatures refused at the
+  edge. The firmament now HEARS the network:
+
+      wire :5555 → [net driver] → [net_client: Ed25519 gate] → turn_in (RW)
+                 → (channel id 1) → [executor: VERIFIED turn] → commit_out → persist
+
   STATUS (2026-06-13): BOOTS. Every PD here is a real, cross-compiled ELF that
-  reaches userspace and prints over serial. The five seats:
+  reaches userspace and prints over serial. The six seats:
 
     verifier  — dregg-verifier-stark-pd : the REAL plonky3 STARK
                 (BabyBear+BLAKE3+FRI), proved + verified ON-DEVICE with the
@@ -25,10 +33,15 @@
     persist   — dregg-persist-stub-pd   : the durable-store seat. Maps commit_out
                 (R) ONLY; the storage-device cap will land HERE and only here
                 (sole holder). redb-over-block-cap is the §3 port.
-    net       — dregg-net-driver-pd     : the EDGE. SOLE holder of the NIC cap +
-                the virtio-mmio region + the DMA paddr + IRQ 79. Probes a real
-                virtio-net device and brings the NIC UP (docs/FIRMAMENT.md §6, M3)
-                — the distributed end (n>1) of the cap gradation (§3).
+    net       — dregg-net-driver-pd     : the EDGE DRIVER. SOLE holder of the NIC
+                cap + the virtio-mmio region + the DMA paddr + IRQ 79. Probes a
+                real virtio-net device and brings the NIC UP (docs/FIRMAMENT.md §6,
+                M3) — the distributed end (n>1) of the cap gradation (§3).
+    net_client— dregg-net-client-pd     : the INGRESS edge (the firmament's ear).
+                The smoltcp TCP/IP PD: DHCP, listens on TCP :5555, Ed25519-checks a
+                SignedTurn envelope, then STAGES the verified turn into turn_in (RW
+                — sole writer) and signals the executor. Bad signatures refused at
+                the edge. Holds NO NIC cap — only the shared rings + turn_in.
     app       — dregg-rbg-dir           : a houyhnhnm app-PD. The rbg
                 DirectoryCell (CAS swap + membership ACL + factory slot-caveat →
                 seL4_Untyped_Retype). Holds only its own caps — no ambient
@@ -57,8 +70,11 @@
          partition below grants each region to exactly the PDs that need it.
          ════════════════════════════════════════════════════════════════════ -->
 
-    <!-- turn de-envelope → executor handoff. The net/ingress edge writes a
-         signature-checked turn here; the executor reads it (R). -->
+    <!-- turn de-envelope → executor handoff. The net-client (ingress) edge
+         Ed25519-checks a SignedTurn, stages the verified turn bytes here (it maps
+         turn_in RW), then signals the executor; the executor reads it (R). This
+         is the seL4-enforced "bad signatures never reach the heart" boundary: the
+         ingress PD is the SOLE writer, the executor the SOLE reader. -->
     <memory_region name="turn_in"    size="0x100000" />   <!-- 1 MiB -->
     <!-- executor → persist commit-log handoff. executor writes (RW), persist
          reads (R) — the only path durable state is reached. -->
@@ -139,10 +155,12 @@
 
 
     <!-- ════════════════════════════════════════════════════════════════════
-         PD: net  — the EDGE. SOLE holder of the NIC cap + virtio-mmio + DMA paddr
-         + IRQ 79. Probes a REAL virtio-net device, brings the NIC up (the n>1 end
-         of the cap gradation, FIRMAMENT §3, §6). Same device layout proven in
-         net-driver-only.system; here it lives ONLY in this PD.
+         PD: net  — the EDGE DRIVER. SOLE holder of the NIC cap + virtio-mmio + DMA
+         paddr + IRQ 79. Probes a REAL virtio-net device, brings the NIC up (the
+         n>1 end of the cap gradation, FIRMAMENT §3, §6). Same device layout proven
+         in net-driver-only.system; here it lives ONLY in this PD. Its CLIENT
+         channel (id 1) binds the net-client (ingress) PD below — the driver only
+         touches the wire; it has NO turn_in / executor cap.
          ════════════════════════════════════════════════════════════════════ -->
     <protection_domain name="net" priority="60" stack_size="0x10000">
         <program_image path="dregg-net-driver-pd.elf" />
@@ -164,6 +182,39 @@
 
 
     <!-- ════════════════════════════════════════════════════════════════════
+         PD: net_client  — the INGRESS edge (the firmament's ear). The smoltcp
+         TCP/IP PD: acquires an IPv4 address by DHCP, listens on TCP :5555, and on
+         each chunk Ed25519-`verify_strict`-checks a SignedTurn envelope BEFORE the
+         turn crosses into the verified executor (docs/SEL4-EMBEDDING.md §4). It
+         shares the ring buffers + the client DMA region with the driver PD (the
+         `Provide` role to the driver's `Use`); a plain line is echoed (the bare
+         smoke test). On ACCEPT it STAGES the verified turn bytes into turn_in
+         (mapped RW HERE — the ingress edge is the sole writer; the executor maps
+         it R) and signals the executor (channel id 1). Bad signatures are REFUSED
+         at the edge and never reach the heart. It holds NO NIC/device cap — only
+         the shared rings + turn_in. Mirrors net-full.system's dregg_net_client.
+         ════════════════════════════════════════════════════════════════════ -->
+    <!-- priority STRICTLY BELOW the driver (net=60): the net_client makes a
+         protected procedure call (the MAC fetch) TO the driver, and Microkit
+         requires a PPC target to be of strictly higher priority than the caller
+         (mirrors net-full.system, where driver=4 > client=1). -->
+    <protection_domain name="net_client" priority="59" stack_size="0x10000">
+        <program_image path="dregg-net-client-pd.elf" />
+
+        <map mr="virtio_net_client_dma" vaddr="0x1_000_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_client_dma_vaddr" />
+
+        <map mr="virtio_net_rx_free" vaddr="0x2_000_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_rx_free" />
+        <map mr="virtio_net_rx_used" vaddr="0x2_001_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_rx_used" />
+        <map mr="virtio_net_tx_free" vaddr="0x2_002_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_tx_free" />
+        <map mr="virtio_net_tx_used" vaddr="0x2_003_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_tx_used" />
+
+        <!-- turn_in mapped RW HERE: the ingress edge is the SOLE writer (the
+             executor maps it R). High vaddr, clear of the smoltcp heap. -->
+        <map mr="turn_in" vaddr="0x4_000_000_000" perms="rw" cached="true" setvar_vaddr="turn_in_vaddr" />
+    </protection_domain>
+
+
+    <!-- ════════════════════════════════════════════════════════════════════
          PD: app  — a houyhnhnm app-PD: the rbg DirectoryCell (CAS + ACL + factory
          slot-caveat). Holds ONLY its own caps — no device, no NIC, no other PD's
          memory. Ambient authority is structurally absent (FIRMAMENT §5).
@@ -177,11 +228,21 @@
          Channels — the only control-flow edges; the cap layout forbids any other.
          ════════════════════════════════════════════════════════════════════ -->
 
-    <!-- net/ingress edge signals the executor: "a signature-checked turn is
-         staged in turn_in". -->
+    <!-- driver ↔ net_client: the driver's CLIENT channel (id 1) binds the
+         net_client's DRIVER channel (id 0). Notifications both ways crank the
+         shared ring buffers; pp=true so the client can make a protected call to
+         fetch the MAC (mirrors net-full.system). -->
     <channel>
-        <end pd="net"      id="1" />
-        <end pd="executor" id="1" />
+        <end pd="net"        id="1" />
+        <end pd="net_client" id="0" pp="true" />
+    </channel>
+
+    <!-- net_client/ingress edge signals the executor: "a signature-checked turn
+         is staged in turn_in" (the firmament boundary the SignedTurn crosses only
+         after Ed25519 passes). net_client id 1 ↔ executor id 1 (NET_TO_EXECUTOR). -->
+    <channel>
+        <end pd="net_client" id="1" />
+        <end pd="executor"   id="1" />
     </channel>
 
     <!-- executor signals persist: "a commit-log entry is ready in commit_out". -->

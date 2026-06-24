@@ -1,0 +1,52 @@
+# net-client-hosttest — the EXECUTABLE host witness for the firmament INGRESS
+# weld: the net_client (ingress) PD's SignedTurn Ed25519 gate (`net-client/src/
+# turn_gate.rs`) + the turn_in framing it stages for the executor PD.
+#
+# WHY A SEPARATE CRATE (same reason as ../persist-hosttest, ../crypto-floor-hosttest).
+# The net_client is a `no_std` Microkit ELF whose load-bearing artifact runs on
+# aarch64 under qemu-system in the 6-PD assembly (`sel4/dregg.system`). On a macOS
+# host there is no user-mode `qemu-aarch64` to run a PD's logic in isolation, and
+# the in-qemu wire-RX path depends on the virtio-net driver + QEMU SLIRP L2 binding
+# (a pre-existing net-stack characteristic, orthogonal to this weld). So this
+# sibling std crate INCLUDES the SAME `turn_gate.rs` the net_client PD carries
+# (via `#[path]`) and drives the gate + the turn_in staging framing as a normal
+# host binary + `#[test]`s — a real, runnable witness on a box with no qemu-aarch64.
+#
+# WHAT IT PROVES (the ingress weld, end to end, byte-identically):
+#   1. a GOOD SignedTurn envelope ([DRGT][pk32][sig64][msg]) Ed25519-`verify_strict`
+#      PASSES the gate and yields EXACTLY the message bytes to stage (`accepted`);
+#   2. a BAD-signature / tampered / wrong-key / short envelope is REFUSED — the
+#      gate yields NO accepted bytes (the "bad signatures never reach the heart"
+#      firmament-boundary invariant, in the gate's type);
+#   3. a plain (non-envelope) line is echoed and never accepted;
+#   4. the turn_in FRAMING the net_client writes (4-byte LE length prefix + the
+#      verified message) decodes byte-for-byte under the EXACT logic the executor
+#      PD's `run_turn_from_turn_in` reads — so a staged turn round-trips the
+#      net_client -> turn_in -> executor handoff.
+#
+# This is byte-for-byte the gate + framing the seL4 net_client PD runs (the SAME
+# turn_gate.rs source, the SAME ed25519-dalek 2 the SDK signs SignedTurn with). The
+# in-qemu boot of the 6-PD assembly with the net_client listening on :5555 and the
+# executor armed on channel id 1 is the named wall (the macOS qemu-SLIRP RX path);
+# this host-test is the runnable witness for the weld's load-bearing logic.
+
+# Standalone workspace (own target dir; swarm-safe; NOT a member of the dregg-pd
+# workspace — same rationale as ../persist-hosttest, ../crypto-floor-hosttest).
+[workspace]
+
+[package]
+name = "dregg-net-client-hosttest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "host_ingress_gate"
+path = "src/main.rs"
+
+[dependencies]
+# The SAME crate major the net_client gate + the dregg SDK sign/verify SignedTurn
+# with — so the host witness runs byte-identical Ed25519. `rand_core` lets the
+# witness mint keypairs to sign with; the gate itself only verifies.
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
+rand_core = { version = "0.6", default-features = false, features = ["getrandom"] }

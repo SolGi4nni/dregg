@@ -216,21 +216,30 @@ build-assembly-real: build-aarch64 build-executor-microkit
 	cd $(PD_DIR) && cargo build $(CARGO_FLAGS) \
 		-p dregg-verifier-stark-pd \
 		-p dregg-persist-stub-pd -p dregg-net-driver-pd -p dregg-rbg-dir
+	# net_client (the ingress edge): built WITH `executor-ingress` so it stages a
+	# verified turn into turn_in + signals the executor (own invocation because
+	# --features is package-scoped). This is the 6th PD that closes the wire→heart
+	# path in dregg.system.
+	cd $(PD_DIR) && cargo build $(CARGO_FLAGS) \
+		-p dregg-net-client-pd --features dregg-net-client-pd/executor-ingress
 	mkdir -p $(BUILD)
 	cp $(PD_DIR)/target/aarch64-sel4-microkit/release/dregg-verifier-stark-pd.elf $(BUILD)/
 	cp $(EXEC_MK_ELF)                                                              $(BUILD)/
 	cp $(PD_DIR)/target/aarch64-sel4-microkit/release/dregg-persist-stub-pd.elf   $(BUILD)/
 	cp $(PD_DIR)/target/aarch64-sel4-microkit/release/dregg-net-driver-pd.elf     $(BUILD)/
+	cp $(PD_DIR)/target/aarch64-sel4-microkit/release/dregg-net-client-pd.elf     $(BUILD)/
 	cp $(PD_DIR)/target/aarch64-sel4-microkit/release/dregg-rbg-dir.elf           $(BUILD)/
 	$(MICROKIT) dregg.system --search-path $(BUILD) --board $(BOARD) --config $(CONFIG) -o $(BUILD)/dregg-real.img -r $(BUILD)/dregg-real.report.txt
 
-# Boot the REAL 5-PD firmament: the VERIFIED Lean executor runs a turn (status:2
-# ok:1) through the assembled PD's channels (turn_in/commit_out), the verifier
-# -stark PD verifies a real STARK, persist reads the commit, net brings the NIC up.
+# Boot the REAL 6-PD firmament: a SignedTurn on TCP :5555 is Ed25519-checked by
+# the net_client (ingress) PD, staged into turn_in, and run by the VERIFIED Lean
+# executor (status:2 ok:1) through the assembled PD's channels (turn_in/
+# commit_out); the verifier-stark PD verifies a real STARK, persist reads the
+# commit, the net driver brings the NIC up. The hostfwd maps host :5555 -> guest.
 run-assembly-real: build-assembly-real
 	$(QEMU_AARCH64_ASSEMBLY) \
 		-global virtio-mmio.force-legacy=false \
-		-netdev user,id=net0 \
+		-netdev user,id=net0,hostfwd=tcp::5555-:5555 \
 		-device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.31 \
 		-device loader,file=$(BUILD)/dregg-real.img,addr=0x90000000,cpu-num=0 \
 		-serial mon:stdio

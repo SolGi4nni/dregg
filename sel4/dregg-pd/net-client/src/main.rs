@@ -38,7 +38,7 @@ use sel4_abstract_allocator::WithAlignmentBound;
 use sel4_abstract_allocator::basic::BasicAllocator;
 use sel4_driver_interfaces::net::GetNetDeviceMeta;
 use sel4_microkit::{
-    Channel, ChannelSet, Handler, Infallible, debug_println, memory_region_symbol,
+    ChannelSet, Handler, Infallible, debug_println, memory_region_symbol,
     protection_domain,
 };
 use sel4_microkit_driver_adapters::net::client::Client as NetClient;
@@ -69,6 +69,12 @@ struct EdgeHandler {
     millis: i64,
     have_addr: bool,
     cranks: u32,
+    /// The turn_in handoff region (RW), acquired in `init()` so its
+    /// `memory_region_symbol!` is emitted + retained in the PD ELF (the microkit
+    /// tool patches the vaddr here). Only present in the `executor-ingress` build
+    /// (dregg.system); net-full.system has no turn_in map.
+    #[cfg(feature = "executor-ingress")]
+    turn_in: SharedMemoryRef<'static, [u8]>,
 }
 
 impl EdgeHandler {
@@ -150,31 +156,92 @@ impl EdgeHandler {
     /// and on a received chunk either Ed25519-checks a SignedTurn envelope
     /// (the firmament-boundary gate) or echoes a plain line (the smoke test).
     fn service_tcp(&mut self) {
-        let socket = self.sockets.get_mut::<tcp::Socket>(self.tcp_handle);
+        // (Re-)listen + pull a chunk in a scoped borrow, so the turn_in staging
+        // below (which borrows `self`) does not conflict with the socket borrow.
+        let chunk: Option<([u8; 1600], usize)> = {
+            let socket = self.sockets.get_mut::<tcp::Socket>(self.tcp_handle);
 
-        if !socket.is_open() {
-            if let Err(e) = socket.listen(config::ECHO_PORT) {
-                debug_println!("[net-client] tcp listen error: {:?}", e);
-            } else {
-                debug_println!(
-                    "[net-client] TCP listening on :{} — a turn can now arrive over TCP",
-                    config::ECHO_PORT
-                );
-            }
-        }
-
-        if socket.can_recv() {
-            // Pull up to one MTU-ish chunk and decide what it is.
-            let mut buf = [0u8; 1600];
-            let n = socket.recv_slice(&mut buf).unwrap_or(0);
-            if n > 0 {
-                let reply = turn_gate::handle_chunk(&buf[..n]);
-                if socket.can_send() {
-                    let _ = socket.send_slice(&reply);
+            if !socket.is_open() {
+                if let Err(e) = socket.listen(config::ECHO_PORT) {
+                    debug_println!("[net-client] tcp listen error: {:?}", e);
+                } else {
+                    debug_println!(
+                        "[net-client] TCP listening on :{} — a turn can now arrive over TCP",
+                        config::ECHO_PORT
+                    );
                 }
+            }
+
+            if socket.can_recv() {
+                let mut buf = [0u8; 1600];
+                let n = socket.recv_slice(&mut buf).unwrap_or(0);
+                if n > 0 { Some((buf, n)) } else { None }
+            } else {
+                None
+            }
+        };
+
+        if let Some((buf, n)) = chunk {
+            let outcome = turn_gate::handle_chunk(&buf[..n]);
+            // On an ACCEPTED SignedTurn, hand the verified message across the
+            // firmament boundary: stage it into turn_in (RW) and signal the
+            // executor. Only `executor-ingress` (dregg.system) maps turn_in +
+            // binds the executor channel; net-full.system builds without it, so
+            // the gate stays a pure echo/verdict there.
+            if let Some(msg) = outcome.accepted {
+                self.stage_turn_to_executor(&msg);
+            }
+            let socket = self.sockets.get_mut::<tcp::Socket>(self.tcp_handle);
+            if socket.can_send() {
+                let _ = socket.send_slice(&outcome.reply);
             }
         }
     }
+
+    /// Stage a verified turn message into the `turn_in` shared region the executor
+    /// PD reads (mapped RW HERE; R for the executor) and signal the executor on
+    /// channel id 1. Framing: a 4-byte LE length prefix + the message bytes —
+    /// exactly what the executor's `run_turn_from_turn_in` reads. The Ed25519 gate
+    /// has ALREADY passed (the `accepted` branch), so only signature-checked turns
+    /// ever reach here — the seL4-enforced "bad signatures never reach the heart".
+    #[cfg(feature = "executor-ingress")]
+    fn stage_turn_to_executor(&mut self, msg: &[u8]) {
+        // turn_in's 4-byte LE length prefix bounds the message; refuse oversize so
+        // a wire chunk can never overrun the region (fail-closed at the edge).
+        let max_msg = config::TURN_IN_SIZE - 4;
+        if msg.is_empty() || msg.len() > max_msg {
+            debug_println!(
+                "[net-client] staged turn rejected: len {} not in 1..={} — NOT handed to the executor",
+                msg.len(),
+                max_msg
+            );
+            return;
+        }
+
+        // Build the framed bytes (4-byte LE length prefix + message) and copy them
+        // into turn_in via the shared-memory BulkOps memcpy (the device-safe write
+        // path the rust-sel4 shared-memory crate provides).
+        let total = 4 + msg.len();
+        let len = msg.len() as u32;
+        let mut framed = vec![0u8; total];
+        framed[0] = (len & 0xff) as u8;
+        framed[1] = ((len >> 8) & 0xff) as u8;
+        framed[2] = ((len >> 16) & 0xff) as u8;
+        framed[3] = ((len >> 24) & 0xff) as u8;
+        framed[4..].copy_from_slice(msg);
+        self.turn_in.as_mut_ptr().index(0..total).copy_from_slice(&framed);
+
+        debug_println!(
+            "[net-client] staged {} turn bytes into turn_in; signalling executor (ch 1)",
+            msg.len()
+        );
+        channels::EXECUTOR.notify();
+    }
+
+    /// net-full.system path: no executor PD, no turn_in map. The gate already
+    /// replied over the wire; there is nothing to hand on.
+    #[cfg(not(feature = "executor-ingress"))]
+    fn stage_turn_to_executor(&mut self, _msg: &[u8]) {}
 }
 
 impl Handler for EdgeHandler {
@@ -254,10 +321,36 @@ fn init() -> EdgeHandler {
     )
     .expect("smoltcp DeviceImpl over the shared rings");
 
-    // The interface, seeded with our MAC. No static IP — DHCP fills it in.
+    // The interface, seeded with our MAC.
     let mut iface_config = Config::new(HardwareAddress::Ethernet(mac_address));
     iface_config.random_seed = 0x6472_6567_6731; // "dregg1" — deterministic, houyhnhnm
-    let iface = Interface::new(iface_config, &mut device, Instant::from_millis(0));
+    #[allow(unused_mut)]
+    let mut iface = Interface::new(iface_config, &mut device, Instant::from_millis(0));
+
+    // INGRESS reachability (dregg.system, behind `executor-ingress`): seed the
+    // QEMU user-mode (SLIRP) static address so the :5555 listener is reachable via
+    // `-netdev user,hostfwd=tcp::5555-:5555` IMMEDIATELY — without waiting on a
+    // DHCP lease. Under quiescent SLIRP there are no post-boot driver RX
+    // notifications to crank the DHCP handshake forward (and no timer PD), so DHCP
+    // can stall; the static seed makes the firmament's ear reachable regardless.
+    // DHCP still runs and can upgrade the lease on a real network. SLIRP hands the
+    // guest 10.0.2.15/24 with gateway 10.0.2.2 (QEMU's fixed user-net layout).
+    #[cfg(feature = "executor-ingress")]
+    let have_static_addr = {
+        use smoltcp::wire::{IpAddress, Ipv4Address};
+        iface.update_ip_addrs(|addrs| {
+            let _ = addrs.push(IpCidr::new(IpAddress::v4(10, 0, 2, 15), 24));
+        });
+        let _ = iface
+            .routes_mut()
+            .add_default_ipv4_route(Ipv4Address::new(10, 0, 2, 2));
+        debug_println!(
+            "[net-client] static SLIRP addr 10.0.2.15/24 (gw 10.0.2.2) seeded — :5555 reachable now"
+        );
+        true
+    };
+    #[cfg(not(feature = "executor-ingress"))]
+    let have_static_addr = false;
 
     // Sockets: one DHCPv4 client, one TCP listener with its rx/tx buffers.
     let mut sockets = SocketSet::new(vec![]);
@@ -275,6 +368,19 @@ fn init() -> EdgeHandler {
         config::ECHO_PORT
     );
 
+    // Acquire the turn_in handoff region (RW) HERE in init() so its
+    // `memory_region_symbol!` is emitted + retained in the PD ELF (the microkit
+    // tool patches `turn_in_vaddr` into it). Acquiring it lazily inside the staging
+    // path let the linker DCE the symbol. Only the `executor-ingress` build maps
+    // turn_in (dregg.system); net-full.system has no turn_in map.
+    #[cfg(feature = "executor-ingress")]
+    let turn_in = unsafe {
+        SharedMemoryRef::<'static, _>::new(memory_region_symbol!(
+            turn_in_vaddr: *mut [u8],
+            n = config::TURN_IN_SIZE
+        ))
+    };
+
     let mut handler = EdgeHandler {
         device,
         iface,
@@ -282,8 +388,14 @@ fn init() -> EdgeHandler {
         dhcp_handle,
         tcp_handle,
         millis: 0,
-        have_addr: false,
+        // With a static SLIRP address seeded (ingress build), the edge already has
+        // an address, so the crank loop need not keep poking the driver for a DHCP
+        // lease (which can stall under quiescent SLIRP). DHCP still runs and can
+        // upgrade the lease on a real network.
+        have_addr: have_static_addr,
         cranks: 0,
+        #[cfg(feature = "executor-ingress")]
+        turn_in,
     };
 
     // One crank at init: queue the first DHCP DISCOVER and (via the !have_addr
@@ -295,8 +407,3 @@ fn init() -> EdgeHandler {
 
     handler
 }
-
-// Silence the unused-on-this-path warning while keeping the field as a readable
-// liveness witness for future ingress wiring.
-#[allow(dead_code)]
-fn _assert_channel_is_used(_c: Channel) {}

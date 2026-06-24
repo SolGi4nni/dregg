@@ -30,6 +30,17 @@ publish = false
 name = "dregg-net-client-pd"
 path = "src/main.rs"
 
+[features]
+# `executor-ingress` (dregg.system only): on an accepted SignedTurn, STAGE the
+# verified turn bytes into the turn_in shared region (mapped RW) and signal the
+# executor PD (channel id 1) — closing the ingress → verified-executor path. OFF
+# by default so net-full.system (a 2-PD net edge with NO executor PD / no turn_in
+# map) builds clean: the gate still Ed25519-checks + replies over the wire, but
+# never touches the (there-unmapped) turn_in symbol or the (there-unbound)
+# executor channel.
+default = []
+executor-ingress = []
+
 [dependencies]
 sel4-microkit = { workspace = true }
 
