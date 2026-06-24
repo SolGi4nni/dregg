@@ -291,6 +291,21 @@ impl DirectoryCell {
         })
     }
 
+    /// Borrowing scan over `(name, entry)` pairs after a membership check.
+    ///
+    /// Like [`Self::list`] but without cloning every entry — for in-process
+    /// consumers (e.g. intent matching) that only read the entries and do not
+    /// need an owned, shippable snapshot.
+    ///
+    /// Requires membership.
+    pub fn iter_entries(
+        &self,
+        caller: MemberId,
+    ) -> Result<impl Iterator<Item = (&Name, &DirectoryEntry)>, DirectoryError> {
+        self.check_membership(&caller)?;
+        Ok(self.entries.iter())
+    }
+
     /// Get a specific entry by name.
     ///
     /// Returns the entry and its current version. The caller can pass this version
@@ -713,16 +728,18 @@ impl ScopedIntentPool {
         directory: &DirectoryCell,
         caller: MemberId,
     ) -> Result<Vec<([u8; 32], Name)>, DirectoryError> {
-        let listing = directory.list(caller)?;
+        // Borrow the directory's entries directly rather than cloning a whole
+        // owned `Listing` (every entry + its tags) just to read them.
+        let entries: Vec<(&Name, &DirectoryEntry)> = directory.iter_entries(caller)?.collect();
         let mut matches = Vec::new();
 
         for (id, intent) in &self.intents {
             if intent.kind != ScopedIntentKind::Need {
                 continue;
             }
-            for (name, entry) in &listing.entries {
+            for (name, entry) in &entries {
                 if self.pattern_matches(&intent.match_pattern, name, entry) {
-                    matches.push((*id, name.clone()));
+                    matches.push((*id, (*name).clone()));
                     break; // first match per intent
                 }
             }

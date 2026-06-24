@@ -546,7 +546,7 @@ impl RelayNetlayer {
         for msg in drained {
             // `destination` on a drained message is us; the sender rides in
             // the envelope payload prefix written by RelayConn::send.
-            if let Some((sender, _)) = split_sender_prefix(&msg.encrypted_payload) {
+            if let Some(sender) = parse_sender_prefix(&msg.encrypted_payload) {
                 if !claimed.contains(&sender) && !unclaimed.contains(&sender) {
                     unclaimed.push_back(sender);
                 }
@@ -584,12 +584,20 @@ fn join_sender_prefix(sender: &FederationId, sealed: &[u8]) -> Vec<u8> {
 }
 
 fn split_sender_prefix(payload: &[u8]) -> Option<(FederationId, Vec<u8>)> {
+    let sender = parse_sender_prefix(payload)?;
+    Some((sender, payload[32..].to_vec()))
+}
+
+/// Read only the sender id from an envelope prefix, without allocating the
+/// trailing sealed body — for paths that route on the sender and keep the
+/// original message (the drain/sort loop).
+fn parse_sender_prefix(payload: &[u8]) -> Option<FederationId> {
     if payload.len() < 32 {
         return None;
     }
     let mut id = [0u8; 32];
     id.copy_from_slice(&payload[..32]);
-    Some((FederationId(id), payload[32..].to_vec()))
+    Some(FederationId(id))
 }
 
 /// A store-and-forward session leg to one peer.
