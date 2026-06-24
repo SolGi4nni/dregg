@@ -1243,6 +1243,376 @@ def exerciseHoldState (st : RecChainedState) (actor : CellId) : RecChainedState 
 @[simp] private theorem exerciseHoldState_kernel (st : RecChainedState) (actor : CellId) :
     (exerciseHoldState st actor).kernel = st.kernel := rfl
 
+/-! ### §6.7a — THE INTER-EXECUTOR KERNEL-AGREEMENT BRIDGE (the `exercise_inner_fold` boundary).
+
+The handler folds its inner forest through `subTurn (innerEffects …)` over `RecordKernelState` (each step
+is `execEffect (toClosedEffect fa)` = the looked-up handler's `step`), while `execFullA`'s `.exerciseA`
+arm folds via `execInnerA` over `RecChainedState` (each step is `execFullA fa`). The two are DIFFERENT
+inner executors over different state carriers, so the handler step does not, on its own, establish the
+live fold's kernel.
+
+The KEY observation that makes the boundary PROVABLE (not carried): we never need the full refinement
+direction (handler-commits ⇒ live-commits) — for the boundary we have BOTH folds committing (the handler
+by its commit `h`; the live fold by the circuit witness / `execInnerA = some post`). What remains is mere
+AGREEMENT: when BOTH a handler kernel-step and the live `execFullA` commit, they land on the SAME kernel.
+That agreement holds UNCONDITIONALLY per effect (the handler only ever NARROWS what commits, and where it
+DOES commit, the resulting kernel is exactly the bare chained step's — the §6.1–§6.6 refinement theorems
+prove this), so the divergent arms (`attenuate`/`noteSpend`-without-proof, where the handler is the LOOSER
+one) cause no trouble: the live commit is a HYPOTHESIS here, so we are only ever on the path where both
+agree. The recursion bottoms out structurally on the (smaller) inner list. -/
+
+/-- Reconstruct a one-effect handler-turn commit from a bare kernel step: if the looked-up handler's
+`step` commits on `st.kernel`, then `execHandlerOne` commits on `st` with that exact kernel. The inverse
+direction of `execHandlerOne_kernel`. -/
+private theorem execHandlerOne_of_kernelStep (fa : FullActionA) (st : RecChainedState)
+    (k' : RecordKernelState)
+    (hstep : (toClosedEffect fa).handler.step st.kernel (toClosedEffect fa).args = some k') :
+    execHandlerOne fa st
+      = some { kernel := k', log := (closedOf [fa]).reverse.map (fun e => e.handler.trace e.args) ++ st.log } := by
+  unfold execHandlerOne execHandlerTurn
+  have hturn : execTurn (closedOf [fa]) st.kernel = some k' := by
+    simp only [closedOf, List.map_cons, List.map_nil, execTurn_cons, execEffect, execTurn_nil]
+    rw [hstep]; rfl
+  rw [hturn]
+
+/-- A committed `stateStep` field write was into a member cell (the live gate carries membership). The
+membership the setPermissions/setVK/setProgram refinement theorems need, recovered from the LIVE commit
+(`execFullA`'s arm IS `stateStep st f actor cell (.int v)`). -/
+private theorem setStateField_mem_of_live {st st' : RecChainedState} {f : FieldName}
+    {actor cell : CellId} {v : Value}
+    (h : Dregg2.Exec.EffectsState.stateStep st f actor cell v = some st') :
+    cell ∈ st.kernel.accounts := by
+  unfold Dregg2.Exec.EffectsState.stateStep at h
+  by_cases hg : Dregg2.Exec.EffectsState.stateAuthB st.kernel.caps actor cell = true
+      ∧ cell ∈ st.kernel.accounts ∧ Dregg2.Exec.EffectsState.cellLive st.kernel cell = true
+  · exact hg.2.1
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-! **THE GENUINE INNER-FOLD DIVERGENCES — three FROZEN-FACE handler inner steps.** The handler's
+exercise inner fold runs `execEffect (toClosedEffect fa)` = the looked-up handler's `step`. For three
+constructors that handler step is a SIMPLIFIED "frozen face" that does LESS than the live `execFullA`
+arm, so on a non-trivial input the handler kernel and the live kernel DIVERGE. Verified empirically /
+read off the existing top-level `_residual`/`_metadata` theorems:
+
+  1. **`refreshDelegationA`** — handler `Lifecycle.refreshDelegationStep` updates ONLY `delegations`;
+     the live `refreshDelegationChainA` ALSO re-stamps `delegationEpochAt child := parentEpoch`. On a
+     stale-epoch child the two diverge at `delegationEpochAt` (eval: handler 0 vs live 5).
+  2. **`createCellFromFactoryA`** — handler dispatch is `createCellFromFactoryH = createCellH` (born
+     EMPTY); the live `createCellFromFactoryChainA` installs the registered factory's `slotCaveats`,
+     `factoryVk` field, and `initialFields`. They diverge at the minted cell's record/caveats.
+  3. **`spawnA`** — handler dispatch is `spawnH = createCellH` (born EMPTY); the live `spawnChainA`
+     ALSO copies the held cap to the child, records the parent, snapshots the c-list, stamps the epoch.
+
+For all three the top-level handler refinement deliberately routes through the CHAINED arm (the
+`_metadata`/`_residual` theorems) precisely BECAUSE the born-empty/frozen dispatch differs from the live
+arm. As inner effects of an exercise they have no such re-routing — the inner fold uses the frozen face —
+so the inter-executor kernel agreement is NOT unconditional. `noFrozenFace` is the precise SYNTACTIC
+characterization of the closable fragment (the inner forests on which the two folds PROVABLY agree at the
+kernel); the residual is exactly its complement. (The clean fix lives in the handler-algebra lane: route
+the exercise inner fold through the chained stamping/installing/handoff steps — the same arms the
+top-level refinements already use. Until then this is the precise honest residual.) -/
+def noFrozenFace : FullActionA → Bool
+  | .refreshDelegationA _ _ => false
+  | .createCellFromFactoryA _ _ _ => false
+  | .spawnA _ _ _ => false
+  | .exerciseA _ _ inner => inner.attach.all (fun p => noFrozenFace p.1)
+  | _ => true
+decreasing_by
+  simp_wf
+  have := List.sizeOf_lt_of_mem p.2
+  omega
+
+mutual
+/-- **`handlerStep_agrees_execFullA_kernel` — the inter-executor per-effect kernel agreement.** When the
+handler's kernel step AND the live `execFullA` BOTH commit on a shared kernel, they produce the SAME
+kernel (on the closable fragment `noFrozenFace fa = true` — every effect EXCEPT the one divergent
+`refreshDelegationA` frozen-face arm). We pass the handler side as a kernel-step on `st.kernel`; the live
+side as `execFullA st fa`. Proved by `sizeOf fa` recursion: the unconditional arms delegate to the §6
+refinement theorems (which give the unique `execFullA` result with matching kernel; `execFullA` is a
+function, so the witnessed `st'` coincides); the side-conditioned arms (setField/makeSovereign/
+receiptArchive/heapWrite — where the handler may be the LOOSER one) are settled DIRECTLY at the kernel via
+the live `*_factors`; the refresh arm is RULED OUT by `noFrozenFace`; the exercise arm recurses into
+the inner-fold agreement on the structurally-smaller (safe) inner list. -/
+theorem handlerStep_agrees_execFullA_kernel :
+    ∀ (fa : FullActionA) (st st' : RecChainedState) (k' : RecordKernelState),
+      noFrozenFace fa = true →
+      (toClosedEffect fa).handler.step st.kernel (toClosedEffect fa).args = some k' →
+      execFullA st fa = some st' → st'.kernel = k'
+  | .balanceA t a, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_transfer st _ t a (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .delegate del rec t, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_delegate st _ del rec t (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .revoke holder t, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_revoke st _ holder t (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .mintA actor cell a amt, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_mint st _ actor cell a amt (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .burnA actor cell a amt, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_burn st _ actor cell a amt (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .setFieldA actor cell f v, st, st', k', _halign, hstep, hlive => by
+      -- DIRECT: the live setField arm is `stateStepDev`; both commit to the same `writeField` post-state.
+      rw [toClosedEffect] at hstep
+      change Dregg2.Exec.Handlers.StateSupply.setFieldDevStep st.kernel
+        { actor := actor, target := cell, field := f, value := v } = some k' at hstep
+      have hkk : Dregg2.Exec.EffectsState.stateStepDev st f actor cell v = some st' := hlive
+      -- the handler step's kernel and the live step's kernel both write field `f` of `cell` to `v`.
+      have hnr : Dregg2.Exec.EffectsState.reservedField f = false :=
+        Dregg2.Exec.Handlers.StateSupply.setFieldDevStep_notReserved hstep
+      replace hstep := Dregg2.Exec.Handlers.StateSupply.setFieldDevStep_eq hstep
+      change stateWriteStep st.kernel { actor := actor, target := cell, field := f, value := v } = some k' at hstep
+      unfold stateWriteStep at hstep
+      by_cases hg : acceptsEffects st.kernel cell
+          && authorizedB st.kernel.caps { actor := actor, src := cell, dst := cell, amt := 0 }
+      · rw [if_pos hg] at hstep
+        have hkdef : k' = writeField st.kernel f cell (.int v) := (Option.some.inj hstep).symm
+        -- the live `stateStepDev` post-state.
+        unfold Dregg2.Exec.EffectsState.stateStepDev at hkk
+        rw [if_neg (by rw [hnr]; simp)] at hkk
+        unfold Dregg2.Exec.EffectsState.stateStepGuarded at hkk
+        by_cases hcav : caveatsAdmit st.kernel f actor cell v = true
+        · rw [if_pos hcav] at hkk
+          obtain ⟨_, hst'⟩ := Dregg2.Exec.EffectsState.stateStep_factors hkk
+          rw [hst', hkdef]
+        · rw [if_neg hcav] at hkk; exact absurd hkk (by simp)
+      · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+  | .emitEventA actor cell topic data, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_emitEvent st _ actor cell topic data (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .incrementNonceA actor cell n, st, st', k', _halign, hstep, hlive => by
+      have hmem : cell ∈ st.kernel.accounts :=
+        setStateField_mem_of_live (Dregg2.Exec.EffectsState.incrementNonceStep_eq hlive)
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_incrementNonce st _ actor cell n hmem (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .setPermissionsA actor cell p, st, st', k', _halign, hstep, hlive => by
+      have hmem : cell ∈ st.kernel.accounts := setStateField_mem_of_live (f := permsField) hlive
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_setPermissions st _ actor cell p hmem (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .setVKA actor cell vk, st, st', k', _halign, hstep, hlive => by
+      have hmem : cell ∈ st.kernel.accounts := setStateField_mem_of_live (f := Dregg2.Exec.TurnExecutorFull.vkField) hlive
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_setVK st _ actor cell vk hmem (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .setProgramA actor cell prog, st, st', k', _halign, hstep, hlive => by
+      have hmem : cell ∈ st.kernel.accounts := setStateField_mem_of_live (f := Dregg2.Exec.TurnExecutorFull.programField) hlive
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_setProgram st _ actor cell prog hmem (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .introduceA intro rec t, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_introduce st _ intro rec t (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .delegateAttenA del rec t keep, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_delegateAtten st _ del rec t keep (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .attenuateA actor idx keep, st, st', k', _halign, hstep, hlive => by
+      -- the live executor FAILS CLOSED out of bounds; the live commit recovers the in-bounds side-condition.
+      have hb : idx < (st.kernel.caps actor).length :=
+        (Dregg2.Exec.TurnExecutorFull.attenuateA_factors hlive).1
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_attenuate st _ actor idx keep hb (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .revokeDelegationA holder t, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_revokeDelegation st _ holder t (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .exerciseA actor target inner, st, st', k', halign, hstep, hlive => by
+      -- BOTH sides fold the SAME `inner`. Recurse on the structurally-smaller list. The exercise's own
+      -- safety propagates element-wise to the inner forest.
+      have hsafe : ∀ fa ∈ inner, noFrozenFace fa = true := by
+        have h := halign
+        unfold noFrozenFace at h
+        rw [List.all_eq_true] at h
+        intro fa hfa
+        exact h ⟨fa, hfa⟩ (List.mem_attach inner _)
+      let innerF := inner.map (fun fa => facetedOf (Dregg2.Exec.TurnExecutorFull.requiredFacetA fa) (toClosedEffect fa))
+      have hsub : subTurn (innerEffects innerF) st.kernel = some k' := by
+        rw [toClosedEffect] at hstep
+        change exerciseStep st.kernel { actor := actor, target := target, inner := innerF } = some k' at hstep
+        unfold exerciseStep at hstep
+        by_cases hg : exerciseAdmitB st.kernel { actor := actor, target := target, inner := innerF }
+        · rw [if_pos hg] at hstep; exact hstep
+        · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+      have hfold : execInnerA (exerciseHoldState st actor) inner = some st' := by
+        simp only [execFullA] at hlive
+        by_cases hf : Dregg2.Exec.TurnExecutorFull.innerFacetsAdmittedA st actor target inner = true
+        · rw [if_pos hf] at hlive
+          cases hgs : Dregg2.Exec.TurnExecutorFull.exerciseStepA st actor target with
+          | none => rw [hgs] at hlive; exact absurd hlive (by simp)
+          | some s1 =>
+              rw [hgs] at hlive
+              obtain ⟨_, hs1⟩ := Dregg2.Exec.TurnExecutorFull.exerciseStepA_factors hgs
+              rw [hs1] at hlive; exact hlive
+        · rw [if_neg hf] at hlive; exact absurd hlive (by simp)
+      exact innerFold_agrees_kernel inner (exerciseHoldState st actor) st' k' hsafe
+        (by rw [exerciseHoldState_kernel]; exact hsub) hfold
+  | .createCellA actor newCell, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_createCell st _ actor newCell (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .createCellFromFactoryA _actor _newCell _vk, _st, _st', _k', halign, _hstep, _hlive => by
+      -- FROZEN-FACE DIVERGENCE: handler dispatch is born-EMPTY `createCellH`; the live
+      -- `createCellFromFactoryChainA` installs the factory's caveats/vk/initialFields. RULED OUT.
+      simp only [noFrozenFace, reduceCtorEq] at halign
+  | .spawnA _actor _child _target, _st, _st', _k', halign, _hstep, _hlive => by
+      -- FROZEN-FACE DIVERGENCE: handler dispatch is born-EMPTY `createCellH`; the live `spawnChainA`
+      -- copies the held cap + records parent + snapshots c-list + stamps epoch. RULED OUT.
+      simp only [noFrozenFace, reduceCtorEq] at halign
+  | .bridgeMintA actor cell a value, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_bridgeMint st _ actor cell a value (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .noteSpendA nf actor spendProof, st, st', k', _halign, hstep, hlive => by
+      -- live commit forces `spendProof = true` (the §8 NOTE-PROOF TEETH); refine against that.
+      have hsp : spendProof = true := by
+        cases spendProof with
+        | false =>
+            exfalso
+            have hnone : execFullA st (.noteSpendA nf actor false) = none := by
+              show Dregg2.Exec.TurnExecutorFull.noteSpendChainA st nf actor false = none
+              unfold Dregg2.Exec.TurnExecutorFull.noteSpendChainA
+              rfl
+            rw [hnone] at hlive; exact absurd hlive (by simp)
+        | true => rfl
+      subst hsp
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_noteSpend st _ nf actor (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .noteCreateA cm actor, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_noteCreate st _ cm actor (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .makeSovereignA actor cell, st, st', k', _halign, hstep, hlive => by
+      -- DIRECT: both steps commit to `makeSovereignKernel st.kernel cell`.
+      rw [toClosedEffect] at hstep
+      change Dregg2.Exec.Handlers.StateSupply.makeSovereignStepK st.kernel
+        { actor := actor, target := cell } = some k' at hstep
+      unfold Dregg2.Exec.Handlers.StateSupply.makeSovereignStepK at hstep
+      by_cases hg : acceptsEffects st.kernel cell
+          && authorizedB st.kernel.caps { actor := actor, src := cell, dst := cell, amt := 0 }
+      · rw [if_pos hg] at hstep
+        have hkdef : k' = Dregg2.Exec.TurnExecutorFull.makeSovereignKernel st.kernel cell := (Option.some.inj hstep).symm
+        obtain ⟨_, hst'⟩ := Dregg2.Exec.TurnExecutorFull.makeSovereignStep_factors hlive
+        rw [hst', hkdef]
+      · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+  | .refusalA actor cell, st, st', k', _halign, hstep, hlive => by
+      have hmem : cell ∈ st.kernel.accounts := setStateField_mem_of_live (f := Dregg2.Exec.TurnExecutorFull.refusalField) hlive
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_refusal st _ actor cell hmem (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .receiptArchiveA actor cell, st, st', k', _halign, hstep, hlive => by
+      -- DIRECT: both steps move the lifecycle side-table to `lcArchived`.
+      rw [toClosedEffect] at hstep
+      change Dregg2.Exec.Handlers.Lifecycle.cellArchiveStep st.kernel { actor := actor, cell := cell }
+        = some k' at hstep
+      unfold Dregg2.Exec.Handlers.Lifecycle.cellArchiveStep at hstep
+      by_cases hg : stateAuthB st.kernel.caps actor cell && acceptsEffects st.kernel cell
+      · rw [if_pos hg] at hstep
+        have hkdef : k' = Dregg2.Exec.TurnExecutorFull.setLifecycle st.kernel cell Dregg2.Exec.TurnExecutorFull.lcArchived := (Option.some.inj hstep).symm
+        change Dregg2.Exec.TurnExecutorFull.receiptArchiveChainA st actor cell = some st' at hlive
+        unfold Dregg2.Exec.TurnExecutorFull.receiptArchiveChainA at hlive
+        by_cases hgl : stateAuthB st.kernel.caps actor cell = true ∧ cell ∈ st.kernel.accounts
+            ∧ Dregg2.Exec.EffectsState.cellLive st.kernel cell = true
+        · rw [if_pos hgl] at hlive
+          have hst' : st' = { kernel := Dregg2.Exec.TurnExecutorFull.setLifecycle st.kernel cell Dregg2.Exec.TurnExecutorFull.lcArchived,
+                              log := { actor := actor, src := cell, dst := cell, amt := 0 } :: st.log } :=
+            (Option.some.inj hlive).symm
+          rw [hst', hkdef]
+        · rw [if_neg hgl] at hlive; exact absurd hlive (by simp)
+      · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+  | .pipelinedSendA actor, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_pipelinedSend st _ actor (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .cellSealA actor cell, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_cellSeal st _ actor cell (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .cellUnsealA actor cell, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_cellUnseal st _ actor cell (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .cellDestroyA actor cell ch, st, st', k', _halign, hstep, hlive => by
+      obtain ⟨s'', hex, hke⟩ := handler_refines_execFullA_cellDestroy st _ actor cell ch (execHandlerOne_of_kernelStep _ st k' hstep)
+      rw [hlive] at hex; rw [Option.some.injEq] at hex; rw [← hex] at hke; exact hke
+  | .refreshDelegationA _actor _child, _st, _st', _k', halign, _hstep, _hlive => by
+      -- THE ONE DIVERGENT ARM is RULED OUT of the closable fragment: the handler frozen-face
+      -- `Lifecycle.refreshDelegationStep` updates ONLY `delegations` (NO epoch re-stamp), while the live
+      -- `refreshDelegationChainA` ALSO re-stamps `delegationEpochAt child := parentEpoch` — so on a
+      -- stale-epoch child the two kernels DIVERGE (verified empirically). `noFrozenFace` excludes it.
+      simp only [noFrozenFace, reduceCtorEq] at halign
+  | .heapWriteA actor target addr v newRoot, st, st', k', _halign, hstep, hlive => by
+      -- DIRECT: the handler `heapWriteStep` writes `heap_root` + the heaps splice (no caveat gate); the
+      -- live `heapStepGuardedW` writes the SAME (its `stateStepGuarded` commits the same `heap_root` write
+      -- + the SAME splice). When BOTH commit the kernels coincide.
+      rw [toClosedEffect] at hstep
+      change Dregg2.Exec.Handlers.StateSupply.heapWriteStep st.kernel
+        { actor := actor, target := target, addr := addr, value := v, newRoot := newRoot } = some k' at hstep
+      unfold Dregg2.Exec.Handlers.StateSupply.heapWriteStep at hstep
+      by_cases hg : acceptsEffects st.kernel target
+          && authorizedB st.kernel.caps { actor := actor, src := target, dst := target, amt := 0 }
+      · rw [if_pos hg] at hstep
+        have hkdef : k' = { writeField st.kernel Dregg2.Substrate.HeapKernel.heapRootField target (.int newRoot) with
+              heaps := fun c => if c = target
+                                then Dregg2.Substrate.Heap.set (st.kernel.heaps target) addr v
+                                else st.kernel.heaps c } := (Option.some.inj hstep).symm
+        obtain ⟨s₁, hsg, hst'⟩ := Dregg2.Substrate.HeapKernel.heapStepGuardedW_factors hlive
+        obtain ⟨_, hs₁⟩ := Dregg2.Exec.EffectsState.stateStep_factors
+          (Dregg2.Exec.EffectsState.stateStepGuarded_eq hsg)
+        rw [hst', hkdef, hs₁]
+      · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+  termination_by fa _ _ _ _ _ _ => sizeOf fa
+
+/-- **`innerFold_agrees_kernel` — the inner-fold lift of the per-effect agreement.** Both inner folds run
+the SAME `inner` from a shared kernel; if every effect is on the closable fragment (`hsafe`), the handler's
+`subTurn (innerEffects (map facetedOf …))` reaches `k'` AND the live `execInnerA` reaches `post`, then
+`post.kernel = k'`. By induction on `inner`, each step consumes `handlerStep_agrees_execFullA_kernel`. -/
+theorem innerFold_agrees_kernel :
+    ∀ (inner : List FullActionA) (st post : RecChainedState) (k' : RecordKernelState),
+      (∀ fa ∈ inner, noFrozenFace fa = true) →
+      subTurn (innerEffects (inner.map (fun fa => facetedOf (Dregg2.Exec.TurnExecutorFull.requiredFacetA fa) (toClosedEffect fa)))) st.kernel = some k' →
+      execInnerA st inner = some post → post.kernel = k'
+  | [], st, post, k', _hsafe, hsub, hlive => by
+      simp only [List.map_nil, innerEffects, subTurn_nil, Option.some.injEq] at hsub
+      simp only [execInnerA, Option.some.injEq] at hlive
+      rw [← hlive, ← hsub]
+  | fa :: rest, st, post, k', hsafe, hsub, hlive => by
+      simp only [List.map_cons, innerEffects, subTurn_cons, facetedOf, closedToSub,
+        Option.bind_eq_some_iff] at hsub
+      obtain ⟨kmid, hhead, htail⟩ := hsub
+      simp only [execInnerA] at hlive
+      cases hlf : execFullA st fa with
+      | none => rw [hlf] at hlive; exact absurd hlive (by simp)
+      | some smid =>
+          rw [hlf] at hlive
+          have hheadstep : (toClosedEffect fa).handler.step st.kernel (toClosedEffect fa).args = some kmid := by
+            simpa only [execEffect] using hhead
+          have hmidk : smid.kernel = kmid :=
+            handlerStep_agrees_execFullA_kernel fa st smid kmid
+              (hsafe fa (List.mem_cons_self ..)) hheadstep hlf
+          have htail' : subTurn (innerEffects (rest.map (fun fa => facetedOf (Dregg2.Exec.TurnExecutorFull.requiredFacetA fa) (toClosedEffect fa)))) smid.kernel = some k' := by
+            rw [hmidk]; simpa only [innerEffects] using htail
+          exact innerFold_agrees_kernel rest smid post k'
+            (fun fa hfa => hsafe fa (List.mem_cons_of_mem _ hfa)) htail' hlive
+  termination_by inner _ _ _ _ _ _ => sizeOf inner
+end
+
+/-- **`exercise_inner_fold_kernel_agrees` — THE BOUNDARY KERNEL EQUALITY, PROVEN.** On the closable
+fragment (`noFrozenFace`-safe inner forest), whenever the handler executor commits an exercise (giving its
+`subTurn` inner fold's kernel `s'.kernel`) AND the live `execInnerA` from the hold-state commits to `post`,
+the two inner folds AGREE at the kernel: `post.kernel = s'.kernel`. This is the boundary fact the
+`exercise_inner_fold` front carried — now DISCHARGED by `innerFold_agrees_kernel` (per-effect inter-executor
+agreement, inducted over the forest), not assumed. The residual is exactly the un-safe complement (a forest
+carrying a frozen-face `refreshDelegationA`/`createCellFromFactoryA`/`spawnA`). -/
+theorem exercise_inner_fold_kernel_agrees (s s' post : RecChainedState) (actor target : CellId)
+    (inner : List FullActionA)
+    (hsafe : ∀ fa ∈ inner, noFrozenFace fa = true)
+    (hfold : execInnerA (exerciseHoldState s actor) inner = some post)
+    (h : execHandlerOne (.exerciseA actor target inner) s = some s') :
+    post.kernel = s'.kernel := by
+  -- the handler's committed exercise inner fold reaches `s'.kernel`.
+  have hstep := execHandlerOne_kernel (.exerciseA actor target inner) s s' h
+  rw [toClosedEffect] at hstep
+  let innerF := inner.map (fun fa => facetedOf (Dregg2.Exec.TurnExecutorFull.requiredFacetA fa) (toClosedEffect fa))
+  change exerciseStep s.kernel { actor := actor, target := target, inner := innerF } = some s'.kernel at hstep
+  unfold exerciseStep at hstep
+  by_cases hg : exerciseAdmitB s.kernel { actor := actor, target := target, inner := innerF }
+  · rw [if_pos hg] at hstep
+    -- the live inner fold (`hfold`) and the handler's `subTurn` (`hstep`) agree at the kernel.
+    exact innerFold_agrees_kernel inner (exerciseHoldState s actor) post s'.kernel hsafe
+      (by rw [exerciseHoldState_kernel]; exact hstep) hfold
+  · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+
 /-- **`handler_refines_execFullA_exercise` — PROVED on the inner-turn honest path.** Whenever the handler
 executor commits an exercise AND the inner `FullActionA` fold from the hold-state reaches the SAME
 kernel (`hinner`), `execFullA` ALSO commits the exercise AND produces that kernel. -/
@@ -1287,6 +1657,19 @@ theorem handler_refines_execFullA_exercise (s s' : RecChainedState) (actor targe
     simp only [execFullA, if_pos hfacet, hg', hfold]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
+/-- **`handler_refines_execFullA_exercise_fromSafe` — the `hinner` SHED on the closable fragment.** The
+abstract `hinner` (the live inner fold reaching the handler's kernel) is DISCHARGED from the live fold
+`hfold` paired with the PROVEN boundary `exercise_inner_fold_kernel_agrees` — the caller no longer supplies
+a bare kernel-equality, only the `noFrozenFace` safety + the live fold it already has. -/
+theorem handler_refines_execFullA_exercise_fromSafe (s s' post : RecChainedState) (actor target : CellId)
+    (inner : List FullActionA)
+    (hsafe : ∀ fa ∈ inner, noFrozenFace fa = true)
+    (hfold : execInnerA (exerciseHoldState s actor) inner = some post)
+    (h : execHandlerOne (.exerciseA actor target inner) s = some s') :
+    ∃ s'', execFullA s (.exerciseA actor target inner) = some s'' ∧ s''.kernel = s'.kernel :=
+  handler_refines_execFullA_exercise s s' actor target inner
+    ⟨post, hfold, exercise_inner_fold_kernel_agrees s s' post actor target inner hsafe hfold h⟩ h
+
 /-! ## §7 — THE TEETH: R1/R6 holes closed in BOTH executors (parity witnesses).
 
 The payoff. For each hole, a single fixture exhibits the LIVE EXECUTOR `execFullA` accepting the attack
@@ -1322,6 +1705,16 @@ def teethSealed : RecChainedState :=
 
 -- (F1b: the §TEETH-R2 escrow-release fixtures left with the kernel escrow store — the settle-actor
 -- gate lives in the factory contract now, with its own teeth in `Apps/EscrowFactory.lean`.)
+
+-- §TEETH-INNER-FOLD-DIVERGENCE: the `noFrozenFace` classifier is NON-VACUOUS (true AND false), and the
+-- three excluded constructors are EXACTLY the frozen-face inner steps that DIVERGE from the live arm.
+#guard noFrozenFace (.balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0) == true   -- transfer: safe
+#guard noFrozenFace (.refreshDelegationA 0 1) == false                                      -- epoch re-stamp: UNSAFE
+#guard noFrozenFace (.createCellFromFactoryA 0 9 7) == false                                -- factory install: UNSAFE
+#guard noFrozenFace (.spawnA 0 9 1) == false                                                -- cap handoff: UNSAFE
+-- a nested exercise carrying a frozen-face refresh is itself classified UNSAFE (the recursion bites):
+#guard noFrozenFace (.exerciseA 0 1 [.refreshDelegationA 0 1]) == false
+#guard noFrozenFace (.exerciseA 0 1 [.balanceA { actor := 0, src := 0, dst := 1, amt := 1 } 0]) == true
 
 -- §TEETH-CONSERVATION: a whole handler turn conserves the combined measure (the derived global law,
 -- evaluated): a transfer 0→1 (30 of asset 0, both LIVE) + a self nonce-write on cell 0 leaves the
@@ -1386,6 +1779,11 @@ The derived global laws + the strengthening + the executor structure are all pin
 #assert_axioms hole_handler_receiptArchive
 #assert_axioms handler_refines_execFullA_receiptArchive
 #assert_axioms handler_refines_execFullA_exercise
+-- The inter-executor inner-fold boundary (the `exercise_inner_fold` front) — kernel-pinned, no new axiom.
+#assert_axioms handlerStep_agrees_execFullA_kernel
+#assert_axioms innerFold_agrees_kernel
+#assert_axioms exercise_inner_fold_kernel_agrees
+#assert_axioms handler_refines_execFullA_exercise_fromSafe
 
 /-! ## §DEFER — scope of THIS cutover keystone (additive; the call-site switch is mechanical).
 

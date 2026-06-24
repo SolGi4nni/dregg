@@ -67,21 +67,23 @@ structure OpenFront where
 -- faithful chained arm — the same pattern as `…_spawn_fresh`/`…_refreshDelegation`, the refinement that
 -- consumes the chained step, not the lossy dispatch.)
 def openFronts : List OpenFront := [
-  -- Wave 7: the exercise INNER-TURN fold (the `hinner` hypothesis on `handler_refines_execFullA_exercise`).
-  -- RESIDUAL (precise): kernel agreement between the handler's `subTurn (innerEffects …)` over the
-  -- born-empty `RecordKernelState` (the `Handlers.Exercise.exerciseStep` algebra) and the live executor's
-  -- `execInnerA` recursion over `RecChainedState` (`execFullA`'s `.exerciseA` arm). The two inner FOLDS
-  -- are DIFFERENT executors over different state carriers, so the handler step does not, on its own,
-  -- establish `execInnerA (exerciseHoldState s actor) inner` reaching the handler's kernel — that is the
-  -- inter-executor inner-fold agreement, carried as the explicit `hinner` hypothesis. The CIRCUIT layer
-  -- discharges its analogue from the emitted inner-turn witness
-  -- (`ExerciseInnerTurn.exercise_inner_emitted_refines_turnSpec` → `turnSpec`); the HANDLER lane can
-  -- consume that SAME witness once it is paired with the boundary `post.kernel = s'.kernel`
-  -- (`ActionDispatch.execInnerA_iff_turnSpec` bridges `turnSpec` → `execInnerA = some post`). Honest
-  -- residual: the witness-threading + boundary-kernel lemma. The R4 facet-mask + the cap-handoff/factory
-  -- metadata are all CLOSED; this inner-fold agreement is the one remaining handler-exercise front.
-  ⟨"exercise_inner_fold", .w7_exercise_inner_fold, some "exerciseA",
-    "handler_refines_execFullA_exercise carries hinner: the handler's subTurn over RecordKernelState vs the live execInnerA over RecChainedState are different inner folds; their kernel agreement (execInnerA reaches the handler's kernel) is the inter-executor inner-fold front, dischargeable by threading the circuit's emitted inner-turn witness (→ turnSpec → execInnerA_iff_turnSpec) paired with the boundary post.kernel = s'.kernel"⟩
+  -- Wave 7: the exercise INNER-TURN fold boundary — CLOSED on the closable fragment; the residual is the
+  -- PRECISE complement (the three FROZEN-FACE inner steps). The boundary kernel-equality between the
+  -- handler's `subTurn (innerEffects …)` over `RecordKernelState` and the live `execInnerA` over
+  -- `RecChainedState` (`execFullA`'s `.exerciseA` arm) is now PROVEN — `HandlerExecutor.
+  -- exercise_inner_fold_kernel_agrees` (per-effect inter-executor agreement inducted over the forest;
+  -- `portal_handler_exercise_safe` SHEDS the `hpost` boundary the previous portal carried). What remains
+  -- OPEN is exactly the un-safe complement (`noFrozenFace fa = false`): an inner forest carrying a
+  -- `refreshDelegationA` (handler omits the `delegationEpochAt` re-stamp the live `refreshDelegationChainA`
+  -- applies — eval: handler 0 vs live 5), a `createCellFromFactoryA` (handler dispatch `= createCellH`,
+  -- born EMPTY; live installs the factory's `slotCaveats`/`factoryVk`/`initialFields`), or a `spawnA`
+  -- (handler `= createCellH`; live copies the held cap + records parent + snapshots c-list + stamps epoch).
+  -- These are GENUINE semantic divergences — the handler inner step does strictly LESS than the live arm —
+  -- the SAME gap the top-level `handler_refines_execFullA_{refreshDelegation,…_metadata}` route through the
+  -- CHAINED arm to close. The clean fix (handler-algebra lane): route the exercise inner fold through those
+  -- chained stamping/installing/handoff steps; then `noFrozenFace` is total and the front fully closes.
+  ⟨"exercise_inner_fold_frozenface", .w7_exercise_inner_fold, some "exerciseA",
+    "exercise_inner_fold boundary PROVEN on the noFrozenFace-safe fragment (exercise_inner_fold_kernel_agrees + portal_handler_exercise_safe shed hpost). Residual = the 3 frozen-face inner steps where the handler does strictly less than the live arm: refreshDelegationA (epoch re-stamp), createCellFromFactoryA (factory install), spawnA (cap handoff). Fix: route the exercise inner fold through the chained arms (handler-algebra lane)."⟩
 ]
 
 def countOpenFronts : Nat := openFronts.length
@@ -173,6 +175,26 @@ theorem portal_handler_exercise_fromWitness
   exact Dregg2.Exec.HandlerExecutor.handler_refines_execFullA_exercise s s' actor target inner
     ⟨post, hfold, hpost⟩ h
 
+/-- **`portal_handler_exercise_safe` — the boundary fact `hpost` SHED (`exercise_inner_fold` CLOSED on the
+closable fragment).** The previous portal carried `hpost : post.kernel = s'.kernel` as a hypothesis — the
+inter-executor boundary kernel-equality between the handler's `subTurn` inner fold and the live
+`execInnerA`. That equality is now PROVEN (`HandlerExecutor.exercise_inner_fold_kernel_agrees`) on the
+`noFrozenFace`-safe fragment: by per-effect inter-executor agreement (`handlerStep_agrees_execFullA_kernel`)
+inducted over the forest, when the handler commit gives `s'.kernel` and the live fold gives `post`, the two
+kernels coincide. So the caller no longer supplies the boundary kernel — only `hsafe` (the syntactic
+closable-fragment guard) and the live fold `hfold` (or, downstream, the circuit witness `w` it already
+threads, via `execInnerA_iff_turnSpec`). The residual is EXACTLY the un-safe complement: an inner forest
+carrying a FROZEN-FACE `refreshDelegationA` / `createCellFromFactoryA` / `spawnA` (whose handler inner step
+does strictly LESS than the live arm — epoch re-stamp / factory install / cap handoff). -/
+theorem portal_handler_exercise_safe
+    (actor target : CellId) (inner : List FullActionA) (post : RecChainedState)
+    (hsafe : ∀ fa ∈ inner, Dregg2.Exec.HandlerExecutor.noFrozenFace fa = true)
+    (hfold : execInnerA (Dregg2.Exec.HandlerExecutor.exerciseHoldState s actor) inner = some post)
+    (h : execHandlerOne (.exerciseA actor target inner) s = some s') :
+    ∃ s'', execFullA s (.exerciseA actor target inner) = some s'' ∧ s''.kernel = s'.kernel :=
+  Dregg2.Exec.HandlerExecutor.handler_refines_execFullA_exercise_fromSafe s s' post actor target inner
+    hsafe hfold h
+
 end HolePortals
 
 -- The frontier has exactly ONE GENUINELY-open handler front (drift-free: `countOpenFronts`
@@ -180,10 +202,12 @@ end HolePortals
 -- non-empty (open work remains) yet bounded. The R4 facet-mask front is CLOSED
 -- (the facet mask is enforced on `execFullA`, the canonical semantics; `portal_exercise_r4_facet_mask`),
 -- the `exercise_inner_turn_witness` fold front is CLOSED (`portal_exercise_inner_turn`), and the
--- `spawn_factory_metadata` delegation/factory-install front is now CLOSED (census-D4:
--- `handler_refines_execFullA_spawn_metadata` / `…_createCellFromFactory_metadata` verify the metadata off
--- the chained arm via `HandlerFloors.{spawnMetadataFloor,factoryMetadataFloor}`). Only the
--- `exercise_inner_fold` (`hinner`) inter-executor inner-fold front remains.
+-- `spawn_factory_metadata` delegation/factory-install front is CLOSED (census-D4). The
+-- `exercise_inner_fold` boundary is now PROVEN on the closable fragment (`exercise_inner_fold_kernel_agrees`
+-- + `portal_handler_exercise_safe` shed `hpost`); the ONE remaining front is the PRECISE honest residual —
+-- `exercise_inner_fold_frozenface`: an inner forest carrying a frozen-face `refreshDelegationA` /
+-- `createCellFromFactoryA` / `spawnA`, where the handler inner step does strictly LESS than the live arm (a
+-- GENUINE inter-executor divergence, verified; closable by routing the inner fold through the chained arms).
 #guard countOpenFronts == openFronts.length
 #guard countOpenFronts == 1
 #guard ¬ openFronts.isEmpty
@@ -192,8 +216,9 @@ end HolePortals
 #guard (openFronts.filter (fun f => f.id == "exercise_inner_turn_witness")).isEmpty
 #guard (openFronts.filter (fun f => f.id == "spawn_factory_metadata")).isEmpty
 
-/-! ## §3 — axiom-hygiene pins for the genuine portals (the witness-threading shed rests on the kernel
-triple). -/
+/-! ## §3 — axiom-hygiene pins for the genuine portals (the witness-threading shed + the PROVEN boundary
+kernel-equality both rest on the kernel triple). -/
 #assert_axioms portal_handler_exercise_fromWitness
+#assert_axioms portal_handler_exercise_safe
 
 end Dregg2.Exec.HandlerOpenFronts
