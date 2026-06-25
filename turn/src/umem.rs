@@ -105,6 +105,17 @@ pub enum UDomain {
     Nullifiers = 3,
     /// The append-only receipt index (the MMR-committed log).
     Index = 4,
+    /// **Working / service memory (UMEM-PRIMITIVE.md §3, Stage D).** A service
+    /// cell's (or the interpreter's, or a long-running effect's) TRANSIENT scratch.
+    /// It participates in the ONE memcheck trace — so it is consistent for free
+    /// (`universal_memory_sound`) — but, exactly like `Registers`, it is NEVER
+    /// emitted by [`project_cell`]/[`project_ledger`]/[`project_executor_state`],
+    /// so its boundary root never enters the state commitment and it costs nothing
+    /// on the consensus path. A dedicated tag (distinct from `Registers`) so a
+    /// service / the interpreter gets its OWN non-aliasing scratch
+    /// (tag isolation: `consistentFrom_filter`). Its boundary is derivable on
+    /// demand ([`working_umem_root`], the §4 checkpoint) but never published.
+    Working = 5,
 }
 
 impl UDomain {
@@ -195,6 +206,18 @@ pub enum UKey {
     // -- index domain --------------------------------------------------------
     /// The receipt log at a chronological position (caller-supplied; see module docs).
     Receipt(u64),
+    // -- working domain (transient service/interpreter scratch) --------------
+    /// One `(collection, key)` cell of a service cell's (or the interpreter's)
+    /// TRANSIENT working umem (UMEM-PRIMITIVE.md §3, Stage D). Keyed by the owning
+    /// `service` so two services get disjoint, non-aliasing scratch. NEVER
+    /// projected from persistent state — it lives only in the trace; its derivable
+    /// boundary root ([`working_umem_root`]) is the §4 checkpoint and is never
+    /// committed. (Added last so existing `UKey` ordering is undisturbed.)
+    Working {
+        service: CellId,
+        collection: u32,
+        key: u32,
+    },
 }
 
 impl UKey {
@@ -228,6 +251,7 @@ impl UKey {
             | UKey::Factory(_) => UDomain::Caps,
             UKey::NoteNullifier(_) | UKey::BridgedNullifier(_) => UDomain::Nullifiers,
             UKey::Receipt(_) => UDomain::Index,
+            UKey::Working { .. } => UDomain::Working,
         }
     }
 
@@ -262,7 +286,12 @@ impl UKey {
             UKey::Factory(_)
             | UKey::NoteNullifier(_)
             | UKey::BridgedNullifier(_)
-            | UKey::Receipt(_) => None,
+            | UKey::Receipt(_)
+            // Working scratch is TRANSIENT, not part of any cell's persistent
+            // bundle — a `CreateCell` birth must NOT pull it in (it is keyed by an
+            // owning service for namespacing only, like `Registers` it projects to
+            // nothing). So it reports no owning cell.
+            | UKey::Working { .. } => None,
         }
     }
 }
@@ -284,6 +313,15 @@ pub enum UVal {
     Bytes32([u8; 32]),
     /// Canonical JSON of a structured value.
     Blob(Vec<u8>),
+    /// **A value that IS another umem's boundary root (UMEM-PRIMITIVE.md §5,
+    /// Stage D).** A `UmemRef` makes one umem hold, at a key, the committed root
+    /// of ANOTHER umem — the composable construct. Reading "through" the ref
+    /// (binding the outer root, then binding the child root it names) is the
+    /// recursive open ([`open_through_umem_ref`]): two independent
+    /// `boundary_init_root_bound` applications, the keystone composed with itself.
+    /// Distinct from `Bytes32` only by INTENT (it names another umem rather than a
+    /// field element); the byte content is the child's sorted-Poseidon2 root.
+    UmemRef([u8; 32]),
 }
 
 fn json<T: serde::Serialize>(t: &T) -> UVal {
@@ -515,6 +553,185 @@ pub fn open_heap_against_committed(
         });
     }
     Ok(requested)
+}
+
+/// The 32-byte content a working-umem cell folds into its boundary root: a
+/// `UmemRef` (the composable case — the value IS a child root) or a raw
+/// `Bytes32`. Any other shape cannot reproduce the committed root, so it folds
+/// as a zero placeholder and the binding refuses below.
+fn working_cell_bytes(v: &UVal) -> [u8; 32] {
+    match v {
+        UVal::UmemRef(b) | UVal::Bytes32(b) => *b,
+        _ => [0u8; 32],
+    }
+}
+
+/// **THE WORKING-UMEM BOUNDARY (UMEM-PRIMITIVE.md §3/§5, Stage D).** Derive, on
+/// demand, the sorted-Poseidon2 root over one `service`'s `Working`-domain cells
+/// in `proj` — the §4 checkpoint of a transient working/service umem. This root
+/// is NEVER published into the state commitment (the `Working` domain is never
+/// projected from persistent state, exactly like `Registers`); it exists only so
+/// a working umem can be bound as an init image when a reader opens "through" it
+/// ([`open_through_umem_ref`]). The fold uses the SAME `compute_heap_root` as the
+/// per-cell heap, so a working-umem-of-roots binds by exactly the keystone's
+/// `boundary_init_root_bound` tooth.
+pub fn working_umem_root(proj: &UProjection, service: CellId) -> [u8; 32] {
+    let mut map: BTreeMap<(u32, u32), [u8; 32]> = BTreeMap::new();
+    for (k, v) in proj.iter() {
+        if let UKey::Working {
+            service: s,
+            collection,
+            key,
+        } = k
+        {
+            if *s == service {
+                map.insert((*collection, *key), working_cell_bytes(v));
+            }
+        }
+    }
+    dregg_cell::state::compute_heap_root(&map)
+}
+
+/// Why a recursive open through a `UmemRef` refused — each variant names the
+/// LEVEL whose boundary binding failed (the Rust shadow of an independent
+/// `boundary_init_root_bound` application per level).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecursiveOpenError {
+    /// LEVEL 1: the outer service umem's projected `Working` preimage does not
+    /// reproduce the committed root it was bound against (a tampered outer image).
+    OuterBindRefused {
+        /// The service whose working umem was bound.
+        service: CellId,
+        /// The committed boundary root supplied for level 1.
+        committed: [u8; 32],
+        /// The root re-derived from the projected `Working` preimage (≠ committed).
+        derived: [u8; 32],
+    },
+    /// The outer umem holds no cell at the ref address — there is no child to
+    /// descend into.
+    RefMissing {
+        service: CellId,
+        collection: u32,
+        key: u32,
+    },
+    /// The outer umem's cell at the ref address is present but is NOT a
+    /// `UVal::UmemRef` (it does not name a child umem to open through).
+    RefNotAUmemRef {
+        service: CellId,
+        collection: u32,
+        key: u32,
+    },
+    /// LEVEL 2: the child cell's projected `Heap` preimage does not reproduce the
+    /// root the outer `UmemRef` named (a tampered child image).
+    ChildBindRefused(HeapBindError),
+}
+
+impl std::fmt::Display for RecursiveOpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecursiveOpenError::OuterBindRefused {
+                service,
+                committed,
+                derived,
+            } => write!(
+                f,
+                "recursive open: outer service umem {service:?} bind refused — \
+                 committed root {committed:?} != root derived from the projected \
+                 Working preimage {derived:?}"
+            ),
+            RecursiveOpenError::RefMissing {
+                service,
+                collection,
+                key,
+            } => write!(
+                f,
+                "recursive open: outer umem {service:?} holds no cell at ref \
+                 ({collection}, {key})"
+            ),
+            RecursiveOpenError::RefNotAUmemRef {
+                service,
+                collection,
+                key,
+            } => write!(
+                f,
+                "recursive open: outer umem {service:?} cell at ({collection}, \
+                 {key}) is not a UmemRef"
+            ),
+            RecursiveOpenError::ChildBindRefused(e) => {
+                write!(f, "recursive open: child level — {e}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RecursiveOpenError {}
+
+/// **THE RECURSIVE OPEN — composable umems (UMEM-PRIMITIVE.md §5, Stage D).**
+/// Open a child cell's heap *through* a service cell's working umem-of-roots:
+///
+///  1. **LEVEL 1** — bind the outer service umem's committed boundary
+///     (`service_committed`) as an init image: re-fold its `Working` preimage
+///     into a sorted-Poseidon2 root ([`working_umem_root`]) and refuse if it does
+///     not equal `service_committed` (the Rust shadow of `boundary_init_root_bound`
+///     at the outer level). Then read the child root the outer umem holds at
+///     `(ref_collection, ref_key)` — it MUST be a [`UVal::UmemRef`].
+///  2. **LEVEL 2** — bind that child root as the child cell's heap init image and
+///     open `(child_collection, child_key)` ([`open_heap_against_committed`] — the
+///     SAME keystone tooth, applied a second time).
+///
+/// Two independent `boundary_init_root_bound` applications: the keystone composed
+/// with itself, soundness compositional for free. The levels CANNOT alias —
+/// the outer cells live in the `Working` domain and the child cells in the `Heap`
+/// domain, disjoint by tag (`consistentFrom_filter`). A tamper at either level
+/// derives a different root and the matching bind refuses.
+///
+/// `Ok(Some(v))` if the child key is present, `Ok(None)` if absent (the
+/// Merkle-path-free freshness leg), `Err` naming the level that refused.
+#[allow(clippy::too_many_arguments)]
+pub fn open_through_umem_ref(
+    proj: &UProjection,
+    service: CellId,
+    service_committed: [u8; 32],
+    ref_collection: u32,
+    ref_key: u32,
+    child_cell: CellId,
+    child_collection: u32,
+    child_key: u32,
+) -> Result<Option<[u8; 32]>, RecursiveOpenError> {
+    // LEVEL 1 — bind the outer service umem's committed boundary root.
+    let outer_derived = working_umem_root(proj, service);
+    if outer_derived != service_committed {
+        return Err(RecursiveOpenError::OuterBindRefused {
+            service,
+            committed: service_committed,
+            derived: outer_derived,
+        });
+    }
+    // Read the child umem-ref the bound outer umem names at the ref address.
+    let child_root = match proj.get(&UKey::Working {
+        service,
+        collection: ref_collection,
+        key: ref_key,
+    }) {
+        Some(UVal::UmemRef(r)) => *r,
+        Some(_) => {
+            return Err(RecursiveOpenError::RefNotAUmemRef {
+                service,
+                collection: ref_collection,
+                key: ref_key,
+            });
+        }
+        None => {
+            return Err(RecursiveOpenError::RefMissing {
+                service,
+                collection: ref_collection,
+                key: ref_key,
+            });
+        }
+    };
+    // LEVEL 2 — bind the child cell's heap against the root the ref named, open.
+    open_heap_against_committed(proj, child_cell, child_root, child_collection, child_key)
+        .map_err(RecursiveOpenError::ChildBindRefused)
 }
 
 /// Memory-op kind (the memcheck `Kind`).
