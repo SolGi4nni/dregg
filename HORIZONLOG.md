@@ -5842,3 +5842,18 @@ circuit_builder.rs:486 comments still describe the old scalar-only expose; fix t
 (~124-bit); widen for a conservative 128-bit collision story.
 #9 (Lean EngineSound discharge) is now UNBLOCKED — the verifier genuinely enforces the binding, so acc_attests_whole_history can
 stop assuming EngineSound and derive it from the verifier soundness. The LAST IVC piece.
+
+### ✅✅ IVC #1 CLOSED ALL THE WAY UP THE STACK (2026-06-25) — #9 DISCHARGED
+The un-forgeable-history floor is now machine-PROVEN, not just tested. The whole-chain ordered binding (the claim is the
+genuine ordered segment-summary of the executed leaves) is DERIVED in Lean (RecursiveAggregation.lean §9, 8f4c1d7a) — was
+assumed (EngineSound projection), now subtree_binding derives GenuineSeg by induction on the aggregation tree. Dregg2 green
+(4183), 0 sorry, 18 new #assert_axioms-clean. Codex's 3-layer boundary: SegSound (per-node FRI/STARK, ASSUMED floor) +
+the induction (whole-chain ordered binding, DERIVED) + PoseidonSegBinding (4-lane W24 digest CR, ASSUMED floor for the
+same-endpoint case). no_mixed_root_distinct_endpoint = fully derived; no_mixed_root same-endpoint reduces to Poseidon2 CR.
+So IVC #1 rests on EXACTLY TWO named crypto floors (FRI soundness + Poseidon2 CR) with everything structural machine-derived.
+FOUR arbiters now agree: empirical (both heavy folds reject the forgery) + native (verify_all_tables) + adversarial (codex
+final, no critical hole) + DEDUCTIVE (this Lean discharge). The marathon (4 refuted FRI hypotheses -> frozen-proof technique
+-> root cause = 2 WitnessChecks bus imbalances in the expose_claim/W24 path -> fix -> codex-clear -> discharge) is at its
+summit. unfoolability_guarantee is a DERIVATION.
+Remaining (codex-named, NONE critical, scoped follow-ups): online-accumulator port to the 4-lane digest (MEDIUM); doc-drift
+comments (LOW); widen the digest past 4 lanes for conservative 128-bit (LOW).
