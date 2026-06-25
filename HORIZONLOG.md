@@ -8,6 +8,31 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## `invoke()` + the SERVICE EXPLORER LANDED end-to-end in deos; serviced-answer + registry-wire are the named follow-ups (2026-06-25)
+- WHAT: cells-as-service-objects INVOCATION shipped at the userspace layer (NO kernel `Effect::Invoke`, Effect enum
+  untouched), end-to-end into the live deos cockpit:
+  1. `dregg_app_framework::invoke` (`app-framework/src/invoke.rs`) — the front door: resolves a method against a cell's
+     interface (derive-from-program OR an `InterfaceRegistry`), routes via the verified DFA `route_method`, cap-gates on
+     `MethodSig::auth_required` (`InvokeAuthority` tiers), refuses Serviced methods as the named seam, desugars to an
+     ordinary method-targeting `Action` + fires through the executor. 5 unit tests.
+  2. `starbridge_v2::service_explorer::ServiceExplorer` (`starbridge-v2/src/service_explorer.rs`) — the deos-interior
+     Postman-like model (gpui-free, 6 tests): discover→list→invoke off the live `World`, re-inspecting the post-state.
+     New executor-entry `World::wrap_action_turn` (preserves the action's method symbol).
+  3. The `🛰 SERVICES` cockpit tab (`cockpit/{mod,construct,nav,panels_workspace,panels_moldable}.rs`) — method list +
+     args presets + underlying-effect picker + invoke buttons + outcome banner; `Tab::ServiceExplorer` registered, nav
+     capture/restore, `CycleServiceFocus`. The `service` anchor boots publishing {ping,set_status,tick}. Verified by a
+     headless render of the live element tree (the published methods + invoke affordances paint). 713 lib tests green.
+- NAMED FOLLOW-UPS (closure lanes, not parking):
+  - SERVICED-ANSWER CARRIER — a `Serviced` method's answer rides the OFE cross-cell-read (`crossCellRead_refines_observedField`);
+    today both `invoke()` and the explorer REFUSE it in-band (the seam). The receipt shape that witnesses the serviced
+    reads + produced result (so a light client re-checks a service answer) is the build. (Named in `cell/src/interface.rs` S2 list.)
+  - REGISTRY WIRE-THROUGH — the cockpit explorer resolves derive-from-program only (`invoke`); the richer
+    `InterfaceRegistry`/`build_with_descriptor` + `invoke_with_descriptor` (Signature-gated / Serviced methods) are built
+    and tested but not yet surfaced in the cockpit (no UI to register a descriptor). Wire a registry panel.
+  - METHOD CLEARTEXT NAMES — a `MethodSig` carries only the symbol; the explorer shows short-hex. A name-registry (or
+    carrying the cleartext alongside the descriptor) would show {ping,…} instead of {53ee61…}. Cosmetic, userspace.
+  - ARGS ENTRY — the args field uses preset buttons (the cockpit's text idiom); a live text input is the richer UX.
+
 ## mid-forest `yield_point` LANDED; promise-pipelining lift of the live yield is the named follow-up (2026-06-25)
 - WHAT: the continuations lane's "THE SEAM — mid-forest checkpoint" is CLOSED. `TurnExecutor::maybe_umem_yield`
   (called from `executor/execute_tree.rs` after each effect appends to the journal) snapshots
