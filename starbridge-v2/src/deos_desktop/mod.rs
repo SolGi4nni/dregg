@@ -50,10 +50,12 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, ClickEvent, Context, Div, FontWeight, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, Stateful,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, AppContext, ClickEvent, Context, Div, Entity, FontWeight, InteractiveElement,
+    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    Point, Render, Stateful, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
+
+use gpui_component::input::{Input, InputEvent, InputState};
 
 use dregg_cell::lifecycle::CellLifecycle;
 use dregg_types::CellId;
@@ -306,6 +308,22 @@ pub struct DeosDesktop {
     /// workflow window body; the REAL `dregg_deploy::refine` flow + decision run over
     /// it. Keyed by the subject cell so each cell has its own workflow.
     workflows: HashMap<CellId, workflow::WorkflowState>,
+    /// **The real free-typing document editors** — one live `gpui-component`
+    /// `InputState` (a rope-backed, multi-line text widget) per open document cell.
+    /// Keystrokes flow through its `Change` event into [`Self::edit_doc`], which
+    /// commits the prose into the cell's COMMITTED heap (`commit_doc_text_to_heap` →
+    /// `SetField`) as a receipted patch. Created lazily on first render of the doc
+    /// body (where `window`/`cx` are in hand). The `Change` subscription's lifetime
+    /// is kept in `doc_subs`.
+    doc_inputs: HashMap<CellId, Entity<InputState>>,
+    /// The per-document `Change`-event subscription handles (kept alive so the
+    /// keystroke→heap commit fires for the editor's whole lifetime).
+    doc_subs: HashMap<CellId, Subscription>,
+    /// Cells whose document text was changed OUTSIDE the editor widget (a transclude
+    /// drop / a bake edit) and so the live `InputState` must be re-seeded from the
+    /// cached buffer on the next render (those paths lack `&mut Window`, which
+    /// `InputState::set_value` needs). Drained in `render_doc_body`.
+    doc_resync: std::collections::HashSet<CellId>,
 }
 
 impl DeosDesktop {
@@ -346,6 +364,9 @@ impl DeosDesktop {
                      drag to arrange (persisted) · Open as Document to author"
                 .to_string(),
             workflows: HashMap::new(),
+            doc_inputs: HashMap::new(),
+            doc_subs: HashMap::new(),
+            doc_resync: std::collections::HashSet::new(),
         };
         // Re-open any windows the persisted layout remembers (spatial persistence
         // for windows, not just icons — and now for window TYPE too).
@@ -488,6 +509,13 @@ impl DeosDesktop {
 
     fn close_window(&mut self, key: WinKey) {
         self.windows.remove(&key);
+        // Drop the live editor entity + its Change subscription when a document window
+        // closes, so a reopen re-seeds the widget from the committed cell heap.
+        if key.1 == WinKindTag::DocEditor {
+            self.doc_inputs.remove(&key.0);
+            self.doc_subs.remove(&key.0);
+            self.doc_resync.remove(&key.0);
+        }
         self.layout.drop_win(&id_hex(&key.0), key.1);
         self.layout.save(&self.layout_path);
     }
@@ -1088,6 +1116,9 @@ impl DeosDesktop {
             self.layout.save(&self.layout_path);
             let rev = self.cell_field_u64(&into, DOC_REV_SLOT) + 1;
             let ok = prose_ok && self.commit_set_field(into, DOC_REV_SLOT, rev);
+            // The live editor widget must pick up the transcluded line on next render
+            // (this path has no `&mut Window` to push into `InputState` directly).
+            self.doc_resync.insert(into);
             self.status = format!(
                 "COMPOSE: transcluded {} into doc {} → patch + heap {} (height {}).",
                 id_short(&src),
@@ -1125,6 +1156,45 @@ impl DeosDesktop {
             h: 300.0,
         });
         self.open_menu = None;
+    }
+
+    /// **Ensure the live free-typing editor exists for `cell`** — a real
+    /// `gpui-component` `InputState` (rope-backed, multi-line) seeded with the cell's
+    /// current committed prose, with a `Change` subscription that commits every
+    /// keystroke through [`Self::edit_doc`] into the cell's heap (a receipted patch +
+    /// verified revision turn). Idempotent: a second call is a no-op. Needs `window`
+    /// + `cx` to build the entity, so it runs from `render_doc_body` (which threads
+    /// them) rather than the `window`-less open paths.
+    fn ensure_doc_input(&mut self, cell: CellId, window: &mut Window, cx: &mut Context<Self>) {
+        if self.doc_inputs.contains_key(&cell) {
+            return;
+        }
+        let seed = self.load_doc_buffer(cell);
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .soft_wrap(true)
+                .placeholder(
+                    "Type your document — every keystroke is a receipted patch on the cell heap…",
+                )
+                .default_value(seed)
+        });
+        // The keystroke → heap seam: on every Change, fold the editor's rope into the
+        // cell's committed prose (the SAME `edit_doc` the canned buttons call). The
+        // editor IS the buffer; the heap commit is its side effect.
+        let sub = cx.subscribe_in(
+            &input,
+            window,
+            move |this, input, event: &InputEvent, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let text = input.read(cx).value().to_string();
+                    this.edit_doc(cell, text);
+                    cx.notify();
+                }
+            },
+        );
+        self.doc_inputs.insert(cell, input);
+        self.doc_subs.insert(cell, sub);
     }
 
     /// **The document-editor edit gesture** — replace the buffer with `new_text`,
@@ -1436,6 +1506,9 @@ impl DeosDesktop {
             self.open_kind(cell, WinKindTag::DocEditor);
         }
         self.edit_doc(cell, text.to_string());
+        // The live editor widget re-seeds from the buffer on next render (this bake
+        // hook has no `&mut Window` to push into `InputState` directly).
+        self.doc_resync.insert(cell);
     }
 
     /// COMPOSE: transclude `src` into the open document on `into` (a receipted patch
@@ -1506,7 +1579,7 @@ impl DeosDesktop {
 // `chrome.rs` and are imported above.)
 
 impl Render for DeosDesktop {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut root = div()
             .id("deos-desktop-root")
             .size_full()
@@ -1562,7 +1635,7 @@ impl Render for DeosDesktop {
         let mut wins: Vec<WinKey> = self.windows.keys().copied().collect();
         wins.sort_by_key(|k| self.windows[k].z);
         for key in wins {
-            root = root.child(self.render_window(key, cx));
+            root = root.child(self.render_window(key, window, cx));
         }
 
         // ── The context menu overlay (the ACTUATION) ─────────────────────────────
@@ -1745,7 +1818,12 @@ impl DeosDesktop {
             )
     }
 
-    fn render_window(&self, key: WinKey, cx: &mut Context<Self>) -> AnyElement {
+    fn render_window(
+        &mut self,
+        key: WinKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let (cell, tag) = key;
         let (x, y, w, h, title, minimized) = {
             let ws = &self.windows[&key];
@@ -1771,7 +1849,7 @@ impl DeosDesktop {
         // The body varies by window TYPE — the NT/Pharo density.
         let body = match tag {
             WinKindTag::Inspector => self.render_inspector_body(cell, cx),
-            WinKindTag::DocEditor => self.render_doc_body(cell, cx),
+            WinKindTag::DocEditor => self.render_doc_body(cell, window, cx),
             WinKindTag::Links => self.render_links_body(cell),
             WinKindTag::Transcript => self.render_transcript_body(),
             WinKindTag::Workflow => self.render_workflow_body(cell, cx),
@@ -1966,21 +2044,34 @@ impl DeosDesktop {
     /// **The document-editor body** — the cell's prose, the live chronicle (patch
     /// count), and the receipted-edit controls. Typing here is a `dregg_doc::Patch`
     /// plus a verified revision turn (the document IS the cell).
-    fn render_doc_body(&self, cell: CellId, cx: &mut Context<Self>) -> AnyElement {
-        let (text, patches) = match self
+    fn render_doc_body(
+        &mut self,
+        cell: CellId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        // Build the live free-typing editor on first render of this doc body (it needs
+        // `window`/`cx`). Keystrokes flow Change → `edit_doc` → committed heap.
+        self.ensure_doc_input(cell, window, cx);
+        // Apply a pending external edit (transclude / bake) into the live widget — the
+        // editing paths that lack `&mut Window` deferred the `set_value` to here.
+        if self.doc_resync.remove(&cell) {
+            let text = self.load_doc_buffer(cell);
+            if let Some(input) = self.doc_inputs.get(&cell).cloned() {
+                input.update(cx, |st, cx| st.set_value(&text, window, cx));
+            }
+        }
+
+        let patches = match self
             .windows
             .get(&(cell, WinKindTag::DocEditor))
             .map(|w| &w.kind)
         {
-            Some(WinKind::DocEditor { buffer, doc }) => (buffer.clone(), doc.history().len()),
-            _ => (self.load_doc_text(&cell), 0),
+            Some(WinKind::DocEditor { doc, .. }) => doc.history().len(),
+            _ => 0,
         };
         let rev = self.cell_field_u64(&cell, DOC_REV_SLOT);
-        let shown = if text.is_empty() {
-            "(empty — type below, or drag a cell-icon here to transclude it)".to_string()
-        } else {
-            text.clone()
-        };
+        let input = self.doc_inputs.get(&cell).cloned();
         div()
             .id(gpui::SharedString::from(format!(
                 "docbody-{}",
@@ -1994,64 +2085,31 @@ impl DeosDesktop {
             .flex()
             .flex_col()
             .gap_1()
-            .child(face_section("Document (receipted patches)"))
+            .child(face_section(
+                "Document (free-typing — every keystroke is a receipted patch)",
+            ))
             .child(
-                // The prose surface — a parchment field showing the live folded text.
+                // THE PROSE SURFACE — a REAL editable text field (gpui-component's
+                // rope-backed multi-line `Input`). Click in and type; each keystroke
+                // commits into the cell's heap. Drag a cell-icon here to transclude it.
                 div()
                     .id(gpui::SharedString::from(format!(
                         "docprose-{}",
                         id_hex(&cell)
                     )))
                     .flex_1()
-                    .min_h(px(90.0))
-                    .p_2()
+                    .min_h(px(120.0))
                     .bg(gpui::rgb(0xffffff))
                     .border_1()
                     .border_color(gpui::rgb(NT_FACE_DARK))
                     .text_size(px(12.0))
-                    .child(shown),
+                    .when_some(input, |this, input| this.child(Input::new(&input).h_full())),
             )
             .child(face_section("Chronicle"))
             .child(face_row("patches", &patches.to_string()))
             .child(face_row("cell revision", &rev.to_string()))
             .child(face_row("author", &format!("{}", self.author.0 & 0xffff)))
-            .child(face_section("Edit (each lands a receipt)"))
-            // A couple of canned edits drive the receipted-patch path live.
-            .child(self.doc_edit_button(cell, "Append a line ¶", "\nA new authored line.\n", cx))
-            .child(self.doc_edit_button(cell, "Append a heading #", "\n# Section\n", cx))
             .into_any_element()
-    }
-
-    /// A document-edit button: appends `append` to the buffer as a receipted patch +
-    /// verified revision turn.
-    fn doc_edit_button(
-        &self,
-        cell: CellId,
-        label: &str,
-        append: &str,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let append = append.to_string();
-        bevel_raised(
-            div()
-                .id(gpui::SharedString::from(format!(
-                    "docedit-{}-{label}",
-                    id_hex(&cell)
-                )))
-                .px_2()
-                .py_1()
-                .my_1()
-                .text_size(px(11.0)),
-        )
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _ev: &MouseDownEvent, _w, cx| {
-                let cur = this.load_doc_buffer(cell);
-                this.edit_doc(cell, format!("{cur}{append}"));
-                cx.notify();
-            }),
-        )
-        .child(label.to_string())
     }
 
     /// **The links / backlinks body** — which cells this one reaches (its caps),
