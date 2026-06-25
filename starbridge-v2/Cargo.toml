@@ -487,17 +487,17 @@ image = { version = "0.25", default-features = false, features = ["png"], option
 # PlatformHeadlessRenderer`, wired into `current_headless_renderer` on Linux).
 # Patch source of record: docs/desktop-os-research/patches/gpui-offscreen.patch
 # (+ this session's headless wiring). The windowed `run_window` path is unchanged.
-gpui = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+gpui = { git = "https://github.com/emberian/zed", rev = "adb9026524", optional = true }
 # `font-kit` is LOAD-BEARING: gpui_platform's default features are empty, so without
 # this gpui_macos's MacPlatform falls back to `NoopTextSystem` (`platform.rs:197`,
 # `#[cfg(not(feature = "font-kit"))]`) — the windowed cockpit renders BLANK TEXT.
 # Enabling it forwards to `gpui_macos/font-kit` → the real CoreText `MacTextSystem`.
-gpui_platform = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true, features = ["font-kit"] }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "adb9026524", optional = true, features = ["font-kit"] }
 # The wgpu renderer leaf, pulled DIRECTLY only for the headless bake (the
 # `CosmicTextSystem` platform text system + the offscreen renderer). Gated on
 # `headless-render`; absent from the windowed build. Same fork rev as gpui above
 # so cargo resolves ONE gpui instance across the graph.
-gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "adb9026524", optional = true }
 
 # --- gpui-component: the real widget library (gated on `gpui-ui`) ------------
 # VENDORED fork `emberian/gpui-component@dregg-repoint` (upstream

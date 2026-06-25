@@ -62,8 +62,8 @@ log = "0.4"
 # gpui + gpui_platform, gated on `gpui-web`. Same fork rev as starbridge-v2 pins
 # so cargo resolves ONE gpui instance. On wasm32, gpui_platform's wasm target
 # block forwards to the gpui_web backend (no native windowing in the graph).
-gpui = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
-gpui_platform = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+gpui = { git = "https://github.com/emberian/zed", rev = "adb9026524", optional = true }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "adb9026524", optional = true }
 # gpui-component — the real widget library `cockpit_web` calls `init(cx)` on at
 # boot (the cockpit's `Input`/`Button`/list globals). VENDORED fork (same rev as
 # starbridge-v2 pins) so cargo resolves ONE gpui-component instance. Default

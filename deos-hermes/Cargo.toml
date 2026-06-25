@@ -84,14 +84,14 @@ dregg-doc = { path = "../dregg-doc", optional = true }
 # the cockpit's, so the delivered `impl CockpitSurface` drops into starbridge-v2's
 # dock with no second gpui linkage. OFF by default (the SDK-only build stays
 # gpui-free; the heavy tree is only pulled with `--features cockpit-surface`).
-gpui = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
-gpui_platform = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", features = ["font-kit", "x11", "wayland", "runtime_shaders"], optional = true }
+gpui = { git = "https://github.com/emberian/zed", rev = "adb9026524", optional = true }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "adb9026524", features = ["font-kit", "x11", "wayland", "runtime_shaders"], optional = true }
 gpui-component = { git = "https://github.com/emberian/gpui-component", rev = "b2deb2aa", default-features = false, optional = true }
 gpui-component-assets = { git = "https://github.com/emberian/gpui-component", rev = "b2deb2aa", optional = true }
 # Offscreen-capture deps (the `screenshot` feature). `image 0.25` matches
 # gpui_wgpu's `image` (one resolved version, same as starbridge-v2 / deos-zed).
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
-gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "adb9026524", optional = true }
 # `anyhow` unifies the offscreen-capture error path (font load / window open /
 # screenshot / PNG write). Only pulled with the `screenshot` feature.
 anyhow = { version = "1", optional = true }

@@ -320,6 +320,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "android-activity"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f2a1bb052857d5dd49572219344a7332b31b76405648eabac5bc68978251bcd"
+dependencies = [
+ "android-properties",
+ "bitflags 2.13.0",
+ "cc",
+ "jni 0.22.4",
+ "libc",
+ "log",
+ "ndk",
+ "ndk-context",
+ "ndk-sys",
+ "num_enum",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "android-cell"
 version = "0.1.0"
 dependencies = [
@@ -331,6 +350,12 @@ dependencies = [
  "servo-render",
  "starbridge-web-surface",
 ]
+
+[[package]]
+name = "android-properties"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc7eb209b1518d6bb87b283c20095f5228ecda460da70b44f0802523dea6da04"
 
 [[package]]
 name = "android_system_properties"
@@ -383,7 +408,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -394,7 +419,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1484,7 +1509,7 @@ dependencies = [
  "bitflags 2.13.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1504,7 +1529,7 @@ dependencies = [
  "bitflags 2.13.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "regex",
@@ -2337,9 +2362,19 @@ checksum = "2550f75b8cfac212855f6b1885455df8eaee8fe8e246b647d69146142e016084"
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
- "gpui_util",
+ "gpui_util 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "indexmap 2.14.0",
+ "rustc-hash 2.1.2",
+]
+
+[[package]]
+name = "collections"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "gpui_util 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "indexmap 2.14.0",
  "rustc-hash 2.1.2",
 ]
@@ -2372,7 +2407,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -3291,7 +3326,7 @@ dependencies = [
  "dregg-firmament",
  "dregg-sdk",
  "dregg-turn",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
@@ -3344,7 +3379,7 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "gloo-timers",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
@@ -3383,7 +3418,7 @@ dependencies = [
  "anyhow",
  "bitflags 2.13.0",
  "futures-util",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "gpui_platform",
  "js-sys",
  "libc",
@@ -3407,7 +3442,7 @@ dependencies = [
  "deos-js",
  "dregg-cell",
  "dregg-types",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "gpui-component",
  "gpui_platform",
  "gpui_wgpu",
@@ -3439,7 +3474,7 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
@@ -3572,7 +3607,17 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "derive_refineable"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3714,7 +3759,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5375,7 +5420,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6309,7 +6354,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.18",
- "windows 0.62.2",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -6335,13 +6380,12 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "accesskit",
  "anyhow",
  "async-channel 2.5.0",
  "async-task",
- "backtrace",
  "bindgen 0.71.1",
  "bitflags 2.13.0",
  "block",
@@ -6349,7 +6393,7 @@ dependencies = [
  "chrono",
  "cocoa 0.26.0",
  "cocoa-foundation 0.2.0",
- "collections",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
  "core-foundation 0.10.0",
  "core-foundation-sys",
  "core-graphics 0.24.0",
@@ -6363,18 +6407,101 @@ dependencies = [
  "futures",
  "futures-concurrency",
  "getrandom 0.3.4",
- "gpui_macros",
- "gpui_shared_string",
- "gpui_util",
+ "gpui_macros 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "gpui_shared_string 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "gpui_util 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
  "heapless 0.9.3",
- "http_client",
+ "http_client 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
  "image",
  "inventory",
  "itertools 0.14.0",
  "log",
  "lyon",
  "mach2 0.5.0",
- "media",
+ "media 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "metal 0.33.0",
+ "num_cpus",
+ "objc",
+ "parking",
+ "parking_lot 0.12.5",
+ "pathfinder_geometry",
+ "pin-project",
+ "pollster 0.4.0",
+ "postage",
+ "profiling",
+ "rand 0.9.4",
+ "raw-window-handle",
+ "refineable 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "regex",
+ "resvg",
+ "scheduler 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "schemars 1.2.1",
+ "seahash",
+ "serde",
+ "serde_json",
+ "slotmap",
+ "smallvec",
+ "spin 0.10.0",
+ "stacksafe",
+ "strum 0.27.2",
+ "sum_tree 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "taffy",
+ "thiserror 2.0.18",
+ "ttf-parser",
+ "url",
+ "usvg",
+ "util_macros 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "uuid",
+ "waker-fn",
+ "web-time",
+ "windows 0.61.3",
+ "zed-font-kit",
+ "zed-scap",
+]
+
+[[package]]
+name = "gpui"
+version = "0.2.2"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "accesskit",
+ "anyhow",
+ "async-channel 2.5.0",
+ "async-task",
+ "backtrace",
+ "bindgen 0.71.1",
+ "bitflags 2.13.0",
+ "block",
+ "cbindgen",
+ "chrono",
+ "cocoa 0.26.0",
+ "cocoa-foundation 0.2.0",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "core-text 21.0.0",
+ "core-video",
+ "ctor",
+ "derive_more 2.1.1",
+ "embed-resource",
+ "etagere",
+ "foreign-types 0.5.0",
+ "futures",
+ "futures-concurrency",
+ "getrandom 0.3.4",
+ "gpui_macros 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "gpui_shared_string 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "gpui_util 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "heapless 0.9.3",
+ "http_client 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "image",
+ "inventory",
+ "itertools 0.14.0",
+ "log",
+ "lyon",
+ "mach2 0.5.0",
+ "media 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "metal 0.33.0",
  "num_cpus",
  "objc",
@@ -6388,10 +6515,10 @@ dependencies = [
  "proptest 1.10.0",
  "rand 0.9.4",
  "raw-window-handle",
- "refineable",
+ "refineable 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "regex",
  "resvg",
- "scheduler",
+ "scheduler 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "schemars 1.2.1",
  "seahash",
  "serde",
@@ -6401,13 +6528,13 @@ dependencies = [
  "spin 0.10.0",
  "stacksafe",
  "strum 0.27.2",
- "sum_tree",
+ "sum_tree 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "taffy",
  "thiserror 2.0.18",
  "ttf-parser",
  "url",
  "usvg",
- "util_macros",
+ "util_macros 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "uuid",
  "waker-fn",
  "web-time",
@@ -6428,10 +6555,10 @@ dependencies = [
  "core-text 21.0.0",
  "enum-iterator",
  "futures",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
  "gpui-component-assets",
  "gpui-component-macros",
- "gpui_macros",
+ "gpui_macros 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
  "html5ever 0.27.0",
  "instant",
  "itertools 0.13.0",
@@ -6505,7 +6632,7 @@ version = "0.5.1"
 source = "git+https://github.com/emberian/gpui-component?rev=b2deb2aa#b2deb2aaea79f07010899274dd86c415571a64c8"
 dependencies = [
  "anyhow",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
  "log",
  "rust-embed",
  "wasm-bindgen",
@@ -6524,9 +6651,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_android"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "android-activity",
+ "anyhow",
+ "futures",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "gpui_wgpu",
+ "jni 0.21.1",
+ "libc",
+ "log",
+ "ndk",
+ "ndk-sys",
+ "parking_lot 0.12.5",
+ "raw-window-handle",
+ "smallvec",
+ "uuid",
+]
+
+[[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -6537,12 +6685,12 @@ dependencies = [
  "bytemuck",
  "calloop",
  "calloop-wayland-source",
- "collections",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "filedescriptor",
  "futures",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "gpui_wgpu",
- "http_client",
+ "http_client 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "image",
  "itertools 0.14.0",
  "libc",
@@ -6559,7 +6707,7 @@ dependencies = [
  "strum 0.27.2",
  "swash",
  "url",
- "util",
+ "util 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "uuid",
  "wayland-backend",
  "wayland-client",
@@ -6577,7 +6725,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -6586,7 +6734,7 @@ dependencies = [
  "block",
  "cbindgen",
  "cocoa 0.26.0",
- "collections",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "core-foundation 0.10.0",
  "core-foundation-sys",
  "core-graphics 0.24.0",
@@ -6598,13 +6746,13 @@ dependencies = [
  "etagere",
  "foreign-types 0.5.0",
  "futures",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "image",
  "itertools 0.14.0",
  "libc",
  "log",
  "mach2 0.5.0",
- "media",
+ "media 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "metal 0.33.0",
  "objc",
  "objc2 0.6.4",
@@ -6616,7 +6764,7 @@ dependencies = [
  "semver",
  "smallvec",
  "strum 0.27.2",
- "util",
+ "util 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "uuid",
  "zed-font-kit",
 ]
@@ -6624,7 +6772,18 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "gpui_macros"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -6635,10 +6794,11 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "console_error_panic_hook",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "gpui_android",
  "gpui_linux",
  "gpui_macos",
  "gpui_web",
@@ -6648,7 +6808,17 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "schemars 1.2.1",
+ "serde",
+ "smol_str",
+]
+
+[[package]]
+name = "gpui_shared_string"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "schemars 1.2.1",
  "serde",
@@ -6658,7 +6828,16 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "anyhow",
+ "log",
+]
+
+[[package]]
+name = "gpui_util"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "anyhow",
  "log",
@@ -6667,14 +6846,14 @@ dependencies = [
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
  "futures",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "gpui_wgpu",
- "http_client",
+ "http_client 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "js-sys",
  "log",
  "parking_lot 0.12.5",
@@ -6691,15 +6870,15 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "anyhow",
  "bytemuck",
- "collections",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "cosmic-text",
  "etagere",
- "gpui",
- "gpui_util",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "gpui_util 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "image",
  "itertools 0.14.0",
  "js-sys",
@@ -6721,15 +6900,15 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "accesskit",
  "accesskit_windows",
  "anyhow",
- "collections",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "etagere",
  "futures",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "image",
  "itertools 0.14.0",
  "log",
@@ -6737,7 +6916,7 @@ dependencies = [
  "rand 0.9.4",
  "raw-window-handle",
  "smallvec",
- "util",
+ "util 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "uuid",
  "windows 0.61.3",
  "windows-core 0.61.2",
@@ -7178,7 +7357,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -7197,7 +7376,32 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "url",
- "util",
+ "util 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+]
+
+[[package]]
+name = "http_client"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-fs",
+ "async-tar",
+ "bytes",
+ "derive_more 2.1.1",
+ "futures",
+ "http 1.4.2",
+ "http-body 1.0.1",
+ "log",
+ "parking_lot 0.12.5",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha2 0.10.9",
+ "tempfile",
+ "url",
+ "util 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
 ]
 
 [[package]]
@@ -7352,7 +7556,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "system-configuration 0.7.0",
  "tokio",
  "tower-service",
@@ -7372,7 +7576,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -8261,7 +8465,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9534,7 +9738,22 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "anyhow",
+ "bindgen 0.71.1",
+ "core-foundation 0.10.0",
+ "core-video",
+ "ctor",
+ "foreign-types 0.5.0",
+ "metal 0.33.0",
+ "objc",
+]
+
+[[package]]
+name = "media"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "anyhow",
  "bindgen 0.71.1",
@@ -9778,7 +9997,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9937,6 +10156,21 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "ndk"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3f42e7bbe13d351b6bead8286a43aac9534b82bd3cc43e47037f012ebfd62d4"
+dependencies = [
+ "bitflags 2.13.0",
+ "jni-sys 0.3.1",
+ "log",
+ "ndk-sys",
+ "num_enum",
+ "raw-window-handle",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -10112,7 +10346,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10263,6 +10497,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_enum"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d0bca838442ec211fa11de3a8b0e0e8f3a4522575b5c4c06ed722e005036f26"
+dependencies = [
+ "num_enum_derive",
+ "rustversion",
+]
+
+[[package]]
+name = "num_enum_derive"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "num_threads"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10307,7 +10563,7 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.21.7",
  "chrono",
  "getrandom 0.2.17",
  "http 1.4.2",
@@ -10947,7 +11203,6 @@ dependencies = [
 [[package]]
 name = "p3-circuit"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",
@@ -10974,7 +11229,6 @@ dependencies = [
 [[package]]
 name = "p3-circuit-prover"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "hashbrown 0.16.1",
  "p3-air",
@@ -11250,7 +11504,6 @@ dependencies = [
 [[package]]
 name = "p3-poseidon1-circuit-air"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -11300,7 +11553,6 @@ dependencies = [
 [[package]]
 name = "p3-poseidon2-circuit-air"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -11324,7 +11576,6 @@ dependencies = [
 [[package]]
 name = "p3-recursion"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",
@@ -11594,9 +11845,19 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
- "collections",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "perf"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "serde",
  "serde_json",
 ]
@@ -12279,7 +12540,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -12408,7 +12669,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -12448,7 +12709,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -12839,16 +13100,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "read-fonts"
-version = "0.39.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4ed38b89c2c77ff968c524145ad65fb010f38af5c7a224b53b81d47ac2daa81"
-dependencies = [
- "bytemuck",
- "font-types 0.11.3",
-]
-
-[[package]]
 name = "readlock"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12948,9 +13199,17 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
- "derive_refineable",
+ "derive_refineable 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+]
+
+[[package]]
+name = "refineable"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "derive_refineable 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
 ]
 
 [[package]]
@@ -13517,7 +13776,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13530,7 +13789,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13609,7 +13868,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13630,7 +13889,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13726,7 +13985,22 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "async-task",
+ "backtrace",
+ "chrono",
+ "flume",
+ "futures",
+ "parking_lot 0.12.5",
+ "rand 0.9.4",
+ "web-time",
+]
+
+[[package]]
+name = "scheduler"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "async-task",
  "backtrace",
@@ -15866,7 +16140,7 @@ version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32824fab5e16e6c4d86dc1ba84489390419a39f97699852b66480bb87d297ed8"
 dependencies = [
- "dirs 6.0.0",
+ "dirs 5.0.1",
 ]
 
 [[package]]
@@ -15984,16 +16258,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "skrifa"
-version = "0.42.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c34617370ae968efb7161bb2beb517d9084659aae19e24b89e3db25b46e4564"
-dependencies = [
- "bytemuck",
- "read-fonts 0.39.2",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16067,7 +16331,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -16156,7 +16420,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -16520,6 +16784,7 @@ dependencies = [
  "dregg-cell",
  "dregg-cell-crypto",
  "dregg-coord",
+ "dregg-deploy",
  "dregg-doc",
  "dregg-firmament",
  "dregg-persist",
@@ -16533,7 +16798,7 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "gpui-component",
  "gpui_platform",
  "gpui_wgpu",
@@ -16582,7 +16847,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
- "gpui",
+ "gpui 0.2.2 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "gpui-component",
  "gpui_platform",
  "hex",
@@ -16918,13 +17183,25 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "heapless 0.9.3",
  "log",
  "rayon",
  "tracing",
- "ztracing",
+ "ztracing 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+]
+
+[[package]]
+name = "sum_tree"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "heapless 0.9.3",
+ "log",
+ "rayon",
+ "tracing",
+ "ztracing 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
 ]
 
 [[package]]
@@ -17063,7 +17340,7 @@ version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0811b01ca2c4e8718760713911feaf4675c24f94e50530a015ec646cfb622f7c"
 dependencies = [
- "skrifa 0.42.1",
+ "skrifa 0.37.0",
  "yazi",
  "zeno",
 ]
@@ -17272,7 +17549,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -17313,7 +17590,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -18412,7 +18689,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset 0.9.1",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -18713,19 +18990,58 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "util"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "anyhow",
  "async-fs",
  "async_zip",
- "collections",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
  "command-fds",
  "dirs 6.0.0",
  "dunce",
  "futures",
  "futures-lite 1.13.0",
  "globset",
- "gpui_util",
+ "gpui_util 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "itertools 0.14.0",
+ "libc",
+ "log",
+ "mach2 0.5.0",
+ "nix 0.29.0",
+ "percent-encoding",
+ "regex",
+ "rust-embed",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "shlex 1.3.0",
+ "smol",
+ "take-until",
+ "tempfile",
+ "tendril 0.4.3",
+ "unicase",
+ "url",
+ "walkdir",
+ "which",
+]
+
+[[package]]
+name = "util"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "anyhow",
+ "async-fs",
+ "async_zip",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "command-fds",
+ "dirs 6.0.0",
+ "dunce",
+ "futures",
+ "futures-lite 1.13.0",
+ "globset",
+ "gpui_util 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "itertools 0.14.0",
  "libc",
  "log",
@@ -18752,9 +19068,19 @@ dependencies = [
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
- "perf",
+ "perf 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "util_macros"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "perf 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "quote",
  "syn 2.0.118",
 ]
@@ -19786,7 +20112,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -21305,11 +21631,22 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "anyhow",
  "chrono",
- "collections",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "log",
+]
+
+[[package]]
+name = "zlog"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "collections 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
  "log",
 ]
 
@@ -21350,18 +21687,34 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
 dependencies = [
  "tracing",
  "tracing-subscriber 0.3.23",
- "zlog",
- "ztracing_macro",
+ "zlog 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+ "ztracing_macro 0.1.0 (git+https://github.com/emberian/zed?rev=54fbcb6943)",
+]
+
+[[package]]
+name = "ztracing"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
+dependencies = [
+ "tracing",
+ "tracing-subscriber 0.3.23",
+ "zlog 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
+ "ztracing_macro 0.1.0 (git+https://github.com/emberian/zed?rev=adb9026524)",
 ]
 
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/emberian/zed?rev=54fbcb6943#54fbcb6943f86a742e3c33fa96e86a16281cf051"
+source = "git+https://github.com/emberian/zed?rev=54fbcb6943#adb9026524d3fbc30dcf6e86ca016136435c285c"
+
+[[package]]
+name = "ztracing_macro"
+version = "0.1.0"
+source = "git+https://github.com/emberian/zed?rev=adb9026524#adb9026524d3fbc30dcf6e86ca016136435c285c"
 
 [[package]]
 name = "zune-core"
