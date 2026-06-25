@@ -32,6 +32,36 @@ reason.)*
 - MULTIPLAYER: a real two-instance session — two co-inhabitants sync via the membrane's field-granular stitch
   (`8159d322`). SURFACES: the Spotter + menus now reach EVERY session surface, each landing mold-ready (`f7e6765a`).
 
+## ⚑ THE UMEM ROTATION-FLIP BURN-DOWN (the 5-rank plan, named in `6ec89500` + `UNIVERSAL-MAP-ROTATION.md`)
+*(The flip = make the universal-memory prover LOAD-BEARING on the wire: `umem_witness_enabled`
+still defaults FALSE (`turn/src/executor/mod.rs:815`), v1 is still the only prover. Each rank
+carries its closure shape. Pure-Lean ranks are VK-risk-free and can soak before any flag-day.)*
+- RANK 1 — the umem ADDRESS/VALUE CODEC ADAPTERS (the gating long pole, VK-RISK-FREE). ✅ DONE
+  (`metatheory/Dregg2/Crypto/UMemCodec.lean`, 17 theorems `#assert_axioms`-clean): the REAL
+  structured carriers replacing `effect_vm_umem_real_turn.rs`'s per-proof "dense injective
+  relabeling" — `uaddrEnc=hash[domainTag d, coll, key]` + `uaddrEnc_injective` (the structured
+  address codec, faithful under CR + injective tag); `capLeafOf=hash[holder,target,rights,op]` (=
+  the deployed `siteCapEdgeLeaf` by `rfl`) + value codec WHERE/WHAT split + `capRoot_injective`
+  (the cap boundary root binds its 4-felt cap cells, no new combinatorics); the MMR
+  boundary-derivation analogue for the index domain (`index_boundary_root_{derived,bound,
+  from_memcheck}`, riding `mroot_injective` + `memcheck_pins_final`). All on the SAME named
+  `Poseidon2SpongeCR` floor (no narrower bit-count), non-vacuity both polarities on `refSponge`.
+- RANK 2 — the `absent` map-op realization (`descriptor_ir2.rs:62-68`, declared in IR / refused by
+  assembly today; the nullifier-insert lane needs it regardless). CLOSURE: assembly + a refuse-test.
+- RANK 3 — the 3-verb EXECUTOR (the runtime long pole): `RecordKernelState` → the ONE universal
+  map (`VerbCompression.lean:87-89` "rides THE ONE ROTATION"; `turn/`+`cell/`-shaped). The 3-verb
+  circuit descriptors GATE on this — circuit semantics must not run ahead of runtime semantics.
+- RANK 4 — the per-domain WHOLE-IMAGE fold-chip generalization: the cap/nullifier/index boundary
+  folds reconciled against the universal boundary table (the `6ec89500` whole-image chip is the
+  heap-plane proof-of-shape; extend to the other domains via the Rank-1 codecs). Still
+  `umem_witness_enabled`-gated.
+- RANK 5 — the LAYOUT FLAG-DAY (one motion, AFTER GATE 0 = IR-v2 size GREEN): registers 8→16 +
+  `FactoryDescriptor.fields` · `heap_root`+`iroot` commitment limbs (`CommitBindsIndex`/
+  `CommitBindsMMR`) · PI v3 · RESERVED/selector-block death · universal-memory table assembly →
+  ONE descriptor regen → differential gauntlets (cell≡circuit per map · per-effect AGREE · the
+  memory-argument adversarial suite, `UniversalMemory.lean` §6 as the templates) → VK/commitment
+  bump → succession drill → persvati gauntlet → deploy when ember says deploy.
+
 ## web-deos DEEPENED: a SERVICE CELL invoked node-less in the browser (2026-06-25)
 - WHAT: the web `ViewNode` path gained a fourth, richer surface — a KV-store SERVICE CELL driven entirely in a
   browser tab (`wasm/src/bindings_card.rs::KvStoreWorld` + `deos-view/src/web.rs::render_kvstore_live_document` +
