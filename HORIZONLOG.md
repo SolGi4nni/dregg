@@ -35,13 +35,18 @@ re-breaks WHOLE-workspace resolution (the same "declaring breaks it" class the u
 cause) — the dep + `zed-full`/`zed-full-pane`/`desktop-zed-full` features stay UNDECLARED (re-add block in
 `starbridge-v2/Cargo.toml`). MEASURED-CLEAN in isolation: `deos-zed-full[full-zed]` + `servo`(swgl, no
 libservo) resolves green — only the `sqlez`↔`{matrix-sdk-sqlite, servo-storage}` `libsqlite3-sys` split gates
-it. CLOSURE (clean, one line): bump Zed's `sqlez` to `libsqlite3-sys 0.35` in the emberian/zed fork's
-workspace `Cargo.toml` (so `sqlez` + `servo-storage` + `matrix-sdk-sqlite` all share ONE `links="sqlite3"`
-package — sqlite3 C ABI 0.30→0.35 is backward-compatible). THEN uncomment the re-add block, wire `ZedFullPane`
-into `open_editor_pane` (gated `zed-full-pane`) + build the live-cockpit `AppState` (the named mount seam in
-`zed_full_pane.rs` — real `client::Client`/`session::Session`/`UserStore`/`WorkspaceStore`/`LanguageRegistry`/
-`NodeRuntime`, `set_global`'d), fold `zed-full` into `desktop`, retire `desktop-zed-full`, and bake Dev
-showing the full Zed.
+it. CLOSURE — **VALIDATED, one line**: bump Zed's `sqlez` `libsqlite3-sys` pin from `0.30.1` → `0.35.0` in the
+emberian/zed fork's workspace `Cargo.toml` (line ~620). PROVEN this session via a full-source `[patch.
+"https://github.com/emberian/zed"]` to a local checkout with the bump: `deos-zed-full[full-zed]` +
+`servo-render[libservo]` then RESOLVE TOGETHER on ONE `libsqlite3-sys 0.35` (`sqlez` + `servo-storage` both
+present, exactly one libsqlite3-sys node) AND `sqlez` COMPILES unchanged against 0.35 (sqlite3 C ABI
+0.30→0.35 is backward-compatible — no source edits beyond the pin). SHIP: commit the pin bump to emberian/zed
+as a new rev + bump `rev = "54fbcb6943"` → new rev across breadstuffs (`grep -rl 54fbcb6943 --include=Cargo.toml`).
+THEN uncomment the re-add block (`starbridge-v2/Cargo.toml`), wire `ZedFullPane` into `open_editor_pane`
+(gated `zed-full-pane`) + build the live-cockpit `AppState` (the named mount seam in `zed_full_pane.rs` —
+real `client::Client`/`session::Session`/`UserStore`/`WorkspaceStore`/`LanguageRegistry`/`NodeRuntime`,
+`set_global`'d), fold `zed-full` into `desktop`, retire `desktop-zed-full`, and bake Dev showing the full Zed.
+(BLOCKER 2 unicode-width already CLOSED — `dregg-tui` extracted, commit `678d47ced`.)
 
 ## ✎ "MAKE YOUR FIRST CARD" — repeat entry from Author mode (2026-06-24)
 Named by the onboarding commit (`12d072eff`; `starbridge-v2/src/dock/card_surface.rs::build_first_card_surface`,
