@@ -1054,25 +1054,33 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
+    // The desktop is hosted under a `gpui_component::Root` (its document editors are
+    // real `InputState` widgets, which reach `Root` for overlay/focus plumbing). We
+    // keep a handle to the inner `DeosDesktop` entity to drive the bake steps.
+    let desk_cell: Rc<RefCell<Option<gpui::Entity<DeosDesktop>>>> = Rc::new(RefCell::new(None));
+    let desk_sink = desk_cell.clone();
     let window = cx.open_window(size(px(w), px(h)), move |window, cx| {
-        cx.new(|cx| DeosDesktop::new(world_for_view, user, lp, window, cx))
+        let view = cx.new(|cx| DeosDesktop::new(world_for_view, user, lp, window, cx));
+        *desk_sink.borrow_mut() = Some(view.clone());
+        cx.new(|cx| gpui_component::Root::new(gpui::AnyView::from(view), window, cx))
     })?;
     cx.run_until_parked();
+    let desk_h = desk_cell.borrow().clone().expect("desktop entity captured");
 
     // 1. Open an inspector + a TRANSCRIPT (receipt log) window — denser surfaces.
-    window.update(&mut cx, |desk, _w, cx| {
+    desk_h.update(&mut cx, |desk, cx| {
         desk.bake_open_window(treasury);
         desk.bake_open_transcript(user);
         cx.notify();
-    })?;
+    });
     cx.run_until_parked();
 
     // 2. Fire a REAL right-click actuation: transfer treasury → user (a verified
     //    turn). Assert the World advanced.
-    window.update(&mut cx, |desk, _w, cx| {
+    desk_h.update(&mut cx, |desk, cx| {
         desk.bake_actuate_transfer(treasury, user, 1_000);
         cx.notify();
-    })?;
+    });
     cx.run_until_parked();
     let mid_height = shared.borrow().height();
     anyhow::ensure!(
@@ -1082,21 +1090,21 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 
     // 3. Open a DOCUMENT EDITOR on the user cell and TYPE into it — each edit is a
     //    receipted patch + a verified revision turn (the document IS the cell).
-    window.update(&mut cx, |desk, _w, cx| {
+    desk_h.update(&mut cx, |desk, cx| {
         desk.bake_open_doc(user);
         desk.bake_edit_doc(
             user,
             "# deos document\nA document is a cell.\nEditing is receipted patches.\n",
         );
         cx.notify();
-    })?;
+    });
     cx.run_until_parked();
     let doc_height = shared.borrow().height();
     anyhow::ensure!(
         doc_height > mid_height,
         "a document edit must land a REAL verified revision turn (height {mid_height} -> {doc_height})"
     );
-    let doc_text = window.update(&mut cx, |desk, _w, _cx| desk.bake_doc_text(user))?;
+    let doc_text = desk_h.update(&mut cx, |desk, _cx| desk.bake_doc_text(user));
     anyhow::ensure!(
         doc_text.contains("A document is a cell."),
         "the document editor must hold the authored prose"
@@ -1104,27 +1112,49 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 
     // 4. COMPOSE: transclude the treasury cell INTO the user's document — a genuine
     //    cross-cell compose (receipted patch + verified turn).
-    window.update(&mut cx, |desk, _w, cx| {
+    desk_h.update(&mut cx, |desk, cx| {
         desk.bake_transclude(treasury, user);
         cx.notify();
-    })?;
+    });
     cx.run_until_parked();
     let post_height = shared.borrow().height();
     anyhow::ensure!(
         post_height > doc_height,
         "the compose/transclude must land a REAL verified turn (height {doc_height} -> {post_height})"
     );
-    let composed = window.update(&mut cx, |desk, _w, _cx| desk.bake_doc_text(user))?;
+    let composed = desk_h.update(&mut cx, |desk, _cx| desk.bake_doc_text(user));
     anyhow::ensure!(
         composed.contains("{transclude dregg://"),
         "the composed document must carry the transclusion"
     );
 
+    // 4b. Open the LINKS window + an INSPECTOR on the user doc-cell — the document is
+    //     now wired into the rest of the desktop: the Links window resolves the
+    //     transclusion to treasury's LIVE faces (an outbound link →) and the inspector
+    //     reflects the committed prose. Assert the structured backlink resolves both
+    //     ways (user → treasury outbound, treasury ← user backlink).
+    desk_h.update(&mut cx, |desk, cx| {
+        desk.bake_open_links(user);
+        desk.bake_open_window(user);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let (out_links, back_links) =
+        desk_h.update(&mut cx, |desk, _cx| desk.bake_doc_links(user, treasury));
+    anyhow::ensure!(
+        out_links,
+        "the user document's Links must resolve an outbound transclusion → treasury"
+    );
+    anyhow::ensure!(
+        back_links,
+        "treasury's Links must show a backlink ← the user document that mentions it"
+    );
+
     // 5. Drag the treasury icon to a new position and assert the layout PERSISTED.
-    window.update(&mut cx, |desk, _w, cx| {
+    desk_h.update(&mut cx, |desk, cx| {
         desk.bake_drag_icon(treasury, 720.0, 540.0);
         cx.notify();
-    })?;
+    });
     cx.run_until_parked();
     let persisted = DesktopLayout::load(&layout_path);
     anyhow::ensure!(
@@ -1143,7 +1173,7 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     //    workflow, pin a baseline, then add a WIDENING intent (Seal) — and assert the
     //    REAL flow-refinement decision (dregg_deploy::refine) flips from refines to
     //    diverges. This exercises the proven `decide_refines` game, not a mock.
-    window.update(&mut cx, |desk, _w, cx| {
+    desk_h.update(&mut cx, |desk, cx| {
         use starbridge_v2::deos_desktop::IntentKind;
         desk.bake_open_workflow(service);
         desk.bake_workflow_add(service, IntentKind::Transfer);
@@ -1151,35 +1181,33 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         // Pin the baseline B = {Transfer, Grant}.
         desk.bake_workflow_pin_baseline(service);
         cx.notify();
-    })?;
+    });
     cx.run_until_parked();
     // Within the baseline's intent shapes → REFINES.
-    window.update(&mut cx, |desk, _w, cx| {
+    desk_h.update(&mut cx, |desk, cx| {
         use starbridge_v2::deos_desktop::IntentKind;
         desk.bake_workflow_add(service, IntentKind::Transfer);
         cx.notify();
-    })?;
+    });
     cx.run_until_parked();
-    let refines_within =
-        window.update(&mut cx, |desk, _w, _cx| desk.bake_workflow_refines(service))?;
+    let refines_within = desk_h.update(&mut cx, |desk, _cx| desk.bake_workflow_refines(service));
     anyhow::ensure!(
         refines_within,
         "a workflow whose steps stay within the baseline envelope must REFINE it (the proven A ≤ᶠ B game)"
     );
     // A WIDENING intent (Seal) outside the envelope → DIVERGES.
-    window.update(&mut cx, |desk, _w, cx| {
+    desk_h.update(&mut cx, |desk, cx| {
         use starbridge_v2::deos_desktop::IntentKind;
         desk.bake_workflow_add(service, IntentKind::Seal);
         cx.notify();
-    })?;
+    });
     cx.run_until_parked();
-    let diverges_widened =
-        window.update(&mut cx, |desk, _w, _cx| desk.bake_workflow_refines(service))?;
+    let diverges_widened = desk_h.update(&mut cx, |desk, _cx| desk.bake_workflow_refines(service));
     anyhow::ensure!(
         !diverges_widened,
         "a workflow that widens beyond its baseline (adds Seal) must NOT refine it — the refinement game must catch the widening"
     );
-    let wf_letters = window.update(&mut cx, |desk, _w, _cx| desk.bake_workflow_letters(service))?;
+    let wf_letters = desk_h.update(&mut cx, |desk, _cx| desk.bake_workflow_letters(service));
     anyhow::ensure!(
         wf_letters == 4,
         "the composed workflow's flow-Proc must fire one letter per step (4 steps -> 4 letters), got {wf_letters}"
@@ -1190,15 +1218,15 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     //    then assert the World's conservation invariant (Σ balance = 0) the new
     //    World-summary widget reflects still holds after every committed turn.
     let pre_cascade_height = shared.borrow().height();
-    let sigma_before = window.update(&mut cx, |desk, _w, _cx| desk.bake_world_balance_sum())?;
+    let sigma_before = desk_h.update(&mut cx, |desk, _cx| desk.bake_world_balance_sum());
     // TILE the windows into a grid so every surface (the enriched inspector with its
     // state-slots + per-cell turns + balance gauge, the transcript, the document, the
     // workflow composer) is visible at once — and prove it fires no verified turn.
-    let _tiled = window.update(&mut cx, |desk, _w, cx| {
+    let _tiled = desk_h.update(&mut cx, |desk, cx| {
         let n = desk.bake_tile_windows();
         cx.notify();
         n
-    })?;
+    });
     cx.run_until_parked();
     let post_cascade_height = shared.borrow().height();
     anyhow::ensure!(
@@ -1209,21 +1237,21 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     // The conservation sum (Σ balance, reflected by the World-summary widget) is
     // INVARIANT under value-conserving turns AND under the layout actuation — the
     // net of issuer wells vs. accounts does not move.
-    let sigma = window.update(&mut cx, |desk, _w, _cx| desk.bake_world_balance_sum())?;
+    let sigma = desk_h.update(&mut cx, |desk, _cx| desk.bake_world_balance_sum());
     anyhow::ensure!(
         sigma == sigma_before,
         "the World's Σ balance (the conservation net the widget shows) must be invariant \
          under the cascade layout actuation ({sigma_before} -> {sigma})"
     );
-    let total_wins = window.update(&mut cx, |desk, _w, _cx| desk.bake_total_window_count())?;
+    let total_wins = desk_h.update(&mut cx, |desk, _cx| desk.bake_total_window_count());
 
     // 8. Open the PROPERTY inspector/editor over the treasury cell, and a deep
     //    right-click context menu over the service cell — both visible in the shot.
-    window.update(&mut cx, |desk, _w, cx| {
+    desk_h.update(&mut cx, |desk, cx| {
         desk.bake_open_properties(treasury);
         desk.bake_open_menu(service, 60.0, 250.0);
         cx.notify();
-    })?;
+    });
     cx.run_until_parked();
     cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
     cx.run_until_parked();
@@ -1231,7 +1259,7 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let captured = cx.capture_screenshot(window.into())?;
     let (ww, hh) = (captured.width(), captured.height());
     captured.save(format!("{out}.png"))?;
-    let docwins = window.update(&mut cx, |desk, _w, _cx| desk.bake_window_count(true))?;
+    let docwins = desk_h.update(&mut cx, |desk, _cx| desk.bake_window_count(true));
     let _ = std::fs::remove_file(&layout_path);
     println!(
         "OK deos DESKTOP render -> {out}.png ({ww}x{hh}, logical {w}x{h}); NT/Pharo workbench \

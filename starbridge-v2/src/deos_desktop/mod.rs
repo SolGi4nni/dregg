@@ -76,6 +76,28 @@ pub use chrome::{
 };
 pub use layout::{DesktopLayout, DesktopPrefs, DocText, IconPos, WinGeom, WinKindTag};
 
+/// Parse a document line back to the `CellId` it transcludes, if any. The compose
+/// gesture writes `{transclude dregg://<64-hex> · <kind> · balance <b> · <life>}`
+/// (see [`DeosDesktop::transclude_into`]); this reverses the `dregg://<hex>` head so
+/// a transclusion becomes a STRUCTURED link the Links window can resolve to live
+/// faces + invert into a backlink. Returns `None` for any non-transclusion line.
+fn parse_transclusion_ref(line: &str) -> Option<CellId> {
+    let after = line.split("dregg://").nth(1)?;
+    // The hex id runs up to the first delimiter (space, middot, or closing brace).
+    let hex: String = after
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    for (i, b) in bytes.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(CellId::from_bytes(bytes))
+}
+
 // ── A live, open inspector window over one cell ───────────────────────────────────
 
 /// The faces an inspector window shows of a cell (read fresh off the live ledger
@@ -1193,6 +1215,11 @@ impl DeosDesktop {
                 }
             },
         );
+        // Focus the editor the moment it opens — "Open as Document" lands you with a
+        // live caret, ready to type (a real editor, not a click-to-focus surface). The
+        // desktop is hosted under a `gpui_component::Root` (the editor widget reaches it
+        // for its overlay/focus plumbing), so this is always safe.
+        input.update(cx, |st, cx| st.focus(window, cx));
         self.doc_inputs.insert(cell, input);
         self.doc_subs.insert(cell, sub);
     }
@@ -1545,6 +1572,38 @@ impl DeosDesktop {
     /// The current edit-buffer text of `cell`'s open document (a bake/test hook).
     pub fn bake_doc_text(&self, cell: CellId) -> String {
         self.load_doc_buffer(cell)
+    }
+
+    /// The live `InputState` editor entity for `cell`'s open document, if the doc body
+    /// has rendered at least once (so `ensure_doc_input` built it). A test hook: lets a
+    /// headless test TYPE into the REAL widget (`insert`/`set_value`) and assert the
+    /// keystroke→heap seam fires, exercising the genuine `Change` subscription rather
+    /// than a bypass.
+    pub fn bake_doc_input(&self, cell: CellId) -> Option<Entity<InputState>> {
+        self.doc_inputs.get(&cell).cloned()
+    }
+
+    /// **Structured link assertion (a bake/test hook)** — does `doc`'s document carry
+    /// a transclusion that resolves to `target` (an OUTBOUND link), and does `target`'s
+    /// Links view see `doc` as a BACKLINK (← mentions this)? Returns `(outbound, back)`.
+    /// Reuses the exact `parse_transclusion_ref` the Links window renders with, so the
+    /// assertion tracks the real surface.
+    pub fn bake_doc_links(&self, doc: CellId, target: CellId) -> (bool, bool) {
+        let prose = self.load_doc_buffer(doc);
+        let outbound = prose
+            .lines()
+            .filter_map(parse_transclusion_ref)
+            .any(|t| t == target);
+        // The backlink is the same parse inverted: target sees doc mentioning it.
+        let back = self
+            .read_doc_from_heap(&doc)
+            .or_else(|| Some(prose.clone()))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(parse_transclusion_ref)
+            .any(|t| t == target)
+            && doc != target;
+        (outbound, back)
     }
 
     /// **Cascade** all open windows (the Window→Cascade command) — a bake/test hook.
@@ -1992,6 +2051,39 @@ impl DeosDesktop {
             }
         }
 
+        // ── The committed document, if this cell carries one (the inspector REFLECTS
+        //    the document that IS the cell — a prose preview off the committed heap) ──
+        if let Some(prose) = self.read_doc_from_heap(&cell) {
+            col = col.child(face_section("Document (committed prose)"));
+            let bytes = prose.len();
+            let lines = prose
+                .lines()
+                .count()
+                .max(if prose.is_empty() { 0 } else { 1 });
+            col = col.child(face_row("bytes on heap", &bytes.to_string()));
+            col = col.child(face_row("lines", &lines.to_string()));
+            let preview: String = prose.chars().take(140).collect();
+            let preview = if prose.chars().count() > 140 {
+                format!("{preview}…")
+            } else {
+                preview
+            };
+            col = col.child(
+                div()
+                    .my_1()
+                    .p_1()
+                    .bg(gpui::rgb(0xffffff))
+                    .border_1()
+                    .border_color(gpui::rgb(NT_FACE_DARK))
+                    .text_size(px(10.0))
+                    .child(if preview.is_empty() {
+                        "(empty document)".to_string()
+                    } else {
+                        preview
+                    }),
+            );
+        }
+
         // ── Recent turns whose agent IS this cell (the cell's own chronicle) ──
         col = col.child(face_section("Recent turns (this cell)"));
         let cell_receipts: Vec<String> = {
@@ -2131,23 +2223,75 @@ impl DeosDesktop {
             .gap_1()
             .child(face_section("Outbound (capabilities)"))
             .child(face_row("cap count", &caps.to_string()));
-        // Transclusions composed into this cell's document (parsed from the prose).
+        // ── Composed-in: transclusions this cell's document reaches. Each line is
+        //    parsed back to a STRUCTURED reference and the referenced cell's LIVE faces
+        //    (kind · balance · lifecycle) are re-read off the ledger — so a backlink
+        //    reflects the target's current state, not the stale text snapshot. ──
         let doc = self.load_doc_buffer(cell);
-        let incoming: Vec<&str> = doc
-            .lines()
-            .filter(|l| l.contains("{transclude dregg://"))
-            .collect();
-        col = col.child(face_section("Composed-in (transclusions)"));
-        if incoming.is_empty() {
+        let outbound: Vec<CellId> = doc.lines().filter_map(parse_transclusion_ref).collect();
+        col = col.child(face_section("Composed-in (transclusions →)"));
+        if outbound.is_empty() {
             col = col.child(face_row(
                 "transclusions",
                 "(none — drag a cell onto its doc)",
             ));
         } else {
-            for (i, l) in incoming.iter().enumerate() {
-                col = col.child(face_row(&format!("[{i}]"), l.trim()));
+            for tgt in &outbound {
+                if self.world.borrow().ledger().get(tgt).is_some() {
+                    col = col.child(face_row(
+                        &format!("→ {}", id_short(tgt)),
+                        &format!(
+                            "{} · {} · {}",
+                            self.cell_kind(tgt),
+                            fmt_balance(self.cell_balance(tgt)),
+                            self.cell_lifecycle(tgt),
+                        ),
+                    ));
+                } else {
+                    col = col.child(face_row(&format!("→ {}", id_short(tgt)), "(no such cell)"));
+                }
             }
         }
+
+        // ── Backlinks: which OTHER cells' documents transclude THIS one. A reverse
+        //    scan over every committed document on the desktop (the open windows +
+        //    the heap-backed prose) — "what points here". ──
+        let here = cell;
+        let backlinks: Vec<CellId> = self
+            .cells
+            .iter()
+            .filter(|other| **other != here)
+            .filter(|other| {
+                let prose = self
+                    .read_doc_from_heap(other)
+                    .or_else(|| {
+                        self.windows
+                            .get(&(**other, WinKindTag::DocEditor))
+                            .and_then(|w| match &w.kind {
+                                WinKind::DocEditor { buffer, .. } => Some(buffer.clone()),
+                                _ => None,
+                            })
+                    })
+                    .unwrap_or_default();
+                prose
+                    .lines()
+                    .filter_map(parse_transclusion_ref)
+                    .any(|t| t == here)
+            })
+            .copied()
+            .collect();
+        col = col.child(face_section("Backlinks (← mentions this)"));
+        if backlinks.is_empty() {
+            col = col.child(face_row("backlinks", "(none point here yet)"));
+        } else {
+            for src in &backlinks {
+                col = col.child(face_row(
+                    &format!("← {}", id_short(src)),
+                    &format!("{} mentions this", self.cell_kind(src)),
+                ));
+            }
+        }
+
         col = col
             .child(face_section("World"))
             .child(face_row("cells", &self.cells.len().to_string()))
@@ -2267,6 +2411,28 @@ impl DeosDesktop {
                     .font_weight(FontWeight::BOLD)
                     .child(title.to_string()),
             )
+            // A live status badge for document windows — the receipt landing in the
+            // title bar as you type (rev · patches · saved✓), read off committed state.
+            .when(tag == WinKindTag::DocEditor, |row| {
+                let rev = self.cell_field_u64(&cell, DOC_REV_SLOT);
+                let patches = match self
+                    .windows
+                    .get(&(cell, WinKindTag::DocEditor))
+                    .map(|w| &w.kind)
+                {
+                    Some(WinKind::DocEditor { doc, .. }) => doc.history().len(),
+                    _ => 0,
+                };
+                row.child(
+                    div()
+                        .mx_1()
+                        .px_1()
+                        .text_size(px(9.0))
+                        .bg(gpui::rgb(0x0a3a14))
+                        .text_color(gpui::rgb(0x9fe0a8))
+                        .child(format!("rev {rev} · {patches}¶ · heap✓")),
+                )
+            })
             .child(self.title_btn(key, GLYPH_MIN, TitleBtn::Minimize, cx))
             .child(self.title_btn(
                 key,
