@@ -237,7 +237,7 @@ from outermost (easy, real today) to innermost (the deep ceiling):
 | **network** | each app has a UID; the `INET` permission lets it open sockets ambiently | a `SurfaceCapability`-style allowlist of origins; an unlisted origin's socket never opens | **netns + iptables-by-UID**: the container runs in its own network namespace; per-app rules filter by the originating UID (Android UIDs are stable; this is exactly how AFWall+/Fyrypt do per-app firewalling — [AFWall+](https://github.com/ukanth/afwall), [iptables on Android](https://source.android.com/docs/core/architecture/hidl/network-stack)). Route the permitted egress through `Netlayer::dial`; refuse the rest = `RefusedByCap`. |
 | **files / storage** | scoped-storage + DAC per UID | a cap over a file-root; reads/writes are turns | bind-mount only the cap'd roots into the container; everything else is absent (no ambient FS). |
 | **sensors / camera / mic / location** | runtime permissions + SELinux | a cap per sensor; each grant is a receipt | the HAL is the chokepoint — an **interposed HAL stub** returns data only when a cap admits (deepest work; see below). |
-| **intents / IPC (binder)** | binder transactions mediated by SELinux | cross-cell `intent` = a cap-bounded effect, like the membrane forwarder | binder is the IPC fabric; deep mediation = an interposed binder filter (the analogue of the `servo-net` fork). |
+| **intents / IPC (binder)** | implicit `Intent` → `startActivity` → `PackageManager` resolves over EVERY installed app's filters (ambient; a remembered "default app" is a standing grant) | a cap-bounded, **spotter-resolved** hand-off: resolution ranges only over the cell's *granted* handler neighborhood, a single match becomes a targeted turn, ambiguity is an explicit chooser (never a silent default), each decision a receipt | the **resolution-and-authority layer is built** — `android-cell/src/intentgate.rs` (`IntentResolver` · `IntentDecision` · `IntentReceipt`, the AOSP action+category+data match over the cap-reachable set). Deep mediation — interposing the actual binder `startActivity`/`queryIntentActivities` transaction so the device kernel routes only cap-admitted intents — is the analogue of the `servo-net` fork (the frontier below). |
 
 **The depth ladder (honest, like the webcell's `FORBIDDEN_SCHEMES` ceiling):**
 
@@ -247,10 +247,20 @@ from outermost (easy, real today) to innermost (the deep ceiling):
   property: **no ambient authority; a denied I/O reaches nothing.** This is the
   android-cell's equivalent of the webcell's connect-decision gate, and it is enough for
   the first spike.
-- **Deep (the ceiling):** sensor/camera/intent gating at *per-call receipt* granularity
-  needs interposing Android's HAL or binder — the analogue of vendoring `servo-net` to
-  own the http byte socket. That is real engineering (a HAL stub or a binder filter),
-  out of one spike's reach, and named here as the frontier, not claimed.
+- **Shallow + real today (intents):** the **intent resolution-and-authority gate** is
+  built (`intentgate.rs`) — an outbound `Intent` is resolved by a spotter over only the
+  cell's *granted* handler neighborhood (no ambient `PackageManager` over the whole
+  device), gated by the held `SurfaceCapability` for web data, a single match handed off
+  as a targeted turn, ambiguity surfaced as an explicit chooser (Android's remembered
+  "default app" auto-pick — the standing ambient grant — refused), each decision a
+  content-addressed `IntentReceipt`. This is the same shape as the net/input gates and
+  delivers the no-ambient-`startActivity` property at the resolution granularity.
+- **Deep (the ceiling):** sensor/camera gating, AND interposing the *actual* binder
+  `startActivity`/`queryIntentActivities` transaction (so the device kernel itself routes
+  only cap-admitted intents), at *per-call receipt* granularity needs interposing
+  Android's HAL or binder — the analogue of vendoring `servo-net` to own the http byte
+  socket. That is real engineering (a HAL stub or a binder filter), out of one spike's
+  reach, and named here as the frontier, not claimed.
 
 The principle holds at the shallow depth and the gate composes with the compositor
 gate exactly as in the webcell: **two independent teeth** (a cap-permitted app frame is

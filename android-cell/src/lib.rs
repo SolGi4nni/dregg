@@ -43,6 +43,7 @@
 pub mod checkpoint;
 pub mod frame;
 pub mod input;
+pub mod intentgate;
 pub mod netgate;
 pub mod present;
 pub mod runtime;
@@ -55,6 +56,9 @@ pub use frame::{ANDROID_SCREENCAP_HEADER_LEN, ScreencapError, screencap_to_rgba}
 pub use input::{
     AndroidInput, AndroidInputGate, AndroidInputSink, InputDecision, InputError, InputReceipt,
     RecordingInputSink, cap_admits_input,
+};
+pub use intentgate::{
+    AndroidIntent, IntentDecision, IntentFilter, IntentHandler, IntentReceipt, IntentResolver,
 };
 pub use netgate::{AndroidNetGate, IoDecision, IoReceipt};
 pub use present::{AndroidPresentation, present_android_frame};
