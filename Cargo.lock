@@ -11033,7 +11033,7 @@ dependencies = [
 [[package]]
 name = "p3-circuit"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea#a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=d959ff10f86495e81bd883e5d9dde1f0fcf00d81#d959ff10f86495e81bd883e5d9dde1f0fcf00d81"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",
@@ -11060,7 +11060,7 @@ dependencies = [
 [[package]]
 name = "p3-circuit-prover"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea#a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=d959ff10f86495e81bd883e5d9dde1f0fcf00d81#d959ff10f86495e81bd883e5d9dde1f0fcf00d81"
 dependencies = [
  "hashbrown 0.16.1",
  "p3-air",
@@ -11336,7 +11336,7 @@ dependencies = [
 [[package]]
 name = "p3-poseidon1-circuit-air"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea#a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=d959ff10f86495e81bd883e5d9dde1f0fcf00d81#d959ff10f86495e81bd883e5d9dde1f0fcf00d81"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -11386,7 +11386,7 @@ dependencies = [
 [[package]]
 name = "p3-poseidon2-circuit-air"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea#a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=d959ff10f86495e81bd883e5d9dde1f0fcf00d81#d959ff10f86495e81bd883e5d9dde1f0fcf00d81"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -11410,7 +11410,7 @@ dependencies = [
 [[package]]
 name = "p3-recursion"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea#a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=d959ff10f86495e81bd883e5d9dde1f0fcf00d81#d959ff10f86495e81bd883e5d9dde1f0fcf00d81"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",

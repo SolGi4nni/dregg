@@ -36,21 +36,31 @@
 //! SCALARS, not O(1) — though the proof memory (the expensive part) is genuinely constant. Folding
 //! the binding incrementally so `seam_pairs` vanishes is named open work (prereq (b) below).
 //!
-//! ## ⚠ SEGMENT-ACCUMULATOR FOLLOW-UP (the mixed-root analog, named)
+//! ## SEGMENT-ACCUMULATOR — PORTED (the mixed-root analog, CLOSED for the online path)
 //!
 //! The K-fold tree (`ivc_turn_chain`) closed the mixed-root hole by carrying an ordered
 //! SEGMENT on every DESCRIPTOR leaf and combining segments in-circuit (so the whole-chain
 //! claim is derived from the real executions, with no swappable binding leaf). This online
-//! accumulator STILL uses the separate `TurnChainBindingAir` leaf at `finalize` (its claim
-//! is a hash-chain over the seam-pair roots, reconstructed from `seam_pairs`), so it has the
-//! SAME structural weakness the K-fold just retired: the binding leaf is not tied in-circuit
-//! to the descriptor leaves the running fold actually verified. Its `verify_turn_chain_recursive`
-//! is self-consistent (it exposes + checks its own binding claim) but does NOT yet enjoy the
-//! segment tooth's by-construction binding. The follow-up is to port the segment model here:
-//! each `accumulate` step's descriptor leaf carries its segment, and the running fold combines
-//! `running.segment` with the new leaf's segment (the left-linear analog of the K-fold combine —
-//! its continuity/count/digest constraints are identical). NAMED, not closed in this pass; the
-//! K-fold bar (the mixed-root witness) is the one that landed.
+//! accumulator now carries the SAME genuine 4-lane W24 Poseidon2 segment digest, ported
+//! exactly from the K-fold close:
+//!   - **leaf** ([`prove_descriptor_leaf_rotated_with_segment`]): each `accumulate` step's
+//!     descriptor leaf carries `[first_old, last_new, count=1, acc=commit([old,new])]`,
+//!     bound in-circuit to the descriptor proof's REAL rotated roots.
+//!   - **running combine** ([`combine_segments_expose`]): the running fold re-exposes the
+//!     parent segment with `acc = commit(L.acc ++ R.acc)` where L = the running segment and
+//!     R = the new leaf's segment — the LEFT-LINEAR analog of the K-fold balanced combine,
+//!     with identical continuity / count / ordered-digest constraints. So the running proof
+//!     carries the whole-chain segment by construction.
+//!   - **finalize** ([`Accumulator::finalize`]): the running proof IS the root; its exposed
+//!     segment `[genesis_root, head_root, num_turns, chain_digest]` is the whole-chain claim
+//!     derived from the REAL descriptor leaves. `verify_turn_chain_recursive`'s SEGMENT tooth
+//!     checks the carried claim against it, fail-closed. The `TurnChainBindingAir` leaf is
+//!     STILL produced for the carried `binding_proof` field (byte-API / defense-in-depth) but
+//!     is NO LONGER a soundness dependency and is NOT folded into the root — exactly as the
+//!     K-fold path now carries (not folds) its binding proof.
+//!
+//! So a same-endpoint mixed-root forgery against the online whole-chain proof is REJECTED by
+//! the same construction the K-fold uses (witness: `online_mixed_root_forgery_rejected`).
 //!
 //! ## What is GENUINELY here vs the named in-band gap (honest, tiered)
 //!
@@ -136,9 +146,8 @@
 
 use p3_commit::Pcs;
 use p3_recursion::{
-    BatchOnly, ProveNextLayerParams, RecursionInput, RecursionOutput,
-    build_and_prove_aggregation_layer, build_and_prove_aggregation_layer_with_expose,
-    build_and_prove_next_layer_with_expose,
+    BatchOnly, ProveNextLayerParams, RecursionOutput, build_and_prove_aggregation_layer,
+    build_and_prove_aggregation_layer_with_expose,
 };
 use p3_uni_stark::StarkGenericConfig;
 
@@ -150,8 +159,11 @@ type RecursionCommit = <<DreggRecursionConfig as StarkGenericConfig>::Pcs as Pcs
 >>::Commitment;
 
 use crate::ivc_turn_chain::{
-    FinalizedTurn, RecursionVk, TurnChainBindingAir, WholeChainProof, ir2_leaf_wrap_config,
-    prove_descriptor_leaf_rotated_with_config, verify_turn_chain_recursive,
+    FinalizedTurn, HostSeg, RecursionVk, SEG_COUNT, SEG_DIGEST_FIRST, SEG_DIGEST_WIDTH,
+    SEG_FIRST_OLD, SEG_LAST_NEW, SEG_WIDTH, TurnChainBindingAir, WholeChainProof, combine_seg,
+    expose_claim_instance_index, ir2_leaf_wrap_config, leaf_seg,
+    prove_descriptor_leaf_rotated_with_config, prove_descriptor_leaf_rotated_with_segment,
+    seg_poseidon_commit, verify_turn_chain_recursive,
 };
 use crate::joint_turn_aggregation::verify_descriptor_participant;
 use crate::plonky3_recursion_impl::recursive::{
@@ -159,45 +171,58 @@ use crate::plonky3_recursion_impl::recursive::{
     prove_inner_for_air_with_config, verify_inner_for_air_with_config,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::poseidon2::hash_4_to_1;
-use p3_baby_bear::BabyBear as P3BabyBear;
-use p3_field::PrimeCharacteristicRing;
 
 const D: usize = 4;
 
 /// The recursion challenge (extension) field the expose hooks build constants over.
 type AccChallenge = <DreggRecursionConfig as StarkGenericConfig>::Challenge;
 
-/// Expose the accumulator's binding-leaf claims `[genesis, final, num_turns, chain_digest]`
-/// as a `SEG_WIDTH`-lane segment, ZERO-PADDING the single-felt binding digest to the K-fold
-/// path's [`crate::ivc_turn_chain::SEG_DIGEST_WIDTH`]-lane digest block:
-/// `[genesis, final, num_turns, chain_digest, 0, …, 0]`.
+/// **THE SEGMENT-COMBINE EXPOSE HOOK (the online dual of `aggregate_tree`'s combine).**
 ///
-/// This keeps the ONLINE accumulator's artifact structurally uniform with the K-fold's
-/// multi-felt segment (so `verify_turn_chain_recursive`'s tooth (4) reads a consistent
-/// layout) WITHOUT strengthening its digest — the accumulator path is scoped OUT of the
-/// codex #3 mixed-root close (its binding leaf is the separate, swappable single-felt
-/// `hash_4_to_1` carrier; the padding lanes carry no additional commitment).
-fn accumulator_expose_padded_segment(
+/// The running fold's aggregation re-exposes the parent segment EXACTLY as the K-fold
+/// `aggregate_tree` does: left = the running proof's segment, right = the new leaf's
+/// segment. It constrains state continuity (`L.last_new == R.first_old`, by direct
+/// `connect` — never `sub`+`assert_zero`, which would clobber the shared `WitnessId(0)`),
+/// count additivity (`count = L.count + R.count`), and the ordered multi-felt digest fold
+/// (`acc = seg_poseidon_commit(L.acc ++ R.acc)`, L absorbed before R ⇒ order-sensitive),
+/// then exposes the parent `[first_old, last_new, count, acc_0..acc_{W-1}]`. This is what
+/// makes the running proof carry the SAME genuine 4-lane W24 Poseidon2 segment digest the
+/// K-fold path carries — closing the same-endpoint mixed-root forgery for the online path.
+fn combine_segments_expose(
     cb: &mut p3_circuit::CircuitBuilder<AccChallenge>,
-    binding_claims: &[p3_recursion::Target],
+    left_apt: &[Vec<p3_recursion::Target>],
+    right_apt: &[Vec<p3_recursion::Target>],
+    left_idx: usize,
+    right_idx: usize,
 ) {
-    use crate::ivc_turn_chain::{NUM_CHAIN_CLAIMS, SEG_DIGEST_FIRST};
-    // Binding-leaf PI order: [genesis, final, num_turns, chain_digest] — i.e. the first
-    // SEG_DIGEST_FIRST + 1 lanes (the 3 scalar lanes + the single binding digest at the
-    // first digest lane), with the remaining digest lanes zero.
-    let prefix_len = SEG_DIGEST_FIRST + 1;
-    debug_assert!(
-        binding_claims.len() >= prefix_len,
-        "binding leaf must expose [genesis, final, num_turns, chain_digest]"
-    );
-    let zero = cb.define_const(AccChallenge::ZERO);
-    let mut seg: Vec<p3_recursion::Target> = Vec::with_capacity(NUM_CHAIN_CLAIMS);
-    seg.extend_from_slice(&binding_claims[..prefix_len]);
-    while seg.len() < NUM_CHAIN_CLAIMS {
-        seg.push(zero);
-    }
-    cb.expose_as_public_output(&seg);
+    let l = left_apt
+        .get(left_idx)
+        .expect("left (running) segment instance present");
+    let r = right_apt
+        .get(right_idx)
+        .expect("right (new-leaf) segment instance present");
+    debug_assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
+
+    // (1) STATE CONTINUITY: the running subtree's final root must be the new leaf's first
+    // root — the temporal tooth, in-circuit, by direct `connect` (off the zero slot).
+    cb.connect(l[SEG_LAST_NEW], r[SEG_FIRST_OLD]);
+
+    // (2) parent segment: span [L.first_old .. R.last_new], count L+R, ordered multi-felt
+    // digest acc = commit(L.acc ++ R.acc).
+    let first_old = l[SEG_FIRST_OLD];
+    let last_new = r[SEG_LAST_NEW];
+    let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
+    let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
+    acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+    acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+    let acc = seg_poseidon_commit(cb, &acc_inputs);
+    let mut parent = Vec::with_capacity(SEG_WIDTH);
+    parent.push(first_old);
+    parent.push(last_new);
+    parent.push(count);
+    parent.extend_from_slice(&acc);
+    debug_assert_eq!(parent.len(), SEG_WIDTH);
+    cb.expose_as_public_output(&parent);
 }
 
 /// **THE WRAP-STEP TRACE-HEIGHT CEILING (the `min_trace_height` half of the fixed-shape knob).**
@@ -233,10 +258,6 @@ fn wrap_params() -> ProveNextLayerParams {
             .with_min_trace_height(1usize << WRAP_LOG_CEIL),
         constraint_profile: base.constraint_profile,
     }
-}
-
-fn to_p3(v: BabyBear) -> P3BabyBear {
-    P3BabyBear::from_u64(v.0 as u64)
 }
 
 /// A short blake3 fingerprint of a recursion preprocessed commitment (the VK-identity core), for
@@ -324,17 +345,32 @@ impl std::error::Error for AccError {}
 /// can be regenerated WITHOUT retaining the consumed turns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChainSummary {
-    /// The genesis root the chain started from (the first turn's `old_root`).
+    /// The genesis root the chain started from (the first turn's `old_root`); the running
+    /// segment's `first_old`.
     pub genesis_root: BabyBear,
-    /// The running head root (the last folded turn's `new_root`); the next turn must consume this.
+    /// The running head root (the last folded turn's `new_root`); the next turn must consume
+    /// this. The running segment's `last_new`.
     pub head_root: BabyBear,
-    /// The running ordered-history digest (`hash_4_to_1` over the `(old, new, idx)` pairs).
-    pub chain_digest: BabyBear,
-    /// The number of turns folded so far.
+    /// The running ordered-history digest — the genuine 4-lane W24 Poseidon2 segment `acc`,
+    /// folded LEFT-LINEARLY as `acc = commit(running.acc ++ leaf.acc)` (the host mirror of the
+    /// in-circuit [`combine_segments_expose`]). This EQUALS the digest the running proof exposes,
+    /// so `finalize`'s carried `chain_digest` matches the root-exposed segment tooth.
+    pub chain_digest: [BabyBear; SEG_DIGEST_WIDTH],
+    /// The number of turns folded so far (the running segment's `count`).
     pub num_turns: usize,
-    /// The running Poseidon2 accumulator carrier (`acc_out` of the binding AIR; `chain_digest` IS
-    /// this after the last fold). Tracked so the next fold's digest hashes from the right pre-state.
-    acc_carrier: BabyBear,
+}
+
+impl ChainSummary {
+    /// The running segment as a [`HostSeg`] (the host mirror of the running proof's exposed
+    /// segment), so the next fold can `combine_seg(running, new_leaf)` exactly as the circuit does.
+    fn as_seg(&self) -> HostSeg {
+        HostSeg {
+            first_old: self.genesis_root,
+            last_new: self.head_root,
+            count: BabyBear::new(self.num_turns as u32),
+            acc: self.chain_digest,
+        }
+    }
 }
 
 /// The running accumulator: a single running recursion proof (O(1) PROOF memory) + the O(1) chain
@@ -618,9 +654,12 @@ impl Accumulator {
             params.clone()
         };
 
-        // (3) the rotated descriptor leaf, wrapped to a batch proof at the wrap config.
+        // (3) the rotated descriptor leaf, wrapped to a batch proof at the wrap config AND
+        //     carrying its ordered SEGMENT `[old_root, new_root, 1, commit([old,new])]` bound
+        //     in-circuit to the descriptor's real rotated roots (the same leaf the K-fold path
+        //     folds). This is what lets the running fold combine genuine 4-lane segments.
         let leg = &turn.participant.rotated;
-        let new_leaf = prove_descriptor_leaf_rotated_with_config(
+        let new_leaf = prove_descriptor_leaf_rotated_with_segment(
             &leg.descriptor,
             &leg.proof,
             &leg.public_inputs,
@@ -666,6 +705,20 @@ impl Accumulator {
                 // the genesis leaf) there is no recorded expectation yet, so that one fold is unpinned;
                 // its OUTPUT seeds the expectation for every subsequent fold.
                 let expected = running.running_preprocessed_commit();
+                // THE SEGMENT INSTANCE INDICES — read off the batch proofs BEFORE converting them
+                // to recursion inputs (which consume them). left = the running proof's exposed
+                // segment, right = the new leaf's exposed segment; the combine hook reads both.
+                let left_seg_idx = expose_claim_instance_index(&running.0).ok_or_else(|| {
+                    AccError::RecursionFailed {
+                        reason: "running proof carries no segment (expose_claim) table".to_string(),
+                    }
+                })?;
+                let right_seg_idx = expose_claim_instance_index(&new_leaf.0).ok_or_else(|| {
+                    AccError::RecursionFailed {
+                        reason: "new descriptor leaf carries no segment (expose_claim) table"
+                            .to_string(),
+                    }
+                })?;
                 let left = if self.pin_vk_identity && self.pinned_running_vk.is_some() {
                     if self.pinned_running_vk != expected {
                         // Restore the running proof we `take()`-d so the accumulator is unchanged on
@@ -699,13 +752,36 @@ impl Accumulator {
                     running.into_recursion_input::<BatchOnly>()
                 };
                 let right = new_leaf.into_recursion_input::<BatchOnly>();
-                build_and_prove_aggregation_layer::<
+                // THE SEGMENT COMBINE (the online dual of the K-fold `aggregate_tree` combine):
+                // re-expose the parent segment with the ordered 4-lane digest acc = commit(L ++ R),
+                // so the running proof carries the whole-chain segment by construction.
+                let expose =
+                    move |cb: &mut p3_circuit::CircuitBuilder<AccChallenge>,
+                          left_apt: &[Vec<p3_recursion::Target>],
+                          right_apt: &[Vec<p3_recursion::Target>]| {
+                        combine_segments_expose(
+                            cb,
+                            left_apt,
+                            right_apt,
+                            left_seg_idx,
+                            right_seg_idx,
+                        );
+                    };
+                build_and_prove_aggregation_layer_with_expose::<
                     DreggRecursionConfig,
                     BatchOnly,
                     BatchOnly,
                     _,
                     D,
-                >(&left, &right, &config, &backend, &fold_params, None)
+                >(
+                    &left,
+                    &right,
+                    &config,
+                    &backend,
+                    &fold_params,
+                    None,
+                    Some(&expose),
+                )
                 .map_err(|e| AccError::RecursionFailed {
                     reason: format!("running aggregation layer failed: {e:?}"),
                 })?
@@ -725,36 +801,29 @@ impl Accumulator {
             }
         }
 
-        // (5) advance the running summary. The running digest folds each turn's `(old, new)` pair
-        //     into the Poseidon2 carrier, in order — so it commits to the WHOLE ordered history
-        //     incrementally (O(1) memory: only the carrier is kept). `finalize` reproduces the SAME
-        //     fold from the same per-step inputs it would re-derive, so tooth 2's last-row
-        //     constraint (`acc_out == chain_digest`) holds — see `finalize_binding_leaf`'s note.
+        // (5) advance the running summary. The host folds the SEGMENT exactly as the in-circuit
+        //     `combine_segments_expose` does — LEFT-LINEARLY: the new leaf's segment
+        //     `[old, new, 1, commit([old,new])]` combines into the running segment as
+        //     `acc = commit(running.acc ++ leaf.acc)`. The result EQUALS the digest the running
+        //     proof exposes, so `finalize`'s carried `chain_digest` matches the root-exposed
+        //     segment tooth (O(1) memory: only the running 4-lane segment is kept).
         let new_summary = match self.summary {
             None => {
-                let acc_in = BabyBear::ZERO;
-                let acc_out = hash_4_to_1(&[acc_in, old_root, new_root, BabyBear::new(0)]);
+                let seg = leaf_seg(old_root, new_root);
                 ChainSummary {
-                    genesis_root: old_root,
-                    head_root: new_root,
-                    chain_digest: acc_out,
+                    genesis_root: seg.first_old,
+                    head_root: seg.last_new,
+                    chain_digest: seg.acc,
                     num_turns: 1,
-                    acc_carrier: acc_out,
                 }
             }
             Some(s) => {
-                let acc_out = hash_4_to_1(&[
-                    s.acc_carrier,
-                    old_root,
-                    new_root,
-                    BabyBear::new(s.num_turns as u32),
-                ]);
+                let seg = combine_seg(s.as_seg(), leaf_seg(old_root, new_root));
                 ChainSummary {
-                    genesis_root: s.genesis_root,
-                    head_root: new_root,
-                    chain_digest: acc_out,
+                    genesis_root: seg.first_old,
+                    head_root: seg.last_new,
+                    chain_digest: seg.acc,
                     num_turns: s.num_turns + 1,
-                    acc_carrier: acc_out,
                 }
             }
         };
@@ -767,98 +836,43 @@ impl Accumulator {
 
     /// **Read the running accumulator out into a [`WholeChainProof`]** a light client verifies.
     ///
-    /// Wraps the running root and a chain-binding leaf (regenerated from the O(1) summary — see
-    /// [`finalize_binding_leaf`]) into ONE root, then carries the binding proof + the four publics,
-    /// matching the [`WholeChainProof`] the K-fold path produces. The result verifies under
-    /// [`verify_turn_chain_recursive`] / [`lightclient::verify_history`] against the honest VK anchor
-    /// extracted from this very fold.
+    /// The running proof IS the root: every `accumulate` fold combined the new leaf's ordered
+    /// segment into the running segment in-circuit ([`combine_segments_expose`]), so the running
+    /// proof already exposes the whole-chain segment `[genesis_root, head_root, num_turns,
+    /// chain_digest]` derived from the REAL descriptor leaves. `finalize` carries that segment as
+    /// the four publics + a (non-soundness) binding proof, matching the [`WholeChainProof`] the
+    /// K-fold path produces. The result verifies under [`verify_turn_chain_recursive`] /
+    /// [`lightclient::verify_history`] against the honest VK anchor extracted from this very fold.
     ///
     /// `finalize` consumes the accumulator (the running proof is moved into the artifact).
     ///
-    /// NOTE (the binding regeneration): the binding leaf attests the ordered `(old, new)` pairs of
-    /// the WHOLE chain. `finalize` rebuilds the genuine per-turn `TurnChainBindingAir` leaf from the
-    /// `seam_pairs` reconstruction witness (the 2-felt/turn scalars — see the struct note), so its
-    /// last-row digest reproduces `summary.chain_digest` EXACTLY and tooth 2 of
-    /// `verify_turn_chain_recursive` (the carried-publics attestation binding `[genesis_root,
-    /// head_root, num_turns, chain_digest]`) passes. The per-pair ordering is attested BOTH by this
-    /// binding leaf AND by the in-circuit descriptor leaves folded into the root.
+    /// NOTE (the carried binding proof): the [`TurnChainBindingAir`] leaf is regenerated from the
+    /// `seam_pairs` witness (a host-side defense-in-depth witness of the ordered chain) and carried
+    /// in the `binding_proof` field for byte-API/struct compatibility, but it is NO LONGER a
+    /// soundness dependency and is NOT folded into the root — the SEGMENT tooth over the running
+    /// proof's exposed segment binds the claim, exactly as the K-fold path carries (not folds) its
+    /// binding proof.
     pub fn finalize(self) -> Result<WholeChainProof, AccError> {
         let summary = self.summary.ok_or(AccError::Empty)?;
         let running = self.running.ok_or(AccError::Empty)?;
 
-        let config = ir2_leaf_wrap_config();
-        let backend = create_recursion_backend();
-        // The binding leaf is wrapped uni->batch at the DEFAULT params (a leaf is already a fixed
-        // shape — the same discipline `accumulate`'s step-3 leaf wrap uses). The FINAL root
-        // aggregation, by contrast, is proven under [`wrap_params`] when the wrap step is enabled, so
-        // the terminal root proof carries the SAME wrap-shaped FRI trace ceiling as the running folds
-        // (codex finding #5: the terminal proof must not have a depth/shape-dependent root VK from a
-        // default-params fold).
-        let leaf_params = ProveNextLayerParams::default();
-        let root_params = if self.wrap_enabled {
-            wrap_params()
-        } else {
-            leaf_params.clone()
-        };
-
-        // The per-turn binding leaf, rebuilt from the seam-pair witness so its digest reproduces the
-        // running `chain_digest` exactly.
-        let (binding_inner, binding_pis) = finalize_binding_leaf(&summary, &self.seam_pairs)
-            .map_err(|reason| AccError::RecursionFailed { reason })?;
-
-        // Wrap the binding leaf uni->batch at the wrap config.
-        let binding_batch = {
-            let air = TurnChainBindingAir;
-            let p3_pis: Vec<P3BabyBear> = binding_pis.iter().map(|&v| to_p3(v)).collect();
-            let input = RecursionInput::UniStark {
-                proof: &binding_inner,
-                air: &air,
-                public_inputs: p3_pis,
-                preprocessed_commit: None,
-            };
-            // EXPOSED-CLAIM CHANNEL: emit the expose_claim table over the binding
-            // child's 4 verified `air_public_targets` `[genesis, final, num_turns,
-            // chain_digest]`, so the accumulator's root carries the host-readable,
-            // bus-bound chain claims `verify_turn_chain_recursive`'s tooth (4) checks.
-            //
-            // CODEX #3/#4: the K-fold path's `verify` tooth now expects a multi-felt
-            // (`SEG_DIGEST_WIDTH`-lane) Poseidon2 segment digest. The ONLINE accumulator
-            // (scoped OUT of the mixed-root close — its binding leaf is still the separate,
-            // swappable single-felt `hash_4_to_1` carrier) keeps that 1-felt digest, but
-            // ZERO-PADS it to the new lane width so the artifact is structurally uniform and
-            // tooth (4) reads a consistent `[genesis, final, num_turns, d, 0, 0, 0]`. This
-            // does NOT strengthen the accumulator's digest — its collision-resistance is
-            // unchanged from the 1-felt binding leaf; the structural mixed-root weakness
-            // named in codex #4 is unaffected.
-            let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
-                               apt: &[Vec<p3_recursion::Target>]| {
-                if let Some(claims) = apt.first() {
-                    accumulator_expose_padded_segment(cb, claims);
-                }
-            };
-            build_and_prove_next_layer_with_expose::<
-                DreggRecursionConfig,
-                TurnChainBindingAir,
-                _,
-                D,
-            >(&input, &config, &backend, &leaf_params, Some(&expose))
-            .map_err(|e| AccError::RecursionFailed {
-                reason: format!("finalize binding-leaf wrap failed: {e:?}"),
-            })?
-        };
-
-        // Fold the running root with the binding leaf into the FINAL root.
+        // **THE RUNNING PROOF IS THE ROOT (the ported segment close).** Every `accumulate` fold
+        // combined the new leaf's ordered segment into the running segment in-circuit
+        // ([`combine_segments_expose`]), so the running proof ALREADY exposes the whole-chain
+        // segment `[genesis_root, head_root, num_turns, chain_digest]` — derived BY CONSTRUCTION
+        // from the REAL descriptor leaves. `verify_turn_chain_recursive`'s SEGMENT tooth reads it
+        // and checks it against the carried claim, fail-closed. There is NO terminal fold and NO
+        // swappable binding leaf in the soundness path — exactly the K-fold close.
         //
-        // **PIN the running (left) input against the captured fixed-point VK (codex finding #5).**
-        // The terminal fold is itself an AGG∘LEAF (left = the running aggregation, right = the
-        // binding leaf), structurally identical to a steady running fold — so the SAME VK-identity
-        // pin applies. When the pin was captured during the fold, the running proof's commitment MUST
-        // equal it (else the running proof came from a foreign circuit); fail closed, exactly as
-        // `accumulate` does. When no pin was captured (a single-turn chain — the running proof is
-        // still a leaf, never aggregated) the unpinned fold is correct (there is no captured running
-        // aggregation VK to pin against).
-        let running_commit = running.running_preprocessed_commit();
-        let left = if self.pin_vk_identity && self.pinned_running_vk.is_some() {
+        // **VK-identity defense-in-depth (codex finding #5).** The running fold was VK-pinned at
+        // every step in `accumulate`, so `running` is the pinned fixed-point proof and is already
+        // wrap-shaped (proven under [`wrap_params`]) — there is no default-params terminal fold to
+        // introduce a depth/shape-dependent root VK. We additionally assert here that the running
+        // proof's commitment STILL matches the captured pin: a foreign/swapped running proof is
+        // refused fail-closed rather than read out. (No pin captured = a single-turn chain whose
+        // running proof is still a leaf; the leaf root is correct.)
+        if self.pin_vk_identity && self.pinned_running_vk.is_some() {
+            let running_commit = running.running_preprocessed_commit();
             if self.pinned_running_vk != running_commit {
                 return Err(AccError::VkIdentityMismatch {
                     index: summary.num_turns,
@@ -873,61 +887,21 @@ impl Accumulator {
                         .unwrap_or_default(),
                 });
             }
-            running.into_recursion_input_pinned::<BatchOnly>(
-                self.pinned_running_vk
-                    .clone()
-                    .expect("pinned_running_vk is Some by the enclosing guard"),
-            )
-        } else {
-            running.into_recursion_input::<BatchOnly>()
-        };
-        // The binding leaf (right child) carries the expose_claim table; find its
-        // instance index so the root re-exposes those bus-bound claims.
-        let right_idx = crate::ivc_turn_chain::expose_claim_instance_index(&binding_batch.0);
-        let right = binding_batch.into_recursion_input::<BatchOnly>();
-        let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
-                           _left_apt: &[Vec<p3_recursion::Target>],
-                           right_apt: &[Vec<p3_recursion::Target>]| {
-            if let Some(idx) = right_idx
-                && let Some(claims) = right_apt.get(idx)
-            {
-                accumulator_expose_padded_segment(cb, claims);
-            }
-        };
-        let root = build_and_prove_aggregation_layer_with_expose::<
-            DreggRecursionConfig,
-            BatchOnly,
-            BatchOnly,
-            _,
-            D,
-        >(
-            &left,
-            &right,
-            &config,
-            &backend,
-            &root_params,
-            None,
-            Some(&expose),
-        )
-        .map_err(|e| AccError::RecursionFailed {
-            reason: format!("finalize root aggregation failed: {e:?}"),
-        })?;
+        }
 
-        // The artifact digest is the binding leaf's PADDED last-row `acc_out` (`binding_pis[3]`) —
-        // the single-felt online-accumulator carrier — ZERO-PADDED to the K-fold path's multi-felt
-        // digest lane width (codex #3). The accumulator is scoped OUT of the mixed-root close; the
-        // padding lanes carry no commitment, they only make the artifact's lane layout uniform with
-        // the K-fold so `verify_turn_chain_recursive`'s tooth (4) reads a consistent shape.
-        // (`summary.chain_digest` is the UNPADDED running carrier — a different, internal quantity.)
-        let mut chain_digest = [BabyBear::ZERO; crate::ivc_turn_chain::SEG_DIGEST_WIDTH];
-        chain_digest[0] = binding_pis[3];
+        // The carried binding proof: a host-side defense-in-depth witness of the ordered chain,
+        // rebuilt from the O(1) summary + `seam_pairs`. RETAINED for the `WholeChainProof`
+        // byte-API/struct compatibility but NO LONGER a soundness dependency and NOT folded into
+        // the root — exactly as the K-fold path carries (not folds) its binding proof.
+        let (binding_inner, _binding_pis) = finalize_binding_leaf(&summary, &self.seam_pairs)
+            .map_err(|reason| AccError::RecursionFailed { reason })?;
 
         Ok(WholeChainProof {
-            root,
+            root: running,
             binding_proof: binding_inner,
             genesis_root: summary.genesis_root,
             final_root: summary.head_root,
-            chain_digest,
+            chain_digest: summary.chain_digest,
             num_turns: summary.num_turns,
         })
     }

@@ -843,7 +843,7 @@ pub(crate) struct HostSeg {
 /// The per-turn (descriptor-leaf) segment: `first_old = old_root`, `last_new =
 /// new_root`, `count = 1`, `acc = commit([old_root, new_root])` — the SAME seed
 /// [`seg_poseidon_commit`] computes at the leaf wrap.
-fn leaf_seg(old_root: BabyBear, new_root: BabyBear) -> HostSeg {
+pub(crate) fn leaf_seg(old_root: BabyBear, new_root: BabyBear) -> HostSeg {
     HostSeg {
         first_old: old_root,
         last_new: new_root,
@@ -856,7 +856,7 @@ fn leaf_seg(old_root: BabyBear, new_root: BabyBear) -> HostSeg {
 /// continuity `l.last_new == r.first_old` (caller-checked upstream as `ChainBreak`),
 /// `first_old = l.first_old`, `last_new = r.last_new`, `count = l.count + r.count`,
 /// `acc = commit(l.acc ++ r.acc)` (order-sensitive: l before r).
-fn combine_seg(l: HostSeg, r: HostSeg) -> HostSeg {
+pub(crate) fn combine_seg(l: HostSeg, r: HostSeg) -> HostSeg {
     let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
     acc_inputs.extend_from_slice(&l.acc);
     acc_inputs.extend_from_slice(&r.acc);
@@ -1620,6 +1620,158 @@ pub fn prove_turn_chain_recursive_rotated(
     }
     let refs: Vec<&FinalizedTurn> = turns.iter().collect();
     prove_chain_core_rotated(&refs, &selectors)
+}
+
+/// The host-side whole-chain summary the staged welded fold computes: the four chain claims the
+/// in-circuit root segment exposes, derived from the welded legs' rotated `(old_root, new_root)`
+/// (PI 34/35 — intact through the weld) folded through the SAME ordered binary tree the recursion
+/// aggregation runs in-circuit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeldedChainHostSummary {
+    /// The first turn's `old_root` (the chain genesis).
+    pub genesis_root: BabyBear,
+    /// The last turn's `new_root` (the chain head).
+    pub final_root: BabyBear,
+    /// The number of folded turns.
+    pub num_turns: usize,
+    /// The multi-felt Poseidon2 ordered-history digest over the `(old_root, new_root)` triples.
+    pub chain_digest: [BabyBear; SEG_DIGEST_WIDTH],
+}
+
+/// Host-admit ONE welded rotated+umem leg: re-verify its `Ir2BatchProof` against its carried
+/// WELDED descriptor (under the leaf-wrap config). Unlike [`verify_descriptor_participant`], this
+/// does NOT map the descriptor name back through the deployed R=24 registry — the welded form is
+/// STAGED (its `name` carries the
+/// [`dregg_circuit::effect_vm_descriptors::ROTATED_UMEM_WELD_SUFFIX`]), so admission verifies the
+/// proof against the leg's own descriptor and confirms the staged-weld marker.
+fn admit_welded_leg(t: &FinalizedTurn, index: usize) -> Result<(), TurnChainError> {
+    use dregg_circuit::descriptor_ir2::verify_vm_descriptor2_with_config;
+    use dregg_circuit::effect_vm_descriptors::ROTATED_UMEM_WELD_SUFFIX;
+    let leg = &t.participant.rotated;
+    if !leg.descriptor.name.ends_with(ROTATED_UMEM_WELD_SUFFIX) {
+        return Err(TurnChainError::TurnProofInvalid {
+            index,
+            reason: format!(
+                "leg descriptor '{}' is not a staged rotated+umem weld",
+                leg.descriptor.name
+            ),
+        });
+    }
+    verify_vm_descriptor2_with_config(
+        &leg.descriptor,
+        &leg.proof,
+        &leg.public_inputs,
+        &ir2_leaf_wrap_config(),
+    )
+    .map_err(|reason| TurnChainError::TurnProofInvalid { index, reason })
+}
+
+/// **THE STAGED WELDED-UMEM IVC FOLD (HOST — VK-RISK-FREE) — the last precursor before the VK
+/// epoch.** Fold a multi-turn history of WELDED rotated+umem legs
+/// ([`crate::joint_turn_aggregation::RotatedParticipantLeg::mint_welded_from_block_witnesses`]): each
+/// leg is host-admitted (its welded `Ir2BatchProof` re-verified against its welded descriptor — the
+/// umem reconciliation rides INSIDE the proof), then the chain's temporal tooth
+/// (`prev.new_root == next.old_root`) + the ordered-history digest are folded through the SAME host
+/// recipe [`prove_chain_core_rotated`] runs before its recursion aggregation
+/// ([`compute_root_segment`] / continuity).
+///
+/// This is the IVC half of the flag-day weld, proved STAGED: the welded leg supplies the
+/// `old_root`/`new_root` PI accessors (PI 34/35 — intact through the weld) the chain fold binds, so
+/// a multi-turn history folds through the rotated+umem form exactly as it does through the deployed
+/// rotated form — the 0-PI cohort leg's IVC incompatibility resolved. A `ChainBreak` (reordered /
+/// dropped / spliced turn) and a leg whose welded proof does not verify are both refused.
+///
+/// STAGED: nothing deployed — the welded legs carry staged descriptors, no VK epoch, no
+/// deployed-default flip. (The full in-circuit recursion aggregation over the welded leaves is
+/// [`prove_welded_umem_turn_chain_recursive_staged`]; this host fold proves the binding the
+/// aggregation succinctly attests.)
+pub fn fold_welded_umem_turn_chain_staged(
+    turns: &[FinalizedTurn],
+) -> Result<WeldedChainHostSummary, TurnChainError> {
+    if turns.len() < 2 {
+        return Err(TurnChainError::TooFewTurns { count: turns.len() });
+    }
+    for (i, t) in turns.iter().enumerate() {
+        admit_welded_leg(t, i)?;
+    }
+    let refs: Vec<&FinalizedTurn> = turns.iter().collect();
+    // The temporal tooth: `prev.new_root == next.old_root` over the welded legs' rotated roots.
+    generate_chain_trace_rotated_continuity(&refs)?;
+    // The ordered root segment — the SAME pairwise binary fold the in-circuit aggregation runs.
+    let root_seg = compute_root_segment(&refs);
+    Ok(WeldedChainHostSummary {
+        genesis_root: root_seg.first_old,
+        final_root: root_seg.last_new,
+        num_turns: turns.len(),
+        chain_digest: root_seg.acc,
+    })
+}
+
+/// **THE STAGED WELDED-UMEM IVC FOLD (RECURSIVE — VK-RISK-FREE).** The in-circuit twin of
+/// [`fold_welded_umem_turn_chain_staged`]: host-admit each welded leg, check continuity, then mint
+/// ONE segment-carrying recursion leaf per welded turn ([`prove_descriptor_leaf_rotated_with_segment`]
+/// — which RE-VERIFIES the welded (umem-bearing) descriptor proof IN-CIRCUIT) and aggregate them to
+/// one root whose exposed segment is the whole-chain `[genesis_root, final_root, num_turns,
+/// chain_digest]`. Returns the same [`WholeChainProof`] artifact the deployed rotated fold yields.
+///
+/// STAGED: the leaves carry welded (staged) descriptors; no VK epoch, no deployed-default flip. This
+/// is the genuine end-to-end IVC fold over the rotated+umem form — the precursor whose ONLY remaining
+/// step to deployment is the gated VK epoch (committing the welded descriptor's VK).
+pub fn prove_welded_umem_turn_chain_recursive_staged(
+    turns: &[FinalizedTurn],
+) -> Result<WholeChainProof, TurnChainError> {
+    if turns.len() < 2 {
+        return Err(TurnChainError::TooFewTurns { count: turns.len() });
+    }
+    for (i, t) in turns.iter().enumerate() {
+        admit_welded_leg(t, i)?;
+    }
+    let refs: Vec<&FinalizedTurn> = turns.iter().collect();
+    generate_chain_trace_rotated_continuity(&refs)?;
+    if (turns.len() as u64) >= BABY_BEAR_MODULUS as u64 {
+        return Err(TurnChainError::RecursionFailed {
+            reason: format!(
+                "num_turns {} >= BabyBear modulus {BABY_BEAR_MODULUS} (count lane would wrap mod p)",
+                turns.len()
+            ),
+        });
+    }
+    let root_seg = compute_root_segment(&refs);
+    let genesis_root = root_seg.first_old;
+    let final_root = root_seg.last_new;
+    let chain_digest = root_seg.acc;
+
+    let config = ir2_leaf_wrap_config();
+    let backend = create_recursion_backend();
+    let params = ProveNextLayerParams::default();
+
+    // The carried binding proof (defense-in-depth host witness; NOT folded into the root — the
+    // segment tooth over the root's exposed segment binds the claim).
+    let (binding_inner, _binding_pis) = prove_chain_binding_leaf_rotated(&refs)?;
+
+    let mut batch_leaves: Vec<RecursionOutput<DreggRecursionConfig>> =
+        Vec::with_capacity(turns.len());
+    for (i, t) in refs.iter().enumerate() {
+        let leg = &t.participant.rotated;
+        let wrapped = prove_descriptor_leaf_rotated_with_segment(
+            &leg.descriptor,
+            &leg.proof,
+            &leg.public_inputs,
+            &config,
+        )
+        .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+        batch_leaves.push(wrapped);
+    }
+    let root = aggregate_tree(batch_leaves, &config, &backend, &params)?;
+
+    Ok(WholeChainProof {
+        root,
+        binding_proof: binding_inner,
+        genesis_root,
+        final_root,
+        chain_digest,
+        num_turns: turns.len(),
+    })
 }
 
 /// The rotated fold core: like [`prove_chain_core`] but mints rotated native-batch leaves and

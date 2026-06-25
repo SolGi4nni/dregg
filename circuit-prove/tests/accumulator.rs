@@ -242,20 +242,110 @@ fn incremental_accumulate_verifies_whole_history() {
     // count. (The root proofs differ in tree shape — hence different VK fingerprints — but the
     // endpoints + count agree.)
     //
-    // NOTE on the digest: the K-fold now uses the ORDERED SEGMENT-ACCUMULATOR (codex's fix for the
-    // mixed-root hole) — each descriptor leaf carries `[first_old, last_new, count, acc]` and the
-    // BALANCED-TREE combine folds `acc = H(L.acc, R.acc)`. The online accumulator instead carries
-    // the SEQUENTIAL binding-AIR `hash_4_to_1` chain digest over its LEFT-LINEAR fold. The two are
-    // each internally-sound ordered-history commitments but, being different fold structures over
-    // different per-step hashes, they are NOT bit-equal — so we deliberately do NOT assert digest
-    // equality here. Each artifact's own `verify_turn_chain_recursive` binds its own carried digest
-    // to its own root-exposed value (the segment tooth), which is what soundness requires.
+    // NOTE on the digest: BOTH paths now carry the SAME ordered SEGMENT-ACCUMULATOR digest (codex's
+    // fix for the mixed-root hole) — each descriptor leaf carries `[first_old, last_new, count,
+    // acc]` with the genuine 4-lane W24 Poseidon2 `acc`, and the combine folds `acc = commit(L.acc,
+    // R.acc)`. They differ ONLY in fold SHAPE: the K-fold uses the BALANCED binary tree, the online
+    // accumulator the LEFT-LINEAR fold. Both are sound ordered-history commitments, but the two fold
+    // shapes give different digests, so we deliberately do NOT assert digest equality here. Each
+    // artifact's own `verify_turn_chain_recursive` binds its own carried digest to its own
+    // root-exposed segment (the segment tooth), which is what soundness requires.
     let (turns2, _g2, _f2) = make_chain(1000, 0, 11, 3);
     let kfold: WholeChainProof =
         prove_turn_chain_recursive(&turns2).expect("the K-fold of the same chain proves");
     assert_eq!(kfold.genesis_root, whole.genesis_root, "genesis agrees");
     assert_eq!(kfold.final_root, whole.final_root, "final agrees");
     assert_eq!(kfold.num_turns, whole.num_turns, "num_turns agrees");
+}
+
+/// **THE ONLINE MIXED-ROOT CLOSE (the port of `mixed_root_forgery_executes_A_claims_B` to the
+/// online accumulator).** Drive the ONLINE accumulator over history A's REAL segment-bearing
+/// descriptor leaves, finalize to A's whole-chain proof, then carry a DIFFERENT history B's claims
+/// to the verifier. Because every `accumulate` fold combined A's leaf segments in-circuit, A's root
+/// exposes A's `[genesis, final, num_turns, digest]` BY CONSTRUCTION — so a B-claim against an
+/// A-execution is REJECTED by the segment tooth. There is no swappable binding leaf to inject B's
+/// endpoints into the root (the binding proof is carried but is not a soundness dependency).
+///
+/// The SECOND assertion exercises the SAME-ENDPOINT close specifically: carry A's REAL
+/// genesis/final/count but a TAMPERED 4-lane digest. The old single-felt zero-padded carrier could
+/// not bind this lane; now the root exposes the genuine 4-lane W24 Poseidon2 segment digest, so a
+/// same-endpoint wrong-digest claim is rejected too (~124-bit collision resistance).
+#[test]
+#[ignore = "SLOW: a real online segment fold over 2 turns (~minutes); run with --ignored — the online mixed-root CLOSE"]
+fn online_mixed_root_forgery_rejected() {
+    use dregg_circuit_prove::ivc_turn_chain::{
+        SEG_DIGEST_WIDTH, verify_turn_chain_recursive_from_parts,
+    };
+    use dregg_circuit_prove::plonky3_recursion_impl::recursive::recursion_vk_fingerprint;
+
+    // History A: the REAL executed online history (the descriptor leaves the accumulator folds).
+    let (turns_a, _ga, _fa) = make_chain(1000, 0, 7, 2);
+    // History B: a DIFFERENT history; only its CLAIMS are carried (the execution was A).
+    let (turns_b, gb, fb) = make_chain(500, 0, 3, 2);
+
+    // Drive the ONLINE accumulator over A and finalize to A's whole-chain proof.
+    let mut acc = Accumulator::genesis();
+    for (i, t) in turns_a.iter().enumerate() {
+        acc.accumulate(t)
+            .unwrap_or_else(|e| panic!("A turn {i} must accumulate: {e}"));
+    }
+    let whole_a = acc.finalize().expect("A finalizes to a whole-chain proof");
+
+    // The honest anchor recomputed from A's root (an honest setup over THIS shape distributes
+    // exactly this fingerprint — the attacker forges only the carried claim).
+    let vk = recursion_vk_fingerprint(&whole_a.root.0);
+
+    // Sanity: A's own claim verifies (the honest online path).
+    verify_turn_chain_recursive(&whole_a, &vk).expect("A's honest whole-chain proof verifies");
+
+    // ----- (1) DIFFERENT-ENDPOINT forgery: carry B's claims against A's online root. -----
+    let b_genesis = turns_b[0].old_root();
+    let b_final = turns_b[1].new_root();
+    assert_eq!(b_genesis, gb);
+    assert_eq!(b_final, fb);
+    assert_ne!(
+        b_genesis, whole_a.genesis_root,
+        "B's history must differ from A's"
+    );
+    let b_chain_digest = [BabyBear::ZERO; SEG_DIGEST_WIDTH];
+
+    let verdict = verify_turn_chain_recursive_from_parts(
+        &whole_a.root.0,
+        &whole_a.binding_proof,
+        b_genesis,
+        b_final,
+        b_chain_digest,
+        2,
+        &vk,
+    );
+    eprintln!("[online mixed-root] B-claim verdict = {verdict:?}  (is_err = CLOSED)");
+    assert!(
+        verdict.is_err(),
+        "ONLINE MIXED-ROOT CLOSED: a B whole-chain claim against an online root that folded A's \
+         REAL descriptor leaves MUST be REJECTED by the segment tooth (A's root exposes A's \
+         endpoints, not B's). got: {verdict:?}"
+    );
+
+    // ----- (2) SAME-ENDPOINT forgery: A's real endpoints + a TAMPERED 4-lane digest. -----
+    let mut bad_digest = whole_a.chain_digest;
+    bad_digest[0] += BabyBear::ONE;
+    let verdict2 = verify_turn_chain_recursive_from_parts(
+        &whole_a.root.0,
+        &whole_a.binding_proof,
+        whole_a.genesis_root,
+        whole_a.final_root,
+        bad_digest,
+        whole_a.num_turns,
+        &vk,
+    );
+    eprintln!(
+        "[online mixed-root] same-endpoint wrong-digest verdict = {verdict2:?}  (is_err = CLOSED)"
+    );
+    assert!(
+        verdict2.is_err(),
+        "SAME-ENDPOINT CLOSED: a claim carrying A's real genesis/final/count but a WRONG 4-lane \
+         digest MUST be REJECTED — the root exposes the genuine segment digest. got: {verdict2:?}"
+    );
 }
 
 /// **THE VK-IDENTITY-PIN TOOTH (lever (a), in-band).** A child proof whose VK-identity (its

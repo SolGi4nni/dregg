@@ -203,10 +203,10 @@ p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a
 ## child-VK identity pinned in-band + table_public_inputs threaded = the constant-VK perpetual
 ## fold; validated end-to-end by incremental_accumulate_verifies_whole_history). PURE git deps,
 ## no `[patch]`, no sibling checkout — a fresh clone and CI resolve this identically.
-p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea" }
-p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea" }
-p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea" }
-p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "a45ee56eb9d739de3ad3fda3ac4ca70dd07ceeea" }
+p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "d959ff10f86495e81bd883e5d9dde1f0fcf00d81" }
+p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "d959ff10f86495e81bd883e5d9dde1f0fcf00d81" }
+p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "d959ff10f86495e81bd883e5d9dde1f0fcf00d81" }
+p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "d959ff10f86495e81bd883e5d9dde1f0fcf00d81" }
 
 ## Crates.io
 ## --- TEMP LOCAL DSU-FIX ITERATION PATCH (REMOVE before CI-correct rev bump) ---
