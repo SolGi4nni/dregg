@@ -499,6 +499,209 @@ pub fn project_executor_state(
     out
 }
 
+// ===========================================================================
+// THE 3-VERB EXECUTOR BRIDGE — the AUTHORITATIVE per-effect RecordKernelState
+// projection (`UNIVERSAL-MAP-ROTATION.md` §2.3: "RecordKernelState → the ONE
+// universal map"; `VerbCompression.lean:87-89`, "rides THE ONE ROTATION").
+//
+// [`project_executor_state`] / `TurnExecutor::umem_snapshot` produce the
+// WHOLE-executor OBSERVATION surface (the witness lane, recursion-gated off).
+// THIS is the per-effect ANCHOR a 3-verb circuit's differential gauntlets agree
+// with: one cell's `RecordKernelState` (its before/after `Cell`) IS its
+// universal-map projection, and the per-domain BOUNDARY roots DERIVED from that
+// projection reproduce — value-for-value — the per-map-table representation the
+// deployed commitment already carries (`cell.state.fields_root`,
+// `cell.state.heap_root`, the canonical `cap_root`). The projection is the
+// AUTHORITATIVE state representation; the committed map roots are DERIVED views
+// over it, not an independent source of truth.
+//
+// This is the `boundary_root_derived` shadow at the PER-EFFECT level (the Lean
+// keystone `metatheory/Dregg2/Crypto/UniversalMemory.lean:416`): a 3-verb
+// circuit proving against THIS projection agrees with the deployed per-map-table
+// roots BY CONSTRUCTION, so the differential never has to localize a divergence
+// to "which root is right" — both compute the same object. VK-RISK-FREE: this
+// is the executor's state PROJECTION + its representation, no descriptor / wire
+// / VK change, and the `umem_witness_enabled` gate is untouched (these are pure
+// functions over a `Cell`, not the prover path).
+// ===========================================================================
+
+/// **THE AUTHORITATIVE per-effect `RecordKernelState` projection** — one cell's
+/// committed state (the rotated per-effect descriptor's per-cell before/after
+/// block, `rotation_witness::produce`'s input) projected into the ONE universal
+/// address space. The single-cell entry of [`project_cell`], named to mark it
+/// THE per-effect anchor the 3-verb gauntlets point at. Pure: no ledger, no
+/// journal, no gate.
+pub fn project_record_kernel_state(cell: &Cell) -> UProjection {
+    let mut out = UProjection::new();
+    project_cell(cell, &mut out);
+    out
+}
+
+/// The per-domain BOUNDARY roots DERIVED from a `RecordKernelState` projection —
+/// the derived views the deployed commitment carries as its per-map-table roots.
+/// Each is folded purely from the projection's cells (no access to the source
+/// `Cell`'s stored roots), so equality with the cell's committed roots is a
+/// genuine `boundary_root_derived` agreement, not a tautology.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordKernelBoundary {
+    /// The openable sorted-Poseidon2 root over the `Field` plane's OVERFLOW
+    /// entries (slot ≥ `STATE_SLOTS`, the `fields_map`) — the deployed
+    /// `cell.state.fields_root`.
+    pub fields_root: [u8; 32],
+    /// The openable sorted-Poseidon2 root over the `Heap` plane — the deployed
+    /// `cell.state.heap_root`.
+    pub heap_root: [u8; 32],
+    /// The canonical capability root over the `CapSlot` plane's LIVE caps — the
+    /// deployed `compute_canonical_capability_root_felt(&cell.capabilities)`
+    /// felt the EffectVM `cap_root` column carries. (Tombstones are not
+    /// projected; see [`record_kernel_boundary_agrees`]'s faithful class.)
+    pub cap_root: dregg_circuit::field::BabyBear,
+}
+
+/// Derive the per-domain boundary roots from a `RecordKernelState` projection of
+/// `cell` — fold each plane's projected cells through the SAME sorted-Poseidon2
+/// machinery the deployed commitment uses (`compute_fields_root`,
+/// `compute_heap_root`, the `cap_root` tree). The `Field` plane is split at
+/// `STATE_SLOTS`: direct slots `< 16` are the register-file fields (not part of
+/// `fields_root`); overflow slots `≥ 16` are the openable `fields_map`.
+pub fn derive_record_kernel_boundary(proj: &UProjection, cell: CellId) -> RecordKernelBoundary {
+    let mut fields_map: BTreeMap<u64, [u8; 32]> = BTreeMap::new();
+    let mut heap_map: BTreeMap<(u32, u32), [u8; 32]> = BTreeMap::new();
+    let mut cap_leaves: Vec<dregg_circuit::cap_root::CapLeaf> = Vec::new();
+    for (k, v) in proj.iter() {
+        match k {
+            UKey::Field { cell: kc, slot } if *kc == cell && *slot >= STATE_SLOTS as u64 => {
+                if let UVal::Bytes32(b) = v {
+                    fields_map.insert(*slot, *b);
+                }
+            }
+            UKey::Heap {
+                cell: kc,
+                collection,
+                key,
+            } if *kc == cell => {
+                if let UVal::Bytes32(b) = v {
+                    heap_map.insert((*collection, *key), *b);
+                }
+            }
+            UKey::CapSlot { cell: kc, .. } if *kc == cell => {
+                // The blob is the canonical JSON of the live `CapabilityRef`
+                // (carrying its real `slot`, so `cap_ref_to_leaf`'s `slot_hash`
+                // sort key is faithful regardless of slot contiguity).
+                if let Ok(cap) = decode_blob::<CapabilityRef>(k, v) {
+                    cap_leaves.push(dregg_cell::commitment::cap_ref_to_leaf(&cap));
+                }
+            }
+            _ => {}
+        }
+    }
+    RecordKernelBoundary {
+        fields_root: dregg_cell::state::compute_fields_root(&fields_map),
+        heap_root: dregg_cell::state::compute_heap_root(&heap_map),
+        // No tombstones: the projection drops revoked slots (reify residual #3),
+        // so the derived root matches the deployed one exactly for the
+        // no-tombstone faithful class. The leaf set's order is irrelevant — the
+        // sorted-Poseidon2 tree canonicalizes by sort key.
+        cap_root: dregg_circuit::cap_root::compute_capability_root_with_tombstones(cap_leaves, &[]),
+    }
+}
+
+/// A per-map-table BOUNDARY disagreement: a root DERIVED from the universal-map
+/// projection does not equal the deployed per-map-table representation the cell
+/// carries — the bridge's anti-drift tooth, named by plane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BoundaryDisagreement {
+    /// The derived `fields_root` ≠ the cell's committed `fields_root`.
+    FieldsRoot {
+        /// The cell's committed `state.fields_root`.
+        committed: [u8; 32],
+        /// The root re-derived from the projected `Field` (slot ≥ 16) plane.
+        derived: [u8; 32],
+    },
+    /// The derived `heap_root` ≠ the cell's committed `heap_root`.
+    HeapRoot {
+        /// The cell's committed `state.heap_root`.
+        committed: [u8; 32],
+        /// The root re-derived from the projected `Heap` plane.
+        derived: [u8; 32],
+    },
+    /// The derived `cap_root` ≠ the cell's canonical capability root.
+    CapRoot {
+        /// `compute_canonical_capability_root_felt(&cell.capabilities)`.
+        committed: dregg_circuit::field::BabyBear,
+        /// The root re-derived from the projected `CapSlot` plane.
+        derived: dregg_circuit::field::BabyBear,
+    },
+}
+
+impl std::fmt::Display for BoundaryDisagreement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BoundaryDisagreement::FieldsRoot { committed, derived } => write!(
+                f,
+                "RecordKernelState boundary: committed fields_root {committed:?} != \
+                 root derived from the projected Field(slot>=16) plane {derived:?}"
+            ),
+            BoundaryDisagreement::HeapRoot { committed, derived } => write!(
+                f,
+                "RecordKernelState boundary: committed heap_root {committed:?} != \
+                 root derived from the projected Heap plane {derived:?}"
+            ),
+            BoundaryDisagreement::CapRoot { committed, derived } => write!(
+                f,
+                "RecordKernelState boundary: canonical cap_root {committed:?} != \
+                 root derived from the projected CapSlot plane {derived:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BoundaryDisagreement {}
+
+/// **THE 3-VERB EXECUTOR BRIDGE AGREEMENT** — project a cell's `RecordKernelState`
+/// into the ONE universal map ([`project_record_kernel_state`]), derive the
+/// per-domain boundary roots from that projection alone
+/// ([`derive_record_kernel_boundary`]), and CHECK each equals the deployed
+/// per-map-table representation the cell carries. On agreement the universal-map
+/// projection IS an authoritative representation of the cell's committed map
+/// roots — the anchor a umem / 3-verb circuit's differential gauntlets bind to;
+/// a disagreement names the plane that drifted ([`BoundaryDisagreement`]).
+///
+/// **The faithful class** is cells with no capability TOMBSTONES (a revoked slot
+/// leaves a ghost leaf in the deployed `cap_root` but is dropped from the
+/// projected `CapSlot` plane — the documented reify residual #3, so the derived
+/// `cap_root` matches only when `cell.capabilities` has revoked nothing). The
+/// `fields_root` and `heap_root` planes are ALWAYS faithful (openable
+/// sorted-Poseidon2 maps with no dropped state). The 3-verb gauntlet lanes
+/// (transfer / set-field / set-heap / grant / attenuate) all land in this class.
+pub fn record_kernel_boundary_agrees(
+    cell: &Cell,
+) -> Result<RecordKernelBoundary, BoundaryDisagreement> {
+    let proj = project_record_kernel_state(cell);
+    let derived = derive_record_kernel_boundary(&proj, cell.id());
+    if derived.fields_root != cell.state.fields_root {
+        return Err(BoundaryDisagreement::FieldsRoot {
+            committed: cell.state.fields_root,
+            derived: derived.fields_root,
+        });
+    }
+    if derived.heap_root != cell.state.heap_root {
+        return Err(BoundaryDisagreement::HeapRoot {
+            committed: cell.state.heap_root,
+            derived: derived.heap_root,
+        });
+    }
+    let committed_cap =
+        dregg_cell::commitment::compute_canonical_capability_root_felt(&cell.capabilities);
+    if derived.cap_root != committed_cap {
+        return Err(BoundaryDisagreement::CapRoot {
+            committed: committed_cap,
+            derived: derived.cap_root,
+        });
+    }
+    Ok(derived)
+}
+
 /// The binding refused: a cell's projected `Heap` preimage does not reproduce
 /// the committed `heap_root` it was bound against — the Rust shadow of the
 /// keystone's anti-forgery tooth `boundary_init_root_bound`
