@@ -87,6 +87,14 @@ use dregg_app_framework::{
     field_from_u64, hex_encode_32, symbol,
 };
 
+/// The nameservice as a SERVICE CELL on the `invoke()` front door (the
+/// cells-as-service-objects face): a `register`/`release`/`resolve` registry
+/// whose `name → cell` map lives on the per-cell umem-heap, driven through
+/// [`dregg_app_framework::invoke`] (no `Effect::Invoke`). The
+/// [`FactoryDescriptor`] federation surface in THIS module is unchanged; see
+/// [`service`] for the second worked citizen after `starbridge-kvstore`.
+pub mod service;
+
 // =============================================================================
 // State schema (per-registry-cell field-slot layout)
 // =============================================================================
