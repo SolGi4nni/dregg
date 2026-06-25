@@ -40,13 +40,20 @@ use crate::state::NodeState;
 const CHAR_LEVEL: usize = 0;
 const CHAR_XP: usize = 1;
 const CHAR_ROOM: usize = 2;
+const CHAR_SAY_COUNT: usize = 3;
 const NPC_MOOD: usize = 0;
 const DUNGEON_DESCENDED: usize = 0;
+/// Item-cell field layout (the torch / the locked chest).
+const ITEM_HELD: usize = 0;
+const ITEM_ROOM: usize = 1;
 
 /// The XP a `gain-xp` kill awards (crosses the level-up threshold of 100 the GM watches).
 const GAIN_XP_VALUE: u64 = 120;
-/// Room id the `move` affordance walks the character into (the HALL).
+/// Room ids of the explorable map.
+const ENTRANCE_ROOM: u64 = 1;
 const HALL_ROOM: u64 = 2;
+const TOWER_ROOM: u64 = 3;
+const CELLAR_ROOM: u64 = 4;
 
 fn open_permissions() -> Permissions {
     Permissions {
@@ -125,6 +132,12 @@ pub struct MudWorld {
     pub watchman: CellId,
     pub entrance: CellId,
     pub hall: CellId,
+    pub tower: CellId,
+    pub cellar: CellId,
+    /// The torch — an item the player holds a cap on (takeable).
+    pub torch: CellId,
+    /// The locked chest — an item the player has NO cap on (a `take` is refused).
+    pub chest: CellId,
     /// The dungeon the player was ADMITTED into (a `descend` here succeeds).
     pub dungeon: CellId,
     /// The dungeon the player was NOT admitted into (a `descend` here is refused).
@@ -138,6 +151,10 @@ impl MudWorld {
             watchman: spawned_cell_for("mud-play-npc-watchman"),
             entrance: spawned_cell_for("mud-play-room-entrance"),
             hall: spawned_cell_for("mud-play-room-hall"),
+            tower: spawned_cell_for("mud-play-room-tower"),
+            cellar: spawned_cell_for("mud-play-room-cellar"),
+            torch: spawned_cell_for("mud-play-item-torch"),
+            chest: spawned_cell_for("mud-play-item-chest"),
             dungeon: spawned_cell_for("mud-play-dungeon-aria"),
             sealed_dungeon: spawned_cell_for("mud-play-dungeon-sealed"),
         }
@@ -148,7 +165,39 @@ impl MudWorld {
         match room {
             1 => "the Entrance",
             2 => "the Hall",
+            3 => "the Tower",
+            4 => "the Cellar",
             _ => "an unknown place",
+        }
+    }
+
+    /// Resolve a movement direction from a given room into a target room id, per the exit
+    /// graph (the fiction the GM laid out). `None` ⇒ there is no exit that way.
+    fn exit(room: u64, dir: &str) -> Option<u64> {
+        let dir = dir.trim().to_lowercase();
+        match (room, dir.as_str()) {
+            (ENTRANCE_ROOM, "north" | "n") => Some(HALL_ROOM),
+            (HALL_ROOM, "south" | "s") => Some(ENTRANCE_ROOM),
+            (HALL_ROOM, "up" | "u") => Some(TOWER_ROOM),
+            (HALL_ROOM, "down" | "d") => Some(CELLAR_ROOM),
+            (TOWER_ROOM, "down" | "d") => Some(HALL_ROOM),
+            (CELLAR_ROOM, "up" | "u") => Some(HALL_ROOM),
+            _ => None,
+        }
+    }
+
+    /// The exits leaving a room, as `(direction, destination-name)` — for `look`.
+    fn exits(room: u64) -> &'static [(&'static str, &'static str)] {
+        match room {
+            ENTRANCE_ROOM => &[("north", "the Hall")],
+            HALL_ROOM => &[
+                ("south", "the Entrance"),
+                ("up", "the Tower"),
+                ("down", "the Cellar"),
+            ],
+            TOWER_ROOM => &[("down", "the Hall")],
+            CELLAR_ROOM => &[("up", "the Hall")],
+            _ => &[],
         }
     }
 }
@@ -367,34 +416,100 @@ impl<'a> MudClient<'a> {
     }
 
     /// LOOK — render the room the player is in: the character's stats, the room + its exits,
-    /// and any NPC present, all read off the REAL ledger.
+    /// the NPC, the items lying here, and the player's inventory — all read off the REAL
+    /// ledger (the room's items + the inventory are item-cell `HELD`/`ROOM` fields).
     pub async fn look(&self) -> Result<String, String> {
         let level = self.read_field(&self.world.character, CHAR_LEVEL).await?;
         let xp = self.read_field(&self.world.character, CHAR_XP).await?;
         let room = self.read_field(&self.world.character, CHAR_ROOM).await?;
+        let said = self
+            .read_field(&self.world.character, CHAR_SAY_COUNT)
+            .await?;
         let mood = self.read_field(&self.world.watchman, NPC_MOOD).await?;
 
         let mut out = String::new();
         out.push_str(&format!("You are in {}.\n", MudWorld::room_name(room)));
-        out.push_str(&format!("  Aria — level {level}, {xp} xp.\n"));
-        if room == 1 {
+        out.push_str(&format!(
+            "  Aria — level {level}, {xp} xp{}.\n",
+            if said > 0 {
+                format!(" (you have spoken {said}×)")
+            } else {
+                String::new()
+            }
+        ));
+
+        // The watchman patrols the Entrance/Hall; describe it where it is relevant.
+        if room == ENTRANCE_ROOM {
             out.push_str("  A watchman stands by the gate, ");
             out.push_str(if mood == 0 {
                 "calm.\n"
             } else {
                 "ALERT — eyeing you.\n"
             });
-            out.push_str("  Exits: north (to the Hall).\n");
-        } else if room == 2 {
+        } else if room == HALL_ROOM {
             out.push_str("  The watchman from the entrance is ");
             out.push_str(if mood == 0 {
                 "still calm.\n"
             } else {
                 "ALERT and watching you closely.\n"
             });
-            out.push_str("  Exits: south (to the Entrance). A dark stair descends here.\n");
+        } else if room == TOWER_ROOM {
+            out.push_str("  Wind whistles through the high Tower windows.\n");
+        } else if room == CELLAR_ROOM {
+            out.push_str("  The Cellar is dim and close. A dark stair descends here.\n");
+        }
+
+        // ITEMS lying in THIS room (an item is "here" iff its ROOM == room and it is not held).
+        for (item, name) in self.items() {
+            let held = self.read_field(item, ITEM_HELD).await.unwrap_or(0);
+            let iroom = self.read_field(item, ITEM_ROOM).await.unwrap_or(0);
+            if held == 0 && iroom == room {
+                out.push_str(&format!("  A {name} lies here.\n"));
+            }
+        }
+
+        // INVENTORY — the items the player holds (HELD == 1).
+        let carried = self.inventory().await?;
+        if carried.is_empty() {
+            out.push_str("  You carry nothing.\n");
+        } else {
+            out.push_str(&format!("  You carry: {}.\n", carried.join(", ")));
+        }
+
+        // EXITS — the room graph.
+        let exits = MudWorld::exits(room);
+        if exits.is_empty() {
+            out.push_str("  There are no obvious exits.\n");
+        } else {
+            let rendered: Vec<String> = exits
+                .iter()
+                .map(|(d, dest)| format!("{d} (to {dest})"))
+                .collect();
+            out.push_str(&format!("  Exits: {}.\n", rendered.join(", ")));
+        }
+        if room == HALL_ROOM {
+            out.push_str("  A dark stair descends into a dungeon here.\n");
         }
         Ok(out)
+    }
+
+    /// The named items of the world (the takeable torch + the locked chest).
+    fn items(&self) -> [(&CellId, &'static str); 2] {
+        [
+            (&self.world.torch, "torch"),
+            (&self.world.chest, "sealed chest"),
+        ]
+    }
+
+    /// INVENTORY — the names of the items the player currently holds (HELD == 1).
+    pub async fn inventory(&self) -> Result<Vec<String>, String> {
+        let mut held = Vec::new();
+        for (item, name) in self.items() {
+            if self.read_field(item, ITEM_HELD).await.unwrap_or(0) == 1 {
+                held.push(name.to_string());
+            }
+        }
+        Ok(held)
     }
 
     /// MOVE — walk the character into the Hall (fire the `move` affordance: ROOM := 2).
@@ -421,6 +536,124 @@ impl<'a> MudClient<'a> {
             }],
         )
         .await
+    }
+
+    /// GO — walk a direction across the exit graph. Resolves `dir` against the player's
+    /// CURRENT room; if there's no exit that way, returns `Ok(None)` (no turn fired). On a
+    /// valid exit, fires a `go` turn writing the character's ROOM field to the destination
+    /// (the player's own location) — authorized because the player holds its character cap.
+    /// Returns `(destination_room, outcome)`.
+    pub async fn go(&self, dir: &str) -> Result<Option<(u64, PlayOutcome)>, String> {
+        let room = self.read_field(&self.world.character, CHAR_ROOM).await?;
+        let Some(dest) = MudWorld::exit(room, dir) else {
+            return Ok(None);
+        };
+        let outcome = self
+            .fire(
+                "go",
+                vec![Effect::SetField {
+                    cell: self.world.character,
+                    index: CHAR_ROOM,
+                    value: pack_u64(dest),
+                }],
+            )
+            .await?;
+        Ok(Some((dest, outcome)))
+    }
+
+    /// TAKE — pick up an item: flip its HELD flag to 1 (the item enters your inventory).
+    /// Authorized iff you hold a cap over that item-cell — holding the cap IS being able to
+    /// take it. Taking the locked chest (no cap) is REFUSED by the executor's authority gate.
+    /// Returns `None` if no such item / it is not in your room; else `Some(outcome)`.
+    pub async fn take_item(&self, name: &str) -> Result<Option<PlayOutcome>, String> {
+        let Some(item) = self.item_named(name) else {
+            return Ok(None);
+        };
+        let room = self.read_field(&self.world.character, CHAR_ROOM).await?;
+        let iroom = self.read_field(&item, ITEM_ROOM).await.unwrap_or(0);
+        let held = self.read_field(&item, ITEM_HELD).await.unwrap_or(0);
+        // You can only take an item that lies (un-held) in the room you are standing in.
+        if held == 1 || iroom != room {
+            return Ok(None);
+        }
+        let outcome = self
+            .fire(
+                "take",
+                vec![Effect::SetField {
+                    cell: item,
+                    index: ITEM_HELD,
+                    value: pack_u64(1),
+                }],
+            )
+            .await?;
+        Ok(Some(outcome))
+    }
+
+    /// DROP — set an item down in your current room: flip HELD to 0 + stamp its ROOM to here.
+    /// Authorized iff you hold the item's cap (you carry it). Returns `None` if not carried.
+    pub async fn drop_item(&self, name: &str) -> Result<Option<PlayOutcome>, String> {
+        let Some(item) = self.item_named(name) else {
+            return Ok(None);
+        };
+        if self.read_field(&item, ITEM_HELD).await.unwrap_or(0) != 1 {
+            return Ok(None); // not carried
+        }
+        let room = self.read_field(&self.world.character, CHAR_ROOM).await?;
+        let outcome = self
+            .fire(
+                "drop",
+                vec![
+                    Effect::SetField {
+                        cell: item,
+                        index: ITEM_HELD,
+                        value: pack_u64(0),
+                    },
+                    Effect::SetField {
+                        cell: item,
+                        index: ITEM_ROOM,
+                        value: pack_u64(room),
+                    },
+                ],
+            )
+            .await?;
+        Ok(Some(outcome))
+    }
+
+    /// SAY — speak in the room: bump your character's utterance counter (your own field).
+    pub async fn say(&self) -> Result<PlayOutcome, String> {
+        let count = self
+            .read_field(&self.world.character, CHAR_SAY_COUNT)
+            .await
+            .unwrap_or(0);
+        self.fire(
+            "say",
+            vec![Effect::SetField {
+                cell: self.world.character,
+                index: CHAR_SAY_COUNT,
+                value: pack_u64(count + 1),
+            }],
+        )
+        .await
+    }
+
+    /// Resolve an item name (loose match) to its cell id.
+    fn item_named(&self, name: &str) -> Option<CellId> {
+        let n = name.trim().to_lowercase();
+        if n.contains("torch") {
+            Some(self.world.torch)
+        } else if n.contains("chest") {
+            Some(self.world.chest)
+        } else {
+            None
+        }
+    }
+
+    /// Whether an item (by name) is currently held by the player — for tests/narration.
+    pub async fn holds(&self, name: &str) -> Result<bool, String> {
+        let Some(item) = self.item_named(name) else {
+            return Ok(false);
+        };
+        Ok(self.read_field(&item, ITEM_HELD).await.unwrap_or(0) == 1)
     }
 
     /// DESCEND — enter the player's PERSONAL dungeon instance (fire the instance-scoped
@@ -559,8 +792,11 @@ pub async fn run_repl<R: BufRead, W: Write>(
         if cmd.is_empty() {
             continue;
         }
+        let mut words = cmd.split_whitespace();
+        let verb = words.next().unwrap_or("").to_lowercase();
+        let arg = words.collect::<Vec<_>>().join(" ");
 
-        match cmd {
+        match verb.as_str() {
             "help" | "?" => {
                 writeln!(output, "{}", HELP)?;
             }
@@ -568,7 +804,32 @@ pub async fn run_repl<R: BufRead, W: Write>(
                 Ok(view) => write!(output, "{view}")?,
                 Err(e) => writeln!(output, "(the world is hazy: {e})")?,
             },
-            "move" | "n" | "north" => match client.do_move().await {
+            // Directional movement across the exit graph: `go north`, or bare `north`/`n`/…
+            "go" | "north" | "n" | "south" | "s" | "up" | "u" | "down" => {
+                let dir = if verb == "go" {
+                    arg.clone()
+                } else {
+                    verb.clone()
+                };
+                match client.go(&dir).await {
+                    Ok(Some((dest, o))) => {
+                        render_outcome(
+                            &mut output,
+                            &format!("You head {dir} into {}", MudWorld::room_name(dest)),
+                            &o,
+                        )?;
+                        if o.accepted {
+                            if let Ok(view) = client.look().await {
+                                write!(output, "{view}")?;
+                            }
+                        }
+                    }
+                    Ok(None) => writeln!(output, "You can't go {dir} from here.")?,
+                    Err(e) => writeln!(output, "(your step falters: {e})")?,
+                }
+            }
+            // The legacy fixed `move` verb (walks north into the Hall) — kept for compat.
+            "move" => match client.do_move().await {
                 Ok(o) => {
                     render_outcome(&mut output, "You walk north into the Hall", &o)?;
                     if o.accepted {
@@ -579,6 +840,39 @@ pub async fn run_repl<R: BufRead, W: Write>(
                 }
                 Err(e) => writeln!(output, "(your step falters: {e})")?,
             },
+            "take" | "get" => match client.take_item(&arg).await {
+                Ok(Some(o)) => {
+                    if o.accepted {
+                        render_outcome(&mut output, &format!("You take the {arg}"), &o)?;
+                    } else {
+                        writeln!(
+                            output,
+                            "You reach for the {arg}, but the world REFUSES you: {}",
+                            o.error
+                                .unwrap_or_else(|| "(no cap over it — it is locked)".to_string())
+                        )?;
+                    }
+                }
+                Ok(None) => writeln!(output, "There is no {arg} here to take.")?,
+                Err(e) => writeln!(output, "(your hand passes through it: {e})")?,
+            },
+            "drop" => match client.drop_item(&arg).await {
+                Ok(Some(o)) => render_outcome(&mut output, &format!("You set down the {arg}"), &o)?,
+                Ok(None) => writeln!(output, "You aren't carrying a {arg}.")?,
+                Err(e) => writeln!(output, "(it sticks to your hand: {e})")?,
+            },
+            "inventory" | "inv" | "i" => match client.inventory().await {
+                Ok(items) if items.is_empty() => writeln!(output, "You carry nothing.")?,
+                Ok(items) => writeln!(output, "You carry: {}.", items.join(", "))?,
+                Err(e) => writeln!(output, "(your pack is a blur: {e})")?,
+            },
+            "say" | "speak" => {
+                let words = if arg.is_empty() { "Hello?" } else { &arg };
+                match client.say().await {
+                    Ok(o) => render_outcome(&mut output, &format!("You say, \"{words}\""), &o)?,
+                    Err(e) => writeln!(output, "(your voice catches: {e})")?,
+                }
+            }
             "gain-xp" | "kill" | "fight" => match client.gain_xp().await {
                 Ok(o) => {
                     render_outcome(&mut output, "You strike down a foe and gain experience", &o)?
@@ -600,7 +894,7 @@ pub async fn run_repl<R: BufRead, W: Write>(
                     Err(e) => writeln!(output, "  (the world is still: {e})")?,
                 }
             }
-            "descend" | "down" | "d" | "dungeon" => match client.descend().await {
+            "descend" | "dungeon" | "enter" => match client.descend().await {
                 Ok((visible, o)) => {
                     if !visible {
                         writeln!(output, "(you sense no stair here)")?;
@@ -679,10 +973,14 @@ const BANNER: &str = "\
 const HELP: &str = "\
 Commands:
   look      (l)            — look around the room you're in
-  move      (n / north)    — walk north into the Hall
+  go <dir>  (north/up/…)   — walk an exit (north, south, up, down) across the map
+  take <it> (get)          — pick up an item lying here (the cap IS the takeability)
+  drop <it>                — set an item down in this room
+  inventory (inv / i)      — list what you carry
+  say <msg> (speak)        — speak in the room (a receipted utterance)
   gain-xp   (kill / fight) — strike down a foe and gain experience
   tick      (wait)         — let the Gamemaster observe; the world responds
-  descend   (down / d)     — descend into your personal dungeon instance
+  descend   (dungeon)      — descend into your personal dungeon instance
   forge     (cheat)        — try a forbidden GM-only write (it is refused)
   help      (?)            — show this
   quit      (q / exit)     — leave the world";
