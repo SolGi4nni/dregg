@@ -715,4 +715,435 @@ end Accumulator
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.ivc_accumulate_fires
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.ivc_acc_conserves_real
 
+/-! ## 9. THE ORDERED SEGMENT-ACCUMULATOR — the whole-chain binding DERIVED, not assumed.
+
+§§1–8 took the whole-chain ordered binding as a NAMED hypothesis: `EngineSound.binding_sound` asserts
+a verifying `TurnChainBindingAir` leaf delivers `ChainBound` + the genesis/final pins, and
+`acc_attests_whole_history` then PROJECTS the attestation off the `Acc.leanWitness` the prover stored.
+That is exactly the mixed-root hole codex's segment-accumulator fix closes BY CONSTRUCTION
+(`docs/CODEX-IVC-SEGMENT-ACCUMULATOR-DESIGN.md`): every descriptor/execution leaf — and every
+aggregation node — carries a constant-size ordered SEGMENT summary `Seg = (firstOld, lastNew, count,
+acc)`; a node combines its children with state-continuity (`L.lastNew = R.firstOld`), count additivity,
+and an ORDERED Poseidon2 digest `acc = H(L.acc, R.acc)`; the host checks the root's exposed segment
+equals the carried claim. The Rust verifier enforces this (`ivc_turn_chain.rs:224/1963`, codex
+`CODEX-IVC-FINAL-REVIEW.md` — the mixed-root forgery REJECTS). Here we DERIVE — no longer assume — that
+a verifying segment tree's root claim IS the genuine ordered segment-summary of the EXECUTED leaves.
+
+THREE soundness layers, cleanly separated (codex `docs/CODEX-DISCHARGE-SKELETON.md`):
+
+  * **`SegSound` (LAYER-1 — the per-node FRI/STARK crypto floor, ASSUMED, realizable).** Provides ONLY
+    *local* statement soundness: a verifying LEAF node's exposed segment is its genuine leaf-segment
+    (and its turn executed); a verifying COMBINE node's children verify and its exposed segment
+    satisfies the local `CombineOk` constraint w.r.t. the children's exposed segments. This is the
+    `EngineSound` boundary §2 already carries, refined to per-node and kept STRICTLY LOCAL — it does NOT
+    mention `GenuineSeg`, `ChainBound`, or the whole history. (The leaf's executor witness is in fact
+    free: a `ChainStep` bakes `commits`.)
+
+  * **`subtree_binding` (LAYER-2 — THE DISCHARGE, DERIVED).** By induction on the aggregation tree, a
+    verifying subtree's exposed segment is the genuine ordered segment-summary (`GenuineSeg`) of the
+    leaves under it. BASE = a verifying leaf (LAYER-1 ⇒ exposed = leaf-segment). STEP = a verifying
+    combine node (LAYER-1 ⇒ children verify + `CombineOk`; the children's `GenuineSeg` by IH; the
+    `CombineOk` fields force the parent = the ordered concatenation). From `GenuineSeg` we DERIVE the
+    whole-chain facts the §2 binding leaf used to ASSUME: `genuine_count`, `genuine_ordered`
+    (`ChainBound` over the WHOLE leaf list — exactly `WellFormedChain.bound`/`binding_sound`),
+    `genuine_firstOld`/`genuine_lastNew` (genesis = first leaf's old root, final = last leaf's new root).
+    THIS is the ordered-binding discharge — `ordered_binding_derived` + `segment_tree_wellformed`
+    produce `WellFormedChain.bound` from the segment construction, no longer as a hypothesis.
+
+  * **`PoseidonSegBinding` (LAYER-3 — the digest collision-resistance crypto floor, ASSUMED,
+    realizable).** Semantic uniqueness of the ordered digest: equal `acc` ⇒ equal ordered leaf
+    sequence. The DISTINCT-ENDPOINT mixed-root forgery (B's claim has a different genesis/final than A's
+    executed leaves) is rejected with NO appeal to this floor — `subtree_binding` forces the endpoints
+    (`no_mixed_root_distinct_endpoint`). The SAME-ENDPOINT case (B's claim shares A's endpoints but a
+    different interior leaf sequence) reduces to a Poseidon2 collision; that is the 4-lane W24 digest CR
+    codex confirmed the close rests on (`CODEX-IVC-FINAL-REVIEW.md`). Named here as the terminal crypto
+    floor it is (`no_mixed_root`) — NOT a hole, NOT something Lean can discharge.
+
+So the whole-chain ORDERED binding moves from ASSUMED (`binding_sound`) to DERIVED (`subtree_binding` +
+`GenuineSeg` corollaries); only the per-node proof soundness (LAYER-1) and the digest CR (LAYER-3)
+remain as the two NAMED, realizable crypto floors. `#assert_axioms`-clean. -/
+
+section Segment
+
+variable (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+variable (RH : Dregg2.Exec.RecordKernelState → ℤ)
+variable (cmb : ℤ → ℤ → ℤ)
+variable (compress : ℤ → ℤ → ℤ)
+variable (compressN : List ℤ → ℤ)
+/-! The ordered (non-commutative) Poseidon2 digest combiner `H` — the running `acc = H(old,new)` at a
+leaf and `acc = H(L.acc, R.acc)` at a node. Its collision-resistance is `PoseidonSegBinding` (LAYER-3). -/
+variable (H : ℤ → ℤ → ℤ)
+
+/-- **`Seg`** — the constant-size ordered segment summary every leaf/node carries: the segment's first
+old root, its last new root, its turn count, and the ordered digest `acc` of the (old,new) pairs under
+it. The Rust 7-felt claim `(genesis, final, count, + 4 BabyBear digest lanes)` (`ivc_turn_chain.rs:224`);
+the four digest lanes are abstracted to the single field `acc : ℤ` over the combiner `H`. -/
+structure Seg where
+  firstOld : ℤ
+  lastNew  : ℤ
+  count    : Nat
+  acc      : ℤ
+
+/-- The genuine leaf segment of a `ChainStep`: `(oldRoot, newRoot, 1, H oldRoot newRoot)`. -/
+def leafSeg (s : ChainStep) : Seg where
+  firstOld := ChainStep.oldRoot CH RH cmb compress compressN s
+  lastNew  := ChainStep.newRoot CH RH cmb compress compressN s
+  count    := 1
+  acc      := H (ChainStep.oldRoot CH RH cmb compress compressN s)
+                (ChainStep.newRoot CH RH cmb compress compressN s)
+
+/-- The genuine combine of two adjacent segments: endpoints from the ends, counts add, digest folds
+ordered. (Continuity `L.lastNew = R.firstOld` is enforced separately by `CombineOk`.) -/
+def combineSeg (L R : Seg) : Seg where
+  firstOld := L.firstOld
+  lastNew  := R.lastNew
+  count    := L.count + R.count
+  acc      := H L.acc R.acc
+
+/-- **`CombineOk L R parent`** — the LOCAL combine constraint a verifying aggregation node enforces in
+circuit: the parent's endpoints/count/digest are the genuine fold of the children's, AND the two
+children are state-continuous at the seam (`L.lastNew = R.firstOld`). This is what LAYER-1 delivers for
+a verifying node; it mentions only the node and its immediate children — nothing whole-history. -/
+def CombineOk (L R parent : Seg) : Prop :=
+  parent.firstOld = L.firstOld ∧ parent.lastNew = R.lastNew ∧
+    parent.count = L.count + R.count ∧ parent.acc = H L.acc R.acc ∧ L.lastNew = R.firstOld
+
+/-- **`AggTree`** — the aggregation tree the prover folds: a leaf carries its executed `ChainStep` and
+the segment it EXPOSES; a node carries the segment it exposes and its two children. (The recursion
+proofs themselves are abstracted into `Accepts` below — each subtree has a verification status.) -/
+inductive AggTree where
+  | leaf : ChainStep → Seg → AggTree
+  | node : Seg → AggTree → AggTree → AggTree
+
+/-- The segment a subtree EXPOSES (the prover's claim for it). The host checks the ROOT's exposed
+segment equals the carried public claim. -/
+def exposedSeg : AggTree → Seg
+  | .leaf _ c   => c
+  | .node c _ _ => c
+
+/-- The executed leaves under a subtree, in chain (in-order) order — the genuine history the subtree
+attests. -/
+def treeLeaves : AggTree → List ChainStep
+  | .leaf s _   => [s]
+  | .node _ l r => treeLeaves l ++ treeLeaves r
+
+/-- **`GenuineSeg s leaves`** — `s` IS the genuine ordered segment-summary of `leaves`: a single
+executed leaf yields its `leafSeg`; a state-continuous concatenation yields the `combineSeg` of the
+parts. This is the DERIVED object (LAYER-2) — NOT supplied by the engine, but reconstructed by
+`subtree_binding` from per-node local soundness. -/
+inductive GenuineSeg : Seg → List ChainStep → Prop
+  | leaf (s : ChainStep) : GenuineSeg (leafSeg CH RH cmb compress compressN H s) [s]
+  | node {sl sr : Seg} {ls rs : List ChainStep}
+      (hl : GenuineSeg sl ls) (hr : GenuineSeg sr rs) (hcont : sl.lastNew = sr.firstOld) :
+      GenuineSeg (combineSeg H sl sr) (ls ++ rs)
+
+/-! The per-subtree verification status `Accepts` (the recursion proof of that subtree verifies).
+Abstract — in the realized engine `Accepts t := (verify t.proof = true)`; we never inspect internals. -/
+variable (Accepts : AggTree → Prop)
+
+/-- **`SegSound t`** (LAYER-1, the per-node crypto floor — ASSUMED, realizable). Per-node *local*
+soundness, recursive over the tree: a verifying LEAF exposes its genuine leaf-segment (its turn
+executed); a verifying COMBINE node's two children verify and its exposed segment satisfies the local
+`CombineOk`. STRICTLY LOCAL — it never mentions `GenuineSeg`, `ChainBound`, or the whole history. -/
+def SegSound : AggTree → Prop
+  | .leaf s c   => Accepts (.leaf s c) →
+      (recCexec s.pre s.turn = some s.post ∧ c = leafSeg CH RH cmb compress compressN H s)
+  | .node c l r => (Accepts (.node c l r) →
+        Accepts l ∧ Accepts r ∧ CombineOk H (exposedSeg l) (exposedSeg r) c)
+      ∧ SegSound l ∧ SegSound r
+
+/-- A satisfied `CombineOk` pins the parent to the genuine `combineSeg` of the children, AND yields the
+seam-continuity. The structural fact the induction step turns into a `GenuineSeg.node`. -/
+theorem combineOk_eq {L R parent : Seg} (h : CombineOk H L R parent) :
+    parent = combineSeg H L R ∧ L.lastNew = R.firstOld := by
+  obtain ⟨hf, hln, hcnt, hacc, hcont⟩ := h
+  refine ⟨?_, hcont⟩
+  obtain ⟨pf, pl, pc, pa⟩ := parent
+  simp only [combineSeg, Seg.mk.injEq]
+  exact ⟨hf, hln, hcnt, hacc⟩
+
+/-! ### The LAYER-2 induction — derive `GenuineSeg` from LAYER-1 local soundness. -/
+
+/-- **`subtree_binding` (THE DISCHARGE).** A verifying subtree's exposed segment IS the genuine ordered
+segment-summary of its executed leaves. By induction on the aggregation tree: BASE = a verifying leaf
+(LAYER-1 ⇒ exposed = leaf-segment); STEP = a verifying combine node (LAYER-1 ⇒ children verify +
+`CombineOk`; the children's `GenuineSeg` by IH; `CombineOk` forces the parent = the ordered
+concatenation). The whole-chain ordered binding is DERIVED here, not assumed. -/
+theorem subtree_binding (t : AggTree)
+    (hs : SegSound CH RH cmb compress compressN H Accepts t) (hv : Accepts t) :
+    GenuineSeg CH RH cmb compress compressN H (exposedSeg t) (treeLeaves t) := by
+  induction t with
+  | leaf s c =>
+      have hc := (hs hv).2
+      simp only [exposedSeg, treeLeaves]
+      rw [hc]
+      exact GenuineSeg.leaf s
+  | node c l r ihl ihr =>
+      obtain ⟨hnode, hsl, hsr⟩ := hs
+      obtain ⟨hvl, hvr, hcomb⟩ := hnode hv
+      have hgl := ihl hsl hvl
+      have hgr := ihr hsr hvr
+      obtain ⟨hpar, hcont⟩ := combineOk_eq H hcomb
+      simp only [exposedSeg, treeLeaves]
+      rw [hpar]
+      exact GenuineSeg.node hgl hgr hcont
+
+/-! ### Corollaries of `GenuineSeg` — the whole-chain facts, all DERIVED (no crypto floor). -/
+
+/-- A genuine summary is over a NONEMPTY leaf list (every subtree has ≥1 executed leaf). -/
+theorem genuine_ne_nil {s : Seg} {l : List ChainStep}
+    (h : GenuineSeg CH RH cmb compress compressN H s l) : l ≠ [] := by
+  induction h with
+  | leaf s => simp
+  | node hl hr hcont ihl ihr =>
+      rename_i sl sr ls rs
+      cases ls with
+      | nil => exact absurd rfl ihl
+      | cons a t => simp
+
+/-- The genuine count IS the number of executed leaves (no drop/insert). -/
+theorem genuine_count {s : Seg} {l : List ChainStep}
+    (h : GenuineSeg CH RH cmb compress compressN H s l) : s.count = l.length := by
+  induction h with
+  | leaf s => simp [leafSeg]
+  | node hl hr hcont ihl ihr =>
+      simp only [combineSeg, List.length_append, ihl, ihr]
+
+/-- The genuine genesis IS the first executed leaf's old root (the chain's true start). -/
+theorem genuine_firstOld {s : Seg} {l : List ChainStep}
+    (h : GenuineSeg CH RH cmb compress compressN H s l) :
+    ∀ x, l.head? = some x → s.firstOld = ChainStep.oldRoot CH RH cmb compress compressN x := by
+  induction h with
+  | leaf s =>
+      intro x hx
+      simp only [List.head?_cons, Option.some.injEq] at hx
+      subst hx
+      simp [leafSeg]
+  | node hl hr hcont ihl ihr =>
+      rename_i sl sr ls rs
+      intro x hx
+      rw [List.head?_append_of_ne_nil ls (genuine_ne_nil CH RH cmb compress compressN H hl)] at hx
+      simp only [combineSeg]
+      exact ihl x hx
+
+/-- The genuine final IS the last executed leaf's new root (the chain's true end). -/
+theorem genuine_lastNew {s : Seg} {l : List ChainStep}
+    (h : GenuineSeg CH RH cmb compress compressN H s l) :
+    ∀ x, l.getLast? = some x → s.lastNew = ChainStep.newRoot CH RH cmb compress compressN x := by
+  induction h with
+  | leaf s =>
+      intro x hx
+      simp only [List.getLast?_singleton, Option.some.injEq] at hx
+      subst hx
+      simp [leafSeg]
+  | node hl hr hcont ihl ihr =>
+      rename_i sl sr ls rs
+      intro x hx
+      rw [List.getLast?_append_of_ne_nil ls (genuine_ne_nil CH RH cmb compress compressN H hr)] at hx
+      simp only [combineSeg]
+      exact ihr x hx
+
+/-- **`chainBound_append`** — splice two `ChainBound` segments at a continuous seam. The load-bearing
+combinatorial lemma of the ordered-binding derivation: a drop/reorder at the join breaks exactly the
+seam `Continues`. -/
+theorem chainBound_append :
+    ∀ (xs ys : List ChainStep),
+      ChainBound CH RH cmb compress compressN xs →
+      ChainBound CH RH cmb compress compressN ys →
+      (∀ a b, xs.getLast? = some a → ys.head? = some b →
+        Continues CH RH cmb compress compressN a b) →
+      ChainBound CH RH cmb compress compressN (xs ++ ys)
+  | [], ys, _, hy, _ => by simpa using hy
+  | [a], ys, _, hy, hjoin => by
+      cases ys with
+      | nil => simp [ChainBound]
+      | cons b rest =>
+          show ChainBound CH RH cmb compress compressN (a :: b :: rest)
+          exact ⟨hjoin a b (by simp) (by simp), hy⟩
+  | a :: b :: rest, ys, hx, hy, hjoin => by
+      obtain ⟨hab, htail⟩ := hx
+      have ih := chainBound_append (b :: rest) ys htail hy
+        (fun x y hxl hyl => hjoin x y (by rw [List.getLast?_cons_cons]; exact hxl) hyl)
+      show ChainBound CH RH cmb compress compressN (a :: b :: (rest ++ ys))
+      exact ⟨hab, by simpa using ih⟩
+
+/-- **`genuine_ordered`** — a genuine summary's leaves are `ChainBound`: the temporal tooth holds over
+the WHOLE list. This is EXACTLY the `WellFormedChain.bound` / `EngineSound.binding_sound` fact that §2
+ASSUMED — here DERIVED from `GenuineSeg` (hence, via `subtree_binding`, from per-node local soundness). -/
+theorem genuine_ordered {s : Seg} {l : List ChainStep}
+    (h : GenuineSeg CH RH cmb compress compressN H s l) :
+    ChainBound CH RH cmb compress compressN l := by
+  induction h with
+  | leaf s => simp [ChainBound]
+  | node hl hr hcont ihl ihr =>
+      rename_i sl sr ls rs
+      refine chainBound_append CH RH cmb compress compressN ls rs ihl ihr ?_
+      intro a b ha hb
+      have h1 := genuine_lastNew CH RH cmb compress compressN H hl a ha
+      have h2 := genuine_firstOld CH RH cmb compress compressN H hr b hb
+      show ChainStep.newRoot CH RH cmb compress compressN a
+            = ChainStep.oldRoot CH RH cmb compress compressN b
+      rw [← h1, hcont, h2]
+
+/-! ### The keystones — root binding, ordered-binding discharge, mixed-root rejection. -/
+
+/-- **`root_binds_carried_claim`.** When the host check passes (the root's exposed segment equals the
+carried public claim) and the root verifies, the carried CLAIM is the genuine ordered segment-summary
+of the executed leaves. The whole-chain claim is bound to the actual execution. -/
+theorem root_binds_carried_claim (t : AggTree) (carried : Seg)
+    (hs : SegSound CH RH cmb compress compressN H Accepts t) (hv : Accepts t)
+    (hhost : exposedSeg t = carried) :
+    GenuineSeg CH RH cmb compress compressN H carried (treeLeaves t) := by
+  rw [← hhost]
+  exact subtree_binding CH RH cmb compress compressN H Accepts t hs hv
+
+/-- **`ordered_binding_derived`.** A verifying segment tree's leaves are `ChainBound` — the whole-chain
+ordered binding, DERIVED from the segment construction, NOT taken as a hypothesis. -/
+theorem ordered_binding_derived (t : AggTree)
+    (hs : SegSound CH RH cmb compress compressN H Accepts t) (hv : Accepts t) :
+    ChainBound CH RH cmb compress compressN (treeLeaves t) :=
+  genuine_ordered CH RH cmb compress compressN H
+    (subtree_binding CH RH cmb compress compressN H Accepts t hs hv)
+
+/-- **`segment_tree_wellformed` (THE CONNECT).** A verifying segment tree, with the producer's
+state-continuity witness, IS a `WellFormedChain` — and its `bound` field is now DERIVED
+(`ordered_binding_derived`) from the segment construction, where §2 took it as `binding_sound`. The
+`chained` (state/log continuity) remains the named producer witness / CR residual, UNCHANGED. -/
+theorem segment_tree_wellformed (g : RecChainedState) (t : AggTree)
+    (hs : SegSound CH RH cmb compress compressN H Accepts t) (hv : Accepts t)
+    (hchain : StateChained g (treeLeaves t)) :
+    WellFormedChain CH RH cmb compress compressN g (treeLeaves t) :=
+  { chained := hchain
+  , bound := ordered_binding_derived CH RH cmb compress compressN H Accepts t hs hv }
+
+/-- **`no_mixed_root_distinct_endpoint` (the DISTINCT-endpoint forgery, FULLY DERIVED).** A verifying
+root cannot export a claim whose genesis differs from its OWN first executed leaf's old root: the host
+check binds the claim to the genuine summary, which `genuine_firstOld` pins to the real genesis. So
+"B's claim (a different genesis), A's leaves" is impossible — with NO appeal to the digest CR floor. -/
+theorem no_mixed_root_distinct_endpoint (t : AggTree) (claimB : Seg) (a : ChainStep)
+    (hs : SegSound CH RH cmb compress compressN H Accepts t) (hv : Accepts t)
+    (hhost : exposedSeg t = claimB)
+    (ha : (treeLeaves t).head? = some a)
+    (hforge : claimB.firstOld ≠ ChainStep.oldRoot CH RH cmb compress compressN a) :
+    False :=
+  hforge (genuine_firstOld CH RH cmb compress compressN H
+    (root_binds_carried_claim CH RH cmb compress compressN H Accepts t claimB hs hv hhost) a ha)
+
+/-- **`PoseidonSegBinding` (LAYER-3 — the digest collision-resistance floor, ASSUMED, realizable).**
+Semantic uniqueness of the ordered Poseidon2 digest: two genuine summaries with equal `acc` are over
+the SAME ordered leaf sequence. Realizable as the 4-lane W24 digest CR (`CODEX-IVC-FINAL-REVIEW.md`);
+NOT a hole — a terminal crypto primitive, exactly like the FRI soundness in `EngineSound`. -/
+def PoseidonSegBinding : Prop :=
+  ∀ (s1 s2 : Seg) (l1 l2 : List ChainStep),
+    GenuineSeg CH RH cmb compress compressN H s1 l1 →
+    GenuineSeg CH RH cmb compress compressN H s2 l2 →
+    s1.acc = s2.acc → l1 = l2
+
+/-- **`no_mixed_root` (the SAME-endpoint forgery, under the digest CR floor).** Even when a forged
+claim shares A's endpoints, a verifying root cannot export a claim that is the genuine summary of a
+DIFFERENT leaf sequence: the host check binds the claim to A's genuine summary, and `PoseidonSegBinding`
+(equal digest ⇒ equal leaves) forces the two leaf sequences to coincide. This is the same-endpoint case
+the distinct-endpoint argument cannot reach — closed by reduction to a Poseidon2 collision, the NAMED
+terminal floor. -/
+theorem no_mixed_root (hpsb : PoseidonSegBinding CH RH cmb compress compressN H)
+    (t : AggTree) (claimB : Seg) (leavesB : List ChainStep)
+    (hs : SegSound CH RH cmb compress compressN H Accepts t) (hv : Accepts t)
+    (hB : GenuineSeg CH RH cmb compress compressN H claimB leavesB)
+    (hhost : exposedSeg t = claimB)
+    (hmixed : leavesB ≠ treeLeaves t) :
+    False :=
+  hmixed (hpsb claimB claimB leavesB (treeLeaves t) hB
+    (root_binds_carried_claim CH RH cmb compress compressN H Accepts t claimB hs hv hhost) rfl)
+
+end Segment
+
+/-! ### §9 NON-VACUITY — the discharge FIRES on a real 2-leaf executor chain.
+
+The induction would be hollow if no genuine combine node could fire. We build a REAL 2-step chain from
+the teeth genesis (two honest transfers of 10), expose its genuine segments, and prove `SegSound` holds
+with the accepting status — so `subtree_binding` concludes a genuine `GenuineSeg` over the two executed
+leaves, and `ordered_binding_derived` delivers a REAL `ChainBound` over them. The combine node's
+state-continuity holds DEFINITIONALLY (the second step consumes the first's post under the same
+turn-context), exactly the seam the segment-accumulator binds. -/
+
+section SegRealize
+
+open Dregg2.Exec.ConsensusExec (teethGenesis honestTurn)
+
+/-- A concrete digest combiner for the witness. -/
+def zH : ℤ → ℤ → ℤ := fun _ _ => 0
+
+/-- A genuine SECOND honest step: from the post-state of `honestStep`, cell 0 transfers another 10.
+`commits` is discharged by `decide` — the executor really takes the step. -/
+def honestStep2 : ChainStep where
+  pre := honestStep.post
+  turn := honestTurn
+  post := (recCexec honestStep.post honestTurn).get (by decide)
+  commits := (Option.some_get _).symm
+
+/-- The realizing 2-leaf aggregation tree: one combine node over the two honest leaves, each exposing
+its genuine `leafSeg`, the node exposing their genuine `combineSeg`. -/
+def realTree : AggTree :=
+  .node (combineSeg zH (leafSeg zCH zRH zcmb zcompress zcompressN zH honestStep)
+                       (leafSeg zCH zRH zcmb zcompress zcompressN zH honestStep2))
+        (.leaf honestStep  (leafSeg zCH zRH zcmb zcompress zcompressN zH honestStep))
+        (.leaf honestStep2 (leafSeg zCH zRH zcmb zcompress zcompressN zH honestStep2))
+
+/-- **`real_seg_sound` (LAYER-1 inhabited).** The per-node local soundness holds on the realizing tree
+under the accepting status: each leaf exposes its genuine `leafSeg` (its honest step executed), and the
+combine node's `CombineOk` holds — the seam-continuity by `rfl` (step 2 consumes step 1's post under the
+same turn-context). So `SegSound` is INHABITED on a real chain; the discharge is not vacuous. -/
+theorem real_seg_sound :
+    SegSound zCH zRH zcmb zcompress zcompressN zH (fun _ => True) realTree := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro _
+    refine ⟨trivial, trivial, ?_, ?_, ?_, ?_, ?_⟩ <;> rfl
+  · intro _; exact ⟨honestStep.commits, rfl⟩
+  · intro _; exact ⟨honestStep2.commits, rfl⟩
+
+/-- **`real_tree_binds` (the discharge FIRES).** `subtree_binding` concludes a genuine `GenuineSeg`:
+the root's exposed segment IS the genuine ordered summary of the two executed leaves. A real, non-vacuous
+firing of the LAYER-2 induction. -/
+theorem real_tree_binds :
+    GenuineSeg zCH zRH zcmb zcompress zcompressN zH (exposedSeg realTree) (treeLeaves realTree) :=
+  subtree_binding zCH zRH zcmb zcompress zcompressN zH (fun _ => True) realTree real_seg_sound trivial
+
+/-- **`real_tree_ordered` (the ordered binding DERIVED on a real chain).** A genuine `ChainBound` over
+the two executed leaves — the whole-chain ordered binding, derived from the segment tree, on a real run. -/
+theorem real_tree_ordered :
+    ChainBound zCH zRH zcmb zcompress zcompressN (treeLeaves realTree) :=
+  ordered_binding_derived zCH zRH zcmb zcompress zcompressN zH (fun _ => True) realTree real_seg_sound trivial
+
+/-- **`real_tree_count` (the count is genuine).** The root segment's count equals the number of executed
+leaves — read off the derived `GenuineSeg`. -/
+theorem real_tree_count :
+    (exposedSeg realTree).count = (treeLeaves realTree).length :=
+  genuine_count zCH zRH zcmb zcompress zcompressN zH real_tree_binds
+
+/-- And that count is literally `2` — a TRUE arithmetic fact, not a husk. -/
+theorem real_tree_count_is_two : (exposedSeg realTree).count = 2 := rfl
+
+end SegRealize
+
+/-! ### §9 axiom hygiene — the discharge + its corollaries + the two named floors. -/
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.combineOk_eq
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.subtree_binding
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.genuine_ne_nil
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.genuine_count
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.genuine_firstOld
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.genuine_lastNew
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.chainBound_append
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.genuine_ordered
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.root_binds_carried_claim
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.ordered_binding_derived
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.segment_tree_wellformed
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.no_mixed_root_distinct_endpoint
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.no_mixed_root
+-- §9 non-vacuity (the discharge FIRES on a real 2-leaf executor chain from genesis):
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.real_seg_sound
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.real_tree_binds
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.real_tree_ordered
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.real_tree_count
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.real_tree_count_is_two
+
 end Dregg2.Circuit.RecursiveAggregation
