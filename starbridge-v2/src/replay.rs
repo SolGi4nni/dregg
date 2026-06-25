@@ -45,9 +45,10 @@
 use std::collections::BTreeMap;
 
 use dregg_cell::{Cell, CellId, Ledger};
+use dregg_turn::umem::{UProjection, project_ledger, reify_ledger};
 use dregg_turn::{
-    turn::{Turn, TurnReceipt, TurnResult},
     ComputronCosts, TurnExecutor,
+    turn::{Turn, TurnReceipt, TurnResult},
 };
 
 // ===========================================================================
@@ -128,6 +129,15 @@ pub struct History {
     /// after applying steps `0..i`, so `roots[0]` is the empty root and
     /// `roots[steps.len()]` is the head root.
     roots: Vec<[u8; 32]>,
+    /// The umem BOUNDARY captured after each step (parallel to `roots`): the
+    /// [`project_ledger`] projection of the post-state ledger into the universal
+    /// `(domain, collection, key) ↦ value` address space. `boundaries[i]` is the
+    /// boundary after applying steps `0..i` (`boundaries[0]` = the empty-ledger
+    /// projection). This is the umem time-travel revolution made live: the
+    /// boundary IS the state, so [`Self::reify_to`] restores any past point by
+    /// [`reify_ledger`] (a single inverse fold) instead of O(history)
+    /// re-execution from genesis — root-verified against `roots[i]` all the same.
+    boundaries: Vec<UProjection>,
     /// The fixed executor timestamp used for every recorded turn, so replay is
     /// bit-deterministic (a recorded receipt re-derives identically).
     timestamp: i64,
@@ -152,9 +162,12 @@ impl History {
     pub fn with_costs(timestamp: i64, costs: ComputronCosts) -> Self {
         let mut roots = Vec::new();
         roots.push(Ledger::new().root()); // root after 0 steps (the empty ledger)
+        // The umem boundary after 0 steps: the empty-ledger projection.
+        let boundaries = vec![project_ledger(&Ledger::new())];
         History {
             steps: Vec::new(),
             roots,
+            boundaries,
             timestamp,
             costs,
         }
@@ -211,6 +224,8 @@ impl History {
             .expect("genesis insert is into a fresh slot");
         self.steps.push(RecordedStep::Genesis { cell });
         self.roots.push(ledger.root());
+        // Capture the umem boundary of the post-state (the reify_to fast-restore image).
+        self.boundaries.push(project_ledger(ledger));
         id
     }
 
@@ -237,6 +252,8 @@ impl History {
                     post_root,
                 });
                 self.roots.push(post_root);
+                // Capture the umem boundary of the post-state (the reify_to image).
+                self.boundaries.push(project_ledger(ledger));
                 Some(receipt)
             }
             _ => None,
@@ -273,6 +290,49 @@ impl History {
             return Err(ReplayError::RootMismatch { step: k, got, want });
         }
         Ok(ledger)
+    }
+
+    /// **THE UMEM-BOUNDARY RESTORE — the live time-scrub's reconstruction path.**
+    ///
+    /// Reconstruct the world state at step `k` by RESTORING the umem boundary
+    /// captured at `k` ([`reify_ledger`] over `boundaries[k]`) — a single inverse
+    /// fold, NOT O(history) re-execution from genesis. This is the umem time-travel
+    /// revolution wired into the live cockpit: "rewind to step k" = restore a
+    /// boundary, exactly the `turn/tests/umem_time_travel.rs` keystone
+    /// (`reify_ledger(project_ledger(L)) == L`) run on real recorded history.
+    ///
+    /// The restore is held to the SAME anti-substitution discipline as
+    /// [`Self::replay_to`]: the reified ledger MUST commit to the recorded root
+    /// tooth `roots[k]`, or the restore is REFUSED ([`ReplayError::RootMismatch`]).
+    ///
+    /// A cell whose state lies OUTSIDE the projection's faithful class (typed
+    /// interfaces, capability tombstones, a post-revoke `next_slot` gap — the named
+    /// `reify_seam` residuals) makes [`reify_ledger`] refuse rather than round-trip
+    /// a lie; this method then FALLS BACK to root-verified [`Self::replay_to`], so
+    /// the scrub is always correct — the umem boundary is the fast path, genesis
+    /// replay the safety net. The returned [`ScrubSource`] reports which fired.
+    pub fn reify_to(&self, k: usize) -> Result<(Ledger, ScrubSource), ReplayError> {
+        if k >= self.boundaries.len() {
+            return Err(ReplayError::OutOfRange {
+                step: k,
+                len: self.steps.len(),
+            });
+        }
+        match reify_ledger(&self.boundaries[k]) {
+            Ok(mut ledger) => {
+                // The root tooth: the restored boundary MUST reproduce the recorded
+                // commitment (the same fail-closed discipline as replay_to / snapshot.rs).
+                let got = ledger.root();
+                let want = self.roots[k];
+                if got != want {
+                    return Err(ReplayError::RootMismatch { step: k, got, want });
+                }
+                Ok((ledger, ScrubSource::UmemBoundary))
+            }
+            // The boundary holds a cell outside the faithful class — restore by
+            // root-verified genesis replay instead (correct, just not O(1)).
+            Err(_reify_err) => Ok((self.replay_to(k)?, ScrubSource::ReplayFallback)),
+        }
     }
 
     /// Classify EVERY step's reversibility in a SINGLE forward pass — O(N) total
@@ -655,6 +715,18 @@ impl Fork {
 // Errors
 // ===========================================================================
 
+/// How [`History::reify_to`] reconstructed a scrub point — surfaced so the cockpit
+/// (and tests) can SEE the umem time-travel path is the one actually exercised.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrubSource {
+    /// Restored by [`reify_ledger`] over the captured umem boundary — the O(1)
+    /// inverse fold, no genesis re-execution (the umem revolution, live).
+    UmemBoundary,
+    /// The boundary held a cell outside the faithful class, so the scrub fell back
+    /// to root-verified [`History::replay_to`] (genesis re-execution).
+    ReplayFallback,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplayError {
     /// Asked to replay/diff to a step beyond the recorded history.
@@ -688,7 +760,10 @@ impl std::fmt::Display for ReplayError {
                 short(got),
                 short(want)
             ),
-            ReplayError::NondeterministicReplay { expected_receipt, got } => write!(
+            ReplayError::NondeterministicReplay {
+                expected_receipt,
+                got,
+            } => write!(
                 f,
                 "nondeterministic replay: recorded commit {} re-ran as {got}",
                 short(expected_receipt)
@@ -836,7 +911,7 @@ fn short(bytes: &[u8]) -> String {
 
 #[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 mod palette {
-    use gpui::{rgb, Hsla};
+    use gpui::{Hsla, rgb};
     pub fn panel() -> Hsla {
         rgb(0x161b22).into()
     }
@@ -876,7 +951,7 @@ mod palette {
 /// `Context<Cockpit>` type.
 #[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub fn replay_panel(model: &ReplayPanelModel) -> impl gpui::IntoElement {
-    use gpui::{div, px, ParentElement, Styled};
+    use gpui::{ParentElement, Styled, div, px};
     use palette as p;
 
     let mut col = div().flex().flex_col().gap_1().p_3().size_full();
@@ -1146,6 +1221,69 @@ mod tests {
         let mut head = h.replay_to(h.len()).unwrap();
         let mut live = live;
         assert_eq!(head.root(), live.root(), "head replay == live world");
+    }
+
+    // --- UMEM-BOUNDARY RESTORE (the live time-scrub path) -------------------
+
+    #[test]
+    fn reify_to_restores_via_umem_boundary_and_matches_replay() {
+        let (h, live, _a, _b) = fixture();
+        assert_eq!(h.len(), 5);
+        for k in 0..=h.len() {
+            let (mut reified, source) = h.reify_to(k).expect("umem-boundary restore verifies");
+            // The live cockpit scrub restores via the UMEM BOUNDARY — the O(1)
+            // reify_ledger inverse fold — NOT genesis re-execution.
+            assert_eq!(
+                source,
+                ScrubSource::UmemBoundary,
+                "step {k} restored via the umem boundary (the faithful class)"
+            );
+            // Root-verified: the restored boundary reproduces the recorded tooth…
+            assert_eq!(reified.root(), h.root_at(k), "step {k} root tooth");
+            // …and equals the independent genesis-replay reconstruction exactly.
+            let mut replayed = h.replay_to(k).expect("replay reference");
+            assert_eq!(
+                reified.root(),
+                replayed.root(),
+                "step {k}: umem-boundary restore == genesis replay"
+            );
+        }
+        // The head restore reproduces the LIVE ledger (root agreement).
+        let (mut head, _) = h.reify_to(h.len()).unwrap();
+        let mut live = live;
+        assert_eq!(head.root(), live.root(), "head reify == live world");
+    }
+
+    #[test]
+    fn reify_to_root_tooth_catches_a_tampered_recorded_root() {
+        let (mut h, _l, _a, _b) = fixture();
+        // Tamper the recorded root tooth at step 3: the umem-boundary restore must
+        // refuse it (the reified ledger commits to the honest root, not the forge).
+        let forged = {
+            let mut r = h.root_at(3);
+            r[0] ^= 0xff;
+            r
+        };
+        h.roots[3] = forged;
+        assert!(
+            matches!(
+                h.reify_to(3),
+                Err(ReplayError::RootMismatch { step: 3, .. })
+            ),
+            "a tampered tooth must fail-closed on the umem-boundary restore too"
+        );
+        // Untampered steps still restore.
+        assert!(h.reify_to(2).is_ok());
+        assert!(h.reify_to(4).is_ok());
+    }
+
+    #[test]
+    fn reify_to_out_of_range_is_rejected() {
+        let (h, _l, _a, _b) = fixture();
+        assert!(matches!(
+            h.reify_to(h.len() + 1),
+            Err(ReplayError::OutOfRange { .. })
+        ));
     }
 
     #[test]

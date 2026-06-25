@@ -26,7 +26,7 @@
 //! the world.
 
 use crate::meta_debug::{MetaLevelId, MetaStack};
-use crate::replay::{History, StateDiff};
+use crate::replay::{History, ScrubSource, StateDiff};
 use crate::ui_snapshot::Liveness;
 use crate::world::World;
 use dregg_cell::CellId;
@@ -88,6 +88,10 @@ pub struct TimeCockpitModel {
     pub cursor_verified: bool,
     /// The canonical root at the cursor.
     pub cursor_root: [u8; 32],
+    /// `true` iff the cursor's image was restored via the UMEM BOUNDARY (the O(1)
+    /// `reify_ledger` inverse fold — the umem time-travel revolution), `false` iff
+    /// the scrub fell back to genesis replay for a cell outside the faithful class.
+    pub cursor_via_umem: bool,
     /// The honest liveness of the cursor view: [`Liveness::Live`] at the head,
     /// [`Liveness::ReplayedDeterministic`] in the past (the image rewound, the
     /// camera re-ran from the witnessed log).
@@ -162,17 +166,19 @@ impl TimeCockpitModel {
             });
         }
 
-        // The verified reconstruction at the cursor.
-        let (cursor_cells, cursor_verified) = match history.replay_to(cursor) {
-            Ok(ledger) => {
+        // The verified reconstruction at the cursor — restored via the UMEM BOUNDARY
+        // (`History::reify_to`: the O(1) `reify_ledger` inverse fold, root-verified),
+        // falling back to genesis replay only for a cell outside the faithful class.
+        let (cursor_cells, cursor_verified, cursor_via_umem) = match history.reify_to(cursor) {
+            Ok((ledger, source)) => {
                 let mut cells: Vec<(CellId, i64, usize)> = ledger
                     .iter()
                     .map(|(id, c)| (*id, c.state.balance(), c.capabilities.len()))
                     .collect();
                 cells.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
-                (cells, true)
+                (cells, true, source == ScrubSource::UmemBoundary)
             }
-            Err(_) => (Vec::new(), false),
+            Err(_) => (Vec::new(), false, false),
         };
         let cursor_root = history.root_at(cursor);
 
@@ -226,6 +232,7 @@ impl TimeCockpitModel {
             cursor_cells,
             cursor_verified,
             cursor_root,
+            cursor_via_umem,
             liveness,
             diff_from_prev,
             suspended,
@@ -294,7 +301,7 @@ impl TimeCockpitModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{transfer, ResumeMode, World};
+    use crate::world::{ResumeMode, World, transfer};
 
     /// A small world: a treasury (1_000) and a sink (0), three committed turns.
     fn fixture() -> (World, CellId, CellId) {
@@ -337,11 +344,12 @@ mod tests {
         assert_eq!(m.undo_floor(), turns[1].step);
         assert!(m.undo_floor_badge().contains("un-turn floor"));
         // Genesis / empty-root ticks have nothing to invert → None.
-        assert!(m
-            .ticks
-            .iter()
-            .filter(|t| !t.is_turn)
-            .all(|t| t.reversible.is_none()));
+        assert!(
+            m.ticks
+                .iter()
+                .filter(|t| !t.is_turn)
+                .all(|t| t.reversible.is_none())
+        );
     }
 
     #[test]
@@ -349,11 +357,12 @@ mod tests {
         let (w, _t, _s) = fixture(); // three transfers — all reversible
         let stack = MetaStack::new();
         let m = TimeCockpitModel::build(&w, w.recorded_turns().len(), &stack);
-        assert!(m
-            .ticks
-            .iter()
-            .filter(|t| t.is_turn)
-            .all(|t| t.reversible == Some(true)));
+        assert!(
+            m.ticks
+                .iter()
+                .filter(|t| t.is_turn)
+                .all(|t| t.reversible == Some(true))
+        );
         assert_eq!(
             m.undo_floor(),
             0,
@@ -428,6 +437,40 @@ mod tests {
             past.diff_from_prev.is_some(),
             "a mid-history cursor has a prev-step diff"
         );
+    }
+
+    // ── the live scrub RESTORES VIA THE UMEM BOUNDARY (not genesis replay) ───
+
+    #[test]
+    fn the_live_scrub_restores_via_the_umem_boundary() {
+        let (w, treasury, _sink) = fixture();
+        let stack = MetaStack::new();
+        let head = w.recorded_turns().len();
+
+        // Drag to a PAST step: the cockpit model's image is restored by the umem
+        // boundary (`reify_ledger`), not O(history) genesis replay — and it is
+        // still root-verified and value-correct.
+        let past = TimeCockpitModel::build(&w, head - 1, &stack);
+        assert!(
+            past.cursor_via_umem,
+            "the live cockpit scrub restores via the umem boundary (the revolution, live)"
+        );
+        assert!(past.cursor_verified, "the umem restore root-verifies");
+        let past_bal = past
+            .cursor_cells
+            .iter()
+            .find(|(id, ..)| *id == treasury)
+            .unwrap()
+            .1;
+        assert_eq!(
+            past_bal, 700,
+            "rewound one turn via umem: 1000 − 100 − 200 = 700"
+        );
+
+        // The head is also umem-restored.
+        let live = TimeCockpitModel::build(&w, head, &stack);
+        assert!(live.cursor_via_umem, "the head image is umem-restored too");
+        assert!(live.at_head());
     }
 
     // ── the SUSPEND gate: the head freezes, the continuation is staged ───────
@@ -515,11 +558,15 @@ mod tests {
         let (w, _t, _s) = fixture();
         let stack = MetaStack::new();
         let head = w.recorded_turns().len();
-        assert!(TimeCockpitModel::build(&w, head, &stack)
-            .liveness_badge()
-            .contains("LIVE"));
-        assert!(TimeCockpitModel::build(&w, 0, &stack)
-            .liveness_badge()
-            .contains("REPLAYED"));
+        assert!(
+            TimeCockpitModel::build(&w, head, &stack)
+                .liveness_badge()
+                .contains("LIVE")
+        );
+        assert!(
+            TimeCockpitModel::build(&w, 0, &stack)
+                .liveness_badge()
+                .contains("REPLAYED")
+        );
     }
 }

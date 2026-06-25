@@ -197,6 +197,11 @@ impl Cockpit {
                     )
                 } else {
                     pill("✗ root UNVERIFIED".to_string(), theme::bad())
+                })
+                .child(if model.cursor_via_umem {
+                    pill("⟲ umem boundary".to_string(), theme::accent())
+                } else {
+                    pill("↺ genesis replay".to_string(), theme::muted())
                 }),
         );
 
