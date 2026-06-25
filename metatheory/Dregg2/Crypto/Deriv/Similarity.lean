@@ -40,8 +40,8 @@ congruence kept since `PredRE` has native `inter`). -/
 inductive Sim : PredRE → PredRE → Prop where
   /-- Associativity of `alt`. -/
   | assoc     : Sim (.alt (.alt R₁ R₂) R₃) (.alt R₁ (.alt R₂ R₃))
-  /-- Right deduplication: `R₁ ⋓ R₂ ⋓ R₁ ≅ R₁ ⋓ R₂`. -/
-  | dedup     : Sim (.alt (.alt R₁ R₂) R₁) (.alt R₁ R₂)
+  /-- Right deduplication: `R₁ ⋓ R₂ ⋓ R₁ ≅ R₁ ⋓ R₂` (the `⋓` right-associated, matching ITP'25). -/
+  | dedup     : Sim (.alt R₁ (.alt R₂ R₁)) (.alt R₁ R₂)
   /-- Idempotence: `R ⋓ R ≅ R`. -/
   | idem      : Sim (.alt R R) R
   /-- Reflexivity. -/
