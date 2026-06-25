@@ -1048,6 +1048,274 @@ pub fn receipt_op(position: u64, receipt_hash: [u8; 32]) -> UmemOp {
     }
 }
 
+// ============================================================================
+// THE UMEM BOUNDARY PRODUCER — `UmemTurnWitness` → a REAL `UMemBoundaryWitness`.
+//
+// The deployed-plumbing piece that lets the SDK/IVC prover be handed a REAL (non-`default`)
+// universal-memory boundary witness. Until now the `UmemTurnWitness → UMemBoundaryWitness`
+// lowering lived only as test-local helpers (`circuit/tests/effect_vm_umem_real_turn.rs`'s
+// `lower`, `effect_vm_umem_cohort.rs`'s `build_umem_form`); this is the library function the
+// rotation-flip's Rank 4 routes the deployed prover through (the prover-switch is the NEXT
+// sequenced, gated step — this producer is VK-risk-free in isolation).
+//
+// The lowering uses the deployed Rank-1 address/value CODECS (`heap_addr` for the heap/field
+// planes, `slot_hash` for the caps plane, `fold_bytes32`/`fold_bytes` for nullifiers and
+// structured values — `metatheory/Dregg2/Crypto/UMemCodec.lean`, `a2217919`), so the produced
+// boundary carries REAL structured `(domain, key)` addresses and value felts (not the
+// per-proof dense relabeling). The `(domain, key)` address is the literal pair — the domain is
+// its own bus coordinate (`UMemOpSpec.domain`), so the in-domain key carries `hash[coll, key]`.
+//
+// The producer reads the turn's Blum WRITE trace (`UmemTurnWitness::ops`) as the per-op main
+// rows and the turn's PRE projection (`UmemTurnWitness::pre`) as the per-domain boundary's init
+// image — exactly the triple `prove_vm_descriptor2_umem` consumes. The fold square
+// (`fold(pre, ops) == post`) and the memcheck discipline the executor already guarantees carry
+// straight into the multiset balance: each address's init is emitted once by the boundary at
+// serial 0, every op claims either that init (`prev_serial == 0`) or a prior op's installed
+// value, and the codec is a deterministic function so equal values encode to equal felts.
+
+use dregg_circuit::cap_root::{fold_bytes32, slot_hash};
+use dregg_circuit::descriptor_ir2::{
+    EffectVmDescriptor2, MemKind, UMemBoundaryWitness, UMemOpSpec, VmConstraint2,
+};
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::heap_root::heap_addr;
+use dregg_circuit::lean_descriptor_air::LeanExpr;
+
+/// Field-plane collection tag (the user-field map lives under one logical collection).
+const UMEM_FIELD_COLL: u32 = 0xF1E1;
+/// Balance scalar tag (the economic register made a umem cell).
+const UMEM_BALANCE_COLL: u32 = 0xBA1A;
+/// Nonce scalar tag.
+const UMEM_NONCE_COLL: u32 = 0x0CE0;
+
+/// Fold a low `u64` into a key felt limb (the in-domain `key` argument of `heap_addr`).
+fn umem_key_limb(x: u64) -> BabyBear {
+    BabyBear::new((x % (BABYBEAR_P as u64)) as u32)
+}
+
+/// Horner fold of canonical bytes into a felt (the Rank-1 value-codec shape: a field image of
+/// the value; `Bytes32` rides the deployed `fold_bytes32`). Nonzero seed so the empty value is
+/// distinct from absence.
+fn umem_fold_bytes(bytes: &[u8]) -> BabyBear {
+    let mut acc = BabyBear::ONE;
+    let mul = BabyBear::new(0x1000_0193); // FNV-ish field multiplier
+    for &b in bytes {
+        acc = acc * mul + BabyBear::new(b as u32 + 1);
+    }
+    acc
+}
+
+/// The owning cell folded into a felt (the universal-map address is per-CELL: unlike a single
+/// cell's own heap, the unified address space holds every cell, so the cell identity is part of
+/// the address — two cells' balances are distinct `(domain, key)` cells).
+fn umem_cell_felt(c: &CellId) -> BabyBear {
+    fold_bytes32(c.as_bytes())
+}
+
+/// The deployed-codec structured `(domain code, in-domain key felt)` of a projected address —
+/// Rank-1's `uaddrEnc` shape with the domain split out as its own column. Cell-plane keys fold
+/// the owning cell into the address (via the deployed `heap_addr` hash) so the universal map's
+/// per-cell cells never alias across cells.
+pub fn umem_key_addr(k: &UKey) -> (u32, BabyBear) {
+    let domain = k.domain().code();
+    let key = match k {
+        UKey::Heap {
+            cell,
+            collection,
+            key,
+        } => heap_addr(
+            umem_cell_felt(cell),
+            heap_addr(BabyBear::new(*collection), BabyBear::new(*key)),
+        ),
+        UKey::Field { cell, slot } => heap_addr(
+            umem_cell_felt(cell),
+            heap_addr(BabyBear::new(UMEM_FIELD_COLL), umem_key_limb(*slot)),
+        ),
+        UKey::Balance(cell) => heap_addr(
+            umem_cell_felt(cell),
+            heap_addr(BabyBear::new(UMEM_BALANCE_COLL), BabyBear::ZERO),
+        ),
+        UKey::Nonce(cell) => heap_addr(
+            umem_cell_felt(cell),
+            heap_addr(BabyBear::new(UMEM_NONCE_COLL), BabyBear::ZERO),
+        ),
+        UKey::CapSlot { cell, slot } => heap_addr(umem_cell_felt(cell), slot_hash(*slot)),
+        UKey::NoteNullifier(b) | UKey::BridgedNullifier(b) => fold_bytes32(b),
+        // Any other projected address: a deterministic injective felt over its canonical
+        // serialization (which carries the owning cell). The planes above are the ones the
+        // cohort effects touch on the hot path; the fallback keeps the producer total over the
+        // whole `UKey` space.
+        other => umem_fold_bytes(&serde_json::to_vec(other).expect("ukey serializes")),
+    };
+    (domain, key)
+}
+
+/// The `(present, value)` felt pair of an optional cell — `none ↦ (0, 0)`, the canonical absent
+/// encoding the umem grammar pins.
+pub fn umem_val_felt(v: Option<&UVal>) -> (BabyBear, BabyBear) {
+    match v {
+        None => (BabyBear::ZERO, BabyBear::ZERO),
+        Some(UVal::Bytes32(b)) | Some(UVal::UmemRef(b)) => (BabyBear::ONE, fold_bytes32(b)),
+        Some(other) => (
+            BabyBear::ONE,
+            umem_fold_bytes(&serde_json::to_vec(other).expect("uval serializes")),
+        ),
+    }
+}
+
+/// The IR-v2 universal-memory proving inputs the producer derives from a turn's
+/// [`UmemTurnWitness`]: the umem-form descriptor, the per-op main trace, and the REAL
+/// [`UMemBoundaryWitness`](dregg_circuit::descriptor_ir2::UMemBoundaryWitness). The deployed
+/// `prove_vm_descriptor2_umem` consumes the triple (`&descriptor, &rows, &[]/* PIs */,
+/// &MemBoundaryWitness::default(), &[]/* map heaps */, &boundary`).
+#[derive(Clone, Debug)]
+pub struct UmemProvingInputs {
+    /// The umem-form descriptor: one `UMemOp` constraint per touched domain, guarded by its
+    /// own indicator column.
+    pub descriptor: EffectVmDescriptor2,
+    /// One main row per Blum op (key · present · value · prev_present · prev_value · prev_serial
+    /// + the per-domain guard columns), padded to a power of two.
+    pub rows: Vec<Vec<BabyBear>>,
+    /// The REAL universal-memory boundary: the turn's touched `(domain, key)` addresses with
+    /// their PRE-state cells as the init image.
+    pub boundary: UMemBoundaryWitness,
+}
+
+/// **THE PRODUCER** — derive the REAL universal-memory proving inputs (descriptor + per-op
+/// trace + [`UMemBoundaryWitness`](dregg_circuit::descriptor_ir2::UMemBoundaryWitness)) from a
+/// turn's [`UmemTurnWitness`]. The boundary is non-`default`: it carries the turn's genuine
+/// touched addresses (under the deployed codecs) with their pre-state init image, so the
+/// SDK/IVC prover can be handed a real boundary instead of `UMemBoundaryWitness::default()`.
+///
+/// `Err` if the address codec collides (two distinct `UKey`s lowering to the same
+/// `(domain, key)` felt — caught so the strict-increasing boundary stays sound) or the trace is
+/// empty.
+pub fn umem_proving_inputs(witness: &UmemTurnWitness) -> Result<UmemProvingInputs, String> {
+    umem_proving_inputs_from(&witness.pre, &witness.ops)
+}
+
+/// [`umem_proving_inputs`] over an explicit `(pre projection, op trace)` — the form callers use
+/// to append the caller-owned index-domain receipt write ([`receipt_op`]) to the witness ops
+/// before lowering.
+pub fn umem_proving_inputs_from(
+    pre: &UProjection,
+    ops: &[UmemOp],
+) -> Result<UmemProvingInputs, String> {
+    if ops.is_empty() {
+        return Err("umem producer: empty op trace (no boundary to derive)".into());
+    }
+
+    // Per-address codec + injectivity: distinct `UKey`s MUST lower to distinct `(domain, key)`
+    // felts, else the boundary's strict-increasing requirement (and the multiset balance) is
+    // unsound. Fail closed on a collision.
+    let mut by_addr: BTreeMap<(u32, u32), UKey> = BTreeMap::new();
+    let mut touched: BTreeMap<UKey, (u32, BabyBear)> = BTreeMap::new();
+    for op in ops {
+        let (d, key) = umem_key_addr(&op.key);
+        match by_addr.get(&(d, key.as_u32())) {
+            Some(prev) if prev != &op.key => {
+                return Err(format!(
+                    "umem producer: address codec collision — {prev:?} and {:?} both lower to \
+                     (domain {d}, key {})",
+                    op.key,
+                    key.as_u32()
+                ));
+            }
+            _ => {
+                by_addr.insert((d, key.as_u32()), op.key.clone());
+            }
+        }
+        touched.entry(op.key.clone()).or_insert((d, key));
+    }
+
+    // One `UMemOp::Write` constraint per touched domain, guarded by its own indicator column.
+    // (A disciplined read folds identically to a same-value write — `val == prev_val` — so the
+    // write-kind constraint is sound over the executor's journal-derived write trace.)
+    let mut domains: Vec<u32> = touched.values().map(|(d, _)| *d).collect();
+    domains.sort_unstable();
+    domains.dedup();
+    let guard_col: BTreeMap<u32, usize> = domains
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (*d, 6 + i))
+        .collect();
+    let width = 6 + domains.len();
+
+    let constraints: Vec<VmConstraint2> = domains
+        .iter()
+        .map(|d| {
+            VmConstraint2::UMemOp(UMemOpSpec {
+                guard: LeanExpr::Var(guard_col[d]),
+                domain: *d,
+                key: LeanExpr::Var(0),
+                present: LeanExpr::Var(1),
+                value: LeanExpr::Var(2),
+                prev_present: LeanExpr::Var(3),
+                prev_value: LeanExpr::Var(4),
+                prev_serial: LeanExpr::Var(5),
+                kind: MemKind::Write,
+            })
+        })
+        .collect();
+
+    let descriptor = EffectVmDescriptor2 {
+        name: "umem-turn-boundary".to_string(),
+        trace_width: width,
+        public_input_count: 0,
+        tables: vec![],
+        constraints,
+        hash_sites: vec![],
+        ranges: vec![],
+    };
+
+    // One main row per Blum op (in execution order), padded to a power of two with guards off.
+    let mut rows: Vec<Vec<BabyBear>> = Vec::with_capacity(ops.len());
+    for op in ops {
+        let (d, key) = umem_key_addr(&op.key);
+        let (present, value) = umem_val_felt(op.val.as_ref());
+        let (prev_present, prev_value) = umem_val_felt(op.prev_val.as_ref());
+        let mut row = vec![BabyBear::ZERO; width];
+        row[0] = key;
+        row[1] = present;
+        row[2] = value;
+        row[3] = prev_present;
+        row[4] = prev_value;
+        row[5] = BabyBear::new(op.prev_serial as u32);
+        row[guard_col[&d]] = BabyBear::ONE;
+        rows.push(row);
+    }
+    let height = rows.len().next_power_of_two().max(4);
+    while rows.len() < height {
+        rows.push(vec![BabyBear::ZERO; width]);
+    }
+
+    // The boundary: every touched address (strict-increasing by `(domain, key)`), with its
+    // PRE-state cell as the init image.
+    let mut addrs: Vec<(u32, BabyBear, Option<BabyBear>)> = touched
+        .iter()
+        .map(|(k, (d, key))| {
+            let (present, value) = umem_val_felt(pre.get(k));
+            let init = if present == BabyBear::ONE {
+                Some(value)
+            } else {
+                None
+            };
+            (*d, *key, init)
+        })
+        .collect();
+    addrs.sort_by_key(|(d, k, _)| (*d, k.as_u32()));
+    let boundary = UMemBoundaryWitness {
+        addrs: addrs.iter().map(|(d, k, _)| (*d, *k)).collect(),
+        init_vals: addrs.iter().map(|(_, _, v)| *v).collect(),
+    };
+
+    Ok(UmemProvingInputs {
+        descriptor,
+        rows,
+        boundary,
+    })
+}
+
 /// A journal entry's address touches: `(key, recorded_prev)` where
 /// `recorded_prev = Some(cell)` when the journal recorded the prior value
 /// (`Some(None)` = recorded-absent, e.g. a fresh capability slot) and `None` when the
