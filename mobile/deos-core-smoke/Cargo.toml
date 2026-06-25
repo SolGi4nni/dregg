@@ -1,0 +1,33 @@
+[package]
+name = "deos-core-smoke"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The verified-core-on-android smoke binary: runs a real dregg-turn transfer on aarch64-linux-android (the live Android emulator / a Pixel), commits it through the embedded executor, and prints the receipt. Proves STEP 1 of MOBILE-DEOS / GRAPHIDEOS — the pure-compute verified kernel ports to android and RUNS, no source changes."
+
+# ────────────────────────────────────────────────────────────────────────────
+# NOT a workspace member (mirrors `android-cell`): it path-deps `dregg-turn`,
+# which (via its default `prover` feature) is the heavy circuit/crypto core. We
+# build it explicitly for the android target via cargo-ndk, then push+run the
+# ELF on the emulator with adb. See ../README.md.
+#
+#   export ANDROID_NDK_HOME="$HOME/Library/Android/sdk/ndk/<ver>"
+#   cargo ndk -t arm64-v8a build -p deos-core-smoke
+#   adb push target/aarch64-linux-android/debug/deos-core-smoke /data/local/tmp/
+#   adb shell /data/local/tmp/deos-core-smoke
+# ────────────────────────────────────────────────────────────────────────────
+
+[dependencies]
+# THE VERIFIED CORE. Default features ON = `prover` (the full circuit/crypto
+# closure: dregg-circuit + dregg-circuit-prove + ark-bls12-381 + curve25519 +
+# ed25519 + chacha20) — proving the WHOLE kernel cross-compiles, not a trimmed
+# slice. (The Lean-link path `dregg-exec-lean`/`dregg-lean-ffi` is NOT pulled
+# here — that's `dregg-sdk`'s producer side and links a host `libdregg_lean.a`;
+# the turn EXECUTOR's Rust verify+apply path is self-contained pure compute.)
+dregg-turn = { path = "../../turn" }
+dregg-cell = { path = "../../cell" }
+blake3 = "1"
+
+[[bin]]
+name = "deos-core-smoke"
+path = "src/main.rs"

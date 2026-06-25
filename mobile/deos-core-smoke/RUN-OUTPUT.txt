@@ -1,0 +1,14 @@
+# STEP 1 PROOF — deos verified core running on android (aarch64-linux-android)
+# Captured 2026-06-25T01:31:09Z on the live Android emulator (Pixel_7_API_35, arm64-v8a)
+# Build: cargo ndk -t arm64-v8a build -p deos-core-smoke ; adb push ; adb shell
+# device: arm64-v8a / aarch64 / android 15
+
+=== deos verified core :: android smoke ===
+target = aarch64
+os     = android
+pre : alice=1000 bob=0
+post: alice=750 bob=250
+receipt.turn_hash = 158e1f27070e8c3e5515deb26d6c164bd9b1062870481055368cea459019ba17
+receipt.post_state_hash = 8fbaedb00b02333b0d9863e3a7ba66fcbfdcf079049b52e310e5bb08a0422c67
+receipt.computrons_used = 0
+OK: the verified dregg kernel committed a transfer turn on android, conserved value, and emitted a receipt.

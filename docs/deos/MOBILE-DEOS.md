@@ -280,7 +280,60 @@ The first step is concrete and risk-free: **the cockpit running in Cuttlefish.**
 
 ---
 
-*Relates to `HIG.md` (the design language the touch pass obeys),
+## 7. BUILD PROGRESS + the honest walls (2026-06-24, a real build spike)
+
+A first real build spike against the in-tree toolchain (the SDK at
+`~/Library/Android/sdk`, NDK r29, `cargo-ndk`, an arm64-v8a AVD — the setup the
+`ANDROID-CELL.md` lane stood up; this spike SHARES it). The build tree lives in
+`mobile/` (`mobile/README.md` has the exact build+run recipe). The ambition beyond
+the app slice — graphideOS as a full GrapheneOS *fork* / deos alterverse — is
+`GRAPHIDEOS.md` (every top-half layer's deos form, the fork-build feasibility).
+
+### ✅ STEP 1 DONE — the verified core runs on android
+
+- **Compiles.** `dregg-turn` + the embedded `TurnExecutor` with the **full default
+  `prover` feature** (the whole circuit + crypto closure — `dregg-circuit`,
+  `dregg-circuit-prove`, `ark-bls12-381`, `curve25519-dalek`, `ed25519`,
+  `chacha20`) cross-compile **clean for `aarch64-linux-android`**, **zero source
+  changes** to the kernel. (`cargo ndk -t arm64-v8a build -p dregg-turn` → exit 0.)
+- **Runs.** The smoke binary `mobile/deos-core-smoke` (a `[[bin]]` over
+  `dregg-turn`/`dregg-cell`) was pushed to a **live Android emulator**
+  (Pixel_7_API_35, arm64-v8a, Android 15) and **executed**: two sovereign cells, a
+  real `Effect::Transfer` turn through the executor, **value conserved (Σδ=0)**, a
+  genuine receipt emitted (`turn_hash` + `post_state_hash`). Transcript:
+  `mobile/deos-core-smoke/RUN-OUTPUT.txt`. *A turn commits, a receipt lands, on
+  android* — the kernel is renderer-independent pure compute and ports.
+
+### ⛔ STEP 2 WALL — gpui has no android platform backend
+
+A real gpui frame on android is **blocked, and the wall is precise**: gpui's
+`Platform`/`PlatformWindow`/dispatcher/IME/lifecycle layer is `cfg`-gated to
+macos/linux/windows/freebsd only; the pinned gpui fork carries **no**
+`android-activity`/`ndk` dependency. The `gpui_wgpu` *renderer* DOES take a
+`raw_window_handle` (an `ANativeWindow` can supply it), so the **draw** path is
+reachable — but a real frame needs a new `PlatformAndroid` backend (window from
+`ANativeWindow`, an android event/IME pump, the lifecycle states). That is a
+**gpui-fork change**, which this pass is constrained not to make. This is the exact
+content of §5's "demonstrated, not productized" — *a backend port, not a recompile*.
+(Upstream `gpui-mobile` is the demonstrated shape to lift when the backend is built.)
+
+Consequently **STEP 3 (APK + screenshot of a deos frame in the emulator) is gated**
+on that backend. The "deos on android" proof this spike DELIVERS is the verified
+core executing on the device (Step 1); the painted frame waits on the gpui android
+backend.
+
+### Other named walls (full list in `GRAPHIDEOS.md §7`)
+
+- The **Lean-linked producer** (`libdregg_lean.a`) is not yet cross-compiled for
+  android — the Rust verify+apply path (proven above) is what runs today.
+- The **GrapheneOS fork build tree** is Linux-only + ≥1 TiB; **not this macOS host**
+  (99% disk, macOS can't host the AOSP `repo`/Soong build). The image stages belong
+  on a dedicated Linux build node (`GRAPHIDEOS.md §4`).
+
+---
+
+*Relates to `GRAPHIDEOS.md` (the full-fork alterverse — every top-half layer's deos
+form + the fork-build feasibility), `HIG.md` (the design language the touch pass obeys),
 `DEOS-DISTRIBUTION.md` (mobile is the fourth target shape — host app · seL4 image
 · web tab · phone), and `WEB-DEOS.md` (the same gpui renderer on a non-native
 surface — the wasm/WebGPU slice the NDK/Vulkan slice rhymes with).*
