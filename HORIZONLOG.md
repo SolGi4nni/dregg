@@ -8,6 +8,21 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## DERIVATIVE-MATCHING faithfulness: Stages 0/1/3 LANDED kernel-clean over dregg's Pred; Stage 4 language-half done, table-equality unblocked (2026-06-25)
+- WHAT: a Brzozowski/Antimirov symbolic-derivative matcher built over dregg's OWN `Pred` algebra
+  (`PredRE` = ERE≤'s `RE` minus the four lookarounds, `Pred` leaf), in dregg's own Lean — ERE≤ +
+  ITP'25 `finiteness-derivatives` read as proof BLUEPRINTS only (no import; cloned to `~/dev/_research/`).
+  All `#assert_axioms`-clean (`{propext, Classical.choice, Quot.sound}`), zero `sorry`. Modules:
+  `metatheory/Dregg2/Crypto/Deriv/{Core,Correctness,Similarity,Determinize,Combinatorics,TTerm,Permute,
+  SymbolicDerivative,Pieces,Finite,Monotone,Finiteness}.lean` (wired into `Dregg2.lean`).
+  - Stage 0 (`Core`): `der`/`null`/`derives` + denotational `Matches` (starMetric termination) + non-vacuity `#guard`s (incl. the new `neg` deny-filter).
+  - Stage 1 (`Correctness`): `correctness : derives w R = true ↔ Matches w R` — the "weeks in the design" middle theorem (seven per-ctor lemmas + the Kleene-star tower).
+  - Stage 3 (`Finiteness.der_finite`): **Brzozowski FINITENESS** `∃ xs, ∀ {n}, steps r n ⊆[≅] xs` — the whole symbolic-derivative state space fits up to similarity in the fixed finite `⊕(pieces r)`. The full ITP'25 tower (TTerm/symbolic-derivative/pieces/neSubsets/Permute-nodup/`step_to_pieces`/`pieces_equiv'`) ported over `Pred`. `sim_sound` (`Similarity`) proves `≅` is language-sound so the finite ≅-quotient = finite recognized languages. (`DecidableEq PredRE` is CLASSICAL — kept clean.) The design rated this "months, not days"; it landed.
+  - Stage 4 (`Determinize`): the derivative automaton presented AS the in-circuit `Dfa.lean` `DfaAccepts` run — `derivativeDfa_correct/_matches` (accepts ↔ `derives` = `Matches`); the in-circuit `Dfa.lean` cascade is IMPORTED, untouched.
+- NAMED FOLLOW-UPS (closure lanes, not parking):
+  - **Stage 4 table-equality** `derivativeCompile_eq_tableDfa` vs `compiler.rs::determinize`'s powerset table — UNBLOCKED now `der_finite` is proven; remaining = a Lean model of the powerset construction + a `derivativeDfa ≃ powersetDfa` LANGUAGE-equivalence (suffices for the table-opaque AIR; the regime `derivativeDfa_matches` already lives in). Named in `Deriv/Determinize.lean` closing note.
+  - **Stage 5 stateful `(old,new)` carrier** (policy/caveat trace) — gated open research; the binding soundness constraint is the right-skew (derivatives decide LANGUAGE; `FlowRefine.decideRefines` decides reactive SIMULATION; never conflate). Named in `docs/deos/DERIVATIVE-MATCHING-DESIGN.md §5.3`.
+
 ## `invoke()` + the SERVICE EXPLORER LANDED end-to-end in deos; serviced-answer + registry-wire are the named follow-ups (2026-06-25)
 - WHAT: cells-as-service-objects INVOCATION shipped at the userspace layer (NO kernel `Effect::Invoke`, Effect enum
   untouched), end-to-end into the live deos cockpit:
