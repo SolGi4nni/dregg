@@ -13,13 +13,11 @@ resolver = "3"
 # workspace, so those two stay separate workspaces (discord-bot excluded below,
 # deos-zed-full still excluded). `default-members` (below) is the light protocol/
 # circuit/app set so bare `cargo build`/`cargo test` stays gpui/mozjs/servo-free.
-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trace", "demo", "demo-agent", "demo/sdk-consensus", "federation", "circuit", "circuit-prove", "audit", "bridge", "wire", "persist", "cell", "cell-crypto", "turn", "exec-lean", "coord", "tests", "types", "sdk", "dregg-sdk-net", "node", "intent", "net", "discharge-gateway", "teasting", "app-framework", "dregg-dsl", "dregg-dsl-runtime", "dregg-dsl-tests", "dregg-dsl-differential", "blocklace", "captp", "cli", "verifier", "protocol-tests", "observability", "storage", "starbridge-apps/nameservice", "dfa", "dfa-federation", "rbg", "credentials", "directory", "starbridge-apps/identity", "starbridge-apps/subscription", "starbridge-apps/governed-namespace", "starbridge-apps/compartment-workflow-mandate", "starbridge-apps/storage-gateway-mandate", "starbridge-apps/privacy-voting", "starbridge-apps/bounty-board", "starbridge-apps/agent-provenance", "starbridge-apps/tool-access-delegation", "starbridge-apps/sealed-auction", "starbridge-apps/polis", "starbridge-apps/escrow-market", "starbridge-apps/first-room", "starbridge-apps/compute-exchange", "starbridge-apps/gallery", "starbridge-apps/swarm-orchestration", "starbridge-apps/supply-chain-provenance", "starbridge-apps/agent-orchestration", "starbridge-apps/tussle", "dregg-storage-templates", "preflight", "dregg-lean-ffi", "lightclient", "redteam", "perf", "dregg-auth", "dregg-query", "dregg-userspace-verify", "dregg-deploy", "dregg-analyzer", "deos-reflect", "starbridge-v2", "starbridge-v2/web", "deos-js", "deos-view", "deos-zed", "deos-matrix", "deos-hermes", "deos-terminal", "servo-render", "deos-web-cells", "starbridge-web-surface", "deos-leptos", "android-cell", "mobile/deos-core-smoke"]
 
 # default-members = the LIGHT protocol/circuit/app crates (members minus the 12
 # gpui/mozjs/servo elephants). A bare `cargo build`/`cargo test` (no `--workspace`,
 # no `-p <elephant>`) operates on THESE only, so the default dev loop never pulls
 # gpui/mozjs/servo. Build an elephant explicitly with `-p starbridge-v2` etc.
-default-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trace", "demo", "demo-agent", "demo/sdk-consensus", "federation", "circuit", "circuit-prove", "audit", "bridge", "wire", "persist", "cell", "cell-crypto", "turn", "exec-lean", "coord", "tests", "types", "sdk", "dregg-sdk-net", "node", "intent", "net", "discharge-gateway", "teasting", "app-framework", "dregg-dsl", "dregg-dsl-runtime", "dregg-dsl-tests", "dregg-dsl-differential", "blocklace", "captp", "cli", "verifier", "protocol-tests", "observability", "storage", "starbridge-apps/nameservice", "dfa", "dfa-federation", "rbg", "credentials", "directory", "starbridge-apps/identity", "starbridge-apps/subscription", "starbridge-apps/governed-namespace", "starbridge-apps/compartment-workflow-mandate", "starbridge-apps/storage-gateway-mandate", "starbridge-apps/privacy-voting", "starbridge-apps/bounty-board", "starbridge-apps/agent-provenance", "starbridge-apps/tool-access-delegation", "starbridge-apps/sealed-auction", "starbridge-apps/polis", "starbridge-apps/escrow-market", "starbridge-apps/first-room", "starbridge-apps/compute-exchange", "starbridge-apps/gallery", "starbridge-apps/swarm-orchestration", "starbridge-apps/supply-chain-provenance", "starbridge-apps/agent-orchestration", "starbridge-apps/tussle", "dregg-storage-templates", "preflight", "dregg-lean-ffi", "lightclient", "redteam", "perf", "dregg-auth", "dregg-query", "dregg-userspace-verify", "dregg-deploy", "dregg-analyzer", "deos-reflect"]
 
 # chain/ and chain/program/ are standalone workspaces with their own root Cargo.toml.
 # chain has a known dep conflict (sp1-core-machine pins generic-array =1.1.0,
@@ -211,6 +209,7 @@ p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev
 p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "8d42900357f0140851e0098fab84b93995c498e9" }
 
 ## Crates.io
+## --- TEMP LOCAL DSU-FIX ITERATION PATCH (REMOVE before CI-correct rev bump) ---
 ark-serialize = { version = "0.5", features = ["derive"] }
 # NOTE: RC needed for aead 0.6 trait unification with chacha20poly1305 0.10;
 # stable aes-gcm 0.10 uses aead 0.5 which conflicts. Revisit when 0.11 stable ships.
@@ -329,3 +328,13 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.dregg-lightclient]
 opt-level = 3
+
+# --- TEMP LOCAL DSU-FIX ITERATION PATCH (REMOVE before CI-correct rev bump) ---
+# Points the four emberian/plonky3-recursion git deps at the local working tree so
+# the in-flight connect-DSU fix can be iterated without a push. Removed + replaced
+# by a rev bump to the pushed fork tip once the heavy folds are green.
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../plonky3-recursion/recursion" }
+p3-circuit = { path = "../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../plonky3-recursion/poseidon2-circuit-air" }

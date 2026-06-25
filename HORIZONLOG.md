@@ -8,6 +8,12 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+  (workspace member). Slice 3 = `gate_effect_set`/`gate_auth` over the PROVEN `is_facet_attenuation`/`is_attenuation`;
+  Slice 1 = `witness_receipt` → real chained `dregg_turn::TurnReceipt` (v3 hash binds the chain link); Slice 1's payoff =
+  kind → `EffectSummary`) so the attested queries see real facts, not just the receipt-hash MMR. (c) ACTUAL adoption is in
+  `cap-bundle` parser → `CapBundle` — an ember/David seam, out-of-tree. (d) Slice 2 (`Target::HostPd` confinement) stays in
+  `sel4/dregg-firmament`, not re-exported.
+
 ## umem Stage A LANDED: the per-cell heap is a first-class umem (additive); live producer is the named seam (2026-06-25)
 - WHAT: `UMEM-PRIMITIVE.md §2/§7` Stage A — the per-cell heap (`CellState.heap_map`) projected as a
   first-class umem collection, additive on the recursion-gated bridge witness, the keystone's first

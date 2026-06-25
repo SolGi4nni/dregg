@@ -345,6 +345,7 @@ dependencies = [
  "blake3",
  "bs58",
  "dregg-captp",
+ "dregg-cell",
  "dregg-firmament",
  "image",
  "servo-render",
@@ -11031,7 +11032,6 @@ dependencies = [
 [[package]]
 name = "p3-circuit"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",
@@ -11058,7 +11058,6 @@ dependencies = [
 [[package]]
 name = "p3-circuit-prover"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "hashbrown 0.16.1",
  "p3-air",
@@ -11334,7 +11333,6 @@ dependencies = [
 [[package]]
 name = "p3-poseidon1-circuit-air"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -11384,7 +11382,6 @@ dependencies = [
 [[package]]
 name = "p3-poseidon2-circuit-air"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -11408,7 +11405,6 @@ dependencies = [
 [[package]]
 name = "p3-recursion"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=8d42900357f0140851e0098fab84b93995c498e9#8d42900357f0140851e0098fab84b93995c498e9"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",
@@ -12012,6 +12008,17 @@ dependencies = [
  "cpufeatures 0.2.17",
  "opaque-debug",
  "universal-hash 0.5.1",
+]
+
+[[package]]
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-query",
+ "dregg-turn",
+ "hex",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -16406,6 +16413,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-kvstore"
+version = "0.1.0"
+dependencies = [
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
+]
+
+[[package]]
 name = "starbridge-nameservice"
 version = "0.1.0"
 dependencies = [
@@ -17334,7 +17351,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand 2.4.1",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
