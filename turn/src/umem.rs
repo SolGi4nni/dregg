@@ -332,6 +332,27 @@ fn json<T: serde::Serialize>(t: &T) -> UVal {
 /// Lean `Option`-cell encoding with `none` dropped).
 pub type UProjection = BTreeMap<UKey, UVal>;
 
+/// **THE CHECKED NON-PROJECTION INVARIANT (UMEM-PRIMITIVE.md §3).** The
+/// persistent projection NEVER emits a `Working`-domain key. A `Working` cell
+/// rides the ONE memcheck trace — so it is consistent for free
+/// (`universal_memory_sound`) — but, exactly like `Registers`, its boundary root
+/// must never enter the state commitment: it is transient service/interpreter
+/// scratch, not consensus state. That guarantee was previously load-bearing only
+/// by the Rust FACT that [`project_cell`]/[`project_ledger`]/
+/// [`project_executor_state`] happen to never construct a `UKey::Working` — a
+/// comment, not a checked property. This makes it CHECKED: if anyone later wires a
+/// `Working` cell into a projection, it fires here (in debug/test builds) rather
+/// than silently entering a committed boundary.
+#[inline]
+fn debug_assert_no_working(proj: &UProjection) {
+    debug_assert!(
+        !proj.keys().any(|k| k.domain() == UDomain::Working),
+        "umem soundness: a persistent projection must NEVER carry a Working-domain \
+         key — Working is transient trace-only scratch whose boundary is never \
+         published into the state commitment (see UMEM-PRIMITIVE.md §3)"
+    );
+}
+
 /// Project one cell's planes into the universal address space.
 pub fn project_cell(cell: &Cell, out: &mut UProjection) {
     let id = cell.id();
@@ -439,6 +460,8 @@ pub fn project_cell(cell: &Cell, out: &mut UProjection) {
         out.insert(UKey::VerificationKey(id), json(vk));
     }
     out.insert(UKey::Program(id), json(&cell.program));
+    // SOUNDNESS: this projection of a persistent cell must carry no Working cell.
+    debug_assert_no_working(out);
 }
 
 /// Project the whole ledger (hosted cells + sovereign commitments).
@@ -450,6 +473,7 @@ pub fn project_ledger(ledger: &Ledger) -> UProjection {
     for (id, commitment) in ledger.iter_sovereign_commitments() {
         out.insert(UKey::SovereignCommitment(*id), UVal::Bytes32(*commitment));
     }
+    debug_assert_no_working(&out);
     out
 }
 
@@ -471,6 +495,7 @@ pub fn project_executor_state(
     for (vk, desc) in factories.descriptors.iter() {
         out.insert(UKey::Factory(*vk), json(desc));
     }
+    debug_assert_no_working(&out);
     out
 }
 
@@ -1757,6 +1782,163 @@ mod heap_stage_a_tests {
         assert_ne!(
             err.derived, committed,
             "the tampered image derives a different root"
+        );
+    }
+}
+
+#[cfg(test)]
+mod working_non_projection_tests {
+    //! The CHECKED form of the `Working`-domain non-projection invariant
+    //! (UMEM-PRIMITIVE.md §3): `Working` rides the memcheck trace (consistent for
+    //! free) but is NEVER emitted by `project_cell`/`project_ledger`/
+    //! `project_executor_state` into a committed boundary. Previously guarded only
+    //! by the Rust fact that those functions never construct a `UKey::Working`;
+    //! now a `debug_assert_no_working` guard fires if that breaks, and this test
+    //! pins it from the outside.
+    use super::*;
+    use dregg_cell::{Cell, Ledger, note::Nullifier, nullifier_set::NullifierSet};
+    use dregg_cell_crypto::note_bridge::BridgedNullifierSet;
+
+    fn cell_seeded(seed: u8) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        pk[31] = seed.wrapping_mul(37);
+        Cell::with_balance(pk, [0u8; 32], 1000 + seed as i64)
+    }
+
+    fn bytes(n: u8) -> [u8; 32] {
+        let mut b = [0u8; 32];
+        b[0] = n;
+        b
+    }
+
+    fn count_working(proj: &UProjection) -> usize {
+        proj.keys()
+            .filter(|k| k.domain() == UDomain::Working)
+            .count()
+    }
+
+    /// A populated executor state: two cells (with fields + heap entries + a
+    /// balance), note + bridged nullifiers, projected three ways. None of the
+    /// three projection functions emits a single `Working`-domain key.
+    #[test]
+    fn projections_never_emit_working() {
+        // -- two populated cells, one with heap entries. --
+        let mut a = cell_seeded(1);
+        a.state.fields[0] = bytes(7);
+        a.state.set_heap(3, 4, bytes(11));
+        a.state.set_heap(3, 9, bytes(22));
+        let mut b = cell_seeded(2);
+        b.state.fields[2] = bytes(9);
+
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(a.clone()).unwrap();
+        ledger.insert_cell(b.clone()).unwrap();
+
+        // project_cell over each populated cell — no Working.
+        let mut per_cell = UProjection::new();
+        project_cell(&a, &mut per_cell);
+        project_cell(&b, &mut per_cell);
+        assert!(
+            !per_cell.is_empty(),
+            "the per-cell projection is genuinely populated"
+        );
+        assert_eq!(
+            count_working(&per_cell),
+            0,
+            "project_cell must emit no Working-domain key"
+        );
+
+        // project_ledger over the populated ledger — no Working.
+        let ledger_proj = project_ledger(&ledger);
+        assert!(!ledger_proj.is_empty());
+        assert_eq!(
+            count_working(&ledger_proj),
+            0,
+            "project_ledger must emit no Working-domain key"
+        );
+
+        // project_executor_state over ledger + side tables — no Working.
+        let mut note_nullifiers = NullifierSet::new();
+        note_nullifiers.insert(Nullifier(bytes(0xA1))).unwrap();
+        note_nullifiers.insert(Nullifier(bytes(0xA2))).unwrap();
+        let mut bridged_nullifiers = BridgedNullifierSet::new();
+        bridged_nullifiers.insert(bytes(0xB1)).unwrap();
+        let factories = FactoryRegistry::new();
+
+        let full =
+            project_executor_state(&ledger, &note_nullifiers, &bridged_nullifiers, &factories);
+        assert!(full.len() > ledger_proj.len(), "side tables added cells");
+        assert_eq!(
+            count_working(&full),
+            0,
+            "project_executor_state must emit no Working-domain key"
+        );
+    }
+
+    /// THE LOAD-BEARING DISTINCTION: a `Working` cell is carried by the memcheck
+    /// FOLD (it is genuine trace-resident state, consistent for free) yet NEVER
+    /// appears in the projected boundary. We fold `Working` WRITE ops over the
+    /// real projection — the folded image carries them — but the projection
+    /// functions, re-run over the same persistent state, still emit zero. So a
+    /// transient scratch lives in the trace but is never published.
+    #[test]
+    fn working_rides_the_trace_but_never_the_boundary() {
+        let cell = cell_seeded(3);
+        let service = cell.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(cell).unwrap();
+
+        // the persistent boundary — Working-free by the invariant.
+        let pre = project_ledger(&ledger);
+        assert_eq!(count_working(&pre), 0, "the boundary carries no Working");
+
+        // a memcheck trace that WRITES two Working scratch cells (the transient
+        // service umem the §3 design rides on the ONE trace).
+        let ops = vec![
+            UmemOp {
+                kind: UmemKind::Write,
+                key: UKey::Working {
+                    service,
+                    collection: 1,
+                    key: 0,
+                },
+                val: Some(UVal::Bytes32(bytes(0x55))),
+                prev_val: None,
+                prev_serial: 0,
+            },
+            UmemOp {
+                kind: UmemKind::Write,
+                key: UKey::Working {
+                    service,
+                    collection: 1,
+                    key: 1,
+                },
+                val: Some(UVal::UmemRef(bytes(0x66))),
+                prev_val: None,
+                prev_serial: 0,
+            },
+        ];
+        assert!(disciplined(&ops), "the Working trace is disciplined");
+
+        // the FOLD carries the Working cells — they are genuine trace state.
+        let folded = fold(&pre, &ops);
+        assert_eq!(
+            count_working(&folded),
+            2,
+            "the memcheck fold carries the Working scratch cells (consistent for free)"
+        );
+        // and their boundary is derivable on demand (the §4 checkpoint) — yet it
+        // is never published.
+        let _checkpoint = working_umem_root(&folded, service);
+
+        // CRUCIAL: re-projecting the SAME persistent state still emits zero
+        // Working — the scratch never crossed into a committed boundary.
+        let re = project_ledger(&ledger);
+        assert_eq!(
+            count_working(&re),
+            0,
+            "Working stays trace-only; the projection never publishes it"
         );
     }
 }
