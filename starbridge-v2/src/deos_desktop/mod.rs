@@ -61,7 +61,8 @@ use dregg_cell::lifecycle::CellLifecycle;
 use dregg_types::CellId;
 
 use dregg_doc::{
-    Author, Doc, Granularity, History, Regime, ResolutionChoice, content, resolutions_for,
+    Author, Doc, Granularity, History, Regime, ResolutionChoice, blame, blame_summary, content,
+    resolutions_for, walk_atoms,
 };
 
 use crate::world::{World, grant_capability, transfer};
@@ -154,6 +155,11 @@ enum WinKind {
     /// objects. The window's editing state (steps + baseline) lives in the desktop's
     /// `workflows` map keyed by the subject cell, so this variant is a marker.
     WorkflowComposer,
+    /// **The DOCUMENT EXPLORER** — the Pharo-moldable multi-face inspector of a
+    /// document's patch substance (History scrubber · DocGraph · Blame). Its per-cell
+    /// view state (selected tab + scrubber cursor) lives in `doc_explorers`, so this
+    /// variant is a marker like `WorkflowComposer`.
+    DocExplorer,
 }
 
 impl WinKind {
@@ -164,6 +170,7 @@ impl WinKind {
             WinKind::Links => "Links",
             WinKind::Transcript => "Transcript",
             WinKind::WorkflowComposer => "Workflow",
+            WinKind::DocExplorer => "Doc Explorer",
         }
     }
 }
@@ -209,6 +216,9 @@ enum ActionKind {
     Inspect,
     /// Open the cell as a DOCUMENT EDITOR (the document-as-cell surface).
     OpenDoc,
+    /// Open the DOCUMENT EXPLORER — the Pharo-moldable inspector of the document's
+    /// patch substance (History scrubber · DocGraph · Blame).
+    OpenDocExplorer,
     /// Open the links / backlinks view over the cell.
     OpenLinks,
     /// Open the transcript / receipt-log window (the World chronicle).
@@ -357,6 +367,46 @@ pub struct DeosDesktop {
     /// cached buffer on the next render (those paths lack `&mut Window`, which
     /// `InputState::set_value` needs). Drained in `render_doc_body`.
     doc_resync: std::collections::HashSet<CellId>,
+    /// **The per-cell DOCUMENT-EXPLORER view state** — which face (tab) is selected and
+    /// where the History time-travel scrubber's cursor sits. Keyed by the subject cell;
+    /// the `DocExplorer` window reads it. A pure view concern (no committed state).
+    doc_explorers: HashMap<CellId, DocExplorerState>,
+}
+
+/// The view state of a [`WinKind::DocExplorer`] window: which moldable face is shown
+/// and the History scrubber's cursor (a revision index, `None` = the tip).
+#[derive(Clone, Default)]
+struct DocExplorerState {
+    tab: DocExplorerTab,
+    /// The scrubbed revision index (0-based into the patch history); `None` = tip.
+    scrub: Option<usize>,
+}
+
+/// The moldable faces of the Document Explorer (the Pharo "many views of one object").
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum DocExplorerTab {
+    /// The patch-history time-travel scrubber (replay the doc at each revision).
+    #[default]
+    History,
+    /// The DocGraph laid bare — atoms (id · alive/dead · author) + order-edges.
+    Graph,
+    /// Per-line authorship blame + contributions-by-author.
+    Blame,
+}
+
+impl DocExplorerTab {
+    fn label(self) -> &'static str {
+        match self {
+            DocExplorerTab::History => "History (time-travel)",
+            DocExplorerTab::Graph => "DocGraph (atoms)",
+            DocExplorerTab::Blame => "Blame (authorship)",
+        }
+    }
+    const ALL: [DocExplorerTab; 3] = [
+        DocExplorerTab::History,
+        DocExplorerTab::Graph,
+        DocExplorerTab::Blame,
+    ];
 }
 
 impl DeosDesktop {
@@ -400,6 +450,7 @@ impl DeosDesktop {
             doc_inputs: HashMap::new(),
             doc_subs: HashMap::new(),
             doc_resync: std::collections::HashSet::new(),
+            doc_explorers: HashMap::new(),
         };
         // Re-open any windows the persisted layout remembers (spatial persistence
         // for windows, not just icons — and now for window TYPE too).
@@ -438,6 +489,7 @@ impl DeosDesktop {
             WinKindTag::Links => WinKind::Links,
             WinKindTag::Transcript => WinKind::Transcript,
             WinKindTag::Workflow => WinKind::WorkflowComposer,
+            WinKindTag::DocExplorer => WinKind::DocExplorer,
             WinKindTag::DocEditor => {
                 let text = self.load_doc_text(&cell);
                 let g = if self.layout.prefs.word_granularity {
@@ -534,6 +586,7 @@ impl DeosDesktop {
             WinKindTag::Links => (380.0, 300.0),
             WinKindTag::Inspector => (360.0, 300.0),
             WinKindTag::Workflow => (420.0, 460.0),
+            WinKindTag::DocExplorer => (460.0, 420.0),
             _ => (380.0, 320.0),
         };
         if let Some(g) = self.layout.win_geom(&id_hex(&cell), tag) {
@@ -553,6 +606,9 @@ impl DeosDesktop {
             self.doc_inputs.remove(&key.0);
             self.doc_subs.remove(&key.0);
             self.doc_resync.remove(&key.0);
+        }
+        if key.1 == WinKindTag::DocExplorer {
+            self.doc_explorers.remove(&key.0);
         }
         self.layout.drop_win(&id_hex(&key.0), key.1);
         self.layout.save(&self.layout_path);
@@ -752,6 +808,11 @@ impl DeosDesktop {
             // ── Open-as surfaces (the window-type vocabulary) ──
             MenuAction::new("Inspect…", true, A::Inspect),
             MenuAction::new("Open as Document…", true, A::OpenDoc),
+            MenuAction::new(
+                "Explore Document… (history · graph · blame)",
+                true,
+                A::OpenDocExplorer,
+            ),
             MenuAction::new("Links & Backlinks…", true, A::OpenLinks),
             MenuAction::new("Transcript (receipt log)…", true, A::OpenTranscript),
             MenuAction::new(
@@ -975,6 +1036,13 @@ impl DeosDesktop {
             ActionKind::OpenDoc => {
                 self.open_kind(cell, WinKindTag::DocEditor);
                 self.status = format!("Document editor open on {}.", id_short(&cell));
+            }
+            ActionKind::OpenDocExplorer => {
+                self.open_kind(cell, WinKindTag::DocExplorer);
+                self.status = format!(
+                    "Doc Explorer on {} — time-travel · DocGraph · blame (the patch substance).",
+                    id_short(&cell)
+                );
             }
             ActionKind::OpenLinks => {
                 self.open_kind(cell, WinKindTag::Links);
@@ -1875,6 +1943,51 @@ impl DeosDesktop {
         self.doc_resync.insert(cell);
     }
 
+    // ── Document Explorer bake+test hooks (the Pharo-moldable patch inspector) ──
+
+    /// Open the Document Explorer window on `cell` (the Explore Document… action).
+    pub fn bake_open_doc_explorer(&mut self, cell: CellId) {
+        self.open_kind(cell, WinKindTag::DocExplorer);
+    }
+
+    /// Select the explorer's face (0=History, 1=Graph, 2=Blame) — the tab gesture.
+    pub fn bake_doc_explorer_tab(&mut self, cell: CellId, tab: usize) {
+        let t = match tab {
+            1 => DocExplorerTab::Graph,
+            2 => DocExplorerTab::Blame,
+            _ => DocExplorerTab::History,
+        };
+        self.doc_explorers.entry(cell).or_default().tab = t;
+    }
+
+    /// Scrub the History face to revision `rev` (`None` = tip) — the time-travel cursor.
+    pub fn bake_doc_explorer_scrub(&mut self, cell: CellId, rev: Option<usize>) {
+        self.doc_explorers.entry(cell).or_default().scrub = rev;
+    }
+
+    /// The document AT the scrubbed revision (replayed via `replay_to`), or the tip's
+    /// text. A bake/test hook proving the time-travel scrubber reads real history.
+    pub fn bake_doc_explorer_at(&self, cell: CellId, rev: Option<usize>) -> Option<String> {
+        let doc = self.doc_for_explorer(cell)?;
+        let patches = doc.history().patches();
+        Some(match rev {
+            Some(i) if i < patches.len() => {
+                content(&doc.history().replay_to(patches[i].id())).to_marked_string()
+            }
+            _ => doc.text(),
+        })
+    }
+
+    /// How many atoms / how many distinct authors `cell`'s document graph carries — a
+    /// bake/test assertion hook over the live DocGraph + blame faces.
+    pub fn bake_doc_explorer_stats(&self, cell: CellId) -> Option<(usize, usize)> {
+        let doc = self.doc_for_explorer(cell)?;
+        let graph = doc.history().replay();
+        let atoms = graph.atoms().count();
+        let authors = blame_summary(&graph).len();
+        Some((atoms, authors))
+    }
+
     /// The live `InputState` editor entity for `cell`'s open document, if the doc body
     /// has rendered at least once (so `ensure_doc_input` built it). A test hook: lets a
     /// headless test TYPE into the REAL widget (`insert`/`set_value`) and assert the
@@ -2213,6 +2326,7 @@ impl DeosDesktop {
             WinKindTag::Links => self.render_links_body(cell),
             WinKindTag::Transcript => self.render_transcript_body(),
             WinKindTag::Workflow => self.render_workflow_body(cell, cx),
+            WinKindTag::DocExplorer => self.render_doc_explorer_body(cell, cx),
             _ => self.render_inspector_body(cell, cx),
         };
 
@@ -2699,6 +2813,294 @@ impl DeosDesktop {
             }),
         )
         .child(format!("resolve: {label}"))
+    }
+
+    // ── THE DOCUMENT EXPLORER — the Pharo-moldable inspector of a doc's patch substance ──
+
+    /// Obtain a live `dregg_doc::Doc` to explore for `cell`: the open editor's own doc
+    /// (its full patch-history) if one is open, else a doc reconstructed from the cell's
+    /// committed heap prose. `None` for a cell that carries no document at all.
+    fn doc_for_explorer(&self, cell: CellId) -> Option<Doc> {
+        if let Some(WinKind::DocEditor { doc, .. }) = self
+            .windows
+            .get(&(cell, WinKindTag::DocEditor))
+            .map(|w| &w.kind)
+        {
+            return Some(doc.clone());
+        }
+        let text = self.read_doc_from_heap(&cell)?;
+        let g = if self.layout.prefs.word_granularity {
+            Granularity::Word
+        } else {
+            Granularity::Line
+        };
+        let mut doc = Doc::new(g);
+        if !text.is_empty() {
+            doc.edit(self.author, &text);
+        }
+        Some(doc)
+    }
+
+    /// **The Document Explorer body** — a tabbed Pharo-moldable inspector over a
+    /// document's `dregg_doc` faces: the History time-travel scrubber, the DocGraph
+    /// atoms+edges, and Blame. Read-only reflection over the live patch substance.
+    fn render_doc_explorer_body(&self, cell: CellId, cx: &mut Context<Self>) -> AnyElement {
+        let state = self.doc_explorers.get(&cell).cloned().unwrap_or_default();
+        let doc = self.doc_for_explorer(cell);
+
+        let mut col = div()
+            .id(gpui::SharedString::from(format!(
+                "docxbody-{}",
+                id_hex(&cell)
+            )))
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .bg(gpui::rgb(0xf2f0f8))
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1();
+
+        // The tab strip (the NT/Pharo "many faces of one object" selector).
+        let mut tabs = div().flex().flex_row().gap_1().my_1();
+        for t in DocExplorerTab::ALL {
+            let selected = t == state.tab;
+            tabs = tabs.child(
+                bevel_raised(
+                    div()
+                        .id(gpui::SharedString::from(format!(
+                            "docxtab-{}-{}",
+                            id_hex(&cell),
+                            t.label()
+                        )))
+                        .px_2()
+                        .py_1()
+                        .text_size(px(10.0))
+                        .when(selected, |d| {
+                            d.bg(gpui::rgb(NT_SELECT)).text_color(gpui::rgb(0xffffff))
+                        }),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _ev: &MouseDownEvent, _w, cx| {
+                        this.doc_explorers.entry(cell).or_default().tab = t;
+                        cx.notify();
+                    }),
+                )
+                .child(t.label()),
+            );
+        }
+        col = col.child(tabs);
+
+        let Some(doc) = doc else {
+            return col
+                .child(face_row(
+                    "(no document)",
+                    "Open as Document and type to explore it",
+                ))
+                .into_any_element();
+        };
+
+        let body = match state.tab {
+            DocExplorerTab::History => self.render_docx_history(cell, &doc, state.scrub, cx),
+            DocExplorerTab::Graph => self.render_docx_graph(&doc),
+            DocExplorerTab::Blame => self.render_docx_blame(&doc),
+        };
+        col.child(body).into_any_element()
+    }
+
+    /// The History FACE — the patch-history time-travel scrubber. Each revision is a
+    /// clickable row; selecting one replays the document AT that point (`replay_to`),
+    /// so you scrub the document's whole evolution. The tip is the live document.
+    fn render_docx_history(
+        &self,
+        cell: CellId,
+        doc: &Doc,
+        scrub: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let patches = doc.history().patches();
+        let n = patches.len();
+        let mut col = div().flex().flex_col().gap_1().child(face_section(&format!(
+            "History — {n} patch(es), time-travel"
+        )));
+
+        // The revision rows: genesis(0) … tip(n). Clicking sets the scrub cursor.
+        let cursor = scrub.unwrap_or(n);
+        for i in 0..=n {
+            let is_tip = i == n;
+            let selected = i == cursor;
+            let label = if is_tip {
+                "● tip (live)".to_string()
+            } else {
+                let author = patches[i].author.0 & 0xffff;
+                format!("rev {i}  ·  @{author}")
+            };
+            col = col.child(
+                bevel_raised(
+                    div()
+                        .id(gpui::SharedString::from(format!(
+                            "docxrev-{}-{i}",
+                            id_hex(&cell)
+                        )))
+                        .px_2()
+                        .py_1()
+                        .text_size(px(10.0))
+                        .when(selected, |d| {
+                            d.bg(gpui::rgb(0xd8d0f0)).font_weight(FontWeight::BOLD)
+                        }),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _ev: &MouseDownEvent, _w, cx| {
+                        let s = this.doc_explorers.entry(cell).or_default();
+                        s.scrub = if is_tip { None } else { Some(i) };
+                        cx.notify();
+                    }),
+                )
+                .child(label),
+            );
+        }
+
+        // The replayed document AT the scrubbed revision (the time-travel payoff).
+        let at_text = if cursor >= n {
+            doc.text()
+        } else {
+            let pid = patches[cursor].id();
+            let g = content(&doc.history().replay_to(pid));
+            g.to_marked_string()
+        };
+        let preview: String = at_text.chars().take(400).collect();
+        col = col.child(face_section(if cursor >= n {
+            "Document at tip (live)"
+        } else {
+            "Document at this revision (replayed)"
+        }));
+        col.child(
+            div()
+                .my_1()
+                .p_1()
+                .min_h(px(60.0))
+                .bg(gpui::rgb(0xffffff))
+                .border_1()
+                .border_color(gpui::rgb(NT_FACE_DARK))
+                .text_size(px(10.0))
+                .child(if preview.trim().is_empty() {
+                    "(empty at this revision)".to_string()
+                } else {
+                    preview
+                }),
+        )
+        .into_any_element()
+    }
+
+    /// The DocGraph FACE — the Pijul graph laid bare: every atom (its id, alive/dead
+    /// status, author, content) and the order-edges. Pure structural reflection (the
+    /// "inspect the object's guts" Pharo bar) over the document's content-addressed atoms.
+    fn render_docx_graph(&self, doc: &Doc) -> AnyElement {
+        let graph = doc.history().replay();
+        let mut atoms: Vec<_> = graph.atoms().collect();
+        atoms.sort_by_key(|a| a.id.0);
+        let alive = atoms.iter().filter(|a| a.is_alive()).count();
+        let mut col = div().flex().flex_col().gap_1().child(face_section(&format!(
+            "DocGraph — {} atom(s), {alive} alive",
+            atoms.len()
+        )));
+        for a in &atoms {
+            // ROOT is the sentinel; show it dimmed as the anchor.
+            let is_root = a.id.0 == 0;
+            let status = if a.is_alive() {
+                "alive"
+            } else {
+                "dead·tombstone"
+            };
+            let content_preview: String = a.content.chars().take(36).collect();
+            let label = if is_root {
+                "ROOT (anchor)".to_string()
+            } else {
+                format!("@{} · {status}", a.provenance.author.0 & 0xffff)
+            };
+            let succ: Vec<_> = graph.successors(a.id).collect();
+            let edge = if succ.is_empty() {
+                String::new()
+            } else {
+                format!("  →{}", succ.len())
+            };
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .px_1()
+                    .text_size(px(10.0))
+                    .when(!a.is_alive(), |d| d.text_color(gpui::rgb(NT_DIM)))
+                    .child(
+                        div()
+                            .w(px(150.0))
+                            .child(format!("a{:x}{edge}", (a.id.0 as u64) & 0xffff)),
+                    )
+                    .child(div().w(px(120.0)).child(label))
+                    .child(div().flex_1().child(if content_preview.trim().is_empty() {
+                        "·".to_string()
+                    } else {
+                        content_preview.replace('\n', "⏎")
+                    })),
+            );
+        }
+        col.into_any_element()
+    }
+
+    /// The Blame FACE — per-line authorship (each live atom attributed to its author +
+    /// the patch that introduced it, content-addressed so attribution rides the content),
+    /// plus a contributions-by-author tally.
+    fn render_docx_blame(&self, doc: &Doc) -> AnyElement {
+        let graph = doc.history().replay();
+        let lines = blame(&graph);
+        let summary = blame_summary(&graph);
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(face_section(&format!("Blame — {} line(s)", lines.len())));
+        for bl in &lines {
+            let text: String = bl.content.chars().take(44).collect();
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .px_1()
+                    .text_size(px(10.0))
+                    .child(
+                        div()
+                            .w(px(70.0))
+                            .text_color(gpui::rgb(0x4040a0))
+                            .child(format!("@{}", bl.author.0 & 0xffff)),
+                    )
+                    .child(div().flex_1().child(if text.trim().is_empty() {
+                        "·".to_string()
+                    } else {
+                        text.replace('\n', "⏎")
+                    })),
+            );
+        }
+        col = col.child(face_section("Contributions (by author)"));
+        let mut tally: Vec<_> = summary.into_iter().collect();
+        tally.sort_by(|a, b| b.1.cmp(&a.1));
+        if tally.is_empty() {
+            col = col.child(face_row(
+                "(none)",
+                "type into the document to attribute atoms",
+            ));
+        }
+        for (author, count) in tally {
+            col = col.child(face_row(
+                &format!("@{}", author.0 & 0xffff),
+                &format!("{count} atom(s)"),
+            ));
+        }
+        col.into_any_element()
     }
 
     /// **The links / backlinks body** — which cells this one reaches (its caps),
@@ -3565,6 +3967,7 @@ fn kind_short(tag: WinKindTag) -> &'static str {
         WinKindTag::Transcript => "LOG",
         WinKindTag::Workflow => "WFL",
         WinKindTag::AndroidCell => "AND",
+        WinKindTag::DocExplorer => "DGX",
     }
 }
 

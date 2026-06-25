@@ -51,6 +51,11 @@ pub enum WinKindTag {
     /// mapped (via [`super::android_window`]) into cap-gated `AndroidInput` driven into
     /// the confined runtime. Clicking the window TAPS the android app.
     AndroidCell,
+    /// **The DOCUMENT EXPLORER** — a Pharo-moldable multi-face inspector of a
+    /// document cell's patch-theoretic substance: a tabbed surface over the live
+    /// `dregg_doc` faces (History time-travel scrubber · the DocGraph atoms+edges ·
+    /// Blame authorship). Read-only reflection; the editing happens in `DocEditor`.
+    DocExplorer,
 }
 
 /// A persisted document's text, keyed by the cell's hex id — the CONTENT

@@ -1189,6 +1189,39 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     // full resolve→publish loop is asserted by the `deos_desktop_conflict_is_a_state`
     // test; here the bake proves the conflict STATE arises + renders.
 
+    // 4d. THE DOCUMENT EXPLORER — the Pharo-moldable inspector of the user document's
+    //     patch substance. Open it, select the History face, and SCRUB to an early
+    //     revision (the time-travel scrubber, via `replay_to`). Assert the replayed
+    //     early revision differs from the tip — real history reflection, not a flat
+    //     readout. The window renders in the final shot (History · Graph · Blame tabs).
+    desk_h.update(&mut cx, |desk, cx| {
+        desk.bake_open_doc_explorer(user);
+        desk.bake_doc_explorer_tab(user, 0); // History face
+        desk.bake_doc_explorer_scrub(user, Some(0)); // scrub to the first revision
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let tip_text = desk_h
+        .update(&mut cx, |desk, _cx| desk.bake_doc_explorer_at(user, None))
+        .unwrap_or_default();
+    let early_text = desk_h
+        .update(&mut cx, |desk, _cx| {
+            desk.bake_doc_explorer_at(user, Some(0))
+        })
+        .unwrap_or_default();
+    anyhow::ensure!(
+        early_text != tip_text,
+        "the Document Explorer's time-travel scrubber must replay an EARLIER revision \
+         distinct from the tip (real `replay_to` history, not a flat readout)"
+    );
+    let (atoms, _authors) = desk_h
+        .update(&mut cx, |desk, _cx| desk.bake_doc_explorer_stats(user))
+        .unwrap_or((0, 0));
+    anyhow::ensure!(
+        atoms >= 1,
+        "the Document Explorer's DocGraph face must reflect the document's live atoms"
+    );
+
     // 5. Drag the treasury icon to a new position and assert the layout PERSISTED.
     desk_h.update(&mut cx, |desk, cx| {
         desk.bake_drag_icon(treasury, 720.0, 540.0);
