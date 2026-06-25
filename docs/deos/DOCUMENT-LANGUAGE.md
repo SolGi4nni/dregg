@@ -37,16 +37,18 @@ is concentrated in two forward faces, and this document is about the first:
   theory tells us whether we built it right. We *connect* to it (§5), we do not re-derive
   it here.
 
-The honest state, stated up front so the rest reads against it: **most of the hypermedia
-substance is already built** — `deos-web-cells`'s `DreggverseDocument` (an ordered list of
-spans, own-content interleaved with byte-range transclusions, resolved per-viewer through
-the membrane), the verified `TranscludedField`, the two-way `Backlinks`, the per-viewer
-`Membrane`, the `Rehydration` liveness-type. What is **genuinely new** is the *Pijul-shaped
-patch core* — a document as a graph of nodes with alive/dead status, edits as graph
-operations, history as a partial order of patches, and **conflicts as first-class states**.
-The current `DreggverseDocument` is *content-flat*: it is the rendered result, with no patch
-history and no conflict states. The patch core is the missing layer, and it rides — does not
-replace — everything already built.
+The honest state, stated up front so the rest reads against it: **the hypermedia
+substance is built** on two sides. The Nelson/Engelbart side: `deos-web-cells`'s
+`DreggverseDocument` (an ordered list of spans, own-content interleaved with byte-range
+transclusions, resolved per-viewer through the membrane), the verified `TranscludedField`,
+the two-way `Backlinks`, the per-viewer `Membrane`, the `Rehydration` liveness-type. The
+*Pijul-shaped patch core* side: the **`dregg-doc` crate** — a document as a graph of atoms
+with alive/dead status, edits as graph operations (`Add`/`Delete`/`Connect`/`SetField`),
+history as a fold of composable patches, and **conflicts as first-class states**. The two
+sides ride one substrate; `dregg-doc` is the patch layer, and `DreggverseDocument` remains
+*content-flat* (it is the rendered result, with no patch history of its own — `dregg-doc` is
+the layer that produces such a rendering). The patch core rides — does not replace —
+everything on the Nelson/Engelbart side.
 
 ---
 
@@ -60,8 +62,8 @@ has*, so the document language is a naming-and-welding act, not a from-scratch b
 | document notion | dregg object | already built? |
 |---|---|---|
 | **a document** | a **cell** (or a connected cell-subgraph), content-addressed, cap-gated | yes — `dregg_cell::Cell` |
-| **an edit** | a **patch** = a **turn** (an effect over the document cell, leaving a receipt) | yes — the turn/effect/receipt spine; the *patch grammar* is new |
-| **the document's content** | the result of **applying the patch-history** (fold the turns from genesis) | the fold exists (`History::replay_to`); content-as-patch-fold is new |
+| **an edit** | a **patch** = a **turn** (an effect over the document cell, leaving a receipt) | yes — the turn/effect/receipt spine; the *patch grammar* is `dregg_doc::Patch` (`Add`/`Delete`/`Connect`/`SetField`) |
+| **the document's content** | the result of **applying the patch-history** (fold the turns from genesis) | yes — `dregg_doc::History::replay`/`replay_to`; content-as-patch-fold is `dregg_doc::content` |
 | **transclusion** | a **verified cross-cell quote** (`TranscludedField` — content-addressed + receipt + quorum) | yes — `starbridge-web-surface/src/transclusion.rs` |
 | **a two-way link** | the **witness-graph read backward** (`Backlinks` / `DreggverseMap`) | yes — `links_here.rs`, `dreggverse_map.rs` |
 
@@ -200,9 +202,9 @@ substrate. A document cell's content is a `HeapRoot` / field structure (a Merkle
 vertices are content-addressed atoms (the same content-addressing the whole system uses);
 "alive/dead" is a monotone tombstone (the same shape as the nullifier set and the
 revocation tombstone tree, `INSPECTOR-FRAMEWORK.md` slices 4/7); and the union-merge is the
-I-confluent fragment (§2.4). The Pijul graph is a *new structure to author*, but every
+I-confluent fragment (§2.4). The Pijul graph is realized as `dregg_doc::DocGraph`, and every
 primitive it needs (content-addressed atoms, monotone tombstones, Merkle commitment,
-union-merge) is one the substrate already ships.
+union-merge) is one the substrate already ships (the `substrate`-feature ride binds them).
 
 ### 2.3 Conflicts as FIRST-CLASS STATES
 
@@ -364,27 +366,69 @@ resolution leaves a receipt — the resolution itself is witnessed and revertibl
 
 ## 4. THE IMPLEMENTATION SHAPE
 
-### 4.1 Where the patch core lives: a new `dregg-doc` crate
+### 4.1 Where the patch core lives: the `dregg-doc` crate
 
-There is **no `dregg-doc` crate today** (confirmed: the patch-theory core is the one
-genuinely-new module). The recommendation:
+The Pijul-shaped patch core lives in the **`dregg-doc` crate** (`dregg-doc/`, package
+`dregg-doc` v0.1.0, edition 2024, AGPL-3.0). It is a small, `gpui`-free, `cargo test`-able
+core, and by design its **own (empty) workspace** so the parent dregg workspace's build does
+not pull it in — and so the default core is **dependency-free**: pure data structures and
+algorithms, fast and testable in isolation ("let it breathe"). Its public modules:
 
-- **`dregg-doc` — the Pijul-shaped patch-theory core (NEW).** A small, `gpui`-free,
-  `cargo test`-able crate holding: the `DocGraph` (vertices = content-addressed atoms with
-  alive/dead status, edges = order relation), the `Patch` grammar (`Add` / `Delete` (=
-  tombstone) / `Connect`), `apply`/`compose`/`invert`, the union-`merge` (the colimit), the
-  **`Conflict` first-class state** (an antichain region), and `resolve` (a patch that
-  collapses an antichain). It depends on `dregg-cell` for content-addressing and the
-  tombstone/Merkle primitives, and on the `ConfluenceClassifier` to decide the
-  monotone-vs-conflict regime per region. This crate is the *only* genuinely-new structural
-  module; everything else welds existing pieces to it.
+- **`graph`** — `DocGraph`: a keyed atom map `BTreeMap<AtomId, Atom>` + order-edges
+  `BTreeMap<AtomId, BTreeSet<AtomId>>` + a single-valued field store
+  `BTreeMap<String, Vec<FieldAssign>>`. This *is* the Pijul graph (atoms with alive/dead
+  status, edges = the order relation, plus the non-monotone field fragment).
+- **`atom`** — `Atom` (id, content, `Status::{Alive,Dead}` with the monotone "Dead wins"
+  `Status::join`, `Provenance{author,patch}`); `AtomId::derive` (content-addressed).
+- **`patch`** — the `Op` grammar `Add{id,content,after}` / `Delete{id}` (tombstone) /
+  `Connect{from,to}` / `SetField{name,value,superseding}`, with the inverse ops
+  `Resurrect`/`Disconnect`/`RetractField`; `Patch{author,ops}` with a content-addressed
+  `id()`, `apply`/`apply_to`, `compose`, and `invert` (RCCS reversibility).
+- **`merge`** — `merge`/`merge_all`: the total, commutative, associative, idempotent union
+  (the pushout/LUB), via the pointwise `Status::join` + edge/field set-union of
+  `union_in_place`.
+- **`history`** — `History`: `commit`, `replay`/`replay_to` (time-travel), `branch` (fork a
+  draft), `stitch` (publish = the pushout merge of two folds).
+- **`content`** — the linearization: `content` walks the alive atoms, surfacing a fork as a
+  first-class `ConflictRegion` (`Segment::{Clean,Conflict}`, an antichain of ≥2 live
+  `Alternative`s, each carrying provenance); `walk_atoms` is the per-atom companion.
+- **`regime`** — `Regime::{Prose,Field}`, the per-region monotone-vs-real classifier
+  (`needs_consensus`).
+- **`resolve`** — resolution is just another authored patch: `resolve_connect` /
+  `resolve_keep` / `resolve_keep_in` (drops a dropped branch *whole*) / `resolve_field`.
+- **`resolution`** — `resolutions`/`resolutions_for`: the one-click resolution menu
+  (`Resolution::{Keep,Order,ChooseField}`, each a ready authored `Patch`) — the model that
+  makes a rendered conflict resolvable from the surface.
+- **`doc`** — the ergonomic authoring path: `Doc`/`Granularity::{Line,Word}`, an LCS-diff
+  `edit` that mints predecessor-seeded stable atom ids (so duplicate tokens stay distinct).
+- **`depend`** — the theory of patches: `dependencies`/`transitive_dependencies`/
+  `dependents`/`commute`/`unrecord`/`cherry_pick`.
+- **`blame`** (`blame`/`blame_summary` — attribution that survives moves), **`threeway`**
+  (`three_way`/`merge_base`/`render_three_way` — diff3), **`composition`** (`Op::Embed`,
+  composed documents), **`literate`** (the `<<< … >>>` conflict markup parse/render),
+  **`commit`** (`Commitment`/`commit` — the in-crate `DefaultHasher` stand-in commitment).
 
-  Rides the substrate by: a `DocGraph` *is* a `HeapRoot`-shaped content map of a document
-  cell (atoms are heap leaves, content-addressed, Merkle-committed); a `Patch` *is* a `Turn`
-  whose effects write those leaves + tombstones; the document's *content* is
-  `History::replay_to(tip)` folded through the patch grammar; `merge` *is* the
-  `LaceMerge`/I-confluent union for the monotone fragment and a `Conflict` state at the
-  `Confluence.lean` boundary.
+  The default core stays **standalone and dependency-free**; the *ride* onto the live
+  substrate is behind off-by-default features:
+
+  - **`substrate`** welds onto the real `dregg-cell` + `dregg-turn`: `to_heap_map` projects a
+    `DocGraph` into a real `(collection_id, key) -> 32-byte` cell heap and `substrate_commit`
+    is the **sorted-Poseidon2 real heap root** over it (replacing the `commit` `DefaultHasher`
+    stand-in with the faithful commitment a light client trusts); `executor_drive::
+    ExecutorDrivenDoc` desugars an edit into genuine `Effect::SetField` writes driven through
+    the real `TurnExecutor` (cap-gated, finalized, leaving a `TurnReceipt` that *is* the
+    provenance); `desktop::DesktopSurface` projects a cockpit workspace as a document.
+  - **`rope`** welds a `ropey::Rope` editor buffer onto the patch core (`RopeDoc`,
+    `rope.rs`), pinned to deos-zed's exact `ropey` version so its real `Editor` buffer plugs
+    in at the seam.
+
+  So the substrate ride is *built but optional*: a `DocGraph` projects onto a `HeapRoot`-shaped
+  content map of a document cell (atoms are heap leaves, content-addressed, Merkle-committed);
+  a `Patch`'s effects are real turns writing those leaves + tombstones; the document's
+  *content* is `History::replay_to(tip)` folded through the patch grammar; `merge` is the
+  I-confluent union for the monotone fragment and a `Conflict` state at the non-monotone
+  field boundary. The wiring of `Regime` to the live `ConfluenceClassifier` per region is the
+  one still-forward weld (§4.4).
 
 - **`document` module in `starbridge-v2` (the native gpui editor face).** Beside
   `web_cells.rs` / `links_here.rs`: the gpui-free MODEL of a document view (rendered spans,
@@ -404,6 +448,14 @@ genuinely-new module). The recommendation:
   (`parallel_source_view.rs` / `transclusion_demo.rs` are the seeds of the source-vs-rendered
   document views).
 
+**The deos desktop already edits documents through `dregg-doc`.** The cockpit's document
+editor (`starbridge-v2/src/deos_desktop/mod.rs`) holds a live `dregg_doc::Doc`: a document is
+a cell, and typing diffs the buffer into a `dregg_doc::Patch` whose provenance flows into
+blame. The same `dregg_doc::{Author, Doc, Granularity}` path backs the deos-zed editor face
+(`deos-zed`'s `Editor` / `cell_git.rs`, where `dregg_doc::blame` gives move-stable blame) and
+the deos-js composer (`dregg_doc::composition`'s `Op::Embed` embed algebra). So the patch core
+is not a model awaiting a consumer — it is the document layer the live surfaces already run on.
+
 ### 4.2 What is reused vs. genuinely new
 
 **Reused (built, leaned on, not reinvented):**
@@ -420,17 +472,30 @@ genuinely-new module). The recommendation:
 | rhizomatic's 8-op algebra (`select…resolve…fix`) | `~/dev/rhizomatic` | a ready-made query/merge/`resolve` face for the monotone document fragment. |
 | Presentable / Gadget framework | `INSPECTOR-FRAMEWORK.md` (to build) | a document's rendered/source/patch-history/conflict presentations; edit/resolve gadgets. |
 
-**Genuinely new (the `dregg-doc` patch core + its faces):**
+**The `dregg-doc` patch core (BUILT — the structural layer the rest welds onto):**
 
-1. **The Pijul-shaped patch graph** — `DocGraph`, alive/dead atoms, order-edges; the data
-   model that makes merges total and conflicts representable. *(The current
-   `DreggverseDocument` is content-flat — this is the missing structural layer beneath it.)*
-2. **The patch grammar + algebra** — `Patch` = `Add`/`Delete`/`Connect`; `apply`,
-   `compose`, `invert`, `merge` (= pushout/union).
-3. **Conflicts-as-first-class-states** — the `Conflict` antichain state + `resolve`, and the
-   `ConflictView` presentation + the resolution `CommittingGadget`.
-4. **The patch-history fold = document content** — content as `replay_to(tip)` over the
-   patch grammar, with the patch-history `Provenance` presentation.
+1. **The Pijul-shaped patch graph** — `DocGraph`, alive/dead atoms, order-edges + the
+   single-valued field store; the data model that makes merges total and conflicts
+   representable. *(`DreggverseDocument` stays content-flat; this is the patch layer that
+   produces a rendering.)*
+2. **The patch grammar + algebra** — `Patch` = `Add`/`Delete`/`Connect`/`SetField`; `apply`,
+   `compose`, `invert`, `merge` (= the LUB/union the pushout computes).
+3. **Conflicts-as-first-class-states** — the `ConflictRegion` antichain state + `resolve_*`,
+   and `resolutions`/`resolutions_for` (the one-click resolution menu). *(The `ConflictView`
+   presentation + resolution gadget as moldable-inspector surfaces is the forward UI weld.)*
+4. **The patch-history fold = document content** — content as `History::replay`/`replay_to`
+   over the patch grammar, with provenance carried per atom (blame, three-way diff3).
+
+**Still forward (the faces and the proof tail, not the core):**
+
+- The live conflict-view UI in the surfaces (the moldable-inspector `ConflictView`
+  presentation + resolution gadget over the built `resolutions` model).
+- The servo content seam: a rendered document / conflict-view as real cap-gated servo
+  content, not a text model (§4.3).
+- The full cross-party stitch with holes (the partial-turn-promises consent points) and the
+  `Regime`↔live-`ConfluenceClassifier` per-region wiring.
+- The categorical-pushout Lean residual (§4.4 RESEARCH): the join is proven; the full
+  category-`P` construction is named, not built.
 
 ### 4.3 The native-substance overhaul (gpui-native · dregg-native · servo-native)
 
@@ -475,28 +540,32 @@ than as a prototype to be redone later.
 
 ### 4.4 An honest now / soon / research split
 
-- **NOW (weld + a small new core; the substrate carries it).**
-  - The `dregg-doc` crate skeleton: `DocGraph`, the `Patch` grammar, `apply`/`merge`/`resolve`,
-    the I-confluent union path. `cargo test` it like `web_cells.rs` (a pure model, no GPU).
-  - Wire a document's *content* to the patch-history fold (reuse `History::replay_to`).
-  - Grow `DreggverseDocumentView` (built) a patch-history + conflict-view face; render it in
-    the native cockpit `document` module and as a `deos-leptos` reactive view.
-  - Lift the existing `{view,comment,edit,admin}` affordances to per-region edit caps over a
-    document cell-subgraph (the membrane and the gate are already there).
-  - Build each face in its *native* substance from the start (§4.3): the gpui-free document
-    MODEL + thin gpui render in the cockpit; the `RwSignal`/`Memo` reactive view in
-    `deos-leptos`; every edit an executor-backed turn — not prototype-then-redo.
+- **LANDED (the patch core + its first faces).**
+  - The `dregg-doc` crate: `DocGraph`, the `Patch` grammar, `apply`/`compose`/`invert`,
+    `merge`/`merge_all` (the union/LUB), `resolve_*`, `History` (replay/replay_to/branch/
+    stitch), `content` (conflicts as `ConflictRegion`s), `resolutions` (the one-click menu),
+    `Doc`/`Granularity` (LCS-diff authoring), `depend`/`blame`/`threeway`/`composition`/
+    `literate`. A pure, dependency-free, `cargo test`-able core.
+  - A document's *content* is the patch-history fold (`History::replay`/`replay_to`).
+  - The substrate ride (behind `--features substrate`): `to_heap_map` + `substrate_commit`
+    (the real sorted-Poseidon2 heap root), `executor_drive::ExecutorDrivenDoc` (edits as real
+    `TurnExecutor` turns leaving receipts), `desktop::DesktopSurface`; and the `rope` bridge.
+  - The cockpit's document editor runs on a live `dregg_doc::Doc`
+    (`starbridge-v2/src/deos_desktop/mod.rs`); the deos-zed editor and deos-js composer
+    consume `dregg-doc` too (§4.1).
 
 - **SOON (the conflict semantics + the native cutover, end to end).**
   - **Close the servo content seam** for documents: a rendered document / conflict-view as a
     real cap-gated servo render-pass over the document cell, cutting over the `MockSurface` /
     text-model stand-ins (`web_cells.rs` `servo_layer_note`, `delegate.rs` `WebViewDelegate`).
-  - First-class conflict states through the full stitch: an author's branch publish that
-    contests a region yields a stored `Conflict` state, not a rejected merge
-    (`BRANCH-AND-STITCH-PROTOCOL.md` §3 `Stitch`, the linear-logic-forced explicit drop).
-  - The `ConflictView` presentation + the resolution gadget in the moldable inspector;
-    cross-party resolution as a partial-turn-with-holes (the `partial-turn-promises` thread).
-  - The `ConfluenceClassifier` wired as the per-region regime gate (real-conflict vs illusory).
+  - The `ConflictView` presentation + the resolution gadget in the moldable inspector, over
+    the built `resolutions` model; cross-party resolution as a partial-turn-with-holes (the
+    `partial-turn-promises` thread, the linear-logic-forced explicit drop on a contested
+    stitch).
+  - The `Regime` classifier wired to the live `ConfluenceClassifier` as the per-region regime
+    gate (real-conflict vs illusory).
+  - Lift the existing `{view,comment,edit,admin}` affordances to per-region edit caps over a
+    document cell-subgraph (the membrane and the gate are already there).
   - Rhizomatic's `resolve`/query operators as the monotone document's read/merge face.
 
 - **RESEARCH (the load-bearing proofs and the open questions).**
@@ -603,10 +672,14 @@ two-way `DreggverseMap`/`LinksHerePanel` per-viewer fog (`dreggverse_map.rs`, `l
 (`INSPECTOR-FRAMEWORK.md`); the patch-theory ≅ event-structure calibration, `LaceMerge`/
 `Confluence`/`ConfluenceClassifier`, the I-confluent fragment, the stitch = pushout
 (`DISTRIBUTED-TIMETRAVEL-SEMANTICS.md`, `BRANCH-AND-STITCH-PROTOCOL.md`, the
-`rhizomatic-dregg-slotting` + `distributed-houyhnhnm-frontier` memories). Confirmed: **there is
-no `dregg-doc` crate today** — the patch core is genuinely new; and the current
-`DreggverseDocument` is **content-flat** (no patch history, no conflict states), which is the
-gap this doc designs.
+`rhizomatic-dregg-slotting` + `distributed-houyhnhnm-frontier` memories); and the
+**`dregg-doc` crate** — the Pijul-shaped patch core IS built (`dregg-doc/src/{graph,atom,
+patch,merge,history,content,regime,resolve,resolution,doc,depend,blame,threeway,composition,
+literate,commit}.rs`, plus the substrate-gated `substrate`/`executor_drive`/`desktop` and the
+`rope` bridge), `cargo test`-able as its own dependency-free workspace, and already consumed
+by the deos desktop editor, deos-zed, and deos-js. Confirmed: `DreggverseDocument`
+(`deos-web-cells/src/document.rs`) is still **content-flat** (an ordered `Vec<Span>` EDL, no
+patch history of its own) — `dregg-doc` is the patch layer that produces such a rendering.
 
 **Prior art — cited from memory; confirm dates/attributions before this goes outward:**
 Ted Nelson, *Literary Machines* (~1981), Project Xanadu / transclusion (1965–); Douglas

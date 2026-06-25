@@ -157,10 +157,58 @@ fn typing_into_the_real_input_widget_commits_to_the_cell_heap() {
         "the live editor widget holds exactly the committed prose"
     );
 
+    // ── THE DOCUMENT IS THE CELL: close + reopen re-seeds FROM THE COMMITTED HEAP ──
+    // Wipe the sidecar so the only surviving source of the prose is the cell's
+    // committed `fields_map`. Close the doc window (drops the live editor + its sub),
+    // then reopen + render — the FRESH `InputState` must re-seed verbatim from the
+    // ledger heap, with NO new turn (reopening reads; it does not write).
+    let _ = std::fs::remove_file(&layout_path);
+    window
+        .update(&mut cx, |_root, _w, cx| {
+            desk.update(cx, |d, cx| {
+                d.bake_close_doc(user);
+                cx.notify();
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let height_after_close = shared.borrow().height();
+    window
+        .update(&mut cx, |_root, _w, cx| {
+            desk.update(cx, |d, cx| {
+                d.bake_open_doc(user);
+                cx.notify();
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let reopened = window
+        .update(&mut cx, |_root, _w, cx| {
+            desk.read(cx)
+                .bake_doc_input(user)
+                .map(|e| e.read(cx).value().to_string())
+        })
+        .unwrap()
+        .expect("a fresh editor exists after reopen");
+    assert_eq!(
+        reopened, typed,
+        "the reopened editor re-seeds VERBATIM from the committed cell heap (the \
+         document IS the cell; the sidecar was wiped)"
+    );
+    assert_eq!(
+        shared.borrow().height(),
+        height_after_close,
+        "reopening a document READS the heap — it must not write a new turn"
+    );
+
     let _ = std::fs::remove_file(&layout_path);
     println!(
         "OK typed {} bytes into the REAL gpui-component editor → Change → edit_doc → \
-         committed heap (height {pre} -> {post}); reads back verbatim from the ledger.",
+         committed heap (height {pre} -> {post}); reads back verbatim from the ledger; \
+         and after close + sidecar-wipe + reopen, the FRESH editor re-seeds verbatim \
+         from the committed heap with no new turn — the document IS the cell.",
         typed.len()
     );
 }

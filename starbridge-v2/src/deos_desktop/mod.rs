@@ -60,7 +60,9 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use dregg_cell::lifecycle::CellLifecycle;
 use dregg_types::CellId;
 
-use dregg_doc::{Author, Doc, Granularity};
+use dregg_doc::{
+    Author, Doc, Granularity, History, Regime, ResolutionChoice, content, resolutions_for,
+};
 
 use crate::world::{World, grant_capability, transfer};
 
@@ -132,6 +134,15 @@ enum WinKind {
         doc: Doc,
         /// The text currently in the edit buffer (committed-on-edit / on the bake).
         buffer: String,
+        /// **A forked co-author DRAFT branch** (BRANCH-AND-STITCH-PROTOCOL §1) — a
+        /// clone of `doc`'s patch-history that a second author edits independently,
+        /// confined until stitched. `None` until the user forks one.
+        branch: Option<Doc>,
+        /// **The STITCHED document** after a merge (`History::stitch` = the pushout) —
+        /// it may carry first-class `dregg_doc` conflict states (an antichain of live
+        /// alternatives) where both authors edited the same region. `None` until a
+        /// stitch runs; rendered as the live ConflictView when it holds a conflict.
+        merged: Option<Doc>,
     },
     /// A links / backlinks view — which cells this one reaches (its caps) and which
     /// reach it, plus the transclusions composed into it.
@@ -438,7 +449,12 @@ impl DeosDesktop {
                 if !text.is_empty() {
                     doc.edit(self.author, &text);
                 }
-                WinKind::DocEditor { doc, buffer: text }
+                WinKind::DocEditor {
+                    doc,
+                    buffer: text,
+                    branch: None,
+                    merged: None,
+                }
             }
             // Other window TYPEs owned by concurrent surfaces fall back to an
             // inspector body until their own arm lands (swarm self-heal).
@@ -1122,7 +1138,7 @@ impl DeosDesktop {
         let author = self.author;
         let mut committed = false;
         if let Some(ws) = self.windows.get_mut(&(into, WinKindTag::DocEditor)) {
-            if let WinKind::DocEditor { doc, buffer } = &mut ws.kind {
+            if let WinKind::DocEditor { doc, buffer, .. } = &mut ws.kind {
                 buffer.push_str(&line);
                 let new_text = buffer.clone();
                 doc.edit(author, &new_text);
@@ -1231,7 +1247,7 @@ impl DeosDesktop {
         let author = self.author;
         let mut patches = 0usize;
         if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
-            if let WinKind::DocEditor { doc, buffer } = &mut ws.kind {
+            if let WinKind::DocEditor { doc, buffer, .. } = &mut ws.kind {
                 *buffer = new_text.clone();
                 doc.edit(author, &new_text);
                 patches = doc.history().len();
@@ -1251,6 +1267,251 @@ impl DeosDesktop {
             if ok { "committed" } else { "rejected" },
             self.world.borrow().height()
         );
+    }
+
+    /// **Fork a co-author DRAFT branch** (BRANCH-AND-STITCH-PROTOCOL §1) — clone the
+    /// document's patch-history into a parallel `dregg_doc::Doc` a *second* author
+    /// edits independently. The branch is confined (no heap commit) until stitched; a
+    /// branch edit cannot leak into the published document. This is the live realization
+    /// of "an author's draft is a branch."
+    fn fork_doc_branch(&mut self, cell: CellId) {
+        let g = if self.layout.prefs.word_granularity {
+            Granularity::Word
+        } else {
+            Granularity::Line
+        };
+        if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+            if let WinKind::DocEditor {
+                doc,
+                branch,
+                merged,
+                ..
+            } = &mut ws.kind
+            {
+                *branch = Some(Doc::from_history(doc.history().branch(), g));
+                *merged = None;
+            }
+        }
+        self.status = format!(
+            "BRANCH: forked a confined co-author draft of doc {} — edit it, then Stitch \
+             (a divergent region becomes a first-class conflict, not a rejected merge).",
+            id_short(&cell)
+        );
+    }
+
+    /// **A divergent edit on the draft branch** — author the branch as a *second*
+    /// author (`author ^ 1`, a distinct identity) so a stitch that touches the same
+    /// region yields a genuine prose antichain (two live, mutually-unordered
+    /// alternatives), each carrying its author's provenance. Confined: no heap commit.
+    fn diverge_branch(&mut self, cell: CellId, append: &str) {
+        let coauthor = Author(self.author.0 ^ 1);
+        let mut new_text = None;
+        if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+            if let WinKind::DocEditor {
+                branch: Some(b), ..
+            } = &mut ws.kind
+            {
+                let t = format!("{}{append}", b.text());
+                b.edit(coauthor, &t);
+                new_text = Some(t);
+            }
+        }
+        self.status = match new_text {
+            Some(t) => format!(
+                "BRANCH: co-author @{} diverged the draft of doc {} ({} chars) — confined; \
+                 Stitch to merge.",
+                coauthor.0 & 0xffff,
+                id_short(&cell),
+                t.len()
+            ),
+            None => format!(
+                "BRANCH: no draft on doc {} — Fork a draft first.",
+                id_short(&cell)
+            ),
+        };
+    }
+
+    /// **Stitch the draft branch into the document** (BRANCH-AND-STITCH-PROTOCOL §3 —
+    /// the pushout). `History::stitch` folds both branches' patches; the result is a
+    /// merged `dregg_doc::Doc` that may carry FIRST-CLASS CONFLICT STATES (an antichain
+    /// of live alternatives) where both authors edited one region. A clean stitch folds
+    /// straight into the document + heap; a conflicted stitch is held in `merged` and
+    /// surfaced as the live ConflictView (resolved by a later patch — never rejected).
+    fn stitch_branch(&mut self, cell: CellId) {
+        let g = if self.layout.prefs.word_granularity {
+            Granularity::Word
+        } else {
+            Granularity::Line
+        };
+        let mut outcome: Option<(bool, String)> = None; // (conflicted, clean_text)
+        if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+            if let WinKind::DocEditor {
+                doc,
+                branch: Some(b),
+                merged,
+                ..
+            } = &mut ws.kind
+            {
+                let mut stitched = doc.history().branch();
+                stitched.stitch(b.history());
+                let graph = stitched.replay();
+                let rendered = content(&graph);
+                let stitched_doc = Doc::from_history(stitched, g);
+                if rendered.has_conflict() {
+                    *merged = Some(stitched_doc);
+                    outcome = Some((true, String::new()));
+                } else {
+                    // Clean stitch — adopt the merged history as the document's own.
+                    let text = stitched_doc.text();
+                    *doc = stitched_doc;
+                    *merged = None;
+                    outcome = Some((false, text));
+                }
+            }
+        }
+        match outcome {
+            Some((true, _)) => {
+                let n = self
+                    .doc_merged_conflict_count(cell)
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "?".into());
+                self.status = format!(
+                    "STITCH doc {} → {n} first-class CONFLICT(s): both authors edited a \
+                     region. Resolve below (a resolution is itself a receipted patch).",
+                    id_short(&cell)
+                );
+            }
+            Some((false, text)) => {
+                // A clean merge folds into the committed heap as a real revision turn.
+                self.edit_doc(cell, text);
+                if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+                    if let WinKind::DocEditor { branch, .. } = &mut ws.kind {
+                        *branch = None;
+                    }
+                }
+                self.status = format!(
+                    "STITCH doc {} → clean merge (disjoint edits union) committed to heap.",
+                    id_short(&cell)
+                );
+            }
+            None => {
+                self.status = format!(
+                    "STITCH: no draft on doc {} — Fork a draft first.",
+                    id_short(&cell)
+                );
+            }
+        }
+    }
+
+    /// How many unresolved conflict regions the stitched (merged) document carries, if
+    /// any. `None` when there is no merged document open on the cell.
+    fn doc_merged_conflict_count(&self, cell: CellId) -> Option<usize> {
+        match self
+            .windows
+            .get(&(cell, WinKindTag::DocEditor))
+            .map(|w| &w.kind)
+        {
+            Some(WinKind::DocEditor {
+                merged: Some(m), ..
+            }) => Some(content(&m.history().replay()).conflicts().count()),
+            _ => None,
+        }
+    }
+
+    /// **Resolve one conflict region with one choice** — apply the ready
+    /// `ResolutionChoice` patch (keep-this / order-both / choose-value) to the merged
+    /// document's history. A resolution is *just another additive authored patch*
+    /// (`dregg_doc` resolve.rs); after it the antichain collapses. When the merged
+    /// document is fully conflict-free, it FOLDS into the document + a real verified
+    /// heap-commit turn, and the draft branch retires — the merge is published.
+    fn resolve_conflict(&mut self, cell: CellId, region_idx: usize, choice_idx: usize) {
+        let author = self.author;
+        // Build the resolving patch off the live merged graph + chosen region/choice.
+        let choice: Option<ResolutionChoice> = match self
+            .windows
+            .get(&(cell, WinKindTag::DocEditor))
+            .map(|w| &w.kind)
+        {
+            Some(WinKind::DocEditor {
+                merged: Some(m), ..
+            }) => {
+                let graph = m.history().replay();
+                // Clone the chosen region out so the `rendered` borrow ends here,
+                // then build its resolution menu against the (still-live) graph.
+                let region = content(&graph).conflicts().nth(region_idx).cloned();
+                region.and_then(|region| {
+                    resolutions_for(&graph, &region, author)
+                        .into_iter()
+                        .nth(choice_idx)
+                })
+            }
+            _ => None,
+        };
+        let Some(choice) = choice else {
+            self.status = "RESOLVE: that conflict/choice is gone (already resolved?).".into();
+            return;
+        };
+        // Apply the resolution patch onto the merged history; re-render.
+        let mut published: Option<(Doc, bool)> = None; // (doc, fully_clean)
+        if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+            if let WinKind::DocEditor {
+                merged: Some(m), ..
+            } = &mut ws.kind
+            {
+                let mut h = m.history().branch();
+                h.commit(choice.patch.clone());
+                let still_conflicted = content(&h.replay()).has_conflict();
+                let g = if self.layout.prefs.word_granularity {
+                    Granularity::Word
+                } else {
+                    Granularity::Line
+                };
+                let resolved = Doc::from_history(h, g);
+                published = Some((resolved, !still_conflicted));
+            }
+        }
+        let Some((resolved, clean)) = published else {
+            return;
+        };
+        if clean {
+            // The conflict is fully resolved — publish: adopt the merged history as the
+            // document's own, retire the branch, and commit the resolved prose to heap.
+            let text = resolved.text();
+            if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+                if let WinKind::DocEditor {
+                    doc,
+                    branch,
+                    merged,
+                    ..
+                } = &mut ws.kind
+                {
+                    *doc = resolved;
+                    *branch = None;
+                    *merged = None;
+                }
+            }
+            self.edit_doc(cell, text);
+            self.status = format!(
+                "RESOLVE doc {} → '{}' — conflict collapsed, merge PUBLISHED to heap \
+                 (the resolution is itself a receipted patch).",
+                id_short(&cell),
+                choice.label
+            );
+        } else {
+            // Still conflicted (more regions / concurrent resolutions) — hold the merged
+            // doc with the resolution folded in; the remaining conflicts stay live.
+            if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+                if let WinKind::DocEditor { merged, .. } = &mut ws.kind {
+                    *merged = Some(resolved);
+                }
+            }
+            self.status = format!(
+                "RESOLVE doc {} → '{}' applied; further conflict(s) remain (resolution is \
+                 closed under its own conflicts).",
+                id_short(&cell),
+                choice.label
+            );
+        }
     }
 
     /// Actuate a desktop-background menu action (no cell context).
@@ -1526,6 +1787,14 @@ impl DeosDesktop {
         self.open_kind(cell, WinKindTag::DocEditor);
     }
 
+    /// Close `cell`'s document editor window (what the titlebar ✕ does) — drops the
+    /// live `InputState` entity + its `Change` subscription, so a reopen re-seeds the
+    /// widget FROM THE COMMITTED CELL HEAP (not a stale in-memory buffer). A bake/test
+    /// hook over `close_window`, for proving the document IS the cell.
+    pub fn bake_close_doc(&mut self, cell: CellId) {
+        self.close_window((cell, WinKindTag::DocEditor));
+    }
+
     /// Type `text` into `cell`'s document editor — a receipted patch + a verified
     /// SetField revision turn (what the live editor's keystrokes do).
     pub fn bake_edit_doc(&mut self, cell: CellId, text: &str) {
@@ -1572,6 +1841,38 @@ impl DeosDesktop {
     /// The current edit-buffer text of `cell`'s open document (a bake/test hook).
     pub fn bake_doc_text(&self, cell: CellId) -> String {
         self.load_doc_buffer(cell)
+    }
+
+    // ── Branch / stitch / conflict bake+test hooks (the document-language surface) ──
+
+    /// Fork a confined co-author draft branch of `cell`'s document (the Fork button).
+    pub fn bake_fork_branch(&mut self, cell: CellId) {
+        self.fork_doc_branch(cell);
+    }
+
+    /// Author a divergent edit on `cell`'s draft branch (the Diverge button), so a
+    /// stitch yields a genuine prose conflict at the shared region.
+    pub fn bake_diverge_branch(&mut self, cell: CellId, append: &str) {
+        self.diverge_branch(cell, append);
+    }
+
+    /// Stitch `cell`'s draft branch into the document (the pushout) — a clean merge
+    /// folds to heap; a contested region becomes a first-class conflict state.
+    pub fn bake_stitch_branch(&mut self, cell: CellId) {
+        self.stitch_branch(cell);
+    }
+
+    /// How many unresolved first-class CONFLICT regions `cell`'s stitched document
+    /// currently carries (`None` if no stitch is pending). A bake/test assertion hook.
+    pub fn bake_conflict_count(&self, cell: CellId) -> Option<usize> {
+        self.doc_merged_conflict_count(cell)
+    }
+
+    /// Resolve conflict region `region_idx` of `cell`'s stitched document with choice
+    /// `choice_idx` (a one-click `ResolutionChoice` patch). A bake/test hook.
+    pub fn bake_resolve_conflict(&mut self, cell: CellId, region_idx: usize, choice_idx: usize) {
+        self.resolve_conflict(cell, region_idx, choice_idx);
+        self.doc_resync.insert(cell);
     }
 
     /// The live `InputState` editor entity for `cell`'s open document, if the doc body
@@ -2201,7 +2502,203 @@ impl DeosDesktop {
             .child(face_row("patches", &patches.to_string()))
             .child(face_row("cell revision", &rev.to_string()))
             .child(face_row("author", &format!("{}", self.author.0 & 0xffff)))
+            .child(self.render_doc_collab(cell, cx))
             .into_any_element()
+    }
+
+    /// **The branch / stitch / CONFLICT surface** — the live realization of
+    /// conflicts-as-first-class-states (DOCUMENT-LANGUAGE §2.3, the `dregg_doc` patch
+    /// core). It shows: Fork-a-draft / diverge / Stitch controls; and when a stitch
+    /// produced a conflict, the ConflictView — each antichain region's live
+    /// alternatives side-by-side WITH author provenance, and one-click resolution
+    /// buttons (`resolutions_for`) that each commit a real resolution patch.
+    fn render_doc_collab(&self, cell: CellId, cx: &mut Context<Self>) -> AnyElement {
+        let (has_branch, branch_text, merged) = match self
+            .windows
+            .get(&(cell, WinKindTag::DocEditor))
+            .map(|w| &w.kind)
+        {
+            Some(WinKind::DocEditor { branch, merged, .. }) => (
+                branch.is_some(),
+                branch.as_ref().map(|b| b.text()),
+                merged.clone(),
+            ),
+            _ => (false, None, None),
+        };
+
+        let mut col = div().flex().flex_col().gap_1().child(face_section(
+            "Collaborate (branch · stitch · conflict-as-state)",
+        ));
+
+        // The branch/stitch controls.
+        if !has_branch && merged.is_none() {
+            col = col.child(self.doc_collab_button(
+                cell,
+                "Fork a co-author draft branch",
+                DocCollabAct::Fork,
+                cx,
+            ));
+        }
+        if has_branch {
+            let bt = branch_text.unwrap_or_default();
+            let preview: String = bt.lines().last().unwrap_or("").chars().take(48).collect();
+            col = col
+                .child(face_row(
+                    "draft branch",
+                    "confined (no heap commit until stitch)",
+                ))
+                .child(face_row(
+                    "branch tail",
+                    if preview.is_empty() {
+                        "(empty)"
+                    } else {
+                        &preview
+                    },
+                ))
+                .child(self.doc_collab_button(
+                    cell,
+                    "Co-author diverges (edit the draft)",
+                    DocCollabAct::Diverge,
+                    cx,
+                ))
+                .child(self.doc_collab_button(
+                    cell,
+                    "Stitch draft → document (pushout)",
+                    DocCollabAct::Stitch,
+                    cx,
+                ));
+        }
+
+        // ── THE CONFLICT VIEW — first-class conflict states, side-by-side. ──
+        if let Some(m) = &merged {
+            let graph = m.history().replay();
+            let rendered = content(&graph);
+            let conflicts: Vec<_> = rendered.conflicts().cloned().collect();
+            col = col.child(face_section(&format!(
+                "CONFLICT ({} region{}, first-class state)",
+                conflicts.len(),
+                if conflicts.len() == 1 { "" } else { "s" }
+            )));
+            for (ri, region) in conflicts.iter().enumerate() {
+                let regime_lbl = match region.regime {
+                    Regime::Prose => "prose · always-resolvable",
+                    Regime::Field => "field · needs consensus",
+                };
+                let head = if let Some(f) = &region.field {
+                    format!("region {ri}  ·  field '{f}'  ·  {regime_lbl}")
+                } else {
+                    format!("region {ri}  ·  {regime_lbl}")
+                };
+                col = col.child(
+                    div()
+                        .my_1()
+                        .px_1()
+                        .text_size(px(10.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(gpui::rgb(0xa02020))
+                        .child(head),
+                );
+                // Each live alternative, attributed to its author (a FACT).
+                for alt in &region.alternatives {
+                    let txt: String = alt.text.chars().take(80).collect();
+                    col = col.child(
+                        div()
+                            .ml_2()
+                            .px_1()
+                            .py_1()
+                            .bg(gpui::rgb(0xfff4f4))
+                            .border_1()
+                            .border_color(gpui::rgb(0xd0a0a0))
+                            .text_size(px(10.0))
+                            .child(format!(
+                                "@{}: {}",
+                                alt.provenance.author.0 & 0xffff,
+                                if txt.trim().is_empty() {
+                                    "(empty)"
+                                } else {
+                                    txt.trim()
+                                }
+                            )),
+                    );
+                }
+                // One-click resolution choices — each a ready, authored patch.
+                let choices = resolutions_for(&graph, region, self.author);
+                for (ci, choice) in choices.iter().enumerate() {
+                    col = col.child(self.doc_resolve_button(cell, ri, ci, &choice.label, cx));
+                }
+            }
+        }
+
+        col.into_any_element()
+    }
+
+    /// A branch/stitch action button — fires the corresponding collaboration gesture.
+    fn doc_collab_button(
+        &self,
+        cell: CellId,
+        label: &str,
+        act: DocCollabAct,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        bevel_raised(
+            div()
+                .id(gpui::SharedString::from(format!(
+                    "doccollab-{}-{}",
+                    id_hex(&cell),
+                    label
+                )))
+                .px_2()
+                .py_1()
+                .my_1()
+                .text_size(px(11.0)),
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _ev: &MouseDownEvent, _w, cx| {
+                match act {
+                    DocCollabAct::Fork => this.fork_doc_branch(cell),
+                    DocCollabAct::Diverge => {
+                        this.diverge_branch(cell, "\nThe co-author's alternative line.\n")
+                    }
+                    DocCollabAct::Stitch => this.stitch_branch(cell),
+                }
+                cx.notify();
+            }),
+        )
+        .child(label.to_string())
+    }
+
+    /// A one-click conflict-resolution button — commits exactly the chosen
+    /// `ResolutionChoice`'s ready patch onto the merged document.
+    fn doc_resolve_button(
+        &self,
+        cell: CellId,
+        region_idx: usize,
+        choice_idx: usize,
+        label: &str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        bevel_raised(
+            div()
+                .id(gpui::SharedString::from(format!(
+                    "docresolve-{}-{region_idx}-{choice_idx}",
+                    id_hex(&cell)
+                )))
+                .ml_2()
+                .px_2()
+                .py_1()
+                .my_1()
+                .text_size(px(10.0))
+                .bg(gpui::rgb(0xe8f0e8)),
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _ev: &MouseDownEvent, _w, cx| {
+                this.resolve_conflict(cell, region_idx, choice_idx);
+                cx.notify();
+            }),
+        )
+        .child(format!("resolve: {label}"))
     }
 
     /// **The links / backlinks body** — which cells this one reaches (its caps),
@@ -3076,6 +3573,17 @@ enum TitleBtn {
     Minimize,
     Maximize,
     Close,
+}
+
+/// A document COLLABORATION gesture (the branch/stitch surface of the doc editor).
+#[derive(Clone, Copy)]
+enum DocCollabAct {
+    /// Fork a confined co-author draft branch of the document.
+    Fork,
+    /// Author a divergent edit on the draft branch (as a second author).
+    Diverge,
+    /// Stitch the draft branch into the document (the pushout) — may conflict.
+    Stitch,
 }
 
 /// Which boolean preference a desktop-Preferences toggle flips.

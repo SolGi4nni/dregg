@@ -1150,6 +1150,45 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         "treasury's Links must show a backlink ← the user document that mentions it"
     );
 
+    // 4c. THE DOCUMENT LANGUAGE — conflicts as first-class STATES. On the service cell:
+    //     author a base, fork a confined co-author draft, diverge it, AND diverge the
+    //     main — then STITCH (the pushout). Two edits to the same region become a
+    //     first-class CONFLICT (an antichain of live alternatives, each attributed),
+    //     HELD (no heap write) and rendered as the live ConflictView with one-click
+    //     resolution choices. We assert the conflict arose, RESOLVE it (the resolution
+    //     is itself a receipted patch), and assert the merge PUBLISHES to the heap.
+    desk_h.update(&mut cx, |desk, cx| {
+        desk.bake_open_doc(service);
+        desk.bake_edit_doc(service, "A shared opening line.\n");
+        desk.bake_fork_branch(service);
+        desk.bake_diverge_branch(service, "alice's ending.\n");
+        desk.bake_edit_doc(service, "A shared opening line.\nbob's ending.\n");
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let pre_stitch = shared.borrow().height();
+    desk_h.update(&mut cx, |desk, cx| {
+        desk.bake_stitch_branch(service);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let conflict_n = desk_h
+        .update(&mut cx, |desk, _cx| desk.bake_conflict_count(service))
+        .unwrap_or(0);
+    anyhow::ensure!(
+        conflict_n >= 1,
+        "a stitch of two divergent edits to one region must be a FIRST-CLASS conflict \
+         (got {conflict_n})"
+    );
+    anyhow::ensure!(
+        shared.borrow().height() == pre_stitch,
+        "a CONFLICTED stitch is HELD, not committed (no heap write while the conflict stands)"
+    );
+    // The conflict is LEFT live so the final shot renders the ConflictView (both
+    // alternatives side-by-side, attributed, with one-click resolution choices). The
+    // full resolve→publish loop is asserted by the `deos_desktop_conflict_is_a_state`
+    // test; here the bake proves the conflict STATE arises + renders.
+
     // 5. Drag the treasury icon to a new position and assert the layout PERSISTED.
     desk_h.update(&mut cx, |desk, cx| {
         desk.bake_drag_icon(treasury, 720.0, 540.0);
