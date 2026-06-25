@@ -192,6 +192,14 @@ pub enum ConflictReason {
     AuthorityRevoked,
     /// The merge would amplify a capability beyond its attenuation lattice.
     CapAmplification,
+    /// Two branches wrote the SAME universal-memory address to DIFFERENT values
+    /// (a per-field write collision). Surfaced by the umem reconciliation
+    /// (`starbridge_v2::umem_membrane`): the stitch is per-`UKey`, so the conflict
+    /// names the EXACT address that diverged — two principals editing DIFFERENT
+    /// fields of the same cell fold clean, while a genuine same-field collision
+    /// is a first-class object carrying both attributed readings (never a silent
+    /// last-writer-wins).
+    ValueCollision,
 }
 
 /// The deos-side trait the confined comms-PD implements to mint and rehydrate
@@ -238,7 +246,7 @@ pub trait MembraneHost {
     /// program guarantees, a byte-identical receipt. The fork holds NO cap to
     /// mainline, so side effects are structurally confined (nesting IS safety).
     fn drive(&self, fork: &ForkHandle, turn_bytes: &[u8])
-        -> Result<TurnReceiptDigest, Self::Error>;
+    -> Result<TurnReceiptDigest, Self::Error>;
 
     /// Stitch a driven fork back toward mainline. Implementation (roadmap for the
     /// proof, buildable for the mechanism): compute the pushout against the

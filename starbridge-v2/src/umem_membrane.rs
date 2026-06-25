@@ -57,10 +57,26 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dregg_cell::CellId;
-use dregg_turn::umem::{UKey, UProjection, UVal, project_ledger};
+use dregg_turn::umem::{UKey, UProjection, UVal, project_cell, project_ledger};
 use serde::{Deserialize, Serialize};
 
 use crate::world::World;
+
+/// **The stable per-address event id** — a domain-separated blake3 commitment over
+/// a [`UKey`]'s canonical postcard bytes, used to surface a umem merge's clean folds
+/// and conflicts as the membrane wire's `[u8; 32]` event/conflict ids
+/// ([`deos_matrix::membrane::StitchOutcome`] / `ConflictObject`). Where the
+/// cell-granular `Atom` stitch keyed an event at `(cell-id ‖ post-state)` — opaque
+/// at the cell — this keys it at the EXACT universal-memory address that moved, so
+/// the chat lane's stitch report is field-granular.
+pub fn umem_event_id(key: &UKey) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(b"deos-umem-membrane-event-v1");
+    let kb = postcard::to_stdvec(key).expect("UKey is postcard-serializable");
+    h.update(&(kb.len() as u64).to_le_bytes());
+    h.update(&kb);
+    *h.finalize().as_bytes()
+}
 
 /// **A cap-bounded subgraph projected to a universal map — the FORK as a umem branch.**
 ///
@@ -127,6 +143,31 @@ impl UmemBranch {
             cells,
             umem,
             minted_height: world.height(),
+        }
+    }
+
+    /// **Project a carried [`MembraneFrustum`] into a umem branch — the live
+    /// membrane's CARRY recast as a passable umem.** The frustum already carries the
+    /// cap-bounded cell subgraph (the cull) the membrane ships; this projects EXACTLY
+    /// those cells into the universal address space, so the bytes that cross the
+    /// boundary witness a `UProjection` (its [`UmemBranch::umem_root`] the handoff
+    /// tooth — derived from the SAME cells the frustum's
+    /// [`crate::shared_fork::MembraneFrustum::frustum_root`] binds). This is the bridge
+    /// that makes [`crate::shared_fork::ForkMembraneHost`]'s carry a witnessed umem
+    /// rather than only an opaque `Cell` blob.
+    pub fn from_frustum(frustum: &crate::shared_fork::MembraneFrustum) -> Self {
+        let mut umem = UProjection::new();
+        for cell in &frustum.cells {
+            project_cell(cell, &mut umem);
+        }
+        let mut cells: Vec<CellId> = frustum.cells.iter().map(|c| c.id()).collect();
+        cells.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        UmemBranch {
+            focus: frustum.focus,
+            max_depth: frustum.max_depth,
+            cells,
+            umem,
+            minted_height: frustum.minted_height,
         }
     }
 

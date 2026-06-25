@@ -44,13 +44,13 @@ use std::collections::HashSet;
 use dregg_cell::{AuthRequired, CapabilityRef, CellId};
 use dregg_cell_crypto::ReadCap;
 use dregg_turn::conditional::{
-    compute_proof_hash, resolve_condition, ConditionProof, ConditionalResult, ConditionalTurn,
-    ProofCondition, DEFAULT_MAX_ROOT_AGE,
+    ConditionProof, ConditionalResult, ConditionalTurn, DEFAULT_MAX_ROOT_AGE, ProofCondition,
+    compute_proof_hash, resolve_condition,
 };
 use dregg_turn::turn::{Turn, TurnReceipt};
 
 use crate::powerbox::{Powerbox, PowerboxOutcome};
-use crate::world::{touched_cells, CommitOutcome, World};
+use crate::world::{CommitOutcome, World, touched_cells};
 
 /// **A cap fully granted into the fork — the EMBEDDED tier.**
 ///
@@ -806,6 +806,17 @@ impl MembraneFrustum {
         *hasher.finalize().as_bytes()
     }
 
+    /// **The carried payload AS a witnessed umem — its boundary root the handoff.**
+    /// Projects the frustum's culled subgraph into the ONE universal address space
+    /// ([`crate::umem_membrane::UmemBranch::from_frustum`]) and returns that
+    /// projection's anti-substitution [`crate::umem_membrane::UmemBranch::umem_root`]
+    /// — the umem twin of [`Self::frustum_root`], derived from the SAME cells. This is
+    /// what makes the membrane's CARRY a passable umem (not only an opaque `Cell`
+    /// blob): a recipient can re-project the carried cells and bind them to this root.
+    pub fn umem_root(&self) -> [u8; 32] {
+        crate::umem_membrane::UmemBranch::from_frustum(self).umem_root()
+    }
+
     /// Serialize the frustum for the wire (the bytes that ride the envelope's
     /// `snapshot` field). Postcard — the canonical `Cell` codec.
     pub fn to_snapshot_bytes(&self) -> Vec<u8> {
@@ -988,8 +999,8 @@ pub use membrane_host::ForkMembraneHost;
 mod membrane_host {
     use super::*;
     use deos_matrix::membrane::{
-        ForkHandle, FrustumCut, Liveness, MembraneEnvelope, MembraneHost, StitchOutcome,
-        TurnReceiptDigest, WitnessCursor,
+        ConflictObject, ConflictReason, ForkHandle, FrustumCut, Liveness, MembraneEnvelope,
+        MembraneHost, StitchOutcome, TurnReceiptDigest, WitnessCursor,
     };
     use std::sync::Mutex;
 
@@ -1025,6 +1036,68 @@ mod membrane_host {
                 forks: Mutex::new(Vec::new()),
                 next_fork: Mutex::new(1),
             }
+        }
+
+        /// **THE MULTIPLAYER UMEM STITCH — two driven forks reconciled per-address.**
+        ///
+        /// Reconcile fork `a` and fork `b` (both rehydrated from the SAME minted
+        /// frustum — the shared umem ancestor) by the umem merge
+        /// ([`crate::umem_membrane::stitch_projections`]): the minted frustum is the
+        /// baseline ([`crate::umem_membrane::UmemBranch::from_frustum`]), each driven
+        /// fork is re-projected, and the join is per-[`dregg_turn::umem::UKey`]. So two
+        /// principals editing DIFFERENT fields of the SAME cell fold CLEAN (where the
+        /// cell-granular `Atom` stitch would collide on one opaque per-cell atom), and a
+        /// genuine same-address collision surfaces as a field-granular
+        /// [`ConflictObject`] ([`ConflictReason::ValueCollision`]) keyed at the EXACT
+        /// address — both attributed readings live, never a silent last-writer-wins.
+        ///
+        /// `merged` carries the per-address event ids the merge folded clean (relative
+        /// to the baseline); `dropped` the field-granular conflicts; `settled_root` is
+        /// the driven root only when the fold is conflict-free.
+        pub fn stitch_pair(
+            &self,
+            a: &ForkHandle,
+            b: &ForkHandle,
+        ) -> Result<StitchOutcome, MembraneError> {
+            use crate::umem_membrane::{UmemBranch, stitch_projections, umem_event_id};
+            let forks = self.forks.lock().unwrap();
+            let ea = forks
+                .iter()
+                .find(|(id, _, _)| *id == a.0)
+                .ok_or(MembraneError::NoSuchFork(a.0))?;
+            let eb = forks
+                .iter()
+                .find(|(id, _, _)| *id == b.0)
+                .ok_or(MembraneError::NoSuchFork(b.0))?;
+            // The shared ancestor IS the carried umem (both rehydrated from `ea.2`).
+            let base = UmemBranch::from_frustum(&ea.2);
+            let proj_a = UmemBranch::mint(&ea.1, base.focus, base.max_depth);
+            let proj_b = UmemBranch::mint(&eb.1, base.focus, base.max_depth);
+            let stitch = stitch_projections(&base.umem, &proj_a.umem, &proj_b.umem);
+            let merged: Vec<[u8; 32]> = stitch
+                .merged
+                .iter()
+                .filter(|(k, v)| base.umem.get(k) != Some(v))
+                .map(|(k, _)| umem_event_id(k))
+                .collect();
+            let dropped: Vec<ConflictObject> = stitch
+                .conflicts
+                .iter()
+                .map(|c| ConflictObject {
+                    event: umem_event_id(&c.key),
+                    reason: ConflictReason::ValueCollision,
+                })
+                .collect();
+            let settled_root = if stitch.is_clean() {
+                Some(ea.1.state_root())
+            } else {
+                None
+            };
+            Ok(StitchOutcome {
+                settled_root,
+                merged,
+                dropped,
+            })
         }
     }
 
@@ -1113,69 +1186,38 @@ mod membrane_host {
         }
 
         fn stitch(&self, fork: &ForkHandle) -> Result<StitchOutcome, Self::Error> {
-            use crate::branch_stitch::{BranchCap, SettleOutcome, Stitch};
+            use crate::umem_membrane::{UmemBranch, stitch_projections, umem_event_id};
             let forks = self.forks.lock().unwrap();
             let entry = forks
                 .iter()
                 .find(|(id, _, _)| *id == fork.0)
                 .ok_or(MembraneError::NoSuchFork(fork.0))?;
-            // The REAL diff: the driven fork's actual mutated atoms vs the minted
-            // baseline (NOT a fabricated atom at a hand-coded key).
-            let (baseline, driven) = entry.2.driven_graphs(&entry.1);
-            // Confer back only what is in view in the frustum (the cells the guest
-            // genuinely held) — the settlement gate re-checks authority at the tip.
-            let conferred: Vec<BranchCap> = entry
-                .2
-                .cells
+            // THE CARRY AS A WITNESSED UMEM: the minted frustum projected into the ONE
+            // universal address space (its `umem_root` the handoff). THE MERGE-BACK AS A
+            // UMEM RECONCILIATION: the driven fork re-projected and folded per-address
+            // against that baseline. A single driven fork against the mint-time baseline
+            // has no concurrent writer in this leg, so every address the guest moved
+            // folds CLEAN (I-confluent) and the `merged` set names those EXACT addresses
+            // — field-granular, not an opaque per-cell `Atom`. (Anti-amplification is the
+            // frustum cull's confinement-by-omission + the executor's verified drive,
+            // not a decorative settle: the guest cannot move an address it never held.)
+            let base = UmemBranch::from_frustum(&entry.2);
+            let driven = UmemBranch::mint(&entry.1, base.focus, base.max_depth);
+            let stitch = stitch_projections(&base.umem, &base.umem, &driven.umem);
+            let merged: Vec<[u8; 32]> = stitch
+                .merged
                 .iter()
-                .map(|c| BranchCap {
-                    target: cell_key(&c.id()),
-                    debit_reach: false,
-                })
+                .filter(|(k, v)| base.umem.get(k) != Some(v))
+                .map(|(k, _)| umem_event_id(k))
                 .collect();
-            let stitch = Stitch {
-                main: baseline,
-                branch: driven.clone(),
-                conferred: conferred.clone(),
-            };
-            match stitch.settle(&conferred, None) {
-                SettleOutcome::Settled(merged) => Ok(StitchOutcome {
-                    settled_root: Some(entry.1.state_root()),
-                    merged: merged
-                        .atoms
-                        .keys()
-                        .map(|k| {
-                            let mut h = [0u8; 32];
-                            h[..8].copy_from_slice(&k.to_le_bytes());
-                            h
-                        })
-                        .collect(),
-                    dropped: Vec::new(),
-                }),
-                SettleOutcome::Refused {
-                    over_authorized_target,
-                } => {
-                    use deos_matrix::membrane::{ConflictObject, ConflictReason};
-                    let mut ev = [0u8; 32];
-                    ev[..8].copy_from_slice(&over_authorized_target.to_le_bytes());
-                    Ok(StitchOutcome {
-                        settled_root: None,
-                        merged: Vec::new(),
-                        dropped: vec![ConflictObject {
-                            event: ev,
-                            reason: ConflictReason::CapAmplification,
-                        }],
-                    })
-                }
-            }
+            // A single-fork fold has no second writer, so it is always conflict-free and
+            // settles at the driven fork's root.
+            Ok(StitchOutcome {
+                settled_root: Some(entry.1.state_root()),
+                merged,
+                dropped: Vec::new(),
+            })
         }
-    }
-
-    /// A stable atom key per cell (the low 8 bytes of its id) — shared by the
-    /// stitch diff and the conferred-cap set so they key identically.
-    fn cell_key(id: &CellId) -> u64 {
-        let b = id.as_bytes();
-        u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
     }
 
     fn hex32(b: &[u8; 32]) -> String {
@@ -1266,6 +1308,147 @@ mod membrane_host {
                 host.drive(&ForkHandle(999), &turn_bytes).unwrap_err(),
                 MembraneError::NoSuchFork(999)
             ));
+        }
+
+        /// **THE FOURTH UMEM REVOLUTION, LIVE — the membrane fork/carry/stitch ARE
+        /// umem ops through the running `ForkMembraneHost`.** A real fork→carry→stitch:
+        ///   * FORK — the host mints a real frustum (the cap-bounded cull).
+        ///   * CARRY — that carried payload IS a witnessed umem (its cells project to a
+        ///     `UProjection`; its `umem_root` reproduces from the carried frustum — the
+        ///     handoff tooth, the umem twin of the frustum root).
+        ///   * STITCH — two principals rehydrate the SAME envelope into independent real
+        ///     forks, each DRIVES a real verified turn, and the host reconciles them by
+        ///     the UMEM MERGE (`stitch_pair`): a same-address collision is a FIELD-
+        ///     GRANULAR `ConflictObject` keyed at the EXACT address (`ValueCollision`),
+        ///     while disjoint per-cell edits fold CLEAN — the per-address win over the
+        ///     opaque cell-granular `Atom` merge, now load-bearing in the live host.
+        #[test]
+        fn the_live_membrane_stitches_umems_field_granular() {
+            use crate::umem_membrane::{UmemBranch, umem_event_id};
+            use deos_matrix::membrane::ConflictReason;
+            use dregg_turn::umem::UKey;
+
+            let (world, room, user_a, user_b, shared, doc_a, doc_b) = mp_world();
+            let fork = world.fork();
+            let host = ForkMembraneHost::new(fork, room);
+
+            // FORK + CARRY: mint a real membrane; its carried payload is a witnessed umem.
+            let env = host
+                .mint(
+                    room.0,
+                    FrustumCut {
+                        focus_cell: [0u8; 32],
+                        max_depth: 3,
+                        authority_bounded: true,
+                        cell_count: 0,
+                    },
+                )
+                .expect("the real host mints the membrane");
+            let frustum =
+                MembraneFrustum::from_snapshot_bytes(&env.snapshot).expect("snapshot decodes");
+            let carried = UmemBranch::from_frustum(&frustum);
+            assert_eq!(
+                carried.umem_root(),
+                frustum.umem_root(),
+                "the carried payload IS a witnessed umem — its boundary root the handoff"
+            );
+            assert!(
+                carried.umem.contains_key(&UKey::Field {
+                    cell: shared,
+                    slot: 0
+                }),
+                "the shared.field[0] address rides in the carried umem projection"
+            );
+
+            // Two principals rehydrate the SAME envelope into independent real forks.
+            let (h_a, _) = host.rehydrate(&env).expect("A rehydrates a real fork");
+            let (h_b, _) = host.rehydrate(&env).expect("B rehydrates a real fork");
+
+            // Each authors a real verified turn (built against a fresh rehydrate of the
+            // same frustum — identical chain head). A and B COLLIDE on shared.field[0]
+            // (different values) but make DISJOINT private edits (doc_a vs doc_b).
+            let drive_bytes = |who: CellId, ops: Vec<dregg_turn::action::Effect>| {
+                let driver = frustum
+                    .rehydrate(env.frustum_root)
+                    .expect("driver rehydrates");
+                postcard::to_stdvec(&driver.turn(who, ops)).expect("turn serializes")
+            };
+            host.drive(
+                &h_a,
+                &drive_bytes(
+                    user_a,
+                    vec![
+                        crate::world::set_field(shared, 0, [0xAAu8; 32]),
+                        crate::world::set_field(doc_a, 0, [0x11u8; 32]),
+                    ],
+                ),
+            )
+            .expect("A drives a real verified turn on its fork");
+            host.drive(
+                &h_b,
+                &drive_bytes(
+                    user_b,
+                    vec![
+                        crate::world::set_field(shared, 0, [0xBBu8; 32]),
+                        crate::world::set_field(doc_b, 0, [0x22u8; 32]),
+                    ],
+                ),
+            )
+            .expect("B drives a real verified turn on its fork");
+
+            // STITCH — the host reconciles the two driven forks by the UMEM MERGE.
+            let outcome = host
+                .stitch_pair(&h_a, &h_b)
+                .expect("the live host stitches the two umems");
+
+            // THE FIELD-GRANULAR CONFLICT: exactly shared.field[0] collides, named at
+            // its EXACT address (not an opaque per-cell atom).
+            let shared_f0 = umem_event_id(&UKey::Field {
+                cell: shared,
+                slot: 0,
+            });
+            assert_eq!(
+                outcome.dropped.len(),
+                1,
+                "exactly one field-granular conflict (shared.field[0]): {:?}",
+                outcome.dropped
+            );
+            assert_eq!(
+                outcome.dropped[0].event, shared_f0,
+                "the conflict names the EXACT universal-memory address that diverged"
+            );
+            assert_eq!(
+                outcome.dropped[0].reason,
+                ConflictReason::ValueCollision,
+                "a same-field write collision is a first-class ValueCollision object"
+            );
+            assert!(
+                outcome.settled_root.is_none(),
+                "an unresolved field collision does not settle (fail-closed)"
+            );
+
+            // THE UMEM-GRANULARITY WIN: the DISJOINT per-cell edits fold CLEAN — where
+            // the cell-granular `Atom` merge would have collapsed each to one opaque atom.
+            let doc_a_f0 = umem_event_id(&UKey::Field {
+                cell: doc_a,
+                slot: 0,
+            });
+            let doc_b_f0 = umem_event_id(&UKey::Field {
+                cell: doc_b,
+                slot: 0,
+            });
+            assert!(
+                outcome.merged.contains(&doc_a_f0),
+                "A's disjoint doc_a edit folded CLEAN into the merged umem"
+            );
+            assert!(
+                outcome.merged.contains(&doc_b_f0),
+                "B's disjoint doc_b edit folded CLEAN into the merged umem"
+            );
+            assert!(
+                !outcome.merged.contains(&shared_f0),
+                "the conflicted address is held back from the clean-merged set"
+            );
         }
 
         // ── THE CROSS-WORKSPACE BRIDGE: bake a REAL executor envelope as a golden
@@ -2456,12 +2639,13 @@ mod tests {
             vec![],
         );
         assert_eq!(sf.embedded.len(), 1, "docs is embedded");
-        assert!(fork
-            .ledger()
-            .get(&guest)
-            .unwrap()
-            .capabilities
-            .has_access(&docs));
+        assert!(
+            fork.ledger()
+                .get(&guest)
+                .unwrap()
+                .capabilities
+                .has_access(&docs)
+        );
 
         // The guest drives a REAL turn over its embedded cap — no consent door.
         let drive = fork.turn(guest, vec![crate::world::set_field(docs, 3, [9u8; 32])]);
