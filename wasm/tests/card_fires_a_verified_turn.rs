@@ -239,6 +239,63 @@ fn inspector_card_renders_faces_and_an_affordance_click_fires_a_verified_turn() 
     );
 }
 
+/// THE TALLY-BOARD LOOP, EXECUTABLE (host target). The board carries three named tallies
+/// (slots 0/1/2), each a `Row` with a live `Bind` and `+1`/`−1` affordances. A `+1`/`−1`
+/// click fires `fire("inc"|"dec", slot)` — the EXACT payload the web renderer puts on the
+/// row's buttons (`data-turn`/`data-arg`) — as a real cap-gated verified turn, and the bound
+/// row re-reads the committed model. This proves the full `Row`/`Table` + multi-affordance
+/// ViewNode vocabulary drives real turns, per-slot and in both directions.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn tally_board_per_row_affordances_fire_verified_turns_and_repaint() {
+    use dregg_wasm::bindings_card::TallyWorld;
+
+    // Mint the board seeded to the defaults [3, 1, 4] — three seed turns (one per non-zero
+    // slot), each a real verified turn leaving a receipt.
+    let mut board = TallyWorld::new(vec![]).expect("mint the tally board");
+    assert_eq!(board.read(0), 3, "apples seed");
+    assert_eq!(board.read(1), 1, "oranges seed");
+    assert_eq!(board.read(2), 4, "pears seed");
+    assert_eq!(board.receipt_count(), 3, "three seed turns committed");
+
+    // The view-tree carries the LAYOUT vocabulary + both affordances per row (the DATA the
+    // web renderer paints into a Table of Rows).
+    let view = board.view_tree_json();
+    assert!(
+        view.contains("\"table\"") && view.contains("\"row\""),
+        "the board view-tree carries the Row/Table layout nodes"
+    );
+    assert!(
+        view.contains("\"turn\":\"inc\"") && view.contains("\"turn\":\"dec\""),
+        "each row publishes BOTH affordances (+1 inc / −1 dec)"
+    );
+
+    // +1 on oranges (slot 1) → a real verified turn; the row re-reads 2.
+    assert_eq!(
+        board.fire("inc", 1).expect("+1 oranges"),
+        2,
+        "oranges 1 → 2"
+    );
+    assert_eq!(board.read(0), 3, "apples untouched");
+    assert_eq!(board.read(2), 4, "pears untouched");
+    assert_eq!(board.receipt_count(), 4, "one more verified turn");
+
+    // −1 on pears (slot 2) → the opposite direction, an independent slot.
+    assert_eq!(board.fire("dec", 2).expect("−1 pears"), 3, "pears 4 → 3");
+    assert_eq!(board.read(1), 2, "oranges held its committed 2");
+    assert_eq!(
+        board.receipt_count(),
+        5,
+        "five verified turns on the audit tape"
+    );
+
+    // −1 saturates at 0 (never underflows) — fire apples down past zero.
+    for _ in 0..5 {
+        let _ = board.fire("dec", 0).expect("−1 apples");
+    }
+    assert_eq!(board.read(0), 0, "apples saturated at 0 (3 → 0, then held)");
+}
+
 // ── The wasm32-target loop ────────────────────────────────────────────────────────────
 // Under `wasm-pack test --node` this runs the FULL card loop in a REAL wasm module: mint
 // → witnessed read → fire a `+1` verified turn → re-read the committed bound slot. The

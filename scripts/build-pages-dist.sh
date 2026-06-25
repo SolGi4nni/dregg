@@ -15,8 +15,9 @@
 #                        with) on a WebGPU canvas, driving the SAME in-tab executor +
 #                        the firmament editor + chat panes. Heavier; needs WebGPU.
 #                        wasm: starbridge-v2/web --features gpui-web.
-#   /cards/            — the deos-js card gallery: a counter + a reflective inspector,
-#                        each a real verified turn in-tab (the deos-view web renderer).
+#   /cards/            — the deos-js card gallery: a counter, a reflective inspector, and a
+#                        tally board (Row + Table + multi-affordance), each a real verified
+#                        turn in-tab (the deos-view web renderer).
 #                        wasm: wasm/ (the card/runtime bindings).
 #   /atlas/            — the interactive atlas (the whole protocol + UI surfaces).
 #
@@ -72,6 +73,7 @@ mkdir -p "$DIST/cards"
 cp "$ROOT/deos-view/target/web-out/dist/index.html" "$DIST/cards/index.html"
 cp "$ROOT/deos-view/target/web-out/dist/counter.html" "$DIST/cards/counter.html"
 cp "$ROOT/deos-view/target/web-out/dist/inspector.html" "$DIST/cards/inspector.html"
+cp "$ROOT/deos-view/target/web-out/dist/tally.html" "$DIST/cards/tally.html"
 cp -R "$ROOT/wasm/pkg" "$DIST/cards/pkg"
 test -s "$DIST/cards/pkg/dregg_wasm_bg.wasm"
 

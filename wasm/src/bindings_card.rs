@@ -480,3 +480,167 @@ fn short_hex(bytes: &[u8; 32]) -> String {
     let h: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     format!("{}…{}", &h[..6], &h[h.len() - 4..])
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+//  THE TALLY-BOARD CARD, IN THE TAB — exercising the FULL ViewNode vocabulary
+// ════════════════════════════════════════════════════════════════════════════════════════
+//
+// `CardWorld` (one slot, one affordance) and `InspectorWorld` (several slots, one affordance
+// each) drive a `vstack` of `text`/`bind`/`button`. Neither exercises the view-tree's
+// LAYOUT nodes (`Row`, `Table`) nor more than one affordance per slot — yet `deos-view`'s
+// web renderer paints all of them. The TALLY BOARD does: it is a `table` of `row`s, each row
+// a named tally with its live `bind` value AND two affordances (`+1` / `-1`). So a click on
+// EITHER button is a real cap-gated verified turn that moves that one tally up or down, and
+// the bound row re-paints — proving `Row` + `Table` + multi-affordance cards render AND fire
+// in a browser tab through the SAME ViewNode IR the native cockpit renders.
+//
+// Like the inspector this rests entirely on the embedded `DreggEngine` (no `mozjs` on
+// wasm32): each tally is a model slot; `+1`/`-1` are `SetField + IncrementNonce` turns over
+// the canonical executor, leaving real receipts. The affordance `data-arg` carries the SLOT
+// index (which tally the button moves) and `data-turn` the direction (`inc`/`dec`).
+
+/// The tally board's named rows — one model slot each. The label heads each `row`; the slot
+/// index is what a button's `data-arg` carries (the inverse: slot → its rendered label).
+const TALLY_LABELS: [&str; 3] = ["apples", "oranges", "pears"];
+
+/// The tally-board card, driven from the browser tab over its own embedded verified executor.
+/// One `TallyWorld` owns one runtime with one tally-cell (agent 0); each tally is a model slot
+/// and each `+1`/`-1` click fires a REAL cap-gated verified turn — the wasm realization of a
+/// multi-row, multi-affordance deos-js card over the full `Row`/`Table` ViewNode vocabulary.
+#[wasm_bindgen]
+pub struct TallyWorld {
+    rt: DreggRuntime,
+}
+
+#[wasm_bindgen]
+impl TallyWorld {
+    /// Mint a fresh tally board on its own embedded executor, seeding each tally slot. The
+    /// tally-cell is agent 0 (single-custody, `AuthRequired::None` holder — the posture
+    /// `Applet::mint` gives a card), funded so a metered turn has a source. `seeds[i]` seeds
+    /// tally `i` (defaults to a clearly-distinct `[3, 1, 4]`); each non-zero seed is committed
+    /// via a REAL verified turn, so the genesis board itself leaves receipts.
+    #[wasm_bindgen(constructor)]
+    pub fn new(seeds: Vec<u64>) -> Result<TallyWorld, JsError> {
+        let mut rt = DreggRuntime::new();
+        rt.try_create_agent("tally", 1_000_000)
+            .map_err(|e| JsError::new(&e))?;
+        let mut world = TallyWorld { rt };
+        let defaults = [3u64, 1u64, 4u64];
+        for slot in 0..TALLY_LABELS.len() {
+            let value = seeds.get(slot).copied().unwrap_or(defaults[slot]);
+            if value != 0 {
+                world
+                    .commit_set(slot, value)
+                    .map_err(|e| JsError::new(&e))?;
+            }
+        }
+        Ok(world)
+    }
+
+    /// The tally-cell's id (hex) — the sovereignty boundary, the agent of its turns.
+    #[wasm_bindgen(js_name = cellId)]
+    pub fn cell_id(&self) -> String {
+        crate::bindings::hex_encode(&self.rt.agents[0].cell_id.0)
+    }
+
+    /// A witnessed read of tally `slot` off the live ledger — the value the web renderer
+    /// paints into the matching `data-slot` span (the SAME read each row's `bind` makes).
+    pub fn read(&self, slot: usize) -> u64 {
+        let cell_id = self.rt.agents[0].cell_id;
+        self.rt
+            .cell_field(&cell_id, slot)
+            .map(|fe| unpack_u64(&fe))
+            .unwrap_or(0)
+    }
+
+    /// The committed-receipt count — the audit tape length (one per fired turn, plus the
+    /// genesis seeds). A browser shows it to prove a `+1`/`-1` was a real turn, not a poke.
+    #[wasm_bindgen(js_name = receiptCount)]
+    pub fn receipt_count(&self) -> usize {
+        self.rt.receipts.len()
+    }
+
+    /// **THE TALLY VIEW-TREE** — a `table` of `row`s, one per named tally: each row carries a
+    /// `text` label, a live `bind` of that tally's slot, and `+1`/`-1` affordance `button`s.
+    /// The SAME `{kind, props, children}` JSON the web renderer (`deos-view::parse_view_tree`)
+    /// consumes — serve it and the board paints live in a browser.
+    #[wasm_bindgen(js_name = viewTreeJson)]
+    pub fn view_tree_json(&self) -> String {
+        tally_view_tree_json()
+    }
+
+    /// **Move one tally** — commit ONE cap-gated verified turn: the tally `arg` advances or
+    /// retreats by one (`turn` = `"inc"`/`"dec"`), then return the re-read value (the new
+    /// `bind` value the browser re-paints). `arg` is the SLOT index the button carried as
+    /// `data-arg`. A `dec` saturates at 0; an unknown direction or out-of-range slot commits
+    /// nothing and errors (the native `FireError::Unknown`).
+    pub fn fire(&mut self, turn: &str, arg: i32) -> Result<u64, JsError> {
+        let slot = arg as usize;
+        if slot >= TALLY_LABELS.len() {
+            return Err(JsError::new(&format!("tally slot out of range: {slot}")));
+        }
+        let current = self.read(slot);
+        let next = match turn {
+            "inc" => current.saturating_add(1),
+            "dec" => current.saturating_sub(1),
+            other => return Err(JsError::new(&format!("unknown affordance: {other}"))),
+        };
+        self.commit_set(slot, next).map_err(|e| JsError::new(&e))?;
+        Ok(self.read(slot))
+    }
+
+    /// Commit `slot := value` on the tally cell as a REAL verified turn (`SetField` +
+    /// `IncrementNonce` — the SAME two effects `Applet::fire` builds), routed through
+    /// `execute_turn_for_agent`. A rejected turn is surfaced, never swallowed.
+    fn commit_set(&mut self, slot: usize, value: u64) -> Result<(), String> {
+        let cell_id = self.rt.agents[0].cell_id;
+        let effects = vec![
+            Effect::SetField {
+                cell: cell_id,
+                index: slot,
+                value: pack_u64(value),
+            },
+            Effect::IncrementNonce { cell: cell_id },
+        ];
+        match self.rt.execute_turn_for_agent(0, effects, 10_000) {
+            TurnResult::Committed { .. } => Ok(()),
+            TurnResult::Rejected { reason, at_action } => {
+                Err(format!("turn rejected: {reason} (at {at_action:?})"))
+            }
+            other => Err(format!("turn not committed: {other:?}")),
+        }
+    }
+}
+
+/// Generate the tally board's view-tree JSON: a titled column over a `table` of `row`s, one
+/// per [`TALLY_LABELS`] entry. Each row is `row(text(label), bind(slot), button("+1"), button("−1"))`
+/// — the `+1`/`−1` buttons carry `data-turn=inc/dec` and `data-arg=slot`. This is the
+/// substance: `Row` + `Table` + multi-affordance, all through the SAME ViewNode vocabulary
+/// the native renderer walks into gpui widgets.
+fn tally_view_tree_json() -> String {
+    use serde_json::json;
+
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    for (slot, label) in TALLY_LABELS.iter().enumerate() {
+        rows.push(json!({
+            "kind": "row",
+            "props": {},
+            "children": [
+                { "kind": "text", "props": { "text": format!("{label}: ") } },
+                { "kind": "bind", "props": { "slot": slot, "label": "" } },
+                { "kind": "button", "props": { "label": "+1", "on_click": { "turn": "inc", "arg": slot } } },
+                { "kind": "button", "props": { "label": "−1", "on_click": { "turn": "dec", "arg": slot } } }
+            ]
+        }));
+    }
+
+    json!({
+        "kind": "vstack",
+        "props": {},
+        "children": [
+            { "kind": "text", "props": { "text": "Tally board" } },
+            { "kind": "table", "props": {}, "children": rows }
+        ]
+    })
+    .to_string()
+}

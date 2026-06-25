@@ -181,3 +181,16 @@ ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "
 # root member), so a fresh clone and CI both pick up the git rev with no local
 # `[patch]` needed here — the "push the fork + drop the local patch" step is
 # done.
+#
+# EXCEPT while the circuit lane iterates the W24 segment-digest Poseidon on the
+# fork's local tree: the root workspace carries a TEMP
+# `[patch."https://github.com/emberian/plonky3-recursion"]` → `../plonky3-recursion`
+# (the in-flight `enable_poseidon2_perm_width_24` API). Patches do NOT cross workspace
+# boundaries, so this standalone workspace must mirror it or it resolves the stale
+# pinned git rev (which predates the method) and `circuit-prove` fails to compile here.
+# Removed in lockstep when the root drops its TEMP patch for a pushed rev bump.
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }

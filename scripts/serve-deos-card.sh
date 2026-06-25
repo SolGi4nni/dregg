@@ -15,6 +15,10 @@
 #                      and an "Affordances" section. Clicking an affordance (tick/add/score)
 #                      fires a real cap-gated verified turn and the bound field re-paints, with
 #                      a live balance/nonce/receipt readout.
+#   /tally.html      — the TALLY-BOARD card (TallyWorld): the FULL ViewNode layout vocabulary
+#                      (Row + Table + a multi-affordance row). A table of named tallies, each a
+#                      row with a live count and +1/−1 buttons; every click fires a real
+#                      cap-gated verified turn moving that one tally, and the row re-paints.
 #
 # Builds the wasm bundle, bakes the live pages, assembles a self-contained dist/, and serves it
 # (each page is a module-import + a .wasm fetch — file:// is CORS-blocked, so it MUST be served
@@ -51,6 +55,8 @@ echo "  GALLERY   : http://localhost:$PORT/            — the card-picker (open
 echo "  COUNTER   : http://localhost:$PORT/counter.html   — click +1 (a real cap-gated verified turn)"
 echo "  INSPECTOR : http://localhost:$PORT/inspector.html — a reflective cockpit surface; click an"
 echo "              affordance (tick/add/score) → a real verified turn → the bound field re-paints."
+echo "  TALLY     : http://localhost:$PORT/tally.html     — a table of named tallies (Row + Table);"
+echo "              click +1/−1 on any row → a real verified turn moves that one tally."
 echo "(Ctrl-C to stop.)"
 cd "$DIST"
 exec python3 -m http.server "$PORT"

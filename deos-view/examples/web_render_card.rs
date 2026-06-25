@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use deos_view::{
     GalleryCard, parse_view_tree, render_card_document, render_card_live_document,
     render_gallery_document, render_html, render_inspector_live_document,
+    render_tally_live_document,
 };
 
 /// The EXACT `JSON.stringify(tree)` shape the SpiderMonkey engine produces for the
@@ -82,6 +83,43 @@ const INSPECTOR_CARD_JSON: &str = r#"{
         { "kind": "button", "props": { "label": "tick", "on_click": { "turn": "tick", "arg": 1 } } },
         { "kind": "button", "props": { "label": "add", "on_click": { "turn": "add", "arg": 1 } } },
         { "kind": "button", "props": { "label": "score", "on_click": { "turn": "score", "arg": 1 } } }
+    ] }
+  ]
+}"#;
+
+/// THE TALLY-BOARD CARD's view-tree — byte-for-byte the shape `wasm/src/bindings_card.rs`'s
+/// `TallyWorld::view_tree_json` generates: a titled column over a `table` of `row`s, one per
+/// named tally (apples/oranges/pears = slots 0/1/2). Each `row` carries a `text` label, a live
+/// `bind` of its slot, and `+1`/`−1` affordance `button`s (`{turn:inc|dec, arg:slot}`). It
+/// exercises the view-tree's LAYOUT nodes (`Row`/`Table`) and a multi-affordance row — surfaces
+/// neither the counter nor the inspector touched — proving the FULL ViewNode vocabulary is
+/// renderer-independent (the SAME tree the cockpit walks into gpui widgets, fed to the WEB
+/// renderer). The static seeds below (3/1/4) are the first paint; the in-tab `TallyWorld`
+/// re-reads the live values after boot.
+const TALLY_CARD_JSON: &str = r#"{
+  "kind": "vstack",
+  "props": {},
+  "children": [
+    { "kind": "text", "props": { "text": "Tally board" } },
+    { "kind": "table", "props": {}, "children": [
+        { "kind": "row", "props": {}, "children": [
+            { "kind": "text", "props": { "text": "apples: " } },
+            { "kind": "bind", "props": { "slot": 0, "label": "" } },
+            { "kind": "button", "props": { "label": "+1", "on_click": { "turn": "inc", "arg": 0 } } },
+            { "kind": "button", "props": { "label": "−1", "on_click": { "turn": "dec", "arg": 0 } } }
+        ] },
+        { "kind": "row", "props": {}, "children": [
+            { "kind": "text", "props": { "text": "oranges: " } },
+            { "kind": "bind", "props": { "slot": 1, "label": "" } },
+            { "kind": "button", "props": { "label": "+1", "on_click": { "turn": "inc", "arg": 1 } } },
+            { "kind": "button", "props": { "label": "−1", "on_click": { "turn": "dec", "arg": 1 } } }
+        ] },
+        { "kind": "row", "props": {}, "children": [
+            { "kind": "text", "props": { "text": "pears: " } },
+            { "kind": "bind", "props": { "slot": 2, "label": "" } },
+            { "kind": "button", "props": { "label": "+1", "on_click": { "turn": "inc", "arg": 2 } } },
+            { "kind": "button", "props": { "label": "−1", "on_click": { "turn": "dec", "arg": 2 } } }
+        ] }
     ] }
   ]
 }"#;
@@ -257,6 +295,60 @@ fn main() {
         "the SAME inspector markup carries the multi-slot bind + affordance contract the wire drives"
     );
 
+    // ── 6b. Bake the LIVE TALLY-BOARD page — the FULL ViewNode vocabulary, browser-native ──
+    // The SAME gpui-free web renderer paints the board's view-tree (a `Table` of `Row`s, each a
+    // named tally with its live `Bind` value + `+1`/`−1` `Button`s — the LAYOUT nodes the
+    // counter/inspector never exercised). The bootstrap mints an in-tab `TallyWorld` seeded to
+    // [3, 1, 4], binds `window.__deosCard`, and re-paints each bound row from the committed
+    // ledger. Clicking a `+1`/`−1` fires a REAL cap-gated verified turn over that executor (its
+    // `data-arg` is the tally's SLOT, `data-turn` the direction) and that one row re-paints.
+    let tally = parse_view_tree(TALLY_CARD_JSON).expect("parse the tally card view-tree");
+    let live_tally = render_tally_live_document(
+        "deos tally-board card — live",
+        &tally,
+        /*bind_values (tree-walk order)*/ &[3, 1, 4],
+        /*seeds*/ &[3, 1, 4],
+        "./pkg/dregg_wasm.js",
+    );
+    let plive_tally = dist.join("tally.html");
+    std::fs::write(&plive_tally, &live_tally).expect("write the live tally.html");
+
+    // ── PROVE the tally board exercises the LAYOUT vocabulary + is wired (not merely written) ─
+    let frag_tally = render_html(&tally, &[3, 1, 4]);
+    assert!(
+        frag_tally.contains("deos-table") && frag_tally.matches("deos-row").count() == 3,
+        "the board renders a Table of three Rows (the layout vocabulary)"
+    );
+    assert!(
+        frag_tally.contains("apples: ")
+            && frag_tally.contains("oranges: ")
+            && frag_tally.contains("pears: "),
+        "each Row paints its named tally's label"
+    );
+    assert!(
+        frag_tally.contains("data-slot=\"0\">3</span>")
+            && frag_tally.contains("data-slot=\"1\">1</span>")
+            && frag_tally.contains("data-slot=\"2\">4</span>"),
+        "each Row's Bind paints its slot's seeded value (3 / 1 / 4)"
+    );
+    assert!(
+        frag_tally.matches("data-turn=\"inc\"").count() == 3
+            && frag_tally.matches("data-turn=\"dec\"").count() == 3,
+        "each Row carries BOTH affordances (+1 inc / −1 dec) — a multi-affordance row"
+    );
+    assert!(
+        frag_tally.contains("data-arg=\"0\"")
+            && frag_tally.contains("data-arg=\"1\"")
+            && frag_tally.contains("data-arg=\"2\""),
+        "each affordance carries its tally's SLOT index as `data-arg`"
+    );
+    assert!(
+        live_tally.contains("import init, { TallyWorld }")
+            && live_tally.contains("new TallyWorld([3n, 1n, 4n])")
+            && live_tally.contains("card.read(slot)"),
+        "the live tally page imports + mints the in-tab executor and re-paints each row off its slot"
+    );
+
     // ── 7. Bake the GALLERY / card-picker as the served home page (`/` = index.html) ──
     // Without a front door a visitor lands on one card and never finds the others. This is
     // a plain-HTML (no-wasm) landing of clickable tiles, one per live card — the
@@ -278,6 +370,13 @@ fn main() {
                         (state rows + affordances) render live; clicking tick/add/score fires a \
                         cap-gated verified turn and the bound field re-paints.",
             },
+            GalleryCard {
+                href: "tally.html",
+                name: "Tally Board",
+                blurb: "A table of named tallies, each a row with a live count and +1/−1 \
+                        buttons. The full ViewNode layout vocabulary (Row + Table + a \
+                        multi-affordance row); every click is a verified turn moving one tally.",
+            },
         ],
     );
     let pgallery = dist.join("index.html");
@@ -285,12 +384,16 @@ fn main() {
 
     // ── PROVE the gallery is wired (not merely written) ───────────────────────────────
     assert!(
-        gallery.contains("href=\"counter.html\"") && gallery.contains("href=\"inspector.html\""),
-        "the gallery links to BOTH live card pages (the card-picker)"
+        gallery.contains("href=\"counter.html\"")
+            && gallery.contains("href=\"inspector.html\"")
+            && gallery.contains("href=\"tally.html\""),
+        "the gallery links to ALL THREE live card pages (the card-picker)"
     );
     assert!(
-        gallery.contains("Counter") && gallery.contains("Reflective Inspector"),
-        "the gallery names both cards"
+        gallery.contains("Counter")
+            && gallery.contains("Reflective Inspector")
+            && gallery.contains("Tally Board"),
+        "the gallery names all three cards"
     );
 
     eprintln!("deos-view web projection baked (gpui-free):");
@@ -300,6 +403,7 @@ fn main() {
     eprintln!("  LIVE gallery (home)  : {}", pgallery.display());
     eprintln!("  LIVE counter page    : {}", plive.display());
     eprintln!("  LIVE inspector page  : {}", plive_insp.display());
+    eprintln!("  LIVE tally page      : {}", plive_tally.display());
     eprintln!();
     eprintln!("To serve the LIVE deos (a card firing real cap-gated verified turns in a TAB):");
     eprintln!("  1. wasm-pack build wasm --target web --out-dir pkg --release");

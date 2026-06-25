@@ -26,7 +26,7 @@
 // The view-tree MODEL is renderer-independent (gpui-free serializable DATA): it is
 // always compiled, under BOTH the `native` and `web` renderers.
 pub mod tree;
-pub use tree::{parse_view_tree, RawNode, RawProps, ViewNode};
+pub use tree::{RawNode, RawProps, ViewNode, parse_view_tree};
 
 // ── The NATIVE renderer: `ViewNode` → real gpui-component pixels (the heavy stack
 //    + deos-js live verified turns). Gated on `native` so the `web` build stays tiny. ──
@@ -40,7 +40,7 @@ pub mod headless;
 pub mod render;
 
 #[cfg(feature = "native")]
-pub use bridge::{build_live_view, view_tree_key, LiveView};
+pub use bridge::{LiveView, build_live_view, view_tree_key};
 #[cfg(feature = "native")]
 pub use faces::FacesView;
 #[cfg(feature = "native")]
@@ -53,6 +53,6 @@ pub use render::{AppletView, SharedApplet};
 pub mod web;
 #[cfg(feature = "web")]
 pub use web::{
-    render_card_document, render_card_live_document, render_gallery_document, render_html,
-    render_inspector_live_document, GalleryCard,
+    GalleryCard, render_card_document, render_card_live_document, render_gallery_document,
+    render_html, render_inspector_live_document, render_tally_live_document,
 };

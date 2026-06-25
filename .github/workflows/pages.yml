@@ -5,7 +5,7 @@ name: Deploy deos to GitHub Pages
 # visitor's own WebAssembly tab (no backend server — GitHub Pages is static).
 #   /              the deos cockpit (WebImage model skin) — land IN deos, fire a real turn
 #   /cockpit-gpui/ the FULL gpui renderer on a WebGPU canvas (same in-tab executor)
-#   /cards/        the deos-js card gallery (counter + reflective inspector)
+#   /cards/        the deos-js card gallery (counter + reflective inspector + tally board)
 #   /atlas/        the interactive atlas
 # scripts/build-pages-dist.sh assembles site/dist; this workflow just builds + uploads it.
 
@@ -71,6 +71,9 @@ jobs:
           test -s site/dist/pkg/starbridge_web_bg.wasm
           test -s site/dist/cards/pkg/dregg_wasm_bg.wasm
           test -f site/dist/cards/index.html
+          test -f site/dist/cards/counter.html
+          test -f site/dist/cards/inspector.html
+          test -f site/dist/cards/tally.html
           test -f site/dist/atlas/index.html
           # the atlas images must be materialized, not LFS pointer stubs
           if head -c 20 site/dist/atlas/ui-states/HOME_.jpg 2>/dev/null | grep -q '^version https://gi'; then
