@@ -2,6 +2,13 @@
 
 use super::*;
 
+/// The dedicated state slot the AGENT-MEMORY affordance uses as the agent's
+/// legible "working counter" — a clean field (the demo agent's slot 0 already
+/// carries seeded state) so the ⊕ advance / ⛂ checkpoint / ↺ resume readouts
+/// start at 0 and increment by one. The checkpoint still captures EVERY plane;
+/// this is only the slot the panel surfaces as the visible working value.
+pub(crate) const AGENT_MEM_SLOT: usize = 5;
+
 impl Cockpit {
     pub(crate) fn dynamics_feed(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let w = self.world.borrow();
@@ -188,10 +195,10 @@ impl Cockpit {
             Tab::Agent => self.mode_card_surface(
                 starbridge_v2::dock::card_surface::ModeCard::Agent,
                 cx,
-                |this, _cx| this.agent_panel().into_any_element(),
+                |this, cx| this.agent_panel(cx).into_any_element(),
             ),
             #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
-            Tab::Agent => self.agent_panel().into_any_element(),
+            Tab::Agent => self.agent_panel(cx).into_any_element(),
             Tab::Swarm => self.swarm_panel(cx).into_any_element(),
             // INHABIT · the ocap-graph card AS the surface (the live cap web as a card).
             #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
@@ -1629,9 +1636,20 @@ impl Cockpit {
     /// dynamics stream), and the legible boundary of what it is authorized to do.
     /// Maps `agent::AgentActivity` (gpui-free) onto gpui — you watch the
     /// executor's receipts, not the agent's self-report.
-    pub(crate) fn agent_panel(&self) -> impl IntoElement {
+    pub(crate) fn agent_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let w = self.world.borrow();
         let act = self.agent_surface.activity(&w, 24);
+        let live_slot0 = w
+            .ledger()
+            .get(&self.agent_surface.agent)
+            .and_then(|c| c.state.get_field(AGENT_MEM_SLOT))
+            .map(|fe| {
+                let mut b = [0u8; 8];
+                b.copy_from_slice(&fe[..8]);
+                u64::from_le_bytes(b)
+            })
+            .unwrap_or(0);
+        drop(w);
 
         let mut col = div()
             .id("cockpit-scroll-body-9")
@@ -1842,7 +1860,279 @@ impl Cockpit {
             );
         }
         col = col.child(auths);
+
+        // --- AGENT MEMORY as a umem (checkpoint · handoff · resume) ----------
+        // The agent-memory revolution made a clickable affordance: the LIVE agent's
+        // whole working-set projected to the universal address space (a witnessed,
+        // portable umem-ref), CHECKPOINTED on a click and RESUMED into a fresh
+        // verified context that CONTINUES from exactly where it left off. The sibling
+        // of the TIME tab's verified reconstruction — fail-closed under the SAME
+        // anti-substitution root tooth.
+        col = col.child(section_title("agent memory · umem checkpoint · handoff · resume").mt_2());
+        col = col.child(div().text_xs().text_color(theme::muted()).child(
+            "A confined agent's working-set IS its cell's state. Project it into the universal \
+             address space and it becomes a umem-ref: a witnessed, portable, comparable object. \
+             ⛂ CHECKPOINT captures the live working-set; ↺ RESUME reconstitutes a FRESH verified \
+             context from it that CONTINUES from the checkpoint — fail-closed under the root tooth.",
+        ));
+        // The control row.
+        col = col.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .child(small_button(
+                    cx,
+                    "agent-mem-advance",
+                    "⊕ advance working-set (+1)",
+                    theme::accent(),
+                    Cockpit::agent_memory_advance,
+                ))
+                .child(small_button(
+                    cx,
+                    "agent-mem-checkpoint",
+                    "⛂ checkpoint working-set",
+                    theme::good(),
+                    Cockpit::agent_memory_checkpoint,
+                ))
+                .child(small_button(
+                    cx,
+                    "agent-mem-resume",
+                    "↺ resume into fresh context",
+                    if self.agent_memory.is_some() {
+                        theme::warn()
+                    } else {
+                        theme::muted()
+                    },
+                    Cockpit::agent_memory_resume,
+                )),
+        );
+        // The live working-set readout + the held checkpoint (and any drift since).
+        col = col.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .items_center()
+                .mt_1()
+                .child(pill(
+                    format!("live working-slot[{AGENT_MEM_SLOT}] = {live_slot0}"),
+                    theme::text(),
+                ))
+                .when(self.agent_memory.is_some(), |d| {
+                    let cp = self.agent_memory.as_ref().unwrap();
+                    let cp_slot = cp.working_slot(AGENT_MEM_SLOT);
+                    d.child(pill(
+                        format!("⛂ checkpoint slot[{AGENT_MEM_SLOT}] = {cp_slot}"),
+                        theme::good(),
+                    ))
+                    .child(pill(
+                        format!("root {}", reflect::short_hex(&cp.root)),
+                        theme::muted(),
+                    ))
+                    .when(cp_slot != live_slot0, |d| {
+                        d.child(pill(
+                            format!(
+                                "Δ live moved {} past the checkpoint",
+                                live_slot0 as i64 - cp_slot as i64
+                            ),
+                            theme::warn(),
+                        ))
+                    })
+                })
+                .when(self.agent_memory.is_none(), |d| {
+                    d.child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::muted())
+                            .child("(no checkpoint yet — ⛂ to capture the working-set)"),
+                    )
+                }),
+        );
+        // The resumed-context witness (the fresh verified context's continued
+        // working-set + the fail-closed teeth verdict).
+        if let Some((resumed_slot, teeth)) = self.agent_memory_resumed {
+            col = col.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .mt_1()
+                    .p_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if teeth { theme::good() } else { theme::bad() })
+                    .bg(theme::panel())
+                    .child(pill(
+                        if teeth {
+                            "↺ RESUMED ✓"
+                        } else {
+                            "↺ REFUSED"
+                        }
+                        .to_string(),
+                        if teeth { theme::good() } else { theme::bad() },
+                    ))
+                    .child(div().text_xs().text_color(theme::text()).child(format!(
+                        "fresh context continues from working-slot[0] = {resumed_slot}",
+                    )))
+                    .child(div().text_xs().text_color(theme::muted()).child(if teeth {
+                        "root re-derived · umem byte-identical · identity preserved"
+                    } else {
+                        "the round-trip teeth did not pass"
+                    })),
+            );
+        }
+        // The last action verdict.
+        if let Some(msg) = &self.agent_memory_status {
+            col = col.child(
+                div()
+                    .mt_1()
+                    .p_2()
+                    .rounded_md()
+                    .bg(theme::panel())
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .child(msg.clone()),
+            );
+        }
+
         col
+    }
+
+    /// ⊕ ADVANCE — commit ONE real verified turn on the LIVE agent that moves its
+    /// working-set: a `tick` METHOD invocation (the agent publishes `{ping,
+    /// set_status, tick}`; a confined agent only commits its OWN published methods —
+    /// the `Cases` program default-denies anything else) carrying a `SetField` on the
+    /// working slot + an `IncrementNonce`. So the operator can watch the live
+    /// working-set move PAST a checkpoint — then ↺ resume recovers the checkpointed
+    /// past. The method symbol is what lets a confined agent's turn through the gate.
+    pub(crate) fn agent_memory_advance(&mut self, cx: &mut Context<Self>) {
+        use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, symbol};
+        let agent = self.agent_surface.agent;
+        let outcome = {
+            let mut w = self.world.borrow_mut();
+            let cur = w
+                .ledger()
+                .get(&agent)
+                .and_then(|c| c.state.get_field(AGENT_MEM_SLOT))
+                .map(|fe| {
+                    let mut b = [0u8; 8];
+                    b.copy_from_slice(&fe[..8]);
+                    u64::from_le_bytes(b)
+                })
+                .unwrap_or(0);
+            let mut next = [0u8; 32];
+            next[..8].copy_from_slice(&(cur + 1).to_le_bytes());
+            // Desugar to a `tick` method Action — the cell program's `MethodIs { tick }`
+            // case admits it (NO new Effect variant; the kernel sees only effects it
+            // already knows). A bare `World::turn` would carry the zero method symbol and
+            // the agent's default-deny program would refuse it.
+            let action = Action {
+                target: agent,
+                method: symbol("tick"),
+                args: vec![],
+                authorization: Authorization::Unchecked,
+                preconditions: Default::default(),
+                effects: vec![
+                    world::set_field(agent, AGENT_MEM_SLOT, next),
+                    world::increment_nonce(agent),
+                ],
+                may_delegate: DelegationMode::None,
+                commitment_mode: CommitmentMode::default(),
+                balance_change: None,
+                witness_blobs: vec![],
+            };
+            let t = w.wrap_action_turn(agent, action);
+            w.commit_turn(t)
+        };
+        self.agent_memory_status = Some(match outcome {
+            CommitOutcome::Committed { .. } => {
+                "⊕ advanced · the live working-set moved +1 (a real verified turn)".to_string()
+            }
+            CommitOutcome::Rejected { reason, .. } => format!("advance refused — {reason}"),
+            CommitOutcome::Queued { .. } => {
+                "⊕ advance staged into the frozen continuation (the loop is suspended)".to_string()
+            }
+        });
+        cx.notify();
+    }
+
+    /// ⛂ CHECKPOINT — capture the LIVE agent's working-set to a umem-ref
+    /// ([`agent_memory::AgentMemoryCheckpoint::capture`]). PURE: never mutates the
+    /// live World — it projects state the agent already owns into a witnessed,
+    /// portable object held in the cockpit (the umem-ref on the wire).
+    pub(crate) fn agent_memory_checkpoint(&mut self, cx: &mut Context<Self>) {
+        let agent = self.agent_surface.agent;
+        let captured = {
+            let w = self.world.borrow();
+            starbridge_v2::agent_memory::AgentMemoryCheckpoint::capture(&w, agent)
+        };
+        match captured {
+            Ok(cp) => {
+                let bytes = cp.to_bytes().map(|b| b.len()).unwrap_or(0);
+                self.agent_memory_status = Some(format!(
+                    "⛂ checkpointed · working-set → umem ({} planes · {} carrier bytes · slot[{}]={} · root {})",
+                    cp.umem.len(),
+                    bytes,
+                    AGENT_MEM_SLOT,
+                    cp.working_slot(AGENT_MEM_SLOT),
+                    reflect::short_hex(&cp.root),
+                ));
+                self.agent_memory_resumed = None;
+                self.agent_memory = Some(cp);
+            }
+            Err(e) => {
+                self.agent_memory_status = Some(format!("checkpoint refused — {e}"));
+            }
+        }
+        cx.notify();
+    }
+
+    /// ↺ RESUME — reconstitute a FRESH verified context from the held checkpoint
+    /// ([`agent_memory::AgentMemoryCheckpoint::resume_into_fresh_world`]) and witness
+    /// the handoff: the resumed agent continues from exactly the checkpointed
+    /// working-set, the fail-closed teeth (root tooth · byte-identical re-projection ·
+    /// identity) all pass or the resume REFUSES. The sibling of the TIME tab's verified
+    /// reconstruction — it builds a fresh context (the live World is untouched).
+    pub(crate) fn agent_memory_resume(&mut self, cx: &mut Context<Self>) {
+        let Some(cp) = self.agent_memory.clone() else {
+            self.agent_memory_status =
+                Some("resume: no checkpoint yet — ⛂ checkpoint the working-set first".to_string());
+            cx.notify();
+            return;
+        };
+        match cp.resume_into_fresh_world() {
+            Ok(resumed) => {
+                // RE-CAPTURE the resumed fresh context and witness the round-trip teeth
+                // against the held checkpoint (byte-identical umem + the re-derived root +
+                // preserved identity). The resume's own teeth already gate this; the
+                // re-capture is the operator-visible state-agreement square.
+                let re =
+                    starbridge_v2::agent_memory::AgentMemoryCheckpoint::capture(&resumed, cp.agent);
+                let teeth = re
+                    .as_ref()
+                    .map(|r| r.umem == cp.umem && r.root == cp.root && r.agent == cp.agent)
+                    .unwrap_or(false);
+                let slot0 = re
+                    .as_ref()
+                    .map(|r| r.working_slot(AGENT_MEM_SLOT))
+                    .unwrap_or_else(|_| cp.working_slot(AGENT_MEM_SLOT));
+                self.agent_memory_resumed = Some((slot0, teeth));
+                self.agent_memory_status = Some(format!(
+                    "↺ resumed into a FRESH verified context · continues from slot[{AGENT_MEM_SLOT}]={slot0} · {}",
+                    if teeth {
+                        "teeth ✓ (root re-derived · umem byte-identical · identity preserved)"
+                    } else {
+                        "teeth ✗ DRIFT"
+                    },
+                ));
+            }
+            Err(e) => {
+                self.agent_memory_resumed = Some((0, false));
+                self.agent_memory_status = Some(format!("↺ resume REFUSED (fail-closed) — {e}"));
+            }
+        }
+        cx.notify();
     }
 
     /// THE A2 SWARM PANEL — multi-agent cap-coordination surface.
@@ -2919,6 +3209,180 @@ mod popout_crash_repro {
         assert!(
             survived,
             "a non-panicking guarded action returns true (ran)"
+        );
+    }
+}
+
+/// **THE AGENT-MEMORY-AS-umem AFFORDANCE, DRIVEN LIVE THROUGH THE COCKPIT.** Not
+/// the standalone `agent_memory.rs` round-trip — this boots the REAL cockpit window
+/// over the live demo World and clicks the Agent tab's checkpoint/resume controls
+/// (the `Cockpit::agent_memory_*` verbs the buttons invoke), proving agent-memory is
+/// load-bearing in a user-facing flow (the sibling of the TIME-tab scrub bake).
+#[cfg(all(test, feature = "render-capture"))]
+mod agent_memory_cockpit_affordance {
+    use super::*;
+    use gpui::{AppContext, HeadlessAppContext, PlatformTextSystem, px, size};
+    use gpui_wgpu::CosmicTextSystem;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    fn headless() -> HeadlessAppContext {
+        static LILEX: &[u8] = include_bytes!("../../assets/fonts/Lilex-Regular.ttf");
+        static IBM_PLEX: &[u8] = include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf");
+        let text_system: Arc<dyn PlatformTextSystem> =
+            Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+        text_system
+            .add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])
+            .expect("register headless fonts");
+        let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+            gpui_platform::current_headless_renderer()
+        });
+        cx.update(|cx| gpui_component::init(cx));
+        cx
+    }
+
+    fn boot_cockpit(cx: &mut HeadlessAppContext) -> (Entity<Cockpit>, gpui::WindowHandle<Cockpit>) {
+        let (world, anchors) = world::demo_world();
+        let shared = Rc::new(RefCell::new(world));
+        let window = cx
+            .open_window(size(px(1280.), px(832.)), |window, cx| {
+                let view = cx.new(|cx| {
+                    let focus = cx.focus_handle();
+                    Cockpit::with_node(shared.clone(), anchors, focus, None, None)
+                });
+                view.update(cx, |c, cx| c.focus_on_open(window, cx));
+                view
+            })
+            .expect("open the cockpit window");
+        let entity = window.root(cx).expect("cockpit root entity");
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, w, _| w.refresh())
+            .expect("refresh the cockpit window");
+        cx.run_until_parked();
+        (entity, window)
+    }
+
+    /// THE LIVE COCKPIT ROUND-TRIP: advance the live agent → ⛂ checkpoint → advance
+    /// PAST the checkpoint → ↺ resume into a fresh verified context. The resumed
+    /// context continues from the CHECKPOINTED working-set (not the diverged live
+    /// one), the fail-closed teeth pass, and the Agent panel renders through it all.
+    #[test]
+    fn clicking_checkpoint_then_resume_recovers_the_checkpointed_working_set() {
+        let mut cx = headless();
+        let (entity, window) = boot_cockpit(&mut cx);
+
+        let read_slot = |cx: &HeadlessAppContext| -> u64 {
+            entity.read_with(cx, |c, _| {
+                let w = c.world.borrow();
+                let cell = w.ledger().get(&c.agent_surface.agent).unwrap();
+                let fe = cell
+                    .state
+                    .get_field(AGENT_MEM_SLOT)
+                    .copied()
+                    .unwrap_or([0u8; 32]);
+                let mut b = [0u8; 8];
+                b.copy_from_slice(&fe[..8]);
+                u64::from_le_bytes(b)
+            })
+        };
+
+        // The agent's working counter starts clean on the dedicated slot.
+        let base = read_slot(&cx);
+
+        // (1) ⊕ ADVANCE the live agent twice — its working-set moves via REAL turns.
+        entity.update(&mut cx, |c, cx| c.agent_memory_advance(cx));
+        let status1 = entity.read_with(&cx, |c, _| c.agent_memory_status.clone());
+        entity.update(&mut cx, |c, cx| c.agent_memory_advance(cx));
+        assert_eq!(
+            read_slot(&cx),
+            base + 2,
+            "two advances moved the live working-set +2 (advance status: {status1:?})"
+        );
+
+        // (2) ⛂ CHECKPOINT — capture the live working-set to a umem-ref.
+        entity.update(&mut cx, |c, cx| c.agent_memory_checkpoint(cx));
+        let checkpoint_slot = entity.read_with(&cx, |c, _| {
+            c.agent_memory
+                .as_ref()
+                .expect("the checkpoint is held after the click")
+                .working_slot(AGENT_MEM_SLOT)
+        });
+        assert_eq!(
+            checkpoint_slot,
+            base + 2,
+            "the checkpoint captured the working-set at the advanced point"
+        );
+
+        // (3) ⊕ ADVANCE PAST the checkpoint — the live agent diverges.
+        entity.update(&mut cx, |c, cx| c.agent_memory_advance(cx));
+        entity.update(&mut cx, |c, cx| c.agent_memory_advance(cx));
+        assert_eq!(
+            read_slot(&cx),
+            base + 4,
+            "the live agent advanced PAST the checkpoint"
+        );
+
+        // (4) ↺ RESUME into a fresh verified context from the held checkpoint.
+        entity.update(&mut cx, |c, cx| c.agent_memory_resume(cx));
+        let resumed = entity.read_with(&cx, |c, _| c.agent_memory_resumed);
+        assert_eq!(
+            resumed,
+            Some((base + 2, true)),
+            "the resumed FRESH context continues from the CHECKPOINT (base+2), not the diverged live (base+4), and the fail-closed teeth all passed"
+        );
+
+        // (5) THE PANEL RENDERS through the whole flow (no panic on a real draw).
+        cx.update_window(window.into(), |_, w, _| w.refresh())
+            .expect("refresh the cockpit after the agent-memory round-trip");
+        cx.run_until_parked();
+        let status = entity.read_with(&cx, |c, _| c.agent_memory_status.clone());
+        assert!(
+            status.map(|s| s.contains("resumed")).unwrap_or(false),
+            "the Agent panel's memory section reflects the resume verdict"
+        );
+    }
+
+    /// A TAMPERED carrier REFUSES through the cockpit verb too — fail-closed at the
+    /// click. We corrupt the held checkpoint's umem, then ↺ resume: the root tooth
+    /// bites and the panel shows the refusal (teeth NOT passed), never a faked resume.
+    #[test]
+    fn resume_is_fail_closed_through_the_cockpit() {
+        let mut cx = headless();
+        let (entity, _window) = boot_cockpit(&mut cx);
+
+        entity.update(&mut cx, |c, cx| c.agent_memory_advance(cx));
+        entity.update(&mut cx, |c, cx| c.agent_memory_checkpoint(cx));
+
+        // Corrupt the held checkpoint's umem (a tamper to the working slot).
+        entity.update(&mut cx, |c, _cx| {
+            let agent = c.agent_surface.agent;
+            let cp = c.agent_memory.as_mut().expect("a checkpoint is held");
+            cp.umem.insert(
+                dregg_turn::umem::UKey::Field {
+                    cell: agent,
+                    slot: 0,
+                },
+                dregg_turn::umem::UVal::Bytes32({
+                    let mut fe = [0u8; 32];
+                    fe[..8].copy_from_slice(&999u64.to_le_bytes());
+                    fe
+                }),
+            );
+        });
+
+        entity.update(&mut cx, |c, cx| c.agent_memory_resume(cx));
+        let resumed = entity.read_with(&cx, |c, _| c.agent_memory_resumed);
+        assert_eq!(
+            resumed,
+            Some((0, false)),
+            "the tampered carrier REFUSES to resume (the root tooth bites — fail-closed at the click)"
+        );
+        let status = entity.read_with(&cx, |c, _| c.agent_memory_status.clone());
+        assert!(
+            status.map(|s| s.contains("REFUSED")).unwrap_or(false),
+            "the panel shows the fail-closed refusal, never a faked resume"
         );
     }
 }
