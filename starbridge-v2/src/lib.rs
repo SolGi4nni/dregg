@@ -53,6 +53,13 @@ pub mod client;
 #[cfg(feature = "embedded-executor")]
 pub mod live_node;
 
+// AGENT MEMORY AS A umem — checkpoint/resume a live confined agent's working-set as a
+// witnessed portable umem-ref (`project_cell`/`reify_cell` over the per-cell umem Stage
+// A), fail-closed under the canonical root tooth. The agent-memory sibling of the
+// time-travel scrub's `reify_ledger` boundary restore — gpui-free, mozjs-free.
+#[cfg(feature = "embedded-executor")]
+pub mod agent_memory;
+
 // The native deos AFFORDANCE surface — htmx-on-crack with the firing→executed-turn
 // seam CLOSED through the embedded executor (the thesis `starbridge-web-surface`
 // could only model). gpui-free, `cargo test`-able.

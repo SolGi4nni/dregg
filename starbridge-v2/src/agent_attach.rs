@@ -266,4 +266,116 @@ mod tests {
             "the fork's own height advanced"
         );
     }
+
+    /// **AGENT-MEMORY AS umem, LOAD-BEARING ON THE LIVE AGENT PATH** (gpui-free,
+    /// SpiderMonkey-free — the attach machinery is plain Rust). A live confined agent
+    /// (the SAME `WorldSinkAdapter` / `attach_agent` agent the cockpit drives) evolves
+    /// its working-set, is CHECKPOINTED to a umem-ref, dropped, and a FRESH agent
+    /// context is reconstituted from the carrier and CONTINUES from the checkpoint —
+    /// proven byte-identical in the universal address space, and fail-closed.
+    #[test]
+    fn live_agent_memory_checkpoint_resume_continues() {
+        use crate::agent_memory::{AgentMemoryCheckpoint, AgentMemoryError};
+        use deos_js::applet::pack_u64;
+        use dregg_turn::umem;
+
+        // ── 1. A LIVE confined agent evolves its working-set ─────────────────────
+        let (world, anchors) = crate::world::demo_world();
+        let [_treasury, _service, user] = anchors;
+        let agent = user;
+        let held = AuthRequired::Signature;
+        let affordances = vec![("bump".to_string(), AuthRequired::Signature)];
+
+        let live = Rc::new(RefCell::new(world));
+        let mut applet = attach_agent(
+            WorldSinkAdapter::live(live.clone()),
+            agent,
+            held.clone(),
+            affordances.clone(),
+        );
+        // Two cap-gated verified turns on the LIVE World — the working-set accumulates.
+        applet.fire("bump", 7).expect("bump 7");
+        applet.fire("bump", 5).expect("bump 5");
+        assert_eq!(
+            applet.get_u64(AGENT_COUNTER_SLOT),
+            12,
+            "live counter 0+7+5 = 12"
+        );
+
+        // ── 2. CHECKPOINT the live agent's working-set as a witnessed umem ───────
+        let checkpoint = AgentMemoryCheckpoint::capture(&live.borrow(), agent)
+            .expect("capture the live agent's umem");
+        assert_eq!(
+            checkpoint.working_slot(AGENT_COUNTER_SLOT),
+            12,
+            "the umem carries the agent's accumulated working-set (12)"
+        );
+        // The carrier on the wire — then the live agent + World are DROPPED.
+        let carrier = checkpoint.to_bytes().expect("serialize the checkpoint");
+        drop(applet);
+        drop(live);
+
+        // ── 3. RESUME into a FRESH agent context from nothing but the carrier ────
+        let recovered = AgentMemoryCheckpoint::from_bytes(&carrier).expect("load the carrier");
+        let resumed_world = recovered
+            .resume_into_fresh_world()
+            .expect("reify the agent into a fresh World (fail-closed teeth all pass)");
+        let resumed_live = Rc::new(RefCell::new(resumed_world));
+        let mut resumed = attach_agent(
+            WorldSinkAdapter::live(resumed_live.clone()),
+            agent,
+            held,
+            affordances,
+        );
+        // The resumed agent CONTINUES from the checkpoint (12), not a reset.
+        assert_eq!(
+            resumed.get_u64(AGENT_COUNTER_SLOT),
+            12,
+            "the resumed agent's working-set is the checkpoint (12), not a reset"
+        );
+
+        // ── 4. THE WITNESS: the umem came across byte-for-byte ───────────────────
+        let resumed_umem = AgentMemoryCheckpoint::capture(&resumed_live.borrow(), agent)
+            .expect("re-capture the resumed agent");
+        assert_eq!(
+            resumed_umem.umem, recovered.umem,
+            "THE ROUND-TRIP WITNESS: the resumed agent's umem is byte-identical to the \
+             checkpoint in the universal address space"
+        );
+        assert_eq!(
+            resumed_umem.root, recovered.root,
+            "the root tooth re-derives"
+        );
+
+        // ── 5. CONTINUE: the resumed agent fires further, advancing FROM 12 ──────
+        let pre_height = resumed_live.borrow().height();
+        resumed
+            .fire("bump", 100)
+            .expect("the resumed agent fires on");
+        assert_eq!(
+            resumed.get_u64(AGENT_COUNTER_SLOT),
+            112,
+            "the resumed agent advanced its working-set FROM the checkpoint (12 + 100)"
+        );
+        assert_eq!(
+            resumed_live.borrow().height(),
+            pre_height + 1,
+            "the post-handoff fire committed a real verified turn on the resumed World"
+        );
+
+        // ── 6. FAIL-CLOSED: a tampered umem carrier REFUSES to resume ────────────
+        let mut tampered = recovered.clone();
+        tampered.umem.insert(
+            umem::UKey::Field {
+                cell: agent,
+                slot: AGENT_COUNTER_SLOT as u64,
+            },
+            umem::UVal::Bytes32(pack_u64(999)),
+        );
+        match tampered.resume_into_fresh_world() {
+            Err(AgentMemoryError::RootTooth { .. }) => {}
+            Err(e) => panic!("a tampered umem must refuse via the root tooth, got {e:?}"),
+            Ok(_) => panic!("a tampered umem must NOT resume — it bypassed the root tooth"),
+        }
+    }
 }

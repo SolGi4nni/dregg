@@ -1556,11 +1556,15 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         "firing the halo's Inspect handle must REUSE the actuation and open a window \
          ({pre_halo_wins} -> {post_halo_wins}) — the ring is a spatial face on the same verbs"
     );
-    // Leave a window molded so the halo ring renders around it in the final shot
-    // (raise the user transcript window to the top, then select it).
+    // Leave a surface molded so the halo ring renders around it in the final shot.
+    // The user cell-icon sits in the clear top-left margin (above the context menu,
+    // clear of the centered overlays), so its full ring of handles reads unobstructed.
+    // Dismiss the one-time welcome card first so it does not cover the workbench.
     desk_h.update(&mut cx, |desk, cx| {
-        desk.bake_open_transcript(user);
-        desk.bake_select_window(user, WinKindTag::Transcript);
+        if desk.bake_welcome_is_shown() {
+            desk.bake_welcome_door(0);
+        }
+        desk.bake_select_icon(user);
         cx.notify();
     });
     cx.run_until_parked();
