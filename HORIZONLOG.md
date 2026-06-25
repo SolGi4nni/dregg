@@ -8,6 +8,30 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE (late-2026-06-25 cluster — lanes that landed AFTER the entries below, recorded here for durability)
+- ANDROID cap-graph COMPLETED: the whole ambient-AOSP surface reforged as cap-bounded gates — intent
+  (`intentgate.rs` `76165ec4`, transport leg `63dfdca3`), content-providers (`contentgate.rs` `7451f6a6`),
+  system-services→organs (`organgate.rs` `af7d1c00`), install=cap-gated-birth (`appfactory.rs` `63dfdca3`).
+  The permission model is REAL: visible cap-badges (`e826335e`), a dangerous-perm hand-over mints a genuine
+  `Effect::GrantCapability` over the verified executor (`542f640d`, `turn/src/action.rs:962`), and the confined
+  app's `checkSelfPermission` is interposed over the cap-badge set + DENIED in-runtime on a dim cap (`d9a2ffc8`).
+  SystemUI cap-chrome rendered ON THE GLASS for a focused AndroidCell window — status bar + quick-settings shade +
+  hand-over sheet, a tap drives a REAL `Effect::GrantCapability`, the badge flips lit (`d361cfc5`/`76b43970`).
+  NAMED TAIL: a clean painted gpui frame on-device still needs real arm64 Vulkan hw (emulator GPU wall, not a bug).
+- SERVICE CELLS: three citizens on `invoke()` — kvstore (`0d1a3f8b`), nameservice (`21afb73c`), escrow-market
+  (`d124ad8a`, first four-organ non-trivial). Non-degrading: identical canonical program ⇒ organ teeth re-enforce
+  on every desugared turn, cap-gate bites at front-door AND executor. No `Effect::Invoke`, no kernel change.
+- MATCHING faithfulness FULLY CLOSED both deployed paths: derivative determinizer (`Determinize.lean`) + legacy
+  Thompson (`c14aa325`, `Thompson.lean` sorry-free); inter/neg route through the determinizer (`compiler.rs:692`).
+- UMEM: the whole-image FOLD CHIP landed in-circuit (`74565bd5`, `dregg-circuit::whole_image_fold` discharges
+  fc679a5f's `hpin`). NAMED TAIL: the universal-map rotation flip (umem becomes the prover — `umem_witness_enabled`
+  still defaults FALSE, `turn/src/executor/mod.rs:815`) → Stage B heap-write effect.
+- FIRMAMENT: the semihost interactive cockpit now runs the REAL verified `DreggEngine` (live-repaint-on-turn,
+  `251692b7`) — closes `SEL4-INTERACTIVE-COCKPIT.md §3.5`. NAMED TAIL: §3.6 step 4, the executor-PD's bare-metal
+  Lean-ELF runtime link (the real-seL4 WALL; gated on Microkit SDK on PATH, not a semihost blocker).
+- MULTIPLAYER: a real two-instance session — two co-inhabitants sync via the membrane's field-granular stitch
+  (`8159d322`). SURFACES: the Spotter + menus now reach EVERY session surface, each landing mold-ready (`f7e6765a`).
+
 ## web-deos DEEPENED: a SERVICE CELL invoked node-less in the browser (2026-06-25)
 - WHAT: the web `ViewNode` path gained a fourth, richer surface — a KV-store SERVICE CELL driven entirely in a
   browser tab (`wasm/src/bindings_card.rs::KvStoreWorld` + `deos-view/src/web.rs::render_kvstore_live_document` +
