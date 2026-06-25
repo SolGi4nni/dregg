@@ -65,21 +65,31 @@
 //! pinned — the no-extra-cells tooth bites in-circuit (the `mapRoot_injective`
 //! anti-ghost the Lean `_teeth` proves, now realized).
 //!
-//! ## The rotation-integration point (named, not faked)
+//! ## The rotation-integration point — REALIZED (the cross-table wiring)
 //!
-//! This chip computes the fold over a declared cell LIST supplied as its insert-chain
-//! rows. To make that list the SAME object the other umem legs reconcile against, the
-//! chain's `(key, value)` rows must be wired to the universal boundary table's declared
-//! `(domain, key)` cells (`descriptor_ir2::UMemBoundaryWitness`, the per-domain sorted
-//! leaves) — i.e. a cross-table lookup binding `whole_image_fold.{key,value}` to the
-//! `umem_boundary` rows of the read peer's field-plane domain. That per-domain wiring is
-//! the universal-map rotation's reconciliation seam (`docs/UNIVERSAL-MAP-ROTATION.md`);
-//! it is the ONE remaining step between this self-contained fold chip and the fold
-//! riding the deployed boundary table. The fold arithmetic itself — the `hpin` content —
-//! is realized here.
+//! The fold above computes the root over a declared cell LIST supplied as its insert-chain
+//! rows. [`whole_image_fold_bound_descriptor`] (and its prove/verify pair) bind that list to
+//! the SAME object the other umem legs reconcile against: the universal boundary table's
+//! declared `(domain, key)` cells (`descriptor_ir2::UMemBoundaryWitness`, the per-domain sorted
+//! leaves of the `Ir2Air::UMemBoundary` arm). Each real fold link additionally drives a
+//! `UMemOp::Read` of `(domain, WIF_KEY) → WIF_VALUE` against the boundary table, so the
+//! deployed universal-memory machinery (no new bus/column/AIR) forces the binding:
+//!
+//!   * the address-closure lookup (`BUS_UMEM_ADDRS`) forces every folded `(domain, key)` to be
+//!     a DECLARED boundary cell — `committed ⊆ declared`, the no-extra-cells direction;
+//!   * the Blum balance (`BUS_UMEM_CHECK`) forces the folded `WIF_VALUE` to EQUAL the boundary
+//!     cell's declared value — the binding cannot let a boundary cell differ from a fold row.
+//!
+//! The chip thus folds EXACTLY the read peer's declared field-plane boundary, and pins that
+//! fold to the published root — the per-domain reconciliation of the universal-map rotation
+//! (`docs/UNIVERSAL-MAP-ROTATION.md`), no longer a free-floating list. The complementary
+//! `declared ⊆ committed` direction rides the deployed per-cell `MapOp::Read` against the
+//! published root; the two together close `committed == declared` in-circuit. The fold
+//! arithmetic — the `hpin` content — is realized in the self-contained chip below.
 
 use crate::descriptor_ir2::{
-    EffectVmDescriptor2, MapKind, MapOpSpec, VmConstraint2, WindowExpr, WindowGateSpec,
+    EffectVmDescriptor2, MapKind, MapOpSpec, MemKind, UMemBoundaryWitness, UMemOpSpec,
+    VmConstraint2, WindowExpr, WindowGateSpec,
 };
 use crate::field::BabyBear;
 use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf, empty_heap_root};
@@ -309,6 +319,122 @@ pub fn verify_whole_image_fold(
 /// honest test path) can compute the genuine published root.
 pub fn whole_boundary_fold(leaves: &[HeapLeaf]) -> BabyBear {
     CanonicalHeapTree::new(leaves.to_vec(), HEAP_TREE_DEPTH).root()
+}
+
+// ===========================================================================
+// THE CROSS-TABLE WIRING — the fold chip bound to the universal boundary table.
+//
+// The self-contained chip above pins the published root to the binary fold of a declared
+// cell LIST supplied as its insert-chain rows. The named rotation-integration point
+// (module banner §"The rotation-integration point") is to make that list the SAME object
+// the other umem legs reconcile against: the universal boundary table's per-domain
+// `(domain, key)` cells (`descriptor_ir2::UMemBoundaryWitness`, the `Ir2Air::UMemBoundary`
+// arm). This is the per-domain reconciliation that completes the whole-image cross-cell-read
+// FULLY in-circuit — the chip no longer folds a free-floating list, it folds EXACTLY the
+// declared boundary of the read peer's field-plane domain.
+//
+// The binding rides the DEPLOYED universal-memory machinery, no new bus / column / AIR:
+// each real fold link additionally drives a `UMemOp::Read` against the boundary table at
+// `(domain, WIF_KEY) → WIF_VALUE`. Two deployed teeth then bite together:
+//
+//   * the address-closure lookup (`Ir2Air::UMemory` → `BUS_UMEM_ADDRS` ← the boundary
+//     table's `(domain, key)` `table_entry`) forces every folded `(domain, key)` to be a
+//     DECLARED boundary cell — a fold row over an address the boundary never declared has no
+//     `table_entry` to balance against and REFUSES (`umemClosed`). This is the
+//     `committed ⊆ declared` (no-extra-cells) direction the whole-image read needs;
+//   * the Blum balance (`BUS_UMEM_CHECK`: the boundary SENDS each declared init cell
+//     `(domain, key, present, init_value, 0)`, the read RECEIVES its claimed prev) forces the
+//     folded `WIF_VALUE` to EQUAL the boundary cell's declared value — a fold row whose value
+//     differs from the boundary's declared cell has no matching init send and REFUSES.
+//
+// Together the binding cannot let a cell in the boundary table differ from the fold-chip's
+// rows: the fold folds exactly the declared boundary cells, with their declared values, and
+// pins that fold to the published root. The complementary `declared ⊆ committed` direction
+// rides the deployed per-cell `MapOp::Read` against the published root
+// (`tests/effect_vm_umem_real_turn.rs::cross_cell_read_proves_committed_peer_state`); the two
+// together close `committed == declared` — the whole-image cross-cell-read, in-circuit.
+
+/// The bound whole-image fold descriptor: the self-contained fold chip
+/// ([`whole_image_fold_descriptor`]) PLUS one `UMemOp::Read` per fold link binding the
+/// insert-chain `(WIF_KEY, WIF_VALUE)` rows to the universal boundary table's declared
+/// `(domain, key)` cells (the named rotation-integration point). `domain` is the read peer's
+/// field-plane domain code (a nibble `< DOMAIN_BOUND`; never the nullifier domain — these are
+/// ordinary present cells, not the insert-only freshness plane).
+pub fn whole_image_fold_bound_descriptor(domain: u32) -> EffectVmDescriptor2 {
+    let mut desc = whole_image_fold_descriptor();
+    desc.name = "dregg-whole-image-fold-bound-v1".to_string();
+    // The cross-table binding: read each folded cell against the boundary table. The read is
+    // a no-op on the map root (it rides the umem multiset, NOT the Merkle chain) — its sole
+    // job is to force `(domain, WIF_KEY)` declared and `WIF_VALUE` == the declared cell value.
+    // present/prev_present = guard (real rows: the cell is present); prev mirrors the cell so
+    // the Blum replay pins the value to the declared init image; prev_serial = 0 (the init).
+    desc.constraints.push(VmConstraint2::UMemOp(UMemOpSpec {
+        guard: LeanExpr::Var(WIF_GUARD),
+        domain,
+        key: LeanExpr::Var(WIF_KEY),
+        present: LeanExpr::Var(WIF_GUARD),
+        value: LeanExpr::Var(WIF_VALUE),
+        prev_present: LeanExpr::Var(WIF_GUARD),
+        prev_value: LeanExpr::Var(WIF_VALUE),
+        prev_serial: LeanExpr::Const(0),
+        kind: MemKind::Read,
+    }));
+    desc
+}
+
+/// Build the universal boundary witness that the bound fold binds against: the declared
+/// `(domain, key)` cells of the read peer's field-plane domain, each carrying its declared
+/// value as `Some(value)`. Lexicographically strictly increasing (one domain ⇒ key order),
+/// mirroring the fold's distinct-address discipline. Returns `Err` on a duplicate address
+/// (a map declares each key once — the same canonicity [`build_whole_image_fold`] enforces).
+pub fn boundary_witness_for_fold(
+    leaves: &[HeapLeaf],
+    domain: u32,
+) -> Result<UMemBoundaryWitness, String> {
+    let mut sorted: Vec<HeapLeaf> = leaves.to_vec();
+    sorted.sort_by_key(|l| l.addr.as_u32());
+    for w in sorted.windows(2) {
+        if w[0].addr == w[1].addr {
+            return Err(format!(
+                "duplicate boundary address {} — a map declares each key once",
+                w[0].addr.as_u32()
+            ));
+        }
+    }
+    Ok(UMemBoundaryWitness {
+        addrs: sorted.iter().map(|l| (domain, l.addr)).collect(),
+        init_vals: sorted.iter().map(|l| Some(l.value)).collect(),
+    })
+}
+
+/// Prove the BOUND whole-image fold: the published root is the in-circuit binary fold of
+/// EXACTLY the universal boundary table's declared cells of `domain`, with their declared
+/// values. The boundary witness MUST agree with `leaves` (use [`boundary_witness_for_fold`]
+/// on the same leaves) — a mismatch is the soundness tooth, exercised by the refusal tests.
+pub fn prove_whole_image_fold_bound(
+    witness: &WholeImageFoldWitness,
+    umem_boundary: &UMemBoundaryWitness,
+    domain: u32,
+) -> Result<crate::descriptor_ir2::Ir2BatchProof<crate::descriptor_ir2::DreggStarkConfig>, String> {
+    let desc = whole_image_fold_bound_descriptor(domain);
+    crate::descriptor_ir2::prove_vm_descriptor2_umem(
+        &desc,
+        &witness.trace,
+        &witness.public_inputs,
+        &crate::descriptor_ir2::MemBoundaryWitness::default(),
+        &witness.map_heaps,
+        umem_boundary,
+    )
+}
+
+/// Verify a bound whole-image fold proof against the published-root public input.
+pub fn verify_whole_image_fold_bound(
+    proof: &crate::descriptor_ir2::Ir2BatchProof<crate::descriptor_ir2::DreggStarkConfig>,
+    public_inputs: &[BabyBear],
+    domain: u32,
+) -> Result<(), String> {
+    let desc = whole_image_fold_bound_descriptor(domain);
+    crate::descriptor_ir2::verify_vm_descriptor2(&desc, proof, public_inputs)
 }
 
 #[cfg(test)]

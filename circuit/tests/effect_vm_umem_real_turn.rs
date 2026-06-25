@@ -455,10 +455,11 @@ fn umem_real_turn_stale_prev_refuses() {
 // over the ENTIRE declared boundary view via a sorted-insert chain from the empty root and pins the
 // delivered fold to the published-root PI. A peer heap with one extra/altered cell folds to a
 // different root and can no longer be pinned (the `mapRoot_injective` no-extra-cells tooth, biting
-// in-circuit). The ONE remaining rotation step is the cross-table wiring binding the chip's
-// insert-chain `(key, value)` rows to the universal boundary table's per-domain `(domain, key)`
-// cells (`whole_image_fold` module docs name it precisely); the fold arithmetic — the `hpin`
-// content — rides here.
+// in-circuit). The cross-table wiring binding the chip's insert-chain `(key, value)` rows to the
+// universal boundary table's per-domain `(domain, key)` cells is REALIZED below
+// (`whole_image_fold_bound_*`): each fold link drives a `UMemOp::Read` against the boundary table,
+// so the deployed address-closure + Blum machinery force the fold to fold EXACTLY the declared
+// boundary cells with their declared values (no new bus/column/AIR).
 
 /// The deployed-shape column layout for the cross-cell read MapOp (arbitrary but stable):
 /// col 0 = the peer's published field-plane root (pinned to PI 0), col 1 = the read field
@@ -803,5 +804,109 @@ fn cross_cell_read_whole_image_tampered_value_refuses() {
     assert!(
         refused,
         "a tampered declared value must refuse (the sorted insert recomputes a different root)"
+    );
+}
+
+// ============================================================================
+// THE CROSS-TABLE WIRING — the fold chip bound to the universal boundary table.
+//
+// The fold chip above pins the published root to the fold of a declared cell LIST it is
+// HANDED. The rotation-integration point (`whole_image_fold` module banner) binds that list to
+// the universal boundary table's per-domain `(domain, key)` cells, so the chip folds EXACTLY
+// the declared boundary of the read peer's field-plane domain — the per-domain reconciliation
+// that completes the whole-image cross-cell-read fully in-circuit. The binding rides the
+// deployed universal-memory machinery (one `UMemOp::Read` per fold link against the boundary
+// table) — no new bus/column/AIR. Two deployed teeth bite: the address-closure lookup refuses
+// a folded cell the boundary never declared (`committed ⊆ declared`), and the Blum balance
+// refuses a folded value that differs from the boundary's declared cell value.
+
+use dregg_circuit::whole_image_fold::{
+    boundary_witness_for_fold, prove_whole_image_fold_bound, verify_whole_image_fold_bound,
+};
+
+/// The read peer's field-plane domain code (a nibble; the ordinary present-cell plane, never
+/// the insert-only nullifier domain).
+const FIELD_DOMAIN: u32 = 0;
+
+#[test]
+fn whole_image_fold_bound_proves_against_boundary_table() {
+    // The HONEST bound read: the fold folds exactly the boundary table's declared field cells,
+    // each with its declared value, and pins that fold to the published root. The combined proof
+    // (the fold Merkle chain + the per-cell `UMemOp::Read` against the universal boundary table)
+    // proves and independently verifies.
+    let leaves = peer_with_fields(&[(1, 111), (3, 777), (5, 555)]);
+    assert!(leaves.len() >= 2, "the fold must be non-trivial");
+    let published = whole_boundary_fold(&leaves);
+
+    let witness = build_whole_image_fold(&leaves, published).expect("declared view folds");
+    let boundary =
+        boundary_witness_for_fold(&leaves, FIELD_DOMAIN).expect("boundary witness builds");
+    let proof = prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN)
+        .expect("the boundary-bound whole-image fold proves");
+    verify_whole_image_fold_bound(&proof, &witness.public_inputs, FIELD_DOMAIN)
+        .expect("the boundary-bound whole-image fold verifies against the published commitment");
+}
+
+#[test]
+fn whole_image_fold_bound_undeclared_cell_refuses() {
+    // The fold folds a cell (slot 5) the universal boundary table never DECLARES. The per-cell
+    // `UMemOp::Read` of that cell hits an undeclared `(domain, key)` — no `table_entry` to balance
+    // the address-closure lookup against (`umemClosed`) — so the bound proof REFUSES. This is the
+    // `committed ⊆ declared` direction: the fold cannot smuggle a cell past the boundary table.
+    let leaves = peer_with_fields(&[(1, 111), (3, 777), (5, 555)]);
+    let published = whole_boundary_fold(&leaves);
+    let witness = build_whole_image_fold(&leaves, published).expect("declared view folds");
+
+    // The boundary DECLARES only two of the three folded cells (slot 5 omitted).
+    let declared: Vec<HeapLeaf> = leaves
+        .iter()
+        .filter(|l| l.addr != BabyBear::new(5 + 1))
+        .cloned()
+        .collect();
+    assert_eq!(declared.len(), leaves.len() - 1, "exactly one cell undeclared");
+    let boundary =
+        boundary_witness_for_fold(&declared, FIELD_DOMAIN).expect("boundary witness builds");
+
+    let outcome =
+        std::panic::catch_unwind(|| prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN));
+    let refused = match outcome {
+        Err(_) => true,
+        Ok(r) => r.is_err(),
+    };
+    assert!(
+        refused,
+        "a folded cell the boundary never declared must refuse (the address-closure tooth bites)"
+    );
+}
+
+#[test]
+fn whole_image_fold_bound_boundary_value_mismatch_refuses() {
+    // The fold folds the genuine cell values, but the universal boundary table DECLARES a
+    // different value for one cell. The per-cell `UMemOp::Read`'s claimed prev value (the folded
+    // value) no longer matches the boundary's replayed init image — the Blum reconciliation
+    // refuses. The binding cannot let a cell in the boundary table differ from the fold rows.
+    let leaves = peer_with_fields(&[(1, 111), (3, 777), (5, 555)]);
+    let published = whole_boundary_fold(&leaves);
+    let witness = build_whole_image_fold(&leaves, published).expect("declared view folds");
+
+    let mut boundary =
+        boundary_witness_for_fold(&leaves, FIELD_DOMAIN).expect("boundary witness builds");
+    // Bump ONE declared cell's value away from the genuine folded value.
+    let bumped = boundary
+        .init_vals
+        .iter_mut()
+        .find(|v| v.is_some())
+        .expect("a present declared cell exists");
+    *bumped = Some(bumped.unwrap() + BabyBear::ONE);
+
+    let outcome =
+        std::panic::catch_unwind(|| prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN));
+    let refused = match outcome {
+        Err(_) => true,
+        Ok(r) => r.is_err(),
+    };
+    assert!(
+        refused,
+        "a boundary cell value differing from the folded value must refuse (the Blum tooth bites)"
     );
 }

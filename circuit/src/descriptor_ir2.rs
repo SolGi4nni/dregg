@@ -118,10 +118,14 @@
 //!     deployed binary fold over the ENTIRE declared boundary view and `PiBinding`s the delivered
 //!     fold to the published root, so a peer heap with one undeclared/altered cell folds elsewhere
 //!     and cannot be pinned (the `mapRoot_injective` no-extra-cells tooth biting in-circuit;
-//!     `tests/effect_vm_umem_real_turn.rs::cross_cell_read_whole_image_*`). The ONE remaining
-//!     rotation step is the cross-table wiring binding the chip's insert-chain `(key, value)` rows
-//!     to the universal boundary table's per-domain `(domain, key)` cells (named in the
-//!     `whole_image_fold` module docs); the fold arithmetic — the `hpin` content — rides there.
+//!     `tests/effect_vm_umem_real_turn.rs::cross_cell_read_whole_image_*`). The cross-table wiring
+//!     binding the chip's insert-chain `(key, value)` rows to THIS universal boundary table's
+//!     per-domain `(domain, key)` cells is REALIZED (`whole_image_fold::whole_image_fold_bound_*`):
+//!     each fold link drives a `UMemOp::Read` against the boundary table, so the deployed
+//!     address-closure lookup (`BUS_UMEM_ADDRS`) forces every folded cell DECLARED and the Blum
+//!     balance (`BUS_UMEM_CHECK`) forces its folded value to equal the declared cell's value — the
+//!     chip folds EXACTLY the declared boundary, no new bus/column/AIR
+//!     (`tests/effect_vm_umem_real_turn.rs::whole_image_fold_bound_*`).
 //!   * The custom table id 5 (Lean `SUBMASK_TID = 0`) is realized as the bitwise-submask
 //!     relation at 30 bits (`subsetTable_mem_iff`: both elements in `[0, 2^30)` and
 //!     `keep & held = keep`), enforced by per-bit decomposition — the custom-table CONTENTS
