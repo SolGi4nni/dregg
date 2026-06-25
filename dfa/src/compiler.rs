@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
+use crate::derivative::{ByteClass, Re};
+
 /// A state identifier in the DFA.
 pub type StateId = u32;
 
@@ -392,6 +394,14 @@ pub enum Pattern {
     /// Match the inner pattern followed by any tail (i.e. `inner . any*`).
     /// Equivalent to a URL `prefix/*` wildcard.
     PrefixOf(Box<Pattern>),
+    /// Complement: match every byte sequence the inner pattern does **not**
+    /// match (the cap-secure *deny* filter). Inexpressible in the Thompson-NFA
+    /// product path (NFAs have no complement constructor), so a pattern
+    /// containing `Not` is compiled through the lazy derivative front-end
+    /// ([`crate::derivative`]) instead of `Pattern → Nfa → Dfa`. The emitted
+    /// flat [`Dfa`] is byte-identical in shape to the eager path's, so the
+    /// in-circuit AIR is untouched.
+    Not(Box<Pattern>),
 }
 
 impl Pattern {
@@ -437,9 +447,117 @@ impl Pattern {
         Pattern::PrefixOf(Box::new(Pattern::literal(prefix)))
     }
 
+    /// Complement (the deny-filter): match everything the inner pattern does
+    /// **not** match. Compiles through the lazy derivative path.
+    pub fn not(inner: Pattern) -> Pattern {
+        Pattern::Not(Box::new(inner))
+    }
+
+    /// True iff this pattern (or any sub-pattern) uses complement and therefore
+    /// must compile through the derivative front-end rather than the eager
+    /// `Pattern → Nfa → Dfa` product path.
+    fn needs_derivative(&self) -> bool {
+        match self {
+            Pattern::Not(_) => true,
+            Pattern::Seq(parts) | Pattern::All(parts) | Pattern::Any(parts) => {
+                parts.iter().any(Pattern::needs_derivative)
+            }
+            Pattern::Offset(_, inner) | Pattern::Repeat(inner, _) | Pattern::PrefixOf(inner) => {
+                inner.needs_derivative()
+            }
+            _ => false,
+        }
+    }
+
     /// Compile this pattern to a DFA.
+    ///
+    /// Patterns without complement keep the eager `Pattern → Nfa → Dfa` product
+    /// path (byte-identical to before). A pattern containing [`Pattern::Not`]
+    /// compiles through the lazy derivative front-end ([`crate::derivative`]),
+    /// which both expresses complement and avoids the eager intersection
+    /// blow-up — while emitting the same flat [`Dfa`] table the AIR consumes.
     pub fn compile(&self) -> Dfa {
-        pattern_to_nfa(self).determinize()
+        if self.needs_derivative() {
+            self.to_re().compile()
+        } else {
+            pattern_to_nfa(self).determinize()
+        }
+    }
+
+    /// Lower this pattern to a byte regex ([`Re`]) for the derivative compiler.
+    pub(crate) fn to_re(&self) -> Re {
+        match self {
+            Pattern::Word(w) => Re::word(w),
+            Pattern::Range(low, high) => Re::range(*low, *high),
+            Pattern::AnyByte => Re::any_byte(),
+            Pattern::Bit(offset_byte, bit_pos, value) => {
+                // skip `offset_byte` arbitrary bytes, then one byte whose
+                // `bit_pos` equals `value`.
+                let mut accepted = Vec::new();
+                for b in 0u16..=255u16 {
+                    let byte_val = b as u8;
+                    if ((byte_val >> bit_pos) & 1 == 1) == *value {
+                        accepted.push((byte_val, byte_val));
+                    }
+                }
+                let leaf = Re::sym(ByteClass::from_ranges(accepted));
+                let mut re = Re::epsilon();
+                for _ in 0..*offset_byte {
+                    re = re.then(Re::any_byte());
+                }
+                re.then(leaf)
+            }
+            Pattern::Seq(parts) => {
+                let mut re = Re::epsilon();
+                for p in parts {
+                    re = re.then(p.to_re());
+                }
+                re
+            }
+            Pattern::Any(parts) => {
+                let mut re = Re::empty();
+                for p in parts {
+                    re = re.or(p.to_re());
+                }
+                re
+            }
+            Pattern::All(parts) => {
+                let mut iter = parts.iter();
+                match iter.next() {
+                    None => Re::epsilon(),
+                    Some(first) => {
+                        let mut re = first.to_re();
+                        for p in iter {
+                            re = re.and(p.to_re());
+                        }
+                        re
+                    }
+                }
+            }
+            Pattern::Offset(skip, inner) => {
+                let mut re = Re::epsilon();
+                for _ in 0..*skip {
+                    re = re.then(Re::any_byte());
+                }
+                re.then(inner.to_re())
+            }
+            Pattern::Repeat(inner, count) => {
+                let mut re = Re::epsilon();
+                for _ in 0..*count {
+                    re = re.then(inner.to_re());
+                }
+                re
+            }
+            Pattern::BytesAt(off, data) => {
+                let mut re = Re::epsilon();
+                for _ in 0..*off {
+                    re = re.then(Re::any_byte());
+                }
+                re.then(Re::word(data))
+            }
+            Pattern::PrefixOf(inner) => inner.to_re().prefix_of(),
+            Pattern::Not(inner) => inner.to_re().not(),
+        }
     }
 }
 
@@ -570,6 +688,16 @@ fn pattern_to_nfa(p: &Pattern) -> Nfa {
             let inner_nfa = pattern_to_nfa(inner);
             let tail = Nfa::byte_range(0, 255).star();
             inner_nfa.concat(tail)
+        }
+        Pattern::Not(_) => {
+            // Complement has no Thompson-NFA constructor; any pattern reaching
+            // `pattern_to_nfa` with a `Not` inside would have been routed to the
+            // derivative path by `Pattern::compile` / `needs_derivative`. This
+            // arm is therefore unreachable in practice.
+            unreachable!(
+                "Pattern::Not must compile through the derivative path; \
+                 reached pattern_to_nfa"
+            )
         }
     }
 }
@@ -776,5 +904,135 @@ mod tests {
         assert!(inter.matches(b"a1"));
         assert!(!inter.matches(b"aa"));
         assert!(!inter.matches(b"1a"));
+    }
+
+    #[test]
+    fn not_pattern_denies() {
+        // Pattern::Not — the deny-filter, now expressible. Match every word
+        // except exactly "admin".
+        let d = Pattern::not(Pattern::word(b"admin")).compile();
+        assert!(!d.matches(b"admin"));
+        assert!(d.matches(b"user"));
+        assert!(d.matches(b"admi"));
+        assert!(d.matches(b"administrator"));
+        assert!(d.matches(b""));
+    }
+
+    #[test]
+    fn not_prefix_deny_filter() {
+        // The canonical capability-secure deny filter: everything NOT under the
+        // revoked "/blocked/" namespace.
+        let d = Pattern::not(Pattern::path_prefix("/blocked/")).compile();
+        assert!(!d.matches(b"/blocked/secret"));
+        assert!(!d.matches(b"/blocked/"));
+        assert!(d.matches(b"/cells/alpha"));
+        assert!(d.matches(b"/blocked")); // no trailing slash → not under it
+    }
+
+    #[test]
+    fn all_with_not_uses_derivative_path() {
+        // Intersection that carries a complement: accept any 1-byte word that
+        // is a lowercase letter AND is not 'q'. Forces the derivative path.
+        let d = Pattern::all(vec![
+            Pattern::range(b'a', b'z'),
+            Pattern::not(Pattern::word(b"q")),
+        ])
+        .compile();
+        assert!(d.matches(b"a"));
+        assert!(d.matches(b"z"));
+        assert!(!d.matches(b"q"));
+        assert!(!d.matches(b"A"));
+    }
+
+    #[test]
+    fn derivative_path_matches_eager_path() {
+        // For a complement-free pattern, the (unused) derivative lowering must
+        // recognize the same language as the eager NFA-product compile.
+        let p = Pattern::seq(vec![
+            Pattern::word(b"/svc/"),
+            Pattern::range(b'a', b'z'),
+            Pattern::any_byte(),
+        ]);
+        let eager = p.compile();
+        let deriv = p.to_re().compile();
+        for w in [
+            &b"/svc/ax"[..],
+            b"/svc/a",
+            b"/svc/Ax",
+            b"/svc/zz",
+            b"/other",
+            b"",
+        ] {
+            assert_eq!(
+                eager.matches(w),
+                deriv.matches(w),
+                "eager vs derivative disagree on {:?}",
+                w
+            );
+        }
+    }
+
+    #[test]
+    fn lazy_intersection_smaller_than_eager_product() {
+        // A k-fold intersection where part `i` constrains the byte at position
+        // `i` to `[a-x]` and then matches an arbitrary tail (`prefix_of`). Each
+        // part stays live across the whole word, so the eager `dfa_intersection`
+        // fold must track every part's progress in the product and ends up
+        // strictly larger than the lazy derivative path, which collapses
+        // residuals that denote the same language. We assert the lazy table is
+        // strictly smaller for every k in a range (so it is not a coincidence
+        // of one size) and that both recognize the same language.
+        for k in 2usize..=6 {
+            let parts: Vec<Pattern> = (0..k)
+                .map(|i| {
+                    let mut seq = Vec::new();
+                    for _ in 0..i {
+                        seq.push(Pattern::any_byte());
+                    }
+                    seq.push(Pattern::range(b'a', b'x'));
+                    Pattern::prefix_of(Pattern::seq(seq))
+                })
+                .collect();
+
+            // Eager product fold (the old FilterTree path).
+            let dfas: Vec<Dfa> = parts.iter().map(|p| p.compile()).collect();
+            let mut eager = dfas[0].clone();
+            for d in &dfas[1..] {
+                eager = dfa_intersection(&eager, d);
+            }
+
+            // Lazy derivative intersection (the new path).
+            let lazy = parts
+                .iter()
+                .map(|p| p.to_re())
+                .reduce(|a, b| a.and(b))
+                .unwrap()
+                .compile();
+
+            // Same language on a corpus that exercises both accept and reject.
+            for w in [
+                &b"aaaaaa"[..],
+                b"xxxxxx",
+                b"zaaaaa", // pos 0 is z (not a..x) → rejected by part 0
+                b"azaaaa", // pos 1 is z → rejected by part 1
+                b"aaa",    // too short to satisfy the position-(>=3) parts
+                b"",
+            ] {
+                assert_eq!(
+                    eager.matches(w),
+                    lazy.matches(w),
+                    "k={k}: lazy vs eager disagree on {:?}",
+                    w
+                );
+            }
+
+            assert!(
+                lazy.num_states < eager.num_states,
+                "k={k}: lazy ({}) should be strictly smaller than the eager \
+                 product ({})",
+                lazy.num_states,
+                eager.num_states
+            );
+        }
     }
 }

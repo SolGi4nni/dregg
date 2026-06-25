@@ -7,10 +7,10 @@
 //!   marking a node inactive and recompiling the combined-intersection DFA.
 //!   Lifted from `rbg::routing` with light changes.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::compiler::{DEAD_STATE, Dfa, Pattern, dfa_intersection};
+use crate::compiler::{Dfa, Pattern};
+use crate::derivative::Re;
 
 // ---------------------------------------------------------------------------
 // TopicFilter
@@ -82,16 +82,25 @@ impl TopicFilter {
 // FilterTree (capability-secure filter revocation)
 // ---------------------------------------------------------------------------
 
-/// A tree of DFA filters that compose by intersection along each root→leaf
-/// path. Revoking a node marks it inactive (intersection identity → accept-all)
-/// and a subsequent `compile_combined` rebuilds the active intersection.
+/// A tree of filters that compose by intersection along each root→leaf path.
+/// Revoking a node marks it inactive (intersection identity → accept-all) and a
+/// subsequent `compile_combined` rebuilds the active intersection.
+///
+/// Each node holds its filter as a byte regex ([`Re`]), and `compile_combined`
+/// folds the active subtree with the **derivative `inter` constructor**
+/// (`Re::and`) — the design's re-grounding (`DERIVATIVE-MATCHING-DESIGN.md`
+/// §2.2). Only the final, combined `Re` is determinized, **once**, via the lazy
+/// derivative path ([`Re::compile`]). This avoids the eager `dfa_intersection`
+/// k-fold product (`O(∏|Sᵢ|)` states — the latent state-explosion site) and
+/// makes a revoked-namespace *deny* filter (`base ⋒ ~revoked`) expressible. The
+/// emitted flat [`Dfa`] is the same table the in-circuit AIR consumes.
 pub struct FilterTree {
     nodes: Vec<FilterNode>,
     root: usize,
 }
 
 struct FilterNode {
-    dfa: Arc<Dfa>,
+    re: Re,
     children: Vec<usize>,
     active: bool,
 }
@@ -101,7 +110,7 @@ impl FilterTree {
     pub fn new() -> Self {
         FilterTree {
             nodes: vec![FilterNode {
-                dfa: Arc::new(accept_all_dfa()),
+                re: accept_all_re(),
                 children: Vec::new(),
                 active: true,
             }],
@@ -109,11 +118,33 @@ impl FilterTree {
         }
     }
 
-    /// Add a child filter under `parent`. Returns the new node index.
+    /// Add a child filter under `parent`, given as an already-compiled [`Dfa`].
+    /// The DFA is lifted to an equivalent [`Re`] (state elimination) so it
+    /// participates in the lazy `inter` fold. Prefer [`FilterTree::add_pattern`]
+    /// / [`FilterTree::add_re`] to avoid the recovery step. Returns the new
+    /// node index.
     pub fn add_filter(&mut self, parent: usize, dfa: Dfa) -> usize {
+        self.add_node(parent, Re::from_dfa(&dfa))
+    }
+
+    /// Add a child filter under `parent`, given as a [`Pattern`]. Lowered to a
+    /// byte regex directly — the native, blow-up-free path (and the only one
+    /// that can carry a [`Pattern::Not`] deny-filter). Returns the new node
+    /// index.
+    pub fn add_pattern(&mut self, parent: usize, pattern: &Pattern) -> usize {
+        self.add_node(parent, pattern.to_re())
+    }
+
+    /// Add a child filter under `parent`, given directly as a byte regex
+    /// ([`Re`]). Returns the new node index.
+    pub fn add_re(&mut self, parent: usize, re: Re) -> usize {
+        self.add_node(parent, re)
+    }
+
+    fn add_node(&mut self, parent: usize, re: Re) -> usize {
         let idx = self.nodes.len();
         self.nodes.push(FilterNode {
-            dfa: Arc::new(dfa),
+            re,
             children: Vec::new(),
             active: true,
         });
@@ -126,20 +157,24 @@ impl FilterTree {
         self.nodes[node_idx].active = false;
     }
 
-    /// Compile the active intersection from the root.
+    /// Fold the active subtree into one combined byte regex (the derivative
+    /// `inter` of every active node), then determinize **once** via the lazy
+    /// derivative path.
     pub fn compile_combined(&self) -> Dfa {
-        self.compile_subtree(self.root)
+        self.combined_re(self.root).compile()
     }
 
-    fn compile_subtree(&self, node_idx: usize) -> Dfa {
+    /// The combined regex of the active subtree rooted at `node_idx`, folded
+    /// with `Re::and` (the derivative intersection). An inactive node
+    /// contributes accept-all (the intersection identity), exactly as before.
+    fn combined_re(&self, node_idx: usize) -> Re {
         let node = &self.nodes[node_idx];
         if !node.active {
-            return accept_all_dfa();
+            return accept_all_re();
         }
-        let mut combined = (*node.dfa).clone();
+        let mut combined = node.re.clone();
         for &child_idx in &node.children {
-            let child = self.compile_subtree(child_idx);
-            combined = dfa_intersection(&combined, &child);
+            combined = combined.and(self.combined_re(child_idx));
         }
         combined
     }
@@ -151,20 +186,9 @@ impl Default for FilterTree {
     }
 }
 
-fn accept_all_dfa() -> Dfa {
-    // 2 states: dead (0) and accepting (1). State 1 loops on every byte.
-    let mut t = vec![DEAD_STATE; 512];
-    for i in 0..256 {
-        t[256 + i] = 1;
-    }
-    let mut acc = BTreeSet::new();
-    acc.insert(1);
-    Dfa {
-        num_states: 2,
-        transitions: t,
-        start: 1,
-        accepting: acc,
-    }
+/// The accept-all byte regex (`any*`) — the intersection identity.
+fn accept_all_re() -> Re {
+    Re::any_byte().star()
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +220,67 @@ mod tests {
         let f = TopicFilter::prefix(b"topic:auth:");
         assert!(f.matches(b"topic:auth:login"));
         assert!(!f.matches(b"topic:data:event"));
+    }
+
+    #[test]
+    fn filter_tree_deny_filter_via_not() {
+        // FilterTree gains the deny-filter: base accepts the "/cells/" space,
+        // a child intersects in "NOT under /cells/secret/". The combined filter
+        // accepts /cells/alpha but denies /cells/secret/key.
+        let mut tree = FilterTree::new();
+        let base = tree.add_pattern(0, &Pattern::path_prefix("/cells/"));
+        let _deny = tree.add_pattern(base, &Pattern::not(Pattern::path_prefix("/cells/secret/")));
+
+        let combined = tree.compile_combined();
+        assert!(combined.matches(b"/cells/alpha"));
+        assert!(combined.matches(b"/cells/beta/x"));
+        assert!(!combined.matches(b"/cells/secret/key"));
+        assert!(!combined.matches(b"/other")); // base requires /cells/ prefix
+    }
+
+    #[test]
+    fn filter_tree_lazy_intersection_air_neutral() {
+        // The combined table from the lazy derivative FilterTree must verify
+        // through the UNCHANGED air.rs machinery — proof side untouched.
+        use crate::air::{generate_air_trace, verify_air_trace};
+
+        let mut tree = FilterTree::new();
+        let a = tree.add_pattern(
+            0,
+            &Pattern::seq(vec![
+                Pattern::word(b"A"),
+                Pattern::any_byte(),
+                Pattern::any_byte(),
+            ]),
+        );
+        let _b = tree.add_pattern(
+            a,
+            &Pattern::not(Pattern::seq(vec![
+                Pattern::any_byte(),
+                Pattern::any_byte(),
+                Pattern::word(b"Z"),
+            ])),
+        );
+        let dfa = tree.compile_combined();
+
+        // "AxY": starts with A, last byte not Z → accepted by base ∩ ~(..Z).
+        let accept_in = b"AxY";
+        assert!(dfa.matches(accept_in));
+        let trace = generate_air_trace(&dfa, accept_in);
+        assert!(
+            verify_air_trace(&dfa, accept_in, &trace),
+            "AIR trace for the derivative-built table failed to verify"
+        );
+
+        // "AxZ": last byte Z → denied by the complement; trace verifies as a
+        // (correct) non-acceptance.
+        let reject_in = b"AxZ";
+        assert!(!dfa.matches(reject_in));
+        let trace = generate_air_trace(&dfa, reject_in);
+        assert!(
+            !verify_air_trace(&dfa, reject_in, &trace),
+            "AIR trace wrongly accepted a denied word"
+        );
     }
 
     #[test]

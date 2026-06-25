@@ -58,6 +58,7 @@
 
 pub mod air;
 pub mod compiler;
+pub mod derivative;
 pub mod filter;
 pub mod router;
 
@@ -66,6 +67,7 @@ pub use air::{
     verify_acceptance, verify_air_trace,
 };
 pub use compiler::{DEAD_STATE, Dfa, Pattern, StateId, Transition};
+pub use derivative::{ByteClass, Re};
 pub use filter::{FilterTree, TopicFilter};
 pub use router::{
     Classification, DispatchDecision, GovernanceProof, GovernedRouter, KindRegistry, RouteTable,
