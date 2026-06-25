@@ -42,18 +42,20 @@
 //! the kept planes (it does not store them): `fields_root` from the
 //! `Field { slot ≥ 16 }` plane, the ledger Merkle root lazily on the next
 //! `root()`. The round-trip law `reify_ledger(project_ledger(L)) == L` is PROVEN
-//! below over the faithful class (the class the projection is value-lossless on),
-//! and the precise residual — four value planes the projection does not yet carry
-//! (heap preimage, interfaces, cap tombstones, the post-revoke `next_slot` gap) —
-//! is named by [`ReifyError`] and exercised by the refusal tests below: reify
-//! REFUSES rather than round-trip a state the boundary cannot reconstruct.
+//! below over the faithful class (the class the projection is value-lossless on).
+//! Revoked cells now round-trip too: the `CapTombstone` plane carries the
+//! revoked slots, so `reify_cell` reconstructs a NON-CONTIGUOUS c-list with the
+//! correct post-revoke `next_slot` (reify residuals #3/#4 closed). The only
+//! surviving residual — the typed-interface plane — is named by
+//! `dregg_turn::umem::ReifyError` and reify REFUSES rather than round-trip a
+//! state the boundary cannot reconstruct.
 
 use std::sync::atomic::Ordering;
 
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use dregg_turn::umem::{
-    ReifyError, UKey, UProjection, UVal, UmemKind, UmemOp, disciplined, fold,
-    project_executor_state, project_ledger, reify_cell, reify_ledger,
+    UKey, UProjection, UVal, UmemKind, UmemOp, disciplined, fold, project_executor_state,
+    project_ledger, reify_cell, reify_ledger,
 };
 use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
@@ -473,29 +475,57 @@ fn reify_round_trips_non_empty_heap() {
     );
 }
 
-/// THE HONEST RESIDUAL #3/#4 — a REVOKED capability leaves a tombstone and a
-/// `next_slot` gap that the live-only `CapSlot` plane drops. reify REFUSES
-/// because the reconstructed cap set could not be byte-identical.
+/// RESIDUALS #3/#4 CLOSED — a REVOKED capability leaves a tombstone and a
+/// `next_slot` gap, but the `CapTombstone` plane carries the revoked slots, so
+/// `reify_cell` reconstructs the NON-CONTIGUOUS live c-list with the correct
+/// post-revoke `next_slot` and the cell round-trips BYTE-IDENTICALLY.
 #[test]
-fn reify_refuses_cap_revocation_gap() {
+fn reify_round_trips_cap_revocation_gap() {
     let target = make_open_cell(13, 0);
     let target_id = target.id();
     let mut cell = make_open_cell(12, 100);
-    // grant two caps (slots 0, 1) then revoke slot 0 → slot 0 tombstoned,
-    // next_slot = 2, live caps = {slot 1}. The projection keeps only slot 1, so
-    // a faithful reify cannot recover the slot-0 tombstone / next_slot=2.
+    // grant three caps (slots 0, 1, 2) then revoke slots 0 and 2 → live caps =
+    // {slot 1} (NON-CONTIGUOUS, gap at 0), tombstones = {0, 2}, next_slot = 3
+    // (past the high-slot revocation gap). The live-only `CapSlot` plane keeps
+    // only slot 1; the `CapTombstone` plane carries {0, 2}, so reconstruction
+    // recovers the gap AND next_slot = max(live=1, tomb=2) + 1 = 3.
+    cell.capabilities
+        .grant(target_id, dregg_cell::AuthRequired::None);
     cell.capabilities
         .grant(target_id, dregg_cell::AuthRequired::None);
     cell.capabilities
         .grant(target_id, dregg_cell::AuthRequired::None);
     cell.capabilities.revoke(0);
+    cell.capabilities.revoke(2);
     let id = cell.id();
+    // Capture the deployed cap_root BEFORE projection — the byte-identity proof
+    // (a recovered tombstone/next_slot reproduces the exact post-revoke root).
+    let cap_root_before = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
 
     let mut ledger = Ledger::new();
-    ledger.insert_cell(cell).unwrap();
+    ledger.insert_cell(cell.clone()).unwrap();
     ledger.insert_cell(target).unwrap();
 
     let proj = project_ledger(&ledger);
-    let err = reify_cell(id, &proj).expect_err("a revoked-cap cell must refuse");
-    assert_eq!(err, ReifyError::CapNextSlotUnrecoverable(id));
+    let reified = reify_cell(id, &proj).expect("a revoked-cap cell now round-trips");
+
+    // BYTE-IDENTICAL: the whole c-list (live caps at non-contiguous slots,
+    // tombstones, next_slot) equals the original.
+    assert_eq!(
+        reified.capabilities, cell.capabilities,
+        "the reconstructed c-list equals the original (non-contiguous slots + gap)"
+    );
+    // The non-contiguous live slot survived; the revoked slots did not resurrect.
+    let live: Vec<u32> = reified.capabilities.iter().map(|c| c.slot).collect();
+    assert_eq!(live, vec![1], "only the non-revoked slot 1 is live");
+    let mut tombs: Vec<u32> = reified.capabilities.tombstoned_slots().collect();
+    tombs.sort_unstable();
+    assert_eq!(tombs, vec![0, 2], "both revoked slots are tombstoned");
+    // The deployed cap_root re-derives identically (the recovered next_slot/gap
+    // reproduces the post-revoke commitment the circuit also enforces).
+    assert_eq!(
+        dregg_cell::compute_canonical_capability_root_felt(&reified.capabilities),
+        cap_root_before,
+        "the reconstructed c-list reproduces the deployed post-revoke cap_root"
+    );
 }

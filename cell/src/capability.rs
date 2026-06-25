@@ -461,10 +461,15 @@ impl CapabilitySet {
         let before = self.refs.len();
         self.refs.retain(|r| r.slot != slot);
         let removed = self.refs.len() < before;
-        if removed && !self.tombstones.contains(&slot) {
+        if removed {
             // Record the tombstone so the cap-root folds ZERO at this slot's
-            // sorted position (not a compacted rebuild).
-            self.tombstones.push(slot);
+            // sorted position (not a compacted rebuild). Kept SORTED + deduped:
+            // tombstone order is semantically irrelevant to the (sorted-tree)
+            // cap-root, and a canonical order makes the umem round-trip law
+            // (`reconstruct` re-derives them ascending) hold byte-identically.
+            if let Err(pos) = self.tombstones.binary_search(&slot) {
+                self.tombstones.insert(pos, slot);
+            }
         }
         removed
     }
@@ -672,6 +677,43 @@ impl CapabilitySet {
         self.tombstones.retain(|&s| s != cap.slot);
         if !self.refs.iter().any(|r| r.slot == cap.slot) {
             self.refs.push(cap);
+        }
+    }
+
+    /// Reconstruct a c-list DIRECTLY from its projected planes — the LIVE caps
+    /// (each carrying its ORIGINAL slot) and the REVOKED-slot tombstones. The
+    /// umem reify primitive (`turn::umem::reify_cell`).
+    ///
+    /// Unlike [`Self::grant_ref`] (which re-assigns slots contiguously from
+    /// `next_slot`), this PRESERVES each cap's original slot — so a revocation
+    /// gap survives — and re-derives `next_slot = max(live slot, tombstoned
+    /// slot) + 1` from BOTH planes. That is exactly the monotone high-water mark
+    /// the original set carried after its revokes, so a revoked cell round-trips
+    /// byte-identically through `project_cell` → `reify_cell` (the former
+    /// reify_seam residuals #3/#4, closed).
+    ///
+    /// `live` need not be sorted; `refs` are stored in slot order and the
+    /// tombstones canonically ascending (deduped) — matching the projection's
+    /// `CapSlot`/`CapTombstone` plane emission, so the reconstructed set is
+    /// `==` to the original (whose tombstones [`Self::revoke`] keeps sorted).
+    pub fn reconstruct(live: Vec<CapabilityRef>, tombstones: Vec<u32>) -> Self {
+        let mut refs = live;
+        refs.sort_by_key(|c| c.slot);
+        let mut tombstones = tombstones;
+        tombstones.sort_unstable();
+        tombstones.dedup();
+        let max_live = refs.iter().map(|c| c.slot).max();
+        let max_tomb = tombstones.iter().copied().max();
+        let next_slot = max_live
+            .into_iter()
+            .chain(max_tomb)
+            .max()
+            .map_or(0, |m| m.saturating_add(1));
+        CapabilitySet {
+            refs,
+            next_slot,
+            tombstones,
+            cap_root_cache: CapRootCache::default(),
         }
     }
 

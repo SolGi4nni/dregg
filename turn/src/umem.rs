@@ -83,8 +83,11 @@
 use std::collections::BTreeMap;
 
 use dregg_cell::{
-    Cell, CellId, FactoryRegistry, Ledger, capability::CapabilityRef, lifecycle::CellLifecycle,
-    nullifier_set::NullifierSet, state::STATE_SLOTS,
+    Cell, CellId, FactoryRegistry, Ledger,
+    capability::{CapabilityRef, CapabilitySet},
+    lifecycle::CellLifecycle,
+    nullifier_set::NullifierSet,
+    state::STATE_SLOTS,
 };
 
 use crate::journal::JournalEntry;
@@ -1838,14 +1841,6 @@ pub(crate) fn emit_trace(
 //
 //  1. **`Cell.interfaces`** — the exposed typed-interface vector. No `UKey`
 //     plane carries it. ⇒ [`ReifyError::InterfacesNotProjected`].
-//  2. **`CapabilitySet.tombstones`** — revoked-slot tombstones. A revoke drops
-//     the cap from the projected `CapSlot` plane entirely AND records a
-//     tombstone slot; the boundary keeps only live caps, so a revocation cannot
-//     be reconstructed. ⇒ [`ReifyError::CapTombstonesNotProjected`].
-//  3. **`CapabilitySet.next_slot` when it exceeds the live high-water mark** —
-//     `next_slot` is monotone; if the highest-numbered slots were revoked it
-//     exceeds `max(live slot)+1` and the boundary cannot recover the gap.
-//     ⇒ [`ReifyError::CapNextSlotUnrecoverable`].
 //
 // **Closed (UMEM-PRIMITIVE §2, Stage A): `CellState.heap_map`.** The per-cell
 // heap is now a first-class umem plane — every `(collection, key) → value` entry
@@ -1854,11 +1849,22 @@ pub(crate) fn emit_trace(
 // non-empty heap is now in the faithful class; `HeapNotProjected` survives only
 // for an internally-inconsistent projection (committed boundary ≠ re-derived).
 //
-// The faithful class is exactly the cells where none of (1)–(3) hold: no
-// interfaces, no revocations, contiguous cap slots from 0 (any heap is fine).
-// The time-travel boundary lands in this class for the transfer / set-field /
-// set-heap / grant lanes the prototype proves over; the residual is the
-// burn-down for extending the projection to carry interface/tombstone planes.
+// **Closed (reify residuals #3/#4): `CapabilitySet.tombstones` +
+// `next_slot`.** A revoke drops the cap from the `CapSlot` plane AND emits one
+// `CapTombstone{cell, slot}` ghost (`project_cell`), so BOTH planes carry the
+// full c-list shape. `reify_cell` reads the live caps AND the tombstone ghosts
+// and hands them to `CapabilitySet::reconstruct`, which restores the
+// NON-CONTIGUOUS live slots and re-derives `next_slot = max(live, tombstoned) +
+// 1` — so a REVOKED cell round-trips byte-identically (matching the boundary
+// the `CapTombstone` plane already proves via `record_kernel_boundary_agrees`).
+// `CapTombstonesNotProjected` / `CapNextSlotUnrecoverable` are retained as
+// precise diagnostics but are no longer reachable for a revoked cell.
+//
+// The faithful class is exactly the cells with no interfaces (any heap, any cap
+// revocation gap is fine). The time-travel boundary lands in this class for the
+// transfer / set-field / set-heap / grant / revoke lanes the prototype proves
+// over; the residual is the burn-down for extending the projection to carry an
+// interface plane.
 //
 // Per-window executor metering (`FactoryRegistry::{creation_counts,
 // current_epoch}`, rate-limit counters) is NOT reconstructed and NOT part of
@@ -1890,12 +1896,13 @@ pub enum ReifyError {
     /// The cell exposes typed interfaces, which no `UKey` plane carries
     /// (residual #2).
     InterfacesNotProjected(CellId),
-    /// The cell carries capability tombstones (revoked slots), which the
-    /// `CapSlot` plane drops (residual #3).
+    /// Retained diagnostic (residual #3, now CLOSED): the `CapTombstone` plane
+    /// carries revoked slots, so `reify_cell` reconstructs them via
+    /// [`CapabilitySet::reconstruct`] — no longer reachable for a revoked cell.
     CapTombstonesNotProjected(CellId),
-    /// The cell's `next_slot` exceeds the live high-water mark `max(slot)+1`,
-    /// so a revocation gap cannot be recovered from the projected live caps
-    /// (residual #4).
+    /// Retained diagnostic (residual #4, now CLOSED): `next_slot` is re-derived
+    /// as `max(live, tombstoned) + 1` from the `CapSlot` + `CapTombstone`
+    /// planes, so a revocation gap is recoverable — no longer reachable.
     CapNextSlotUnrecoverable(CellId),
 }
 
@@ -1972,8 +1979,11 @@ fn expect_bytes32(key: &UKey, val: &UVal) -> Result<[u8; 32], ReifyError> {
 /// for them.
 ///
 /// Refuses (with a precise [`ReifyError`]) when the cell's state needs a plane
-/// the projection does not carry (heap preimage, interfaces, cap tombstones) —
-/// the honest residual of the `reify_seam`. See the module section above.
+/// the projection does not carry (interfaces) — the honest residual of the
+/// `reify_seam`. Revoked cells now round-trip: the `CapTombstone` plane carries
+/// the revoked slots, so `reify_cell` reconstructs a non-contiguous c-list with
+/// the correct post-revoke `next_slot` (residuals #3/#4 closed). See the module
+/// section above.
 ///
 /// `cell` must be present in `proj` (i.e. `UKey::Exist(cell)` ↦ `Present`); the
 /// caller (`reify_ledger`) walks the `Exist` plane to find the cell set.
@@ -2149,34 +2159,28 @@ pub fn reify_cell(cell: CellId, proj: &UProjection) -> Result<Cell, ReifyError> 
         None => None,
     };
 
-    // -- capabilities (the caps-domain `CapSlot` plane): reinstall live caps in
-    //    slot order. A revoke drops the cap from this plane AND adds a
-    //    tombstone, so the boundary keeps only live caps — refuse if the
-    //    reconstructed set could not be byte-identical (residuals #3/#4). --
+    // -- capabilities (the caps-domain `CapSlot` + `CapTombstone` planes):
+    //    reinstall the LIVE caps at their ORIGINAL slots and re-derive the
+    //    revoked-slot tombstones from the `CapTombstone` plane. A revoke drops
+    //    the cap from `CapSlot` AND emits one `CapTombstone{cell, slot}` ghost
+    //    (`project_cell`), so BOTH planes together carry the full c-list shape:
+    //    `CapabilitySet::reconstruct` restores non-contiguous live slots and
+    //    sets `next_slot = max(live, tombstoned) + 1`, round-tripping a revoked
+    //    cell byte-identically (the former reify_seam residuals #3/#4, closed). --
     let mut caps: Vec<CapabilityRef> = Vec::new();
+    let mut cap_tombstones: Vec<u32> = Vec::new();
     for (k, v) in proj.iter() {
-        if let UKey::CapSlot { cell: kc, slot: _ } = k {
-            if *kc == cell {
+        match k {
+            UKey::CapSlot { cell: kc, slot: _ } if *kc == cell => {
                 caps.push(decode_blob(k, v)?);
             }
+            UKey::CapTombstone { cell: kc, slot } if *kc == cell => {
+                cap_tombstones.push(*slot);
+            }
+            _ => {}
         }
     }
-    caps.sort_by_key(|cap| cap.slot);
-    // The projection is byte-identical only when the live slots are exactly
-    // 0..len (no revocation gap, no tombstones). `grant_ref` assigns slot = the
-    // current `next_slot`, so contiguous-from-0 reproduces the original.
-    let contiguous = caps.iter().enumerate().all(|(i, cap)| cap.slot == i as u32);
-    if !contiguous {
-        return Err(ReifyError::CapNextSlotUnrecoverable(cell));
-    }
-    for cap in &caps {
-        c.capabilities
-            .grant_ref(cap)
-            .ok_or(ReifyError::CapNextSlotUnrecoverable(cell))?;
-    }
-    // `grant_ref` preserves every field except the slot, which it re-assigns
-    // contiguously — so the reconstructed `CapabilityRef`s equal the originals
-    // for the faithful (contiguous, no-tombstone) class.
+    c.capabilities = CapabilitySet::reconstruct(caps, cap_tombstones);
 
     // -- residual guards: interfaces are not projected. The `Cell` type no longer
     // carries a typed-interface vector (the field was lifted out of the kernel cell),
