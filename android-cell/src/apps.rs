@@ -37,6 +37,9 @@ use crate::appfactory::AndroidPermission;
 use crate::broadcastgate::{BroadcastReceiver, BroadcastRouter};
 use crate::contentgate::{ContentProvider, ContentResolver, ProviderGrant};
 use crate::intentgate::{IntentHandler, IntentResolver};
+use crate::notifgate::{
+    ChannelCap, NotifPoster, NotificationChannel, POST_NOTIFICATIONS, PostGrant,
+};
 use crate::organgate::{ServiceGrant, ServiceOrgan, ServiceResolver, SystemService};
 use crate::permgate::PermBox;
 use crate::runtime::AppLaunch;
@@ -291,6 +294,43 @@ impl InstalledApps {
             principal,
             principal_holds,
         ))
+    }
+
+    /// **Build the [`NotifPoster`] for an installed `cell`** over the notification channels it
+    /// created at runtime — the install↔notification loop (`GRAPHIDEOS.md §1`, the
+    /// notification-system / SystemUI-shade row). Mirrors [`Self::service_resolver_for`]: the
+    /// authority to reach the shade is sourced from the app's real declared permission, NOT an
+    /// ambient push.
+    ///
+    /// Two legs, faithful to AOSP:
+    /// 1. **The notification-organ (shade) cap, by declared permission** — the app holds the cap to
+    ///    the notification shade organ iff it declared the `POST_NOTIFICATIONS` runtime permission
+    ///    (Android 13+'s only door to the shade). An app that never declared it cannot post at all
+    ///    (the [`crate::notifgate::NotifDecision::RefusedNoOrgan`] end — no ambient post).
+    /// 2. **The channels, from the runtime** — a `NotificationChannel` is created at runtime
+    ///    (`createNotificationChannel`), so the caller supplies the channels the app created; each
+    ///    becomes a [`ChannelCap`] at the caller-supplied `grant` ceiling (the cap attenuation — a
+    ///    `Priority` grant is the heads-up / full-screen-intent hand-over). A post to a channel not
+    ///    in this set is refused (the app holds no cap to it).
+    ///
+    /// An unknown `cell` (uninstalled) holds no organ cap and no channels — it posts nothing.
+    pub fn notif_poster_for(
+        &self,
+        cell: CellId,
+        channels: impl IntoIterator<Item = NotificationChannel>,
+        grant: PostGrant,
+    ) -> NotifPoster {
+        let holds_organ_cap = self
+            .get(cell)
+            .map(|app| {
+                app.manifest
+                    .uses_permissions
+                    .iter()
+                    .any(|p| p.android_name() == POST_NOTIFICATIONS)
+            })
+            .unwrap_or(false);
+        let caps = channels.into_iter().map(|c| ChannelCap::standard(c, grant));
+        NotifPoster::new(holds_organ_cap, caps, Some(cell))
     }
 }
 
@@ -665,5 +705,61 @@ mod tests {
             .find(|b| b.permission == AndroidPermission::Camera)
             .expect("camera is shown in the roster (never hidden)");
         assert_eq!(cam.state, BadgeState::Dim);
+    }
+
+    /// **THE INSTALL↔NOTIFICATION LOOP: the shade cap is sourced from the declared
+    /// `POST_NOTIFICATIONS` permission — an app that never declared it cannot post (no ambient
+    /// push), and a posting app reaches only the channels it created.**
+    #[test]
+    fn notif_poster_sources_the_shade_cap_from_the_declared_permission() {
+        use crate::notifgate::{NotificationChannel, NotificationImportance, PostGrant};
+
+        let mut apps = InstalledApps::new();
+        // A messenger app that DID declare POST_NOTIFICATIONS (the Android 13+ door).
+        let messenger = cell_seed(0x71);
+        apps.install(
+            messenger,
+            AndroidManifest::new(
+                "com.example.messenger",
+                [
+                    AndroidPermission::Internet,
+                    AndroidPermission::Other(POST_NOTIFICATIONS.into()),
+                ],
+            ),
+            AppLaunch::Package("com.example.messenger".into()),
+            [0x11; 32],
+        );
+        // The maps app did NOT declare it.
+        let (maps_cell, maps_manifest) = maps();
+        apps.install(
+            maps_cell,
+            maps_manifest,
+            AppLaunch::Package("m".into()),
+            [0x11; 32],
+        );
+
+        let channels = [NotificationChannel::new(
+            "messages",
+            NotificationImportance::Default,
+            "Messages",
+        )];
+
+        // The messenger holds the shade cap (declared) → a post to its channel is receipted.
+        let messenger_poster =
+            apps.notif_poster_for(messenger, channels.clone(), PostGrant::Standard);
+        assert!(messenger_poster.holds_organ_cap());
+        let posted = messenger_poster.post(&crate::notifgate::Notification::on("messages"));
+        assert!(posted.decision.posted());
+
+        // The maps app did NOT declare POST_NOTIFICATIONS → it holds no shade cap, every post
+        // refused (no ambient post), even to the same channel set.
+        let maps_poster = apps.notif_poster_for(maps_cell, channels, PostGrant::Standard);
+        assert!(!maps_poster.holds_organ_cap());
+        assert!(
+            maps_poster
+                .post(&crate::notifgate::Notification::on("messages"))
+                .decision
+                .refused_no_organ()
+        );
     }
 }

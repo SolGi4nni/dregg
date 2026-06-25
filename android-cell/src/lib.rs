@@ -50,6 +50,7 @@ pub mod frame;
 pub mod input;
 pub mod intentgate;
 pub mod netgate;
+pub mod notifgate;
 pub mod organgate;
 pub mod permgate;
 pub mod present;
@@ -81,6 +82,10 @@ pub use intentgate::{
     IntentHandler, IntentReceipt, IntentResolver, RecordingIntentSink,
 };
 pub use netgate::{AndroidNetGate, IoDecision, IoReceipt};
+pub use notifgate::{
+    ChannelCap, NotifDecision, NotifPoster, NotifReceipt, Notification, NotificationChannel,
+    NotificationImportance, PostClass, PostGrant, notification_shade_organ,
+};
 pub use organgate::{
     ServiceCallKind, ServiceDecision, ServiceGrant, ServiceOp, ServiceOrgan, ServiceReceipt,
     ServiceResolver, SystemService,
