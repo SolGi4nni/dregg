@@ -86,7 +86,9 @@ use dregg_cell_crypto::note_bridge::BridgedNullifierSet;
 
 /// The five state domains — wire codes IDENTICAL to the Lean
 /// `DescriptorIR2.domainCode` (registers 0 · heap 1 · caps 2 · nullifiers 3 · index 4).
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum UDomain {
     /// Per-proof VM register file — EMPTY in the persistent projection by design.
     Registers = 0,
@@ -111,7 +113,7 @@ impl UDomain {
 /// Lean `UniversalBridge.UKey`). The deployed realization is
 /// `addr = hash[domain_tag, collection_id, key]`; the constructor IS that triple's
 /// abstract content.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, serde::Serialize, serde::Deserialize)]
 pub enum UKey {
     // -- heap domain --------------------------------------------------------
     /// Cell existence (ledger membership bit).
@@ -246,7 +248,7 @@ impl UKey {
 /// A universal-memory cell VALUE. Plane-typed for debuggability; structured objects
 /// (permissions, capability refs, lifecycle, programs…) carry their canonical JSON bytes
 /// (deterministic: serde emits struct fields in declaration order).
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum UVal {
     /// Set-membership planes (existence, nullifiers): present.
     Present,
@@ -396,7 +398,7 @@ pub fn project_executor_state(
 }
 
 /// Memory-op kind (the memcheck `Kind`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum UmemKind {
     /// A read (returns and re-claims the current cell).
     Read,
@@ -409,7 +411,7 @@ pub enum UmemKind {
 /// the circuit's `(present, value)` encoding. The op at trace position `i` carries
 /// serial `i + 1` (positional, as the circuit assembly computes it); `prev_serial` is
 /// the serial of the previous touch of the same address (`0` = the init boundary).
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct UmemOp {
     /// Read or write.
     pub kind: UmemKind,

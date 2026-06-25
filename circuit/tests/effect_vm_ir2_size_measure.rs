@@ -393,3 +393,353 @@ fn ir2_fri_grid() {
         );
     }
 }
+
+/// THE INTERIOR-MEMORY CONVERSION PROTOTYPE: take the REAL deployed `setFieldDynVmDescriptor2`
+/// (`circuit/descriptors/dregg-effectvm-set-field-dyn-ir2.json`) — the ONE deployed per-effect
+/// descriptor whose interior state access is a flat `mem_op` pair (a `write` then a `read`-back
+/// of the same field slot, w=188, ZERO chip lookups) — extract its exact `MemOp` specs, and
+/// prove the SAME interior access pattern BOTH ways:
+///   * **flat-MemOp** — the deployed shape: pulls in `{main, byte, memory, boundary}` (4
+///     committed instances; the flat memory table's gap-decomposition + the boundary table).
+///   * **umem** — the conversion: each `mem_op` becomes a `umem_op` on the Heap domain; pulls in
+///     `{main, byte, umemory, umem_boundary}` (4 instances, NO chip), the ONE Blum multiset.
+///
+/// Both are proven through the production `ir2_config` and INDEPENDENTLY verified, so the KiB
+/// numbers are real. The umem teeth still bite: the read-back's `prev_value`/`prev_serial` are
+/// replayed against the boundary image (a forged prior is UNSAT — `umemTableFaithful`), and the
+/// boundary witness declares the `(domain, key)` touched (a `read` returning a value not in the
+/// declared image is rejected). This measures whether the umem table set is cheaper than the
+/// flat-memory table set for the SAME real deployed access pattern.
+#[test]
+fn ir2_setfielddyn_mem_to_umem_conversion() {
+    use dregg_circuit::descriptor_ir2::{
+        EffectVmDescriptor2, MemBoundaryWitness as MBW, MemKind, UMemBoundaryWitness, UMemOpSpec,
+        VmConstraint2, prove_vm_descriptor2_umem,
+    };
+    use dregg_circuit::effect_vm_descriptors::descriptor2_for_key;
+    use dregg_circuit::lean_descriptor_air::LeanExpr;
+
+    // ---- Pull the REAL deployed descriptor and lift out its flat MemOp specs. ----
+    let json = descriptor2_for_key("setFieldDynVmDescriptor2").expect("set-field-dyn descriptor");
+    let deployed = parse_vm_descriptor2(json).expect("set-field-dyn parses");
+    let mem_specs: Vec<_> = deployed
+        .constraints
+        .iter()
+        .filter_map(|k| match k {
+            VmConstraint2::MemOp(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        mem_specs.len(),
+        2,
+        "deployed setFieldDyn carries exactly the write+read-back flat MemOp pair"
+    );
+    println!(
+        "== deployed setFieldDynVmDescriptor2: w={} pi={} | {} flat mem_ops, 0 chip lookups ==",
+        deployed.trace_width,
+        deployed.public_input_count,
+        mem_specs.len()
+    );
+
+    // The interior access pattern, re-expressed over a tiny 4-col witness trace whose columns
+    // are [addr_or_key, value, guard, _serial_pad]. The deployed write installs `value` at a
+    // field-slot address; the read-back returns it. We pick a concrete (addr=100, init=77,
+    // new=99) and replay it both ways. (Lifting the FULL 188-col EffectVM trace is unnecessary
+    // for the interior-memory cost question — both provers see the SAME access pattern.)
+    let addr = BabyBear::new(100);
+    let init = BabyBear::new(77);
+    let newv = BabyBear::new(99);
+
+    // ==== (a) FLAT MemOp — the deployed shape ====
+    let mem_desc = EffectVmDescriptor2 {
+        name: "setfielddyn-mem-interior".to_string(),
+        trace_width: 4,
+        public_input_count: 0,
+        tables: vec![],
+        constraints: vec![
+            VmConstraint2::MemOp(dregg_circuit::descriptor_ir2::MemOpSpec {
+                guard: LeanExpr::Var(2),
+                addr: LeanExpr::Var(0),
+                value: LeanExpr::Var(1), // installs new value
+                prev_value: LeanExpr::Const(77),
+                prev_serial: LeanExpr::Const(0),
+                kind: MemKind::Write,
+            }),
+            VmConstraint2::MemOp(dregg_circuit::descriptor_ir2::MemOpSpec {
+                guard: LeanExpr::Var(2),
+                addr: LeanExpr::Var(0),
+                value: LeanExpr::Var(1), // reads back the just-written value
+                prev_value: LeanExpr::Var(1),
+                prev_serial: LeanExpr::Const(1),
+                kind: MemKind::Read,
+            }),
+        ],
+        hash_sites: vec![],
+        ranges: vec![],
+    };
+    let mut mem_rows = vec![vec![addr, newv, BabyBear::ZERO, BabyBear::ZERO]; 4];
+    mem_rows[0][2] = BabyBear::ONE; // guard the real ops on row 0
+    let mem_boundary = MBW {
+        addrs: vec![100],
+        init_vals: vec![77],
+    };
+    let t0 = Instant::now();
+    let mem_proof = prove_vm_descriptor2(&mem_desc, &mem_rows, &[], &mem_boundary, &[])
+        .expect("flat-mem interior proves");
+    let mem_ms = t0.elapsed().as_millis();
+    verify_vm_descriptor2(&mem_desc, &mem_proof, &[]).expect("flat-mem interior verifies");
+    let mem_bytes = breakdown("setfielddyn-FLATMEM", &mem_proof);
+    let _ = init;
+
+    // ==== (b) umem conversion — the SAME write+read-back on the Heap domain ====
+    let umem_desc = EffectVmDescriptor2 {
+        name: "setfielddyn-umem-interior".to_string(),
+        trace_width: 4,
+        public_input_count: 0,
+        tables: vec![],
+        constraints: vec![
+            VmConstraint2::UMemOp(UMemOpSpec {
+                guard: LeanExpr::Var(2),
+                domain: 1, // Heap
+                key: LeanExpr::Var(0),
+                present: LeanExpr::Const(1),
+                value: LeanExpr::Var(1),
+                prev_present: LeanExpr::Const(1),
+                prev_value: LeanExpr::Const(77),
+                prev_serial: LeanExpr::Const(0),
+                kind: MemKind::Write,
+            }),
+            VmConstraint2::UMemOp(UMemOpSpec {
+                guard: LeanExpr::Var(2),
+                domain: 1,
+                key: LeanExpr::Var(0),
+                present: LeanExpr::Const(1),
+                value: LeanExpr::Var(1),
+                prev_present: LeanExpr::Const(1),
+                prev_value: LeanExpr::Var(1),
+                prev_serial: LeanExpr::Const(1),
+                kind: MemKind::Read,
+            }),
+        ],
+        hash_sites: vec![],
+        ranges: vec![],
+    };
+    let mut um_rows = vec![vec![addr, newv, BabyBear::ZERO, BabyBear::ZERO]; 4];
+    um_rows[0][2] = BabyBear::ONE;
+    let umem_boundary = UMemBoundaryWitness {
+        addrs: vec![(1, addr)],
+        init_vals: vec![Some(init)],
+    };
+    let t1 = Instant::now();
+    let um_proof = prove_vm_descriptor2_umem(
+        &umem_desc,
+        &um_rows,
+        &[],
+        &MemBoundaryWitness::default(),
+        &[],
+        &umem_boundary,
+    )
+    .expect("umem interior proves");
+    let um_ms = t1.elapsed().as_millis();
+    verify_vm_descriptor2(&umem_desc, &um_proof, &[]).expect("umem interior verifies");
+    let um_bytes = breakdown("setfielddyn-UMEM", &um_proof);
+
+    // ---- The verdict line. ----
+    let delta = mem_bytes as i64 - um_bytes as i64;
+    let ratio = um_bytes as f64 / mem_bytes as f64;
+    println!("== CONVERSION VERDICT (deployed setFieldDyn interior access, both verified) ==");
+    println!(
+        "flat-MemOp: {mem_bytes} B ({:.1} KiB, {mem_ms} ms, {} instances) | \
+         umem: {um_bytes} B ({:.1} KiB, {um_ms} ms, {} instances) | \
+         delta: {delta} B ({:+.1} KiB) | umem/mem ratio: {ratio:.3} ({:+.1}%)",
+        kib(mem_bytes),
+        mem_proof.degree_bits.len(),
+        kib(um_bytes),
+        um_proof.degree_bits.len(),
+        (delta as f64) / 1024.0,
+        (ratio - 1.0) * 100.0,
+    );
+}
+
+/// THE CHIP-DROP CASE: the interior-memory bookkeeping of the deployed `attenuate`/`revoke-cap`
+/// descriptors is a `map_op` READ + WRITE pair against a sorted-Merkle c-list (a membership
+/// read then an in-place value update). A `map_op` opens its leaf through a sorted-Poseidon2
+/// permutation that RIDES THE CHIP TABLE — so an interior map read+write PULLS IN
+/// `{main, chip, byte, map_ops}`. The umem equivalent (the same read+write on the Caps domain)
+/// hashes NOTHING: it commits `{main, byte, umemory, umem_boundary}` — the chip is DROPPED.
+/// This isolates the per-op interior-memory cost in each form (the deployed attenuate/revoke-cap
+/// ALSO carry 4 genuine state-recompute chip lookups, so they keep a chip table regardless; this
+/// probe measures the bookkeeping leg ALONE, the part the conversion actually removes).
+#[test]
+fn ir2_mapop_interior_to_umem_chip_drop() {
+    use dregg_circuit::descriptor_ir2::{
+        EffectVmDescriptor2, MapKind, MapOpSpec, MemBoundaryWitness as MBW, MemKind,
+        UMemBoundaryWitness, UMemOpSpec, VmConstraint2, prove_vm_descriptor2_umem,
+    };
+    use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+    use dregg_circuit::lean_descriptor_air::LeanExpr;
+
+    // A 2-entry sorted c-list (the deployed bookkeeping shape: read membership, write update).
+    let heap = vec![
+        HeapLeaf {
+            addr: BabyBear::new(100),
+            value: BabyBear::new(77),
+        },
+        HeapLeaf {
+            addr: BabyBear::new(200),
+            value: BabyBear::new(88),
+        },
+    ];
+    let tree = CanonicalHeapTree::new(heap.clone(), HEAP_TREE_DEPTH);
+    let root = tree.root();
+    let upd = tree
+        .update_witness(HeapLeaf {
+            addr: BabyBear::new(100),
+            value: BabyBear::new(99),
+        })
+        .expect("key present");
+
+    // ==== (a) map_op interior: a READ (membership) + WRITE (update) — chip-bearing ====
+    // cols: [root, key, value_read, new_root, value_write, guard]
+    let map_desc = EffectVmDescriptor2 {
+        name: "clist-mapop-interior".to_string(),
+        trace_width: 6,
+        public_input_count: 0,
+        tables: vec![],
+        constraints: vec![
+            VmConstraint2::MapOp(MapOpSpec {
+                guard: LeanExpr::Var(5),
+                root: LeanExpr::Var(0),
+                key: LeanExpr::Var(1),
+                value: LeanExpr::Var(2),
+                new_root: LeanExpr::Var(0), // read: root unchanged
+                op: MapKind::Read,
+            }),
+            VmConstraint2::MapOp(MapOpSpec {
+                guard: LeanExpr::Var(5),
+                root: LeanExpr::Var(0),
+                key: LeanExpr::Var(1),
+                value: LeanExpr::Var(4),
+                new_root: LeanExpr::Var(3),
+                op: MapKind::Write,
+            }),
+        ],
+        hash_sites: vec![],
+        ranges: vec![],
+    };
+    let mut map_rows = vec![
+        vec![
+            root,
+            BabyBear::new(100),
+            BabyBear::new(77), // read returns current value
+            upd.new_root,
+            BabyBear::new(99), // write installs new value
+            BabyBear::ZERO,
+        ];
+        4
+    ];
+    map_rows[0][5] = BabyBear::ONE;
+    let t0 = Instant::now();
+    let map_proof =
+        prove_vm_descriptor2(&map_desc, &map_rows, &[], &MBW::default(), &[heap.clone()])
+            .expect("map-op interior proves");
+    let map_ms = t0.elapsed().as_millis();
+    verify_vm_descriptor2(&map_desc, &map_proof, &[]).expect("map-op interior verifies");
+    let map_bytes = breakdown("clist-MAPOP", &map_proof);
+
+    // ==== (b) umem conversion: the SAME read + write on the Caps domain — NO chip ====
+    let umem_desc = EffectVmDescriptor2 {
+        name: "clist-umem-interior".to_string(),
+        trace_width: 6,
+        public_input_count: 0,
+        tables: vec![],
+        constraints: vec![
+            VmConstraint2::UMemOp(UMemOpSpec {
+                guard: LeanExpr::Var(5),
+                domain: 2, // Caps
+                key: LeanExpr::Var(1),
+                present: LeanExpr::Const(1),
+                value: LeanExpr::Var(2),
+                prev_present: LeanExpr::Const(1),
+                prev_value: LeanExpr::Var(2),
+                prev_serial: LeanExpr::Const(0),
+                kind: MemKind::Read,
+            }),
+            VmConstraint2::UMemOp(UMemOpSpec {
+                guard: LeanExpr::Var(5),
+                domain: 2,
+                key: LeanExpr::Var(1),
+                present: LeanExpr::Const(1),
+                value: LeanExpr::Var(4),
+                prev_present: LeanExpr::Const(1),
+                prev_value: LeanExpr::Var(2),
+                prev_serial: LeanExpr::Const(1),
+                kind: MemKind::Write,
+            }),
+        ],
+        hash_sites: vec![],
+        ranges: vec![],
+    };
+    let mut um_rows = vec![
+        vec![
+            root,
+            BabyBear::new(100),
+            BabyBear::new(77),
+            upd.new_root,
+            BabyBear::new(99),
+            BabyBear::ZERO,
+        ];
+        4
+    ];
+    um_rows[0][5] = BabyBear::ONE;
+    let umem_boundary = UMemBoundaryWitness {
+        addrs: vec![(2, BabyBear::new(100))],
+        init_vals: vec![Some(BabyBear::new(77))],
+    };
+    let t1 = Instant::now();
+    let um_proof = prove_vm_descriptor2_umem(
+        &umem_desc,
+        &um_rows,
+        &[],
+        &MBW::default(),
+        &[],
+        &umem_boundary,
+    )
+    .expect("umem interior proves");
+    let um_ms = t1.elapsed().as_millis();
+    verify_vm_descriptor2(&umem_desc, &um_proof, &[]).expect("umem interior verifies");
+    let um_bytes = breakdown("clist-UMEM", &um_proof);
+
+    let delta = map_bytes as i64 - um_bytes as i64;
+    let ratio = um_bytes as f64 / map_bytes as f64;
+    println!("== CHIP-DROP VERDICT (c-list read+write interior, both verified) ==");
+    println!(
+        "map_op (chip-bearing): {map_bytes} B ({:.1} KiB, {map_ms} ms, {} instances) | \
+         umem (no chip): {um_bytes} B ({:.1} KiB, {um_ms} ms, {} instances) | \
+         delta: {delta} B ({:+.1} KiB) | umem/map ratio: {ratio:.3} ({:+.1}%)",
+        kib(map_bytes),
+        map_proof.degree_bits.len(),
+        kib(um_bytes),
+        um_proof.degree_bits.len(),
+        (delta as f64) / 1024.0,
+        (ratio - 1.0) * 100.0,
+    );
+    // The map_op interior commits a CHIP table (the sorted-Poseidon2 leaf openings ride it):
+    // its instances are [main, chip(2^6), byte]. The umem conversion commits
+    // [main, byte, umemory, umem_boundary] — NO chip. That dropped chip table is the win.
+    assert_eq!(
+        map_proof.degree_bits.len(),
+        3,
+        "map_op interior = main + chip + byte"
+    );
+    assert_eq!(
+        um_proof.degree_bits.len(),
+        4,
+        "umem conversion = main + byte + umemory + umem_boundary (NO chip)"
+    );
+    assert!(
+        um_bytes < map_bytes,
+        "dropping the chip table shrinks the umem proof below the map_op proof"
+    );
+}
