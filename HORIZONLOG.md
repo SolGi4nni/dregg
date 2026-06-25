@@ -8,6 +8,26 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## web-deos DEEPENED: a SERVICE CELL invoked node-less in the browser (2026-06-25)
+- WHAT: the web `ViewNode` path gained a fourth, richer surface — a KV-store SERVICE CELL driven entirely in a
+  browser tab (`wasm/src/bindings_card.rs::KvStoreWorld` + `deos-view/src/web.rs::render_kvstore_live_document` +
+  `deos-view/examples/web_render_card.rs` bakes `kvstore.html` + a gallery tile). Unlike counter/inspector/tally
+  (bare `SetField` on a cell's own slots), the store publishes a typed `InterfaceDescriptor` (put·delete·get);
+  clicking put/del ROUTES through `route_method` (the verified `dregg_dfa` router) BEFORE desugaring to the
+  version-bump + register `SetField`s — no `Effect::Invoke`. `runtime::app_programs::kvstore_program` (Monotonic on
+  the version slot, mirrors `starbridge_kvstore` which can't be a wasm dep) is installed on the store cell; the
+  caller is a separate agent granted a reach cap. `tryRollback` proves the Monotonic guarantee BITES in-tab (a real
+  executor refusal: "field[0] decreased"); `tryGet` proves get is the named Serviced OFE seam. VERIFIED by running:
+  wasm-pack build + served + `scripts/drive-deos-kvstore.mjs` headless-Chrome CDP driver — all asserts pass
+  (put 20→21, del 10→0, version 4→5→6, rollback refused, get named; receipts 5→6→7). Commit `f956a9514`.
+- NAMED TAILS (closure shape): (a) `put`'s value is currently a single-arg "bump the register" (the ViewNode
+  `Button` carries one `arg`); a richer put-with-explicit-value needs a text `Input`-bound value affordance (the web
+  renderer already renders `Input`, just not yet wired to fire a 2-arg method). (b) `get`'s Serviced answer is
+  NAMED-and-refused, not yet SERVED — closure = surface the OFE cross-cell-read result as a (read-only) bound row
+  when the serviced-answer carrier (S2) lands. (c) the in-tab service-cell is wasm-mirrored (program VALUE +
+  invoke() routing core re-expressed), like the subscription/governance app programs; if `starbridge_kvstore` ever
+  sheds its axum/tokio deps it could be a direct wasm dep instead.
+
 ## deos-desktop document-collaboration UX DEEPENED: drivable branch→diverge→stitch→conflict→resolve + the umem boundary surfaced (2026-06-25)
 - WHAT: the deos_desktop document-language surface (`starbridge-v2/src/deos_desktop/mod.rs`) is now drivable end to end:
   (a) a LIVE co-author draft editor — a second `InputState` (`branch_inputs`/`branch_subs`) so the co-author TYPES the
