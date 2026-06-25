@@ -38,11 +38,15 @@ concrete `State := Nat` table recognizing `ε`'s language — the integer-ID sha
 
 The in-circuit `Dfa.lean` cascade is IMPORTED, untouched. `#assert_axioms`-clean, `sorry`-free.
 
-What remains (NAMED, not closed): the LEGACY complement-free path `compiler.rs::pattern_to_nfa().
-determinize()` (the Thompson-NFA subset construction) instantiates this same contract only via the
-residual-language = Brzozowski-derivative bridge — i.e. Thompson-construction correctness composed with
-subset-construction correctness. That bridge (design §3.2 step 3, the months-scale automata theory) is
-the one piece still open; the deny-filter path this module closes does not need it.
+What remains (NARROWED — see `Thompson.lean`): the LEGACY complement-free path
+`compiler.rs::pattern_to_nfa().determinize()` (the Thompson-NFA ε-closure subset construction)
+instantiates this same contract only via the residual-language = Brzozowski-derivative bridge — i.e.
+Thompson-construction correctness composed with subset-construction correctness (design §3.2 step 3).
+`Thompson.lean` CLOSES the right factor (subset construction) end-to-end via mathlib's verified
+`εNFA.toNFA_correct` + `NFA.toDFA_correct`, isolating the LEFT factor as the single named obligation
+`ThompsonRecognizes` (`accepts (thompson R) = Matches R`) — the one piece still open (mathlib has no
+regex→ε-NFA Thompson construction), shown inhabited by the canonical single-symbol automaton. The
+deny-filter path this module closes needs neither factor.
 -/
 import Dregg2.Crypto.Deriv.TableDfa
 

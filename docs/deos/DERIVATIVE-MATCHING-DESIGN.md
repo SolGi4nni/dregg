@@ -343,7 +343,28 @@ a theorem, not an untrusted Rust gap under an otherwise-clean AIR proof.
    minimal DFA** (both are reachable-state-minimal w.r.t. the same language).
    Strategy: prove both recognize the same language (Edge A + the powerset DFA's
    own correctness — itself currently *unproven Rust*, a sub-gap), then invoke
-   DFA minimization uniqueness. **Honest sub-risk:** dregg's `determinize` is
+   DFA minimization uniqueness.
+
+   > **Update — the subset/determinization factor is now mechanized**
+   > (`metatheory/Dregg2/Crypto/Deriv/Thompson.lean`). The `pattern_to_nfa().
+   > determinize()` pipeline factors as *Thompson-construction correctness ∘
+   > subset-construction correctness*. The right factor — `compiler.rs::Nfa::
+   > determinize` = the ε-closure powerset construction — is closed end-to-end by
+   > importing mathlib's *verified* `εNFA.toNFA_correct` (ε-elimination) +
+   > `NFA.toDFA_correct` (subset construction): `determinizedTable_accepts` proves
+   > the deployed flat-table fold (`ofDFA`, = mathlib `DFA.eval`) recognizes
+   > exactly the Thompson ε-NFA's language, and `legacy_determinized_faithful`
+   > carries that to `Matches`-faithful via `correctness`, generic over the
+   > `Set σ` subset-state space (`tableDfa_faithful'`). The remaining LEFT factor
+   > is isolated as the single obligation `ThompsonRecognizes M R := ∀ w, w ∈
+   > M.accepts ↔ derives w R` — Thompson-construction correctness — which mathlib
+   > does **not** provide (it routes regex→language through Brzozowski derivatives,
+   > not Thompson). It is shown *inhabited* (non-vacuous) by `symENfa_recognizes`
+   > for the canonical single-symbol automaton, but the inductive
+   > `accepts (thompson R) = Matches R` over the concat/star/union sub-automata
+   > (the ε-closure-across-the-join reasoning) is the genuine remaining wall.
+
+   **Honest sub-risk:** dregg's `determinize` is
    *not* minimized (it is reachable-subset, which can have non-minimal states),
    so the equality is up to a state-bijection on the reachable fragment, not
    literal table equality — the theorem likely reads `…  ≃  …` (language/bisim
