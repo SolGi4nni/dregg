@@ -19,10 +19,11 @@
 
 use std::time::Instant;
 
+use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::FinalizedTurn;
-use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
+use dregg_circuit_prove::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
 use dregg_turn::rotation_witness::mint_rotated_participant_leg;
 
 use dregg_lightclient::{FinalityCert, fold_and_attest, verify_finalized_history, verify_history};
@@ -174,7 +175,13 @@ fn main() {
     println!("  aggregate is ONE root recursion proof + 4 public commitments:");
     println!("    genesis_root : {}", agg.genesis_root.as_u32());
     println!("    final_root   : {}", agg.final_root.as_u32());
-    println!("    chain_digest : {}", agg.chain_digest.as_u32());
+    println!(
+        "    chain_digest : {:?}",
+        agg.chain_digest
+            .iter()
+            .map(|d| d.as_u32())
+            .collect::<Vec<_>>()
+    );
     println!("    num_turns    : {}", agg.num_turns);
 
     // --- 3. The light client verifies the WHOLE history from the aggregate alone -----------------
@@ -223,24 +230,69 @@ fn main() {
         "  (this is the compression property: O(1) verify in history length, soundness kept.)"
     );
 
-    // --- 5. The rejection tooth — a broken order is REFUSED --------------------------------------
-    rule("5. ANTI-GHOST TOOTH — a tampered / reordered history is REJECTED");
-    let (mut tampered, _gt, _ft) = make_chain(1_000, 0, 7, 3);
-    // Splice an out-of-sequence turn from an UNRELATED chain into the middle — its real old_root does
-    // not continue the previous turn's new_root, so the temporal tooth breaks.
-    let (foreign, foreign_old, _fn) = make_turn(500, 50, 3);
-    let prev_new = tampered[0].new_root();
+    // --- 5. The THREE tamper teeth — a forged / dropped / reordered history is REJECTED ----------
+    // This is `lightclient_unfoolable` made REAL over arbitrary histories: an adversary who FORGES a
+    // turn's outcome, DROPS a turn, or REORDERS turns cannot obtain a whole-history attestation. Each
+    // forgery is refused BEFORE the expensive fold — by the leaf tooth (host re-verifies every turn's
+    // rotated proof) or the temporal tooth (`new_root[i] == old_root[i+1]`), so the teeth are cheap.
+    rule("5. THE TAMPER TEETH — forged / dropped / reordered histories are REJECTED");
+
+    // (A) FORGED TURN — a malicious prover LIES about a turn's resulting state. Forge the LAST turn's
+    //     claimed post-state root (rotated NEW commit, PI 35): the execution witness is honest, only
+    //     the CLAIM is forged. Because it is the last turn there is no successor to break continuity —
+    //     ONLY the leaf tooth (host re-verifies the rotated proof against its claimed PI) can catch
+    //     it. The forged PI no longer satisfies the rotated descriptor, so host admission REJECTS.
+    let (mut forged_chain, _gf, real_final) = make_chain(1_000, 0, 7, 3);
+    const PI_ROTATED_NEW: usize = V1_PI_COUNT + 1; // rotated NEW-commit position (PI 35)
+    let last = forged_chain.len() - 1;
+    let DescriptorParticipant { rotated } = forged_chain.remove(last).participant;
+    let RotatedParticipantLeg {
+        proof,
+        descriptor,
+        mut public_inputs,
+    } = rotated;
+    let lie = public_inputs[PI_ROTATED_NEW] + BabyBear::ONE;
+    public_inputs[PI_ROTATED_NEW] = lie; // claim a post-state the turn never produced
+    forged_chain.push(FinalizedTurn::new(DescriptorParticipant::rotated(
+        RotatedParticipantLeg {
+            proof,
+            descriptor,
+            public_inputs,
+        },
+    )));
+    assert_ne!(lie, real_final, "the forged final root must differ");
+    match fold_and_attest(&forged_chain) {
+        Ok(_) => panic!("a forged turn outcome must NOT yield a whole-history attestation"),
+        Err(e) => println!("  (A) FORGED turn (lied post-state) REFUSED: {e}"),
+    }
+
+    // (B) DROPPED TURN — an adversary OMITS a turn from the middle of the history (hoping the verifier
+    //     never notices the gap). Remove turn 1 from a real 3-turn chain: turn 2's old_root no longer
+    //     equals turn 0's new_root, so the temporal tooth breaks → ChainBreak. REJECTED.
+    let (mut dropped_chain, _gd, _fd) = make_chain(1_000, 0, 7, 3);
+    let prev_new = dropped_chain[0].new_root();
+    let next_old = dropped_chain[2].old_root();
     assert_ne!(
-        foreign_old, prev_new,
-        "the foreign turn must NOT continue the chain"
+        next_old, prev_new,
+        "after the drop the surviving turns must NOT be continuous (that is the gap)"
     );
-    tampered[1] = foreign;
-    match fold_and_attest(&tampered) {
-        Ok(_) => panic!("a broken order must NOT yield a whole-history attestation"),
-        Err(e) => println!("  reordered chain REFUSED: {e}"),
+    dropped_chain.remove(1); // omit the middle turn
+    match fold_and_attest(&dropped_chain) {
+        Ok(_) => panic!("a dropped turn must NOT yield a whole-history attestation"),
+        Err(e) => println!("  (B) DROPPED turn (omitted middle) REFUSED: {e}"),
+    }
+
+    // (C) REORDERED TURN — an adversary PERMUTES the finalized order. Swap turns 1 and 2 of a real
+    //     3-turn chain: the turn now at position 1 consumes turn 2's old_root, which is not turn 0's
+    //     new_root, so continuity breaks → ChainBreak. REJECTED.
+    let (mut reordered_chain, _gr, _fr) = make_chain(1_000, 0, 7, 3);
+    reordered_chain.swap(1, 2);
+    match fold_and_attest(&reordered_chain) {
+        Ok(_) => panic!("a reordered history must NOT yield a whole-history attestation"),
+        Err(e) => println!("  (C) REORDERED turns (swapped 1<->2) REFUSED: {e}"),
     }
     println!(
-        "  (mirrors Lean tampered_aggregate_cannot_bind: a reordered chain has no valid binding)"
+        "  (mirrors Lean tampered_aggregate_cannot_bind / leaf_pairing_defeats_swap: forged,\n   dropped, and reordered histories each have NO valid binding — the light client is unfoolable)"
     );
 
     // --- 6. The THIRD leg — finality (a correct history must also be FINALIZED) ------------------
