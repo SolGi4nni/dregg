@@ -39,6 +39,27 @@ pub const MENUBAR_H: f32 = 26.0;
 /// balance/model slots.
 pub const DOC_REV_SLOT: usize = 14;
 
+// ── Document prose in the committed cell heap ───────────────────────────────────────
+// A document's prose is stored as field elements in the cell's `fields_map` (the
+// unbounded `BTreeMap<u64, FieldElement>` committed via `fields_root`), addressed by
+// **ext keys >= STATE_SLOTS(16)** so a `SetField` turn writes them through
+// `set_field_ext` (`cell/src/state.rs`) — the prose is on-ledger, receipted, and
+// replays from the committed state, not a sidecar.
+//
+// Namespace (per cell — one document per cell): a base far above the 16 fixed slots
+// and far below the reserved refusal-audit ext key (`2^32`). `DOC_TEXT_BASE + 0`
+// holds the byte LENGTH (LE u64 in the low 8 bytes); `DOC_TEXT_BASE + 1 + i` holds
+// chunk `i` (up to [`DOC_CHUNK_BYTES`] raw UTF-8 bytes, stored verbatim — the
+// `fields_map` keeps the 32 bytes byte-exact and `fields_root` binds all 32 via
+// `fold_bytes32`).
+pub const DOC_TEXT_BASE: u64 = 1_000_000;
+/// Bytes of prose packed into one `FieldElement` (the full 32-byte value is stored
+/// verbatim and committed, so all 32 carry payload).
+pub const DOC_CHUNK_BYTES: usize = 32;
+/// A sane ceiling on document chunks written/scanned per edit (keeps a malformed or
+/// runaway document from unbounded heap writes; ~32 KiB of prose).
+pub const DOC_MAX_CHUNKS: u64 = 1024;
+
 // ── Id rendering ──────────────────────────────────────────────────────────────────
 
 /// The full hex id of a cell (a stable layout/persistence key, and the inspector's

@@ -70,6 +70,14 @@ name = "dregg-mcp"
 path = "src/bin/dregg_mcp.rs"
 required-features = ["embedded-executor"]
 
+# A deos document persists to the REAL committed cell heap (`fields_map` via
+# `Effect::SetField`), not a sidecar — drives the encode/commit/read-back path
+# through the real World/executor. gpui-free: needs only the embedded executor.
+[[test]]
+name = "deos_doc_persists_to_cell_heap"
+path = "tests/deos_doc_persists_to_cell_heap.rs"
+required-features = ["embedded-executor"]
+
 [features]
 # =============================================================================
 # TWO USER-FACING DIALS — `desktop` (the whole cockpit) and `headless` (CI bake).

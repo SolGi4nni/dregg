@@ -64,16 +64,14 @@ use crate::world::{World, grant_capability, transfer};
 
 // The chrome kit + persistence types are re-exported so existing call sites
 // (`deos_desktop::id_hex`, `deos_desktop::DesktopLayout`, …) keep working.
+pub use android_window::{ANDROID_WINDOW_TITLE, AndroidInputCmd, AndroidWindow};
 pub use chrome::{
     DOC_CHUNK_BYTES, DOC_MAX_CHUNKS, DOC_REV_SLOT, DOC_TEXT_BASE, ICON_H, ICON_W, MENUBAR_H,
     NT_DESKTOP_BG, NT_DIM, NT_FACE, NT_FACE_DARK, NT_HILIGHT, NT_ICON_LABEL, NT_MENU_HILIGHT,
     NT_SELECT, NT_SHADOW, NT_TEXT, NT_TITLE_ACTIVE, NT_TITLE_TEXT, WIN_MIN_H, WIN_MIN_W,
     bevel_raised, face_row, face_section, fmt_balance, id_hex, id_short, pxf,
 };
-pub use android_window::{ANDROID_WINDOW_TITLE, AndroidInputCmd, AndroidWindow};
-pub use layout::{
-    DesktopLayout, DesktopPrefs, DocText, IconPos, WinGeom, WinKindTag,
-};
+pub use layout::{DesktopLayout, DesktopPrefs, DocText, IconPos, WinGeom, WinKindTag};
 
 // ── A live, open inspector window over one cell ───────────────────────────────────
 
@@ -643,7 +641,11 @@ impl DeosDesktop {
             MenuAction::new("Open as Document…", true, A::OpenDoc),
             MenuAction::new("Links & Backlinks…", true, A::OpenLinks),
             MenuAction::new("Transcript (receipt log)…", true, A::OpenTranscript),
-            MenuAction::new("Compose Workflow… (intents + refinement)", true, A::OpenWorkflow),
+            MenuAction::new(
+                "Compose Workflow… (intents + refinement)",
+                true,
+                A::OpenWorkflow,
+            ),
             MenuAction::sep(),
             // ── Verified-turn affordances (do it) ──
             MenuAction::new("Bump nonce  (verified turn)", held, A::BumpNonce),
