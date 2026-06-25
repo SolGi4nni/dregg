@@ -54,6 +54,7 @@ pub mod organgate;
 pub mod permgate;
 pub mod present;
 pub mod runtime;
+pub mod storagegate;
 
 pub use appfactory::{AndroidManifest, AndroidPermission, ProtectionLevel};
 pub use apps::{InstalledApp, InstalledApps};
@@ -92,6 +93,10 @@ pub use present::{AndroidPresentation, present_android_frame};
 pub use runtime::{
     AndroidRuntime, AppLaunch, CapturedFrameRuntime, DeviceSpec, RuntimeError, RuntimeKind,
     launch_installed_app,
+};
+pub use storagegate::{
+    MediaKind, StorageAccess, StorageCell, StorageDecision, StorageGrant, StorageReach,
+    StorageReceipt, StorageResolver, StorageVolume,
 };
 
 #[cfg(target_os = "macos")]

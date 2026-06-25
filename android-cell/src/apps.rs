@@ -40,6 +40,7 @@ use crate::intentgate::{IntentHandler, IntentResolver};
 use crate::organgate::{ServiceGrant, ServiceOrgan, ServiceResolver, SystemService};
 use crate::permgate::PermBox;
 use crate::runtime::AppLaunch;
+use crate::storagegate::{MediaKind, StorageCell, StorageGrant, StorageResolver, StorageVolume};
 
 /// One installed app — the android-cell minted from a manifest, plus how to launch it.
 #[derive(Clone, Debug)]
@@ -221,6 +222,51 @@ impl InstalledApps {
             })
             .collect::<Vec<_>>();
         BroadcastRouter::new(receivers, Some(sending_cell))
+    }
+
+    /// **Build the [`StorageResolver`] for an installed `cell`** over the storage volumes its
+    /// OWN manifest grants a cap to — the install↔storage loop (`GRAPHIDEOS.md §1`, the
+    /// storage-model row). Mirrors [`Self::service_resolver_for`]: the cap-set is sourced from
+    /// the app's declared authority, NOT an ambient filesystem.
+    ///
+    /// Two grants, faithful to AOSP scoped storage:
+    /// 1. **Its own scope, always** — every app gets a `ReadWrite` cap to its OWN
+    ///    [`StorageVolume::AppScope`] storage cell (keyed by package), born at install with no
+    ///    permission, exactly as AOSP grants an app free access to its private dir. This is the
+    ///    ONLY storage an app with no storage permission can reach (no ambient FS; another app's
+    ///    scope is never in the neighborhood).
+    /// 2. **The shared `MediaStore` collections, by declared permission** — a declared
+    ///    `READ_EXTERNAL_STORAGE` grants a `ReadOnly` cap to each [`MediaKind`] collection; a
+    ///    declared `WRITE_EXTERNAL_STORAGE` grants `ReadWrite`. An app declaring neither reaches
+    ///    no shared media (the `RefusedUnreachable` end) — the AOSP "no permission, no shared
+    ///    media" rule as a cap attenuation. An unknown `cell` yields an empty resolver.
+    pub fn storage_resolver_for(&self, cell: CellId) -> StorageResolver {
+        let mut cells: Vec<StorageCell> = Vec::new();
+        if let Some(app) = self.get(cell) {
+            // 1. The app's own scope — always a ReadWrite cap (scoped storage, no permission).
+            cells.push(StorageCell::standard(
+                StorageVolume::AppScope {
+                    package: app.manifest.package.clone(),
+                },
+                StorageGrant::ReadWrite,
+            ));
+            // 2. The shared MediaStore collections, gated by the declared storage permission
+            //    (WRITE wins over READ — the strictly-wider grant).
+            let perms = &app.manifest.uses_permissions;
+            let media_grant = if perms.contains(&AndroidPermission::WriteExternalStorage) {
+                Some(StorageGrant::ReadWrite)
+            } else if perms.contains(&AndroidPermission::ReadExternalStorage) {
+                Some(StorageGrant::ReadOnly)
+            } else {
+                None
+            };
+            if let Some(grant) = media_grant {
+                for kind in MediaKind::all() {
+                    cells.push(StorageCell::standard(StorageVolume::Media(kind), grant));
+                }
+            }
+        }
+        StorageResolver::new(cells, Some(cell))
     }
 
     /// **Build the [`PermBox`] for an installed `cell`** — the cap-badge + hand-over surface
@@ -497,6 +543,82 @@ mod tests {
         let receipt = r1.send(&sender, &bc);
         assert!(receipt.decision.fanned_out());
         assert_eq!(receipt.decision.delivered_to(), vec![contacts_cell]);
+    }
+
+    /// The install↔storage loop: an app always reaches its OWN scope (ReadWrite, no permission),
+    /// reaches the shared MediaStore collections only if it declared a storage permission (READ
+    /// → ReadOnly, WRITE → ReadWrite), and never reaches another app's scope (no ambient FS).
+    #[test]
+    fn storage_resolver_ranges_over_the_declared_storage_grants() {
+        use crate::storagegate::{StorageAccess, StorageReach};
+
+        let mut apps = registry();
+        // A gallery app declaring READ_EXTERNAL_STORAGE (shared media, read-only).
+        let gallery_cell = cell_seed(0x54);
+        apps.install(
+            gallery_cell,
+            AndroidManifest::new(
+                "com.example.gallery",
+                [AndroidPermission::ReadExternalStorage],
+            ),
+            AppLaunch::Package("pkg".into()),
+            [0x11; 32],
+        );
+
+        // `maps` declared no storage permission ⟹ only its own scope, no shared media.
+        let (maps_cell, _) = maps();
+        let maps_store = apps.storage_resolver_for(maps_cell);
+
+        let own = StorageReach::parse(
+            "/storage/emulated/0/Android/data/com.example.maps/files/cache.bin",
+        )
+        .unwrap();
+        assert!(
+            maps_store
+                .resolve(&own, StorageAccess::Write)
+                .decision
+                .granted(),
+            "an app always read/writes its OWN scope"
+        );
+
+        let images = StorageReach::parse("content://media/external/images/media/1").unwrap();
+        assert!(
+            maps_store
+                .resolve(&images, StorageAccess::Read)
+                .decision
+                .refused_unreachable(),
+            "no storage permission ⟹ shared media is unreachable (no ambient FS)"
+        );
+
+        // The gallery reaches shared images read-only; a write does not amplify.
+        let gallery_store = apps.storage_resolver_for(gallery_cell);
+        assert!(
+            gallery_store
+                .resolve(&images, StorageAccess::Read)
+                .decision
+                .granted(),
+            "READ_EXTERNAL_STORAGE grants a read cap to the media collections"
+        );
+        assert!(
+            gallery_store
+                .resolve(&images, StorageAccess::Write)
+                .decision
+                .refused_read_only(),
+            "a read cap does not amplify to a write"
+        );
+
+        // Neither app reaches the OTHER's private scope.
+        let maps_secret = StorageReach::parse(
+            "/storage/emulated/0/Android/data/com.example.maps/files/cache.bin",
+        )
+        .unwrap();
+        assert!(
+            gallery_store
+                .resolve(&maps_secret, StorageAccess::Read)
+                .decision
+                .refused_unreachable(),
+            "the gallery cannot read the maps app's private scope"
+        );
     }
 
     /// The install↔permission loop: an installed app's manifest is exactly what the cap-badge
