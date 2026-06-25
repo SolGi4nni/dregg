@@ -1425,6 +1425,74 @@ pub fn umem_cohort_proving_inputs_from(
     })
 }
 
+/// The FIXED per-effect MULTI-DOMAIN cohort proving inputs: the producer's multi-domain rows +
+/// the real [`UMemBoundaryWitness`] the deployed-form FIXED multi-domain cohort descriptor
+/// (`circuit/descriptors/umem-cohort-multidomain-v1-staged-registry.tsv`, the Lean
+/// `EffectVmEmitUMemCohortMulti.umemCohortMultiRegistry`) consumes, plus the touched domains in
+/// COLUMN order (guard column `6 + i` for the `i`-th domain, the producer's sorted-domain-code
+/// order). Completes the cohort to the effects whose state touch spans MORE THAN ONE domain in one
+/// effect (the NOTE/BRIDGE economic verbs — a `nullifiers`-domain freshness insert + a
+/// `heap`-domain balance write), on which [`umem_cohort_proving_inputs_from`] fails closed.
+#[derive(Clone, Debug)]
+pub struct UmemCohortMultiProvingInputs {
+    /// The touched domain codes in COLUMN order (guard column `6 + i`). MUST equal the resolved
+    /// multi-domain cohort descriptor's per-op domains in order (the caller fails closed on a
+    /// mismatch — the descriptor carries the FIXED domain set its committed VK backs).
+    pub domains: Vec<u32>,
+    /// Width-`6 + #domains` cohort rows: `0 key · 1 present · 2 value · 3 prev_present ·
+    /// 4 prev_value · 5 prev_serial` shared, `6 + i` the per-domain guard. Byte-identical to the
+    /// producer rows.
+    pub rows: Vec<Vec<BabyBear>>,
+    /// The REAL universal-memory boundary for this multi-domain leg (touched addresses across all
+    /// domains with their PRE-state init image).
+    pub boundary: UMemBoundaryWitness,
+}
+
+/// **THE FIXED MULTI-DOMAIN COHORT TRACE GENERATOR** — bridge one effect-leg's multi-domain umem op
+/// trace into the FIXED per-effect multi-domain cohort form the deployed-form umem prover
+/// ([`prove_vm_descriptor2_umem`]) accepts. Unlike [`umem_cohort_proving_inputs_from`] (which fails
+/// closed on a multi-domain leg), this generator yields the producer's multi-domain rows + boundary
+/// directly (the producer already emits the FIXED shape per effect — width `6 + #domains`, one
+/// guarded `umemOp` per domain in sorted-code order, the byte-pinned multi-domain cohort
+/// descriptor's twin) and reports the column-ordered domain set so the caller can verify it against
+/// the resolved descriptor's baked-in domains.
+///
+/// `Err` if the leg is empty, the address codec collides, or the leg touches FEWER than two domains
+/// (a single-domain leg belongs on the width-7 cohort — [`umem_cohort_proving_inputs_from`]).
+///
+/// [`prove_vm_descriptor2_umem`]: dregg_circuit::descriptor_ir2::prove_vm_descriptor2_umem
+pub fn umem_cohort_multidomain_proving_inputs_from(
+    pre: &UProjection,
+    ops: &[UmemOp],
+) -> Result<UmemCohortMultiProvingInputs, String> {
+    let inputs = umem_proving_inputs_from(pre, ops)?;
+    // The producer emits one UMemOp constraint per touched domain, in sorted-code order, each
+    // guarded at column 6 + i — exactly the multi-domain cohort descriptor's shape.
+    let domains: Vec<u32> = inputs
+        .descriptor
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            VmConstraint2::UMemOp(spec) => Some(spec.domain),
+            _ => None,
+        })
+        .collect();
+    if domains.len() < 2 {
+        return Err(format!(
+            "umem multi-domain cohort generator: leg touches {} domain(s) (producer width {}); the \
+             multi-domain cohort is for effects spanning >1 domain — a single-domain leg uses the \
+             width-7 cohort (umem_cohort_proving_inputs_from)",
+            domains.len(),
+            inputs.descriptor.trace_width
+        ));
+    }
+    Ok(UmemCohortMultiProvingInputs {
+        domains,
+        rows: inputs.rows,
+        boundary: inputs.boundary,
+    })
+}
+
 /// The pre→post projection DIFF as a Blum write trace: every address whose value changed
 /// (insert / update / delete), emitted as a same-transition [`UmemOp::Write`] with the PRE
 /// value as `prev_val` and `prev_serial == 0` (each touched address is opened once against the

@@ -876,6 +876,60 @@ pub fn umem_cohort_descriptor_json(lean_key: &str) -> Option<&'static str> {
     })
 }
 
+/// The byte-pinned staged registry of the MULTI-DOMAIN umem-form COHORT descriptors (the verified
+/// Lean `EffectVmEmitUMemCohortMulti.umemCohortMultiRegistry`, `EmitUMemCohortMulti.lean`-emitted +
+/// `#guard` byte-pinned). Each is width-8, TWO `umem_op`s — one per touched domain, guarded at
+/// column 6 (`heap`, the balance credit) and column 7 (`nullifiers`, the freshness insert) — the
+/// FIXED twin of the producer's sorted-domain two-domain form (`turn/src/umem.rs`), the shape a
+/// committed VK can back. This COMPLETES the umem cohort to the effects whose state touch spans more
+/// than one domain in one effect (the NOTE/BRIDGE economic verbs), on which the single-domain cohort
+/// fails closed. `key\tname\tjson` per line.
+///
+/// ADDITIVE / STAGED: a NEW set BESIDE the single-domain [`UMEM_COHORT_V1_STAGED_REGISTRY_TSV`] and
+/// the deployed per-map / rotated registries, NO VK bump, nothing on the live wire.
+pub const UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV: &str =
+    include_str!("../descriptors/umem-cohort-multidomain-v1-staged-registry.tsv");
+
+/// Resolve the MULTI-DOMAIN umem-form COHORT lean-key for an [`Effect`](crate::effect_vm::Effect)
+/// whose state touch spans MORE THAN ONE domain in a single effect — the per-effect FIXED-cohort
+/// descriptor (`UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV`) this effect's universal-memory
+/// touch proves against. `None` = the effect is single-domain (resolve it through
+/// [`umem_cohort_lean_key_for_effect`]) or a non-member (stays per-map). STAGED: the deployed default
+/// never calls it.
+///
+/// The deployed multi-domain effects are the NOTE/BRIDGE economic verbs: each reveals/inserts a
+/// `nullifiers`-domain freshness cell AND writes the `heap`-domain balance — domains `{heap (1),
+/// nullifiers (3)}`, the producer's sorted-code order placing `heap` at guard column 6 and
+/// `nullifiers` at guard column 7.
+pub fn umem_cohort_multidomain_lean_key_for_effect(
+    effect: &crate::effect_vm::Effect,
+) -> Option<&'static str> {
+    use crate::effect_vm::Effect;
+    Some(match effect {
+        // reveal a nullifier (nullifiers) + credit the balance (heap)
+        Effect::NoteSpend { .. } => "noteSpendUMem",
+        // insert an inbound bridged nullifier (nullifiers) + credit the balance (heap)
+        Effect::BridgeMint { .. } => "bridgeMintUMem",
+        _ => return None,
+    })
+}
+
+/// The parseable descriptor JSON (third column) for a multi-domain umem-cohort lean-key in
+/// [`UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV`]. `None` if the key is absent.
+pub fn umem_cohort_multidomain_descriptor_json(lean_key: &str) -> Option<&'static str> {
+    UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some(lean_key) {
+                let _wire_name = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+}
+
 /// The wire-name suffix marking a descriptor as the rotated+umem WELD
 /// ([`weld_umem_into_rotated_descriptor`]). A descriptor whose `name` ends with this is a STAGED
 /// welded form — never a deployed-registry member.

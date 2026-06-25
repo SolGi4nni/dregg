@@ -37,6 +37,23 @@ reason.)*
   `prove_welded_umem_turn_chain_recursive_staged` (`#[ignore]`, the staged end-to-end). Teeth bite the welded form
   (ChainBreak on reorder, TurnProofInvalid on a forged welded post-commit). NAMED TAIL = THE VK EPOCH ITSELF: commit the
   welded descriptor's VK + flip the deployed default off rotated+per-map (the ONLY remaining step — deliberately gated).
+- UMEM COHORT → MULTI-DOMAIN (STAGED / VK-RISK-FREE): the umem cohort now covers the FULL effect set. The
+  single-domain cohort (`c67796d8`, width-7) failed closed on effects whose touch spans >1 domain in one effect;
+  this completes it. `metatheory/Dregg2/Circuit/Emit/EffectVmEmitUMemCohortMulti.lean` (`#assert_axioms`-clean):
+  `umemCohortDesc2` = the width-8 two-domain shape (one guarded `umemOp` per domain, `heap` col 6 · `nullifiers`
+  col 7) = the producer's sorted-domain form with the domain set BAKED IN (so a FIXED descriptor backs one VK,
+  which the variable producer form cannot); members `noteSpendUMem` · `bridgeMintUMem` (NOTE/BRIDGE = a nullifiers
+  freshness insert + a heap balance credit). PER-DOMAIN survival (`noteSpend_post_root`/`_pre_root` parametric
+  over the touched domain — fire at BOTH planes) grounded by a two-row worked witness; codec injectivity
+  (`noteSpend_addr_faithful`). Byte-pinned → `circuit/descriptors/umem-cohort-multidomain-v1-staged-registry.tsv`.
+  Rust: `umem_cohort_multidomain_{lean_key_for_effect,descriptor_json}` (circuit) +
+  `umem_cohort_multidomain_proving_inputs_from` (turn) + `prove_umem_cohort_multidomain_staged` (sdk) — a real
+  NoteSpend/BridgeMint two-domain leg PROVES through the deployed-form `prove_vm_descriptor2_umem`; gauntlet 5/5
+  (control proves · forged-pre bites · single-domain/domain-mismatch/non-member fail closed). HONEST SCOPE: the
+  cohort leg reconciles each domain INDEPENDENTLY; the CROSS-domain economic invariant (credit==value) is NOT a
+  memory-reconciliation property — it rides the effect's rotated AIR gates (the weld preserves them), same division
+  as single-domain. No deeper wall. STAGED beside the deployed + single-domain registries; the VK epoch is the only
+  remaining flip.
 - FIRMAMENT: the semihost interactive cockpit now runs the REAL verified `DreggEngine` (live-repaint-on-turn,
   `251692b7`) — closes `SEL4-INTERACTIVE-COCKPIT.md §3.5`. NAMED TAIL: §3.6 step 4, the executor-PD's bare-metal
   Lean-ELF runtime link (the real-seL4 WALL; gated on Microkit SDK on PATH, not a semihost blocker).

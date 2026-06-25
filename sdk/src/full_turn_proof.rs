@@ -1080,6 +1080,108 @@ pub fn prove_umem_cohort_staged(
     Ok(proof)
 }
 
+/// **THE STAGED MULTI-DOMAIN UMEM-COHORT PROVER (VK-RISK-FREE — NOT the deployed default).** The
+/// completion of [`prove_umem_cohort_staged`] to the effects whose state touch spans MORE THAN ONE
+/// domain in a single effect (the NOTE/BRIDGE economic verbs — a `nullifiers`-domain freshness
+/// insert + a `heap`-domain balance write), on which the single-domain cohort path fails closed.
+///
+/// Given one effect-leg's multi-domain universal-memory touch (its pre-state projection + the Blum
+/// op trace), it routes to the FIXED per-effect MULTI-DOMAIN cohort descriptor
+/// (`umem_cohort_multidomain_lean_key_for_effect` → `umem_cohort_multidomain_descriptor_json`, the
+/// byte-pinned [`UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV`] emitted from the verified Lean
+/// `EffectVmEmitUMemCohortMulti.umemCohortMultiRegistry`), builds the multi-domain rows + the REAL
+/// `UMemBoundaryWitness` ([`dregg_turn::umem::umem_cohort_multidomain_proving_inputs_from`]), and
+/// proves through the DEPLOYED-form umem prover [`prove_vm_descriptor2_umem`] with that real
+/// boundary. Self-verifies before return.
+///
+/// The fixed descriptor's baked-in per-op domain set (in column order) is checked against the leg's
+/// actual domain set — a mismatch fails closed (the descriptor carries the FIXED domain set its
+/// committed VK backs; it must not prove a different plane-set than the leg touched).
+///
+/// SOUNDNESS SCOPE (honest): the multi-domain cohort leg reconciles each touched domain's boundary
+/// FAITHFULLY and INDEPENDENTLY (the per-domain survival keystones, `noteSpend_post_root` /
+/// `_pre_root`, parametric over the domain). It does NOT by itself bind the CROSS-domain economic
+/// invariant (e.g. balance-credit == spent-note-value) — that is not a memory-reconciliation
+/// property; it rides the effect's own rotated AIR gates (the weld preserves the whole rotated
+/// constraint set). This is the same division as the single-domain cohort.
+///
+/// STAGED: opt-in, never on the live wire; `umem_witness_enabled` untouched. The deployed default
+/// stays per-map until the gated VK epoch.
+#[cfg(feature = "prover")]
+pub fn prove_umem_cohort_multidomain_staged(
+    effect: &VmEffectKind,
+    pre: &dregg_turn::umem::UProjection,
+    ops: &[dregg_turn::umem::UmemOp],
+) -> Result<
+    dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
+    SdkError,
+> {
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, UMemOpSpec, VmConstraint2, parse_vm_descriptor2,
+        prove_vm_descriptor2_umem, verify_vm_descriptor2,
+    };
+    use dregg_circuit::effect_vm_descriptors::{
+        umem_cohort_multidomain_descriptor_json, umem_cohort_multidomain_lean_key_for_effect,
+    };
+
+    // Resolve the FIXED multi-domain cohort descriptor for this effect-leg (fail closed for
+    // non-members / single-domain effects).
+    let key = umem_cohort_multidomain_lean_key_for_effect(effect).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "umem multi-domain cohort staged: effect {effect:?} is not a multi-domain umem-cohort \
+             member (single-domain effects use prove_umem_cohort_staged)"
+        ))
+    })?;
+    let json = umem_cohort_multidomain_descriptor_json(key).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "umem multi-domain cohort staged: '{key}' not in the staged multi-domain registry"
+        ))
+    })?;
+    let desc = parse_vm_descriptor2(json).map_err(|e| {
+        SdkError::InvalidWitness(format!("umem multi-domain cohort descriptor parse: {e}"))
+    })?;
+
+    // Bridge the leg's per-turn umem witness into the FIXED multi-domain cohort form (fails closed
+    // on a single-domain or empty leg).
+    let inputs =
+        dregg_turn::umem::umem_cohort_multidomain_proving_inputs_from(pre, ops).map_err(|e| {
+            SdkError::InvalidWitness(format!("umem multi-domain cohort trace generation: {e}"))
+        })?;
+
+    // The fixed descriptor's per-op domains (in column order) MUST match the leg's actual domain
+    // set — the descriptor carries the FIXED plane-set its committed VK backs.
+    let desc_domains: Vec<u32> = desc
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            VmConstraint2::UMemOp(UMemOpSpec { domain, .. }) => Some(*domain),
+            _ => None,
+        })
+        .collect();
+    if desc_domains != inputs.domains {
+        return Err(SdkError::InvalidWitness(format!(
+            "umem multi-domain cohort staged: descriptor '{key}' bakes domains {desc_domains:?} but \
+             the leg touches domains {:?}",
+            inputs.domains
+        )));
+    }
+
+    // Prove through the DEPLOYED-form umem prover with the REAL boundary; self-verify.
+    let proof = prove_vm_descriptor2_umem(
+        &desc,
+        &inputs.rows,
+        &[],
+        &MemBoundaryWitness::default(),
+        &[],
+        &inputs.boundary,
+    )
+    .map_err(|e| SdkError::InvalidWitness(format!("umem multi-domain cohort IR-v2 proof: {e}")))?;
+    verify_vm_descriptor2(&desc, &proof, &[]).map_err(|e| {
+        SdkError::InvalidWitness(format!("umem multi-domain cohort self-verify: {e}"))
+    })?;
+    Ok(proof)
+}
+
 /// **THE ROTATED+UMEM WELD PROVER (STAGED, VK-RISK-FREE) — the last precursor before the gated VK
 /// epoch.** Prove a REAL turn through the WELDED rotated+umem descriptor
 /// ([`dregg_circuit::effect_vm_descriptors::weld_umem_into_rotated_descriptor`]): the WHOLE rotated
