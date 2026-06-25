@@ -505,6 +505,14 @@ const PRELUDE: &str = r#"
         // `card()` names the editor's current card (the id editView/setField target).
         editor: {
             card: function() { var c = __deos_editor_card(); return c === "" ? null : c; },
+            // view() — the editor card's CURRENT view-tree (the {kind,props,children}
+            // JSON deos-view consumes), parsed to an object. The READ half of the
+            // reflective loop: an agent reads the live surface's own shape (reflect-on)
+            // before rewriting it. A pure read — NO patch, NO turn. null if no editor.
+            view: function() {
+                var j = __deos_editor_view();
+                return j === "null" ? null : JSON.parse(j);
+            },
             // editView(cardId, patchSpec) — apply a structural view-patch, re-fold the
             // view-source, leave a receipted patch + blame. patchSpec is a small object:
             //   {op:"addButton", label, affordance, arg}  — append a button (a turn);
@@ -683,6 +691,7 @@ impl JsRuntime {
                 (c"__deos_search", native_search as RawNative, 1),
                 // author (the card editor) — view/field/affordance, cap-gated
                 (c"__deos_editor_card", native_editor_card as RawNative, 0),
+                (c"__deos_editor_view", native_editor_view as RawNative, 0),
                 (
                     c"__deos_editor_edit_view",
                     native_editor_edit_view as RawNative,
@@ -1357,6 +1366,27 @@ unsafe extern "C" fn native_editor_card(
             .unwrap_or_default()
     });
     return_string(&mut cx, &args, &id)
+}
+
+/// `__deos_editor_view()` → the editor card's CURRENT view-tree JSON (the
+/// `{kind,props,children}` shape `deos-view`'s `parse_view_tree` consumes), or `"null"`
+/// if no editor is installed. This is the READ half of the reflective loop: an agent
+/// reads the live surface's own tree (reflect-on) BEFORE it rewrites it — no patch, no
+/// turn, a pure cap-free read of the surface's current shape.
+unsafe extern "C" fn native_editor_view(
+    context: *mut RawJSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let json = CURRENT_EDITOR.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|e| e.view_source())
+            .unwrap_or_else(|| "null".to_string())
+    });
+    return_string(&mut cx, &args, &json)
 }
 
 /// Build a [`ViewPatch`] from the JS `patchSpec` JSON (`{op, ...}`). Returns the parse
