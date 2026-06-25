@@ -844,6 +844,268 @@ fn two_step_core_rejects_discontinuity() {
     }
 }
 
+// ============================================================================
+// CODEX RE-REVIEW #2 — THE DEEPER MIXED-ROOT FORGERY (binding-leaf vs descriptor-leaf).
+//
+// The existing tooth `carried_binding_proof_unlinked_to_root_is_rejected` (above)
+// keeps A's GENUINE root and swaps in B's binding proof OUT-OF-BAND. That now
+// rejects: A's root's expose_claim table surfaces A's endpoints, while the swapped
+// carried claim is B's, so tooth (4) (`root-exposed claims == carried claim`) fires.
+//
+// Codex's re-review (`metatheory/docs/CODEX-IVC-REVIEW-2.md`) describes a DEEPER
+// attack the exposed-claim channel does NOT obviously close: build ONE root that
+// FOLDS history A's GENUINE descriptor/execution leaves together with history B's
+// GENUINE binding leaf (+ B's exposed-claim wrap), then carry B's binding proof + B's
+// claims. Now the root's exposed claims ARE B's (the expose_claim table rides the
+// binding-leaf wrap), so tooth (4) is SATISFIED by construction — yet the descriptor
+// leaves in that same root executed history A. NOTHING in the verifier, and (per
+// codex) nothing in the aggregation circuit, ties the binding leaf's (old_root,
+// new_root) rows to the descriptor leaves' actual roots. If that is true, a
+// whole-chain claim for B verifies against a root that executed A.
+//
+// This test reconstructs the fold core (mirroring the lib-private
+// `prove_chain_core_rotated` + `aggregate_tree`, from PUBLIC building blocks) with one
+// substitution: the descriptor leaves are history A's, the binding leaf (and thus the
+// expose_claim table) is history B's. It then runs the REAL verifier
+// (`verify_turn_chain_recursive_from_parts`) carrying B's binding proof + B's claims,
+// against the honest VK fingerprint recomputed from the mixed root, and asserts the
+// ACTUAL current verdict.
+//
+// EXPECTATION per codex: is_ok() (LIVE HOLE). This test asserts the ACTUAL result and
+// reports it; it FLIPS to is_err() the instant a cross-leaf binding (descriptor roots
+// vs binding rows, in the same root) lands. If it REJECTS today, codex's analysis
+// missed an in-band cross-leaf constraint and #1 is closer to closed than claimed.
+// ============================================================================
+
+/// Find the instance index of the `expose_claim` non-primitive table in a root batch
+/// proof, in the same order the in-circuit verifier allocates `air_public_targets`
+/// (primitive tables first, then non-primitives in order). Re-implemented here because
+/// the lib's `expose_claim_instance_index` is `pub(crate)`.
+fn expose_claim_idx(
+    proof: &p3_circuit_prover::BatchStarkProof<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+) -> Option<usize> {
+    let num_primitive = p3_circuit_prover::batch_stark_prover::NUM_PRIMITIVE_TABLES;
+    proof
+        .non_primitives
+        .iter()
+        .position(|e| e.op_type.as_str() == "expose_claim")
+        .map(|pos| num_primitive + pos)
+}
+
+/// **CODEX RE-REVIEW #2 — THE MIXED-ROOT FORGERY, MADE EXECUTABLE.**
+///
+/// Fold history A's GENUINE descriptor leaves with history B's GENUINE binding leaf
+/// into ONE root, carry B's binding proof + B's claims, and report whether the current
+/// whole-chain verifier ACCEPTS it. If is_ok: the LIVE HOLE codex found — a whole-chain
+/// claim for B verifies against a root that executed A. If is_err: the binding-leaf /
+/// descriptor-leaf seam is already closed in-band (codex's analysis missed it).
+#[test]
+#[ignore = "SLOW: two real folds + a mixed re-fold (~minutes); run with --ignored — codex re-review #2"]
+fn mixed_root_forgery_executes_A_claims_B() {
+    use dregg_circuit_prove::ivc_turn_chain::{
+        TurnChainBindingAir, ir2_leaf_wrap_config, prove_descriptor_leaf_rotated_with_config,
+        verify_turn_chain_recursive_from_parts,
+    };
+    use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
+        DreggRecursionConfig, create_recursion_backend, prove_inner_for_air_with_config,
+        recursion_vk_fingerprint, verify_inner_for_air_with_config,
+    };
+    use p3_baby_bear::BabyBear as P3BabyBear;
+    use p3_field::PrimeCharacteristicRing;
+    use p3_recursion::{
+        BatchOnly, ProveNextLayerParams, RecursionInput, RecursionOutput,
+        build_and_prove_aggregation_layer_with_expose, build_and_prove_next_layer_with_expose,
+    };
+
+    const NUM_CHAIN_CLAIMS: usize = 4;
+    const D: usize = 4;
+
+    fn to_p3(v: BabyBear) -> P3BabyBear {
+        P3BabyBear::from_u64(v.as_u32() as u64)
+    }
+
+    // ----- The two histories (same K=2 transfer shape ⇒ same root VK fingerprint). -----
+    // History A: the descriptor/execution leaves we fold (the REAL executed history).
+    let (turns_a, _ga, _fa) = make_chain(1000, 0, 7, 2);
+    // History B: a DIFFERENT history; its binding leaf + claims are what the forgery
+    // carries (so the whole-chain CLAIM is B while the EXECUTION was A).
+    let (turns_b, gb, fb) = make_chain(500, 0, 3, 2);
+    let refs_a: Vec<&FinalizedTurn> = turns_a.iter().collect();
+    let refs_b: Vec<&FinalizedTurn> = turns_b.iter().collect();
+
+    let config: DreggRecursionConfig = ir2_leaf_wrap_config();
+    let backend = create_recursion_backend();
+    let params = ProveNextLayerParams::default();
+
+    // ----- B's binding leaf (the carried binding proof + B's 4 chain claims). -----
+    // Mirror `prove_chain_binding_leaf_rotated` for history B from public pieces. We
+    // build B's binding trace by replaying B's REAL rotated roots through the SAME
+    // `honest_binding_2row` helper this test file already uses (B is a continuous
+    // 2-turn chain ⇒ padded_len == 2 ⇒ no padding rows, identical to the lib trace).
+    let b_genesis = turns_b[0].old_root();
+    let b_mid = turns_b[0].new_root();
+    let b_final = turns_b[1].new_root();
+    assert_eq!(b_mid, turns_b[1].old_root(), "B chains by construction");
+    assert_eq!(b_genesis, gb);
+    assert_eq!(b_final, fb);
+    let (b_rows, b_pis) = honest_binding_2row(b_genesis, b_mid, b_final);
+    let b_binding_inner = prove_inner_for_air_with_config(
+        &TurnChainBindingAir,
+        to_binding_matrix(&b_rows),
+        &b_pis,
+        &config,
+    );
+    verify_inner_for_air_with_config(&TurnChainBindingAir, &b_binding_inner, &b_pis, &config)
+        .expect("B's binding leaf proves + self-verifies");
+    let b_genesis_root = b_pis[0];
+    let b_final_root = b_pis[1];
+    let b_num_turns = 2usize;
+    let b_chain_digest = b_pis[3];
+
+    // ----- The mixed fold: A's descriptor leaves + B's binding leaf -> one root. -----
+    let mut batch_leaves: Vec<RecursionOutput<DreggRecursionConfig>> = Vec::with_capacity(3);
+
+    // A's TWO genuine descriptor leaves (the real executed history).
+    for t in &refs_a {
+        let leg = &t.participant.rotated;
+        let wrapped = prove_descriptor_leaf_rotated_with_config(
+            &leg.descriptor,
+            &leg.proof,
+            &leg.public_inputs,
+            &config,
+        )
+        .expect("A's rotated descriptor leaf wraps in-circuit");
+        batch_leaves.push(wrapped);
+    }
+    let _ = &refs_b; // B's descriptor leaves are intentionally NOT folded.
+
+    // B's binding leaf wrapped with the EXPOSE hook (so the root carries an
+    // expose_claim table whose public_values are B's 4 chain claims) — exactly the
+    // channel `prove_chain_core_rotated` emits, but over B's binding child.
+    {
+        let air = TurnChainBindingAir;
+        let p3_pis: Vec<P3BabyBear> = b_pis.iter().map(|&v| to_p3(v)).collect();
+        let input = RecursionInput::UniStark {
+            proof: &b_binding_inner,
+            air: &air,
+            public_inputs: p3_pis,
+            preprocessed_commit: None,
+        };
+        let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
+                           apt: &[Vec<p3_recursion::Target>]| {
+            if let Some(claims) = apt.first() {
+                cb.expose_as_public_output(&claims[..NUM_CHAIN_CLAIMS]);
+            }
+        };
+        let wrapped = build_and_prove_next_layer_with_expose::<
+            DreggRecursionConfig,
+            TurnChainBindingAir,
+            _,
+            D,
+        >(&input, &config, &backend, &params, Some(&expose))
+        .expect("B's binding-leaf expose wrap");
+        batch_leaves.push(wrapped);
+    }
+
+    // Aggregate the mixed leaves to ONE root (mirror `aggregate_tree`, re-exposing the
+    // expose_claim child's claims at every layer).
+    let mut proofs = batch_leaves;
+    while proofs.len() > 1 {
+        let mut next_level: Vec<RecursionOutput<DreggRecursionConfig>> =
+            Vec::with_capacity(proofs.len().div_ceil(2));
+        let mut i = 0;
+        while i + 1 < proofs.len() {
+            let left_idx = expose_claim_idx(&proofs[i].0);
+            let right_idx = expose_claim_idx(&proofs[i + 1].0);
+            let left = proofs[i].into_recursion_input::<BatchOnly>();
+            let right = proofs[i + 1].into_recursion_input::<BatchOnly>();
+            let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
+                               left_apt: &[Vec<p3_recursion::Target>],
+                               right_apt: &[Vec<p3_recursion::Target>]| {
+                if let Some(idx) = left_idx
+                    && let Some(claims) = left_apt.get(idx)
+                    && claims.len() >= NUM_CHAIN_CLAIMS
+                {
+                    cb.expose_as_public_output(&claims[..NUM_CHAIN_CLAIMS]);
+                } else if let Some(idx) = right_idx
+                    && let Some(claims) = right_apt.get(idx)
+                    && claims.len() >= NUM_CHAIN_CLAIMS
+                {
+                    cb.expose_as_public_output(&claims[..NUM_CHAIN_CLAIMS]);
+                }
+            };
+            let out = build_and_prove_aggregation_layer_with_expose::<
+                DreggRecursionConfig,
+                BatchOnly,
+                BatchOnly,
+                _,
+                D,
+            >(
+                &left,
+                &right,
+                &config,
+                &backend,
+                &params,
+                None,
+                Some(&expose),
+            )
+            .expect("mixed aggregation layer");
+            next_level.push(out);
+            i += 2;
+        }
+        if i < proofs.len() {
+            next_level.push(proofs.pop().unwrap());
+        }
+        proofs = next_level;
+    }
+    let mixed_root: RecursionOutput<DreggRecursionConfig> = proofs.pop().unwrap();
+
+    // The honest anchor: recomputed from the MIXED root itself (an honest setup over
+    // THIS same circuit shape would distribute exactly this fingerprint — the attacker
+    // is not forging the anchor, only the contents).
+    let vk = recursion_vk_fingerprint(&mixed_root.0);
+
+    // RUN THE REAL VERIFIER carrying B's binding proof + B's claims against the mixed
+    // root (A's execution). All four teeth see internally-consistent data: tooth 1 (VK
+    // pin) matches by construction; tooth 2 (B's binding proof attests B's claims);
+    // tooth 3 (the mixed root is a genuine same-shape root); tooth 4 (the root's
+    // expose_claim table carries B's claims, since it rode B's binding leaf).
+    let verdict = verify_turn_chain_recursive_from_parts(
+        &mixed_root.0,
+        &b_binding_inner,
+        b_genesis_root,
+        b_final_root,
+        b_chain_digest,
+        b_num_turns,
+        &vk,
+    );
+
+    eprintln!(
+        "[codex-#2 mixed-root] verdict = {verdict:?}  (is_ok = LIVE HOLE; is_err = closed in-band)"
+    );
+
+    // GROUND TRUTH: assert the ACTUAL current behavior. The mixed root folded A's
+    // descriptor leaves yet the whole-chain claim is B's.
+    //
+    //   - is_ok()  => LIVE HOLE (codex right): a whole-chain claim for B verifies
+    //                 against a root that executed A. Flips to is_err() when a
+    //                 cross-leaf binding (descriptor roots vs binding rows in the same
+    //                 root) lands.
+    //   - is_err() => codex's analysis is incomplete: the seam is already closed
+    //                 in-band; replace this assert with `is_err()` + the reason.
+    //
+    // This assertion is written to the ACTUAL observed result (see the test report).
+    assert!(
+        verdict.is_ok(),
+        "LIVE HOLE EXPECTED (codex re-review #2): the mixed root (A's descriptor leaves \
+         + B's binding leaf + B's claims) should currently VERIFY — a false whole-chain \
+         claim for B against an execution of A. If this fails with is_err(), codex's \
+         analysis missed an in-band cross-leaf constraint; got: {verdict:?}"
+    );
+}
+
 // SKIPPED tooth (vs the deleted in-lib module): `broken_order_unsat_in_circuit`,
 // `ungated_prover_with_stub_leaf_cannot_produce_a_root`, and
 // `recursive_layer_rejects_forged_leaf_public_inputs` are NOT re-expressed here.
