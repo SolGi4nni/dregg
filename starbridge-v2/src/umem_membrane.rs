@@ -417,6 +417,156 @@ pub fn stitch_umem_forks(base: &UmemBranch, a: &UmemEnvelope, b_fork: &World) ->
     stitch_projections(&base.umem, &a.branch.umem, &b.umem)
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════
+// THE SETTLEMENT-SOUND STITCH — Settlement Soundness realized on the LIVE multiplayer.
+//
+// The umem merge above is pushout-correct over STATE (the field-granular fold). Distributed
+// time-travel adds a second, non-monotone axis: AUTHORITY. A branch-and-stitch lets parties
+// fork a PAST config into a virtualized world, experiment there, and reconcile back — but a
+// capability that was LIVE when the branch was spun up may be REVOKED before the branch is
+// finalized. Revocation is the one non-monotone operation, so the stitch MUST evaluate every
+// conferred authority at the SETTLEMENT TIP (the live main world after any revocation), NOT at
+// branch time. This is the operable face of the two proven Lean keystones:
+//
+//   * `Metatheory.SettlementSoundness.stitch_drops_revoked_authority` — "a cap I have since
+//     revoked cannot ride a stitch into my real world": the linear DROP IS an unsettleable
+//     revoked-authority confer.
+//   * `Dregg2.Circuit.SettlementSoundness.settlement_soundness` — a verifying finalized batch
+//     yields a genuine transition whose authority is HONORED AT THE SETTLEMENT TIP
+//     (`honorsAtSettlement`), not at the branch.
+//
+// The state pushout (`stitch_projections`) and the authority gate (`settle_umem_stitch`) are
+// ORTHOGONAL: the disjoint umem edits fold clean / a same-address clash is held fail-closed
+// REGARDLESS of authority, and a conferred cap rides into main ONLY if held at the settlement
+// tip. A cap revoked between branch and tip is LINEAR-DROPPED — never conferred, never conjured.
+
+/// **A capability a stitch would confer back into main — the live, `CellId`-native twin of
+/// [`crate::branch_stitch::BranchCap`].** Named by the live cell it reaches and whether it
+/// confers debit (drain/write) reach. The settlement gate checks every conferred cap against
+/// the authority the author HELD AT THE SETTLEMENT TIP (read from the live world after any
+/// revocation) — authority is evaluated at settlement, not at branch time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConferredCap {
+    /// The live cell this cap reaches.
+    pub target: CellId,
+    /// Whether the cap confers debit (drain/write) reach to `target`. A read-only view sets
+    /// this `false`; a write/node cap sets it `true`. Mirrors `BranchCap::debit_reach`.
+    pub debit_reach: bool,
+}
+
+/// **The settlement-tip held-authority view — `settledRevView` realized on the live ledger.**
+///
+/// Reads the caps `author` holds in the LIVE world AT THE SETTLEMENT TIP (i.e. AFTER any
+/// `RevokeCapability` turn committed between branch and settlement). This is the operable
+/// `Dregg2.Circuit.SettlementSoundness.settledRevView` — the authority view a faithful
+/// settlement reads at the finalized tip, NOT the (stale) branch-time view a branch was built
+/// against. A cap the author has since revoked is structurally absent here, so the gate drops
+/// any stitch that tries to confer it.
+///
+/// Each live cap becomes a `ConferredCap` with `debit_reach = true` whenever the cap is live
+/// (`permissions != Impossible`) — a held cap confers reach; only an `Impossible`/absent cap
+/// fails the gate.
+pub fn settlement_held_at_tip(world: &World, author: CellId) -> Vec<ConferredCap> {
+    let Some(cell) = world.ledger().get(&author) else {
+        return Vec::new();
+    };
+    cell.capabilities
+        .iter()
+        .filter(|c| c.permissions != dregg_cell::AuthRequired::Impossible)
+        .map(|c| ConferredCap {
+            target: c.target,
+            debit_reach: true,
+        })
+        .collect()
+}
+
+/// **A settlement-sound umem stitch — the field-granular pushout PLUS the settlement gate.**
+///
+/// Carries the pushout merge (`stitch`, with its conflicts held fail-closed) and the verdict
+/// of the authority gate: which conferred caps were LIVE at the settlement tip and ride into
+/// main (`admitted`), and which were revoked-before-tip and were LINEAR-DROPPED (`dropped`).
+/// The DROP is lossy but pushout-correct on authority: a revoked cap is never conferred and
+/// never conjured — the merged STATE is unaffected, only the authority confer is dropped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettledUmemStitch {
+    /// The field-granular pushout merge (conflicts held pending explicit resolution).
+    pub stitch: UmemStitch,
+    /// Conferred caps that were HELD AT THE SETTLEMENT TIP — they ride the stitch into main.
+    pub admitted: Vec<ConferredCap>,
+    /// Conferred caps NOT held at the settlement tip (revoked between branch and tip) — the
+    /// linear DROP. "A cap I have since revoked cannot ride a stitch into my real world."
+    pub dropped: Vec<ConferredCap>,
+}
+
+impl SettledUmemStitch {
+    /// **Does the stitch settle?** Fail-closed: it settles only when the state pushout has NO
+    /// live conflicts (every same-address clash explicitly resolved). The linear-dropped caps
+    /// do NOT block settlement — they were simply not conferred (authority is read at the tip).
+    pub fn settles(&self) -> bool {
+        self.stitch.is_clean()
+    }
+
+    /// The settled merged-umem root (the anti-substitution commitment over the merged
+    /// projection), `Some` iff the stitch settles (no live conflict). Mirrors the membrane
+    /// stitch's `settled_root` — a binding root only once the merge is fail-closed clean.
+    pub fn settled_root(&self) -> Option<[u8; 32]> {
+        if !self.settles() {
+            return None;
+        }
+        let mut h = blake3::Hasher::new();
+        h.update(b"deos-umem-membrane-settled-root-v1");
+        h.update(&(self.stitch.merged.len() as u64).to_le_bytes());
+        for (k, v) in self.stitch.merged.iter() {
+            let kb = postcard::to_stdvec(k).expect("UKey is postcard-serializable");
+            let vb = postcard::to_stdvec(v).expect("UVal is postcard-serializable");
+            h.update(&(kb.len() as u64).to_le_bytes());
+            h.update(&kb);
+            h.update(&(vb.len() as u64).to_le_bytes());
+            h.update(&vb);
+        }
+        Some(*h.finalize().as_bytes())
+    }
+}
+
+/// **THE SETTLEMENT-SOUND STITCH — Settlement Soundness on the live multiplayer.**
+///
+/// Welds the field-granular state pushout (`stitch`) to the authority gate. Every conferred cap
+/// is checked against `settlement_held` (the authority read at the SETTLEMENT TIP via
+/// [`settlement_held_at_tip`]): a cap whose target is held — with debit reach if the confer
+/// claims it — is ADMITTED; a cap revoked-before-tip is LINEAR-DROPPED. The gate predicate is
+/// IDENTICAL to the proven control model [`crate::branch_stitch::Stitch::settle`]
+/// (`held.target == c.target && (held.debit_reach || !c.debit_reach)`), but lossy-per-cap (a
+/// drop) rather than whole-stitch refusal, exactly as the membrane lossy-drops an over-conferred
+/// cap while the disjoint merge proceeds.
+///
+/// Pushout-correct (the state merge is untouched by the gate) AND settlement-sound (no revoked
+/// authority rides in). The operable shadow of `stitch_drops_revoked_authority`.
+pub fn settle_umem_stitch(
+    stitch: UmemStitch,
+    conferred: &[ConferredCap],
+    settlement_held: &[ConferredCap],
+) -> SettledUmemStitch {
+    let mut admitted = Vec::new();
+    let mut dropped = Vec::new();
+    for c in conferred {
+        // Held at the settlement tip? (the `branch_stitch::Stitch::settle` gate predicate)
+        let held = settlement_held
+            .iter()
+            .any(|h| h.target == c.target && (h.debit_reach || !c.debit_reach));
+        if held {
+            admitted.push(c.clone());
+        } else {
+            // Revoked between branch and tip → the linear DROP (never conferred, never conjured).
+            dropped.push(c.clone());
+        }
+    }
+    SettledUmemStitch {
+        stitch,
+        admitted,
+        dropped,
+    }
+}
+
 /// Errors the umem membrane raises (the fail-closed paths — mirroring
 /// [`crate::shared_fork::MembraneError`] / [`crate::distributed_card::DistributedCardError`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -680,6 +830,107 @@ mod tests {
         assert_eq!(
             via_envelopes, via_fork,
             "the live-fork stitch and the envelope stitch are the SAME umem merge"
+        );
+    }
+
+    // ── SETTLEMENT-SOUND STITCH — the authority gate (both polarities) ──────────────────
+
+    /// The settlement gate ADMITS a cap held at the tip and DROPS one revoked-before-tip — the
+    /// linear DROP. The state pushout is untouched (orthogonal): authority is read at settlement.
+    #[test]
+    fn settle_drops_revoked_authority_admits_held() {
+        let (world, room, ua, _ub, _shared, doc_a, not_held) = mp_world();
+        // Here we model the settlement-tip held set directly to exercise the gate in isolation
+        // (the live, revocation-driven held view is covered by the integration test and by
+        // `settlement_held_at_tip_reflects_a_real_revocation`).
+        let base = UmemBranch::mint(&world, room, 3);
+        let mut fork_a = world.fork();
+        let _ = fork_a.commit_turn(fork_a.turn(ua, vec![set_field(doc_a, 0, [0xAA; 32])]));
+        let (a_bytes, a_root) = UmemEnvelope::seal(UmemBranch::mint(&fork_a, room, 3));
+        let env_a = open_umem_envelope(&a_bytes, a_root).unwrap();
+        let stitch = stitch_umem_forks(&base, &env_a, &world);
+
+        // ua's branch claims to confer TWO caps: `doc_a` (held at the tip) and `not_held`
+        // (absent from the tip view — the revoked-before-tip case the gate must drop).
+        let conferred = vec![
+            ConferredCap {
+                target: doc_a,
+                debit_reach: true,
+            },
+            ConferredCap {
+                target: not_held,
+                debit_reach: true,
+            },
+        ];
+        // The SETTLEMENT-TIP view: ua holds doc_a but NOT `not_held`.
+        let settlement_held = vec![ConferredCap {
+            target: doc_a,
+            debit_reach: true,
+        }];
+
+        let settled = settle_umem_stitch(stitch, &conferred, &settlement_held);
+        assert_eq!(
+            settled.admitted,
+            vec![ConferredCap {
+                target: doc_a,
+                debit_reach: true
+            }],
+            "the cap still held at the tip is admitted (the gate is non-vacuous)"
+        );
+        assert_eq!(
+            settled.dropped,
+            vec![ConferredCap {
+                target: not_held,
+                debit_reach: true
+            }],
+            "the cap not held at the tip is LINEAR-DROPPED (settlement-sound)"
+        );
+        // State pushout untouched by the gate; settles (no conflict) ⇒ a binding settled root.
+        assert!(settled.settles(), "no state conflict ⇒ settles");
+        assert!(
+            settled.settled_root().is_some(),
+            "a settled stitch has a binding root"
+        );
+    }
+
+    /// The held view read FROM the live world reflects revocation: after a real
+    /// `RevokeCapability` turn, the revoked target is structurally absent from
+    /// [`settlement_held_at_tip`], so the same conferred cap flips admitted → dropped.
+    #[test]
+    fn settlement_held_at_tip_reflects_a_real_revocation() {
+        use crate::world::revoke_capability;
+        let (mut world, _room, ua, _ub, shared, doc_a, _gift) = mp_world();
+        // ua holds caps to `shared` (slot 0) and `doc_a` (slot 1) at the tip.
+        let before = settlement_held_at_tip(&world, ua);
+        assert!(
+            before.iter().any(|c| c.target == doc_a),
+            "ua holds doc_a before the revoke"
+        );
+        // Find the slot of ua's doc_a cap and revoke it via a REAL verified turn on main.
+        let slot = world
+            .ledger()
+            .get(&ua)
+            .unwrap()
+            .capabilities
+            .iter()
+            .find(|c| c.target == doc_a)
+            .map(|c| c.slot)
+            .expect("ua's doc_a cap slot");
+        assert!(
+            world
+                .commit_turn(world.turn(ua, vec![revoke_capability(ua, slot)]))
+                .is_committed(),
+            "ua revokes her own doc_a cap with a real verified turn (the non-monotone op)"
+        );
+        let after = settlement_held_at_tip(&world, ua);
+        assert!(
+            !after.iter().any(|c| c.target == doc_a),
+            "after the revoke, doc_a is GONE from the settlement-tip held view"
+        );
+        // shared is still held — only the revoked target left.
+        assert!(
+            after.iter().any(|c| c.target == shared),
+            "the un-revoked cap (shared) survives at the tip"
         );
     }
 

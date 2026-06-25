@@ -5885,3 +5885,24 @@ final, no critical hole) + DEDUCTIVE (this Lean discharge). The marathon (4 refu
 summit. unfoolability_guarantee is a DERIVATION.
 Remaining (codex-named, NONE critical, scoped follow-ups): online-accumulator port to the 4-lane digest (MEDIUM); doc-drift
 comments (LOW); widen the digest past 4 lanes for conservative 128-bit (LOW).
+
+### ✅ SETTLEMENT-SOUND BRANCH-AND-STITCH ON THE LIVE MULTIPLAYER (2026-06-25)
+Distributed-Houyhnhnm deepening leg 2 BUILT + GREEN. Settlement Soundness already proven both ways and #assert_axioms-clean
+(Metatheory.SettlementSoundness — abstract; Dregg2.Circuit.SettlementSoundness — the deployed COMPOSE off the apex
+lightclient_unfoolable_circuit_sound; both lake-build clean). The new work: the operable realization on the LIVE two-instance
+umem multiplayer. Before this, the live umem stitch (umem_membrane.rs) was pushout-correct over STATE only; the second,
+non-monotone axis (AUTHORITY, the whole point of Settlement Soundness) was unmodeled on the live path. Now welded:
+settle_umem_stitch + ConferredCap + settlement_held_at_tip (= settledRevView read off the LIVE ledger AFTER any revoke) +
+SettledUmemStitch (admitted/dropped). State pushout and the authority gate are ORTHOGONAL — disjoint edits fold clean / a
+same-field clash is held fail-closed regardless of authority; a conferred cap rides in ONLY if held at the settlement tip.
+The live test (tests/branch_stitch_settlement_sound_multiplayer.rs): two co-inhabitants fork the SAME virtualized past
+(confined — offstage absent, a no-cap branch debit refused by the executor = imaginary); each drives real verified turns on
+independent Worlds; ada revokes her own gift cap on MAIN via a real RevokeCapability turn BETWEEN branch and settlement; the
+stitch LINEAR-DROPS the revoked-before-tip gift confer while admitting a still-held cap — with a counterfactual proving the
+drop is CAUSED by the revoke (against the branch-time view gift would ride), not a blanket refusal. The operable shadow of
+stitch_drops_revoked_authority. All green (7 lib unit tests + the live demo + the companion two_instance test).
+NAMED FOLLOW-UPS (none critical): (1) MEDIUM — wire settle_umem_stitch into the production ForkMembraneHost::stitch_pair /
+chat-lane path so the settlement gate runs live, not only in the demo (currently the membrane uses the abstract
+branch_stitch::Stitch::settle DocGraph gate; the umem-native CellId gate is the test-demonstrated bridge). (2) LOW (Lean,
+pre-existing, named in both SettlementSoundness headers) — the circuit-emit conformance: the deployed rest-hash must absorb
+the #139 revocation-channel wire root into the finalized commitment (RestHashIffFrame's revoked conjunct realized at the wire).
