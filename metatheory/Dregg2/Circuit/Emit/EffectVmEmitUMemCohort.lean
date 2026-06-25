@@ -17,9 +17,15 @@ deployed `DescriptorIR2.umemOp` (the same one `demoU` byte-pins); the staged emi
 it per cohort effect.
 
   * **§1 the cohort** — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
-    `transferBalanceUMem` (the heap-domain economic scalar) · `nullifierFreshUMem` (the
-    absent-cell `none`-read freshness leg). The per-cell domain map matches `turn/src/umem.rs`:
-    Field/Heap/Balance/Nonce → `heap` (1), CapSlot → `caps` (2), nullifiers → `nullifiers` (3).
+    `transferBalanceUMem` · `mintBalanceUMem` · `burnBalanceUMem` (the heap-domain economic
+    scalar lane — transfer/mint/burn, distinct selectors over the same `Balance` register) ·
+    `revokeUMem` (the caps-plane DELETE write — a revoked slot's removal, its ghost ZERO leaf
+    kept by the canonical `cap_root` per the cell-side tombstone reconciliation) ·
+    `nullifierFreshUMem` (the absent-cell `none`-read freshness leg). The per-cell domain map
+    matches `turn/src/umem.rs`: Field/Heap/Balance/Nonce → `heap` (1), CapSlot → `caps` (2),
+    nullifiers → `nullifiers` (3). The §2 survival + §3 injectivity keystones are PARAMETRIC over
+    `umemCohortDesc nm dom k`, so they fire verbatim at every cohort member — the supply lane and
+    the revoke delete included.
 
   * **§2 rotV3-style SURVIVAL** — the emitted descriptor BINDS THE PUBLISHED STATE. For each
     cohort member, a `Satisfied2U` witness's claimed final image is FORCED to the genuine fold of
@@ -109,6 +115,29 @@ def attenuateUMem : EffectVmDescriptor2 :=
 def transferBalanceUMem : EffectVmDescriptor2 :=
   umemCohortDesc "dregg-effectvm-umem-transfer-balance-v1-staged" .heap .write
 
+/-- MINT's economic touch is the SAME scalar `Balance` register (`heap` domain) — a credit is a
+`heap`-domain scalar write, the cohort-form twin of the deployed `Effect::Mint` per-asset-well
+supply credit. A DISTINCT selector from `transferBalanceUMem`: same balance-lane shape, its own
+descriptor name (the supply lane is not a transfer). -/
+def mintBalanceUMem : EffectVmDescriptor2 :=
+  umemCohortDesc "dregg-effectvm-umem-mint-balance-v1-staged" .heap .write
+
+/-- BURN's economic touch is the SAME scalar `Balance` register (`heap` domain) — a debit is a
+`heap`-domain scalar write (the supply DELETE on the scalar lane; the balance moves DOWN, the
+cell record stays). A DISTINCT selector from `mint`/`transfer`: the supply lane's own descriptor
+name. -/
+def burnBalanceUMem : EffectVmDescriptor2 :=
+  umemCohortDesc "dregg-effectvm-umem-burn-balance-v1-staged" .heap .write
+
+/-- REVOKE a capability → the caps-plane DELETE write: the revoked slot's live cell is removed
+(its ghost ZERO leaf kept by the canonical `cap_root`; the cell-side tombstone reconciliation,
+`turn/src/umem.rs`'s `CapTombstone` plane). At the umem grammar a delete is a `write` of the
+absent/zero cell over the claimed prior — still a single `caps`-domain `umemOp .write` over the
+base columns, distinct from `grant` (fresh insert) and `attenuate` (in-place narrow) by its own
+selector. -/
+def revokeUMem : EffectVmDescriptor2 :=
+  umemCohortDesc "dregg-effectvm-umem-revoke-v1-staged" .caps .write
+
 /-- The `absent` map-op → umem `none`-read: a `nullifiers`-domain READ returning `none` against
 an absent boundary cell — Merkle-path-free freshness (`nullifier_fresh_sound`). -/
 def nullifierFreshUMem : EffectVmDescriptor2 :=
@@ -122,14 +151,20 @@ def umemCohortRegistry : List (String × EffectVmDescriptor2) :=
   , ("grantUMem",           grantUMem)
   , ("attenuateUMem",       attenuateUMem)
   , ("transferBalanceUMem", transferBalanceUMem)
+  , ("mintBalanceUMem",     mintBalanceUMem)
+  , ("burnBalanceUMem",     burnBalanceUMem)
+  , ("revokeUMem",          revokeUMem)
   , ("nullifierFreshUMem",  nullifierFreshUMem) ]
 
 -- STRUCTURAL pins: each cohort descriptor declares EXACTLY its one umemOp, in the named domain,
 -- over width 7. The umem-form gather collects exactly this cohort touch.
 #guard (umemOpsOf setFieldUMem).length == 1
 #guard (umemOpsOf grantUMem).length == 1
+#guard (umemOpsOf mintBalanceUMem).length == 1
+#guard (umemOpsOf burnBalanceUMem).length == 1
+#guard (umemOpsOf revokeUMem).length == 1
 #guard (umemOpsOf nullifierFreshUMem).length == 1
-#guard umemCohortRegistry.length == 6
+#guard umemCohortRegistry.length == 9
 #guard setFieldUMem.traceWidth == 7
 -- The staged set is DISTINCT from the deployed v1 (no name collides with the per-map registry):
 -- every staged name carries the `umem`/`-staged` markers the v1 names never carry.
@@ -314,6 +349,15 @@ bytes to `circuit/descriptors/umem-cohort-v1-staged-registry.tsv`. -/
 
 #guard emitVmJson2 transferBalanceUMem ==
   "{\"name\":\"dregg-effectvm-umem-transfer-balance-v1-staged\",\"ir\":2,\"trace_width\":7,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":7,\"sem\":\"main\"},{\"id\":6,\"name\":\"umemory\",\"arity\":8,\"sem\":\"umemory\"},{\"id\":7,\"name\":\"umem_boundary\",\"arity\":7,\"sem\":\"umem_boundary\"}],\"constraints\":[{\"t\":\"umem_op\",\"kind\":\"write\",\"domain\":1,\"guard\":{\"t\":\"var\",\"v\":6},\"key\":{\"t\":\"var\",\"v\":0},\"present\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"var\",\"v\":2},\"prev_present\":{\"t\":\"var\",\"v\":3},\"prev_value\":{\"t\":\"var\",\"v\":4},\"prev_serial\":{\"t\":\"var\",\"v\":5}}],\"hash_sites\":[],\"ranges\":[]}"
+
+#guard emitVmJson2 mintBalanceUMem ==
+  "{\"name\":\"dregg-effectvm-umem-mint-balance-v1-staged\",\"ir\":2,\"trace_width\":7,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":7,\"sem\":\"main\"},{\"id\":6,\"name\":\"umemory\",\"arity\":8,\"sem\":\"umemory\"},{\"id\":7,\"name\":\"umem_boundary\",\"arity\":7,\"sem\":\"umem_boundary\"}],\"constraints\":[{\"t\":\"umem_op\",\"kind\":\"write\",\"domain\":1,\"guard\":{\"t\":\"var\",\"v\":6},\"key\":{\"t\":\"var\",\"v\":0},\"present\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"var\",\"v\":2},\"prev_present\":{\"t\":\"var\",\"v\":3},\"prev_value\":{\"t\":\"var\",\"v\":4},\"prev_serial\":{\"t\":\"var\",\"v\":5}}],\"hash_sites\":[],\"ranges\":[]}"
+
+#guard emitVmJson2 burnBalanceUMem ==
+  "{\"name\":\"dregg-effectvm-umem-burn-balance-v1-staged\",\"ir\":2,\"trace_width\":7,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":7,\"sem\":\"main\"},{\"id\":6,\"name\":\"umemory\",\"arity\":8,\"sem\":\"umemory\"},{\"id\":7,\"name\":\"umem_boundary\",\"arity\":7,\"sem\":\"umem_boundary\"}],\"constraints\":[{\"t\":\"umem_op\",\"kind\":\"write\",\"domain\":1,\"guard\":{\"t\":\"var\",\"v\":6},\"key\":{\"t\":\"var\",\"v\":0},\"present\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"var\",\"v\":2},\"prev_present\":{\"t\":\"var\",\"v\":3},\"prev_value\":{\"t\":\"var\",\"v\":4},\"prev_serial\":{\"t\":\"var\",\"v\":5}}],\"hash_sites\":[],\"ranges\":[]}"
+
+#guard emitVmJson2 revokeUMem ==
+  "{\"name\":\"dregg-effectvm-umem-revoke-v1-staged\",\"ir\":2,\"trace_width\":7,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":7,\"sem\":\"main\"},{\"id\":6,\"name\":\"umemory\",\"arity\":8,\"sem\":\"umemory\"},{\"id\":7,\"name\":\"umem_boundary\",\"arity\":7,\"sem\":\"umem_boundary\"}],\"constraints\":[{\"t\":\"umem_op\",\"kind\":\"write\",\"domain\":2,\"guard\":{\"t\":\"var\",\"v\":6},\"key\":{\"t\":\"var\",\"v\":0},\"present\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"var\",\"v\":2},\"prev_present\":{\"t\":\"var\",\"v\":3},\"prev_value\":{\"t\":\"var\",\"v\":4},\"prev_serial\":{\"t\":\"var\",\"v\":5}}],\"hash_sites\":[],\"ranges\":[]}"
 
 #guard emitVmJson2 nullifierFreshUMem ==
   "{\"name\":\"dregg-effectvm-umem-nullifier-fresh-v1-staged\",\"ir\":2,\"trace_width\":7,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":7,\"sem\":\"main\"},{\"id\":6,\"name\":\"umemory\",\"arity\":8,\"sem\":\"umemory\"},{\"id\":7,\"name\":\"umem_boundary\",\"arity\":7,\"sem\":\"umem_boundary\"}],\"constraints\":[{\"t\":\"umem_op\",\"kind\":\"read\",\"domain\":3,\"guard\":{\"t\":\"var\",\"v\":6},\"key\":{\"t\":\"var\",\"v\":0},\"present\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"var\",\"v\":2},\"prev_present\":{\"t\":\"var\",\"v\":3},\"prev_value\":{\"t\":\"var\",\"v\":4},\"prev_serial\":{\"t\":\"var\",\"v\":5}}],\"hash_sites\":[],\"ranges\":[]}"

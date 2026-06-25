@@ -174,6 +174,66 @@ fn fixed_slots_are_not_in_fields_root() {
     assert_eq!(boundary.fields_root, cell.state.fields_root);
 }
 
+// ---------------------------------------------------------------------------
+// REVOKED CELLS ARE NOW FAITHFUL — a revoke leaves a ghost ZERO leaf in the
+// deployed cap_root (the cap-crown reconciliation); the `CapTombstone` plane
+// re-derives it, so the projection reproduces the committed root even after a
+// revoke (the former reify residual #3, closed here for the boundary).
+// ---------------------------------------------------------------------------
+#[test]
+fn record_kernel_boundary_agrees_over_revoked_cell() {
+    let mut cell = make_open_cell(7, 500);
+    let t0 = make_open_cell(70, 0).id();
+    let t1 = make_open_cell(71, 0).id();
+    let t2 = make_open_cell(72, 0).id();
+    // grant three caps (slots 0,1,2), then revoke slot 1 → live {0,2}, ghost {1}.
+    cell.capabilities.grant(t0, AuthRequired::None).unwrap();
+    let slot1 = cell.capabilities.grant(t1, AuthRequired::None).unwrap();
+    cell.capabilities.grant(t2, AuthRequired::None).unwrap();
+    let root_before_revoke =
+        dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
+    assert!(cell.capabilities.revoke(slot1), "the slot was live and is revoked");
+    let committed = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
+
+    // NON-VACUITY (the revoke MOVED cap_root): the ghost leaf changes the root.
+    assert_ne!(
+        committed, root_before_revoke,
+        "a revoke moves the canonical cap_root (the ghost leaf is load-bearing)"
+    );
+
+    // THE AGREEMENT now covers the revoked cell: the projection's derived cap_root
+    // (live `CapSlot` leaves PLUS the `CapTombstone` ghosts) reproduces the
+    // committed root the deployed commitment carries.
+    let boundary = record_kernel_boundary_agrees(&cell)
+        .expect("a revoked cell's projection must now reproduce the deployed cap_root");
+    assert_eq!(
+        boundary.cap_root, committed,
+        "derived cap_root == committed (the tombstone ghosts are folded in)"
+    );
+
+    // NON-VACUITY (the tombstone plane is LOAD-BEARING): drop the `CapTombstone`
+    // cells from the projection and the derived cap_root no longer matches the
+    // committed root — it falls back to the tombstone-free fold (the exact reify
+    // residual-#3 gap this plane closes).
+    let proj = project_record_kernel_state(&cell);
+    assert!(
+        proj.keys()
+            .any(|k| matches!(k, UKey::CapTombstone { slot: 1, .. })),
+        "the projection carries the revoked slot's tombstone cell"
+    );
+    let mut no_tombstones = proj.clone();
+    no_tombstones.retain(|k, _| !matches!(k, UKey::CapTombstone { .. }));
+    let derived_without = derive_record_kernel_boundary(&no_tombstones, cell.id());
+    assert_ne!(
+        derived_without.cap_root, committed,
+        "without the tombstone plane the derived cap_root omits the ghost — the residual-#3 gap"
+    );
+    assert_ne!(
+        derived_without.cap_root, boundary.cap_root,
+        "the tombstone plane genuinely moved the derived root"
+    );
+}
+
 // ===========================================================================
 // THE LIVE-EXECUTOR ANCHOR — the bridge over a RecordKernelState the REAL
 // executor produced (the gauntlet shape the 3-verb circuit agrees with).

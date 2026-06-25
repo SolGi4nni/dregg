@@ -48,6 +48,7 @@
 //! | `CellState.heap_map` entries            | `Heap`                   | heap       |
 //! | sovereign commitments                   | `SovereignCommitment`    | heap       |
 //! | `Cell.capabilities` (c-list slots)      | `CapSlot`                | caps       |
+//! | `Cell.capabilities` revoked-slot ghosts | `CapTombstone`           | caps       |
 //! | `Cell.delegate`                         | `Delegate`               | caps       |
 //! | `Cell.delegation` (snapshot)            | `DelegationSnapshot`     | caps       |
 //! | `CellState.delegation_epoch`            | `DelegationEpoch`        | caps       |
@@ -218,6 +219,23 @@ pub enum UKey {
         collection: u32,
         key: u32,
     },
+    // -- caps domain (revoked-slot ghost leaves) ----------------------------
+    /// A capability TOMBSTONE: a revoked slot whose ghost ZERO leaf the deployed
+    /// canonical `cap_root` KEEPS at the revoked slot's sorted position (the
+    /// cap-crown revoke reconciliation — `CapabilitySet::revoke` records the slot
+    /// in `tombstones`, and `compute_canonical_capability_root_felt` folds its
+    /// `slot_hash` as a ghost leaf). The live `CapSlot` plane drops a revoked cap
+    /// entirely, so without this plane the projection's derived `cap_root` would
+    /// not reproduce the deployed root for a revoked cell (the former reify
+    /// residual #3). Projecting the tombstoned slot lets
+    /// [`derive_record_kernel_boundary`] re-fold the SAME ghost leaves the
+    /// deployed root carries. Value-less (a `UVal::Present` marker — the slot is
+    /// the whole content); the leaf digest the root folds is the ZERO sentinel,
+    /// not a value. (Added last so existing `UKey` ordering is undisturbed.)
+    CapTombstone {
+        cell: CellId,
+        slot: u32,
+    },
 }
 
 impl UKey {
@@ -248,6 +266,7 @@ impl UKey {
             | UKey::Permissions(_)
             | UKey::VerificationKey(_)
             | UKey::Program(_)
+            | UKey::CapTombstone { .. }
             | UKey::Factory(_) => UDomain::Caps,
             UKey::NoteNullifier(_) | UKey::BridgedNullifier(_) => UDomain::Nullifiers,
             UKey::Receipt(_) => UDomain::Index,
@@ -282,6 +301,7 @@ impl UKey {
             | UKey::FieldCommitment { cell, .. }
             | UKey::SystemRoot { cell, .. }
             | UKey::Heap { cell, .. }
+            | UKey::CapTombstone { cell, .. }
             | UKey::CapSlot { cell, .. } => Some(*cell),
             UKey::Factory(_)
             | UKey::NoteNullifier(_)
@@ -445,6 +465,17 @@ pub fn project_cell(cell: &Cell, out: &mut UProjection) {
             json(cap),
         );
     }
+    // The revoked-slot TOMBSTONE plane (UMEM-PRIMITIVE reify residual #3, now
+    // closed for the boundary derivation): one `CapTombstone{cell, slot}` cell
+    // per tombstoned slot, so the canonical `cap_root`'s ghost ZERO leaves are
+    // re-derivable from the projection. The live `CapSlot` plane carries only
+    // live caps; this plane carries exactly the revoked slots the deployed root
+    // folds as ghosts (`compute_canonical_capability_root_felt`'s
+    // `tombstoned_slots`). A cell that has never revoked emits none — byte-
+    // identical to the former tombstone-free projection.
+    for slot in cell.capabilities.tombstoned_slots() {
+        out.insert(UKey::CapTombstone { cell: id, slot }, UVal::Present);
+    }
     if let Some(parent) = cell.delegate {
         out.insert(UKey::Delegate(id), UVal::Bytes32(parent.0));
     }
@@ -551,10 +582,12 @@ pub struct RecordKernelBoundary {
     /// The openable sorted-Poseidon2 root over the `Heap` plane — the deployed
     /// `cell.state.heap_root`.
     pub heap_root: [u8; 32],
-    /// The canonical capability root over the `CapSlot` plane's LIVE caps — the
-    /// deployed `compute_canonical_capability_root_felt(&cell.capabilities)`
-    /// felt the EffectVM `cap_root` column carries. (Tombstones are not
-    /// projected; see [`record_kernel_boundary_agrees`]'s faithful class.)
+    /// The canonical capability root over the `CapSlot` plane's LIVE caps PLUS
+    /// the `CapTombstone` plane's revoked ghost slots — the deployed
+    /// `compute_canonical_capability_root_felt(&cell.capabilities)` felt the
+    /// EffectVM `cap_root` column carries. Revoked cells are now faithful: the
+    /// tombstone plane re-derives the deployed root's ghost ZERO leaves (the
+    /// former reify residual #3).
     pub cap_root: dregg_circuit::field::BabyBear,
 }
 
@@ -568,6 +601,7 @@ pub fn derive_record_kernel_boundary(proj: &UProjection, cell: CellId) -> Record
     let mut fields_map: BTreeMap<u64, [u8; 32]> = BTreeMap::new();
     let mut heap_map: BTreeMap<(u32, u32), [u8; 32]> = BTreeMap::new();
     let mut cap_leaves: Vec<dregg_circuit::cap_root::CapLeaf> = Vec::new();
+    let mut tombstone_keys: Vec<dregg_circuit::field::BabyBear> = Vec::new();
     for (k, v) in proj.iter() {
         match k {
             UKey::Field { cell: kc, slot } if *kc == cell && *slot >= STATE_SLOTS as u64 => {
@@ -592,17 +626,29 @@ pub fn derive_record_kernel_boundary(proj: &UProjection, cell: CellId) -> Record
                     cap_leaves.push(dregg_cell::commitment::cap_ref_to_leaf(&cap));
                 }
             }
+            UKey::CapTombstone { cell: kc, slot } if *kc == cell => {
+                // The revoked slot's ghost: fold its `slot_hash` (the SAME sort
+                // key `cap_ref_to_leaf` uses) as a tombstone key, exactly as the
+                // deployed `compute_canonical_capability_root_felt` does over
+                // `tombstoned_slots`.
+                tombstone_keys.push(dregg_circuit::cap_root::slot_hash(*slot));
+            }
             _ => {}
         }
     }
     RecordKernelBoundary {
         fields_root: dregg_cell::state::compute_fields_root(&fields_map),
         heap_root: dregg_cell::state::compute_heap_root(&heap_map),
-        // No tombstones: the projection drops revoked slots (reify residual #3),
-        // so the derived root matches the deployed one exactly for the
-        // no-tombstone faithful class. The leaf set's order is irrelevant — the
-        // sorted-Poseidon2 tree canonicalizes by sort key.
-        cap_root: dregg_circuit::cap_root::compute_capability_root_with_tombstones(cap_leaves, &[]),
+        // The revoked-slot tombstone plane (above) re-derives the SAME ghost ZERO
+        // leaves the deployed root keeps, so the derived `cap_root` reproduces
+        // `compute_canonical_capability_root_felt` even for a revoked cell — the
+        // former reify residual #3, now closed for the boundary derivation. The
+        // leaf/tombstone set order is irrelevant: the sorted-Poseidon2 tree
+        // canonicalizes by sort key.
+        cap_root: dregg_circuit::cap_root::compute_capability_root_with_tombstones(
+            cap_leaves,
+            &tombstone_keys,
+        ),
     }
 }
 
@@ -667,13 +713,16 @@ impl std::error::Error for BoundaryDisagreement {}
 /// roots — the anchor a umem / 3-verb circuit's differential gauntlets bind to;
 /// a disagreement names the plane that drifted ([`BoundaryDisagreement`]).
 ///
-/// **The faithful class** is cells with no capability TOMBSTONES (a revoked slot
-/// leaves a ghost leaf in the deployed `cap_root` but is dropped from the
-/// projected `CapSlot` plane — the documented reify residual #3, so the derived
-/// `cap_root` matches only when `cell.capabilities` has revoked nothing). The
-/// `fields_root` and `heap_root` planes are ALWAYS faithful (openable
-/// sorted-Poseidon2 maps with no dropped state). The 3-verb gauntlet lanes
-/// (transfer / set-field / set-heap / grant / attenuate) all land in this class.
+/// **The faithful class is now TOTAL over the openable planes — revoked cells
+/// included.** A revoked slot leaves a ghost ZERO leaf in the deployed `cap_root`
+/// (the cap-crown reconciliation); the live `CapSlot` plane drops it, but the
+/// `CapTombstone` plane carries it, so [`derive_record_kernel_boundary`] re-folds
+/// the SAME ghosts the deployed root keeps and the derived `cap_root` matches
+/// even after a revoke (the former reify residual #3, closed here for the
+/// boundary). The `fields_root` and `heap_root` planes are ALWAYS faithful
+/// (openable sorted-Poseidon2 maps with no dropped state). The 3-verb gauntlet
+/// lanes (transfer / set-field / set-heap / grant / attenuate / revoke) all
+/// agree.
 pub fn record_kernel_boundary_agrees(
     cell: &Cell,
 ) -> Result<RecordKernelBoundary, BoundaryDisagreement> {
@@ -1356,13 +1405,26 @@ fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
             },
             Some(None), // a grant claims a FRESH slot
         )],
-        JournalEntry::RevokeCapability { cell, old_cap } => vec![Touch::At(
-            UKey::CapSlot {
-                cell: *cell,
-                slot: old_cap.slot,
-            },
-            Some(Some(json(old_cap))),
-        )],
+        JournalEntry::RevokeCapability { cell, old_cap } => vec![
+            // the live slot is removed (prev = the revoked cap json, post = absent)
+            Touch::At(
+                UKey::CapSlot {
+                    cell: *cell,
+                    slot: old_cap.slot,
+                },
+                Some(Some(json(old_cap))),
+            ),
+            // AND its ghost tombstone is recorded (prev = absent, post = Present) —
+            // the deployed `cap_root` keeps a ZERO leaf at the revoked slot, so the
+            // projection's tombstone plane must carry it (see `CapTombstone`).
+            Touch::At(
+                UKey::CapTombstone {
+                    cell: *cell,
+                    slot: old_cap.slot,
+                },
+                Some(None),
+            ),
+        ],
         JournalEntry::SetHeap {
             cell,
             collection,
