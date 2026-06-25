@@ -684,6 +684,18 @@ impl DeosDesktop {
         self.persist_window((cell, tag));
     }
 
+    /// **Land in a surface AND leave it mold-ready** — open (or focus) the `tag` window
+    /// on `cell`, then SELECT it so its Pharo halo ring floats immediately. This is the
+    /// seam that makes the stranger's path ONE motion: a welcome door or a Spotter jump
+    /// drops you into a live surface whose mold-in-place handles are already there — no
+    /// hunting for the gesture. The unifying entry points ([`Self::welcome_dispatch`],
+    /// [`Self::spotter_dispatch`]) route through here so "open" and "you can mold it"
+    /// are the same arrival; it adds NO new actuation, it only welds selection to open.
+    fn land_in(&mut self, cell: CellId, tag: WinKindTag) {
+        self.open_kind(cell, tag);
+        self.selected = Some(HaloTarget::Window((cell, tag)));
+    }
+
     fn close_window(&mut self, key: WinKey) {
         self.windows.remove(&key);
         // Drop a halo selection that pointed at the now-closed window (no stale ring).
@@ -1711,7 +1723,11 @@ impl DeosDesktop {
     /// verbs), reading live faces off the ledger. Delegates the entry shapes to
     /// [`spotter::candidates_for_cells`].
     fn spotter_candidates(&self) -> Vec<spotter::SpotterEntry> {
-        spotter::candidates_for_cells(&self.cells, |c| {
+        // The GLOBAL surfaces (World Explorer · Transcript · the Portable-IR card) come
+        // FIRST so the unifying entry opens onto the whole rooms of the desktop, then the
+        // per-cell vocabulary — one entry to every surface, not only every cell.
+        let mut out = spotter::surface_candidates();
+        out.extend(spotter::candidates_for_cells(&self.cells, |c| {
             (
                 self.cell_kind(c).to_string(),
                 format!(
@@ -1720,7 +1736,8 @@ impl DeosDesktop {
                     self.cell_lifecycle(c)
                 ),
             )
-        })
+        }));
+        out
     }
 
     /// The ranked candidates for the live query (empty query = the full list).
@@ -1744,13 +1761,23 @@ impl DeosDesktop {
             self.spotter = None;
             return;
         };
+        // Every jump LANDS MOLD-READY: the opened surface is selected so its halo ring
+        // is already floating when you arrive (the unifying entry hands you straight to
+        // the mold-in-place gesture). Global surfaces anchor on the user sentinel.
         match entry.target.clone() {
-            Tg::Cell(c) | Tg::Inspect(c) => self.open_kind(c, WinKindTag::Inspector),
-            Tg::OpenDoc(c) => self.open_kind(c, WinKindTag::DocEditor),
-            Tg::Explore(c) => self.open_kind(c, WinKindTag::DocExplorer),
-            Tg::Links(c) => self.open_kind(c, WinKindTag::Links),
-            Tg::Transcript(c) => self.open_kind(c, WinKindTag::Transcript),
-            Tg::Workflow(c) => self.open_workflow_window(c),
+            Tg::Cell(c) | Tg::Inspect(c) => self.land_in(c, WinKindTag::Inspector),
+            Tg::OpenDoc(c) => self.land_in(c, WinKindTag::DocEditor),
+            Tg::Explore(c) => self.land_in(c, WinKindTag::DocExplorer),
+            Tg::Links(c) => self.land_in(c, WinKindTag::Links),
+            Tg::Transcript(c) => self.land_in(c, WinKindTag::Transcript),
+            Tg::Workflow(c) => {
+                self.open_workflow_window(c);
+                self.selected = Some(HaloTarget::Window((c, WinKindTag::Workflow)));
+            }
+            Tg::WorldExplorer => self.land_in(self.user, WinKindTag::WorldExplorer),
+            Tg::WorldTranscript => self.land_in(self.user, WinKindTag::Transcript),
+            #[cfg(feature = "card-pane")]
+            Tg::PortableCard => self.land_in(self.user, WinKindTag::ViewNodePane),
         }
         self.status = format!("Spotter → {}", entry.label);
         self.spotter = None;
@@ -1774,18 +1801,29 @@ impl DeosDesktop {
         self.dismiss_welcome();
         match action {
             A::LookAround => {
+                // The gentlest door still teaches the ONE gesture: select the user's own
+                // cell so its halo ring floats — the handles say "you can touch me" before
+                // the newcomer reads a word. (Selecting an icon fires nothing; it only
+                // invites.) A bare-desktop click clears it again whenever they like.
+                self.selected = Some(HaloTarget::Icon(self.user));
                 self.status =
-                    "Look around — hover a cell for its menu, double-click to open it.".into();
+                    "Look around — that ring of handles molds a cell in place; hover any cell \
+                     for its menu, double-click to open it."
+                        .into();
             }
             A::FindAnything => self.open_spotter(),
             A::WriteSomething => {
                 // Open the user's own cell as a fresh page — the newcomer's first
-                // document, on the cell that is *them*.
-                self.open_kind(self.user, WinKindTag::DocEditor);
-                self.status = "Write something — type, and every keystroke is kept.".into();
+                // document, on the cell that is *them* — and land mold-ready (its halo
+                // floats so the next gesture, "mold it", is already in reach).
+                self.land_in(self.user, WinKindTag::DocEditor);
+                self.status =
+                    "Write something — type, and every keystroke is kept. The ring of handles \
+                     molds this surface in place."
+                        .into();
             }
             A::SeeTheWorld => {
-                self.open_kind(self.user, WinKindTag::WorldExplorer);
+                self.land_in(self.user, WinKindTag::WorldExplorer);
                 self.status =
                     "The whole world — every cell, every receipt, balance summing to zero.".into();
             }

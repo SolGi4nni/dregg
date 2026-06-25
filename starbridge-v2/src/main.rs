@@ -300,6 +300,31 @@ fn main() {
         }
     }
 
+    // `--render-woven <out>`: THE WOVEN DESKTOP BAKE — proves the surfaces are ONE
+    // place, not separate pieces. It walks a stranger's path end to end: land on the
+    // calm WELCOME front door over the live image → click a door → LAND in a live
+    // surface whose Pharo halo ring is already floating (mold-ready, the seam welded)
+    // → then use the Spotter (the unifying entry) to jump to a GLOBAL surface, which
+    // also lands mold-ready. Bakes `<out>.png` of the woven room: a molded live
+    // surface with its halo + the calm Spotter pill. Default 1600x1000.
+    #[cfg(all(
+        feature = "render-capture",
+        feature = "gpui-ui",
+        feature = "embedded-executor"
+    ))]
+    {
+        if let Some(out) = render_woven_arg(&args) {
+            let (w, h) = render_size_arg(&args).unwrap_or((1600.0, 1000.0));
+            match render_woven_headless(&out, w, h) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("render-woven FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     // `--render-guest <out>`: THE GUEST / APP-FORWARD BAKE — the welcoming,
     // low-verbosity desktop a newcomer lands on (the "after you dismiss the
     // inspector" view): the real app surfaces (browser · editor · terminal · chat)
@@ -1041,6 +1066,193 @@ fn render_welcome_arg(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+/// Parse the `--render-woven <out>` (or `=<out>`) argument — the output base path for
+/// the WOVEN DESKTOP bake (the stranger's path, welded end to end). Returns `None` when
+/// absent.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "embedded-executor"
+))]
+fn render_woven_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--render-woven" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--render-woven=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// **THE WOVEN DESKTOP BAKE** — the proof the surfaces are ONE inhabitable place, not a
+/// drawer of separate pieces. Where `--render-welcome` shows the calm front door and
+/// `--render-desktop` shows the dense workbench, THIS bake walks the SEAM BETWEEN them —
+/// a stranger's path, welded end to end:
+///
+///   1. A fresh image opens onto the calm WELCOME card (greeting the live world's real
+///      shape), with NOTHING else open — the calm default.
+///   2. Clicking a welcome door ("Write something") LANDS the newcomer in a live surface
+///      (a document editor on their own cell) that is already MOLD-READY: its Pharo halo
+///      ring floats around it the instant they arrive (the welded seam — open and "you
+///      can mold it" are the same arrival), and the welcome card is gone.
+///   3. The SPOTTER — the unifying entry — jumps to a GLOBAL surface (the World
+///      Explorer), which ALSO lands mold-ready (its halo floating). One entry, every
+///      surface; every landing hands you the mold-in-place gesture.
+///
+/// The bake ASSERTS each seam (welcome→landed-window-selected, halo ring present on the
+/// landed surface, Spotter ranks the global surface and dispatching it lands selected),
+/// then leaves a surface molded with its halo + the calm Spotter pill showing, and
+/// captures `<out>.png` of the woven room. Hermetic. Default 1600x1000.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "embedded-executor"
+))]
+fn render_woven_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
+    use gpui::{AppContext, HeadlessAppContext, PlatformTextSystem, px, size};
+    use gpui_wgpu::CosmicTextSystem;
+    use starbridge_v2::deos_desktop::DeosDesktop;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+
+    // A hermetic, fresh sidecar so `welcomed = false` → the warm card shows (a fresh
+    // image is exactly the newcomer's first run). Start clean.
+    let layout_path =
+        std::env::temp_dir().join(format!("deos-woven-bake-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&layout_path);
+
+    // The live verified image — the SAME `World` the cockpit runs.
+    let (world, anchors) = starbridge_v2::world::demo_world();
+    let [_treasury, _service, user] = anchors;
+    let shared = Rc::new(RefCell::new(world));
+    let height = shared.borrow().height();
+
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+    cx.update(|cx| gpui_component::init(cx));
+
+    let world_for_view = shared.clone();
+    let lp = layout_path.clone();
+    let desk_cell: Rc<RefCell<Option<gpui::Entity<DeosDesktop>>>> = Rc::new(RefCell::new(None));
+    let desk_sink = desk_cell.clone();
+    let window = cx.open_window(size(px(w), px(h)), move |window, cx| {
+        let view = cx.new(|cx| DeosDesktop::new(world_for_view, user, lp, window, cx));
+        *desk_sink.borrow_mut() = Some(view.clone());
+        cx.new(|cx| gpui_component::Root::new(gpui::AnyView::from(view), window, cx))
+    })?;
+    cx.run_until_parked();
+    let desk = desk_cell.borrow().clone().expect("desktop entity captured");
+
+    // ── 1. THE CALM DEFAULT — the warm front door over the live image, nothing else. ──
+    let (shown, greeting, open_windows) = desk.update(&mut cx, |d, _cx| {
+        (
+            d.bake_welcome_is_shown(),
+            d.bake_welcome_greeting(),
+            d.bake_total_window_count(),
+        )
+    });
+    anyhow::ensure!(
+        shown,
+        "a fresh image must open onto the warm WELCOME card (the calm front door)"
+    );
+    anyhow::ensure!(
+        open_windows == 0,
+        "the calm default opens NOTHING else (got {open_windows} open window(s))"
+    );
+    anyhow::ensure!(
+        greeting.contains(&height.to_string()),
+        "the welcome greeting must name the live image's REAL history height ({height})"
+    );
+
+    // ── 2. THE DOOR LANDS YOU MOLD-READY — click "Write something" (door 2: 0-based). ──
+    // The door opens a live document surface AND leaves it selected, so its halo ring is
+    // already floating: open and "you can mold it" are the same arrival (the welded seam).
+    desk.update(&mut cx, |d, cx| {
+        d.bake_welcome_door(2); // 0:look 1:find 2:write 3:survey
+        cx.notify();
+    });
+    cx.run_until_parked();
+    anyhow::ensure!(
+        !desk.update(&mut cx, |d, _cx| d.bake_welcome_is_shown()),
+        "clicking a welcome door dismisses the front door — you have begun"
+    );
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_total_window_count()) >= 1,
+        "the welcome door must LAND the newcomer in a live surface (a window opened)"
+    );
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_selection_is_window()),
+        "the landed surface must be SELECTED (mold-ready) — the welcome door hands you \
+         straight to the mold-in-place gesture, not an unselected window to go hunt"
+    );
+    let door_handles = desk.update(&mut cx, |d, _cx| d.bake_halo_handle_count());
+    anyhow::ensure!(
+        door_handles >= 5,
+        "the landed surface must float its Pharo halo ring (mold-in-place handles); got \
+         {door_handles}"
+    );
+
+    // ── 3. THE SPOTTER IS THE UNIFYING ENTRY — jump to a GLOBAL surface, land mold-ready. ──
+    // Open the Spotter and confirm it ranks the global World Explorer surface (not only
+    // per-cell actions) — the one entry to every surface.
+    desk.update(&mut cx, |d, _cx| d.bake_open_spotter("world explorer"));
+    let spot_matches = desk
+        .update(&mut cx, |d, _cx| d.bake_spotter_match_count())
+        .unwrap_or(0);
+    let top = desk
+        .update(&mut cx, |d, _cx| d.bake_spotter_top_label())
+        .unwrap_or_default();
+    anyhow::ensure!(
+        spot_matches >= 1 && top.to_lowercase().contains("world explorer"),
+        "the Spotter must reach the GLOBAL World Explorer surface (top: {top:?}, {spot_matches} \
+         match(es)) — the unifying entry jumps to places, not only cells"
+    );
+    let before = desk.update(&mut cx, |d, _cx| d.bake_total_window_count());
+    desk.update(&mut cx, |d, _cx| d.bake_spotter_dispatch_top());
+    cx.run_until_parked();
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_total_window_count()) > before,
+        "dispatching the Spotter's global surface opened it"
+    );
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_selection_is_window())
+            && desk.update(&mut cx, |d, _cx| d.bake_halo_handle_count()) >= 5,
+        "a Spotter jump also LANDS mold-ready — the global surface arrives with its halo \
+         ring floating, exactly like the welcome door (one consistent gesture everywhere)"
+    );
+
+    // Leave the woven room in frame: a live surface molded with its halo + (the Spotter
+    // now closed) the calm "type anything" pill showing.
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+
+    let captured = cx.capture_screenshot(window.into())?;
+    let (ww, hh) = (captured.width(), captured.height());
+    captured.save(format!("{out}.png"))?;
+    let _ = std::fs::remove_file(&layout_path);
+    println!(
+        "OK deos WOVEN render -> {out}.png ({ww}x{hh}, logical {w}x{h}); the stranger's path \
+         welded end to end — calm welcome over the live image ({} cells, height {height}) → a \
+         door LANDS you mold-ready in a live surface ({door_handles}-handle halo floating) → the \
+         Spotter (unifying entry) reaches the global World Explorer surface and lands it \
+         mold-ready too. One place, one gesture.",
+        shared.borrow().ledger().iter().count()
+    );
+    Ok(())
 }
 
 /// **THE CALM WELCOME BAKE** — render the deos desktop's *warm front door*: the calm,

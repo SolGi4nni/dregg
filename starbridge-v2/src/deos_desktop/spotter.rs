@@ -29,7 +29,9 @@ use crate::deos_desktop::chrome::{
 
 /// The gesture a selected spotter entry dispatches. The desktop View matches on this
 /// to open the corresponding window kind (or focus the cell), each over the named
-/// cell. One cell yields a `Cell` entry plus the full action vocabulary.
+/// cell. One cell yields a `Cell` entry plus the full action vocabulary; the GLOBAL
+/// surface variants ([`WorldExplorer`](Self::WorldExplorer) …) carry no cell — they
+/// jump to a place, not a cell, so the Spotter is the ONE entry to every surface.
 #[derive(Clone)]
 pub enum SpotterTarget {
     /// Focus / inspect the cell (the bare jump-to-cell).
@@ -46,6 +48,16 @@ pub enum SpotterTarget {
     Transcript(CellId),
     /// Open the workflow-composer window over the cell.
     Workflow(CellId),
+    /// Open the World Explorer — the map of everything (ledger · chronicle · Σ=0). A
+    /// global surface: anchored on the desktop's user sentinel by the dispatcher.
+    WorldExplorer,
+    /// Open the World Transcript — the receipt log of every committed turn (global).
+    WorldTranscript,
+    /// Open the Portable-IR content card — a `deos_view::ViewNode` rendered through
+    /// deos-view's native renderer, beside the native chrome (global). Gated on the
+    /// `card-pane` feature that compiles the content-IR pane in.
+    #[cfg(feature = "card-pane")]
+    PortableCard,
 }
 
 /// One ranked candidate in the spotter result list. `label` is the reader-legible
@@ -228,6 +240,38 @@ pub fn candidates_for_cells(
             score: 0,
         });
     }
+    out
+}
+
+/// Build the GLOBAL surface candidates — the Spotter's jump-to-a-place entries that
+/// are not tied to one cell: the World Explorer, the World Transcript, and (when the
+/// content-IR pane is compiled in) the Portable-IR card. These are PREPENDED to the
+/// per-cell vocabulary so a stranger who opens the Spotter and types nothing sees the
+/// whole rooms of the desktop first — the Spotter is the ONE entry to every surface,
+/// not only every cell. They match the desktop's own menu wording.
+pub fn surface_candidates() -> Vec<SpotterEntry> {
+    let mut out = vec![
+        SpotterEntry {
+            label: "World Explorer  (ledger · chronicle · Σ)".to_string(),
+            sublabel: "surface · the map of everything".to_string(),
+            target: SpotterTarget::WorldExplorer,
+            score: 0,
+        },
+        SpotterEntry {
+            label: "World Transcript  (receipt log)".to_string(),
+            sublabel: "surface · every committed turn".to_string(),
+            target: SpotterTarget::WorldTranscript,
+            score: 0,
+        },
+    ];
+    // The content-IR card sits beside the native chrome only when it is compiled in.
+    #[cfg(feature = "card-pane")]
+    out.push(SpotterEntry {
+        label: "Portable Card  (deos.ui IR · ViewNode)".to_string(),
+        sublabel: "surface · portable content beside native chrome".to_string(),
+        target: SpotterTarget::PortableCard,
+        score: 0,
+    });
     out
 }
 

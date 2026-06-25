@@ -397,6 +397,14 @@ impl DeosDesktop {
         }
     }
 
+    /// Whether the current halo selection is an open WINDOW (vs. a bare cell-icon, vs.
+    /// nothing). A bake/test hook: proves a welcome door / Spotter jump LANDED you in a
+    /// live surface that is already mold-ready (its window halo floating), not merely
+    /// opened a window you must then go hunt and select.
+    pub fn bake_selection_is_window(&self) -> bool {
+        matches!(self.selected, Some(HaloTarget::Window(_)))
+    }
+
     /// Fire the halo's Inspect handle on the current selection (what clicking the
     /// inspect handle does) — proves the ring reuses the existing actuation. Returns
     /// whether something was selected to act on.
