@@ -129,40 +129,45 @@ mod literate;
 mod merge;
 mod patch;
 mod regime;
-mod resolve;
 mod resolution;
+mod resolve;
 // The rope<->patch bridge (`ropey::Rope` text <-> the patch graph) — the editor
 // keystone of APPS-AS-CELLS.md §1. Behind the OFF-by-default `rope` feature so
 // the standalone core stays dependency-free. See src/rope.rs.
-#[cfg(feature = "rope")]
-pub mod rope;
-mod threeway;
-#[cfg(feature = "substrate")]
-mod substrate;
 #[cfg(feature = "substrate")]
 mod executor_drive;
+#[cfg(feature = "rope")]
+pub mod rope;
+#[cfg(feature = "cell-heap")]
+mod substrate;
+mod threeway;
+// THE DOCUMENT RIDES THE PER-CELL UMEM-HEAP — a document IS a cell whose committed
+// `heap_root` (the umem boundary) is its commitment; conflicts-as-objects and
+// `dregg://` transclusion ride the umem primitive. See docs/deos/UMEM-PRIMITIVE.md §8.
+// Pure `dregg-cell` (the commitment ride needs no executor), so `cell-heap`-gated.
+#[cfg(feature = "cell-heap")]
+mod doc_heap;
 // THE DESKTOP IS A DOCUMENT — project a cockpit workspace (ordered surfaces + a
 // tab/focus selector) as a document, committed by the REAL substrate heap root.
-// Substrate-gated (it uses `substrate_commit`). See docs/deos/DOC-CELL-COMPOSITION.md.
-#[cfg(feature = "substrate")]
+// Uses `substrate_commit` (pure `dregg-cell`), so `cell-heap`-gated. See
+// docs/deos/DOC-CELL-COMPOSITION.md.
+#[cfg(feature = "cell-heap")]
 pub mod desktop;
 
 pub use atom::{Atom, AtomId, Author, PatchId, Provenance, Status};
 pub use blame::{BlameLine, blame, blame_summary};
 pub use commit::{Commitment, commit};
+pub use content::{Alternative, ConflictRegion, Rendered, Segment, content, walk_atoms};
 pub use depend::{
     DepError, cherry_pick, commute, dependencies, dependents, transitive_dependencies, unrecord,
 };
-#[cfg(feature = "substrate")]
-pub use substrate::{COLL_ATOMS, COLL_EDGES, COLL_FIELDS, substrate_commit, to_heap_map};
+pub use doc::{Doc, Granularity};
+#[cfg(feature = "cell-heap")]
+pub use doc_heap::{COLL_EMBED, DocHeapCell};
 #[cfg(feature = "substrate")]
 pub use executor_drive::{ExecutorDrivenDoc, field_key};
-pub use content::{Alternative, ConflictRegion, Rendered, Segment, content, walk_atoms};
-pub use doc::{Doc, Granularity};
 pub use graph::{DocGraph, FieldAssign};
 pub use history::History;
-#[cfg(feature = "rope")]
-pub use rope::{RopeDoc, graph_to_rope, rope_diff};
 pub use literate::{
     LiterateDoc, Parsed, ParsedAlternative, ParsedConflict, ParsedField, author_graph, parse,
     parsed_conflicts_of, parsed_shape, render, render_with_fields,
@@ -170,16 +175,18 @@ pub use literate::{
 pub use merge::{merge, merge_all};
 pub use patch::{Op, Patch};
 pub use regime::Regime;
+pub use resolution::{
+    RegionResolutions, Resolution, ResolutionChoice, resolutions, resolutions_for,
+};
 pub use resolve::{
     resolve_connect, resolve_connect_by, resolve_field, resolve_keep, resolve_keep_by,
     resolve_keep_in,
 };
-pub use resolution::{
-    RegionResolutions, Resolution, ResolutionChoice, resolutions, resolutions_for,
-};
-pub use threeway::{
-    ConflictSide, ThreeWayConflict, merge_base, render_three_way, three_way,
-};
+#[cfg(feature = "rope")]
+pub use rope::{RopeDoc, graph_to_rope, rope_diff};
+#[cfg(feature = "cell-heap")]
+pub use substrate::{COLL_ATOMS, COLL_EDGES, COLL_FIELDS, substrate_commit, to_heap_map};
+pub use threeway::{ConflictSide, ThreeWayConflict, merge_base, render_three_way, three_way};
 
 #[cfg(test)]
 mod tests;

@@ -33,21 +33,30 @@ repository = "https://github.com/emberian/dregg"
 # OFF by default: the core stays STANDALONE and dependency-free (load-bearing —
 # pure data structures + algorithms, fast and `cargo test`-able in isolation).
 #
-# `substrate` welds the document onto the REAL dregg cell substrate: it pulls in
-# `dregg-cell` (a path dep into the parent workspace's `../cell`) and projects a
-# `DocGraph` into a real `(collection_id, key) -> 32-byte` cell heap, committing
-# it via the production `compute_heap_root` — the sorted-Poseidon2 binary Merkle
-# tree, the faithful commitment the light client actually trusts. This REPLACES
-# the in-crate `DefaultHasher` stand-in (`commit::commit`) with the real ride.
+# `cell-heap` welds the document onto the REAL dregg cell substrate's COMMITMENT
+# (no executor): it pulls in `dregg-cell` (a path dep into the parent workspace's
+# `../cell`) and projects a `DocGraph` into a real `(collection_id, key) ->
+# 32-byte` cell heap, committing it via the production `compute_heap_root` — the
+# sorted-Poseidon2 binary Merkle tree, the faithful commitment the light client
+# actually trusts. This REPLACES the in-crate `DefaultHasher` stand-in
+# (`commit::commit`) with the real ride.
 #
-# `substrate` ALSO closes THE SEAM (DOCUMENT-LANGUAGE.md §4.1, §4.3 dregg-native):
-# a document IS a real `dregg_cell::Cell` (`ExecutorDrivenDoc`) and an edit IS a
-# real turn — `Op::{Add,Delete,Connect,SetField}` desugars to genuine
-# `dregg_turn::Effect::SetField` writes driven through the real `TurnExecutor`
-# (cap-gated, finalized, journaled), producing a real `dregg_turn::TurnReceipt`.
-# The receipt IS the provenance: no more stand-in `PatchId` for who-wrote-what.
-# That is why `dregg-turn` is pulled in here.
-substrate = ["dep:dregg-cell", "dep:dregg-turn", "dep:blake3"]
+# It also rides the document onto the per-cell UMEM-HEAP (`src/doc_heap.rs`,
+# `docs/deos/UMEM-PRIMITIVE.md` §8): a document IS a `dregg_cell::Cell` whose
+# committed `heap_root` (the umem boundary) is its commitment — so a sovereign
+# document, conflicts-as-objects, and `dregg://` transclusion all ride the umem
+# primitive. Pure `dregg-cell` (NO `dregg-turn`) so the commitment ride stays
+# independent of the turn executor + prover tree.
+cell-heap = ["dep:dregg-cell", "dep:blake3"]
+
+# `substrate` is `cell-heap` PLUS the executor-drive seam (DOCUMENT-LANGUAGE.md
+# §4.1, §4.3 dregg-native): a document IS a real `dregg_cell::Cell`
+# (`ExecutorDrivenDoc`) and an edit IS a real turn — `Op::{Add,Delete,Connect,
+# SetField}` desugars to genuine `dregg_turn::Effect::SetField` writes driven
+# through the real `TurnExecutor` (cap-gated, finalized, journaled), producing a
+# real `dregg_turn::TurnReceipt`. The receipt IS the provenance: no more stand-in
+# `PatchId` for who-wrote-what. That is why `dregg-turn` is pulled in here.
+substrate = ["cell-heap", "dep:dregg-turn"]
 
 # `rope` welds the patch core onto a `ropey::Rope`-backed editor buffer — the
 # rope<->patch BRIDGE the editor needs (DOCUMENT-LANGUAGE.md §4.1, APPS-AS-CELLS.md
