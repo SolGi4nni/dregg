@@ -990,6 +990,96 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
         .map_err(|e| SdkError::InvalidWitness(format!("rotated IR-v2 proof: {e}")))
 }
 
+/// **THE STAGED UMEM-COHORT PROVER (VK-RISK-FREE — NOT the deployed default).** The
+/// rotation-flip's deployed-routing precursor: given one effect-leg's universal-memory touch
+/// (its pre-state projection + the Blum op trace), it routes to the FIXED per-effect cohort
+/// descriptor (`umem_cohort_lean_key_for_effect` → `umem_cohort_descriptor_json`, the byte-pinned
+/// `UMEM_COHORT_V1_STAGED_REGISTRY_TSV` emitted from the verified Lean
+/// `EffectVmEmitUMemCohort.umemCohortRegistry`), builds the single-domain width-7 rows + the REAL
+/// `UMemBoundaryWitness` ([`dregg_turn::umem::umem_cohort_proving_inputs_from`]), and proves
+/// through the DEPLOYED-form umem prover [`prove_vm_descriptor2_umem`] with that real boundary —
+/// NOT `UMemBoundaryWitness::default()`. Self-verifies before return.
+///
+/// This is the architectural-unknown resolution made executable: a real turn proves as PER-EFFECT
+/// fixed-cohort legs (mirroring the deployed rotated routing — one descriptor per leg), each
+/// single-domain. A multi-domain leg fails closed (the trace generator's single-domain gate); the
+/// fixed cohort descriptor's baked-in domain is checked against the leg's actual domain.
+///
+/// STAGED: the deployed default ([`prove_effect_vm_rotated_ir2_with_caveat`] / the IVC
+/// `mint_from_block_witnesses`) stays per-map / per-rotated-descriptor with a DEFAULT umem
+/// boundary; this entry is opt-in and never on the live wire. The VK flag-day welds the umem leg
+/// INTO the rotated descriptor — until then this proves the umem-form reconciliation STANDALONE,
+/// exactly as the cohort emitter's width-7 descriptors model it.
+#[cfg(feature = "prover")]
+pub fn prove_umem_cohort_staged(
+    effect: &VmEffectKind,
+    pre: &dregg_turn::umem::UProjection,
+    ops: &[dregg_turn::umem::UmemOp],
+) -> Result<
+    dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
+    SdkError,
+> {
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, UMemOpSpec, VmConstraint2, parse_vm_descriptor2,
+        prove_vm_descriptor2_umem, verify_vm_descriptor2,
+    };
+    use dregg_circuit::effect_vm_descriptors::{
+        umem_cohort_descriptor_json, umem_cohort_lean_key_for_effect,
+    };
+
+    // Resolve the FIXED cohort descriptor for this effect-leg (fail closed for non-members).
+    let key = umem_cohort_lean_key_for_effect(effect).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "umem cohort staged: effect {effect:?} is not a umem-cohort member (stays per-map)"
+        ))
+    })?;
+    let json = umem_cohort_descriptor_json(key).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "umem cohort staged: '{key}' not in the staged umem cohort registry"
+        ))
+    })?;
+    let desc = parse_vm_descriptor2(json)
+        .map_err(|e| SdkError::InvalidWitness(format!("umem cohort descriptor parse: {e}")))?;
+
+    // Bridge the leg's per-turn umem witness into the FIXED single-domain cohort form (the
+    // trace generator fails closed on a multi-domain leg).
+    let inputs = dregg_turn::umem::umem_cohort_proving_inputs_from(pre, ops)
+        .map_err(|e| SdkError::InvalidWitness(format!("umem cohort trace generation: {e}")))?;
+
+    // The fixed descriptor's baked-in domain MUST match the leg's actual domain (the cohort
+    // descriptor carries the domain as a constant; a mismatch would prove a different plane's
+    // reconciliation than the leg touched).
+    let desc_domain = match desc.constraints.first() {
+        Some(VmConstraint2::UMemOp(UMemOpSpec { domain, .. })) => *domain,
+        _ => {
+            return Err(SdkError::InvalidWitness(format!(
+                "umem cohort staged: descriptor '{key}' carries no umem-op constraint"
+            )));
+        }
+    };
+    if desc_domain != inputs.domain {
+        return Err(SdkError::InvalidWitness(format!(
+            "umem cohort staged: descriptor '{key}' is domain {desc_domain} but the leg touches \
+             domain {}",
+            inputs.domain
+        )));
+    }
+
+    // Prove through the DEPLOYED-form umem prover with the REAL boundary; self-verify.
+    let proof = prove_vm_descriptor2_umem(
+        &desc,
+        &inputs.rows,
+        &[],
+        &MemBoundaryWitness::default(),
+        &[],
+        &inputs.boundary,
+    )
+    .map_err(|e| SdkError::InvalidWitness(format!("umem cohort IR-v2 proof: {e}")))?;
+    verify_vm_descriptor2(&desc, &proof, &[])
+        .map_err(|e| SdkError::InvalidWitness(format!("umem cohort self-verify: {e}")))?;
+    Ok(proof)
+}
+
 /// **THE FAITHFUL 8-FELT WIDE rotated prover (STAGED — the flip's producer leg).** The wide twin of
 /// [`prove_effect_vm_rotated_ir2_with_caveat`]: routes the WIDE descriptor (from
 /// `WIDE_REGISTRY_STAGED_TSV`, the verified Lean `v3RegistryCapOpenWide`), generates the trace

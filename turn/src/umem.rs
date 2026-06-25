@@ -232,10 +232,7 @@ pub enum UKey {
     /// deployed root carries. Value-less (a `UVal::Present` marker — the slot is
     /// the whole content); the leaf digest the root folds is the ZERO sentinel,
     /// not a value. (Added last so existing `UKey` ordering is undisturbed.)
-    CapTombstone {
-        cell: CellId,
-        slot: u32,
-    },
+    CapTombstone { cell: CellId, slot: u32 },
 }
 
 impl UKey {
@@ -1362,6 +1359,69 @@ pub fn umem_proving_inputs_from(
         descriptor,
         rows,
         boundary,
+    })
+}
+
+/// The FIXED per-effect COHORT proving inputs: the single-domain width-7 rows + the real
+/// [`UMemBoundaryWitness`] the deployed-form FIXED cohort descriptor
+/// (`circuit/descriptors/umem-cohort-v1-staged-registry.tsv`, the Lean
+/// `EffectVmEmitUMemCohort.umemCohortRegistry`) consumes. A variable-shape AIR cannot back ONE
+/// committed VK, so the deployed umem form is the FIXED cohort (per-effect, single-domain,
+/// width-7, ONE `umemOp` guarded at column 6); a real multi-effect / multi-cell turn proves as
+/// per-effect fixed-cohort legs (one per effect-touch), exactly as the deployed rotated prover
+/// already routes one descriptor per leg ([`dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect`]).
+#[derive(Clone, Debug)]
+pub struct UmemCohortProvingInputs {
+    /// The single domain code every op in this leg touches — MUST equal the resolved cohort
+    /// descriptor's baked-in `domain` (the caller fails closed on a mismatch).
+    pub domain: u32,
+    /// Width-7 cohort rows: `0 key · 1 present · 2 value · 3 prev_present · 4 prev_value ·
+    /// 5 prev_serial · 6 guard`. Byte-identical to the single-domain producer rows.
+    pub rows: Vec<Vec<BabyBear>>,
+    /// The REAL universal-memory boundary for this single-domain leg (touched addresses with
+    /// their PRE-state init image).
+    pub boundary: UMemBoundaryWitness,
+}
+
+/// **THE FIXED-COHORT TRACE GENERATOR** — bridge one effect-leg's umem op trace into the FIXED
+/// per-effect cohort form the deployed-form umem prover ([`prove_vm_descriptor2_umem`]) accepts.
+///
+/// The producer's per-turn form ([`umem_proving_inputs_from`]) yields a variable-width
+/// (`6 + #domains`) descriptor with one guard column per domain — which CANNOT back a single
+/// committed VK. The FIXED cohort is single-domain width-7. This generator reuses the producer's
+/// row + boundary derivation (so the cohort rows are byte-identical to the single-domain
+/// producer rows) and FAILS CLOSED when the leg touches more than one domain: a single fixed
+/// cohort descriptor cannot witness two domains, so a multi-domain leg is NOT silently dropped
+/// onto a single-domain descriptor — it is refused, and such effects stay on the per-map path
+/// until their own cohort design. The single domain is read off the producer's lone constraint
+/// so the caller can verify it against the resolved cohort descriptor's baked-in domain.
+///
+/// `Err` if the leg is empty, the address codec collides, or the leg is multi-domain.
+///
+/// [`prove_vm_descriptor2_umem`]: dregg_circuit::descriptor_ir2::prove_vm_descriptor2_umem
+pub fn umem_cohort_proving_inputs_from(
+    pre: &UProjection,
+    ops: &[UmemOp],
+) -> Result<UmemCohortProvingInputs, String> {
+    let inputs = umem_proving_inputs_from(pre, ops)?;
+    // SINGLE-DOMAIN gate: the producer's width is `6 + #domains`; the fixed cohort is width 7
+    // (one domain). A wider leg cannot reconcile to ONE fixed cohort descriptor — fail closed.
+    if inputs.descriptor.trace_width != 7 {
+        return Err(format!(
+            "umem cohort generator: leg touches {} domains (producer width {}); the fixed cohort \
+             descriptor is single-domain (width 7) — multi-domain effects stay on the per-map path",
+            inputs.descriptor.trace_width.saturating_sub(6),
+            inputs.descriptor.trace_width
+        ));
+    }
+    let domain = match inputs.descriptor.constraints.first() {
+        Some(VmConstraint2::UMemOp(spec)) => spec.domain,
+        _ => return Err("umem cohort generator: producer emitted no umem-op constraint".into()),
+    };
+    Ok(UmemCohortProvingInputs {
+        domain,
+        rows: inputs.rows,
+        boundary: inputs.boundary,
     })
 }
 

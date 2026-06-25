@@ -822,6 +822,60 @@ pub const V3_STAGED_REGISTRY_TSV: &str =
 pub const V3_STAGED_REGISTRY_FP: &str =
     "61af721aa9401249d15611fbf9d1f89dc4a44002b70b65a2b69af664dc6e50d7";
 
+/// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
+/// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
+/// `transferBalanceUMem` · `mintBalanceUMem` · `burnBalanceUMem` · `revokeUMem` ·
+/// `nullifierFreshUMem` — emitted from the verified Lean
+/// `Dregg2.Circuit.Emit.EffectVmEmitUMemCohort.umemCohortRegistry` (`#assert_axioms`-clean,
+/// byte-pinned). Each is single-domain, width-7, ONE `umem_op` guarded at column 6 — the FIXED
+/// shape a committed VK can back (the producer's per-turn `umem-turn-boundary` form is
+/// variable-width `6 + #domains` and cannot). `key\tname\tjson` per line (key = the lean def
+/// name, e.g. `setFieldUMem`; name = the wire descriptor name; json = the parseable descriptor).
+///
+/// ADDITIVE / STAGED: a NEW set BESIDE the deployed per-map / rotated registries, NO VK bump,
+/// nothing on the live wire. The deployed prover keeps using the per-map V3 registry until the
+/// gated VK epoch; this is the per-effect → umem-descriptor routing the flip rides through.
+pub const UMEM_COHORT_V1_STAGED_REGISTRY_TSV: &str =
+    include_str!("../descriptors/umem-cohort-v1-staged-registry.tsv");
+
+/// Resolve the umem-form COHORT lean-key (the [`UMEM_COHORT_V1_STAGED_REGISTRY_TSV`] first
+/// column) for an [`Effect`](crate::effect_vm::Effect) — the per-effect FIXED-cohort
+/// descriptor this effect's universal-memory touch proves against. `None` = the effect is not
+/// (yet) a umem-cohort member (it stays on the per-map path; e.g. multi-domain or
+/// state-passthrough effects). STAGED: this is the effect→umem-descriptor resolver the gated
+/// flip routes through; the deployed default never calls it.
+///
+/// The domain each member touches mirrors `turn/src/umem.rs` (`UKey::domain`): Field / Balance →
+/// `heap`(1), Cap planes → `caps`(2), nullifiers → `nullifiers`(3).
+pub fn umem_cohort_lean_key_for_effect(effect: &crate::effect_vm::Effect) -> Option<&'static str> {
+    use crate::effect_vm::Effect;
+    Some(match effect {
+        Effect::SetField { .. } => "setFieldUMem",
+        Effect::Transfer { .. } => "transferBalanceUMem",
+        Effect::GrantCapability { .. } => "grantUMem",
+        Effect::AttenuateCapability { .. } => "attenuateUMem",
+        Effect::RevokeCapability { .. } => "revokeUMem",
+        Effect::Mint { .. } | Effect::BridgeMint { .. } => "mintBalanceUMem",
+        Effect::Burn { .. } => "burnBalanceUMem",
+        Effect::NoteSpend { .. } => "nullifierFreshUMem",
+        _ => return None,
+    })
+}
+
+/// The parseable descriptor JSON (third column) for a umem-cohort lean-key in
+/// [`UMEM_COHORT_V1_STAGED_REGISTRY_TSV`]. `None` if the key is absent.
+pub fn umem_cohort_descriptor_json(lean_key: &str) -> Option<&'static str> {
+    UMEM_COHORT_V1_STAGED_REGISTRY_TSV.lines().find_map(|line| {
+        let mut it = line.splitn(3, '\t');
+        if it.next() == Some(lean_key) {
+            let _wire_name = it.next();
+            it.next()
+        } else {
+            None
+        }
+    })
+}
+
 /// **THE FAITHFUL 8-FELT WIDE TRANSFER descriptor (STAGED-ADDITIVE slice).** The
 /// `v3RegistryWide` transfer member (`wideAppend transferV3 bb (bb+51)`, width 816 / PI 54) —
 /// the byte source of the first wide prove+verify roundtrip. Emitted from the verified Lean
