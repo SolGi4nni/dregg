@@ -101,17 +101,22 @@
 //!     genuinely lives in the committed map whose root is published — a forged peer root has no
 //!     membership path, a forged value opens to the genuine leaf. It is the WITNESSED
 //!     CROSS-CELL-READ primitive (the circuit twin of the executor-only
-//!     `StateConstraint::ObservedFieldEquals`); see `tests/effect_vm_umem_real_turn.rs`. NAMED
-//!     TAIL: the whole-IMAGE equality (the no-extra-cells direction). Its SOUNDNESS is now a
-//!     proved Lean theorem — `UniversalMemory.boundary_whole_image_sem` (lifted to the IR as
-//!     `DescriptorIR2.satisfied2U_init_whole_image`): pin the committed pre-state root to the
-//!     sorted-Poseidon2 fold of the ENTIRE declared boundary image and, under the CR floor, the
-//!     committed heap agrees with the declared image at EVERY address INCLUDING absence off the
-//!     declared list (no extra cells). What remains is purely the in-circuit AIR/witness work:
-//!     COMPUTING that whole-boundary root-fold in-circuit and pinning it to the committed-root
-//!     public input — the obligation the Lean theorem's `hpin` hypothesis names exactly. That
-//!     per-domain sorted-leaf fold chip rides the universal-map rotation; this pass realizes only
-//!     the per-cell subset opening above.
+//!     `StateConstraint::ObservedFieldEquals`); see `tests/effect_vm_umem_real_turn.rs`. The
+//!     whole-IMAGE equality (the no-extra-cells direction) is now ASSEMBLED IN LEAN against the
+//!     DEPLOYED binary-Merkle peer-root leg — `UniversalBridge.crossCellRead_whole_image`
+//!     (+ `_sem` / `cross_cell_read_no_extra_cell` / `_teeth`), the binary-`mapRoot_injective`
+//!     companion of the per-cell `crossCellRead_refines_observedField`, exactly as the flat-sponge
+//!     `UniversalMemory.boundary_whole_image_sem` (lifted to the IR as
+//!     `DescriptorIR2.satisfied2U_init_whole_image`) carries it over `Heap.root_injective`: pin the
+//!     published peer root to the binary fold of the ENTIRE declared whole-boundary view and, under
+//!     the CR floor, the committed peer heap agrees with the declared image at EVERY address
+//!     INCLUDING absence off the declared list (no extra cells — a hidden cell cannot survive the
+//!     pin). What remains is ONE precise in-circuit obligation — the Lean theorem's `hpin`
+//!     hypothesis, named exactly: an AIR that COMPUTES the whole-boundary binary fold
+//!     (`mapRoot hash d boundaryHeap`, the per-domain sorted-leaf fold padded to the `2^d`-leaf
+//!     vector) over the universal boundary table and pins it to the published-root public input.
+//!     That fold chip rides the universal-map rotation; this pass realizes only the per-cell subset
+//!     opening above.
 //!   * The custom table id 5 (Lean `SUBMASK_TID = 0`) is realized as the bitwise-submask
 //!     relation at 30 bits (`subsetTable_mem_iff`: both elements in `[0, 2^30)` and
 //!     `keep & held = keep`), enforced by per-bit decomposition — the custom-table CONTENTS

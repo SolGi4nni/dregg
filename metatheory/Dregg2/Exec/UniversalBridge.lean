@@ -1098,6 +1098,101 @@ theorem cross_cell_read_admits_observedFieldEquals (hCR : Poseidon2SpongeCR hash
   rw [hfield] at hpin
   rw [hn, Option.some_inj.mp hpin]
 
+/-! ### §6.5b — THE WHOLE-IMAGE (no-extra-cells) DIRECTION of the deployed cross-cell read.
+
+`crossCellRead_refines_observedField` is the SUBSET view: each declared address opens to peer B's
+committed value under the published root (`opensToMerkle_functional`). It is sound for "this peer
+field IS the committed value", but on its own it does NOT forbid a committed peer heap that holds
+the declared cells AND EXTRA cells the boundary never declared — exactly the named tail in
+`circuit/src/descriptor_ir2.rs` (the no-extra-cells direction "rides the universal-map rotation").
+
+This section closes that direction at the bridge level, against the DEPLOYED binary-Merkle root.
+`UniversalMemory.boundary_whole_image_sem` carries the no-extra-cells punch over the FLAT-sponge
+commitment (`Heap.root_injective`); the deployed cross-cell read commits the peer field plane by
+the depth-`d` binary fold (`MapMerkleRoot.mapRoot`, the `CanonicalHeapTree::root`). So the
+deployed whole-image direction is the BINARY analog: it rides `mapRoot_injective` (the binary
+anti-ghost) exactly as `crossCellRead_refines_observedField` rides `opensToMerkle_functional`
+rather than the flat per-cell `boundary_init_root_derived`. The single CR tooth enters once, on
+the WHOLE-boundary fold instead of a per-cell opening — no new crypto, the precise binary mirror
+of `boundary_image_eq_of_root`.
+
+The hypothesis `hpin` — the published peer root EQUALS `mapRoot hash d boundaryHeap`, the binary
+fold of the ENTIRE declared whole-boundary view (a sorted `2^d`-leaf heap realizing the declared
+image) — is EXACTLY the in-circuit obligation that remains: an AIR that COMPUTES the whole-boundary
+binary fold over the universal boundary table (the per-domain sorted-leaf fold chip, padded to the
+`2^d`-leaf vector) and pins it to the published-root public input. That fold chip rides the
+universal-map rotation; today's leg realizes only the per-cell `opensToMerkle` openings above. -/
+
+section CrossCellReadWholeImage
+
+variable (hash : List ℤ → ℤ) (d : Nat)
+
+/-- **`crossCellRead_whole_image` — the committed peer heap IS the declared whole-boundary view
+(no extra cells), deployed binary-Merkle leg.** If the published peer root is the binary fold of
+peer B's committed `2^d`-leaf field heap (`hcommit`) AND equals the binary fold of the declared
+whole-boundary view `boundaryHeap` (`hpin`, the in-circuit whole-boundary fold pin), then under the
+named CR floor the committed peer heap EQUALS that boundary view: a single extra or altered leaf
+moves the binary root, so the peer can hold NOTHING the boundary never declared. The binary-Merkle
+companion of `UniversalMemory.boundary_image_eq_of_root` — `mapRoot_injective` where the flat
+companion uses `Heap.root_injective`. -/
+theorem crossCellRead_whole_image (hCR : Poseidon2SpongeCR hash)
+    {publishedRoot : ℤ} {peerHeap boundaryHeap : Heap.FeltHeap}
+    (hpl : peerHeap.length = 2 ^ d) (hbl : boundaryHeap.length = 2 ^ d)
+    (hcommit : mapRoot hash d peerHeap = publishedRoot)
+    (hpin : mapRoot hash d boundaryHeap = publishedRoot) :
+    peerHeap = boundaryHeap :=
+  Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash hCR d hpl hbl (hcommit.trans hpin.symm)
+
+/-- **`crossCellRead_whole_image_sem` — the committed peer heap agrees with the declared image at
+EVERY address (no extra cells, in lookup terms).** The lookup-world consequence: once the published
+peer root is pinned to the whole-boundary fold (`hpin`) and the declared boundary view realizes the
+image `if k ∈ as then init k else none` (`hbsem` — the obligation the in-circuit leaf assembly
+discharges), the committed peer heap's `get` equals that image at EVERY address: declared cells
+open to their declared value, and EVERY address OFF the declared list is ABSENT in the peer heap.
+The deployed binary-Merkle realization of `UniversalMemory.boundary_whole_image_sem`. -/
+theorem crossCellRead_whole_image_sem (hCR : Poseidon2SpongeCR hash)
+    {publishedRoot : ℤ} {peerHeap boundaryHeap : Heap.FeltHeap}
+    {init : ℤ → Option ℤ} {as : List ℤ}
+    (hpl : peerHeap.length = 2 ^ d) (hbl : boundaryHeap.length = 2 ^ d)
+    (hcommit : mapRoot hash d peerHeap = publishedRoot)
+    (hpin : mapRoot hash d boundaryHeap = publishedRoot)
+    (hbsem : ∀ k, Heap.get boundaryHeap k = if k ∈ as then init k else none) :
+    ∀ k, Heap.get peerHeap k = if k ∈ as then init k else none := by
+  intro k
+  rw [crossCellRead_whole_image hash d hCR hpl hbl hcommit hpin]
+  exact hbsem k
+
+/-- **`cross_cell_read_no_extra_cell` — a peer cell OFF the declared boundary is ABSENT.** The
+no-extra-cells punch the per-cell subset view could not reach: under the whole-boundary fold pin,
+any address `k ∉ as` (never declared) is `none` in the committed peer heap — the peer cannot hide a
+cell behind the published root. A cross-cell read returning `none` at an undeclared address is
+therefore SOUND (the peer genuinely has no such cell). -/
+theorem cross_cell_read_no_extra_cell (hCR : Poseidon2SpongeCR hash)
+    {publishedRoot : ℤ} {peerHeap boundaryHeap : Heap.FeltHeap}
+    {init : ℤ → Option ℤ} {as : List ℤ} {k : ℤ}
+    (hpl : peerHeap.length = 2 ^ d) (hbl : boundaryHeap.length = 2 ^ d)
+    (hcommit : mapRoot hash d peerHeap = publishedRoot)
+    (hpin : mapRoot hash d boundaryHeap = publishedRoot)
+    (hbsem : ∀ k, Heap.get boundaryHeap k = if k ∈ as then init k else none)
+    (hk : k ∉ as) :
+    Heap.get peerHeap k = none := by
+  have h := crossCellRead_whole_image_sem hash d hCR hpl hbl hcommit hpin hbsem k
+  rwa [if_neg hk] at h
+
+/-- **`cross_cell_read_whole_image_teeth` — the no-extra-cells REFUSAL.** A committed peer heap that
+DIFFERS from the declared whole-boundary view (e.g. holds an extra cell, or alters a declared one)
+CANNOT share the whole-boundary fold root: the binary anti-ghost (`mapRoot_injective`) discriminates.
+This is the two-valued tooth showing the whole-image pin is not vacuous — the contrapositive of
+`crossCellRead_whole_image`. -/
+theorem cross_cell_read_whole_image_teeth (hCR : Poseidon2SpongeCR hash)
+    {peerHeap boundaryHeap : Heap.FeltHeap}
+    (hpl : peerHeap.length = 2 ^ d) (hbl : boundaryHeap.length = 2 ^ d)
+    (hne : peerHeap ≠ boundaryHeap) :
+    mapRoot hash d peerHeap ≠ mapRoot hash d boundaryHeap :=
+  fun heq => hne (Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash hCR d hpl hbl heq)
+
+end CrossCellReadWholeImage
+
 end CrossCellRead
 
 /-! ## §6.6 — NON-VACUITY for the cross-cell-read refinement: a concrete honest read +
@@ -1139,6 +1234,37 @@ example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
 -- sentinel-adjacent addr 5 (the off-leaf address).
 #guard Heap.get peerHeapEx 4 == some 777
 #guard Heap.get peerHeapEx 5 == none
+
+/-- WHOLE-IMAGE non-vacuity: the peer's one-cell heap agrees with the declared image at EVERY
+address — the declared cell `(4 ↦ 777)` present, every off-list address absent. This `get`-shape is
+exactly the proven flat companion's (`UniversalMemory.get_boundaryCells` /
+`boundary_whole_image_sem`), here on the concrete `peerHeapEx`. -/
+private theorem peerHeapEx_whole_image_sem :
+    ∀ k, Heap.get peerHeapEx k
+      = if k ∈ [(4 : ℤ)] then (if k = 4 then some (777 : ℤ) else none) else none := by
+  intro k
+  rw [show peerHeapEx = [((4 : ℤ), (777 : ℤ))] from rfl]
+  by_cases hk : k = 4
+  · subst hk; decide
+  · rw [if_neg (fun h => hk (List.mem_singleton.mp h)),
+        Heap.get_cons_ne _ _ hk, Heap.get_nil]
+
+/-- The honest whole-image read: with the published peer root pinned to the binary fold of the
+declared whole-boundary view (here the peer heap IS its own one-cell boundary view),
+`crossCellRead_whole_image_sem` forces the committed peer to agree with the declared image
+EVERYWHERE — the no-extra-cells direction the per-cell subset opening could not see. -/
+example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+    ∀ k, Heap.get peerHeapEx k
+      = if k ∈ [(4 : ℤ)] then (if k = 4 then some (777 : ℤ) else none) else none :=
+  crossCellRead_whole_image_sem hash 0 hCR peerHeapEx_len peerHeapEx_len rfl rfl
+    peerHeapEx_whole_image_sem
+
+/-- TOOTH (no extra cell): a concrete off-list address (addr 5) is ABSENT in the committed peer
+(`cross_cell_read_no_extra_cell`) — a hidden cell cannot survive the whole-boundary fold pin. -/
+example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+    Heap.get peerHeapEx 5 = none :=
+  cross_cell_read_no_extra_cell hash 0 hCR peerHeapEx_len peerHeapEx_len rfl rfl
+    peerHeapEx_whole_image_sem (by decide)
 
 end CrossCellReadNonVacuity
 
@@ -1280,6 +1406,10 @@ end NonVacuity
 #assert_axioms move_is_memory_program
 #assert_axioms create_is_memory_program
 #assert_axioms crossCellRead_refines_observedField
+#assert_axioms crossCellRead_whole_image
+#assert_axioms crossCellRead_whole_image_sem
+#assert_axioms cross_cell_read_no_extra_cell
+#assert_axioms cross_cell_read_whole_image_teeth
 #assert_axioms cross_cell_read_pins_observedValue
 #assert_axioms cross_cell_read_admits_observedFieldEquals
 #assert_axioms cap_leaf_value_codec
