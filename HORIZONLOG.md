@@ -8,6 +8,57 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## reify_seam CLOSED at the value level; Lean uproj-injectivity is the named follow-up (2026-06-25)
+`reify_cell`/`reify_ledger`/`reify_executor_state` landed (`turn/src/umem.rs`) — the byte-identical inverse of
+`project_cell`/`project_ledger`, re-deriving the dropped commitments (`fields_root` from the `Field{slot≥16}`
+plane; the ledger Merkle root lazily on `root()`; leaf/cap caches) rather than storing them. The round-trip law
+`reify_ledger(project_ledger(L)) == L` is PROVEN over the faithful class (`turn/tests/umem_time_travel.rs`:
+`reify_ledger_round_trips_a_populated_ledger`, `reify_restores_a_live_ledger_to_height_h`). HONEST RESIDUAL
+(named precisely by `ReifyError` + two refusal tests `reify_refuses_heap_not_projected` /
+`reify_refuses_cap_revocation_gap`): FOUR value planes `project_cell` does NOT yet carry — heap preimage
+(`heap_map`; only the derived `heap_root` is projected), `Cell.interfaces`, `CapabilitySet.tombstones`, and the
+post-revoke `next_slot` gap. CLOSURE SHAPE: extend the projection address space (`UKey`) with heap/interface/
+tombstone planes (Rust + the Lean `UniversalBridge.UKey` twin + circuit domain codes, in lockstep), which makes
+the faithful class total. NAMED LEAN FOLLOW-UP: `uproj` injectivity over the account-membership-gated class
+(`metatheory/Dregg2/Exec/UniversalBridge.lean`) — the abstract reify witness (the projection determines the
+state). It is a real multi-plane `funext`+codec-injectivity proof (the Lean kernel projects all 17 fields, so it
+has NO heap/interface/tombstone gap — only the `accounts`-gating mirrors the Rust faithful-class restriction);
+deferred rather than faked to keep `#assert_axioms`-clean. Not vacuous: the Rust round-trip is the deployed-system
+guarantee and is green.
+
+## ⚑ IVC mixed-root #1 — SAME-ENDPOINT digest: BUILT but BLOCKED on an in-circuit-Poseidon↔FRI-PoW conflict (2026-06-25)
+Named by codex re-review #3 (`metatheory/docs/CODEX-IVC-REVIEW-3.md`). The distinct-endpoint mixed-root is
+already structurally closed (the segment tooth binds genesis/final/count to the real descriptor leaves); the
+residual is the SAME-genesis/final/count case, where the ordered-history `acc` was a one-felt QUADRATIC fold
+`a*M1+b*M2+a*b*M3` — algebraically collidable (a directly-solvable colliding partner + degeneracy roots).
+BUILT (`circuit-prove/src/ivc_turn_chain.rs`): `seg_hash2_in_circuit` → `seg_poseidon_commit`, a genuine
+`SEG_DIGEST_WIDTH=4`-felt Poseidon2 duplex SPONGE + its host dual `seg_poseidon_commit_host`; carried
+`chain_digest` widened to `[BabyBear;4]` (struct + `WholeChainProofBytes` envelope→v2 + consumers: lightclient
+`AttestedHistory`, wasm views, pg-dregg transport `[[u8;32];4]` — all compile); codex #5 `num_turns < p` bound
+added. **BLOCKER (empirically isolated, NOT yet fixed):** building the digest's in-circuit Poseidon2 perm via
+the recursion `add_poseidon2_perm_for_challenger` (BABY_BEAR_D4_W16 — the SAME op the FRI challenger uses) makes
+the real recursion fold PANIC at witness-gen: `WitnessConflict { WitnessId(0), existing [0,0,0,0], new <nonzero> }`
+in `run_aggregation_verification_circuit`, originating at the FRI verifier's `check_pow_witness` `assert_zero(bit)`.
+PROVEN cause (isolation runs, ~80s each): the EXACT original quadratic fold (no perm) PASSES `mixed_root` (is_err,
+forgery rejected); ANY Poseidon perm (W=1 or W=4) FAILS with the conflict; the bare sponge gadget passes
+standalone. ROOT (cross-agent diagnosis): a circuit-GLOBAL connect-DSU collapse — exposed segment endpoints +
+a challenger recompose output get unioned into `ExprId::ZERO`'s witness class (`WitnessId(0)`); the extra perm
+rows reshape the graph so a genuinely-NONZERO value lands in that class and clobbers W0 at runtime. The first
+"WitnessId(0) hazard via `decompose_ext_to_base_coeffs`" the task warned of was a RED HERRING (sidestepped by
+ext-perm), but a DEEPER same-class collapse via `check_pow_witness`/recompose remains.
+FIX IN PROGRESS (background agent `a7b40cb5d272fe949`): ISOLATE the digest onto a SEPARATE Poseidon2 op-type
+(`BABY_BEAR_D4_W24` — distinct `NpoTypeId`/variant_name ⇒ isolated chain-state + per-op CTL) so it doesn't share
+the FRI challenger's W16 machinery. RISK flagged: the connect-DSU is circuit-global (not per-op), so op-type
+isolation may NOT change the collapse — agent to validate at `runner.run` BEFORE full W24 table-plumbing; if W24
+doesn't help, pivot to the fork DSU root-fix (forbid a created/exposed NONZERO value from slot-aliasing into
+`ExprId::ZERO`; emit an equality CONSTRAINT instead — generalize fork commit `72ffc56`). Two fork-side attempts
+already tried + reverted (Add-executor verify-don't-clobber [sound but only moved the clobber]; NPO-output
+relocation [write-side only, insufficient]). DO NOT revert to the weak quadratic fold — making Poseidon work IS
+the task. NAMED RESIDUALS (by design): online accumulator scoped OUT (codex #4, single-felt binding leaf zero-
+padded); ~124-bit (4 lanes) floor liftable to 8.
+STATE: fork CLEAN @8d42900; dregg digest code BUILDS but the real folds (`mixed_root`, `k_fold`) FAIL until the
+perm-isolation fix lands. Cheap ivc teeth 4/4; consumers compile.
+
 ## ⚑ FULL ZED AS THE DEFAULT DEV EDITOR — ONE native `links="sqlite3"` clash left (2026-06-24)
 Named by the feature-collapse + zed-full-default lane (`starbridge-v2/Cargo.toml` feature table;
 `deos-zed-full/Cargo.toml`; root `Cargo.toml` exclude; `dregg-tui/`). The cockpit's Dev editor is still

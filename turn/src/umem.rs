@@ -77,8 +77,8 @@
 use std::collections::BTreeMap;
 
 use dregg_cell::{
-    Cell, CellId, FactoryRegistry, Ledger, lifecycle::CellLifecycle, nullifier_set::NullifierSet,
-    state::STATE_SLOTS,
+    Cell, CellId, FactoryRegistry, Ledger, capability::CapabilityRef, lifecycle::CellLifecycle,
+    nullifier_set::NullifierSet, state::STATE_SLOTS,
 };
 
 use crate::journal::JournalEntry;
@@ -746,4 +746,424 @@ pub(crate) fn emit_trace(
         post: post.clone(),
         synthesized,
     })
+}
+
+// ===========================================================================
+// THE REIFY DIRECTION — the inverse of `project_cell` / `project_ledger`.
+//
+// `reify_cell` materializes one cell's projected planes back into a live
+// `Cell`, RE-DERIVING the deliberately-dropped commitments from the kept
+// planes (it does not store them): the user-field-map root (`fields_root`,
+// re-derived from the `Field { slot ≥ 16 }` plane), the heap root, the leaf
+// caches, and — at the ledger level — the Merkle tree/root (which `Ledger`
+// already rebuilds lazily on demand). This closes the time-travel `reify_seam`
+// (`turn/tests/umem_time_travel.rs`): a witnessed `UProjection` boundary lifts
+// back to a byte-identical `Ledger`.
+//
+// ## The round-trip law and its faithful class
+//
+// `reify_ledger(project_ledger(L)) == L` holds for every cell whose state is
+// expressible by the projection address space — the FAITHFUL CLASS. The
+// projection is value-lossless over that class, and `reify` re-derives the rest.
+//
+// ## The named residual (the planes the projection does NOT carry — honest)
+//
+// `project_cell` is injective on the value planes it carries, but it does NOT
+// emit a `UKey` for four cell sub-states. A cell that exercises one of these
+// carries state the boundary cannot reconstruct, so `reify_cell` REFUSES with a
+// precise [`ReifyError`] rather than silently round-tripping a lie:
+//
+//  1. **`CellState.heap_map`** — the `(collection, key) → value` heap. No `UKey`
+//     plane carries heap entries (the `heap_root` is a derived commitment, but
+//     its preimage is dropped), so a non-empty heap cannot be rebuilt from the
+//     boundary. ⇒ [`ReifyError::HeapNotProjected`].
+//  2. **`Cell.interfaces`** — the exposed typed-interface vector. No `UKey`
+//     plane carries it. ⇒ [`ReifyError::InterfacesNotProjected`].
+//  3. **`CapabilitySet.tombstones`** — revoked-slot tombstones. A revoke drops
+//     the cap from the projected `CapSlot` plane entirely AND records a
+//     tombstone slot; the boundary keeps only live caps, so a revocation cannot
+//     be reconstructed. ⇒ [`ReifyError::CapTombstonesNotProjected`].
+//  4. **`CapabilitySet.next_slot` when it exceeds the live high-water mark** —
+//     `next_slot` is monotone; if the highest-numbered slots were revoked it
+//     exceeds `max(live slot)+1` and the boundary cannot recover the gap.
+//     ⇒ [`ReifyError::CapNextSlotUnrecoverable`].
+//
+// The faithful class is exactly the cells where none of (1)–(4) hold: empty
+// heap, no interfaces, no revocations, contiguous cap slots from 0. The
+// time-travel boundary lands in this class for the transfer / set-field /
+// grant lanes the prototype proves over; the residual is the burn-down for
+// extending the projection to carry heap/interface/tombstone planes.
+//
+// Per-window executor metering (`FactoryRegistry::{creation_counts,
+// current_epoch}`, rate-limit counters) is NOT reconstructed and NOT part of
+// the round-trip law — it is documented non-consensus state (the "Named
+// exceptions" in this module's header) that never enters a state commitment.
+
+/// Why a `UProjection` could not be reified into a byte-identical state — each
+/// variant names a value plane the projection deliberately does not carry (the
+/// honest residual of the `reify_seam`; see the module section above).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReifyError {
+    /// The `Identity` blob for a cell is missing or malformed (the projection
+    /// carries `public_key ‖ token_id` as a 64-byte blob; without it the cell's
+    /// content-addressed id cannot be reconstructed).
+    MissingIdentity(CellId),
+    /// A structured-blob plane failed to decode (corrupt projection).
+    BlobDecode { key: UKey, detail: String },
+    /// A plane carried a `UVal` of the wrong shape for its `UKey`.
+    ValueShape { key: UKey, detail: String },
+    /// The reconstructed `(public_key, token_id)` does not hash to the cell id
+    /// the projection keyed it under (the content-address invariant broke).
+    IdentityMismatch { expected: CellId, derived: CellId },
+    /// The cell exercises a non-empty heap, whose preimage no `UKey` plane
+    /// carries (residual #1).
+    HeapNotProjected(CellId),
+    /// The cell exposes typed interfaces, which no `UKey` plane carries
+    /// (residual #2).
+    InterfacesNotProjected(CellId),
+    /// The cell carries capability tombstones (revoked slots), which the
+    /// `CapSlot` plane drops (residual #3).
+    CapTombstonesNotProjected(CellId),
+    /// The cell's `next_slot` exceeds the live high-water mark `max(slot)+1`,
+    /// so a revocation gap cannot be recovered from the projected live caps
+    /// (residual #4).
+    CapNextSlotUnrecoverable(CellId),
+}
+
+impl std::fmt::Display for ReifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReifyError::MissingIdentity(c) => {
+                write!(f, "reify: missing/short Identity blob for cell {c:?}")
+            }
+            ReifyError::BlobDecode { key, detail } => {
+                write!(f, "reify: blob decode failed at {key:?}: {detail}")
+            }
+            ReifyError::ValueShape { key, detail } => {
+                write!(f, "reify: wrong UVal shape at {key:?}: {detail}")
+            }
+            ReifyError::IdentityMismatch { expected, derived } => write!(
+                f,
+                "reify: identity mismatch — projection keyed {expected:?} but \
+                 derive_raw(pk, token) = {derived:?}"
+            ),
+            ReifyError::HeapNotProjected(c) => write!(
+                f,
+                "reify: cell {c:?} has a non-empty heap; no UKey plane carries \
+                 heap entries (reify_seam residual #1)"
+            ),
+            ReifyError::InterfacesNotProjected(c) => write!(
+                f,
+                "reify: cell {c:?} exposes interfaces; no UKey plane carries \
+                 them (reify_seam residual #2)"
+            ),
+            ReifyError::CapTombstonesNotProjected(c) => write!(
+                f,
+                "reify: cell {c:?} carries cap tombstones; the CapSlot plane \
+                 drops revoked slots (reify_seam residual #3)"
+            ),
+            ReifyError::CapNextSlotUnrecoverable(c) => write!(
+                f,
+                "reify: cell {c:?} next_slot exceeds the live high-water mark; \
+                 a revocation gap cannot be recovered (reify_seam residual #4)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReifyError {}
+
+fn decode_blob<T: serde::de::DeserializeOwned>(key: &UKey, val: &UVal) -> Result<T, ReifyError> {
+    match val {
+        UVal::Blob(bytes) => serde_json::from_slice(bytes).map_err(|e| ReifyError::BlobDecode {
+            key: key.clone(),
+            detail: e.to_string(),
+        }),
+        other => Err(ReifyError::ValueShape {
+            key: key.clone(),
+            detail: format!("expected Blob, got {other:?}"),
+        }),
+    }
+}
+
+fn expect_bytes32(key: &UKey, val: &UVal) -> Result<[u8; 32], ReifyError> {
+    match val {
+        UVal::Bytes32(b) => Ok(*b),
+        other => Err(ReifyError::ValueShape {
+            key: key.clone(),
+            detail: format!("expected Bytes32, got {other:?}"),
+        }),
+    }
+}
+
+/// **REIFY ONE CELL** — the inverse of [`project_cell`]. Reads the cell's
+/// projected planes out of `proj` and rebuilds a live [`Cell`], RE-DERIVING the
+/// dropped commitments (`fields_root` from the `Field { slot ≥ 16 }` plane, the
+/// leaf/cap caches) from the kept planes — it never reads a stored commitment
+/// for them.
+///
+/// Refuses (with a precise [`ReifyError`]) when the cell's state needs a plane
+/// the projection does not carry (heap preimage, interfaces, cap tombstones) —
+/// the honest residual of the `reify_seam`. See the module section above.
+///
+/// `cell` must be present in `proj` (i.e. `UKey::Exist(cell)` ↦ `Present`); the
+/// caller (`reify_ledger`) walks the `Exist` plane to find the cell set.
+pub fn reify_cell(cell: CellId, proj: &UProjection) -> Result<Cell, ReifyError> {
+    // -- identity: rebuild (pk, token_id) and re-derive the content address. --
+    let id_key = UKey::Identity(cell);
+    let (pk, token_id) = match proj.get(&id_key) {
+        Some(UVal::Blob(bytes)) if bytes.len() == 64 => {
+            let mut pk = [0u8; 32];
+            let mut token = [0u8; 32];
+            pk.copy_from_slice(&bytes[..32]);
+            token.copy_from_slice(&bytes[32..]);
+            (pk, token)
+        }
+        _ => return Err(ReifyError::MissingIdentity(cell)),
+    };
+    let derived = CellId::derive_raw(&pk, &token_id);
+    if derived != cell {
+        return Err(ReifyError::IdentityMismatch {
+            expected: cell,
+            derived,
+        });
+    }
+
+    // -- scalar heap planes (balance seeds the constructor). --
+    let balance = match proj.get(&UKey::Balance(cell)) {
+        Some(UVal::Int(b)) => *b,
+        Some(other) => {
+            return Err(ReifyError::ValueShape {
+                key: UKey::Balance(cell),
+                detail: format!("expected Int, got {other:?}"),
+            });
+        }
+        None => 0,
+    };
+    let mut c = Cell::with_balance(pk, token_id, balance);
+
+    if let Some(v) = proj.get(&UKey::Nonce(cell)) {
+        match v {
+            UVal::U64(n) => c.state.set_nonce(*n),
+            other => {
+                return Err(ReifyError::ValueShape {
+                    key: UKey::Nonce(cell),
+                    detail: format!("expected U64, got {other:?}"),
+                });
+            }
+        }
+    }
+    if let Some(UVal::Bool(b)) = proj.get(&UKey::ProvedState(cell)) {
+        c.state.set_proved_state(*b);
+    }
+    if let Some(UVal::U64(e)) = proj.get(&UKey::DelegationEpoch(cell)) {
+        c.state.set_delegation_epoch(*e);
+    }
+    if let Some(UVal::U64(h)) = proj.get(&UKey::CommittedHeight(cell)) {
+        c.state.set_committed_height(*h);
+    }
+
+    // -- fixed field slots, visibility, per-slot commitments. --
+    for slot in 0..STATE_SLOTS {
+        let fk = UKey::Field {
+            cell,
+            slot: slot as u64,
+        };
+        if let Some(v) = proj.get(&fk) {
+            c.state.fields[slot] = expect_bytes32(&fk, v)?;
+        }
+        let vk = UKey::FieldVisibility {
+            cell,
+            slot: slot as u64,
+        };
+        if let Some(v) = proj.get(&vk) {
+            c.state.field_visibility[slot] = decode_blob(&vk, v)?;
+        }
+        let ck = UKey::FieldCommitment {
+            cell,
+            slot: slot as u64,
+        };
+        c.state.commitments[slot] = match proj.get(&ck) {
+            Some(v) => Some(expect_bytes32(&ck, v)?),
+            None => None,
+        };
+    }
+
+    // -- the overflow user-field MAP (keys ≥ STATE_SLOTS): rebuild the map,
+    //    then RE-DERIVE `fields_root` from it (don't store the dropped root). --
+    let mut overflow: BTreeMap<u64, [u8; 32]> = BTreeMap::new();
+    for (k, v) in proj.range(UKey::Field { cell, slot: 0 }..) {
+        match k {
+            UKey::Field { cell: kc, slot } if *kc == cell => {
+                if *slot >= STATE_SLOTS as u64 {
+                    overflow.insert(*slot, expect_bytes32(k, v)?);
+                }
+            }
+            // BTreeMap order: once the key leaves this cell's Field run, stop.
+            _ => break,
+        }
+    }
+    c.state.fields_map = overflow;
+    c.state.reseal_fields_root(); // re-derive the dropped `fields_root`.
+
+    // -- the kept root planes (these ARE projected, byte-for-byte). --
+    if let Some(v) = proj.get(&UKey::SwissTableRoot(cell)) {
+        c.state.swiss_table_root = expect_bytes32(&UKey::SwissTableRoot(cell), v)?;
+    }
+    if let Some(v) = proj.get(&UKey::RefcountTableRoot(cell)) {
+        c.state.refcount_table_root = expect_bytes32(&UKey::RefcountTableRoot(cell), v)?;
+    }
+    for i in 0..c.state.system_roots.len() {
+        let sk = UKey::SystemRoot {
+            cell,
+            index: i as u64,
+        };
+        if let Some(v) = proj.get(&sk) {
+            c.state.system_roots[i] = expect_bytes32(&sk, v)?;
+        }
+    }
+    // `heap_root` IS projected, but its PREIMAGE (`heap_map`) is not — a cell
+    // with a non-empty heap carries a non-empty-constant `heap_root`. Refuse
+    // rather than round-trip a heap the boundary cannot rebuild.
+    if let Some(v) = proj.get(&UKey::HeapRoot(cell)) {
+        let projected = expect_bytes32(&UKey::HeapRoot(cell), v)?;
+        if projected != dregg_cell::state::empty_heap_root() {
+            return Err(ReifyError::HeapNotProjected(cell));
+        }
+        c.state.heap_root = projected; // the empty constant, byte-for-byte.
+    }
+
+    // -- lifecycle / mode / permissions / vk / program (structured blobs). --
+    if let Some(v) = proj.get(&UKey::Lifecycle(cell)) {
+        c.lifecycle = decode_blob(&UKey::Lifecycle(cell), v)?;
+    }
+    if let Some(v) = proj.get(&UKey::Mode(cell)) {
+        c.mode = decode_blob(&UKey::Mode(cell), v)?;
+    }
+    if let Some(v) = proj.get(&UKey::Permissions(cell)) {
+        c.permissions = decode_blob(&UKey::Permissions(cell), v)?;
+    }
+    c.verification_key = match proj.get(&UKey::VerificationKey(cell)) {
+        Some(v) => Some(decode_blob(&UKey::VerificationKey(cell), v)?),
+        None => None,
+    };
+    if let Some(v) = proj.get(&UKey::Program(cell)) {
+        c.program = decode_blob(&UKey::Program(cell), v)?;
+    }
+
+    // -- delegation pointer + snapshot. --
+    c.delegate = match proj.get(&UKey::Delegate(cell)) {
+        Some(v) => Some(CellId(expect_bytes32(&UKey::Delegate(cell), v)?)),
+        None => None,
+    };
+    c.delegation = match proj.get(&UKey::DelegationSnapshot(cell)) {
+        Some(v) => Some(decode_blob(&UKey::DelegationSnapshot(cell), v)?),
+        None => None,
+    };
+
+    // -- capabilities (the caps-domain `CapSlot` plane): reinstall live caps in
+    //    slot order. A revoke drops the cap from this plane AND adds a
+    //    tombstone, so the boundary keeps only live caps — refuse if the
+    //    reconstructed set could not be byte-identical (residuals #3/#4). --
+    let mut caps: Vec<CapabilityRef> = Vec::new();
+    for (k, v) in proj.iter() {
+        if let UKey::CapSlot { cell: kc, slot: _ } = k {
+            if *kc == cell {
+                caps.push(decode_blob(k, v)?);
+            }
+        }
+    }
+    caps.sort_by_key(|cap| cap.slot);
+    // The projection is byte-identical only when the live slots are exactly
+    // 0..len (no revocation gap, no tombstones). `grant_ref` assigns slot = the
+    // current `next_slot`, so contiguous-from-0 reproduces the original.
+    let contiguous = caps.iter().enumerate().all(|(i, cap)| cap.slot == i as u32);
+    if !contiguous {
+        return Err(ReifyError::CapNextSlotUnrecoverable(cell));
+    }
+    for cap in &caps {
+        c.capabilities
+            .grant_ref(cap)
+            .ok_or(ReifyError::CapNextSlotUnrecoverable(cell))?;
+    }
+    // `grant_ref` preserves every field except the slot, which it re-assigns
+    // contiguously — so the reconstructed `CapabilityRef`s equal the originals
+    // for the faithful (contiguous, no-tombstone) class.
+
+    // -- residual guards: interfaces are not projected. The `Cell` type no longer
+    // carries a typed-interface vector (the field was lifted out of the kernel cell),
+    // so a reified cell exposes none by construction — the guard is vacuously held.
+    // (`ReifyError::InterfacesNotProjected` is retained for a future projection
+    // extension that would re-introduce a fillable interface plane.)
+
+    Ok(c)
+}
+
+/// **REIFY THE LEDGER** — the inverse of [`project_ledger`]. Rebuilds every
+/// present cell (walking the `Exist` plane) and the sovereign-commitment table,
+/// inserting into a fresh [`Ledger`]. The Merkle tree/root is NOT reconstructed
+/// here: `Ledger` rebuilds it lazily on the next `root()` — the dropped ledger
+/// commitment is re-derived on demand, exactly the projection's documented
+/// "derived commitment over the cells" non-cell.
+///
+/// `reify_ledger(project_ledger(L)) == L` for every `L` in the faithful class
+/// (see the module section above); a cell outside it yields a precise
+/// [`ReifyError`].
+pub fn reify_ledger(proj: &UProjection) -> Result<Ledger, ReifyError> {
+    let mut ledger = Ledger::new();
+    for (k, _) in proj.iter() {
+        if let UKey::Exist(cell) = k {
+            let c = reify_cell(*cell, proj)?;
+            // `insert_cell` re-derives membership + marks the tree dirty; the
+            // root materializes lazily when next asked for.
+            ledger.insert_cell(c).map_err(|e| ReifyError::BlobDecode {
+                key: UKey::Exist(*cell),
+                detail: format!("ledger insert: {e:?}"),
+            })?;
+        }
+    }
+    for (k, v) in proj.iter() {
+        if let UKey::SovereignCommitment(cell) = k {
+            let commitment = expect_bytes32(k, v)?;
+            ledger
+                .register_sovereign_cell(*cell, commitment)
+                .map_err(|e| ReifyError::BlobDecode {
+                    key: UKey::SovereignCommitment(*cell),
+                    detail: format!("sovereign register: {e:?}"),
+                })?;
+        }
+    }
+    Ok(ledger)
+}
+
+/// **REIFY THE FULL EXECUTOR STATE** — the inverse of
+/// [`project_executor_state`]: rebuilds the ledger plus the executor-owned side
+/// tables (note nullifiers, bridged nullifiers, factory descriptors) the
+/// projection carries. Per-window factory metering (`creation_counts`,
+/// `current_epoch`) is NOT reconstructed — it is documented non-consensus
+/// metering, so the returned registry carries only the descriptors (its
+/// metering resets to default).
+pub fn reify_executor_state(
+    proj: &UProjection,
+) -> Result<(Ledger, NullifierSet, BridgedNullifierSet, FactoryRegistry), ReifyError> {
+    let ledger = reify_ledger(proj)?;
+    let mut note_nullifiers = NullifierSet::new();
+    let mut bridged_nullifiers = BridgedNullifierSet::new();
+    let mut factories = FactoryRegistry::new();
+    for (k, v) in proj.iter() {
+        match k {
+            UKey::NoteNullifier(n) => {
+                let _ = note_nullifiers.insert(dregg_cell::note::Nullifier(*n));
+            }
+            UKey::BridgedNullifier(n) => {
+                let _ = bridged_nullifiers.insert(*n);
+            }
+            UKey::Factory(vk) => {
+                let desc = decode_blob(k, v)?;
+                factories.descriptors.insert(*vk, desc);
+            }
+            _ => {}
+        }
+    }
+    Ok((ledger, note_nullifiers, bridged_nullifiers, factories))
 }

@@ -34,24 +34,26 @@
 //! boundary the chain already attested. The rewind here is the in-Rust shadow; the
 //! Lean binding makes the restored boundary trustworthy rather than free-witnessed.
 //!
-//! THE NAMED SEAM (`reify_seam`): materializing a `UProjection` back into a live
-//! byte-identical `Ledger` awaits a `reify_cell` inverse of `project_cell`, because
-//! the projection deliberately DROPS derived commitments (the ledger Merkle root,
-//! `fields_root`) and per-window metering — documented non-cells in
-//! `turn/src/umem.rs`. Those are RECOMPUTED on reconstruction, so the seam is a
-//! WIRE (re-derive the dropped commitments from the restored cell planes), not a
-//! hole: the rewind GUARANTEE already lives complete at the projection+op-trace
-//! level (proven here) and the boundary↔committed-root binding is proven in Lean.
-//! `reify_cell` is the lane-finisher that lifts the witnessed boundary back to a
-//! byte-restored `Ledger`. The test structure-prototypes reify for the planes the
-//! projection carries (balances) and asserts the rewound boundary, naming the gap
-//! precisely.
+//! THE SEAM IS CLOSED (`reify_seam`): materializing a `UProjection` back into a
+//! live byte-identical `Ledger` is now [`reify_cell`] / [`reify_ledger`] — the
+//! inverse of `project_cell`. The projection deliberately DROPS derived
+//! commitments (the ledger Merkle root, `fields_root`) and per-window metering —
+//! documented non-cells in `turn/src/umem.rs` — and reify RE-DERIVES them from
+//! the kept planes (it does not store them): `fields_root` from the
+//! `Field { slot ≥ 16 }` plane, the ledger Merkle root lazily on the next
+//! `root()`. The round-trip law `reify_ledger(project_ledger(L)) == L` is PROVEN
+//! below over the faithful class (the class the projection is value-lossless on),
+//! and the precise residual — four value planes the projection does not yet carry
+//! (heap preimage, interfaces, cap tombstones, the post-revoke `next_slot` gap) —
+//! is named by [`ReifyError`] and exercised by the refusal tests below: reify
+//! REFUSES rather than round-trip a state the boundary cannot reconstruct.
 
 use std::sync::atomic::Ordering;
 
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use dregg_turn::umem::{
-    UKey, UProjection, UVal, UmemKind, UmemOp, disciplined, fold, project_executor_state,
+    ReifyError, UKey, UProjection, UVal, UmemKind, UmemOp, disciplined, fold,
+    project_executor_state, project_ledger, reify_cell, reify_ledger,
 };
 use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
@@ -312,29 +314,105 @@ fn rewind_to_self_is_a_noop() {
 }
 
 // ===========================================================================
-// REIFY DIRECTION (structure-prototype) — restore a boundary back into a live
-// `Ledger` for the planes the projection carries losslessly (balances).
-//
-// THE NAMED SEAM (`reify_seam`): a full byte-identical `Ledger` restore from a
-// `UProjection` alone awaits a `reify_cell` inverse of `project_cell`. The
-// projection DROPS derived commitments (ledger Merkle root, `fields_root`) and
-// per-window metering by design (see `turn/src/umem.rs` "Named exceptions"); those
-// are RECOMPUTED on reconstruction, not stored in the boundary. So this prototype
-// reifies the carried planes (balance) and asserts the live ledger matches the H
-// boundary on them; the keystone closes the remaining planes.
+// REIFY DIRECTION (the seam, CLOSED) — `reify_ledger` is the byte-identical
+// inverse of `project_ledger`, re-deriving the dropped commitments from the
+// kept planes.
 // ===========================================================================
+
+/// THE ROUND-TRIP LAW: `reify_ledger(project_ledger(L)) == L` over a populated
+/// ledger in the faithful class (the planes the projection carries losslessly).
+/// The dropped `fields_root` / heap_root / leaf caches / ledger Merkle root are
+/// RE-DERIVED on reconstruction, not stored — and the rebuilt ledger is
+/// `PartialEq`-equal to the original, cell-for-cell.
 #[test]
-fn reify_seam_balance_plane_restores_from_boundary() {
-    let agent = make_open_cell(4, 800);
-    let target = make_open_cell(5, 20);
+fn reify_ledger_round_trips_a_populated_ledger() {
+    // A ledger exercising the carried planes: balances, nonce, fixed fields,
+    // overflow user-field map (slot ≥ 16 → fields_root re-derive), a granted
+    // capability, custom permissions.
+    let mut agent = make_open_cell(7, 1234);
+    agent.state.set_field(0, [9u8; 32]);
+    agent.state.set_field(3, [4u8; 32]);
+    // overflow user-field MAP entries — these drive the dropped `fields_root`.
+    agent.state.set_field_ext(16, [1u8; 32]);
+    agent.state.set_field_ext(99, [2u8; 32]);
+    let target = make_open_cell(8, 77);
     let (agent_id, target_id) = (agent.id(), target.id());
+    // a live capability agent → target (contiguous slot 0 — faithful class).
+    agent
+        .capabilities
+        .grant(target_id, dregg_cell::AuthRequired::None);
+
     let mut ledger = Ledger::new();
     ledger.insert_cell(agent).unwrap();
     ledger.insert_cell(target).unwrap();
+
+    // PROJECT → REIFY → equal.
+    let proj = project_ledger(&ledger);
+    let mut reified = reify_ledger(&proj).expect("faithful-class ledger reifies");
+
+    // Cell-for-cell byte identity (Cell: PartialEq excludes only the leaf cache,
+    // which reify reconstructs dirty exactly as a fresh decode would).
+    let orig_agent = ledger.get(&agent_id).unwrap();
+    let new_agent = reified.get(&agent_id).unwrap();
+    assert_eq!(
+        new_agent, orig_agent,
+        "reified agent cell is byte-identical (all carried planes + re-derived \
+         fields_root)"
+    );
+    assert_eq!(
+        reified.get(&target_id).unwrap(),
+        ledger.get(&target_id).unwrap(),
+        "reified target cell is byte-identical"
+    );
+
+    // The DROPPED fields_root was RE-DERIVED, not stored — it equals the original
+    // (which the overflow map genuinely commits).
+    assert_eq!(
+        new_agent.state.fields_root, orig_agent.state.fields_root,
+        "fields_root re-derived from the projected Field(slot≥16) plane"
+    );
+    assert_ne!(
+        new_agent.state.fields_root,
+        dregg_cell::state::empty_fields_root(),
+        "the populated map's root is non-vacuous (genuinely re-derived)"
+    );
+
+    // The DROPPED ledger Merkle root re-materializes lazily and matches.
+    assert_eq!(
+        reified.root(),
+        ledger.root(),
+        "the ledger Merkle root re-derives on demand to the original"
+    );
+
+    // And the projection of the reified ledger equals the original projection —
+    // the round-trip closes the loop at the boundary level too.
+    assert_eq!(
+        project_ledger(&reified),
+        proj,
+        "project(reify(project(L))) == project(L)"
+    );
+}
+
+/// THE TIME-TRAVEL PAYOFF: snapshot(H) → advance (real executor turns) → REIFY
+/// the H boundary into a live `Ledger` → it equals the height-H world. This is
+/// `reify_cell` finishing the lane the rewind prototype above proved at the
+/// projection level: the witnessed boundary lifts back to a byte-restored ledger.
+#[test]
+fn reify_restores_a_live_ledger_to_height_h() {
+    let agent = make_open_cell(9, 500);
+    let target = make_open_cell(10, 10);
+    let (agent_id, target_id) = (agent.id(), target.id());
+    let mut ledger_h = Ledger::new();
+    ledger_h.insert_cell(agent).unwrap();
+    ledger_h.insert_cell(target).unwrap();
+
     let executor = TurnExecutor::new(ComputronCosts::zero());
 
-    // snapshot H, advance, then reify the balance plane back from the H boundary.
-    let boundary_h = snapshot_boundary(&executor, &ledger);
+    // SNAPSHOT the umem boundary at H.
+    let boundary_h = snapshot_boundary(&executor, &ledger_h);
+
+    // ADVANCE: a real transfer past H (mutate the live ledger).
+    let mut ledger = ledger_h.clone();
     let turn = single_effect_turn(
         agent_id,
         agent_id,
@@ -342,32 +420,70 @@ fn reify_seam_balance_plane_restores_from_boundary() {
         Effect::Transfer {
             from: agent_id,
             to: target_id,
-            amount: 100,
+            amount: 123,
         },
     );
     assert!(executor.execute(&turn, &mut ledger).is_committed());
-    assert_eq!(ledger.get(&agent_id).unwrap().state.balance(), 700);
+    assert_eq!(ledger.get(&agent_id).unwrap().state.balance(), 377);
 
-    // REIFY the balance plane from the H boundary onto the live ledger.
-    for (k, v) in boundary_h.iter() {
-        if let (UKey::Balance(id), UVal::Int(bal)) = (k, v) {
-            // restore the balance the boundary recorded at H.
-            let mut c = ledger.get(id).cloned().unwrap();
-            c.state.set_balance(*bal);
-            ledger.remove(id);
-            ledger.insert_cell(c).unwrap();
-        }
-    }
-    // the live ledger's balance plane now matches the H boundary (the carried plane
-    // round-trips). Full-cell reify (derived roots, all planes) is the seam.
+    // REIFY the H boundary back into a live ledger — the whole-ledger restore.
+    let mut restored = reify_ledger(&boundary_h).expect("H boundary reifies");
     assert_eq!(
-        ledger.get(&agent_id).unwrap().state.balance(),
-        800,
-        "agent balance reified back to the H boundary"
+        restored.get(&agent_id).unwrap(),
+        ledger_h.get(&agent_id).unwrap(),
+        "reified agent cell == the height-H cell"
     );
     assert_eq!(
-        ledger.get(&target_id).unwrap().state.balance(),
-        20,
-        "target balance reified back to the H boundary"
+        restored.get(&target_id).unwrap(),
+        ledger_h.get(&target_id).unwrap(),
+        "reified target cell == the height-H cell"
     );
+    assert_eq!(
+        restored.root(),
+        ledger_h.root(),
+        "the restored ledger's Merkle root == the height-H root"
+    );
+}
+
+/// THE HONEST RESIDUAL #1 — a non-empty HEAP is not carried by any `UKey`
+/// plane (only its derived `heap_root` is, and its preimage is dropped). reify
+/// REFUSES rather than fabricate an empty heap under a non-empty root.
+#[test]
+fn reify_refuses_heap_not_projected() {
+    let mut cell = make_open_cell(11, 100);
+    cell.state.set_heap(1, 2, [42u8; 32]); // non-empty heap → non-empty heap_root.
+    let id = cell.id();
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(cell).unwrap();
+
+    let proj = project_ledger(&ledger);
+    let err = reify_cell(id, &proj).expect_err("a heap-bearing cell must refuse");
+    assert_eq!(err, ReifyError::HeapNotProjected(id));
+}
+
+/// THE HONEST RESIDUAL #3/#4 — a REVOKED capability leaves a tombstone and a
+/// `next_slot` gap that the live-only `CapSlot` plane drops. reify REFUSES
+/// because the reconstructed cap set could not be byte-identical.
+#[test]
+fn reify_refuses_cap_revocation_gap() {
+    let target = make_open_cell(13, 0);
+    let target_id = target.id();
+    let mut cell = make_open_cell(12, 100);
+    // grant two caps (slots 0, 1) then revoke slot 0 → slot 0 tombstoned,
+    // next_slot = 2, live caps = {slot 1}. The projection keeps only slot 1, so
+    // a faithful reify cannot recover the slot-0 tombstone / next_slot=2.
+    cell.capabilities
+        .grant(target_id, dregg_cell::AuthRequired::None);
+    cell.capabilities
+        .grant(target_id, dregg_cell::AuthRequired::None);
+    cell.capabilities.revoke(0);
+    let id = cell.id();
+
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(cell).unwrap();
+    ledger.insert_cell(target).unwrap();
+
+    let proj = project_ledger(&ledger);
+    let err = reify_cell(id, &proj).expect_err("a revoked-cap cell must refuse");
+    assert_eq!(err, ReifyError::CapNextSlotUnrecoverable(id));
 }
