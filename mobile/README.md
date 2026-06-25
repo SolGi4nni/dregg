@@ -11,8 +11,9 @@ run recipe against the Android Emulator.
 |---|---|
 | **Verified core compiles for `aarch64-linux-android`** | ✅ DONE — `dregg-turn` + the full default `prover` feature (circuit + crypto: ark-bls12-381, curve25519, ed25519, chacha20) cross-compile clean, zero source changes |
 | **Verified core RUNS on android** | ✅ DONE — `deos-core-smoke` ran on the live emulator: a transfer turn committed, value conserved (Σδ=0), a receipt landed (see `deos-core-smoke/RUN-OUTPUT.txt`) |
-| **A gpui frame on android** | ⛔ WALL — gpui has no android `Platform` backend (no `android-activity`/`ndk` dep; only macos/linux/win/freebsd). The `gpui_wgpu` renderer takes a `raw_window_handle` so the *draw* path is reachable, but a real frame needs a new `PlatformAndroid` backend — a gpui-fork change this pass is constrained not to make. See `GRAPHIDEOS.md §7`. |
-| **APK + run in emulator** | ⛔ gated on the gpui frame above |
+| **gpui `PlatformAndroid` backend** | ✅ BUILT — the `gpui_android` crate in the `emberian/zed` fork (platform + android-activity event loop/lifecycle + window-from-`ANativeWindow` + dispatcher + touch input + cosmic-text). Compiles for `aarch64-linux-android`; wired into `gpui_platform::current_platform()` under `cfg(target_os="android")`, other platforms untouched. |
+| **APK + run in emulator** | ✅ DONE — `deos-android-paint/` packages via `cargo-apk`, installs + launches on the live emulator; `android_main` runs, the platform creates a **Vulkan surface from the `ANativeWindow`**, wgpu selects an adapter and builds the renderer (`surface + renderer ready` in logcat). |
+| **deos paints a frame (pixels on screen)** | ⚠ EMULATOR-GPU WALL — the backend reaches renderer-ready, but neither emulator GPU path lands a clean frame: SwiftShader (CPU Vulkan) is correct + stable but its LLVM JIT compiles gpui's pipeline set pathologically slowly (>15 min); the host-GPU emulator's MoltenVK loses the wgpu device at init (`Unexpected error variant`) so the sprite atlas is invalidated; its GL adapter advertises 0 compute workgroups (gpui needs compute) so device creation is rejected. This is an emulator driver-quality wall, not a backend defect — a physical arm64 device (real Vulkan) is the clean target. |
 
 ## Prerequisites (already set up on this host — shared with the `android-cell` lane)
 
@@ -50,13 +51,24 @@ conserved value, and emitted a receipt.` (full transcript in
   receipt. A **workspace member but NOT a default-member** (mirrors `android-cell`)
   so it inherits the root `[patch.crates-io]` (the ark-serialize fork etc.) while
   the default light dev loop stays android-free. Build it explicitly with `-p`.
+- `deos-android-paint/` — the STEP 2 gpui app: a gpui `Application` painting a
+  deos "first-run welcome" frame, packaged as an APK. A **standalone package**
+  (its own `[workspace]`) depending on the `emberian/zed` fork by path (the
+  checkout carrying the new `gpui_android` backend). Build + install + run:
+  `cd deos-android-paint && cargo apk run --target aarch64-linux-android`.
+  Backend selection knob for the emulator: `adb shell setprop debug.gpui.backends
+  vulkan|gl` (the app reads it; `GPUI_WGPU_BACKENDS` env in gpui_wgpu is the
+  underlying lever).
 
 ## Next walls (the ordered frontier)
 
-1. **The gpui android backend** — a `PlatformAndroid` (window from `ANativeWindow`,
-   an android event/IME pump, lifecycle) so gpui can paint one deos frame to an
-   android `SurfaceView`. The biggest single unlock for "deos painting on android."
-   Upstream `gpui-mobile` is the demonstrated shape to lift.
+1. **A clean painted frame** — the `gpui_android` backend reaches renderer-ready
+   on the emulator, but the emulator's GPU drivers block the actual pixels (see
+   the status table: SwiftShader compile time / MoltenVK device-loss / GL no
+   compute). The clean path is a **physical arm64 device** (real Vulkan). Then:
+   the named on-device backend ports — keycode→`Keystroke` + IME commit (the soft
+   keyboard already shows; `AndroidWindowInner::is_composing` is the hook),
+   pinch/multi-touch, scroll-axis extraction, window insets.
 2. **The Lean producer android archive** — cross-compile `libdregg_lean.a` for
    `aarch64-linux-android` so the verified-Lean producer (not just the Rust verify
    path) runs on-device.

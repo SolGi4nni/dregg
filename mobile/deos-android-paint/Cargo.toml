@@ -1,0 +1,47 @@
+# deos-android-paint — graphideOS step 2: a gpui app painting a real deos frame
+# on android, packaged as an APK (cargo-apk). It is a STANDALONE package (its own
+# [workspace]) so it does not pull the breadstuffs workspace; it depends on the
+# emberian/zed gpui fork by path (the local checkout that carries the new
+# gpui_android PlatformAndroid backend).
+[package]
+name = "deos-android-paint"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone: do not be absorbed into a parent workspace.
+[workspace]
+
+[lib]
+# An android app is a shared object loaded by the runtime; `android_main` is the
+# entrypoint (the `android-activity` macro generates the JNI glue).
+crate-type = ["cdylib"]
+
+[dependencies]
+# The gpui fork carrying the new android backend (local checkout).
+gpui = { path = "../../../emberian-zed/crates/gpui" }
+gpui_platform = { path = "../../../emberian-zed/crates/gpui_platform" }
+gpui_android = { path = "../../../emberian-zed/crates/gpui_android" }
+android-activity = { version = "0.6", features = ["native-activity"] }
+log = "0.4"
+android_logger = "0.14"
+
+# cargo-apk metadata: the APK manifest. NativeActivity (no Java/gradle needed).
+[package.metadata.android]
+package = "software.ember.deos.paint"
+build_targets = ["aarch64-linux-android"]
+apk_name = "deos-android-paint"
+
+[package.metadata.android.sdk]
+min_sdk_version = 28
+target_sdk_version = 34
+
+[package.metadata.android.application]
+label = "deos paint"
+# Fullscreen so the deos frame owns the whole display.
+theme = "@android:style/Theme.NoTitleBar.Fullscreen"
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.vulkan.level"
+required = true
+version = 0
