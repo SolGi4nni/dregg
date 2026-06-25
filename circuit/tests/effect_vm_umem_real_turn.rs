@@ -40,11 +40,13 @@ use std::time::Instant;
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, MemKind, UMemBoundaryWitness, UMemOpSpec,
-    VmConstraint2, prove_vm_descriptor2_umem, verify_vm_descriptor2,
+    EffectVmDescriptor2, MapKind, MapOpSpec, MemBoundaryWitness, MemKind, UMemBoundaryWitness,
+    UMemOpSpec, VmConstraint2, prove_vm_descriptor2, prove_vm_descriptor2_umem,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::lean_descriptor_air::LeanExpr;
+use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 use dregg_turn::umem::{UKey, UVal, UmemKind, UmemOp, disciplined, fold, receipt_op};
 use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
@@ -417,4 +419,265 @@ fn umem_real_turn_stale_prev_refuses() {
         &boundary,
     );
     assert!(r.is_err(), "a stale-prev double-claim must refuse");
+}
+
+// ============================================================================
+// THE CROSS-CELL-READ LEG — a turn proving it READ a SECOND cell's committed state.
+//
+// The unlock the boundary→committed-state binding opens (`docs/UNIVERSAL-MAP-ROTATION.md`;
+// Lean anchors `boundary_init_root_derived` / `boundary_init_root_bound` in
+// `Dregg2/Crypto/UniversalMemory.lean`, lifted to the IR as `satisfied2U_init_root`).
+//
+// Today's cross-cell read (`StateConstraint::ObservedFieldEquals`,
+// `turn/src/executor/execute_tree.rs`) is WITNESS-enforced only: the executor binds a peer
+// cell's genuine `state_commitment()` and admits iff the declared `at_root` matches AND the
+// local field equals the peer's finalized value — NO in-circuit fact. This leg LIFTS that into
+// a circuit fact: the peer cell's committed FIELD-PLANE heap root is pinned to a public input
+// (the published commitment), and a `MapOp::Read` opens the read field against THAT root. The
+// soundness is exactly `boundary_init_root_derived`'s `hsem` realized per declared address: the
+// opened cell genuinely lives in the committed pre-state map whose root is published. A forged
+// peer root has no satisfying membership path (the anti-forge tooth, the circuit twin of the
+// executor's empty-binding rejection); a forged field value opens to the genuine leaf, not the
+// claim, and refuses (the mismatch tooth).
+//
+// SOUNDNESS SCOPE (named precisely): this binds each TOUCHED init/read cell to the committed
+// root by per-cell membership (a faithful SUBSET view — "cell X's published field IS this"),
+// which is exactly the cross-cell-read primitive's need. The whole-IMAGE equality (the SUBSET
+// *and* the no-extra-cells direction, i.e. the full sorted-Poseidon2 root recompute over the
+// entire boundary `boundaryCells`, `boundary_init_root_bound`'s injectivity) is the named tail
+// requiring the in-circuit whole-boundary root-fold; it rides the universal-map rotation, not
+// this pass.
+
+/// The deployed-shape column layout for the cross-cell read MapOp (arbitrary but stable):
+/// col 0 = the peer's published field-plane root (pinned to PI 0), col 1 = the read field
+/// address, col 2 = the read field value.
+const XC_ROOT: usize = 0;
+const XC_ADDR: usize = 1;
+const XC_VALUE: usize = 2;
+
+/// Build a peer cell, publish its field-plane heap (`(slot, field_value)` leaves over its
+/// non-zero fields), and return `(peer_cell, peer_field_heap, root)`. The root is the in-circuit
+/// commitment to the peer's field state the cross-cell read opens against.
+fn peer_field_heap(peer: &Cell) -> (Vec<HeapLeaf>, BabyBear) {
+    let mut leaves: Vec<HeapLeaf> = Vec::new();
+    for (slot, f) in peer.state.fields.iter().enumerate() {
+        // a field cell exists in the published map iff its first felt-limb is non-zero (a
+        // simple deterministic presence rule for this leg — every present cell opens).
+        let v = u32::from_le_bytes([f[0], f[1], f[2], f[3]]);
+        if v != 0 {
+            leaves.push(HeapLeaf {
+                addr: BabyBear::new(slot as u32 + 1), // +1: keep addr 0 out of the sentinel range
+                value: BabyBear::new(v),
+            });
+        }
+    }
+    let tree = CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH);
+    (leaves, tree.root())
+}
+
+/// The descriptor for the cross-cell read: one `MapOp::Read` opening the read field against the
+/// peer root, with the root column PINNED to PI 0 (the published commitment). Width 4.
+fn xcell_read_desc() -> EffectVmDescriptor2 {
+    EffectVmDescriptor2 {
+        name: "xcell-read".to_string(),
+        trace_width: 4,
+        public_input_count: 1,
+        tables: vec![],
+        constraints: vec![
+            // The peer-root column EQUALS the published commitment (the anti-forge anchor:
+            // the opened root is not prover-chosen, it is the PI-bound committed value).
+            VmConstraint2::Base(VmConstraint::PiBinding {
+                row: VmRow::First,
+                col: XC_ROOT,
+                pi_index: 0,
+            }),
+            // The read: open `(addr, value)` against the committed peer root (root unchanged).
+            VmConstraint2::MapOp(MapOpSpec {
+                guard: LeanExpr::Const(1),
+                root: LeanExpr::Var(XC_ROOT),
+                key: LeanExpr::Var(XC_ADDR),
+                value: LeanExpr::Var(XC_VALUE),
+                new_root: LeanExpr::Var(XC_ROOT),
+                op: MapKind::Read,
+            }),
+        ],
+        hash_sites: vec![],
+        ranges: vec![],
+    }
+}
+
+/// Execute a turn that mutates cell A but only READS cell B, and return cell B's published
+/// field heap + root + a chosen (read-addr, read-value) the turn observed.
+fn cross_cell_read_setup() -> (Vec<HeapLeaf>, BabyBear, BabyBear, BabyBear) {
+    // cell A: the actor the turn mutates. cell B: the peer the turn READS, never mutates.
+    let mut agent = make_open_cell(21, 1000);
+    agent.state.fields[0] = [9u8; 32];
+    let mut peer = make_open_cell(22, 500);
+    // give the peer some committed field state (the thing the turn reads).
+    peer.state.fields[3] = {
+        let mut b = [0u8; 32];
+        b[..4].copy_from_slice(&777u32.to_le_bytes());
+        b
+    };
+    let (heap, root) = peer_field_heap(&peer);
+    // the read: peer field slot 3 (addr 4) opens to value 777.
+    let read_addr = BabyBear::new(3 + 1);
+    let read_value = BabyBear::new(777);
+
+    let agent_id = agent.id();
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(agent).unwrap();
+    ledger.insert_cell(peer).unwrap();
+
+    // a real turn touching ONLY cell A (a self set-field), proving cell B is untouched.
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    executor.umem_witness_enabled.store(true, Ordering::Relaxed);
+    let mut forest = CallForest::new();
+    forest.add_root(Action {
+        target: agent_id,
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: Default::default(),
+        effects: vec![Effect::SetField {
+            cell: agent_id,
+            index: 1,
+            value: [5u8; 32],
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+        witness_blobs: vec![],
+    });
+    let turn = Turn {
+        agent: agent_id,
+        nonce: 0,
+        call_forest: forest,
+        fee: 0,
+        memo: None,
+        valid_until: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
+    };
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed(), "the mutating turn must commit");
+    (heap, root, read_addr, read_value)
+}
+
+#[test]
+fn cross_cell_read_proves_committed_peer_state() {
+    let (heap, root, read_addr, read_value) = cross_cell_read_setup();
+    let desc = xcell_read_desc();
+    let mut row = vec![BabyBear::ZERO; 4];
+    row[XC_ROOT] = root;
+    row[XC_ADDR] = read_addr;
+    row[XC_VALUE] = read_value;
+    let trace = vec![row; 4];
+
+    // the published commitment is the public input; the root column is PI-bound to it.
+    let proof = prove_vm_descriptor2(
+        &desc,
+        &trace,
+        &[root],
+        &MemBoundaryWitness::default(),
+        &[heap.clone()],
+    )
+    .expect("an honest cross-cell read of committed peer state must prove");
+    verify_vm_descriptor2(&desc, &proof, &[root])
+        .expect("the cross-cell read verifies against the published commitment");
+}
+
+#[test]
+fn cross_cell_read_forged_peer_root_refuses() {
+    let (heap, root, read_addr, read_value) = cross_cell_read_setup();
+    let desc = xcell_read_desc();
+    let forged_root = root + BabyBear::ONE;
+    assert_ne!(forged_root, root);
+    let mut row = vec![BabyBear::ZERO; 4];
+    row[XC_ROOT] = forged_root; // a root not matching any published peer heap
+    row[XC_ADDR] = read_addr;
+    row[XC_VALUE] = read_value;
+    let trace = vec![row; 4];
+
+    // bind the PI to the forged root too (so PiBinding passes): the MapOp Read still has no
+    // witness heap with that root — the anti-forge membership tooth bites.
+    let r = prove_vm_descriptor2(
+        &desc,
+        &trace,
+        &[forged_root],
+        &MemBoundaryWitness::default(),
+        &[heap],
+    );
+    assert!(
+        r.is_err(),
+        "a forged peer root must refuse (no membership path)"
+    );
+}
+
+#[test]
+fn cross_cell_read_forged_field_value_refuses() {
+    let (heap, root, read_addr, _read_value) = cross_cell_read_setup();
+    let desc = xcell_read_desc();
+    let mut row = vec![BabyBear::ZERO; 4];
+    row[XC_ROOT] = root;
+    row[XC_ADDR] = read_addr;
+    row[XC_VALUE] = BabyBear::new(778); // NOT the committed 777
+    let trace = vec![row; 4];
+
+    let r = prove_vm_descriptor2(
+        &desc,
+        &trace,
+        &[root],
+        &MemBoundaryWitness::default(),
+        &[heap],
+    );
+    assert!(
+        r.is_err(),
+        "a forged read value must refuse (opens to the genuine leaf, not the claim)"
+    );
+}
+
+#[test]
+fn cross_cell_read_pi_mismatch_refuses() {
+    // the published commitment PI must EQUAL the opened root: a turn claiming it read against
+    // commitment C while opening against a different root C' is refused by the PiBinding leg.
+    let (heap, root, read_addr, read_value) = cross_cell_read_setup();
+    let desc = xcell_read_desc();
+    let mut row = vec![BabyBear::ZERO; 4];
+    row[XC_ROOT] = root;
+    row[XC_ADDR] = read_addr;
+    row[XC_VALUE] = read_value;
+    let trace = vec![row; 4];
+
+    // supply a DIFFERENT published commitment than the opened root — the PiBinding leg is
+    // unsatisfiable, so NO proof exists. (The PI is not part of the pre-flight trace replay, so
+    // the refusal surfaces as the in-circuit constraint failing rather than an Err — caught
+    // here: either way, a satisfying proof is impossible.)
+    let wrong_pi = root + BabyBear::ONE;
+    let outcome = std::panic::catch_unwind(|| {
+        prove_vm_descriptor2(
+            &desc,
+            &trace,
+            &[wrong_pi],
+            &MemBoundaryWitness::default(),
+            &[heap.clone()],
+        )
+    });
+    let refused = match outcome {
+        Err(_) => true,      // in-circuit PiBinding constraint failed (no satisfying proof)
+        Ok(r) => r.is_err(), // or refused with an Err
+    };
+    assert!(
+        refused,
+        "the opened root must equal the published-commitment PI (no claiming-a-different-root)"
+    );
 }

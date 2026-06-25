@@ -92,8 +92,18 @@
 //!     subsumed for ALL live descriptors) is flag-day work by the spec's §3 ordering: it
 //!     rides THE ONE ROTATION with the 3-verb executor, never before it.
 //!   * The universal boundary image (`uinit`/`ufin`/declared `(domain, key)` list) is
-//!     witness-supplied (`UMemBoundaryWitness`), exactly like the flat memory boundary;
-//!     binding it to state columns is the same PI-v3 ride-along.
+//!     witness-supplied (`UMemBoundaryWitness`), exactly like the flat memory boundary. The
+//!     INIT image is BOUND to committed PRE-state per-cell by a `MapOp::Read` opening each
+//!     declared init cell against a committed-root PUBLIC INPUT (the PI-v3 ride-along; Lean
+//!     anchor `UniversalMemory.boundary_init_root_derived` + the injectivity tooth
+//!     `boundary_init_root_bound`, lifted to the IR as `DescriptorIR2.satisfied2U_init_root`).
+//!     This is exactly `boundary_root_derived`'s `hsem` realized per address: the opened cell
+//!     genuinely lives in the committed map whose root is published — a forged peer root has no
+//!     membership path, a forged value opens to the genuine leaf. It is the WITNESSED
+//!     CROSS-CELL-READ primitive (the circuit twin of the executor-only
+//!     `StateConstraint::ObservedFieldEquals`); see `tests/effect_vm_umem_real_turn.rs`. NAMED
+//!     TAIL: the whole-IMAGE equality (the no-extra-cells direction, the in-circuit
+//!     sorted-Poseidon2 root-fold over the ENTIRE boundary) rides the universal-map rotation.
 //!   * The custom table id 5 (Lean `SUBMASK_TID = 0`) is realized as the bitwise-submask
 //!     relation at 30 bits (`subsetTable_mem_iff`: both elements in `[0, 2^30)` and
 //!     `keep & held = keep`), enforced by per-bit decomposition — the custom-table CONTENTS

@@ -741,6 +741,29 @@ theorem satisfied2U_boundary_root (hash : List ℤ → ℤ) (d : EffectVmDescrip
   UniversalMemory.boundary_root_from_memcheck hash dm
     h.umemAddrsNodup h.umemClosed h.umemDisciplined h.umemBalanced hs has hda hsem
 
+/-- **The INIT boundary is BOUND to committed pre-state — `boundary_init_root_derived` applied.**
+The companion of `satisfied2U_boundary_root` for the *init* column: for any map domain `dm`, if
+the committed PRE-state map `hpre` has the lookup semantics of the declared init image `uinit`
+over the touched keys `as` (declared, sorted), then today's committed pre-state root EQUALS the
+sorted-Poseidon2 root of the boundary view derived from `uinit`. This is what makes the universal
+boundary's init column TRUSTWORTHY: pinning that derived root to the committed pre-state root (the
+PI-v3 ride-along) forces the declared init image to be the committed pre-state — a tampered init
+CANNOT keep the published root (`boundary_init_root_bound`, under `Poseidon2SpongeCR`). The init
+side needs NO memcheck pinning: `uinit` is the given, not a prover-chosen final column. -/
+theorem satisfied2U_init_root (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    (dm : UniversalMemory.Domain)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
+    {uinit : UniversalMemory.UAddr ℤ → Option ℤ}
+    {ufin : UniversalMemory.UAddr ℤ → Option ℤ × Nat}
+    {uaddrs : List (UniversalMemory.UAddr ℤ)} {t : VmTrace}
+    {hpre : Heap.FeltHeap} {as : List ℤ}
+    (_h : Satisfied2U hash d minit mfin maddrs uinit ufin uaddrs t)
+    (hs : Heap.SortedKeys hpre) (has : as.Pairwise (· < ·))
+    (hsem : ∀ a : ℤ, Heap.get hpre a = if a ∈ as then uinit (dm, a) else none) :
+    Heap.root hash hpre
+      = Heap.root hash (UniversalMemory.boundaryCells (fun a => uinit (dm, a)) as) :=
+  UniversalMemory.boundary_init_root_derived hash hs has hsem
+
 /-- **THE NULLIFIER WIN at the IR — `nullifier_fresh_sound` applied.** In a `Satisfied2U`
 witness whose universal log splits around a guarded read returning `none` at
 `(nullifiers, x)`, the read PROVES: `x` was absent from the proof's initial nullifier view,
@@ -1681,6 +1704,7 @@ def brokenEngine : ProofEngine :=
 #assert_axioms satisfied2U_umem_sound
 #assert_axioms satisfied2U_pins_final
 #assert_axioms satisfied2U_boundary_root
+#assert_axioms satisfied2U_init_root
 #assert_axioms satisfied2U_nullifier_fresh
 #assert_axioms demoU_satisfied
 #assert_axioms proofBind_bound

@@ -444,6 +444,40 @@ theorem boundary_root_from_memcheck (hash : List ℤ → ℤ) (d : Domain)
       memcheck_pins_final hnd hcl hdisc hmc (d, a) (hda a ha)]
   · rw [if_neg ha, if_neg ha]
 
+/-! ### §4b — the INIT boundary is BOUND to committed PRE-state (the PI-v3 ride-along anchor).
+
+The FINAL boundary derivation (`boundary_root_from_memcheck`) shows the prover's *post*-state
+boundary view commits to the same object the deployed map roots commit to. Its mirror image is
+what makes the universal boundary's INIT column TRUSTWORTHY rather than free-witnessed: the
+boundary's declared init image must EQUAL the committed PRE-state, not be prover-chosen.
+
+`boundary_init_root_derived` is exactly `boundary_root_derived` instantiated at `fin' = init`
+(the init image is the GIVEN, so no memcheck pinning is needed — it is even simpler than the
+final side). Welded to the circuit by pinning the computed boundary-init root to a committed
+pre-state map root supplied as a public input, this is the soundness theorem behind the
+in-circuit init binding: under the named `Poseidon2SpongeCR` floor (`Heap.root_injective`),
+a boundary whose init image differs from the committed pre-state produces a DIFFERENT
+sorted-Poseidon2 leaf list, hence a different root, hence the pin REFUSES. The bound boundary
+init root = the committed map root, by canonicity, NO crypto in the derivation itself
+(the CR floor enters only at the injectivity tooth, exactly as on the final side). -/
+theorem boundary_init_root_derived (hash : List ℤ → ℤ) {h : FeltHeap}
+    {init : ℤ → Option ℤ} {as : List ℤ}
+    (hs : Heap.SortedKeys h) (has : as.Pairwise (· < ·))
+    (hsem : ∀ a, Heap.get h a = if a ∈ as then init a else none) :
+    Heap.root hash h = Heap.root hash (boundaryCells init as) :=
+  boundary_root_derived hash hs has hsem
+
+/-- **`boundary_init_root_bound` — the binding is sound (the anti-forgery tooth).** Under the
+named CR floor, a committed pre-state map `hcommitted` and the prover's declared init heap
+`hdeclared` carry the SAME root iff they ARE the same map. So pinning the boundary-init root to
+the committed root forces the declared init heap to be the committed pre-state — a tampered init
+image CANNOT keep the published root. The init-side companion of `nullifier_fresh_binds_root`. -/
+theorem boundary_init_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {hcommitted hdeclared : FeltHeap}
+    (hroot : Heap.root hash hdeclared = Heap.root hash hcommitted) :
+    hdeclared = hcommitted :=
+  Heap.root_injective hash hCR hroot
+
 /-! ## §5 — THE NULLIFIER WIN: freshness is a memory property (no Merkle path intra-proof).
 
 A nullifier domain cell is `none` (never spent) or `some _` (spent). Inserts are the only writes
@@ -713,6 +747,24 @@ example :
     · rw [if_neg (fun h => ha (List.mem_singleton.mp h)),
         Heap.get_cons_ne _ _ ha, Heap.get_nil]
 
+/-- The INIT-side anchor fires too: the committed pre-state map `[(10, 7)]` (the heap-domain
+init image) has the same root as the boundary view derived from `uinit`. Both polarities of the
+boundary derivation (init AND final) are concrete-witnessed. -/
+private def uinit_one : UAddr ℤ → Option ℤ := fun a => if a = (Domain.heap, 10) then some 7 else none
+
+example :
+    Heap.root Heap.refSponge [((10 : ℤ), (7 : ℤ))]
+      = Heap.root Heap.refSponge
+          (boundaryCells (fun a => uinit_one (Domain.heap, a)) [10]) := by
+  refine boundary_init_root_derived Heap.refSponge ?_ ?_ ?_
+  · simp [Heap.SortedKeys, Heap.keys]
+  · simp
+  · intro a
+    by_cases ha : a = (10 : ℤ)
+    · subst ha; decide
+    · rw [if_neg (fun h => ha (List.mem_singleton.mp h)),
+        Heap.get_cons_ne _ _ ha, Heap.get_nil]
+
 end NonVacuity
 
 /-! ## Axiom-hygiene pins -/
@@ -726,6 +778,8 @@ end NonVacuity
 #assert_axioms get_boundaryCells
 #assert_axioms boundary_root_derived
 #assert_axioms boundary_root_from_memcheck
+#assert_axioms boundary_init_root_derived
+#assert_axioms boundary_init_root_bound
 #assert_axioms consistent_read_pins
 #assert_axioms fold_none_of_insert_only
 #assert_axioms nullifier_fresh_sound
