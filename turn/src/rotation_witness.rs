@@ -565,9 +565,15 @@ pub fn mint_welded_umem_rotated_participant_leg(
 /// weld), so the IVC chain fold's `old_root`/`new_root` accessors keep working over the welded leg
 /// AND the 8-felt anchors are preserved for the ~124-bit binding.
 ///
-/// SCOPE: the live sovereign Transfer lead (the transfer-shape wide producer); a non-Transfer lead
-/// fails closed. `before_cell`/`after_cell` are the real actor cells (their projection diff IS the
-/// umem touch).
+/// SCOPE: the FULL single-domain wide cohort — any effect whose WIDE producer is SAT on the bare wide
+/// sovereign path (the value/field families: transfer / burn / bridgeMint / setField / setFieldDyn,
+/// heap domain), routed through the shared
+/// [`RotatedParticipantLeg::mint_welded_wide_from_block_witnesses`](dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg::mint_welded_wide_from_block_witnesses)
+/// dispatch. The cap-WRITE family (grant/attenuate/revoke — AFTER cap-root is an in-circuit cap-tree
+/// MAP-OP write) needs the SEPARATE cap-open path and is a named tail; the multi-domain note/bridge
+/// economic verbs stay on the multi-domain cohort path (not yet welded/folded — a named tail on the
+/// narrow path too). `before_cell`/`after_cell` are the real actor cells (their projection diff IS the
+/// umem touch); a multi-domain touch fails closed at `umem_cohort_proving_inputs_from`.
 #[cfg(feature = "prover")]
 #[allow(clippy::too_many_arguments)]
 pub fn mint_welded_wide_umem_rotated_participant_leg(
@@ -626,6 +632,10 @@ pub fn mint_welded_wide_umem_rotated_participant_leg(
         &inputs.rows,
         &inputs.boundary,
         inputs.domain,
+        // The value/field cohort needs no grow-gate / refusal context (heap-domain balance/field
+        // moves). A note/refusal lead would thread these — but those leads are named tails here.
+        None,
+        None,
     )
 }
 

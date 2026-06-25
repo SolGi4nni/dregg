@@ -406,8 +406,14 @@ impl RotatedParticipantLeg {
     /// chain fold's temporal tooth binds, PLUS the 8-felt [`wide_old_root8`](Self::wide_old_root8) /
     /// [`wide_new_root8`](Self::wide_new_root8) the ~124-bit binding reads.
     ///
-    /// SCOPE: the live sovereign Transfer lead (the transfer-shape wide producer); a non-Transfer
-    /// lead fails closed (its wide producer leg extends identically when the IVC routes it). STAGED:
+    /// SCOPE: the FULL single-domain wide cohort — any effect whose WIDE producer is SAT on the bare
+    /// wide sovereign path (`generate_rotated_effect_vm_descriptor_and_trace_wide`, the SAME family
+    /// dispatch the live SDK wide prover runs): the value/field families (transfer / burn / bridgeMint
+    /// / setField / setFieldDyn) ride the heap domain; the grow-gate (note) + record-pin / lifecycle
+    /// families ride when the caller threads their context. `before_nullifiers` is the note-spend
+    /// grow-gate's BEFORE nullifier set; `refusal_fields` the refusal `fields_root` write witness;
+    /// both `None` for the value/field leads. A heterogeneous / non-cohort slice (or a cap-WRITE lead
+    /// whose AFTER cap-root needs the SEPARATE cap-open path) fails closed at the dispatcher. STAGED:
     /// a welded WIDE descriptor BESIDE the deployed wide registry; no VK bump, nothing on the wire.
     #[allow(clippy::too_many_arguments)]
     pub fn mint_welded_wide_from_block_witnesses(
@@ -419,67 +425,47 @@ impl RotatedParticipantLeg {
         umem_rows: &[Vec<BabyBear>],
         umem_boundary: &dregg_circuit::descriptor_ir2::UMemBoundaryWitness,
         domain: u32,
+        before_nullifiers: Option<&[BabyBear]>,
+        refusal_fields: Option<(&[dregg_circuit::heap_root::HeapLeaf], BabyBear)>,
     ) -> Result<RotatedParticipantLeg, String> {
         use crate::ivc_turn_chain::ir2_leaf_wrap_config;
         use dregg_circuit::descriptor_ir2::{
-            MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2_for_config,
-            verify_vm_descriptor2_with_config,
+            prove_vm_descriptor2_for_config, verify_vm_descriptor2_with_config,
         };
         use dregg_circuit::effect_vm::trace_rotated::{
-            generate_rotated_transfer_shape_wide, rotated_descriptor_name_for_effect,
+            empty_caveat_manifest, generate_rotated_effect_vm_descriptor_and_trace_wide,
             transfer_caveat_manifest,
         };
-        use dregg_circuit::effect_vm_descriptors::{
-            WIDE_REGISTRY_STAGED_TSV, weld_umem_into_wide_descriptor,
-        };
+        use dregg_circuit::effect_vm_descriptors::weld_umem_into_wide_descriptor;
 
-        let lead = effects
-            .first()
-            .ok_or_else(|| "mint_welded_wide: empty effect slice".to_string())?;
-        if !matches!(lead, dregg_circuit::effect_vm::Effect::Transfer { .. }) {
-            return Err(format!(
-                "mint_welded_wide: effect {lead:?} is not the Transfer lead this staged wide IVC leg \
-                 supports (the transfer-shape wide producer); it fails closed"
-            ));
+        if effects.is_empty() {
+            return Err("mint_welded_wide: empty effect slice".to_string());
         }
-        let r24_name = rotated_descriptor_name_for_effect(lead).ok_or_else(|| {
-            format!("mint_welded_wide: effect {lead:?} is not a rotated R=24 member")
-        })?;
-        for e in &effects[1..] {
-            if rotated_descriptor_name_for_effect(e) != Some(r24_name) {
-                return Err(
-                    "mint_welded_wide: heterogeneous multi-effect turn (one welded leg)".into(),
-                );
-            }
-        }
-        let json = WIDE_REGISTRY_STAGED_TSV
-            .lines()
-            .find_map(|line| {
-                let mut it = line.splitn(3, '\t');
-                if it.next() == Some(r24_name) {
-                    let _display = it.next();
-                    it.next()
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                format!("mint_welded_wide: '{r24_name}' not in WIDE_REGISTRY_STAGED_TSV")
-            })?;
-        let wide_desc = parse_vm_descriptor2(json).map_err(|e| {
-            format!("mint_welded_wide: wide descriptor '{r24_name}' parse failed: {e}")
-        })?;
+
+        // The shared full-cohort wide producer route (the live SDK wide prover's dispatch, lifted into
+        // `dregg-circuit`): resolves the WIDE descriptor + lays the per-family trace / PI vector /
+        // grow-gate `map_heaps` / (setFieldDyn-only) mem-boundary. Replaces the Transfer-only
+        // transfer-shape leg this staged wide IVC leg used to be scoped to.
+        let caveat = match effects {
+            [dregg_circuit::effect_vm::Effect::Transfer { .. }] => transfer_caveat_manifest(),
+            _ => empty_caveat_manifest(),
+        };
+        let (wide_desc, wide_trace, mut dpis, map_heaps, mem_boundary) =
+            generate_rotated_effect_vm_descriptor_and_trace_wide(
+                initial_state,
+                effects,
+                before,
+                after,
+                &caveat,
+                before_nullifiers,
+                refusal_fields,
+            )
+            .map_err(|e| format!("mint_welded_wide: wide producer dispatch failed: {e}"))?;
 
         // WELD: the universal-memory leg INTO the WIDE descriptor (keeps the 16 wide commit PIs).
         let welded = weld_umem_into_wide_descriptor(&wide_desc, domain);
         let base = wide_desc.trace_width;
 
-        let caveat = transfer_caveat_manifest();
-        let (wide_trace, mut dpis) =
-            generate_rotated_transfer_shape_wide(initial_state, effects, before, after, &caveat)
-                .map_err(|e| {
-                    format!("mint_welded_wide: wide transfer-shape generation failed: {e}")
-                })?;
         if let Some(tid) = turn_id {
             dpis[pi::TURN_HASH_BASE] = tid;
         }
@@ -514,8 +500,8 @@ impl RotatedParticipantLeg {
             &welded,
             &welded_trace,
             &dpis,
-            &MemBoundaryWitness::default(),
-            &[],
+            &mem_boundary,
+            &map_heaps,
             umem_boundary,
             &wrap_config,
         )

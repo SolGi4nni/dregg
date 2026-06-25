@@ -3107,6 +3107,178 @@ pub fn generate_rotated_custom_wide(
     Ok((trace, dpis))
 }
 
+/// **THE FULL-COHORT WIDE descriptor + trace dispatcher (the shared producer spine).** Resolve the
+/// WIDE descriptor (from [`crate::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV`]) for a turn's
+/// homogeneous cohort lead and generate its trace / PI vector / grow-gate `map_heaps` /
+/// (setFieldDyn-only) [`MemBoundaryWitness`](crate::descriptor_ir2::MemBoundaryWitness) through the
+/// per-family wide producer it routes to — the SAME family dispatch the live SDK wide prover
+/// (`dregg_sdk::full_turn_proof::prove_effect_vm_rotated_wide`) runs, lifted into `dregg-circuit` so
+/// the IVC welded-leg mint
+/// ([`crate::effect_vm::trace_rotated`] consumers in `dregg-circuit-prove`) shares ONE producer route
+/// (no hand-inlined twin). The wide PI vector's LAST 16 PIs are the 8-felt before/after commit
+/// anchors (~124-bit); the descriptor is the unwelded WIDE member (the caller welds the umem leg).
+///
+/// `before`/`after` are the rotated block witnesses; `caveat` the turn manifest; `before_nullifiers`
+/// the note-spend grow-gate's BEFORE nullifier set (`None` for non-spend leads); `refusal_fields`
+/// the refusal `fields_root` write witness (`Some` REQUIRED for a `Refusal` lead — the honest refusal
+/// is UNSAT without it). Fails closed (`Err`) on an empty / heterogeneous / non-cohort slice.
+#[allow(clippy::type_complexity)]
+pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before: &RotatedBlockWitness,
+    after: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    before_nullifiers: Option<&[BabyBear]>,
+    refusal_fields: Option<(&[crate::heap_root::HeapLeaf], BabyBear)>,
+) -> Result<
+    (
+        crate::descriptor_ir2::EffectVmDescriptor2,
+        Vec<Vec<BabyBear>>,
+        Vec<BabyBear>,
+        Vec<Vec<crate::heap_root::HeapLeaf>>,
+        crate::descriptor_ir2::MemBoundaryWitness,
+    ),
+    String,
+> {
+    use crate::descriptor_ir2::{MemBoundaryWitness, parse_vm_descriptor2};
+    use crate::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+    use crate::heap_root::HeapLeaf;
+
+    let lead = effects
+        .first()
+        .ok_or_else(|| "wide rotated prover: empty turn".to_string())?;
+    let name = rotated_descriptor_name_for_effect(lead).ok_or_else(|| {
+        format!("wide rotated prover: effect {lead:?} is not in the rotated cohort")
+    })?;
+    if effects.len() > 1 {
+        for e in &effects[1..] {
+            if rotated_descriptor_name_for_effect(e) != Some(name) {
+                return Err("wide rotated prover: heterogeneous multi-effect turn".into());
+            }
+        }
+    }
+    // Resolve the WIDE descriptor JSON for that registry key.
+    let json = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some(name) {
+                let _name = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| format!("{name} not in WIDE_REGISTRY_STAGED_TSV"))?;
+    let desc =
+        parse_vm_descriptor2(json).map_err(|e| format!("wide rotated descriptor parse: {e}"))?;
+
+    // The per-family wide producer dispatch (the live SDK wide prover's route, lifted here).
+    let (mut trace, mut dpis, mut map_heaps) = if matches!(lead, Effect::NoteSpend { .. }) {
+        let leaves: Vec<HeapLeaf> = before_nullifiers
+            .unwrap_or(&[])
+            .iter()
+            .map(|nf| HeapLeaf {
+                addr: *nf,
+                value: BabyBear::new(1),
+            })
+            .collect();
+        generate_rotated_note_spend_wide(initial_state, effects, before, after, caveat, &leaves)
+            .map_err(|e| format!("wide note-spend generation: {e}"))?
+    } else if matches!(lead, Effect::NoteCreate { .. }) {
+        generate_rotated_note_create_wide(initial_state, effects, before, after, caveat, &[])
+            .map_err(|e| format!("wide note-create generation: {e}"))?
+    } else if matches!(lead, Effect::Refusal { .. }) {
+        let (leaves, audit_value) = refusal_fields.ok_or_else(|| {
+                "wide refusal prover: a Refusal lead requires `refusal_fields` (the BEFORE-cell \
+                 fields-tree leaf set + the audit felt) to satisfy the in-circuit `fields_root` \
+                 `.write` map-op gate; an empty fields tree is UNSAT (the honest refusal fails closed)"
+                    .to_string()
+            })?;
+        generate_rotated_refusal_wide(
+            initial_state,
+            effects,
+            before,
+            after,
+            caveat,
+            leaves,
+            audit_value,
+        )
+        .map_err(|e| format!("wide refusal generation: {e}"))?
+    } else if matches!(
+        lead,
+        Effect::SetPermissions { .. }
+            | Effect::SetVerificationKey { .. }
+            | Effect::CellSeal { .. }
+            | Effect::CellUnseal { .. }
+            | Effect::CellDestroy { .. }
+            | Effect::ReceiptArchive { .. }
+            | Effect::MakeSovereign
+    ) {
+        let (t, d) =
+            generate_rotated_record_pin_wide(initial_state, effects, before, after, caveat)
+                .map_err(|e| format!("wide record-pin generation: {e}"))?;
+        (t, d, vec![])
+    } else if matches!(lead, Effect::CreateCell { .. }) {
+        generate_rotated_create_cell_wide(initial_state, effects, before, after, caveat, &[])
+            .map_err(|e| format!("wide create-cell generation: {e}"))?
+    } else if matches!(lead, Effect::CreateCellFromFactory { .. }) {
+        generate_rotated_create_from_factory_wide(
+            initial_state,
+            effects,
+            before,
+            after,
+            caveat,
+            &[],
+        )
+        .map_err(|e| format!("wide create-from-factory generation: {e}"))?
+    } else if matches!(lead, Effect::SpawnWithDelegation { .. }) {
+        generate_rotated_spawn_wide(initial_state, effects, before, after, caveat, &[])
+            .map_err(|e| format!("wide spawn generation: {e}"))?
+    } else if matches!(lead, Effect::SetField { field_idx, .. } if *field_idx >= 8) {
+        // setFieldDyn carries the DISTINCT 581-wide V1Face geometry + a mem-boundary witness
+        // (NOT map_heaps); the dedicated block below overrides these placeholders.
+        (Vec::new(), Vec::new(), Vec::new())
+    } else if matches!(lead, Effect::Custom { .. }) {
+        generate_rotated_custom_wide(initial_state, effects, before, after, caveat)
+            .map(|(t, d)| (t, d, vec![]))
+            .map_err(|e| format!("wide custom generation: {e}"))?
+    } else {
+        let (t, d) =
+            generate_rotated_transfer_shape_wide(initial_state, effects, before, after, caveat)
+                .map_err(|e| format!("wide transfer-shape generation: {e}"))?;
+        (t, d, vec![])
+    };
+
+    // setFieldDyn's witness is the mem-boundary, NOT map_heaps; resolve it here and override the
+    // placeholders the family dispatch produced above.
+    let mem_boundary = if let Effect::SetField { field_idx, .. } = lead {
+        if *field_idx >= 8 {
+            let slot = field_idx % 8;
+            let (t, d, mb) = generate_rotated_set_field_dyn_wide(
+                initial_state,
+                before,
+                after,
+                caveat,
+                slot,
+                BabyBear::new(0),
+            )
+            .map_err(|e| format!("wide set-field-dyn generation: {e}"))?;
+            trace = t;
+            dpis = d;
+            map_heaps = vec![];
+            mb
+        } else {
+            MemBoundaryWitness::default()
+        }
+    } else {
+        MemBoundaryWitness::default()
+    };
+
+    Ok((desc, trace, dpis, map_heaps, mem_boundary))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
