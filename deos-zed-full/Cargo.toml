@@ -49,11 +49,30 @@ full-zed = [
     "deos-hermes/cockpit-surface",
     # `ui` is needed to name `ui::IconName` in the agent panel's `Panel::icon`.
     "dep:ui",
+    # THE LIVE-COCKPIT `AppState` BUILDER (`boot::build_live_app_state`). A real
+    # `workspace::AppState` for the deos cockpit — a real `client::Client` (real
+    # `clock::RealSystemClock` + an `HttpClientWithUrl` over a `BlockedHttpClient`,
+    # no network needed to edit cells), a `session::Session` over the real
+    # `db::AppDatabase`, a `client::UserStore` + `workspace::WorkspaceStore`, a
+    # `language::LanguageRegistry`, and a `node_runtime::NodeRuntime::unavailable`
+    # (editing cells needs no node) — built once and `AppState::set_global`'d. This
+    # is the SAME shape as `AppState::test`, minus the fakes, so the cockpit mounts
+    # a genuine `Entity<Workspace>` (the named mount seam, now closed).
+    "dep:client",
+    "dep:session",
+    "dep:node_runtime",
+    "dep:http_client",
+    "dep:clock",
+    "dep:db",
 ]
 
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
+# `boot::build_live_app_state` mints a fresh session id (the same `Uuid::new_v4`
+# the standalone Zed binary uses for its session). v4 only; same major the zed
+# graph already pulls so it unifies.
+uuid = { version = "1", features = ["v4"] }
 
 # THE CELL BACKING — deos-zed's gpui-free `FirmamentFs` (a file IS a cell, a save
 # IS a receipted turn over an in-process Ledger + TurnExecutor). We pull it
@@ -136,6 +155,20 @@ deos-hermes = { path = "../deos-hermes", default-features = false, optional = tr
 # rev as the rest of the graph.
 ui = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
 
+# THE LIVE-COCKPIT `AppState` BUILDER's REAL deps (gated on full-zed). These are
+# the non-test crates the production Zed binary builds `AppState` from — pulled
+# here so `boot::build_live_app_state` constructs a genuine `workspace::AppState`
+# for the cockpit (a real `Client`/`Session`/`UserStore`/`WorkspaceStore`/
+# `LanguageRegistry`/`NodeRuntime`), NOT `AppState::test`. All already in the
+# graph transitively via `workspace`/`project`; named directly so the builder can
+# call their plain (non-test-support) constructors. Same zed-fork rev as the rest.
+client = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+session = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+node_runtime = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+http_client = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+clock = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+db = { git = "https://github.com/emberian/zed", rev = "54fbcb6943", optional = true }
+
 
 # Replicate the zed fork's [patch.crates-io] table (the subset our graph pulls),
 # same as deos-zed/Cargo.toml carries for gpui. Plus the proof-dep overrides the
@@ -212,6 +245,14 @@ path = "tests/unified_workspace_one_running_thing.rs"
 [[test]]
 name = "unified_workspace_png_bake"
 path = "tests/unified_workspace_png_bake.rs"
+
+# THE LIVE-`AppState` BAKE — the same one Workspace, but mounted from the
+# PRODUCTION `AppState` (`boot::build_live_app_state`, NOT `AppState::test`) the
+# live cockpit's `ZedWindow::open` uses. The proof of the mount seam. `cfg`-gated
+# on full-zed. Writes to `$DEOS_LIVE_APPSTATE_WORKSPACE_PNG`.
+[[test]]
+name = "live_app_state_workspace_png_bake"
+path = "tests/live_app_state_workspace_png_bake.rs"
 
 [patch.crates-io]
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }

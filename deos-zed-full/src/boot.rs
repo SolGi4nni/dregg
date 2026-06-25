@@ -22,12 +22,14 @@
 //! Only built under `--features full-zed` (it needs the heavy Zed graph).
 #![cfg(feature = "full-zed")]
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use gpui::{AsyncWindowContext, Entity, WeakEntity};
 use outline_panel::OutlinePanel;
 use project_panel::ProjectPanel;
 use terminal_view::terminal_panel::TerminalPanel;
-use workspace::Workspace;
+use workspace::{AppState, Workspace};
 
 /// Install the global state every Zed `Workspace` + the enabled panels need:
 /// the theme registry and the per-crate action/observer registrations
@@ -55,6 +57,98 @@ pub fn install_workspace_globals(cx: &mut gpui::App) {
     terminal_view::init(cx);
     command_palette::init(cx);
     search::init(cx);
+}
+
+/// Build a REAL (non-test) [`AppState`] for the live deos cockpit and
+/// `AppState::set_global` it — the load-bearing **mount seam** for hosting the
+/// whole Zed `Workspace` as a live cockpit window.
+///
+/// This is the same shape as `AppState::test` (the constructor the headless
+/// proofs use), but with every fake replaced by its production part:
+///
+///  * `client::Client::new` over a real [`clock::RealSystemClock`] + an
+///    [`http_client::HttpClientWithUrl`] wrapping a [`http_client::BlockedHttpClient`]
+///    (editing cells over the FirmamentFs ledger needs no network — the blocked
+///    client makes that explicit; a host that wants collab can swap in a real
+///    `ReqwestClient` and call `client.set_id`/sign-in itself);
+///  * `session::Session::new` over the real [`db::AppDatabase`]'s
+///    [`db::kvp::KeyValueStore`] (the on-disk session store the standalone Zed
+///    binary uses), wrapped in a `session::AppSession`;
+///  * `client::UserStore::new` + `workspace::WorkspaceStore::new` over that
+///    client (the same plain `pub fn` constructors `AppState::test` calls);
+///  * `language::LanguageRegistry::new` (the real, non-`::test` registry);
+///  * `node_runtime::NodeRuntime::unavailable` (cell editing needs no node
+///    runtime; a host that wants LSP/extensions can build a real `NodeRuntime`);
+///  * the cockpit's own `build_window_options` (a plain default — the cockpit
+///    hosts the Workspace as a *pane*, so the OS-window options are unused by the
+///    embed; supplied to satisfy the field).
+///
+/// The caller passes the cell-ledger `fs` (a `FirmamentZedFs`) so the returned
+/// `AppState.fs` IS the ledger. After this returns, `AppState::global(cx)` and
+/// `Client::set_global` are live, so the panels' `*::load` and the Workspace's
+/// machinery resolve their globals exactly as in the standalone binary.
+///
+/// Call this ONCE per cockpit `App` (it `set_global`s); a second call is
+/// idempotent on the client global but rebuilds the state. The caller must have
+/// installed a `settings::SettingsStore` global FIRST (and typically called
+/// [`install_workspace_globals`]).
+pub fn build_live_app_state(fs: Arc<dyn fs::Fs>, cx: &mut gpui::App) -> Arc<AppState> {
+    use gpui::AppContext as _;
+
+    use client::{Client, UserStore};
+    use http_client::{BlockedHttpClient, HttpClientWithUrl};
+    use language::LanguageRegistry;
+    use node_runtime::NodeRuntime;
+    use session::{AppSession, Session};
+    use workspace::WorkspaceStore;
+
+    // Make the cell-ledger fs the App's global `Fs` (the panels + project read it).
+    <dyn fs::Fs>::set_global(fs.clone(), cx);
+
+    // A real client over the real system clock. No network is needed to edit
+    // cells, so the HTTP carrier is a `BlockedHttpClient` behind the URL wrapper —
+    // a genuine `Arc<HttpClientWithUrl>`, just one that refuses outbound requests.
+    let clock = Arc::new(clock::RealSystemClock);
+    let http: Arc<HttpClientWithUrl> = Arc::new(HttpClientWithUrl::new(
+        Arc::new(BlockedHttpClient),
+        "https://zed.dev",
+        None,
+    ));
+    let client = Client::new(clock, http, cx);
+
+    // The real session over the on-disk app database (the same KV store the
+    // standalone Zed binary uses). `Session::new` is async; the App's foreground
+    // executor blocks on it here exactly as `main.rs` does.
+    let app_db = db::AppDatabase::new();
+    let kv = db::kvp::KeyValueStore::from_app_db(&app_db);
+    let session_id = uuid::Uuid::new_v4().to_string();
+    // Build the session off the background executor and block the foreground on the
+    // resulting task — the exact pattern `crates/zed/src/main.rs` uses.
+    let session_task = cx.background_executor().spawn(Session::new(session_id, kv));
+    let session = cx.foreground_executor().block_on(session_task);
+    let app_session = cx.new(|cx| AppSession::new(session, cx));
+
+    let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+    let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+
+    // Register the client's per-App globals/handlers (the same call `AppState::test`
+    // and the standalone binary make) so the Workspace's client-driven paths work.
+    Client::set_global(client.clone(), cx);
+    client::init(&client, cx);
+
+    let app_state = Arc::new(AppState {
+        client,
+        fs,
+        languages,
+        user_store,
+        workspace_store,
+        node_runtime: NodeRuntime::unavailable(),
+        build_window_options: |_, _| Default::default(),
+        session: app_session,
+    });
+    AppState::set_global(app_state.clone(), cx);
+    app_state
 }
 
 /// Load the three FirmamentFs-relevant panels (`project_panel`, `outline_panel`,

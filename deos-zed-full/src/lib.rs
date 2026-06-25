@@ -53,6 +53,11 @@ pub mod zed {
     pub use language;
     pub use project;
     pub use workspace;
+    // The settings store + theme globals, re-exported so a cockpit host can name
+    // `settings::SettingsStore` / `theme::GlobalTheme` (the idempotency markers a
+    // window-opener checks) without a direct dep on the zed crates.
+    pub use settings;
+    pub use theme;
 }
 
 /// Boot a REAL Zed [`workspace::Workspace`] (with its real `project_panel` /

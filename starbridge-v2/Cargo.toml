@@ -146,7 +146,20 @@ native-full = ["desktop"]
 # turns), not disk — the cockpit editor is firmament-backed by default.
 dev-surfaces = ["dep:deos-zed", "dep:deos-terminal", "dep:deos-hermes", "dep:deos-matrix", "firmament"]
 
-# zed-full — mount the WHOLE Zed `workspace::Workspace` (the real editor /
+# zed-full / zed-full-pane — READY TO DECLARE (the cockpit-side code is written +
+# verified). `zed-full-pane` pulls `deos-zed-full` (Zed's real editor/workspace/
+# project + all panels over the cell-ledger) and is the cfg-gate `lib.rs` +
+# `src/zed_full_pane.rs` read. `zed-full` rides `dev-surfaces` (the dock that hosts
+# it). LEFT COMMENTED for the SAME reason the `deos-zed-full` dep below is: merely
+# declaring it injects Zed's `sqlez` → `libsqlite3-sys 0.30` into the root lock
+# graph, clashing (`links="sqlite3"`) with `deos-matrix` → `libsqlite3-sys 0.35`
+# (EMPIRICALLY re-confirmed this session). UNCOMMENT — and fold `zed-full` into
+# `desktop` — the instant the emberian/zed fork rev carrying the one-line `sqlez`
+# → `libsqlite3-sys 0.35` bump is pinned across breadstuffs.
+# zed-full = ["dev-surfaces", "zed-full-pane"]
+# zed-full-pane = ["dep:deos-zed-full"]
+
+# zed-full (legacy note) — mount the WHOLE Zed `workspace::Workspace` (the real editor /
 # workspace / project crates + every panel, over a FirmamentFs cell-ledger) as the
 # Dev editor surface (`src/zed_full_pane.rs`'s `ZedFullPane`, a `CockpitSurface`
 # hosting the live `Entity<Workspace>`). Pulls `deos-zed-full` with `full-zed`.
@@ -547,10 +560,14 @@ deos-terminal = { path = "../deos-terminal", features = ["cockpit-surface"], opt
 #     fork's workspace `Cargo.toml` (so `sqlez` + `servo-storage` + `matrix-sdk-sqlite`
 #     all share ONE `links="sqlite3"` package), THEN uncomment this dep + declare the
 #     `zed-full`/`zed-full-pane` features above + fold `zed-full` into `desktop`.
-# `src/zed_full_pane.rs` (the `CockpitSurface` hosting the live `Entity<Workspace>`)
-# is written + ready; the `deos-zed-full[full-zed]` + `servo`(swgl) graph resolves
-# clean in isolation — only the sqlez↔matrix/servo `libsqlite3-sys` unification gates
-# the in-root declaration.
+# `src/zed_full_pane.rs` (the `CockpitSurface` hosting the live `Entity<Workspace>`,
+# now with `ZedWindow::open` + the live-`AppState` builder
+# `deos_zed_full::boot::build_live_app_state`) is written + ready and VERIFIED in
+# `deos-zed-full`'s own resolvable workspace; the `deos-zed-full[full-zed]` +
+# `servo`(swgl) graph resolves clean in isolation — only the sqlez↔matrix/servo
+# `libsqlite3-sys` unification (the fork-rev bump) gates the in-root declaration.
+# UNCOMMENT (+ the `zed-full-pane` feature, + fold `zed-full` into `desktop`) the
+# instant the bumped emberian/zed rev is pinned across breadstuffs.
 # deos-zed-full = { path = "../deos-zed-full", features = ["full-zed"], optional = true }
 # THE AGENT'S HANDS (deos-js) bound to the LIVE cockpit World — `agent-js`. Real
 # SpiderMonkey via mozjs; the `WorldSink` weld in `src/agent_attach.rs` runs the
