@@ -2226,32 +2226,83 @@ impl SemihostCockpit {
     /// cockpit uses the inline drive so a turn commits deterministically with no
     /// thread timing.)
     pub fn commit_turn_via_semihost(&mut self, turn: Turn) -> CommitOutcome {
+        self.commit_turn_via_semihost_projecting(turn, None).0
+    }
+
+    /// **COMMIT A TURN THROUGH THE SEMIHOST executor-PD, PROJECTING THE REPAINT.**
+    ///
+    /// The full §3 live-repaint-on-turn loop with the cockpit's REAL verified
+    /// `DreggEngine` behind the heart (not the stub `AttenuationRunner`
+    /// `dregg-firmament/src/repaint.rs` proves the wire with): the turn is staged,
+    /// the executor-PD runs the REAL `World` commit path, and — on COMMIT — the
+    /// served turn's REAL [`TurnReceipt`] is projected into a
+    /// [`dregg_firmament::DirtyRegion`] (`owner`'s surface ⟼ its new
+    /// state-root/content-digest) the compositor-PD re-paints. A REJECTED turn
+    /// projects `None` (fail-closed — a refused turn re-paints NOTHING), exactly the
+    /// binding `repaint.rs` proves, now driven by the genuine verified semantics.
+    ///
+    /// This is the seam `SEL4-INTERACTIVE-COCKPIT.md §3.5` named between the proven
+    /// halves: the executor-PD's REAL turn path and the compositor-PD's present gate
+    /// were both green but the live-repaint loop was only exercised with the stub
+    /// runner. This connects the cockpit's REAL `DreggEngine` to the SAME projection
+    /// — a genuine committed transfer re-paints the focused cell. No new primitive.
+    pub fn commit_turn_via_semihost_with_repaint(
+        &mut self,
+        turn: Turn,
+        owner: CellId,
+    ) -> (CommitOutcome, Option<dregg_firmament::DirtyRegion>) {
+        self.commit_turn_via_semihost_projecting(turn, Some(owner))
+    }
+
+    /// The shared stage → step → commit_out path, optionally projecting the §3
+    /// repaint signal from the REAL served turn. `repaint_owner = Some(cell)` asks
+    /// for the [`DirtyRegion`](dregg_firmament::DirtyRegion) a committed turn
+    /// projects toward the compositor (the focused cell that re-paints); `None`
+    /// skips the projection (the plain commit path). The projection reads the SAME
+    /// served turn the commit does — a committed turn's REAL receipt ⟼ a dirty
+    /// region; a rejected turn ⟼ `None` (fail-closed).
+    fn commit_turn_via_semihost_projecting(
+        &mut self,
+        turn: Turn,
+        repaint_owner: Option<CellId>,
+    ) -> (CommitOutcome, Option<dregg_firmament::DirtyRegion>) {
         // Encode + STAGE the turn into the executor-PD's turn_in region (the
         // app-PD's turn_in write before it signals the heart).
         let turn_bytes = match postcard::to_stdvec(&turn) {
             Ok(b) => b,
             Err(e) => {
-                return CommitOutcome::Rejected {
-                    reason: format!("turn encode failed: {e}"),
-                    at_action: vec![],
-                };
+                return (
+                    CommitOutcome::Rejected {
+                        reason: format!("turn encode failed: {e}"),
+                        at_action: vec![],
+                    },
+                    None,
+                );
             }
         };
         if self.executor.stage_turn(&turn_bytes).is_none() {
-            return CommitOutcome::Rejected {
-                reason: format!(
-                    "turn ({} bytes) does not fit the executor-PD turn_in region",
-                    turn_bytes.len()
-                ),
-                at_action: vec![],
-            };
+            return (
+                CommitOutcome::Rejected {
+                    reason: format!(
+                        "turn ({} bytes) does not fit the executor-PD turn_in region",
+                        turn_bytes.len()
+                    ),
+                    at_action: vec![],
+                },
+                None,
+            );
         }
         // DRIVE the executor-PD's protected-procedure body (read turn_in + step +
         // write commit_out). This is the heart running the turn over the
         // EmulatedKernel; on the cross-PD path this is a `serve_turn` off the
         // Endpoint, here the inline single-thread collapse.
         let served = self.executor.step_staged_turn();
-        match served {
+        // PROJECT the §3 repaint from the REAL served turn (its REAL TurnReceipt):
+        // a committed turn ⟼ Some(DirtyRegion); a rejected turn ⟼ None (fail-closed,
+        // re-paints nothing). This borrow ends before `served` is matched/moved.
+        let dirty = repaint_owner
+            .and_then(|owner| dregg_firmament::repaint::project_dirty_from_turn(&owner, &served));
+        let outcome = match served {
             dregg_firmament::ServedTurn::Committed { .. } => {
                 // Read the receipt back out of commit_out and decode it — proving
                 // it genuinely round-tripped through the PD wire (not returned
@@ -2259,10 +2310,13 @@ impl SemihostCockpit {
                 let receipt_bytes = match self.executor.commit_out_read() {
                     Some(b) => b,
                     None => {
-                        return CommitOutcome::Rejected {
-                            reason: "executor-PD committed but commit_out was empty".into(),
-                            at_action: vec![],
-                        };
+                        return (
+                            CommitOutcome::Rejected {
+                                reason: "executor-PD committed but commit_out was empty".into(),
+                                at_action: vec![],
+                            },
+                            None,
+                        );
                     }
                 };
                 match postcard::from_bytes::<TurnReceipt>(&receipt_bytes) {
@@ -2286,7 +2340,8 @@ impl SemihostCockpit {
                 reason,
                 at_action: vec![],
             },
-        }
+        };
+        (outcome, dirty)
     }
 
     /// The run-turn Endpoint id (for the cross-PD `serve_turn` path / future
@@ -2919,6 +2974,176 @@ mod tests {
             cockpit.world().state_root(),
             "the semihost path advances the SAME image the direct path does"
         );
+    }
+
+    // ── LIVE-REPAINT-ON-TURN, with the REAL verified DreggEngine behind the heart
+    //    (`docs/desktop-os-research/SEL4-INTERACTIVE-COCKPIT.md §3.5`) ────────────
+    //
+    // `dregg-firmament/tests/live_repaint_on_turn.rs` proves the executor-PD →
+    // compositor-PD repaint loop with a STUB runner (the 2-byte `AttenuationRunner`).
+    // These tests close the named seam between that and the cockpit's REAL `World`:
+    // a GENUINE verified transfer turn, committed through the semihost executor-PD,
+    // projects a `DirtyRegion` from its REAL `TurnReceipt` that the compositor-PD
+    // re-paints — and a rejected overspend re-paints nothing, and a SEQUENCE of real
+    // turns re-paints to DISTINCT frames (the "the cells CHANGE while you watch"
+    // rung). No new primitive — it rides the proven executor-PD turn path, the
+    // proven compositor present gate, and the SAME projection the stub proves.
+
+    /// Boot a compositor-PD whose focused surface is the genesis wallet `owner`,
+    /// owning regions {10, 11}, starting blank (digest 0) — the cell a turn
+    /// re-paints. Shares the cockpit's n=1 kernel so the regions live on ONE
+    /// microkernel (the deos-live.system equivalent: executor-PD ⊕ compositor-PD).
+    fn focused_compositor(
+        kernel: dregg_firmament::emulated_kernel::EmulatedKernel,
+        owner: CellId,
+    ) -> dregg_firmament::CompositorPd {
+        use dregg_firmament::compositor_pd::{Scene, Surface};
+        dregg_firmament::CompositorPd::boot(
+            kernel,
+            Scene {
+                surfaces: vec![Surface {
+                    owner,
+                    regions: vec![10, 11],
+                    content_digest: 0,
+                    source_state_root: 0,
+                    z_layer: 0,
+                    focus_flag: true,
+                }],
+            },
+        )
+    }
+
+    #[test]
+    fn a_real_verified_turn_repaints_the_focused_cell_through_the_executor_pd() {
+        // The cockpit's REAL `World` hosted in the executor-PD, sharing its n=1
+        // kernel with a compositor-PD that focuses the wallet `a`.
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 1_000);
+        let b = w.genesis_cell(2, 0);
+        let mut cockpit = SemihostCockpit::boot(w);
+        let mut compositor = focused_compositor(cockpit.kernel().clone(), a);
+
+        // The framebuffer BEFORE any turn — the focused cell's tile 10 is blank.
+        let fb_before = compositor.framebuffer_snapshot();
+        assert_eq!(fb_before[10], 0, "the focused cell starts blank");
+
+        // A GENUINE verified transfer a→b, committed THROUGH the executor-PD, with
+        // the §3 repaint projected from its REAL `TurnReceipt`.
+        let turn = cockpit.world().turn(a, vec![transfer(a, b, 250)]);
+        let (outcome, dirty) = cockpit.commit_turn_via_semihost_with_repaint(turn, a);
+        assert!(
+            outcome.is_committed(),
+            "the real transfer committed at the heart"
+        );
+        let dirty = dirty.expect("a committed real turn projects a DirtyRegion");
+        assert_eq!(
+            dirty.owner, a,
+            "the dirty region names the wallet that committed"
+        );
+
+        // THE COMPOSITOR RE-PAINTS: present the dirty region onto the focused cell's
+        // region 10 — the scene gate ADMITS the honest repaint, the framebuffer
+        // advances at exactly tile 10 (the cell re-painted to its new committed
+        // state's frame).
+        let commit = compositor
+            .present(&dirty.owner, dirty.to_present(vec![10]))
+            .expect("the scene gate admits the honest repaint");
+        let fb_after = compositor.framebuffer_snapshot();
+        assert_ne!(
+            fb_after[10], fb_before[10],
+            "the REAL committed turn re-painted the focused cell"
+        );
+        assert_eq!(
+            fb_after[10],
+            (commit.digest & 0xFF) as u8,
+            "tile 10 holds the frame the real turn projected"
+        );
+
+        // The post-state confirms the SAME heart advanced the ledger (250 moved).
+        assert_eq!(
+            cockpit.world().ledger().get(&a).unwrap().state.balance(),
+            750
+        );
+        assert_eq!(
+            cockpit.world().ledger().get(&b).unwrap().state.balance(),
+            250
+        );
+    }
+
+    #[test]
+    fn a_rejected_real_turn_repaints_nothing_fail_closed() {
+        // An overspend is rejected AT THE HEART through the PD wire; the projection
+        // is None (fail-closed — no dirty signal), and the framebuffer is untouched.
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 100);
+        let b = w.genesis_cell(2, 0);
+        let mut cockpit = SemihostCockpit::boot(w);
+        let mut compositor = focused_compositor(cockpit.kernel().clone(), a);
+        let fb_before = compositor.framebuffer_snapshot();
+
+        let turn = cockpit.world().turn(a, vec![transfer(a, b, 1_000)]); // overspend
+        let (outcome, dirty) = cockpit.commit_turn_via_semihost_with_repaint(turn, a);
+        assert!(
+            !outcome.is_committed(),
+            "the overspend is REJECTED at the heart"
+        );
+        assert!(
+            dirty.is_none(),
+            "a rejected real turn projects no dirty region (re-paints nothing)"
+        );
+
+        // The framebuffer is BYTE-IDENTICAL — a refused turn re-painted nothing.
+        assert_eq!(
+            compositor.framebuffer_snapshot(),
+            fb_before,
+            "the rejected turn left the framebuffer byte-identical (fail-closed)"
+        );
+        assert_eq!(compositor.frames().len(), 0, "no frame committed");
+    }
+
+    #[test]
+    fn a_sequence_of_real_turns_repaints_to_distinct_frames() {
+        // "The cells CHANGE while you watch": each committed turn in a SEQUENCE
+        // advances the ledger AND re-paints the focused cell to a DISTINCT frame
+        // (distinct committed receipt ⟹ distinct state-root ⟹ distinct content
+        // digest ⟹ a genuine frame advance — the binding the compositor's
+        // frame-advance leg relies on). This is the umem "passable intermediate
+        // states" made visible: each boundary the heart commits re-paints the glass.
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 1_000);
+        let b = w.genesis_cell(2, 0);
+        let mut cockpit = SemihostCockpit::boot(w);
+        let mut compositor = focused_compositor(cockpit.kernel().clone(), a);
+
+        let mut frames: Vec<u8> = vec![compositor.framebuffer_snapshot()[10]]; // blank=0
+        for _ in 0..3 {
+            let turn = cockpit.world().turn(a, vec![transfer(a, b, 50)]);
+            let (outcome, dirty) = cockpit.commit_turn_via_semihost_with_repaint(turn, a);
+            assert!(outcome.is_committed(), "each real transfer commits");
+            let dirty = dirty.expect("each committed turn projects a dirty region");
+            compositor
+                .present(&dirty.owner, dirty.to_present(vec![10]))
+                .expect("each honest repaint is admitted");
+            frames.push(compositor.framebuffer_snapshot()[10]);
+        }
+
+        // Each successive committed turn re-painted to a DISTINCT frame from the
+        // one before it (the chain-head advanced ⟹ a distinct receipt ⟹ a distinct
+        // frame). The framebuffer genuinely CHANGED on every turn.
+        for win in frames.windows(2) {
+            assert_ne!(
+                win[0], win[1],
+                "each committed turn re-paints to a frame distinct from the last"
+            );
+        }
+        // The ledger advanced once per turn (3 × 50 moved a→b).
+        assert_eq!(
+            cockpit.world().ledger().get(&b).unwrap().state.balance(),
+            150
+        );
+        assert_eq!(cockpit.world().height(), 3, "three turns committed");
+        // Four distinct framebuffer states straddled the three turns (blank + 3).
+        assert_eq!(compositor.frames().len(), 3, "three repaints logged");
     }
 
     // =======================================================================
