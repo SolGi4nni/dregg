@@ -281,7 +281,7 @@ live-node = ["dep:reqwest"]
 # builds get the registry via `native-full` (or pass `--features app-registry`
 # alongside `embedded-executor` for the gpui-free native test path); the wasm
 # build omits it cleanly.
-embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-cell-crypto", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells", "dep:dregg-persist", "dep:dregg-doc", "dep:dregg-captp", "dep:dregg-secrets"]
+embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-cell-crypto", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-deploy", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells", "dep:dregg-persist", "dep:dregg-doc", "dep:dregg-captp", "dep:dregg-secrets"]
 
 # THE APP REGISTRY — wire `dregg-app-framework` + a STARTER SET of pre-built
 # starbridge-apps (gallery / tussle / sealed-auction / bounty-board) into the
@@ -649,6 +649,16 @@ dregg-doc = { path = "../dregg-doc", features = ["substrate"], optional = true }
 # REAL `check_conservation`/`check_no_amplification`/`check_wellformed` the live
 # editor's validate() rail delegates to (never a parallel re-expression).
 dregg-userspace-verify = { path = "../dregg-userspace-verify", optional = true }
+# THE WORKFLOW-COMPOSER + FLOW-REFINEMENT machinery (`dregg_deploy::refine`): the
+# REAL `Proc` flow algebra (sequence `⋆` / choice `⊔` / emit), the proven online
+# simulation-game decision `decide_refines` (`A ≤ᶠ B` — routes through the verified
+# Lean `@[export] dregg_decide_refines`, falling back to the σ-free mirror), and the
+# `FlowSpec`/`IntentEffect` intent envelope. The workflow-composer desktop surface
+# (`src/deos_desktop/workflow.rs`) composes `dregg_turn::Effect`s into a `Proc`
+# workflow and asks the REAL refinement gate "does workflow A refine B?". `dregg-deploy`
+# path-deps the SAME `../turn`/`../cell`/`../dregg-lean-ffi` already in this tree (via
+# dregg-sdk), so it adds no new heavy link and reuses the SAME Lean archive.
+dregg-deploy = { path = "../dregg-deploy", optional = true }
 # THE FIRMAMENT cap-gradation bridge (sel4/dregg-firmament): the REAL
 # `Capability{ target: Surface(cell), rights }` + `SurfaceBacking` (a genuine
 # dregg_cell::Ledger + dregg_turn::TurnExecutor) the cap-first shell rides — so a

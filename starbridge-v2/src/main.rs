@@ -1120,7 +1120,53 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         "the authored document prose must PERSIST to the sidecar (content persistence)"
     );
 
-    // 6. Open the PROPERTY inspector/editor over the treasury cell, and a deep
+    // 6. Open the WORKFLOW-COMPOSER over the service cell: compose intents into a
+    //    workflow, pin a baseline, then add a WIDENING intent (Seal) — and assert the
+    //    REAL flow-refinement decision (dregg_deploy::refine) flips from refines to
+    //    diverges. This exercises the proven `decide_refines` game, not a mock.
+    window.update(&mut cx, |desk, _w, cx| {
+        use starbridge_v2::deos_desktop::IntentKind;
+        desk.bake_open_workflow(service);
+        desk.bake_workflow_add(service, IntentKind::Transfer);
+        desk.bake_workflow_add(service, IntentKind::Grant);
+        // Pin the baseline B = {Transfer, Grant}.
+        desk.bake_workflow_pin_baseline(service);
+        cx.notify();
+    })?;
+    cx.run_until_parked();
+    // Within the baseline's intent shapes → REFINES.
+    window.update(&mut cx, |desk, _w, cx| {
+        use starbridge_v2::deos_desktop::IntentKind;
+        desk.bake_workflow_add(service, IntentKind::Transfer);
+        cx.notify();
+    })?;
+    cx.run_until_parked();
+    let refines_within =
+        window.update(&mut cx, |desk, _w, _cx| desk.bake_workflow_refines(service))?;
+    anyhow::ensure!(
+        refines_within,
+        "a workflow whose steps stay within the baseline envelope must REFINE it (the proven A ≤ᶠ B game)"
+    );
+    // A WIDENING intent (Seal) outside the envelope → DIVERGES.
+    window.update(&mut cx, |desk, _w, cx| {
+        use starbridge_v2::deos_desktop::IntentKind;
+        desk.bake_workflow_add(service, IntentKind::Seal);
+        cx.notify();
+    })?;
+    cx.run_until_parked();
+    let diverges_widened =
+        window.update(&mut cx, |desk, _w, _cx| desk.bake_workflow_refines(service))?;
+    anyhow::ensure!(
+        !diverges_widened,
+        "a workflow that widens beyond its baseline (adds Seal) must NOT refine it — the refinement game must catch the widening"
+    );
+    let wf_letters = window.update(&mut cx, |desk, _w, _cx| desk.bake_workflow_letters(service))?;
+    anyhow::ensure!(
+        wf_letters == 4,
+        "the composed workflow's flow-Proc must fire one letter per step (4 steps -> 4 letters), got {wf_letters}"
+    );
+
+    // 7. Open the PROPERTY inspector/editor over the treasury cell, and a deep
     //    right-click context menu over the service cell — both visible in the shot.
     window.update(&mut cx, |desk, _w, cx| {
         desk.bake_open_properties(treasury);
@@ -1139,7 +1185,9 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     println!(
         "OK deos DESKTOP render -> {out}.png ({ww}x{hh}, logical {w}x{h}); NT/Pharo workbench \
          over the live verified World — {} cell-icons; inspector + transcript + {docwins} document \
-         editor window(s); a deep right-click context menu AND a property inspector/editor open; a \
+         editor window(s); a WORKFLOW COMPOSER (intents composed into a flow; the proven \
+         dregg_deploy::refine A ≤ᶠ B game decides refinement — a widening Seal DIVERGES); a deep \
+         right-click context menu AND a property inspector/editor open; a \
          receipted document edit + a cross-cell TRANSCLUDE compose; REAL verified turns \
          (height {pre_height} -> {post_height}); icon drag + authored prose persisted to the \
          layout sidecar.",
