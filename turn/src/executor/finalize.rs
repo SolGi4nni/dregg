@@ -600,6 +600,11 @@ impl TurnExecutor {
                 // commitment which folds the lifecycle byte in (see
                 // cell/src/commitment.rs).
                 JournalEntry::SetLifecycle { .. } | JournalEntry::AttenuateCapability { .. } => {}
+                // Heap writes: rollback-only here — no separate LedgerDelta
+                // field. On commit the cell's updated `heap_root` (and its
+                // `heap_map` preimage) is read off the cell itself; the
+                // canonical commitment folds `heap_root` in (cell/src/state.rs).
+                JournalEntry::SetHeap { .. } => {}
             }
         }
 

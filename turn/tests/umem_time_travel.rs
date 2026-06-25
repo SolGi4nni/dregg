@@ -445,20 +445,32 @@ fn reify_restores_a_live_ledger_to_height_h() {
     );
 }
 
-/// THE HONEST RESIDUAL #1 — a non-empty HEAP is not carried by any `UKey`
-/// plane (only its derived `heap_root` is, and its preimage is dropped). reify
-/// REFUSES rather than fabricate an empty heap under a non-empty root.
+/// RESIDUAL #1 CLOSED (UMEM-PRIMITIVE §2, Stage A) — the per-cell heap is now a
+/// first-class umem plane, so a non-empty HEAP round-trips: `reify_cell` rebuilds
+/// `heap_map` from the projected `Heap` plane and RE-DERIVES `heap_root`. The
+/// reified cell is byte-identical (same heap entries, same committed root).
 #[test]
-fn reify_refuses_heap_not_projected() {
+fn reify_round_trips_non_empty_heap() {
     let mut cell = make_open_cell(11, 100);
-    cell.state.set_heap(1, 2, [42u8; 32]); // non-empty heap → non-empty heap_root.
+    cell.state.set_heap(1, 2, [42u8; 32]);
+    cell.state.set_heap(3, 7, [9u8; 32]); // a second collection.
     let id = cell.id();
+    let committed = cell.state.heap_root;
     let mut ledger = Ledger::new();
     ledger.insert_cell(cell).unwrap();
 
     let proj = project_ledger(&ledger);
-    let err = reify_cell(id, &proj).expect_err("a heap-bearing cell must refuse");
-    assert_eq!(err, ReifyError::HeapNotProjected(id));
+    let reified = reify_cell(id, &proj).expect("a heap-bearing cell now round-trips");
+    assert_eq!(
+        reified.state.get_heap(1, 2),
+        Some([42u8; 32]),
+        "the heap entry round-trips"
+    );
+    assert_eq!(reified.state.get_heap(3, 7), Some([9u8; 32]));
+    assert_eq!(
+        reified.state.heap_root, committed,
+        "the re-derived heap_root equals the committed boundary"
+    );
 }
 
 /// THE HONEST RESIDUAL #3/#4 — a REVOKED capability leaves a tombstone and a

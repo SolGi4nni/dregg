@@ -45,7 +45,7 @@
 //! | `CellState.swiss_table_root`            | `SwissTableRoot`         | heap       |
 //! | `CellState.refcount_table_root`         | `RefcountTableRoot`      | heap       |
 //! | `CellState.system_roots[i]`             | `SystemRoot`             | heap       |
-//! | `CellState.heap_root`                   | `HeapRoot`               | heap       |
+//! | `CellState.heap_map` entries            | `Heap`                   | heap       |
 //! | sovereign commitments                   | `SovereignCommitment`    | heap       |
 //! | `Cell.capabilities` (c-list slots)      | `CapSlot`                | caps       |
 //! | `Cell.delegate`                         | `Delegate`               | caps       |
@@ -66,6 +66,11 @@
 //!    `fields_map` (a boundary view in the universal-memory design, recomputed on every
 //!    map write without its own journal entry; projecting it would double-count the
 //!    `Field` plane).
+//!  * `CellState.heap_root` — NOT projected: the DERIVED commitment (boundary) of the
+//!    `Heap` plane, exactly as `fields_root` is of `Field`. The sorted-Poseidon2 root
+//!    over the projected `Heap` cells equals it (`boundary_root_derived`); projecting it
+//!    would double-count the heap. The committed boundary is still on the cell, and a
+//!    cross-cell read binds it directly ([`open_heap_against_committed`]).
 //!  * the ledger Merkle tree / root — NOT projected: derived commitment over the cells.
 //!  * rate-limit counters / budget gate — NOT projected: per-window executor metering,
 //!    not consensus state (they never enter the state commitment).
@@ -145,7 +150,22 @@ pub enum UKey {
     /// One `system_roots` sub-block cell.
     SystemRoot { cell: CellId, index: u64 },
     /// The committed openable sorted-Poseidon2 heap root carried in cell state.
+    /// NOT projected by `project_cell` (it is the DERIVED commitment of the
+    /// `Heap` plane — see the module header's "Named exceptions"); retained as an
+    /// address for the reify consistency check and verifier-supplied boundaries.
     HeapRoot(CellId),
+    /// One entry of the cell's openable heap — the `(collection, key) → value`
+    /// map whose committed boundary is the derived `heap_root`. This is the
+    /// per-cell umem made first-class: a heap access projects to a genuine umem
+    /// cell, and the derived sorted-Poseidon2 root over all `Heap` cells of one
+    /// cell EQUALS that cell's committed `heap_root` (the boundary). A cross-cell
+    /// read binds another cell's committed `heap_root` as an init image and opens
+    /// a key here (see [`open_heap_against_committed`]).
+    Heap {
+        cell: CellId,
+        collection: u32,
+        key: u32,
+    },
     /// A sovereign cell's 32-byte state commitment.
     SovereignCommitment(CellId),
     // -- caps domain --------------------------------------------------------
@@ -195,6 +215,7 @@ impl UKey {
             | UKey::RefcountTableRoot(_)
             | UKey::SystemRoot { .. }
             | UKey::HeapRoot(_)
+            | UKey::Heap { .. }
             | UKey::SovereignCommitment(_)
             | UKey::CommittedHeight(_) => UDomain::Heap,
             UKey::CapSlot { .. }
@@ -236,6 +257,7 @@ impl UKey {
             | UKey::FieldVisibility { cell, .. }
             | UKey::FieldCommitment { cell, .. }
             | UKey::SystemRoot { cell, .. }
+            | UKey::Heap { cell, .. }
             | UKey::CapSlot { cell, .. } => Some(*cell),
             UKey::Factory(_)
             | UKey::NoteNullifier(_)
@@ -332,7 +354,24 @@ pub fn project_cell(cell: &Cell, out: &mut UProjection) {
             UVal::Bytes32(*root),
         );
     }
-    out.insert(UKey::HeapRoot(id), UVal::Bytes32(cell.state.heap_root));
+    // The per-cell heap made a first-class umem (UMEM-PRIMITIVE.md §2, Stage A):
+    // one `Heap{cell, collection, key}` cell per `heap_map` entry. The committed
+    // `heap_root` is the DERIVED commitment over these preimage cells (the sorted-
+    // Poseidon2 root EQUALS `cell.state.heap_root` by `compute_heap_root` /
+    // `boundary_root_derived`), so — exactly like `fields_root` over the `Field`
+    // plane — it is NOT projected here (projecting both would double-count the
+    // heap and make every heap write also move a derived-root cell). This is a
+    // refactor of WHERE the commitment is read (the preimage), not WHAT it commits.
+    for ((collection, key), value) in cell.state.heap_map.iter() {
+        out.insert(
+            UKey::Heap {
+                cell: id,
+                collection: *collection,
+                key: *key,
+            },
+            UVal::Bytes32(*value),
+        );
+    }
     out.insert(
         UKey::CommittedHeight(id),
         UVal::U64(cell.state.committed_height()),
@@ -395,6 +434,87 @@ pub fn project_executor_state(
         out.insert(UKey::Factory(*vk), json(desc));
     }
     out
+}
+
+/// The binding refused: a cell's projected `Heap` preimage does not reproduce
+/// the committed `heap_root` it was bound against — the Rust shadow of the
+/// keystone's anti-forgery tooth `boundary_init_root_bound`
+/// (`metatheory/Dregg2/Crypto/UniversalMemory.lean:475`): a tampered init image
+/// produces a different sorted-Poseidon2 leaf list, hence a different root,
+/// hence the pin refuses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeapBindError {
+    /// The cell whose heap was being bound.
+    pub cell: CellId,
+    /// The committed `heap_root` supplied as the init image's boundary.
+    pub committed: [u8; 32],
+    /// The root re-derived from the projected `Heap` preimage (≠ `committed`).
+    pub derived: [u8; 32],
+}
+
+impl std::fmt::Display for HeapBindError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "umem heap bind refused for cell {:?}: committed root {:?} != \
+             root derived from projected Heap preimage {:?}",
+            self.cell, self.committed, self.derived
+        )
+    }
+}
+
+impl std::error::Error for HeapBindError {}
+
+/// **THE CROSS-CELL HEAP READ** — bind another cell's committed `heap_root` as an
+/// init image and open one `(collection, key)`. This is the keystone's first
+/// cross-cell consumer (UMEM-PRIMITIVE §2, Stage A): a reader opens cell `cell`'s
+/// heap from a projection `proj` while pinning it to a `committed` root.
+///
+/// The init binding is the Rust shadow of `boundary_init_root_bound`: the heap's
+/// projected preimage is re-folded into its sorted-Poseidon2 root
+/// (`compute_heap_root`); if that does not equal the committed root the read
+/// REFUSES ([`HeapBindError`]) — a tampered image cannot keep the published root.
+/// On a sound binding the key is opened: `Ok(Some(value))` if present,
+/// `Ok(None)` if absent (the Merkle-path-free freshness leg).
+pub fn open_heap_against_committed(
+    proj: &UProjection,
+    cell: CellId,
+    committed: [u8; 32],
+    collection: u32,
+    key: u32,
+) -> Result<Option<[u8; 32]>, HeapBindError> {
+    let mut heap: BTreeMap<(u32, u32), [u8; 32]> = BTreeMap::new();
+    let mut requested: Option<[u8; 32]> = None;
+    for (k, v) in proj.iter() {
+        if let UKey::Heap {
+            cell: kc,
+            collection: c,
+            key: kk,
+        } = k
+        {
+            if *kc == cell {
+                let value = match v {
+                    UVal::Bytes32(b) => *b,
+                    // a malformed plane cannot reproduce the committed root, so
+                    // the binding will refuse below; record a zero placeholder.
+                    _ => [0u8; 32],
+                };
+                heap.insert((*c, *kk), value);
+                if *c == collection && *kk == key {
+                    requested = Some(value);
+                }
+            }
+        }
+    }
+    let derived = dregg_cell::state::compute_heap_root(&heap);
+    if derived != committed {
+        return Err(HeapBindError {
+            cell,
+            committed,
+            derived,
+        });
+    }
+    Ok(requested)
 }
 
 /// Memory-op kind (the memcheck `Kind`).
@@ -529,6 +649,19 @@ fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
                 slot: old_cap.slot,
             },
             Some(Some(json(old_cap))),
+        )],
+        JournalEntry::SetHeap {
+            cell,
+            collection,
+            key,
+            old_value,
+        } => vec![Touch::At(
+            UKey::Heap {
+                cell: *cell,
+                collection: *collection,
+                key: *key,
+            },
+            Some(old_value.map(UVal::Bytes32)),
         )],
         JournalEntry::CreateCell { cell } => vec![Touch::CreateCell(*cell)],
         JournalEntry::SetProvedState { cell, old_value } => vec![Touch::At(
@@ -769,30 +902,33 @@ pub(crate) fn emit_trace(
 // ## The named residual (the planes the projection does NOT carry — honest)
 //
 // `project_cell` is injective on the value planes it carries, but it does NOT
-// emit a `UKey` for four cell sub-states. A cell that exercises one of these
+// emit a `UKey` for three cell sub-states. A cell that exercises one of these
 // carries state the boundary cannot reconstruct, so `reify_cell` REFUSES with a
 // precise [`ReifyError`] rather than silently round-tripping a lie:
 //
-//  1. **`CellState.heap_map`** — the `(collection, key) → value` heap. No `UKey`
-//     plane carries heap entries (the `heap_root` is a derived commitment, but
-//     its preimage is dropped), so a non-empty heap cannot be rebuilt from the
-//     boundary. ⇒ [`ReifyError::HeapNotProjected`].
-//  2. **`Cell.interfaces`** — the exposed typed-interface vector. No `UKey`
+//  1. **`Cell.interfaces`** — the exposed typed-interface vector. No `UKey`
 //     plane carries it. ⇒ [`ReifyError::InterfacesNotProjected`].
-//  3. **`CapabilitySet.tombstones`** — revoked-slot tombstones. A revoke drops
+//  2. **`CapabilitySet.tombstones`** — revoked-slot tombstones. A revoke drops
 //     the cap from the projected `CapSlot` plane entirely AND records a
 //     tombstone slot; the boundary keeps only live caps, so a revocation cannot
 //     be reconstructed. ⇒ [`ReifyError::CapTombstonesNotProjected`].
-//  4. **`CapabilitySet.next_slot` when it exceeds the live high-water mark** —
+//  3. **`CapabilitySet.next_slot` when it exceeds the live high-water mark** —
 //     `next_slot` is monotone; if the highest-numbered slots were revoked it
 //     exceeds `max(live slot)+1` and the boundary cannot recover the gap.
 //     ⇒ [`ReifyError::CapNextSlotUnrecoverable`].
 //
-// The faithful class is exactly the cells where none of (1)–(4) hold: empty
-// heap, no interfaces, no revocations, contiguous cap slots from 0. The
-// time-travel boundary lands in this class for the transfer / set-field /
-// grant lanes the prototype proves over; the residual is the burn-down for
-// extending the projection to carry heap/interface/tombstone planes.
+// **Closed (UMEM-PRIMITIVE §2, Stage A): `CellState.heap_map`.** The per-cell
+// heap is now a first-class umem plane — every `(collection, key) → value` entry
+// projects to a `Heap{cell, collection, key}` cell, so `reify_cell` rebuilds the
+// `heap_map` from that preimage and RE-DERIVES `heap_root` (the boundary). A
+// non-empty heap is now in the faithful class; `HeapNotProjected` survives only
+// for an internally-inconsistent projection (committed boundary ≠ re-derived).
+//
+// The faithful class is exactly the cells where none of (1)–(3) hold: no
+// interfaces, no revocations, contiguous cap slots from 0 (any heap is fine).
+// The time-travel boundary lands in this class for the transfer / set-field /
+// set-heap / grant lanes the prototype proves over; the residual is the
+// burn-down for extending the projection to carry interface/tombstone planes.
 //
 // Per-window executor metering (`FactoryRegistry::{creation_counts,
 // current_epoch}`, rate-limit counters) is NOT reconstructed and NOT part of
@@ -815,8 +951,11 @@ pub enum ReifyError {
     /// The reconstructed `(public_key, token_id)` does not hash to the cell id
     /// the projection keyed it under (the content-address invariant broke).
     IdentityMismatch { expected: CellId, derived: CellId },
-    /// The cell exercises a non-empty heap, whose preimage no `UKey` plane
-    /// carries (residual #1).
+    /// The committed `HeapRoot` boundary does not equal the root re-derived from
+    /// the projected `Heap` preimage — an internally-inconsistent projection (a
+    /// tampered boundary). (Formerly "heap not projected": the per-cell heap is
+    /// now a first-class umem plane, so the preimage IS carried — UMEM-PRIMITIVE
+    /// §2, Stage A — and this fires only on a genuine boundary/preimage mismatch.)
     HeapNotProjected(CellId),
     /// The cell exposes typed interfaces, which no `UKey` plane carries
     /// (residual #2).
@@ -849,8 +988,8 @@ impl std::fmt::Display for ReifyError {
             ),
             ReifyError::HeapNotProjected(c) => write!(
                 f,
-                "reify: cell {c:?} has a non-empty heap; no UKey plane carries \
-                 heap entries (reify_seam residual #1)"
+                "reify: cell {c:?} committed heap_root != root re-derived from the \
+                 projected Heap preimage (inconsistent boundary)"
             ),
             ReifyError::InterfacesNotProjected(c) => write!(
                 f,
@@ -1022,15 +1161,34 @@ pub fn reify_cell(cell: CellId, proj: &UProjection) -> Result<Cell, ReifyError> 
             c.state.system_roots[i] = expect_bytes32(&sk, v)?;
         }
     }
-    // `heap_root` IS projected, but its PREIMAGE (`heap_map`) is not — a cell
-    // with a non-empty heap carries a non-empty-constant `heap_root`. Refuse
-    // rather than round-trip a heap the boundary cannot rebuild.
+    // -- the openable HEAP (UMEM-PRIMITIVE.md §2, Stage A): rebuild `heap_map`
+    //    from the projected `Heap` plane, then RE-DERIVE `heap_root` from it
+    //    (the boundary is the committed `HeapRoot` plane; the preimage is now
+    //    carried, closing the former reify_seam residual #1). --
+    let mut heap: BTreeMap<(u32, u32), [u8; 32]> = BTreeMap::new();
+    for (k, v) in proj.iter() {
+        if let UKey::Heap {
+            cell: kc,
+            collection,
+            key,
+        } = k
+        {
+            if *kc == cell {
+                heap.insert((*collection, *key), expect_bytes32(k, v)?);
+            }
+        }
+    }
+    c.state.heap_map = heap;
+    c.state.reseal_heap_root(); // re-derive the boundary from the preimage.
+    // The committed `HeapRoot` plane (when carried) MUST equal the root
+    // re-derived from the projected preimage; otherwise the projection is
+    // internally inconsistent (a tampered boundary) and we refuse rather than
+    // round-trip a heap whose preimage does not reproduce the committed root.
     if let Some(v) = proj.get(&UKey::HeapRoot(cell)) {
-        let projected = expect_bytes32(&UKey::HeapRoot(cell), v)?;
-        if projected != dregg_cell::state::empty_heap_root() {
+        let committed = expect_bytes32(&UKey::HeapRoot(cell), v)?;
+        if committed != c.state.heap_root {
             return Err(ReifyError::HeapNotProjected(cell));
         }
-        c.state.heap_root = projected; // the empty constant, byte-for-byte.
     }
 
     // -- lifecycle / mode / permissions / vk / program (structured blobs). --
@@ -1166,4 +1324,222 @@ pub fn reify_executor_state(
         }
     }
     Ok((ledger, note_nullifiers, bridged_nullifiers, factories))
+}
+
+// ===========================================================================
+// STAGE A — the per-cell heap as a first-class umem (UMEM-PRIMITIVE.md §2).
+//
+// These in-crate tests exercise the `emit_trace` bridge (which is `pub(crate)`)
+// over a `JournalEntry::SetHeap` heap write, the projection of `heap_map` into
+// the `Heap` plane, and the cross-cell read (`open_heap_against_committed`) that
+// binds another cell's committed `heap_root` as an init image — the keystone's
+// first cross-cell consumer.
+// ===========================================================================
+#[cfg(test)]
+mod heap_stage_a_tests {
+    use super::*;
+    use crate::journal::JournalEntry;
+    use dregg_cell::Cell;
+
+    fn heap_cell(seed: u8) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        pk[31] = seed.wrapping_mul(37);
+        Cell::with_balance(pk, [0u8; 32], 0)
+    }
+
+    fn bytes(n: u8) -> [u8; 32] {
+        let mut b = [0u8; 32];
+        b[0] = n;
+        b
+    }
+
+    /// The projection carries one `Heap` cell per `heap_map` entry, and the
+    /// sorted-Poseidon2 root re-derived over those cells EQUALS the cell's
+    /// committed `heap_root` (the boundary). The derived root is a refactor of
+    /// WHERE the commitment is read, not WHAT it commits.
+    #[test]
+    fn heap_projection_derives_committed_root() {
+        let mut cell = heap_cell(1);
+        cell.state.set_heap(7, 3, bytes(42));
+        cell.state.set_heap(7, 9, bytes(7));
+        cell.state.set_heap(2, 1, bytes(99));
+        let id = cell.id();
+        let committed = cell.state.heap_root;
+
+        let mut proj = UProjection::new();
+        project_cell(&cell, &mut proj);
+
+        // every heap_map entry is a genuine umem cell.
+        let mut rebuilt: BTreeMap<(u32, u32), [u8; 32]> = BTreeMap::new();
+        for (k, v) in proj.iter() {
+            if let UKey::Heap {
+                cell: kc,
+                collection,
+                key,
+            } = k
+            {
+                assert_eq!(*kc, id, "heap cell keyed under the owning cell");
+                match v {
+                    UVal::Bytes32(b) => {
+                        rebuilt.insert((*collection, *key), *b);
+                    }
+                    other => panic!("heap cell must be Bytes32, got {other:?}"),
+                }
+            }
+        }
+        assert_eq!(rebuilt.len(), 3, "all three heap entries projected");
+
+        // the derived boundary EQUALS the committed boundary.
+        let derived = dregg_cell::state::compute_heap_root(&rebuilt);
+        assert_eq!(
+            derived, committed,
+            "derived sorted-Poseidon2 root over the Heap plane must equal the \
+             committed heap_root"
+        );
+        // the derived boundary is NOT separately projected (it is the derived
+        // commitment of the Heap plane, like fields_root over Field).
+        assert_eq!(
+            proj.get(&UKey::HeapRoot(id)),
+            None,
+            "heap_root is the derived commitment, not a separate projected cell"
+        );
+    }
+
+    /// A heap write journaled as `JournalEntry::SetHeap` is re-read as a genuine
+    /// umem WRITE row in the heap domain; the fold over the pre-projection equals
+    /// the post-projection, the trace is disciplined, and no op is synthesized
+    /// (the journal NAMES the heap address).
+    #[test]
+    fn heap_write_emits_genuine_umem_row() {
+        let mut cell = heap_cell(2);
+        let id = cell.id();
+
+        // pre-state: empty heap.
+        let mut pre = UProjection::new();
+        project_cell(&cell, &mut pre);
+
+        // apply the heap write (the out-of-band mutation the live producer will
+        // one day journal) and capture the post-state.
+        let value = bytes(55);
+        cell.state.set_heap(4, 8, value);
+        let mut post = UProjection::new();
+        project_cell(&cell, &mut post);
+
+        // the journal entry the producer emits on a heap write.
+        let entry = JournalEntry::SetHeap {
+            cell: id,
+            collection: 4,
+            key: 8,
+            old_value: None, // the (4,8) key was absent before this turn.
+        };
+
+        let w = emit_trace(&pre, &post, std::slice::from_ref(&entry))
+            .expect("heap-write bridge must produce a witness");
+
+        // the agreement square + discipline + no synthesized ops.
+        assert_eq!(fold(&w.pre, &w.ops), w.post, "the agreement square holds");
+        assert!(disciplined(&w.ops), "the trace is disciplined");
+        assert_eq!(w.synthesized, 0, "the journal names the heap address");
+
+        // a genuine WRITE row at the Heap key, absent -> value.
+        let row = w
+            .ops
+            .iter()
+            .find(|op| {
+                matches!(
+                    op.key,
+                    UKey::Heap {
+                        collection: 4,
+                        key: 8,
+                        ..
+                    }
+                )
+            })
+            .expect("a Heap write row must be emitted");
+        assert_eq!(row.kind, UmemKind::Write);
+        assert_eq!(row.prev_val, None, "the key was absent before the write");
+        assert_eq!(row.val, Some(UVal::Bytes32(value)), "the written value");
+
+        // the derived commitment (heap_root) is not a projected cell; the Heap
+        // plane is the truth and the post-state carries the written entry.
+        assert_eq!(post.get(&UKey::HeapRoot(id)), None);
+        assert_eq!(
+            post.get(&UKey::Heap {
+                cell: id,
+                collection: 4,
+                key: 8
+            }),
+            Some(&UVal::Bytes32(value))
+        );
+
+        // NON-VACUITY: a tampered installed value breaks the fold/post square.
+        let mut tampered = w.ops.clone();
+        for op in tampered.iter_mut() {
+            if matches!(
+                op.key,
+                UKey::Heap {
+                    collection: 4,
+                    key: 8,
+                    ..
+                }
+            ) {
+                op.val = Some(UVal::Bytes32(bytes(0xFF)));
+            }
+        }
+        assert_ne!(
+            fold(&pre, &tampered),
+            post,
+            "a tampered heap write must break the agreement square (non-vacuous)"
+        );
+    }
+
+    /// THE CROSS-CELL READ — a reader binds cell B's committed `heap_root` as an
+    /// init image and opens a key. A sound binding opens the value; a tampered
+    /// projected preimage produces a different root, so the binding REFUSES (the
+    /// Rust shadow of the keystone's `boundary_init_root_bound`).
+    #[test]
+    fn cross_cell_read_binds_committed_heap_root() {
+        // cell B holds a heap; its heap_root is the committed boundary.
+        let mut b = heap_cell(3);
+        b.state.set_heap(1, 2, bytes(42));
+        b.state.set_heap(1, 5, bytes(13));
+        let b_id = b.id();
+        let committed = b.state.heap_root;
+
+        let mut proj = UProjection::new();
+        project_cell(&b, &mut proj);
+
+        // a sound binding opens a present key and reports absence Merkle-free.
+        assert_eq!(
+            open_heap_against_committed(&proj, b_id, committed, 1, 2),
+            Ok(Some(bytes(42))),
+            "binding the committed root opens the present key"
+        );
+        assert_eq!(
+            open_heap_against_committed(&proj, b_id, committed, 1, 99),
+            Ok(None),
+            "an absent key opens to None (the freshness leg)"
+        );
+
+        // TAMPER: a forged value in the projected preimage yields a different
+        // derived root, so the init binding refuses (anti-forgery tooth).
+        let mut forged = proj.clone();
+        forged.insert(
+            UKey::Heap {
+                cell: b_id,
+                collection: 1,
+                key: 2,
+            },
+            UVal::Bytes32(bytes(0xAA)),
+        );
+        let err = open_heap_against_committed(&forged, b_id, committed, 1, 2)
+            .expect_err("a tampered init image must fail the published root");
+        assert_eq!(err.cell, b_id);
+        assert_eq!(err.committed, committed);
+        assert_ne!(
+            err.derived, committed,
+            "the tampered image derives a different root"
+        );
+    }
 }

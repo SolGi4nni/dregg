@@ -8,6 +8,28 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## umem Stage A LANDED: the per-cell heap is a first-class umem (additive); live producer is the named seam (2026-06-25)
+- WHAT: `UMEM-PRIMITIVE.md §2/§7` Stage A — the per-cell heap (`CellState.heap_map`) projected as a
+  first-class umem collection, additive on the recursion-gated bridge witness, the keystone's first
+  cross-cell consumer. Shipped in `turn/`:
+  - `UKey::Heap { cell, collection, key }` (heap domain) + `project_cell` emits one `UVal::Bytes32`
+    per `heap_map` entry. `heap_root` is now the DERIVED commitment of the `Heap` plane (NOT
+    separately projected — exactly the established `fields_root`/`Field` treatment; the sorted-
+    Poseidon2 root over the projected cells EQUALS `cell.state.heap_root` by `boundary_root_derived`).
+  - `JournalEntry::SetHeap` + `record_set_heap` + rollback + `touches_of_entry` → genuine `umem_op`
+    rows on a heap write (the bridge re-reads a journaled heap write as its Blum WRITE).
+  - `open_heap_against_committed` — the cross-cell read: binds another cell's committed `heap_root`
+    as an init image and opens a key; a tampered preimage derives a different root → the binding
+    REFUSES (the Rust shadow of the keystone `boundary_init_root_bound`).
+  - reify_seam RESIDUAL #1 CLOSED: `reify_cell` rebuilds `heap_map` from the `Heap` plane + re-derives
+    `heap_root`; a non-empty heap now round-trips. Tests: `turn/src/umem.rs` `heap_stage_a_tests` (3) +
+    `turn/tests/umem_time_travel.rs::reify_round_trips_non_empty_heap`. All umem suites green.
+- NAMED SEAM (closure lane, not parking): no live `Effect` journals a heap write yet — today the heap
+  is mutated out-of-band (`CellState::set_heap`, e.g. `deos-js`/`dregg-doc`). The producer is a
+  heap-writing effect = a NEW effect/circuit surface (Stage B+, with `UmemRef`/checkpoint), deliberately
+  NOT built here. `JournalEntry::SetHeap` + `record_set_heap` carry `#[allow(dead_code)]` until it lands.
+  Named in `turn/src/journal.rs` (the `SetHeap` NAMED SEAM doc).
+
 ## DERIVATIVE-MATCHING faithfulness: Stages 0/1/3 LANDED kernel-clean over dregg's Pred; Stage 4 language-half done, table-equality unblocked (2026-06-25)
 - WHAT: a Brzozowski/Antimirov symbolic-derivative matcher built over dregg's OWN `Pred` algebra
   (`PredRE` = ERE≤'s `RE` minus the four lookarounds, `Pred` leaf), in dregg's own Lean — ERE≤ +

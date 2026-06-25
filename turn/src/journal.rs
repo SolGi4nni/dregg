@@ -97,6 +97,27 @@ pub(crate) enum JournalEntry {
         cell: CellId,
         old_lifecycle: CellLifecycle,
     },
+    /// A cell's heap entry `(collection, key)` was written (the openable
+    /// sorted-Poseidon2 `(collection, key) → value` heap whose committed root is
+    /// `CellState.heap_root`). Records the old value (`None` for a key that was
+    /// absent before this turn — the universal-memory absent leg, exactly like
+    /// `SetField`). On rollback the prior value is restored (or the key removed)
+    /// and the heap root re-sealed. The umem bridge re-reads this as the heap
+    /// domain's Blum write — see [`crate::umem::UKey::Heap`].
+    ///
+    /// NAMED SEAM (UMEM-PRIMITIVE §2, Stage A): the rollback + bridge wiring is
+    /// complete and exercised by `turn/tests/umem_heap.rs`, but no live `Effect`
+    /// journals a heap write yet — today the heap is mutated out-of-band
+    /// (`CellState::set_heap`, e.g. `deos-js`/`dregg-doc`). The producer is a
+    /// heap-writing effect, a new effect/circuit surface (Stage B+) deliberately
+    /// NOT built here. `#[allow(dead_code)]` until that producer lands.
+    #[allow(dead_code)]
+    SetHeap {
+        cell: CellId,
+        collection: u32,
+        key: u32,
+        old_value: Option<FieldElement>,
+    },
     /// A capability slot was attenuated in place. Records the prior values
     /// of the three narrow-able fields (permissions, allowed_effects, expires_at)
     /// so rollback can restore the slot exactly.
@@ -161,6 +182,25 @@ impl LedgerJournal {
     pub fn record_set_nonce(&mut self, cell: CellId, old_nonce: u64) {
         self.entries
             .push(JournalEntry::SetNonce { cell, old_nonce });
+    }
+
+    /// Record a heap write. `old_value = None` means the `(collection, key)`
+    /// was absent before this turn. (Awaiting the live heap-writing effect
+    /// producer — see [`JournalEntry::SetHeap`]'s NAMED SEAM note.)
+    #[allow(dead_code)]
+    pub fn record_set_heap(
+        &mut self,
+        cell: CellId,
+        collection: u32,
+        key: u32,
+        old_value: Option<FieldElement>,
+    ) {
+        self.entries.push(JournalEntry::SetHeap {
+            cell,
+            collection,
+            key,
+            old_value,
+        });
     }
 
     /// Record a capability grant (so it can be revoked on rollback).
@@ -398,6 +438,23 @@ impl LedgerJournal {
                 } => {
                     if let Some(c) = ledger.get_mut(&cell) {
                         c.lifecycle = old_lifecycle;
+                    }
+                }
+                JournalEntry::SetHeap {
+                    cell,
+                    collection,
+                    key,
+                    old_value,
+                } => {
+                    if let Some(c) = ledger.get_mut(&cell) {
+                        match old_value {
+                            Some(v) => {
+                                c.state.set_heap(collection, key, v);
+                            }
+                            None => {
+                                c.state.remove_heap(collection, key);
+                            }
+                        }
                     }
                 }
                 JournalEntry::AttenuateCapability {
