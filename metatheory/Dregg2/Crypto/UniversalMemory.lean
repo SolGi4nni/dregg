@@ -478,6 +478,63 @@ theorem boundary_init_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2Spong
     hdeclared = hcommitted :=
   Heap.root_injective hash hCR hroot
 
+/-! ### §4c — the WHOLE-IMAGE boundary equality (the no-extra-cells direction).
+
+`boundary_init_root_bound` proves the binding REFUSES a tampered declared heap. §4b's per-cell
+realization (the deployed cross-cell-read, `satisfied2U_init_root`) proves only the SUBSET view:
+each TOUCHED address `(d, a)` with `a ∈ as` opens to its declared value under the committed root.
+That is sound for "this peer field IS the committed value" but it does NOT, on its own, forbid a
+committed heap that holds the declared cells AND EXTRA cells the boundary never declared.
+
+This section closes the no-extra-cells direction at the Lean level, by the route the in-circuit
+WHOLE-boundary root-fold realizes: recompute the sorted-Poseidon2 root of the ENTIRE declared
+boundary image `boundaryCells init as` and PIN it to the committed pre-state root. That single
+pin, via `root_injective`, forces the committed heap to BE the boundary view — so the committed
+heap's lookup semantics is EXACTLY the declared image: present-and-declared cells carry their
+declared value, and EVERY address off the declared list is ABSENT in the committed heap (no
+extra cells, no hidden cell). The two directions stated separately:
+  * `boundary_image_eq_of_root` — the committed heap equals the boundary view (the leaf-list
+    equality `root_injective` yields, the structural anti-ghost);
+  * `boundary_whole_image_sem` — its consequence in lookup terms: the committed heap agrees with
+    the declared image at EVERY address, INCLUDING absence off the declared list.
+
+NO new crypto: the CR floor enters once, exactly as in `boundary_init_root_bound`. This is the
+SAME `Poseidon2SpongeCR` tooth, applied to the whole-image fold instead of a per-cell opening.
+The deferred work is entirely the in-circuit AIR that COMPUTES `Heap.root hash (boundaryCells
+…)` over the universal boundary table and pins it to the committed-root public input; that fold
+rides the universal-map rotation (it needs the rotation's per-domain sorted-leaf fold chip). The
+Lean obligation it must discharge is precisely the hypothesis `hpin` below. -/
+
+/-- **`boundary_image_eq_of_root` — the committed heap IS the boundary view (no extra cells).**
+If the committed pre-state heap `hcommitted` carries the SAME root as the sorted-Poseidon2 fold
+of the ENTIRE declared boundary image `boundaryCells init as`, then under the named CR floor the
+committed heap EQUALS that boundary view as a leaf list. This is the structural no-extra-cells
+fact: the committed heap can hold NOTHING the boundary did not declare, because a single extra
+or altered leaf moves the root. The whole-image companion of `boundary_init_root_bound`, against
+the recomputed fold rather than a separately-declared heap. -/
+theorem boundary_image_eq_of_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {hcommitted : FeltHeap} {init : ℤ → Option ℤ} {as : List ℤ}
+    (hpin : Heap.root hash hcommitted = Heap.root hash (boundaryCells init as)) :
+    hcommitted = boundaryCells init as :=
+  Heap.root_injective hash hCR hpin
+
+/-- **`boundary_whole_image_sem` — the committed heap agrees with the declared image EVERYWHERE.**
+The lookup-world consequence of `boundary_image_eq_of_root`: under the CR floor, pinning the
+committed pre-state root to the whole-boundary fold forces the committed heap's `get` to equal
+the declared image at EVERY address — declared cells open to their declared value, and every
+address OFF the declared list is absent. This is the full whole-image equality `hsem` that the
+per-cell subset realization (`satisfied2U_init_root`'s hypothesis) had to ASSUME: here it is
+DERIVED from the single whole-boundary root pin, with the no-extra-cells direction included.
+(`as` sorted is needed for the boundary view to be the canonical sorted leaf list it folds as.) -/
+theorem boundary_whole_image_sem (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {hcommitted : FeltHeap} {init : ℤ → Option ℤ} {as : List ℤ}
+    (has : as.Pairwise (· < ·))
+    (hpin : Heap.root hash hcommitted = Heap.root hash (boundaryCells init as)) :
+    ∀ a, Heap.get hcommitted a = if a ∈ as then init a else none := by
+  intro a
+  rw [boundary_image_eq_of_root hash hCR hpin]
+  exact get_boundaryCells has a
+
 /-! ## §5 — THE NULLIFIER WIN: freshness is a memory property (no Merkle path intra-proof).
 
 A nullifier domain cell is `none` (never spent) or `some _` (spent). Inserts are the only writes
@@ -765,6 +822,36 @@ example :
     · rw [if_neg (fun h => ha (List.mem_singleton.mp h)),
         Heap.get_cons_ne _ _ ha, Heap.get_nil]
 
+/-! ### Whole-image (no-extra-cells) non-vacuity — the extra cell MOVES the fold root.
+
+`boundary_image_eq_of_root` / `boundary_whole_image_sem` carry the no-extra-cells punch under the
+abstract CR floor; these guards exhibit it on the computable `refSponge`, the executable shadow.
+A committed heap that holds the declared boundary cell `[(10, 7)]` AND an EXTRA cell `(20, 5)`
+the boundary never declared has a DIFFERENT root from the whole-boundary fold `boundaryCells uinit
+[10]` — so the whole-image root pin REFUSES it (a hidden cell cannot survive the fold), exactly
+the direction the per-cell subset opening could not see. -/
+
+-- The whole-boundary fold of the one-cell init image is the one-cell leaf list (positive):
+#guard boundaryCells (fun a => uinit_one (Domain.heap, a)) [10] == [((10 : ℤ), (7 : ℤ))]
+-- A committed heap with an EXTRA undeclared cell (20,5) has a DIFFERENT fold root — REFUSED:
+#guard (Heap.root Heap.refSponge [((10 : ℤ), (7 : ℤ)), ((20 : ℤ), (5 : ℤ))]
+  != Heap.root Heap.refSponge (boundaryCells (fun a => uinit_one (Domain.heap, a)) [10]))
+-- The honest committed heap (exactly the boundary cell) MATCHES the fold root — admitted:
+#guard (Heap.root Heap.refSponge [((10 : ℤ), (7 : ℤ))]
+  == Heap.root Heap.refSponge (boundaryCells (fun a => uinit_one (Domain.heap, a)) [10]))
+-- The whole-image lookup characterization: OFF-list address 20 is ABSENT in the boundary view
+-- (the no-extra-cells direction in lookup terms — `boundary_whole_image_sem`'s `else none`):
+#guard Heap.get (boundaryCells (fun a => uinit_one (Domain.heap, a)) [10]) (20 : ℤ) == none
+
+/-- `boundary_whole_image_sem` fires structurally on a concrete committed heap = its boundary
+view: the heap agrees with the declared image at the declared address AND is absent off-list.
+(Stated against an abstract CR `hash`/`hCR` since the theorem rides the named floor; the pin
+hypothesis is given by `rfl` on the matching heap, exercising the whole-image route end to end.) -/
+example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (init : ℤ → Option ℤ) (as : List ℤ) (has : as.Pairwise (· < ·)) :
+    ∀ a, Heap.get (boundaryCells init as) a = if a ∈ as then init a else none :=
+  boundary_whole_image_sem hash hCR has rfl
+
 end NonVacuity
 
 /-! ## Axiom-hygiene pins -/
@@ -780,6 +867,8 @@ end NonVacuity
 #assert_axioms boundary_root_from_memcheck
 #assert_axioms boundary_init_root_derived
 #assert_axioms boundary_init_root_bound
+#assert_axioms boundary_image_eq_of_root
+#assert_axioms boundary_whole_image_sem
 #assert_axioms consistent_read_pins
 #assert_axioms fold_none_of_insert_only
 #assert_axioms nullifier_fresh_sound

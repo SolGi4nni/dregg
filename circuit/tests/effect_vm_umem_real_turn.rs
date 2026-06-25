@@ -444,8 +444,13 @@ fn umem_real_turn_stale_prev_refuses() {
 // root by per-cell membership (a faithful SUBSET view — "cell X's published field IS this"),
 // which is exactly the cross-cell-read primitive's need. The whole-IMAGE equality (the SUBSET
 // *and* the no-extra-cells direction, i.e. the full sorted-Poseidon2 root recompute over the
-// entire boundary `boundaryCells`, `boundary_init_root_bound`'s injectivity) is the named tail
-// requiring the in-circuit whole-boundary root-fold; it rides the universal-map rotation, not
+// entire boundary `boundaryCells`) is now a PROVED Lean theorem on the soundness side:
+// `UniversalMemory.boundary_whole_image_sem` (IR lift `DescriptorIR2.satisfied2U_init_whole_image`)
+// — pinning the committed root to the whole-boundary fold forces the committed heap to agree with
+// the declared image at every address, absence off-list included (no extra cells), via
+// `boundary_init_root_bound`'s injectivity. What remains is purely the in-circuit AIR/witness work
+// that COMPUTES that whole-boundary root-fold and pins it to the committed-root PI (the theorem's
+// `hpin` hypothesis); that per-domain sorted-leaf fold chip rides the universal-map rotation, not
 // this pass.
 
 /// The deployed-shape column layout for the cross-cell read MapOp (arbitrary but stable):

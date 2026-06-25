@@ -102,8 +102,16 @@
 //!     membership path, a forged value opens to the genuine leaf. It is the WITNESSED
 //!     CROSS-CELL-READ primitive (the circuit twin of the executor-only
 //!     `StateConstraint::ObservedFieldEquals`); see `tests/effect_vm_umem_real_turn.rs`. NAMED
-//!     TAIL: the whole-IMAGE equality (the no-extra-cells direction, the in-circuit
-//!     sorted-Poseidon2 root-fold over the ENTIRE boundary) rides the universal-map rotation.
+//!     TAIL: the whole-IMAGE equality (the no-extra-cells direction). Its SOUNDNESS is now a
+//!     proved Lean theorem — `UniversalMemory.boundary_whole_image_sem` (lifted to the IR as
+//!     `DescriptorIR2.satisfied2U_init_whole_image`): pin the committed pre-state root to the
+//!     sorted-Poseidon2 fold of the ENTIRE declared boundary image and, under the CR floor, the
+//!     committed heap agrees with the declared image at EVERY address INCLUDING absence off the
+//!     declared list (no extra cells). What remains is purely the in-circuit AIR/witness work:
+//!     COMPUTING that whole-boundary root-fold in-circuit and pinning it to the committed-root
+//!     public input — the obligation the Lean theorem's `hpin` hypothesis names exactly. That
+//!     per-domain sorted-leaf fold chip rides the universal-map rotation; this pass realizes only
+//!     the per-cell subset opening above.
 //!   * The custom table id 5 (Lean `SUBMASK_TID = 0`) is realized as the bitwise-submask
 //!     relation at 30 bits (`subsetTable_mem_iff`: both elements in `[0, 2^30)` and
 //!     `keep & held = keep`), enforced by per-bit decomposition — the custom-table CONTENTS
