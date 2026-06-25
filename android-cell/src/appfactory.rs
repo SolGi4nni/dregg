@@ -202,6 +202,25 @@ impl AndroidPermission {
             },
         }
     }
+
+    /// **The concrete cell a real hand-over of this permission grants a cap
+    /// reaching** — the resolution of [`Self::cap_template`]'s [`CapTarget`]
+    /// against the grantee `app_cell`. The [`crate::permgate::PermWorld`] kernel
+    /// path mints a real `Effect::GrantCapability` toward exactly this cell:
+    ///
+    /// - a sensor/organ permission ([`CapTarget::Specific`]) targets its
+    ///   name-derived device organ ([`organ_cell`]) — camera and location are
+    ///   distinct authorities, so the granted cap reaches distinct cells;
+    /// - a storage/custom permission ([`CapTarget::SelfCell`]) targets the
+    ///   android-cell's own file-root, which is the `app_cell` itself;
+    /// - a network permission ([`CapTarget::Any`]) anchors on the `app_cell`
+    ///   (INTERNET is `Normal` and never reaches the hand-over path anyway).
+    pub fn grant_target(&self, app_cell: CellId) -> CellId {
+        match self.cap_template().target {
+            CapTarget::Specific(id) => id,
+            CapTarget::SelfCell | CapTarget::Any => app_cell,
+        }
+    }
 }
 
 /// **The AOSP permission protection level** — `normal` (auto-granted at install, no dialog),

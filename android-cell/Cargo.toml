@@ -42,6 +42,18 @@ dregg-captp = { path = "../captp" }
 # pulls `dregg-cell` transitively; we name it directly for the factory types.
 dregg-cell = { path = "../cell" }
 
+# THE REAL KERNEL — `TurnExecutor` + `Effect::GrantCapability` (the verified
+# executor that `dregg_sdk::embed::DreggEngine` — and so the cockpit's `World` /
+# `powerbox` — wraps). The permission hand-over (`permgate::PermWorld`) routes a
+# dangerous-permission grant through THIS executor over a real `dregg_cell::Ledger`,
+# so the permission cap actually lands in the android-cell's c-list with a kernel
+# `TurnReceipt`. `dregg-firmament` already pulls it transitively; named directly
+# for the executor/turn vocabulary. The android-cell ↔ cockpit-`World` boundary
+# (named in `permgate`'s module docs): the cockpit's `World` is a starbridge-v2
+# type ABOVE this crate, so we cannot — and need not — depend on it; the authority
+# it commits through is exactly this `TurnExecutor`.
+dregg-turn = { path = "../turn" }
+
 # content_digest = blake3(rgba8) — the SAME blake3 the RgbaFrame uses; also the
 # IoReceipt's decision digest.
 blake3 = "1"

@@ -46,18 +46,42 @@
 //!    [`PermBox::revoke`] (the Settings-revoke reforge) dims a runtime-granted badge again,
 //!    receipted.
 //!
-//! # The depth (honest, like the sibling gates')
+//! # Two surfaces: the pure badge model, and the real kernel grant
 //!
-//! This is the **authority-and-visibility** layer: the badge set is the faithful projection of
-//! an app's held permissions, and the hand-over is the receipted cap transfer that replaces the
-//! dialog. The remaining frontier — binding a grant to the cockpit's *real* [`World`] grant turn
-//! (the cockpit powerbox already mints a verified [`Effect::GrantCapability`]; the device-side
-//! wiring routes a dangerous-permission hand-over through that same executor so the permission
-//! cap lands in the android-cell's c-list with a kernel [`TurnReceipt`]), and the in-runtime
-//! `checkSelfPermission` interposition so the confined app's own permission checks read this
-//! badge set rather than the framework's — are the same not-yet-claimed depth the sibling gates
-//! name. What IS real today: the protection-level-faithful badge derivation + the declared /
-//! held-by-granter teeth + the receipted hand-over + revoke, testable on any node with no device.
+//! 1. [`PermBox`] is the **pure, device-free badge model**: the faithful projection of an app's
+//!    held permissions + the receipted hand-over decision ([`PermReceipt`]), testable on any node.
+//!    Its [`grant`](PermBox::grant) records a content-addressed *witness* — it does not, by
+//!    itself, land a cap in any ledger. It is the cockpit's badge-preview surface.
+//! 2. [`PermWorld`] is the **real kernel hand-over**: it owns a live [`dregg_cell::Ledger`] +
+//!    the verified [`dregg_turn::executor::TurnExecutor`] (the SAME executor the cockpit's
+//!    powerbox commits through — `World` is a thin wrapper over `dregg_sdk::embed::DreggEngine`,
+//!    which wraps exactly this `TurnExecutor`). Its [`grant`](PermWorld::grant) of a *dangerous*
+//!    permission mints a genuine [`Effect::GrantCapability`] from the granting principal to the
+//!    android-cell and commits it through the executor, so **the permission cap actually lands in
+//!    the android-cell's capability c-list with a kernel [`TurnReceipt`]** and the badge flips
+//!    [`BadgeState::Lit`] because the cell *genuinely holds the cap*. The executor is the
+//!    authority: it re-checks `mint_needs_held_factory` (the principal must hold the organ cap —
+//!    `RefusedByKernel` / `CapabilityNotHeld`) and no-amplification, exactly the powerbox's teeth.
+//!
+//! # The android-cell ↔ cockpit-`World` boundary (named, not papered over)
+//!
+//! The cockpit's [`World`] is a `starbridge-v2` type that sits ABOVE this crate (it pulls gpui,
+//! the SDK, persistence, …). So `android-cell` does NOT — and need not — depend on it: that would
+//! invert the layering. The authority `World::commit_turn` ultimately runs is
+//! `dregg_turn::TurnExecutor::execute` over a `dregg_cell::Ledger`; [`PermWorld`] depends on that
+//! kernel directly. So the grant is a *real* verified turn through the same gate the powerbox
+//! uses — the cockpit, when it drives an android-cell, hands its `World`'s ledger semantics to
+//! this path; a future cockpit binding can lift [`PermWorld::grant`] onto its own `World` without
+//! a new effect (the effect IS [`Effect::GrantCapability`], reused verbatim).
+//!
+//! # The remaining depth (honest)
+//!
+//! The in-runtime `checkSelfPermission` interposition (so the confined app's own permission
+//! checks read this badge set rather than the framework's), and the in-circuit constructor proof
+//! that a given android-cell was minted by its descriptor, are the same not-yet-claimed depth the
+//! sibling gates name. What IS real today: the protection-level-faithful badge derivation + the
+//! declared / held-by-granter teeth + the receipted hand-over + revoke ([`PermBox`]), AND a real
+//! kernel cap-grant that lands in the cell's c-list with a verified `TurnReceipt` ([`PermWorld`]).
 //!
 //! [`World`]: ../../starbridge-v2/src/world.rs
 //! [`Effect::GrantCapability`]: dregg_turn::action::Effect
@@ -310,9 +334,9 @@ impl PermReceipt {
             PermDecision::RefusedNotHeldByGranter { .. } => format!(
                 "android-perm: ✖ {perm} REFUSED — the granting principal does not hold this authority (you cannot hand over what you do not hold)"
             ),
-            PermDecision::NothingToRevoke { .. } => format!(
-                "android-perm: ◦ {perm} not runtime-granted — nothing to revoke"
-            ),
+            PermDecision::NothingToRevoke { .. } => {
+                format!("android-perm: ◦ {perm} not runtime-granted — nothing to revoke")
+            }
         }
     }
 }
@@ -469,6 +493,353 @@ impl PermBox {
     }
 }
 
+// ── THE REAL KERNEL HAND-OVER ────────────────────────────────────────────────
+
+use dregg_cell::AuthRequired;
+use dregg_cell::{CapabilityRef, Cell, Ledger, Permissions};
+use dregg_turn::action::{Action, Authorization, DelegationMode, Effect};
+use dregg_turn::executor::{ComputronCosts, TurnExecutor};
+use dregg_turn::forest::CallForest;
+use dregg_turn::turn::{Turn, TurnReceipt, TurnResult};
+
+/// **The outcome of a real kernel permission hand-over** ([`PermWorld::grant`]) — the
+/// permission-side analogue of the cockpit powerbox's `PowerboxOutcome`, faithful to AOSP and
+/// carrying the executor's OWN [`TurnReceipt`] when a grant truly committed.
+#[derive(Clone, Debug)]
+pub enum KernelGrantOutcome {
+    /// A genuine [`Effect::GrantCapability`] turn COMMITTED: the permission cap landed in the
+    /// android-cell's real c-list at `slot`, its badge is genuinely [`BadgeState::Lit`], and the
+    /// executor's own [`TurnReceipt`] witnesses the transition (the dialog, reforged into a
+    /// verified turn — not just a content-addressed witness).
+    Granted {
+        permission: AndroidPermission,
+        app_cell: CellId,
+        /// The c-list slot the executor minted the cap into (assigned by the grantee's c-list).
+        slot: u32,
+        receipt: TurnReceipt,
+    },
+    /// A no-op: a `Normal` permission is already held at install (auto-granted) — no turn runs.
+    AlreadyHeldAtInstall { permission: AndroidPermission },
+    /// REFUSED before any turn: the app's manifest never declared this permission, so there is no
+    /// cap template and it can never be held (no ambient escalation).
+    RefusedNotDeclared { permission: AndroidPermission },
+    /// REFUSED by the REAL executor: the granting principal holds no cap reaching the permission's
+    /// organ (the kernel's `mint_needs_held_factory` / `CapabilityNotHeld`), or another
+    /// no-amplification gate fired. Carries the kernel's own reason — the authority is the
+    /// executor, never us.
+    RefusedByKernel {
+        permission: AndroidPermission,
+        reason: String,
+    },
+}
+
+impl KernelGrantOutcome {
+    /// Did a real `GrantCapability` turn commit (the cap genuinely landed)?
+    pub fn granted(&self) -> bool {
+        matches!(self, KernelGrantOutcome::Granted { .. })
+    }
+    /// The executor's verified receipt, if a grant committed.
+    pub fn receipt(&self) -> Option<&TurnReceipt> {
+        match self {
+            KernelGrantOutcome::Granted { receipt, .. } => Some(receipt),
+            _ => None,
+        }
+    }
+    /// Was the hand-over refused by the kernel (not held / amplifying)?
+    pub fn refused_by_kernel(&self) -> bool {
+        matches!(self, KernelGrantOutcome::RefusedByKernel { .. })
+    }
+    /// Was the hand-over refused because the permission was never declared?
+    pub fn refused_not_declared(&self) -> bool {
+        matches!(self, KernelGrantOutcome::RefusedNotDeclared { .. })
+    }
+}
+
+/// **THE REAL KERNEL PERMISSION HAND-OVER — the powerbox path, for an android-cell.**
+///
+/// Where [`PermBox`] is the pure, device-free badge model (its [`grant`](PermBox::grant) leaves a
+/// content-addressed witness), `PermWorld` owns a live [`Ledger`] + the verified [`TurnExecutor`]
+/// — the SAME executor the cockpit's powerbox commits through — and its [`grant`](Self::grant) of
+/// a dangerous permission mints a genuine [`Effect::GrantCapability`] so the permission cap lands
+/// in the android-cell's real c-list with a kernel [`TurnReceipt`]. The cap-badge then flips
+/// [`BadgeState::Lit`] because the cell GENUINELY holds the cap (the badge reads the live c-list,
+/// not an internal set). Holds NO ambient authority: the executor refuses a grant the principal
+/// cannot back (`mint_needs_held_factory`), exactly the powerbox tooth, as the real backstop.
+pub struct PermWorld {
+    ledger: Ledger,
+    executor: TurnExecutor,
+    /// The granting principal (the device/system identity that holds device authority).
+    principal: CellId,
+    /// The android-cell the hand-over targets (the grantee, confined: born with an empty c-list).
+    app_cell: CellId,
+    /// The app's manifest — the declared permissions are the ONLY grantable ones.
+    manifest: AndroidManifest,
+}
+
+impl PermWorld {
+    /// **Install the android-cell into a fresh real ledger + verified executor.** The android-cell
+    /// (`app_seed`) is born CONFINED — an empty c-list, no ambient authority (the ocap floor). The
+    /// granting principal (`principal_seed`) is born holding device authority over each *dangerous*
+    /// permission in `principal_holds` (a real c-list cap reaching that permission's organ — the
+    /// powerbox's "you can only grant what you hold"). A `Normal` permission needs no organ cap (it
+    /// is held at install), so it is skipped. `app_seed` and `principal_seed` must differ.
+    pub fn install(
+        app_seed: u8,
+        principal_seed: u8,
+        manifest: AndroidManifest,
+        principal_holds: impl IntoIterator<Item = AndroidPermission>,
+    ) -> Self {
+        let mut ledger = Ledger::new();
+
+        // The android-cell: open, EMPTY c-list — a confined app-as-cell.
+        let app = open_cell(app_seed, 0);
+        let app_cell = app.id();
+        ledger
+            .insert_cell(app)
+            .expect("fresh android-cell ledger slot");
+
+        // The granting principal: holds a real cap reaching each organ for the dangerous
+        // permissions it can confer (the device authority — what makes a hand-over backable).
+        let mut principal_cell = open_cell(principal_seed, 0);
+        for perm in principal_holds {
+            if perm.protection_level().held_at_install() {
+                continue; // a Normal permission is held at install — no organ cap to confer.
+            }
+            let target = perm.grant_target(app_cell);
+            principal_cell
+                .capabilities
+                .grant(target, perm.cap_template().max_permissions)
+                .expect("fresh principal c-list slot for the device organ");
+        }
+        let principal = principal_cell.id();
+        ledger
+            .insert_cell(principal_cell)
+            .expect("fresh principal ledger slot");
+
+        // Metering-free: the permission hand-over is a single-custody system act (the device's
+        // package-manager principal), not a fee-bearing economic turn, so the grant turn carries
+        // no fee. The cells' `Permissions` + the executor's authority/no-amplification gates still
+        // decide every grant — `ComputronCosts::zero()` removes only the fee budget, never a gate.
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        PermWorld {
+            ledger,
+            executor,
+            principal,
+            app_cell,
+            manifest,
+        }
+    }
+
+    /// The android-cell this surface speaks for (the grantee).
+    pub fn app_cell(&self) -> CellId {
+        self.app_cell
+    }
+
+    /// The granting principal.
+    pub fn principal(&self) -> CellId {
+        self.principal
+    }
+
+    /// The live ledger — the real cap c-lists a verifier inspects.
+    pub fn ledger(&self) -> &Ledger {
+        &self.ledger
+    }
+
+    /// **Does the android-cell GENUINELY hold this permission now** — reading its REAL c-list in
+    /// the live ledger (not an internal flag set)? A `Normal` declared permission is held at
+    /// install; a dangerous one is held iff a real grant turn landed its organ cap; an undeclared
+    /// permission is never held.
+    pub fn holds(&self, permission: &AndroidPermission) -> bool {
+        if !self.manifest.declares(permission) {
+            return false;
+        }
+        if permission.protection_level().held_at_install() {
+            return true;
+        }
+        let target = permission.grant_target(self.app_cell);
+        self.ledger
+            .get(&self.app_cell)
+            .map(|c| c.capabilities.has_access(&target))
+            .unwrap_or(false)
+    }
+
+    fn reason_for(&self, permission: &AndroidPermission) -> BadgeReason {
+        if !self.manifest.declares(permission) {
+            BadgeReason::NotDeclared
+        } else if permission.protection_level().held_at_install() {
+            BadgeReason::HeldAtInstall
+        } else if self.holds(permission) {
+            BadgeReason::HeldByGrant
+        } else {
+            BadgeReason::DeclaredNotGranted
+        }
+    }
+
+    fn badge_for(&self, permission: &AndroidPermission) -> CapBadge {
+        let reason = self.reason_for(permission);
+        CapBadge {
+            permission: permission.clone(),
+            level: permission.protection_level(),
+            state: reason.state(),
+            reason,
+        }
+    }
+
+    /// **RENDER THE CAP-BADGE SET from the live ledger** — the WHOLE roster (standard permissions
+    /// ∪ the app's declared custom permissions), each lit or dim by what the cell GENUINELY holds.
+    pub fn badges(&self) -> CapBadgeSet {
+        let mut roster: BTreeSet<AndroidPermission> =
+            AndroidPermission::all_standard().into_iter().collect();
+        roster.extend(self.manifest.uses_permissions.iter().cloned());
+        let badges = roster.iter().map(|p| self.badge_for(p)).collect();
+        CapBadgeSet {
+            cell: self.app_cell,
+            badges,
+        }
+    }
+
+    /// **THE REAL HAND-OVER CEREMONY — grant `permission` to the android-cell via a verified turn.**
+    /// Faithful AOSP, fail-closed, with the REAL executor as the authority:
+    ///
+    /// 1. **Declared, or absent** — the manifest must declare `permission`; otherwise there is no
+    ///    cap template, so no turn runs ([`KernelGrantOutcome::RefusedNotDeclared`]).
+    /// 2. **Normal is already held** — a `Normal` permission was auto-granted at install; the
+    ///    hand-over is a no-op ([`KernelGrantOutcome::AlreadyHeldAtInstall`]).
+    /// 3. **THE REAL MINT** — for a `Dangerous`/`Signature` permission, build a genuine
+    ///    [`Effect::GrantCapability`] from the principal to the android-cell, reaching the
+    ///    permission's organ at the cap template's ceiling, and commit it through the
+    ///    [`TurnExecutor`]. The executor re-checks `mint_needs_held_factory` (the principal must
+    ///    hold the organ cap) + no-amplification; a refusal surfaces as
+    ///    [`KernelGrantOutcome::RefusedByKernel`] with the kernel's own reason. On commit the cap
+    ///    lands in the android-cell's c-list, its badge flips [`BadgeState::Lit`], and the
+    ///    executor's [`TurnReceipt`] is returned.
+    pub fn grant(&mut self, permission: AndroidPermission) -> KernelGrantOutcome {
+        if !self.manifest.declares(&permission) {
+            return KernelGrantOutcome::RefusedNotDeclared { permission };
+        }
+        if permission.protection_level().held_at_install() {
+            return KernelGrantOutcome::AlreadyHeldAtInstall { permission };
+        }
+
+        let target = permission.grant_target(self.app_cell);
+        let rights = permission.cap_template().max_permissions;
+
+        // THE REAL TURN: a genuine Effect::GrantCapability, committed through the verified
+        // executor. The cap's `slot` field is advisory — the grantee's c-list (`grant_ref`)
+        // assigns the real slot. We thread the principal's receipt-chain head + nonce exactly as
+        // the cockpit's `World::commit_turn` does, so this is a well-formed verified turn.
+        let nonce = self
+            .ledger
+            .get(&self.principal)
+            .map(|c| c.state.nonce())
+            .unwrap_or(0);
+        let effect = Effect::GrantCapability {
+            from: self.principal,
+            to: self.app_cell,
+            cap: CapabilityRef {
+                target,
+                slot: 0,
+                permissions: rights,
+                breadstuff: None,
+                expires_at: None,
+                allowed_effects: None,
+                stored_epoch: None,
+            },
+        };
+        let mut turn = bare_turn(self.principal, nonce, vec![effect]);
+        turn.previous_receipt_hash = self.executor.get_last_receipt_hash(&self.principal);
+
+        match self.executor.execute(&turn, &mut self.ledger) {
+            TurnResult::Committed { receipt, .. } => {
+                self.executor
+                    .set_last_receipt_hash(receipt.agent, receipt.receipt_hash());
+                let slot = self
+                    .ledger
+                    .get(&self.app_cell)
+                    .and_then(|c| {
+                        c.capabilities
+                            .iter()
+                            .find(|cr| cr.target == target)
+                            .map(|cr| cr.slot)
+                    })
+                    .unwrap_or(0);
+                KernelGrantOutcome::Granted {
+                    permission,
+                    app_cell: self.app_cell,
+                    slot,
+                    receipt,
+                }
+            }
+            TurnResult::Rejected { reason, .. } => KernelGrantOutcome::RefusedByKernel {
+                permission,
+                reason: format!("{reason:?}"),
+            },
+            other => KernelGrantOutcome::RefusedByKernel {
+                permission,
+                reason: format!("the executor did not commit the grant: {other:?}"),
+            },
+        }
+    }
+}
+
+/// A deterministic open cell from a one-byte seed (the genesis fixture shape `make_open_cell`
+/// uses): `pk[0]=seed`, `pk[31]=seed*37`, fully-open permissions, an empty c-list.
+fn open_cell(seed: u8, balance: i64) -> Cell {
+    let mut pk = [0u8; 32];
+    pk[0] = seed;
+    pk[31] = seed.wrapping_mul(37);
+    let mut cell = Cell::with_balance(pk, [0u8; 32], balance);
+    cell.permissions = Permissions {
+        send: AuthRequired::None,
+        receive: AuthRequired::None,
+        set_state: AuthRequired::None,
+        set_permissions: AuthRequired::None,
+        set_verification_key: AuthRequired::None,
+        increment_nonce: AuthRequired::None,
+        delegate: AuthRequired::None,
+        access: AuthRequired::None,
+    };
+    cell
+}
+
+/// A bare `Unchecked` single-action turn carrying `effects` (the executor-test template shape the
+/// cockpit's `World::turn` also builds — honest for a single-custody surface: the cells'
+/// `Permissions` + the executor's whole-turn guarantees still gate every effect).
+fn bare_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
+    let mut forest = CallForest::new();
+    forest.add_root(Action {
+        target: agent,
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: Default::default(),
+        effects,
+        may_delegate: DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+        witness_blobs: vec![],
+    });
+    Turn {
+        agent,
+        nonce,
+        call_forest: forest,
+        fee: 0,
+        memo: None,
+        valid_until: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,7 +907,10 @@ mod tests {
     #[test]
     fn hand_over_lights_a_dangerous_badge_and_receipts() {
         let (mut pb, app, principal) = maps_permbox();
-        assert!(!pb.holds(&AndroidPermission::AccessFineLocation), "dim before");
+        assert!(
+            !pb.holds(&AndroidPermission::AccessFineLocation),
+            "dim before"
+        );
 
         let receipt = pb.grant(AndroidPermission::AccessFineLocation);
         assert!(receipt.decision.granted());
@@ -641,8 +1015,178 @@ mod tests {
             .into_iter()
             .find(|b| b.permission == custom)
             .expect("the declared custom permission is shown in the roster");
-        assert_eq!(badge.level, ProtectionLevel::Dangerous, "custom fails closed");
+        assert_eq!(
+            badge.level,
+            ProtectionLevel::Dangerous,
+            "custom fails closed"
+        );
         assert_eq!(badge.state, BadgeState::Dim, "dim until handed over");
         assert_eq!(badge.reason, BadgeReason::DeclaredNotGranted);
+    }
+
+    // ── THE REAL KERNEL HAND-OVER tests (PermWorld) ──────────────────────────
+
+    /// Build a `PermWorld` for a maps app declaring INTERNET (normal) +
+    /// ACCESS_FINE_LOCATION (dangerous), whose principal holds the location device authority.
+    fn maps_permworld() -> PermWorld {
+        let manifest = AndroidManifest::new(
+            "com.example.maps",
+            [
+                AndroidPermission::Internet,
+                AndroidPermission::AccessFineLocation,
+            ],
+        );
+        PermWorld::install(
+            0x51,
+            0x01,
+            manifest,
+            [AndroidPermission::AccessFineLocation],
+        )
+    }
+
+    /// **THE REAL-CAP-LANDING TEST: `PermWorld::grant` of a dangerous permission commits a REAL
+    /// `GrantCapability` turn, the cap lands in the android-cell's c-list, and the badge is Lit
+    /// because the cell GENUINELY holds it — not just a content-addressed witness.**
+    #[test]
+    fn kernel_grant_lands_a_real_cap_in_the_cells_clist_and_lights_the_badge() {
+        let mut pw = maps_permworld();
+        let app = pw.app_cell();
+        let organ = AndroidPermission::AccessFineLocation.grant_target(app);
+
+        // Before: the dangerous badge is dim (declared, awaiting hand-over) and the cell's REAL
+        // c-list does NOT reach the location organ.
+        assert!(!pw.holds(&AndroidPermission::AccessFineLocation));
+        assert!(
+            !pw.ledger()
+                .get(&app)
+                .unwrap()
+                .capabilities
+                .has_access(&organ),
+            "precondition: the android-cell does NOT reach the location organ before the grant"
+        );
+        let loc_before = pw
+            .badges()
+            .badges
+            .into_iter()
+            .find(|b| b.permission == AndroidPermission::AccessFineLocation)
+            .unwrap();
+        assert_eq!(loc_before.state, BadgeState::Dim);
+        assert_eq!(loc_before.reason, BadgeReason::DeclaredNotGranted);
+
+        // THE REAL MINT: a genuine GrantCapability turn through the verified executor.
+        let outcome = pw.grant(AndroidPermission::AccessFineLocation);
+        assert!(
+            outcome.granted(),
+            "the held, declared dangerous grant commits"
+        );
+        let receipt = outcome
+            .receipt()
+            .expect("a committed grant carries a kernel TurnReceipt");
+        assert_eq!(
+            receipt.agent,
+            pw.principal(),
+            "the turn was the principal's"
+        );
+        assert!(receipt.action_count >= 1, "a real verified turn landed");
+
+        // After: the cap GENUINELY lives in the android-cell's real c-list, reaching the organ
+        // at the template ceiling (Signature), and the badge is now Lit BY GRANT.
+        assert!(pw.holds(&AndroidPermission::AccessFineLocation));
+        let granted = pw
+            .ledger()
+            .get(&app)
+            .unwrap()
+            .capabilities
+            .iter()
+            .find(|cr| cr.target == organ)
+            .expect("the granted organ cap is in the android-cell's c-list");
+        assert_eq!(
+            granted.permissions,
+            AuthRequired::Signature,
+            "the cap carries the template ceiling, never wider (no amplification)"
+        );
+        let loc_after = pw
+            .badges()
+            .badges
+            .into_iter()
+            .find(|b| b.permission == AndroidPermission::AccessFineLocation)
+            .unwrap();
+        assert_eq!(loc_after.state, BadgeState::Lit, "the badge flips Lit");
+        assert_eq!(loc_after.reason, BadgeReason::HeldByGrant);
+    }
+
+    /// **THE NO-AMBIENT-ESCALATION TEST (kernel): an UNDECLARED permission still refuses — no cap
+    /// template, no turn, the cell never reaches its organ.**
+    #[test]
+    fn kernel_grant_of_an_undeclared_permission_still_refuses() {
+        let mut pw = maps_permworld();
+        // The maps app never declared CAMERA.
+        let outcome = pw.grant(AndroidPermission::Camera);
+        assert!(outcome.refused_not_declared());
+        assert!(
+            outcome.receipt().is_none(),
+            "a refused hand-over runs no turn"
+        );
+        assert!(!pw.holds(&AndroidPermission::Camera));
+        let cam_organ = AndroidPermission::Camera.grant_target(pw.app_cell());
+        assert!(
+            !pw.ledger()
+                .get(&pw.app_cell())
+                .unwrap()
+                .capabilities
+                .has_access(&cam_organ),
+            "the android-cell never reaches the camera organ"
+        );
+    }
+
+    /// **THE POWERBOX TOOTH AT THE REAL KERNEL: a declared dangerous permission the PRINCIPAL does
+    /// not hold is refused by the executor itself (`mint_needs_held_factory` / CapabilityNotHeld) —
+    /// the real backstop, not our pre-check. The cap never lands.**
+    #[test]
+    fn kernel_grant_the_principal_cannot_back_is_refused_by_the_executor() {
+        // The app declares CAMERA, but the principal holds NO camera authority.
+        let manifest = AndroidManifest::new("com.example.cam", [AndroidPermission::Camera]);
+        let mut pw = PermWorld::install(0x52, 0x02, manifest, []); // principal holds nothing
+        let app = pw.app_cell();
+
+        let outcome = pw.grant(AndroidPermission::Camera);
+        assert!(
+            outcome.refused_by_kernel(),
+            "the executor refuses a grant the principal cannot back"
+        );
+        match &outcome {
+            KernelGrantOutcome::RefusedByKernel { reason, .. } => assert!(
+                reason.contains("CapabilityNotHeld") || reason.contains("Delegation"),
+                "the kernel reason cites the held-authority requirement, got: {reason}"
+            ),
+            other => panic!("expected a kernel refusal, got {other:?}"),
+        }
+        assert!(!pw.holds(&AndroidPermission::Camera));
+        let organ = AndroidPermission::Camera.grant_target(app);
+        assert!(
+            !pw.ledger()
+                .get(&app)
+                .unwrap()
+                .capabilities
+                .has_access(&organ),
+            "the cap never landed"
+        );
+    }
+
+    /// A `Normal` permission is already held at install — the kernel hand-over is a no-op, no turn.
+    #[test]
+    fn kernel_grant_of_a_normal_permission_is_a_no_op() {
+        let mut pw = maps_permworld();
+        assert!(pw.holds(&AndroidPermission::Internet), "lit at install");
+        let outcome = pw.grant(AndroidPermission::Internet);
+        assert!(matches!(
+            outcome,
+            KernelGrantOutcome::AlreadyHeldAtInstall { .. }
+        ));
+        assert!(
+            outcome.receipt().is_none(),
+            "no turn for an install-held permission"
+        );
+        assert!(pw.holds(&AndroidPermission::Internet));
     }
 }
