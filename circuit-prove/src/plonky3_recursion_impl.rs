@@ -180,13 +180,24 @@ pub mod recursive {
             &self,
             circuit: &mut CircuitBuilder<Challenge>,
         ) -> Result<(), p3_recursion::verifier::VerificationError> {
+            use p3_baby_bear::default_babybear_poseidon2_24;
             use p3_circuit::ops::generate_poseidon2_trace;
-            use p3_poseidon2_circuit_air::BabyBearD4Width16;
+            use p3_poseidon2_circuit_air::{BabyBearD4Width16, BabyBearD4Width24};
 
             let perm = default_babybear_poseidon2_16();
             circuit.enable_poseidon2_perm::<BabyBearD4Width16, _>(
                 generate_poseidon2_trace::<Challenge, BabyBearD4Width16>,
                 perm,
+            );
+            // The ISOLATED segment-digest permutation: a SECOND Poseidon2 op-type
+            // (`poseidon2_perm/baby_bear_d4_w24`) that shares neither chain-state, CTL bus,
+            // nor (because its op-type and width differ) the connect/CSE collapse the FRI
+            // challenger's width-16 perm participates in. The ordered-history segment digest
+            // (`seg_poseidon_commit`) runs over THIS op so its perm I/O can never be aliased
+            // into the verifier's `ExprId::ZERO` witness class.
+            circuit.enable_poseidon2_perm_width_24::<BabyBearD4Width24, _>(
+                generate_poseidon2_trace::<Challenge, BabyBearD4Width24>,
+                default_babybear_poseidon2_24(),
             );
             circuit
                 .enable_recompose::<F>(p3_circuit::ops::generate_recompose_trace::<F, Challenge>);
@@ -726,6 +737,11 @@ pub mod recursive {
         // Register the NPO table provers that were used to produce the recursive proof.
         // The verifier needs these to interpret the non-primitive ops in the proof.
         prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W16);
+        // The ISOLATED segment-digest permutation table (`baby_bear_d4_w24`): a distinct
+        // Poseidon2 op-type the IVC segment-digest sponge runs over, so its rows never share
+        // the W16 challenger's chain-state / CTL bus / connect graph. The verifier must
+        // register it to interpret the W24 `poseidon2_perm` ops a segment-bearing root carries.
+        prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W24);
         // split_coeff_tables = false because Poseidon2Config::D (4) == extension degree D (4)
         prover.register_recompose_table::<D>(false);
         // The exposed-claim channel: the root proof carries an `expose_claim` table.
