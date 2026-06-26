@@ -34,6 +34,11 @@ dregg-app-framework = { path = "../../app-framework" }
 dregg-cell = { path = "../../cell", default-features = false }
 dregg-turn = { path = "../../turn" }
 dregg-types = { path = "../../types" }
+# The attested-query face (the `src/derived.rs` showcase): the conjunctive-query
+# surface + the non-omission certificate (the receipt-log MMR
+# `server_cannot_omit_position`). Used to certify the COMPLETENESS of the log's
+# committed provenance entries to a light client ("these are ALL the entries").
+dregg-query = { path = "../../dregg-query" }
 
 blake3 = "1"
 serde = { workspace = true }

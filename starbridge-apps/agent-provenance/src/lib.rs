@@ -68,6 +68,25 @@ use dregg_app_framework::{
 };
 use dregg_cell::state::STATE_SLOTS;
 
+// The four modern app-framework axes this app demonstrates (the unified template):
+//   - the FactoryDescriptor + CellProgram floor (AX1: `provenance_factory_descriptor`,
+//     `provenance_cell_program` — the executor-truth slot caveats);
+//   - the DeosApp composition surface (AX2: `provenance_app`, `register_deos`, the gated
+//     append fire — the deos-seam, `tests/deos_seam.rs`);
+//   - the SERVICE-CELL `invoke()` front door (AX3: a typed `InterfaceDescriptor` + method
+//     dispatch over the log — `service`, `tests/service.rs`);
+//   - the deos-view CARD (AX4: a renderer-independent `deos.ui.*` view-tree — `card`).
+// Plus `derived`: the attested-query completeness certificate over the log's entries.
+
+/// The deos-view CARD: the app's UI as a renderer-independent `deos.ui.*` view-tree.
+pub mod card;
+/// The ATTESTED-QUERY showcase: a `dregg_query` non-omission certificate over the
+/// log's committed entries (+ the projection-function summary).
+pub mod derived;
+/// The CELLS-AS-SERVICE-OBJECTS face: a typed `InterfaceDescriptor` + `invoke()`
+/// method dispatch over the provenance log.
+pub mod service;
+
 // =============================================================================
 // Provenance-cell state schema
 // =============================================================================
