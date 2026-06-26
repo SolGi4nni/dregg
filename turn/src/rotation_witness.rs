@@ -636,6 +636,84 @@ pub fn mint_welded_wide_umem_rotated_participant_leg(
         // moves). A note/refusal lead would thread these — but those leads are named tails here.
         None,
         None,
+        // No cap-tree write witness — a cap-WRITE lead routes through the dedicated cap-write entry
+        // (`mint_welded_wide_umem_cap_write_rotated_participant_leg`); reaching here it fails closed.
+        None,
+    )
+}
+
+/// **THE CAP-WRITE WIDE+umem WELDED LEG (STAGED, VK-RISK-FREE).** The cap-open weld twin of
+/// [`mint_welded_wide_umem_rotated_participant_leg`] for the nonce-FREEZE cap-WRITE family — the
+/// `grant` / `attenuate` / `revoke(Capability)` bases whose AFTER cap-root is an in-circuit cap-tree
+/// `map_op` write (attenuate / revokeCapability) or a frozen authority-only pass-through (grantCap).
+/// It threads the cap-tree write witness ([`CapWriteWideWitness`](dregg_circuit::effect_vm::trace_rotated::CapWriteWideWitness)
+/// — the cell's c-list + the consumed anchor key + the op payload) through the SAME shared full-cohort
+/// wide producer dispatch the value cohort rides, then welds the umem leg onto the WIDE descriptor —
+/// purely additive, so the 8-felt (~124-bit) anchors ride through INTACT (no narrowing). A cap-WRITE
+/// lead whose base carries a map_op but is given no witness — or any non-cap-WRITE lead — fails closed
+/// at the dispatcher (the cap-open weld never fabricates a post-cap-root). STAGED: a welded WIDE
+/// descriptor BESIDE the deployed wide registry; no VK bump, nothing on the wire.
+#[allow(clippy::too_many_arguments)]
+pub fn mint_welded_wide_umem_cap_write_rotated_participant_leg(
+    initial_state: &dregg_circuit::effect_vm::CellState,
+    effects: &[dregg_circuit::effect_vm::Effect],
+    before_cell: &Cell,
+    after_cell: &Cell,
+    nullifier_root: &[u8; 32],
+    commitments_root: &[u8; 32],
+    receipt_log: &[[u8; 32]],
+    turn_id: Option<BabyBear>,
+    cap_write: &dregg_circuit::effect_vm::trace_rotated::CapWriteWideWitness,
+) -> Result<dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg, String> {
+    use crate::umem::{
+        project_diff_ops, project_record_kernel_state, umem_cohort_proving_inputs_from,
+    };
+    use dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness;
+    use dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg;
+
+    let mut ledger = Ledger::new();
+    ledger
+        .insert_cell(after_cell.clone())
+        .map_err(|e| format!("mint_welded_wide_umem_cap_write: ledger seed failed: {e:?}"))?;
+
+    let before_w = produce(
+        before_cell,
+        &ledger,
+        nullifier_root,
+        commitments_root,
+        receipt_log,
+    );
+    let after_w = produce(
+        after_cell,
+        &ledger,
+        nullifier_root,
+        commitments_root,
+        receipt_log,
+    );
+    let bridge = |w: &RotationWitness| -> Result<RotatedBlockWitness, String> {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
+            .map(|bw| bw.with_asset_class(w.asset_class))
+            .map_err(|e| format!("mint_welded_wide_umem_cap_write: rotated block witness: {e}"))
+    };
+
+    let proj_pre = project_record_kernel_state(before_cell);
+    let proj_post = project_record_kernel_state(after_cell);
+    let ops = project_diff_ops(&proj_pre, &proj_post);
+    let inputs = umem_cohort_proving_inputs_from(&proj_pre, &ops)
+        .map_err(|e| format!("mint_welded_wide_umem_cap_write: umem cohort inputs: {e}"))?;
+
+    RotatedParticipantLeg::mint_welded_wide_from_block_witnesses(
+        initial_state,
+        effects,
+        &bridge(&before_w)?,
+        &bridge(&after_w)?,
+        turn_id,
+        &inputs.rows,
+        &inputs.boundary,
+        inputs.domain,
+        None,
+        None,
+        Some(cap_write),
     )
 }
 

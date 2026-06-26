@@ -412,9 +412,12 @@ impl RotatedParticipantLeg {
     /// / setField / setFieldDyn) ride the heap domain; the grow-gate (note) + record-pin / lifecycle
     /// families ride when the caller threads their context. `before_nullifiers` is the note-spend
     /// grow-gate's BEFORE nullifier set; `refusal_fields` the refusal `fields_root` write witness;
-    /// both `None` for the value/field leads. A heterogeneous / non-cohort slice (or a cap-WRITE lead
-    /// whose AFTER cap-root needs the SEPARATE cap-open path) fails closed at the dispatcher. STAGED:
-    /// a welded WIDE descriptor BESIDE the deployed wide registry; no VK bump, nothing on the wire.
+    /// `cap_write` the cap-tree write witness (the cap-open weld) for the nonce-FREEZE cap-WRITE family
+    /// (attenuate / revokeCapability — whose AFTER cap-root is an in-circuit cap-tree `map_op` write —
+    /// and grantCap, the authority-only frozen base); all `None` for the value/field leads. A cap-WRITE
+    /// lead carrying a map_op but no `cap_write` witness — or a heterogeneous / non-cohort slice — fails
+    /// closed at the dispatcher (the cap-open weld never fabricates a post-cap-root). STAGED: a welded
+    /// WIDE descriptor BESIDE the deployed wide registry; no VK bump, nothing on the wire.
     #[allow(clippy::too_many_arguments)]
     pub fn mint_welded_wide_from_block_witnesses(
         initial_state: &dregg_circuit::effect_vm::CellState,
@@ -427,6 +430,7 @@ impl RotatedParticipantLeg {
         domain: u32,
         before_nullifiers: Option<&[BabyBear]>,
         refusal_fields: Option<(&[dregg_circuit::heap_root::HeapLeaf], BabyBear)>,
+        cap_write: Option<&dregg_circuit::effect_vm::trace_rotated::CapWriteWideWitness>,
     ) -> Result<RotatedParticipantLeg, String> {
         use crate::ivc_turn_chain::ir2_leaf_wrap_config;
         use dregg_circuit::descriptor_ir2::{
@@ -459,6 +463,7 @@ impl RotatedParticipantLeg {
                 &caveat,
                 before_nullifiers,
                 refusal_fields,
+                cap_write,
             )
             .map_err(|e| format!("mint_welded_wide: wide producer dispatch failed: {e}"))?;
 

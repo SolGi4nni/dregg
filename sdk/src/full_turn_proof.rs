@@ -1423,6 +1423,10 @@ fn generate_wide_descriptor_and_trace(
         caveat,
         before_nullifiers,
         refusal_fields,
+        // The live SDK wide prover routes cap-WRITE leads through the SEPARATE cap-open path
+        // (`prove_effect_vm_cap_open`), never this dispatcher — so no cap-write witness is threaded here
+        // (a cap-WRITE lead reaching this route fails closed, as it always has).
+        None,
     )
     .map_err(SdkError::InvalidWitness)
 }

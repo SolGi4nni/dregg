@@ -3107,6 +3107,46 @@ pub fn generate_rotated_custom_wide(
     Ok((trace, dpis))
 }
 
+/// **THE CAP-WRITE WIDE producer witness (the cap-open weld for the WIDE leg).** A cap-WRITE family
+/// lead (attenuate / revokeCapability) advances its AFTER cap-root through an in-circuit cap-tree
+/// `map_op` write the bare transfer-shape route leaves UNSAT; this carries the witness that write
+/// needs: the cell's FULL c-list (`clist_leaves`, the openable sorted-Poseidon2 accumulator the BEFORE
+/// cap-root IS the root of), the consumed/written anchor key (`anchor_key` = the slot's `slot_hash[0]`),
+/// and the op-specific `inserted` `(key, value)` payload (an `Update`/attenuate writes the narrowed
+/// KEEP_MASK as the value; a `Remove`/revokeCapability takes `None`). Threaded through
+/// [`generate_rotated_cap_write_base`] — a wrong post-root / a c-list missing the key is UNSAT (fails
+/// closed, never a fabricated post-cap-root).
+pub struct CapWriteWideWitness {
+    /// The cell's full c-list (the BEFORE cap-root is the root of this sorted-Poseidon2 tree).
+    pub clist_leaves: Vec<crate::heap_root::HeapLeaf>,
+    /// The written/anchor key (the consumed cap's `slot_hash[0]`). MUST be present in `clist_leaves`.
+    pub anchor_key: BabyBear,
+    /// The op-specific insert payload: `(key, value)` for `Update` (value = KEEP_MASK) — `None` for
+    /// `Remove`.
+    pub inserted: Option<(BabyBear, BabyBear)>,
+}
+
+/// **THE CAP-WRITE WIDE plan for a lead effect.** `Some((op, needs_freeze_patch))` for the cap-WRITE
+/// family whose AFTER cap-root the bare wide transfer-shape route cannot satisfy:
+///   * `AttenuateCapability` → `(Some(Update), false)` — in-place UPDATE-AT-KEY (read held mask, write
+///     the narrowed KEEP_MASK). The map_op WRITE base rides the nonce-TICK face (the v1 cap-root advance
+///     is the genuine in-trace transition), so NO freeze patch — exactly as the live cap-open path skips
+///     the patch when a write witness is threaded.
+///   * `RevokeCapability` → `(Some(Remove), false)` — ZERO-value REMOVE of the held slot, same tick face.
+///   * `GrantCapability` → `(None, true)` — the authority-only grant base FREEZES the cap-root
+///     (pass-through, no map_op write), and rides the nonce-FREEZE face the bare transfer-shape route
+///     (nonce-TICK) mis-shapes — so the freeze patch IS applied, but no cap-tree write witness.
+/// `None` for every other lead (the nonce-TICK passthrough cap bases revokeDelegation / introduce ride
+/// the transfer-shape route directly; the value/field/grow-gate/record families have their own arms).
+fn cap_write_wide_plan(effect: &Effect) -> Option<(Option<CapTreeWriteOp>, bool)> {
+    match effect {
+        Effect::AttenuateCapability { .. } => Some((Some(CapTreeWriteOp::Update), false)),
+        Effect::RevokeCapability { .. } => Some((Some(CapTreeWriteOp::Remove), false)),
+        Effect::GrantCapability { .. } => Some((None, true)),
+        _ => None,
+    }
+}
+
 /// **THE FULL-COHORT WIDE descriptor + trace dispatcher (the shared producer spine).** Resolve the
 /// WIDE descriptor (from [`crate::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV`]) for a turn's
 /// homogeneous cohort lead and generate its trace / PI vector / grow-gate `map_heaps` /
@@ -3121,7 +3161,10 @@ pub fn generate_rotated_custom_wide(
 /// `before`/`after` are the rotated block witnesses; `caveat` the turn manifest; `before_nullifiers`
 /// the note-spend grow-gate's BEFORE nullifier set (`None` for non-spend leads); `refusal_fields`
 /// the refusal `fields_root` write witness (`Some` REQUIRED for a `Refusal` lead — the honest refusal
-/// is UNSAT without it). Fails closed (`Err`) on an empty / heterogeneous / non-cohort slice.
+/// is UNSAT without it); `cap_write` the cap-tree write witness (`Some` REQUIRED for a cap-WRITE lead
+/// whose base carries an in-circuit cap-tree `map_op` write — attenuate / revokeCapability — the
+/// honest cap-write is UNSAT without it). Fails closed (`Err`) on an empty / heterogeneous /
+/// non-cohort slice.
 #[allow(clippy::type_complexity)]
 pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
     initial_state: &CellState,
@@ -3131,6 +3174,7 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
     caveat: &RotatedCaveatManifest,
     before_nullifiers: Option<&[BabyBear]>,
     refusal_fields: Option<(&[crate::heap_root::HeapLeaf], BabyBear)>,
+    cap_write: Option<&CapWriteWideWitness>,
 ) -> Result<
     (
         crate::descriptor_ir2::EffectVmDescriptor2,
@@ -3244,6 +3288,48 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
         generate_rotated_custom_wide(initial_state, effects, before, after, caveat)
             .map(|(t, d)| (t, d, vec![]))
             .map_err(|e| format!("wide custom generation: {e}"))?
+    } else if let Some((op_opt, needs_patch)) = cap_write_wide_plan(lead) {
+        // THE CAP-WRITE FAMILY (the cap-open weld for the WIDE leg): the nonce-FREEZE attenuate-family
+        // bases. Their AFTER cap-root is an in-circuit cap-tree `map_op` write (attenuate/revokeCapability)
+        // OR a frozen pass-through (grantCap — authority-only, no write), and they ride the nonce-FREEZE
+        // face — neither of which the bare transfer-shape route satisfies (the map_op is UNSAT, the nonce
+        // gate is FREEZE not TICK), so a cap-WRITE lead FAILS CLOSED there. Here we lay the genuine base
+        // trace, apply the nonce-FREEZE patch the base descriptor expects, thread the cap-tree write
+        // witness (when the base carries a map_op), and append the 8-felt wide carriers (the SAME additive
+        // append the value cohort rides — the ~124-bit anchors are preserved). A cap-WRITE lead with a
+        // map_op but no `cap_write` witness fails closed (the cap-open weld never fabricates a post-root).
+        let (mut t, base_pis) =
+            generate_rotated_effect_vm_trace(initial_state, effects, before, after, caveat)
+                .map_err(|e| format!("wide cap-write base trace: {e}"))?;
+        let mut d = if needs_patch {
+            patch_attenuate_base_for_cap_open(&mut t, &base_pis)
+                .map_err(|e| format!("wide cap-write nonce-freeze patch: {e}"))?
+        } else {
+            base_pis
+        };
+        let heaps = match op_opt {
+            Some(op) => {
+                let w = cap_write.ok_or_else(|| {
+                    format!(
+                        "wide cap-write prover: effect {lead:?} carries an in-circuit cap-tree map_op \
+                         write but no CapWriteWideWitness (c-list + anchor key) was threaded — fails \
+                         closed (the route is the cap-open weld, never a fabricated post-cap-root)"
+                    )
+                })?;
+                generate_rotated_cap_write_base(
+                    &mut t,
+                    &mut d,
+                    op,
+                    &w.clist_leaves,
+                    w.anchor_key,
+                    w.inserted,
+                )
+                .map_err(|e| format!("wide cap-write map_op witness: {e}"))?
+            }
+            None => Vec::new(),
+        };
+        let d = append_wide_carriers(&mut t, d, GRAD_ROT_WIDTH);
+        (t, d, heaps)
     } else {
         let (t, d) =
             generate_rotated_transfer_shape_wide(initial_state, effects, before, after, caveat)
