@@ -170,6 +170,24 @@ reason.)*
   memory-reconciliation property — it rides the effect's rotated AIR gates (the weld preserves them), same division
   as single-domain. No deeper wall. STAGED beside the deployed + single-domain registries; the VK epoch is the only
   remaining flip.
+- DOMAIN-2 (capability) WIDE CAP-OPEN+UMEM WELD (STAGED / VK-RISK-FREE) — the 7th flip-refusal's wall CLOSED: the
+  value-cohort weld (`prove_wide_umem_welded_staged`) resolves the PLAIN wide descriptor for a cap effect, which the
+  light-client wire FORBIDS (`is_forbidden_plain_cap_descriptor` — a cap proven without the membership crown launders
+  host-trusted authority). The 7th refusal's `OodEvaluationMismatch` was a SEPARATE witness inconsistency (a spurious
+  Heap-domain nonce op made the projection diff multi-domain). NEW `prove_cap_open_umem_welded_staged` (sdk
+  `full_turn_proof.rs`, sharing the extracted `build_effect_vm_cap_open_leg`) welds the umem CAPS leg (domain 2) onto the
+  WIDE CAP-OPEN descriptor (the membership crown the wire demands) — a real `AttenuateCapability` proves + self-verifies +
+  VERIFIES THROUGH the deployed wire `verify_effect_vm_rotated_with_cutover` under the Lean-emitted welded twin
+  `attenuateCapOpenEffVmDescriptor2R24` (domain 2) in `WIDE_UMEM_WELD_REGISTRY_TSV`. Gauntlet `wide_umem_weld_domain2_gauntlet.rs`
+  4/4 (mint+wire-verify · 8-felt tooth · vk_hash tooth · umem caps anti-forge · caps-domain guard · the plain-cap-weld
+  WIRE-rejection that demonstrates the wall). The 13 sibling domain-2 members share the cap-root-weld shape — the sweep is
+  mechanical (each routes its own cap-open key; the wire-accepted cap-open keys get the welded twin). NAMED TAIL (executor-
+  COMMIT of domain-2): the deployed executor's sovereign cohort path (`verify_one_cohort_run`) resolves cap effects to their
+  PLAIN cohort descriptor (no cap-open routing, no forbidden-plain tooth) — a DIFFERENT surface than the wire. So a single
+  welded proof can't both wire-verify (cap-open) AND executor-commit (plain) for a cap effect; and the plain grant base's
+  `hash_2_to_1` cap_root model can't bind a genuine canonical (sorted-Poseidon2) caps insert (constraint #3). Executor-commit
+  of domain-2 needs the executor to ROUTE cap effects to the cap-open welded twin — a follow-on that touches the deployed
+  executor's descriptor resolution (beyond the staged VK-risk-free weld).
 - FIRMAMENT: the semihost interactive cockpit now runs the REAL verified `DreggEngine` (live-repaint-on-turn,
   `251692b7`) — closes `SEL4-INTERACTIVE-COCKPIT.md §3.5`. NAMED TAIL: §3.6 step 4, the executor-PD's bare-metal
   Lean-ELF runtime link (the real-seL4 WALL; gated on Microkit SDK on PATH, not a semihost blocker).

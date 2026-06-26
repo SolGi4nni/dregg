@@ -2600,9 +2600,60 @@ fn prove_effect_vm_cap_open(
     ),
     SdkError,
 > {
-    use dregg_circuit::descriptor_ir2::{
-        MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
-    };
+    use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
+    // The descriptor + trace + dpis + map-op heaps are built by the SHARED cap-open leg builder (so the
+    // welded domain-2 twin `prove_wide_umem_welded_cap_open_staged` reuses the EXACT same cap-open
+    // descriptor / membership crown / wide carriers, then welds the umem leg onto it — no hand-inlined
+    // twin). This routine only PROVES the built leg through the bare (non-umem) IR-v2 prover.
+    let (desc, trace, dpis, all_heaps) = build_effect_vm_cap_open_leg(
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        cap,
+        route,
+        identity,
+        wide,
+    )?;
+    let proof = prove_vm_descriptor2(
+        &desc,
+        &trace,
+        &dpis,
+        &MemBoundaryWitness::default(),
+        &all_heaps,
+    )
+    .map_err(|e| SdkError::InvalidWitness(format!("cap-open IR-v2 proof ({}): {e}", desc.name)))?;
+    Ok((proof, dpis))
+}
+
+/// **THE SHARED CAP-OPEN LEG BUILDER** — resolve the `<effect>CapOpenVmDescriptor2R24` descriptor and
+/// assemble its rotated base trace + membership-crown appendix + (when `wide`) the 8-felt wide carriers
+/// + the cap-tree `map_op` witness heaps, returning `(descriptor, trace, dpis, map_op_heaps)` WITHOUT
+/// proving. Extracted from [`prove_effect_vm_cap_open`] so the bare prover AND the welded domain-2 twin
+/// ([`prove_wide_umem_welded_cap_open_staged`]) share ONE descriptor/trace route (no hand-inlined twin):
+/// the welded twin welds the universal-memory caps leg onto THIS descriptor + trace before proving. See
+/// [`prove_effect_vm_cap_open`] for the per-step semantics.
+#[cfg(feature = "prover")]
+#[allow(clippy::type_complexity)]
+fn build_effect_vm_cap_open_leg(
+    initial_state: &CellState,
+    effects: &[VmEffectKind],
+    before_w: &dregg_turn::rotation_witness::RotationWitness,
+    after_w: &dregg_turn::rotation_witness::RotationWitness,
+    cap: &CapMembershipWitness,
+    route: &CapOpenRoute,
+    identity: Option<TurnIdentityFelts>,
+    wide: bool,
+) -> Result<
+    (
+        dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+        Vec<Vec<BabyBear>>,
+        Vec<BabyBear>,
+        Vec<Vec<dregg_circuit::heap_root::HeapLeaf>>,
+    ),
+    SdkError,
+> {
+    use dregg_circuit::descriptor_ir2::parse_vm_descriptor2;
     use dregg_circuit::effect_vm::trace_rotated::{
         CapOpenWitness, RotatedBlockWitness, append_wide_carriers_cap_open, cap_open_tb_dpis,
         empty_caveat_manifest, generate_rotated_cap_write_base, generate_rotated_effect_vm_trace,
@@ -2812,17 +2863,188 @@ fn prove_effect_vm_cap_open(
     // is irrelevant; concatenating yields one heap per distinct tree the descriptor opens.
     let all_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> =
         cap_write_heaps.into_iter().chain(accounts_heaps).collect();
-    let proof = prove_vm_descriptor2(
-        &desc,
-        &trace,
+    Ok((desc, trace, dpis, all_heaps))
+}
+
+/// **THE WIDE CAP-OPEN+UMEM DOMAIN-2 WELD PROVER (STAGED, VK-RISK-FREE) — the 7th flip-refusal's wall
+/// CLOSED.** The cap-open (domain-2 capability) twin of [`prove_wide_umem_welded_staged`]: it proves,
+/// in ONE descriptor / ONE proof, BOTH the WIDE cap-open cohort proof (the rotated effect semantics +
+/// the in-circuit depth-16 cap-membership authority crown + the wide PI vector whose LAST 16 PIs are
+/// the 8-felt before/after commit anchors) AND the universal-memory CAPS-domain reconciliation leg (the
+/// cohort `umemOp` over 7 appended columns + a REAL [`UMemBoundaryWitness`]).
+///
+/// **Why the value-cohort weld ([`prove_wide_umem_welded_staged`]) could not do this.** That prover
+/// resolves the PLAIN wide descriptor for the lead (`rotated_descriptor_name_for_effect`), which for a
+/// capability effect is the authority-only `…VmDescriptor2R24` (e.g. `attenuateVmDescriptor2R24`). The
+/// light-client wire verifier ([`verify_effect_vm_rotated_with_cutover`]) FORBIDS those plain cap
+/// descriptors (`is_forbidden_plain_cap_descriptor`): a cap effect proven without the in-circuit
+/// membership crown launders host-trusted authority. So a welded grant under the plain descriptor
+/// self-verifies but the WIRE rejects it (the 7th refusal's `OodEvaluationMismatch` was a SEPARATE
+/// witness inconsistency — a spurious nonce op made the projection diff multi-domain; the genuine wall
+/// is the forbidden-plain-cap wire tooth). This prover instead routes through the cap-open WIDE
+/// descriptor (the membership crown the wire DEMANDS) and welds the caps leg onto THAT — the descriptor
+/// the welded registry (`WIDE_UMEM_WELD_REGISTRY_TSV`) carries a wire-accepted twin of (e.g.
+/// `attenuateCapOpenEffVmDescriptor2R24`, domain 2).
+///
+/// `route` MUST be a wide-eligible cap-open route (`cap_open_key_has_wide_twin`, non-TB); `cap` the
+/// actor's consumed-capability membership witness; `pre`/`ops` the turn's CAPS-domain universal-memory
+/// touch (single-domain caps, derived from the genuine before/after cell projection diff). Self-verifies
+/// before return; returns `(proof, wide_dpis)`. STAGED: a NEW welded descriptor BESIDE the deployed
+/// registry; no VK epoch, no deployed-default flip, `umem_witness_enabled` untouched.
+#[cfg(feature = "prover")]
+#[allow(clippy::too_many_arguments)]
+fn prove_wide_umem_welded_cap_open_staged(
+    initial_state: &CellState,
+    effects: &[VmEffectKind],
+    before_w: &dregg_turn::rotation_witness::RotationWitness,
+    after_w: &dregg_turn::rotation_witness::RotationWitness,
+    cap: &CapMembershipWitness,
+    route: &CapOpenRoute,
+    pre: &dregg_turn::umem::UProjection,
+    ops: &[dregg_turn::umem::UmemOp],
+) -> Result<
+    (
+        dregg_circuit::descriptor_ir2::Ir2BatchProof<
+            dregg_circuit::descriptor_ir2::DreggStarkConfig,
+        >,
+        Vec<BabyBear>,
+    ),
+    SdkError,
+> {
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, prove_vm_descriptor2_umem, verify_vm_descriptor2,
+    };
+    use dregg_circuit::effect_vm_descriptors::weld_umem_into_wide_descriptor;
+
+    // The umem leg's single-domain CAPS cohort rows + the REAL boundary (fails closed on a multi-domain
+    // leg — e.g. a stray Heap-domain Nonce op alongside the caps insert; the projection diff must be
+    // caps-only, mirroring the value-cohort weld's single-domain discipline).
+    let inputs = dregg_turn::umem::umem_cohort_proving_inputs_from(pre, ops)
+        .map_err(|e| SdkError::InvalidWitness(format!("umem caps cohort trace generation: {e}")))?;
+    if inputs.domain != dregg_turn::umem::UDomain::Caps.code() {
+        return Err(SdkError::InvalidWitness(format!(
+            "cap-open umem weld: the universal-memory leg touches domain {} but a capability cap-open \
+             weld must reconcile the CAPS domain ({}) — thread the genuine caps projection diff",
+            inputs.domain,
+            dregg_turn::umem::UDomain::Caps.code()
+        )));
+    }
+
+    // Build the WIDE cap-open leg (the membership crown the wire demands) via the SHARED builder, then
+    // weld the umem caps leg onto its descriptor + trace.
+    let (cap_open_desc, cap_open_trace, dpis, all_heaps) = build_effect_vm_cap_open_leg(
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        cap,
+        route,
+        None,
+        true,
+    )?;
+    if cap_open_desc.public_input_count < 16 + 38 {
+        return Err(SdkError::InvalidWitness(format!(
+            "cap-open umem weld: the resolved descriptor {} is not the WIDE cap-open form (PI count \
+             {} — the 8-felt wide carriers were not appended; route must be wide-eligible)",
+            cap_open_desc.name, cap_open_desc.public_input_count
+        )));
+    }
+
+    // WELD: append the umem caps leg INTO the WIDE cap-open descriptor (purely additive — keeps the
+    // membership crown + the 16 wide commit PIs / 8-felt anchors INTACT). The first appended umem
+    // column is PAST the cap-open carriers (`base` = the cap-open wide trace width).
+    let welded = weld_umem_into_wide_descriptor(&cap_open_desc, inputs.domain);
+    let base = cap_open_desc.trace_width;
+
+    let real_umem_rows: Vec<&Vec<BabyBear>> = inputs
+        .rows
+        .iter()
+        .filter(|r| r.get(6).copied() == Some(BabyBear::ONE))
+        .collect();
+    if real_umem_rows.len() > cap_open_trace.len() {
+        return Err(SdkError::InvalidWitness(format!(
+            "cap-open umem weld: {} caps umem ops exceed the cap-open trace height {} (cannot \
+             co-locate the umem leg on the cap-open rows)",
+            real_umem_rows.len(),
+            cap_open_trace.len()
+        )));
+    }
+    let mut welded_base: Vec<Vec<BabyBear>> = Vec::with_capacity(cap_open_trace.len());
+    for (ri, row) in cap_open_trace.iter().enumerate() {
+        let mut wr = row.clone();
+        wr.resize(base + 7, BabyBear::ZERO);
+        if let Some(umem_row) = real_umem_rows.get(ri) {
+            for (i, &v) in umem_row.iter().enumerate().take(7) {
+                wr[base + i] = v;
+            }
+        }
+        welded_base.push(wr);
+    }
+
+    // Prove the WELDED WIDE cap-open descriptor through the DEPLOYED-form umem prover with the REAL
+    // caps boundary. The cap-open map-op heaps (the c-list cap-tree witness) ride UNCHANGED.
+    let proof = prove_vm_descriptor2_umem(
+        &welded,
+        &welded_base,
         &dpis,
         &MemBoundaryWitness::default(),
         &all_heaps,
+        &inputs.boundary,
     )
-    .map_err(|e| {
-        SdkError::InvalidWitness(format!("cap-open IR-v2 proof ({effective_key}): {e}"))
-    })?;
+    .map_err(|e| SdkError::InvalidWitness(format!("cap-open+umem welded IR-v2 proof: {e}")))?;
+    verify_vm_descriptor2(&welded, &proof, &dpis)
+        .map_err(|e| SdkError::InvalidWitness(format!("cap-open+umem welded self-verify: {e}")))?;
     Ok((proof, dpis))
+}
+
+/// **THE PUBLIC DOMAIN-2 (capability) WELDED-MINT ENTRY (STAGED, VK-RISK-FREE).** Resolve the
+/// cap-open route for a single cap-authorized effect ([`cap_open_route_for_run`]) and prove the WIDE
+/// cap-open+umem CAPS-domain weld ([`prove_wide_umem_welded_cap_open_staged`]) — a self-verifying
+/// welded mint of a domain-2 cohort member (attenuate / grant / delegate / revoke / introduce …). The
+/// produced leg verifies through the deployed wire verifier under the cap-open member's welded twin in
+/// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV)
+/// (for the wire-accepted cap-open keys — e.g. `attenuateCapOpenEffVmDescriptor2R24`).
+///
+/// `effects` is a single-effect cap-authorized run; `cap` the actor's consumed-capability membership
+/// witness (its `clist_leaves` thread the cap-tree write witness when the route is write-bearing);
+/// `pre`/`ops` the turn's CAPS-domain universal-memory touch (single-domain caps, the genuine
+/// before/after cell projection diff). Returns `(proof, wide_dpis)`. STAGED: no VK bump, no default
+/// flip, `umem_witness_enabled` untouched.
+#[cfg(feature = "prover")]
+#[allow(clippy::too_many_arguments)]
+pub fn prove_cap_open_umem_welded_staged(
+    initial_state: &CellState,
+    effects: &[VmEffectKind],
+    before_w: &dregg_turn::rotation_witness::RotationWitness,
+    after_w: &dregg_turn::rotation_witness::RotationWitness,
+    cap: &CapMembershipWitness,
+    pre: &dregg_turn::umem::UProjection,
+    ops: &[dregg_turn::umem::UmemOp],
+) -> Result<
+    (
+        dregg_circuit::descriptor_ir2::Ir2BatchProof<
+            dregg_circuit::descriptor_ir2::DreggStarkConfig,
+        >,
+        Vec<BabyBear>,
+    ),
+    SdkError,
+> {
+    let route = cap_open_route_for_run(effects).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "cap-open umem weld: {effects:?} has no wired cap-open route (the domain-2 welded mint \
+             needs a single cap-authorized effect — attenuate / grant / delegate / revoke / introduce)"
+        ))
+    })?;
+    prove_wide_umem_welded_cap_open_staged(
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        cap,
+        &route,
+        pre,
+        ops,
+    )
 }
 
 /// Resolve the committed rotated cohort descriptor JSON for a turn's effects (the SAME
