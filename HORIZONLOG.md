@@ -9,6 +9,27 @@ should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
 ## NOW-STATE (late-2026-06-25 cluster — lanes that landed AFTER the entries below, recorded here for durability)
+- CI-GREEN GRIND (2026-06-26). Drove the workspace toward green after the wide-registry/umem churn. LANDED (committed):
+  (1) `circuit/src/dsl/garbled.rs` — the DSL garbled prover/verifier pushed a 16-felt PI vector (`as_slice()` over the
+  now-8-felt WideHash ×2) while the descriptor reuses the deprecated 4-felt GarbledEvaluationAir columns + expects 8 PIs;
+  the overlap broke the boundary PiBinding on EVERY true proof (`output_only_disclosure_via_proof`). Push only the first 4
+  felts of each hash; the full 8-felt bind stays at the struct-equality level (e8f5016a3 fallout). (2)
+  `sdk/src/full_turn_proof.rs` — 8 cap-WRITE/attenuate `_proves_and_verifies_light_client` tests proved the obsolete narrow
+  1-felt leg (now tooth-rejected because the key has a wide twin); routed them onto the deployed WIDE leg (`go_wide=true` +
+  `cap_open_wide_vk_hash_by_key`), mirroring production. (3) `starbridge-v2/src/cockpit/frame.rs` + `deos-js/src/layout_card.rs`
+  — `Tab::ServiceExplorer` was orphaned (in `Tab::ALL`=31 but no mode's `surfaces()`=30); homed under OPERATE in both the
+  hardcoded map and the mirrored `cockpit_default`, fixing the partition invariants. NAMED RESIDUAL RED (follow-up):
+  • `cap_write_revoke_proves_and_verifies_light_client` — the WIDE `revokeDelegationWriteCapOpen` leg (DELEG-tree REMOVE) is
+  UNSATISFIABLE (failed constraint #70 at row 0), unlike Update-on-deleg (refresh) + Remove-on-cap-tree (revokeCapability)
+  which prove wide; red on BOTH routes (narrow is tooth-rejected) → needs the wide DELEG-REMOVE carrier fix.
+  • `lightclient::vk_anchor_is_circuit_shape_not_history_content` — the documented IVC running-VK 2-step transient (depth-2
+  fold VK still content-varying; fork-gated, see the IVC entry below). • `node::producer_mode_cell_unseal_commits_lean_state_matching_rust`
+  — the Lean executor REJECTS a CellUnseal that Rust commits (Rust↔Lean divergence, lean-gated so it skips when lean is
+  unlinked; WIP swap-migration smoke 13/56, c8539c296) → kernel-equivalence alignment. • TEST-MODE NOTE: the negative
+  soundness arms `cap_open_transfer_leg_*` / `cap_open_fanout_revoke_*` rely on DEBUG-mode panics (catch_unwind over an
+  unsatisfiable prove) → they PASS in debug, FAIL in `--release`; the sdk suite is not blanket-release-runnable.
+  GREEN now: lake (4259), `cargo build --workspace`, wide_registry_parses_and_is_name_stable (the umem-flip gate), turn/cell/
+  app-framework/circuit/circuit-prove/sdk(−1)/node(−1)/android-cell/doc/pg-dregg/starbridge-v2-lib/deos-js-layout.
 - DREGG-QUERY WIRED LIVE (2026-06-26). The mature attested-read engine is now DEPLOYED into the node: the two handlers
   `/api/receipts/index/{root,range}` (`node/src/api.rs` `get_receipt_index_root`/`get_receipt_index_range`) serve real
   attested slices over an incrementally-maintained MMR (`NodeStateInner::receipt_index` + `sync_receipt_index`, lazily synced
