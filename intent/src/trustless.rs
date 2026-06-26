@@ -2694,25 +2694,25 @@ mod tests {
         assert_eq!(engine.winning_score(), Some(5.0));
     }
 
-    /// P0 #82 adversarial test: a production-style engine constructed via
+    /// Adversarial test: a production-style engine constructed via
     /// `TrustlessIntentEngine::new` (the default constructor) must NOT
-    /// silently accept a witnessed predicate against a kind whose real
-    /// verifier has not been installed. Pre-fix the default used the
-    /// permissive stub registry, which accepted any non-empty proof bytes
-    /// against any built-in kind. After the fix the default installs
-    /// `NotYetWiredVerifier` for non-NonMembership built-ins, which rejects
-    /// with a clear "not yet wired" reason.
+    /// silently accept a forged witnessed predicate. Pre-wiring the default
+    /// used the permissive stub registry, which accepted any non-empty proof
+    /// bytes against any built-in kind. The default now installs the REAL
+    /// `DfaAcceptanceVerifier`, so a garbage DFA proof is rejected by the
+    /// real out-of-circuit re-check (the trace fails to decode/verify).
     #[test]
-    fn p0_82_default_engine_rejects_witnessed_predicate_not_yet_wired() {
+    fn p0_82_default_engine_rejects_forged_dfa_witnessed_predicate() {
         let (key, key_shares) = make_test_keys(2, 3);
         let mut engine = TrustlessIntentEngine::new(2, 3);
         let intents = vec![make_intent(1), make_intent(2)];
         drive_to_solving(&mut engine, &key, &key_shares, &intents, 10);
 
-        // Submit a DFA witnessed-predicate with non-empty proof bytes.
-        // Under the pre-fix stub default, this would be silently accepted.
-        // Under the strict default (default_builtins → NotYetWiredVerifier),
-        // it must reject with a clear "not yet wired" reason.
+        // Submit a DFA witnessed-predicate with forged (non-decodable) proof
+        // bytes. Under the pre-wiring stub default this would be silently
+        // accepted. Under the real wired default (`default_builtins` →
+        // `DfaAcceptanceVerifier`) the trace fails the real re-check and the
+        // submission is rejected.
         let sub = make_witnessed_submission(
             0xAA,
             &intents,
@@ -2725,12 +2725,13 @@ mod tests {
         match result {
             Err(EngineError::InvalidProof { reason }) => {
                 assert!(
-                    reason.contains("not yet wired") || reason.contains("not yet installed"),
-                    "expected 'not yet wired' surface from NotYetWiredVerifier, got: {reason}"
+                    reason.contains("dfa-acceptance")
+                        || reason.contains("DFA acceptance proof rejected"),
+                    "expected a real DFA-verifier rejection, got: {reason}"
                 );
             }
             other => panic!(
-                "default engine must NOT silently accept a not-yet-wired witnessed predicate, got: {other:?}"
+                "default engine must NOT silently accept a forged DFA witnessed predicate, got: {other:?}"
             ),
         }
     }
@@ -2806,24 +2807,41 @@ mod tests {
         }
     }
 
-    /// P0 #82: same adversarial check for `IntentPredicateVerifier::default()`
-    /// — the programmatic-defaults surface used by app callers must also
-    /// fail-closed on a not-yet-wired kind.
+    /// The programmatic-defaults surface used by app callers
+    /// (`IntentPredicateVerifier::default()`) wires the REAL
+    /// `DfaAcceptanceVerifier`: a genuine acceptance proof verifies, and a
+    /// forged proof is rejected by the real re-check (never silently accepted).
     #[test]
-    fn p0_82_default_predicate_verifier_rejects_dfa_kind() {
+    fn p0_82_default_predicate_verifier_wires_real_dfa() {
         use crate::predicate::{IntentPredicateVerifier, ResourceDfa};
+        use dregg_dfa::{RouteTableBuilder, RouteTarget, Router, compile_to_air};
 
         let verifier = IntentPredicateVerifier::default();
-        let dfa = ResourceDfa::new([0x11; 32], vec![0xAB, 0xCD]);
-        let result = verifier.matches_resource(&dfa, "documents/x");
+
+        // A real route-table DFA acceptance proof for "documents/x" verifies.
+        let table = RouteTableBuilder::new()
+            .route("documents/x", RouteTarget::handler("docs"))
+            .compile();
+        let route_root = table.commitment;
+        let router = Router::new(table);
+        let trace = compile_to_air(&router, b"documents/x");
+        assert!(trace.accepts(), "the resource must match its own route");
+        let good = ResourceDfa::new(route_root, trace.to_proof_bytes());
+        verifier
+            .matches_resource(&good, "documents/x")
+            .expect("real DFA acceptance proof must verify through the wired verifier");
+
+        // A forged proof is rejected by the real DFA re-check.
+        let forged = ResourceDfa::new([0x11; 32], vec![0xAB, 0xCD]);
+        let result = verifier.matches_resource(&forged, "documents/x");
         assert!(
             result.is_err(),
-            "default IntentPredicateVerifier must reject DFA proof (not-yet-wired)"
+            "default IntentPredicateVerifier must reject a forged DFA proof"
         );
         let err = format!("{}", result.unwrap_err());
         assert!(
-            err.contains("not yet wired") || err.contains("not yet installed"),
-            "expected not-yet-wired reason, got: {err}"
+            err.contains("dfa-acceptance") || err.contains("DFA acceptance proof rejected"),
+            "expected a real DFA-verifier rejection, got: {err}"
         );
     }
 

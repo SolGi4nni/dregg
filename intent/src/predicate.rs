@@ -387,21 +387,45 @@ mod tests {
     }
 
     #[test]
-    fn default_verifier_uses_default_builtins_and_rejects_dfa() {
-        // P0 #82: the Default impl now installs `default_builtins`, which
-        // wraps not-yet-wired built-in kinds with `NotYetWiredVerifier`.
-        // A DFA proof against the default-constructed verifier must reject.
+    fn default_verifier_wires_real_dfa_acceptance() {
+        // The Default impl installs the cell crate's `default_builtins`, which
+        // now ships the REAL `DfaAcceptanceVerifier` (an out-of-circuit re-check
+        // of a serialized `dregg_dfa::AirTrace` bound to the route-table root).
+        // So a genuine acceptance proof verifies through the default verifier,
+        // and a forged proof is rejected by the real re-check — not silently
+        // waved through as the pre-wiring stub registry did.
+        use dregg_dfa::{RouteTableBuilder, RouteTarget, Router, compile_to_air};
+
         let verifier = IntentPredicateVerifier::default();
-        let dfa = ResourceDfa::new([0x11; 32], vec![0xAB, 0xCD]);
-        let result = verifier.matches_resource(&dfa, "documents/x");
+
+        // Build a real route-table DFA + acceptance trace for "documents/x".
+        let table = RouteTableBuilder::new()
+            .route("documents/x", RouteTarget::handler("docs"))
+            .compile();
+        let route_root = table.commitment;
+        let router = Router::new(table);
+        let trace = compile_to_air(&router, b"documents/x");
+        assert!(trace.accepts(), "the resource must match its own route");
+        let proof_bytes = trace.to_proof_bytes();
+
+        // A genuine proof verifies through the real wired DFA verifier.
+        let good = ResourceDfa::new(route_root, proof_bytes);
+        verifier
+            .matches_resource(&good, "documents/x")
+            .expect("real DFA acceptance proof must verify through the wired verifier");
+
+        // A forged proof (garbage bytes against an arbitrary root) is rejected
+        // by the real re-check rather than silently accepted.
+        let forged = ResourceDfa::new([0x11; 32], vec![0xAB, 0xCD]);
+        let result = verifier.matches_resource(&forged, "documents/x");
         assert!(
             result.is_err(),
-            "Default IntentPredicateVerifier must reject DFA (not-yet-wired)"
+            "default IntentPredicateVerifier must reject a forged DFA proof"
         );
         let msg = format!("{}", result.unwrap_err());
         assert!(
-            msg.contains("not yet wired") || msg.contains("not yet installed"),
-            "expected not-yet-wired reason, got: {msg}"
+            msg.contains("dfa-acceptance") || msg.contains("DFA acceptance proof rejected"),
+            "expected a real DFA-verifier rejection, got: {msg}"
         );
     }
 
