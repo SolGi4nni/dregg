@@ -17,6 +17,9 @@ dregg-cell = { path = "../../cell", default-features = false }
 dregg-turn = { path = "../../turn" }
 dregg-types = { path = "../../types" }
 
+serde = { workspace = true }
+serde_json = { workspace = true }
+
 [dev-dependencies]
 # The dreggverse document language patch-core (its OWN, empty workspace, like
 # the other standalone path deps — resolves its workspace inheritance from the

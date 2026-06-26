@@ -54,6 +54,27 @@
 //! 3. Build invocations with [`KvStore::put`] / [`KvStore::delete`] (which call
 //!    `invoke_with_descriptor` under the hood) and submit the returned [`Turn`]
 //!    through an executor ([`dregg_app_framework::EmbeddedExecutor::submit_turn`]).
+//!
+//! ## The four modern app-framework axes
+//!
+//! This crate demonstrates the unified starbridge-app template. The SAME
+//! [`store_program`] backs every axis:
+//!   - **AX1 — verified core**: [`store_program`] + `Monotonic(VERSION_SLOT)` (this
+//!     file) — the rollback-proof invariant the executor enforces.
+//!   - **AX2 — deos surface**: [`deos::kvstore_app`] / [`deos::register_deos`]
+//!     (`src/deos.rs`) — the store composed as a `DeosApp`.
+//!   - **AX3 — service cell**: [`KvStore`] / `invoke()` (this file) — the typed
+//!     [`InterfaceDescriptor`] driven through the front door.
+//!   - **AX4 — deos-view card**: [`card::kvstore_card_value`] (`src/card.rs`) — the
+//!     UI as a renderer-independent `deos.ui.*` view-tree.
+
+/// AX4 — the deos-view CARD: the app's UI as a renderer-independent `deos.ui.*`
+/// view-tree (pure `serde_json`, no `deos-view` dependency).
+pub mod card;
+/// AX2 — the deos-native surface: the store composed as a [`DeosApp`]
+/// ([`deos::kvstore_app`], [`deos::register_deos`], the [`deos::fire_put`] /
+/// [`deos::fire_delete`] fires).
+pub mod deos;
 
 use dregg_app_framework::{
     AppCipherclerk, Effect, FieldElement, InterfaceRegistry, InvokeAuthority, InvokeRefused,

@@ -1,0 +1,44 @@
+{
+  "id": "kvstore",
+  "name": "Key-Value Store",
+  "description": "A verified key-value register store exposed as a SERVICE CELL (cells-as-service-objects). A single cell holds a register file: slot 0 is a monotone store version, slots 1..=15 are key-addressed value registers. The published typed InterfaceDescriptor exposes put/delete (Replayable, Signature-gated) and get (Serviced — the named OFE read seam), driven through the invoke() front door — no Effect::Invoke, no kernel change. The store version is Monotonic, so a replayed or reordered mutation is an executor refusal.",
+  "version": "0.1.0",
+  "status": "starbridge",
+  "crate": "starbridge-kvstore",
+  "runtime_mode": "starbridge-native",
+  "caddy_prefix": "/kvstore",
+  "factory_vks": [],
+  "page": null,
+  "inspectors": ["kvstore"],
+  "turn_builders": ["put", "delete"],
+  "required_apis": ["/turn/submit", "/api/cell/{id}"],
+  "deos": {
+    "surface": "DeosApp",
+    "mount": "register_deos (src/deos.rs) — folds the composed DeosApp into the StarbridgeAppContext affordance registry; DeosApp::mount yields the axum router",
+    "src_factory": "kvstore_app(cipherclerk, executor)",
+    "cell": "store",
+    "discoverable": ["kvstore", "registers"],
+    "publish": "Signature (the store cell is a dregg:// sturdyref an indexer on another federation reacquires to read the live version)",
+    "affordances": {
+      "view": "cap-only, Signature (a READER reads the live store version) — EmitEvent kvstore-read",
+      "put": "cap-only, Either (a WRITER writes a register) — the fire submits the FULL two-effect turn (bump VERSION + SetField(reg, value)), the executor re-enforcing Monotonic(VERSION)",
+      "delete": "cap-only, Either (a WRITER clears a register) — the fire submits the FULL two-effect turn (bump VERSION + SetField(reg, 0)), the executor re-enforcing Monotonic(VERSION)"
+    },
+    "seam": "The fire runs against the seeded store cell carrying store_program() (Monotonic(VERSION)), so a rollback/replay that would lower the store version BITES in the deos fire path (src/deos.rs::tests)."
+  },
+  "service": {
+    "interface": "interface_descriptor() — three typed methods",
+    "front_door": "KvStore::put / KvStore::delete / KvStore::get via invoke_with_descriptor()",
+    "methods": {
+      "put": "Replayable, Signature, args (reg, value) — desugars to bump VERSION + SetField(reg, value)",
+      "delete": "Replayable, Signature, args (reg) — desugars to bump VERSION + SetField(reg, 0)",
+      "get": "Serviced, None, args (reg) — the named OFE read seam, never desugared to a turn"
+    }
+  },
+  "manifest_health": {
+    "status": "starbridge-native",
+    "embedded": true,
+    "deos_native_src": true,
+    "source_of_truth": "starbridge-apps/kvstore/src/lib.rs"
+  }
+}
