@@ -42,17 +42,31 @@
 //! fields), and (3) the root batch proof verifies.
 //!
 //! What remains NAMED, not discharged (the honest floor): `recursive_sound` — the recursion fork's
-//! FRI engine soundness — plus two precisely-scoped fork follow-ups the harness pins narrow but do
-//! not close (stated in full in `circuit/src/ivc_turn_chain.rs`'s module docs): (a) the VK pin fixes
-//! the ROOT circuit's structure, but the fork's aggregation circuit takes each CHILD proof's
-//! preprocessed commitment as a runtime public input living in the constraint-free `PublicAir` trace
-//! that host verification never checks, so leaf-circuit identity is not yet pinned in-band; (b) leaf
-//! public values are not re-exposed at the root (`into_recursion_input::<BatchOnly>` passes empty
-//! `table_public_inputs` and the fork ignores them when building the aggregation circuit), so the
-//! carried binding proof is not in-band linked to the binding leaf folded INSIDE the root. Both
-//! close with the same fork lever: thread `table_public_inputs` up the tree and host-check the
-//! circuit public vector. [`AttestedHistory`] is the `AggregateAttests` verdict under that named
-//! carrier, and [`verify_history`] is the light-client check.
+//! FRI/STARK engine soundness. This is the SAME standard assumption every recursive STARK chain
+//! carries (Mina/Plonky3-style: FRI soundness, like collision-resistance for a hash) — it is NOT a
+//! dregg-specific gap and is not provable in Lean. The two precisely-scoped fork follow-ups that
+//! once sat ALONGSIDE it are now DISCHARGED (in-band, in `circuit-prove/src/ivc_turn_chain.rs`'s
+//! `aggregate_tree`), so recursion soundness rests on `recursive_sound` ALONE:
+//!
+//! - (a) **leaf-circuit identity pinned in-band — CLOSED.** Every child of the K-fold tree (each
+//!   descriptor leaf and each interior aggregation node) is folded through the fork's
+//!   `into_recursion_input_pinned`: the child's own preprocessed commitment (its VK-identity core,
+//!   the Merkle cap binding its static op-list) is baked as a CONSTANT the parent aggregation
+//!   circuit `connect`s its child-commitment targets to. A foreign-circuit child is refused either
+//!   way — keep the honest constant and the foreign child's in-circuit preprocessed-trace FRI check
+//!   is UNSAT; bake the foreign commitment and the ROOT VK fingerprint (tooth 1) stops matching the
+//!   honest anchor. The pinned constants live in every node's op-list up to the root, so the root VK
+//!   pin TRANSITIVELY certifies the whole tree's leaf identity (no same-shape argument left).
+//! - (b) **leaf public values re-exposed at the root — CLOSED.** Each child is fed with its GENUINE
+//!   per-table public inputs threaded up (`into_recursion_input_pinned` calls
+//!   `genuine_table_public_inputs`, not the empty-vector legacy path), so a child's exposed segment
+//!   publics are re-verified IN-CIRCUIT at the next layer. Combined with the ordered SEGMENT
+//!   accumulator, the whole-chain `[genesis_root, final_root, num_turns, chain_digest]` is
+//!   re-exposed at the root (`expose_claim`) and host-checked (verify tooth 3) — the carried claim
+//!   is in-band linked to the REAL descriptor leaves folded INSIDE the root.
+//!
+//! [`AttestedHistory`] is the `AggregateAttests` verdict under that one named crypto carrier, and
+//! [`verify_history`] is the light-client check.
 //!
 //! ## Retrieving the bytes behind a verified commitment (data availability)
 //!

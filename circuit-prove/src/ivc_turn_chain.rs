@@ -149,6 +149,11 @@
 //! - **Engine soundness** (`recursive_sound`): the wrap layer's in-circuit FRI
 //!   verifier and the root batch-STARK verifier are the plonky3 recursion
 //!   fork's; their soundness is the named crypto carrier, as everywhere else.
+//!   This is the SAME standard FRI/STARK soundness assumption every recursive
+//!   STARK chain carries (Mina/Plonky3-style) — it is NOT a dregg-specific gap
+//!   and is not provable in Lean. With the two fork follow-ups below CLOSED,
+//!   recursion soundness rests on this assumption ALONE: nothing app-specific
+//!   is left un-pinned.
 //! - **Segment digest — a multi-felt Poseidon2 commitment** ([`seg_poseidon_commit`],
 //!   codex re-review #3, CLOSED). The ordered-history `acc` is a genuine
 //!   [`SEG_DIGEST_WIDTH`]-felt Poseidon2 sponge over the recursion config's
@@ -162,13 +167,27 @@
 //!   now mismatches the root digest. The ONLINE [`crate::accumulator`] is scoped OUT (it
 //!   keeps the single-felt binding-leaf carrier, zero-padded to the new lane width — codex
 //!   #4 mixed-root weakness for that path is unchanged).
-//! - **Child-circuit identity under the VK pin (fork follow-up, precise).** The
-//!   harness-level VK pin (tooth 1) pins the ROOT layer's circuit structure; the leaf
-//!   circuits' op-list identity is pinned in-band only via the fork's
-//!   `into_recursion_input_pinned` path (used by the online [`crate::accumulator`]). For
-//!   the balanced-tree K-fold the leaf VK identity rests on the root VK pin + the genuine
-//!   same-shape aggregation; baking child preprocessed commitments as checked publics is
-//!   the remaining fork follow-up.
+//! - **Child-circuit identity under the VK pin (fork follow-up — CLOSED).** [`aggregate_tree`]
+//!   now folds EVERY child (descriptor leaf or interior aggregation node) through the fork's
+//!   `into_recursion_input_pinned` path: each child's own preprocessed commitment (its
+//!   VK-identity core — the Merkle cap binding its static op-list) is baked as a CONSTANT the
+//!   parent aggregation circuit `connect`s its child-commitment targets to. A foreign-circuit
+//!   child is refused in-band either way — keep the honest constant and the foreign child's
+//!   in-circuit preprocessed-trace FRI check is UNSAT (its real commitment ≠ the pinned
+//!   constant); bake the foreign commitment and the parent op-list changes, so the ROOT
+//!   preprocessed commitment changes and the root VK fingerprint (tooth 1) stops matching the
+//!   honest anchor. The pinned constants live in every node's op-list up to the root, so the
+//!   root VK pin TRANSITIVELY certifies the whole tree's leaf-circuit identity — the leaf VK no
+//!   longer rests on a same-shape argument. (Previously pinned only on the online
+//!   [`crate::accumulator`] fixed-point path; the balanced-tree K-fold is now pinned too.)
+//! - **Leaf public values re-exposed at the root (fork follow-up — CLOSED).** Each child is fed
+//!   with its GENUINE per-table public inputs threaded up (`into_recursion_input_pinned` calls
+//!   `genuine_table_public_inputs`, not the empty-vector legacy path), so a child's exposed
+//!   segment publics are re-verified IN-CIRCUIT at the next layer instead of left as
+//!   unconstrained target slots. Combined with the ordered SEGMENT accumulator, the
+//!   whole-chain `[genesis_root, final_root, num_turns, chain_digest]` is re-exposed at the
+//!   root (the `expose_claim` table) and host-checked by verify tooth 3 — the carried claim is
+//!   in-band linked to the REAL descriptor leaves folded inside the root.
 //!
 //! ## K-fold vs unbounded
 //!
@@ -2459,7 +2478,16 @@ fn prove_chain_core_rotated(
     // Aggregate the segment-carrying descriptor leaves to ONE root, COMBINING the segments
     // in-circuit at each node (continuity + count + ordered-digest fold). The root's exposed
     // segment is the whole-chain `[genesis_root, final_root, num_turns, chain_digest]`.
-    let root = aggregate_tree(batch_leaves, &config, &backend, &params)?;
+    //
+    // DEFAULT = the serial `aggregate_tree` (unchanged proving path). When `DREGG_MERGE_WORKERS` is
+    // set, the PARALLEL scan-state driver folds the SAME DAG through the merge-pool (independent
+    // merge nodes farmed to N workers) — byte-identical root, parallel path. This is the operator
+    // throughput knob (aggregation was the serial cap; the merge is the farm-able unit).
+    let root = if crate::merge_pool::parallel_aggregation_enabled() {
+        crate::merge_pool::aggregate_tree_scan_state_configured(batch_leaves)?
+    } else {
+        aggregate_tree(batch_leaves, &config, &backend, &params)?
+    };
 
     Ok(WholeChainProof {
         root,
@@ -2515,8 +2543,176 @@ fn prove_chain_binding_leaf_rotated(
     Ok((proof, pis))
 }
 
+/// The runtime preprocessed-commitment value type for the recursion config — a child proof's
+/// VK-identity core (a Merkle cap). This is what lever (a)'s in-circuit pin constrains; the merge
+/// primitive extracts it directly from a bare [`BatchStarkProof`] (the host mirror of
+/// [`RecursionOutput::running_preprocessed_commit`]).
+pub(crate) type RecursionCommit =
+    <<DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Pcs as p3_commit::Pcs<
+        <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge,
+        <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenger,
+    >>::Commitment;
+
+/// **THE SEGMENT-COMBINE EXPOSE HOOK** — factored out of [`aggregate_tree`]'s inner loop so the
+/// serial tree fold AND the parallel scan-state driver (the [`crate::merge_pool`]) drive the SAME
+/// per-node math: state continuity (`L.last_new == R.first_old`, by direct `connect` — never
+/// `sub`+`assert_zero`, which would clobber the shared `WitnessId(0)`), count additivity
+/// (`count = L.count + R.count`), the ordered multi-felt digest fold (`acc = commit(L.acc ++ R.acc)`,
+/// L absorbed before R ⇒ order-sensitive), then expose the parent `[first_old, last_new, count, acc]`.
+/// Because both paths call this ONE function, the parallel root is byte-identical to the serial root.
+pub(crate) fn segment_combine_expose(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+    left_apt: &[Vec<p3_recursion::Target>],
+    right_apt: &[Vec<p3_recursion::Target>],
+    left_idx: usize,
+    right_idx: usize,
+) {
+    let l = left_apt
+        .get(left_idx)
+        .expect("left segment instance present");
+    let r = right_apt
+        .get(right_idx)
+        .expect("right segment instance present");
+    debug_assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
+
+    // (1) STATE CONTINUITY: L.last_new == R.first_old (the temporal tooth, off the zero slot).
+    cb.connect(l[SEG_LAST_NEW], r[SEG_FIRST_OLD]);
+
+    // (2) parent segment: span [L.first_old .. R.last_new], count L+R, ordered multi-felt digest
+    //     acc = commit(L.acc ++ R.acc).
+    let first_old = l[SEG_FIRST_OLD];
+    let last_new = r[SEG_LAST_NEW];
+    let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
+    let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
+    acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+    acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+    let acc = seg_poseidon_commit(cb, &acc_inputs);
+    let mut parent = Vec::with_capacity(SEG_WIDTH);
+    parent.push(first_old);
+    parent.push(last_new);
+    parent.push(count);
+    parent.extend_from_slice(&acc);
+    debug_assert_eq!(parent.len(), SEG_WIDTH);
+    cb.expose_as_public_output(&parent);
+}
+
+/// Build a [`RecursionInput::BatchStark`] from a BARE [`BatchStarkProof`] (the host mirror of
+/// [`RecursionOutput::into_recursion_input_pinned`], which is a method on the OWNED output). This is
+/// what lets the merge primitive run on a proof that arrived WITHOUT its prover-only
+/// `Rc<CircuitProverData>` — i.e. a proof that crossed a thread / GPU / machine boundary as the
+/// `Send`, serde [`BatchStarkProof`] (exactly the verify-sufficient subset
+/// [`WholeChainProofBytes`] ships). It threads the proof's genuine per-table public values
+/// (lever (b)) and pins the child's preprocessed commitment in-circuit (lever (a)).
+pub(crate) fn batch_to_pinned_input(
+    proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+    expected_commit: RecursionCommit,
+) -> RecursionInput<'_, DreggRecursionConfig, BatchOnly> {
+    let num_primitive = p3_circuit_prover::batch_stark_prover::NUM_PRIMITIVE_TABLES;
+    // `Val<DreggRecursionConfig>` is the p3-native BabyBear (`P3BabyBear`), NOT the dregg-circuit
+    // `BabyBear` alias — `non_primitives[].public_values` and the `table_public_inputs` field both
+    // carry the native field.
+    let mut tpi: Vec<Vec<P3BabyBear>> = vec![Vec::new(); num_primitive];
+    for entry in &proof.non_primitives {
+        tpi.push(entry.public_values.clone());
+    }
+    RecursionInput::BatchStark {
+        proof,
+        common_data: &proof.stark_common,
+        table_public_inputs: tpi,
+        expected_preprocessed_commit: Some(expected_commit),
+    }
+}
+
+/// **THE FARMABLE MERGE PRIMITIVE — one scan-state merge node, over `Send` currency.**
+///
+/// Aggregate TWO segment-carrying child [`BatchStarkProof`]s into ONE parent
+/// [`RecursionOutput`], combining their ordered segments in-circuit via
+/// [`segment_combine_expose`] and pinning each child's VK identity in-band
+/// ([`batch_to_pinned_input`]). This is the per-node body of [`aggregate_tree`] lifted into a PURE,
+/// side-effect-free function whose inputs (`&BatchStarkProof`) and result-of-interest (the output's
+/// `.0`) are `Send`/serde — so independent merge nodes are FARMABLE to a worker / GPU / machine pool
+/// ([`crate::merge_pool`]). The result's prover-only `Rc<CircuitProverData>` (`.1`) is never read by
+/// any downstream merge OR by verification (every reader takes `root.0`), so a pool worker may drop
+/// it and ship back only the `BatchStarkProof`.
+///
+/// It reads each child's segment instance index ([`expose_claim_instance_index`]) and preprocessed
+/// commitment (its VK core) directly from the bare proof, builds the pinned recursion inputs, and
+/// proves the aggregation layer with the segment-combine hook. The math is IDENTICAL to the serial
+/// tree node, so the parallel root equals the serial root.
+pub(crate) fn merge_two_segment_proofs(
+    left: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+    right: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+    config: &DreggRecursionConfig,
+    backend: &p3_recursion::FriRecursionBackendForExt<D, 16, 8, p3_recursion::ops::Poseidon2Config>,
+    params: &ProveNextLayerParams,
+) -> Result<RecursionOutput<DreggRecursionConfig>, TurnChainError> {
+    let left_idx =
+        expose_claim_instance_index(left).ok_or_else(|| TurnChainError::RecursionFailed {
+            reason: "left aggregation child carries no segment (expose_claim) table".to_string(),
+        })?;
+    let right_idx =
+        expose_claim_instance_index(right).ok_or_else(|| TurnChainError::RecursionFailed {
+            reason: "right aggregation child carries no segment (expose_claim) table".to_string(),
+        })?;
+
+    // LEVER (a) — extract each child's preprocessed commitment (its VK-identity core) and pin it
+    // in-band; a from-scratch prover folding a proof of a DIFFERENT circuit is refused fail-closed.
+    let left_commit = left
+        .stark_common
+        .preprocessed
+        .as_ref()
+        .map(|gp| gp.commitment.clone())
+        .ok_or_else(|| TurnChainError::RecursionFailed {
+            reason: "left aggregation child carries no preprocessed commitment to pin \
+                     (its circuit identity cannot be bound in-band) — refused fail-closed"
+                .to_string(),
+        })?;
+    let right_commit = right
+        .stark_common
+        .preprocessed
+        .as_ref()
+        .map(|gp| gp.commitment.clone())
+        .ok_or_else(|| TurnChainError::RecursionFailed {
+            reason: "right aggregation child carries no preprocessed commitment to pin \
+                     (its circuit identity cannot be bound in-band) — refused fail-closed"
+                .to_string(),
+        })?;
+
+    let left_input = batch_to_pinned_input(left, left_commit);
+    let right_input = batch_to_pinned_input(right, right_commit);
+
+    let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+                       left_apt: &[Vec<p3_recursion::Target>],
+                       right_apt: &[Vec<p3_recursion::Target>]| {
+        segment_combine_expose(cb, left_apt, right_apt, left_idx, right_idx);
+    };
+
+    build_and_prove_aggregation_layer_with_expose::<
+        DreggRecursionConfig,
+        BatchOnly,
+        BatchOnly,
+        _,
+        D,
+    >(
+        &left_input,
+        &right_input,
+        config,
+        backend,
+        params,
+        None,
+        Some(&expose),
+    )
+    .map_err(|e| TurnChainError::RecursionFailed {
+        reason: format!("aggregation layer failed: {e:?}"),
+    })
+}
+
 /// Fold a vector of batch-STARK proofs to ONE via 2-to-1 aggregation layers.
 /// (Same binary-tree fold as [`joint_turn_recursive`](crate::joint_turn_recursive).)
+///
+/// Each internal node delegates to [`merge_two_segment_proofs`] — the SAME farmable primitive the
+/// parallel scan-state driver ([`crate::merge_pool::aggregate_tree_scan_state`]) drains from its
+/// merge-pool — so the serial root and the parallel root are byte-identical.
 fn aggregate_tree(
     mut proofs: Vec<RecursionOutput<DreggRecursionConfig>>,
     config: &DreggRecursionConfig,
@@ -2533,85 +2729,15 @@ fn aggregate_tree(
             Vec::with_capacity(proofs.len().div_ceil(2));
         let mut i = 0;
         while i + 1 < proofs.len() {
-            // THE SEGMENT COMBINE (close of the mixed-root hole): BOTH children carry an
-            // ordered segment `[first_old, last_new, count, acc]` in their `expose_claim`
-            // table. Read both, constrain them to combine soundly (state continuity, count
-            // additivity, ordered-digest fold), and expose the parent segment. There is no
-            // separate binding leaf — the whole-chain claim is the fold of the REAL
-            // descriptor leaves' segments.
-            let left_idx = expose_claim_instance_index(&proofs[i].0).ok_or_else(|| {
-                TurnChainError::RecursionFailed {
-                    reason: "left aggregation child carries no segment (expose_claim) table"
-                        .to_string(),
-                }
-            })?;
-            let right_idx = expose_claim_instance_index(&proofs[i + 1].0).ok_or_else(|| {
-                TurnChainError::RecursionFailed {
-                    reason: "right aggregation child carries no segment (expose_claim) table"
-                        .to_string(),
-                }
-            })?;
-
-            let left = proofs[i].into_recursion_input::<BatchOnly>();
-            let right = proofs[i + 1].into_recursion_input::<BatchOnly>();
-
-            let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
-                               left_apt: &[Vec<p3_recursion::Target>],
-                               right_apt: &[Vec<p3_recursion::Target>]| {
-                let l = left_apt
-                    .get(left_idx)
-                    .expect("left segment instance present");
-                let r = right_apt
-                    .get(right_idx)
-                    .expect("right segment instance present");
-                debug_assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
-
-                // (1) STATE CONTINUITY: L.last_new == R.first_old. The left subtree's final
-                // root must be the right subtree's first root — the temporal tooth, in-circuit.
-                //
-                // Enforce equality by DIRECT `connect`, NOT `assert_zero(sub(..))`. The
-                // `sub`+`assert_zero` idiom lowers to a backward-add whose `out` is the shared
-                // `ExprId::ZERO` witness (`WitnessId(0)`): when one operand (`l.last_new`, a real
-                // child-exposed root) is transitively unioned into the zero class by the verifier's
-                // in-circuit challenger machinery, witness generation OVERWRITES `WitnessId(0)` with
-                // a non-zero root — a `WitnessConflict { WitnessId(0) }`. `connect` unions the two
-                // operands directly (no zero involved): equal on the honest path, and a mismatch
-                // (a tampered/discontinuous chain) is rejected as a conflict — the same temporal
-                // tooth, fail-closed, without touching the zero slot.
-                cb.connect(l[SEG_LAST_NEW], r[SEG_FIRST_OLD]);
-
-                // (2) parent segment: span [L.first_old .. R.last_new], count L+R, ordered
-                // multi-felt digest acc = commit(L.acc ++ R.acc) (L absorbed before R ⇒
-                // order-sensitive). The digest occupies SEG_DIGEST_WIDTH lanes from
-                // SEG_DIGEST_FIRST.
-                let first_old = l[SEG_FIRST_OLD];
-                let last_new = r[SEG_LAST_NEW];
-                let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
-                let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
-                acc_inputs
-                    .extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
-                acc_inputs
-                    .extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
-                let acc = seg_poseidon_commit(cb, &acc_inputs);
-                let mut parent = Vec::with_capacity(SEG_WIDTH);
-                parent.push(first_old);
-                parent.push(last_new);
-                parent.push(count);
-                parent.extend_from_slice(&acc);
-                debug_assert_eq!(parent.len(), SEG_WIDTH);
-                cb.expose_as_public_output(&parent);
-            };
-
-            let out = build_and_prove_aggregation_layer_with_expose::<
-                DreggRecursionConfig,
-                BatchOnly,
-                BatchOnly,
-                _,
-                D,
-            >(&left, &right, config, backend, params, None, Some(&expose))
-            .map_err(|e| TurnChainError::RecursionFailed {
-                reason: format!("aggregation layer failed: {e:?}"),
-            })?;
+            // THE SEGMENT COMBINE (close of the mixed-root hole): delegate to the SAME farmable
+            // per-node primitive the parallel scan-state driver drains — both children carry an
+            // ordered segment `[first_old, last_new, count, acc]` in their `expose_claim` table;
+            // [`merge_two_segment_proofs`] reads both, pins each child's VK identity in-band
+            // (lever (a)+(b)), combines the segments soundly (continuity + count + ordered-digest),
+            // and exposes the parent segment. There is no separate binding leaf — the whole-chain
+            // claim is the fold of the REAL descriptor leaves' segments.
+            let out =
+                merge_two_segment_proofs(&proofs[i].0, &proofs[i + 1].0, config, backend, params)?;
             next_level.push(out);
             i += 2;
         }

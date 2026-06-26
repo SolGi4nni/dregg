@@ -1067,6 +1067,175 @@ fn mixed_root_forgery_executes_A_claims_B() {
     );
 }
 
+/// **FORK FOLLOW-UP (a) — LEAF-CIRCUIT IDENTITY PINNED IN-BAND (the close).**
+///
+/// [`aggregate_tree`](dregg_circuit_prove::ivc_turn_chain) now folds every child of the K-fold
+/// tree through `into_recursion_input_pinned`, baking each child's OWN preprocessed commitment
+/// (its VK-identity core — the Merkle cap binding its static op-list) as a CONSTANT the parent
+/// aggregation circuit `connect`s its child-commitment targets to. This test walks that exact
+/// descriptor-leaf segment-combine path and witnesses BOTH sides:
+///   1. the honest pin (each child pinned to its own genuine commitment) PROVES;
+///   2. a FORGED leaf-identity — the left child pinned to a FOREIGN commitment (one field element
+///      flipped, i.e. a different-circuit op-list) — is refused IN-BAND (the parent aggregation
+///      circuit is UNSAT), NOT via a same-shape argument.
+///
+/// Previously the child's preprocessed commitment rode as unconstrained runtime targets the host
+/// never checked, so a from-scratch prover could fold a proof of a DIFFERENT circuit. The pin
+/// closes that: the constant lives in every node's op-list up to the root, so the root VK pin
+/// (verify tooth 1) transitively certifies the whole tree's leaf identity. (The sibling
+/// `accumulator::pinned_fold_rejects_foreign_vk_in_circuit` exercises the same fork lever on the
+/// ONLINE fixed-point path; this is the K-fold light-client path.)
+#[test]
+#[ignore = "SLOW: a real segment fold (~minutes); run with --ignored — fork follow-up (a) close"]
+fn pinned_leaf_identity_rejects_foreign_child_in_band() {
+    use dregg_circuit_prove::ivc_turn_chain::{
+        SEG_COUNT, SEG_DIGEST_FIRST, SEG_DIGEST_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW, SEG_WIDTH,
+        ir2_leaf_wrap_config, prove_descriptor_leaf_rotated_with_segment, seg_poseidon_commit,
+    };
+    use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
+        DreggRecursionConfig, create_recursion_backend,
+    };
+    use p3_baby_bear::BabyBear as P3BabyBear;
+    use p3_field::PrimeCharacteristicRing;
+    use p3_recursion::{
+        BatchOnly, ProveNextLayerParams, RecursionOutput,
+        build_and_prove_aggregation_layer_with_expose,
+    };
+    use p3_symmetric::MerkleCap;
+
+    const D: usize = 4;
+
+    // Two genuine segment-bearing descriptor leaves of one continuous K=2 chain.
+    let (turns, _g, _f) = make_chain(1000, 0, 7, 2);
+    let config: DreggRecursionConfig = ir2_leaf_wrap_config();
+    let backend = create_recursion_backend();
+    let params = ProveNextLayerParams::default();
+
+    let mut leaves: Vec<RecursionOutput<DreggRecursionConfig>> = Vec::with_capacity(2);
+    for t in &turns {
+        let leg = &t.participant.rotated;
+        leaves.push(
+            prove_descriptor_leaf_rotated_with_segment(
+                &leg.descriptor,
+                &leg.proof,
+                &leg.public_inputs,
+                &config,
+            )
+            .expect("rotated descriptor leaf wraps with its segment"),
+        );
+    }
+
+    let left_idx = expose_claim_idx(&leaves[0].0).expect("left segment");
+    let right_idx = expose_claim_idx(&leaves[1].0).expect("right segment");
+
+    // The children's GENUINE preprocessed commitments (their VK-identity cores).
+    let left_commit = leaves[0]
+        .running_preprocessed_commit()
+        .expect("a recursion leaf-wrap has a preprocessed commitment");
+    let right_commit = leaves[1]
+        .running_preprocessed_commit()
+        .expect("a recursion leaf-wrap has a preprocessed commitment");
+
+    // (1) HONEST pin: each child pinned to its OWN commitment ⇒ the in-circuit connect +
+    //     preprocessed-trace FRI check is satisfiable, the layer PROVES (exactly the combine
+    //     `aggregate_tree` walks for the light client).
+    {
+        let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
+                           left_apt: &[Vec<p3_recursion::Target>],
+                           right_apt: &[Vec<p3_recursion::Target>]| {
+            let l = left_apt.get(left_idx).expect("left seg present");
+            let r = right_apt.get(right_idx).expect("right seg present");
+            assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
+            cb.connect(l[SEG_LAST_NEW], r[SEG_FIRST_OLD]);
+            let first_old = l[SEG_FIRST_OLD];
+            let last_new = r[SEG_LAST_NEW];
+            let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
+            let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
+            acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+            acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+            let acc = seg_poseidon_commit(cb, &acc_inputs);
+            let mut parent = Vec::with_capacity(SEG_WIDTH);
+            parent.push(first_old);
+            parent.push(last_new);
+            parent.push(count);
+            parent.extend_from_slice(&acc);
+            cb.expose_as_public_output(&parent);
+        };
+        let left = leaves[0].into_recursion_input_pinned::<BatchOnly>(left_commit.clone());
+        let right = leaves[1].into_recursion_input_pinned::<BatchOnly>(right_commit.clone());
+        build_and_prove_aggregation_layer_with_expose::<
+            DreggRecursionConfig,
+            BatchOnly,
+            BatchOnly,
+            _,
+            D,
+        >(
+            &left,
+            &right,
+            &config,
+            &backend,
+            &params,
+            None,
+            Some(&expose),
+        )
+        .expect("a pinned segment fold against the GENUINE child VK identities must prove");
+    }
+
+    // (2) FORGED leaf-identity: pin the LEFT child to a FOREIGN commitment (one field element
+    //     flipped — a different-circuit op-list). The left child's real preprocessed commitment
+    //     no longer matches the pinned constant, so the parent aggregation circuit is UNSAT — the
+    //     foreign leaf-circuit identity is refused IN-BAND, not via a same-shape argument.
+    let mut roots = left_commit.into_roots();
+    assert!(!roots.is_empty(), "the cap has at least one root");
+    roots[0][0] += P3BabyBear::ONE; // a different-circuit preprocessed commitment
+    let foreign_left = MerkleCap::new(roots);
+    {
+        let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
+                           left_apt: &[Vec<p3_recursion::Target>],
+                           right_apt: &[Vec<p3_recursion::Target>]| {
+            let l = left_apt.get(left_idx).expect("left seg present");
+            let r = right_apt.get(right_idx).expect("right seg present");
+            assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
+            cb.connect(l[SEG_LAST_NEW], r[SEG_FIRST_OLD]);
+            let first_old = l[SEG_FIRST_OLD];
+            let last_new = r[SEG_LAST_NEW];
+            let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
+            let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
+            acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+            acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+            let acc = seg_poseidon_commit(cb, &acc_inputs);
+            let mut parent = Vec::with_capacity(SEG_WIDTH);
+            parent.push(first_old);
+            parent.push(last_new);
+            parent.push(count);
+            parent.extend_from_slice(&acc);
+            cb.expose_as_public_output(&parent);
+        };
+        let left = leaves[0].into_recursion_input_pinned::<BatchOnly>(foreign_left);
+        let right = leaves[1].into_recursion_input_pinned::<BatchOnly>(right_commit);
+        let res = build_and_prove_aggregation_layer_with_expose::<
+            DreggRecursionConfig,
+            BatchOnly,
+            BatchOnly,
+            _,
+            D,
+        >(
+            &left,
+            &right,
+            &config,
+            &backend,
+            &params,
+            None,
+            Some(&expose),
+        );
+        assert!(
+            res.is_err(),
+            "FORK FOLLOW-UP (a) CLOSED: a child pinned to a FOREIGN preprocessed commitment \
+             (a different-circuit leaf identity) MUST be refused in-band (UNSAT), got Ok"
+        );
+    }
+}
+
 // SKIPPED tooth (vs the deleted in-lib module): `broken_order_unsat_in_circuit`,
 // `ungated_prover_with_stub_leaf_cannot_produce_a_root`, and
 // `recursive_layer_rejects_forged_leaf_public_inputs` are NOT re-expressed here.

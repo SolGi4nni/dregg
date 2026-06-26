@@ -24,6 +24,7 @@ pub mod ivc_turn_chain;
 pub mod joint_turn_aggregation;
 pub mod joint_turn_recursive;
 pub mod lean_lookup_air;
+pub mod merge_pool;
 pub mod plonky3_recursion_impl;
 pub mod recursive_witness_bundle;
 pub mod shielded;
