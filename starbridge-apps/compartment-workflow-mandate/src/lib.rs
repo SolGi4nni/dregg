@@ -22,6 +22,15 @@
 /// biting through the real embedded executor.
 pub mod colonist_job;
 
+/// AX4 — the app's UI as a renderer-independent `deos.ui.*` view-tree CARD.
+pub mod card;
+/// AX5 — the OFFICER auto-driver as a `Reactor` (the reactive twin of `invoke()`):
+/// a committed `advance_step` wakes the next step.
+pub mod reactor;
+/// AX3 — the charter as a SERVICE CELL on the `invoke()` front door (a typed
+/// [`dregg_cell::interface::InterfaceDescriptor`] + the `advance_step`/`view` vocabulary).
+pub mod service;
+
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellAffordance, CellId, CellMode,
     CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor,

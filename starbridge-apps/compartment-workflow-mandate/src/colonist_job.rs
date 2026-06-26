@@ -5,7 +5,9 @@
 //! AND a spend budget it provably can't exceed. This module is the executable mirror of the proven
 //! Lean job-spec `metatheory/Dregg2/Apps/ColonistJob.lean`: ONE concrete job —
 //!
-//!     gather → make → hand-off
+//! ```text
+//! gather → make → hand-off
+//! ```
 //!
 //! — driven by the REAL embedded executor (`EmbeddedExecutor` from `dregg-app-framework`), so the
 //! colonist advances its cursor through the DAG via genuine signed turns, and the three admission
