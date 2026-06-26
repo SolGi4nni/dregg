@@ -532,6 +532,79 @@ mod tests {
         }
     }
 
+    /// **THE FINALITY-CERT SIGNATURE BINDING (fold-free unit tooth).** Exercises the `CertValid`
+    /// signature leg directly — no STARK aggregate — so the GAP-2 fix (count only Ed25519-bound votes,
+    /// not bare pubkeys) is validated in milliseconds. The end-to-end teeth
+    /// (`finalized_light_client_rejects_unbound_finality_cert`) ride the same logic through a real fold.
+    #[test]
+    fn finality_cert_quorum_is_signature_bound() {
+        let root = BabyBear::new(123_456);
+        let n = 4usize; // supermajority threshold 2*4/3 + 1 = 3
+
+        // Honest: 3 distinct validators sign THIS root + committee size → genuine quorum.
+        let honest = FinalityCert {
+            votes: (0..3u8).map(|i| signed_vote(i, root, n)).collect(),
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert_eq!(honest.distinct_signers(), 3, "three bound votes count");
+        assert!(honest.has_quorum(), "3-of-4 bound is a supermajority");
+
+        // (a) UNSIGNED: 3 distinct, well-formed validator KEYS but zero signatures — the old
+        // count-only check called this a quorum; the binding leg counts ZERO.
+        let unsigned = FinalityCert {
+            votes: (0..3u8)
+                .map(|i| SignedVote {
+                    validator: validator_key(i).verifying_key().to_bytes(),
+                    signature: [0u8; 64],
+                })
+                .collect(),
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert_eq!(unsigned.listed_signers(), 3, "three keys are listed");
+        assert_eq!(unsigned.distinct_signers(), 0, "but none are signature-bound");
+        assert!(!unsigned.has_quorum(), "an unsigned cert is NOT a quorum");
+
+        // (b) WRONG-ROOT: real signatures by real validators, but over a DIFFERENT root — the
+        // sig→root binding fails, so they do not verify over THIS cert's root.
+        let other = root + BabyBear::ONE;
+        let wrong_root = FinalityCert {
+            votes: (0..3u8).map(|i| signed_vote(i, other, n)).collect(),
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert_eq!(
+            wrong_root.distinct_signers(),
+            0,
+            "signatures bound to another root do not verify here"
+        );
+
+        // (c) WRONG-COUNT: real signatures over THIS root but a DIFFERENT committee size — the count is
+        // inside the signed message, so an attacker cannot shrink `participant_count` to lower the
+        // threshold while replaying the same signatures.
+        let shrunk = FinalityCert {
+            votes: (0..3u8).map(|i| signed_vote(i, root, n)).collect(),
+            participant_count: 1, // claim a smaller committee than was signed over (n)
+            finalized_root: root,
+        };
+        assert_eq!(
+            shrunk.distinct_signers(),
+            0,
+            "signatures bound to committee size n do not verify under a shrunk count"
+        );
+
+        // (d) DEDUP: one validator's valid vote listed thrice counts ONCE.
+        let v = signed_vote(7, root, n);
+        let padded = FinalityCert {
+            votes: vec![v.clone(), v.clone(), v],
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert_eq!(padded.distinct_signers(), 1, "repeats collapse to one");
+        assert!(!padded.has_quorum());
+    }
+
     /// OPEN permissions so the rotated producer-witness path admits the actor cell without auth
     /// gating (mirrors `circuit/tests/rotation_batchstark_leaf_smoke.rs`).
     fn open_permissions() -> dregg_cell::Permissions {
