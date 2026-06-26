@@ -1228,7 +1228,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "47d8d6a7376fd061a49c5a4d9a1e4beb85b0329559b4a9d862b5f738e5991d55";
+    "a5f74b91e89e691a75ef88878bbeac4f448776db1b4775338d7002d0bbc6f568";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,

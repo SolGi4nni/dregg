@@ -46,16 +46,27 @@ whose `name` ends with this is the WIDE single-domain rotated+umem weld. -/
 def wideUMemWeldSuffix : String := "-umem-wide-welded-staged"
 
 /-- The single-domain universal-memory domain a wide member's effect touches, keyed by the LIVE
-registry key. Mirrors the per-cell domain map of `turn/src/umem.rs` the cohort emitter uses
-(Field/Heap/Balance/Nonce → `heap` (1); CapSlot → `caps` (2)): the capability verbs (grant /
-attenuate / revoke / introduce / delegate / refresh / spawn, with their CapOpen / Write twins)
-touch the `caps` plane; every other cohort member's state touch is a `heap`-domain write. The
-multi-domain note/bridge verbs are NOT single-domain-weldable (the producer fails closed on them),
+registry key. Mirrors the per-cell domain map of `turn/src/umem.rs` the cohort emitter uses: a UKey's
+`domain()` decides the plane, and the `caps` plane (domain 2) is `CapSlot`/`Delegate`/`DelegationSnapshot`/
+`DelegationEpoch`/`Permissions`/`VerificationKey`/`Program`/`CapTombstone`/`Factory`, the `heap` plane
+(domain 1) is `Field`/`Balance`/`Nonce`/`Lifecycle`/`Identity`/… So:
+
+  * the capability verbs (grant / attenuate / revoke / introduce / delegate / refresh / spawn, with
+    their CapOpen / Write twins) touch the `caps` plane via `CapSlot`/`Delegate`/`Program`;
+  * **`setPerms` / `setVK` ALSO touch the `caps` plane** — their projection diff is a single
+    `UKey::Permissions` / `UKey::VerificationKey` write, both `UDomain::Caps` (`turn/src/umem.rs`
+    `UKey::domain`). The producer's welded leg therefore reconciles domain 2; a welded entry declaring
+    `heap` here binds NO descriptor on the deployed wire (the 9th flip-refusal `a5df2470`). They are
+    NOT name-prefixed by a cap verb, so they are matched explicitly;
+  * every OTHER cohort member's single-domain state touch is a `heap`-domain write (e.g. cellSeal /
+    cellUnseal / cellDestroy / receiptArchive move `Lifecycle`; transfer / burn / mint move `Balance`).
+
+The multi-domain note/bridge verbs are NOT single-domain-weldable (the producer fails closed on them),
 so their welded entry is unexercisable — keyed `heap` as a harmless placeholder. -/
 def wideKeyUMemDomain (key : String) : Domain :=
   if "grant".isPrefixOf key || "attenuate".isPrefixOf key || "revoke".isPrefixOf key
       || "introduce".isPrefixOf key || "delegate".isPrefixOf key || "refresh".isPrefixOf key
-      || "spawn".isPrefixOf key then
+      || "spawn".isPrefixOf key || "setPerms".isPrefixOf key || "setVK".isPrefixOf key then
     Domain.caps
   else
     Domain.heap
