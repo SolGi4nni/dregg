@@ -515,7 +515,9 @@ impl TurnExecutor {
             generate_rotated_transfer_shape_with_fee_wide, rotated_descriptor_name_for_effect,
             rotated_descriptor_name_for_effect_fee, transfer_caveat_manifest,
         };
-        use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+        use dregg_circuit::effect_vm_descriptors::{
+            WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
+        };
         use dregg_circuit::field::BabyBear;
 
         let initial_vm_state = run_initial_state;
@@ -577,6 +579,36 @@ impl TurnExecutor {
         let desc = parse_vm_descriptor2(json).map_err(|e| {
             TurnError::InvalidExecutionProof(format!("rotated descriptor parse: {e}"))
         })?;
+
+        // WELDED-AWARE RESOLUTION (the umem-flip staged verifier leg, VK-RISK-FREE — the flip's HARD
+        // BLOCKER closed). A cohort key with a welded twin in WIDE_UMEM_WELD_REGISTRY_TSV admits BOTH
+        // the welded proof (`prove_wide_umem_welded_staged`, resolve the welded descriptor) AND the
+        // bare wide proof. The weld is PI-COUNT-PRESERVING (`welded.public_input_count ==
+        // bare.public_input_count` — the parity tooth in `effect_vm_descriptors.rs`), so the SAME
+        // reconstructed `dpis` (the 8-felt before/after anchors + fee/record pins below) bind BOTH
+        // forms BYTE-IDENTICALLY; only the descriptor target differs. The 12 live-only members
+        // (heapWrite/supplyMint/transferCapOpenTB/exerciseCapOpen/spawnCapOpen + the 7 WriteCapOpen)
+        // have NO welded twin, so `welded_desc` is None and they FALL BACK to the bare wide member
+        // alone. STAGED: this only ADMITS the welded form on the wire — the deployed default prover
+        // stays bare and `umem_witness_enabled` is untouched (the gated VK epoch does the flip). This
+        // mirrors the SDK wire verifier's `bound.extend(collect_bound(WIDE_UMEM_WELD_REGISTRY_TSV))`.
+        let welded_desc = WIDE_UMEM_WELD_REGISTRY_TSV
+            .lines()
+            .find_map(|line| {
+                let mut it = line.splitn(3, '\t');
+                if it.next() == Some(name) {
+                    let _name = it.next();
+                    it.next()
+                } else {
+                    None
+                }
+            })
+            .map(|wj| {
+                parse_vm_descriptor2(wj).map_err(|e| {
+                    TurnError::InvalidExecutionProof(format!("welded descriptor parse: {e}"))
+                })
+            })
+            .transpose()?;
 
         // 5. The caveat manifest the producer used (transfer exercises both domains;
         //    everything else uses the empty manifest).
@@ -875,13 +907,45 @@ impl TurnExecutor {
             }
         }
 
-        // 7. Verify through the multi-table batch verifier (the hand-AIR leg is gone).
-        verify_vm_descriptor2(&desc, ir2_proof, &dpis).map_err(|e| {
-            // A post-state forgery surfaces here: the anchored after-commit PIs disagree with the
-            // trace's after-block STATE_COMMIT carrier (the wide descriptor's carrier-12 pi_bindings).
-            TurnError::ProofVerificationFailed(format!("rotated effect-vm verify: {e}"))
-        })?;
-        Ok(())
+        // 7. Verify through the multi-table batch verifier (the hand-AIR leg is gone). WELDED-AWARE
+        //    (the umem-flip staged verifier leg): try the welded twin (when present) AND the bare
+        //    wide member, requiring a UNIQUE accept. A welded proof verifies ONLY against the welded
+        //    member (its extra umemOp / +7 trace columns cannot satisfy the bare member) and a bare
+        //    proof verifies ONLY against the bare member, so the 8-felt ~124-bit anchors stay bound
+        //    and the ambiguity tooth (mirrored from the SDK wire verifier's unique-accept) still
+        //    holds. A post-state forgery surfaces as NO accept: the anchored after-commit PIs
+        //    disagree with the trace's after-block STATE_COMMIT carrier (the wide descriptor's
+        //    carrier-12 pi_bindings). The 12 live-only members (no welded twin) verify against the
+        //    bare member alone.
+        let mut accepted = 0usize;
+        let mut last_err: Option<String> = None;
+        if let Some(welded) = welded_desc.as_ref() {
+            match verify_vm_descriptor2(welded, ir2_proof, &dpis) {
+                Ok(()) => accepted += 1,
+                Err(e) => last_err = Some(format!("welded twin: {e}")),
+            }
+        }
+        match verify_vm_descriptor2(&desc, ir2_proof, &dpis) {
+            Ok(()) => accepted += 1,
+            Err(e) => last_err = Some(format!("bare wide: {e}")),
+        }
+        match accepted {
+            0 => Err(TurnError::ProofVerificationFailed(format!(
+                "rotated effect-vm verify: proof bound NO descriptor (welded twin {}): {}",
+                if welded_desc.is_some() {
+                    "present"
+                } else {
+                    "absent"
+                },
+                last_err.unwrap_or_default()
+            ))),
+            1 => Ok(()),
+            _ => Err(TurnError::ProofVerificationFailed(
+                "rotated effect-vm verify: proof bound BOTH the welded and bare descriptors — \
+                 selector binding ambiguous, rejecting"
+                    .to_string(),
+            )),
+        }
     }
 
     // RETIRED: `verify_and_commit_proof_v1` (v1 hand-AIR sovereign verify) and

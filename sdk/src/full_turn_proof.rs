@@ -1547,6 +1547,163 @@ pub fn prove_wide_umem_welded_staged(
     Ok((proof, dpis))
 }
 
+/// **THE FEE-IN-PROOF WIDE ROTATED+UMEM WELD PROVER (STAGED, VK-RISK-FREE) — the deployed sovereign
+/// transfer route's welded twin.** The fee-path twin of [`prove_wide_umem_welded_staged`]: a single
+/// sovereign `[Transfer]` lead routes the FEE-IN-PROOF wide descriptor (`transferFeeVmDescriptor2R24`
+/// in [`WIDE_REGISTRY_STAGED_TSV`], the fee debited inside the proven transition), which is exactly
+/// what the deployed executor resolves for a lone transfer (`verify_one_cohort_run`'s
+/// `is_fee_transfer` route). This welds the universal-memory cohort leg onto THAT fee descriptor via
+/// the SAME purely-additive [`weld_umem_into_wide_descriptor`] (preserving `public_input_count` + all
+/// 16 wide-commit `PiBinding`s — the 8-felt anchors ride through INTACT), so a welded fee proof
+/// verifies through the deployed `verify_and_commit_proof_rotated` welded-twin leg and COMMITS.
+///
+/// A NON-Transfer lead has no fee-in-proof descriptor, so this defers to the unfee'd
+/// [`prove_wide_umem_welded_staged`]. STAGED: a NEW welded descriptor BESIDE the deployed registry;
+/// no VK bump, no default flip, `umem_witness_enabled` untouched. Self-verifies before return.
+#[cfg(feature = "prover")]
+#[allow(clippy::too_many_arguments)]
+pub fn prove_wide_umem_welded_staged_with_fee(
+    initial_state: &CellState,
+    effects: &[dregg_circuit::effect_vm::Effect],
+    before_w: &dregg_turn::rotation_witness::RotationWitness,
+    after_w: &dregg_turn::rotation_witness::RotationWitness,
+    caveat: &dregg_circuit::effect_vm::trace_rotated::RotatedCaveatManifest,
+    pre: &dregg_turn::umem::UProjection,
+    ops: &[dregg_turn::umem::UmemOp],
+    fee: u64,
+) -> Result<
+    (
+        dregg_circuit::descriptor_ir2::Ir2BatchProof<
+            dregg_circuit::descriptor_ir2::DreggStarkConfig,
+        >,
+        Vec<BabyBear>,
+    ),
+    SdkError,
+> {
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2_umem, verify_vm_descriptor2,
+    };
+    use dregg_circuit::effect_vm::trace_rotated::{
+        RotatedBlockWitness, generate_rotated_transfer_shape_with_fee_wide,
+        rotated_descriptor_name_for_effect_fee,
+    };
+    use dregg_circuit::effect_vm_descriptors::{
+        WIDE_REGISTRY_STAGED_TSV, weld_umem_into_wide_descriptor,
+    };
+
+    let lead = effects
+        .first()
+        .ok_or_else(|| SdkError::InvalidWitness("wide fee weld prover: empty turn".into()))?;
+    // Non-Transfer leads carry no fee-in-proof descriptor — defer to the unfee'd welded prover.
+    if !matches!(lead, dregg_circuit::effect_vm::Effect::Transfer { .. }) {
+        return prove_wide_umem_welded_staged(
+            initial_state,
+            effects,
+            before_w,
+            after_w,
+            caveat,
+            pre,
+            ops,
+            None,
+            None,
+        );
+    }
+    let name = rotated_descriptor_name_for_effect_fee(lead).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "wide fee weld prover: effect {lead:?} has no fee-in-proof descriptor"
+        ))
+    })?;
+
+    // The umem leg's single-domain cohort rows + the REAL boundary (the SAME shape the unfee'd
+    // welded prover assembles; fails closed on a multi-domain leg).
+    let inputs = dregg_turn::umem::umem_cohort_proving_inputs_from(pre, ops)
+        .map_err(|e| SdkError::InvalidWitness(format!("umem cohort trace generation: {e}")))?;
+
+    let json = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some(name) {
+                let _name = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            SdkError::InvalidWitness(format!("{name} not in WIDE_REGISTRY_STAGED_TSV"))
+        })?;
+    let wide_desc = parse_vm_descriptor2(json)
+        .map_err(|e| SdkError::InvalidWitness(format!("wide fee descriptor parse: {e}")))?;
+
+    let bridge = |w: &dregg_turn::rotation_witness::RotationWitness| {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
+            .map(|bw| bw.with_asset_class(w.asset_class))
+    };
+    let before = bridge(before_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("wide fee before-witness: {e}")))?;
+    let after = bridge(after_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("wide fee after-witness: {e}")))?;
+
+    // The fee-aware WIDE trace + PI vector (the deployed fee route; the fee is debited in-proof and
+    // the 8-felt carriers re-absorb the post-fee limbs).
+    let (wide_trace, dpis) = generate_rotated_transfer_shape_with_fee_wide(
+        initial_state,
+        effects,
+        &before,
+        &after,
+        caveat,
+        fee,
+    )
+    .map_err(|e| SdkError::InvalidWitness(format!("wide fee trace generation: {e}")))?;
+
+    // WELD: append the umem leg INTO the fee WIDE descriptor (keeps the wide PI vector + the 16 wide
+    // commit PIs — the 8-felt anchors — INTACT; the first appended umem column is PAST the wide
+    // carriers at `base` = the wide trace width). IDENTICAL no-narrowing append as the unfee'd weld.
+    let welded = weld_umem_into_wide_descriptor(&wide_desc, inputs.domain);
+    let base = wide_desc.trace_width;
+
+    let real_umem_rows: Vec<&Vec<BabyBear>> = inputs
+        .rows
+        .iter()
+        .filter(|r| r.get(6).copied() == Some(BabyBear::ONE))
+        .collect();
+    if real_umem_rows.len() > wide_trace.len() {
+        return Err(SdkError::InvalidWitness(format!(
+            "wide fee+umem weld: {} umem ops exceed the wide trace height {} (cannot co-locate the \
+             umem leg on the wide rows)",
+            real_umem_rows.len(),
+            wide_trace.len()
+        )));
+    }
+    let mut welded_base: Vec<Vec<BabyBear>> = Vec::with_capacity(wide_trace.len());
+    for (ri, row) in wide_trace.iter().enumerate() {
+        let mut wr = row.clone();
+        wr.resize(base + 7, BabyBear::ZERO);
+        if let Some(umem_row) = real_umem_rows.get(ri) {
+            for (i, &v) in umem_row.iter().enumerate().take(7) {
+                wr[base + i] = v;
+            }
+        }
+        welded_base.push(wr);
+    }
+
+    // The fee descriptor carries NO map_ops (the deployed fee path proves with an empty
+    // `MemBoundaryWitness` + no `map_heaps`), so only the appended umem boundary is real.
+    let proof = prove_vm_descriptor2_umem(
+        &welded,
+        &welded_base,
+        &dpis,
+        &MemBoundaryWitness::default(),
+        &[],
+        &inputs.boundary,
+    )
+    .map_err(|e| SdkError::InvalidWitness(format!("wide fee+umem welded IR-v2 proof: {e}")))?;
+    verify_vm_descriptor2(&welded, &proof, &dpis)
+        .map_err(|e| SdkError::InvalidWitness(format!("wide fee+umem welded self-verify: {e}")))?;
+    Ok((proof, dpis))
+}
+
 /// **THE FEE-IN-PROOF WIDE rotated prover (`transferFeeVmDescriptor2R24Wide`, the flip's live
 /// sovereign producer leg).** The wide twin of [`prove_effect_vm_rotated_ir2_with_fee`]: it routes the
 /// WIDE fee descriptor (from `WIDE_REGISTRY_STAGED_TSV`), generates the fee-aware wide trace
