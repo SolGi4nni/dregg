@@ -2231,6 +2231,8 @@ fn prove_effect_vm_cap_open_attenuate(
             dregg_circuit::effect_vm::trace_rotated::WRITE_MASK_LO,
         )),
     };
+    // The attenuate cap-open key has a proven wide twin, so production always goes wide for it (the
+    // narrow 1-felt leg is rejected by the wide-dodge tooth). Mirror production: go WIDE.
     prove_effect_vm_cap_open(
         initial_state,
         effects,
@@ -2239,7 +2241,7 @@ fn prove_effect_vm_cap_open_attenuate(
         cap,
         &route,
         None,
-        false,
+        true,
     )
 }
 
@@ -2331,7 +2333,8 @@ fn cap_open_wide_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
 #[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))] // test-only; the chain routes via `cap_open_vk_hash_by_key`
 fn rotated_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
-    cap_open_vk_hash_by_key("attenuateCapOpenEffVmDescriptor2R24")
+    // The attenuate leg goes WIDE (production route), so its vk_hash is the wide descriptor fingerprint.
+    cap_open_wide_vk_hash_by_key("attenuateCapOpenEffVmDescriptor2R24")
 }
 
 /// The TRANSFER cap-open leg's `vk_hash` (#225) — the blake3 fingerprint of the LIVE TURN-BOUND
@@ -6343,6 +6346,13 @@ mod tests {
         // FAILS — that is the honest signal the cap-WRITE post-root is NOT light-client-verifiable. A wrong
         // post-root is UNSAT (`cap_write_revoke_forge_rejected`), so a passing proof here IS the genuine
         // post-cap-root, bound on the wire.
+        // KNOWN-RED RESIDUAL (wide DELEG-tree-REMOVE prover gap): the `revokeDelegationWriteCapOpen` key
+        // has a wide twin in the registry, so the narrow 1-felt leg below is REJECTED by the wide-dodge
+        // tooth — yet the WIDE prove path for this DELEG-tree REMOVE is unsatisfiable (`constraints not
+        // satisfied on row 0: failed constraints = [#70]`), unlike the Update-on-deleg (refreshDelegation)
+        // and Remove-on-cap-tree (revokeCapability) wide legs that DO prove. So this test is red on both
+        // routes pending the wide DELEG-REMOVE carrier fix; the narrow route is kept here to surface the
+        // tooth-rejection rather than masking the real gap.
         let (proof, dpis) =
             prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
                 .expect(
@@ -6630,14 +6640,17 @@ mod tests {
         // (1) NON-VACUITY: the WRITE-bearing revokeCapability cap-open MUST GENUINELY prove + the
         // LIGHT-CLIENT verifier MUST accept the genuine post-cap-root (the cap-tree REMOVE bound on the
         // wire). NO catch_unwind: a refusal/rejection FAILS the test (the honest signal).
+        // The WRITE key has a proven wide twin, so production always goes wide for it (the narrow
+        // 1-felt leg is rejected by the wide-dodge tooth). Prove + verify the deployed WIDE leg.
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, true)
                 .expect(
                     "the WRITE-bearing revokeCapability cap-open MUST genuinely prove — the cap-root REMOVE \
                      on the rotated limb (213→264) over the real c-list, v1-state frozen, nonce ticks",
                 );
         let proof_bytes = postcard::to_allocvec(&proof).expect("serialize write cap-open leg");
-        let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("write wrapper vk_hash");
+        let vk_hash =
+            cap_open_wide_vk_hash_by_key(effective_key).expect("wide write wrapper vk_hash");
         verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
             "the WRITE-bearing revokeCapability cap-open MUST verify on the light-client path — the genuine \
              post-cap-root is on-the-wire light-client-verifiable",
@@ -6856,15 +6869,18 @@ mod tests {
         // (1) NON-VACUITY: the WRITE-bearing refreshDelegation cap-open MUST GENUINELY prove + the
         // LIGHT-CLIENT verifier MUST accept the genuine post-DELEG-root (the DELEG-tree UPDATE bound on the
         // wire). NO catch_unwind: a refusal/rejection FAILS the test (the honest signal).
+        // The WRITE key has a proven wide twin, so production always goes wide for it (the narrow
+        // 1-felt leg is rejected by the wide-dodge tooth). Prove + verify the deployed WIDE leg.
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, true)
                 .expect(
                     "the WRITE-bearing refreshDelegation cap-open MUST genuinely prove — the DELEG-root \
                      UPDATE on the rotated limb 25 (beforeDelegRootCol) over the real leaf-set, caps frozen, \
                      nonce ticks",
                 );
         let proof_bytes = postcard::to_allocvec(&proof).expect("serialize write cap-open leg");
-        let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("write wrapper vk_hash");
+        let vk_hash =
+            cap_open_wide_vk_hash_by_key(effective_key).expect("wide write wrapper vk_hash");
         verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
             "the WRITE-bearing refreshDelegation cap-open MUST verify on the light-client path — the genuine \
              post-DELEG-root is on-the-wire light-client-verifiable",
@@ -7125,8 +7141,10 @@ mod tests {
 
         // GENUINE PROVE + LIGHT-CLIENT VERIFY (UNAMBIGUOUS — no catch_unwind). A passing proof IS the
         // genuine post-cap-root (a wrong post-root is UNSAT), bound on the wire.
+        // The INSERT WRITE key has a proven wide twin, so production always goes wide for it (the
+        // narrow 1-felt leg is rejected by the wide-dodge tooth). Prove + verify the deployed WIDE leg.
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, true)
                 .unwrap_or_else(|e| {
                     panic!(
                         "the INSERT cap-write wrapper ({expected_write_key}) MUST genuinely prove — anchor \
@@ -7135,7 +7153,8 @@ mod tests {
                     )
                 });
         let proof_bytes = postcard::to_allocvec(&proof).expect("serialize insert cap-open leg");
-        let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("insert wrapper vk_hash");
+        let vk_hash =
+            cap_open_wide_vk_hash_by_key(effective_key).expect("wide insert wrapper vk_hash");
         verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).unwrap_or_else(|e| {
             panic!(
                 "the INSERT cap-write wrapper ({expected_write_key}) MUST verify on the light-client path — \
@@ -7657,8 +7676,10 @@ mod tests {
             "the fresh conferred edge derived from the grant must match the test's expectation"
         );
 
+        // The grant INSERT WRITE key has a proven wide twin, so production always goes wide for it (the
+        // narrow 1-felt leg is rejected by the wide-dodge tooth). Prove + verify the deployed WIDE leg.
         let (proof, dpis) = prove_effect_vm_cap_open(
-            &initial, &effects, &before_w, &after_w, &cap, &route, None, false,
+            &initial, &effects, &before_w, &after_w, &cap, &route, None, true,
         )
         .expect(
             "the WRITE-bearing grant cap-open MUST genuinely prove — anchor read + fresh \
@@ -7667,7 +7688,8 @@ mod tests {
         );
         let proof_bytes =
             postcard::to_allocvec(&proof).expect("serialize grant write cap-open leg");
-        let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("grant write wrapper vk_hash");
+        let vk_hash =
+            cap_open_wide_vk_hash_by_key(effective_key).expect("wide grant write wrapper vk_hash");
         verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
             "the WRITE-bearing grant cap-open MUST verify on the light-client path — the genuine \
              post-cap-root (the conferred edge) is on-the-wire light-client-verifiable",
@@ -8167,8 +8189,10 @@ mod tests {
 
         // GENUINE PROVE + LIGHT-CLIENT VERIFY (UNAMBIGUOUS — no catch_unwind): the genuine post-cap-root
         // (sorted INSERT) AND the `granted ⊑ held` submask both hold; a passing proof binds them on the wire.
+        // The delegateAtten WRITE key has a proven wide twin, so production always goes wide for it (the
+        // narrow 1-felt leg is rejected by the wide-dodge tooth). Prove + verify the deployed WIDE leg.
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, false)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, true)
                 .unwrap_or_else(|e| {
                     panic!(
                         "the delegateAtten submask wrapper MUST genuinely prove — anchor read + fresh \
@@ -8177,8 +8201,8 @@ mod tests {
                 });
         let proof_bytes =
             postcard::to_allocvec(&proof).expect("serialize delegateAtten cap-open leg");
-        let vk_hash =
-            cap_open_vk_hash_by_key(effective_key).expect("delegateAtten wrapper vk_hash");
+        let vk_hash = cap_open_wide_vk_hash_by_key(effective_key)
+            .expect("wide delegateAtten wrapper vk_hash");
         verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).unwrap_or_else(|e| {
             panic!(
                 "the delegateAtten submask wrapper MUST verify on the light-client path — the genuine \
