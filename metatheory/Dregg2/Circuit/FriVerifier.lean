@@ -625,4 +625,42 @@ private def toyProof (fc : Nat) : BatchProofData Nat :=
 
 end NonVacuity
 
+/-! ## 6. Transcript fidelity against the p3-challenger REFERENCE vectors.
+
+The load-bearing keystone (`docs/deos/FRI-VERIFIER-PROOF-ENGINEERING.md §4`) is that
+the Lean `Challenger` reproduces the deployed `DuplexChallenger` byte-for-byte. The
+upstream p3-challenger crate ships its OWN unit-test vectors over a `reverse`
+permutation (`duplex_challenger.rs` `test_duplex_challenger`,
+`test_output_buffer_pops_correctly`, WIDTH 24 / RATE 16). We replay those EXACT
+vectors through the Lean model: if the model diverged from the reference
+implementation, these `#guard`s would fail the build. This is a genuine
+cross-implementation fidelity check on the transcript engine (not a self-fixture) —
+the first concrete rung of the `TranscriptRefines` obligation, ahead of the
+Poseidon2-w16 round-constant instantiation (milestone 2).
+
+`sampleVec n` collects `n` base squeezes (`= sampleExt`'s coefficient list). -/
+section ReferenceVectors
+
+/- p3-challenger `test_duplex_challenger`: WIDTH 24, RATE 16, `perm = reverse`.
+Observe `0..11` (no auto-duplex, 12 < 16); the first `sample` duplexes (overwrite
+the first 12 lanes, permute = reverse, refill output from `state[..16]`), and 16
+base squeezes pop the output from the END. The reference expects
+`state_after_duplexing[..16].reverse = [8,9,10,11, 0x12]`. -/
+#guard
+  (Challenger.sampleExt (F := Nat) List.reverse 16 16
+    (Challenger.observeList List.reverse 16
+      (Challenger.init (List.replicate 24 0)) (List.range 12))).1
+  = [8, 9, 10, 11] ++ List.replicate 12 0
+
+/- p3-challenger `test_output_buffer_pops_correctly`: observe `0..15` (the 16th
+observe auto-duplexes), then the first two samples pop `8` then `9` from the end of
+the refilled output buffer `[0x8, 15,14,...,8]`. -/
+#guard
+  (Challenger.sampleExt (F := Nat) List.reverse 16 2
+    (Challenger.observeList List.reverse 16
+      (Challenger.init (List.replicate 24 0)) (List.range 16))).1
+  = [8, 9]
+
+end ReferenceVectors
+
 end Dregg2.Circuit.FriVerifier
