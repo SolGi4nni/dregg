@@ -49,7 +49,7 @@ EMITTERS = [
     "EmitAllJsonV2.lean",                    # ir2: defName-keyed (V2_DESCRIPTORS)
     "EmitRotationV3.lean",                   # rotation v3-staged artifacts + registry tsv
     "EmitWideTransferProbe.lean",            # ADDITIVE: the faithful 8-felt wide transfer descriptor
-    "EmitWideRegistryProbe.lean",            # ADDITIVE: the FULL 45-member faithful 8-felt wide registry
+    "EmitWideRegistryProbe.lean",            # ADDITIVE: the 57-member faithful 8-felt wide registry (covers live V3)
     "EmitBilateralLegs.lean",                # bilateral-aggregation legs
     "EmitCrossCellConservation.lean",        # turn-wide cross-cell Σδ=0 conservation AIR (foolable gap #6)
 ]
@@ -145,8 +145,9 @@ ROTATION_TSV = "rotation-v3-staged-registry.tsv"
 # ADDITIVE: the faithful 8-felt wide transfer descriptor (a single `key\tname\tjson` line,
 # `EmitWideTransferProbe.lean`). Beside the live 1-felt registry — the live TSV is untouched.
 WIDE_TRANSFER_TSV = "rotation-wide-transfer-staged.tsv"
-# ADDITIVE: the FULL 45-member faithful 8-felt wide registry (`key\tname\tjson` per line,
-# `EmitWideRegistryProbe.lean`, trailing newline). The per-family wide-roundtrip slice consumes it.
+# ADDITIVE: the 57-member faithful 8-felt wide registry, a member-for-member name-stable cover of the
+# live V3 registry (`key\tname\tjson` per line, `EmitWideRegistryProbe.lean`, trailing newline). The
+# per-family wide-roundtrip slice consumes it.
 # Beside the live 1-felt registry — the live TSV / FP / VK are untouched.
 WIDE_REGISTRY_TSV = "rotation-wide-registry-staged.tsv"
 
@@ -178,15 +179,17 @@ def split_wide(stdout: str, written):
 
 
 def split_wide_registry(stdout: str, written):
-    """The wide-registry emitter prints one `key\tname\tjson` line per wide member: the 45
-    emit-source members (`v3RegistryCapOpenWide`) PLUS the 10 WRITE-bearing cap-open tail members
-    (`v3RegistryCapOpenWriteWide`, §10 — the `…WriteCapOpen…` wrappers + `spawnCapOpen` +
-    `exerciseCapOpen` made 8-felt-wide) = 55 lines. The checked-in artifact is those lines joined
-    with a trailing newline."""
+    """The wide-registry emitter prints one `key\tname\tjson` line per wide member, in the LIVE
+    `rotation-v3-staged-registry.tsv` order — a member-for-member, name-stable COVER of the live V3
+    registry (57 members): the 45 emit-source members (`v3RegistryCapOpenWide`) + the live-only
+    `transferCapOpenTB` / `heapWrite` + the 9 WRITE-bearing cap-open tail members
+    (`v3RegistryCapOpenWriteWide`, §10, MINUS `grantCapWriteCapOpen` — not a live member) + the
+    live-only `supplyMint`, each made 8-felt-wide = 57 lines. The checked-in artifact is those lines
+    joined with a trailing newline."""
     lines = [ln for ln in stdout.splitlines() if ln.strip()]
-    if len(lines) != 55:
+    if len(lines) != 57:
         sys.exit(
-            f"emit_descriptors: wide registry emitter produced {len(lines)} lines (expected 55)"
+            f"emit_descriptors: wide registry emitter produced {len(lines)} lines (expected 57)"
         )
     for ln in lines:
         if ln.count("\t") != 2:

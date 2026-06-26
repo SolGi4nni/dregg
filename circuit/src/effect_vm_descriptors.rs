@@ -1185,21 +1185,24 @@ fn weld_umem_into_descriptor_with_suffix(
 pub const WIDE_TRANSFER_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-transfer-staged.tsv");
 
-/// **THE FAITHFUL 8-FELT WIDE REGISTRY (STAGED-ADDITIVE slice 2).** The FULL 45-member emit-source
-/// registry made 8-felt-wide: each `v3RegistryCapOpen` member wrapped through the proven
-/// `wideAppend member bb (bb+51)` (`bb = 187` uniform — the rotated BEFORE-limb base). The `key\t
-/// name\tjson` per line (key = the live registry key, e.g. `burnVmDescriptor2R24`, mirroring
-/// `rotation-v3-staged-registry.tsv`), emitted from the verified Lean
-/// `CapOpenEmit.v3RegistryCapOpenWide` (`metatheory/EmitWideRegistryProbe.lean`). ADDITIVE: the live
-/// 1-felt `V3_STAGED_REGISTRY_TSV` / FP / VK are UNTOUCHED — this is the parallel wide path beside
-/// them. The transfer row (row 0) is byte-identical to `WIDE_TRANSFER_STAGED_TSV`. The wide carriers
-/// land PAST each member's host width (608 for the 816-wide families, 818 for the 1026-wide cap-open
-/// tail), re-absorbing the SAME rotated limbs the 1-felt block lays into a genuine 8-felt
-/// (~124-bit) commitment.
+/// **THE FAITHFUL 8-FELT WIDE REGISTRY (STAGED-ADDITIVE slice 2).** A member-for-member, name-stable
+/// COVER of the live V3 registry (`rotation-v3-staged-registry.tsv`, 57 members) made 8-felt-wide:
+/// each live member wrapped through the proven `wideAppend host bb (bb+51)` at its real per-member
+/// BEFORE-limb base `bb` (the underlying v1 FACE width). The `key\tname\tjson` per line (key = the
+/// live registry key, e.g. `burnVmDescriptor2R24`), emitted from the verified Lean
+/// `CapOpenEmit.v3RegistryCapOpenWide` + the WRITE-bearing tail + the three live-only members
+/// (`transferCapOpenTB` / `heapWrite` / `supplyMint`), in the LIVE order
+/// (`metatheory/EmitWideRegistryProbe.lean`). `grantCapWriteCapOpen` is reconciled OUT (it is not a
+/// live `V3_STAGED_REGISTRY_TSV` member). ADDITIVE: the live 1-felt `V3_STAGED_REGISTRY_TSV` / FP / VK
+/// are UNTOUCHED — this is the parallel wide path beside them. The transfer row (row 0) is
+/// byte-identical to `WIDE_TRANSFER_STAGED_TSV`. The wide carriers land PAST each member's host width
+/// (581/595/609/819/821), re-absorbing the SAME rotated limbs the 1-felt block lays into a genuine
+/// 8-felt (~124-bit) commitment (wide widths 789/803/817/1027/1029, each carrying the 16 wide commit
+/// PIs = the 8-felt before/after anchors).
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "d9573d0dae0b2fb0e201bea893ef908392f307cd0054ae962709ad0f6be6ea8d";
+    "d446ab8a72d0f9a5b95bda545de43c86e4568c0acc93456da5ed37b2842a8cf2";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -2389,16 +2392,23 @@ mod tests {
             );
             let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key} wide parses: {e}"));
             // the wide member is `host + 208` (two 13×8 carrier blocks) and `host.piCount + 16`.
-            // The host widths in play are 581 (custom/setFieldDyn), 609 (817-wide), 819 (cap-open):
-            // every wide width is one of 789 / 817 / 1027 (188-base EffectVM row).
+            // The host widths in play are 581 (custom/setFieldDyn → 789), 595 (heapWrite splice → 803),
+            // 609 (the rotated cohort → 817), 819 (cap-open → 1027) and 821 (the turn-identity-pinned
+            // transfer cap-open → 1029): every wide width is `host + 208` (188-base EffectVM row).
             assert!(
-                matches!(d.trace_width, 789 | 817 | 1027),
-                "{key}: wide width {} is a known wide geometry (789 / 817 / 1027)",
+                matches!(d.trace_width, 789 | 803 | 817 | 1027 | 1029),
+                "{key}: wide width {} is a known wide geometry (789 / 803 / 817 / 1027 / 1029)",
                 d.trace_width
             );
+            // Every wide member carries the 16 wide-commit PIs (the 8-felt ~124-bit before/after
+            // anchors) appended PAST its host's PI vector, so `piCount = host.piCount + 16`. The
+            // rotated cohort / `-eff` / cap-open / write members host the full 46-PI rotated vector →
+            // 62; the turn-identity-pinned `transferCapOpenTB` hosts 49 → 65; the minimal-PI Class-A
+            // `heapWrite` hosts just 4 → 20. The floor (≥ 20) is exactly the 16 anchors + heapWrite's
+            // 4 host PIs — every member fits the 16 wide PIs, NO narrowing.
             assert!(
-                d.public_input_count >= 62,
-                "{key}: wide PI count {} carries the 16 wide PIs (base ≥ 46)",
+                d.public_input_count >= 20,
+                "{key}: wide PI count {} carries the 16 wide-commit PIs",
                 d.public_input_count
             );
             if i == 0 {
@@ -2415,7 +2425,12 @@ mod tests {
                 );
             }
         }
-        assert_eq!(n, 45, "the wide registry covers all 45 emit-source members");
+        assert_eq!(
+            n,
+            live_keys.len(),
+            "the wide registry is a member-for-member cover of the live V3 registry (57 members)"
+        );
+        assert_eq!(n, 57, "the wide registry covers all 57 live V3 members");
     }
 
     /// The widened-entry codec teeth: round-trip + FAIL-CLOSED decode. A forged
