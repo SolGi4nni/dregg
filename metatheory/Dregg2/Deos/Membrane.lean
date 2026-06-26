@@ -180,14 +180,101 @@ def egC : Cap := reshare [Auth.write, Auth.read] [Auth.read] egA
 
 end Witnesses
 
-/-! ## §6 — Axiom hygiene. -/
+/-! ## §6 — THE UPWARD LEG: the conjunction forwarder (`cell/src/membrane.rs`).
+
+§1–§5 are the DOWNWARD membrane: a reshare chain, iterated `attenuate` (descent), realized by
+`starbridge-web-surface/src/rehydrate.rs`'s `Membrane::reshare`. The Rust HOUSE-CAPACITY
+`cell/src/membrane.rs` is the DUAL — a 2-of-2 **conjunction forwarder**: it holds caps A and B and
+exposes a new cap C exercisable only by presenting BOTH, whose authority floor is the **meet** of the
+two held authorities (`compose_both = a.mask & b.mask`). Authority composes UPWARD through it, and the
+non-amplification floor is `exposed ⊑ a & b`.
+
+This is STILL the same lattice — `a & b` (effect-mask AND) is the MEET over the very `List Auth` /
+`capAuthConferred ⊆` order the cap crown proves on. Over `List Auth` the meet is list intersection,
+and "the meet is a lower bound" gives the floor by REUSE (`List.mem_of_mem_filter` + `Subset.trans`) —
+no new lattice. This is the EXECUTOR-level rung of `cell/src/membrane.rs::is_non_amplifying`/`seal`
+(`exposed ⊑ a & b`); the in-circuit / light-client witness is the named VK-affecting follow-up
+(`metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md` membrane row), exactly as the downward leg's circuit
+tooth is `cell/src/membrane.rs`'s own named shadow. -/
+
+/-- **`compose a b`** — the conjunction forwarder's exposed-authority floor: the MEET of the two held
+caps' conferred authorities (an authority survives only if BOTH held caps confer it). This IS the Rust
+`compose_both`/`CompositionPolicy::BothOf::authority_bound` (`a.mask & b.mask`), with effect-mask AND
+read as `List Auth` intersection. -/
+def compose (a b : Cap) : List Auth :=
+  (capAuthConferred a).filter (fun x => decide (x ∈ capAuthConferred b))
+
+/-- The meet is bounded by the LEFT held cap (`a & b ⊑ a`). -/
+theorem compose_subset_left (a b : Cap) : compose a b ⊆ capAuthConferred a := by
+  intro x hx
+  exact List.mem_of_mem_filter hx
+
+/-- The meet is bounded by the RIGHT held cap (`a & b ⊑ b`). -/
+theorem compose_subset_right (a b : Cap) : compose a b ⊆ capAuthConferred b := by
+  intro x hx
+  rw [compose, List.mem_filter] at hx
+  exact of_decide_eq_true hx.2
+
+/-- **THE CONJUNCTION-FORWARDER NON-AMPLIFICATION KEYSTONE** — the Rust `cell/src/membrane.rs` seal
+floor `exposed ⊑ a & b`, as a theorem. A membrane whose exposed authority `C` is `⊆` the meet confers
+NO more than EITHER held cap held: `exposed ⊆ a` AND `exposed ⊆ b`. So presenting C can never exercise
+an authority a held cap lacked — the upward composition cannot amplify, by `Subset.trans` over the
+SAME conferred-authority order the cap crown proves. -/
+theorem membrane_non_amplifies (exposed : List Auth) (a b : Cap)
+    (hseal : exposed ⊆ compose a b) :
+    exposed ⊆ capAuthConferred a ∧ exposed ⊆ capAuthConferred b :=
+  ⟨List.Subset.trans hseal (compose_subset_left a b),
+   List.Subset.trans hseal (compose_subset_right a b)⟩
+
+/-- **THE NEGATIVE TOOTH** (the Rust `forged_over_grant_is_rejected_at_seal` / the `a & b` darkening):
+an authority a held cap LACKS is absent from the meet, so a SEALED membrane (`exposed ⊆ compose a b`)
+cannot expose it — even if its claimed `exposed` names it. If `x ∉ a` (or `x ∉ b`), then `x ∉ exposed`.
+A forwarder cannot manufacture an authority neither/either held cap carries. -/
+theorem sealed_refuses_unheld (exposed : List Auth) (a b : Cap) (x : Auth)
+    (hseal : exposed ⊆ compose a b) (hunheld : x ∉ capAuthConferred a) :
+    x ∉ exposed :=
+  fun hx => hunheld ((membrane_non_amplifies exposed a b hseal).1 hx)
+
+/-! ## §7 — UPWARD-LEG NON-VACUITY TEETH (`#guard`): the conjunction floor BITES, both polarities. -/
+
+section ForwarderWitnesses
+
+open Dregg2.Deos.Surface (Surface)
+
+/-- Held cap A on cell `5`: write, read, grant. -/
+def fA : Cap := Surface 5 [Auth.write, Auth.read, Auth.grant]
+/-- Held cap B on cell `5`: read, grant, call. -/
+def fB : Cap := Surface 5 [Auth.read, Auth.grant, Auth.call]
+
+-- THE MEET: only what BOTH hold (read, grant) — write (A-only) and call (B-only) are darkened.
+#guard compose fA fB == [Auth.read, Auth.grant]
+-- write ∈ A but ∉ the meet (B lacks it): the forwarder cannot expose an A-only authority.
+#guard !(Auth.write ∈ compose fA fB : Bool)
+-- call ∈ B but ∉ the meet (A lacks it): nor a B-only authority.
+#guard !(Auth.call ∈ compose fA fB : Bool)
+-- the MAXIMAL lawful membrane (exposes exactly the meet) seals:
+#guard decide (([Auth.read, Auth.grant] : List Auth) ⊆ compose fA fB)
+-- a SUB-floor exposed (less than the meet) also seals (you may forward narrower):
+#guard decide (([Auth.read] : List Auth) ⊆ compose fA fB)
+-- AMPLIFICATION REFUSED: a forged exposed naming `write` (A-only) is NOT ⊆ the meet — does not seal:
+#guard !decide (([Auth.read, Auth.write] : List Auth) ⊆ compose fA fB)
+-- and an authority NEITHER held cap carries (`reply`) does not seal either:
+#guard !decide (([Auth.reply] : List Auth) ⊆ compose fA fB)
+
+end ForwarderWitnesses
+
+/-! ## §8 — Axiom hygiene. -/
 
 #assert_all_clean [
   oneHop_attenuates,
   reshare_chain_attenuates,
   reshare_bounded_by_middle,
   reshareN_attenuates,
-  reshare_refuses_amplification
+  reshare_refuses_amplification,
+  compose_subset_left,
+  compose_subset_right,
+  membrane_non_amplifies,
+  sealed_refuses_unheld
 ]
 
 end Dregg2.Deos.Membrane

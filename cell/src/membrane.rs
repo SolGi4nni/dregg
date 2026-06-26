@@ -42,16 +42,39 @@
 //! descent side ([`crate::facet::is_facet_attenuation`]): the membrane is
 //! exactly that same partial order read *upward through a meet*.
 //!
+//! ## Formal grounding (the non-amp floor is PROVEN, not just smoke-tested)
+//!
+//! The non-amplification floor enforced here — `exposed ⊑ a & b` ([`Membrane::
+//! is_non_amplifying`], rechecked at [`Membrane::seal`] and
+//! [`SealedMembrane::exercise`]) — is the EXECUTOR image of a proven Lean rung:
+//! the **upward (conjunction) leg** of `metatheory/Dregg2/Deos/Membrane.lean`.
+//! There the meet `a & b` is `compose` (intersection over the same `List Auth` /
+//! `capAuthConferred ⊆` order the cap crown proves on), and
+//!
+//!   * `membrane_non_amplifies` — `exposed ⊆ compose a b ⟹ exposed ⊆ a ∧
+//!     exposed ⊆ b` (this `is_non_amplifying`/`seal` floor cannot amplify), and
+//!   * `sealed_refuses_unheld` — an authority a held cap lacks is absent from the
+//!     meet, so a sealed membrane cannot expose it (the negative tooth, the Lean
+//!     image of [`tests::forged_over_grant_is_rejected_at_seal`]),
+//!
+//! are both `#assert_all_clean` (kernel-axiom-clean), proven BY REUSE of the
+//! submask/meet lattice (`List.mem_of_mem_filter` + `Subset.trans`) — no new
+//! lattice. The Lean `Deos.Membrane` is the dual of attenuation read upward
+//! through a meet, exactly as this module's docs state. The test
+//! [`tests::non_amp_floor_matches_lean_rung`] mirrors that rung's witnesses on
+//! the [`EffectMask`] shape so the Rust is checked against the proven statement.
+//!
 //! ## Honest seams (named with their lanes)
 //!
-//! - **Executor-level, not yet circuit-bound.** This is the ocap-algebra slice:
-//!   a [`SealedMembrane`] is a verified-policy object, and [`MembraneCap`] is
-//!   the exposed cap C. Binding the membrane's `exposed` mask into the cell
-//!   state-commitment / cap-root the circuit sees (so a light client witnesses
-//!   "C's authority = a&b") is the circuit follow-up — the same VK-gated lane
-//!   the cap-root reshape (`project-cap-reshape-plan`) is already driving. The
-//!   non-amp tooth here is the *executor* tooth; the circuit tooth is its
-//!   shadow.
+//! - **Executor-grounded; the circuit witness is the named VK follow-up.** The
+//!   Lean rung above grounds the EXECUTOR non-amp tooth. Binding the membrane's
+//!   `exposed` mask into the cell state-commitment / cap-root the circuit sees
+//!   (so a light client — not just the executor — witnesses "C's authority =
+//!   a&b") is the VK-affecting weld named in
+//!   `metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md` (membrane row: "Medium,
+//!   VK-affecting — new authorization predicate + circuit auth check"), the same
+//!   VK-gated lane the cap-root reshape (`project-cap-reshape-plan`) drives. The
+//!   non-amp tooth here is the *executor* tooth; the circuit tooth is its shadow.
 //! - **2-of-2 is the genuine slice.** The policy generalises to k-of-n (hold a
 //!   `Vec` of facets, require a quorum) and to predicate-gated composition
 //!   (the [`crate::capability::CapabilityCaveat::Witnessed`] surface); the
@@ -386,7 +409,8 @@ pub struct MembraneCap {
 mod tests {
     use super::*;
     use crate::facet::{
-        EFFECT_EMIT_EVENT, EFFECT_SET_FIELD, EFFECT_SET_PERMISSIONS, EFFECT_TRANSFER,
+        EFFECT_EMIT_EVENT, EFFECT_GRANT_CAPABILITY, EFFECT_SET_FIELD, EFFECT_SET_PERMISSIONS,
+        EFFECT_TRANSFER,
     };
 
     fn cell(n: u8) -> CellId {
@@ -627,4 +651,74 @@ mod tests {
 
     const EFFECT_ALL_TEST: EffectMask =
         EFFECT_SET_FIELD | EFFECT_TRANSFER | EFFECT_EMIT_EVENT | EFFECT_SET_PERMISSIONS;
+
+    // ── the Lean rung: this executor floor is PROVEN, not just smoke-tested ──
+
+    /// Mirror of the upward-leg witnesses in `metatheory/Dregg2/Deos/Membrane.lean`
+    /// (`compose` / `membrane_non_amplifies` / `sealed_refuses_unheld`, all
+    /// `#assert_all_clean`). The Lean proves over `List Auth`; here the SAME
+    /// structure is checked over [`EffectMask`], so the Rust non-amp floor is
+    /// checked against the proven statement, not just an ad-hoc tampering.
+    ///
+    /// Lean: A = {write, read, grant}, B = {read, grant, call}, meet = {read,
+    /// grant}; A-only and B-only bits are darkened; the meet seals, a sub-floor
+    /// seals, an over-grant (A-only bit) and a bit in neither both refuse.
+    #[test]
+    fn non_amp_floor_matches_lean_rung() {
+        // A-only ≙ write, shared ≙ {read, grant} ≙ {SET_FIELD, TRANSFER},
+        // B-only ≙ call, neither ≙ reply. Map to distinct EffectMask bits:
+        let a_only = EFFECT_EMIT_EVENT; // Lean `write` (A-only)
+        let shared = EFFECT_SET_FIELD | EFFECT_TRANSFER; // Lean {read, grant}
+        let b_only = EFFECT_GRANT_CAPABILITY; // Lean `call` (B-only)
+        let neither = EFFECT_SET_PERMISSIONS; // Lean `reply` (in neither)
+
+        let a = HeldFacet::new(cell(5), a_only | shared);
+        let b = HeldFacet::new(cell(5), shared | b_only);
+
+        // `compose` == the meet (only what BOTH hold): the Lean `#guard compose fA fB == [read,grant]`.
+        assert_eq!(compose_both(&a, &b), shared);
+        // A-only and B-only bits are darkened (Lean: write/call ∉ the meet).
+        assert_eq!(compose_both(&a, &b) & a_only, 0);
+        assert_eq!(compose_both(&a, &b) & b_only, 0);
+
+        // The maximal membrane (exposes exactly the meet) seals — `membrane_non_amplifies`.
+        let maximal = Membrane::maximal(
+            cell(9),
+            a.clone(),
+            b.clone(),
+            CompositionPolicy::BothOf,
+            cell(5),
+        );
+        assert!(maximal.is_non_amplifying());
+        assert_eq!(maximal.clone().seal().unwrap().cap_c().authority, shared);
+
+        // A sub-floor exposed also seals (Lean `#guard [read] ⊆ compose fA fB`).
+        let sub = Membrane::new(
+            cell(9),
+            a.clone(),
+            b.clone(),
+            CompositionPolicy::BothOf,
+            cell(5),
+            EFFECT_SET_FIELD,
+        );
+        assert!(sub.is_non_amplifying());
+
+        // Over-grant of an A-only bit does NOT seal (Lean `!([read,write] ⊆ meet)`).
+        let over = Membrane::new(
+            cell(9),
+            a.clone(),
+            b.clone(),
+            CompositionPolicy::BothOf,
+            cell(5),
+            shared | a_only,
+        );
+        assert!(!over.is_non_amplifying());
+        assert!(over.seal().is_none());
+
+        // A bit in NEITHER held cap does not seal (Lean `!([reply] ⊆ meet)`) —
+        // the executor image of `sealed_refuses_unheld`.
+        let alien = Membrane::new(cell(9), a, b, CompositionPolicy::BothOf, cell(5), neither);
+        assert!(!alien.is_non_amplifying());
+        assert!(alien.seal().is_none());
+    }
 }
