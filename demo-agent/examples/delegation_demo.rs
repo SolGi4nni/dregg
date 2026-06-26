@@ -259,13 +259,26 @@ fn main() {
     executor.set_timestamp(2000);
 
     let child_nonce = ledger.get(&child_id).unwrap().state.nonce();
+    // The genuine refreshed snapshot: the commitment over the PARENT's live c-list
+    // (exactly what `apply_refresh_delegation` re-arms from). The executor DERIVES
+    // this value and refuses a mismatching declaration (the forge antibody), so the
+    // demo must declare the honest value for the self-refresh to commit.
+    let refresh_snapshot = {
+        let parent = ledger.get(&parent_id).unwrap();
+        let snap: Vec<dregg_cell::CapabilityRef> = parent.capabilities.iter().cloned().collect();
+        let bytes = postcard::to_allocvec(&snap).unwrap_or_default();
+        dregg_cell::DelegatedRef::compute_clist_commitment(&bytes)
+    };
     let refresh = Action {
         target: child_id,
         method: symbol("refresh_delegation"),
         args: vec![],
         authorization: Authorization::Unchecked,
         preconditions: Default::default(),
-        effects: vec![Effect::RefreshDelegation],
+        effects: vec![Effect::RefreshDelegation {
+            child: child_id,
+            snapshot: refresh_snapshot,
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
