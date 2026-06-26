@@ -7455,11 +7455,13 @@ fn cap_ref_label(cap: &dregg_cell::CapabilityRef) -> String {
 }
 
 /// Build the typed [`dregg_query::EffectSummary`] enrichment for a committed
-/// turn: the decoded per-effect disclosure (transfers / grants / revocations)
-/// plus a post-state balance observation for every cell the turn's transfers
-/// touched. Read off the ALREADY-committed before/after ledger — additive, never
-/// gates the commit. The `asset` of a transfer/balance is the token domain of
-/// the cell (pre-state for the source, post-state for the destination).
+/// turn: the decoded per-effect disclosure — transfers / grants / revocations /
+/// burns (supply reductions) / state-field writes / cell births / lifecycle
+/// transitions (seal/unseal/destroy/sovereign) — plus a post-state balance
+/// observation for every cell the turn's transfers/burns touched. Read off the
+/// ALREADY-committed before/after ledger — additive, never gates the commit. The
+/// `asset` of a transfer/balance is the token domain of the cell (pre-state for
+/// the source/burn target, post-state for the destination).
 fn summarize_turn_effects(
     turn: &Turn,
     pre: &dregg_cell::Ledger,
@@ -7511,6 +7513,64 @@ fn summarize_turn_effects(
                         cap: format!("{}#{}", hex_encode(&cell.0), slot),
                     });
                 }
+                Effect::Burn { target, amount, .. } => {
+                    // A provable supply reduction — no destination credited. The
+                    // asset is the target's token domain (pre-state, since the
+                    // cell may be destroyed/altered after).
+                    out.push(ES::Burned {
+                        cell: hex_encode(&target.0),
+                        asset: asset_of(target, pre),
+                        amount: *amount,
+                    });
+                    note(target.0, &mut touched);
+                }
+                Effect::SetField { cell, index, value } => {
+                    out.push(ES::Field {
+                        cell: hex_encode(&cell.0),
+                        index: *index as u64,
+                        value: hex_encode(value),
+                    });
+                }
+                Effect::CreateCell {
+                    public_key,
+                    token_id,
+                    ..
+                } => {
+                    // The new cell id is derived from (public_key, token_id) —
+                    // the same derivation the executor uses (`Cell::id()`).
+                    let cell = dregg_cell::CellId::derive_raw(public_key, token_id);
+                    out.push(ES::Created {
+                        agent: hex_encode(&tree.action.target.0),
+                        cell: hex_encode(&cell.0),
+                    });
+                }
+                Effect::CreateCellFromFactory {
+                    owner_pubkey,
+                    token_id,
+                    ..
+                } => {
+                    let cell = dregg_cell::CellId::derive_raw(owner_pubkey, token_id);
+                    out.push(ES::Created {
+                        agent: hex_encode(&tree.action.target.0),
+                        cell: hex_encode(&cell.0),
+                    });
+                }
+                Effect::CellSeal { target, .. } => out.push(ES::Lifecycle {
+                    cell: hex_encode(&target.0),
+                    state: "sealed".to_string(),
+                }),
+                Effect::CellUnseal { target } => out.push(ES::Lifecycle {
+                    cell: hex_encode(&target.0),
+                    state: "unsealed".to_string(),
+                }),
+                Effect::CellDestroy { target, .. } => out.push(ES::Lifecycle {
+                    cell: hex_encode(&target.0),
+                    state: "destroyed".to_string(),
+                }),
+                Effect::MakeSovereign { cell } => out.push(ES::Lifecycle {
+                    cell: hex_encode(&cell.0),
+                    state: "sovereign".to_string(),
+                }),
                 _ => {}
             }
         }
@@ -8011,6 +8071,59 @@ mod tests {
                 ES::Balance { amount: 250, cell, .. } if *cell == hex_encode(&recipient.0)
             )),
             "expected a post-state Balance(250) for the recipient, got {summaries:?}"
+        );
+    }
+
+    /// The richer EDB: a turn carrying a state-field write, a cell birth, and a
+    /// make-sovereign lifecycle transition yields the typed `Field` / `Created`
+    /// / `Lifecycle` summaries dregg-query turns into `field`/`created`/
+    /// `lifecycle` facts.
+    #[test]
+    fn summarize_turn_effects_yields_field_created_lifecycle() {
+        use dregg_query::EffectSummary as ES;
+
+        let agent_pk = [0x33u8; 32];
+        let agent = CellId(dregg_cell::CellId::derive_raw(&agent_pk, &[0u8; 32]).0);
+        let new_pk = [0x44u8; 32];
+        let new_token = [0x55u8; 32];
+        let new_cell = CellId(dregg_cell::CellId::derive_raw(&new_pk, &new_token).0);
+
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger
+            .insert_cell(dregg_cell::Cell::with_balance(agent_pk, [0u8; 32], 0))
+            .expect("agent insert");
+
+        let mut forest = CallForest::new();
+        forest.add_root(
+            dregg_turn::ActionBuilder::new_unchecked_for_tests(agent, "rich", agent)
+                .effect_set_field(agent, 2, [0xABu8; 32])
+                .effect_create_cell(new_pk, new_token, 0)
+                .effect_make_sovereign(agent)
+                .build(),
+        );
+        let turn = make_min_turn(agent, 0, None, forest);
+
+        // The summary is read off the effects + ledger; pre == post is fine for
+        // these families (only Transfer/Burn need a balance delta).
+        let summaries = summarize_turn_effects(&turn, &ledger, &ledger);
+
+        assert!(
+            summaries.iter().any(
+                |e| matches!(e, ES::Field { index: 2, cell, .. } if *cell == hex_encode(&agent.0))
+            ),
+            "expected a typed Field write, got {summaries:?}"
+        );
+        assert!(
+            summaries
+                .iter()
+                .any(|e| matches!(e, ES::Created { cell, .. } if *cell == hex_encode(&new_cell.0))),
+            "expected a Created summary for the derived new-cell id, got {summaries:?}"
+        );
+        assert!(
+            summaries.iter().any(
+                |e| matches!(e, ES::Lifecycle { state, cell } if state == "sovereign" && *cell == hex_encode(&agent.0))
+            ),
+            "expected a sovereign Lifecycle transition, got {summaries:?}"
         );
     }
 

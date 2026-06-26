@@ -12,14 +12,21 @@
 //!   answer row appears it never retracts as more receipts arrive. Such a
 //!   query is answerable from ANY node's partial view and is cacheable —
 //!   coordination-free.
-//! - A NEGATED atom is the one non-monotone operator on this surface:
+//! - A NEGATED atom is one non-monotone operator on this surface:
 //!   "not revoked(Cap, _)" can flip an answer row from present to absent
 //!   when a later receipt arrives. Its answer is correct only relative to a
 //!   FINALIZED prefix — "this answer is only as fresh as height H" — the
 //!   canonical case being negation-over-revocation.
+//! - AGGREGATION (`count`/`sum`/`min`/`max`, the Q3 layer) is the other:
+//!   the aggregate VALUE moves as receipts arrive (a count grows, a min
+//!   falls), so a `(group, value)` row retracts when a later receipt revises
+//!   it. Aggregation is therefore finalized-dependent too — the aggregate is
+//!   exact only over the certified, finalized prefix.
 //!
-//! There is no third class: the Q1 surface has no aggregation and no
-//! recursion, so monotone-vs-negation exhausts it.
+//! (A `group_by` with NO aggregates is a plain DISTINCT projection of a
+//! monotone query — it stays monotone; only the aggregate fold is
+//! non-monotone.) Negation and aggregation exhaust the non-monotone surface:
+//! there is no recursion.
 
 use serde::{Deserialize, Serialize};
 
@@ -51,10 +58,11 @@ impl Classification {
     }
 }
 
-/// Classify a query. Sound and complete FOR THIS SURFACE: negated atoms are
-/// the only non-monotone operator a [`Query`] can contain (selections,
-/// constants, joins, and comparisons over an append-only EDB all preserve
-/// monotonicity), so the verdict is exact, not a heuristic.
+/// Classify a query. Sound and complete FOR THIS SURFACE: negated atoms and
+/// aggregates are the only non-monotone operators a [`Query`] can contain
+/// (selections, constants, joins, comparisons, and DISTINCT projection over an
+/// append-only EDB all preserve monotonicity), so the verdict is exact, not a
+/// heuristic.
 pub fn classify(q: &Query) -> Classification {
     let mut reasons = Vec::new();
     for a in &q.negated {
@@ -62,6 +70,13 @@ pub fn classify(q: &Query) -> Classification {
             "negated atom over {}: absence is not stable under append \
              (answer is only correct for a finalized prefix)",
             a.pred.name()
+        ));
+    }
+    for agg in &q.aggregates {
+        reasons.push(format!(
+            "aggregate {:?}: the aggregate value moves as receipts arrive \
+             (exact only over the certified finalized prefix)",
+            agg.op
         ));
     }
     let class = if reasons.is_empty() {

@@ -54,6 +54,24 @@ pub enum EffectSummary {
     },
     /// A capability revocation.
     Revoked { cap: String },
+    /// A provable supply reduction (`Effect::Burn`): the cell's balance is cut
+    /// with no destination credit. Distinct from `Transfer` precisely because
+    /// no `to` is credited — the supply of `asset` strictly decreases.
+    Burned {
+        cell: String,
+        asset: String,
+        amount: u64,
+    },
+    /// A state-field write (`Effect::SetField`): slot `index` of `cell` was set
+    /// to `value` (hex of the 32-byte field element).
+    Field {
+        cell: String,
+        index: u64,
+        value: String,
+    },
+    /// A cell lifecycle transition (`state` ∈ `sealed` / `unsealed` /
+    /// `destroyed` / `sovereign`).
+    Lifecycle { cell: String, state: String },
     /// Any effect kind the schema does not extract facts from (kept so the
     /// row remains a faithful summary; extraction skips it). The `name`
     /// field carries the underlying effect-kind string (it cannot be called
@@ -132,6 +150,19 @@ pub fn extract_receipt_facts(r: &ReceiptRecord, out: &mut FactBase) {
             }
             EffectSummary::Revoked { cap } => {
                 out.add(Fact::revoked(cap.clone(), h));
+            }
+            EffectSummary::Burned {
+                cell,
+                asset,
+                amount,
+            } => {
+                out.add(Fact::burned(cell.clone(), asset.clone(), *amount, h));
+            }
+            EffectSummary::Field { cell, index, value } => {
+                out.add(Fact::field(cell.clone(), *index, value.clone(), h));
+            }
+            EffectSummary::Lifecycle { cell, state } => {
+                out.add(Fact::lifecycle(cell.clone(), state.clone(), h));
             }
             EffectSummary::Other { .. } => {}
         }

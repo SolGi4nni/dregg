@@ -7,6 +7,14 @@
 //! - `balance(Cell, Asset, Amount, Height)`
 //! - `granted(From, To, Cap, Height)`
 //! - `revoked(Cap, Height)`
+//! - `burned(Cell, Asset, Amount, Height)` — a provable supply reduction
+//!   (`Effect::Burn`): unlike `transfer`, no destination is credited.
+//! - `field(Cell, Index, Value, Height)` — a state-field write
+//!   (`Effect::SetField`): the slot `Index` of `Cell` was set to `Value`
+//!   (hex of the 32-byte field element) at height `H`.
+//! - `lifecycle(Cell, State, Height)` — a cell lifecycle transition
+//!   (`State` ∈ `sealed` / `unsealed` / `destroyed` / `sovereign`), from the
+//!   seal/unseal/destroy/make-sovereign effects.
 //!
 //! Every predicate is HEIGHT-STAMPED in its last argument and the fact base
 //! is append-only — monotone by construction. A `balance` fact is a stamped
@@ -57,6 +65,9 @@ pub enum Pred {
     Balance,
     Granted,
     Revoked,
+    Burned,
+    Field,
+    Lifecycle,
 }
 
 impl Pred {
@@ -68,6 +79,9 @@ impl Pred {
             Pred::Balance => 4,
             Pred::Granted => 4,
             Pred::Revoked => 2,
+            Pred::Burned => 4,
+            Pred::Field => 4,
+            Pred::Lifecycle => 3,
         }
     }
 
@@ -79,6 +93,9 @@ impl Pred {
             Pred::Balance => &["cell", "asset", "amount", "height"],
             Pred::Granted => &["from", "to", "cap", "height"],
             Pred::Revoked => &["cap", "height"],
+            Pred::Burned => &["cell", "asset", "amount", "height"],
+            Pred::Field => &["cell", "index", "value", "height"],
+            Pred::Lifecycle => &["cell", "state", "height"],
         }
     }
 
@@ -89,6 +106,9 @@ impl Pred {
             Pred::Balance => "balance",
             Pred::Granted => "granted",
             Pred::Revoked => "revoked",
+            Pred::Burned => "burned",
+            Pred::Field => "field",
+            Pred::Lifecycle => "lifecycle",
         }
     }
 }
@@ -167,6 +187,42 @@ impl Fact {
         Fact {
             pred: Pred::Revoked,
             args: vec![Value::sym(cap), Value::nat(h)],
+        }
+    }
+
+    pub fn burned(
+        cell: impl Into<String>,
+        asset: impl Into<String>,
+        amount: u64,
+        h: Height,
+    ) -> Self {
+        Fact {
+            pred: Pred::Burned,
+            args: vec![
+                Value::sym(cell),
+                Value::sym(asset),
+                Value::nat(amount),
+                Value::nat(h),
+            ],
+        }
+    }
+
+    pub fn field(cell: impl Into<String>, index: u64, value: impl Into<String>, h: Height) -> Self {
+        Fact {
+            pred: Pred::Field,
+            args: vec![
+                Value::sym(cell),
+                Value::nat(index),
+                Value::sym(value),
+                Value::nat(h),
+            ],
+        }
+    }
+
+    pub fn lifecycle(cell: impl Into<String>, state: impl Into<String>, h: Height) -> Self {
+        Fact {
+            pred: Pred::Lifecycle,
+            args: vec![Value::sym(cell), Value::sym(state), Value::nat(h)],
         }
     }
 

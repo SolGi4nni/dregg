@@ -76,15 +76,56 @@ pub struct Filter {
     pub rhs: Term,
 }
 
+/// An aggregation operator (the Q3 surface, toward
+/// docs/EPISTEMIC-DATALOG.md). All four are NON-MONOTONE in their value over an
+/// append-only EDB — `count`/`sum` grow, `min` falls, `max` rises as more
+/// receipts arrive — so any query that aggregates is graded
+/// [`crate::classify::CoordinationClass::FinalizedDependent`]: the aggregate is
+/// exact only for the certified, finalized prefix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AggOp {
+    /// Count of distinct answer rows in the group. (`arg` is ignored / `None`.)
+    Count,
+    /// Sum of the `Nat` values bound to `arg` across the group.
+    Sum,
+    /// Minimum of the `Nat` values bound to `arg`.
+    Min,
+    /// Maximum of the `Nat` values bound to `arg`.
+    Max,
+}
+
+/// One aggregate term: `op(arg) AS as_name`. For [`AggOp::Count`] `arg` is
+/// `None` (count of rows); for `Sum`/`Min`/`Max` it names the positively-bound
+/// variable whose `Nat` values are folded. `as_name` is a FRESH output column —
+/// it must not collide with any positive/group variable.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Aggregate {
+    pub op: AggOp,
+    pub arg: Option<String>,
+    pub as_name: String,
+}
+
 /// A conjunctive query: positive atoms (joined on shared variables), negated
 /// atoms (safe: every named variable in a negated atom must occur in some
-/// positive atom), and filters (every named variable must be positively
-/// bound).
+/// positive atom), filters (every named variable must be positively bound),
+/// and an optional aggregation layer (`group_by` + `aggregates`) applied to the
+/// deduplicated answer set.
+///
+/// When `aggregates` is non-empty the output rows bind exactly the `group_by`
+/// variables plus the aggregates' `as_name`s (the other positive variables are
+/// projected away). `group_by` with empty `aggregates` is a DISTINCT projection
+/// onto those variables — still monotone. `group_by` empty with aggregates is a
+/// single global-aggregate row.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Query {
     pub atoms: Vec<Atom>,
     pub negated: Vec<Atom>,
     pub filters: Vec<Filter>,
+    #[serde(default)]
+    pub group_by: Vec<String>,
+    #[serde(default)]
+    pub aggregates: Vec<Aggregate>,
 }
 
 impl Query {
@@ -101,6 +142,26 @@ impl Query {
     }
     pub fn filter(mut self, lhs: Term, op: CmpOp, rhs: Term) -> Self {
         self.filters.push(Filter { lhs, op, rhs });
+        self
+    }
+    /// Group the answer set by these variables (in order). Each must be a
+    /// positively-bound variable.
+    pub fn group_by(mut self, vars: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.group_by = vars.into_iter().map(Into::into).collect();
+        self
+    }
+    /// Add an aggregate `op(arg) AS as_name`.
+    pub fn aggregate(
+        mut self,
+        op: AggOp,
+        arg: Option<impl Into<String>>,
+        as_name: impl Into<String>,
+    ) -> Self {
+        self.aggregates.push(Aggregate {
+            op,
+            arg: arg.map(Into::into),
+            as_name: as_name.into(),
+        });
         self
     }
 
@@ -124,6 +185,16 @@ pub enum QueryError {
     Unsafe(String),
     #[error("query has no positive atoms")]
     Empty,
+    #[error("aggregate {op:?} requires an argument variable")]
+    AggMissingArg { op: AggOp },
+    #[error("aggregate output column {0:?} collides with a query/group variable")]
+    AggCollision(String),
+    #[error("aggregate {op:?} over {var:?}: value {value} is not a number")]
+    AggType {
+        op: AggOp,
+        var: String,
+        value: Value,
+    },
 }
 
 /// Validate arities + safety (range-restriction): every named variable used
@@ -160,6 +231,34 @@ pub fn validate(q: &Query) -> Result<(), QueryError> {
             {
                 return Err(QueryError::Unsafe(v.clone()));
             }
+        }
+    }
+    // Aggregation safety: group-by and aggregate-argument variables must be
+    // positively bound; aggregate output columns must be fresh names (not a
+    // positive or group variable, nor another aggregate's column).
+    for v in &q.group_by {
+        if !positive.contains(v.as_str()) {
+            return Err(QueryError::Unsafe(v.clone()));
+        }
+    }
+    let mut out_names: BTreeSet<&str> = BTreeSet::new();
+    for agg in &q.aggregates {
+        match agg.op {
+            AggOp::Count => {}
+            AggOp::Sum | AggOp::Min | AggOp::Max => {
+                let Some(arg) = &agg.arg else {
+                    return Err(QueryError::AggMissingArg { op: agg.op });
+                };
+                if !positive.contains(arg.as_str()) {
+                    return Err(QueryError::Unsafe(arg.clone()));
+                }
+            }
+        }
+        if positive.contains(agg.as_name.as_str())
+            || q.group_by.iter().any(|g| g == &agg.as_name)
+            || !out_names.insert(agg.as_name.as_str())
+        {
+            return Err(QueryError::AggCollision(agg.as_name.clone()));
         }
     }
     Ok(())
@@ -333,9 +432,85 @@ pub fn eval(base: &FactBase, q: &Query) -> Result<Vec<Bindings>, QueryError> {
     }
     // Filters.
     rows.retain(|b| q.filters.iter().all(|f| filter_holds(f, b)));
-    // Deduplicate (set semantics).
+    // Deduplicate (set semantics) — the conjunctive answer set.
     let set: BTreeSet<Bindings> = rows.into_iter().collect();
-    Ok(set.into_iter().collect())
+    // Aggregation / projection layer, if requested.
+    if q.group_by.is_empty() && q.aggregates.is_empty() {
+        return Ok(set.into_iter().collect());
+    }
+    aggregate(&set, q)
+}
+
+/// The Q3 group-by + aggregate fold over the deduplicated answer set. Groups
+/// are keyed by the `group_by` tuple (empty group-by ⇒ one global group, but
+/// only when there are aggregates — a group-by-only query with NO rows yields
+/// no groups). Output rows bind the group variables plus each aggregate's
+/// `as_name`. Output is already group-distinct, so no further dedup is needed.
+fn aggregate(set: &BTreeSet<Bindings>, q: &Query) -> Result<Vec<Bindings>, QueryError> {
+    // Group key → member rows. A BTreeMap keeps groups in a deterministic order.
+    let mut groups: BTreeMap<Vec<Value>, Vec<&Bindings>> = BTreeMap::new();
+    for row in set {
+        let key: Vec<Value> = q
+            .group_by
+            .iter()
+            .map(|g| row.get(g).cloned().unwrap_or(Value::Nat(0)))
+            .collect();
+        groups.entry(key).or_default().push(row);
+    }
+    // A global aggregate (no group-by) over an EMPTY set still yields one row
+    // (count = 0); a grouped query over an empty set yields no rows.
+    if groups.is_empty() && q.group_by.is_empty() && !q.aggregates.is_empty() {
+        groups.insert(Vec::new(), Vec::new());
+    }
+    let mut out = Vec::with_capacity(groups.len());
+    for (key, members) in groups {
+        let mut b = Bindings::new();
+        for (g, v) in q.group_by.iter().zip(key) {
+            b.insert(g.clone(), v);
+        }
+        for agg in &q.aggregates {
+            b.insert(agg.as_name.clone(), fold_agg(agg, &members)?);
+        }
+        out.push(b);
+    }
+    Ok(out)
+}
+
+/// Fold one aggregate over a group's member rows. `Sum`/`Min`/`Max` require
+/// every contributing value to be a `Nat` (the EDB's amounts/heights are); a
+/// `Sym` in a numeric aggregate fails closed with [`QueryError::AggType`].
+fn fold_agg(agg: &Aggregate, members: &[&Bindings]) -> Result<Value, QueryError> {
+    if agg.op == AggOp::Count {
+        return Ok(Value::Nat(members.len() as u64));
+    }
+    let arg = agg.arg.as_ref().expect("validated: numeric agg has an arg");
+    let nat = |b: &Bindings| -> Result<u64, QueryError> {
+        match b.get(arg) {
+            Some(Value::Nat(n)) => Ok(*n),
+            other => Err(QueryError::AggType {
+                op: agg.op,
+                var: arg.clone(),
+                value: other.cloned().unwrap_or(Value::Nat(0)),
+            }),
+        }
+    };
+    let mut iter = members.iter();
+    let first = match iter.next() {
+        Some(b) => nat(b)?,
+        // Empty numeric group (only reachable for a global Sum over no rows).
+        None => return Ok(Value::Nat(0)),
+    };
+    let mut acc = first;
+    for b in iter {
+        let n = nat(b)?;
+        acc = match agg.op {
+            AggOp::Sum => acc.saturating_add(n),
+            AggOp::Min => acc.min(n),
+            AggOp::Max => acc.max(n),
+            AggOp::Count => unreachable!(),
+        };
+    }
+    Ok(Value::Nat(acc))
 }
 
 /// The "join positions" of an atom given the set of already-bound variables:

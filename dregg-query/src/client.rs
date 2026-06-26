@@ -76,7 +76,10 @@
 //! by the IVC aggregate and one light-client check
 //! (`light_client_position_non_omission`) anchors every certificate over the
 //! whole history. This crate's verifier takes the root as a parameter
-//! exactly so that swap is a caller-side change only.
+//! exactly so that swap is a caller-side change only. The precise close — the
+//! hash-floor swap (blake3 → Poseidon2, non-VK, caller-side) and the EPOCH
+//! limb weld (VK-affecting, gated to the rotation) — is designed in
+//! `docs/deos/COMMIT-BINDS-MMR.md`.
 
 use serde::{Deserialize, Serialize};
 

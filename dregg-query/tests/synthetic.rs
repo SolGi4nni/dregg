@@ -538,3 +538,258 @@ fn attested_slice_dense_index_binding() {
         Err(AttestError::DenseIndex { slot: 3, .. })
     ));
 }
+
+// =====================================================================
+// Richer EDB: burned / field / lifecycle / created facts
+// =====================================================================
+
+/// A chain exercising every new effect family: a cell birth, two burns of the
+/// same asset, a state-field write, and a lifecycle seal.
+fn rich_chain() -> Vec<ReceiptRecord> {
+    vec![
+        record(
+            0,
+            1,
+            "alice",
+            vec![EffectSummary::Created {
+                agent: "alice".into(),
+                cell: "vault".into(),
+            }],
+        ),
+        record(
+            1,
+            2,
+            "alice",
+            vec![EffectSummary::Burned {
+                cell: "vault".into(),
+                asset: "gold".into(),
+                amount: 30,
+            }],
+        ),
+        record(
+            2,
+            3,
+            "alice",
+            vec![EffectSummary::Burned {
+                cell: "vault".into(),
+                asset: "gold".into(),
+                amount: 70,
+            }],
+        ),
+        record(
+            3,
+            4,
+            "alice",
+            vec![EffectSummary::Field {
+                cell: "vault".into(),
+                index: 2,
+                value: "deadbeef".into(),
+            }],
+        ),
+        record(
+            4,
+            5,
+            "alice",
+            vec![EffectSummary::Lifecycle {
+                cell: "vault".into(),
+                state: "sealed".into(),
+            }],
+        ),
+    ]
+}
+
+#[test]
+fn rich_extraction_schema() {
+    let base = extract_facts(&rich_chain());
+    assert_eq!(base.with_pred(Pred::Created).count(), 1);
+    assert_eq!(base.with_pred(Pred::Burned).count(), 2);
+    assert_eq!(base.with_pred(Pred::Field).count(), 1);
+    assert_eq!(base.with_pred(Pred::Lifecycle).count(), 1);
+    assert!(base.iter().all(|f| f.well_formed()));
+
+    // A `field` write is queryable by slot index.
+    let q = Query::new().atom(
+        Pred::Field,
+        vec![
+            Term::sym("vault"),
+            Term::nat(2),
+            Term::var("V"),
+            Term::var("H"),
+        ],
+    );
+    let rows = eval(&base, &q).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["V"], Value::sym("deadbeef"));
+    assert_eq!(rows[0]["H"], Value::nat(4));
+}
+
+// =====================================================================
+// Q3: aggregation (group-by + count/sum/min/max)
+// =====================================================================
+
+#[test]
+fn aggregate_sum_groups_by_asset() {
+    let base = extract_facts(&rich_chain());
+    // ?- burned(Cell, Asset, Amt, _) GROUP BY Asset; sum(Amt) AS total, count AS n.
+    let q = Query::new()
+        .atom(
+            Pred::Burned,
+            vec![
+                Term::var("Cell"),
+                Term::var("Asset"),
+                Term::var("Amt"),
+                Term::Wild,
+            ],
+        )
+        .group_by(["Asset"])
+        .aggregate(AggOp::Sum, Some("Amt"), "total")
+        .aggregate(AggOp::Count, None::<String>, "n")
+        .aggregate(AggOp::Max, Some("Amt"), "biggest");
+    let rows = eval(&base, &q).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["Asset"], Value::sym("gold"));
+    assert_eq!(rows[0]["total"], Value::nat(100)); // 30 + 70
+    assert_eq!(rows[0]["n"], Value::nat(2));
+    assert_eq!(rows[0]["biggest"], Value::nat(70));
+}
+
+#[test]
+fn aggregate_global_count_no_group() {
+    let base = extract_facts(&rich_chain());
+    // ?- burned(...); count AS n. — one global row.
+    let q = Query::new()
+        .atom(
+            Pred::Burned,
+            vec![Term::Wild, Term::Wild, Term::var("A"), Term::Wild],
+        )
+        .aggregate(AggOp::Count, None::<String>, "n")
+        .aggregate(AggOp::Min, Some("A"), "smallest");
+    let rows = eval(&base, &q).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["n"], Value::nat(2));
+    assert_eq!(rows[0]["smallest"], Value::nat(30));
+}
+
+#[test]
+fn aggregate_grades_finalized_dependent() {
+    // Aggregation is the second non-monotone operator: the value moves under
+    // append (the sum grows as more burns arrive), so the query is
+    // finalized-dependent even though every atom is monotone.
+    let q = Query::new()
+        .atom(
+            Pred::Burned,
+            vec![Term::Wild, Term::var("Asset"), Term::var("Amt"), Term::Wild],
+        )
+        .group_by(["Asset"])
+        .aggregate(AggOp::Sum, Some("Amt"), "total");
+    let c = classify(&q);
+    assert_eq!(c.class, CoordinationClass::FinalizedDependent);
+    assert!(c.reasons[0].contains("aggregate"));
+}
+
+#[test]
+fn group_by_only_is_a_monotone_projection() {
+    // group_by with NO aggregates is DISTINCT projection — still monotone.
+    let base = extract_facts(&rich_chain());
+    let q = Query::new()
+        .atom(
+            Pred::Burned,
+            vec![
+                Term::var("Cell"),
+                Term::var("Asset"),
+                Term::Wild,
+                Term::Wild,
+            ],
+        )
+        .group_by(["Asset"]);
+    assert!(classify(&q).is_monotone());
+    let rows = eval(&base, &q).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["Asset"], Value::sym("gold"));
+    assert!(!rows[0].contains_key("Cell")); // projected away
+}
+
+#[test]
+fn aggregate_validation_rejects_bad_shapes() {
+    let base = extract_facts(&rich_chain());
+    // Sum without an arg.
+    let q = Query::new()
+        .atom(
+            Pred::Burned,
+            vec![Term::Wild, Term::var("Asset"), Term::var("Amt"), Term::Wild],
+        )
+        .aggregate(AggOp::Sum, None::<String>, "total");
+    assert!(matches!(
+        eval(&base, &q),
+        Err(QueryError::AggMissingArg { op: AggOp::Sum })
+    ));
+    // Output column collides with a positive variable.
+    let q = Query::new()
+        .atom(
+            Pred::Burned,
+            vec![Term::Wild, Term::var("Asset"), Term::var("Amt"), Term::Wild],
+        )
+        .aggregate(AggOp::Sum, Some("Amt"), "Amt");
+    assert!(matches!(eval(&base, &q), Err(QueryError::AggCollision(_))));
+    // Numeric aggregate over a symbol fails closed.
+    let q = Query::new()
+        .atom(
+            Pred::Burned,
+            vec![Term::Wild, Term::var("Asset"), Term::var("Amt"), Term::Wild],
+        )
+        .aggregate(AggOp::Sum, Some("Asset"), "bad");
+    assert!(matches!(eval(&base, &q), Err(QueryError::AggType { .. })));
+}
+
+/// The certificate teeth bite over the AGGREGATE surface: an attested sum
+/// verifies over the whole log, a tampered aggregate row is caught by
+/// re-derivation, and an omitted burn receipt cannot produce a verifying
+/// certificate (so the sum cannot be quietly understated).
+#[test]
+fn attested_aggregate_teeth_bite() {
+    let receipts = rich_chain();
+    let trusted_root = mmr_of(&receipts).root();
+    let slice = attested_slice(&receipts, 0, 4);
+
+    let q = Query::new()
+        .atom(
+            Pred::Burned,
+            vec![Term::Wild, Term::var("Asset"), Term::var("Amt"), Term::Wild],
+        )
+        .group_by(["Asset"])
+        .aggregate(AggOp::Sum, Some("Amt"), "total");
+
+    let ans = answer_whole_log(slice, q.clone()).unwrap();
+    assert_eq!(ans.rows.len(), 1);
+    assert_eq!(ans.rows[0]["total"], Value::nat(100));
+    // Aggregation ⇒ finalized-dependent, fresh as of the head height.
+    assert!(!ans.classification.is_monotone());
+    assert_eq!(ans.fresh_as_of, 5);
+    ans.verify(&Blake3Mmr, &trusted_root).unwrap();
+
+    // Tamper the aggregate value: re-derivation catches it.
+    let mut lying = ans.clone();
+    lying.rows[0].insert("total".into(), Value::nat(30));
+    assert!(matches!(
+        lying.verify(&Blake3Mmr, &trusted_root),
+        Err(AttestError::RowsMismatch)
+    ));
+
+    // Hide a burn (position 2, the 70-unit burn) to understate the sum: the
+    // re-indexed slice opens only against the server's OWN root, not trusted.
+    let mut hidden: Vec<ReceiptRecord> = receipts
+        .iter()
+        .filter(|r| r.chain_index != 2)
+        .cloned()
+        .collect();
+    for (i, r) in hidden.iter_mut().enumerate() {
+        r.chain_index = i as u64;
+    }
+    let forged = attested_slice(&hidden, 0, 3);
+    let understated = answer_whole_log(forged, q).unwrap();
+    assert_eq!(understated.rows[0]["total"], Value::nat(30)); // the lie
+    assert!(matches!(
+        understated.verify(&Blake3Mmr, &trusted_root),
+        Err(AttestError::UntrustedRoot)
+    ));
+}

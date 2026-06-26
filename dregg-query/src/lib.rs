@@ -18,7 +18,8 @@
 //! ## Layout
 //!
 //! - [`fact`] — the EDB schema: `created` / `transfer` / `balance` /
-//!   `granted` / `revoked`, height-stamped, append-only.
+//!   `granted` / `revoked` / `burned` / `field` / `lifecycle`, height-stamped,
+//!   append-only.
 //! - [`receipt`] — the receipt row consumed (node wire mirror + offline
 //!   `Vec<ReceiptRecord>` mode) and fact extraction.
 //! - [`query`] — terms / atoms / filters / safe negation + the nested-loop
@@ -61,5 +62,5 @@ pub use attested::{
 pub use classify::{Classification, CoordinationClass, classify};
 pub use fact::{Fact, FactBase, Height, Pred, Value};
 pub use mmr::{Blake3Mmr, Mmr, MmrError, MmrHasher, Peak, RangeOpening, verify_range};
-pub use query::{Atom, Bindings, CmpOp, Filter, Query, QueryError, Term, eval};
+pub use query::{AggOp, Aggregate, Atom, Bindings, CmpOp, Filter, Query, QueryError, Term, eval};
 pub use receipt::{EffectSummary, ReceiptRecord, extract_facts};
