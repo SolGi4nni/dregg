@@ -35,6 +35,11 @@ mod db;
 // embeds (the REAL `TranscludedField` live quote), and `dregg://` what-links-here
 // (the REAL `Backlinks`/`Membrane`). Built on `starbridge-web-surface`.
 pub mod deos_surface;
+// The deos-desktop ↔ bot drive seam: a desktop surface POSTs a `BotOp` to the bot's
+// HTTP surface (`POST /api/op`); the bot builds + signs + submits the SAME real dregg
+// turn the Discord command would, records the SAME activity, and can reflect it to
+// Discord — desktop + Discord as two faces of one dregg-driven bot.
+pub mod deos_drive;
 mod devnet;
 pub mod discord_caps;
 mod embeds;
@@ -44,10 +49,19 @@ mod embeds;
 pub mod identity_proof;
 pub mod intent_flow;
 pub mod presence;
+/// The bot's command surface published as a typed, cap-gated service-cell
+/// `InterfaceDescriptor`, driven through the `invoke()` front door (the modern
+/// service-cell face, mirroring the `starbridge-nameservice` citizen).
+pub mod service;
 
 // Production HTTP read surface (§4.7) — axum + tower middlewares, graceful shutdown,
 // SSE, CellStateView-compatible responses, reuses devnet/captp/db/NullifierSet.
 mod http_server;
+
+// The interactive ViewNode loop inside Discord: a `deosturn:<turn>:<arg>` button press →
+// a REAL cap-gated verified dregg turn → the card embed re-renders from the new committed
+// state (the interactive half of the `deos_view` Discord backend, `69e15322`).
+pub mod viewnode_applet;
 
 use std::sync::Arc;
 
@@ -116,6 +130,8 @@ const REGISTERED_COMMAND_NAMES: &[&str] = &[
     "handoff-status",
     // ─── deos surface inside Discord (cap-gated affordance buttons + transclusion) ─
     "deos",
+    // ─── interactive ViewNode card (buttons fire real verified turns) ───────────
+    "card",
 ];
 
 #[cfg(test)]
@@ -146,6 +162,11 @@ pub struct BotState {
     /// `dregg_captp::handoff::HandoffCertificate` artifacts (target swiss
     /// table + trusted introducer set). See `handoff_flow.rs`.
     pub handoff_broker: Mutex<handoff_flow::HandoffBroker>,
+    /// The per-(user, card) registry of live embedded card applets — the in-process
+    /// substance the interactive ViewNode loop drives. A `deosturn:` button press fires
+    /// a real cap-gated verified turn on the pressing user's card and re-renders it
+    /// (`viewnode_applet`).
+    pub card_applets: viewnode_applet::CardApplets,
 }
 
 /// The main event handler for Discord gateway events.
@@ -222,6 +243,8 @@ impl EventHandler for Handler {
             commands::handoff::register_status(),
             // ─── deos surface inside Discord ────────────────────────────────
             commands::deos::register(),
+            // ─── interactive ViewNode card ──────────────────────────────────
+            commands::card::register(),
         ];
         debug_assert_eq!(commands.len(), REGISTERED_COMMAND_NAMES.len());
 
@@ -332,15 +355,22 @@ impl EventHandler for Handler {
                 "intent" => commands::intent::handle(&ctx, &command, &self.state).await,
                 "bounty" => commands::bounty::handle(&ctx, &command, &self.state).await,
                 "deos" => commands::deos::handle(&ctx, &command, &self.state).await,
+                "card" => commands::card::handle(&ctx, &command, &self.state).await,
                 _ => {
                     tracing::warn!("Unknown command: {name}");
                 }
             }
         } else if let Interaction::Component(component) = interaction {
-            // Route `deos:`-prefixed component presses (cap-gated affordance
-            // buttons) to the deos handler, which RE-RUNS the cap gate; everything
-            // else is the dashboard's.
-            if component.data.custom_id.starts_with("deos:") {
+            // Route component presses by custom-id prefix:
+            //   `deosturn:<turn>:<arg>` — a ViewNode card affordance: fire it as a REAL
+            //     cap-gated verified turn and re-render the card (the interactive loop);
+            //   `deos:<hex8>:<affordance>` — a cap-gated deos-surface button: RE-RUN the
+            //     cap gate in the deos handler;
+            //   everything else is the dashboard's.
+            let custom_id = &component.data.custom_id;
+            if custom_id.starts_with("deosturn:") {
+                viewnode_applet::handle_deosturn_component(&ctx, &component, &self.state).await;
+            } else if custom_id.starts_with("deos:") {
                 commands::deos::handle_component(&ctx, &component, &self.state).await;
             } else {
                 commands::dashboard::handle_component(&ctx, &component, &self.state).await;
@@ -525,6 +555,7 @@ async fn main() {
         handoff_broker: Mutex::new(handoff_flow::HandoffBroker::new(dregg_captp::FederationId(
             federation_id_bytes,
         ))),
+        card_applets: viewnode_applet::CardApplets::new(),
     });
 
     // §4.7 Production HTTP read surface (Starbridge RemoteRuntime + humans).

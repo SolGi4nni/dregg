@@ -21,6 +21,10 @@ pub mod transfer;
 // ─── CapTP integration commands ─────────────────────────────────────────────
 pub mod bounty;
 pub mod captp;
+// `/card` — the interactive ViewNode card inside Discord: its buttons fire real
+// cap-gated verified dregg turns and the embed re-renders from the new committed state
+// (`crate::viewnode_applet`).
+pub mod card;
 pub mod dashboard;
 // The deos surface inside Discord — cap-gated affordance buttons (progressive
 // attenuation), live transclusion into embeds, and dregg:// what-links-here.
