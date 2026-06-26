@@ -64,7 +64,7 @@ proven to identical canonical digests.
 | **persistence / Store** (deltas-since-watermark) | Ledger + receipt-index MMR + snapshot/ship; `AttestedSlice` coverage (`dregg-query/src/attested.rs`) | **metabolized + one-bettered.** MMR range-opening is a proof-carrying "deltas since watermark"; rhizomatic's append-idempotent log is the same shape *without* the non-omission proof. |
 | **federation = publish ∩ subscribe**; privacy = published-query relevance closure (default-deny, but **irrevocable** grow-only, SPEC-6 §7) | capabilities — default-deny by cap, cryptographic, **revocable at settlement** (`metatheory/Metatheory/SettlementSoundness.lean`); the branch-and-stitch lens is itself a Pred/query; the CALM classifier grades published queries | **dregg already answers stronger.** dregg's privacy perimeter is the *capability*, not a query closure, and dregg's revocation is settlement-live where rhizomatic candidly admits it cannot un-send. The "lens = query, publish ∩ subscribe" framing is convergent and already expressible over dregg-query; it needs no import. |
 | **Chorus** = agent memory on the substrate | the umem-as-primitive epoch + the agent-memory revolution (`turn/src/umem.rs`; `deos-hermes/tests/agent_memory_as_umem.rs`) | **convergent evolution, already metabolized independently.** Both projects built agent memory on their own substrate; dregg's is a *witnessed* portable projection (`UProjection`) with per-cell heaps and continuity proofs. |
-| **SPEC-9 alias** = accountable, deterministic, negatable **semantic convergence**, fuzzy match exiled to a derived author | dregg's stance matches *exactly* — the camera is blind to caveats; `witnessed(vk)` is the derived author *with a proof attached* (the memory's "derived-author homolog") — **but there is no load-bearing surface for it yet.** dregg identifiers are content-derived (asset = issuer-cell Σδ=0; caps content-addressed; cell ids canonical), so vocabulary **drift mostly vanishes at the identity layer**. | **the one genuinely-new idea dregg has not metabolized.** Not-yet-ready: its only real surface (open *human concept* vocabulary above a content-derived substrate) lives in the agent-memory / concept layer, not the kernel. Scoped below. |
+| **SPEC-9 alias** = accountable, deterministic, negatable **semantic convergence**, fuzzy match exiled to a derived author | dregg's stance matches *exactly* — the camera is blind to caveats; `witnessed(vk)` is the derived author *with a proof attached* (the memory's "derived-author homolog"). dregg identifiers are content-derived (asset = issuer-cell Σδ=0; caps content-addressed; cell ids canonical), so vocabulary **drift mostly vanishes at the identity layer**. | **metabolized + one-bettered (formal gate proven).** The concept-layer `aliased` closure now lives at `metatheory/Dregg2/Confluence/SemanticConvergence.lean`: grow-only `mapping(name,slot,frag,by)` + a one-hop closure that is **monotone-mod-negation** and, in the no-negation fragment, exactly `Confluence.Tier1Eligible` — the *same* gate as a G-Set (`aliasedRaw_tier1`). Content-derived identity **discharges the same-entity case** (`sameEntity_dedup_by_content`), so dregg carries only the same-concept half. The one-better: a `trust`-gated mapping demands `witnessed(vk)` — a proof-carrying judge decidable over `Pred`, which only ever *narrows* aliasing (`trustedReach_subset`). `#assert_axioms`-clean. |
 
 ### Headline
 
@@ -72,8 +72,12 @@ The bulk of the new upstream work is **application-layer** (Chorus) or is
 something dregg already proves a **stronger** version of: merge → I-confluence-
 gated (`Confluence.lean`), read → MMR-attested (`dregg-query`), persistence →
 MMR range opening, privacy → capabilities + settlement-live revocation. The
-single genuinely-new *idea* worth metabolizing is **accountable semantic
-convergence (SPEC-9)** — and dregg can metabolize it one-better than the source.
+single genuinely-new *idea* worth metabolizing was **accountable semantic
+convergence (SPEC-9)** — and dregg metabolized it one-better than the source:
+the formal gate is proven (`Dregg2/Confluence/SemanticConvergence.lean`,
+`#assert_axioms`-clean), `aliased`-in-the-monotone-fragment *is* `Tier1Eligible`,
+and the judge is proof-carrying (decidable over `Pred`, accountable-never-amplifying)
+where rhizomatic's is a bare keypair with fuzzy matching exiled to a derived author.
 
 ## Why SPEC-9 is the metabolize target, and why content-addressing makes it *small*
 
@@ -128,7 +132,34 @@ means:
    coordination-free), and content-derived identity discharges the same-entity
    case so dregg need only carry the same-concept half.
 
-Until that formal half exists, SPEC-9 stays **named, not built** — a labelled
-target with its closure lane, in the project's own idiom. Everything else
-rhizomatic shipped this cycle is already metabolized in dregg, frequently with a
-proof rhizomatic does not carry.
+### The formal half — DONE (`Dregg2/Confluence/SemanticConvergence.lean`)
+
+The proof obligation above is discharged. The module (`#assert_axioms`-clean,
+`#eval` non-vacuity, in the default `lake build` target via the root anchor):
+
+- **`Mapping (name, slot, frag, auth, vk, proof)`** + a `Store` of grow-only
+  `asserted` / `negated` finsets; `survivors = asserted \ negated` is exactly the
+  `mask(negation)` semantics of `dregg-query/src/classify.rs`.
+- **`reach` / `aliased`** — the one-hop closure (`name → slot → frag`, no
+  transitivity). Decidable by construction (a bounded `Finset` existential):
+  convergence is *decided*, never fuzzy.
+- **Monotone-mod-negation** — `aliased_mono` (append asserted ⇒ aliasing only
+  grows). In the no-negation fragment `aliasedRaw` is `Confluence.IConfluent` and
+  hence `Tier1Eligible` (`aliasedRaw_tier1`) — *the same static gate a G-Set
+  passes*. The CALM classifier is reused verbatim (`classifyAliased`,
+  `classify_sound`); both polarities are witnessed concretely (`append_creates_alias`
+  / `negation_retracts` — negation is the single non-monotone reason).
+- **Content-derived identity discharges same-entity** — `sameEntity_dedup_by_content`:
+  mappings agreeing on the fields and sharing a content id (injective `idOf`) are
+  *literally equal*, so a G-Set union already converges them. dregg carries only
+  the same-concept half.
+- **The one-better — a proof-carrying judge** — a `trust`-gated `witnessed verify m`
+  (decidable, `verify` a *parameter* not an `axiom`). `trustedReach_subset` proves
+  trust-gating only ever *narrows* aliasing (accountable, never amplifies); it stays
+  `Tier1Eligible` (`aliasedTrustedRaw_tier1`); `trust_gate_both_polarities` shows a
+  forged judge EXCLUDED and a witnessed one INCLUDED.
+
+Where it lives: the umem/concept layer — **not** dregg-query's closed EDB, **not**
+any kernel effect / `sel::*` / VK column. Everything else rhizomatic shipped this
+cycle is already metabolized in dregg, frequently with a proof rhizomatic does not
+carry; SPEC-9 now joins them, with its own.
