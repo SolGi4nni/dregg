@@ -172,6 +172,28 @@ use dregg_dfa::{GovernedRouter, KindRegistry, RouteTable, RouteTableBuilder, Rou
 use dregg_turn::action::WitnessBlob;
 use dregg_turn::executor::{single_member_authorized_root, single_member_membership_proof};
 
+// The five modern app-framework axes this app demonstrates (the unified template):
+//   - AX1/AX2 — the FactoryDescriptor + DeosApp composition surface (this file:
+//     `governance_factory_descriptor`, `governance_app`, `register` / `register_deos`,
+//     the gated propose/vote fires — the deos seam, `tests/deos_seam.rs`);
+//   - AX3 — the SERVICE-CELL `invoke()` front door (typed `InterfaceDescriptor` +
+//     method dispatch over the propose → vote → commit lifecycle — `service`,
+//     `tests/service.rs`);
+//   - AX4 — the deos-view CARD (a renderer-independent `deos.ui.*` view-tree — `card`);
+//   - AX5 — the `Reactor` (the reactive twin of `invoke()`): the EVENT-DRIVEN
+//     vote→commit step, where a quorum of votes auto-fires the route-table swap
+//     (`reactor`).
+
+/// AX4 — the deos-view CARD: the app's UI as a renderer-independent `deos.ui.*`
+/// view-tree.
+pub mod card;
+/// AX5 — the `Reactor`: the quorum auto-committer (the reactive twin of `invoke()`),
+/// watching the namespace for committed votes and firing the swap at threshold.
+pub mod reactor;
+/// AX3 — the CELLS-AS-SERVICE-OBJECTS face: a typed `InterfaceDescriptor` + `invoke()`
+/// method dispatch over the propose → vote → commit governance lifecycle.
+pub mod service;
+
 // =============================================================================
 // Slot layout
 // =============================================================================
