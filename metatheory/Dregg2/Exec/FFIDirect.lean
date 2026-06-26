@@ -505,7 +505,13 @@ contract), so the C side iterates each list by length + index. -/
 
 `execDirect` on the parsed `(host,state,turn)` of a wire produces the SAME `(state, loglen, status)`
 the JSON `execFullForestAuthStep` re-encodes — proof the two share one core. We compare on the
-re-encoded post-state string (no `BEq` on `WState`) + loglen + status code. -/
+re-encoded post-state string (no `BEq` on `WState`) + loglen + status code + teaching `reason`.
+
+The wire carries a teaching `reason` (the `AdmissionReason.reasonCode` of the FIRST failing prologue
+gate, `0` when the turn was admitted — see `encodeWStatusReasonOut`). It is a pure function of the
+prologue-admission inputs `(ctx, hdr, s0)`, NOT of the exec path, so we recompute it here EXACTLY as
+`execFullForestAuthStep` does and re-encode the direct result with it — the differential then asserts
+the two paths agree on the full reason-bearing wire, not just the exec core. -/
 
 private def directMatchesJson (input : String) : Bool :=
   match parseWWire input with
@@ -513,11 +519,18 @@ private def directMatchesJson (input : String) : Bool :=
   | some w =>
       let r := execDirect w.host w.state w.turn
       let jsonOut := execFullForestAuthStep input
-      let directOut := encodeWStatusOut r.state r.loglen
+      -- The teaching reason is computed from the same prologue-admission inputs the JSON path uses.
+      let s0 : RecChainedState := { kernel := stateOfWState w.state, log := [] }
+      let ctx := admCtxOfHost w.host
+      let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
+                    w.turn.validUntil w.turn.prevHash
+      let reason := AdmissionReason.reasonCode (AdmissionReason.admissionReason ctx hdr s0)
+      let directOut := encodeWStatusReasonOut r.state r.loglen
         (match r.status with
          | 2 => TurnStatus.bodyCommitted
          | 1 => TurnStatus.prologueCommittedBodyFailed
          | _ => TurnStatus.rejected)
+        reason
       directOut == jsonOut
 
 -- the genuine-credential gated demo: direct == JSON (both commit, identical post-state):
