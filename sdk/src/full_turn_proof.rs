@@ -2655,46 +2655,6 @@ fn prove_effect_vm_cap_open(
     // is irrelevant; concatenating yields one heap per distinct tree the descriptor opens.
     let all_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> =
         cap_write_heaps.into_iter().chain(accounts_heaps).collect();
-    if std::env::var("DBG_CAPWRITE").is_ok() {
-        use dregg_circuit::descriptor_ir2::{VmConstraint2, eval_lean_expr, fill_chip_lanes};
-        use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
-        let z = BabyBear::ZERO;
-        let n = trace.len();
-        let mut rows: Vec<Vec<BabyBear>> = trace.to_vec();
-        for r in &mut rows {
-            fill_chip_lanes(&desc, r);
-        }
-        eprintln!(
-            "DBG key={effective_key} width={} rows={}",
-            trace[0].len(),
-            n
-        );
-        // Walk every JSON constraint; evaluate gate/transition/boundary on row 0 (and 0->1).
-        for (ci, k) in desc.constraints.iter().enumerate() {
-            let bad = match k {
-                VmConstraint2::Base(VmConstraint::Gate(b)) => {
-                    // transition gate fires rows 0..n-2
-                    Some(eval_lean_expr(b, &rows[0]))
-                }
-                VmConstraint2::Base(VmConstraint::Transition { hi, lo }) => {
-                    use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE};
-                    let nn = rows[1.min(n - 1)][STATE_BEFORE_BASE + hi];
-                    let ll = rows[0][STATE_AFTER_BASE + lo];
-                    Some(nn - ll)
-                }
-                VmConstraint2::Base(VmConstraint::Boundary {
-                    row: VmRow::First,
-                    body,
-                }) => Some(eval_lean_expr(body, &rows[0])),
-                _ => None,
-            };
-            if let Some(v) = bad {
-                if v != z {
-                    eprintln!("DBG VIOLATED json#{ci} = {} :: {:?}", v.as_u32(), k);
-                }
-            }
-        }
-    }
     let proof = prove_vm_descriptor2(
         &desc,
         &trace,
@@ -5314,47 +5274,47 @@ mod tests {
             "a cap permitting a DIFFERENT effect (grant, not transfer) MUST be refused (fail-closed)"
         );
 
-        // NEGATIVE #2 (the GENERAL SUBMASK facet gate BITES IN-CIRCUIT): hand-build a CapOpenWitness
-        // whose leaf facet is the wrong effect bit, BYPASSING the build/from_membership facet pin (its
-        // root still recomposes, so `widen_to_cap_open`'s recompose check passes). The LIVE
-        // `transferCapOpenEffVmDescriptor2R24` descriptor's `effBitGateFor` pins effBit ==
+        // NEGATIVE #2 (the GENERAL SUBMASK facet gate BITES AT THE DEPLOYED VERIFIER): hand-build a
+        // CapOpenWitness whose leaf facet is the wrong effect bit, BYPASSING the build/from_membership
+        // facet pin (its root still recomposes, so `widen_to_cap_open`'s recompose check passes). The
+        // LIVE `transferCapOpenTBVmDescriptor2R24` descriptor's `effBitGateFor` pins effBit ==
         // EFFECT_TRANSFER (= 2) while the submask gate forces `(effBit & full_mask) == effBit` — and a
-        // grant-only leaf (`mask_lo = 4`, bit 2) has `(2 & 4) == 0 != 2`, so it is UNSAT and the proof
-        // FAILS. The genuine in-circuit bite of the general submask facet (residual (a)): not the
-        // constant transfer pin, but the decoded `(EFFECT_TRANSFER & mask) == EFFECT_TRANSFER`.
-        let mut wrong_leaf = chosen;
-        wrong_leaf[3] = BabyBear::new(EFFECT_GRANT); // mask_lo = grant, not transfer
-        let mut wsib = [BabyBear::ZERO; 16];
-        let mut wdir = [0u8; 16];
-        wsib.copy_from_slice(&open.siblings);
-        wdir.copy_from_slice(&open.directions);
-        // recompute the root for the tampered leaf so the recompose self-check passes.
-        let wrong_w = {
-            let mut w = CapOpenWitness {
-                leaf: wrong_leaf,
-                siblings: wsib,
-                directions: wdir,
-                cap_root: BabyBear::ZERO,
-                src: wrong_leaf[1],
-                eff_bit: WRITE_MASK_LO, // the transfer descriptor pins effBit == EFFECT_TRANSFER
-            };
-            w.cap_root = w.recomposes();
-            w
-        };
-        // Build the transfer base + widen with the wrong-facet appendix directly, then prove — the
-        // facetEffGate/effBitGate must reject it. An UNSAT trace makes `prove_vm_descriptor2`'s
-        // constraint check FAIL (it panics on unsatisfied constraints rather than returning Err), so
-        // we catch_unwind: a panic OR an Err both count as "rejected in-circuit".
-        // Suppress the expected unsatisfied-constraint panic's backtrace noise during the negative.
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let in_circuit_rejected = std::panic::catch_unwind(|| {
+        // grant-only leaf (`mask_lo = 4`, bit 2) has `(2 & 4) == 0 != 2`, so the trace is UNSAT.
+        //
+        // We feed the FORGED proof to the DEPLOYED WIRE VERIFIER and assert it REJECTS — the real
+        // soundness boundary (STARK soundness), end to end. In DEBUG the IR-v2 prover's constraint
+        // self-check (`#[cfg(debug_assertions)]`) panics before emitting a proof, so there is no proof
+        // to verify; the verifier-rejection arm is therefore release-only (mirroring
+        // `circuit::plonky3_forged_parent_rejected`). Release is the point: the forged proof actually
+        // reaches the live verifier and is rejected.
+        #[cfg(not(debug_assertions))]
+        {
             use dregg_circuit::descriptor_ir2::{
                 MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
+                verify_vm_descriptor2,
             };
             use dregg_circuit::effect_vm::trace_rotated::{
                 RotatedBlockWitness, cap_open_tb_dpis, generate_rotated_effect_vm_trace,
                 transfer_caveat_manifest, widen_to_cap_open_tb,
+            };
+            let mut wrong_leaf = chosen;
+            wrong_leaf[3] = BabyBear::new(EFFECT_GRANT); // mask_lo = grant, not transfer
+            let mut wsib = [BabyBear::ZERO; 16];
+            let mut wdir = [0u8; 16];
+            wsib.copy_from_slice(&open.siblings);
+            wdir.copy_from_slice(&open.directions);
+            // recompute the root for the tampered leaf so the recompose self-check passes.
+            let wrong_w = {
+                let mut w = CapOpenWitness {
+                    leaf: wrong_leaf,
+                    siblings: wsib,
+                    directions: wdir,
+                    cap_root: BabyBear::ZERO,
+                    src: wrong_leaf[1],
+                    eff_bit: WRITE_MASK_LO, // the transfer descriptor pins effBit == EFFECT_TRANSFER
+                };
+                w.cap_root = w.recomposes();
+                w
             };
             // #225: the LIVE transfer cap-open is the TURN-BOUND descriptor (409 wide, 41 PIs).
             let json =
@@ -5370,17 +5330,18 @@ mod tests {
             let src = wrong_w.src;
             widen_to_cap_open_tb(&mut trace, &wrong_w, src, src).unwrap();
             let dpis = cap_open_tb_dpis(&dpis, src, src, src);
-            prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[]).is_ok()
-        })
-        .map(|ok| !ok) // proved OK ⇒ NOT rejected; we want rejected
-        .unwrap_or(true); // panicked (unsatisfied constraints) ⇒ rejected
-        std::panic::set_hook(prev_hook);
-        assert!(
-            in_circuit_rejected,
-            "the GENERAL facet gate (facetEffGate: mask_lo == effBit, effBit pinned EFFECT_TRANSFER) \
-             MUST reject a wrong-facet leaf IN-CIRCUIT — the cap-open authorizes the turn's ACTUAL \
-             effect, not just a constant transfer pin"
-        );
+            // Release: the prover emits a BOGUS proof for the UNSAT wrong-facet trace; the DEPLOYED
+            // verifier must reject it.
+            let forged =
+                prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
+                    .expect("release prover emits a (bogus) proof for the UNSAT wrong-facet trace");
+            assert!(
+                verify_vm_descriptor2(&desc, &forged, &dpis).is_err(),
+                "the GENERAL facet gate (facetEffGate: mask_lo == effBit, effBit pinned EFFECT_TRANSFER) \
+                 MUST make the DEPLOYED VERIFIER reject a wrong-facet leaf — the cap-open authorizes the \
+                 turn's ACTUAL effect, not just a constant transfer pin"
+            );
+        }
     }
 
     /// THE FAN-OUT (residual (a) closed for the 6 effects) — a cap-authorized `RevokeDelegation`
@@ -5545,37 +5506,43 @@ mod tests {
             "a cap permitting a DIFFERENT effect (transfer, not delegation) MUST be refused (fail-closed)"
         );
 
-        // NEGATIVE #2 (the GENERAL facet gate BITES IN-CIRCUIT): hand-build a CapOpenWitness whose
-        // leaf facet is the wrong bit (EFFECT_TRANSFER) but eff_bit is the route's (EFFECT_DELEGATION_OPS),
-        // bypassing the build pin. The descriptor's `effBitGateFor` pins effBit == EFFECT_DELEGATION_OPS
-        // while `facetEffGate` forces mask_lo == effBit — so the wrong-facet leaf is UNSAT.
-        let mut wrong_leaf = chosen;
-        wrong_leaf[3] = BabyBear::new(EFFECT_TRANSFER); // mask_lo = transfer, not delegation
-        let mut wsib = [BabyBear::ZERO; 16];
-        let mut wdir = [0u8; 16];
-        wsib.copy_from_slice(&built.siblings);
-        wdir.copy_from_slice(&built.directions);
-        let wrong_w = {
-            let mut w = CapOpenWitness {
-                leaf: wrong_leaf,
-                siblings: wsib,
-                directions: wdir,
-                cap_root: BabyBear::ZERO,
-                src: wrong_leaf[1],
-                eff_bit: EFFECT_DELEGATION_OPS, // the revoke descriptor pins effBit == DELEGATION_OPS
-            };
-            w.cap_root = w.recomposes();
-            w
-        };
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let in_circuit_rejected = std::panic::catch_unwind(|| {
+        // NEGATIVE #2 (the GENERAL facet gate BITES AT THE DEPLOYED VERIFIER): hand-build a
+        // CapOpenWitness whose leaf facet is the wrong bit (EFFECT_TRANSFER) but eff_bit is the route's
+        // (EFFECT_DELEGATION_OPS), bypassing the build pin. The descriptor's `effBitGateFor` pins effBit
+        // == EFFECT_DELEGATION_OPS while `facetEffGate` forces mask_lo == effBit — so the wrong-facet
+        // leaf is UNSAT.
+        //
+        // We feed the FORGED proof to the DEPLOYED WIRE VERIFIER and assert it REJECTS — the real
+        // soundness boundary (STARK soundness), end to end. In DEBUG the IR-v2 prover's constraint
+        // self-check (`#[cfg(debug_assertions)]`) panics before emitting a proof, so the
+        // verifier-rejection arm is release-only (mirroring `circuit::plonky3_forged_parent_rejected`).
+        #[cfg(not(debug_assertions))]
+        {
             use dregg_circuit::descriptor_ir2::{
                 MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
+                verify_vm_descriptor2,
             };
             use dregg_circuit::effect_vm::trace_rotated::{
                 RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
                 widen_to_cap_open,
+            };
+            let mut wrong_leaf = chosen;
+            wrong_leaf[3] = BabyBear::new(EFFECT_TRANSFER); // mask_lo = transfer, not delegation
+            let mut wsib = [BabyBear::ZERO; 16];
+            let mut wdir = [0u8; 16];
+            wsib.copy_from_slice(&built.siblings);
+            wdir.copy_from_slice(&built.directions);
+            let wrong_w = {
+                let mut w = CapOpenWitness {
+                    leaf: wrong_leaf,
+                    siblings: wsib,
+                    directions: wdir,
+                    cap_root: BabyBear::ZERO,
+                    src: wrong_leaf[1],
+                    eff_bit: EFFECT_DELEGATION_OPS, // the revoke descriptor pins effBit == DELEGATION_OPS
+                };
+                w.cap_root = w.recomposes();
+                w
             };
             let json = cap_open_descriptor_json_by_key("revokeCapOpenVmDescriptor2R24").unwrap();
             let desc = parse_vm_descriptor2(json).unwrap();
@@ -5588,17 +5555,18 @@ mod tests {
                 generate_rotated_effect_vm_trace(&initial, &effects, &before, &after, &caveat)
                     .unwrap();
             widen_to_cap_open(&mut trace, &wrong_w).unwrap();
-            prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[]).is_ok()
-        })
-        .map(|ok| !ok)
-        .unwrap_or(true);
-        std::panic::set_hook(prev_hook);
-        assert!(
-            in_circuit_rejected,
-            "the GENERAL facet gate (facetEffGate: mask_lo == effBit, effBit pinned EFFECT_DELEGATION_OPS) \
-             MUST reject a wrong-facet leaf IN-CIRCUIT for the revoke fan-out — the cap-open authorizes \
-             the turn's ACTUAL effect-kind only"
-        );
+            // Release: the prover emits a BOGUS proof for the UNSAT wrong-facet trace; the DEPLOYED
+            // verifier must reject it.
+            let forged =
+                prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
+                    .expect("release prover emits a (bogus) proof for the UNSAT wrong-facet trace");
+            assert!(
+                verify_vm_descriptor2(&desc, &forged, &dpis).is_err(),
+                "the GENERAL facet gate (facetEffGate: mask_lo == effBit, effBit pinned EFFECT_DELEGATION_OPS) \
+                 MUST make the DEPLOYED VERIFIER reject a wrong-facet leaf for the revoke fan-out — the \
+                 cap-open authorizes the turn's ACTUAL effect-kind only"
+            );
+        }
     }
 
     /// THE CAP-WRITE WRAPPER GENUINELY REQUIRES THE CAP-TREE WRITE WITNESS — it FAIL-CLOSES, it does
@@ -6257,27 +6225,27 @@ mod tests {
         );
     }
 
-    /// **THE CAP-WRITE LOOP — cap-root half CLOSED, ONE residual descriptor obstruction (nonce-freeze).**
-    /// A `RevokeDelegation` (a cap-tree REMOVE) with a GENUINE c-list witness routes to the
-    /// `revokeDelegationWriteCapOpenVmDescriptor2R24` WRITE wrapper (the re-point is ON), and the Rust
-    /// trace-gen is now ALIGNED to the fixed descriptor: the cap-root advances on the ROTATED-BLOCK limb
-    /// (descriptor vars 213→264, exactly as note-spend advances its nullifier accumulator), the v1-state
-    /// cap-root cols 65/87 are FROZEN pass-through (the `213 == 65` collision GONE), and the c-list heap is
-    /// threaded as the `map_op` witness (the genuine sorted-tree post-WRITE root computed; a wrong post-root
-    /// is UNSAT, `cap_write_revoke_forge_rejected`).
+    /// **THE CAP-WRITE LOOP — CLOSED on the WIDE DELEG-tree REMOVE leg.**
+    /// A `RevokeDelegation` (a DELEG-tree REMOVE) with a GENUINE c-list witness routes to the
+    /// `revokeDelegationWriteCapOpenVmDescriptor2R24` WRITE wrapper (the re-point is ON), proven on the WIDE
+    /// cap-open route (the key has a proven wide twin, so production + this test go wide): the cap-root
+    /// advances on the ROTATED-BLOCK limb (descriptor vars 213→264, exactly as note-spend advances its
+    /// nullifier accumulator), the v1-state cap-root cols 65/87 are FROZEN pass-through (the `213 == 65`
+    /// collision GONE), the c-list heap is threaded as the `map_op` witness (the genuine sorted-tree
+    /// post-WRITE root computed; a wrong post-root is UNSAT, `cap_write_revoke_forge_rejected`), and the
+    /// 8-felt (~124-bit) wide commit anchors are appended over the membership crown.
     ///
-    /// ⚑ ONE RESIDUAL DESCRIPTOR-EMIT OBSTRUCTION (metatheory, VK-affecting — NOT a producer-side gap, NOT a
-    /// trace-gen gap): the deployed `revokeDelegationWriteCapOpenVmDescriptor2R24` STILL carries a spurious
-    /// NONCE-FREEZE gate (`var78 == var56`, i.e. after.nonce == before.nonce) inherited from the
-    /// attenuate-family shape. But revoke is a nonce-TICK passthrough (after.nonce = before.nonce + 1), so
-    /// the gate is VIOLATED on every honest revoke — the IR-v2 prover's self-verify fails on this gate
-    /// (`check_constraints`, constraint #10 == the nonce-freeze gate, MEASURED: before.nonce(col 56)=0,
-    /// after.nonce(col 78)=1). The cap-root half of the descriptor fix is DONE (the 213→264 advance + the
-    /// 65/87 freeze both prove out, MEASURED); the nonce-freeze is the lone remaining gate to DROP (revoke
-    /// must tick, not freeze, the nonce). Until then the wrapper is UNPROVABLE for this structural reason,
-    /// NOT a faked witness — the prover REFUSES (no silent forge). When the descriptor drops the nonce-freeze
-    /// gate, this flips to the genuine prove+verify arm (the loop closes end-to-end). The cap-root advance is
-    /// confirmed correct by `cap_write_revoke_descriptor_after_root_is_map_op_defined_only`.
+    /// THE LAST WIDE GAP — the delegation-EPOCH tick — is CLOSED HERE (it was the `failed constraint #70`
+    /// the wide DELEG-REMOVE leg tripped on while the Update-on-deleg (refresh) and Remove-on-cap-tree
+    /// (revokeCapability) wide legs proved). A genuine revokeDelegation is EPOCH-BASED revocation: the
+    /// after-state BUMPS the delegation epoch (a cap stamped at the prior epoch goes stale). The wide
+    /// `revokeDelegationWriteCapOpenVmDescriptor2R24` UNIQUELY pins that tick on the rotated delegation-epoch
+    /// limb (pre_limb 30 = `epoch_felt`, descriptor cols 218→269, guarded by the revoke selector:
+    /// `after.epoch == before.epoch + 1`). The nonce-only after-cell FROZE the epoch and was UNSAT — so the
+    /// faithful witness here advances BOTH the nonce and the delegation epoch (`bump_delegation_epoch`), and
+    /// the leg PROVES + LIGHT-CLIENT-VERIFIES end-to-end. revokeCapability / refresh carry no epoch-tick gate
+    /// (their REMOVE/UPDATE wide legs prove with a frozen epoch — the source-of-truth distinction). The
+    /// cap-root advance is confirmed correct by `cap_write_revoke_descriptor_after_root_is_map_op_defined_only`.
     #[cfg(feature = "prover")]
     #[test]
     fn cap_write_revoke_proves_and_verifies_light_client() {
@@ -6362,6 +6330,17 @@ mod tests {
         };
         let mut after_cell = before_cell.clone();
         let _ = after_cell.state.increment_nonce();
+        // A genuine RevokeDelegation BUMPS the delegation epoch (epoch-based revocation — a cap stamped
+        // at the prior epoch goes stale). The wide `revokeDelegationWriteCapOpenVmDescriptor2R24` pins
+        // that tick on the rotated delegation-epoch limb (pre_limb 30 = `epoch_felt`, descriptor cols
+        // 218→269), guarded by the revoke selector: `after.epoch == before.epoch + 1`. So the faithful
+        // after-state must advance the epoch (the nonce-only after-cell FROZE it and was UNSAT — the
+        // honest revoke ticks BOTH the nonce and the delegation epoch). revokeCapability / refresh carry
+        // no epoch-tick gate, which is why their REMOVE/UPDATE wide legs prove with a frozen epoch.
+        assert!(
+            after_cell.state.bump_delegation_epoch(),
+            "the genuine revokeDelegation post-state advances the delegation epoch"
+        );
         let mut ledger = dregg_cell::Ledger::new();
         ledger.insert_cell(after_cell.clone()).unwrap();
         let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
@@ -6396,13 +6375,10 @@ mod tests {
         // FAILS — that is the honest signal the cap-WRITE post-root is NOT light-client-verifiable. A wrong
         // post-root is UNSAT (`cap_write_revoke_forge_rejected`), so a passing proof here IS the genuine
         // post-cap-root, bound on the wire.
-        // KNOWN-RED RESIDUAL (wide DELEG-tree-REMOVE prover gap): the `revokeDelegationWriteCapOpen` key
-        // has a wide twin in the registry, so the narrow 1-felt leg below is REJECTED by the wide-dodge
-        // tooth — yet the WIDE prove path for this DELEG-tree REMOVE is unsatisfiable (`constraints not
-        // satisfied on row 0: failed constraints = [#70]`), unlike the Update-on-deleg (refreshDelegation)
-        // and Remove-on-cap-tree (revokeCapability) wide legs that DO prove. So this test is red on both
-        // routes pending the wide DELEG-REMOVE carrier fix; the narrow route is kept here to surface the
-        // tooth-rejection rather than masking the real gap.
+        // PROVE on the WIDE route: the `revokeDelegationWriteCapOpen` key has a proven wide twin in the
+        // registry (so production goes wide; the narrow 1-felt leg is REJECTED by the wide-dodge tooth).
+        // The wide DELEG-tree REMOVE leg now proves — the after-state advances the delegation epoch above,
+        // satisfying the epoch-tick gate the bare nonce-only after-cell froze (the former `#70` gap).
         let (proof, dpis) =
             prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None, true)
                 .expect(
@@ -6423,10 +6399,10 @@ mod tests {
     /// forge) — this is the guardrail the cap-WRITE axis rests on. (b) documents the CURRENT honest state:
     /// the authority-only revoke cap-open still PROVES + the light-client verifier ACCEPTS it (the
     /// post-cap-root is host-trusted — a NAMED residual). The verifier-half tooth that will FORCE the write
-    /// route (`is_forbidden_authority_only_cap_write_descriptor`) is GATED OFF until the write wrapper proves
-    /// (blocked on the descriptor's spurious nonce-freeze gate — see
-    /// `cap_write_revoke_proves_and_verifies_light_client`); it stays off so the honest revoke path is not
-    /// broken before its provable alternative exists.
+    /// route (`is_forbidden_authority_only_cap_write_descriptor`) remains GATED OFF as a deliberate verifier
+    /// policy step (a VK-epoch decision), NOT a prover blocker: the write wrapper now PROVES + verifies on the
+    /// wide DELEG-REMOVE leg (`cap_write_revoke_proves_and_verifies_light_client`), so the provable alternative
+    /// exists; flipping the tooth on is the separate forcing step.
     #[cfg(feature = "prover")]
     #[test]
     fn cap_write_revoke_forge_rejected() {
