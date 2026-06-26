@@ -30,9 +30,13 @@ silent soundness break") becomes a refinement THEOREM.
 
 `#assert_axioms` on the theorems here stays `⊆ {propext, Classical.choice,
 Quot.sound}`: the FRI floor enters as a typeclass HYPOTHESIS, never an `axiom`. No
-`sorry`; the not-yet-specified verifier sub-checks (the FRI fold, the per-query
-Merkle/quotient/logup checks) are carried as EXPLICIT record fields of `FriChecks`,
-to be specified week-by-week (the §5 roadmap), NOT faked.
+`sorry`. The verifier sub-checks are now ALL concrete: the FRI fold-chain + Merkle
+recompute (§1b), AND the per-table quotient / logup interaction bus / degree-bit / PoW
+checks (§3b `batchTablesCheck`/`queryPowCheck` — the `FriChecks.batchTables`/`queryPow`
+fields the prior lane parked are SPECIFIED, with proven reject-teeth). The
+`verifyAlgo → StarkSound` bridge (getting the verifier algorithm OUT of the apex's TCB)
+is `Dregg2.Circuit.FriVerifierBridge`; the REAL Poseidon2-w16 hash, KAT-validated
+bit-exact, is `Dregg2.Circuit.Poseidon2BabyBearW16`.
 
 Self-contained over an abstract field `F` + permutation `perm` + canonical
 projection `toNat` — no heavy imports, builds fast, mirrors how `Poseidon2Binding`
@@ -263,6 +267,28 @@ structure QueryOpening (F : Type) where
   index : Nat
   layers : List (LayerOpening F)
 
+/-- **A batched table's out-of-domain opening** — the per-table data the batch-STARK
+constraint check consumes (`verify_all_tables`/`p3_batch_stark::verify_batch`,
+`~/dev/plonky3-recursion/circuit-prover/src/batch_stark_prover.rs:1589`). For each of
+the batched AIRs (the three primitive tables Const/Public/Alu + the four NPO tables
+Poseidon2-w16 / Poseidon2-w24 / recompose / expose_claim) the verifier opens, at the
+Fiat-Shamir out-of-domain point `ζ`: the folded AIR constraint value `constraintEval`
+(the random-linear-combined constraint polynomial at the opened row pair `(ζ, ζ·g)`),
+the quotient opening `quotientAtZeta`, the claimed vanishing value `vanishingAtZeta`
+(`ζ^{2^degreeBits} − 1`), the table's `degreeBits` (and the VK-pinned
+`expectedDegreeBits` it must equal — the range-table `LIMB_BITS` pin), and this
+table's net contribution `logupCumSum` to the logup interaction bus. The soundness
+content: `constraintEval = vanishingAtZeta · quotientAtZeta` (the quotient identity —
+a tampered quotient fails it), `vanishingAtZeta + 1 = ζ^{2^degreeBits}` (the vanishing
+is genuinely recomputed, not trusted), and the bus sums to zero across tables. -/
+structure TableOpening (F : Type) where
+  degreeBits : Nat
+  expectedDegreeBits : Nat
+  constraintEval : F
+  quotientAtZeta : F
+  vanishingAtZeta : F
+  logupCumSum : F
+
 /-- The concrete FRI-core operations the verifier is parameterized by: the Poseidon2
 compression, and the arity-2 fold combine `beta x e0 e1 ↦ folded`. These are the two
 calibration points the transcript/arithmetic fixture pins (ETH-NATIVE-WRAP §3/§4);
@@ -364,6 +390,15 @@ structure BatchProofData (F : Type) where
   /-- The `expose_claim` table's exposed segment `[first_old, last_new, count,
   acc_0..acc_3]` — tooth 3 compares this to the carried publics. -/
   exposedSegment : List F
+  /-- The Fiat-Shamir out-of-domain point `ζ` (a singleton when present; the batch
+  constraint check opens every table here). Empty ⇒ malformed ⇒ REJECT. -/
+  oodPoint : List F := []
+  /-- The per-table out-of-domain openings the batch-STARK constraint check verifies
+  (Const/Public/Alu + the four NPO tables). -/
+  tableOpenings : List (TableOpening F) := []
+  /-- The grinding proof-of-work witness output (a singleton when present): its low
+  `query_proof_of_work_bits` bits must be zero. Empty ⇒ missing PoW ⇒ REJECT. -/
+  powWitness : List F := []
 
 /-- The public inputs the wrap carries: `[genesis_root, final_root, num_turns,
 chain_digest…]` (`ivc_turn_chain.rs:1296–1304`). Tooth 3 is `exposedSegment = this`. -/
@@ -565,6 +600,216 @@ theorem verifyAlgo_concrete_rejects_wrong_query_count [Inhabited F] [DecidableEq
   unfold verifyAlgo
   simp only [hfold, Bool.and_false, Bool.false_and]
 
+/-! ## 3b. The CONCRETE batch-STARK constraint checks — `batchTables` + `queryPow`.
+
+The two `FriChecks` fields the prior lane parked as opaque record stubs
+(`batchTables`, `queryPow`) are SPECIFIED here as real algorithms, closing the §5
+roadmap step 4. The batch-STARK verifier, at the Fiat-Shamir out-of-domain point `ζ`,
+for each batched AIR (`verify_all_tables` → `p3_batch_stark::verify_batch`,
+`batch_stark_prover.rs:1589`):
+
+  * recomputes the vanishing polynomial `Z_H(ζ) = ζ^{2^degreeBits} − 1` and checks the
+    QUOTIENT IDENTITY `C(ζ) = Z_H(ζ) · q(ζ)` — the folded AIR constraint at the OOD
+    point equals the vanishing times the opened quotient (a tampered quotient breaks
+    it); written `vanishingAtZeta + 1 = ζ^{2^degreeBits}` (semiring, no subtraction)
+    + `constraintEval = vanishingAtZeta · quotientAtZeta`;
+  * pins each table's `degreeBits` to the VK-expected value (the range-table
+    `LIMB_BITS` pin — `verify_vm_descriptor2` checks `degree_bits[byte] == LIMB_BITS`);
+  * checks the LOGUP INTERACTION BUS balances — the per-table cumulative sums net to
+    zero across all tables (`p3_lookup::logup::LogUpGadget`; sends = receives);
+  * checks the GRINDING PoW — the witness output's low `query_proof_of_work_bits` bits
+    are zero (`query_proof_of_work_bits = 16`).
+
+These are real Boolean functions of the proof data, parameterized by a `FieldArith`
+op bundle (the field `+`/`*`/`^`/`0`/`1`, mirroring how `FriCore` abstracts the
+Poseidon2 `compress` + the arity-2 `foldCombine` — this module imports nothing, so the
+ring ops are carried as a record, not a Mathlib typeclass). The soundness-relevant
+TEETH are proven: a tampered quotient, a wrong degree-bit, an unbalanced bus, and a
+failed/missing PoW each REJECT. They are NOT opaque verdicts and NOT `sorry`. -/
+
+/-- The field arithmetic the batch-table constraint check needs — the additive group
+`(add, zero)`, the multiplication `mul`, the powering `pow` (for the vanishing
+recompute `ζ^{2^db}`), and `one`. Carried as a record (the module is import-free),
+exactly as `FriCore` carries `compress`/`foldCombine`. -/
+structure FieldArith (F : Type) where
+  add : F → F → F
+  mul : F → F → F
+  pow : F → Nat → F
+  zero : F
+  one : F
+/-- The logup interaction-bus running sum: fold the per-table cumulative contributions
+through the field `add` (starting at `zero`). -/
+def busSum {F : Type} (A : FieldArith F) (ts : List (TableOpening F)) : F :=
+  (ts.map (fun t => t.logupCumSum)).foldr A.add A.zero
+
+/-- One table's out-of-domain check: the degree-bit pin, the vanishing recompute
+`Z_H(ζ)+1 = ζ^{2^db}`, and the quotient identity `C(ζ) = Z_H(ζ)·q(ζ)`. All hold. -/
+def tableOk {F : Type} [DecidableEq F] (A : FieldArith F) (ood : F) (t : TableOpening F) : Bool :=
+  decide (t.degreeBits = t.expectedDegreeBits)
+    && decide (A.add t.vanishingAtZeta A.one = A.pow ood (2 ^ t.degreeBits))
+    && decide (t.constraintEval = A.mul t.vanishingAtZeta t.quotientAtZeta)
+
+/-- **The concrete batch-table check.** Opens every table at the OOD point `ζ` (the
+proof's singleton `oodPoint`), runs each table's `tableOk`, and checks the bus sums to
+`zero`. A missing OOD point (malformed proof) REJECTS. -/
+def batchTablesCheck {F : Type} [DecidableEq F]
+    (A : FieldArith F) (proof : BatchProofData F) : Bool :=
+  match proof.oodPoint with
+  | [ood] => proof.tableOpenings.all (tableOk A ood)
+      && decide (busSum A proof.tableOpenings = A.zero)
+  | _ => false
+
+/-- **The concrete grinding-PoW check.** The witness output's low `powBits` bits must
+be zero (`rand & ((1<<powBits)−1) = 0`). A missing witness (no grinding) REJECTS. -/
+def queryPowCheck {F : Type} (toNat : F → Nat) (powBits : Nat) (proof : BatchProofData F) : Bool :=
+  match proof.powWitness with
+  | [w] => decide (toNat w % (2 ^ powBits) = 0)
+  | _ => false
+
+/-- **The fully-concrete `FriChecks` bundle**: the FRI query core (§1b) PLUS the
+specified batch-table constraint check and the grinding PoW. No remaining opaque
+record stub — every `verifyAlgo` sub-check is now a real algorithm. -/
+def fullChecks {F : Type} [DecidableEq F]
+    (core : FriCore F) (A : FieldArith F) (toNat : F → Nat) (powBits : Nat) : FriChecks F where
+  foldConsistent := (concreteFriChecks core).foldConsistent
+  merklePaths := (concreteFriChecks core).merklePaths
+  batchTables := fun proof _betas => batchTablesCheck A proof
+  queryPow := fun proof => queryPowCheck toNat powBits proof
+
+/-! ### The batch-check teeth (REAL, proven). -/
+
+/-- **Tampered-quotient tooth**: if the opened quotient does not satisfy the quotient
+identity `C(ζ) = Z_H(ζ)·q(ζ)`, the table REJECTS — a prover cannot forge the
+quotient. -/
+theorem tableOk_rejects_tampered_quotient {F : Type} [DecidableEq F]
+    (A : FieldArith F) (ood : F) (t : TableOpening F)
+    (h : t.constraintEval ≠ A.mul t.vanishingAtZeta t.quotientAtZeta) :
+    tableOk A ood t = false := by
+  unfold tableOk
+  rw [Bool.and_eq_false_iff]; right; exact decide_eq_false h
+
+/-- **Wrong-degree tooth**: a table whose declared `degreeBits` differs from the
+VK-expected value REJECTS (the range-table `LIMB_BITS` pin). -/
+theorem tableOk_rejects_wrong_degree {F : Type} [DecidableEq F]
+    (A : FieldArith F) (ood : F) (t : TableOpening F)
+    (h : t.degreeBits ≠ t.expectedDegreeBits) :
+    tableOk A ood t = false := by
+  unfold tableOk
+  rw [Bool.and_eq_false_iff]; left
+  rw [Bool.and_eq_false_iff]; left
+  exact decide_eq_false h
+
+/-- **Unbalanced-bus tooth**: if the logup cumulative sums do not net to `zero`, the
+batch check REJECTS — a prover cannot inject unmatched bus messages. -/
+theorem batchTablesCheck_rejects_unbalanced_bus {F : Type} [DecidableEq F]
+    (A : FieldArith F) (proof : BatchProofData F) (ood : F)
+    (hood : proof.oodPoint = [ood])
+    (hbus : busSum A proof.tableOpenings ≠ A.zero) :
+    batchTablesCheck A proof = false := by
+  unfold batchTablesCheck
+  rw [hood]
+  rw [Bool.and_eq_false_iff]; right
+  exact decide_eq_false hbus
+
+/-- **Tampered-quotient propagates to the batch check**: a single table whose quotient
+identity fails REJECTS the whole batch (`List.all` is false once any element is). -/
+theorem batchTablesCheck_rejects_tampered_quotient {F : Type} [DecidableEq F]
+    (A : FieldArith F) (proof : BatchProofData F) (ood : F)
+    (hood : proof.oodPoint = [ood]) (t : TableOpening F) (hmem : t ∈ proof.tableOpenings)
+    (h : t.constraintEval ≠ A.mul t.vanishingAtZeta t.quotientAtZeta) :
+    batchTablesCheck A proof = false := by
+  unfold batchTablesCheck
+  rw [hood]
+  rw [Bool.and_eq_false_iff]; left
+  rw [List.all_eq_false]
+  exact ⟨t, hmem, by rw [tableOk_rejects_tampered_quotient A ood t h]; decide⟩
+
+/-- **Missing-OOD tooth**: a proof with no out-of-domain point is malformed and the
+batch check REJECTS. -/
+@[simp] theorem batchTablesCheck_no_ood {F : Type} [DecidableEq F]
+    (A : FieldArith F) (proof : BatchProofData F)
+    (hood : proof.oodPoint = []) : batchTablesCheck A proof = false := by
+  unfold batchTablesCheck; rw [hood]
+
+/-- **Failed-PoW tooth**: a grinding witness whose low `powBits` bits are not zero
+REJECTS — the prover must have ground a valid nonce. -/
+theorem queryPowCheck_rejects_bad_pow {F : Type} (toNat : F → Nat) (powBits : Nat)
+    (proof : BatchProofData F) (w : F) (hw : proof.powWitness = [w])
+    (h : toNat w % (2 ^ powBits) ≠ 0) :
+    queryPowCheck toNat powBits proof = false := by
+  unfold queryPowCheck; rw [hw]; exact decide_eq_false h
+
+/-- **Missing-PoW tooth**: a proof with no grinding witness REJECTS (no proof of
+work ⇒ the query-soundness amplification is absent). -/
+@[simp] theorem queryPowCheck_no_witness {F : Type} (toNat : F → Nat) (powBits : Nat)
+    (proof : BatchProofData F) (hw : proof.powWitness = []) :
+    queryPowCheck toNat powBits proof = false := by
+  unfold queryPowCheck; rw [hw]
+
+/-- **Composite tooth through the real `verifyAlgo`**: a proof carrying a tampered
+quotient on a batched table is REJECTED by the full verifier, whatever else holds —
+the batch-table constraint check is load-bearing inside `verifyAlgo`. -/
+theorem verifyAlgo_full_rejects_tampered_quotient {F : Type} [Inhabited F] [DecidableEq F]
+    (perm : List F → List F) (RATE : Nat) (toNat : F → Nat)
+    (params : FriParams) (vk : RecursionVk F) (core : FriCore F) (A : FieldArith F)
+    (initState : List F) (logN : Nat) (proof : BatchProofData F) (pub : WrapPublics F)
+    (ood : F) (hood : proof.oodPoint = [ood]) (t : TableOpening F)
+    (hmem : t ∈ proof.tableOpenings)
+    (h : t.constraintEval ≠ A.mul t.vanishingAtZeta t.quotientAtZeta) :
+    verifyAlgo perm RATE toNat params vk (fullChecks core A toNat params.powBits)
+      initState logN proof pub = false := by
+  have hbt : (fullChecks core A toNat params.powBits).batchTables proof
+      (deriveFri perm RATE params proof (Challenger.init initState)).1 = false :=
+    batchTablesCheck_rejects_tampered_quotient A proof ood hood t hmem h
+  unfold verifyAlgo
+  simp only [hbt, Bool.and_false, Bool.false_and]
+
+/-! ### Executable non-vacuity for the batch checks (over `ℤ`, for genuine bus cancellation).
+
+`ℤ` (a `CommRing`) lets the logup bus genuinely CANCEL (a send `+5` against a receive
+`−5`), which `ℕ` cannot express. An honest two-table batch ACCEPTS; a tampered
+quotient, a wrong degree-bit, an unbalanced bus, and a missing/failed PoW all REJECT. -/
+section BatchNonVacuity
+
+/-- The `ℤ` field arithmetic: `pow` is a manual repeated-`mul` (the module imports no
+`HPow ℤ ℕ`), so the `#guard`s evaluate genuine ring arithmetic. -/
+private def intArith : FieldArith Int :=
+  { add := (· + ·), mul := (· * ·), zero := 0, one := 1,
+    pow := fun b n => Nat.rec 1 (fun _ acc => b * acc) n }
+
+-- ζ=3, db=1 ⇒ pow 3 2 = 3·(3·1) = 9.
+#guard intArith.pow 3 2 = 9
+
+/-- An honest table at `ζ = 3`, `degreeBits = 1`: `Z_H(3) = 3^2 − 1 = 8`,
+`q = 5`, `C = 8·5 = 40`, bus contribution `+5`. -/
+private def toyTableA : TableOpening Int :=
+  { degreeBits := 1, expectedDegreeBits := 1, constraintEval := 40,
+    quotientAtZeta := 5, vanishingAtZeta := 8, logupCumSum := 5 }
+
+/-- The matching table whose bus contribution `−5` cancels `toyTableA`'s `+5`. -/
+private def toyTableB : TableOpening Int :=
+  { degreeBits := 1, expectedDegreeBits := 1, constraintEval := 16,
+    quotientAtZeta := 2, vanishingAtZeta := 8, logupCumSum := -5 }
+
+#guard tableOk intArith (3 : Int) toyTableA = true                       -- honest table ACCEPTS
+#guard tableOk intArith (3 : Int) { toyTableA with quotientAtZeta := 6 } = false  -- tampered q REJECTS
+#guard tableOk intArith (3 : Int) { toyTableA with degreeBits := 2 } = false      -- wrong degree REJECTS
+#guard tableOk intArith (3 : Int) { toyTableA with vanishingAtZeta := 7 } = false -- forged Z_H REJECTS
+
+private def toyBatch : BatchProofData Int :=
+  { traceCommit := [], friCommitments := [], finalPoly := [0], queries := [],
+    exposedSegment := [], oodPoint := [3], tableOpenings := [toyTableA, toyTableB],
+    powWitness := [8] }   -- 8 = 0b1000: low 3 bits zero
+
+#guard batchTablesCheck intArith toyBatch = true                                        -- honest batch ACCEPTS
+#guard batchTablesCheck intArith { toyBatch with tableOpenings := [toyTableA] } = false -- unbalanced bus REJECTS
+#guard batchTablesCheck intArith { toyBatch with oodPoint := [] } = false               -- missing OOD REJECTS
+#guard queryPowCheck (fun z => z.toNat) 3 toyBatch = true                       -- 8 % 8 = 0: PoW ACCEPTS
+#guard queryPowCheck (fun z => z.toNat) 3 { toyBatch with powWitness := [9] } = false  -- 9 % 8 ≠ 0 REJECTS
+#guard queryPowCheck (fun z => z.toNat) 3 { toyBatch with powWitness := [] } = false   -- missing PoW REJECTS
+
+end BatchNonVacuity
+
 /-! ## 4. The carriers + the refinement statement (the payoff).
 
 The wrap rests on the SAME floor as the existing apex: FRI low-degree soundness +
@@ -696,8 +941,15 @@ permutation (`duplex_challenger.rs` `test_duplex_challenger`,
 vectors through the Lean model: if the model diverged from the reference
 implementation, these `#guard`s would fail the build. This is a genuine
 cross-implementation fidelity check on the transcript engine (not a self-fixture) —
-the first concrete rung of the `TranscriptRefines` obligation, ahead of the
-Poseidon2-w16 round-constant instantiation (milestone 2).
+the first concrete rung of the `TranscriptRefines` obligation. These vectors exercise
+the Challenger LOGIC (observe/duplex/sample/pop-from-end) over a `reverse` stand-in
+permutation; the REAL `Poseidon2BabyBear<16>` hash itself — the actual round constants,
+the `MDSMat4` external layer, the `(1+Diag(V))` internal shift-diagonal, the `x^7`
+S-box — is implemented and KAT-validated bit-exact against the deployed Rust permute in
+the sibling `Dregg2.Circuit.Poseidon2BabyBearW16` (milestone 2 of the §5 roadmap). The
+remaining rung is wiring the two together: a Rust `DuplexChallenger`-with-real-Poseidon2
+transcript KAT to pin `TranscriptRefines` against the real hash (the reference-vector
+check above already pins the Challenger algorithm; the sibling pins the permutation).
 
 `sampleVec n` collects `n` base squeezes (`= sampleExt`'s coefficient list). -/
 section ReferenceVectors

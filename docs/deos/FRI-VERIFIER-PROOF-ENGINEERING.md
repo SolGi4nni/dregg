@@ -201,22 +201,49 @@ This is a multi-week proof-engineering effort. Ordered by leverage:
    positions + executable `#guard` non-vacuity), the `verifyAlgo` assembly, the
    carriers as hypotheses, and `wrap_sound` proven (axiom-free). `lake build`-green,
    `sorry`-free, carriers named.
-2. **Transcript fidelity against fixtures.** Export a Poseidon2-w16 challenger
-   fixture from `circuit-prove` (observe a known stream, record every squeeze);
-   prove the Lean `Challenger` reproduces it (`#guard`), and pin the
-   `TranscriptRefines` obligation to it. Implement the gnark challenger gadget and
-   diff it against the same fixture. Pin the `foldCombine`/`compress` calibration
-   constants to the deployed Poseidon2 + plonky3 arity-2 fold.
-3. **The batch surface.** Per-table degree-bits/quotient/logup-bus + the four NPO
-   tables specified (the `batchTables`/`queryPow` `FriChecks` remainder); the full
-   `verify_all_tables` Boolean assembled.
-4. **The `verifyAlgo → StarkSound` bridge.** Connect the specified algorithm's
-   accept to the existing `StarkSound.extract`, so the wrap soundness composes into
-   the existing light-client apex (one verifier, one VK).
+2. **(LANDED, hash half) Transcript fidelity against the real hash.** The Lean
+   `Challenger` is cross-checked against p3-challenger's OWN reference vectors
+   (`FriVerifier §6`, over a `reverse` stand-in — the Challenger LOGIC). The REAL
+   `Poseidon2BabyBear<16>` permutation — the actual `RC_16_EXTERNAL_INITIAL/FINAL` +
+   `INTERNAL` round constants, the `MDSMat4` external layer, the `(1+Diag(V))` internal
+   shift-diagonal, the `x^7` S-box — is now implemented over canonical ℕ-mod-`p` in
+   `Dregg2.Circuit.Poseidon2BabyBearW16` and **KAT-validated bit-exact** against the
+   deployed Rust `default_babybear_poseidon2_16().permute(·)` (the `permute [0..15]` +
+   all-zero KATs + the `TruncatedPermutation` `compress`). REMAINING: a Rust
+   `DuplexChallenger`-with-real-Poseidon2 transcript KAT to weld the two (pin
+   `TranscriptRefines` against the real hash); the gnark challenger gadget + diff.
+3. **(LANDED) The batch surface.** The per-table quotient identity
+   `C(ζ) = Z_H(ζ)·q(ζ)` (with the vanishing genuinely recomputed), the logup
+   interaction-bus balance, the degree-bit pin, and the grinding PoW are SPECIFIED as
+   real algorithms (`FriVerifier §3b` `batchTablesCheck` / `queryPowCheck` /
+   `fullChecks`), filling the `FriChecks.batchTables`/`queryPow` fields. Reject-teeth
+   proven (`batchTablesCheck_rejects_tampered_quotient`,
+   `batchTablesCheck_rejects_unbalanced_bus`, `tableOk_rejects_wrong_degree`,
+   `queryPowCheck_rejects_bad_pow`, and `verifyAlgo_full_rejects_tampered_quotient`
+   through the whole verifier) + `#guard` non-vacuity over ℤ. REMAINING: the exact AIR
+   constraint polynomial of each of the four NPO tables (the `constraintEval` is
+   carried as the opened value; binding it to the actual per-table AIR is the next
+   refinement) and the OOD-point's transcript binding.
+4. **(LANDED) The `verifyAlgo → StarkSound` bridge.** `Dregg2.Circuit.FriVerifierBridge`
+   makes `CircuitSoundness.StarkSound` a THEOREM (`starkSound_of_verifyAlgo`) over the
+   SPECIFIED `verifyAlgo` instead of the opaque `verifyBatch`. `AlgoStarkSound` = the
+   FRI/STARK extraction floor re-stated over `verifyAlgo` (the irreducible FRI-LDT +
+   Poseidon2-CR floor, now sitting ON TOP of the proven algorithm); `DeployedRefines` =
+   the deployed Rust `verify_batch` computes the same accept Boolean as `verifyAlgo`
+   (the Rust analogue of `GnarkRefines`, the sole remaining code-trust).
+   `lightclient_unfoolable_via_algo` rests the apex on the bridge;
+   `deployed_rejects_tampered_quotient` shows the proven tooth biting the deployed
+   verifier with no appeal to the floor. `#assert_axioms`-clean.
 5. **gnark refinement discharge.** The operation-for-operation gnark↔`verifyAlgo`
    equality, fixture-anchored, accept/reject agreement over genuine + adversarial
    fixtures (ETH-NATIVE-WRAP §3 milestone 3).
 
-Milestone 1 LANDED (transcript keystone + concrete FRI query core). 2–5 are the
-remaining body — dominated by the batch-table arithmetic and the fixture-anchored
-gnark discharge — that retires the wrap's last load-bearing unknown.
+Milestones 1, 3, 4 LANDED (transcript keystone + concrete FRI query core; the concrete
+batch-table/PoW surface; the `verifyAlgo → StarkSound` bridge). Milestone 2 LANDED for
+the HASH (real Poseidon2-w16, KAT-validated bit-exact). The remaining TCB residual is
+exactly: (a) `AlgoStarkSound` (the FRI-LDT + Poseidon2-CR math floor — IRREDUCIBLE, the
+same floor every STARK assumes), (b) `DeployedRefines` (Rust `verify_batch` = the Lean
+`verifyAlgo` spec — discharged by the differential-testing rung + the per-table AIR
+binding), and (c) the gnark refinement (milestone 5). The verifier ALGORITHM — the
+transcript derivation, the FRI fold/Merkle core, the batch quotient/logup/PoW checks —
+is now SPECIFIED and its teeth PROVEN, out of the opaque-verdict TCB.
