@@ -200,6 +200,7 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
         turn_hash: *blake3::hash(b"perf-rotated-turn").as_bytes(),
         rotation: Some(rotation),
         cap_turn_identity: None,
+        umem_witness: None,
     };
     RotatedTurn {
         witness,

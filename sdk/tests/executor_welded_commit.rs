@@ -314,3 +314,54 @@ fn setup_bare(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
 
     (cclerk, cell_id, ledger)
 }
+
+/// **THE DOMAIN-1 CIPHERCLERK WELD PRODUCER (STAGED, VK-RISK-FREE) — the deployed sovereign producer
+/// mints welded when armed.** Arm the cipherclerk's domain-1 weld toggle
+/// (`set_umem_weld_staged_enabled(true)`) and drive a sovereign transfer through the SAME deployed
+/// entry the live producer uses (`execute_sovereign_turn_with_proof` → `prove_sovereign_turn_rotated`).
+/// The resulting `execution_proof` is the WIDE+UMEM WELDED form (the value-domain reconciliation leg
+/// folded BESIDE the 8-felt commit), and it COMMITS through the deployed welded-aware executor — the
+/// domain-1 half of "both domains mint welded on the deployed path."
+///
+/// CONTROL is the sibling `bare_transfer_still_commits_through_welded_aware_executor` (toggle OFF ⇒
+/// the byte-identical bare leg). STAGED: the toggle defaults OFF, so the live fleet is unaffected
+/// until the gated VK epoch flips it on.
+#[test]
+fn domain1_armed_cipherclerk_mints_welded_and_commits() {
+    let (mut cclerk, cell_id, mut ledger) = setup_bare(1000);
+    // ARM the domain-1 weld producer (the opt-in the gated VK epoch will flip on by default).
+    cclerk.set_umem_weld_staged_enabled(true);
+    assert!(cclerk.umem_weld_staged_enabled());
+
+    let dest_cell =
+        Cell::with_balance([43u8; 32], *blake3::hash(b"weld-exec-domain").as_bytes(), 0);
+    let dest_id = dest_cell.id();
+    let _ = ledger.insert_cell(dest_cell);
+
+    let effects = vec![Effect::Transfer {
+        from: cell_id,
+        to: dest_id,
+        amount: 100,
+    }];
+    let turn = cclerk
+        .execute_sovereign_turn_with_proof(&cell_id, effects, 0, 0)
+        .expect("the ARMED cipherclerk MUST mint the welded sovereign transfer proof");
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    match executor.execute(&turn, &mut ledger) {
+        TurnResult::Committed { .. } => {}
+        other => panic!(
+            "the DOMAIN-1 welded sovereign transfer MUST commit through the welded-aware executor, \
+             got {other:?}"
+        ),
+    }
+    let committed = ledger
+        .get_sovereign_commitment(&cell_id)
+        .expect("commitment present after commit");
+    assert_eq!(
+        *committed,
+        turn.execution_proof_new_commitment.unwrap(),
+        "the welded leg's 8-felt commit anchors are PI-count-preserving — the committed commitment \
+         matches the deployed-default (bare) one"
+    );
+}

@@ -1065,6 +1065,15 @@ pub struct AgentCipherclerk {
     /// keying. This set is *advisory*: authoritative non-revocation is
     /// proven against the published registry root, not this field.
     local_revocations: std::collections::HashSet<String>,
+    /// **THE DOMAIN-1 UMEM-WELD PRODUCER TOGGLE (STAGED / VK-RISK-FREE).** When `true`, the sovereign
+    /// rotated producer ([`Self::prove_sovereign_turn_rotated`]) mints the WIDE+UMEM **welded** form of
+    /// a single-cohort turn whose descriptor key has a Lean-emitted welded twin (and whose actor
+    /// projection diff is non-empty single-domain) — the universal-memory leg folded BESIDE the 8-felt
+    /// (~124-bit) commit, accepted ADDITIVELY by the deployed executor. `false` (the default) ⇒ the
+    /// byte-identical BARE wide leg the live fleet proves, so existing sovereign turns are UNAFFECTED.
+    /// This is the producer-path opt-in (the loud-probe enables it); the deployed default flip is the
+    /// gated VK epoch. Runtime-only, never serialized.
+    umem_weld_staged_enabled: bool,
 }
 
 /// Internal carrier for a proven sovereign turn: the proof-carrying [`Turn`]
@@ -1159,7 +1168,22 @@ impl AgentCipherclerk {
             sovereign_cells: HashMap::new(),
             sovereign_witness_sequences: HashMap::new(),
             local_revocations: std::collections::HashSet::new(),
+            umem_weld_staged_enabled: false,
         }
+    }
+
+    /// **THE DOMAIN-1 UMEM-WELD PRODUCER TOGGLE.** Arm (or disarm) the staged WIDE+UMEM welded mint on
+    /// the sovereign rotated producer. STAGED / VK-RISK-FREE: when armed, a single-cohort sovereign turn
+    /// whose descriptor key has a Lean-emitted welded twin mints the welded form (the universal-memory
+    /// leg BESIDE the 8-felt commit, accepted ADDITIVELY by the deployed executor); when disarmed (the
+    /// default) the byte-identical BARE wide leg runs. Used by the loud-probe + the gated VK epoch.
+    pub fn set_umem_weld_staged_enabled(&mut self, enabled: bool) {
+        self.umem_weld_staged_enabled = enabled;
+    }
+
+    /// Whether the staged WIDE+UMEM welded mint is armed on the sovereign rotated producer.
+    pub fn umem_weld_staged_enabled(&self) -> bool {
+        self.umem_weld_staged_enabled
     }
 
     /// Create a cipherclerk from a BIP39 mnemonic phrase.
@@ -1210,6 +1234,7 @@ impl AgentCipherclerk {
             sovereign_cells: HashMap::new(),
             sovereign_witness_sequences: HashMap::new(),
             local_revocations: std::collections::HashSet::new(),
+            umem_weld_staged_enabled: false,
         }
     }
 
@@ -5756,21 +5781,90 @@ impl AgentCipherclerk {
             effect_witness_index_map: Vec::new(),
         };
 
+        // DOMAIN-1 UMEM-WELD ROUTING (STAGED / VK-RISK-FREE). When the toggle is armed, build the
+        // turn's GENUINE actor projection diff (before→after record-kernel projection) and, when it is a
+        // NON-EMPTY single-domain change whose wide descriptor key has a Lean-emitted welded twin, mint
+        // the WIDE+UMEM WELDED form (the universal-memory leg folded BESIDE the 8-felt commit — the weld
+        // is PI-COUNT-PRESERVING, so the 16 wide commit PIs / `public_inputs` are UNTOUCHED, and the
+        // deployed executor admits the welded twin ADDITIVELY). The bare wide leg runs when the toggle is
+        // disarmed (the deployed default — the live fleet is unaffected), or for an empty / multi-domain
+        // diff / no-welded-twin turn (which the single-domain cohort cannot reconcile — kept bare, NOT a
+        // hidden weld failure). When the toggle IS armed and the turn is weldable, a weld error FAILS
+        // CLOSED (no silent downgrade).
+        let umem_weld = if self.umem_weld_staged_enabled {
+            use dregg_turn::umem::{project_diff_ops, project_record_kernel_state};
+            let pre = project_record_kernel_state(&before_cell);
+            let post = project_record_kernel_state(&after_cell);
+            let ops = project_diff_ops(&pre, &post);
+            let lead = vm_effects.first();
+            let single_domain =
+                !ops.is_empty() && ops.iter().all(|op| op.key.domain() == ops[0].key.domain());
+            let welded_key = lead.and_then(|e| {
+                if is_fee_transfer {
+                    Some("transferFeeVmDescriptor2R24")
+                } else {
+                    dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect(e)
+                }
+            });
+            match welded_key {
+                Some(key)
+                    if single_domain
+                        && crate::full_turn_proof::wide_umem_weld_registry_has(key) =>
+                {
+                    Some((pre, ops))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         // THE WIDE FLIP: route the WIDE provers (8-felt commit published on the 16 wide PIs). The
         // wide generators inside re-derive the SAME wide trace + PI vector computed above, so the
         // bound 16 wide PIs match `public_inputs[n_pi-16..]`.
-        let (proof, _wide_dpis) = if is_fee_transfer {
-            // FEE-IN-PROOF wide: `transferFeeVmDescriptor2R24Wide` (55 PIs, fee debited in-proof).
-            crate::full_turn_proof::prove_effect_vm_rotated_wide_with_fee(
+        let (proof, _wide_dpis) = match (&umem_weld, is_fee_transfer) {
+            // DOMAIN-1 welded mint (fee-in-proof transfer): the universal-memory leg welded onto the
+            // deployed fee descriptor — the value-domain reconciliation BESIDE the 8-felt anchors.
+            (Some((pre, ops)), true) => {
+                crate::full_turn_proof::prove_wide_umem_welded_staged_with_fee(
+                    &initial_vm_state,
+                    &vm_effects,
+                    &before_w,
+                    &after_w,
+                    &caveat,
+                    pre,
+                    ops,
+                    fee,
+                )?
+            }
+            // DOMAIN-1 welded mint (plain): the universal-memory leg welded onto the plain wide
+            // descriptor.
+            (Some((pre, ops)), false) => crate::full_turn_proof::prove_wide_umem_welded_staged(
                 &initial_vm_state,
                 &vm_effects,
                 &before_w,
                 &after_w,
                 &caveat,
-                fee,
-            )?
-        } else {
-            crate::full_turn_proof::prove_effect_vm_rotated_wide(
+                pre,
+                ops,
+                // The cipherclerk path threads no nullifier-set context (empty grow-gate accumulator).
+                None,
+                // The refusal `fields_root` WRITE-gate context — same as the bare wide route below.
+                refusal_fields.as_ref().map(|(l, a)| (l.as_slice(), *a)),
+            )?,
+            // BARE wide (the deployed default — toggle disarmed or the turn is not weldable).
+            (None, true) => {
+                // FEE-IN-PROOF wide: `transferFeeVmDescriptor2R24Wide` (55 PIs, fee debited in-proof).
+                crate::full_turn_proof::prove_effect_vm_rotated_wide_with_fee(
+                    &initial_vm_state,
+                    &vm_effects,
+                    &before_w,
+                    &after_w,
+                    &caveat,
+                    fee,
+                )?
+            }
+            (None, false) => crate::full_turn_proof::prove_effect_vm_rotated_wide(
                 &initial_vm_state,
                 &vm_effects,
                 &before_w,
@@ -5784,7 +5878,7 @@ impl AgentCipherclerk {
                 // the lead is a Refusal) — threaded so the honest refusal proves through the `.write`
                 // map-op gate. This MUST match the precompute's refusal route (same trace + wide PIs).
                 refusal_fields.as_ref().map(|(l, a)| (l.as_slice(), *a)),
-            )?
+            )?,
         };
         let proof_bytes = postcard::to_allocvec(&proof)
             .map_err(|e| SdkError::Wire(format!("rotated proof serialize: {e}")))?;

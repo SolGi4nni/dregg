@@ -908,6 +908,7 @@ pub fn prove_and_verify_finalized_turn_freshness(
         turn_hash,
         rotation,
         cap_turn_identity: None,
+        umem_witness: None,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 
@@ -977,6 +978,7 @@ pub fn prove_and_verify_finalized_turn_capability(
     previously_spent: &[[u8; 32]],
     rotation: Option<dregg_sdk::RotationTurnWitness>,
     clist_leaves: Vec<dregg_circuit::heap_root::HeapLeaf>,
+    umem_witness: Option<dregg_sdk::UmemWeldWitness>,
 ) -> Result<ProvenFinalizedTurn, FullTurnProvingError> {
     // BREADSTUFF (actor-held) path: the cap's HOLDER is the actor, so the
     // AUTHORITY leg binds against the ACTOR's own canonical pre-state cap root —
@@ -995,6 +997,7 @@ pub fn prove_and_verify_finalized_turn_capability(
         previously_spent,
         rotation,
         clist_leaves,
+        umem_witness,
     )
 }
 
@@ -1016,6 +1019,35 @@ pub fn cap_write_clist_leaves(cell: &dregg_cell::Cell) -> Vec<dregg_circuit::hea
             }
         })
         .collect()
+}
+
+/// **THE DOMAIN-2 (CAPS) UMEM WELD WITNESS PRODUCER (the umem-flip's node-side seam).** Build the
+/// per-turn universal-memory weld witness ([`dregg_sdk::UmemWeldWitness`]) from the REAL before/after
+/// actor cells the commit path holds — the GENUINE record-kernel projection diff
+/// (`project_record_kernel_state(before) → project_diff_ops(pre, post)`) — and return it ONLY when the
+/// diff is a NON-EMPTY, single-domain CAPS change (the shape
+/// [`prove_wide_umem_welded_cap_open_staged`] reconciles). A turn whose actor projection diff is empty
+/// (no caps change), heap-domain (a value move, NOT a cap-open weld), or spans multiple domains gets
+/// `None` ⇒ the caller keeps the BARE wide cap-open leg (the deployed default). This is the witness
+/// the loud-probe threads to mint the DOMAIN-2 welded form through the deployed cap path; the deployed
+/// commit site (`blocklace_sync`) passes `None` until the gated VK epoch flips it on.
+pub fn caps_umem_weld_witness(
+    before_cell: &dregg_cell::Cell,
+    after_cell: &dregg_cell::Cell,
+) -> Option<dregg_sdk::UmemWeldWitness> {
+    use dregg_turn::umem::{UDomain, project_diff_ops, project_record_kernel_state};
+    let pre = project_record_kernel_state(before_cell);
+    let post = project_record_kernel_state(after_cell);
+    let ops = project_diff_ops(&pre, &post);
+    if ops.is_empty() {
+        return None;
+    }
+    // Single-domain CAPS discipline (the cap-open weld reconciles domain 2 only — the producer fails
+    // closed otherwise, so we refuse to thread a witness it could not mint from).
+    if ops.iter().any(|op| op.key.domain() != UDomain::Caps) {
+        return None;
+    }
+    Some(dregg_sdk::UmemWeldWitness { pre, ops })
 }
 
 /// Prove a finalized CAPABILITY-GATED turn binding the AUTHORITY (cap-membership)
@@ -1055,6 +1087,7 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
     previously_spent: &[[u8; 32]],
     rotation: Option<dregg_sdk::RotationTurnWitness>,
     clist_leaves: Vec<dregg_circuit::heap_root::HeapLeaf>,
+    umem_witness: Option<dregg_sdk::UmemWeldWitness>,
 ) -> Result<ProvenFinalizedTurn, FullTurnProvingError> {
     // Defence in depth: the receipt witness must be internally consistent AND
     // open to the CANONICAL pre-state capability root the node itself derived for
@@ -1222,6 +1255,12 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
         turn_hash,
         rotation,
         cap_turn_identity,
+        // DOMAIN-2 UMEM WELD (the producer seam this closes): when the caller threads the turn's
+        // genuine CAPS-domain projection diff, the cap-open leg mints the WIDE cap-open+umem WELDED
+        // form (the membership crown + the 8-felt anchors + the appended caps `umemOp` leg) that the
+        // deployed executor admits ADDITIVELY. `None` (the deployed default) ⇒ the bare wide cap-open
+        // leg — owner/cap turns that thread no witness are UNAFFECTED, no VK committed.
+        umem_witness,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 
@@ -2708,6 +2747,7 @@ mod tests {
             &[],
             rotation,
             vec![],
+            None,
         )
         .expect("honest capability-gated turn must prove + cap-bound-verify");
 
@@ -2773,6 +2813,7 @@ mod tests {
             &[],
             rotation(),
             vec![],
+            None,
         );
         assert!(
             matches!(
@@ -2796,6 +2837,7 @@ mod tests {
             &[],
             rotation(),
             vec![],
+            None,
         )
         .expect("honest proof");
         let wrong_root = pre_cap_root + BabyBear::new(1);
@@ -2876,6 +2918,7 @@ mod tests {
             &[],
             rotation(),
             vec![],
+            None,
         );
         assert!(
             matches!(
@@ -2899,6 +2942,7 @@ mod tests {
             &[],
             rotation(),
             vec![],
+            None,
         )
         .expect("honest proof");
         let mut inflated_leaf = consumed.cap_leaf();
@@ -2965,6 +3009,7 @@ mod tests {
             &[],
             None,
             vec![],
+            None,
         );
         assert!(
             matches!(
@@ -2996,6 +3041,7 @@ mod tests {
             &[],
             rotation,
             vec![],
+            None,
         )
         .expect("honest proof");
         let expectation = dregg_sdk::CapMembershipExpectation {
@@ -3197,6 +3243,7 @@ mod tests {
             &[],
             rotation,
             vec![],
+            None,
         )
         .expect("the rotated capability-gated turn must prove + cap-bound-verify");
 
@@ -3299,6 +3346,7 @@ mod tests {
             &[],
             rotation,
             vec![],
+            None,
         );
         assert!(
             matches!(
@@ -3333,6 +3381,7 @@ mod tests {
             &[],
             rotation2,
             vec![],
+            None,
         )
         .expect("honest ROTATED cap proof");
         // Confirm it really IS the rotated leg carrying the cap tooth.
@@ -3677,6 +3726,7 @@ mod tests {
             &[],
             rotation,
             vec![],
+            None,
         )
         .expect("honest bearer-delegated turn must prove + authority-bound-verify");
 
@@ -3772,6 +3822,7 @@ mod tests {
             &[],
             rotation(),
             vec![],
+            None,
         );
         assert!(
             matches!(
@@ -3800,6 +3851,7 @@ mod tests {
             &[],
             rotation(),
             vec![],
+            None,
         )
         .expect("honest bearer proof (bound to the real delegator root)");
         let expectation = dregg_sdk::CapMembershipExpectation {
@@ -3990,6 +4042,7 @@ mod tests {
             &[],
             rotation,
             vec![],
+            None,
         )
         .expect("honest cross-vat cap-gated transfer must prove + authority-bound-verify");
         assert!(
@@ -4042,5 +4095,44 @@ mod tests {
             Some(&expectation),
         )
         .expect("light-client re-verify of the cross-vat proof must accept");
+    }
+
+    /// DOMAIN-2 SOURCING: `caps_umem_weld_witness` builds a CAPS-domain weld witness from a c-list
+    /// change (the shape the deployed cap path threads to the welded cap-open producer), and REFUSES
+    /// (returns `None`) a non-caps (balance / heap) change or a no-op — so the deployed path only
+    /// welds when the genuine actor projection diff is a caps reconciliation.
+    #[test]
+    fn caps_umem_weld_witness_sources_caps_diff_only() {
+        let mut before = Cell::with_balance([0x5Au8; 32], [0u8; 32], 1_000);
+        before.permissions = open_permissions();
+
+        // (a) A CAPS change (grant a slot) ⇒ Some witness whose ops are all CAPS-domain.
+        let mut after_caps = before.clone();
+        after_caps
+            .capabilities
+            .grant(CellId::from_bytes([0x99u8; 32]), AuthRequired::None);
+        let w = caps_umem_weld_witness(&before, &after_caps)
+            .expect("a c-list change yields a CAPS-domain weld witness");
+        assert!(
+            !w.ops.is_empty()
+                && w.ops
+                    .iter()
+                    .all(|op| op.key.domain() == dregg_turn::umem::UDomain::Caps),
+            "the sourced witness reconciles the CAPS domain only"
+        );
+
+        // (b) A NO-OP (identical cells) ⇒ None (empty diff, nothing to weld).
+        assert!(
+            caps_umem_weld_witness(&before, &before).is_none(),
+            "an empty actor projection diff yields no weld witness (stays bare)"
+        );
+
+        // (c) A BALANCE change (heap domain, NOT caps) ⇒ None — a value move is not a cap-open weld.
+        let mut after_bal = before.clone();
+        after_bal.state.set_balance(900);
+        assert!(
+            caps_umem_weld_witness(&before, &after_bal).is_none(),
+            "a heap-domain (balance) change is refused — the cap-open weld reconciles CAPS only"
+        );
     }
 }

@@ -189,6 +189,45 @@ pub struct FullTurnWitness {
     /// honest self-test default. The threading of a CROSS-VAT `(actor ≠ src)` identity is supplied by
     /// the node's cap-gated prove site (which holds the turn's `agent`/`from`/`to`).
     pub cap_turn_identity: Option<TurnIdentityFelts>,
+
+    // -- UNIVERSAL-MEMORY WELD witness (the umem-flip's PRODUCER PATH, STAGED / VK-RISK-FREE) --
+    /// Present ONLY when the caller deliberately threads the turn's universal-memory projection diff
+    /// (the genuine before→after cell projection + its Blum op trace) to mint the WIDE+UMEM **welded**
+    /// form of the effect-vm leg INSTEAD of the bare wide leg. When `Some` AND the turn is a SINGLE
+    /// cohort-run whose descriptor key has a welded twin in
+    /// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV),
+    /// [`prove_cohort_run_chain`] routes the run through the welded producer
+    /// ([`prove_wide_umem_welded_cap_open_staged`] for a CAPS-domain cap-open member, or
+    /// [`prove_wide_umem_welded_staged`] for a value/domain-1 plain member) so the leg carries the
+    /// universal-memory reconciliation BESIDE the 8-felt (~124-bit) commit anchors. The welded leg
+    /// verifies UNIQUELY through the deployed wire/executor verifiers under the Lean-emitted welded
+    /// registry member (admitted ADDITIVELY beside the bare wide form).
+    ///
+    /// STAGED, VK-RISK-FREE: the PRESENCE of this witness IS the opt-in. When `None` (the deployed
+    /// default), the byte-identical BARE wide leg runs — so an owner-authorized / cap-gated turn that
+    /// does NOT thread a witness is UNAFFECTED, no VK is committed, and `umem_witness_enabled` is
+    /// untouched. The deployed default flip (every turn welds) is the gated VK epoch, after this.
+    pub umem_witness: Option<UmemWeldWitness>,
+}
+
+/// **THE PER-TURN UNIVERSAL-MEMORY WELD WITNESS (the umem-flip's producer path).** Carries the
+/// turn's genuine before-state projection (`pre`) + the Blum WRITE op trace (`ops`) of the
+/// before→after projection DIFF — exactly the `(pre, ops)` pair the welded staged producers
+/// ([`prove_wide_umem_welded_staged`] / [`prove_wide_umem_welded_cap_open_staged`]) fold into the
+/// universal-memory cohort leg they weld onto the wide descriptor.
+///
+/// The caller builds it from the REAL before/after cells the node/cipherclerk holds at the turn's
+/// pre/post state (e.g. `dregg_turn::umem::project_record_kernel_state(before)` →
+/// `project_diff_ops(pre, post)`), so the umem leg reconciles the GENUINE per-cell state change. The
+/// producers fail closed if the diff is empty, multi-domain (for the single-domain cohort), or
+/// (cap-open) touches a domain other than Caps — so a witness that does not match the proven
+/// transition is REFUSED, never silently dropped.
+#[derive(Clone, Debug)]
+pub struct UmemWeldWitness {
+    /// The turn's PRE-state universal-memory projection (the before-cell record-kernel projection).
+    pub pre: dregg_turn::umem::UProjection,
+    /// The Blum WRITE op trace of the before→after projection diff (`project_diff_ops`).
+    pub ops: Vec<dregg_turn::umem::UmemOp>,
 }
 
 /// The single-felt turn identity published by the TURN-BOUND cap-open (#225): `(actor, src, dst)`.
@@ -2434,6 +2473,51 @@ fn cap_open_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
     Ok(*blake3::hash(json.as_bytes()).as_bytes())
 }
 
+/// Look up a WIDE+UMEM WELDED descriptor JSON by its LIVE registry key from
+/// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV)
+/// — the Lean-emitted, member-for-member welded twin of the wide registry. The KEY is the live
+/// registry key (`transferVmDescriptor2R24` / `attenuateCapOpenEffVmDescriptor2R24`); the JSON is the
+/// welded descriptor (the wide carriers + the appended `umemOp` leg). `Ok(None)` when the key has NO
+/// welded twin (the 1-felt-only / wide-twin-pending residual — e.g. `transferCapOpenTB`); `Err` only
+/// on a malformed line (unreachable for the committed TSV).
+#[cfg(feature = "prover")]
+fn wide_umem_weld_registry_json_by_key(key: &str) -> Option<&'static str> {
+    use dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV;
+    WIDE_UMEM_WELD_REGISTRY_TSV.lines().find_map(|line| {
+        let mut it = line.splitn(3, '\t');
+        if it.next() == Some(key) {
+            let _display = it.next();
+            it.next()
+        } else {
+            None
+        }
+    })
+}
+
+/// True iff the live registry `key` has a welded twin in the Lean-emitted
+/// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV)
+/// — the gate the welded routing in [`prove_cohort_run_chain`] keys on (a welded member welds; a
+/// wide-twin-pending residual stays bare).
+#[cfg(feature = "prover")]
+pub fn wide_umem_weld_registry_has(key: &str) -> bool {
+    wide_umem_weld_registry_json_by_key(key).is_some()
+}
+
+/// The WIDE+UMEM WELDED leg's `vk_hash` for a registry `key`: the blake3 fingerprint of the welded
+/// member's committed JSON — the SAME fingerprint the wire verifier
+/// (`verify_effect_vm_rotated_with_cutover`) and the executor's `verify_and_commit_proof_rotated`
+/// re-derive from the uniquely-accepting welded descriptor. So a welded leg's attached vk_hash MUST
+/// pin the welded member (NOT the bare wide member) for the descriptor-identity tooth to pass.
+#[cfg(feature = "prover")]
+fn wide_umem_weld_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
+    let json = wide_umem_weld_registry_json_by_key(key).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "{key} has no welded twin in WIDE_UMEM_WELD_REGISTRY_TSV"
+        ))
+    })?;
+    Ok(*blake3::hash(json.as_bytes()).as_bytes())
+}
+
 /// THE WIDE CAP-OPEN FLAG-DAY: does this cap-open effective key have a PROVEN wide twin in
 /// `WIDE_REGISTRY_STAGED_TSV` (the Lean `v3RegistryCapOpenWide` authority crown + the §10
 /// `v3RegistryCapOpenWriteWide` WRITE tail)? True for the 8 AUTHORITY-CROWN members
@@ -3310,6 +3394,7 @@ fn prove_cohort_run_chain(
     cap_membership: Option<&CapMembershipWitness>,
     cap_turn_identity: Option<TurnIdentityFelts>,
     before_nullifiers: Option<&[BabyBear]>,
+    umem_witness: Option<&UmemWeldWitness>,
 ) -> Result<Vec<AttachedSubProof>, SdkError> {
     let runs = split_into_cohort_runs(effects);
     if runs.is_empty() {
@@ -3318,6 +3403,14 @@ fn prove_cohort_run_chain(
         ));
     }
     let n_runs = runs.len();
+    // UMEM-WELD ROUTING GATE (the umem-flip's producer path, STAGED / VK-RISK-FREE). A welded leg
+    // folds the turn's WHOLE before→after universal-memory projection diff (`umem_witness.{pre,ops}`)
+    // onto the cohort descriptor; that diff is a whole-TURN object, so it maps cleanly onto a leg ONLY
+    // when the turn is a SINGLE cohort-run (`n_runs == 1`, the leg == the whole turn). A heterogeneous
+    // turn would need a per-run projection split that the whole-turn witness does NOT carry, so we keep
+    // such turns BARE (no silent mis-attribution of the whole-turn diff to one run). The deployed
+    // welded-mint cases (cap-gated attenuate/delegate/revoke, sovereign transfer) are single-run.
+    let umem_weld = umem_witness.filter(|_| n_runs == 1);
     let mut legs: Vec<AttachedSubProof> = Vec::with_capacity(n_runs);
     let mut s_k = initial_state.clone();
     for (k, run) in runs.iter().enumerate() {
@@ -3376,30 +3469,61 @@ fn prove_cohort_run_chain(
             // cap path proves the TB Transfer route — see `node::turn_proving`'s wide commit anchors).
             let effective_key = cap_open_effective_key(&route, cap);
             let go_wide = cap_open_wide_descriptor_json_by_key(effective_key).is_ok();
-            let (proof, dpis) = prove_effect_vm_cap_open(
-                &s_k,
-                run_effects,
-                &rot.before,
-                after_w,
-                cap,
-                &route,
-                cap_turn_identity,
-                go_wide,
-            )?;
-            let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
-                SdkError::InvalidWitness(format!(
-                    "cap-open rotated proof serialize failed (run {k}): {e}"
-                ))
-            })?;
-            // The vk_hash MUST pin the EFFECTIVE descriptor that was PROVEN (wide when go_wide, else
-            // the 1-felt V3 cap-open) — the proof is descriptor-bound, and the wide-cutover verifier
-            // re-pins blake3(json) against it.
-            let vk_hash = if go_wide {
-                cap_open_wide_vk_hash_by_key(effective_key)?
+            // DOMAIN-2 UMEM WELD (the producer seam this closes). When the caller threaded the turn's
+            // CAPS-domain universal-memory projection diff AND this cap-open key has a Lean-emitted
+            // welded twin, prove the WIDE cap-open+umem WELDED descriptor (the membership crown + the
+            // 8-felt anchors + the appended `umemOp` caps-reconciliation leg) instead of the bare wide
+            // cap-open leg. The welded leg verifies UNIQUELY through the deployed wire/executor verifiers
+            // under its `WIDE_UMEM_WELD_REGISTRY_TSV` member (admitted ADDITIVELY beside the bare wide
+            // form), so its vk_hash MUST pin the WELDED member. This FAILS CLOSED (no silent bare
+            // fallback) when the welded prove cannot mint — a threaded witness that does not reconcile
+            // the genuine caps diff is a LOUD error, never a hidden downgrade.
+            if let Some(uw) =
+                umem_weld.filter(|_| go_wide && wide_umem_weld_registry_has(effective_key))
+            {
+                let (proof, dpis) = prove_wide_umem_welded_cap_open_staged(
+                    &s_k,
+                    run_effects,
+                    &rot.before,
+                    after_w,
+                    cap,
+                    &route,
+                    &uw.pre,
+                    &uw.ops,
+                )?;
+                let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+                    SdkError::InvalidWitness(format!(
+                        "cap-open welded rotated proof serialize failed (run {k}): {e}"
+                    ))
+                })?;
+                let vk_hash = wide_umem_weld_vk_hash_by_key(effective_key)?;
+                (proof_bytes, dpis, vk_hash)
             } else {
-                cap_open_vk_hash_by_key(effective_key)?
-            };
-            (proof_bytes, dpis, vk_hash)
+                let (proof, dpis) = prove_effect_vm_cap_open(
+                    &s_k,
+                    run_effects,
+                    &rot.before,
+                    after_w,
+                    cap,
+                    &route,
+                    cap_turn_identity,
+                    go_wide,
+                )?;
+                let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+                    SdkError::InvalidWitness(format!(
+                        "cap-open rotated proof serialize failed (run {k}): {e}"
+                    ))
+                })?;
+                // The vk_hash MUST pin the EFFECTIVE descriptor that was PROVEN (wide when go_wide, else
+                // the 1-felt V3 cap-open) — the proof is descriptor-bound, and the wide-cutover verifier
+                // re-pins blake3(json) against it.
+                let vk_hash = if go_wide {
+                    cap_open_wide_vk_hash_by_key(effective_key)?
+                } else {
+                    cap_open_vk_hash_by_key(effective_key)?
+                };
+                (proof_bytes, dpis, vk_hash)
+            }
         } else {
             // THE WIDE FLAG-DAY (light-client ~31-bit floor close): the normal (owner-authorized,
             // non-cap-open) run now proves through the WIDE producer (`prove_effect_vm_rotated_wide`,
@@ -3412,28 +3536,63 @@ fn prove_cohort_run_chain(
             // match. The 1-felt waist is GONE for every normal effect on the composed full-turn /
             // light-client surface. (The cap-open path above keeps its own cap-open descriptor route;
             // its wide migration is the NAMED residual — see the report.)
-            let (proof, rot_pi) = prove_effect_vm_rotated_wide(
-                &s_k,
-                run_effects,
-                &rot.before,
-                after_w,
-                &caveat,
-                before_nullifiers,
-                // The chained full-turn path threads no per-run refusal fields context (the live
-                // refusal lead is the single-leg sovereign path); a Refusal run here fails closed
-                // against the `.write` gate, exactly as the sovereign forest path.
-                None,
-            )?;
-            let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
-                SdkError::InvalidWitness(format!(
-                    "chained rotated wide proof serialize failed (run {k}): {e}"
-                ))
-            })?;
-            (
-                proof_bytes,
-                rot_pi,
-                rotated_effect_vm_wide_vk_hash(run_effects)?,
-            )
+            // DOMAIN-1 / VALUE UMEM WELD (the producer seam, symmetric to the cap-open arm). When the
+            // caller threaded the turn's universal-memory projection diff AND this normal cohort key
+            // has a Lean-emitted welded twin, prove the WIDE+umem WELDED descriptor (the wide carriers
+            // + the appended single-domain `umemOp` leg) instead of the bare wide leg. FAILS CLOSED (no
+            // silent bare fallback) if the welded prove cannot mint. The bare wide leg runs otherwise
+            // (the deployed default — owner turns with no threaded witness are UNAFFECTED).
+            let wide_key =
+                dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect(
+                    run_effects.first().ok_or_else(|| {
+                        SdkError::InvalidWitness("chained rotated prover: empty cohort run".into())
+                    })?,
+                );
+            if let (Some(uw), Some(key)) = (
+                umem_weld.filter(|_| wide_key.map(wide_umem_weld_registry_has).unwrap_or(false)),
+                wide_key,
+            ) {
+                let (proof, dpis) = prove_wide_umem_welded_staged(
+                    &s_k,
+                    run_effects,
+                    &rot.before,
+                    after_w,
+                    &caveat,
+                    &uw.pre,
+                    &uw.ops,
+                    before_nullifiers,
+                    None,
+                )?;
+                let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+                    SdkError::InvalidWitness(format!(
+                        "chained welded wide proof serialize failed (run {k}): {e}"
+                    ))
+                })?;
+                (proof_bytes, dpis, wide_umem_weld_vk_hash_by_key(key)?)
+            } else {
+                let (proof, rot_pi) = prove_effect_vm_rotated_wide(
+                    &s_k,
+                    run_effects,
+                    &rot.before,
+                    after_w,
+                    &caveat,
+                    before_nullifiers,
+                    // The chained full-turn path threads no per-run refusal fields context (the live
+                    // refusal lead is the single-leg sovereign path); a Refusal run here fails closed
+                    // against the `.write` gate, exactly as the sovereign forest path.
+                    None,
+                )?;
+                let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+                    SdkError::InvalidWitness(format!(
+                        "chained rotated wide proof serialize failed (run {k}): {e}"
+                    ))
+                })?;
+                (
+                    proof_bytes,
+                    rot_pi,
+                    rotated_effect_vm_wide_vk_hash(run_effects)?,
+                )
+            }
         };
         legs.push(AttachedSubProof {
             label: "effect-vm-rotated".into(),
@@ -3828,6 +3987,7 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
             witness.cap_membership.as_ref(),
             witness.cap_turn_identity,
             before_nullifiers.as_deref(),
+            witness.umem_witness.as_ref(),
         )?;
         let mut leg_pis: Vec<Vec<BabyBear>> = Vec::with_capacity(legs.len());
         for leg in legs {
@@ -5102,6 +5262,7 @@ pub fn prove_turn_with_auth(
         turn_hash,
         rotation: None,
         cap_turn_identity: None,
+        umem_witness: None,
     };
     prove_full_turn(&witness)
 }
@@ -5126,6 +5287,7 @@ pub fn prove_turn_self_sovereign(
         turn_hash,
         rotation: None,
         cap_turn_identity: None,
+        umem_witness: None,
     };
     prove_full_turn(&witness)
 }
@@ -5154,6 +5316,7 @@ pub fn prove_turn_self_sovereign_rotated(
         turn_hash,
         rotation,
         cap_turn_identity: None,
+        umem_witness: None,
     };
     prove_full_turn(&witness)
 }
@@ -9193,6 +9356,7 @@ mod tests {
             turn_hash: [0x77u8; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
 
         let proof = prove_full_turn(&witness).expect("full turn proof should generate");
@@ -9246,6 +9410,7 @@ mod tests {
             turn_hash: [0x91u8; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
 
@@ -9318,6 +9483,7 @@ mod tests {
             turn_hash: [0x92u8; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the forgery is a verify-time property)");
@@ -9440,6 +9606,7 @@ mod tests {
             turn_hash: [0xB1u8; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
 
@@ -9526,6 +9693,7 @@ mod tests {
             turn_hash: [0xB2u8; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the mismatch is a verify-time property)");
@@ -9592,6 +9760,7 @@ mod tests {
             turn_hash: [0x11u8; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
         let proof = prove_full_turn(&witness).expect("auth-bound proof should generate");
         assert!(proof.components.has_authorization);
@@ -9656,6 +9825,7 @@ mod tests {
             turn_hash: [0x22u8; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generation succeeds (mismatch is a verify-time property)");
@@ -9710,6 +9880,7 @@ mod tests {
             turn_hash: [0x88u8; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
         let mut proof = prove_full_turn(&witness).expect("honest proof should generate");
 
@@ -9883,7 +10054,7 @@ mod tests {
                 ),
                 caveat: dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
             };
-            let res = prove_cohort_run_chain(&initial, &[], &rot, None, None, None);
+            let res = prove_cohort_run_chain(&initial, &[], &rot, None, None, None, None);
             assert!(
                 res.is_err(),
                 "the chained prover must fail closed on an empty turn"
@@ -10017,7 +10188,7 @@ mod tests {
         let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
 
         // Build the chained legs directly (the prover the composed path uses).
-        let legs = prove_cohort_run_chain(&initial, &effects, &rot, None, None, None)
+        let legs = prove_cohort_run_chain(&initial, &effects, &rot, None, None, None, None)
             .expect("heterogeneous turn must prove as a chain of rotated legs");
         assert_eq!(legs.len(), 3, "three cohort runs ⇒ three rotated legs");
         for leg in &legs {
@@ -10194,6 +10365,7 @@ mod tests {
             turn_hash: [0x5A; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("chained proof with a correct Σ-net=0 conservation witness must generate");
@@ -10243,6 +10415,7 @@ mod tests {
             turn_hash: [0x5A; 32],
             rotation: Some(rot),
             cap_turn_identity: None,
+            umem_witness: None,
         };
         let res = prove_full_turn(&witness);
         assert!(

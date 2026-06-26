@@ -3777,6 +3777,13 @@ async fn execute_finalized_turn(
                                 &full_turn_previously_spent,
                                 rotation,
                                 clist_leaves,
+                                // STAGED / VK-RISK-FREE: the deployed commit path keeps minting the BARE
+                                // wide cap-open leg (no welded umem witness threaded) — the welded
+                                // DOMAIN-2 producer path is BUILT + loud-probe-validated and ready for
+                                // the gated VK epoch (attempt #13) to flip this to
+                                // `caps_umem_weld_witness(before, after)`. Flipping it here now would
+                                // change the deployed default before the VK is committed.
+                                None,
                             )
                         }
                         (None, Some((consumed, holder_cap_root)), spent_nullifier) => {
@@ -3825,6 +3832,9 @@ async fn execute_finalized_turn(
                                 // (not the actor's) — the bearer write wrapper is the named fan-out
                                 // residual; the authority-only route proves until it lands.
                                 Vec::new(),
+                                // STAGED: bare wide cap-open leg (no welded umem witness) — the welded
+                                // producer path is ready for the gated VK epoch to flip on.
+                                None,
                             )
                         }
                         (None, None, Some(spent_nullifier)) => {
