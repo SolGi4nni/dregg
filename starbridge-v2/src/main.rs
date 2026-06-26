@@ -538,6 +538,23 @@ fn main() {
         }
     }
 
+    // `--desktop`: BOOT THE LIVE WOVEN WORKBENCH — open an INTERACTIVE gpui window
+    // rooted at `DeosDesktop` (the woven desktop the `--render-woven` bake only ever
+    // renders to a PNG), over the embedded verified World, STARTING AT THE CALM
+    // WELCOME (a fresh layout shows the warm front door once — NOT the everything-
+    // cascade the bake drives). The doors, the Spotter, the halos, and every surface
+    // are live + clickable: each gesture fires a REAL verified turn through the
+    // embedded executor (exactly as the bake proves they do). This is the windowed
+    // twin of the bake — the playable deos_desktop. It returns when the window closes.
+    //   cargo run -p starbridge-v2 --features native-full --bin starbridge-v2 -- --desktop
+    #[cfg(all(feature = "embedded-executor", feature = "gpui-ui"))]
+    {
+        if args.iter().any(|a| a == "--desktop") {
+            run_desktop_window();
+            return;
+        }
+    }
+
     // `--node <url>`: ALSO connect the master interface to a LIVE remote dregg
     // node (its receipt nervous system + cell reflections), alongside the embedded
     // image. The embedded world is the headline; this is the additional remote
@@ -803,6 +820,103 @@ fn run_window(
                     )
                 });
                 view.update(cx, |c, cx| c.focus_on_open(window, cx));
+                cx.new(|cx| gpui_component::Root::new(gpui::AnyView::from(view), window, cx))
+            },
+        )
+        .expect("failed to open window");
+        cx.activate(true);
+    });
+}
+
+/// **THE LIVE WOVEN WORKBENCH** — open the interactive [`DeosDesktop`] (the woven
+/// desktop) in a real gpui window over the embedded verified World, starting at the
+/// calm WELCOME. This is the windowed twin of the `--render-woven` bake: the SAME
+/// `DeosDesktop::new(...)` over the SAME `world::demo_world()` image, but rooted in a
+/// live `cx.open_window` (exactly as [`run_window`] does for the cockpit) instead of a
+/// headless capture — so the doors, the Spotter, the halos, and every surface are
+/// clickable and fire real verified turns through the embedded executor. The desktop
+/// persists its arrangement to `DesktopLayout::default_path()` (drag to arrange); the
+/// calm welcome greets a never-greeted image exactly once, then opens onto the arranged
+/// room. NOT gated behind `render-capture`: this is the live windowed entry, `--desktop`.
+#[cfg(all(feature = "embedded-executor", feature = "gpui-ui"))]
+fn run_desktop_window() {
+    use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+    use gpui_platform::application;
+    use starbridge_v2::deos_desktop::{DeosDesktop, DesktopLayout};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    // The live verified image — the SAME `World` the cockpit + the woven bake run.
+    let (world, anchors) = world::demo_world();
+    let [_treasury, _service, user] = anchors;
+
+    // STARTUP PROOF (the no-blank-screen receipt): the desktop opens onto the live
+    // image; report its real shape so a blank window reads as a render/display issue,
+    // not an empty UI. A never-greeted layout opens onto the calm WELCOME front door.
+    let layout_path = DesktopLayout::default_path();
+    {
+        let fresh = !DesktopLayout::load(&layout_path).prefs.welcomed;
+        println!("== Starbridge v2 · opening the woven DESKTOP — root: DeosDesktop ==");
+        println!(
+            "  live image: {} cells · height {} · {} receipts",
+            world.cell_count(),
+            world.height(),
+            world.receipts().len()
+        );
+        println!(
+            "  layout sidecar: {} ({})",
+            layout_path.display(),
+            if fresh {
+                "fresh — opens onto the calm WELCOME front door"
+            } else {
+                "remembered — opens onto your arranged room"
+            }
+        );
+        println!(
+            "  right-click ANYTHING · double-click to inspect · drag to arrange (persisted) · \
+             the Spotter, doors, halos + surfaces fire REAL verified turns"
+        );
+    }
+
+    let shared = Rc::new(RefCell::new(world));
+
+    application().run(move |cx: &mut App| {
+        // Register the embedded UI fonts (CoreText lacks "Lilex"/"IBM Plex"); without
+        // this every panel lays out but renders BLANK text — same as `run_window`.
+        {
+            static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+            static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+            if let Err(e) = cx.text_system().add_fonts(vec![
+                std::borrow::Cow::Borrowed(LILEX),
+                std::borrow::Cow::Borrowed(IBM_PLEX),
+            ]) {
+                eprintln!("warning: failed to register embedded UI fonts: {e}");
+            }
+        }
+        // The real widget kit + the deos dark theme (follow OS appearance, default
+        // Dark) — same boot pair as `run_window`.
+        gpui_component::init(cx);
+        apply_deos_theme(None, false, cx);
+
+        let bounds = Bounds::centered(None, size(px(1600.), px(1000.)), cx);
+        let layout_path = layout_path.clone();
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("deos — desktop".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |window, cx| {
+                // THE WINDOW ROOT IS `DeosDesktop` — built directly over the live World
+                // (no login ceremony; the desktop is its own front door, opening on the
+                // calm welcome). Wrapped in a gpui-component `Root` so the surfaces' kit
+                // text inputs (doc editor, branch prompts, the Spotter) paint.
+                let view = cx.new(|cx| {
+                    DeosDesktop::new(shared.clone(), user, layout_path.clone(), window, cx)
+                });
                 cx.new(|cx| gpui_component::Root::new(gpui::AnyView::from(view), window, cx))
             },
         )
