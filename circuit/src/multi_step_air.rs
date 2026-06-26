@@ -20,8 +20,9 @@ pub const MAX_STEPS: usize = 32;
 
 /// Maximum delegation chain depth across all composed proofs.
 ///
-/// Bounds the total proving time for a delegation chain to approximately 50 seconds
-/// at ~500ms per step. Chains deeper than this are rejected at proof generation time
+/// Bounds the total proving time for a delegation chain: at an assumed ~500ms per
+/// step (an order-of-magnitude estimate, not benchmarked) this caps it near ~50
+/// seconds. Chains deeper than this are rejected at proof generation time
 /// to prevent DoS via unbounded recursive proving.
 ///
 /// This limit applies to the total chain from root issuer to final delegate. A single

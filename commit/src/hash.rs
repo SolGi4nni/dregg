@@ -8,7 +8,8 @@
 //!
 //! This module uses BLAKE3, which is the CORRECT choice for external-facing operations
 //! (storage, networking, Ed25519 signature domains, tooling interop). BLAKE3 is:
-//! - 10-100x faster than Poseidon2 for non-ZK uses
+//! - Roughly 10-100x faster than Poseidon2 for non-ZK uses (the well-known
+//!   native-hash vs in-circuit-arithmetization gap; not locally benchmarked)
 //! - Widely supported by external tooling and libraries
 //! - Appropriate for all paths that never enter a STARK/SNARK circuit
 //!
