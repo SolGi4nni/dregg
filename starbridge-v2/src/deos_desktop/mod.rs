@@ -37,6 +37,13 @@
 // The remaining surfaces (windows, menus, document editing, properties, actuation,
 // rendering) live here as `impl DeosDesktop` blocks over the shared chrome/layout.
 pub mod android_window;
+/// THE DISCORD-BOT SURFACE — the desktop face of the one dregg-driven bot: a card
+/// that drives the bot's ops as dregg turns (`drive_on_world` on the embedded executor
+/// / the `op_request` POST to the live bot's `/api/op`) and renders the bot's activity
+/// feed as a portable `deos_view::ViewNode` card (the SAME shape the bot renders as a
+/// Discord embed). The core (ops · drive · feed) is gpui-free; the card render is gated
+/// on `card-pane` (where `deos-view` is in scope).
+pub mod bot_surface;
 pub mod chrome;
 pub mod docgraph_view;
 /// The Pharo HALO — direct-manipulation handles floating on a selected icon/window,
@@ -512,6 +519,13 @@ pub struct DeosDesktop {
     /// window's anchor cell. Gated on `card-pane` (where `deos-view` is in scope).
     #[cfg(feature = "card-pane")]
     viewnode_panes: HashMap<CellId, Entity<deos_view::AppletView>>,
+    /// **The discord-bot's activity feed** the bot-surface card paints — the desktop
+    /// mirror of the bot's `GET /api/apps/activity/recent` (folded into the SAME
+    /// `ViewNode` card shape the bot renders as a Discord embed). Empty without a live
+    /// bot (the HTTP leg is the named seam); a desktop-driven op would append here.
+    /// Gated on `card-pane` (where the card render is in scope).
+    #[cfg(feature = "card-pane")]
+    bot_activity: Vec<bot_surface::BotActivity>,
     /// **The live SystemUI cap-chromes** — one [`crate::systemui_caps::SystemUiCapChrome`]
     /// (a confined android-cell's real `PermWorld` + the verified executor) per open
     /// `AndroidCell` window, minted lazily on first paint. The window body renders its
@@ -634,6 +648,8 @@ impl DeosDesktop {
             show_welcome,
             #[cfg(feature = "card-pane")]
             viewnode_panes: HashMap::new(),
+            #[cfg(feature = "card-pane")]
+            bot_activity: Vec::new(),
             #[cfg(feature = "android-systemui")]
             systemui_chromes: HashMap::new(),
             #[cfg(feature = "android-systemui")]
@@ -2036,6 +2052,11 @@ impl DeosDesktop {
             Tg::DocCollab => self.start_doc_collab(self.user),
             #[cfg(feature = "card-pane")]
             Tg::PortableCard => self.land_in(self.user, WinKindTag::ViewNodePane),
+            #[cfg(feature = "card-pane")]
+            Tg::BotSurface => self.land_in(
+                bot_surface::bot_surface_window_cell(),
+                WinKindTag::ViewNodePane,
+            ),
             #[cfg(feature = "android-systemui")]
             Tg::AndroidCell => self.land_in(self.user, WinKindTag::AndroidCell),
         }
@@ -3939,7 +3960,16 @@ impl DeosDesktop {
         let entity = match self.viewnode_panes.get(&cell).cloned() {
             Some(e) => e,
             None => {
-                let e = viewnode_pane::build_viewnode_view(cx);
+                // The discord-bot surface paints the bot's activity feed as the card
+                // (the SAME `ViewNode` shape the bot renders as a Discord embed); every
+                // other ViewNodePane is the World-Status panel. Without a live bot the
+                // feed is empty (the HTTP `/api/apps/activity/recent` leg is the seam),
+                // so the card renders its chrome + "no activity yet".
+                let e = if bot_surface::is_bot_surface(&cell) {
+                    bot_surface::build_bot_surface_view(cx, &self.bot_activity)
+                } else {
+                    viewnode_pane::build_viewnode_view(cx)
+                };
                 self.viewnode_panes.insert(cell, e.clone());
                 e
             }
@@ -3954,7 +3984,9 @@ impl DeosDesktop {
             .flex()
             .flex_col()
             .gap_1()
-            .child(face_section(if viewnode_pane::is_world_board(&cell) {
+            .child(face_section(if bot_surface::is_bot_surface(&cell) {
+                "discord-bot · activity (deos_view::ViewNode -> AppletView · the bot's feed as a desktop card — the SAME card the bot renders as a Discord embed; two faces of one dregg-driven bot)"
+            } else if viewnode_pane::is_world_board(&cell) {
                 "World Board (deos_view::ViewNode -> AppletView · the confined agent COMPOSED this surface from scratch, reading the live World)"
             } else {
                 "World-Status panel (deos_view::ViewNode -> AppletView · a confined agent reflects-on + rewrites it live)"

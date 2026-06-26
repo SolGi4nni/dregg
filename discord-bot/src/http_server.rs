@@ -37,7 +37,7 @@ use axum::{
         IntoResponse, Json,
         sse::{Event, Sse},
     },
-    routing::get,
+    routing::{get, post},
 };
 use futures_util::stream::{self, Stream};
 use serde::Serialize;
@@ -254,6 +254,11 @@ fn build_router(state: Arc<BotState>) -> Router {
         .route("/api/activity/recent", get(recent_activity))
         .route("/api/intents/recent", get(recent_intents))
         .route("/api/queues", get(list_queues))
+        // The deos-desktop drive seam: a desktop surface POSTs a `BotOp` here; the bot
+        // builds + signs + submits the SAME real dregg turn the Discord command would,
+        // records the SAME activity, and can reflect it to Discord. The bot's ops are
+        // drivable "onchain" from the desktop — two faces of one dregg-driven bot.
+        .route("/api/op", post(drive_op))
         .route("/observability/stream", get(observability_stream))
         // Production middleware (order matters: trace outermost for full req)
         .layer(TraceLayer::new_for_http())
@@ -421,6 +426,35 @@ async fn list_queues(
         })?;
 
     Ok(Json(queue_views(queues, subscriptions)))
+}
+
+/// **Drive a bot op as a dregg turn from the deos desktop.** The desktop POSTs a
+/// [`crate::deos_drive::DriveRequest`] (`{user_id, op, ...}`); the bot builds + signs
+/// + submits the SAME real dregg turn the matching Discord command would, records the
+/// activity, and returns the [`crate::deos_drive::DriveOutcome`] (accepted + turn
+/// hash + activity id). This is the write half of the bot's HTTP surface — the bot's
+/// ops are exercisable "onchain" from the desktop, not only from Discord.
+async fn drive_op(
+    State(state): State<Arc<BotState>>,
+    Json(req): Json<crate::deos_drive::DriveRequest>,
+) -> Result<Json<crate::deos_drive::DriveOutcome>, HttpError> {
+    match crate::deos_drive::drive(&state, &req).await {
+        Ok(outcome) => {
+            info!(
+                action = %outcome.action,
+                accepted = outcome.accepted,
+                "deos-desktop drove a bot op as a dregg turn"
+            );
+            Ok(Json(outcome))
+        }
+        Err(e) => {
+            warn!(error = %e, "deos-desktop drive failed");
+            Err(HttpError {
+                status: StatusCode::BAD_GATEWAY,
+                message: format!("drive failed: {e}"),
+            })
+        }
+    }
 }
 
 async fn recent_activity(

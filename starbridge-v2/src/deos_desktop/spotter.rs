@@ -64,6 +64,12 @@ pub enum SpotterTarget {
     /// boards OF it). Gated on the `card-pane` feature that compiles the content-IR pane in.
     #[cfg(feature = "card-pane")]
     PortableCard,
+    /// Open the DISCORD-BOT SURFACE — the desktop face of the one dregg-driven bot: a
+    /// `deos_view::ViewNode` card that drives the bot's ops as dregg turns and renders
+    /// the bot's activity feed (the SAME card the bot renders as a Discord embed). A
+    /// global surface, anchored on the bot-surface window cell. Gated on `card-pane`.
+    #[cfg(feature = "card-pane")]
+    BotSurface,
     /// Open a confined ANDROID CELL dressed as the phone's SystemUI cap-chrome — the
     /// status bar · the pull-down quick-settings shade · the hand-over sheet (a tap is a
     /// real `Effect::GrantCapability` on the confined ledger). A global surface, anchored
@@ -289,6 +295,16 @@ pub fn surface_candidates() -> Vec<SpotterEntry> {
         label: "World-Status Board  (deos.ui ViewNode · agent-composable)".to_string(),
         sublabel: "surface · live state the agent reflects-on + rewrites".to_string(),
         target: SpotterTarget::PortableCard,
+        score: 0,
+    });
+    // The discord-bot surface — the desktop face of the one dregg-driven bot (drive its
+    // ops as dregg turns + the activity feed as a card) — only when the card pane is in.
+    #[cfg(feature = "card-pane")]
+    out.push(SpotterEntry {
+        label: "discord-bot  (drive its ops · activity feed · ViewNode card)".to_string(),
+        sublabel: "surface · the desktop + Discord as two faces of one dregg-driven bot"
+            .to_string(),
+        target: SpotterTarget::BotSurface,
         score: 0,
     });
     // The confined Android cell + its SystemUI cap-chrome only when that half is built in.
