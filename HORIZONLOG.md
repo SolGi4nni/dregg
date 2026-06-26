@@ -181,13 +181,25 @@ reason.)*
   `attenuateCapOpenEffVmDescriptor2R24` (domain 2) in `WIDE_UMEM_WELD_REGISTRY_TSV`. Gauntlet `wide_umem_weld_domain2_gauntlet.rs`
   4/4 (mint+wire-verify · 8-felt tooth · vk_hash tooth · umem caps anti-forge · caps-domain guard · the plain-cap-weld
   WIRE-rejection that demonstrates the wall). The 13 sibling domain-2 members share the cap-root-weld shape — the sweep is
-  mechanical (each routes its own cap-open key; the wire-accepted cap-open keys get the welded twin). NAMED TAIL (executor-
-  COMMIT of domain-2): the deployed executor's sovereign cohort path (`verify_one_cohort_run`) resolves cap effects to their
-  PLAIN cohort descriptor (no cap-open routing, no forbidden-plain tooth) — a DIFFERENT surface than the wire. So a single
-  welded proof can't both wire-verify (cap-open) AND executor-commit (plain) for a cap effect; and the plain grant base's
-  `hash_2_to_1` cap_root model can't bind a genuine canonical (sorted-Poseidon2) caps insert (constraint #3). Executor-commit
-  of domain-2 needs the executor to ROUTE cap effects to the cap-open welded twin — a follow-on that touches the deployed
-  executor's descriptor resolution (beyond the staged VK-risk-free weld).
+  mechanical (each routes its own cap-open key; the wire-accepted cap-open keys get the welded twin).
+  ✅ EXECUTOR-COMMIT OF DOMAIN-2 — CLOSED (STAGED, VK-RISK-FREE). The deployed executor sovereign path
+  (`verify_one_cohort_run`) now ADDITIVELY resolves the bare cap-open + welded cap-open descriptors (via
+  `cap_open_candidate_keys`, the executor twin of the SDK `cap_open_route_for_run`) BESIDE the plain cap member, and
+  verifies the proof against them with the SAME anchored dpis. KEY: the cap-open WIDE PI vector is PI-COUNT-IDENTICAL (62) to
+  the plain wide cap vector (the membership crown adds TRACE columns, not PIs) and rides the SAME `append_wide_carriers` dpi
+  transform — `append_wide_carriers` ZEROS the retired `V1_PI_COUNT/+1` commit pins (so the c-list never reaches the final
+  dpis) and the executor overrides the 16 wide carriers to stored-OLD/claimed-NEW — so the executor's existing reconstructed
+  dpis bind the cap-open members BYTE-IDENTICALLY (no new witness field, no c-list converter). A welded cap-open
+  `AttenuateCapability` proof now COMMITS through `TurnExecutor::execute` (`sdk/tests/executor_cap_open_welded_commit.rs` —
+  commit + the 8-felt anchor tooth biting a forged NEW). All 3 surfaces (producer · wire · executor) are now welded-complete
+  for domain-2. The deployed plain path is UNTOUCHED (host-trusted authority still commits; 31 `sovereign_rotated_{wide,c1}`
+  tests green); the default prover stays bare and `umem_witness_enabled` is untouched (the gated VK epoch does the flip). To
+  guarantee the producer mints over the EXECUTOR's projection (the SDK `AgentCipherclerk::convert_effects_to_vm` maps attenuate
+  to a RevokeCapability shape — a divergent effect-KIND — while the executor bridge maps it to `VmEffect::AttenuateCapability`),
+  `convert_turn_effects_to_vm` is now `pub`. SWEEP: `cap_open_candidate_keys` covers all 7 domain-2 cap-effect families; the
+  wire-accepted welded twins (attenuate · delegate/grantCap · introduce · refreshDelegation · revokeCapability ·
+  revokeDelegation) resolve from both registries and share the identical mechanism — attenuate is PROVEN end-to-end, the rest
+  are mechanically covered (per-effect proof-tests are a follow-on).
 - FIRMAMENT: the semihost interactive cockpit now runs the REAL verified `DreggEngine` (live-repaint-on-turn,
   `251692b7`) — closes `SEL4-INTERACTIVE-COCKPIT.md §3.5`. NAMED TAIL: §3.6 step 4, the executor-PD's bare-metal
   Lean-ELF runtime link (the real-seL4 WALL; gated on Microkit SDK on PATH, not a semihost blocker).

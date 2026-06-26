@@ -9,7 +9,12 @@ use crate::action::Effect;
 use crate::forest::CallTree;
 use crate::turn::Turn;
 
-pub(super) fn convert_turn_effects_to_vm(
+/// Project a turn's call-forest effects into the sequence of circuit-level VM effects the Effect VM
+/// AIR consumes (the intentionally lossy turn→circuit bridge). Exposed so a proof PRODUCER can mint a
+/// sovereign leg over the EXACT VM-effect projection the executor reconstructs at verify time — the
+/// per-effect dispatch here (e.g. `Effect::AttenuateCapability → VmEffect::AttenuateCapability`) is the
+/// authoritative one the executor's `verify_one_cohort_run` resolves descriptors against.
+pub fn convert_turn_effects_to_vm(
     cell_id: &CellId,
     turn: &Turn,
 ) -> Vec<dregg_circuit::effect_vm::Effect> {

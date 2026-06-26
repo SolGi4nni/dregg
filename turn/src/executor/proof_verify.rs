@@ -110,6 +110,52 @@ pub(super) fn cell_state_after_run(
     s
 }
 
+/// The cap-open descriptor keys a capability-effect lead may be proven under (the executor twin of the
+/// SDK `full_turn_proof::cap_open_route_for_run`'s key set). A capability turn's authority is
+/// light-client-verifiable ONLY through these cap-open descriptors — the in-circuit depth-16
+/// cap-membership crown lives in THEM and nowhere else; the PLAIN cap descriptor (`attenuateVmDescriptor2R24`,
+/// …) carries no membership check (the wire forbids it — `is_forbidden_plain_cap_descriptor`). The
+/// executor ADMITS these cap-open members BESIDE the deployed plain cap descriptor (which a full node
+/// may host-trust), so a wire-accepted bare/welded cap-open proof (`prove_cap_open_umem_welded_staged`)
+/// commits through the SAME sovereign path. Each key is resolved from the WIDE bare + WIDE+umem welded
+/// registries; a key absent there (e.g. a 1-felt-only write wrapper with no wide twin) is skipped at
+/// resolution, so this list may safely over-include. `Transfer` is omitted: its cap-open is the
+/// turn-bound `transferCapOpenTB` member (a distinct width / PI count), and a plain transfer already
+/// routes the fee descriptor.
+fn cap_open_candidate_keys(lead: &dregg_circuit::effect_vm::Effect) -> &'static [&'static str] {
+    use dregg_circuit::effect_vm::Effect as E;
+    match lead {
+        E::AttenuateCapability { .. } => &["attenuateCapOpenEffVmDescriptor2R24"],
+        E::GrantCapability { .. } => &[
+            "grantCapCapOpenVmDescriptor2R24",
+            "delegateCapOpenVmDescriptor2R24",
+            "delegateWriteCapOpenVmDescriptor2R24",
+            "delegateAttenWriteCapOpenVmDescriptor2R24",
+        ],
+        E::RevokeCapability { .. } => &[
+            "revokeCapabilityCapOpenVmDescriptor2R24",
+            "revokeCapabilityWriteCapOpenVmDescriptor2R24",
+        ],
+        E::RevokeDelegation { .. } => &[
+            "revokeCapOpenVmDescriptor2R24",
+            "revokeDelegationWriteCapOpenVmDescriptor2R24",
+        ],
+        E::RefreshDelegation { .. } => &[
+            "refreshDelegationCapOpenVmDescriptor2R24",
+            "refreshDelegationWriteCapOpenVmDescriptor2R24",
+        ],
+        E::Introduce { .. } => &[
+            "introduceCapOpenVmDescriptor2R24",
+            "introduceWriteCapOpenVmDescriptor2R24",
+        ],
+        E::SpawnWithDelegation { .. } => &[
+            "spawnCapOpenVmDescriptor2R24",
+            "spawnWriteCapOpenVmDescriptor2R24",
+        ],
+        _ => &[],
+    }
+}
+
 impl TurnExecutor {
     /// TRUST-CRITICAL: This function bridges the TRUSTLESS layer (STARK proofs) into the
     /// executor. If compromised: forged sovereign state could be committed without valid proofs.
@@ -917,31 +963,88 @@ impl TurnExecutor {
         //    disagree with the trace's after-block STATE_COMMIT carrier (the wide descriptor's
         //    carrier-12 pi_bindings). The 12 live-only members (no welded twin) verify against the
         //    bare member alone.
-        let mut accepted = 0usize;
-        let mut last_err: Option<String> = None;
-        if let Some(welded) = welded_desc.as_ref() {
-            match verify_vm_descriptor2(welded, ir2_proof, &dpis) {
-                Ok(()) => accepted += 1,
-                Err(e) => last_err = Some(format!("welded twin: {e}")),
+        // CAP-OPEN ROUTE (the executor twin of the SDK wire verifier's cap-open routing — the
+        // domain-2 executor-commit gap CLOSED). A capability effect's authority is
+        // light-client-verifiable ONLY under its cap-open descriptor (the in-circuit depth-16
+        // cap-membership crown). The deployed sovereign producer mints the PLAIN wide cap descriptor
+        // (`prove_effect_vm_rotated_wide`, host-trusted authority — admitted via `desc`/`welded_desc`
+        // above, kept working), but a wire-accepted bare/welded cap-open proof
+        // (`prove_cap_open_umem_welded_staged`) binds the cap-open descriptor + its welded umem twin.
+        // The cap-open WIDE PI vector is PI-COUNT-IDENTICAL (62) to the plain wide cap vector — the
+        // membership crown adds TRACE columns, not PIs — and rides the SAME `append_wide_carriers` dpi
+        // transform, so the reconstructed `dpis` (the 8-felt ~124-bit anchors + the height pin) bind
+        // the cap-open forms BYTE-IDENTICALLY (the executor's `generate_rotated_transfer_shape_wide`
+        // base IS `generate_rotated_effect_vm_trace` + `append_wide_carriers`, exactly the producer's
+        // cap-open base). We ADDITIVELY resolve the bare cap-open + welded cap-open descriptors and
+        // verify the proof against them with the SAME anchored `dpis`, so a welded cap-open domain-2
+        // proof commits through the executor — its cap-effect verify surface now AGREES with the
+        // wire's (both cap-open + the membership crown, both admit the welded twin). STAGED: purely
+        // additive descriptor resolution; the deployed default prover (plain) and `umem_witness_enabled`
+        // are untouched. The dpis-length guard (`public_input_count == dpis.len()`) admits only the 62-PI
+        // wide members the reconstructed `dpis` can bind; absent / wrong-width keys are skipped.
+        let mut cap_open_descs: Vec<dregg_circuit::descriptor_ir2::EffectVmDescriptor2> =
+            Vec::new();
+        for key in cap_open_candidate_keys(lead) {
+            for registry in [WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV] {
+                let json = registry.lines().find_map(|line| {
+                    let mut it = line.splitn(3, '\t');
+                    if it.next() == Some(*key) {
+                        let _display = it.next();
+                        it.next()
+                    } else {
+                        None
+                    }
+                });
+                if let Some(json) = json {
+                    if let Ok(d) = parse_vm_descriptor2(json) {
+                        if d.public_input_count == dpis.len() {
+                            cap_open_descs.push(d);
+                        }
+                    }
+                }
             }
         }
-        match verify_vm_descriptor2(&desc, ir2_proof, &dpis) {
-            Ok(()) => accepted += 1,
-            Err(e) => last_err = Some(format!("bare wide: {e}")),
+
+        // The verify candidate set: the plain welded twin (when present), the plain bare wide member,
+        // and the cap-open bare + welded members. A SOUND rotated proof binds exactly ONE descriptor —
+        // a cap-open proof's membership-crown trace cannot satisfy a plain (narrower) member and a
+        // plain proof's narrower trace cannot satisfy a cap-open member — so requiring a UNIQUE accept
+        // preserves the ambiguity tooth. A post-state forgery surfaces as NO accept (the anchored
+        // after-commit PIs disagree with the trace's after-block STATE_COMMIT carrier). Admitting the
+        // cap-open members is STRICTLY STRONGER (more in-circuit constraints), never a widening of the
+        // plain path.
+        let mut candidates: Vec<&dregg_circuit::descriptor_ir2::EffectVmDescriptor2> = Vec::new();
+        if let Some(welded) = welded_desc.as_ref() {
+            candidates.push(welded);
+        }
+        candidates.push(&desc);
+        for d in &cap_open_descs {
+            candidates.push(d);
+        }
+
+        let mut accepted = 0usize;
+        let mut last_err: Option<String> = None;
+        for d in &candidates {
+            match verify_vm_descriptor2(d, ir2_proof, &dpis) {
+                Ok(()) => accepted += 1,
+                Err(e) => last_err = Some(format!("{}: {e}", d.name)),
+            }
         }
         match accepted {
             0 => Err(TurnError::ProofVerificationFailed(format!(
-                "rotated effect-vm verify: proof bound NO descriptor (welded twin {}): {}",
+                "rotated effect-vm verify: proof bound NO descriptor (plain welded twin {}, {} \
+                 cap-open member(s)): {}",
                 if welded_desc.is_some() {
                     "present"
                 } else {
                     "absent"
                 },
+                cap_open_descs.len(),
                 last_err.unwrap_or_default()
             ))),
             1 => Ok(()),
             _ => Err(TurnError::ProofVerificationFailed(
-                "rotated effect-vm verify: proof bound BOTH the welded and bare descriptors — \
+                "rotated effect-vm verify: proof bound MULTIPLE descriptors (plain/welded/cap-open) — \
                  selector binding ambiguous, rejecting"
                     .to_string(),
             )),

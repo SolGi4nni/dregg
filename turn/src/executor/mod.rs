@@ -483,7 +483,7 @@ pub use membership_verifier::{
 
 /// The turn executor: applies turns to a ledger atomically.
 mod effect_vm_bridge;
-use effect_vm_bridge::convert_turn_effects_to_vm;
+pub use effect_vm_bridge::convert_turn_effects_to_vm;
 pub struct TurnExecutor {
     /// Cost configuration for computron metering.
     pub costs: ComputronCosts,
