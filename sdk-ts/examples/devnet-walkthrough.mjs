@@ -6,7 +6,7 @@
 //   node examples/devnet-walkthrough.mjs
 //
 // Environment:
-//   DREGG_NODE_URL    (default https://devnet.dregg.fg-goose.online)
+//   DREGG_NODE_URL    (default http://localhost:8421)
 //   DREGG_DEVNET_KEY  (if the devnet gate requires one)
 //   DREGG_HOME        (profile store; defaults to ~/.dregg)
 //
@@ -14,7 +14,7 @@
 
 import { AgentRuntime, Identity, NodeClient, ReceiptFilter, profiles } from "../dist/index.mjs";
 
-const NODE_URL = process.env.DREGG_NODE_URL ?? "https://devnet.dregg.fg-goose.online";
+const NODE_URL = process.env.DREGG_NODE_URL ?? "http://localhost:8421";
 const PROFILE = "walkthrough";
 
 // ── 1. A named identity (the shared $DREGG_HOME/profiles store) ────────────

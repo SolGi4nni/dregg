@@ -4,7 +4,7 @@
 //! import dregg
 //!
 //! ident = dregg.Identity.from_profile("ember")      # ~/.dregg/profiles, shared with the CLI
-//! receipt = (ident.turn("https://devnet.dregg.fg-goose.online")
+//! receipt = (ident.turn("http://localhost:8421")   # your local node — see QUICKSTART.md
 //!                 .transfer("28c2cba0…", 100)
 //!                 .sign()
 //!                 .submit())
@@ -37,8 +37,8 @@ use dregg_cell::{AuthRequired, CapabilityRef, field_from_u64};
 use dregg_sdk::cipherclerk::{AgentCipherclerk, SignedTurn};
 use dregg_sdk::explain::{explain_action, explain_turn};
 use dregg_sdk::profiles;
-use dregg_types::CellId;
 use dregg_turn::Effect;
+use dregg_types::CellId;
 
 // ─── exceptions ───
 
@@ -591,9 +591,7 @@ impl TurnBuilder {
         let node_url = self.node_url.clone();
         let federation_id = match self.federation_id {
             Some(fid) => fid,
-            None => py
-                .detach(|| fetch_federation_id(&node_url))
-                .map_err(err)?,
+            None => py.detach(|| fetch_federation_id(&node_url)).map_err(err)?,
         };
 
         let ident = self.identity.borrow(py);
@@ -794,10 +792,7 @@ impl Receipt {
                 None => return Ok(None),
             }
         }
-        self.proof
-            .as_ref()
-            .map(|v| json_to_py(py, v))
-            .transpose()
+        self.proof.as_ref().map(|v| json_to_py(py, v)).transpose()
     }
 
     /// The receipt's full JSON as a plain dict.
@@ -1088,7 +1083,12 @@ fn list_profiles(py: Python<'_>) -> PyResult<Bound<'_, PyList>> {
 /// One cell-program constraint atom (a `StateConstraint`). Compose lists of
 /// these into a content-addressed factory descriptor via
 /// `dregg.program.descriptor([...])`.
-#[pyclass(unsendable, module = "dregg.program", name = "Constraint", from_py_object)]
+#[pyclass(
+    unsendable,
+    module = "dregg.program",
+    name = "Constraint",
+    from_py_object
+)]
 #[derive(Clone)]
 struct PyConstraint {
     inner: StateConstraint,
@@ -1222,10 +1222,7 @@ fn descriptor<'py>(
     let desc = dregg_sdk::program::programmed_cell_descriptor(list);
     let d = PyDict::new(py);
     d.set_item("factory_vk", hex::encode(desc.factory_vk))?;
-    d.set_item(
-        "child_program_vk",
-        desc.child_program_vk.map(hex::encode),
-    )?;
+    d.set_item("child_program_vk", desc.child_program_vk.map(hex::encode))?;
     d.set_item("constraints", n)?;
     Ok(d)
 }
@@ -1289,7 +1286,8 @@ impl Trustline {
         line: u64,
         salt: Option<&str>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let mut body = serde_json::json!({ "holder": hex::encode(parse_32(holder, "holder")?), "line": line });
+        let mut body =
+            serde_json::json!({ "holder": hex::encode(parse_32(holder, "holder")?), "line": line });
         if let Some(s) = salt {
             body["salt"] = serde_json::Value::String(s.to_string());
         }
@@ -1314,27 +1312,46 @@ impl Trustline {
     }
 
     /// Repay `amount`, restoring the line (`POST /trustline/repay`).
-    fn repay<'py>(&self, py: Python<'py>, trustline: &Bound<'_, PyAny>, amount: u64) -> PyResult<Bound<'py, PyAny>> {
+    fn repay<'py>(
+        &self,
+        py: Python<'py>,
+        trustline: &Bound<'_, PyAny>,
+        amount: u64,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let body = serde_json::json!({ "trustline": hex::encode(parse_32(trustline, "trustline")?), "amount": amount });
         self.post(py, "/trustline/repay", body)
     }
 
     /// Settle outstanding draws to the holders (`POST /trustline/settle`).
-    fn settle<'py>(&self, py: Python<'py>, trustline: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-        let body = serde_json::json!({ "trustline": hex::encode(parse_32(trustline, "trustline")?) });
+    fn settle<'py>(
+        &self,
+        py: Python<'py>,
+        trustline: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let body =
+            serde_json::json!({ "trustline": hex::encode(parse_32(trustline, "trustline")?) });
         self.post(py, "/trustline/settle", body)
     }
 
     /// Close the line: settle outstanding to holder, residual to issuer
     /// (`POST /trustline/close`).
-    fn close<'py>(&self, py: Python<'py>, trustline: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-        let body = serde_json::json!({ "trustline": hex::encode(parse_32(trustline, "trustline")?) });
+    fn close<'py>(
+        &self,
+        py: Python<'py>,
+        trustline: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let body =
+            serde_json::json!({ "trustline": hex::encode(parse_32(trustline, "trustline")?) });
         self.post(py, "/trustline/close", body)
     }
 
     /// Live position (`GET /trustline/status/{cell}`):
     /// `{line, drawn, settled, remaining, escrow, open, coordinator_*}`.
-    fn status<'py>(&self, py: Python<'py>, trustline: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn status<'py>(
+        &self,
+        py: Python<'py>,
+        trustline: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let cell = hex::encode(parse_32(trustline, "trustline")?);
         let base = self.node_url.clone();
         let key = self.devnet_key.clone();
@@ -1393,7 +1410,9 @@ fn member_json(m: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     } else if let Ok(b) = seal.extract::<&[u8]>() {
         hex::encode(b)
     } else {
-        return Err(PyTypeError::new_err("member.seal_pk: expected hex str or bytes"));
+        return Err(PyTypeError::new_err(
+            "member.seal_pk: expected hex str or bytes",
+        ));
     };
     Ok(serde_json::json!({ "cell": cell_hex, "seal_pk": seal_hex }))
 }
@@ -1429,12 +1448,21 @@ impl Channels {
             .iter()
             .map(member_json)
             .collect::<PyResult<Vec<_>>>()?;
-        self.post(py, "/channels/create", serde_json::json!({ "tag": tag, "members": members }))
+        self.post(
+            py,
+            "/channels/create",
+            serde_json::json!({ "tag": tag, "members": members }),
+        )
     }
 
     /// Add a member — one unified epoch step (`POST /channels/join`); returns
     /// the fresh fan-out.
-    fn join<'py>(&self, py: Python<'py>, channel: &Bound<'_, PyAny>, member: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn join<'py>(
+        &self,
+        py: Python<'py>,
+        channel: &Bound<'_, PyAny>,
+        member: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let body = serde_json::json!({ "channel": hex::encode(parse_32(channel, "channel")?), "member": member_json(member)? });
         self.post(py, "/channels/join", body)
     }
@@ -1443,14 +1471,23 @@ impl Channels {
     /// forward-read ability and their group-held capabilities (`POST
     /// /channels/remove`). The removed member is absent from the returned
     /// fan-out.
-    fn remove<'py>(&self, py: Python<'py>, channel: &Bound<'_, PyAny>, member: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn remove<'py>(
+        &self,
+        py: Python<'py>,
+        channel: &Bound<'_, PyAny>,
+        member: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let body = serde_json::json!({ "channel": hex::encode(parse_32(channel, "channel")?), "member": hex::encode(parse_32(member, "member")?) });
         self.post(py, "/channels/remove", body)
     }
 
     /// Advance the epoch without a membership change (`POST /channels/rekey`;
     /// a fresh key fan-out).
-    fn rekey<'py>(&self, py: Python<'py>, channel: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn rekey<'py>(
+        &self,
+        py: Python<'py>,
+        channel: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let body = serde_json::json!({ "channel": hex::encode(parse_32(channel, "channel")?) });
         self.post(py, "/channels/rekey", body)
     }
@@ -1478,7 +1515,11 @@ impl Channels {
 
     /// Live group state (`GET /channels/status/{cell}`): epoch, roster
     /// commitment, and the `epochs_unified` invariant tooth.
-    fn status<'py>(&self, py: Python<'py>, channel: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn status<'py>(
+        &self,
+        py: Python<'py>,
+        channel: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let cell = hex::encode(parse_32(channel, "channel")?);
         let base = self.node_url.clone();
         let key = self.devnet_key.clone();
@@ -1607,7 +1648,9 @@ fn hex_or_bytes(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<String> {
     if let Ok(b) = obj.extract::<&[u8]>() {
         return Ok(hex::encode(b));
     }
-    Err(PyTypeError::new_err(format!("{what}: expected hex str or bytes")))
+    Err(PyTypeError::new_err(format!(
+        "{what}: expected hex str or bytes"
+    )))
 }
 
 /// **Mailbox** — a hosted inbox over the relay (`docs/ORGANS.md` §2).
@@ -1646,7 +1689,12 @@ impl Mailbox {
 
     /// Sign `domain || owner_pk || nonce [|| extra]` with the owner key,
     /// returning `(owner_hex, nonce_hex, signature_hex)`.
-    fn signed_tuple(&self, py: Python<'_>, domain: &[u8], extra: &[u8]) -> (String, String, String) {
+    fn signed_tuple(
+        &self,
+        py: Python<'_>,
+        domain: &[u8],
+        extra: &[u8],
+    ) -> (String, String, String) {
         let ident = self.identity.borrow(py);
         let owner = ident.clerk.public_key().0;
         let mut nonce = [0u8; 8];
@@ -1725,7 +1773,8 @@ impl Mailbox {
     ) -> PyResult<Bound<'py, PyAny>> {
         let dest_hex = hex::encode(parse_32(dest, "dest")?);
         use base64::Engine;
-        let payload_b64 = base64::engine::general_purpose::STANDARD.encode(ciphertext_bytes(ciphertext)?);
+        let payload_b64 =
+            base64::engine::general_purpose::STANDARD.encode(ciphertext_bytes(ciphertext)?);
         let body = serde_json::json!({ "sender": self.owner_hex(py), "payload": payload_b64, "deposit": deposit });
         let base = self.base_url.clone();
         let path = format!("/relay/send/{dest_hex}");
@@ -1762,7 +1811,11 @@ impl Mailbox {
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
-        format!("Mailbox(owner={:?}, relay={:?})", self.owner_hex(py), self.base_url)
+        format!(
+            "Mailbox(owner={:?}, relay={:?})",
+            self.owner_hex(py),
+            self.base_url
+        )
     }
 }
 
@@ -1774,7 +1827,9 @@ fn ciphertext_bytes(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
         return hex::decode(s.trim())
             .map_err(|e| PyValueError::new_err(format!("ciphertext: invalid hex: {e}")));
     }
-    Err(PyTypeError::new_err("ciphertext: expected bytes or hex str"))
+    Err(PyTypeError::new_err(
+        "ciphertext: expected bytes or hex str",
+    ))
 }
 
 /// Minimal getrandom fill (the binding already pulls `rand` transitively via
@@ -1842,9 +1897,17 @@ impl AttestedQuery {
     /// `GET /api/turn/{hash}/proof` — the full-turn STARK for a committed turn,
     /// or `None` while the node's prove pool is still producing it. The proof
     /// is BYTES — verify it with the Rust/Lean `verify_full_turn`, not here.
-    fn turn_proof<'py>(&self, py: Python<'py>, turn_hash: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
+    fn turn_proof<'py>(
+        &self,
+        py: Python<'py>,
+        turn_hash: &str,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
         let base = self.node_url.clone();
-        let url = format!("{}/api/turn/{}/proof", base.trim_end_matches('/'), turn_hash.trim());
+        let url = format!(
+            "{}/api/turn/{}/proof",
+            base.trim_end_matches('/'),
+            turn_hash.trim()
+        );
         let fetched = py.detach(move || match http_agent().get(&url).call() {
             Ok(resp) => resp
                 .into_json::<serde_json::Value>()
@@ -1922,6 +1985,14 @@ const KERNEL_PROBE_WIRE: &str = "{\"cells\":[[1,{\"rec\":[[\"balance\",{\"int\":
 #[pyfunction]
 fn kernel(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     let d = PyDict::new(py);
+    // Which wheel is this? The LIGHT (default) build is the kernel-free client;
+    // the HEAVY build (`--features kernel`) embeds the verified Lean executor.
+    let build_mode = if cfg!(feature = "kernel") {
+        "kernel"
+    } else {
+        "light"
+    };
+    d.set_item("build", build_mode)?;
     let lean = dregg_lean_ffi::lean_available();
     d.set_item("lean", lean)?;
     d.set_item(
@@ -1950,7 +2021,19 @@ fn kernel(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
         }
     } else {
         d.set_item("verified_step_ok", false)?;
-        d.set_item("verified_step_out", "lean kernel not linked (rust fallback)")?;
+        // Distinguish "this wheel never embedded the kernel" (the light client
+        // build — the expected, graceful case) from "the kernel build could not
+        // link/init its archive at build time" (a heavy-build problem to fix).
+        let why = if cfg!(feature = "kernel") {
+            "lean kernel not linked (the kernel build's archive/runtime was \
+             unavailable at build time — run ./scripts/bootstrap.sh)"
+        } else {
+            "kernel-absent: this is the LIGHT, client-only build (no embedded \
+             executor). The sign/submit/read surface is fully present; install \
+             the kernel wheel (dregg[kernel], built with --features kernel) for \
+             the embedded verified Lean kernel."
+        };
+        d.set_item("verified_step_out", why)?;
     }
     Ok(d)
 }
@@ -2079,8 +2162,8 @@ fn deploy_lower<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>>
     let dep = parse_deployment(text).map_err(|e| err(e.to_string()))?;
     let lowered = dregg_deploy::Lowered::from_deployment(&dep).map_err(|e| err(e.to_string()))?;
 
-    let forest_json = serde_json::to_value(&lowered.forest)
-        .map_err(|e| err(format!("encode forest: {e}")))?;
+    let forest_json =
+        serde_json::to_value(&lowered.forest).map_err(|e| err(format!("encode forest: {e}")))?;
 
     let d = PyDict::new(py);
     d.set_item("forest", json_to_py(py, &forest_json)?)?;

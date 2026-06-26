@@ -19,7 +19,13 @@ signing preimages are differentially tested against the repo's own
 vector as the Rust SDK, CLI, and browser extension — if any implementation
 drifts, all of them fail together.
 
-## Walkthrough (devnet)
+## Walkthrough (local node)
+
+There is no public server (the former `devnet.dregg.fg-goose.online` is offline);
+run a node locally first — see `QUICKSTART.md` (`dregg-node init … && dregg-node run
+--enable-faucet --port 8421`). On a remote/operator node the signed-turn ingress is
+operator-gated (`devnetKey` / `$DREGG_API_TOKEN`); on your own `--enable-faucet` dev
+node it is open.
 
 ```ts
 import { AgentRuntime, Identity, NodeClient, ReceiptFilter, profiles } from "@dregg/sdk";
@@ -27,9 +33,9 @@ import { AgentRuntime, Identity, NodeClient, ReceiptFilter, profiles } from "@dr
 // 1. A named identity — the same $DREGG_HOME/profiles store as `dregg id`.
 const identity = profiles.loadActive() ?? (profiles.create("me"), profiles.load("me"));
 
-// 2. Bind to a node.
-const node = new NodeClient("https://devnet.dregg.fg-goose.online", {
-  devnetKey: process.env.DREGG_DEVNET_KEY, // the signed-turn ingress is operator-gated
+// 2. Bind to a node (your local dev node, or a remote node + its operator token).
+const node = new NodeClient("http://localhost:8421", {
+  devnetKey: process.env.DREGG_DEVNET_KEY, // only needed for an operator-gated remote node
 });
 const runtime = new AgentRuntime(identity, node);
 
@@ -125,7 +131,10 @@ The read-only twin: no identity, no signing. Fetch the federation-attested
 state roots, finalized checkpoints, and a committed turn's full-turn STARK.
 
 ```ts
-const aq = new AttestedQuery("https://devnet.dregg.fg-goose.online");
+// The federation-attested roots/checkpoints + standalone STARK are produced by
+// blocklace finalization across a committee, so they are empty/404 on a SOLO node;
+// boot the local federation (`demo/multi-node-devnet`, QUICKSTART §9) to see them.
+const aq = new AttestedQuery("http://127.0.0.1:7811");
 const roots = await aq.attestedRoots();        // federation-signed roots (+ signature count)
 const cp = await aq.checkpoint();              // latest finalized checkpoint (+ qc votes)
 const proof = await aq.turnProof(turnHashHex); // full-turn STARK BYTES

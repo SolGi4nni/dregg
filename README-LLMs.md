@@ -145,7 +145,10 @@ These are restated in `REORIENT.md` (read it first after any context loss).
 - **Remote scale:** `scripts/pbuild <lane> <cmd>` runs workspace-scale cargo on
   persvati (24-core). The `tee|tail` exit code is tail's, not cargo's — always grep
   the SAVED log for `test result:` / `error[`.
-- **First contact (no build):** `curl -s https://devnet.dregg.fg-goose.online/status`.
+- **First contact:** no public server (the former `devnet.dregg.fg-goose.online` is
+  offline). Run locally — `cargo build -p dregg-node && ./target/debug/dregg-node init
+  --data-dir /tmp/d && ./target/debug/dregg-node run --data-dir /tmp/d --enable-faucet
+  --port 8421 &` then `curl -s http://localhost:8421/status`. Full path: `QUICKSTART.md`.
 - **Release:** `dist` (formerly cargo-dist), config in root `Cargo.toml`
   `[workspace.metadata.dist]`. `dist plan` shows the artifact matrix. The dev
   pre-release tag is `v0.0.0-dev` (NOT `v0.0.0~dev` — `~` is illegal SemVer). `cli`

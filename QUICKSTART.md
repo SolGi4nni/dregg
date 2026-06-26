@@ -29,15 +29,22 @@ curl -s http://localhost:8421/status
 ```
 
 ```json
-{"healthy":true,"peer_count":0,"dag_height":0,"consensus_live":true,
- "federation_mode":"solo","state_producer":"lean","lean_producer":true,
- "full_turn_proving":false,"producer_covered_effects":21}
+{"healthy":false,"peer_count":0,"latest_height":0,"dag_height":0,"block_count":0,
+ "consensus_live":false,"federation_mode":"solo","state_producer":"lean",
+ "lean_producer":true,"full_turn_proving":false,"producer_covered_effects":21}
 ```
 
 `state_producer:"lean"` is the point: the node executes turns by calling the
 verified Lean function, not a Rust reimplementation. (`full_turn_proving` is off
 by default — the per-turn STARK is on the hot path; pass `--prove-turns` to turn
 it on, which is what an audit-grade node runs.)
+
+`healthy:false` / `consensus_live:false` is **expected on a solo node** —
+`healthy` requires a finalized blocklace block (`consensus_live && block_count >
+0`), and a single node has no committee to finalize one. Turns still commit and
+witness on the verified path (you are about to watch one land); block finality
+and the federation-attested read surface arrive with the multi-node federation in
+§9.
 
 Faucet a cell. NOTE: a cell id is a commitment to a public key
 (`id == derive_raw(pubkey, token)`), so a bare *random* id is **unspendable** —
@@ -77,10 +84,10 @@ dregg node status
 
 ```text
 === Node Status ===
-  Health: HEALTHY
+  Health: UNHEALTHY          # expected on a solo node — see §1; turns still commit
   Federation mode: solo
-  State producer: LEAN (verified)
-  DAG height: …
+  State producer: LEAN (verified, 21 effects)
+  DAG height: 0
 ```
 
 `dregg doctor` health-checks the whole client surface; `dregg --help` lists the
@@ -156,9 +163,22 @@ dregg turn status 8dae2ff1…
   Witnessed: yes
 ```
 
-(With `full_turn_proving` off the receipt's witness lands immediately and the
-proof stays `proof_pending`. Start the node with `--prove-turns` to attach a real
-per-turn STARK; a light client then fetches it at `GET /api/turn/{hash}/proof`.)
+The receipt — committed, chained, witnessed — IS your proof the turn ran on the
+verified path; `dregg turn status` reads `Proof: present`, `Witnessed: yes`. With
+`full_turn_proving` off, the witness lands immediately and the proof stays
+`proof_pending`. Start the node with `--prove-turns` and a worker attaches a real
+per-turn STARK to the committed receipt a moment later (the `Proof: present`,
+`Witness count: 1` you then read). Note the per-cell pre/post state roots in the
+receipt are only populated when proving is on — a non-proving node leaves them as
+placeholders (the cell state itself updates either way; read it back with
+`dregg cell inspect`).
+
+The federation-attested read surface a *light client* fetches — `GET
+/federation/roots` (committee-signed state roots), `GET /checkpoint/latest`
+(finalized checkpoints), and the standalone full-turn STARK bytes at `GET
+/api/turn/{hash}/proof` — are produced by **blocklace finalization across a
+federation**, so they are empty / `404` on a solo node by design. To see them
+populated, boot the local multi-node federation in §9.
 
 ## 4. The guided demo — a full app lifecycle, one command
 
@@ -278,6 +298,45 @@ dregg turn status <turn-hash>                 # receipt, finality, witness
 
 and in a browser at `http://localhost:3000/explorer/cell/<id>` (also
 `…/explorer/receipt/<hash>`, `…/explorer/tx/<turn-hash>`).
+
+## 9. The federation read surface (the light-client verify)
+
+A solo node commits and witnesses turns, but the *federation-attested* artifacts a
+light client reads — committee-signed state roots, finalized checkpoints, and the
+standalone full-turn STARK — only exist once a committee finalizes blocks. Boot a
+local federation (two federations of three nodes each) to see them populated. This
+needs only the already-built `dregg-node` binary plus `jq`:
+
+```sh
+cargo build -p dregg-node -p dregg-verifier        # the verifier is used by scenarios
+cd demo/multi-node-devnet
+./start_devnet.sh                                   # boots 6 nodes on 127.0.0.1:7811-7813, :7821-7823
+```
+
+The attested read surface is then live off any node (F1 node-1 is `:7811`):
+
+```sh
+curl -s http://127.0.0.1:7811/federation/roots      # committee-signed state roots (+ signatures)
+curl -s http://127.0.0.1:7811/checkpoint/latest     # latest finalized checkpoint (+ qc votes)
+```
+
+The endpoints respond immediately; `roots` is an empty array `[]` on a freshly
+booted, idle federation and fills as the committee finalizes blocks under activity.
+The scenario scripts drive that activity and assert the surface end-to-end (all
+green on this tree):
+
+```sh
+./scenarios/federation_attestation.sh               # committee-signed roots, tamper rejected
+./run_all_scenarios.sh                              # cross-fed handoff, attestation, transfer, …
+./stop_devnet.sh                                    # SIGTERM, then SIGKILL after 5s
+```
+
+From an SDK this is the read-only `AttestedQuery` noun (no identity, no signing) —
+`attestedRoots()` / `checkpoint()` / `turnProof(hash)` in `@dregg/sdk` and
+`dregg.AttestedQuery` in the Python binding. Verifying a STARK or a threshold
+signature is a Rust/wasm operation; the pure-TS/Python `AttestedQuery` surfaces the
+artifacts to verify, it does not return a checked verdict on its own.
+`demo/multi-node-devnet/README.md` documents the topology and each scenario.
 
 ## Where next
 

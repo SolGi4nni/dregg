@@ -15,7 +15,7 @@ import sys
 
 import dregg
 
-NODE = os.environ.get("DREGG_NODE_URL", "https://devnet.dregg.fg-goose.online")
+NODE = os.environ.get("DREGG_NODE_URL", "http://localhost:8421")
 
 # 1. A named identity (shared store with `dregg id create/use` and the Rust
 #    SDK: ~/.dregg/profiles/<name>.json).

@@ -19,12 +19,12 @@
 //   </script>
 //
 // Environment (Node smoke-test only):
-//   DREGG_NODE_URL    (default https://devnet.dregg.fg-goose.online)
+//   DREGG_NODE_URL    (default http://localhost:8421)
 //   DREGG_DEVNET_KEY  (if the devnet ingress is gated)
 
 import { AgentRuntime, Identity } from "../dist/browser.mjs";
 
-const NODE_URL = process.env.DREGG_NODE_URL ?? "https://devnet.dregg.fg-goose.online";
+const NODE_URL = process.env.DREGG_NODE_URL ?? "http://localhost:8421";
 
 // Identity.generate() uses globalThis.crypto.getRandomValues — the SAME in Node
 // and the browser. No node:crypto, no native dependency.

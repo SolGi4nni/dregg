@@ -16,7 +16,7 @@ import os
 
 import dregg
 
-NODE = os.environ.get("DREGG_NODE_URL", "https://devnet.dregg.fg-goose.online")
+NODE = os.environ.get("DREGG_NODE_URL", "http://localhost:8421")
 RELAY = os.environ.get("DREGG_RELAY_URL", "http://localhost:3100")
 KEY = os.environ.get("DREGG_API_TOKEN")
 

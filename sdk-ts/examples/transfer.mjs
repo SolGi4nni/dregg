@@ -6,14 +6,14 @@
 //   node examples/transfer.mjs
 //
 // Environment:
-//   DREGG_NODE_URL    (default https://devnet.dregg.fg-goose.online)
+//   DREGG_NODE_URL    (default http://localhost:8421)
 //   DREGG_DEVNET_KEY  (if the devnet ingress is gated)
 //
 // Build first: npm run build
 
 import { AgentRuntime, Identity, NodeClient } from "../dist/index.mjs";
 
-const NODE_URL = process.env.DREGG_NODE_URL ?? "https://devnet.dregg.fg-goose.online";
+const NODE_URL = process.env.DREGG_NODE_URL ?? "http://localhost:8421";
 
 const node = new NodeClient(NODE_URL, { devnetKey: process.env.DREGG_DEVNET_KEY });
 

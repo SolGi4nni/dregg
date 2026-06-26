@@ -10,13 +10,13 @@
 //   node examples/attested-query.mjs [turnHashHex]
 //
 // Environment:
-//   DREGG_NODE_URL    (default https://devnet.dregg.fg-goose.online)
+//   DREGG_NODE_URL    (default http://localhost:8421)
 //
 // Build first: npm run build
 
 import { AttestedQuery } from "../dist/index.mjs";
 
-const NODE_URL = process.env.DREGG_NODE_URL ?? "https://devnet.dregg.fg-goose.online";
+const NODE_URL = process.env.DREGG_NODE_URL ?? "http://localhost:8421";
 
 const aq = new AttestedQuery(NODE_URL);
 
