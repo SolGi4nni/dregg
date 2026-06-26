@@ -58,6 +58,12 @@ use dregg_app_framework::{
 /// `starbridge-kvstore` and `starbridge-nameservice`.
 pub mod service;
 
+/// The AX4 card axis — the escrow's UI as a renderer-independent `deos.ui.*`
+/// view-tree ([`card::escrow_card_value`]), pure `serde_json` with no `deos-view`
+/// dependency. The button `turn` names ARE the [`service`] method vocabulary, so
+/// the card and the service cell speak the same lifecycle.
+pub mod card;
+
 // =============================================================================
 // Escrow-cell state schema
 // =============================================================================
