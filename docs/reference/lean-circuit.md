@@ -193,6 +193,31 @@ hypothesis. The closure layer *discharges* that family from genuine per-effect r
   `lightclient_unfoolable_assembled` (`:440`) and
   `lightclient_turn_unfoolable_forest_assembled` (`:463`) are the capstones.
 
+### Scope carve-out — `Effect::Custom` is NOT discharged in-circuit
+
+The per-effect discharge above covers the kernel effect families that have a
+`FullActionA` constructor and a `<effect>_closedLog` rung. `Effect::Custom`
+(`circuit/src/effect_vm/effect.rs:281` — custom cell-program dispatch) has
+**neither**: there is no `customA` constructor in `FullActionA` and no
+`closedLogExtract_custom_closed` rung in the 36-way `closedLogExtract_all_genuine`
+(`ClosureFanoutGenuine.lean:1009`), which routes any non-cohort index through its
+`| (n+1) => rds.other (n+1)` catch-all (the `ClosureReadouts.other` field, a carried
+hypothesis labelled "off-cohort indices (not real effects)" at `:808`). The deployed
+custom descriptor `customV3` (`v3Registry`, `EffectVmEmitRotationV3.lean:3933`) *is*
+in the registry the apex commits, but its in-AIR `proofBind` op is row-locally `True`
+(`DescriptorIR2.lean:570` — the AIR records the proof commitment and trusts it). The
+stronger `Satisfied2Custom` / `proofBind_determined` predicate, which requires the
+bound external sub-proof to *verify* under a named `EngineBinding E` hypothesis, is
+proven as local lemmas in the Emit modules (`EffectVmEmitV2.lean:1286`,
+`EffectVmEmitRotationV3.lean:4307`) but is **never threaded into the apex chain**.
+Consequently a light client running only the aggregate STARK does **not** witness a
+custom program's correctness; that check is the out-of-circuit Rust
+`dregg_circuit_prove::custom_proof_bind::verify_proof_bind`
+(`circuit-prove/src/custom_proof_bind.rs`), which the light client / SDK must run
+separately. The `custom_proof_commitment` column is 4-felt / ~62-bit
+(`custom_proof_bind.rs:61-70`), below the 8-felt / ~124-bit faithful-commitment floor.
+Full grounding: `docs/deos/CUSTOM-VK-AUTHORIZATION.md`.
+
 ## Whole-history aggregation (the light client over a chain)
 
 `Dregg2.Circuit.RecursiveAggregation` lifts single-turn soundness to a whole history.
