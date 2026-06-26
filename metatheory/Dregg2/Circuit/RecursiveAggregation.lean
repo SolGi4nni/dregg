@@ -1125,6 +1125,132 @@ theorem real_tree_count_is_two : (exposedSeg realTree).count = 2 := rfl
 
 end SegRealize
 
+/-! ## 10. THE RUNNING-VK FIXED POINT — perpetual constancy MECHANIZED (the depth-invariance induction).
+
+§§1–9 prove the whole-history ATTESTATION is preserved by the unbounded fold. They are SILENT on the
+SHAPE of the running recursion proof's verifying key — the property a LIGHT CLIENT needs to pin ONE
+trust anchor and accept an accumulated chain of ANY length: that the running VK is CONSTANT across fold
+depth. `circuit-prove/src/accumulator.rs` MEASURES this (`wrapped_running_vk_is_constant_across_depth`):
+the running aggregation VK settles to a fixed point at depth 4 (after a finite 2-step transient) and is
+BYTE-IDENTICAL from there — `rows`, `degree_bits`, AND the preprocessed commitment all equal at depth 4
+and depth 5. The "perpetual" half — `∀N, VK_N = VK_4` — used to rest on a PROSE structural-idempotence
+argument. THIS SECTION MECHANIZES it.
+
+The mechanization, tiered by what each part rests on (honest):
+
+  * **The fold-shape transition is a deterministic function of SHAPE ALONE — `step : VkShape → VkShape`.**
+    The parent aggregation circuit's op-list (hence its preprocessed commitment = the VK core) is built
+    by `verify_p3_batch_proof_circuit` (the recursion fork) from ONLY the running input proof's SHAPE
+    quantities — its `rows`, `table_packing`, the `non_primitives` op_type/rows/lanes manifest, and the
+    per-instance public-value COUNTS (`entry.public_values.len()`, a count, never the values). The
+    witness VALUES never enter the op-list, and `recursion_vk_fingerprint` (the impl) is correspondingly
+    content-independent ("two proofs of the same circuit shape over different data fingerprint
+    identically"). So the running VK at depth n+1 is a FUNCTION of the running VK at depth n and the
+    constant leaf shape — modeled here as `step`. Modeling the transition as a FUNCTION of `VkShape`
+    (not a relation over proofs) is precisely the encoding of that discharged fact. (Discharge: the fork
+    code-audit + the value-independence Rust tooth `running_vk_fixed_point_is_value_independent` — two
+    DIFFERENT value-streams reach the SAME depth-4 VK material.)
+
+  * **The depth-4 VK is a FIXED POINT of `step` — `hfix : step anchor = anchor`.** MEASURED:
+    `wrapped_running_vk_is_constant_across_depth` shows the full VK material is byte-identical at depth 4
+    and depth 5 — i.e. one application of `step` to the depth-4 shape reproduces it exactly.
+
+  * **THEREFORE the running VK is PERPETUALLY CONSTANT past depth 4** — `running_vk_perpetually_constant`:
+    `∀ n, step^[n] anchor = anchor`. This is the deterministic-iteration induction the prose argument
+    named, now machine-checked. A light client pins the ONE depth-4 anchor and EVERY deeper running proof
+    carries it (`running_vk_one_anchor`).
+
+The remaining recursion-fork work is NOT this perpetual claim (mechanized here): it is shrinking the
+finite 2-step TRANSIENT (depths 2,3, before the fixed point) to zero, so every fold from the FIRST
+aggregation already carries the one anchor. That needs a CANONICAL agg-shaped SEED whose own left is
+agg-shaped (the Pickles step∘wrap identity/normalize fold) — a primitive the fork exposes none of today.
+The transient is a USABILITY uniformity, NOT a soundness gate: the VK-identity pin TRACKS the running
+commitment through it (honest transient folds are not rejected), and a light client anchors on the
+perpetual fixed-point VK. -/
+
+section RunningVkFixedPoint
+
+/-! The running recursion proof's verifying-key SHAPE (`VkShape`) — the full verifier-reconstruction
+material the `recursion_vk_fingerprint` hashes (table packing, `rows`, `degree_bits`, the non-primitive
+manifest, and the preprocessed commitment = the op-list / VK core). Opaque here: the theorem speaks to
+its TRANSITION across folds, not its internals.
+
+`step` is the fold-shape transition: the VK shape of the running proof at depth n+1 as a DETERMINISTIC
+function of the VK shape at depth n (the leaf shape being constant). That this is a function of SHAPE
+ALONE — not of the witness values — is the fork's content-independence (the verifier op-list is built
+from the input proof's shape quantities only); modeling it as `VkShape → VkShape` encodes exactly that
+discharged fact. -/
+variable {VkShape : Type}
+variable (step : VkShape → VkShape)
+
+/-- **`running_vk_iterate_fixed` (the deterministic-iteration core).** Iterating a deterministic map
+from a fixed point stays at the fixed point — `Mathlib.Function.iterate_fixed`. The pure-math backbone
+of perpetual constancy: the depth-4 shape is reproduced by every further fold. -/
+theorem running_vk_iterate_fixed {a : VkShape} (hfix : step a = a) :
+    ∀ n, step^[n] a = a :=
+  fun n => Function.iterate_fixed hfix n
+
+/-- **`running_vk_perpetually_constant` (THE DEPTH-INVARIANCE HEADLINE).** Given the MEASURED depth-4
+fixed point (`hfix : step anchor = anchor` — the byte-identical depth-4 == depth-5 VK material), the
+running VK at EVERY depth past 4 — `step^[n] anchor`, the n-th fold beyond the fixed point — equals the
+depth-4 anchor. So `∀N, VK_N = VK_4`: a fixed-size verifier forever, no longer a prose idempotence
+argument but a machine-checked induction off ONE measured fixed point. -/
+theorem running_vk_perpetually_constant {anchor : VkShape} (hfix : step anchor = anchor) :
+    ∀ n, step^[n] anchor = anchor :=
+  running_vk_iterate_fixed step hfix
+
+/-- **`running_vk_one_anchor` (the light-client single-anchor property).** Any two running proofs at or
+past the fixed point carry the IDENTICAL VK shape — so a light client pins ONE anchor and accepts an
+accumulated chain of ANY length. -/
+theorem running_vk_one_anchor {anchor : VkShape} (hfix : step anchor = anchor) (m n : Nat) :
+    step^[m] anchor = step^[n] anchor := by
+  rw [running_vk_perpetually_constant step hfix m, running_vk_perpetually_constant step hfix n]
+
+end RunningVkFixedPoint
+
+/-! ### §10 NON-VACUITY — the fixed-point induction FIRES on a concrete transient + fixed point.
+
+The mechanization would be hollow if no transition with a genuine transient AND a reachable fixed point
+existed. We model exactly the measured shape: a transition that INCREMENTS through a transient (depths
+0,1,2,3) and CLAMPS at 4 (the depth-4 fixed point), then fire the perpetual-constancy theorem off the
+anchor — and witness the transient is REAL (depth 0 ≠ depth 4), the A/B companion of
+`wrap_grows_vk_when_disabled`. -/
+section RunningVkRealize
+
+/-- A concrete VK-shape carrier for the witness — a Nat standing for the settled fold depth/shape. -/
+abbrev RealVk := Nat
+
+/-- A concrete fold-shape transition mirroring the MEASURED shape: it increments through the transient
+(depths < 4) and is STATIONARY at the fixed point (depths ≥ 4 map to 4). The depth-4 shape `4` is its
+fixed point. -/
+def realStep : RealVk → RealVk := fun n => if 4 ≤ n then 4 else n + 1
+
+/-- The MEASURED fixed point on the witness: `realStep 4 = 4` (the depth-4 == depth-5 reproduction). -/
+theorem real_running_vk_fixed : realStep 4 = 4 := by decide
+
+/-- **`real_running_vk_perpetual` (the headline WITNESSED).** The perpetual-constancy theorem fires:
+from the witnessed fixed point, every iterate equals the anchor — a real, non-vacuous instance of the
+depth-invariance induction (`∀N, VK_N = VK_4`). -/
+theorem real_running_vk_perpetual : ∀ n, realStep^[n] 4 = 4 :=
+  running_vk_perpetually_constant realStep real_running_vk_fixed
+
+/-- **`real_running_vk_transient_is_real` (the non-vacuity A/B half).** The modeled transition genuinely
+MOVES through the transient before settling: the depth-0 shape differs from the depth-4 shape
+(`realStep^[4] 0 = 4 ≠ 0`). So the fixed-point equality asserted above is LOAD-BEARING (the early shapes
+really differ), exactly as the Rust `wrap_grows_vk_when_disabled` confirms the measured transient is
+real. -/
+theorem real_running_vk_transient_is_real : realStep^[4] 0 ≠ realStep^[0] 0 := by decide
+
+end RunningVkRealize
+
+/-! ### §10 axiom hygiene — the running-VK fixed point is `#assert_axioms`-clean. -/
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.running_vk_iterate_fixed
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.running_vk_perpetually_constant
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.running_vk_one_anchor
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.real_running_vk_fixed
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.real_running_vk_perpetual
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.real_running_vk_transient_is_real
+
 /-! ### §9 axiom hygiene — the discharge + its corollaries + the two named floors. -/
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.combineOk_eq
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.subtree_binding

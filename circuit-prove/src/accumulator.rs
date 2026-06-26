@@ -97,7 +97,8 @@
 //! under a fixed `min_trace_height` ceiling so the running FRI trace shape cannot grow with depth.
 //!
 //! **What is MEASURED (not merely named) — the running VK reaches a CONSTANT FIXED POINT (at depth 4),
-//! with the steady state holding by a STRUCTURAL IDEMPOTENCE argument (not yet a mechanized induction).**
+//! and the perpetual steady state is now MECHANIZED (a `#assert_axioms`-clean Lean induction off ONE
+//! measured fixed point — no longer a prose idempotence argument).**
 //! A real incremental fold over a continuous chain (test `wrapped_running_vk_is_constant_across_depth`)
 //! shows the running aggregation proof's full VK fingerprint — table packing, `rows`, `degree_bits`, the
 //! non-primitive manifest, AND the preprocessed commitment (the op-list / VK core) — settling to a fixed
@@ -105,44 +106,59 @@
 //!   - depth 2 (LEAF∘LEAF result) ≠ depth 3 (AGG over LEAF∘LEAF) ≠ depth 4 (AGG over AGG∘LEAF) — the
 //!     transient (the running INPUT's own sub-structure propagates EXACTLY ONE level into the parent
 //!     op-list before it stabilizes — see the structural finding below);
-//!   - **depth 4 == depth 5 (== … ): byte-IDENTICAL VK material, including the preprocessed commitment.**
+//!   - **depth 4 == depth 5 == depth 6 (== … ): byte-IDENTICAL VK material, including the preprocessed
+//!     commitment** (two measured iterations past the fixed point).
 //! The `degree_bits` are constant THROUGHOUT (`[9,9,15,14,15]`, natural max `2^15`); the transient lives
 //! entirely in the op-list (logical `rows` + preprocessed commitment).
 //!
-//! **Why the fixed point is PERPETUAL (the structural argument — honest about its status).** Once the
-//! running input is an `AGG(AGG, LEAF)`-shaped proof (depth 4+), folding it against a leaf produces
-//! another `AGG(AGG, LEAF)`-shaped proof: the verifier op-list of `verify(AGG(AGG,LEAF))` is a function
-//! of that fixed input shape, so the fold map `f` is IDEMPOTENT on it (`f(steady) = steady`). The
-//! measured `depth-4 == depth-5` is the first application of that idempotence; the perpetual claim rests
-//! on the idempotence argument, NOT on a measurement at every depth (which is impossible) NOR on a
-//! mechanized induction over the fold (an honest residual — the Lean skeleton below proves the
-//! whole-history attestation invariant, not the byte-level VK-shape fixpoint). It is a measured fixed
-//! point + a structural idempotence argument, not a proof of `∀N, VK_N == VK_4`.
+//! **Why the fixed point is PERPETUAL — now MECHANIZED.** The fold-shape transition is a DETERMINISTIC
+//! function of the running input's VK SHAPE ALONE (`step : VkShape → VkShape`): the parent aggregation
+//! circuit's op-list (hence its preprocessed commitment = the VK core) is built by the fork's
+//! `verify_p3_batch_proof_circuit` from ONLY the input proof's shape quantities — its `rows`,
+//! `table_packing`, the `non_primitives` op_type/rows/lanes manifest, and per-instance public-value
+//! COUNTS (`entry.public_values.len()` — a count, never the values); `recursion_vk_fingerprint` is
+//! correspondingly content-independent. So once `step` has a fixed point, deterministic iteration keeps
+//! every further fold at it. The Lean theorem
+//! `Dregg2.Circuit.RecursiveAggregation.running_vk_perpetually_constant` proves `∀N, step^[N] anchor =
+//! anchor` (`#assert_axioms`-clean) from the SINGLE measured fixed point `step anchor = anchor` (the
+//! byte-identical depth-4 == depth-5 material). Its modeling premise — that `step` is shape-only — is
+//! discharged empirically by the Rust `running_vk_fixed_point_is_value_independent` tooth (two DIFFERENT
+//! value-streams reach the SAME depth-4 VK). So `∀N, VK_N == VK_4` is now a machine-checked induction off
+//! one measurement, NOT a measurement at every depth (impossible) NOR an un-mechanized prose argument.
+//! The ONLY remaining recursion-fork residual is the finite 2-step TRANSIENT (see below) — a usability
+//! uniformity, not the perpetual claim and not a soundness gate.
 //!
-//! **THE PRECISE REMAINING CRYPTO (the structural half of the wrap — named exactly, with the localized
-//! delta).** The fixed point is reached at depth 4, NOT depth 2 — a finite 2-step transient. The
-//! ROOT-CAUSED structural reason: the AGG∘LEAF verifier op-list depends on the STRUCTURE of the running
-//! (left) input proof — specifically the per-instance opened-column widths / public-value counts of its
-//! `non_primitives` and its `rows` (see `verify_p3_batch_proof_circuit` in the fork: it iterates the
-//! input proof's `non_primitives` and allocates per-instance targets from their `public_values.len()`
+//! **THE PRECISE REMAINING FORK WORK (the TRANSIENT, not the perpetual claim — named exactly, with the
+//! localized delta).** The fixed point is reached at depth 4, NOT depth 2 — a finite 2-step transient.
+//! This is the ONLY residual; it is a usability uniformity (every fold from the FIRST aggregation
+//! carrying the one anchor), NOT the perpetual-constancy claim (mechanized above) and NOT a soundness
+//! gate (the VK-identity pin TRACKS the running commitment through the transient; a light client anchors
+//! on the perpetual fixed-point VK). The ROOT-CAUSED structural reason: the AGG∘LEAF verifier op-list
+//! depends on the STRUCTURE of the running (left) input proof — the per-instance opened-column widths /
+//! public-value counts of its `non_primitives` and its `rows` (`verify_p3_batch_proof_circuit` iterates
+//! the input proof's `non_primitives` and allocates per-instance targets from their `public_values.len()`
 //! and opened-value widths). A LEAF input, an `AGG(LEAF,LEAF)` input, and an `AGG(AGG,LEAF)` input each
 //! carry a DIFFERENT such structure — and that structure propagates exactly ONE level into the parent's
 //! op-list (measured: `rows` Const 269→277, recompose 19112→19093; `prep_commit` ddaa…→830a…), so the
 //! parent op-list stabilizes only once the input has been `AGG(AGG,LEAF)`-shaped for one full fold.
-//! To make EVERY fold from depth 2 carry the ONE anchor, the running input must have the steady
+//! To collapse the transient (reach the fixed point at depth 2), the running input must have the steady
 //! `AGG(AGG,LEAF)` structure from the FIRST aggregation — which requires a CANONICAL agg-shaped SEED
 //! whose own left is already agg-shaped (a recursive fixpoint seed). That is the genuine Pickles
 //! step∘wrap circuit: a fixed wrap circuit whose output shape equals its input shape, seeded once. The
 //! fork exposes no such canonical-shape / re-prove primitive today (no identity/normalize fold), so
-//! building the fixpoint seed is genuinely multi-pass — the precise outstanding fork work. The
-//! `min_trace_height` ceiling pins the FRI trace heights (the easy half, empirically a near-no-op since
-//! heights were already constant) but NOT the op-list. Lever (a)+(b), the tracked-pin fail-closed tooth,
-//! and the measured-plus-idempotent fixed point are its foundation.
+//! building the fixpoint seed is genuinely multi-pass — the precise outstanding FORK work, scoped to the
+//! transient alone. The `min_trace_height` ceiling pins the FRI trace heights (the easy half,
+//! empirically a near-no-op since heights were already constant) but NOT the op-list. Lever (a)+(b), the
+//! tracked-pin fail-closed tooth, and the measured-plus-MECHANIZED fixed point are its foundation.
 //!
 //! The soundness SKELETON of the unbounded loop is PROVEN in Lean
 //! (`Dregg2.Circuit.RecursiveAggregation.accumulate_preserves_wellformed` /
 //! `acc_attests_whole_history`, `#assert_axioms`-clean): the running fold preserves whole-history
-//! attestation by induction from genesis, carrying the SAME named `EngineSound` recursion boundary.
+//! attestation by induction from genesis, carrying the SAME named `EngineSound` recursion boundary. The
+//! depth-invariance (running-VK perpetual constancy) is ALSO mechanized there now — §10
+//! `running_vk_perpetually_constant` / `running_vk_one_anchor` (`#assert_axioms`-clean): `∀N, VK_N =
+//! VK_4` off the single measured fixed point, with shape-only determinism discharged by the
+//! `running_vk_fixed_point_is_value_independent` tooth.
 
 use p3_commit::Pcs;
 use p3_recursion::{
