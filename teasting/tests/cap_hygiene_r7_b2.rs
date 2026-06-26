@@ -24,8 +24,9 @@
 
 use dregg_cell::{
     AuthRequired, CapabilityRef, Cell, CellId, EFFECT_ALL, EFFECT_SET_FIELD, EFFECT_TRANSFER,
-    Ledger, Permissions, SealPair,
+    Ledger, Permissions,
 };
+use dregg_cell_crypto::SealPair;
 use dregg_turn::{
     ActionBuilder, Effect, TurnBuilder, TurnError, TurnResult,
     executor::{ComputronCosts, TurnExecutor},

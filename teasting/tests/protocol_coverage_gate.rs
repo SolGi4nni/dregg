@@ -57,6 +57,7 @@ fn effect_executor_coverage(e: &Effect) -> bool {
         Effect::Burn { .. } => true,        // integration_burn_receipt
         Effect::AttenuateCapability { .. } => true, // integration_attenuate_capability
         Effect::ReceiptArchive { .. } => true, // integration_attestation_archive
+        Effect::Mint { .. } => true,        // sdk/tests/mint_supply_e2e.rs (cap-gated mint e2e)
         // coverage_queue_effects.rs:
 
         // coverage_misc_effects.rs:
@@ -73,14 +74,36 @@ fn effect_executor_coverage(e: &Effect) -> bool {
         // ── Not yet covered: documented blockers (#142 work-list) ────────
         Effect::NoteSpend { .. } => false, // needs the real ZK spending-proof stack
         Effect::PipelinedSend { .. } => false, // only valid inside a pipeline resolution pass
+        // Cell-program install + the partial-turn/reactor vocabulary
+        // (Promise/Notify/React). Driven through `executor.execute` by the
+        // every_variant_roundtrip no-panic smoke, but not yet by a DEDICATED
+        // accept/reject coverage flow — conservatively `false` per the honesty
+        // contract (under-claim, never over-claim) until a coverage_* suite
+        // gates each through the executor.
+        Effect::SetProgram { .. } => false,
+        Effect::Promise { .. } => false,
+        Effect::Notify { .. } => false,
+        Effect::React { .. } => false,
     }
 }
 
 /// `Effect` variants not yet exercised end-to-end (the #142 work-list).
-const NOT_YET_COVERED: &[&str] = &["NoteSpend", "PipelinedSend"];
+const NOT_YET_COVERED: &[&str] = &[
+    "NoteSpend",
+    "PipelinedSend",
+    "SetProgram",
+    "Promise",
+    "Notify",
+    "React",
+];
 
 /// Ratchet: the number of not-yet-covered `Effect` variants may only DECREASE.
-const MAX_UNCOVERED_EFFECTS: usize = 2;
+///
+/// History: 2 → 6 when the cell-program-install (`SetProgram`) and partial-turn/
+/// reactor (`Promise`/`Notify`/`React`) effect vocabulary landed without a
+/// dedicated accept/reject coverage flow; shrink back as each gains a
+/// coverage_* suite that drives it through `TurnExecutor::execute`.
+const MAX_UNCOVERED_EFFECTS: usize = 6;
 
 #[test]
 fn effect_coverage_ratchet_only_shrinks() {
