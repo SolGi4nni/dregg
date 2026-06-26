@@ -63,17 +63,34 @@ circuit forces the non-amplification AXIS (the in-circuit `granted ⊑ held` too
     over-grants (granted bit set, held bit clear) does NOT satisfy the descriptor (reusing
     `attenuateGenuineNonAmp_rejects_amplify`).
 
-## The registry cutover (NOT done here — named residual)
+## The registry cutover — SUPERSEDED (the deployed v3 lead already forces the crux, more strongly)
 
-`attenuateVmDescriptorGenuineNonAmp` is an `EffectVmDescriptor` (v1-level), whose proven teeth are
-stated at per-row CONSTRAINT satisfaction (`∀ c ∈ …constraints, c.holdsVm env false false`), NOT at the
-v3 `Satisfied2 d` level the live `v3Registry` entry `attenuateVmDescriptor2R24 = attenuateV3` uses.
-Cutting the registry over requires FIRST lifting the genuine-non-amp descriptor through `rotateV3` /
-`v3OfWith` into an `EffectVmDescriptor2` and re-proving its `Satisfied2`⟹per-row-constraints bridge —
-substantial machinery that is its OWN strand. So this module targets the genuine descriptor at the
-level its teeth live, and the v3-lift + the in-place `v3Registry` swap (+ the Rust JSON re-emit +
-`V3_STAGED_REGISTRY_FP` re-pin + deploy) are NAMED as the cutover residual. The proof is load-bearing
-about the GENUINE descriptor (the one with the real recompute + non-amp), not the opaque live one.
+This module proves the attenuation VALUE leg against `attenuateVmDescriptorGenuineNonAmp` — a v1-level
+`EffectVmDescriptor` whose teeth are at per-row CONSTRAINT satisfaction (`∀ c ∈ …constraints,
+c.holdsVm env false false`) — and the cap-root binding it carries is a SINGLE-EDGE PREPEND-ACCUMULATOR
+over a `cap_root` FELT (`capAdvanceOf`/`edgeLeafOf`), explicitly VALUE_PARTIAL: there is structurally
+NO theorem relating that felt accumulator to a sorted-Merkle commitment of the `Caps` function.
+
+The earlier-named residual — "lift the genuine-non-amp descriptor through `rotateV3`/`v3OfWith` and
+swap the `v3Registry` entry `attenuateVmDescriptor2R24` over to it" — is SUPERSEDED, NOT pursued. The
+live v3-registry lead `attenuateVmDescriptor2R24 = attenuateV3` was rebased (the 2026-06-21 silent-forge
+close) onto the MOVING cap-WRITE face (`attenuateVmDescriptorGenuineNoRecomputeTick`, deployed name
+`dregg-effectvm-attenuateA-v1-genuine-norecompute-tick-rot24-v3-capwrite`) carrying, ON THE LIVE WIRE,
+the ROTATED-limb cap-tree `map_op` write (`heldReadOpRot` + `keepWriteOpRot`, guarded on the FIRING
+`sel.ATTENUATE_CAPABILITY = 48`) + the `granted ⊑ held` submask lookup, with the depth-16 cap-tree
+MEMBERSHIP open welded by `attenuateCapOpenEffVmDescriptor2R24`. That route is STRICTLY STRONGER on the
+cap-root axis: the `map_op` write is a genuine sorted-Merkle insert-or-update (`writesTo` FUNCTIONAL
+under CR — a forged after-root is UNSAT), i.e. exactly the sorted-Merkle commitment the felt accumulator
+here cannot certify. It is proven at the `Satisfied2`/apex level the registry actually uses, name-stable
+and `#assert_axioms`-clean, in `RotatedKernelRefinementCapFamily`:
+  * `attenuateV3_non_amp` — `Satisfied2 attenuateV3` FORCES `granted ⊑ held` (in-circuit non-amp);
+  * `attenuate_descriptorRefines_sat` — the CLASS-A refinement: the cap-tree UPDATE-AT-KEY write FORCED;
+  * `attenuate_descriptorRefines_capOpenSat` — the apex-wirable rung (tag 12), membership welded.
+
+So this module stays as the genuine-recompute VALUE_PARTIAL study (the recompute-accumulator's exact
+teeth), and the deployed crux is the CapFamily rungs over `attenuateV3`. No registry swap is warranted
+(it would DOWNGRADE the deployed sorted-Merkle write to the VALUE_PARTIAL felt accumulator); the named
+"v3-lift + registry swap" residual is CLOSED-AS-SUPERSEDED.
 
 ## Axiom hygiene
 

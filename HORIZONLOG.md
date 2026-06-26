@@ -5971,3 +5971,24 @@ chat-lane path so the settlement gate runs live, not only in the demo (currently
 branch_stitch::Stitch::settle DocGraph gate; the umem-native CellId gate is the test-demonstrated bridge). (2) LOW (Lean,
 pre-existing, named in both SettlementSoundness headers) — the circuit-emit conformance: the deployed rest-hash must absorb
 the #139 revocation-channel wire root into the finalized commitment (RestHashIffFrame's revoked conjunct realized at the wire).
+
+### ✅ ATTENUATE v3-REGISTRY "RECOMPUTE DESCRIPTOR" RESIDUAL — CLOSED-AS-SUPERSEDED (2026-06-25)
+The circuit-soundness tail's reducible-open "route attenuate through the cap-reshape recompute descriptor as its
+v3-registry lead" (project-cap-reshape-plan; named in RotatedKernelRefinementAttenuate §"The registry cutover") is
+SUPERSEDED at HEAD — verified, not assumed. attenuate's deployed v3-registry lead is ALREADY `attenuateVmDescriptor2R24`
+(= `dregg-effectvm-attenuateA-v1-genuine-norecompute-tick-rot24-v3-capwrite`, the staged v3 + wide registries), rebased by
+the 2026-06-21 silent-forge close onto the MOVING cap-WRITE face: the ROTATED-limb cap-tree `map_op` write (heldReadOpRot +
+keepWriteOpRot, guarded on the FIRING sel.ATTENUATE_CAPABILITY=48, var264 GENUINELY bound) + the `granted ⊑ held` submask
+lookup + the depth-16 cap-tree MEMBERSHIP open (attenuateCapOpenEffVmDescriptor2R24). This forces the security crux
+(in-circuit non-amplification + genuine cap-root binding) at the `Satisfied2`/apex level the registry uses, name-stable,
+#assert_axioms-clean, GREEN at HEAD (lake build RotatedKernelRefinementCapFamily = 3094 jobs OK): attenuateV3_non_amp
+(granted⊑held FORCED) · attenuate_descriptorRefines_sat (CLASS-A, cap-tree UPDATE-AT-KEY write FORCED) ·
+attenuate_descriptorRefines_capOpenSat (apex rung, tag 12). The literal `attenuateVmDescriptorGenuineNonAmp` /
+capReshapeVmDescriptor recompute descriptor is a v1-level felt PREPEND-ACCUMULATOR explicitly classed VALUE_PARTIAL ("no
+theorem relates that felt accumulator to a sorted-Merkle commitment of the Caps function") — so routing attenuate to it
+would DOWNGRADE the deployed sorted-Merkle `map_op` write (writesTo functional under CR) to a weaker felt accumulator. NO
+registry swap warranted; NO VK action (the staged v3/wide leads are unchanged, name-stable; the live wire is still v1, the
+whole rotation cutover remains the one VK-epoch flag-day). Note "production-authority forced in attenuate" in the brief was a
+conflation — production-authority is the §4 MINT flavour of cap-reshape; attenuate is non-amplification only (§4D/§2). Change:
+corrected the stale named residual in RotatedKernelRefinementAttenuate.lean §"The registry cutover" to record
+CLOSED-AS-SUPERSEDED with the superseding rung names (Lean comment only — no proof/VK touched; module rebuilds green, 3033 jobs).
