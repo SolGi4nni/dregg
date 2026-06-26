@@ -150,6 +150,39 @@ fn editor_pane_structure_toggle_tracks_the_live_document() {
                 dv.segment_count() > 0,
                 "the inspector renders the document's structure"
             );
+            assert!(
+                !dv.has_conflict(),
+                "a single-author edit/save chain stays clean — no conflict yet"
+            );
+        })
+        .unwrap();
+
+    // 4. THE MERGE/CONFLICT ACTION — the gap-closer. A single-author session
+    //    cannot, by typing alone, produce a conflict; the pane's merge action
+    //    forks two divergent co-author takes of the open document and merges them
+    //    (the real pushout), surfacing a FIRST-CLASS conflict object the structure
+    //    pane shows. This is the button click's host path.
+    window
+        .update(&mut cx, |holder, window, cx| {
+            holder.surface.view().update(cx, |v, cx| {
+                v.merge_coauthor_take(window, cx);
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    window
+        .update(&mut cx, |holder, _window, cx| {
+            assert_eq!(
+                holder.surface.mode(cx),
+                ViewMode::Structure,
+                "the merge action surfaces the conflict in the structure face"
+            );
+            let dv = holder.surface.view().read(cx).doc_viewer().read(cx);
+            assert!(
+                dv.has_conflict(),
+                "the co-author merge produced a first-class conflict object in-session"
+            );
         })
         .unwrap();
 }

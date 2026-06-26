@@ -35,6 +35,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use dregg_doc::Author;
+
 use crate::doc_viewer::DocViewer;
 use crate::editor::Editor;
 use crate::file_tree::FileTree;
@@ -131,6 +133,27 @@ impl EditorPaneView {
         });
     }
 
+    /// **The merge/conflict action** — run the in-session co-author conflict
+    /// demonstrator on the open document, then switch to the STRUCTURE face so the
+    /// resulting first-class conflict object is front-and-centre. This is what
+    /// closes the gap that a single-author session never produces a conflict (so
+    /// the structure pane was blame-only): a REAL branch/merge (the pushout,
+    /// `Editor::simulate_coauthor_merge`), surfaced as an object. The co-author
+    /// identity is a DISTINCT author so the conflict object attributes both
+    /// alternatives correctly ("who wrote which" is a fact).
+    pub fn merge_coauthor_take(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let coauthor = {
+            let mine = self.editor.read(cx).author().0;
+            Author(if mine == 2 { 3 } else { 2 })
+        };
+        self.editor.update(cx, |ed, cx| {
+            ed.simulate_coauthor_merge(coauthor, window, cx);
+        });
+        self.mode = ViewMode::Structure;
+        self.refresh_structure(cx);
+        cx.notify();
+    }
+
     /// Switch the shown face; refresh the structure snapshot when entering it.
     pub fn set_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
         if self.mode == mode {
@@ -165,6 +188,31 @@ impl EditorPaneView {
             .child(SharedString::from(mode.label()))
             .on_click(cx.listener(move |this, _ev, _window, cx| {
                 this.set_mode(mode, cx);
+            }))
+    }
+
+    /// The merge/conflict action button (right of the mode tabs): fork two
+    /// divergent co-author takes of the open document and merge them — producing a
+    /// first-class conflict object the structure pane shows. Closes the
+    /// "single-author session can't make a conflict" gap with a real pushout.
+    fn coauthor_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (bg, fg, border) = {
+            let theme = cx.theme();
+            (theme.secondary, theme.foreground, theme.border)
+        };
+        div()
+            .id("editor-merge-coauthor")
+            .px_3()
+            .py_1()
+            .cursor_pointer()
+            .bg(bg)
+            .text_color(fg)
+            .text_xs()
+            .border_1()
+            .border_color(border)
+            .child(SharedString::from("⑃ merge a co-author's take"))
+            .on_click(cx.listener(|this, _ev, window, cx| {
+                this.merge_coauthor_take(window, cx);
             }))
     }
 
@@ -207,7 +255,9 @@ impl Render for EditorPaneView {
             .border_b_1()
             .border_color(cx.theme().border)
             .child(self.mode_tab(ViewMode::Buffer, cx))
-            .child(self.mode_tab(ViewMode::Structure, cx));
+            .child(self.mode_tab(ViewMode::Structure, cx))
+            .child(div().flex_1())
+            .child(self.coauthor_button(cx));
 
         // The right column is the editor buffer or the structure inspector.
         let right: AnyElement = match self.mode {

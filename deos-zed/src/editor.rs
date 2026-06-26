@@ -14,8 +14,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use dregg_doc::{Author, BlameLine, Granularity, Rendered, RopeDoc};
 use gpui::{
-    div, px, App, AppContext as _, Context, Entity, FocusHandle, Focusable, IntoElement,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window,
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement as _,
+    Render, SharedString, Styled as _, Subscription, Window, div, px,
 };
 use gpui_component::input::{Input, InputEvent, InputState, TabSize};
 use gpui_component::{ActiveTheme as _, StyledExt as _};
@@ -119,6 +119,34 @@ pub struct Editor {
 /// saved content, returns `Ok(status_note)` to append to the status line, or
 /// `Err(message)` if the remote leg failed (the local save still stands).
 pub type SaveCallback = Box<dyn Fn(&str) -> std::result::Result<String, String> + 'static>;
+
+/// Rewrite the last non-empty line of `text` by appending `suffix`. Used by the
+/// in-session conflict demonstrator ([`Editor::simulate_coauthor_merge`]) to make
+/// two divergent co-author takes of the SAME tail line — a guaranteed antichain.
+///
+/// Line-granular: each line is an atom, so two different rewrites of one line are
+/// two atoms after a single predecessor — exactly the prose-conflict shape the
+/// renderer surfaces (`dregg_doc::content`). Reconstructing with a trailing `\n`
+/// after every line normalizes the buffer's line tokenization, which is what the
+/// rope→patch diff tokenizes at.
+fn diverge_last_line(text: &str, suffix: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let idx = lines.iter().rposition(|l| !l.trim().is_empty());
+    let mut out = String::new();
+    match idx {
+        Some(i) => {
+            for (j, l) in lines.iter().enumerate() {
+                out.push_str(l);
+                if j == i {
+                    out.push_str(suffix);
+                }
+                out.push('\n');
+            }
+        }
+        None => out.push_str(text),
+    }
+    out
+}
 
 impl Editor {
     /// Create an empty editor over the given filesystem seam.
@@ -406,6 +434,98 @@ impl Editor {
                 Err(e)
             }
         }
+    }
+
+    /// Merge another author's version of THIS document into the open document —
+    /// the branch-and-stitch reconciliation, the categorical PUSHOUT
+    /// (`RopeDoc::merge_branch`; the join proven in `metatheory/Dregg2/Deos/
+    /// DocMerge.lean`). `coauthor_doc` must share this document's history as a
+    /// prefix (a real co-author's branch off the same genesis). Where the two
+    /// diverge disjointly the merge is clean; where they genuinely clash the
+    /// result carries a FIRST-CLASS conflict object (never a `<<<<<<<` text wound).
+    ///
+    /// The buffer is a cache of the fold, so it re-materializes to the clean
+    /// linear content (`RopeDoc::rope` renders clean segments only — a conflicted
+    /// antichain has no single linear rope); the conflict objects live in the
+    /// STRUCTURE pane (the `DocViewer`). Returns `true` iff the merged document
+    /// carries an unresolved conflict.
+    pub fn merge_coauthor(
+        &mut self,
+        coauthor_doc: &RopeDoc,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((conflicted, clean, patches)) = self.doc.as_mut().map(|doc| {
+            let rendered = doc.merge_branch(coauthor_doc);
+            (
+                rendered.has_conflict(),
+                doc.rope().to_string(),
+                doc.history().len(),
+            )
+        }) else {
+            self.status = SharedString::from("nothing to merge (no document open)");
+            cx.notify();
+            return false;
+        };
+        self.input.update(cx, |state, cx| {
+            state.set_value(clean, window, cx);
+        });
+        self.dirty = false;
+        self.status = SharedString::from(if conflicted {
+            format!(
+                "merged a co-author's take — {patches} patches · CONFLICT (see the structure pane)"
+            )
+        } else {
+            format!("merged a co-author's take — {patches} patches · clean")
+        });
+        cx.notify();
+        conflicted
+    }
+
+    /// **The in-session conflict demonstrator.** Lets a SINGLE author, editing
+    /// alone, produce a genuine first-class conflict object — closing the gap that
+    /// a single-author session never produces a conflict, so the structure pane is
+    /// blame-only.
+    ///
+    /// It folds any pending buffer edits into the document (so the shared ancestor
+    /// is exactly what's shown), forks TWO divergent branches that each re-write
+    /// the same tail line — one as this editor's author, one as `coauthor` — and
+    /// merges them through the REAL `RopeDoc::branch`/`merge_branch` pushout (not a
+    /// mock). The merged document carries a real conflict object the STRUCTURE pane
+    /// renders (both alternatives + their authorship as a fact). Returns `true` iff
+    /// a conflict was produced (false if no document is open or it is empty).
+    pub fn simulate_coauthor_merge(
+        &mut self,
+        coauthor: Author,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.doc.is_none() {
+            self.status = SharedString::from("open a document first");
+            cx.notify();
+            return false;
+        }
+        let text = self.text(cx);
+        if text.trim().is_empty() {
+            self.status = SharedString::from("nothing to diverge (empty document)");
+            cx.notify();
+            return false;
+        }
+        // Fold any pending buffer edits in, so the ancestor == what's shown.
+        if let Some(doc) = self.doc.as_mut() {
+            doc.edit_rope(self.author, &Rope::from_str(&text));
+        }
+        let ancestor = self.doc.clone().expect("document present");
+        let mine = diverge_last_line(&text, "  ‹your edit›");
+        let theirs = diverge_last_line(&text, "  ‹a teammate's edit›");
+        // Two branches off the shared ancestor, each rewriting the same tail line.
+        let mut my_branch = ancestor.branch();
+        my_branch.edit_rope(self.author, &Rope::from_str(&mine));
+        let mut co_branch = ancestor.branch();
+        co_branch.edit_rope(coauthor, &Rope::from_str(&theirs));
+        // Adopt my branch as the document, then merge the co-author's branch in.
+        self.doc = Some(my_branch);
+        self.merge_coauthor(&co_branch, window, cx)
     }
 
     /// The editor's focus handle (the underlying input's), so a host pane can

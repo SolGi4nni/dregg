@@ -26,8 +26,12 @@
   3. **The pushout overclaim.** The earlier docstrings called this "THE categorical pushout up to
      unique iso" — but the content is `Finset.union_subset`: the LATTICE JOIN / LUB. THE FIX: it is
      stated HONESTLY as "`merge a b` is the least upper bound (join) in the document inclusion order
-     `⊑` — the colimit-by-union the pushout computes in the Pijul model." The residual is NAMED:
-     building the actual category `P`, the span `a ← a⊓b → b`, functoriality — NOT done here.
+     `⊑` — the colimit-by-union the pushout computes in the Pijul model." §9 then PROVES the
+     categorical statement for the HONEST model — the THIN/PREORDER category of document states under
+     `⊑`: there `merge a b` IS the pushout of any span `a ⊑← c →⊑ b`, unique up to unique iso, which
+     in a poset degenerates to unique up to EQUALITY (the only isos are identities, by antisymmetry of
+     `⊑`). The remaining residual (NAMED, not built): the FULL LABELLED patch category `P` whose
+     MORPHISMS are patches (not mere inclusions) — a larger, non-thin category — and its functoriality.
 
 **The content-abstraction (why dropping `payload` is FAITHFUL, not a cheat).** The merge never
 inspects an atom's content or provenance: `union_in_place` JOINS `status` and, for an already-present
@@ -259,8 +263,10 @@ theorem merge_status_dead_wins (a b : DocGraph) (i : AtomId)
 Honest framing (audit gap #3): this is NOT "the categorical pushout up to unique iso". It is the
 LATTICE JOIN — the LEAST UPPER BOUND in the document inclusion order `⊑` — which in the Pijul graph
 model is the colimit-by-union the pushout computes. We prove exactly that: `merge a b` includes both
-legs (the cocone) and is below any common upper bound (leastness). The RESIDUAL — building the actual
-category `P`, the span `a ← a⊓b → b`, functoriality of the inclusion — is NAMED, not claimed. -/
+legs (the cocone) and is below any common upper bound (leastness). §9 PROMOTES this to the
+categorical pushout statement in the THIN inclusion category (`merge` IS the pushout of a span, unique
+up to iso = equality). The remaining residual — the FULL LABELLED patch category `P` whose morphisms
+are patches (not inclusions), and its functoriality — is NAMED, not claimed. -/
 
 /-- **`Includes g h` (`g ⊑ h`).** Document inclusion: `h` advances past `g`. Pointwise on atoms
 (`h`'s atom at each present id of `g` is `≥` in the `alive ≤ dead` order), the order-edges contain
@@ -343,8 +349,9 @@ theorem merge_least {a b u : DocGraph} (ha : a ⊑ u) (hb : b ⊑ u) : merge a b
 /-- **`merge_is_lub` (THE UNIVERSAL PROPERTY, as a LATTICE JOIN — honestly).** `merge a b` is the
 LEAST UPPER BOUND of `a` and `b` in `⊑`: it includes both legs AND lies below every common upper
 bound. This is the join, the colimit-by-union the pushout computes in the Pijul model — stated as
-exactly the LUB, no more. RESIDUAL (NAMED, not proved here): the actual category `P`, the span
-`a ← a⊓b → b`, functoriality of `⊑`. -/
+exactly the LUB, no more. §9 promotes it to the categorical pushout in the thin inclusion category
+(unique up to iso = equality). RESIDUAL (NAMED, not proved here): the FULL LABELLED patch category
+`P` whose morphisms are patches (not inclusions), and its functoriality. -/
 theorem merge_is_lub (a b : DocGraph) :
     a ⊑ merge a b ∧ b ⊑ merge a b ∧
     (∀ u, a ⊑ u → b ⊑ u → merge a b ⊑ u) :=
@@ -575,5 +582,140 @@ theorem field_not_iconfluent :
 #assert_axioms resolve_collapses
 #assert_axioms prose_iconfluent
 #assert_axioms field_not_iconfluent
+
+/-! ## 9. THE CATEGORICAL PUSHOUT — `merge` is the pushout in the THIN inclusion category,
+unique up to iso (= equality).
+
+This CLOSES the categorical residual §4 named — for the HONEST, tractable model. The document states
+ordered by inclusion `⊑` form a THIN (preorder) category: `Includes.refl`/`Includes.trans` are the
+identity/composition, and between any two objects there is AT MOST ONE morphism. In a thin category
+a colimit is a least upper bound, and conversely the join `merge a b` IS the pushout of any span
+`a ⊑← c →⊑ b`. "Unique up to unique iso" degenerates here to "unique up to EQUALITY": the only isos
+in a poset are identities, because `⊑` is ANTISYMMETRIC (`Includes.antisymm` below) — `g ⊑ h` and
+`h ⊑ g` force `g = h`. This is a correct, standard categorical fact; what it does NOT do is build the
+FULL LABELLED patch category `P` (morphisms = patches, not inclusions), a larger non-thin category —
+that remains the named residual. -/
+
+/-- **`Status.le_antisymm`.** The monotone status order `alive ≤ dead` is ANTISYMMETRIC: `a ≤ b` and
+`b ≤ a` force `a = b`. (Cases on `a`, `b`; the `dead ≤ alive = False` clause kills the cross cases.) -/
+theorem Status.le_antisymm {a b : Status} (hab : Status.le a b) (hba : Status.le b a) : a = b := by
+  cases a <;> cases b <;> first | rfl | (simp only [Status.le] at hab hba)
+
+/-- **`Includes.antisymm`.** Document inclusion `⊑` is ANTISYMMETRIC: `g ⊑ h` and `h ⊑ g` force
+`g = h`. With `Includes.refl`/`Includes.trans` this makes `⊑` a PARTIAL ORDER (a poset), so the thin
+category over it has only identity isomorphisms. On atoms each present id is forced equal by
+`Status.le_antisymm` (the some/none cross cases are impossible — the `⊑` atom clause yields a `some`
+on the other side); on order/fields it is `Finset.Subset.antisymm`. -/
+theorem Includes.antisymm {g h : DocGraph} (hgh : g ⊑ h) (hhg : h ⊑ g) : g = h := by
+  obtain ⟨hga, hgo, hgf⟩ := hgh
+  obtain ⟨hha, hho, hhf⟩ := hhg
+  apply DocGraph.ext
+  · intro i
+    cases hgi : g.atoms i with
+    | none =>
+      cases hhi : h.atoms i with
+      | none => rfl
+      | some w =>
+        obtain ⟨v, hv, _⟩ := hha i w hhi
+        rw [hgi] at hv; simp at hv
+    | some v =>
+      cases hhi : h.atoms i with
+      | none =>
+        obtain ⟨w, hw, _⟩ := hga i v hgi
+        rw [hhi] at hw; simp at hw
+      | some w =>
+        obtain ⟨w2, hw2, hvw⟩ := hga i v hgi
+        rw [hhi, Option.some.injEq] at hw2; subst hw2
+        obtain ⟨v2, hv2, hwv⟩ := hha i w hhi
+        rw [hgi, Option.some.injEq] at hv2; subst hv2
+        rw [Status.le_antisymm hvw hwv]
+  · exact Finset.Subset.antisymm hgo hho
+  · intro n; exact Finset.Subset.antisymm (hgf n) (hhf n)
+
+/-- **`Includes.le_antisymm`** — the poset law, stated alongside the existing `refl`/`trans`: `⊑` is
+a PARTIAL ORDER. (Alias of `Includes.antisymm`, named to read as the order law.) -/
+theorem Includes.le_antisymm {g h : DocGraph} (hgh : g ⊑ h) (hhg : h ⊑ g) : g = h :=
+  Includes.antisymm hgh hhg
+
+/-- **`IsCocone a b d`** — `d` is a cocone over the two feet `a`, `b`: both include into `d`
+(`a ⊑ d ∧ b ⊑ d`). In the THIN category over a span with apex `c` (`c ⊑ a`, `c ⊑ b`) the square
+COMMUTES AUTOMATICALLY — `c ⊑ d` via either leg is the same morphism because between `c` and `d`
+there is at most one arrow — so the cocone condition reduces to "`d` is an upper bound of the two
+feet". -/
+def IsCocone (a b d : DocGraph) : Prop := a ⊑ d ∧ b ⊑ d
+
+/-- **`IsPushout c a b d`** — `d` is the pushout of the span `a ⊑← c →⊑ b` in the thin inclusion
+category: `c` includes into both feet, `d` is a cocone over the feet, and `d` is the LEAST such
+cocone (universality). In a poset this is exactly the join of the feet — independent of the apex
+`c`, which contributes no extra constraint to the colimit object. -/
+def IsPushout (c a b d : DocGraph) : Prop :=
+  c ⊑ a ∧ c ⊑ b ∧ IsCocone a b d ∧ ∀ d', IsCocone a b d' → d ⊑ d'
+
+/-- **`merge_isPushout` (merge IS the pushout).** For any span `a ⊑← c →⊑ b`, the join `merge a b`
+is its pushout in the thin inclusion category. The cocone legs are `merge_includes_left/right`;
+universality is `merge_least`. The apex `c` plays NO role in the colimit object — the poset pushout is
+the join of the two FEET, independent of `c` (the span's apex only certifies that `a`, `b` share a
+common past). -/
+theorem merge_isPushout (c a b : DocGraph) (hca : c ⊑ a) (hcb : c ⊑ b) :
+    IsPushout c a b (merge a b) := by
+  refine ⟨hca, hcb, ⟨merge_includes_left a b, merge_includes_right a b⟩, ?_⟩
+  intro d' hd'
+  exact merge_least hd'.1 hd'.2
+
+/-- **`pushout_unique` (UNIQUE UP TO ISO = EQUALITY).** Any two pushouts of the same span are EQUAL.
+From universality each is below the other (`d ⊑ d'` because `d` is the least cocone and `d'` is a
+cocone; symmetrically `d' ⊑ d`), then `Includes.antisymm`. In a general category the pushout is
+unique up to unique iso; in this THIN category the only isos are identities (antisymmetry), so
+"unique up to iso" IS "unique up to equality". -/
+theorem pushout_unique {c a b d d' : DocGraph}
+    (hd : IsPushout c a b d) (hd' : IsPushout c a b d') : d = d' := by
+  obtain ⟨_, _, hcone, huniv⟩ := hd
+  obtain ⟨_, _, hcone', huniv'⟩ := hd'
+  exact Includes.antisymm (huniv d' hcone') (huniv' d hcone)
+
+/-- **`pushout_iff_merge`.** A graph `d` is the pushout of the span `a ⊑← c →⊑ b` IFF it equals
+`merge a b`. Combines `merge_isPushout` (existence) and `pushout_unique` (uniqueness). -/
+theorem pushout_iff_merge {c a b d : DocGraph} (hca : c ⊑ a) (hcb : c ⊑ b) :
+    IsPushout c a b d ↔ d = merge a b := by
+  constructor
+  · intro hd; exact pushout_unique hd (merge_isPushout c a b hca hcb)
+  · intro h; subst h; exact merge_isPushout c a b hca hcb
+
+/-! ### A concrete inhabited pushout (non-vacuity tooth). -/
+
+/-- **`conflictGraph_isPushout` (NON-VACUITY).** A concrete inhabited pushout: in the span with apex
+`base` and feet `merge base forkA`, `merge base forkB`, the pushout object is `conflictGraph`. Note
+`conflictGraph = merge (merge base forkA) forkB`, and by comm/assoc/idem of `merge` this is the join
+of the two FEET — proved here by `Includes.antisymm` against `merge` of the feet, then `merge_isPushout`.
+This exhibits that `IsPushout` is genuinely inhabited (true and non-trivially so). -/
+theorem conflictGraph_isPushout :
+    IsPushout base (merge base forkA) (merge base forkB) conflictGraph := by
+  have heq : conflictGraph = merge (merge base forkA) (merge base forkB) := by
+    apply Includes.antisymm
+    · -- conflictGraph = merge (merge base forkA) forkB ⊑ merge (merge base forkA) (merge base forkB)
+      show merge (merge base forkA) forkB ⊑ merge (merge base forkA) (merge base forkB)
+      apply merge_least
+      · exact merge_includes_left _ _
+      · exact Includes.trans (merge_includes_right base forkB) (merge_includes_right _ _)
+    · -- merge (merge base forkA) (merge base forkB) ⊑ conflictGraph
+      show merge (merge base forkA) (merge base forkB) ⊑ merge (merge base forkA) forkB
+      apply merge_least
+      · exact merge_includes_left _ _
+      · apply merge_least
+        · exact Includes.trans (merge_includes_left base forkA) (merge_includes_left _ _)
+        · exact merge_includes_right _ _
+  rw [heq]
+  exact merge_isPushout base (merge base forkA) (merge base forkB)
+    (merge_includes_left base forkA) (merge_includes_left base forkB)
+
+/-! ## 9a. Axiom hygiene for the categorical-pushout keystones. -/
+
+#assert_axioms Status.le_antisymm
+#assert_axioms Includes.antisymm
+#assert_axioms Includes.le_antisymm
+#assert_axioms merge_isPushout
+#assert_axioms pushout_unique
+#assert_axioms pushout_iff_merge
+#assert_axioms conflictGraph_isPushout
 
 end Dregg2.Deos.DocMerge
