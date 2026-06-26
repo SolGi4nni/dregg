@@ -50,6 +50,25 @@
 //! `dregg-circuit` (`descriptor_ir2::verify_vm_descriptor2`, the committed
 //! `V3_STAGED_REGISTRY_TSV`). It authors NO constraint (LAW #1) and pulls in no
 //! prover, ledger, or executor state — the standalone-verifier invariant holds.
+//!
+//! # Deployment role (NOT the production sovereign-verify wire)
+//!
+//! This is the standalone prover-free `verifier`-floor / CLI demonstration twin
+//! (callers: the `dregg-verifier rotated-replay-chain` subcommand and the
+//! `integration_rotated_replay_chain` tests). It is NOT on the deployed
+//! sovereign turn-verify wire a real proof-carrying turn flows through — that
+//! wire is the SDK cutover (`verify_effect_vm_rotated_with_cutover`), the
+//! executor (`turn/src/executor/proof_verify.rs`), and the IVC
+//! (`admit_welded_leg`), all of which iterate WIDE + WIDE_UMEM_WELD (the 8-felt
+//! ~124-bit commitment) and fall back to V3 only for the cap-open residual.
+//! This module reads ONLY the 1-felt `V3_STAGED_REGISTRY_TSV`, so it is behind
+//! the WIDE flip by construction: it is fed narrow V3 legs by its test/CLI
+//! producers and never sees production wire proofs. A wide/welded proof handed
+//! here verifies under NO V3 member and is REJECTED (fail-closed, never
+//! unsound). Consequence: the umem WIDE/weld flip needs NO pre-flight work
+//! here; this floor is off the flip's wire. (Re-pointing the demonstration
+//! floor at the wide+welded registries, if ever wanted, is downstream cleanup,
+//! not a flip blocker.)
 
 use dregg_circuit::descriptor_ir2::{
     DreggStarkConfig, Ir2BatchProof, parse_vm_descriptor2, verify_vm_descriptor2,
