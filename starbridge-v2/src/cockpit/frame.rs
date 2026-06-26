@@ -145,6 +145,7 @@ impl CockpitMode {
                 Tab::Swarm,
                 Tab::Powerbox,
                 Tab::Cipherclerk,
+                Tab::ServiceExplorer,
                 Tab::Trust,
             ],
         }
