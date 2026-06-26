@@ -29,10 +29,26 @@ OPAQUE hypothesis. This module makes that `∀` EXPLICIT, ENUMERATED, and NAMED.
      concludes its leaf `Spec` from a per-effect ENCODE decode (`rotatedEncodes` /
      `DelegateCapsTreeEncodes` / …), NOT from `StateDecode`. The commitment surface `StateDecode`
      commits the LEDGER ROOT only; the limb-level encode data (the guard fields, the cap-tree opening,
-     the per-row column reads) is the genuine residue `StateDecode` cannot carry. Bridging
-     `StateDecode ⟹ <effect>Encode` per effect is the real work — exactly the `WitnessDecodes`-adjacent
-     decode extraction. NONE of the 36 effects bridges cleanly from `StateDecode` alone, so the bridge
-     is carried for EVERY effect as the named per-effect residual `EffectDecodeBridge`.
+     the per-row column reads) is the genuine residue `StateDecode` cannot carry. So the bridge is NOT
+     `StateDecode ⟹ <effect>Encode` (a category error: `StateDecode pc pre post` does not even mention
+     the trace `t`, while `<effect>Encode` is a predicate ABOUT `t`'s columns) — the genuine bridge is
+     `Satisfied2 (R e) … t ⟹ <effect>Encode`, the per-effect circuit-witness column-read extraction
+     (the `WitnessDecodes`-class limb decode the honest prover's trace supplies, certified by
+     `StarkSound`); `StateDecode` only supplies the kernel boundary the encode is matched against. NONE
+     of the 36 effects bridges from `StateDecode` alone, so the bridge is carried for EVERY effect as the
+     named per-effect residual `EffectDecodeBridge`.
+
+     This capstone carries the family OPAQUE (`∀ e, EffectDecodeBridge` as a hypothesis); the closure
+     stack REDUCES it. `ClosureAll.effectDecodeBridge_of_closedLogExtract` discharges each
+     `EffectDecodeBridge e` from a `ClosedLogExtract e` (= `Satisfied2 (R e) + StateDecodeLog ⟹ kstepAll
+     e`), and `ClosureFanoutGenuine.closedLogExtract_all_genuine` discharges `∀ e, ClosedLogExtract` for
+     all 36 effects from a `ClosureReadouts` bundle of the per-effect `<e>TraceReadout`
+     (`Satisfied2 ⟹ <e>Encodes`) floors, each slot CALLING its proven `<e>_closedLog` /
+     `*_descriptorRefines_sat` rung. `ClosureFinal.lightclient_unfoolable_circuit_sound` then collapses
+     the `∀ e` over-ask to ONE floor at the published `pi.effect`. So the post-reduction carried set is
+     `StarkSound` + `Poseidon2SpongeCR`/`logHashInjective` (standard CR) + the per-effect
+     `Satisfied2 ⟹ encode` readout (standard SNARK-witness class) — NOT a `StateDecode`-bridge residual,
+     and NOT a new crypto carrier.
 
   4. **`hrefinesAll`** — `∀ e, descriptorRefines S hash (Rfix e) (kstepAll e)`, assembled from the
      per-effect bridge family `(∀ e, EffectDecodeBridge S hash Rfix e)`. Since `EffectDecodeBridge` IS
@@ -51,9 +67,13 @@ OPAQUE hypothesis. This module makes that `∀` EXPLICIT, ENUMERATED, and NAMED.
   * `WitnessDecodes hash Rfix S pi` — the witness→kernel-state EXISTENCE rung (REALIZABLE, named).
   * **`∀ e, EffectDecodeBridge S hash Rfix e`** — THE ENUMERATED per-effect decode bridge family. This
     is the apex's old opaque `hrefines` made an explicit, per-effect residual set. Each `e`'s bridge is
-    the genuine `StateDecode ⟹ <effect>Encode` extraction the commitment surface cannot certify. The
-    LOGICAL CORE of each rung (`<effect>Encode ⟹ <effect>Spec ⟹ dispatchArm e`) is fully landed in the
-    `RotatedKernelRefinement*` family; the bridge is precisely the missing decode-extraction half.
+    the genuine `Satisfied2 (R e) … t ⟹ <effect>Encode` circuit-witness column-read extraction the
+    commitment surface cannot certify (NOT `StateDecode ⟹ <effect>Encode` — `StateDecode` has no `t`).
+    The LOGICAL CORE of each rung (`<effect>Encode ⟹ <effect>Spec ⟹ dispatchArm e`) is fully landed in
+    the `RotatedKernelRefinement*` family; the bridge is precisely the missing decode-extraction half —
+    and it is REDUCED, for all 36 effects, to the named `<e>TraceReadout` (`WitnessDecodes`-class)
+    floors in `ClosureFanoutGenuine`/`ClosureFinal` (see §3). This capstone is the OPAQUE-`∀` waypoint;
+    the reduced apex is `ClosureFinal.lightclient_unfoolable_circuit_sound`.
 
 This is the honest capstone: the apex stands mod ONE named, enumerated family (`EffectDecodeBridge`)
 plus the standard crypto/extraction floors — NOT an opaque carried `∀`.
