@@ -34,9 +34,7 @@
 use std::sync::atomic::Ordering;
 
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions, capability::CapabilityRef};
-use dregg_turn::umem::{
-    BoundaryDisagreement, RecordKernelBoundary, record_kernel_boundary_agrees,
-};
+use dregg_turn::umem::{BoundaryDisagreement, RecordKernelBoundary, record_kernel_boundary_agrees};
 use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     turn::Turn,
@@ -194,7 +192,10 @@ fn agree_gauntlet_transfer_corpus() {
         assert_cell_planes_agree(ledger.get(&agent_id).unwrap());
         assert_cell_planes_agree(ledger.get(&target_id).unwrap());
     }
-    assert!(checked >= 10, "the transfer corpus checked real after-cells");
+    assert!(
+        checked >= 10,
+        "the transfer corpus checked real after-cells"
+    );
 }
 
 // ===========================================================================
@@ -272,7 +273,10 @@ fn agree_gauntlet_set_field_overflow_corpus() {
             }],
         );
         let r = executor.execute(&turn, &mut ledger);
-        assert!(r.is_committed(), "set-field(overflow) #{i} must commit: {r:?}");
+        assert!(
+            r.is_committed(),
+            "set-field(overflow) #{i} must commit: {r:?}"
+        );
 
         checked += assert_ledger_agrees(&ledger);
         let after = ledger.get(&agent_id).unwrap();
@@ -340,7 +344,10 @@ fn agree_gauntlet_set_heap_corpus() {
             }],
         );
         let r = executor.execute(&turn, &mut ledger);
-        assert!(r.is_committed(), "heap-bearing turn #{i} must commit: {r:?}");
+        assert!(
+            r.is_committed(),
+            "heap-bearing turn #{i} must commit: {r:?}"
+        );
 
         checked += assert_ledger_agrees(&ledger);
         let after = ledger.get(&agent_id).unwrap();
@@ -374,8 +381,9 @@ fn agree_gauntlet_grant_corpus() {
         let mut ledger = Ledger::new();
         ledger.insert_cell(agent).unwrap();
 
-        let before_root =
-            dregg_cell::compute_canonical_capability_root_felt(&ledger.get(&agent_id).unwrap().capabilities);
+        let before_root = dregg_cell::compute_canonical_capability_root_felt(
+            &ledger.get(&agent_id).unwrap().capabilities,
+        );
 
         let executor = umem_executor();
         // self-grant: from == to == cap.target == agent (authorized by the signed
@@ -409,8 +417,7 @@ fn agree_gauntlet_grant_corpus() {
             !after.capabilities.iter().next().is_none(),
             "a live cap landed"
         );
-        let after_root =
-            dregg_cell::compute_canonical_capability_root_felt(&after.capabilities);
+        let after_root = dregg_cell::compute_canonical_capability_root_felt(&after.capabilities);
         assert_ne!(after_root, before_root, "the grant moved cap_root");
         assert_cell_planes_agree(after);
     }
@@ -444,8 +451,9 @@ fn agree_gauntlet_attenuate_corpus() {
         ledger.insert_cell(actor_with_cap).unwrap();
         ledger.insert_cell(target).unwrap();
 
-        let before_root =
-            dregg_cell::compute_canonical_capability_root_felt(&ledger.get(&actor_id).unwrap().capabilities);
+        let before_root = dregg_cell::compute_canonical_capability_root_felt(
+            &ledger.get(&actor_id).unwrap().capabilities,
+        );
 
         let executor = umem_executor();
         let turn = turn_with(
@@ -465,8 +473,7 @@ fn agree_gauntlet_attenuate_corpus() {
 
         checked += assert_ledger_agrees(&ledger);
         let after = ledger.get(&actor_id).unwrap();
-        let after_root =
-            dregg_cell::compute_canonical_capability_root_felt(&after.capabilities);
+        let after_root = dregg_cell::compute_canonical_capability_root_felt(&after.capabilities);
         assert_ne!(after_root, before_root, "attenuation moved cap_root");
         // no tombstone: the live cap count is unchanged (narrowed in place).
         assert_eq!(after.capabilities.iter().count(), 1, "narrowed in place");
@@ -488,7 +495,10 @@ fn agree_gauntlet_combined_multi_verb() {
     actor.state.set_heap(9, 1, bytes(50)); // pre-seeded heap plane.
     let target = make_open_cell(201, 10);
     let (actor_id, target_id) = (actor.id(), target.id());
-    let slot = actor.capabilities.grant(target_id, AuthRequired::Either).unwrap();
+    let slot = actor
+        .capabilities
+        .grant(target_id, AuthRequired::Either)
+        .unwrap();
 
     let mut ledger = Ledger::new();
     ledger.insert_cell(actor).unwrap();
@@ -520,7 +530,10 @@ fn agree_gauntlet_combined_multi_verb() {
         ],
     );
     let r = executor.execute(&turn, &mut ledger);
-    assert!(r.is_committed(), "combined multi-verb turn must commit: {r:?}");
+    assert!(
+        r.is_committed(),
+        "combined multi-verb turn must commit: {r:?}"
+    );
 
     let checked = assert_ledger_agrees(&ledger);
     assert!(checked >= 2);
@@ -528,7 +541,10 @@ fn agree_gauntlet_combined_multi_verb() {
     let after = ledger.get(&actor_id).unwrap();
     // every moved plane reproduces: fields_root (overflow write), heap_root
     // (seeded), cap_root (attenuation).
-    assert_ne!(after.state.fields_root, dregg_cell::state::empty_fields_root());
+    assert_ne!(
+        after.state.fields_root,
+        dregg_cell::state::empty_fields_root()
+    );
     assert_ne!(after.state.heap_root, dregg_cell::state::empty_heap_root());
     assert_cell_planes_agree(after);
 }

@@ -514,7 +514,7 @@ impl<P: Producer> Drainer<P> {
                 return DrainOutcome::Refused {
                     gate: Gate::Produce,
                     reason,
-                }
+                };
             }
         };
         // Provenance: a producer cannot misattribute the turn. The creator MUST be

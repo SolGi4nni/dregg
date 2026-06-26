@@ -10,22 +10,25 @@
 #![allow(dead_code)]
 
 /// One inspectable substance value: a (label, value) pair, pre-rendered.
-pub struct Kv { pub k: &'static str, pub v: &'static str }
+pub struct Kv {
+    pub k: &'static str,
+    pub v: &'static str,
+}
 
 /// One capability in a cell's c-list (the AUTHORITY substance), rendered.
 pub struct CapRow {
     pub target: &'static str, // target cell id (short hex)
     pub slot: u32,
-    pub auth: &'static str,   // AuthRequired
-    pub note: &'static str,   // human note (which named cell / caveat)
+    pub auth: &'static str, // AuthRequired
+    pub note: &'static str, // human note (which named cell / caveat)
 }
 
 /// One state field (the STATE substance), rendered.
 pub struct FieldRow {
     pub slot: u32,
-    pub note: &'static str,   // human meaning, or ""
-    pub kind: &'static str,   // public | committed | disclosable
-    pub value: &'static str,  // decoded value or commitment hash
+    pub note: &'static str,  // human meaning, or ""
+    pub kind: &'static str,  // public | committed | disclosable
+    pub value: &'static str, // decoded value or commitment hash
 }
 
 /// One cell in the image — everything the viewer inspects.
@@ -33,7 +36,7 @@ pub struct ImageCell {
     pub key: &'static str,
     pub title: &'static str,
     pub blurb: &'static str,
-    pub id_hex: &'static str,      // content-addressed id (short)
+    pub id_hex: &'static str, // content-addressed id (short)
     pub pk_hex: &'static str,
     pub token_hex: &'static str,
     pub mode: &'static str,
@@ -44,16 +47,16 @@ pub struct ImageCell {
     pub is_well: bool,
     // STATE substance
     pub nonce: u64,
-    pub fields_used: u32,          // how many of the 16 fields are nonzero
+    pub fields_used: u32, // how many of the 16 fields are nonzero
     pub fields: &'static [FieldRow],
     // AUTHORITY substance
     pub caps: &'static [CapRow],
-    pub perms: &'static [Kv],      // the 8 permission gates
+    pub perms: &'static [Kv], // the 8 permission gates
     // EVIDENCE substance
     pub proved_state: bool,
-    pub vk_hash: &'static str,     // "none" if no VK
+    pub vk_hash: &'static str, // "none" if no VK
     pub vk_program: &'static str,
-    pub commitment: &'static str,  // state_commitment() (short hex)
+    pub commitment: &'static str, // state_commitment() (short hex)
 }
 
 pub const IMAGE: &[ImageCell] = &[
@@ -72,23 +75,71 @@ pub const IMAGE: &[ImageCell] = &[
         nonce: 2,
         fields_used: 5,
         fields: &[
-            FieldRow { slot: 0, note: "greeting", kind: "public", value: "\"welcome to deos\"" },
-            FieldRow { slot: 1, note: "thesis", kind: "public", value: "\"a computer you hold\"" },
-            FieldRow { slot: 2, note: "law of authority", kind: "public", value: "\"authority is proof\"" },
-            FieldRow { slot: 3, note: "law of persistence", kind: "public", value: "\"persistence is default\"" },
-            FieldRow { slot: 4, note: "law of sovereignty", kind: "public", value: "\"the keys are yours\"" },
+            FieldRow {
+                slot: 0,
+                note: "greeting",
+                kind: "public",
+                value: "\"welcome to deos\"",
+            },
+            FieldRow {
+                slot: 1,
+                note: "thesis",
+                kind: "public",
+                value: "\"a computer you hold\"",
+            },
+            FieldRow {
+                slot: 2,
+                note: "law of authority",
+                kind: "public",
+                value: "\"authority is proof\"",
+            },
+            FieldRow {
+                slot: 3,
+                note: "law of persistence",
+                kind: "public",
+                value: "\"persistence is default\"",
+            },
+            FieldRow {
+                slot: 4,
+                note: "law of sovereignty",
+                kind: "public",
+                value: "\"the keys are yours\"",
+            },
         ],
-        caps: &[
-        ],
+        caps: &[],
         perms: &[
-            Kv { k: "send", v: "signature" },
-            Kv { k: "receive", v: "none" },
-            Kv { k: "set_state", v: "signature" },
-            Kv { k: "set_permissions", v: "signature" },
-            Kv { k: "set_vk", v: "proof" },
-            Kv { k: "increment_nonce", v: "signature" },
-            Kv { k: "delegate", v: "signature" },
-            Kv { k: "access", v: "none" },
+            Kv {
+                k: "send",
+                v: "signature",
+            },
+            Kv {
+                k: "receive",
+                v: "none",
+            },
+            Kv {
+                k: "set_state",
+                v: "signature",
+            },
+            Kv {
+                k: "set_permissions",
+                v: "signature",
+            },
+            Kv {
+                k: "set_vk",
+                v: "proof",
+            },
+            Kv {
+                k: "increment_nonce",
+                v: "signature",
+            },
+            Kv {
+                k: "delegate",
+                v: "signature",
+            },
+            Kv {
+                k: "access",
+                v: "none",
+            },
         ],
         proved_state: false,
         vk_hash: "none",
@@ -110,24 +161,77 @@ pub const IMAGE: &[ImageCell] = &[
         nonce: 1,
         fields_used: 6,
         fields: &[
-            FieldRow { slot: 0, note: "motto line 1", kind: "public", value: "\"I object to doing\"" },
-            FieldRow { slot: 1, note: "motto line 2", kind: "public", value: "\"things computers\"" },
-            FieldRow { slot: 2, note: "motto line 3", kind: "public", value: "\"can do.\"" },
-            FieldRow { slot: 3, note: "attribution", kind: "public", value: "\"- Guild of Houyhnhnm\"" },
-            FieldRow { slot: 7, note: "year (u64)", kind: "public", value: "1999" },
-            FieldRow { slot: 10, note: "private (committed)", kind: "committed", value: "f0731163 79a5cd05 85e0e326 .." },
+            FieldRow {
+                slot: 0,
+                note: "motto line 1",
+                kind: "public",
+                value: "\"I object to doing\"",
+            },
+            FieldRow {
+                slot: 1,
+                note: "motto line 2",
+                kind: "public",
+                value: "\"things computers\"",
+            },
+            FieldRow {
+                slot: 2,
+                note: "motto line 3",
+                kind: "public",
+                value: "\"can do.\"",
+            },
+            FieldRow {
+                slot: 3,
+                note: "attribution",
+                kind: "public",
+                value: "\"- Guild of Houyhnhnm\"",
+            },
+            FieldRow {
+                slot: 7,
+                note: "year (u64)",
+                kind: "public",
+                value: "1999",
+            },
+            FieldRow {
+                slot: 10,
+                note: "private (committed)",
+                kind: "committed",
+                value: "f0731163 79a5cd05 85e0e326 ..",
+            },
         ],
-        caps: &[
-        ],
+        caps: &[],
         perms: &[
-            Kv { k: "send", v: "signature" },
-            Kv { k: "receive", v: "none" },
-            Kv { k: "set_state", v: "signature" },
-            Kv { k: "set_permissions", v: "signature" },
-            Kv { k: "set_vk", v: "signature" },
-            Kv { k: "increment_nonce", v: "signature" },
-            Kv { k: "delegate", v: "signature" },
-            Kv { k: "access", v: "none" },
+            Kv {
+                k: "send",
+                v: "signature",
+            },
+            Kv {
+                k: "receive",
+                v: "none",
+            },
+            Kv {
+                k: "set_state",
+                v: "signature",
+            },
+            Kv {
+                k: "set_permissions",
+                v: "signature",
+            },
+            Kv {
+                k: "set_vk",
+                v: "signature",
+            },
+            Kv {
+                k: "increment_nonce",
+                v: "signature",
+            },
+            Kv {
+                k: "delegate",
+                v: "signature",
+            },
+            Kv {
+                k: "access",
+                v: "none",
+            },
         ],
         proved_state: false,
         vk_hash: "none",
@@ -149,22 +253,66 @@ pub const IMAGE: &[ImageCell] = &[
         nonce: 3,
         fields_used: 2,
         fields: &[
-            FieldRow { slot: 0, note: "last recipient", kind: "public", value: "\"last->peer\"" },
-            FieldRow { slot: 1, note: "last amount", kind: "public", value: "250" },
+            FieldRow {
+                slot: 0,
+                note: "last recipient",
+                kind: "public",
+                value: "\"last->peer\"",
+            },
+            FieldRow {
+                slot: 1,
+                note: "last amount",
+                kind: "public",
+                value: "250",
+            },
         ],
         caps: &[
-            CapRow { target: "ffa3cb29 27cb1bc2 8bb7ccc1 6099a654", slot: 0, auth: "either", note: "-> the garden" },
-            CapRow { target: "6ba3b626 21db85f0 ff68edbd 70d6da2e", slot: 1, auth: "signature", note: "-> a peer" },
+            CapRow {
+                target: "ffa3cb29 27cb1bc2 8bb7ccc1 6099a654",
+                slot: 0,
+                auth: "either",
+                note: "-> the garden",
+            },
+            CapRow {
+                target: "6ba3b626 21db85f0 ff68edbd 70d6da2e",
+                slot: 1,
+                auth: "signature",
+                note: "-> a peer",
+            },
         ],
         perms: &[
-            Kv { k: "send", v: "signature" },
-            Kv { k: "receive", v: "none" },
-            Kv { k: "set_state", v: "signature" },
-            Kv { k: "set_permissions", v: "signature" },
-            Kv { k: "set_vk", v: "signature" },
-            Kv { k: "increment_nonce", v: "signature" },
-            Kv { k: "delegate", v: "signature" },
-            Kv { k: "access", v: "none" },
+            Kv {
+                k: "send",
+                v: "signature",
+            },
+            Kv {
+                k: "receive",
+                v: "none",
+            },
+            Kv {
+                k: "set_state",
+                v: "signature",
+            },
+            Kv {
+                k: "set_permissions",
+                v: "signature",
+            },
+            Kv {
+                k: "set_vk",
+                v: "signature",
+            },
+            Kv {
+                k: "increment_nonce",
+                v: "signature",
+            },
+            Kv {
+                k: "delegate",
+                v: "signature",
+            },
+            Kv {
+                k: "access",
+                v: "none",
+            },
         ],
         proved_state: false,
         vk_hash: "none",
@@ -186,20 +334,53 @@ pub const IMAGE: &[ImageCell] = &[
         nonce: 1,
         fields_used: 2,
         fields: &[
-            FieldRow { slot: 0, note: "role", kind: "public", value: "\"computrons issuer\"" },
-            FieldRow { slot: 1, note: "supply minted (u64)", kind: "public", value: "1200" },
+            FieldRow {
+                slot: 0,
+                note: "role",
+                kind: "public",
+                value: "\"computrons issuer\"",
+            },
+            FieldRow {
+                slot: 1,
+                note: "supply minted (u64)",
+                kind: "public",
+                value: "1200",
+            },
         ],
-        caps: &[
-        ],
+        caps: &[],
         perms: &[
-            Kv { k: "send", v: "signature" },
-            Kv { k: "receive", v: "none" },
-            Kv { k: "set_state", v: "signature" },
-            Kv { k: "set_permissions", v: "signature" },
-            Kv { k: "set_vk", v: "proof" },
-            Kv { k: "increment_nonce", v: "signature" },
-            Kv { k: "delegate", v: "signature" },
-            Kv { k: "access", v: "none" },
+            Kv {
+                k: "send",
+                v: "signature",
+            },
+            Kv {
+                k: "receive",
+                v: "none",
+            },
+            Kv {
+                k: "set_state",
+                v: "signature",
+            },
+            Kv {
+                k: "set_permissions",
+                v: "signature",
+            },
+            Kv {
+                k: "set_vk",
+                v: "proof",
+            },
+            Kv {
+                k: "increment_nonce",
+                v: "signature",
+            },
+            Kv {
+                k: "delegate",
+                v: "signature",
+            },
+            Kv {
+                k: "access",
+                v: "none",
+            },
         ],
         proved_state: false,
         vk_hash: "0455373c b015dc24 099836be ..",
@@ -221,34 +402,137 @@ pub const IMAGE: &[ImageCell] = &[
         nonce: 2,
         fields_used: 16,
         fields: &[
-            FieldRow { slot: 0, note: "entry 1", kind: "public", value: "111" },
-            FieldRow { slot: 1, note: "entry 2", kind: "public", value: "222" },
-            FieldRow { slot: 2, note: "", kind: "public", value: "333" },
-            FieldRow { slot: 3, note: "", kind: "public", value: "444" },
-            FieldRow { slot: 4, note: "", kind: "public", value: "555" },
-            FieldRow { slot: 5, note: "", kind: "public", value: "666" },
-            FieldRow { slot: 6, note: "", kind: "public", value: "777" },
-            FieldRow { slot: 7, note: "", kind: "public", value: "888" },
-            FieldRow { slot: 8, note: "", kind: "public", value: "999" },
-            FieldRow { slot: 9, note: "", kind: "public", value: "1110" },
-            FieldRow { slot: 10, note: "", kind: "public", value: "1221" },
-            FieldRow { slot: 11, note: "", kind: "public", value: "1332" },
-            FieldRow { slot: 12, note: "", kind: "public", value: "1443" },
-            FieldRow { slot: 13, note: "", kind: "public", value: "1554" },
-            FieldRow { slot: 14, note: "", kind: "public", value: "1665" },
-            FieldRow { slot: 15, note: "entry 16", kind: "public", value: "1776" },
+            FieldRow {
+                slot: 0,
+                note: "entry 1",
+                kind: "public",
+                value: "111",
+            },
+            FieldRow {
+                slot: 1,
+                note: "entry 2",
+                kind: "public",
+                value: "222",
+            },
+            FieldRow {
+                slot: 2,
+                note: "",
+                kind: "public",
+                value: "333",
+            },
+            FieldRow {
+                slot: 3,
+                note: "",
+                kind: "public",
+                value: "444",
+            },
+            FieldRow {
+                slot: 4,
+                note: "",
+                kind: "public",
+                value: "555",
+            },
+            FieldRow {
+                slot: 5,
+                note: "",
+                kind: "public",
+                value: "666",
+            },
+            FieldRow {
+                slot: 6,
+                note: "",
+                kind: "public",
+                value: "777",
+            },
+            FieldRow {
+                slot: 7,
+                note: "",
+                kind: "public",
+                value: "888",
+            },
+            FieldRow {
+                slot: 8,
+                note: "",
+                kind: "public",
+                value: "999",
+            },
+            FieldRow {
+                slot: 9,
+                note: "",
+                kind: "public",
+                value: "1110",
+            },
+            FieldRow {
+                slot: 10,
+                note: "",
+                kind: "public",
+                value: "1221",
+            },
+            FieldRow {
+                slot: 11,
+                note: "",
+                kind: "public",
+                value: "1332",
+            },
+            FieldRow {
+                slot: 12,
+                note: "",
+                kind: "public",
+                value: "1443",
+            },
+            FieldRow {
+                slot: 13,
+                note: "",
+                kind: "public",
+                value: "1554",
+            },
+            FieldRow {
+                slot: 14,
+                note: "",
+                kind: "public",
+                value: "1665",
+            },
+            FieldRow {
+                slot: 15,
+                note: "entry 16",
+                kind: "public",
+                value: "1776",
+            },
         ],
-        caps: &[
-        ],
+        caps: &[],
         perms: &[
-            Kv { k: "send", v: "signature" },
-            Kv { k: "receive", v: "none" },
-            Kv { k: "set_state", v: "signature" },
-            Kv { k: "set_permissions", v: "signature" },
-            Kv { k: "set_vk", v: "signature" },
-            Kv { k: "increment_nonce", v: "signature" },
-            Kv { k: "delegate", v: "signature" },
-            Kv { k: "access", v: "none" },
+            Kv {
+                k: "send",
+                v: "signature",
+            },
+            Kv {
+                k: "receive",
+                v: "none",
+            },
+            Kv {
+                k: "set_state",
+                v: "signature",
+            },
+            Kv {
+                k: "set_permissions",
+                v: "signature",
+            },
+            Kv {
+                k: "set_vk",
+                v: "signature",
+            },
+            Kv {
+                k: "increment_nonce",
+                v: "signature",
+            },
+            Kv {
+                k: "delegate",
+                v: "signature",
+            },
+            Kv {
+                k: "access",
+                v: "none",
+            },
         ],
         proved_state: true,
         vk_hash: "39265531 df941549 d230c277 ..",
@@ -269,20 +553,46 @@ pub const IMAGE: &[ImageCell] = &[
         is_well: false,
         nonce: 1,
         fields_used: 1,
-        fields: &[
-            FieldRow { slot: 0, note: "label", kind: "public", value: "\"a friend's cell\"" },
-        ],
-        caps: &[
-        ],
+        fields: &[FieldRow {
+            slot: 0,
+            note: "label",
+            kind: "public",
+            value: "\"a friend's cell\"",
+        }],
+        caps: &[],
         perms: &[
-            Kv { k: "send", v: "signature" },
-            Kv { k: "receive", v: "none" },
-            Kv { k: "set_state", v: "signature" },
-            Kv { k: "set_permissions", v: "signature" },
-            Kv { k: "set_vk", v: "signature" },
-            Kv { k: "increment_nonce", v: "signature" },
-            Kv { k: "delegate", v: "signature" },
-            Kv { k: "access", v: "none" },
+            Kv {
+                k: "send",
+                v: "signature",
+            },
+            Kv {
+                k: "receive",
+                v: "none",
+            },
+            Kv {
+                k: "set_state",
+                v: "signature",
+            },
+            Kv {
+                k: "set_permissions",
+                v: "signature",
+            },
+            Kv {
+                k: "set_vk",
+                v: "signature",
+            },
+            Kv {
+                k: "increment_nonce",
+                v: "signature",
+            },
+            Kv {
+                k: "delegate",
+                v: "signature",
+            },
+            Kv {
+                k: "access",
+                v: "none",
+            },
         ],
         proved_state: false,
         vk_hash: "none",

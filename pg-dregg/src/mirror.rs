@@ -2213,9 +2213,11 @@ mod tests {
         // It agrees with what RootChain::extend would accept, batch for batch.
         let mut chain = RootChain::resume(g, 0);
         for l in &links {
-            assert!(chain
-                .extend(&batch(l.ordinal, l.prev_root, l.ledger_root))
-                .is_ok());
+            assert!(
+                chain
+                    .extend(&batch(l.ordinal, l.prev_root, l.ledger_root))
+                    .is_ok()
+            );
         }
         assert_eq!(
             chain.head(),
@@ -2510,8 +2512,11 @@ mod tests {
         // PUBLIC gets nothing; reader + kernel may SELECT so the SRF can join it.
         assert!(sql.contains("REVOKE ALL ON dregg.turn_proofs FROM PUBLIC"));
         assert!(sql.contains("GRANT SELECT ON dregg.turn_proofs TO dregg_reader, dregg_kernel"));
-        assert!(sql
-            .contains("GRANT INSERT, SELECT, UPDATE, DELETE ON dregg.turn_proofs TO dregg_kernel"));
+        assert!(
+            sql.contains(
+                "GRANT INSERT, SELECT, UPDATE, DELETE ON dregg.turn_proofs TO dregg_kernel"
+            )
+        );
     }
 
     #[test]

@@ -254,10 +254,12 @@ fn build_router(state: Arc<BotState>) -> Router {
         .route("/api/activity/recent", get(recent_activity))
         .route("/api/intents/recent", get(recent_intents))
         .route("/api/queues", get(list_queues))
-        // The deos-desktop drive seam: a desktop surface POSTs a `BotOp` here; the bot
-        // builds + signs + submits the SAME real dregg turn the Discord command would,
-        // records the SAME activity, and can reflect it to Discord. The bot's ops are
-        // drivable "onchain" from the desktop — two faces of one dregg-driven bot.
+        // RELEGATED — NOT the desktop command path. The on-chain command path is a
+        // real dregg turn the desktop submits to the command cell, which the bot's
+        // `bot_reactor` WATCHES and reacts to (the chain is the message bus). This
+        // endpoint survives only as the bot's optional internal reaction-delivery
+        // surface — a peer that already speaks HTTP can still nudge the same
+        // custodial `drive` — but the desktop never uses it to command the bot.
         .route("/api/op", post(drive_op))
         .route("/observability/stream", get(observability_stream))
         // Production middleware (order matters: trace outermost for full req)
@@ -428,12 +430,15 @@ async fn list_queues(
     Ok(Json(queue_views(queues, subscriptions)))
 }
 
-/// **Drive a bot op as a dregg turn from the deos desktop.** The desktop POSTs a
-/// [`crate::deos_drive::DriveRequest`] (`{user_id, op, ...}`); the bot builds + signs
-/// + submits the SAME real dregg turn the matching Discord command would, records the
-/// activity, and returns the [`crate::deos_drive::DriveOutcome`] (accepted + turn
-/// hash + activity id). This is the write half of the bot's HTTP surface — the bot's
-/// ops are exercisable "onchain" from the desktop, not only from Discord.
+/// **RELEGATED reaction-delivery surface — NOT the desktop command path.**
+///
+/// The desktop commands the bot ON-CHAIN: it submits a real dregg turn to the
+/// command cell ([`crate::deos_drive::command_cell`]), and the bot's
+/// [`crate::bot_reactor`] watches that cell and reacts. This HTTP endpoint is no
+/// longer how the desktop drives the bot; it remains only as an optional internal
+/// nudge for a peer that already speaks HTTP, routing through the SAME custodial
+/// [`crate::deos_drive::drive`] the on-chain reactor uses. The command bus is the
+/// chain, not this POST.
 async fn drive_op(
     State(state): State<Arc<BotState>>,
     Json(req): Json<crate::deos_drive::DriveRequest>,

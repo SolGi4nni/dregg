@@ -60,7 +60,8 @@ impl Encoder {
 
     /// A fixed domain/section tag (length-prefixed).
     fn tag(&mut self, t: &[u8]) {
-        self.bytes.extend_from_slice(&(t.len() as u64).to_le_bytes());
+        self.bytes
+            .extend_from_slice(&(t.len() as u64).to_le_bytes());
         self.bytes.extend_from_slice(t);
     }
 
@@ -76,7 +77,8 @@ impl Encoder {
 
     /// A length-prefixed byte run (e.g. content / field name / value).
     fn bytes_run(&mut self, b: &[u8]) {
-        self.bytes.extend_from_slice(&(b.len() as u64).to_le_bytes());
+        self.bytes
+            .extend_from_slice(&(b.len() as u64).to_le_bytes());
         self.bytes.extend_from_slice(b);
     }
 

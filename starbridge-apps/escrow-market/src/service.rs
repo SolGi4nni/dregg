@@ -79,12 +79,12 @@ use dregg_cell::program::CellProgram;
 use dregg_turn::Turn;
 use dregg_types::CellId;
 
-use crate::{
-    CEILING_SLOT, DELIVERY_HASH_SLOT, REFUNDED_SLOT, RELEASED_SLOT, SELLER_HASH_SLOT,
-    STATE_FUNDED, STATE_LISTED, STATE_SETTLED, STATE_SHIPPED, amount_field, escrow_cell_program,
-    party_hash, state_field,
-};
 use crate::{BUYER_HASH_SLOT, ESCROWED_SLOT, STATE_SLOT};
+use crate::{
+    CEILING_SLOT, DELIVERY_HASH_SLOT, REFUNDED_SLOT, RELEASED_SLOT, SELLER_HASH_SLOT, STATE_FUNDED,
+    STATE_LISTED, STATE_SETTLED, STATE_SHIPPED, amount_field, escrow_cell_program, party_hash,
+    state_field,
+};
 
 // =============================================================================
 // Method names
@@ -307,7 +307,13 @@ impl EscrowService {
     /// otherwise. To actually READ the order, read the committed state at the
     /// escrow's slots ([`STATE_SLOT`](crate::STATE_SLOT), …).
     pub fn view(&self, cipherclerk: &AppCipherclerk) -> Result<Turn, EscrowError> {
-        self.invoke(cipherclerk, METHOD_VIEW, vec![], vec![], InvokeAuthority::None)
+        self.invoke(
+            cipherclerk,
+            METHOD_VIEW,
+            vec![],
+            vec![],
+            InvokeAuthority::None,
+        )
     }
 
     /// A `SetField` effect on this escrow cell.
@@ -385,7 +391,11 @@ mod tests {
         for m in [METHOD_LIST, METHOD_FUND, METHOD_SHIP, METHOD_SETTLE] {
             let sig = iface.method(&method_symbol(m)).unwrap();
             assert_eq!(sig.semantics, Semantics::Replayable, "{m} is replayable");
-            assert_eq!(sig.auth_required, AuthRequired::Signature, "{m} is sig-gated");
+            assert_eq!(
+                sig.auth_required,
+                AuthRequired::Signature,
+                "{m} is sig-gated"
+            );
         }
         let view = iface.method(&method_symbol(METHOD_VIEW)).unwrap();
         assert_eq!(view.semantics, Semantics::Serviced);

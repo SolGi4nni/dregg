@@ -482,8 +482,20 @@ First line.
 Second line.";
         let p = parse(src);
         assert_eq!(p.fields.len(), 2);
-        assert_eq!(p.fields[0], ParsedField { name: "title".into(), value: "The Cat".into() });
-        assert_eq!(p.fields[1], ParsedField { name: "author".into(), value: "ember".into() });
+        assert_eq!(
+            p.fields[0],
+            ParsedField {
+                name: "title".into(),
+                value: "The Cat".into()
+            }
+        );
+        assert_eq!(
+            p.fields[1],
+            ParsedField {
+                name: "author".into(),
+                value: "ember".into()
+            }
+        );
         assert_eq!(p.prose, "First line.\nSecond line.");
         assert!(p.conflicts.is_empty());
     }
@@ -555,12 +567,18 @@ The cat ran.
 
         // Author 1 and Author 2 each append a distinct line after the shared one.
         let a = {
-            let mut d = LiterateDoc { prose: clone_doc(&base_doc), fields: vec![] };
+            let mut d = LiterateDoc {
+                prose: clone_doc(&base_doc),
+                fields: vec![],
+            };
             d.edit(Author(1), "shared\nalpha\n");
             d.history().replay()
         };
         let b = {
-            let mut d = LiterateDoc { prose: clone_doc(&base_doc), fields: vec![] };
+            let mut d = LiterateDoc {
+                prose: clone_doc(&base_doc),
+                fields: vec![],
+            };
             d.edit(Author(2), "shared\nbeta\n");
             d.history().replay()
         };
@@ -569,18 +587,33 @@ The cat ran.
 
         let merged = merge(&a, &b);
         let rendered = content(&merged);
-        assert!(rendered.has_conflict(), "concurrent tail edits => a conflict");
+        assert!(
+            rendered.has_conflict(),
+            "concurrent tail edits => a conflict"
+        );
 
         let src = render(&rendered);
-        assert!(src.contains("<<< prose"), "renders a prose conflict block:\n{src}");
-        assert!(src.contains("|| @1: alpha"), "alternative A with its author:\n{src}");
-        assert!(src.contains("|| @2: beta"), "alternative B with its author:\n{src}");
+        assert!(
+            src.contains("<<< prose"),
+            "renders a prose conflict block:\n{src}"
+        );
+        assert!(
+            src.contains("|| @1: alpha"),
+            "alternative A with its author:\n{src}"
+        );
+        assert!(
+            src.contains("|| @2: beta"),
+            "alternative B with its author:\n{src}"
+        );
 
         // The block PARSES BACK to the same region (regime + both authored alts).
         let reparsed = parsed_conflicts_of(&src);
         assert_eq!(reparsed.len(), 1, "one conflict region round-trips");
         let folded: Vec<ParsedConflict> = rendered.conflicts().map(parsed_shape).collect();
-        assert_eq!(reparsed, folded, "render then parse recovers the conflict region");
+        assert_eq!(
+            reparsed, folded,
+            "render then parse recovers the conflict region"
+        );
     }
 
     #[test]
@@ -597,11 +630,20 @@ The cat ran.
         let field_conflicts: Vec<_> = rendered.field_conflicts().collect();
         assert_eq!(field_conflicts.len(), 1, "the title field clashes");
         assert_eq!(field_conflicts[0].regime, Regime::Field);
-        assert!(field_conflicts[0].regime.needs_consensus(), "a field clash is REAL");
+        assert!(
+            field_conflicts[0].regime.needs_consensus(),
+            "a field clash is REAL"
+        );
 
         let src = render(&rendered);
-        assert!(src.contains("<<< field(title)"), "renders a field conflict block:\n{src}");
-        assert!(src.contains("The Cat") && src.contains("The Dog"), "both values:\n{src}");
+        assert!(
+            src.contains("<<< field(title)"),
+            "renders a field conflict block:\n{src}"
+        );
+        assert!(
+            src.contains("The Cat") && src.contains("The Dog"),
+            "both values:\n{src}"
+        );
 
         let reparsed = parsed_conflicts_of(&src);
         let folded: Vec<ParsedConflict> = rendered.conflicts().map(parsed_shape).collect();
@@ -614,12 +656,18 @@ The cat ran.
         // markers as literal prose lines (they are surfaced state, not input).
         let src = "before\n<<< prose\n|| @1: x\n|| @2: y\n>>>\nafter\n";
         let p = parse(src);
-        assert_eq!(p.prose, "before\nafter\n", "the conflict block is lifted out of prose");
+        assert_eq!(
+            p.prose, "before\nafter\n",
+            "the conflict block is lifted out of prose"
+        );
         assert_eq!(p.conflicts.len(), 1);
         let mut doc = LiterateDoc::new();
         doc.edit(Author(1), src);
         // The authored prose is just the clean lines; no `<<<` leaked in.
-        assert!(!doc.source().contains("|| @1: x"), "markers did not become prose atoms");
+        assert!(
+            !doc.source().contains("|| @1: x"),
+            "markers did not become prose atoms"
+        );
     }
 
     // tiny helper: clone the inner prose Doc (it is Clone) for a fork.

@@ -63,7 +63,10 @@ fn the_whole_stack_coheres_into_one_world() {
     let executor = EmbeddedExecutor::new(&cclerk, "default");
     let store_cell = cclerk.cell_id();
 
-    println!("\n=== ONE live World — store cell {} ===", short(&store_cell));
+    println!(
+        "\n=== ONE live World — store cell {} ===",
+        short(&store_cell)
+    );
 
     // ===================================================================
     // 1. MINT A COUPLE OF CELLS — two real CreateCell turns.
@@ -90,10 +93,20 @@ fn the_whole_stack_coheres_into_one_world() {
             .submit_turn(&turn)
             .unwrap_or_else(|e| panic!("minting {label} must commit: {e}"));
         assert_ne!(receipt.turn_hash, [0u8; 32], "a real mint receipt");
-        println!("1. minted {label} = {} (receipt {})", short_id(pk, token), short_hash(&receipt.turn_hash));
+        println!(
+            "1. minted {label} = {} (receipt {})",
+            short_id(pk, token),
+            short_hash(&receipt.turn_hash)
+        );
     }
-    assert!(executor.cell_state(companion_id).is_some(), "companion is in the World");
-    assert!(executor.cell_state(vault_id).is_some(), "vault is in the World");
+    assert!(
+        executor.cell_state(companion_id).is_some(),
+        "companion is in the World"
+    );
+    assert!(
+        executor.cell_state(vault_id).is_some(),
+        "vault is in the World"
+    );
 
     // Install the published key-value SERVICE interface on the agent cell — it is
     // now a cells-as-service-object store. The Service Explorer resolves its typed
@@ -111,31 +124,63 @@ fn the_whole_stack_coheres_into_one_world() {
     let put1 = store
         .put(&cclerk, REG_MIN, [9u8; 32], 1, InvokeAuthority::Signature)
         .expect("a Signature holder builds put(REG_MIN, .., v=1)");
-    executor.submit_turn(&put1).expect("put commits a verified turn");
+    executor
+        .submit_turn(&put1)
+        .expect("put commits a verified turn");
     let st = executor.cell_state(store.cell).unwrap();
-    assert_eq!(st.fields[REG_MIN], [9u8; 32], "the register holds the value");
+    assert_eq!(
+        st.fields[REG_MIN], [9u8; 32],
+        "the register holds the value"
+    );
     assert_eq!(st.fields[VERSION_SLOT], field_from_u64(1), "version → 1");
     println!("2. invoke put(reg={REG_MIN}) committed; store version = 1");
 
     // A forward bump commits (Monotonic permits it).
     let put2 = store
-        .put(&cclerk, REG_MIN + 1, [7u8; 32], 2, InvokeAuthority::Signature)
+        .put(
+            &cclerk,
+            REG_MIN + 1,
+            [7u8; 32],
+            2,
+            InvokeAuthority::Signature,
+        )
         .unwrap();
-    executor.submit_turn(&put2).expect("forward version bump commits");
-    assert_eq!(executor.cell_state(store.cell).unwrap().fields[VERSION_SLOT], field_from_u64(2));
+    executor
+        .submit_turn(&put2)
+        .expect("forward version bump commits");
+    assert_eq!(
+        executor.cell_state(store.cell).unwrap().fields[VERSION_SLOT],
+        field_from_u64(2)
+    );
 
     // A put that would roll the version BACK builds (front door passes), but the
     // EXECUTOR refuses on the verified Monotonic(VERSION) caveat — protocol, not
     // userspace. Anti-ghost: it commits nothing.
     let rollback = store
-        .put(&cclerk, REG_MIN + 2, [2u8; 32], 1, InvokeAuthority::Signature)
+        .put(
+            &cclerk,
+            REG_MIN + 2,
+            [2u8; 32],
+            1,
+            InvokeAuthority::Signature,
+        )
         .expect("the rollback invocation BUILDS");
     let rejected = executor.submit_turn(&rollback);
-    assert!(rejected.is_err(), "the executor must refuse a version rollback");
-    println!("   rollback put refused by the executor: {}", oneline(&rejected.unwrap_err()));
+    assert!(
+        rejected.is_err(),
+        "the executor must refuse a version rollback"
+    );
+    println!(
+        "   rollback put refused by the executor: {}",
+        oneline(&rejected.unwrap_err())
+    );
     let st = executor.cell_state(store.cell).unwrap();
     assert_eq!(st.fields[REG_MIN + 2], [0u8; 32], "rollback wrote nothing");
-    assert_eq!(st.fields[VERSION_SLOT], field_from_u64(2), "version held at 2");
+    assert_eq!(
+        st.fields[VERSION_SLOT],
+        field_from_u64(2),
+        "version held at 2"
+    );
 
     // ===================================================================
     // 3. FORK → DIVERGE → STITCH → RESOLVE — a document on the umem-heap.
@@ -148,12 +193,20 @@ fn the_whole_stack_coheres_into_one_world() {
     // Diverge: each branch sets the canonical title differently — a clash.
     let diverged_a = Patch::by(
         Author(1),
-        [Op::SetField { name: "title".into(), value: "Cats".into(), superseding: false }],
+        [Op::SetField {
+            name: "title".into(),
+            value: "Cats".into(),
+            superseding: false,
+        }],
     )
     .apply_to(&branch_a);
     let diverged_b = Patch::by(
         Author(2),
-        [Op::SetField { name: "title".into(), value: "Dogs".into(), superseding: false }],
+        [Op::SetField {
+            name: "title".into(),
+            value: "Dogs".into(),
+            superseding: false,
+        }],
     )
     .apply_to(&branch_b);
 
@@ -171,9 +224,14 @@ fn the_whole_stack_coheres_into_one_world() {
     // committed heap_root binds BOTH alternatives. Insert it into the SAME World.
     let mut doc = DocHeapCell::from_graph(0x3D, stitched);
     let conflict_boundary = doc.commitment();
-    assert_eq!(conflict_boundary, doc.cell().state.heap_root, "commitment IS the umem boundary");
+    assert_eq!(
+        conflict_boundary,
+        doc.cell().state.heap_root,
+        "commitment IS the umem boundary"
+    );
     assert!(
-        doc.heap_membership(COLL_FIELDS, 0).is_some() && doc.heap_membership(COLL_FIELDS, 1).is_some(),
+        doc.heap_membership(COLL_FIELDS, 0).is_some()
+            && doc.heap_membership(COLL_FIELDS, 1).is_some(),
         "BOTH clashing alternatives are leaves bound by the umem boundary"
     );
     let doc_id = doc.cell_id();
@@ -185,13 +243,20 @@ fn the_whole_stack_coheres_into_one_world() {
         conflict_boundary,
         "the published conflict's umem boundary is committed in the live ledger"
     );
-    println!("   published conflict to umem-heap: doc cell {} boundary {}", short(&doc_id), short_hash(&conflict_boundary));
+    println!(
+        "   published conflict to umem-heap: doc cell {} boundary {}",
+        short(&doc_id),
+        short_hash(&conflict_boundary)
+    );
 
     // Resolve: a later patch (a superseding field write) collapses the conflict.
     // The umem boundary MOVES; re-publish it into the live World.
     let resolve = resolve_field(Author(1), "title", "Cats");
     let resolved_boundary = doc.apply(resolve);
-    assert_ne!(resolved_boundary, conflict_boundary, "resolution moved the umem boundary");
+    assert_ne!(
+        resolved_boundary, conflict_boundary,
+        "resolution moved the umem boundary"
+    );
     assert_eq!(
         content(doc.graph()).field_conflicts().count(),
         0,
@@ -205,7 +270,10 @@ fn the_whole_stack_coheres_into_one_world() {
         resolved_boundary,
         "the resolved umem boundary is re-published in the live ledger"
     );
-    println!("   resolve: 0 conflicts; boundary moved to {}", short_hash(&resolved_boundary));
+    println!(
+        "   resolve: 0 conflicts; boundary moved to {}",
+        short_hash(&resolved_boundary)
+    );
 
     // ===================================================================
     // 4. SCRUB TIME-TRAVEL — snapshot H, advance, restore (byte-identical).
@@ -218,11 +286,20 @@ fn the_whole_stack_coheres_into_one_world() {
 
     // Advance: a real verified put past H — the World genuinely moves.
     let put3 = store
-        .put(&cclerk, REG_MIN + 3, [5u8; 32], 3, InvokeAuthority::Signature)
+        .put(
+            &cclerk,
+            REG_MIN + 3,
+            [5u8; 32],
+            3,
+            InvokeAuthority::Signature,
+        )
         .unwrap();
     executor.submit_turn(&put3).expect("advancing put commits");
     let boundary_now = project_ledger(&executor.with_ledger_mut(|l| l.clone()));
-    assert_ne!(boundary_now, boundary_h, "advancing moved the umem boundary");
+    assert_ne!(
+        boundary_now, boundary_h,
+        "advancing moved the umem boundary"
+    );
     assert_eq!(
         executor.cell_state(store.cell).unwrap().fields[VERSION_SLOT],
         field_from_u64(3),
@@ -252,7 +329,10 @@ fn the_whole_stack_coheres_into_one_world() {
         resolved_boundary,
         "the restored document's umem boundary is exactly its height-H boundary"
     );
-    println!("   reify_ledger restored {} cells byte-identical to height H", h_ids.len());
+    println!(
+        "   reify_ledger restored {} cells byte-identical to height H",
+        h_ids.len()
+    );
 
     // ===================================================================
     // 5. AN UNAUTHORIZED OP — refused by the executor's authority gate.
@@ -264,7 +344,11 @@ fn the_whole_stack_coheres_into_one_world() {
     let trespass = cclerk.make_action(
         vault_id,
         "trespass",
-        vec![Effect::SetField { cell: vault_id, index: REG_MIN, value: [0xEE; 32] }],
+        vec![Effect::SetField {
+            cell: vault_id,
+            index: REG_MIN,
+            value: [0xEE; 32],
+        }],
     );
     let trespass_turn = cclerk.make_turn(trespass);
     let refused = executor.submit_turn(&trespass_turn);
@@ -272,7 +356,10 @@ fn the_whole_stack_coheres_into_one_world() {
         refused.is_err(),
         "the executor's authority gate must refuse a write to a cell the agent does not own"
     );
-    println!("5. unauthorized write to vault refused by the executor: {}", oneline(&refused.unwrap_err()));
+    println!(
+        "5. unauthorized write to vault refused by the executor: {}",
+        oneline(&refused.unwrap_err())
+    );
 
     // Anti-ghost: the vault is untouched.
     assert_eq!(

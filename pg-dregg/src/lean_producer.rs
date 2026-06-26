@@ -63,10 +63,10 @@
 use crate::drainer::{Producer, SubmitIntent};
 use crate::mirror::{MemCell, MirrorBatch};
 use crate::workflow::{balance_reg, cell_row, turn_row};
-use dregg_lean_ffi::marshal::{
-    marshal_turn, Digest, WForest, WireAction, WireAuth, WireState, WireTurn, WireValue,
-};
 use dregg_lean_ffi::TurnStatus;
+use dregg_lean_ffi::marshal::{
+    Digest, WForest, WireAction, WireAuth, WireState, WireTurn, WireValue, marshal_turn,
+};
 
 /// The wire `Nat` id the synthesized turn gives the float SOURCE cell.
 const WIRE_SRC: u64 = 0;

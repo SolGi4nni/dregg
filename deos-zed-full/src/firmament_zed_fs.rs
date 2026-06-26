@@ -54,16 +54,16 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::stream::{self, BoxStream, Stream};
 use futures::{AsyncRead, StreamExt};
 
+use fs::FileHandle;
 use fs::{
     CopyOptions, CreateOptions, Fs, JobEventReceiver, MTime, Metadata, PathEvent, RemoveOptions,
-    RenameOptions, TrashedEntry, TrashRestoreError, Watcher,
+    RenameOptions, TrashRestoreError, TrashedEntry, Watcher,
 };
-use fs::FileHandle;
 use git::repository::GitRepository;
 use rope::Rope;
 use text::LineEnding;
@@ -153,7 +153,11 @@ impl FirmamentZedFs {
     /// synthetic `.git` namespace entry is presented so Zed's worktree scanner
     /// auto-discovers the cell-ledger repository). `None` when git is disabled.
     fn git_work_root(&self) -> Option<PathBuf> {
-        self.git.lock().unwrap().as_ref().map(|r| r.work_root().to_path_buf())
+        self.git
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|r| r.work_root().to_path_buf())
     }
 
     /// Is `path` the synthetic `.git` directory of the enabled git surface (i.e.
@@ -479,7 +483,11 @@ impl Fs for FirmamentZedFs {
         }
     }
 
-    async fn git_init(&self, _abs_work_directory: &Path, _fallback_branch_name: String) -> Result<()> {
+    async fn git_init(
+        &self,
+        _abs_work_directory: &Path,
+        _fallback_branch_name: String,
+    ) -> Result<()> {
         bail!("FirmamentZedFs: git_init not modeled over cells (this slice)")
     }
 
@@ -533,11 +541,7 @@ fn path_inode(path: &Path) -> u64 {
 /// Recursively walk the cell namespace under `dir` and seed each file-cell's
 /// current content as the genesis commit in the git surface. `read_dir` lists one
 /// level (files + implicit directories); we recurse into directories.
-fn seed_git_from_namespace(
-    cell: &SyncCellFs,
-    repo: &crate::cell_git::CellLedgerGit,
-    dir: &Path,
-) {
+fn seed_git_from_namespace(cell: &SyncCellFs, repo: &crate::cell_git::CellLedgerGit, dir: &Path) {
     for (path, is_dir) in cell.read_dir(dir) {
         if is_dir {
             seed_git_from_namespace(cell, repo, &path);

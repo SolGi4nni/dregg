@@ -263,10 +263,7 @@ mod tests {
             })
         );
         // A single printable char → text.
-        assert_eq!(
-            w.key("a"),
-            Some(AndroidInputCmd::Text { text: "a".into() })
-        );
+        assert_eq!(w.key("a"), Some(AndroidInputCmd::Text { text: "a".into() }));
         // An unmapped chord is swallowed (no ambient key reaches the app).
         assert_eq!(w.key("cmd-shift-p"), None);
     }

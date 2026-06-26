@@ -121,7 +121,10 @@ fn invert_round_trips_an_add() {
     let w = hello_world().2;
     let p = Patch::by(Author(1), [Patch::add(9, " !", w).1]);
     let edited = p.apply_to(&base);
-    assert_ne!(content(&edited).to_marked_string(), content(&base).to_marked_string());
+    assert_ne!(
+        content(&edited).to_marked_string(),
+        content(&base).to_marked_string()
+    );
     let undone = p.invert().apply_to(&edited);
     // The added atom is dropped from the walk; content matches the pre-edit doc.
     assert_eq!(
@@ -167,7 +170,10 @@ fn invert_round_trips_a_field_set() {
 #[test]
 fn history_replay_is_the_content_fold() {
     let mut h = History::new();
-    h.commit(Patch::by(Author(1), [Patch::add(1, "Hello ", AtomId::ROOT).1]));
+    h.commit(Patch::by(
+        Author(1),
+        [Patch::add(1, "Hello ", AtomId::ROOT).1],
+    ));
     let hello = Patch::add(1, "Hello ", AtomId::ROOT).0;
     h.commit(Patch::by(Author(1), [Patch::add(2, "world", hello).1]));
     assert_eq!(content(&h.replay()).to_marked_string(), "Hello world");
@@ -190,7 +196,10 @@ fn replay_to_is_time_travel() {
 fn branch_then_stitch_is_the_pushout() {
     // Shared base, two authors branch and edit disjoint regions, then publish.
     let mut main = History::new();
-    main.commit(Patch::by(Author(1), [Patch::add(1, "base", AtomId::ROOT).1]));
+    main.commit(Patch::by(
+        Author(1),
+        [Patch::add(1, "base", AtomId::ROOT).1],
+    ));
     let base_atom = Patch::add(1, "base", AtomId::ROOT).0;
 
     let mut draft = main.branch();
@@ -211,7 +220,10 @@ fn forks() -> (DocGraph, DocGraph, DocGraph) {
     let a = Patch::by(Author(1), [Patch::add(10, "!", w).1]).apply_to(&base);
     let (b_atom, b_op) = Patch::add(11, "there ", h);
     let mut bp = Patch::by(Author(2), [b_op]);
-    bp.push(Op::Connect { from: b_atom, to: w });
+    bp.push(Op::Connect {
+        from: b_atom,
+        to: w,
+    });
     let b = bp.apply_to(&base);
     let c = Patch::by(Author(3), [Op::Delete { id: w }]).apply_to(&base);
     (a, b, c)
@@ -269,7 +281,10 @@ fn disjoint_edits_merge_clean() {
     let left = pp.apply_to(&base);
     let right = Patch::by(Author(2), [Patch::add(21, "!", w).1]).apply_to(&base);
     let m = merge(&left, &right);
-    assert!(!content(&m).has_conflict(), "disjoint edits do not conflict");
+    assert!(
+        !content(&m).has_conflict(),
+        "disjoint edits do not conflict"
+    );
     assert_eq!(content(&m).to_marked_string(), "Oh, Hello world!");
 }
 
@@ -293,7 +308,11 @@ fn concurrent_inserts_become_a_conflict_region_not_a_panic() {
     assert!(r.has_conflict(), "the merge carries a first-class conflict");
     let region = r.prose_conflicts().next().expect("one prose conflict");
     assert_eq!(region.regime, Regime::Prose);
-    assert_eq!(region.alternatives.len(), 2, "an antichain of two alternatives");
+    assert_eq!(
+        region.alternatives.len(),
+        2,
+        "an antichain of two alternatives"
+    );
     let heads = region.heads();
     assert!(heads.contains(&alt_a) && heads.contains(&alt_b));
     assert!(region.alternatives.iter().any(|a| a.text.contains("ALPHA")));
@@ -305,7 +324,11 @@ fn conflict_alternatives_carry_provenance() {
     // "who wrote which alternative" is a FACT (§3.5).
     let (m, _w, _a, _b) = conflicting_merge();
     let region = content(&m).prose_conflicts().next().unwrap().clone();
-    let authors: Vec<Author> = region.alternatives.iter().map(|a| a.provenance.author).collect();
+    let authors: Vec<Author> = region
+        .alternatives
+        .iter()
+        .map(|a| a.provenance.author)
+        .collect();
     assert!(authors.contains(&Author(1)), "ALPHA's author attributed");
     assert!(authors.contains(&Author(2)), "BETA's author attributed");
 }
@@ -333,23 +356,42 @@ fn concurrent_field_writes_are_a_field_conflict_needing_consensus() {
     let base = DocGraph::new();
     let a = Patch::by(
         Author(1),
-        [Op::SetField { name: "title".into(), value: "Cats".into(), superseding: false }],
+        [Op::SetField {
+            name: "title".into(),
+            value: "Cats".into(),
+            superseding: false,
+        }],
     )
     .apply_to(&base);
     let b = Patch::by(
         Author(2),
-        [Op::SetField { name: "title".into(), value: "Dogs".into(), superseding: false }],
+        [Op::SetField {
+            name: "title".into(),
+            value: "Dogs".into(),
+            superseding: false,
+        }],
     )
     .apply_to(&base);
     let m = merge(&a, &b);
-    assert_eq!(m.field("title").len(), 2, "both assignments survive (a clash)");
+    assert_eq!(
+        m.field("title").len(),
+        2,
+        "both assignments survive (a clash)"
+    );
     let r = content(&m);
     let fc = r.field_conflicts().next().expect("a field conflict");
     assert_eq!(fc.regime, Regime::Field);
-    assert!(fc.regime.needs_consensus(), "a field clash may need consensus");
+    assert!(
+        fc.regime.needs_consensus(),
+        "a field clash may need consensus"
+    );
     assert_eq!(fc.field.as_deref(), Some("title"));
     // Both clashing values are attributed.
-    let authors: Vec<Author> = fc.alternatives.iter().map(|a| a.provenance.author).collect();
+    let authors: Vec<Author> = fc
+        .alternatives
+        .iter()
+        .map(|a| a.provenance.author)
+        .collect();
     assert!(authors.contains(&Author(1)) && authors.contains(&Author(2)));
 }
 
@@ -360,7 +402,11 @@ fn same_field_value_does_not_conflict() {
     let mk = |auth| {
         Patch::by(
             Author(auth),
-            [Op::SetField { name: "title".into(), value: "Same".into(), superseding: false }],
+            [Op::SetField {
+                name: "title".into(),
+                value: "Same".into(),
+                superseding: false,
+            }],
         )
         .apply_to(&base)
     };
@@ -380,20 +426,36 @@ fn resolve_by_ordering_collapses_a_prose_conflict() {
     let r = content(&m);
     assert!(!r.has_conflict(), "ordering resolves the conflict");
     let s = r.to_marked_string();
-    assert!(s.contains("ALPHA") && s.contains("BETA"), "both kept, linearized: {s}");
+    assert!(
+        s.contains("ALPHA") && s.contains("BETA"),
+        "both kept, linearized: {s}"
+    );
 }
 
 #[test]
 fn resolve_by_choosing_keeps_one_drops_the_other() {
     let (mut m, _w, _a, _b) = conflicting_merge();
     let region = content(&m).prose_conflicts().next().unwrap().clone();
-    let keep = region.alternatives.iter().find(|a| a.text.contains("ALPHA")).unwrap().head;
-    let drop = region.alternatives.iter().find(|a| a.text.contains("BETA")).unwrap().head;
+    let keep = region
+        .alternatives
+        .iter()
+        .find(|a| a.text.contains("ALPHA"))
+        .unwrap()
+        .head;
+    let drop = region
+        .alternatives
+        .iter()
+        .find(|a| a.text.contains("BETA"))
+        .unwrap()
+        .head;
     resolve_keep(keep, &[drop]).apply(&mut m);
     let r = content(&m);
     assert!(!r.has_conflict());
     let s = r.to_marked_string();
-    assert!(s.contains("ALPHA") && !s.contains("BETA"), "kept ALPHA, dropped BETA: {s}");
+    assert!(
+        s.contains("ALPHA") && !s.contains("BETA"),
+        "kept ALPHA, dropped BETA: {s}"
+    );
 }
 
 #[test]
@@ -401,19 +463,31 @@ fn resolve_field_settles_the_clash() {
     let base = DocGraph::new();
     let a = Patch::by(
         Author(1),
-        [Op::SetField { name: "title".into(), value: "Cats".into(), superseding: false }],
+        [Op::SetField {
+            name: "title".into(),
+            value: "Cats".into(),
+            superseding: false,
+        }],
     )
     .apply_to(&base);
     let b = Patch::by(
         Author(2),
-        [Op::SetField { name: "title".into(), value: "Dogs".into(), superseding: false }],
+        [Op::SetField {
+            name: "title".into(),
+            value: "Dogs".into(),
+            superseding: false,
+        }],
     )
     .apply_to(&base);
     let mut m = merge(&a, &b);
     assert!(content(&m).has_conflict());
     // A settling authority chooses the canonical value.
     resolve_field(Author(99), "title", "Pets").apply(&mut m);
-    assert_eq!(m.field("title").len(), 1, "the clash collapses to one value");
+    assert_eq!(
+        m.field("title").len(),
+        1,
+        "the clash collapses to one value"
+    );
     assert_eq!(m.field("title")[0].value, "Pets");
     assert!(!content(&m).has_conflict());
 }
@@ -451,12 +525,20 @@ fn title_clash() -> DocGraph {
     let base = DocGraph::new();
     let a = Patch::by(
         Author(1),
-        [Op::SetField { name: "title".into(), value: "Cats".into(), superseding: false }],
+        [Op::SetField {
+            name: "title".into(),
+            value: "Cats".into(),
+            superseding: false,
+        }],
     )
     .apply_to(&base);
     let b = Patch::by(
         Author(2),
-        [Op::SetField { name: "title".into(), value: "Dogs".into(), superseding: false }],
+        [Op::SetField {
+            name: "title".into(),
+            value: "Dogs".into(),
+            superseding: false,
+        }],
     )
     .apply_to(&base);
     merge(&a, &b)
@@ -503,10 +585,17 @@ fn commit_anti_forge_provenance() {
         b.sort();
         a == b
     };
-    assert!(render_eq, "the forged conflict renders the same alternative values");
+    assert!(
+        render_eq,
+        "the forged conflict renders the same alternative values"
+    );
 
     // ...but the commitment DIFFERS — the forge cannot hide under an equal render.
-    assert_ne!(commit(&forged), c0, "forging an alternative's author changes the commitment");
+    assert_ne!(
+        commit(&forged),
+        c0,
+        "forging an alternative's author changes the commitment"
+    );
 }
 
 #[test]
@@ -521,7 +610,11 @@ fn commit_anti_forge_dropped_alternative() {
     hidden.drop_field_assignment("title", "Dogs");
     assert_eq!(hidden.field("title").len(), 1, "one alternative hidden");
 
-    assert_ne!(commit(&hidden), c0, "dropping an alternative changes the commitment");
+    assert_ne!(
+        commit(&hidden),
+        c0,
+        "dropping an alternative changes the commitment"
+    );
 }
 
 #[test]
@@ -542,7 +635,11 @@ fn commit_binds_prose_alternative_provenance() {
         swapped.structural_eq(&m),
         "same content/edges (structural), only provenance differs"
     );
-    assert_ne!(commit(&swapped), c0, "provenance is bound: swapped authors -> different commitment");
+    assert_ne!(
+        commit(&swapped),
+        c0,
+        "provenance is bound: swapped authors -> different commitment"
+    );
 }
 
 #[test]
@@ -603,12 +700,27 @@ fn blame_does_not_reassign_on_a_middle_insert() {
     // The ORIGINAL two atoms keep their ids, content, AND authors — unmoved.
     let find = |b: &[BlameLine], a: AtomId| b.iter().find(|l| l.atom == a).cloned().unwrap();
     assert_eq!(find(&before, h).author, Author(1));
-    assert_eq!(find(&after, h).author, Author(1), "middle insert did NOT reassign Hello");
+    assert_eq!(
+        find(&after, h).author,
+        Author(1),
+        "middle insert did NOT reassign Hello"
+    );
     assert_eq!(find(&before, w).author, Author(2));
-    assert_eq!(find(&after, w).author, Author(2), "middle insert did NOT reassign world");
+    assert_eq!(
+        find(&after, w).author,
+        Author(2),
+        "middle insert did NOT reassign world"
+    );
     // The inserted atom is correctly the only one attributed to Author(3).
     assert!(after.iter().filter(|l| l.author == Author(3)).count() == 1);
-    assert_eq!(after.iter().find(|l| l.author == Author(3)).unwrap().content, "big ");
+    assert_eq!(
+        after
+            .iter()
+            .find(|l| l.author == Author(3))
+            .unwrap()
+            .content,
+        "big "
+    );
 }
 
 #[test]
@@ -666,7 +778,11 @@ fn three_way_setup() -> (History, History, History) {
 fn merge_base_is_the_longest_common_prefix() {
     let (base, ours, theirs) = three_way_setup();
     let mb = merge_base(&ours, &theirs);
-    assert_eq!(mb.patches(), base.patches(), "the shared prefix is exactly base");
+    assert_eq!(
+        mb.patches(),
+        base.patches(),
+        "the shared prefix is exactly base"
+    );
     assert_eq!(mb.len(), 2);
     // The merge base of identical histories is the whole history.
     assert_eq!(merge_base(&ours, &ours).patches(), ours.patches());
@@ -685,8 +801,16 @@ fn render_three_way_shows_base_and_both_sides() {
     assert_eq!(v.base_text, "");
     // Both sides present, with their real authors and diverging text.
     assert_eq!(v.sides.len(), 2);
-    assert!(v.sides.iter().any(|s| s.author == Author(1) && s.text.contains("ALPHA")));
-    assert!(v.sides.iter().any(|s| s.author == Author(2) && s.text.contains("BETA")));
+    assert!(
+        v.sides
+            .iter()
+            .any(|s| s.author == Author(1) && s.text.contains("ALPHA"))
+    );
+    assert!(
+        v.sides
+            .iter()
+            .any(|s| s.author == Author(2) && s.text.contains("BETA"))
+    );
 }
 
 #[test]
@@ -746,6 +870,9 @@ fn render_three_way_clean_merge_yields_no_conflicts() {
     theirs.commit(Patch::by(Author(2), [yop, Op::Connect { from: y, to: a3 }]));
 
     let merged = three_way(&base, &ours, &theirs);
-    assert!(!content(&merged).has_conflict(), "disjoint ordered edits merge clean");
+    assert!(
+        !content(&merged).has_conflict(),
+        "disjoint ordered edits merge clean"
+    );
     assert!(render_three_way(&merged, &base.replay()).is_empty());
 }

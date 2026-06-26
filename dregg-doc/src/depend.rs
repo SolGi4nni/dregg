@@ -141,7 +141,11 @@ impl<'h> DepIndex<'h> {
                 }
             }
         }
-        DepIndex { history, ids, origin }
+        DepIndex {
+            history,
+            ids,
+            origin,
+        }
     }
 
     /// The index (into `history.patches()`/`ids`) of the patch with id `p`.
@@ -177,9 +181,9 @@ impl<'h> DepIndex<'h> {
                     }
                     let qid = self.ids[j];
                     if qid != p
-                        && q.ops.iter().any(
-                            |op| matches!(op, Op::SetField { name: n, .. } if n == name),
-                        )
+                        && q.ops
+                            .iter()
+                            .any(|op| matches!(op, Op::SetField { name: n, .. } if n == name))
                     {
                         deps.insert(qid);
                     }
@@ -263,11 +267,17 @@ pub fn commute(history: &History, p: PatchId, q: PatchId) -> bool {
         return false;
     }
     let idx = DepIndex::new(history);
-    let p_deps = idx.index_of(p).map(|pi| idx.transitive(pi)).unwrap_or_default();
+    let p_deps = idx
+        .index_of(p)
+        .map(|pi| idx.transitive(pi))
+        .unwrap_or_default();
     if p_deps.contains(&q) {
         return false;
     }
-    let q_deps = idx.index_of(q).map(|qi| idx.transitive(qi)).unwrap_or_default();
+    let q_deps = idx
+        .index_of(q)
+        .map(|qi| idx.transitive(qi))
+        .unwrap_or_default();
     !q_deps.contains(&p)
 }
 
@@ -302,11 +312,7 @@ pub fn unrecord(history: &History, p: PatchId) -> History {
 /// - [`DepError::UnsatisfiableDep`] if `p` (or a dep) references an atom that no
 ///   `source` patch introduces and that `onto` does not already have — the patch
 ///   is not self-contained, so replaying it would dangle.
-pub fn cherry_pick(
-    source: &History,
-    p: PatchId,
-    onto: &mut History,
-) -> Result<PatchId, DepError> {
+pub fn cherry_pick(source: &History, p: PatchId, onto: &mut History) -> Result<PatchId, DepError> {
     if !source.patches().iter().any(|q| q.id() == p) {
         return Err(DepError::NotInSource(p));
     }
@@ -544,10 +550,7 @@ mod tests {
         let id3 = h.commit(Patch::by(Author(1), [op_c]));
         // patch3 directly depends on patch2; transitively also on patch1.
         assert_eq!(dependencies(&h, id3), BTreeSet::from([id2]));
-        assert_eq!(
-            transitive_dependencies(&h, id3),
-            BTreeSet::from([id1, id2])
-        );
+        assert_eq!(transitive_dependencies(&h, id3), BTreeSet::from([id1, id2]));
     }
 
     #[test]

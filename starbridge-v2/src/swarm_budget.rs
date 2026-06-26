@@ -111,7 +111,10 @@ impl StingrayDrawError {
     /// A short operator-legible label.
     pub fn label(&self) -> String {
         match self {
-            StingrayDrawError::PoolExhausted { remaining, requested } => format!(
+            StingrayDrawError::PoolExhausted {
+                remaining,
+                requested,
+            } => format!(
                 "REFUSED — shared pool exhausted (draw {requested} > remaining {remaining}; the conservation bound bit)"
             ),
             StingrayDrawError::DuplicateDraw { digest } => format!(

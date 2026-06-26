@@ -320,10 +320,16 @@ mod tests {
         // FALSE bite: the dropped branch is gone WHOLE — neither its head nor its
         // tail leaks (the old bug left "b2" alive and orphaned).
         assert!(!text.contains("b1"), "dropped head gone: {text:?}");
-        assert!(!text.contains("b2"), "dropped TAIL gone too (no leak): {text:?}");
+        assert!(
+            !text.contains("b2"),
+            "dropped TAIL gone too (no leak): {text:?}"
+        );
         // TRUE bite: the kept branch survives whole, and the conflict is collapsed.
         assert!(text.contains("a1\na2"), "kept branch whole: {text:?}");
-        assert!(!after.has_conflict(), "the keep genuinely collapses it: {text:?}");
+        assert!(
+            !after.has_conflict(),
+            "the keep genuinely collapses it: {text:?}"
+        );
     }
 
     #[test]
@@ -338,8 +344,11 @@ mod tests {
         let (tail, opt) = Patch::add(9, "tail\n", AtomId::ROOT);
         // branch A: base -> a1 -> tail
         let (a1, opa1) = Patch::add(2, "a1\n", base);
-        let a = Patch::by(Author(1), [opt.clone(), opa1, Op::Connect { from: a1, to: tail }])
-            .apply_to(&g);
+        let a = Patch::by(
+            Author(1),
+            [opt.clone(), opa1, Op::Connect { from: a1, to: tail }],
+        )
+        .apply_to(&g);
         // branch B: base -> b1 -> tail
         let (b1, opb1) = Patch::add(4, "b1\n", base);
         let b = Patch::by(Author(2), [opt, opb1, Op::Connect { from: b1, to: tail }]).apply_to(&g);
@@ -350,7 +359,10 @@ mod tests {
         let text = content(&resolved).to_marked_string();
         assert!(text.contains("a1"), "kept branch present: {text:?}");
         assert!(!text.contains("b1"), "dropped branch gone: {text:?}");
-        assert!(text.contains("tail"), "the SHARED rejoin atom survives: {text:?}");
+        assert!(
+            text.contains("tail"),
+            "the SHARED rejoin atom survives: {text:?}"
+        );
     }
 
     // ── TRUE bite: a genuine conflict yields ready resolutions that collapse it ──
@@ -378,7 +390,10 @@ mod tests {
         // keep alpha, keep beta, order, order-swapped.
         assert_eq!(choices.len(), 4, "two keeps + two orders: {choices:?}");
         assert_eq!(
-            choices.iter().filter(|c| matches!(c.resolution, Resolution::Keep { .. })).count(),
+            choices
+                .iter()
+                .filter(|c| matches!(c.resolution, Resolution::Keep { .. }))
+                .count(),
             2
         );
         assert_eq!(
@@ -452,7 +467,11 @@ mod tests {
         let region = rendered.field_conflicts().next().expect("a field clash");
 
         let choices = resolutions_for(&merged, region, Author(1));
-        assert_eq!(choices.len(), 2, "one choose per distinct value: {choices:?}");
+        assert_eq!(
+            choices.len(),
+            2,
+            "one choose per distinct value: {choices:?}"
+        );
         for c in &choices {
             assert!(matches!(c.resolution, Resolution::ChooseField { .. }));
             let settled = c.patch.apply_to(&merged);
@@ -476,10 +495,16 @@ mod tests {
         let rendered = content(&merged);
 
         let menu = resolutions(&merged, &rendered, Author(1));
-        assert!(menu.len() >= 2, "at least a prose and a field region: {menu:?}");
+        assert!(
+            menu.len() >= 2,
+            "at least a prose and a field region: {menu:?}"
+        );
         assert!(menu.iter().any(|r| r.regime == Regime::Prose));
         let field = menu.iter().find(|r| r.regime == Regime::Field).unwrap();
-        assert!(field.regime.needs_consensus(), "the field region is the real clash");
+        assert!(
+            field.regime.needs_consensus(),
+            "the field region is the real clash"
+        );
         assert!(!field.choices.is_empty());
     }
 
@@ -497,7 +522,10 @@ mod tests {
         assert!(!rendered.has_conflict());
 
         let menu = resolutions(&g, &rendered, Author(1));
-        assert!(menu.is_empty(), "no conflict => no resolutions to fabricate");
+        assert!(
+            menu.is_empty(),
+            "no conflict => no resolutions to fabricate"
+        );
     }
 
     /// The resolution patch is authored by the resolver (it leaves a receipt under

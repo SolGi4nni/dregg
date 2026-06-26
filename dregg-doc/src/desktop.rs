@@ -30,7 +30,7 @@
 //! refusing the contended scene, the document *represents* it as a resolvable
 //! clash (the right semantics for the multi-device "one cap across distance" case).
 
-use crate::{content, AtomId, Author, DocGraph, Op, Patch, Rendered};
+use crate::{AtomId, Author, DocGraph, Op, Patch, Rendered, content};
 
 /// A renderer-agnostic description of one cockpit surface — the minimal shape the
 /// desktop→document projection needs. The cockpit's `compositor::CompositedSurface`
@@ -131,7 +131,12 @@ pub fn scene_to_doc(surfaces: &[DesktopSurface], active_tab: usize, author: Auth
 /// surface-atom stays in the graph (provenance retained, time-travellable —
 /// un-minimize = the inverse) but drops off the rendered walk.
 pub fn tombstone_surface(surface: &DesktopSurface, author: Author) -> Patch {
-    Patch::by(author, [Op::Delete { id: surface_atom_id(surface) }])
+    Patch::by(
+        author,
+        [Op::Delete {
+            id: surface_atom_id(surface),
+        }],
+    )
 }
 
 /// Author a layout edit as a *superseding* `SetField` patch on the active tab —
@@ -204,8 +209,14 @@ mod tests {
         let b = short_owner(&[0xB2; 32]);
         let pa = walk.find(&a).expect("surface A in the desktop document");
         let pb = walk.find(&b).expect("surface B in the desktop document");
-        assert!(pa < pb, "the document walk IS the paint order (A under B): {walk}");
-        assert!(!r.has_conflict(), "a single-operator desktop is conflict-free");
+        assert!(
+            pa < pb,
+            "the document walk IS the paint order (A under B): {walk}"
+        );
+        assert!(
+            !r.has_conflict(),
+            "a single-operator desktop is conflict-free"
+        );
     }
 
     #[test]
@@ -220,15 +231,26 @@ mod tests {
     #[test]
     fn the_desktop_commits_to_a_real_heap_root() {
         let root = desktop_commit(&two_surface(), 3, Author(1));
-        assert_ne!(root, dregg_cell::empty_heap_root(), "a populated desktop is not the empty root");
-        assert_eq!(root, desktop_commit(&two_surface(), 3, Author(1)), "the same desktop commits equal");
+        assert_ne!(
+            root,
+            dregg_cell::empty_heap_root(),
+            "a populated desktop is not the empty root"
+        );
+        assert_eq!(
+            root,
+            desktop_commit(&two_surface(), 3, Author(1)),
+            "the same desktop commits equal"
+        );
     }
 
     #[test]
     fn a_rearranged_desktop_has_a_different_commitment() {
         let root0 = desktop_commit(&two_surface(), 3, Author(1));
         let root1 = desktop_commit(&two_surface(), 7, Author(1)); // a layout edit (tab)
-        assert_ne!(root0, root1, "a different desktop layout -> a different commitment");
+        assert_ne!(
+            root0, root1,
+            "a different desktop layout -> a different commitment"
+        );
     }
 
     #[test]
@@ -254,37 +276,71 @@ mod tests {
         let b = short_owner(&[0xB2; 32]);
         let d1 = Patch::by(
             Author(1),
-            [Op::SetField { name: FIELD_FOCUS.into(), value: a.clone(), superseding: false }],
+            [Op::SetField {
+                name: FIELD_FOCUS.into(),
+                value: a.clone(),
+                superseding: false,
+            }],
         )
         .apply_to(&base);
         let d2 = Patch::by(
             Author(2),
-            [Op::SetField { name: FIELD_FOCUS.into(), value: b.clone(), superseding: false }],
+            [Op::SetField {
+                name: FIELD_FOCUS.into(),
+                value: b.clone(),
+                superseding: false,
+            }],
         )
         .apply_to(&base);
         let merged = crate::merge(&d1, &d2);
 
-        let vals: Vec<&str> = merged.field(FIELD_FOCUS).iter().map(|x| x.value.as_str()).collect();
-        assert!(vals.contains(&a.as_str()), "device 1's focus claim survives: {vals:?}");
-        assert!(vals.contains(&b.as_str()), "device 2's focus claim survives: {vals:?}");
-        assert!(vals.len() >= 2, "the contended focus is a first-class clash, not a clobber");
+        let vals: Vec<&str> = merged
+            .field(FIELD_FOCUS)
+            .iter()
+            .map(|x| x.value.as_str())
+            .collect();
         assert!(
-            content(&merged).field_conflicts().any(|c| c.alternatives.len() >= 2),
+            vals.contains(&a.as_str()),
+            "device 1's focus claim survives: {vals:?}"
+        );
+        assert!(
+            vals.contains(&b.as_str()),
+            "device 2's focus claim survives: {vals:?}"
+        );
+        assert!(
+            vals.len() >= 2,
+            "the contended focus is a first-class clash, not a clobber"
+        );
+        assert!(
+            content(&merged)
+                .field_conflicts()
+                .any(|c| c.alternatives.len() >= 2),
             "the desktop renders a first-class focus conflict (both claims kept)"
         );
 
         // RESOLUTION: a superseding patch collapses the clash (one device wins, by an
         // EXPLICIT decision — never a silent loss).
         let resolved = resolve_focus(&[0xB2; 32], Author(1)).apply_to(&merged);
-        assert_eq!(resolved.field(FIELD_FOCUS).len(), 1, "the resolution collapses the clash");
-        assert_eq!(resolved.field(FIELD_FOCUS)[0].value, b, "B wins by an explicit resolving patch");
+        assert_eq!(
+            resolved.field(FIELD_FOCUS).len(),
+            1,
+            "the resolution collapses the clash"
+        );
+        assert_eq!(
+            resolved.field(FIELD_FOCUS)[0].value,
+            b,
+            "B wins by an explicit resolving patch"
+        );
     }
 
     #[test]
     fn minimizing_a_surface_tombstones_it_off_the_walk_but_keeps_it_in_the_graph() {
         let base = scene_to_doc(&two_surface(), 3, Author(1));
         let b = short_owner(&[0xB2; 32]);
-        assert!(content(&base).to_marked_string().contains(&b), "B is on the walk before minimize");
+        assert!(
+            content(&base).to_marked_string().contains(&b),
+            "B is on the walk before minimize"
+        );
 
         let minimized = tombstone_surface(&surface(0xB2, 1, true), Author(1)).apply_to(&base);
         assert!(
@@ -305,23 +361,41 @@ mod tests {
         let base = scene_to_doc(&two_surface(), 3, Author(1));
         let d1 = Patch::by(
             Author(1),
-            [Op::SetField { name: FIELD_ACTIVE_TAB.into(), value: "5".into(), superseding: false }],
+            [Op::SetField {
+                name: FIELD_ACTIVE_TAB.into(),
+                value: "5".into(),
+                superseding: false,
+            }],
         )
         .apply_to(&base);
         let d2 = Patch::by(
             Author(2),
-            [Op::SetField { name: FIELD_ACTIVE_TAB.into(), value: "9".into(), superseding: false }],
+            [Op::SetField {
+                name: FIELD_ACTIVE_TAB.into(),
+                value: "9".into(),
+                superseding: false,
+            }],
         )
         .apply_to(&base);
         let merged = crate::merge(&d1, &d2);
         // base set "3", then both concurrently set 5 and 9 -> the clash carries the
         // concurrent values (the base "3" is superseded by neither alone; both 5,9 live).
-        let vals: Vec<&str> =
-            merged.field(FIELD_ACTIVE_TAB).iter().map(|x| x.value.as_str()).collect();
-        assert!(vals.contains(&"5") && vals.contains(&"9"), "both tab selections clash: {vals:?}");
+        let vals: Vec<&str> = merged
+            .field(FIELD_ACTIVE_TAB)
+            .iter()
+            .map(|x| x.value.as_str())
+            .collect();
+        assert!(
+            vals.contains(&"5") && vals.contains(&"9"),
+            "both tab selections clash: {vals:?}"
+        );
 
         let resolved = set_active_tab(9, Author(1)).apply_to(&merged);
-        assert_eq!(resolved.field(FIELD_ACTIVE_TAB).len(), 1, "the resolution collapses the tab clash");
+        assert_eq!(
+            resolved.field(FIELD_ACTIVE_TAB).len(),
+            1,
+            "the resolution collapses the tab clash"
+        );
         assert_eq!(resolved.field(FIELD_ACTIVE_TAB)[0].value, "9");
     }
 }

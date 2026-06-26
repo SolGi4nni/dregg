@@ -124,7 +124,10 @@ pub struct DreggUri {
 impl DreggUri {
     /// A `dregg://<namespace>/<name>` reference.
     pub fn new(namespace: CellId, name: impl Into<String>) -> Self {
-        DreggUri { namespace, name: name.into() }
+        DreggUri {
+            namespace,
+            name: name.into(),
+        }
     }
 }
 
@@ -351,7 +354,12 @@ impl LayoutGraph {
     /// total).
     pub fn apply(&mut self, op: &Op, prov: Provenance) {
         match op {
-            Op::Embed { id, child, after, role } => {
+            Op::Embed {
+                id,
+                child,
+                after,
+                role,
+            } => {
                 self.atoms.entry(*id).or_insert(LayoutAtom {
                     id: *id,
                     content: AtomContent::Embed(child.clone(), *role),
@@ -366,7 +374,11 @@ impl LayoutGraph {
                 }
             }
             Op::Order { from, to } => self.connect(*from, *to),
-            Op::Repin { id, pin, superseding } => {
+            Op::Repin {
+                id,
+                pin,
+                superseding,
+            } => {
                 if *superseding {
                     self.pins.insert(*id, vec![(*pin, prov)]);
                 } else {
@@ -563,7 +575,9 @@ pub struct Viewer {
 impl Viewer {
     /// A viewer that may read the given cells.
     pub fn able(cells: impl IntoIterator<Item = CellId>) -> Self {
-        Viewer { may_read: cells.into_iter().collect() }
+        Viewer {
+            may_read: cells.into_iter().collect(),
+        }
     }
     /// May this viewer read `cell`?
     pub fn can_read(&self, cell: CellId) -> bool {
@@ -646,7 +660,9 @@ impl MapNamespace {
 
 impl NamespaceResolver for MapNamespace {
     fn resolve_name(&self, uri: &DreggUri) -> Option<CellId> {
-        self.bindings.get(&(uri.namespace, uri.name.clone())).copied()
+        self.bindings
+            .get(&(uri.namespace, uri.name.clone()))
+            .copied()
     }
 }
 
@@ -869,7 +885,10 @@ impl Rendered {
         self.segments.iter().any(|s| {
             matches!(
                 s,
-                Segment::Embedded { resolution: ChildResolution::Darkened { .. }, .. }
+                Segment::Embedded {
+                    resolution: ChildResolution::Darkened { .. },
+                    ..
+                }
             )
         })
     }
@@ -969,7 +988,10 @@ fn fold(
             let mut alternatives: Vec<(Pin, Author)> =
                 pins.iter().map(|(p, prov)| (*p, prov.author)).collect();
             alternatives.sort_by(|a, b| a.0.key().cmp(&b.0.key()));
-            out.segments.push(Segment::PinConflict { embed: id, alternatives });
+            out.segments.push(Segment::PinConflict {
+                embed: id,
+                alternatives,
+            });
         }
     }
 
@@ -1052,7 +1074,11 @@ pub struct DesktopSurface {
 impl DesktopSurface {
     /// A surface owned by `owner` at paint layer `z` (unfocused).
     pub fn new(owner: CellId, z: i64) -> Self {
-        DesktopSurface { owner, z_layer: z, focus_flag: false }
+        DesktopSurface {
+            owner,
+            z_layer: z,
+            focus_flag: false,
+        }
     }
     /// This surface holding focus.
     pub fn focused(mut self) -> Self {
@@ -1084,7 +1110,11 @@ pub fn scene_to_composed(surfaces: &[DesktopSurface], author: Author) -> LayoutG
     let mut ops: Vec<Op> = Vec::with_capacity(surfaces.len());
     for s in surfaces {
         let id = surface_embed_id(s);
-        let role = if s.focus_flag { EmbedRole::Block } else { EmbedRole::Section };
+        let role = if s.focus_flag {
+            EmbedRole::Block
+        } else {
+            EmbedRole::Section
+        };
         ops.push(Op::Embed {
             id,
             child: ChildRef::live(s.owner),
@@ -1126,7 +1156,9 @@ pub fn workspace_resolver(surfaces: &[DesktopSurface]) -> MapResolver {
 /// time-travellable, off the rendered walk). The reflexive edit: closing a window
 /// is the embed grammar editing the document that IS the desktop.
 pub fn close_surface(s: &DesktopSurface) -> Op {
-    Op::Remove { id: surface_embed_id(s) }
+    Op::Remove {
+        id: surface_embed_id(s),
+    }
 }
 
 #[cfg(test)]
@@ -1154,7 +1186,10 @@ mod tests {
                 id,
                 content: AtomContent::Text(text.to_string()),
                 status: Status::Alive,
-                provenance: Provenance { author: Author(99), patch: crate::atom::PatchId(1) },
+                provenance: Provenance {
+                    author: Author(99),
+                    patch: crate::atom::PatchId(1),
+                },
             },
         );
         g.connect(AtomId::ROOT, id);
@@ -1170,7 +1205,12 @@ mod tests {
         let mut layout = LayoutGraph::new();
         layout.apply_patch(
             Author(1),
-            &[Op::Embed { id: eid, child: ChildRef::live(fig), after: root(), role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: eid,
+                child: ChildRef::live(fig),
+                after: root(),
+                role: EmbedRole::Figure,
+            }],
         );
         let viewer = Viewer::able([fig]);
         let resolver = MapResolver::default().with(fig, leaf_cell("a figure"));
@@ -1188,7 +1228,12 @@ mod tests {
         let mut layout = LayoutGraph::new();
         layout.apply_patch(
             Author(1),
-            &[Op::Embed { id: eid, child: ChildRef::live(secret), after: root(), role: EmbedRole::Section }],
+            &[Op::Embed {
+                id: eid,
+                child: ChildRef::live(secret),
+                after: root(),
+                role: EmbedRole::Section,
+            }],
         );
         // The resolver KNOWS the cell, but the viewer lacks the cap.
         let resolver = MapResolver::default().with(secret, leaf_cell("classified"));
@@ -1198,7 +1243,10 @@ mod tests {
         // The citation (which cell) survives; the bytes do not.
         assert_eq!(r.embedded_cells(), vec![secret], "the citation is kept");
         match &r.segments[0] {
-            Segment::Embedded { resolution: ChildResolution::Darkened { cell }, .. } => {
+            Segment::Embedded {
+                resolution: ChildResolution::Darkened { cell },
+                ..
+            } => {
                 assert_eq!(*cell, secret)
             }
             other => panic!("expected darkened, got {other:?}"),
@@ -1217,13 +1265,21 @@ mod tests {
         let mut layout = LayoutGraph::new();
         layout.apply_patch(
             Author(1),
-            &[Op::Embed { id: eid, child: ChildRef::live(gone), after: root(), role: EmbedRole::Block }],
+            &[Op::Embed {
+                id: eid,
+                child: ChildRef::live(gone),
+                after: root(),
+                role: EmbedRole::Block,
+            }],
         );
         let resolver = MapResolver::default(); // empty — the cell does not resolve
         let viewer = Viewer::able([gone]);
         let r = content_composed(&layout, &viewer, &resolver);
         match &r.segments[0] {
-            Segment::Embedded { resolution: ChildResolution::Unresolved { cell }, .. } => {
+            Segment::Embedded {
+                resolution: ChildResolution::Unresolved { cell },
+                ..
+            } => {
                 assert_eq!(*cell, gone, "a dangling embed is surfaced, not swallowed")
             }
             other => panic!("expected unresolved, got {other:?}"),
@@ -1240,20 +1296,35 @@ mod tests {
         let mut la = LayoutGraph::new();
         la.apply_patch(
             Author(1),
-            &[Op::Embed { id: embed_id(1, b), child: ChildRef::live(b), after: root(), role: EmbedRole::Section }],
+            &[Op::Embed {
+                id: embed_id(1, b),
+                child: ChildRef::live(b),
+                after: root(),
+                role: EmbedRole::Section,
+            }],
         );
         let mut lb = LayoutGraph::new();
         lb.apply_patch(
             Author(1),
-            &[Op::Embed { id: embed_id(1, a), child: ChildRef::live(a), after: root(), role: EmbedRole::Section }],
+            &[Op::Embed {
+                id: embed_id(1, a),
+                child: ChildRef::live(a),
+                after: root(),
+                role: EmbedRole::Section,
+            }],
         );
-        let resolver = MapResolver::default().with(a, la.clone()).with(b, lb.clone());
+        let resolver = MapResolver::default()
+            .with(a, la.clone())
+            .with(b, lb.clone());
         let viewer = Viewer::able([a, b]);
         // Render A: A -> B -> (A again, cycle).
         let r = content_composed(&la, &viewer, &resolver);
         // Top level is the embed of B (rendered); inside it, the embed of A cycles.
         let found_cycle = format!("{r:?}").contains("Cycle");
-        assert!(found_cycle, "the A->B->A cycle is surfaced as a Cycle state");
+        assert!(
+            found_cycle,
+            "the A->B->A cycle is surfaced as a Cycle state"
+        );
     }
 
     // ── §4.1: a layout edit and a child edit NEVER conflict ──────────────────
@@ -1267,7 +1338,12 @@ mod tests {
         let mut base_layout = LayoutGraph::new();
         base_layout.apply_patch(
             Author(1),
-            &[Op::Embed { id: eid, child: ChildRef::live(fig), after: root(), role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: eid,
+                child: ChildRef::live(fig),
+                after: root(),
+                role: EmbedRole::Figure,
+            }],
         );
         let base_child = leaf_cell("figure v1");
         let base = Composed {
@@ -1280,7 +1356,12 @@ mod tests {
         let mut a = base.clone();
         a.layout.apply_patch(
             Author(1),
-            &[Op::Embed { id: embed_id(2, other), child: ChildRef::live(other), after: eid, role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: embed_id(2, other),
+                child: ChildRef::live(other),
+                after: eid,
+                role: EmbedRole::Figure,
+            }],
         );
         a.children.insert(other, leaf_cell("second figure"));
 
@@ -1294,7 +1375,10 @@ mod tests {
                 id: extra,
                 content: AtomContent::Text("figure caption".into()),
                 status: Status::Alive,
-                provenance: Provenance { author: Author(2), patch: crate::atom::PatchId(5) },
+                provenance: Provenance {
+                    author: Author(2),
+                    patch: crate::atom::PatchId(5),
+                },
             },
         );
         child.connect(AtomId::ROOT, extra);
@@ -1335,14 +1419,24 @@ mod tests {
         let mut base = LayoutGraph::new();
         base.apply_patch(
             Author(1),
-            &[Op::Embed { id: embed_id(1, f1), child: ChildRef::live(f1), after: root(), role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: embed_id(1, f1),
+                child: ChildRef::live(f1),
+                after: root(),
+                role: EmbedRole::Figure,
+            }],
         );
         let head = embed_id(1, f1);
 
         let mut a = base.clone();
         a.apply_patch(
             Author(1),
-            &[Op::Embed { id: embed_id(2, f2), child: ChildRef::live(f2), after: head, role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: embed_id(2, f2),
+                child: ChildRef::live(f2),
+                after: head,
+                role: EmbedRole::Figure,
+            }],
         );
         let mut b = base.clone();
         b.apply_patch(
@@ -1353,7 +1447,11 @@ mod tests {
         assert_eq!(merge_layout(&a, &b), merge_layout(&b, &a), "commutative");
         let m = merge_layout(&a, &b);
         assert_eq!(merge_layout(&m, &m), m, "idempotent");
-        assert_eq!(merge_layout(&m, &base), m, "absorbs the base (idempotent over prefix)");
+        assert_eq!(
+            merge_layout(&m, &base),
+            m,
+            "absorbs the base (idempotent over prefix)"
+        );
     }
 
     // ── §4.3: the one new cross-boundary conflict — pin divergence ───────────
@@ -1365,18 +1463,41 @@ mod tests {
         let mut base = LayoutGraph::new();
         base.apply_patch(
             Author(1),
-            &[Op::Embed { id: eid, child: ChildRef::live(fig), after: root(), role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: eid,
+                child: ChildRef::live(fig),
+                after: root(),
+                role: EmbedRole::Figure,
+            }],
         );
 
         // Author A pins the figure at v3; Author B at v5 — concurrently.
         let mut a = base.clone();
-        a.apply_patch(Author(1), &[Op::Repin { id: eid, pin: Pin::At(3), superseding: false }]);
+        a.apply_patch(
+            Author(1),
+            &[Op::Repin {
+                id: eid,
+                pin: Pin::At(3),
+                superseding: false,
+            }],
+        );
         let mut b = base.clone();
-        b.apply_patch(Author(2), &[Op::Repin { id: eid, pin: Pin::At(5), superseding: false }]);
+        b.apply_patch(
+            Author(2),
+            &[Op::Repin {
+                id: eid,
+                pin: Pin::At(5),
+                superseding: false,
+            }],
+        );
 
         let merged = merge_layout(&a, &b);
         assert_eq!(merged.pins(eid).len(), 2, "both pins survive as a clash");
-        assert_eq!(merged.effective_pin(eid), None, "no single effective pin (clash)");
+        assert_eq!(
+            merged.effective_pin(eid),
+            None,
+            "no single effective pin (clash)"
+        );
 
         let viewer = Viewer::able([fig]);
         let resolver = MapResolver::default().with(fig, leaf_cell("figure"));
@@ -1388,14 +1509,33 @@ mod tests {
         let alts = pin_conflict.expect("a pin-divergence conflict is surfaced");
         assert_eq!(alts.len(), 2, "two pins clash");
         // It is a FIELD-regime (non-monotone, may-need-consensus) conflict.
-        let seg = r.segments.iter().find(|s| matches!(s, Segment::PinConflict { .. })).unwrap();
-        assert_eq!(seg.regime(), Some(Regime::Field), "pin divergence is a Field clash");
+        let seg = r
+            .segments
+            .iter()
+            .find(|s| matches!(s, Segment::PinConflict { .. }))
+            .unwrap();
+        assert_eq!(
+            seg.regime(),
+            Some(Regime::Field),
+            "pin divergence is a Field clash"
+        );
         assert!(Regime::Field.needs_consensus());
 
         // A superseding repin (a resolution) collapses the clash.
         let mut resolved = merged.clone();
-        resolved.apply_patch(Author(1), &[Op::Repin { id: eid, pin: Pin::At(5), superseding: true }]);
-        assert_eq!(resolved.effective_pin(eid), Some(Pin::At(5)), "resolved to one pin");
+        resolved.apply_patch(
+            Author(1),
+            &[Op::Repin {
+                id: eid,
+                pin: Pin::At(5),
+                superseding: true,
+            }],
+        );
+        assert_eq!(
+            resolved.effective_pin(eid),
+            Some(Pin::At(5)),
+            "resolved to one pin"
+        );
         let r2 = content_composed(&resolved, &viewer, &resolver);
         assert!(!r2.has_conflict(), "the resolution clears the pin conflict");
     }
@@ -1413,12 +1553,22 @@ mod tests {
         let mut a = base.clone();
         a.apply_patch(
             Author(1),
-            &[Op::Embed { id: embed_id(1, f1), child: ChildRef::live(f1), after: root(), role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: embed_id(1, f1),
+                child: ChildRef::live(f1),
+                after: root(),
+                role: EmbedRole::Figure,
+            }],
         );
         let mut b = base.clone();
         b.apply_patch(
             Author(2),
-            &[Op::Embed { id: embed_id(2, f2), child: ChildRef::live(f2), after: root(), role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: embed_id(2, f2),
+                child: ChildRef::live(f2),
+                after: root(),
+                role: EmbedRole::Figure,
+            }],
         );
         let merged = merge_layout(&a, &b);
 
@@ -1434,15 +1584,31 @@ mod tests {
         let alts = layout_conflict.expect("a layout conflict is surfaced");
         assert_eq!(alts.len(), 2, "two embeds clash at one position");
         // It is a PROSE-regime (illusory, unilaterally orderable) conflict.
-        let seg = r.segments.iter().find(|s| matches!(s, Segment::LayoutConflict { .. })).unwrap();
+        let seg = r
+            .segments
+            .iter()
+            .find(|s| matches!(s, Segment::LayoutConflict { .. }))
+            .unwrap();
         assert_eq!(seg.regime(), Some(Regime::Prose));
-        assert!(!Regime::Prose.needs_consensus(), "a layout order is unilaterally resolvable");
+        assert!(
+            !Regime::Prose.needs_consensus(),
+            "a layout order is unilaterally resolvable"
+        );
 
         // Resolve by ordering f1 before f2 (the layout resolution primitive).
         let mut resolved = merged.clone();
-        resolved.apply_patch(Author(1), &[Op::Order { from: embed_id(1, f1), to: embed_id(2, f2) }]);
+        resolved.apply_patch(
+            Author(1),
+            &[Op::Order {
+                from: embed_id(1, f1),
+                to: embed_id(2, f2),
+            }],
+        );
         let r2 = content_composed(&resolved, &viewer, &resolver);
-        assert!(!r2.has_conflict(), "ordering the embeds clears the layout conflict");
+        assert!(
+            !r2.has_conflict(),
+            "ordering the embeds clears the layout conflict"
+        );
         assert_eq!(r2.embedded_cells(), vec![f1, f2], "both, now in order");
     }
 
@@ -1455,16 +1621,34 @@ mod tests {
         let mut layout = LayoutGraph::new();
         layout.apply_patch(
             Author(1),
-            &[Op::Embed { id: eid, child: ChildRef::pinned(fig, 42), after: root(), role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: eid,
+                child: ChildRef::pinned(fig, 42),
+                after: root(),
+                role: EmbedRole::Figure,
+            }],
         );
-        assert_eq!(layout.effective_pin(eid), Some(Pin::At(42)), "the embed pins v42");
+        assert_eq!(
+            layout.effective_pin(eid),
+            Some(Pin::At(42)),
+            "the embed pins v42"
+        );
         // A live embed has no fixed pin (tracks the tip).
         let mut live = LayoutGraph::new();
         live.apply_patch(
             Author(1),
-            &[Op::Embed { id: eid, child: ChildRef::live(fig), after: root(), role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: eid,
+                child: ChildRef::live(fig),
+                after: root(),
+                role: EmbedRole::Figure,
+            }],
         );
-        assert_eq!(live.effective_pin(eid), Some(Pin::Live), "a live embed tracks the tip");
+        assert_eq!(
+            live.effective_pin(eid),
+            Some(Pin::Live),
+            "a live embed tracks the tip"
+        );
     }
 
     // ── recursion: a child that itself composes a grandchild ─────────────────
@@ -1478,14 +1662,24 @@ mod tests {
         let mut section_layout = LayoutGraph::new();
         section_layout.apply_patch(
             Author(2),
-            &[Op::Embed { id: embed_id(1, fig), child: ChildRef::live(fig), after: root(), role: EmbedRole::Figure }],
+            &[Op::Embed {
+                id: embed_id(1, fig),
+                child: ChildRef::live(fig),
+                after: root(),
+                role: EmbedRole::Figure,
+            }],
         );
 
         // The parent embeds the section.
         let mut parent = LayoutGraph::new();
         parent.apply_patch(
             Author(1),
-            &[Op::Embed { id: embed_id(1, section), child: ChildRef::live(section), after: root(), role: EmbedRole::Section }],
+            &[Op::Embed {
+                id: embed_id(1, section),
+                child: ChildRef::live(section),
+                after: root(),
+                role: EmbedRole::Section,
+            }],
         );
 
         let resolver = MapResolver::default()
@@ -1502,7 +1696,11 @@ mod tests {
                 ..
             } => {
                 assert_eq!(*c, section);
-                assert_eq!(inner.embedded_cells(), vec![fig], "the grandchild figure is composed");
+                assert_eq!(
+                    inner.embedded_cells(),
+                    vec![fig],
+                    "the grandchild figure is composed"
+                );
             }
             other => panic!("expected a rendered section, got {other:?}"),
         }
@@ -1535,8 +1733,14 @@ mod tests {
             vec![CellId(0xA1), CellId(0xB2), CellId(0xC3)],
             "the composed desktop embeds each window's owner cell in paint order"
         );
-        assert!(!r.has_conflict(), "a single-author desktop layout is conflict-free");
-        assert!(!r.has_darkened(), "a full-authority viewer reads every window");
+        assert!(
+            !r.has_conflict(),
+            "a single-author desktop layout is conflict-free"
+        );
+        assert!(
+            !r.has_darkened(),
+            "a full-authority viewer reads every window"
+        );
         // The embedded surfaces RESOLVE (the fold recursed into each window's cell).
         for seg in &r.segments {
             if let Segment::Embedded { resolution, .. } = seg {
@@ -1578,7 +1782,11 @@ mod tests {
         let c3 = surface_embed_id(&surfaces[2]);
         layout.apply_patch(Author(2), &[Op::Order { from: c3, to: a1 }]);
         let reordered = content_composed(&layout, &viewer, &resolver);
-        assert_eq!(reordered.embedded_cells().len(), 2, "the reorder edit kept both windows");
+        assert_eq!(
+            reordered.embedded_cells().len(),
+            2,
+            "the reorder edit kept both windows"
+        );
     }
 
     // (NEGATIVE) An OUT-OF-CAP window DARKENS — the per-viewer membrane through the
@@ -1604,7 +1812,12 @@ mod tests {
         );
         // Exactly the secret window darkened; the readable two rendered.
         for seg in &r.segments {
-            if let Segment::Embedded { resolved_cell: Some(cell), resolution, .. } = seg {
+            if let Segment::Embedded {
+                resolved_cell: Some(cell),
+                resolution,
+                ..
+            } = seg
+            {
                 if *cell == CellId(0x5EC) {
                     assert!(
                         matches!(resolution, ChildResolution::Darkened { .. }),
@@ -1642,13 +1855,23 @@ mod tests {
         let mut d1 = base.clone();
         d1.apply_patch(
             Author(1),
-            &[Op::Embed { id: surface_embed_id(&win(0xB2, 1)), child: ChildRef::live(CellId(0xB2)), after: a1, role: EmbedRole::Section }],
+            &[Op::Embed {
+                id: surface_embed_id(&win(0xB2, 1)),
+                child: ChildRef::live(CellId(0xB2)),
+                after: a1,
+                role: EmbedRole::Section,
+            }],
         );
         // Device 2 opens window C after A (concurrently — same anchor, no order).
         let mut d2 = base.clone();
         d2.apply_patch(
             Author(2),
-            &[Op::Embed { id: surface_embed_id(&win(0xC3, 1)), child: ChildRef::live(CellId(0xC3)), after: a1, role: EmbedRole::Section }],
+            &[Op::Embed {
+                id: surface_embed_id(&win(0xC3, 1)),
+                child: ChildRef::live(CellId(0xC3)),
+                after: a1,
+                role: EmbedRole::Section,
+            }],
         );
 
         let merged = merge_layout(&d1, &d2);
@@ -1662,7 +1885,13 @@ mod tests {
             r.has_conflict(),
             "two windows opened at the same position are a first-class layout fork"
         );
-        let conflict = r.segments.iter().any(|s| matches!(s, Segment::LayoutConflict { .. }));
-        assert!(conflict, "the desktop renders the contended window placement honestly");
+        let conflict = r
+            .segments
+            .iter()
+            .any(|s| matches!(s, Segment::LayoutConflict { .. }));
+        assert!(
+            conflict,
+            "the desktop renders the contended window placement honestly"
+        );
     }
 }

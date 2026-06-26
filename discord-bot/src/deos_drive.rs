@@ -88,6 +88,20 @@ impl BotOp {
         }
     }
 
+    /// The dregg method name the op's resulting turn targets — the method the
+    /// bot's reaction action carries (matching [`build_op_action`]'s built
+    /// `Action::method`). Stable, so the reactor's [`ReactionPlan`] re-hashes the
+    /// SAME symbol.
+    ///
+    /// [`ReactionPlan`]: dregg_app_framework::ReactionPlan
+    pub fn method_name(&self) -> &'static str {
+        match self {
+            BotOp::RegisterName { .. } => "register_name",
+            BotOp::AttestPresence => "attest_presence",
+            BotOp::IssueCredential { .. } => "issue_credential",
+        }
+    }
+
     /// A short, reader-legible subject for the activity record (the name / schema /
     /// "online").
     pub fn subject(&self) -> String {
@@ -171,6 +185,164 @@ pub fn build_presence_action(cclerk: &UserCipherclerk, epoch: u64) -> Action {
             value: field_from_u64(epoch),
         }],
     )
+}
+
+// ─── The on-chain command cell (the message bus) ─────────────────────────────────
+//
+// The desktop drives a bot op NOT by an HTTP POST but by submitting a real dregg
+// turn to a well-known **command cell** — the chain is the message bus. The op
+// (the full [`DriveRequest`]) is carried as the committed STATE of that cell
+// (SetField slots, faithfully readable off any node's `/api/cell` fields) plus an
+// `EmitEvent` announcement the bot's reactor keys on. The bot WATCHES this cell
+// (via [`app_framework::Reactor`]) and reacts — no HTTP command path.
+
+/// The deterministic, well-known **bot-command cell**: the on-chain mailbox the
+/// desktop submits command turns to and the bot's reactor watches. A distinct,
+/// out-of-band address (`0xC0…`, "COmmand") so it never collides with a user's
+/// self-registry cell.
+pub fn command_cell() -> CellId {
+    CellId([0xC0u8; 32])
+}
+
+/// The method every on-chain command turn targets — what the bot's
+/// [`crate::bot_reactor::BotCommandReactor`] filter watches for.
+pub const COMMAND_METHOD: &str = "bot_command";
+
+/// The event topic the command turn emits (the on-chain announcement the reactor
+/// keys on, indexed for off-chain consumption).
+pub const COMMAND_TOPIC: &str = "bot-command";
+
+/// Command-cell state slot: the monotonic command sequence. The watcher detects a
+/// NEW command when this advances, and dedupes already-handled commands.
+pub const CMD_SEQ_SLOT: usize = 0;
+/// Command-cell state slot: the payload byte length.
+pub const CMD_LEN_SLOT: usize = 1;
+/// Command-cell state base slot: the serialized [`DriveRequest`] payload, packed
+/// 31 bytes per field element from here upward.
+pub const CMD_PAYLOAD_BASE: usize = 2;
+
+/// Bytes packed per field element (31, leaving the high byte zero so the value is
+/// safely below any ~255-bit field modulus — no canonicalization surprises).
+const CHUNK: usize = 31;
+
+/// Pack arbitrary bytes into field elements, 31 bytes each (high byte zero).
+fn pack_bytes(bytes: &[u8]) -> Vec<[u8; 32]> {
+    bytes
+        .chunks(CHUNK)
+        .map(|c| {
+            let mut fe = [0u8; 32];
+            fe[..c.len()].copy_from_slice(c);
+            fe
+        })
+        .collect()
+}
+
+/// Reconstruct `len` bytes from packed field elements (the inverse of
+/// [`pack_bytes`]).
+fn unpack_bytes(chunks: &[[u8; 32]], len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len);
+    for fe in chunks {
+        out.extend_from_slice(&fe[..CHUNK]);
+    }
+    out.truncate(len);
+    out
+}
+
+/// **Build the on-chain command turn the desktop submits to the [`command_cell`].**
+/// The full [`DriveRequest`] is serialized and written as the command cell's
+/// committed state (a `SetField` per payload chunk + the seq + the length), and an
+/// [`Effect::EmitEvent`] announces it under [`COMMAND_TOPIC`]. The returned
+/// [`Action`] is UNSIGNED — the desktop (the acting peer) signs + submits it; the
+/// bot never sees an HTTP body, only this committed turn. `seq` is the desktop's
+/// monotonic command counter (so re-submits are distinguishable + dedupable).
+pub fn build_command_action(req: &DriveRequest, seq: u64) -> Action {
+    let payload = serde_json::to_vec(req).expect("a DriveRequest always serializes");
+    let cell = command_cell();
+    let chunks = pack_bytes(&payload);
+
+    let mut effects = vec![
+        Effect::SetField {
+            cell,
+            index: CMD_SEQ_SLOT,
+            value: field_from_u64(seq),
+        },
+        Effect::SetField {
+            cell,
+            index: CMD_LEN_SLOT,
+            value: field_from_u64(payload.len() as u64),
+        },
+    ];
+    for (i, chunk) in chunks.iter().enumerate() {
+        effects.push(Effect::SetField {
+            cell,
+            index: CMD_PAYLOAD_BASE + i,
+            value: *chunk,
+        });
+    }
+    // The on-chain announcement: topic the reactor keys on, data = [seq, len, payload..].
+    let mut event_data = vec![field_from_u64(seq), field_from_u64(payload.len() as u64)];
+    event_data.extend(chunks);
+    effects.push(Effect::EmitEvent {
+        cell,
+        event: dregg_app_framework::Event::new(symbol(COMMAND_TOPIC), event_data),
+    });
+
+    Action {
+        target: cell,
+        method: symbol(COMMAND_METHOD),
+        args: vec![field_from_u64(seq)],
+        authorization: dregg_turn::action::Authorization::Unchecked,
+        preconditions: Default::default(),
+        effects,
+        may_delegate: dregg_turn::action::DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+        witness_blobs: Vec::new(),
+    }
+}
+
+/// **Decode the [`DriveRequest`] + seq from a command turn's committed effects** —
+/// the inverse of [`build_command_action`]. The bot's reactor reads the command
+/// cell's `SetField`s (its committed state — what `/api/cell` exposes) and
+/// reconstructs the exact op the desktop submitted. `None` if the effects do not
+/// carry a well-formed command (fail-closed).
+pub fn decode_command(effects: &[Effect]) -> Option<(DriveRequest, u64)> {
+    let cell = command_cell();
+    let mut seq: Option<u64> = None;
+    let mut len: Option<usize> = None;
+    let mut chunks: Vec<(usize, [u8; 32])> = Vec::new();
+
+    for effect in effects {
+        if let Effect::SetField {
+            cell: c,
+            index,
+            value,
+        } = effect
+        {
+            if *c != cell {
+                continue;
+            }
+            match *index {
+                CMD_SEQ_SLOT => seq = Some(field_to_u64(value)),
+                CMD_LEN_SLOT => len = Some(field_to_u64(value) as usize),
+                i if i >= CMD_PAYLOAD_BASE => chunks.push((i - CMD_PAYLOAD_BASE, *value)),
+                _ => {}
+            }
+        }
+    }
+
+    let seq = seq?;
+    let len = len?;
+    chunks.sort_by_key(|(i, _)| *i);
+    let ordered: Vec<[u8; 32]> = chunks.into_iter().map(|(_, fe)| fe).collect();
+    let bytes = unpack_bytes(&ordered, len);
+    let req: DriveRequest = serde_json::from_slice(&bytes).ok()?;
+    Some((req, seq))
+}
+
+/// Read the trailing-8-bytes big-endian u64 from a `field_from_u64`-encoded field.
+fn field_to_u64(fe: &[u8; 32]) -> u64 {
+    u64::from_be_bytes(fe[24..32].try_into().unwrap_or([0u8; 8]))
 }
 
 // ─── The driver (build → sign → submit → record) ─────────────────────────────────
@@ -369,6 +541,59 @@ mod tests {
             }
             other => panic!("presence must be one SetField, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn command_action_round_trips_the_drive_request_on_chain() {
+        // THE ON-CHAIN BUS: a DriveRequest → a real command turn to the command
+        // cell (the desktop's submission) → decode it back from the committed
+        // effects (what the bot's reactor reads off the cell's state). No HTTP.
+        for op in [
+            BotOp::AttestPresence,
+            BotOp::RegisterName {
+                name: "ember-the-goose".to_string(),
+            },
+            BotOp::IssueCredential {
+                schema: "kyc".to_string(),
+                attributes: serde_json::json!({ "over_18": true, "region": "earth" }),
+            },
+        ] {
+            let req = DriveRequest {
+                user_id: 4242,
+                guild_id: Some("guild-7".to_string()),
+                op: op.clone(),
+            };
+            let action = build_command_action(&req, 9);
+            // The command turn targets the command cell with the command method.
+            assert_eq!(action.target, command_cell());
+            assert_eq!(action.method, symbol(COMMAND_METHOD));
+            // It announces the op on-chain (the topic the reactor keys on).
+            assert!(
+                action.effects.iter().any(|e| matches!(
+                    e,
+                    Effect::EmitEvent { event, .. } if event.topic == symbol(COMMAND_TOPIC)
+                )),
+                "the command turn emits the bot-command announcement"
+            );
+            // The bot's reactor reads it back EXACTLY off the committed effects.
+            let (decoded, seq) =
+                decode_command(&action.effects).expect("a well-formed command turn must decode");
+            assert_eq!(seq, 9);
+            assert_eq!(decoded.user_id, 4242);
+            assert_eq!(decoded.guild_id.as_deref(), Some("guild-7"));
+            assert_eq!(decoded.op, op, "the op round-trips on-chain, faithfully");
+        }
+    }
+
+    #[test]
+    fn malformed_command_effects_decode_to_none() {
+        // Fail-closed: an unrelated turn's effects carry no command → None.
+        let junk = vec![Effect::SetField {
+            cell: CellId([0x11u8; 32]),
+            index: 5,
+            value: [0u8; 32],
+        }];
+        assert!(decode_command(&junk).is_none());
     }
 
     #[test]

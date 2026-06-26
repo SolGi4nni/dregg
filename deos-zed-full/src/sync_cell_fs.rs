@@ -31,9 +31,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
-use deos_zed::fs::{host_decode_content, LedgerSpine, OwnedSpine};
+use deos_zed::fs::{LedgerSpine, OwnedSpine, host_decode_content};
 
 // The real verified cell id type — the same `dregg_cell::CellId` deos-zed's
 // `LedgerSpine` trait returns (`install_file` → `Result<CellId>`).

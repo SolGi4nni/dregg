@@ -147,7 +147,11 @@ pub(crate) fn diff_history_to_ops(history: &History, new_text: &str, g: Granular
     // Sanity: the walked atom sequence must align 1:1 with the tokenization of
     // the text it renders (it does, because we always author one atom per token).
     // If it ever didn't, mapping kept tokens to ids would be wrong.
-    debug_assert_eq!(cur_tokens.len(), cur_ids.len(), "one atom per token invariant");
+    debug_assert_eq!(
+        cur_tokens.len(),
+        cur_ids.len(),
+        "one atom per token invariant"
+    );
 
     diff_to_ops(&cur_tokens, &cur_ids, &new_tokens)
 }

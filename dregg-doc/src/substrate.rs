@@ -71,7 +71,8 @@ impl Leaf {
 
     /// A length-prefixed byte run (content / name / value / tag).
     fn run(&mut self, b: &[u8]) {
-        self.bytes.extend_from_slice(&(b.len() as u64).to_le_bytes());
+        self.bytes
+            .extend_from_slice(&(b.len() as u64).to_le_bytes());
         self.bytes.extend_from_slice(b);
     }
 
@@ -205,12 +206,20 @@ mod tests {
         let base = DocGraph::new();
         let a = Patch::by(
             Author(1),
-            [Op::SetField { name: "title".into(), value: "Cats".into(), superseding: false }],
+            [Op::SetField {
+                name: "title".into(),
+                value: "Cats".into(),
+                superseding: false,
+            }],
         )
         .apply_to(&base);
         let b = Patch::by(
             Author(2),
-            [Op::SetField { name: "title".into(), value: "Dogs".into(), superseding: false }],
+            [Op::SetField {
+                name: "title".into(),
+                value: "Dogs".into(),
+                superseding: false,
+            }],
         )
         .apply_to(&base);
         merge(&a, &b)
@@ -271,7 +280,10 @@ mod tests {
         let (mut a, mut b) = (vals(&m), vals(&forged));
         a.sort();
         b.sort();
-        assert_eq!(a, b, "the forged conflict renders the same alternative values");
+        assert_eq!(
+            a, b,
+            "the forged conflict renders the same alternative values"
+        );
 
         // ...but the REAL heap root DIFFERS — the forge cannot hide under it.
         assert_ne!(

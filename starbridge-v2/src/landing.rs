@@ -149,7 +149,9 @@ impl LandingPortal {
                 lines: vec![
                     PortalLine::new(
                         Tone::Good,
-                        format!("{cells} live cells holding {total_value} in value across {total_caps} capabilities"),
+                        format!(
+                            "{cells} live cells holding {total_value} in value across {total_caps} capabilities"
+                        ),
                     ),
                     PortalLine::new(
                         Tone::Good,
@@ -157,12 +159,11 @@ impl LandingPortal {
                     ),
                     PortalLine::new(
                         Tone::Accent,
-                        format!("image commitment: {root}  (this image is one sovereign among a federation)"),
+                        format!(
+                            "image commitment: {root}  (this image is one sovereign among a federation)"
+                        ),
                     ),
-                    PortalLine::new(
-                        Tone::Muted,
-                        format!("last heartbeat — {last_beat}"),
-                    ),
+                    PortalLine::new(Tone::Muted, format!("last heartbeat — {last_beat}")),
                 ],
             },
             // --- THE HEART (the real executor) --------------------------------
@@ -200,7 +201,9 @@ impl LandingPortal {
                     ),
                     PortalLine::new(
                         Tone::Good,
-                        format!("{receipts} receipts recorded — open the BLOCKLACE to walk them, or REPLAY to scrub time"),
+                        format!(
+                            "{receipts} receipts recorded — open the BLOCKLACE to walk them, or REPLAY to scrub time"
+                        ),
                     ),
                 ],
             },

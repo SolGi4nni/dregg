@@ -28,12 +28,13 @@
 #![cfg(feature = "full-zed")]
 
 use gpui::{
-    actions, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, Styled as _, Window,
+    actions,
 };
 use ui::IconName;
-use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
+use workspace::dock::{DockPosition, Panel, PanelEvent};
 
 pub use deos_hermes::cockpit_surface::{AgentDockView, HermesSession};
 pub use deos_hermes::surface::AgentDockModel;
@@ -143,7 +144,12 @@ impl Panel for HermesPanel {
         matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
-    fn set_position(&mut self, position: DockPosition, _window: &mut Window, cx: &mut Context<Self>) {
+    fn set_position(
+        &mut self,
+        position: DockPosition,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Bottom is not a valid dock for an agent sidebar; clamp to left/right.
         self.position = match position {
             DockPosition::Bottom => DockPosition::Right,

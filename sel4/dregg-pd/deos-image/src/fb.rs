@@ -90,8 +90,9 @@ unsafe fn fw_cfg_dma(
     let dma_reg = (fwcfg_vaddr() + FWCFG_DMA_REG_OFF) as *mut u64;
     core::ptr::write_volatile(dma_reg, (desc_paddr as u64).to_be());
     loop {
-        let ctl =
-            u32::from_be(core::ptr::read_volatile(core::ptr::addr_of!((*desc_vaddr).control)));
+        let ctl = u32::from_be(core::ptr::read_volatile(core::ptr::addr_of!(
+            (*desc_vaddr).control
+        )));
         if ctl & !FW_CFG_DMA_CTL_ERROR == 0 {
             if ctl & FW_CFG_DMA_CTL_ERROR != 0 {
                 debug_println!("[deos-image]   WARN fw_cfg DMA ERROR bit");
@@ -147,14 +148,13 @@ pub fn configure_ramfb() -> bool {
 
     let select = match unsafe { find_ramfb_select(scratch_v, scratch_p) } {
         Some(s) => {
-            debug_println!(
-                "[deos-image]   fw_cfg 'etc/ramfb' selector = {:#06x}",
-                s
-            );
+            debug_println!("[deos-image]   fw_cfg 'etc/ramfb' selector = {:#06x}", s);
             s
         }
         None => {
-            debug_println!("[deos-image]   ERROR 'etc/ramfb' not found (is -device ramfb present?)");
+            debug_println!(
+                "[deos-image]   ERROR 'etc/ramfb' not found (is -device ramfb present?)"
+            );
             return false;
         }
     };
@@ -253,7 +253,11 @@ impl Canvas {
     pub fn vgradient(&mut self, top: (u8, u8, u8), bot: (u8, u8, u8)) {
         for y in 0..HEIGHT {
             let t = y * 255 / (HEIGHT - 1);
-            let c = rgb(lerp8(top.0, bot.0, t), lerp8(top.1, bot.1, t), lerp8(top.2, bot.2, t));
+            let c = rgb(
+                lerp8(top.0, bot.0, t),
+                lerp8(top.1, bot.1, t),
+                lerp8(top.2, bot.2, t),
+            );
             let base = (y * WIDTH) as usize;
             for x in 0..WIDTH as usize {
                 self.px[base + x] = c;
@@ -275,7 +279,11 @@ impl Canvas {
         let x1 = x.saturating_add(w).min(WIDTH);
         for yy in y..y1 {
             let t = if h > 1 { (yy - y) * 255 / (h - 1) } else { 0 };
-            let c = rgb(lerp8(top.0, bot.0, t), lerp8(top.1, bot.1, t), lerp8(top.2, bot.2, t));
+            let c = rgb(
+                lerp8(top.0, bot.0, t),
+                lerp8(top.1, bot.1, t),
+                lerp8(top.2, bot.2, t),
+            );
             let base = (yy * WIDTH) as usize;
             for xx in x..x1 {
                 self.px[base + xx as usize] = c;

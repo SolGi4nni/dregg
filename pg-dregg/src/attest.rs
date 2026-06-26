@@ -536,9 +536,9 @@ mod tests {
         SerializedWholeChainProof::new(
             vec![0xa1, 0xa2, 0xa3], // non-empty root-proof blob (stub never decodes it)
             vec![0xb1, 0xb2],       // non-empty binding-proof blob
-            [1u8; 32],                                 // genesis_root hint
-            [9u8; 32],                                 // final_root hint
-            [[5u8; 32]; WHOLE_CHAIN_DIGEST_LANES],     // multi-felt chain_digest hint
+            [1u8; 32],              // genesis_root hint
+            [9u8; 32],              // final_root hint
+            [[5u8; 32]; WHOLE_CHAIN_DIGEST_LANES], // multi-felt chain_digest hint
             num_turns,
         )
         .to_bytes()
@@ -692,13 +692,25 @@ mod tests {
         );
         // A transport with an EMPTY root proof component ⇒ refused (a half-proof is
         // never silently accepted).
-        let empty_root =
-            SerializedWholeChainProof::new(vec![], vec![1], [0; 32], [0; 32], [[0; 32]; WHOLE_CHAIN_DIGEST_LANES], 1);
+        let empty_root = SerializedWholeChainProof::new(
+            vec![],
+            vec![1],
+            [0; 32],
+            [0; 32],
+            [[0; 32]; WHOLE_CHAIN_DIGEST_LANES],
+            1,
+        );
         let e = SerializedWholeChainProof::from_bytes(&empty_root.to_bytes()).unwrap_err();
         assert!(e.contains("empty root proof"), "{e}");
         // ... and an empty binding proof component ⇒ refused.
-        let empty_bind =
-            SerializedWholeChainProof::new(vec![1], vec![], [0; 32], [0; 32], [[0; 32]; WHOLE_CHAIN_DIGEST_LANES], 1);
+        let empty_bind = SerializedWholeChainProof::new(
+            vec![1],
+            vec![],
+            [0; 32],
+            [0; 32],
+            [[0; 32]; WHOLE_CHAIN_DIGEST_LANES],
+            1,
+        );
         let e = SerializedWholeChainProof::from_bytes(&empty_bind.to_bytes()).unwrap_err();
         assert!(e.contains("empty binding proof"), "{e}");
     }
@@ -707,7 +719,14 @@ mod tests {
     fn transport_wrong_version_is_refused() {
         // A transport tagged with an unknown version is refused (fail-closed) rather
         // than misread — the staged-format discipline.
-        let mut t = SerializedWholeChainProof::new(vec![1], vec![1], [0; 32], [0; 32], [[0; 32]; WHOLE_CHAIN_DIGEST_LANES], 1);
+        let mut t = SerializedWholeChainProof::new(
+            vec![1],
+            vec![1],
+            [0; 32],
+            [0; 32],
+            [[0; 32]; WHOLE_CHAIN_DIGEST_LANES],
+            1,
+        );
         t.version = 9999;
         let e = SerializedWholeChainProof::from_bytes(&t.to_bytes()).unwrap_err();
         assert!(e.contains("unsupported") && e.contains("version"), "{e}");

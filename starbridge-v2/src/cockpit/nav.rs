@@ -148,9 +148,7 @@ impl Cockpit {
                 v.push(("next face".into(), NavAction::CyclePresent));
             }
             Tab::InspectAct => v.push(("cycle focus".into(), NavAction::CycleInspectFocus)),
-            Tab::ServiceExplorer => {
-                v.push(("cycle focus".into(), NavAction::CycleServiceFocus))
-            }
+            Tab::ServiceExplorer => v.push(("cycle focus".into(), NavAction::CycleServiceFocus)),
             Tab::Simulate => {
                 v.push(("cycle target".into(), NavAction::CycleSimTarget));
                 v.push(("cycle effect".into(), NavAction::CycleSimEffect));

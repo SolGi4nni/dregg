@@ -58,7 +58,9 @@ fn the_escrow_publishes_a_resolvable_typed_interface() {
     // an app populated — the richer-than-derived descriptor with real auth/seam.
     let mut registry = InterfaceRegistry::new();
     register_interface(&mut registry, svc.cell);
-    let resolved = registry.get(&svc.cell).expect("the interface is registered");
+    let resolved = registry
+        .get(&svc.cell)
+        .expect("the interface is registered");
 
     assert_eq!(resolved.methods.len(), 5);
     for m in [METHOD_LIST, METHOD_FUND, METHOD_SHIP, METHOD_SETTLE] {
@@ -69,7 +71,10 @@ fn the_escrow_publishes_a_resolvable_typed_interface() {
         );
     }
     assert_eq!(
-        resolved.method(&method_symbol(METHOD_VIEW)).unwrap().semantics,
+        resolved
+            .method(&method_symbol(METHOD_VIEW))
+            .unwrap()
+            .semantics,
         Semantics::Serviced,
     );
 
@@ -132,7 +137,12 @@ fn the_whole_lifecycle_commits_as_verified_turns() {
 fn an_unauthorized_fund_is_refused_at_the_front_door() {
     let (cclerk, executor, svc) = deploy_escrow(0x03);
     svc.list(&cclerk, "acme-corp", 1000, InvokeAuthority::Signature)
-        .and_then(|t| executor.submit_turn(&t).map_err(|_| EscrowError::EmptyParty).map(|_| t))
+        .and_then(|t| {
+            executor
+                .submit_turn(&t)
+                .map_err(|_| EscrowError::EmptyParty)
+                .map(|_| t)
+        })
         .expect("list commits");
 
     // The caller holds NO authority; `fund` requires Signature. Refused before any
@@ -169,7 +179,10 @@ fn an_over_ceiling_fund_is_refused_by_the_executor_trustline() {
         .fund(&cclerk, "buyer-bob", 1500, InvokeAuthority::Signature)
         .expect("the over-ceiling invocation BUILDS (front door passes)");
     let rejected = executor.submit_turn(&over);
-    assert!(rejected.is_err(), "the executor must refuse an over-ceiling fund");
+    assert!(
+        rejected.is_err(),
+        "the executor must refuse an over-ceiling fund"
+    );
 
     // Anti-ghost: the rejected turn committed nothing — still LISTED, escrow zero.
     let state = executor.cell_state(svc.cell).unwrap();
@@ -214,7 +227,10 @@ fn a_replayed_settle_is_refused_by_the_executor_lifecycle() {
         .settle(&cclerk, 800, 0, InvokeAuthority::Signature)
         .expect("the replay invocation BUILDS (front door passes)");
     let rejected = executor.submit_turn(&replay);
-    assert!(rejected.is_err(), "the executor must refuse a settle replay");
+    assert!(
+        rejected.is_err(),
+        "the executor must refuse a settle replay"
+    );
     let msg = format!("{:?}", rejected.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic")
@@ -257,15 +273,23 @@ fn view_is_the_named_serviced_seam_and_unknown_methods_fail_closed() {
 
 #[test]
 fn the_interface_is_witnessably_inspectable() {
-    let svc = EscrowService::new(
-        AppCipherclerk::new(AgentCipherclerk::new(), [0x07; 32]).cell_id(),
-    );
+    let svc =
+        EscrowService::new(AppCipherclerk::new(AgentCipherclerk::new(), [0x07; 32]).cell_id());
     let iface = &svc.descriptor;
 
     // Every published method routes through the verified DFA router (the same path
     // the Service Explorer uses to discover invokable methods).
-    for m in [METHOD_LIST, METHOD_FUND, METHOD_SHIP, METHOD_SETTLE, METHOD_VIEW] {
-        assert!(iface.route_method(&method_symbol(m)).is_some(), "{m} routes");
+    for m in [
+        METHOD_LIST,
+        METHOD_FUND,
+        METHOD_SHIP,
+        METHOD_SETTLE,
+        METHOD_VIEW,
+    ] {
+        assert!(
+            iface.route_method(&method_symbol(m)).is_some(),
+            "{m} routes"
+        );
     }
 
     // A route-membership witness PROVES `settle` is a member of the committed

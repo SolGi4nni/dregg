@@ -43,7 +43,7 @@ use dregg_sdk::AgentCipherclerk;
 use dregg_types::CellId;
 
 #[cfg(feature = "embedded-executor")]
-use crate::app_worldspine::{default_domain_token, AppWorldSpine, SeedField, WorldFireError};
+use crate::app_worldspine::{AppWorldSpine, SeedField, WorldFireError, default_domain_token};
 #[cfg(feature = "embedded-executor")]
 use crate::world::World;
 #[cfg(feature = "embedded-executor")]
@@ -423,8 +423,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "gallery",
                     "Sealed Gallery",
-
-                        "A juried art gallery with sealed (commit-reveal) submissions — \
+                    "A juried art gallery with sealed (commit-reveal) submissions — \
                          artists commit, the curator closes, artists reveal, the curator features.",
                     starbridge_gallery::gallery_app,
                     |exec, _cclerk| {
@@ -479,13 +478,12 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "sealed-auction",
                     "Sealed Auction",
-
-                        "A sealed-bid (commit-reveal) auction — bidders commit hashed bids, \
+                    "A sealed-bid (commit-reveal) auction — bidders commit hashed bids, \
                          the seller closes commits, bidders reveal, the seller resolves the winner.",
                     starbridge_sealed_auction::auction_app,
                     |exec, _cclerk| {
@@ -537,13 +535,12 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "bounty-board",
                     "Bounty Board",
-
-                        "A bounty with an escrowed reward — a worker claims it, submits work, \
+                    "A bounty with an escrowed reward — a worker claims it, submits work, \
                          and the poster pays out (each step a cap-gated state-machine turn).",
                     starbridge_bounty_board::bounty_app,
                     |exec, _cclerk| {
@@ -595,13 +592,12 @@ impl AppRegistry {
                             |_live| b::claim_effects(app_cell, "worker"),
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "tussle",
                     "Tussle",
-
-                        "A two-figure simultaneous-move game — each player commits a sealed move, \
+                    "A two-figure simultaneous-move game — each player commits a sealed move, \
                          both reveal, the frame resolves (a typed set-membership reveal gate).",
                     starbridge_tussle::tussle_app,
                     |exec, _cclerk| {
@@ -689,7 +685,7 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 // ───────────────────────────────────────────────────────────
                 // THE SECOND WAVE — the framework-using starbridge-apps wired
@@ -713,8 +709,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "agent-orchestration",
                     "Agent Orchestration",
-
-                        "A coordinator board with a shared per-worker spend budget — a worker fires one \
+                    "A coordinator board with a shared per-worker spend budget — a worker fires one \
                          metered step, advancing the no-replay epoch (the Σspend ≤ budget gate bites).",
                     starbridge_agent_orchestration::deos::orchestration_app,
                     |exec, _cclerk| {
@@ -783,7 +778,8 @@ impl AppRegistry {
                             |live| {
                                 let spend_slot = o::WorkerSlot::A.spend_slot() as usize;
                                 let live_spent = field_tail_u64(&live.fields[spend_slot]);
-                                let live_epoch = field_tail_u64(&live.fields[o::EPOCH_SLOT as usize]);
+                                let live_epoch =
+                                    field_tail_u64(&live.fields[o::EPOCH_SLOT as usize]);
                                 vec![
                                     dregg_app_framework::Effect::SetField {
                                         cell: board,
@@ -803,13 +799,12 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "agent-provenance",
                     "Agent Provenance",
-
-                        "A hash-linked provenance log — a recorder appends one entry that chains to the \
+                    "A hash-linked provenance log — a recorder appends one entry that chains to the \
                          prior tip (the link-hash chain the executor's WriteOnce board re-enforces).",
                     starbridge_agent_provenance::provenance_app,
                     |exec, _cclerk| {
@@ -865,13 +860,12 @@ impl AppRegistry {
                             |live| p::append_effects(log, live, &claim),
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "compartment-workflow-mandate",
                     "Compartment Workflow Mandate",
-
-                        "A clearance-gated workflow charter (review → redact → sign) — an officer advances \
+                    "A clearance-gated workflow charter (review → redact → sign) — an officer advances \
                          one step, presenting a clearance that must dominate the entered step's compartment.",
                     starbridge_compartment_workflow_mandate::workflow_app,
                     |exec, _cclerk| {
@@ -942,8 +936,7 @@ impl AppRegistry {
                         // (entering step 0 = review), presenting the officer clearance
                         // and the review compartment label — exactly what `fire_advance_step`
                         // materializes for the executor's ClearanceDominates tooth.
-                        let review_compartment =
-                            c::WorkflowPhase::CHARTER[0].compartment_label();
+                        let review_compartment = c::WorkflowPhase::CHARTER[0].compartment_label();
                         let receipt = spine.commit(
                             "advance_step",
                             &c::OPERATOR_RIGHTS,
@@ -953,13 +946,12 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "compute-exchange",
                     "Compute Exchange",
-
-                        "A compute-job market (post → bid → settle) — a provider bids on the posted job, \
+                    "A compute-job market (post → bid → settle) — a provider bids on the posted job, \
                          advancing the job state machine (the settle conservation AffineEq waits downstream).",
                     starbridge_compute_exchange::job_app,
                     |exec, _cclerk| {
@@ -1021,13 +1013,12 @@ impl AppRegistry {
                             |_live| j::bid_effects(job, "provider-gpu", 750),
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "escrow-market",
                     "Escrow Market",
-
-                        "A two-party escrow marketplace (list → fund → ship → settle) — a buyer funds the \
+                    "A two-party escrow marketplace (list → fund → ship → settle) — a buyer funds the \
                          listed item into escrow (the settle release+refund=escrowed conservation waits downstream).",
                     starbridge_escrow_market::escrow_app,
                     |exec, _cclerk| {
@@ -1078,20 +1069,17 @@ impl AppRegistry {
                         );
                         // COMMIT `fund` through World: LISTED → FUNDED, escrowing the
                         // buyer's amount (the SAME `fund_effects` the framework path fires).
-                        let receipt = spine.commit(
-                            "fund",
-                            &e::BUYER_RIGHTS,
-                            &e::BUYER_RIGHTS,
-                            |_live| e::fund_effects(escrow, "buyer-bob", 500),
-                        )?;
+                        let receipt =
+                            spine.commit("fund", &e::BUYER_RIGHTS, &e::BUYER_RIGHTS, |_live| {
+                                e::fund_effects(escrow, "buyer-bob", 500)
+                            })?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "nameservice",
                     "Name Service",
-
-                        "A registered-name record (owner / expiry / revocation) — the owner renews the name, \
+                    "A registered-name record (owner / expiry / revocation) — the owner renews the name, \
                          advancing the expiry (the executor re-enforces Monotonic(EXPIRY) + WriteOnce(NAME)).",
                     starbridge_nameservice::name_app,
                     |exec, cclerk| {
@@ -1144,11 +1132,8 @@ impl AppRegistry {
                         // COMMIT `renew` through World: EXPIRY += one rent epoch, read off
                         // World's live state (Monotonic(EXPIRY) holds) — the SAME advance
                         // `fire_renew` computes.
-                        let receipt = spine.commit(
-                            "renew",
-                            &n::OWNER_RIGHTS,
-                            &n::OWNER_RIGHTS,
-                            |live| {
+                        let receipt =
+                            spine.commit("renew", &n::OWNER_RIGHTS, &n::OWNER_RIGHTS, |live| {
                                 let live_expiry = field_tail_u64(&live.fields[n::EXPIRY_SLOT]);
                                 let new_expiry =
                                     live_expiry.saturating_add(n::DEFAULT_RENT_EPOCH_BLOCKS);
@@ -1157,16 +1142,14 @@ impl AppRegistry {
                                     index: n::EXPIRY_SLOT,
                                     value: dregg_app_framework::field_from_u64(new_expiry),
                                 }]
-                            },
-                        )?;
+                            })?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "privacy-voting",
                     "Privacy Voting",
-
-                        "A public-tally poll — an administrator records one vote onto the poll's running tally \
+                    "A public-tally poll — an administrator records one vote onto the poll's running tally \
                          (the executor re-enforces the poll invariants; the poll stays open until closed).",
                     starbridge_privacy_voting::voting_app,
                     |exec, _cclerk| {
@@ -1238,13 +1221,12 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "storage-gateway-mandate",
                     "Storage Gateway Mandate",
-
-                        "A metered storage gateway (put / get / list under a volume ceiling) — a writer puts \
+                    "A metered storage gateway (put / get / list under a volume ceiling) — a writer puts \
                          an object, debiting the volume meter (the executor re-enforces volume_spent ≤ ceiling).",
                     starbridge_storage_gateway_mandate::gateway_app,
                     |exec, _cclerk| {
@@ -1320,25 +1302,20 @@ impl AppRegistry {
                         // + last-op (the SAME `put_effects` the framework path fires).
                         let key = "uploads/first";
                         let blob_hash = s::object_key_field(key);
-                        let receipt = spine.commit(
-                            "put",
-                            &s::WRITER_RIGHTS,
-                            &s::WRITER_RIGHTS,
-                            |live| {
+                        let receipt =
+                            spine.commit("put", &s::WRITER_RIGHTS, &s::WRITER_RIGHTS, |live| {
                                 let live_spent =
                                     field_tail_u64(&live.fields[s::VOLUME_SPENT_SLOT as usize]);
                                 let new_spent = live_spent.saturating_add(1);
                                 s::put_effects(gateway, key, new_spent, blob_hash)
-                            },
-                        )?;
+                            })?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "subscription",
                     "Subscription Feed",
-
-                        "A publish/consume message feed under a capacity bound — a publisher publishes one \
+                    "A publish/consume message feed under a capacity bound — a publisher publishes one \
                          message, advancing the head cursor + folding the message-commitment root.",
                     starbridge_subscription::subscription_deos_app,
                     |exec, _cclerk| {
@@ -1399,19 +1376,17 @@ impl AppRegistry {
                                     field_tail_u64(&live.fields[s::SEQ_HEAD_SLOT as usize]);
                                 let new_head = live_head.saturating_add(1);
                                 let prev_root = live.fields[s::MESSAGE_ROOT_SLOT as usize];
-                                let new_root =
-                                    s::fold_message_root(&prev_root, new_head, &payload);
+                                let new_root = s::fold_message_root(&prev_root, new_head, &payload);
                                 s::publish_effects(feed, new_head, new_root, payload)
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "swarm-orchestration",
                     "Swarm Orchestration",
-
-                        "A swarm dispatch board with a per-worker spend budget — the lead dispatches one task \
+                    "A swarm dispatch board with a per-worker spend budget — the lead dispatches one task \
                          to a worker, debiting its meter + advancing the no-replay epoch (Σspend ≤ budget bites).",
                     starbridge_swarm_orchestration::board_app,
                     |exec, _cclerk| {
@@ -1470,14 +1445,12 @@ impl AppRegistry {
                         // COMMIT `dispatch` through World: read the live worker-A meter +
                         // epoch off World's ledger, debit cost 1, advance the epoch (the
                         // SAME `dispatch_effects` the framework path fires).
-                        let receipt = spine.commit(
-                            "dispatch",
-                            &w::LEAD_RIGHTS,
-                            &w::LEAD_RIGHTS,
-                            |live| {
+                        let receipt =
+                            spine.commit("dispatch", &w::LEAD_RIGHTS, &w::LEAD_RIGHTS, |live| {
                                 let spend_slot = w::Worker::A.spend_slot() as usize;
                                 let live_spent = field_tail_u64(&live.fields[spend_slot]);
-                                let live_epoch = field_tail_u64(&live.fields[w::EPOCH_SLOT as usize]);
+                                let live_epoch =
+                                    field_tail_u64(&live.fields[w::EPOCH_SLOT as usize]);
                                 w::dispatch_effects(
                                     board,
                                     w::Worker::A,
@@ -1487,16 +1460,14 @@ impl AppRegistry {
                                     1,
                                     "task-0",
                                 )
-                            },
-                        )?;
+                            })?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "tool-access-delegation",
                     "Tool Access Delegation",
-
-                        "A rate-limited tool-access mandate — a worker invokes the tool once, ticking the \
+                    "A rate-limited tool-access mandate — a worker invokes the tool once, ticking the \
                          call counter (the executor re-enforces calls_made ≤ rate_limit + the deadline gate).",
                     starbridge_tool_access_delegation::tad_app,
                     |exec, _cclerk| {
@@ -1553,7 +1524,7 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 // ───────────────────────────────────────────────────────────
                 // THE SENDER-BOUND WAVE — affordances that read the turn's
@@ -1562,8 +1533,7 @@ impl AppRegistry {
                 AppEntry::framework(
                     "supply-chain-provenance",
                     "Supply-Chain Provenance",
-
-                        "A custody-chain item (mint → handoff) — the incoming custodian accepts custody, \
+                    "A custody-chain item (mint → handoff) — the incoming custodian accepts custody, \
                          advancing the actor-bound baton (the SenderInSlot(CUSTODIAN) tooth bites).",
                     starbridge_supply_chain_provenance::item_app,
                     |exec, _cclerk| {
@@ -1586,10 +1556,8 @@ impl AppRegistry {
                         // genesis, so `SenderInSlot(CUSTODIAN)` holds on the seeded baton —
                         // exactly as `mint_effects_signed` binds the signer.
                         let custodian = app.cipherclerk().public_key().0;
-                        let genesis_event =
-                            sc::custody_event(&sc::GENESIS_PREV, &custodian, 1);
-                        let genesis_link =
-                            sc::link_hash(&sc::GENESIS_PREV, &genesis_event);
+                        let genesis_event = sc::custody_event(&sc::GENESIS_PREV, &custodian, 1);
+                        let genesis_link = sc::link_hash(&sc::GENESIS_PREV, &genesis_event);
                         // SEED the minted item onto World: `item_program` (the custody policy:
                         // AnyOf[Immutable, SenderInSlot(CUSTODIAN)] + StrictMonotonic(EPOCH) +
                         // Monotonic(HEAD) + WriteOnce(links)) + the genesis baseline (CUSTODIAN
@@ -1670,17 +1638,20 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "identity",
                     "Identity / Credentials",
-
-                        "A credential issuer (issue → revoke) — an authorized issuer issues one credential, \
+                    "A credential issuer (issue → revoke) — an authorized issuer issues one credential, \
                          advancing the issuance sequence (the SenderAuthorized membership tooth bites).",
                     starbridge_identity::identity_app,
                     |exec, cclerk| {
-                        starbridge_identity::seed_issuer(exec, cclerk, &starbridge_identity::kyc_schema());
+                        starbridge_identity::seed_issuer(
+                            exec,
+                            cclerk,
+                            &starbridge_identity::kyc_schema(),
+                        );
                     },
                     |app, sub| {
                         use starbridge_identity as id;
@@ -1696,8 +1667,7 @@ impl AppRegistry {
                         let signer = app.cipherclerk().public_key().0;
                         let auth_root =
                             dregg_turn::executor::single_member_authorized_root(&signer);
-                        let schema_hash =
-                            id::schema_commitment(&id::kyc_schema());
+                        let schema_hash = id::schema_commitment(&id::kyc_schema());
                         // SEED onto World: `issuer_program` (WriteOnce SCHEMA + MonotonicSequence
                         // ISSUANCE_COUNTER + Monotonic REVOCATION_ROOT + SenderAuthorized) + the
                         // `seed_issuer` baseline (schema bound, counters 0, auth root = signer).
@@ -1730,10 +1700,9 @@ impl AppRegistry {
                         // counter +1 off live state (MonotonicSequence holds), CARRYING the
                         // single-member membership proof so the real MerkleMembership verifier
                         // admits the authorized signer (the SenderAuthorized tooth).
-                        let witness =
-                            dregg_turn::action::WitnessBlob::merkle_path(
-                                dregg_turn::executor::single_member_membership_proof(&signer),
-                            );
+                        let witness = dregg_turn::action::WitnessBlob::merkle_path(
+                            dregg_turn::executor::single_member_membership_proof(&signer),
+                        );
                         let receipt = spine.commit_as(
                             signer,
                             "issue",
@@ -1761,13 +1730,12 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 AppEntry::framework(
                     "governed-namespace",
                     "Governed Namespace",
-
-                        "A constitutionally-governed route table (propose → vote → commit) — a committee \
+                    "A constitutionally-governed route table (propose → vote → commit) — a committee \
                          member opens a proposal, advancing the pending root (the SenderAuthorized committee tooth bites).",
                     starbridge_governed_namespace::governance_app,
                     |exec, _cclerk| {
@@ -1782,7 +1750,12 @@ impl AppRegistry {
                     },
                     |app, sub| {
                         use starbridge_governed_namespace as gn;
-                        gn::fire_propose(app, &gn::COMMITTEE_RIGHTS, sub.cipherclerk(), sub.executor())
+                        gn::fire_propose(
+                            app,
+                            &gn::COMMITTEE_RIGHTS,
+                            sub.cipherclerk(),
+                            sub.executor(),
+                        )
                     },
                     |app, world| {
                         use starbridge_governed_namespace as gn;
@@ -1833,10 +1806,9 @@ impl AppRegistry {
                         // the pending root past its live value (Monotonic in the propose case),
                         // CARRYING the single-member membership proof so the real
                         // MerkleMembership verifier admits the committee member.
-                        let witness =
-                            dregg_turn::action::WitnessBlob::merkle_path(
-                                dregg_turn::executor::single_member_membership_proof(&signer),
-                            );
+                        let witness = dregg_turn::action::WitnessBlob::merkle_path(
+                            dregg_turn::executor::single_member_membership_proof(&signer),
+                        );
                         let receipt = spine.commit_as(
                             signer,
                             "propose_table_update",
@@ -1866,7 +1838,7 @@ impl AppRegistry {
                             },
                         )?;
                         Ok((spine, receipt))
-                    }
+                    },
                 ),
                 // ───────────────────────────────────────────────────────────
                 // THE POLIS GOVERNANCE LAYER — a PROGRAM entry, not a `DeosApp`.
@@ -1903,10 +1875,11 @@ impl AppRegistry {
                             .map(|i| dregg_cell::CellId::from_bytes([i; 32]))
                             .collect();
                         let charter = council::CouncilCharter::new(members, 2);
-                        let program = council::council_cell_program(&charter)
-                            .map_err(|e| WorldFireError::World {
+                        let program = council::council_cell_program(&charter).map_err(|e| {
+                            WorldFireError::World {
                                 reason: format!("polis charter refused to build: {e}"),
-                            })?;
+                            }
+                        })?;
                         // The governance cell is born in DRAFT (state 0, every slot
                         // zero) — exactly the default genesis cell — so NO seed fields
                         // are needed. The agent/pubkey is a fixed governance-operator
@@ -1932,8 +1905,7 @@ impl AppRegistry {
                         // DRAFT). No sender clause on a legacy charter, so the
                         // single-custody `commit` admits it; World's executor
                         // re-enforces the council machine.
-                        let proposal_hash =
-                            dregg_app_framework::field_from_u64(0x90_0_5A1);
+                        let proposal_hash = dregg_app_framework::field_from_u64(0x90_0_5A1);
                         let members_commit = charter.members_commitment();
                         let receipt = spine.commit(
                             "propose",
@@ -1963,7 +1935,7 @@ impl AppRegistry {
                         )?;
                         Ok((spine, receipt))
                     },
-                )
+                ),
             ],
         }
     }

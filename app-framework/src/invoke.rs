@@ -60,11 +60,11 @@
 
 use std::collections::HashMap;
 
+use dregg_cell::Cell;
 use dregg_cell::interface::{InterfaceDescriptor, MethodSig, Semantics, method_symbol};
 use dregg_cell::permissions::AuthRequired;
-use dregg_cell::Cell;
-use dregg_turn::action::{Action, Effect};
 use dregg_turn::Turn;
+use dregg_turn::action::{Action, Effect};
 use dregg_types::CellId;
 
 use crate::cipherclerk::AppCipherclerk;
@@ -105,7 +105,11 @@ impl InvokeAuthority {
     ///   method has no invocation).
     /// - [`AuthRequired::Custom { vk_hash }`] — needs a matching
     ///   [`InvokeAuthority::Custom`].
-    fn satisfies(self, required: &AuthRequired) -> bool {
+    ///
+    /// Public so the symmetric reactive front-door ([`crate::reactor`]) can
+    /// cap-gate a reaction on the SAME authority tiers `invoke()` gates a
+    /// command on — one authority-satisfaction predicate for both faces.
+    pub fn satisfies(self, required: &AuthRequired) -> bool {
         match required {
             AuthRequired::None => true,
             AuthRequired::Signature => self == InvokeAuthority::Signature,
@@ -199,7 +203,10 @@ impl std::fmt::Display for InvokeRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownMethod { method } => {
-                write!(f, "method `{method}` is not a declared method of the interface")
+                write!(
+                    f,
+                    "method `{method}` is not a declared method of the interface"
+                )
             }
             Self::Unauthorized { method, required } => write!(
                 f,
@@ -349,8 +356,7 @@ pub fn invoke_with_descriptor(
     effects: Vec<Effect>,
     authority: InvokeAuthority,
 ) -> Result<Turn, InvokeRefused> {
-    let (action, _sig) =
-        resolve_against(target, descriptor, method, args, effects, authority)?;
+    let (action, _sig) = resolve_against(target, descriptor, method, args, effects, authority)?;
     let signed = cipherclerk.sign_action(action);
     Ok(cipherclerk.make_turn(signed))
 }
@@ -458,7 +464,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             refused,
-            InvokeRefused::Unauthorized { required: AuthRequired::Signature, .. }
+            InvokeRefused::Unauthorized {
+                required: AuthRequired::Signature,
+                ..
+            }
         ));
 
         // A Signature caller satisfies it.
@@ -518,9 +527,13 @@ mod tests {
         assert!(!InvokeAuthority::Signature.satisfies(&AuthRequired::Impossible));
         // Custom must match the vk_hash.
         let vk = [9u8; 32];
-        assert!(InvokeAuthority::Custom { vk_hash: vk }
-            .satisfies(&AuthRequired::Custom { vk_hash: vk }));
-        assert!(!InvokeAuthority::Custom { vk_hash: [1u8; 32] }
-            .satisfies(&AuthRequired::Custom { vk_hash: vk }));
+        assert!(
+            InvokeAuthority::Custom { vk_hash: vk }
+                .satisfies(&AuthRequired::Custom { vk_hash: vk })
+        );
+        assert!(
+            !InvokeAuthority::Custom { vk_hash: [1u8; 32] }
+                .satisfies(&AuthRequired::Custom { vk_hash: vk })
+        );
     }
 }

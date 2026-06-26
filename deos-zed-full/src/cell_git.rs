@@ -61,20 +61,20 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use futures::future::{BoxFuture, FutureExt};
 
 use git::repository::{
-    AskPassDelegate, Branch, BranchesScanResult, CommitDetails, CommitDiff, CommitDataReader,
+    AskPassDelegate, Branch, BranchesScanResult, CommitDataReader, CommitDetails, CommitDiff,
     CommitFile, CommitOptions, CommitSummary, CreateWorktreeTarget, DiffType, FetchOptions,
     FileHistoryChangedFileSets, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
     InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RepoPath, ResetMode,
     SearchCommitArgs, Worktree,
 };
+use git::stash::GitStash;
 use git::status::{
     DiffTreeType, FileStatus, GitDiffStat, GitStatus, StatusCode, TrackedStatus, TreeDiff,
 };
-use git::stash::GitStash;
 use git::{Oid, RemoteCommandOutput, RunHook};
 
 use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
@@ -83,7 +83,7 @@ use text::LineEnding;
 
 use collections::HashMap;
 
-use dregg_doc::{blame, Author, Doc, Granularity, History, PatchId};
+use dregg_doc::{Author, Doc, Granularity, History, PatchId, blame};
 
 /// The synthetic author for editor saves coming through the cell-fs (a single
 /// cap-holder identity for this slice; the real seam binds the turn's editor cell
@@ -305,10 +305,7 @@ impl GitRepository for CellLedgerGit {
         // rendered text of its HEAD patch (an unsaved edit). A path that has live
         // content but no committed history is `Added`/untracked. This is real
         // modified-since-HEAD status with NO host git anywhere.
-        let prefixes: Vec<PathBuf> = path_prefixes
-            .iter()
-            .map(|p| self.abs_path(p))
-            .collect();
+        let prefixes: Vec<PathBuf> = path_prefixes.iter().map(|p| self.abs_path(p)).collect();
         let docs = self.docs.lock().unwrap();
         let live = self.live.lock().unwrap();
         let mut entries: Vec<(RepoPath, FileStatus)> = Vec::new();
@@ -316,7 +313,9 @@ impl GitRepository for CellLedgerGit {
             if !prefixes.is_empty() && !prefixes.iter().any(|pre| path.starts_with(pre)) {
                 continue;
             }
-            let Ok(rp) = self.repo_path(path) else { continue };
+            let Ok(rp) = self.repo_path(path) else {
+                continue;
+            };
             match docs.get(path) {
                 Some(doc) => {
                     let head = doc.head_text();
@@ -384,7 +383,8 @@ impl GitRepository for CellLedgerGit {
     }
 
     fn change_branch(&self, _name: String) -> BoxFuture<'_, Result<()>> {
-        async { bail!("CellLedgerGit: branch switching is not modeled (one linear patch history)") }.boxed()
+        async { bail!("CellLedgerGit: branch switching is not modeled (one linear patch history)") }
+            .boxed()
     }
     fn create_branch(
         &self,
@@ -426,11 +426,7 @@ impl GitRepository for CellLedgerGit {
     fn remove_worktree(&self, _path: PathBuf, _force: bool) -> BoxFuture<'_, Result<()>> {
         async { bail!("CellLedgerGit: remove_worktree not modeled") }.boxed()
     }
-    fn rename_worktree(
-        &self,
-        _old_path: PathBuf,
-        _new_path: PathBuf,
-    ) -> BoxFuture<'_, Result<()>> {
+    fn rename_worktree(&self, _old_path: PathBuf, _new_path: PathBuf) -> BoxFuture<'_, Result<()>> {
         async { bail!("CellLedgerGit: rename_worktree not modeled") }.boxed()
     }
 
@@ -509,7 +505,10 @@ impl GitRepository for CellLedgerGit {
         async move {
             match blame_result {
                 Some(b) => Ok(b),
-                None => bail!("CellLedgerGit: no history for {}", path.as_std_path().display()),
+                None => bail!(
+                    "CellLedgerGit: no history for {}",
+                    path.as_std_path().display()
+                ),
             }
         }
         .boxed()
@@ -666,10 +665,7 @@ impl GitRepository for CellLedgerGit {
         async move { Ok(out) }.boxed()
     }
 
-    fn diff_stat(
-        &self,
-        _path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'static, Result<GitDiffStat>> {
+    fn diff_stat(&self, _path_prefixes: &[RepoPath]) -> BoxFuture<'static, Result<GitDiffStat>> {
         async { Ok(GitDiffStat::default()) }.boxed()
     }
 
@@ -755,7 +751,9 @@ impl GitRepository for CellLedgerGit {
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
-        bail!("CellLedgerGit: commit_data_reader not modeled (use show/load_commit for per-patch details)")
+        bail!(
+            "CellLedgerGit: commit_data_reader not modeled (use show/load_commit for per-patch details)"
+        )
     }
 
     fn update_ref(&self, _ref_name: String, _commit: String) -> BoxFuture<'_, Result<()>> {
@@ -962,9 +960,7 @@ fn build_zed_blame(lines: &[dregg_doc::BlameLine], path: &RepoPath) -> git::blam
 
 /// The commit-graph nodes for the log view: each patch in chain order, with its
 /// predecessor as parent.
-fn build_graph_nodes(
-    docs: &StdHashMap<PathBuf, PathDoc>,
-) -> Vec<Arc<InitialGraphCommitData>> {
+fn build_graph_nodes(docs: &StdHashMap<PathBuf, PathDoc>) -> Vec<Arc<InitialGraphCommitData>> {
     use smallvec::SmallVec;
     let mut nodes = Vec::new();
     for doc in docs.values() {

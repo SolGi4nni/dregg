@@ -303,36 +303,56 @@ impl CommandId {
             GoOrgans => "Go to Organs (live trustline · flash-well cell-state)",
             GoProofs => "Go to Proofs (attach + STARK verification status)",
             GoPowerbox => "Go to Powerbox (CapDesk — designate a held cap into an app, attenuated)",
-            GoDevtools => "Go to Devtools (Firebug for a verified OS — network · receipts · federation)",
-            GoWebShell => "Go to Web-Shell (a general http(s):// browser — real Servo render behind the net-cap gate)",
-            WebShellGo => "Web-shell: Go (render the address-bar URL through the cap-gated Servo WebView)",
+            GoDevtools => {
+                "Go to Devtools (Firebug for a verified OS — network · receipts · federation)"
+            }
+            GoWebShell => {
+                "Go to Web-Shell (a general http(s):// browser — real Servo render behind the net-cap gate)"
+            }
+            WebShellGo => {
+                "Web-shell: Go (render the address-bar URL through the cap-gated Servo WebView)"
+            }
             WebShellBack => "Web-shell: ← Back (previous URL in history, re-rendered)",
             WebShellForward => "Web-shell: → Forward (next URL in history, re-rendered)",
             WebShellReload => "Web-shell: ⟳ Reload (re-render the current URL)",
-            LaunchConfinedApp => "Launch a confined app (no ambient authority → it requests via the powerbox)",
+            LaunchConfinedApp => {
+                "Launch a confined app (no ambient authority → it requests via the powerbox)"
+            }
             SwarmCoordinatorEmitA => {
                 "Swarm: coordinator emits task/go → worker-a (notify edge, async)"
             }
-            SwarmWorkerADrain => {
-                "Swarm: worker-a drains inbox (own ack turn — async, not joint)"
-            }
+            SwarmWorkerADrain => "Swarm: worker-a drains inbox (own ack turn — async, not joint)",
             SwarmCoordinatorTransferAndWake => {
                 "Swarm: coordinator transfers + wakes worker-a (one seam, two effects)"
             }
-            KillerDemoAdvance => "Killer demo: ▶ advance one frame (mint → agent → notify → refusal)",
-            KillerDemoRunAll => "Killer demo: ⏩ run the whole script (the four-surface self-check)",
-            KillerDemoOverShare => "Killer demo: ⚠ over-share the budget window (pixel-layer REFUSE)",
+            KillerDemoAdvance => {
+                "Killer demo: ▶ advance one frame (mint → agent → notify → refusal)"
+            }
+            KillerDemoRunAll => {
+                "Killer demo: ⏩ run the whole script (the four-surface self-check)"
+            }
+            KillerDemoOverShare => {
+                "Killer demo: ⚠ over-share the budget window (pixel-layer REFUSE)"
+            }
             KillerDemoReset => "Killer demo: ↺ reset to frame 0 (replay)",
             BufferType => "Buffer: type a line (in-memory — goes dirty)",
             BufferCommit => "Buffer: commit the edit (cap-gated verified turn)",
             BufferReadOnlyWrite => "Buffer: ⚠ write a read-only mirror (watch it REFUSE)",
             TerminalRunInMandate => "Terminal: run an in-mandate command (COMMITS)",
             TerminalRunOutOfMandate => "Terminal: ⚠ run an out-of-mandate command (REFUSE)",
-            OpenTerminalPane => "Open Terminal pane (live $SHELL on a PTY · build deos inside deos)",
+            OpenTerminalPane => {
+                "Open Terminal pane (live $SHELL on a PTY · build deos inside deos)"
+            }
             OpenEditorPane => "Open Editor pane (live deos-zed editor · edit deos inside deos)",
-            OpenAgentPane => "Open Agent pane (confined Hermes · tool-call ledger + receipts + mandate inspector)",
-            OpenCardPane => "Open Card (a live hyperdreggmedia card · a +1 button fires a verified turn on the live ledger)",
-            OpenMembrane => "Open Membrane (the deos social pane · a message IS a cap-bounded world-fork you mint · drive · stitch)",
+            OpenAgentPane => {
+                "Open Agent pane (confined Hermes · tool-call ledger + receipts + mandate inspector)"
+            }
+            OpenCardPane => {
+                "Open Card (a live hyperdreggmedia card · a +1 button fires a verified turn on the live ledger)"
+            }
+            OpenMembrane => {
+                "Open Membrane (the deos social pane · a message IS a cap-bounded world-fork you mint · drive · stitch)"
+            }
             ShellOpenSelected => "Shell: open the selected cell as a surface",
             ShellFocusFront => "Shell: focus the front surface (cap-gated)",
             ShellCloseFocused => "Shell: close the focused surface (cap-gated)",
@@ -343,8 +363,12 @@ impl CommandId {
             ShellPresentFocused => "Shell: present the focused surface (T1∧T2∧T3 commits)",
             ShellOverpaintFocused => "Shell: ⚠ overpaint another surface's region (T1 REJECT)",
             ShellInputSteal => "Shell: ⚠ steal input focus (T3 REJECT)",
-            TearOffActiveSurface => "Shell: ↗ tear off the active surface into its own window (Local→Surface migration, identity preserved)",
-            PopBackActiveSurface => "Shell: ↩ pop the active surface back into the dock (close its torn-off window)",
+            TearOffActiveSurface => {
+                "Shell: ↗ tear off the active surface into its own window (Local→Surface migration, identity preserved)"
+            }
+            PopBackActiveSurface => {
+                "Shell: ↩ pop the active surface back into the dock (close its torn-off window)"
+            }
             ReplayStepBack => "Replay: step back one turn",
             ReplayStepForward => "Replay: step forward one turn",
             ReplayToGenesis => "Replay: jump to genesis",
@@ -388,18 +412,36 @@ impl CommandId {
             GoAgent => "agent loop swarm activity mandate receipt grounded ados integrator",
             GoBuffer => "editor buffer text file write edit document ide code scratch",
             GoTerminal => "terminal command shell console bash run ide tool-call ados seam",
-            GoSwarm => "swarm multi-agent coordinator worker notify inbox wake coordination ados a2",
-            GoGraph => "graph ocap delegation capability edge multi-hop reach blast-radius layout depth",
-            GoOrgans => "organ trustline flashwell flash-well credit line channel mailbox court live cell-state",
-            GoProofs => "proof stark verify attach tier verification signed by-construction light-client",
-            GoPowerbox => "powerbox capdesk designate grant capability attenuate mint file dialog ocap pick picker confined app no-ambient-authority",
-            GoDevtools => "devtools firebug devtools network receipts log console federation inspector data-plane deliveries queue inbox wake notify topic pub-sub committee epoch checkpoint revocation bridge filter drill-down",
-            GoWebShell => "web shell browser http https url address bar servo webview render page internet net surf navigate site www tab",
-            WebShellGo => "web shell browser go render http https url navigate load page fetch servo webview cap-gate net",
+            GoSwarm => {
+                "swarm multi-agent coordinator worker notify inbox wake coordination ados a2"
+            }
+            GoGraph => {
+                "graph ocap delegation capability edge multi-hop reach blast-radius layout depth"
+            }
+            GoOrgans => {
+                "organ trustline flashwell flash-well credit line channel mailbox court live cell-state"
+            }
+            GoProofs => {
+                "proof stark verify attach tier verification signed by-construction light-client"
+            }
+            GoPowerbox => {
+                "powerbox capdesk designate grant capability attenuate mint file dialog ocap pick picker confined app no-ambient-authority"
+            }
+            GoDevtools => {
+                "devtools firebug devtools network receipts log console federation inspector data-plane deliveries queue inbox wake notify topic pub-sub committee epoch checkpoint revocation bridge filter drill-down"
+            }
+            GoWebShell => {
+                "web shell browser http https url address bar servo webview render page internet net surf navigate site www tab"
+            }
+            WebShellGo => {
+                "web shell browser go render http https url navigate load page fetch servo webview cap-gate net"
+            }
             WebShellBack => "web shell browser back previous history navigate url",
             WebShellForward => "web shell browser forward next history navigate url",
             WebShellReload => "web shell browser reload refresh re-render current url page",
-            LaunchConfinedApp => "launch spawn start run confined app birth new cell powerbox request capability no-ambient-authority sandbox open application capdesk",
+            LaunchConfinedApp => {
+                "launch spawn start run confined app birth new cell powerbox request capability no-ambient-authority sandbox open application capdesk"
+            }
             SwarmCoordinatorEmitA => {
                 "emit event notify wake inbox async turn receipt seam swarm coordinator worker"
             }
@@ -421,26 +463,52 @@ impl CommandId {
             KillerDemoReset => "killer demo reset replay restart frame zero fresh world",
             BufferType => "edit type insert text buffer dirty",
             BufferCommit => "save commit buffer write digest turn cap-gated revision",
-            BufferReadOnlyWrite => "read-only refuse attenuate mirror no-amplify buffer write guard",
+            BufferReadOnlyWrite => {
+                "read-only refuse attenuate mirror no-amplify buffer write guard"
+            }
             TerminalRunInMandate => "command run terminal bash mandate commit receipt authorized",
-            TerminalRunOutOfMandate => "command refuse terminal bash mandate out-of-reach confined guard",
-            OpenTerminalPane => "open terminal pane shell pty bash zsh cargo git build dev self-hosting live split console run command spawn",
-            OpenEditorPane => "open editor pane code edit deos-zed file source dev self-hosting live split ide author write text",
-            OpenAgentPane => "open agent pane hermes confined ai llm tool-call ledger receipt refusal mandate inspector ados dev-loop cap-gated turn dock chat",
-            OpenCardPane => "open card hyperdreggmedia applet view button +1 counter bind live ledger verified turn receipt joy clickable widget deos-js dock pane",
-            OpenMembrane => "open membrane chat deos-matrix social multiplayer message world-fork frustum mint rehydrate drive stitch settlement branch fork capability bounded room timeline send turn comms-pd dock pane",
+            TerminalRunOutOfMandate => {
+                "command refuse terminal bash mandate out-of-reach confined guard"
+            }
+            OpenTerminalPane => {
+                "open terminal pane shell pty bash zsh cargo git build dev self-hosting live split console run command spawn"
+            }
+            OpenEditorPane => {
+                "open editor pane code edit deos-zed file source dev self-hosting live split ide author write text"
+            }
+            OpenAgentPane => {
+                "open agent pane hermes confined ai llm tool-call ledger receipt refusal mandate inspector ados dev-loop cap-gated turn dock chat"
+            }
+            OpenCardPane => {
+                "open card hyperdreggmedia applet view button +1 counter bind live ledger verified turn receipt joy clickable widget deos-js dock pane"
+            }
+            OpenMembrane => {
+                "open membrane chat deos-matrix social multiplayer message world-fork frustum mint rehydrate drive stitch settlement branch fork capability bounded room timeline send turn comms-pd dock pane"
+            }
             ShellOpenSelected => "open window surface cell app spawn view",
             ShellFocusFront => "focus raise front bring forward window",
             ShellCloseFocused => "close window surface dismiss",
             ShellCycleLayout => "tile float stack arrange layout compositor",
             ShellMinimizeFocused => "minimize collapse hide window surface",
             ShellShareFocused => "share window surface delegate grant attenuate mirror hand-off",
-            ShellOverShareFocused => "over-share amplify widen reject window surface no-amplification grant",
-            ShellPresentFocused => "present paint frame surface composite commit scene verified t1 t2 t3",
-            ShellOverpaintFocused => "overpaint region reject non-overlap t1 amplify paint another scene security",
-            ShellInputSteal => "input steal focus keystroke reject t3 route misroute volition scene security",
-            TearOffActiveSurface => "tear off pop out window detach surface migration firmament distance relocate move multi-window split-out identity preserved local surface",
-            PopBackActiveSurface => "pop back dock reattach close window torn-off surface migration return home merge",
+            ShellOverShareFocused => {
+                "over-share amplify widen reject window surface no-amplification grant"
+            }
+            ShellPresentFocused => {
+                "present paint frame surface composite commit scene verified t1 t2 t3"
+            }
+            ShellOverpaintFocused => {
+                "overpaint region reject non-overlap t1 amplify paint another scene security"
+            }
+            ShellInputSteal => {
+                "input steal focus keystroke reject t3 route misroute volition scene security"
+            }
+            TearOffActiveSurface => {
+                "tear off pop out window detach surface migration firmament distance relocate move multi-window split-out identity preserved local surface"
+            }
+            PopBackActiveSurface => {
+                "pop back dock reattach close window torn-off surface migration return home merge"
+            }
             ReplayStepBack => "rewind previous undo back",
             ReplayStepForward => "advance next redo forward",
             ReplayToGenesis => "start beginning empty zero",
@@ -657,11 +725,7 @@ pub fn fuzzy_score(query: &str, haystack: &str) -> Option<i32> {
         prev_was_sep = is_sep;
     }
 
-    if qi == q.len() {
-        Some(score)
-    } else {
-        None
-    }
+    if qi == q.len() { Some(score) } else { None }
 }
 
 /// One ranked search hit: the command + its score (for the test/inspection).
@@ -906,12 +970,16 @@ mod tests {
         }
         // Found by concept: "killer demo" → run-all; "over-share" → the pixel-layer
         // refusal; "mint" → the advance (frame 1 mints); "four-surface" → the demo.
-        assert!(search(&reg, "killer demo")
-            .iter()
-            .any(|h| h.command.id == CommandId::KillerDemoRunAll));
-        assert!(search(&reg, "over-share")
-            .iter()
-            .any(|h| h.command.id == CommandId::KillerDemoOverShare));
+        assert!(
+            search(&reg, "killer demo")
+                .iter()
+                .any(|h| h.command.id == CommandId::KillerDemoRunAll)
+        );
+        assert!(
+            search(&reg, "over-share")
+                .iter()
+                .any(|h| h.command.id == CommandId::KillerDemoOverShare)
+        );
         assert!(search(&reg, "four-surface").iter().any(|h| {
             matches!(
                 h.command.id,
@@ -948,21 +1016,31 @@ mod tests {
         }
         // Found by concept: "tile" → cycle-layout; "open window" → open-surface;
         // "delegate"/"amplify" → the real-executor window-share + its rejection.
-        assert!(search(&reg, "tile")
-            .iter()
-            .any(|h| h.command.id == CommandId::ShellCycleLayout));
-        assert!(search(&reg, "window")
-            .iter()
-            .any(|h| h.command.id == CommandId::ShellOpenSelected));
-        assert!(search(&reg, "compositor")
-            .iter()
-            .any(|h| h.command.id == CommandId::GoShell));
-        assert!(search(&reg, "delegate")
-            .iter()
-            .any(|h| h.command.id == CommandId::ShellShareFocused));
-        assert!(search(&reg, "amplify")
-            .iter()
-            .any(|h| h.command.id == CommandId::ShellOverShareFocused));
+        assert!(
+            search(&reg, "tile")
+                .iter()
+                .any(|h| h.command.id == CommandId::ShellCycleLayout)
+        );
+        assert!(
+            search(&reg, "window")
+                .iter()
+                .any(|h| h.command.id == CommandId::ShellOpenSelected)
+        );
+        assert!(
+            search(&reg, "compositor")
+                .iter()
+                .any(|h| h.command.id == CommandId::GoShell)
+        );
+        assert!(
+            search(&reg, "delegate")
+                .iter()
+                .any(|h| h.command.id == CommandId::ShellShareFocused)
+        );
+        assert!(
+            search(&reg, "amplify")
+                .iter()
+                .any(|h| h.command.id == CommandId::ShellOverShareFocused)
+        );
     }
 
     #[test]
@@ -990,22 +1068,32 @@ mod tests {
         }
         // Found by concept: "editor"/"buffer" → the buffer; "terminal"/"bash" →
         // the terminal; "read-only"/"commit"/"mandate" → the cap-gated ops.
-        assert!(search(&reg, "editor buffer")
-            .iter()
-            .any(|h| h.command.id == CommandId::GoBuffer));
-        assert!(search(&reg, "terminal bash")
-            .iter()
-            .any(|h| h.command.id == CommandId::GoTerminal));
-        assert!(search(&reg, "commit")
-            .iter()
-            .any(|h| h.command.id == CommandId::BufferCommit));
-        assert!(search(&reg, "read-only")
-            .iter()
-            .any(|h| h.command.id == CommandId::BufferReadOnlyWrite));
-        assert!(search(&reg, "mandate")
-            .iter()
-            .any(|h| h.command.id == CommandId::TerminalRunInMandate
-                || h.command.id == CommandId::TerminalRunOutOfMandate));
+        assert!(
+            search(&reg, "editor buffer")
+                .iter()
+                .any(|h| h.command.id == CommandId::GoBuffer)
+        );
+        assert!(
+            search(&reg, "terminal bash")
+                .iter()
+                .any(|h| h.command.id == CommandId::GoTerminal)
+        );
+        assert!(
+            search(&reg, "commit")
+                .iter()
+                .any(|h| h.command.id == CommandId::BufferCommit)
+        );
+        assert!(
+            search(&reg, "read-only")
+                .iter()
+                .any(|h| h.command.id == CommandId::BufferReadOnlyWrite)
+        );
+        assert!(
+            search(&reg, "mandate")
+                .iter()
+                .any(|h| h.command.id == CommandId::TerminalRunInMandate
+                    || h.command.id == CommandId::TerminalRunOutOfMandate)
+        );
     }
 
     #[test]
@@ -1150,9 +1238,9 @@ mod tests {
         let mut p = CommandPalette::new();
         p.open();
         p.set_query("burnx"); // the trailing x breaks the burn subsequence
-                              // Robust to a growing command set: assert the burn verb specifically is
-                              // filtered out (the point of the test), not that the WHOLE list is empty —
-                              // another command's keywords may legitimately contain b-u-r-n-…-x.
+        // Robust to a growing command set: assert the burn verb specifically is
+        // filtered out (the point of the test), not that the WHOLE list is empty —
+        // another command's keywords may legitimately contain b-u-r-n-…-x.
         assert_ne!(
             p.current(),
             Some(CommandId::Burn),

@@ -50,8 +50,8 @@ use dregg_cell::blueprint::{
     self, BridgeTerms, ChannelTerms, EscrowTerms, ObligationTerms, TrustlineTerms,
 };
 use dregg_cell::factory::{
-    canonical_program_vk, CapTarget, CapTemplate, ChildVkStrategy, FactoryCreationParams,
-    FactoryDescriptor,
+    CapTarget, CapTemplate, ChildVkStrategy, FactoryCreationParams, FactoryDescriptor,
+    canonical_program_vk,
 };
 use dregg_cell::program::StateConstraint;
 use dregg_cell::{AuthRequired, CellId, CellMode, CellProgram};
@@ -62,7 +62,7 @@ use crate::presentable::{
     Presentation, PresentationBody, PresentationKind, SmState, SmTransition, StateMachineView,
 };
 use crate::reflect::{self, Field, Inspectable, ObjectKind};
-use crate::world::{create_cell_from_factory, CommitOutcome, World};
+use crate::world::{CommitOutcome, World, create_cell_from_factory};
 
 // ===========================================================================
 // §L10.1 — ReflectedFactory: the deployed-descriptor Presentable face.
@@ -656,7 +656,7 @@ impl FactoryAuthor {
             Err(e) => {
                 return AuthoringOutcome::Refused {
                     reason: format!("{e:?}"),
-                }
+                };
             }
         };
         let mut fork = world.fork();

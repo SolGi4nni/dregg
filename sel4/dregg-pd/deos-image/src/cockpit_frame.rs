@@ -68,9 +68,24 @@ struct Tab {
 pub const TABS: [&str; 3] = ["HOME", "SHELL", "AGENT"];
 
 const TAB_BOXES: [Tab; 3] = [
-    Tab { x: 602, y: 13, w: 40, h: 17 },
-    Tab { x: 651, y: 13, w: 46, h: 17 },
-    Tab { x: 707, y: 13, w: 44, h: 17 },
+    Tab {
+        x: 602,
+        y: 13,
+        w: 40,
+        h: 17,
+    },
+    Tab {
+        x: 651,
+        y: 13,
+        w: 46,
+        h: 17,
+    },
+    Tab {
+        x: 707,
+        y: 13,
+        w: 44,
+        h: 17,
+    },
 ];
 
 /// The render geometry — must equal the framebuffer geometry so the blit is a

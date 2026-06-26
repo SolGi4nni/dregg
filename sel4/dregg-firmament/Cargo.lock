@@ -857,6 +857,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "dregg-circuit",
+ "dregg-dfa",
  "dregg-types",
  "postcard",
  "serde",
@@ -956,6 +957,15 @@ dependencies = [
  "blake3",
  "dregg-circuit",
  "dregg-dsl-runtime",
+ "serde",
+]
+
+[[package]]
+name = "dregg-dfa"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "postcard",
  "serde",
 ]
 

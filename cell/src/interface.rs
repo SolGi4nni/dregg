@@ -312,6 +312,121 @@ impl InterfaceDescriptor {
     }
 }
 
+impl InterfaceDescriptor {
+    /// **Compile this interface into a `dregg_dfa::RouteTable`** — the keystone
+    /// of CELLS-AS-SERVICE-OBJECTS Stage 2: *a cell's interface IS a route table*,
+    /// and method dispatch is the verified DFA [`dregg_dfa::Router`]
+    /// classification (linear-time, BLAKE3-committed, AIR-provable via
+    /// `dregg_dfa::air`).
+    ///
+    /// Each [`MethodSig::symbol`] (the 32-byte BLAKE3 method-name hash) becomes an
+    /// EXACT-MATCH route over its raw bytes → a [`dregg_dfa::RouteTarget::handler`]
+    /// whose name is the lowercase hex of the symbol (see [`handler_for_symbol`]).
+    /// A classification of a method symbol thus resolves, in the verified router,
+    /// to exactly the handler naming the bound method.
+    ///
+    /// Distinctness is structural: every method symbol is a full 32-byte BLAKE3
+    /// digest, so no symbol can be a byte-prefix of another — the exact-match
+    /// `Pattern::word` routes never overlap, and the router's longest-match
+    /// resolution is exact. The reuse here is total: NO hand-rolled dispatch; the
+    /// `dfa` crate's [`dregg_dfa::RouteTableBuilder`] (and its BLAKE3 commitment)
+    /// is the dispatch primitive.
+    ///
+    /// The returned table's [`dregg_dfa::RouteTable::commitment`] is a function of
+    /// the routed symbols (and their handler names), so it is itself a content
+    /// address of the dispatchable surface — a sibling to `interface_id`, in the
+    /// DFA crate's own commitment scheme.
+    pub fn to_route_table(&self) -> dregg_dfa::RouteTable {
+        let mut builder = dregg_dfa::RouteTableBuilder::new();
+        for m in &self.methods {
+            builder = builder.route_pattern(
+                dregg_dfa::Pattern::word(&m.symbol),
+                dregg_dfa::RouteTarget::handler(handler_for_symbol(&m.symbol)),
+            );
+        }
+        builder.compile()
+    }
+
+    /// Resolve a method by routing its `symbol` through THIS interface's
+    /// [`dregg_dfa::Router`] — the verified-dispatch front door. Returns the
+    /// matched [`MethodSig`] (and the handler name the router classified to) when
+    /// `symbol` names a declared method, `None` otherwise.
+    ///
+    /// This is the soundness-bearing path the `Effect::Invoke` executor arm calls:
+    /// the method is found by the SAME `dregg_dfa::Router::classify` a federation
+    /// constitution audits, not by an ad-hoc `find`. The router's verdict and the
+    /// descriptor's [`InterfaceDescriptor::method`] lookup must agree (the
+    /// returned `MethodSig` is re-fetched from `methods` by the classified handler
+    /// name); a mismatch yields `None`, fail-closed.
+    pub fn route_method(&self, symbol: &Symbol) -> Option<&MethodSig> {
+        let table = self.to_route_table();
+        let router = dregg_dfa::Router::new(table);
+        let class = router.classify(&symbol[..])?;
+        let handler = match class.target {
+            dregg_dfa::RouteTarget::Handler(name) => name.clone(),
+            _ => return None,
+        };
+        // The router classified `symbol` to `handler`; re-derive the method the
+        // handler names and confirm it is exactly the routed symbol (defense in
+        // depth — the handler name IS the symbol hex, so this binds the verdict
+        // back to a concrete declared method).
+        self.methods
+            .iter()
+            .find(|m| handler_for_symbol(&m.symbol) == handler && &m.symbol == symbol)
+    }
+
+    /// **The route-MEMBERSHIP witness** that `method` belongs to this interface,
+    /// as a serialized `dregg_dfa::AirTrace` over the interface's route table.
+    ///
+    /// `invoke()` is NOT a kernel effect — it DESUGARS to the underlying effect a
+    /// method names. The one fact a light client must witness about the dispatch
+    /// (beyond the underlying effect's existing circuit rung) is that the invoked
+    /// method M is actually a member of the cell's COMMITTED interface. That fact
+    /// is exactly "the route table derived from the committed
+    /// [`InterfaceDescriptor`] accepts M's symbol bytes" — and the DFA's EXISTING
+    /// route-membership AIR (`dregg_dfa::air`) witnesses it. No new in-circuit
+    /// machinery: the same `AirTrace`/`verify_acceptance` pair the slot-caveat
+    /// `WitnessedPredicateKind::Dfa` verifier already uses.
+    ///
+    /// Returns the serialized proof bytes together with the route-table
+    /// commitment (`router_root`) the witness binds — the caller re-checks via
+    /// [`InterfaceDescriptor::verify_route_membership`]. Returns `None` if
+    /// `method` is not a declared method (no membership to witness).
+    pub fn route_membership_witness(&self, method: &Symbol) -> Option<(Vec<u8>, [u8; 32])> {
+        // Only a declared method has a membership witness (fail-closed).
+        self.route_method(method)?;
+        let table = self.to_route_table();
+        let root = table.commitment;
+        let air = dregg_dfa::compile_to_air_from_table(&table, &method[..]);
+        Some((air.to_proof_bytes(), root))
+    }
+
+    /// Verify a [`InterfaceDescriptor::route_membership_witness`] for `method`:
+    /// the serialized `AirTrace` must (a) bind THIS interface's route-table
+    /// commitment, and (b) prove the DFA accepts `method`'s symbol bytes — i.e.
+    /// M is a member of the committed interface. Reuses
+    /// [`dregg_dfa::verify_acceptance`]; adds nothing in-circuit.
+    pub fn verify_route_membership(&self, method: &Symbol, proof_bytes: &[u8]) -> bool {
+        let root = self.to_route_table().commitment;
+        matches!(
+            dregg_dfa::verify_acceptance(root, &method[..], proof_bytes),
+            Ok(true)
+        )
+    }
+}
+
+/// The canonical [`dregg_dfa::RouteTarget::handler`] name for a method symbol:
+/// the lowercase hex of the 32-byte symbol. Reversible (a verifier can map a
+/// classified handler back to the method it names) and auditable (a route table
+/// derived from an interface is legible as "symbol-hex → handler").
+pub fn handler_for_symbol(symbol: &Symbol) -> String {
+    let mut s = String::with_capacity(64);
+    for b in symbol.iter() {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
 /// Walk a [`TransitionGuard`] and collect every method symbol it dispatches on
 /// (the `MethodIs { method }` guards, including those nested under
 /// `AnyOf`/`AllOf`).
@@ -480,6 +595,97 @@ mod tests {
                 .methods
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn interface_compiles_to_route_table_and_routes_each_method() {
+        let iface = InterfaceDescriptor::new(vec![
+            MethodSig::replayable(method_symbol("send")),
+            MethodSig::replayable(method_symbol("dequeue")),
+            MethodSig {
+                auth_required: AuthRequired::Signature,
+                ..MethodSig::replayable(method_symbol("close"))
+            },
+        ]);
+
+        // Every declared method routes — via the dfa Router — to itself.
+        for name in &["send", "dequeue", "close"] {
+            let sym = method_symbol(name);
+            let m = iface
+                .route_method(&sym)
+                .unwrap_or_else(|| panic!("method {name} must route"));
+            assert_eq!(m.symbol, sym);
+        }
+
+        // An undeclared method does NOT route (fail-closed).
+        assert!(iface.route_method(&method_symbol("undeclared")).is_none());
+
+        // The route table is deterministic + commitment-bound (the dfa BLAKE3
+        // commitment), and order-independent in routing outcome.
+        let t1 = iface.to_route_table();
+        let t2 = iface.to_route_table();
+        assert_eq!(t1.commitment, t2.commitment);
+    }
+
+    #[test]
+    fn route_membership_witness_proves_declared_method_and_rejects_others() {
+        let iface = InterfaceDescriptor::new(vec![
+            MethodSig::replayable(method_symbol("send")),
+            MethodSig::replayable(method_symbol("dequeue")),
+        ]);
+
+        // A declared method yields a membership witness that verifies against
+        // THIS interface's committed route table — via the EXISTING dfa AIR.
+        let send = method_symbol("send");
+        let (proof, root) = iface
+            .route_membership_witness(&send)
+            .expect("declared method has a membership witness");
+        assert_eq!(root, iface.to_route_table().commitment);
+        assert!(iface.verify_route_membership(&send, &proof));
+
+        // An undeclared method has NO membership witness (fail-closed).
+        assert!(
+            iface
+                .route_membership_witness(&method_symbol("undeclared"))
+                .is_none()
+        );
+
+        // A witness for one method does not verify as membership of another.
+        let dequeue = method_symbol("dequeue");
+        assert!(!iface.verify_route_membership(&dequeue, &proof));
+
+        // A witness does not verify against a DIFFERENT interface (different
+        // committed route-table root).
+        let other = InterfaceDescriptor::new(vec![MethodSig::replayable(method_symbol("send"))]);
+        // `other` has a different method set ⇒ different route-table commitment,
+        // so the `send` witness minted against `iface` must not verify here.
+        assert_ne!(other.to_route_table().commitment, root);
+        assert!(!other.verify_route_membership(&send, &proof));
+    }
+
+    #[test]
+    fn route_table_router_verdict_matches_descriptor_lookup() {
+        let iface = InterfaceDescriptor::new(vec![
+            MethodSig::replayable(method_symbol("alpha")),
+            MethodSig::replayable(method_symbol("beta")),
+        ]);
+        // The verified router and the descriptor's own `method()` lookup agree.
+        for name in &["alpha", "beta"] {
+            let sym = method_symbol(name);
+            assert_eq!(
+                iface.route_method(&sym).map(|m| m.symbol),
+                iface.method(&sym).map(|m| m.symbol),
+            );
+        }
+    }
+
+    #[test]
+    fn handler_name_is_reversible_symbol_hex() {
+        let sym = method_symbol("send");
+        let name = handler_for_symbol(&sym);
+        assert_eq!(name.len(), 64);
+        // The handler name uniquely identifies the symbol it was derived from.
+        assert_ne!(name, handler_for_symbol(&method_symbol("recv")));
     }
 
     #[test]

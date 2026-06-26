@@ -99,7 +99,9 @@ pub fn init() -> Option<Keyboard> {
     }
     match VirtIOInput::new(transport) {
         Ok(dev) => {
-            debug_println!("[deos-image]   virtio-keyboard UP -- UP/DOWN walk cells, ENTER drills in, ESC backs out");
+            debug_println!(
+                "[deos-image]   virtio-keyboard UP -- UP/DOWN walk cells, ENTER drills in, ESC backs out"
+            );
             Some(dev)
         }
         Err(e) => {

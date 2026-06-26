@@ -863,12 +863,17 @@ fn whole_image_fold_bound_undeclared_cell_refuses() {
         .filter(|l| l.addr != BabyBear::new(5 + 1))
         .cloned()
         .collect();
-    assert_eq!(declared.len(), leaves.len() - 1, "exactly one cell undeclared");
+    assert_eq!(
+        declared.len(),
+        leaves.len() - 1,
+        "exactly one cell undeclared"
+    );
     let boundary =
         boundary_witness_for_fold(&declared, FIELD_DOMAIN).expect("boundary witness builds");
 
-    let outcome =
-        std::panic::catch_unwind(|| prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN));
+    let outcome = std::panic::catch_unwind(|| {
+        prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN)
+    });
     let refused = match outcome {
         Err(_) => true,
         Ok(r) => r.is_err(),
@@ -899,8 +904,9 @@ fn whole_image_fold_bound_boundary_value_mismatch_refuses() {
         .expect("a present declared cell exists");
     *bumped = Some(bumped.unwrap() + BabyBear::ONE);
 
-    let outcome =
-        std::panic::catch_unwind(|| prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN));
+    let outcome = std::panic::catch_unwind(|| {
+        prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN)
+    });
     let refused = match outcome {
         Err(_) => true,
         Ok(r) => r.is_err(),

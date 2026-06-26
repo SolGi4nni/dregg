@@ -66,6 +66,7 @@ pub mod multi_group;
 pub mod optimistic_fire;
 pub mod persistence;
 pub mod queue_endpoint;
+pub mod reactor;
 pub mod rehydration;
 pub mod ring_trade;
 pub mod scaffold;
@@ -142,8 +143,18 @@ pub use dregg_cell::CapabilityRef;
 // userspace layer (no `Effect::Invoke`, no cell-commitment dependency — the
 // interface is resolved in userspace and resolves to existing effects).
 pub use invoke::{
-    invoke, invoke_with_descriptor, resolve_against, resolve_invocation, InterfaceRegistry,
-    InvokeAuthority, InvokeRefused,
+    InterfaceRegistry, InvokeAuthority, InvokeRefused, invoke, invoke_with_descriptor,
+    resolve_against, resolve_invocation,
+};
+
+// The reactive twin of `invoke()`: a service DECLARES what cells/ops it watches
+// (a `ReceiptFilter`) + how it reacts (an observed on-chain op → a reaction
+// turn), and the framework wires the match → cap-gate → build → sign. The
+// on-chain agent-loop made first-class. No kernel `Effect::React` — a reaction
+// desugars to ordinary effects, exactly as `invoke` desugars a command.
+pub use reactor::{
+    ObservedReceipt, ReactRefused, ReactionPlan, Reactor, ReceiptFilter, WatchCells, WatchMethods,
+    plan_reaction, react, react_build, react_to_stream,
 };
 
 // Re-export the SDK cipherclerk at the framework root so applications

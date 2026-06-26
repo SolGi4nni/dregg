@@ -41,18 +41,10 @@ use std::process::Command;
 // non-Windows they return exactly `"ar"`/`"nm"`/`"ranlib"`, so the unix paths are
 // byte-identical to before. See `windows_gnu_link_env` for the matching link arm.
 fn ar_tool() -> &'static str {
-    if cfg!(windows) {
-        "llvm-ar"
-    } else {
-        "ar"
-    }
+    if cfg!(windows) { "llvm-ar" } else { "ar" }
 }
 fn nm_tool() -> &'static str {
-    if cfg!(windows) {
-        "llvm-nm"
-    } else {
-        "nm"
-    }
+    if cfg!(windows) { "llvm-nm" } else { "nm" }
 }
 /// `ranlib` regenerates an archive's symbol index. `llvm-ar` writes the index on
 /// every `rcs`/`r` op (and `llvm-ranlib` may not be on PATH), so on Windows we run
@@ -355,33 +347,35 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         let next = std::sync::atomic::AtomicUsize::new(0);
         std::thread::scope(|scope| {
             for _ in 0..ncpu {
-                scope.spawn(|| loop {
-                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let Some((c, obj)) = jobs_ref.get(i) else {
-                        break;
-                    };
-                    // `-fPIC` so the spliced objects are position-independent: the SAME archive
-                    // then serves both link modes (static bins AND the `DREGG_LEAN_LINK=shared`
-                    // cdylib link, e.g. the sdk-py pyo3 module). No-op on macOS (PIC is the
-                    // default); on Linux it guards against a leanc default change (leanc
-                    // currently compiles PIC there too — Lean plugins are dlopen'd).
-                    let status = Command::new("lake")
-                        .args(["env", "leanc", "-c", "-fPIC", "-I"])
-                        .arg(&inc)
-                        .arg(c)
-                        .arg("-o")
-                        .arg(obj)
-                        .current_dir(meta)
-                        .status();
-                    let ok = matches!(status, Ok(s) if s.success());
-                    if !ok {
-                        // Drop a stale/partial object so the next build retries this `.c`.
-                        let _ = std::fs::remove_file(obj);
-                        failed.store(true, std::sync::atomic::Ordering::SeqCst);
-                        println!(
-                            "cargo:warning=dregg-lean-ffi: leanc failed on {}",
-                            c.display()
-                        );
+                scope.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let Some((c, obj)) = jobs_ref.get(i) else {
+                            break;
+                        };
+                        // `-fPIC` so the spliced objects are position-independent: the SAME archive
+                        // then serves both link modes (static bins AND the `DREGG_LEAN_LINK=shared`
+                        // cdylib link, e.g. the sdk-py pyo3 module). No-op on macOS (PIC is the
+                        // default); on Linux it guards against a leanc default change (leanc
+                        // currently compiles PIC there too — Lean plugins are dlopen'd).
+                        let status = Command::new("lake")
+                            .args(["env", "leanc", "-c", "-fPIC", "-I"])
+                            .arg(&inc)
+                            .arg(c)
+                            .arg("-o")
+                            .arg(obj)
+                            .current_dir(meta)
+                            .status();
+                        let ok = matches!(status, Ok(s) if s.success());
+                        if !ok {
+                            // Drop a stale/partial object so the next build retries this `.c`.
+                            let _ = std::fs::remove_file(obj);
+                            failed.store(true, std::sync::atomic::Ordering::SeqCst);
+                            println!(
+                                "cargo:warning=dregg-lean-ffi: leanc failed on {}",
+                                c.display()
+                            );
+                        }
                     }
                 });
             }
@@ -1374,8 +1368,7 @@ fn main() {
     // OPT-IN runtime trim. rerun-if-env-changed so toggling it re-runs build.rs (and re-derives the
     // trimmed archive / restores the full link).
     println!("cargo:rerun-if-env-changed=DREGG_LEAN_FFI_RUNTIME_TRIM");
-    let runtime_trim_requested =
-        std::env::var("DREGG_LEAN_FFI_RUNTIME_TRIM").as_deref() == Ok("1");
+    let runtime_trim_requested = std::env::var("DREGG_LEAN_FFI_RUNTIME_TRIM").as_deref() == Ok("1");
 
     // Resolve the toolchain + metatheory location up front so we can both (a) refresh the archive
     // from the Lean source when it changed and (b) drive the link below. `lean_sysroot()` honours

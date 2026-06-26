@@ -72,7 +72,10 @@ impl RopeDoc {
     /// Adopt an existing patch [`History`] as a rope-document (e.g. one loaded
     /// from the substrate, or a peer's branch to render in the editor).
     pub fn from_history(history: History, g: Granularity) -> Self {
-        RopeDoc { history, granularity: g }
+        RopeDoc {
+            history,
+            granularity: g,
+        }
     }
 
     /// THE fold -> rope direction: materialize the current document content (the
@@ -243,7 +246,10 @@ mod tests {
         // The commit happens, but the diff is empty (no atoms touched).
         assert_eq!(d.rope().to_string(), "stable\n");
         let last = d.history().patches().last().unwrap();
-        assert!(last.ops.is_empty(), "an unchanged rope yields an empty patch");
+        assert!(
+            last.ops.is_empty(),
+            "an unchanged rope yields an empty patch"
+        );
         assert_eq!(d.history().len(), before + 1);
     }
 
@@ -316,7 +322,10 @@ mod tests {
 
         let merged = merge(&a.history().replay(), &b.history().replay());
         let r = content(&merged);
-        assert!(r.has_conflict(), "concurrent tail edits are a conflict STATE");
+        assert!(
+            r.has_conflict(),
+            "concurrent tail edits are a conflict STATE"
+        );
         // The conflict is a first-class object carrying both alternatives + who
         // wrote each — inspectable, not a `<<<<<<<` text wound.
         let region = r.conflicts().next().expect("a conflict region exists");
@@ -398,8 +407,11 @@ mod tests {
         let r2 = m2.merge_branch(&e);
         assert!(r2.has_conflict(), "concurrent tail edits clash");
         let region = r2.conflicts().next().unwrap();
-        let authors: Vec<Author> =
-            region.alternatives.iter().map(|a| a.provenance.author).collect();
+        let authors: Vec<Author> = region
+            .alternatives
+            .iter()
+            .map(|a| a.provenance.author)
+            .collect();
         assert!(authors.contains(&Author(1)) && authors.contains(&Author(2)));
     }
 

@@ -271,7 +271,10 @@ fn walk(g: &DocGraph, from: AtomId, visited: &mut BTreeSet<AtomId>, out: &mut Ve
                 for &head in &antichain {
                     let mut branch = Vec::new();
                     let mut bvisited = visited.clone();
-                    let prov = g.atom(head).map(|a| a.provenance).unwrap_or(Provenance::GENESIS);
+                    let prov = g
+                        .atom(head)
+                        .map(|a| a.provenance)
+                        .unwrap_or(Provenance::GENESIS);
                     if bvisited.insert(head) {
                         if let Some(a) = g.atom(head) {
                             branch.push(Segment::Clean(a.content.clone()));

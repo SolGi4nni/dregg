@@ -242,7 +242,7 @@ impl ChatSource for CommsPdSource {
                 None => {
                     return Err(deos_matrix::Error::Other(
                         "rehydrated fork is empty — nothing to drive".into(),
-                    ))
+                    ));
                 }
             }
         };

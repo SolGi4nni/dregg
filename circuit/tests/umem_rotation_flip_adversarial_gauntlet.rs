@@ -161,7 +161,10 @@ fn real_cohort_trace() -> (BTreeMap<UKey, UVal>, Vec<UmemOp>, [u8; 32]) {
     };
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "the cohort turn must commit: {result:?}");
+    assert!(
+        result.is_committed(),
+        "the cohort turn must commit: {result:?}"
+    );
     let (_, receipt, _) = result.unwrap_committed();
 
     let witness = executor
@@ -258,8 +261,11 @@ fn lower(pre: &BTreeMap<UKey, UVal>, ops: &[UmemOp]) -> Lowered {
     let mut domains: Vec<u32> = lowering.addr.values().map(|(d, _)| *d).collect();
     domains.sort();
     domains.dedup();
-    let guard_col_of: BTreeMap<u32, usize> =
-        domains.iter().enumerate().map(|(i, d)| (*d, 6 + i)).collect();
+    let guard_col_of: BTreeMap<u32, usize> = domains
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (*d, 6 + i))
+        .collect();
     let width = 6 + domains.len();
 
     let constraints: Vec<VmConstraint2> = domains
@@ -310,11 +316,17 @@ fn lower(pre: &BTreeMap<UKey, UVal>, ops: &[UmemOp]) -> Lowered {
         rows.push(vec![BabyBear::ZERO; width]);
     }
 
-    let mut addrs: Vec<(UKey, (u32, u32))> =
-        lowering.addr.iter().map(|(k, df)| (k.clone(), *df)).collect();
+    let mut addrs: Vec<(UKey, (u32, u32))> = lowering
+        .addr
+        .iter()
+        .map(|(k, df)| (k.clone(), *df))
+        .collect();
     addrs.sort_by_key(|(_, (d, f))| (*d, *f));
     let boundary = UMemBoundaryWitness {
-        addrs: addrs.iter().map(|(_, (d, f))| (*d, BabyBear::new(*f))).collect(),
+        addrs: addrs
+            .iter()
+            .map(|(_, (d, f))| (*d, BabyBear::new(*f)))
+            .collect(),
         init_vals: addrs
             .iter()
             .map(|(k, _)| {

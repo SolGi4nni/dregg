@@ -40,6 +40,11 @@ pub mod deos_surface;
 // turn the Discord command would, records the SAME activity, and can reflect it to
 // Discord — desktop + Discord as two faces of one dregg-driven bot.
 pub mod deos_drive;
+// The bot as a CHAIN-REACTOR: the desktop submits a command turn to the on-chain
+// command cell; the bot's `app_framework::Reactor` WATCHES that cell + reacts with
+// its custodial turn. The on-chain replacement for the `/api/op` HTTP command
+// path — the chain is the message bus, the bot is the reactor.
+pub mod bot_reactor;
 mod devnet;
 pub mod discord_caps;
 mod embeds;
@@ -255,6 +260,12 @@ impl EventHandler for Handler {
 
         // Start the activity feed background task.
         activity_feed::start(self.state.clone(), ctx.http.clone());
+
+        // Start the on-chain command reactor: watch the command cell + react to
+        // desktop-submitted command turns (the on-chain replacement for the
+        // `/api/op` HTTP command path). The bot is a chain-reactor, not an
+        // endpoint the desktop pokes.
+        bot_reactor::start(self.state.clone(), ctx.http.clone());
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {

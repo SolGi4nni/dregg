@@ -2462,7 +2462,13 @@ impl Cockpit {
         let result = {
             let mut w = self.world.borrow_mut();
             let se = ServiceExplorer::build(&w, focus, focus, dregg_cell::AuthRequired::Either);
-            se.invoke(&mut w, symbol, args, effects, dregg_cell::AuthRequired::Either)
+            se.invoke(
+                &mut w,
+                symbol,
+                args,
+                effects,
+                dregg_cell::AuthRequired::Either,
+            )
         };
         self.service_explorer_outcome = Some(match result {
             InvokeOutcome::Committed { receipt, .. } => format!(
@@ -2477,7 +2483,11 @@ impl Cockpit {
             } => format!(
                 "REFUSED invoke {} ({}): {reason}",
                 reflect::short_hex(&symbol),
-                if by_executor { "executor" } else { "front-door" }
+                if by_executor {
+                    "executor"
+                } else {
+                    "front-door"
+                }
             ),
         });
         self.refresh_cells();

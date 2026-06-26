@@ -61,9 +61,9 @@ pub struct AttestedHistoryView {
     pub genesis_root: u32,
     /// The final state root — the genuine fold of the whole history (decimal felt).
     pub final_root: u32,
-    /// The running digest committing to the ORDERED `(old_root, new_root)` pairs
-    /// (decimal felt) — distinct histories with the same endpoints still differ.
-    pub chain_digest: u32,
+    /// The multi-felt Poseidon2 digest committing to the ORDERED `(old_root, new_root)`
+    /// pairs (decimal felts) — distinct histories with the same endpoints still differ.
+    pub chain_digest: Vec<u32>,
     /// How many finalized turns the attested history folds. The light client
     /// learns ALL of them executed correctly without seeing any.
     pub num_turns: usize,
@@ -101,7 +101,7 @@ pub fn light_client_demo(k: usize, step: u64) -> Result<JsValue, JsError> {
         attested: true,
         genesis_root: attested.genesis_root.as_u32(),
         final_root: attested.final_root.as_u32(),
-        chain_digest: attested.chain_digest.as_u32(),
+        chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
         num_turns: attested.num_turns,
         engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
         named_floor: "named floor: recursive_sound (FRI engine soundness) + the two \
@@ -173,7 +173,7 @@ pub fn verify_history_against_anchor(
                 attested: true,
                 genesis_root: attested.genesis_root.as_u32(),
                 final_root: attested.final_root.as_u32(),
-                chain_digest: attested.chain_digest.as_u32(),
+                chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
                 num_turns: attested.num_turns,
                 engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
                 named_floor: "verified against a CONFIG-SUPPLIED anchor (not self-anchored): \
@@ -191,7 +191,7 @@ pub fn verify_history_against_anchor(
                 attested: false,
                 genesis_root: 0,
                 final_root: 0,
-                chain_digest: 0,
+                chain_digest: Vec::new(),
                 num_turns: 0,
                 engine: "recursive-stark (plonky3 fork)".to_string(),
                 named_floor: format!(
@@ -241,8 +241,8 @@ pub struct ExternalHistoryEnvelope {
     pub genesis_root: u32,
     /// Carried public commitment: the final state root (decimal felt).
     pub final_root: u32,
-    /// Carried public commitment: the ordered-history digest (decimal felt).
-    pub chain_digest: u32,
+    /// Carried public commitment: the multi-felt ordered-history digest (decimal felts).
+    pub chain_digest: Vec<u32>,
     /// Carried public commitment: how many finalized turns the aggregate folds.
     pub num_turns: usize,
 }
@@ -312,7 +312,7 @@ pub fn verify_devnet_history(
             attested: false,
             genesis_root: env.genesis_root,
             final_root: env.final_root,
-            chain_digest: env.chain_digest,
+            chain_digest: env.chain_digest.clone(),
             num_turns: env.num_turns,
             engine: "recursive-stark (plonky3 fork)".to_string(),
             named_floor: format!(
@@ -331,7 +331,7 @@ pub fn verify_devnet_history(
             attested: false,
             genesis_root: env.genesis_root,
             final_root: env.final_root,
-            chain_digest: env.chain_digest,
+            chain_digest: env.chain_digest.clone(),
             num_turns: env.num_turns,
             engine: "recursive-stark (plonky3 fork)".to_string(),
             named_floor: "REFUSED: the envelope carries no proof_bytes — the anchor discipline \
@@ -355,7 +355,7 @@ pub fn verify_devnet_history(
                 attested: true,
                 genesis_root: attested.genesis_root.as_u32(),
                 final_root: attested.final_root.as_u32(),
-                chain_digest: attested.chain_digest.as_u32(),
+                chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
                 num_turns: attested.num_turns,
                 engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
                 named_floor: "verified OVER THE WIRE against a CONFIG-supplied anchor: the byte \
@@ -372,7 +372,7 @@ pub fn verify_devnet_history(
                 attested: false,
                 genesis_root: env.genesis_root,
                 final_root: env.final_root,
-                chain_digest: env.chain_digest,
+                chain_digest: env.chain_digest.clone(),
                 num_turns: env.num_turns,
                 engine: "recursive-stark (plonky3 fork)".to_string(),
                 named_floor: format!(
@@ -409,7 +409,7 @@ pub fn produce_external_history_envelope(k: usize, step: u64) -> Result<String, 
         proof_bytes_b64,
         genesis_root: agg.genesis_root.as_u32(),
         final_root: agg.final_root.as_u32(),
-        chain_digest: agg.chain_digest.as_u32(),
+        chain_digest: agg.chain_digest.iter().map(|d| d.as_u32()).collect(),
         num_turns: agg.num_turns,
     };
     serde_json::to_string(&env)
@@ -591,7 +591,7 @@ mod tests {
             proof_bytes_b64: String::new(),
             genesis_root: 11,
             final_root: 22,
-            chain_digest: 33,
+            chain_digest: vec![33, 0, 0, 0],
             num_turns: 4,
         };
         let json = serde_json::to_string(&env).unwrap();
@@ -600,11 +600,11 @@ mod tests {
         assert_eq!(back.vk_fingerprint_hex, "ab".repeat(32));
         assert_eq!(back.genesis_root, 11);
         assert_eq!(back.final_root, 22);
-        assert_eq!(back.chain_digest, 33);
+        assert_eq!(back.chain_digest, vec![33, 0, 0, 0]);
         assert_eq!(back.num_turns, 4);
         // proof_bytes_b64 is `#[serde(default)]` — an envelope omitting it parses.
         let minimal = r#"{"version":1,"vk_fingerprint_hex":"00","genesis_root":0,
-            "final_root":0,"chain_digest":0,"num_turns":2}"#;
+            "final_root":0,"chain_digest":[0,0,0,0],"num_turns":2}"#;
         let m: ExternalHistoryEnvelope = serde_json::from_str(minimal).unwrap();
         assert!(
             m.proof_bytes_b64.is_empty(),
@@ -626,7 +626,7 @@ mod tests {
             proof_bytes_b64: b64.clone(),
             genesis_root: 7,
             final_root: 9,
-            chain_digest: 13,
+            chain_digest: vec![13, 0, 0, 0],
             num_turns: 3,
         };
         let json = serde_json::to_string(&env).unwrap();

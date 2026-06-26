@@ -53,7 +53,8 @@
 use crate::patch::Patch;
 use crate::substrate::to_heap_map as project_graph;
 use dregg_cell::{
-    AuthRequired, Cell, CellId, Ledger, Permissions, STATE_SLOTS, compute_canonical_state_commitment,
+    AuthRequired, Cell, CellId, Ledger, Permissions, STATE_SLOTS,
+    compute_canonical_state_commitment,
 };
 use dregg_turn::{
     ActionBuilder, ComputronCosts, Effect, TurnBuilder, TurnError, TurnExecutor, TurnReceipt,
@@ -207,7 +208,8 @@ impl ExecutorDrivenDoc {
         //    the region's open `set_state` passes the turn-level auth, and the
         //    per-region CAP gate (cross-cell `check_cross_cell_permission`) is
         //    the real enforcement at effect-application.
-        let mut action = ActionBuilder::new_unchecked_for_tests(self.region, "doc_edit", self.editor);
+        let mut action =
+            ActionBuilder::new_unchecked_for_tests(self.region, "doc_edit", self.editor);
         for e in &effects {
             action = action.effect(e.clone());
         }
@@ -396,7 +398,10 @@ mod tests {
 
         let pre = doc.state_commitment();
         let receipt = doc
-            .edit(Patch::by(crate::Author(1), [add(1, "Hello, ", AtomId::ROOT)]))
+            .edit(Patch::by(
+                crate::Author(1),
+                [add(1, "Hello, ", AtomId::ROOT)],
+            ))
             .expect("authorized edit commits");
 
         // THE FINALITY UPGRADE: the executor's single-node commit yields a REAL
@@ -431,7 +436,10 @@ mod tests {
         let pre = doc.state_commitment();
 
         let err = doc
-            .edit(Patch::by(crate::Author(1), [add(1, "Hello, ", AtomId::ROOT)]))
+            .edit(Patch::by(
+                crate::Author(1),
+                [add(1, "Hello, ", AtomId::ROOT)],
+            ))
             .expect_err("an editor without the region cap is refused");
 
         match err {
@@ -499,7 +507,10 @@ mod tests {
         // register file.
         let cell = doc.region_cell();
         assert!(
-            cell.state.fields_map.keys().any(|&k| k >= STATE_SLOTS as u64),
+            cell.state
+                .fields_map
+                .keys()
+                .any(|&k| k >= STATE_SLOTS as u64),
             "a document leaf landed in the committed fields_map the executor wrote"
         );
     }
