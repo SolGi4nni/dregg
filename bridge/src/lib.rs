@@ -36,6 +36,7 @@ pub mod delta;
 pub mod ethereum;
 pub mod midnight;
 pub mod midnight_gateway;
+pub mod midnight_inclusion;
 pub mod midnight_observer;
 pub mod midnight_verified;
 pub mod mina;

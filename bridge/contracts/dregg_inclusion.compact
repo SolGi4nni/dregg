@@ -1,0 +1,100 @@
+// =============================================================================
+// Dregg native state-INCLUSION verifier (Compact sketch)
+// =============================================================================
+//
+// See docs/deos/DIFFERENT-MIDNIGHT-BRIDGE.md.
+//
+// THE IDEA: Midnight cannot verify dregg's FRI transition proof (no STARK/FRI
+// backend, no recursion in Compact). But it CAN verify a Merkle INCLUSION
+// natively, because Compact's standard library ships `merkleTreePathRoot`
+// (Poseidon over the BLS12-381 scalar field). So this contract answers the
+// question a relying dApp actually needs — "is cell X committed at state Y under
+// a root we trust?" — without ever touching FRI.
+//
+// THE FIELD/HASH MISMATCH (why `mirrorRoot`, not dregg's own root): dregg's
+// state roots are sorted Poseidon2 over BabyBear (31-bit). `merkleTreePathRoot`
+// is Poseidon over BLS12-381 Fq (255-bit). They are different hashes over
+// different fields. Compact therefore checks inclusion against a RE-COMMITMENT
+// `mirrorRoot` — a relay-built Merkle tree over the SAME dregg cell states but
+// hashed with Midnight's own Poseidon. `mirrorRoot` is checkpointed
+// optimistically (bonded, dispute window, dregg-side watchtower backstop); the
+// inclusion check below is the part that is fully native and trustless given an
+// honest checkpoint.
+//
+// WHAT WE KNOW WORKS (from ~/midnight/midnight-docs/.../standard-library/exports.md):
+//   - MerkleTreePath<#n, T>            (struct: leaf + Vector<n, MerkleTreePathEntry>)
+//   - MerkleTreeDigest { field: Field }
+//   - merkleTreePathRoot<#n, T>(path): MerkleTreeDigest    // hashes the leaf
+//   - merkleTreePathRootNoLeafHash<#n>(path): MerkleTreeDigest  // leaf pre-hashed
+//   - transientHash<T>(value: T): Field
+//   - degradeToTransient(x: Bytes<32>): Field
+//
+// WHAT'S GATED ON TESTNET / TOOLCHAIN:
+//   - `compact compile` (not installed here) — exact stdlib signatures /
+//     MerkleTreePath construction ergonomics may need adjustment.
+//   - The dregg-side relay must build the mirror tree with the SAME Poseidon
+//     leaf/node hash this contract's merkleTreePathRoot uses (see
+//     bridge/src/midnight_inclusion.rs TODO(mirror-hash)).
+//
+// =============================================================================
+
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// Depth of the mirror Merkle tree (fixed; padded to a power of two on the relay
+// side). Pick to cover the cell population; 20 -> ~1M cells.
+const MIRROR_DEPTH: Uint<8> = 20;
+
+// The checkpointed mirror root R_mid. Sealed-after-checkpoint in a real build
+// (or updated only through the optimistic-checkpoint entry point with a bond +
+// dispute window). Here it is a plain ledger field for the sketch.
+export ledger mirrorRoot: Field;
+
+// Optional: the dregg height / epoch this mirror root commits, so a relying
+// dApp can reason about freshness.
+export ledger mirrorHeight: Uint<64>;
+
+// -----------------------------------------------------------------------------
+// Checkpoint the mirror root (optimistic). In production this is bonded and
+// dispute-gated; the sketch just records it.
+// -----------------------------------------------------------------------------
+export circuit checkpointMirrorRoot(newRoot: Field, height: Uint<64>): [] {
+  // Monotone height: never accept a stale checkpoint.
+  assert(height > mirrorHeight, "checkpoint height must advance");
+  mirrorRoot = disclose(newRoot);
+  mirrorHeight = disclose(height);
+}
+
+// -----------------------------------------------------------------------------
+// THE NATIVE INCLUSION CHECK.
+//
+// A prover submits a path whose leaf is the mirror leaf for (cellId, state).
+// We recompute the root with the native Poseidon Merkle gadget and assert it
+// equals the checkpointed mirrorRoot. No FRI, no non-native arithmetic — a
+// handful of Poseidon permutations.
+//
+// `leaf: Field` is expected to be the relay's mirror leaf, i.e.
+// transientHash([cellId_as_field, state_as_field]); the relying circuit can
+// recompute that here from disclosed (cellId, state) to bind the inclusion to
+// concrete cell/state values, then feed it as the path leaf.
+// -----------------------------------------------------------------------------
+export circuit verifyInclusion(
+  cellId: Bytes<32>,
+  state: Bytes<32>,
+  path: MerkleTreePath<MIRROR_DEPTH, Field>
+): [] {
+  // Bind the path's leaf to the concrete (cellId, state) the dApp cares about,
+  // hashed with the SAME transientHash the relay used to build the mirror tree.
+  const leaf: Field = transientHash<[Field, Field]>(
+    [degradeToTransient(cellId), degradeToTransient(state)]
+  );
+  assert(path.leaf == leaf, "path leaf must commit to (cellId, state)");
+
+  // Native Merkle re-root and compare to the checkpoint.
+  const computed: MerkleTreeDigest = merkleTreePathRoot<MIRROR_DEPTH, Field>(path);
+  assert(computed.field == mirrorRoot, "state not included under mirror root");
+
+  // On success the relying dApp may proceed: cell `cellId` genuinely holds
+  // committed `state` under the trusted mirror root.
+}
