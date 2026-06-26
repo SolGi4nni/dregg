@@ -1,20 +1,30 @@
 # starbridge-bounty-board
 
-**Escrow-backed bounties as a one-way state machine, enforced by the verified executor.**
+**Escrow-backed bounties as a one-way state machine, enforced by the verified executor — and the reference template for a modern deos app.**
 
-A poster escrows a reward and opens a bounty; a worker claims it (first-claimer-wins);
+A poster opens a bounty with an escrowed reward; a worker claims it (first-claimer-wins);
 the worker submits work; the poster pays out. Every transition is a signed turn the
-**verified executor** checks against slot-caveats baked into the bounty cell at birth —
-so a bounty cannot be stolen, replayed, re-priced, or paid twice.
+**verified executor** checks against slot-caveats installed on the bounty cell — so a
+bounty cannot be stolen, replayed, re-priced, or paid twice.
 
-This is a dregg-native app built from primitives only — `FactoryDescriptor`,
-`Effect::SetField` / `Effect::EmitEvent`, `Authorization::Signature` from
-`AppCipherclerk::make_action`, and Lane-G `StateConstraint` slot caveats. There is **no**
-domain-specific bounty `Effect`, **no** `Authorization::Unchecked`, **no** `[0u8; 64]`
-placeholder signature. It is a greenfield rebuild of the legacy `apps/bounty-board/` HTTP
-app on the dregg substrate.
+This crate is also **the worked exemplar of the unified starbridge-app template**: the
+four axes every modern deos app should follow, each demonstrated end-to-end and tested.
+Read it as the paint-by-numbers shape for the other apps.
 
-## The lifecycle, enforced by caveats (not asserted)
+## The four axes (the template)
+
+| Axis | What it is | Where | Test |
+|---|---|---|---|
+| **1. Verified core** | a `FactoryDescriptor` + `CellProgram` whose slot-caveats ARE the lifecycle rules; the executor refuses any illegal turn | `src/lib.rs` | `tests/factory_birth.rs`, `src/lib.rs::tests` |
+| **2. deos surface** | the lifecycle composed as a `DeosApp` — per-viewer projection, cap∧state gated fires, web-of-cells publish, rehydratable snapshot, manifest, generated web component | `src/lib.rs` (`bounty_app`, `register_deos`) | `tests/deos_seam.rs`, `tests/reexpress_deos_app.rs` |
+| **3. Service cell** | a typed `InterfaceDescriptor` driven through the `invoke()` front door — the lifecycle as named methods (cells-as-service-objects) | `src/service.rs` | `tests/service.rs` |
+| **4. deos-view card** | the UI as a renderer-independent `deos.ui.*` view-tree (native gpui / web HTML / discord — one piece of data) | `src/card.rs` | `src/card.rs::tests` |
+
+These compose: the SAME `bounty_cell_program()` backs all four, so the same caveats bite
+whether a turn arrives as a raw `build_*_action`, a gated `DeosApp` fire, or an `invoke()`
+method call. Soundness lives in the verified core (axis 1); axes 2–4 are faces onto it.
+
+## Axis 1 — the lifecycle, enforced by caveats (not asserted)
 
 Each bounty lives in a sovereign cell whose state machine is its installed `CellProgram`:
 
@@ -34,70 +44,109 @@ OPEN ──claim──▶ CLAIMED ──submit──▶ SUBMITTED ──payout�
 to a **strictly greater** code, re-writing the same code is rejected. That single caveat
 gives no-double-claim, no-re-open, and no-double-payout for free.
 
+It is built from dregg primitives only — `FactoryDescriptor`, `Effect::SetField` /
+`Effect::EmitEvent`, `Authorization::Signature` from `AppCipherclerk::make_action`, and
+`StateConstraint` slot caveats. There is **no** domain-specific bounty `Effect`, **no**
+`Authorization::Unchecked`, **no** placeholder signature.
+
+## Axis 2 — the deos surface (`bounty_app` / `register_deos`)
+
+The lifecycle composed as a `DeosApp`: `view_bounty` is a cap-only read; `claim` /
+`submit` / `payout` are **gated** affordances carrying a live-state precondition (the cell
+is in exactly the state the op advances FROM), so a worker sees `claim` LIT on an OPEN
+bounty and DARK the instant it is claimed (the htmx tooth). The fire is a real verified
+turn the executor re-enforces the full program on. `register_deos(ctx)` seeds the cell and
+mounts the whole axum surface (per-viewer projection, `/manifest`, `/surface.js`,
+`dregg://` publish, rehydratable snapshot). See `tests/deos_seam.rs` (the
+fire→full-`CellProgram` seam) and `tests/reexpress_deos_app.rs`.
+
+## Axis 3 — the service cell (`invoke()`, `src/service.rs`)
+
+The lifecycle as a first-class typed interface, driven through the `invoke()` front door
+(cells-as-service-objects — no `Effect::Invoke`, no kernel change; a method desugars to
+the ordinary verified effects it names, routed by the SAME verified DFA router the protocol
+uses):
+
+| method | semantics | auth | desugars to |
+|---|---|---|---|
+| `post(title, reward)` | Replayable | `Signature` | `SetField(TITLE, REWARD, STATE=OPEN)` |
+| `claim(claimant)` | Replayable | `Signature` | `SetField(CLAIMANT, STATE=CLAIMED)` |
+| `submit(artifact)` | Replayable | `Signature` | `SetField(SUBMISSION, STATE=SUBMITTED)` |
+| `payout()` | Replayable | `Signature` | `SetField(STATE=PAID)` |
+| `view()` | **Serviced** | `None` | — (the named OFE seam: a read, not a turn) |
+
+```rust
+use starbridge_bounty_board::service::BountyService;
+use dregg_app_framework::InvokeAuthority;
+
+let svc = BountyService::new(bounty_cell);
+let turn = svc.claim(&cclerk, "bob", InvokeAuthority::Signature)?; // routed + cap-gated + signed
+executor.submit_turn(&turn)?;                                      // the executor re-enforces the program
+```
+
+The cap-gate bites twice (at the front door AND the executor); a competing second `claim`
+is an executor refusal (`WriteOnce(CLAIMANT)`); `view` refuses to desugar (it names the
+serviced seam honestly). Register the interface with `service::register_interface(&mut
+registry, cell)` so the Service Explorer resolves the real `Signature`/`Serviced` shape.
+
+## Axis 4 — the deos-view card (`src/card.rs`)
+
+The app's UI as a renderer-independent `deos.ui.*` view-tree: a `vstack` of a header, a
+live `bind` on `STATE_SLOT` (re-reads the lifecycle off the ledger), and one `button` per
+lifecycle method carrying its `onClick = {turn, arg}` (the button `turn` names ARE the
+service method symbols). The SAME tree renders three ways via `deos-view` — native gpui
+pixels, a browser-loadable HTML document, and a discord embed.
+
+```rust
+let card_json = starbridge_bounty_board::card::bounty_card_json(); // serializable deos.ui.* JSON
+```
+
+The card is pure `serde_json` data (no dependency on the `deos-view` renderer crate, which
+pulls the mozjs + gpui elephants and is a standalone excluded workspace). The deos world's
+renderers consume the JSON; this crate owns the card definition and proves it well-formed.
+
 ## What this crate exports
 
 ```rust
-bounty_factory_descriptor() -> FactoryDescriptor   // the constructor-transparency contract
-bounty_cell_program()       -> CellProgram         // the installed state machine
-factory_descriptors()       -> Vec<FactoryDescriptor>
+// Axis 1 — verified core
+bounty_factory_descriptor() -> FactoryDescriptor
+bounty_cell_program()       -> CellProgram
+build_post_action / build_claim_action / build_submit_action / build_payout_action
+register(ctx: &StarbridgeAppContext) -> [u8; 32]   // mount factory + inspector + deos surface
 
-// turn-builders — each carries a real Ed25519 signature from the cclerk
-build_post_action(cclerk,   bounty_cell, title, reward)
-build_claim_action(cclerk,  bounty_cell, claimant)
-build_submit_action(cclerk, bounty_cell, artifact_uri)
-build_payout_action(cclerk, bounty_cell)
+// Axis 2 — deos surface
+bounty_app(cclerk, executor) -> DeosApp
+register_deos(ctx) -> DeosApp                       // seed + mount the composed surface
+fire_claim / fire_submit / fire_payout
 
-register(ctx: &StarbridgeAppContext) -> [u8; 32]   // mount factory + inspector
+// Axis 3 — service cell
+service::BountyService                              // .post / .claim / .submit / .payout / .view
+service::interface_descriptor() / service::register_interface(...)
+
+// Axis 4 — deos-view card
+card::bounty_card_value() -> serde_json::Value
+card::bounty_card_json()  -> String
 ```
-
-## Running it against a node
-
-The canonical embedded-node path (no external services) — drive the whole lifecycle and
-watch the executor refuse the hostile turns:
-
-```rust
-use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, EmbeddedExecutor, CellMode};
-use dregg_cell::FactoryCreationParams;
-use starbridge_bounty_board::*;
-
-let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0x62u8; 32]);
-let exec = EmbeddedExecutor::new(&cclerk, "default");
-exec.deploy_factory(bounty_factory_descriptor());
-
-// fund the agent, birth a bounty cell from the factory, grant the owner cap …
-// then:
-exec.submit_action(&cclerk, build_post_action(&cclerk,   bounty, "fix the bug", 500))?;
-exec.submit_action(&cclerk, build_claim_action(&cclerk,  bounty, "bob"))?;
-exec.submit_action(&cclerk, build_submit_action(&cclerk, bounty, "ipfs://artifact"))?;
-exec.submit_action(&cclerk, build_payout_action(&cclerk, bounty))?;
-```
-
-`tests/factory_birth.rs` is the runnable, self-contained version of exactly this flow
-(birth → full lifecycle → adversarial refusals).
-
-In a federation deployment, `register(ctx)` mounts the factory on a
-`StarbridgeAppContext`; the in-browser `DreggRuntime` then resolves
-`window.dregg.createFromFactory(BOUNTY_FACTORY_VK, owner_pk, token)` against the host's
-descriptor service, and the JS inspector (`inspectors.js`, component `<dregg-bounty>`)
-renders the per-cell state machine.
 
 ## Tests
-
-| Test | Surface | What it pins |
-|---|---|---|
-| `src/lib.rs::tests::*` | `CellProgram::evaluate` directly | descriptor shape + every slot caveat in isolation (legal post/claim, double-claim, claimant theft, reward change, state regression) |
-| `tests/factory_birth.rs::factory_born_bounty_runs_the_whole_lifecycle` | **the real executor** | birth → `post → claim → submit → payout` all ACCEPTED; post-state reads back exactly |
-| `tests/factory_birth.rs::..._refuses_theft_replay_and_reward_tampering` | **the real executor** | claimant theft / re-claim replay / reward chiseling all REFUSED; state survives |
-| `tests/factory_birth.rs::..._refuses_state_regression_and_double_payout` | **the real executor** | a PAID bounty refuses re-open and double-payout |
 
 ```sh
 cargo test -p starbridge-bounty-board
 ```
 
+| Test | Surface | What it pins |
+|---|---|---|
+| `src/lib.rs::tests::*` | `CellProgram::evaluate` directly | descriptor shape + every slot caveat in isolation |
+| `src/service.rs::tests` | the `invoke()` builder | typed interface shape + front-door refusals |
+| `src/card.rs::tests` | the view-tree | the card is a well-formed `deos.ui.*` tree whose buttons carry the service methods |
+| `tests/factory_birth.rs` | **the real executor** | birth → full lifecycle accepted; theft / replay / re-price / re-open / double-payout REFUSED |
+| `tests/service.rs` | **the real executor** | the lifecycle through `invoke()`: authorized commit, front-door cap-gate, executor re-enforcement, serviced seam |
+| `tests/deos_seam.rs` | **the real executor** | the gated fires + the fire→full-`CellProgram` seam |
+| `tests/reexpress_deos_app.rs` | the axum surface | per-viewer projection, web-of-cells publish, rehydration, manifest, web component |
+
 ## See also
 
-- `../nameservice/README.md` — the anchor starbridge-app and paint-by-numbers exemplar.
-- `../tool-access-delegation/` — sibling app; the factory-birth test pattern this crate's
-  `tests/factory_birth.rs` follows.
-- `../../HORIZONLOG.md` — `APPS-POLISH` follow-ups (escrow-balance binding; userspace-verify
-  integration).
+- `../kvstore/`, `../escrow-market/src/service.rs` — the other `invoke()` service-cell exemplars (axis 3).
+- `../../deos-view/` — the card renderers (native / web / discord); `docs/reference/deos-view.md`.
+- `../../docs/deos/DEOS-APPS.md` — the deos app model and the rebuild plan.
+- `../../docs/guide/` — the learn-by-example guide this app set is tied to.

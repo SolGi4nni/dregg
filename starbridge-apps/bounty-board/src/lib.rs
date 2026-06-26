@@ -61,6 +61,19 @@ use dregg_app_framework::{
     field_from_u64, hex_encode_32, symbol,
 };
 
+// The four modern app-framework axes this app demonstrates (the unified template):
+//   - the FactoryDescriptor + DeosApp composition surface (this file: `bounty_app`,
+//     `register_deos`, the gated lifecycle fires — the deos-seam, `tests/deos_seam.rs`);
+//   - the SERVICE-CELL `invoke()` front door (typed `InterfaceDescriptor` + method
+//     dispatch over the lifecycle — `service`, `tests/service.rs`);
+//   - the deos-view CARD (a renderer-independent `deos.ui.*` view-tree — `card`).
+
+/// The deos-view CARD: the app's UI as a renderer-independent `deos.ui.*` view-tree.
+pub mod card;
+/// The CELLS-AS-SERVICE-OBJECTS face: a typed `InterfaceDescriptor` + `invoke()`
+/// method dispatch over the bounty lifecycle.
+pub mod service;
+
 // =============================================================================
 // Bounty-cell state schema
 // =============================================================================
