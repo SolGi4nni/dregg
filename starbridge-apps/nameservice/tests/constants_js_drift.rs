@@ -1,26 +1,13 @@
-//! Drift guard: `pages/constants.generated.js` must match what
-//! `starbridge_nameservice::web_constants()` renders.
+//! Guard: `web_constants()` agrees with the crate's `pub const` slot layout.
 //!
-//! This is the anti-drift bridge between the Rust source of truth (the
-//! `pub const *_SLOT`, the `symbol("…")` topics, `NAME_FACTORY_VK`) and the web
-//! pages that consume them. If a slot index, topic name, or factory-vk changes
-//! in `src/lib.rs` but the generated JS is not regenerated, this test fails with
-//! the first differing line.
-//!
-//! Regenerate with:
-//!   cargo run -p starbridge-nameservice --example constants_generator
+//! The legacy `pages/` web bundle (and its `constants.generated.js` drift guard)
+//! has been retired — the app's surface is now the renderer-independent deos-view
+//! CARD (`src/card.rs`). [`web_constants`](starbridge_nameservice::web_constants)
+//! is kept as the canonical, source-of-truth constants module; this test pins it
+//! to the executor's slot layout so a copy/paste error in `web_constants()` is
+//! still caught.
 
-use std::path::Path;
-
-#[test]
-fn constants_js_is_in_sync_with_rust_source_of_truth() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("pages/constants.generated.js");
-    starbridge_nameservice::web_constants().assert_matches_file(&path);
-}
-
-/// The generated slot values agree with the crate's `pub const`s — a redundant
-/// but cheap belt-and-suspenders check that the generator wires the right
-/// constants (so a copy/paste error in `web_constants()` is caught too).
+/// The constants module's slot values agree with the crate's `pub const`s.
 #[test]
 fn web_constants_slots_match_pub_consts() {
     let m = starbridge_nameservice::web_constants();

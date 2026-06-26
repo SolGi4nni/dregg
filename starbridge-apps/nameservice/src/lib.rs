@@ -95,6 +95,11 @@ use dregg_app_framework::{
 /// [`service`] for the second worked citizen after `starbridge-kvstore`.
 pub mod service;
 
+/// The deos-view CARD: the app's UI as a renderer-independent `deos.ui.*`
+/// view-tree (pure `serde_json`, no `deos-view` dep). The button `turn` names ARE
+/// the [`service`] method vocabulary — one card, three renderers, one registry.
+pub mod card;
+
 // =============================================================================
 // State schema (per-registry-cell field-slot layout)
 // =============================================================================
@@ -952,14 +957,15 @@ fn field_to_u64(f: &FieldElement) -> u64 {
 /// and reach `ctx.cipherclerk()`, `ctx.executor()`, or
 /// `ctx.factory_registry()` uniformly across all starbridge-apps
 /// mounted on the same host.
-/// The canonical web-constants module for this app — the single source of
-/// truth the `pages/constants.generated.js` file is rendered from.
+/// The canonical web-constants module for this app — a single source of truth
+/// for the slot indices, factory-vk, and event topics.
 ///
 /// Every value here is read from this crate's `pub const`s (slot indices,
-/// factory-vk) and `symbol(..)` topic strings, so the generated JS cannot drift
-/// from the executor's slot layout / event vocabulary. The
-/// `constants_generator` example renders this to `pages/constants.generated.js`;
-/// the `constants_js_is_in_sync` test fails if that file is stale.
+/// factory-vk) and `symbol(..)` topic strings, so any consumer cannot drift from
+/// the executor's slot layout / event vocabulary. The `web_constants_slots_match_pub_consts`
+/// test (`tests/constants_js_drift.rs`) pins it to the `pub const`s. (The legacy
+/// `pages/` web bundle has been retired in favour of the deos-view CARD,
+/// `src/card.rs`.)
 pub fn web_constants() -> ConstantsModule {
     ConstantsModule::new("nameservice")
         .slot("NAME_HASH_SLOT", NAME_HASH_SLOT as u64)

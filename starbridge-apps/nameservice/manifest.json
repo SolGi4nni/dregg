@@ -6,7 +6,7 @@
   "factory_vks": [
     "737461726272696467652d6e616d65736572766963652d666163746f72792121"
   ],
-  "page": "/starbridge-apps/nameservice/pages/index.html",
+  "page": null,
   "inspectors": [
     "dregg-name",
     "dregg-name-registry",
