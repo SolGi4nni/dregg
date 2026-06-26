@@ -34,6 +34,61 @@ gives us:
 
 ---
 
+## Reassessment (2026-06-26): the verified circuit is done — what does it enable?
+
+The deployed circuit now carries a verified full-fidelity bridge-action AIR
+(`dregg_circuit::bridge_action_air`), wrapped by `bridge/src/action_binding.rs`
+and threaded into the cross-chain message by `bridge/src/midnight_verified.rs`
+(`VerifiedDreggToMidnight`). With that done, the question is whether a *stronger*
+interop than optimistic-1-of-N is now reachable. Grounded answer, from reading
+`~/midnight/{midnight-zk,midnight-ledger,midnight-architecture,compact}`:
+
+**Direct proof-carrying onto Midnight is foreclosed — not by SP1, but by Midnight's
+architecture.**
+
+- Midnight's contract proof system is **Halo2 + KZG over BLS12-381** (Jubjub as the
+  in-circuit curve). `midnight-architecture/adrs/0013-proof-system.md`;
+  `midnight-ledger/CHANGELOG_transient-crypto.md` records the Pluto-Eris → BLS12-381
+  switch. There is **no STARK / FRI backend**.
+- A `ContractCall` carries a `proof: P::Proof` whose **verifier key is fixed per
+  entry point** at deployment (`midnight-ledger/spec/contracts.md`). A contract
+  **cannot verify an arbitrary foreign proof**; there is no generic in-circuit
+  proof-verification / recursion primitive exposed to Compact authors. The ZKVM /
+  field-independent-IR fallback (`proposals/0014`, `0021-ZKIR-redesign`) is an
+  in-progress draft explicitly **not targeted for mainnet**.
+- So the earlier framing — "SP1→BLS12-381 is the blocker for pure proof-system
+  interop" — understates the gap. Even *with* a BLS12-381-wrapped proof, Midnight
+  has nowhere to verify it: you would have to compile a **dregg-STARK verifier as a
+  Compact circuit** (emulating BabyBear/FRI inside BLS12-381 constraints — massive,
+  no tooling), and the result is still a Halo2 proof *of the verifier*, not a STARK
+  verified natively. That is the true cost of "Level 4", and it is years out.
+
+**What the verified circuit DOES enable now is the dregg-side fraud proof.** Because
+Midnight only ever checks the federation attestation (Level 1), the circuit proof's
+safety value is realized *entirely on the dregg side*: it is the objective,
+deterministic evidence a watchtower uses to challenge a relay/federation that
+attests to a burn the circuit never witnessed. This is what turns 2/3-threshold
+trust into 1-of-N. **The watchtower is therefore the load-bearing safety component**,
+and standing it up (below) is the highest-leverage real step — not chasing a
+proof-carrying-onto-Midnight path the target chain cannot accept.
+
+### Recommended path
+
+1. **NOW (done):** carry `VerifiedDreggToMidnight` end-to-end on the dregg wire — a
+   gateway that verifies the embedded proof on accept, and a permissionless
+   watchtower that re-verifies it to produce challenge evidence
+   (`bridge/src/midnight_gateway.rs`).
+2. **NEXT:** real Substrate RPC (subxt/jsonrpsee) for the Midnight→dregg observer
+   (`midnight_observer.rs`'s mocked `SubstrateRpcClient`) + post the attestation leg
+   to the deployed contract. Gated only on a reachable devnet node.
+3. **CONTRACT:** the live-syntax `bridge/contracts/dregg_bridge.compact`
+   (pragma 0.23, CompactStandardLibrary) is the compilation target; it already
+   substitutes a hash/Merkle-attestation check for the missing Ed25519 stdlib
+   gadget. Compilation is gated on the `compact` toolchain (not installed here).
+4. **DON'T:** pursue STARK-verified-on-Midnight / BLS12-381 wrapping as a near-term
+   goal — the chain cannot verify it and the in-circuit-STARK-verifier cost is
+   prohibitive. Revisit only if Midnight ships the ZKVM/foreign-IR fallback.
+
 ## Production Architecture: Level 1.5 (Optimistic Proof-Carrying)
 
 ### Core Idea

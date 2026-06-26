@@ -35,6 +35,7 @@ pub mod convert;
 pub mod delta;
 pub mod ethereum;
 pub mod midnight;
+pub mod midnight_gateway;
 pub mod midnight_observer;
 pub mod midnight_verified;
 pub mod mina;
@@ -59,6 +60,10 @@ pub use action_binding::{
 pub use authorize::{AuthError, authorize_with_trace};
 pub use convert::{grant_to_facts, macaroon_to_factset};
 pub use delta::attenuation_to_delta;
+pub use midnight_gateway::{
+    AcceptedEnvelope, BridgeGateway, ClaimFraud, ClaimVerdict, GatewayError, Verdict, Watchtower,
+    claim_hash,
+};
 pub use midnight_verified::{
     VerifiedBridgeError, VerifiedDreggToMidnight, commit_midnight_recipient,
 };
