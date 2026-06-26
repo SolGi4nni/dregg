@@ -17,16 +17,25 @@
 //!   the 8-felt continuity tooth (`WideChainBreak`).
 //! - `wide_welded_umem_forged_post_commit_refused` — a forged 8-felt AFTER commit (a last-8 PI) on a
 //!   WIDE welded leg no longer verifies against its welded descriptor — host admission refuses it.
+//! - `wide_welded_umem_chain_folds_recursive` — THE IN-CIRCUIT RECURSIVE WIDE FOLD
+//!   (`prove_wide_welded_umem_turn_chain_recursive_staged`): the wide welded leaves re-verify
+//!   IN-CIRCUIT and aggregate to ONE root whose exposed 8-felt segment is the whole-chain claim; it
+//!   verifies under its honest VK anchor. `#[ignore]` (minutes).
+//! - `wide_welded_umem_recursive_broken_order_rejected` — the in-circuit recursive entry refuses a
+//!   spliced out-of-order WIDE welded turn at the 8-felt continuity tooth (`WideChainBreak`).
 //!
 //! NOTE: the wide fold binds the **8-felt** anchors because the wide form RETIRES the single-felt
-//! rotated commit PIs (34/35) to zero (the 8-felt wide commit is the sole binding). The full
-//! in-circuit RECURSIVE wide fold (an 8-felt generalization of the single-felt chain-binding AIR) is
-//! a named tail beyond this staged host precursor.
+//! rotated commit PIs (34/35) to zero (the 8-felt wide commit is the sole binding). The in-circuit
+//! RECURSIVE wide fold (the 8-felt generalization of the single-felt chain-binding recursion) binds
+//! that 8-felt continuity (`prev.wide_new_root8 == next.wide_old_root8`) lane-by-lane IN-CIRCUIT at
+//! each aggregation node — the whole-history IVC over the wide+umem legs folds in-circuit, not just
+//! host-side.
 
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, TurnChainError, fold_wide_welded_umem_turn_chain_staged,
+    prove_wide_welded_umem_turn_chain_recursive_staged, verify_wide_turn_chain_recursive,
 };
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
 use dregg_turn::rotation_witness::mint_welded_wide_umem_rotated_participant_leg;
@@ -201,5 +210,80 @@ fn wide_welded_umem_forged_post_commit_refused() {
         Err(TurnChainError::TurnProofInvalid { index, .. }) => assert_eq!(index, 1),
         Ok(_) => panic!("a forged WIDE welded 8-felt post-commit must not fold"),
         Err(other) => panic!("expected TurnProofInvalid at index 1, got {other:?}"),
+    }
+}
+
+/// THE FULL IN-CIRCUIT RECURSIVE WIDE FOLD: the WIDE welded (umem-bearing) descriptor leaves
+/// re-verify IN-CIRCUIT and aggregate to ONE whole-chain root whose exposed 8-felt segment is the
+/// whole-chain claim `[genesis_root8, final_root8, num_turns, chain_digest]`, combined up the tree
+/// with the 8-felt continuity (`prev.wide_new_root8 == next.wide_old_root8`) bound IN-CIRCUIT
+/// lane-by-lane. The root verifies under its honest VK anchor — the genuine end-to-end in-circuit
+/// IVC fold over the rotated+umem WIDE form (staged; the only remaining deployment step is the gated
+/// VK epoch).
+#[test]
+#[ignore = "SLOW: real in-circuit recursion fold over WIDE welded leaves (the wide leg's 8-felt \
+            carriers + umem tables make the in-circuit re-verify HEAVIER than the narrow recursive \
+            leaf — minutes-to-tens-of-minutes; the minimal 2-turn fold already exercises leaf + the \
+            8-felt continuity combine + root + verify); run with --ignored"]
+fn wide_welded_umem_chain_folds_recursive() {
+    // The MINIMAL multi-turn in-circuit fold: 2 wide welded leaves + ONE aggregation combine (which
+    // binds the 8-felt continuity `prev.wide_new_root8 == next.wide_old_root8` lane-by-lane
+    // IN-CIRCUIT) + the root + verify — the genuine end-to-end in-circuit wide fold.
+    let (t0, _o0, _n0, o80, _n80) = make_wide_welded_turn(1000, 0, 7);
+    let (t1, _o1, _n1, _o81, n81) = make_wide_welded_turn(993, 1, 7);
+    let turns = vec![t0, t1];
+
+    let whole = prove_wide_welded_umem_turn_chain_recursive_staged(&turns).expect(
+        "a continuous 2-turn WIDE welded history must fold recursively (in-circuit, 8-felt)",
+    );
+    assert_eq!(whole.num_turns, 2);
+    assert_eq!(
+        whole.genesis_root8, o80,
+        "the in-circuit root's 8-felt genesis is the first turn's wide_old_root8"
+    );
+    assert_eq!(
+        whole.final_root8, n81,
+        "the in-circuit root's 8-felt final root is the last turn's wide_new_root8"
+    );
+    assert!(
+        whole.chain_digest.iter().any(|&x| x != BabyBear::ZERO),
+        "the tree-folded ordered-history digest is a real ~124-bit Poseidon2 commitment"
+    );
+
+    // The WIDE segment tooth: the root's exposed 8-felt segment (built by construction from the
+    // real wide descriptor leaves) must equal the carried claim under the honest VK anchor.
+    let vk = whole.root_vk_fingerprint();
+    verify_wide_turn_chain_recursive(&whole, &vk)
+        .expect("the WIDE welded whole-chain root proof must verify under its honest anchor");
+}
+
+/// THE 8-FELT CONTINUITY TOOTH (recursive entry): a WIDE welded turn whose 8-felt
+/// `wide_old_root8` does not continue the previous turn's `wide_new_root8` breaks the finalized
+/// order and is refused at the wide continuity check — before any recursion proving. (The same
+/// tooth is ALSO bound in-circuit at each aggregation node by lane-by-lane `connect`; this is the
+/// fast host-side gate that catches the splice up front.)
+#[test]
+fn wide_welded_umem_recursive_broken_order_rejected() {
+    let (t0, _o0, _n0, _, _) = make_wide_welded_turn(1000, 0, 7);
+    let (t1, _o1, _n1, _, _) = make_wide_welded_turn(993, 1, 7);
+    let (t2, _o2, _n2, _, _) = make_wide_welded_turn(986, 2, 7);
+    let mut turns = vec![t0, t1, t2];
+
+    let (foreign, _fo, _fn, foreign_old8, _foreign_new8) = make_wide_welded_turn(500, 50, 3);
+    let prev_new8 = turns[0]
+        .participant
+        .rotated
+        .wide_new_root8()
+        .expect("turn 0 carries the 8-felt anchor");
+    assert_ne!(
+        foreign_old8, prev_new8,
+        "the foreign WIDE welded turn must NOT continue the chain at the 8-felt anchor"
+    );
+    turns[1] = foreign;
+
+    match prove_wide_welded_umem_turn_chain_recursive_staged(&turns) {
+        Err(TurnChainError::WideChainBreak { index }) => assert_eq!(index, 1),
+        Ok(_) => panic!("a broken WIDE welded order must not fold recursively"),
+        Err(other) => panic!("expected WideChainBreak at index 1, got {other:?}"),
     }
 }
