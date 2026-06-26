@@ -118,13 +118,29 @@ fold; the final-poly observe; the `num_queries` query-index draws via `sampleBit
 under the grinding PoW. This is the part where a transcript bug hides; it is
 **concretely specified**, not opaque.
 
-**(c) The batch-STARK `verify_all_tables` surface.** The per-table
-degree-bits/quotient/logup-bus checks and the four NPO tables. Specified as a
-bundle of per-component Boolean checks (`FriChecks`) that the algorithm `&&`s
-together. These are **real algorithm sub-procedures carried as explicit functions
-to be specified week-by-week** — honestly scaffolded as record fields, never
-`sorry`. The transcript derivation (a, b) is concrete from day one; the
-arithmetic per-query checks are filled in subsequently.
+**(b′) The FRI query core — `merkleRecompute` + `friChainGo` + `friQueryCheck`
+(CONCRETE, landed).** The per-query FRI low-degree test is NOT an opaque check: it
+is the Poseidon2 Merkle-path recompute (fold the opened leaf up through siblings,
+branching on the index bit, compare to the layer commitment), the fold-chain (each
+layer's opening equals the value the previous layer folded to via `foldCombine beta
+x e0 e1`, bottoming out at the FRI final-poly constant under `log_final_poly_len =
+0`), and the query-position evolution (`idx/2` per layer). All specified. The
+`concreteFriChecks` bundle additionally **BINDS the query positions to the
+transcript-derived indices** — the soundness-critical link that makes Fiat-Shamir
+load-bearing (a prover cannot choose favorable query points). The Poseidon2
+`compress` and the exact arity-2 `foldCombine` (the coset `1/(2x)` twiddle) are the
+two calibration constants the fixture pins; the verifier structure around them is
+concrete Lean. The **Merkle binding tooth** `merkleRecompute_binds` is proven: under
+the Poseidon2-CR carrier (`compress` injective) the opening binds the leaf — the
+anti-forgery property. Executable `#guard` non-vacuity exercises honest-accept /
+tampered-reject / index-mismatch / wrong-count.
+
+**(c) The batch-STARK `verify_all_tables` surface (the genuine remainder).** The
+per-table degree-bits/quotient/logup-bus checks and the four NPO tables. These —
+plus the grinding PoW — are what remains as explicit `FriChecks` fields
+(`batchTables`, `queryPow`), to be specified next; honestly scaffolded as record
+fields, never `sorry`. The transcript derivation (a, b) AND the FRI query core (b′)
+are concrete; the per-table arithmetic is the remaining specification.
 
 **(d) The three teeth.** Tooth 3 (segment equality) is specified concretely now (a
 list equality). Tooth 1 (VK fingerprint) follows the doc's design — bake the VK
@@ -177,28 +193,30 @@ differential-testing trust into a refinement proof resting on the established fl
 
 This is a multi-week proof-engineering effort. Ordered by leverage:
 
-1. **(this commit) The transcript keystone + the refinement skeleton.** The
-   `Challenger` model, `deriveFri` commit-phase derivation, the `verifyAlgo`
-   skeleton with `FriChecks` bundle, the carriers as hypotheses, and `wrap_sound`
-   proven. `lake build`-green, `sorry`-free, carriers named.
+1. **(LANDED) The transcript keystone + the FRI query core + the refinement
+   skeleton.** The `Challenger` model + `observeList_append`, `deriveFri`
+   commit-phase derivation + `deriveQueryIndices`, **the concrete FRI query core**
+   (`merkleRecompute` + `merkleRecompute_binds` Merkle-binding tooth + `friChainGo`
+   fold-chain + `friQueryCheck` + `concreteFriChecks` with transcript-bound query
+   positions + executable `#guard` non-vacuity), the `verifyAlgo` assembly, the
+   carriers as hypotheses, and `wrap_sound` proven (axiom-free). `lake build`-green,
+   `sorry`-free, carriers named.
 2. **Transcript fidelity against fixtures.** Export a Poseidon2-w16 challenger
    fixture from `circuit-prove` (observe a known stream, record every squeeze);
    prove the Lean `Challenger` reproduces it (`#guard`), and pin the
    `TranscriptRefines` obligation to it. Implement the gnark challenger gadget and
-   diff it against the same fixture.
-3. **The FRI fold + query checks specified.** Fill the `FriChecks` fold-consistency
-   and Merkle-path components concretely (specify, not opaque); prove the
-   per-layer `folded = even + beta·odd` relation and the Merkle recomposition (the
-   latter reuses `Dregg2/Crypto/Merkle.lean` shape).
-4. **The batch surface.** Per-table degree-bits/quotient/logup-bus + the four NPO
-   tables specified; the `verify_all_tables` Boolean assembled.
-5. **The `verifyAlgo → StarkSound` bridge.** Connect the specified algorithm's
+   diff it against the same fixture. Pin the `foldCombine`/`compress` calibration
+   constants to the deployed Poseidon2 + plonky3 arity-2 fold.
+3. **The batch surface.** Per-table degree-bits/quotient/logup-bus + the four NPO
+   tables specified (the `batchTables`/`queryPow` `FriChecks` remainder); the full
+   `verify_all_tables` Boolean assembled.
+4. **The `verifyAlgo → StarkSound` bridge.** Connect the specified algorithm's
    accept to the existing `StarkSound.extract`, so the wrap soundness composes into
    the existing light-client apex (one verifier, one VK).
-6. **gnark refinement discharge.** The operation-for-operation gnark↔`verifyAlgo`
+5. **gnark refinement discharge.** The operation-for-operation gnark↔`verifyAlgo`
    equality, fixture-anchored, accept/reject agreement over genuine + adversarial
    fixtures (ETH-NATIVE-WRAP §3 milestone 3).
 
-Milestones 1 is this commit. 2–6 are the multi-week body, dominated by the FRI/
-transcript fidelity work — not a new proof system, but a large, soundness-critical
-specification + refinement effort that retires the wrap's last load-bearing unknown.
+Milestone 1 LANDED (transcript keystone + concrete FRI query core). 2–5 are the
+remaining body — dominated by the batch-table arithmetic and the fixture-anchored
+gnark discharge — that retires the wrap's last load-bearing unknown.
