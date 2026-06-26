@@ -540,6 +540,315 @@ pub fn is_vault(cell: &Cell) -> bool {
     cell.state.get_heap(VAULT_COLL, KEY_TERMS_DIGEST).is_some()
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  THE SHARE VAULT — an ERC-4626-style pool whose share-price is PROVEN
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The conditional vault above locks ONE value under ONE release rule. A *share*
+// vault is the orthogonal capacity: an agent pools an asset and mints fungible
+// `shares` against it, exactly the ERC-4626 deposit/withdraw shape. A deposit of
+// `d` assets mints `shares_out = d · total_shares / total_assets` (the share-price
+// relation; `d` shares 1:1 on the empty bootstrap), and a withdrawal of `s`
+// shares redeems `assets_out = s · total_assets / total_shares`.
+//
+// # Why this is STRONGER than ERC-4626's share math
+//
+// ERC-4626's first-depositor INFLATION ATTACK works because of TWO compounding
+// flaws, BOTH closed here:
+//
+//  1. **`total_assets` is read from the raw token balance** (`balanceOf(vault)`),
+//     so an attacker can DONATE assets directly into the vault, skewing the share
+//     price WITHOUT minting shares. Here `total_assets` is an INTERNAL COMMITTED
+//     COUNTER ([`KEY_TOTAL_ASSETS`]), changed ONLY by an accounted `deposit` /
+//     `withdraw` — a raw balance donation never touches the committed slot, so it
+//     CANNOT skew the ratio. [`ShareVaultState::shares_for_deposit`] reads the
+//     committed `(T, S)`, never an external balance.
+//  2. **Integer division rounds a victim's deposit to ZERO shares** under the
+//     skewed ratio. Here a deposit that would mint zero shares is REJECTED
+//     ([`ShareVaultError::ZeroSharesMinted`]) — a victim is never robbed of a
+//     positive deposit for nothing.
+//
+// # The Lean rung (this is PROVEN, not just smoke-tested)
+//
+// The share-price invariant — minted shares == `d·S/T`, existing holders never
+// diluted, the inflation attack rejected — is the EXECUTOR image of the proven
+// rung `metatheory/Dregg2/Deos/Vault.lean`, grounded BY REUSE of the committed-
+// heap root (`Substrate.Heap.root_binds_get`) + the derived-cell share-price
+// pattern (the minted shares are a DERIVED value `f(total_assets, total_shares,
+// deposit)`, recomputed by the verifier, so a forged count diverges). The test
+// [`tests::share_vault_matches_lean_rung`] mirrors that rung's `#guard` witnesses.
+//
+// # The next slice (named, the VK-affecting follow-up)
+//
+// The rung grounds the EXECUTOR forge-rejection. The remaining slice is the
+// in-circuit witness: a light client verifying a *batch* should see the share-
+// price relation enforced by the EffectVM circuit (a `DepositToVault` effect
+// descriptor binding `shares_out == d·S/T ∧ shares_out > 0`), the VK-affecting
+// weld named in `metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md`.
+
+/// Reserved heap collection id for the share-vault ledger (the committed
+/// `(total_assets, total_shares)` counters). Distinct from [`VAULT_COLL`] (the
+/// conditional-vault ledger), so a cell could carry both without collision.
+pub const SHARE_VAULT_COLL: u32 = 0x5_A4E0_u32; // a fixed reserved id ("ShAr-E0")
+/// Heap key: the committed `total_assets` counter — the INTERNAL accounting of
+/// pooled value (NOT the raw balance). The donation-immunity that closes the
+/// ERC-4626 inflation attack lives in this being a committed counter.
+pub const KEY_TOTAL_ASSETS: u32 = 0;
+/// Heap key: the committed `total_shares` counter — the fungible supply backing
+/// every holder's claim.
+pub const KEY_TOTAL_SHARES: u32 = 1;
+
+/// Why a share-vault operation was refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShareVaultError {
+    /// The cell carries no share-vault binding (no committed counters).
+    NotAShareVault,
+    /// A deposit/withdraw amount was non-positive.
+    NonPositiveAmount,
+    /// THE INFLATION-ATTACK REJECTION: a positive deposit that would mint ZERO
+    /// shares under the current ratio is refused — a victim is never robbed of a
+    /// positive deposit for nothing (the ERC-4626 first-depositor exploit closed).
+    ZeroSharesMinted,
+    /// THE FORGE REJECTION (deposit): the claimed minted share count does not equal
+    /// the share-price relation `d · total_shares / total_assets`.
+    ForgedShareCount {
+        /// The count the claimant asserted.
+        claimed: i64,
+        /// The count the share-price relation actually yields.
+        actual: i64,
+    },
+    /// THE FORGE REJECTION (withdraw): the claimed redeemed asset count does not
+    /// equal `s · total_assets / total_shares`.
+    ForgedAssetCount {
+        /// The count the claimant asserted.
+        claimed: i64,
+        /// The count the share-price relation actually yields.
+        actual: i64,
+    },
+    /// A withdrawal asked for more shares than the redeemer (or the vault) holds.
+    InsufficientShares {
+        /// The committed total share supply.
+        total: i64,
+        /// The shares the withdrawal asked to burn.
+        want: i64,
+    },
+    /// A withdrawal of positive shares that would redeem ZERO assets is refused
+    /// (the dust-redeem dual of the zero-mint tooth).
+    ZeroAssetsRedeemed,
+}
+
+impl std::fmt::Display for ShareVaultError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ShareVaultError::NotAShareVault => write!(f, "cell carries no share-vault binding"),
+            ShareVaultError::NonPositiveAmount => {
+                write!(f, "deposit/withdraw amount must be positive")
+            }
+            ShareVaultError::ZeroSharesMinted => write!(
+                f,
+                "inflation-attack rejection: a positive deposit would mint zero shares"
+            ),
+            ShareVaultError::ForgedShareCount { claimed, actual } => write!(
+                f,
+                "forged share count: claimed {claimed} shares but the share-price relation yields {actual}"
+            ),
+            ShareVaultError::ForgedAssetCount { claimed, actual } => write!(
+                f,
+                "forged asset count: claimed {claimed} assets but the share-price relation yields {actual}"
+            ),
+            ShareVaultError::InsufficientShares { total, want } => write!(
+                f,
+                "insufficient shares: asked to burn {want} of {total} committed"
+            ),
+            ShareVaultError::ZeroAssetsRedeemed => {
+                write!(f, "a positive withdrawal would redeem zero assets")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ShareVaultError {}
+
+/// A read-only view of a share vault's committed counters, recovered from the
+/// cell's heap. The single source of truth every verification path consults — the
+/// honest accept and every forge/inflation reject run through THIS, so a stub in
+/// either direction fails one polarity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShareVaultState {
+    /// The committed `total_assets` (internal accounting, NOT the raw balance).
+    pub total_assets: i64,
+    /// The committed `total_shares` supply.
+    pub total_shares: i64,
+}
+
+impl ShareVaultState {
+    /// Recover a share vault's committed counters from a cell, or
+    /// [`ShareVaultError::NotAShareVault`].
+    pub fn read(cell: &Cell) -> Result<ShareVaultState, ShareVaultError> {
+        let total_assets = cell
+            .state
+            .get_heap(SHARE_VAULT_COLL, KEY_TOTAL_ASSETS)
+            .map(|f| decode_i64(&f))
+            .ok_or(ShareVaultError::NotAShareVault)?;
+        let total_shares = cell
+            .state
+            .get_heap(SHARE_VAULT_COLL, KEY_TOTAL_SHARES)
+            .map(|f| decode_i64(&f))
+            .unwrap_or(0);
+        Ok(ShareVaultState {
+            total_assets,
+            total_shares,
+        })
+    }
+
+    /// **The share-price relation (deposit).** The shares minted for a deposit of
+    /// `deposit` assets: `d · total_shares / total_assets` (truncating, rounding in
+    /// the existing holders' favour) on an established vault, or `deposit` 1:1 on
+    /// the empty bootstrap. The Lean image of `Vault.sharesOut`. Intermediate math
+    /// in `i128` so `d · S` cannot overflow `i64`.
+    pub fn shares_for_deposit(&self, deposit: i64) -> i64 {
+        if self.total_shares == 0 || self.total_assets == 0 {
+            deposit
+        } else {
+            ((deposit as i128 * self.total_shares as i128) / self.total_assets as i128) as i64
+        }
+    }
+
+    /// **The share-price relation (withdraw).** The assets redeemed for `shares`:
+    /// `s · total_assets / total_shares` (truncating), or `0` with no supply. The
+    /// Lean image of `Vault.assetsOut`.
+    pub fn assets_for_withdraw(&self, shares: i64) -> i64 {
+        if self.total_shares == 0 {
+            0
+        } else {
+            ((shares as i128 * self.total_assets as i128) / self.total_shares as i128) as i64
+        }
+    }
+
+    /// **The deposit forge-detector.** Admit a claim to mint `claimed_shares` for a
+    /// deposit of `deposit` assets, returning the minted count, only when:
+    ///
+    /// - the deposit is positive;
+    /// - the share-price relation yields a POSITIVE count (the zero-mint /
+    ///   inflation-attack tooth);
+    /// - the claimed count equals the share-price relation (no forged shares).
+    ///
+    /// The same gate the honest mint passes — there is no separate "accept" path.
+    /// The Lean image of `Vault.DepositOk`.
+    pub fn check_deposit(&self, deposit: i64, claimed_shares: i64) -> Result<i64, ShareVaultError> {
+        if deposit <= 0 {
+            return Err(ShareVaultError::NonPositiveAmount);
+        }
+        let actual = self.shares_for_deposit(deposit);
+        // THE INFLATION-ATTACK TOOTH: a positive deposit that mints nothing is
+        // refused (the ERC-4626 first-depositor exploit closed).
+        if actual <= 0 {
+            return Err(ShareVaultError::ZeroSharesMinted);
+        }
+        // THE FORGE TOOTH: the claimed count must equal the share-price relation.
+        if claimed_shares != actual {
+            return Err(ShareVaultError::ForgedShareCount {
+                claimed: claimed_shares,
+                actual,
+            });
+        }
+        Ok(actual)
+    }
+
+    /// **The withdraw forge-detector.** Admit a claim to redeem `claimed_assets`
+    /// for burning `shares`, returning the redeemed count, only when the shares are
+    /// positive and available, the relation yields positive assets, and the claim
+    /// equals the relation. The Lean image of the withdraw gate.
+    pub fn check_withdraw(&self, shares: i64, claimed_assets: i64) -> Result<i64, ShareVaultError> {
+        if shares <= 0 {
+            return Err(ShareVaultError::NonPositiveAmount);
+        }
+        if shares > self.total_shares {
+            return Err(ShareVaultError::InsufficientShares {
+                total: self.total_shares,
+                want: shares,
+            });
+        }
+        let actual = self.assets_for_withdraw(shares);
+        if actual <= 0 {
+            return Err(ShareVaultError::ZeroAssetsRedeemed);
+        }
+        if claimed_assets != actual {
+            return Err(ShareVaultError::ForgedAssetCount {
+                claimed: claimed_assets,
+                actual,
+            });
+        }
+        Ok(actual)
+    }
+}
+
+/// **Open** an empty share vault on a cell: commit `total_assets = 0`,
+/// `total_shares = 0`. After this the cell binds the (empty) vault; the first
+/// deposit bootstraps shares 1:1.
+pub fn open_share_vault(cell: &mut Cell) {
+    let st = &mut cell.state;
+    st.set_heap(SHARE_VAULT_COLL, KEY_TOTAL_ASSETS, encode_i64(0));
+    st.set_heap(SHARE_VAULT_COLL, KEY_TOTAL_SHARES, encode_i64(0));
+}
+
+/// **Deposit** `deposit` assets, minting `claimed_shares` shares: verify the
+/// claim equals the share-price relation and is positive (via
+/// [`ShareVaultState::check_deposit`]), then advance the committed counters to
+/// `(total_assets + deposit, total_shares + minted)`. Returns the minted count.
+/// If `check_deposit` rejects, nothing is mutated.
+pub fn deposit_shares(
+    cell: &mut Cell,
+    deposit: i64,
+    claimed_shares: i64,
+) -> Result<i64, ShareVaultError> {
+    let st = ShareVaultState::read(cell)?;
+    let minted = st.check_deposit(deposit, claimed_shares)?;
+    cell.state.set_heap(
+        SHARE_VAULT_COLL,
+        KEY_TOTAL_ASSETS,
+        encode_i64(st.total_assets + deposit),
+    );
+    cell.state.set_heap(
+        SHARE_VAULT_COLL,
+        KEY_TOTAL_SHARES,
+        encode_i64(st.total_shares + minted),
+    );
+    Ok(minted)
+}
+
+/// **Withdraw** by burning `shares`, redeeming `claimed_assets`: verify the claim
+/// equals the share-price relation (via [`ShareVaultState::check_withdraw`]), then
+/// advance the counters to `(total_assets − redeemed, total_shares − shares)`.
+/// Returns the redeemed asset count. If the check rejects, nothing is mutated.
+pub fn withdraw_shares(
+    cell: &mut Cell,
+    shares: i64,
+    claimed_assets: i64,
+) -> Result<i64, ShareVaultError> {
+    let st = ShareVaultState::read(cell)?;
+    let redeemed = st.check_withdraw(shares, claimed_assets)?;
+    cell.state.set_heap(
+        SHARE_VAULT_COLL,
+        KEY_TOTAL_ASSETS,
+        encode_i64(st.total_assets - redeemed),
+    );
+    cell.state.set_heap(
+        SHARE_VAULT_COLL,
+        KEY_TOTAL_SHARES,
+        encode_i64(st.total_shares - shares),
+    );
+    Ok(redeemed)
+}
+
+/// Whether a cell carries a share-vault binding (committed counters in its
+/// reserved heap collection). A plain cell returns `false`.
+pub fn is_share_vault(cell: &Cell) -> bool {
+    cell.state
+        .get_heap(SHARE_VAULT_COLL, KEY_TOTAL_ASSETS)
+        .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -870,5 +1179,265 @@ mod tests {
         for v in [0i64, 1, -1, 500, 11_000, i64::MAX, i64::MIN] {
             assert_eq!(decode_i64(&encode_i64(v)), v);
         }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  THE SHARE VAULT — share-price tests (mirroring metatheory/.../Vault.lean)
+    // ════════════════════════════════════════════════════════════════════════
+
+    fn share_vault_cell() -> Cell {
+        Cell::with_balance([8u8; 32], [8u8; 32], 0)
+    }
+
+    /// THE SHARE-PRICE RELATION + HONEST PATH: on an established vault the minted
+    /// shares are exactly `d · total_shares / total_assets`, and the bootstrap
+    /// deposit mints 1:1. The honest mint accepts and advances the counters.
+    #[test]
+    fn share_price_relation_and_honest_mint() {
+        let mut cell = share_vault_cell();
+        open_share_vault(&mut cell);
+        assert!(is_share_vault(&cell));
+        let st = ShareVaultState::read(&cell).unwrap();
+        assert_eq!(st.total_assets, 0);
+        assert_eq!(st.total_shares, 0);
+
+        // BOOTSTRAP: the first deposit mints 1:1.
+        assert_eq!(st.shares_for_deposit(100), 100);
+        let minted = deposit_shares(&mut cell, 100, 100).expect("bootstrap accepts");
+        assert_eq!(minted, 100);
+        let st = ShareVaultState::read(&cell).unwrap();
+        assert_eq!((st.total_assets, st.total_shares), (100, 100));
+
+        // ESTABLISHED: at (T=100, S=100), depositing 50 mints 50·100/100 = 50.
+        assert_eq!(st.shares_for_deposit(50), 50);
+        let minted = deposit_shares(&mut cell, 50, 50).expect("fair deposit accepts");
+        assert_eq!(minted, 50);
+        assert_eq!(
+            ShareVaultState::read(&cell).unwrap(),
+            ShareVaultState {
+                total_assets: 150,
+                total_shares: 150
+            }
+        );
+    }
+
+    /// THE WITHDRAW RELATION: redeemed assets are `s · total_assets / total_shares`.
+    #[test]
+    fn share_withdraw_relation() {
+        let mut cell = share_vault_cell();
+        open_share_vault(&mut cell);
+        deposit_shares(&mut cell, 100, 100).unwrap();
+        let st = ShareVaultState::read(&cell).unwrap();
+        // burning 40 of 100 shares against 100 assets redeems 40·100/100 = 40.
+        assert_eq!(st.assets_for_withdraw(40), 40);
+        let redeemed = withdraw_shares(&mut cell, 40, 40).expect("fair withdraw accepts");
+        assert_eq!(redeemed, 40);
+        assert_eq!(
+            ShareVaultState::read(&cell).unwrap(),
+            ShareVaultState {
+                total_assets: 60,
+                total_shares: 60
+            }
+        );
+    }
+
+    /// THE FORGE TOOTH: a claim to mint MORE shares than the share-price relation
+    /// yields is REJECTED (the derived-cell forge tooth, at the share-price
+    /// derivation).
+    #[test]
+    fn forged_share_count_is_rejected() {
+        let mut cell = share_vault_cell();
+        open_share_vault(&mut cell);
+        deposit_shares(&mut cell, 100, 100).unwrap(); // (T,S) = (100,100)
+        let st = ShareVaultState::read(&cell).unwrap();
+        // honest: depositing 50 yields 50 (non-vacuity).
+        assert_eq!(st.check_deposit(50, 50), Ok(50));
+        // forged: claiming 999 shares for a 50-asset deposit diverges.
+        assert_eq!(
+            st.check_deposit(50, 999),
+            Err(ShareVaultError::ForgedShareCount {
+                claimed: 999,
+                actual: 50
+            })
+        );
+        // the mutating path refuses too, leaving the counters unmoved.
+        assert_eq!(
+            deposit_shares(&mut cell, 50, 999),
+            Err(ShareVaultError::ForgedShareCount {
+                claimed: 999,
+                actual: 50
+            })
+        );
+        assert_eq!(ShareVaultState::read(&cell).unwrap().total_shares, 100);
+    }
+
+    /// THE NO-DILUTION KEYSTONE: a deposit never decreases the price-per-share of
+    /// the existing holders — `total_assets · minted ≤ total_shares · deposit`,
+    /// hence the cross-multiplied `(T+d)/(S+minted) ≥ T/S` holds. The strong
+    /// property ERC-4626's rounding silently violates.
+    #[test]
+    fn deposit_never_dilutes_existing_holders() {
+        // an established vault with an uneven ratio (T=3, S=7): truncating division
+        // rounds the mint DOWN, in the existing holders' favour.
+        let st = ShareVaultState {
+            total_assets: 3,
+            total_shares: 7,
+        };
+        for deposit in [1i64, 2, 5, 10, 100, 1000] {
+            let minted = st.shares_for_deposit(deposit);
+            // no-dilution floor: T·minted ≤ S·d.
+            assert!(
+                st.total_assets as i128 * minted as i128
+                    <= st.total_shares as i128 * deposit as i128,
+                "deposit_no_dilution at d={deposit}"
+            );
+            // price-per-share non-decreasing: T·(S+minted) ≤ S·(T+d).
+            assert!(
+                st.total_assets as i128 * (st.total_shares as i128 + minted as i128)
+                    <= st.total_shares as i128 * (st.total_assets as i128 + deposit as i128),
+                "deposit_price_non_decreasing at d={deposit}"
+            );
+        }
+    }
+
+    /// **The Lean rung: the share-price invariant is PROVEN, not just smoke-tested.**
+    ///
+    /// The share-accounting invariant enforced here — minted shares == the
+    /// share-price relation `d·S/T`, existing holders never diluted, the ERC-4626
+    /// inflation attack rejected — is the EXECUTOR image of the proven Lean rung
+    /// `metatheory/Dregg2/Deos/Vault.lean`, grounded BY REUSE of the committed-heap
+    /// root (`Substrate.Heap.root_binds_get`) + the derived-cell share-price
+    /// pattern. This test mirrors that rung's `#guard` witnesses so the Rust is
+    /// checked against the proven statement:
+    ///
+    ///   * `sharesOut_eq` — at (T=2, S=4) a deposit of 10 mints 10·4/2 = 20;
+    ///   * `bootstrap_deposit_accepts` — the empty vault mints 1:1;
+    ///   * `forged_shares_rejected` — claiming 999 when the ratio yields 20 refused;
+    ///   * `deposit_no_dilution` / `deposit_price_non_decreasing` — the mint never
+    ///     dilutes the existing holders;
+    ///   * `zero_mint_rejected` + `donation_immunity` — THE INFLATION ATTACK, both
+    ///     defenses: internal committed accounting (a donation cannot skew the
+    ///     ratio) AND zero-mint rejection (a skewed deposit that rounds to 0 is
+    ///     refused);
+    ///   * `*_bound_in_root` — the counters are bound into the commitment (a deposit
+    ///     moves the committed root; a forged supply cannot hide under the honest).
+    #[test]
+    fn share_vault_matches_lean_rung() {
+        // `sharesOut_eq`: the share-price relation at the rung's witness (T=2, S=4).
+        let est = ShareVaultState {
+            total_assets: 2,
+            total_shares: 4,
+        };
+        assert_eq!(est.shares_for_deposit(10), 20, "sharesOut_eq: 10·4/2 = 20");
+        assert_eq!(est.assets_for_withdraw(2), 1, "assetsOut_eq: 2·2/4 = 1");
+        assert_eq!(
+            est.check_deposit(10, 20),
+            Ok(20),
+            "established_deposit_accepts"
+        );
+        // `forged_shares_rejected`: claiming 999 diverges.
+        assert_eq!(
+            est.check_deposit(10, 999),
+            Err(ShareVaultError::ForgedShareCount {
+                claimed: 999,
+                actual: 20
+            })
+        );
+
+        // ── THE ERC-4626 INFLATION ATTACK, BOTH DEFENSES ─────────────────────
+        let mut cell = share_vault_cell();
+        open_share_vault(&mut cell);
+        // attacker bootstraps 1 share: committed (T, S) = (1, 1).
+        assert_eq!(deposit_shares(&mut cell, 1, 1), Ok(1));
+        let before_root = cell.state_commitment();
+
+        // DEFENSE 1 — donation immunity: the attacker DONATES 10_000 raw assets
+        // (a direct balance change, NOT an accounted deposit). The committed
+        // total_assets is UNCHANGED, so the share ratio cannot be skewed.
+        cell.state.apply_balance_change(10_000);
+        let st = ShareVaultState::read(&cell).unwrap();
+        assert_eq!(
+            st.total_assets, 1,
+            "donation_immunity: a raw donation does NOT move the committed counter"
+        );
+        // so a victim depositing 100 gets the FAIR 100 shares (in ERC-4626 the
+        // balanceOf-skewed ratio would have minted floor(100·1/10001) = 0).
+        assert_eq!(st.shares_for_deposit(100), 100);
+        assert_eq!(
+            deposit_shares(&mut cell, 100, 100),
+            Ok(100),
+            "victim minted fairly"
+        );
+
+        // DEFENSE 2 — zero-mint rejection: even on a hypothetically-skewed vault
+        // (T=10001, S=1, as ERC-4626's balanceOf would read), a 100-asset deposit
+        // rounds to 0 shares — and the gate REJECTS it, so the victim keeps assets.
+        let skewed = ShareVaultState {
+            total_assets: 10_001,
+            total_shares: 1,
+        };
+        assert_eq!(skewed.shares_for_deposit(100), 0);
+        assert_eq!(
+            skewed.check_deposit(100, 0),
+            Err(ShareVaultError::ZeroSharesMinted),
+            "zero_mint_rejected: the inflation attack is refused"
+        );
+
+        // ── THE HEAP REUSE KEYSTONE (anti-ghost shadow) ──────────────────────
+        // the bootstrap deposit MOVED the committed root (a light client sees the
+        // counters advance, so a forged supply cannot hide under the honest root).
+        let after_victim = cell.state_commitment();
+        assert_ne!(
+            before_root, after_victim,
+            "*_bound_in_root: a deposit moves the committed root"
+        );
+        // a forged share supply (padding it) likewise moves the committed root.
+        let mut forged = cell.clone();
+        forged
+            .state
+            .set_heap(SHARE_VAULT_COLL, KEY_TOTAL_SHARES, encode_i64(9_999));
+        assert_ne!(
+            cell.state_commitment(),
+            forged.state_commitment(),
+            "shares_bound_in_root: a padded supply cannot keep the honest root"
+        );
+    }
+
+    /// Opening then reading a fresh share vault reports the empty counters; a plain
+    /// cell is NotAShareVault.
+    #[test]
+    fn share_vault_open_and_non_vault() {
+        let plain = share_vault_cell();
+        assert_eq!(
+            ShareVaultState::read(&plain),
+            Err(ShareVaultError::NotAShareVault)
+        );
+        let mut cell = share_vault_cell();
+        open_share_vault(&mut cell);
+        assert!(is_share_vault(&cell));
+    }
+
+    /// Non-positive deposits/withdrawals and over-withdrawals are refused.
+    #[test]
+    fn share_vault_amount_guards() {
+        let mut cell = share_vault_cell();
+        open_share_vault(&mut cell);
+        deposit_shares(&mut cell, 100, 100).unwrap();
+        let st = ShareVaultState::read(&cell).unwrap();
+        assert_eq!(
+            st.check_deposit(0, 0),
+            Err(ShareVaultError::NonPositiveAmount)
+        );
+        assert_eq!(
+            st.check_withdraw(0, 0),
+            Err(ShareVaultError::NonPositiveAmount)
+        );
+        assert_eq!(
+            st.check_withdraw(101, 101),
+            Err(ShareVaultError::InsufficientShares {
+                total: 100,
+                want: 101
+            })
+        );
     }
 }

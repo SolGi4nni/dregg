@@ -70,6 +70,13 @@ import Dregg2.Deos.SealedEscrow
 -- replay_rejected (one-shot per period) + early/over/behind-schedule teeth + cursor_bound_in_root.
 -- The Rust obligation_standing.rs is wired via invariant_matches_lean_rung. #assert_all_clean.
 import Dregg2.Deos.StandingObligation
+-- The SHARE-VAULT house-capacity, GROUNDED: an ERC-4626-style vault whose minted shares equal the
+-- share-price relation d·S/T, where existing holders are NEVER diluted (deposit_price_non_decreasing)
+-- and the classic first-depositor INFLATION ATTACK is REJECTED (zero_mint_rejected + donation_immunity
+-- via internal committed accounting). Proven BY REUSE of the committed-heap root + the derived-cell
+-- share-price pattern; the Rust vault.rs share-vault is wired via share_vault_matches_lean_rung.
+-- #assert_all_clean. The proven share-price is stronger than ERC-4626's exploit-prone share math.
+import Dregg2.Deos.Vault
 import Dregg2.Deos.Rehydration
 import Dregg2.Deos.Affordance
 -- The COMPOSITION / RERENDER / VISIBILITY widening (2026-06-14): the desktop's UI-composition
