@@ -3510,6 +3510,7 @@ dependencies = [
  "dregg-sdk",
  "dregg-turn",
  "dregg-types",
+ "serde_json",
 ]
 
 [[package]]
