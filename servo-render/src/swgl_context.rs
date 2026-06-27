@@ -12,11 +12,11 @@
 //!
 //! Under the default `swgl-standalone` feature this depends on NOTHING but `swgl`
 //! + `gleam`. It therefore proves the load-bearing, genuinely-uncertain thing:
-//! **that WebRender's SWGL — a CPU-only C++17 software rasterizer — compiles
-//! (clang, `gl.cc`) on this host and produces REAL RGBA8 pixels into a buffer we
-//! own**, with zero GPU / EGL / windowing dependency. That is the whole "no card"
-//! claim of Stage A, and it is verified by [`tests`] WITHOUT the multi-GB mozjs
-//! build the full `WebView` path needs.
+//!   **that WebRender's SWGL — a CPU-only C++17 software rasterizer — compiles
+//!   (clang, `gl.cc`) on this host and produces REAL RGBA8 pixels into a buffer we
+//!   own**, with zero GPU / EGL / windowing dependency. That is the whole "no card"
+//!   claim of Stage A, and it is verified by [`tests`] WITHOUT the multi-GB mozjs
+//!   build the full `WebView` path needs.
 //!
 //! ## The trait it implements
 //!

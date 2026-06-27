@@ -165,7 +165,7 @@ fn rasterize_content(page_bytes: &[u8], width: u32, height: u32) -> RgbaFrame {
         // region-fill render that makes the tile's pixels a function of the content
         // (so the frame is visibly "this page", and its digest is content-distinct).
         if height >= 2 && width >= 1 {
-            let bands = (height.min(16)).max(1); // up to 16 content bands
+            let bands = height.clamp(1, 16); // up to 16 content bands
             let band_h = (height / bands).max(1);
             for i in 0..bands {
                 // Pick a byte per band (stride across the content so a longer page

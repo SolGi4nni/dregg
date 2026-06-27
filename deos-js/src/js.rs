@@ -930,7 +930,7 @@ unsafe fn arg_string(cx: &mut SmContext, raw: mozjs::jsapi::HandleValue) -> Stri
         let s = str::from_utf8(m.to_bytes()).unwrap_or("").to_string();
         SCRATCH.with(|sc| *sc.borrow_mut() = s);
     }
-    EncodeStringToUTF8(cx, rooted_str.handle().into(), cb);
+    EncodeStringToUTF8(cx, rooted_str.handle(), cb);
     // `mem::take` the scratch String out (leaving an empty one behind) rather than
     // cloning it — the value is consumed by the caller, so the clone was pure waste.
     SCRATCH.with(|sc| std::mem::take(&mut *sc.borrow_mut()))

@@ -52,11 +52,11 @@
 
 use std::collections::BTreeMap;
 
-use crate::affordance::{AffordanceSurface, CellAffordance, FireError};
+use crate::affordance::CellAffordance;
 use crate::delegate::SurfaceCapability;
 use crate::rehydrate::{Membrane, RehydrateError};
 use crate::web_of_cells::{AttestedResource, DreggUri, FetchError, OriginChrome, WebOfCells};
-use dregg_cell::{is_attenuation, AuthRequired, CellId};
+use dregg_cell::CellId;
 
 /// The provenance a transclusion carries — the cited, immutable source citation.
 ///

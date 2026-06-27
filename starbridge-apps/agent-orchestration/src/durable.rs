@@ -542,7 +542,7 @@ mod tests {
         let (c, a, b) = mandates();
         // Build a durable log whose recorded plan includes a step that, re-executed, breaches budget:
         // worker-A spends 700 (its whole sub-budget) then a SECOND 700 (over the 1000 swarm budget).
-        let plan = vec![
+        let plan = [
             WorkStep::new(WorkerSlot::A, Tool::Search, 700, "s1"),
             WorkStep::new(WorkerSlot::B, Tool::Read, 700, "s2-too-much"),
         ];

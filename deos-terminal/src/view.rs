@@ -186,7 +186,7 @@ trait Pipe: Sized {
 impl<T> Pipe for T {}
 
 fn rgba_to_rgb(c: Rgba) -> gpui::Rgba {
-    rgb(((c.r as u32) << 16) | ((c.g as u32) << 8) | (c.b as u32)).into()
+    rgb(((c.r as u32) << 16) | ((c.g as u32) << 8) | (c.b as u32))
 }
 
 impl Focusable for TerminalView {

@@ -2545,7 +2545,7 @@ mod tests {
         // wall at (0,2) between them OCCLUDES it: the frustum is the line-of-sight
         // cone, not a uniform disc. The tile behind the wall is provably un-seen.
         let mut terrain = vec![Terrain::Open; 5 * 5];
-        terrain[0 * 5 + 2] = Terrain::Blocking; // a wall at (0,2)
+        terrain[2] = Terrain::Blocking; // a wall at row 0, col 2 (index 0*5+2)
         let board = Board::with_terrain_and_objectives(
             5,
             5,
@@ -2605,7 +2605,7 @@ mod tests {
         // A unit cannot step onto Impassable terrain (a mountain) — it is refused as a
         // GAME-rule illegality (and so never even declared as a move affordance).
         let mut terrain = vec![Terrain::Open; 5 * 5];
-        terrain[1 * 5 + 1] = Terrain::Impassable; // mountain at (1,1)
+        terrain[6] = Terrain::Impassable; // mountain at row 1, col 1 (index 1*5+1)
         let board = Board::with_terrain_and_objectives(
             5,
             5,

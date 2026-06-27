@@ -835,7 +835,7 @@ mod tests {
         let src = MockSource::seeded();
         let room = src.rooms().unwrap()[0].room_id.to_string();
         assert!(src.typing(&room).contains(&"@grok:deos.local".to_string()));
-        assert!(src.read_by(&room).len() >= 1);
+        assert!(!src.read_by(&room).is_empty());
     }
 }
 

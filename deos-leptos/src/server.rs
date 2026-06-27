@@ -148,7 +148,7 @@ impl DeosExecutorCell {
     /// after a committed turn. Reads the genuine [`CellState`] the executor holds, so
     /// the signal reflects what the executor actually COMMITTED, not a client guess.
     pub fn live_slots(&self) -> CellSlots {
-        self.with_live_state(|s| CellSlots::from_cell_state(s))
+        self.with_live_state(CellSlots::from_cell_state)
             .unwrap_or_else(CellSlots::pending)
     }
 

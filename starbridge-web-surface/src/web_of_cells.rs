@@ -170,6 +170,10 @@ pub enum FetchError {
     ReceiptStreamRootMismatch,
     /// The attested root does not carry a quorum (count < threshold).
     NoQuorum,
+    /// The origin cell's nonce overflowed, so the amend could not produce a
+    /// distinct serve-receipt leaf (a silent overwrite is refused — this is the
+    /// surface analogue of the kernel's P2-2 replay guard).
+    NonceOverflow,
 }
 
 /// The trusted-path origin chrome for a `dregg://` page — drawn by the SHELL from
@@ -363,7 +367,9 @@ impl WebOfCells {
                 .get_mut(&uri.cell)
                 .ok_or(FetchError::OriginNotFound)?;
             cell.state.set_field(CONTENT_COMMITMENT_SLOT, new_hash);
-            cell.state.increment_nonce();
+            if !cell.state.increment_nonce() {
+                return Err(FetchError::NonceOverflow);
+            }
         }
         // Re-point the node's out-of-band byte store to the new content (keyed by the
         // same origin cell), and advance the federation's attestation height.
@@ -381,7 +387,7 @@ impl WebOfCells {
     /// the cell's committed `content_hash` (the serve-turn binding), and produces
     /// the attestation the client verifies BEFORE rendering. Returns the envelope
     /// + the [`OriginChrome`] (drawn from the ledger). The caller MUST call
-    /// [`AttestedResource::verify`] and only render on `Ok`.
+    ///   [`AttestedResource::verify`] and only render on `Ok`.
     pub fn fetch(&self, uri: &DreggUri) -> Result<(AttestedResource, OriginChrome), FetchError> {
         // [2]-[3] resolve the locator: read the origin cell out of the real
         // ledger (the local analogue of dialing the node + enlivening the swiss).
@@ -472,7 +478,7 @@ impl WebOfCells {
                 let mut sig = [0u8; 64];
                 sig[..32].copy_from_slice(&pk.0);
                 sig[32..].copy_from_slice(&receipt_stream_root);
-                (pk.clone(), Signature(sig))
+                (*pk, Signature(sig))
             })
             .collect();
         let threshold = self.quorum_pks.len();

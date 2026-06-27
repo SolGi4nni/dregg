@@ -140,9 +140,9 @@
 //!   fog-of-war game ([`game`]) drives its vision + moves through exactly these.
 //! - **The LIBSERVO SEAM ([`delegate::MockSurface`]):** a real libservo `WebView`
 //!   + a `WebViewDelegate` impl that forwards to [`CapGatedDelegate`] plugs in
-//!   where `MockSurface` stands today. The seam is a single documented type and a
-//!   single `// LIBSERVO SEAM` marker in [`delegate`]; the heavy libservo +
-//!   Metal/wgpu toolchain is a frontier dep deliberately not linked here.
+//!     where `MockSurface` stands today. The seam is a single documented type and a
+//!     single `// LIBSERVO SEAM` marker in [`delegate`]; the heavy libservo +
+//!     Metal/wgpu toolchain is a frontier dep deliberately not linked here.
 //! - **The full-turn seam ([`web_of_cells`]):** the fetch is modeled as a
 //!   verified cell read against a real [`dregg_firmament::SurfaceBacking`] ledger
 //!   with a receipt + attested root; wiring the serve as a full

@@ -334,6 +334,9 @@ impl EditorSurface {
     /// supplies a monotonic counter or a `Tab` discriminant).
     pub fn new(id: u64, fs: Arc<dyn Fs>, root: PathBuf, window: &mut Window, cx: &mut App) -> Self {
         let editor = cx.new(|cx| Editor::new(fs.clone(), window, cx));
+        // `build_pane_view`/`EditorPaneView` hold the tree as `Arc<FileTree>`; the
+        // surface is single-threaded gpui state, so the !Send/!Sync Arc is correct.
+        #[allow(clippy::arc_with_non_send_sync)]
         let tree = Arc::new(FileTree::new(fs, root, cx));
         let view = build_pane_view(editor.clone(), tree, window, cx);
         Self {
@@ -383,6 +386,10 @@ impl EditorSurface {
     /// mounts [`EditorSurface::firmament_over`] instead, handing the spine that
     /// wraps the live World — then the editor edits the SAME ledger the cockpit
     /// inspects.
+    // `firmament_over`/the `firmament` field type the fs as `Arc<FirmamentFs>` (it is
+    // also coerced to `Arc<dyn Fs>`); single-threaded gpui state, so the !Send/!Sync Arc
+    // is intentional and the type cannot become `Rc`.
+    #[allow(clippy::arc_with_non_send_sync)]
     #[cfg(feature = "firmament")]
     pub fn firmament(
         id: u64,
@@ -436,6 +443,8 @@ impl EditorSurface {
             }
             ed
         });
+        // Single-threaded gpui state; `EditorPaneView` holds `Arc<FileTree>`.
+        #[allow(clippy::arc_with_non_send_sync)]
         let tree = Arc::new(FileTree::new(fs, root, cx));
         let view = build_pane_view(editor.clone(), tree, window, cx);
         Ok(Self {
@@ -482,6 +491,8 @@ impl EditorSurface {
             ed.seed_content(name, revisions, window, cx);
             ed
         });
+        // Single-threaded gpui state; `EditorPaneView` holds `Arc<FileTree>`.
+        #[allow(clippy::arc_with_non_send_sync)]
         let tree = Arc::new(FileTree::new(fs, root, cx));
         let view = build_pane_view(editor.clone(), tree, window, cx);
         Self {

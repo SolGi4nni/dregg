@@ -633,7 +633,7 @@ impl Render for ChatView {
         let topic = selected_room.as_ref().and_then(|r| r.topic.clone());
         // room = a cell: show the room cell id + turn-count in the header.
         let cell_line = selected_room.as_ref().map(|r| {
-            let rc = self.source.room_cell(&r.room_id.to_string());
+            let rc = self.source.room_cell(r.room_id.as_ref());
             format!(
                 "cell:{} · {} turns · {}",
                 rc.cell_id.short(),
@@ -740,6 +740,10 @@ fn trust_badge(trust: PersonTrust, success: Hsla, warning: Hsla, danger: Hsla) -
 /// executor (`membrane_capable`) AND the envelope is rehydratable. Otherwise it is
 /// rendered disabled — never a mock action.
 impl ChatView {
+    // Wide constructor — a card needs the message plus the full themed colour set
+    // (bg/border/accent/fg/muted) + the render cx; grouping them into a struct would
+    // only obscure the call site, so the arg count is allowed by design.
+    #[allow(clippy::too_many_arguments)]
     fn membrane_card(
         &self,
         m: &TimelineMessage,
@@ -856,6 +860,7 @@ impl ChatView {
 ///   * transclusion → the live quoted value
 ///   * affordance → a fireable (cap-gated) button
 ///   * receipt → the receipt summary
+///
 /// Unknown/absent objects render their text fallback (fail-closed — the extraction
 /// already refused unknown kinds, so we only reach here for known ones).
 fn object_card(

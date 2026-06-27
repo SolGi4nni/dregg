@@ -135,9 +135,9 @@ impl SurfmanHardware {
     }
 
     fn create_attached_swap_chain(&self) -> Result<SwapChain<Device>, PaintError> {
-        let mut device = self.device.borrow_mut();
+        let device = self.device.borrow_mut();
         let mut context = self.context.borrow_mut();
-        SwapChain::create_attached(&mut device, &mut context, SurfaceAccess::GPUOnly)
+        SwapChain::create_attached(&device, &mut context, SurfaceAccess::GPUOnly)
     }
 
     fn make_current(&self) -> Result<(), PaintError> {
@@ -289,18 +289,18 @@ impl ServoRenderingContext for ServoGpuContext {
             return;
         }
         self.size.set(size);
-        let mut device = self.inner.device.borrow_mut();
+        let device = self.inner.device.borrow_mut();
         let mut context = self.inner.context.borrow_mut();
         let s = Size2D::new(size.width as i32, size.height as i32);
-        let _ = self.swap_chain.resize(&mut device, &mut context, s);
+        let _ = self.swap_chain.resize(&device, &mut context, s);
     }
 
     fn present(&self) {
-        let mut device = self.inner.device.borrow_mut();
+        let device = self.inner.device.borrow_mut();
         let mut context = self.inner.context.borrow_mut();
         let _ = self
             .swap_chain
-            .swap_buffers(&mut device, &mut context, PreserveBuffer::No);
+            .swap_buffers(&device, &mut context, PreserveBuffer::No);
     }
 
     fn make_current(&self) -> Result<(), PaintError> {

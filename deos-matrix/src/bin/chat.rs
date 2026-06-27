@@ -157,7 +157,7 @@ mod gui {
         // The kit's `Theme` global — ChatView's gpui-component widgets read it at
         // render time; without this the composer `Input` panics on the missing
         // `gpui_component::theme::Theme` (the windowed path inits it at boot).
-        cx.update(|cx| gpui_component::init(cx));
+        cx.update(gpui_component::init);
 
         let source: Arc<dyn ChatSource> = Arc::new(MockSource::seeded());
         let label = source.backend_label();

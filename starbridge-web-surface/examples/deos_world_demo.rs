@@ -11,25 +11,25 @@
 //! This is the `fog_of_war_demo` thesis at SCALE — a genuine "htmx on crack you can
 //! PLAY" world that exercises the WHOLE deos thesis on the real dregg cap + membrane
 //! + affordance + web-of-cells primitives (Tier A — no circuit crate; the ZK Tier B
-//! vision AIR is the named cross-crate follow-up in `docs/deos/DEOS-APPS.md`):
+//!   vision AIR is the named cross-crate follow-up in `docs/deos/DEOS-APPS.md`):
 //!
 //!   (1) **a real world** — 12×12, a forest belt + mountains that OCCLUDE
-//!       line-of-sight (the vision frustum has shape, not a uniform disc), four unit
-//!       archetypes (Scout/Soldier/Sensor/Commander), and three capturable objectives;
+//!   line-of-sight (the vision frustum has shape, not a uniform disc), four unit
+//!   archetypes (Scout/Soldier/Sensor/Commander), and three capturable objectives;
 //!   (2) **fog = the membrane's per-viewer projection** — Blue and Red see different
-//!       boards; the no-peek KEYSTONE carries (Blue provably cannot rehydrate a Red
-//!       tile, and cannot even PROVE Red's vision);
+//!   boards; the no-peek KEYSTONE carries (Blue provably cannot rehydrate a Red
+//!   tile, and cannot even PROVE Red's vision);
 //!   (3) **moves + objective-captures = cap-gated verified turns** — a move fires a
-//!       real `SetField`, an objective claim a real `EmitEvent`; an unauthorized fire
-//!       is refused in-band (anti-cheat is free);
+//!   real `SetField`, an objective claim a real `EmitEvent`; an unauthorized fire
+//!   is refused in-band (anti-cheat is free);
 //!   (4) **the web-of-cells distribution** — a LOBBY of worlds, each publishing its
-//!       board/players/objectives as real attested cells;
+//!   board/players/objectives as real attested cells;
 //!   (5) **agents-as-players** — TWO AI agents (different policies) play a FULL match
-//!       to a win condition, every action through the same cap gate (neither can cheat);
+//!   to a win condition, every action through the same cap gate (neither can cheat);
 //!   (6) **the membrane as a negotiation surface** (the GitHub-org-settings page) —
-//!       a player grants attenuated spectator rights (watch-my-side / scoreboard /
-//!       full-post-game), an over-broad grant is refused, a re-share chain (A→B→C)
-//!       attenuates, and the spectator view is liveness-typed + fog-respecting.
+//!   a player grants attenuated spectator rights (watch-my-side / scoreboard /
+//!   full-post-game), an over-broad grant is refused, a re-share chain (A→B→C)
+//!   attenuates, and the spectator view is liveness-typed + fog-respecting.
 
 use starbridge_web_surface::game::{demo_world, play_match};
 use starbridge_web_surface::world::{

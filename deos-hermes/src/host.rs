@@ -184,11 +184,10 @@ impl DreggHost {
         if let Ok(s) = agent.pd.kernel_sock.try_clone() {
             let mut reader = BufReader::new(s);
             let mut line = String::new();
-            if reader.read_line(&mut line).is_ok() {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) {
-                    endpoint_verdict =
-                        v.get("verdict").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
-                }
+            if reader.read_line(&mut line).is_ok()
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim())
+            {
+                endpoint_verdict = v.get("verdict").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
             }
         }
         let exit_verdict = agent.join_verdict()?;
@@ -232,16 +231,16 @@ fn hosted_agent_body(
 
     // (3) THE STRUCTURED EGRESS — the host wired (or didn't) a specific door.
     //   • the GRANTED path must be readable (the door is open).
-    if let Some(p) = granted_egress {
-        if can_read_path(p) {
-            verdict |= probe::EGRESS_GRANTED_OPEN;
-        }
+    if let Some(p) = granted_egress
+        && can_read_path(p)
+    {
+        verdict |= probe::EGRESS_GRANTED_OPEN;
     }
     //   • a path OUTSIDE the grant must STILL be denied (specific door, not a hole).
-    if let Some(p) = ungranted_egress {
-        if !can_read_path(p) {
-            verdict |= probe::EGRESS_SIBLING_DENIED;
-        }
+    if let Some(p) = ungranted_egress
+        && !can_read_path(p)
+    {
+        verdict |= probe::EGRESS_SIBLING_DENIED;
     }
 
     // (4) THE DREGG CONTROL CHANNEL — the agent's only channel is live. Report the
@@ -295,6 +294,6 @@ fn can_execve_shell() -> bool {
         libc::waitpid(pid, &mut status, 0);
     }
     // WIFEXITED && status==0 would be exec success; anything else = denied.
-    let exited_zero = libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
-    exited_zero
+
+    libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0
 }

@@ -900,7 +900,7 @@ mod tests {
         let weaker = Membrane::new(SurfaceCapability::scoped(
             cid(30),
             AuthRequired::Either,
-            origins(&[public_origin.clone()]),
+            origins(std::slice::from_ref(&public_origin)),
             [],
         ));
         let weak = doc

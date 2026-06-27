@@ -58,7 +58,9 @@
 use leptos::prelude::*;
 
 use dregg_types::CellId;
-use starbridge_web_surface::transclusion::{Backlinks, TranscludedField, TransclusionError};
+#[cfg(test)]
+use starbridge_web_surface::transclusion::Backlinks;
+use starbridge_web_surface::transclusion::{TranscludedField, TransclusionError};
 use starbridge_web_surface::web_of_cells::{AttestedResource, DreggUri, WebOfCells};
 
 /// The constitution cell's committed-URL (the trusted-path chrome the source binds —

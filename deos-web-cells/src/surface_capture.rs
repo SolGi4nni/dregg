@@ -12,14 +12,14 @@
 //! 1. **CAPTURES → COMMITS → PUBLISHES** it: [`RenderedSurface::into_bundle`]
 //!    serializes the fragment tree into the bundle's `index.html` (the rendered view)
 //!    + a structural `dom-state` asset (the serialized tree — the live quote a peer
-//!    transcludes) alongside the surface's referenced assets, and
-//!    [`publish_live_surface`] commits that canonical encoding into a REAL `dregg://`
-//!    surface cell through the genuine [`publish_bundle`] chain
-//!    (content → commitment → receipt → receipt-stream-root → quorum). **The published
-//!    cell IS the DOM state at a committed height** — its committed content hash is the
-//!    bundle's content hash, checkable by a third party. The publish returns the
-//!    bearer [`DreggUri`], the [`Sturdyref`] behind the membrane, AND the tiny
-//!    [`DomSnapshot`] frustum (so the surface is immediately rehydratable per-viewer).
+//!      transcludes) alongside the surface's referenced assets, and
+//!      [`publish_live_surface`] commits that canonical encoding into a REAL `dregg://`
+//!      surface cell through the genuine [`publish_bundle`] chain
+//!      (content → commitment → receipt → receipt-stream-root → quorum). **The published
+//!      cell IS the DOM state at a committed height** — its committed content hash is the
+//!      bundle's content hash, checkable by a third party. The publish returns the
+//!      bearer [`DreggUri`], the [`Sturdyref`] behind the membrane, AND the tiny
+//!      [`DomSnapshot`] frustum (so the surface is immediately rehydratable per-viewer).
 //!
 //! 2. **TRANSCLUDES A DOM FRAGMENT**: [`PublishedSurface::quote_fragment`] makes a
 //!    span/region of the published surface's rendered DOM a transcludable
@@ -919,7 +919,7 @@ mod tests {
         let lineage = SurfaceCapability::scoped(
             cell,
             AuthRequired::Either,
-            origins(&[view_origin.clone()]),
+            origins(std::slice::from_ref(&view_origin)),
             [],
         );
 

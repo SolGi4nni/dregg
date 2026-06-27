@@ -295,7 +295,7 @@ mod tests {
         // A stand-in for the live ledger: slot's value depends on (cell tag, slot).
         let world =
             |cell: CellId, slot: Slot| -> u64 { (cell.as_bytes()[0] as u64) * 100 + slot as u64 };
-        assert_eq!(reg.reread(BindingId(0), world), Some(1 * 100 + 0));
+        assert_eq!(reg.reread(BindingId(0), world), Some(100));
         assert_eq!(reg.reread(BindingId(1), world), Some(2 * 100 + 4));
         // Unregistered binding → None.
         assert_eq!(reg.reread(BindingId(99), world), None);

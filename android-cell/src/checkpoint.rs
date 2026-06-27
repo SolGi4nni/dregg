@@ -326,7 +326,7 @@ pub fn emit_boundary_trace(pre: &UProjection, post: &UProjection) -> Result<Vec<
         }
     }
     // Every address present in pre but gone in post is a delete (write of absent).
-    for (k, _) in pre.iter() {
+    for k in pre.keys() {
         if !post.contains_key(k) {
             ops.push(UmemOp {
                 kind: UmemKind::Write,

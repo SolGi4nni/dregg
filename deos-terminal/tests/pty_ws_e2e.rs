@@ -55,11 +55,9 @@ async fn shell_over_websocket_echoes_a_marker() {
 
     // Send a command whose output is a unique marker (binary frame = PTY stdin).
     let marker = "DEOS_WS_OK_5151";
-    ws.send(Message::Binary(
-        format!("echo {marker}\n").into_bytes().into(),
-    ))
-    .await
-    .expect("send keystrokes");
+    ws.send(Message::Binary(format!("echo {marker}\n").into_bytes()))
+        .await
+        .expect("send keystrokes");
 
     // Read binary frames (PTY output) until the marker shows up, with a timeout.
     let mut seen = String::new();

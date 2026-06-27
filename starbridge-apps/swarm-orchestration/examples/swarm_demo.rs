@@ -82,7 +82,7 @@ fn main() {
     println!("        its installed program IS the swarm policy (budget + provenance + no-replay)");
 
     // Two worker agent cells.
-    let mut mk_worker = |tag: &[u8]| {
+    let mk_worker = |tag: &[u8]| {
         let tk = *blake3::hash(tag).as_bytes();
         let mut c = dregg_cell::Cell::new(owner, tk);
         c.state.set_balance(5_000);

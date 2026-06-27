@@ -7,8 +7,8 @@
 //!
 //! 1. **capture → commit → publish** — a `RenderedSurface` (the rendered fragment tree
 //!    + asset refs) is captured into a `LiveDomSnapshot` `WebBundle` and published
-//!    through the REAL `publish_bundle` chain (content → commitment → receipt →
-//!    stream-root → quorum). The published cell IS the DOM state at a committed height.
+//!      through the REAL `publish_bundle` chain (content → commitment → receipt →
+//!      stream-root → quorum). The published cell IS the DOM state at a committed height.
 //! 2. **transclude a DOM fragment** — a span/region of the published surface's rendered
 //!    DOM renders into a `DreggverseDocument` carrying the source's receipt-pinned
 //!    provenance (the live quote at the DOM level).

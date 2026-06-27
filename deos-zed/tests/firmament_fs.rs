@@ -17,6 +17,9 @@ fn open_edit_save_reload_is_a_receipted_turn_round_tripping_through_the_ledger()
     // Drive the editor's exact I/O path (the `Fs` trait) against the firmament
     // backend, but through an `Arc<dyn Fs>` — proving FirmamentFs is a genuine
     // drop-in for RealFs (the same handle EditorPane holds).
+    // Coerced to `Arc<dyn Fs>` below; single-threaded test, so the !Send/!Sync Arc
+    // is intentional.
+    #[allow(clippy::arc_with_non_send_sync)]
     let firm = Arc::new(FirmamentFs::new());
 
     let path = PathBuf::from("/proj/lib.rs");
@@ -113,6 +116,9 @@ fn sequential_saves_chain_their_receipts() {
 /// this same `Arc<dyn Fs>` (the host's gpui_web renderer drives it).
 #[test]
 fn in_browser_first_slice_save_is_a_conserving_receipted_turn_through_the_in_tab_ledger() {
+    // Coerced to `Arc<dyn Fs>` below; single-threaded test, so the !Send/!Sync Arc
+    // is intentional.
+    #[allow(clippy::arc_with_non_send_sync)]
     let firm = Arc::new(FirmamentFs::new());
     let fs: Arc<dyn Fs> = firm.clone();
 

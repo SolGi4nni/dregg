@@ -34,8 +34,8 @@
 //!    witness-graph (the crate's existing `dregg://` + [`AttestedRoot`] machinery)
 //!    and the membrane-negotiated reacquisition returning the per-viewer projection
 //!    + its liveness-type. The fetch is the existing
-//!    [`crate::web_of_cells::WebOfCells`] attested-fetch path: fetch = verified turn
-//!    returning attested content.
+//!      [`crate::web_of_cells::WebOfCells`] attested-fetch path: fetch = verified turn
+//!      returning attested content.
 //!
 //! ## What is real vs. the seam
 //!
@@ -171,7 +171,9 @@ pub enum Interaction {
         origin: DreggUri,
         /// The genuine federation attestation binding the turn into the
         /// witness-graph. Its presence is what makes the interaction *witnessed*.
-        witness: AttestedRoot,
+        /// Boxed: an `AttestedRoot` is large, so inlining it would bloat every
+        /// `Interaction` (the `Ambient` variant is tiny) — `large_enum_variant`.
+        witness: Box<AttestedRoot>,
     },
     /// A raw, un-witnessed external interaction (a non-`dregg://` fetch, an ambient
     /// timer read, an out-of-band agent choice). NOTHING in the witness-graph
@@ -189,7 +191,10 @@ impl Interaction {
     /// A witnessed interaction — a `dregg://` attested fetch carrying the real
     /// federation attestation that captures its non-determinism in the graph.
     pub fn attested_fetch(origin: DreggUri, witness: AttestedRoot) -> Interaction {
-        Interaction::AttestedFetch { origin, witness }
+        Interaction::AttestedFetch {
+            origin,
+            witness: Box::new(witness),
+        }
     }
 
     /// An ambient interaction — reached outside the membrane, never witnessed.

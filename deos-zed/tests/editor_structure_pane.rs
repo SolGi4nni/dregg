@@ -56,7 +56,7 @@ fn editor_pane_structure_toggle_tracks_the_live_document() {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     let path = "/deos/main.rs";
     let seed = "fn main() {\n    println!(\"before\");\n}\n";

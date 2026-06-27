@@ -548,20 +548,21 @@ mod tests {
     /// the fields the digest binds (turn_hash, agent, timestamp, computrons, ...)
     /// are seeded distinctly by `seed` so distinct receipts have distinct hashes.
     fn receipt(seed: u8) -> TurnReceipt {
-        let mut r = TurnReceipt::default();
-        r.turn_hash = [seed; 32];
-        r.forest_hash = [seed.wrapping_add(1); 32];
-        r.pre_state_hash = [seed.wrapping_add(2); 32];
-        r.post_state_hash = [seed.wrapping_add(3); 32];
-        r.effects_hash = [seed.wrapping_add(4); 32];
-        r.timestamp = 1_718_000_000 + seed as i64;
-        r.computrons_used = 100 + seed as u64;
-        r.action_count = 1 + seed as usize;
         let mut agent = [0u8; 32];
         agent[0] = 0xA0;
         agent[1] = seed;
-        r.agent = dregg_types::CellId::derive_raw(&agent, &[0u8; 32]);
-        r
+        TurnReceipt {
+            turn_hash: [seed; 32],
+            forest_hash: [seed.wrapping_add(1); 32],
+            pre_state_hash: [seed.wrapping_add(2); 32],
+            post_state_hash: [seed.wrapping_add(3); 32],
+            effects_hash: [seed.wrapping_add(4); 32],
+            timestamp: 1_718_000_000 + seed as i64,
+            computrons_used: 100 + seed as u64,
+            action_count: 1 + seed as usize,
+            agent: dregg_types::CellId::derive_raw(&agent, &[0u8; 32]),
+            ..Default::default()
+        }
     }
 
     /// An HONEST frame at `idx` carrying `receipt(seed)`.

@@ -163,7 +163,7 @@ where
             let mut sock = unsafe { UnixStream::from_raw_fd(fd) };
             body(&mut sock)
         })
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(ConfinedAgent { pd })
 }
 
@@ -203,7 +203,7 @@ where
             let mut sock = unsafe { UnixStream::from_raw_fd(fd) };
             body(&mut sock)
         })
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(ConfinedAgent { pd })
 }
 

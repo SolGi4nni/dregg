@@ -341,13 +341,13 @@ impl AcpPeer for MockHermesPeer {
             return Ok(msg);
         }
         // Script drained and prompt outstanding → send the PromptResponse.
-        if matches!(self.phase, Phase::Done) {
-            if let Some(id) = self.prompt_response_id.take() {
-                return Ok(RpcMessage::response(
-                    id,
-                    json!({ "stopReason": "end_turn" }),
-                ));
-            }
+        if matches!(self.phase, Phase::Done)
+            && let Some(id) = self.prompt_response_id.take()
+        {
+            return Ok(RpcMessage::response(
+                id,
+                json!({ "stopReason": "end_turn" }),
+            ));
         }
         // Nothing left to say — the stream is closed.
         Err(AcpError::Closed)

@@ -127,7 +127,7 @@ mod imp {
                 maybe_out = out_rx.recv() => {
                     match maybe_out {
                         Some(bytes) => {
-                            if ws_tx.send(Message::Binary(bytes.into())).await.is_err() {
+                            if ws_tx.send(Message::Binary(bytes)).await.is_err() {
                                 break;
                             }
                         }
@@ -139,7 +139,7 @@ mod imp {
                 code = exit_rx.recv() => {
                     let code = code.flatten();
                     let _ = ws_tx
-                        .send(Message::Text(WireMsg::Exit { code }.to_text().into()))
+                        .send(Message::Text(WireMsg::Exit { code }.to_text()))
                         .await;
                     let _ = ws_tx.send(Message::Close(None)).await;
                     break;

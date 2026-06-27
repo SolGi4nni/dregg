@@ -946,16 +946,11 @@ mod tests {
     use super::*;
     use crate::rehydrate::InteractionLog;
     use crate::web_of_cells::DreggUri;
-    use std::collections::BTreeSet;
 
     fn cid(b: u8) -> CellId {
         let mut k = [0u8; 32];
         k[0] = b;
         CellId::derive_raw(&k, &[0u8; 32])
-    }
-
-    fn origins(list: &[&str]) -> BTreeSet<String> {
-        list.iter().map(|s| s.to_string()).collect()
     }
 
     /// A real `SetField` effect (the genuine turn the executor runs for an edit).

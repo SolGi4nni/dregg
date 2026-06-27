@@ -62,7 +62,7 @@ pub fn capture_surface<V: Render + 'static>(
     //     widgets that read `gpui_component::theme::Theme` at paint time; the
     //     WINDOWED path inits it at boot, so the headless App must too or any kit
     //     widget panics "no state of type gpui_component::theme::Theme".
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     // 3. Open a headless (hidden, unfocused) window whose root IS the surface.
     let window = cx.open_window(size(px(w), px(h)), build_root)?;

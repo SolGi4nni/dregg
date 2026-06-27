@@ -483,7 +483,7 @@ pub fn run_first_room() -> Transcript {
     }
 
     // ── RENDER THE ROOM — the inhabitant (job + pay + refusals) and the payer, in-room. ───────────
-    let room_cell = CellId::derive_raw(&owner, &(*blake3::hash(b"the-first-room").as_bytes()));
+    let room_cell = CellId::derive_raw(&owner, blake3::hash(b"the-first-room").as_bytes());
     let mut room = Room::new(room_cell, "the workshop");
 
     let inhabitant = InhabitantView {

@@ -5,7 +5,7 @@
 //!   * a navigation the caps ALLOW succeeds;
 //!   * one they DON'T is refused;
 //!   * an attenuated cap narrows what a sub-surface can fetch;
-//! plus the `dregg://` end-to-end fetch + attestation verification.
+//!     plus the `dregg://` end-to-end fetch + attestation verification.
 
 use std::collections::BTreeSet;
 

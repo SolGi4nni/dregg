@@ -70,8 +70,10 @@ pub enum Error {
     Sdk(#[from] matrix_sdk::Error),
     #[error("matrix http error: {0}")]
     Http(#[from] matrix_sdk::HttpError),
+    // Boxed: `ClientBuildError` is ~208 bytes and would otherwise dominate the
+    // `Error` size, tripping `clippy::result_large_err` on every fallible fn.
     #[error("client build error: {0}")]
-    ClientBuild(#[from] matrix_sdk::ClientBuildError),
+    ClientBuild(Box<matrix_sdk::ClientBuildError>),
     #[error("matrix id parse error: {0}")]
     IdParse(#[from] matrix_sdk::IdParseError),
     #[error("io error: {0}")]
@@ -84,6 +86,12 @@ pub enum Error {
     MembraneUnavailable,
     #[error("{0}")]
     Other(String),
+}
+
+impl From<matrix_sdk::ClientBuildError> for Error {
+    fn from(e: matrix_sdk::ClientBuildError) -> Self {
+        Error::ClientBuild(Box::new(e))
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

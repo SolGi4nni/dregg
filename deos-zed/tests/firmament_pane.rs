@@ -67,7 +67,7 @@ fn cockpit_editor_pane_save_is_a_receipted_turn_through_the_pane() {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     let path = "/deos/main.rs";
     let seed = "fn main() {\n    println!(\"before\");\n}\n";
@@ -180,6 +180,7 @@ fn cockpit_editor_pane_save_is_a_receipted_turn_through_the_pane() {
 ///     `firmament_over` constructor builds,
 ///   * `inspector: Rc<dyn LedgerSpine>` is a SECOND handle on the SAME spine
 ///     (stands in for the cockpit's cell inspector),
+///
 /// and after the editor drives a real `save()`, the inspector — NOT the editor's
 /// fs — is asserted to see the new receipt + the edited cell content.
 #[test]
@@ -193,7 +194,7 @@ fn editor_pane_save_lands_on_the_shared_ledger_a_second_reader_inspects() {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     let path = "/deos/main.rs";
     let seed = "fn main() {\n    println!(\"before\");\n}\n";
@@ -209,6 +210,9 @@ fn editor_pane_save_lands_on_the_shared_ledger_a_second_reader_inspects() {
     // `FirmamentFs::over` the cockpit's `firmament_over` builds. The seed is
     // installed by `firmament_over` itself (once) onto the SHARED ledger — we do
     // NOT pre-seed, so there is exactly ONE file cell at `path`.
+    // Typed `Arc<FirmamentFs>` (the `firmament_over` param shape); single-threaded
+    // test, so the !Send/!Sync Arc is intentional.
+    #[allow(clippy::arc_with_non_send_sync)]
     let firm: Arc<FirmamentFs> = Arc::new(FirmamentFs::over(spine.clone()));
 
     assert_eq!(

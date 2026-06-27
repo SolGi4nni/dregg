@@ -167,11 +167,9 @@ impl Editor {
         // Any edit to the buffer marks the document dirty.
         let subs = vec![
             cx.subscribe(&input, |this, _input, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    if !this.dirty {
-                        this.dirty = true;
-                        cx.notify();
-                    }
+                if matches!(event, InputEvent::Change) && !this.dirty {
+                    this.dirty = true;
+                    cx.notify();
                 }
             }),
         ];
