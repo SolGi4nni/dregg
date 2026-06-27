@@ -17,7 +17,7 @@ use dregg_captp::{
 };
 use dregg_cell::{AuthRequired, CellId, Nullifier, NullifierSet};
 use dregg_teasting::assertions::assert_no_double_spend;
-use dregg_teasting::federation::{dual_federation, quick_federation};
+use dregg_teasting::federation::quick_federation;
 use dregg_teasting::harness::SimulationHarness;
 use dregg_types::generate_keypair;
 use dregg_wire::message::WireMessage;

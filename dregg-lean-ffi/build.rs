@@ -1795,6 +1795,7 @@ fn main() {
 ///     libunwind instead, so empty stub archives satisfy the `-lgcc`/`-lgcc_eh` the Rust-gnu
 ///     driver always emits (the real builtins come from `clang_rt.builtins`, the real EH from
 ///     `libunwind`, both linked above).
+///
 /// The generated shims live in `$OUT_DIR/mingw-shim`. Idempotent (regenerated each build is
 /// cheap). All paths use the sysroot discovered by `lean_sysroot()`; nothing is hardcoded.
 fn windows_gnu_link_env(sysroot: &Path) {

@@ -104,6 +104,7 @@ mod tests {
     use super::*;
     use dregg_captp::FederationId as GroupId;
     use dregg_types::CellId;
+    use dregg_wire::dfa_router::{cell_target, federation_target};
 
     fn test_cell(n: u8) -> CellId {
         CellId([n; 32])

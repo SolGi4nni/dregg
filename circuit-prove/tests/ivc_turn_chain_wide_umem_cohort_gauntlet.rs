@@ -12,6 +12,7 @@
 //!   * FOLDS a multi-turn same-family history through `fold_wide_welded_umem_turn_chain_staged`
 //!     (8-felt continuity + the ordered-history digest);
 //!   * REFUSES a forged 8-felt AFTER commit (the ~124-bit binding tooth bites per family);
+//!
 //! and the gauntlet asserts a NON-COHORT lead (a cap-WRITE effect whose AFTER cap-root needs the
 //! SEPARATE cap-open path) FAILS CLOSED at the dispatch, never silently mis-proved.
 //!

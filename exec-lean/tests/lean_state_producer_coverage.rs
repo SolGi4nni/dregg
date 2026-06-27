@@ -36,8 +36,8 @@ use dregg_exec_lean::lean_shadow::{
 };
 use dregg_turn::action::{Event, RefusalReason};
 use dregg_turn::{
-    Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, ProofCondition,
-    TurnExecutor, turn::Turn,
+    Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
+    turn::Turn,
 };
 
 fn open_permissions() -> Permissions {

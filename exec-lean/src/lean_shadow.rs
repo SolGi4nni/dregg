@@ -1598,7 +1598,9 @@ pub(crate) fn run_shadow_state(
 /// `DREGG_LEAN_PROFILE=1` for `iters` calls (each prints a per-sub-phase ns line to stderr the
 /// bench aggregates). Returns the identity-floor median seconds. Off the production path; called
 /// only by `perf/benches/lean_ffi_turn.rs`.
-pub fn profile_lean_phases(
+// `pub(crate)`: takes `pub(crate)` `ShadowPreLedger`; only ever called from `lean_apply.rs`
+// (the public re-export is `lean_apply::profile_lean_phases`). Avoids the private_interfaces lint.
+pub(crate) fn profile_lean_phases(
     turn: &Turn,
     pre: &ShadowPreLedger,
     host: &ShadowHostCtx,

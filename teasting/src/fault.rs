@@ -343,18 +343,18 @@ impl FaultyNetwork {
         self.total_sent += 1;
 
         // Check partition
-        if let Some(ref partition) = self.config.partition {
-            if partition.is_partitioned(from, to) {
-                let msg = InFlightMessage {
-                    from,
-                    to,
-                    message,
-                    deliver_at: 0,
-                    delivered: true, // mark as "handled" — it was dropped by partition
-                };
-                self.dropped_messages.push(msg);
-                return false;
-            }
+        if let Some(ref partition) = self.config.partition
+            && partition.is_partitioned(from, to)
+        {
+            let msg = InFlightMessage {
+                from,
+                to,
+                message,
+                deliver_at: 0,
+                delivered: true, // mark as "handled" — it was dropped by partition
+            };
+            self.dropped_messages.push(msg);
+            return false;
         }
 
         // Drop?
@@ -406,11 +406,11 @@ impl FaultyNetwork {
         self.current_tick += 1;
 
         // Check if partition has expired
-        if let Some(ref partition) = self.config.partition {
-            if self.current_tick >= partition.duration {
-                // Auto-heal after duration
-                self.config.partition = None;
-            }
+        if let Some(ref partition) = self.config.partition
+            && self.current_tick >= partition.duration
+        {
+            // Auto-heal after duration
+            self.config.partition = None;
         }
     }
 

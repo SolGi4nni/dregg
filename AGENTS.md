@@ -114,6 +114,29 @@ sg -p 'fn $F($$$) -> Result<$T, SdkError>' -l rust   # shape queries (all fns re
   to the `heavy` profile (a name/`package`/`test()` filter in `.config/nextest.toml`),
   don't `#[ignore]` it silently.
 
+## Test-only imports belong inside `#[cfg(test)]`
+
+A `use` at module scope that is only consumed by `#[test]`/`proptest!` code (or by
+`#[cfg(test)] mod tests`) is genuinely unused in the non-test build, so `cargo fix`
+and `cargo clippy --fix` will (correctly!) strip it — silently breaking the test
+target. We are not writing programs that fight clippy; put each import where it is
+actually used:
+
+- A `src/*.rs` with a `#[cfg(test)] mod tests { … }`: put the test-only `use`
+  **inside** that module (or write `#[cfg(test)] use …;`), never at module scope.
+- A whole `src/*.rs` module that is pure test scaffolding (helpers + `#[test]`/
+  `proptest!` only, no production API — e.g. `tests/src/*`, `protocol-tests/
+  src/invariants/*`): gate the **module declaration** with `#[cfg(test)]` so the
+  non-test build skips it entirely; module-scope `use` is then correct.
+- An integration test (`tests/*.rs` — the whole target is test code): module-scope
+  `use` is fine; just don't leave dead ones.
+- A feature-gated symbol: gate the `use` with the same `#[cfg(feature = …)]` as its
+  consumer.
+
+Run `cargo fix` / `cargo clippy --fix` with `--all-targets` if you must, so the test
+build is in scope; and check `cargo test --workspace --no-run --all-targets` before
+trusting an import cleanup.
+
 ## Swarm-safety (if you're a subagent in a fleet)
 
 - The **main loop commits**; subagents don't run git (unless explicitly deputized).

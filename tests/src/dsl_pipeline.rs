@@ -13,9 +13,17 @@
 //!
 //! Also tests: wrong proof rejected, wrong VK rejected.
 
+use dregg_cell::{Cell, CellId, Ledger};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::stark::StarkAir;
 use dregg_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
+};
+use dregg_dsl_runtime::{
+    CellProgram, DslCircuit, ProgramRegistry, prove_dsl_plonky3, verify_dsl_plonky3,
+};
+use dregg_turn::{
+    ActionBuilder, ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
 };
 
 // ============================================================================

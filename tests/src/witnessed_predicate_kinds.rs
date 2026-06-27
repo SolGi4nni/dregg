@@ -19,7 +19,11 @@ use dregg_cell::predicate::{
     NonMembershipNeighborProof, PredicateInput, WitnessedPredicate, WitnessedPredicateError,
     WitnessedPredicateKind, WitnessedPredicateRegistry, WitnessedPredicateVerifier,
 };
-use dregg_cell::{InputRef, MerkleMembershipProof, Nullifier};
+use dregg_cell::program::{
+    CellProgram, ProgramError, StateConstraint, TransitionMeta, WitnessBlobView, WitnessBundle,
+    WitnessKindTag,
+};
+use dregg_cell::{CellState, EvalContext, InputRef, MerkleMembershipProof, Nullifier};
 
 // ---------------------------------------------------------------------------
 // Helpers / shared concerns
@@ -198,7 +202,7 @@ fn verify_nullifier_membership_proof(proof: &MerkleMembershipProof, root: &[u8; 
     let mut current = nullifier_leaf_hash(&proof.element.0);
     let mut idx = proof.index;
     for sibling in &proof.siblings {
-        current = if idx % 2 == 0 {
+        current = if idx.is_multiple_of(2) {
             nullifier_node_hash(&current, sibling)
         } else {
             nullifier_node_hash(sibling, &current)

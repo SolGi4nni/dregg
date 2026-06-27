@@ -42,7 +42,7 @@ impl HeadlessRender {
 
         // gpui-component reads its `Theme` global at render time — init it (and force a
         // dark theme) on this headless App, just as the cockpit's headless bake does.
-        cx.update(|cx| gpui_component::init(cx));
+        cx.update(gpui_component::init);
         cx.update(|cx| {
             gpui_component::theme::Theme::change(gpui_component::theme::ThemeMode::Dark, None, cx)
         });
@@ -70,7 +70,7 @@ impl HeadlessRender {
         self.cx
             .update_window(window, |_, window, _cx| window.refresh())?;
         self.cx.run_until_parked();
-        Ok(self.cx.capture_screenshot(window)?)
+        self.cx.capture_screenshot(window)
     }
 
     /// Run an update against the live `App` (e.g. notify the view to re-render), then

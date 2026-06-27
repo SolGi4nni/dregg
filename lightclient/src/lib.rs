@@ -1070,8 +1070,8 @@ mod tests {
 
         // Corrupt the PUBLIC final root + digest the aggregate claims — splice foreign public
         // claims onto THIS aggregate's root proof.
-        agg.final_root[0] = agg.final_root[0] + BabyBear::ONE;
-        agg.chain_digest[0] = agg.chain_digest[0] + BabyBear::ONE;
+        agg.final_root[0] += BabyBear::ONE;
+        agg.chain_digest[0] += BabyBear::ONE;
 
         match verify_history(&agg, &vk) {
             Err(LightClientError::AggregateInvalid(

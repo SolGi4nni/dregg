@@ -16,7 +16,7 @@ use dregg_captp::sturdy::SwissTable;
 use dregg_captp::uri::DreggUri;
 use dregg_captp::{
     DropResult, ExportGcManager, FederationId, HandoffCertificate, HandoffPresentation,
-    ImportGcManager, PipelineRegistry, PipelinedAction, validate_handoff,
+    PipelineRegistry, PipelinedAction, validate_handoff,
 };
 use dregg_cell::AuthRequired;
 use dregg_teasting::federation::dual_federation;

@@ -27,7 +27,12 @@
 //! the router compiles in every feature combination; only the live wire is
 //! feature-gated.
 
-use crate::{Backing, Bounds, HostPdId, Resolution, ResolveError, Rights};
+use crate::{HostPdId, Resolution, ResolveError, Rights};
+// `Backing`/`Bounds` are consumed only by the live-endpoint `invoke`, which is
+// itself `process-pd`-gated; gate the import to match so the fallback build
+// doesn't see them as unused.
+#[cfg(all(feature = "process-pd", unix))]
+use crate::{Backing, Bounds};
 
 #[cfg(all(feature = "process-pd", unix))]
 use std::collections::BTreeMap;

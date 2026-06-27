@@ -15,7 +15,7 @@
 //!   * `phase1`     — fee debit + nonce increment.
 //!   * `forest`     — `execute_tree` over every root (the auth+effect-apply walk).
 //!   * `post`       — conservation/excess checks, sovereign post-exec, committed-height
-//!                    advance, fee distribution, rate-limit counters.
+//!     advance, fee distribution, rate-limit counters.
 //!   * `post_root`  — `ledger.root()` for the post-state hash.
 //!   * `receipt`    — effects/turn/forest hashes, delta build, receipt build, sign, record head.
 //!

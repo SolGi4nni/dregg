@@ -273,10 +273,10 @@ impl SimFederation {
             // Map ordering BlockId back to a finality block via the id map built
             // during `build_ordering_blocklace`. For simplicity we re-traverse
             // the finality lace directly.
-            if let Some(b) = ordering_lace.get(bid) {
-                if let Some(token_ids) = parse_data_payload(&b.payload) {
-                    round_revocations.extend(token_ids);
-                }
+            if let Some(b) = ordering_lace.get(bid)
+                && let Some(token_ids) = parse_data_payload(&b.payload)
+            {
+                round_revocations.extend(token_ids);
             }
         }
 
@@ -836,7 +836,7 @@ impl SimulationHarness {
                 break;
             }
             let sig = dregg_types::sign(sk, &body_hash);
-            votes.push((pk.clone(), sig));
+            votes.push((*pk, sig));
         }
 
         FederationReceipt::with_vote_signatures(

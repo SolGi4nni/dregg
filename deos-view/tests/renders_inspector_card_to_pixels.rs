@@ -71,7 +71,7 @@ fn inspector_proof_body() {
     let out = out_dir();
 
     // ── 1. Focus the inspector → its view is GENERATED from the focused cell's faces ─────
-    let mut card = InspectorCard::focus(
+    let card = InspectorCard::focus(
         counter_card(),
         Author(42),
         /*held=*/ AuthRequired::None,

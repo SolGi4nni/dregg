@@ -10,7 +10,7 @@
 //! Source: `SLOT-CAVEATS-EVALUATION.md` §4 + `cell/src/program.rs::CellProgram::evaluate_full`.
 
 use crate::Invariant;
-use dregg_cell::{StateConstraint, field_from_u64};
+use dregg_cell::{CellProgram, CellState, StateConstraint, field_from_u64};
 use proptest::prelude::*;
 
 pub struct StateConstraintConjunction;

@@ -103,6 +103,8 @@ fn make_chain(
     let mut nonce = start_nonce;
     let mut genesis = BabyBear::ZERO;
     let mut final_root = BabyBear::ZERO;
+    // `nonce`/`balance` are intertwined chain accumulators here; an enumerate rewrite isn't clean.
+    #[allow(clippy::explicit_counter_loop)]
     for i in 0..k {
         let (turn, old_root, new_root) = make_turn(balance, nonce, step);
         if i == 0 {

@@ -64,7 +64,7 @@ fn deep_holder_isolation_drop_does_not_cross_decrement() {
         "A cross-decremented!"
     );
     assert!(
-        entry.holders.get(&fed(0xB)).is_none(),
+        !entry.holders.contains_key(&fed(0xB)),
         "B should be cleaned up at count 0"
     );
     assert_eq!(entry.total_refs, 2);

@@ -152,6 +152,8 @@ fn make_chain(
     let mut nonce = start_nonce;
     let mut genesis = BabyBear::ZERO;
     let mut final_root = BabyBear::ZERO;
+    // `nonce`/`balance` are intertwined chain accumulators here; an enumerate rewrite isn't clean.
+    #[allow(clippy::explicit_counter_loop)]
     for i in 0..k {
         let (turn, old_root, new_root) = make_turn(balance, nonce, step);
         if i == 0 {
@@ -903,6 +905,8 @@ fn expose_claim_idx(
 /// B's endpoints into the root.
 #[test]
 #[ignore = "SLOW: a real segment fold (~minutes); run with --ignored — codex re-review #2 CLOSE"]
+// A/B are deliberate emphasis in the test name (root A forging a claim of B's endpoints).
+#[allow(non_snake_case)]
 fn mixed_root_forgery_executes_A_claims_B() {
     use dregg_circuit_prove::ivc_turn_chain::TurnChainBindingAir;
     use dregg_circuit_prove::ivc_turn_chain::{

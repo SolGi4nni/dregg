@@ -2572,7 +2572,7 @@ fn prove_chain_core_rotated(
     }
     // Host-side continuity (the `ChainBreak` tooth: `prev.new_root == next.old_root`). This
     // mirrors the in-circuit combine's continuity constraint and fails closed BEFORE any proving.
-    let _ = generate_chain_trace_rotated_continuity(turns)?;
+    generate_chain_trace_rotated_continuity(turns)?;
 
     // CODEX #5 — the count field is a BabyBear (mod p), so `num_turns` must be `< p` for the
     // exposed `count` lane to faithfully equal the real turn count (no modular wrap). A single

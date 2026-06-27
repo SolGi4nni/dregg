@@ -10,9 +10,7 @@
 use std::collections::HashMap;
 
 use dregg_cell::CellId;
-use dregg_teasting::assertions::{
-    assert_conservation_invariant, assert_gc_consistency, assert_nonce_monotonicity,
-};
+use dregg_teasting::assertions::{assert_conservation_invariant, assert_nonce_monotonicity};
 use dregg_teasting::fault::{CrashableNode, FaultConfig, FaultyNetwork, MessageBuffer, SavedState};
 use dregg_teasting::federation::{drive_to_finalization, dual_federation, quick_federation};
 use dregg_teasting::harness::SimulationHarness;

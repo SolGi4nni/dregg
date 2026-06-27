@@ -44,6 +44,12 @@
 #![allow(dead_code)]
 
 pub mod generators;
+// The invariant modules are pure proptest harnesses: every `use` they carry is
+// consumed inside `proptest!`/`#[test]` bodies, which only exist under
+// `cfg(test)`. Gating the whole subtree on `cfg(test)` keeps those imports where
+// they belong — so a non-test `cargo build`/`clippy`/`cargo fix` never sees them
+// as unused and strips them out from under the test build.
+#[cfg(test)]
 pub mod invariants;
 
 /// Marker trait for a protocol invariant. The implementer is a unit struct

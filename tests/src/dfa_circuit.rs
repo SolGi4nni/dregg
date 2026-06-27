@@ -15,7 +15,7 @@
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::{hash_2_to_1, hash_4_to_1};
-use dregg_circuit::stark::{BoundaryConstraint, StarkAir};
+use dregg_circuit::stark::{self, BoundaryConstraint, StarkAir};
 
 // =============================================================================
 // DFA Definition
@@ -171,13 +171,13 @@ impl StarkAir for DfaRoutingAir {
         // Constraint 1: table_entry_hash == hash_4_to_1(current_state, symbol, next_state, 0)
         let expected_entry = hash_4_to_1(&[current_state, symbol, next_state, BabyBear::ZERO]);
         let c1 = table_entry_hash - expected_entry;
-        combined = combined + alpha_pow * c1;
-        alpha_pow = alpha_pow * alpha;
+        combined += alpha_pow * c1;
+        alpha_pow *= alpha;
 
         // Constraint 2: Transition continuity (next row's current_state == this row's next_state)
         let c2 = next[COL_CURRENT_STATE] - next_state;
-        combined = combined + alpha_pow * c2;
-        alpha_pow = alpha_pow * alpha;
+        combined += alpha_pow * c2;
+        alpha_pow *= alpha;
 
         // Constraint 3: running_hash accumulation
         // For row 0: running_hash == hash_2_to_1(table_commitment, table_entry_hash)
@@ -188,7 +188,7 @@ impl StarkAir for DfaRoutingAir {
         let next_entry = next[COL_TABLE_ENTRY_HASH];
         let expected_next_running = hash_2_to_1(local_running, next_entry);
         let c3 = next[COL_RUNNING_HASH] - expected_next_running;
-        combined = combined + alpha_pow * c3;
+        combined += alpha_pow * c3;
         // alpha_pow = alpha_pow * alpha; // last constraint
 
         combined
