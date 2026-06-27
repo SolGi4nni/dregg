@@ -52,6 +52,9 @@ EMITTERS = [
     "EmitWideRegistryProbe.lean",            # ADDITIVE: the 57-member faithful 8-felt wide registry (covers live V3)
     "EmitBilateralLegs.lean",                # bilateral-aggregation legs
     "EmitCrossCellConservation.lean",        # turn-wide cross-cell Σδ=0 conservation AIR (foolable gap #6)
+    "EmitUMemCohort.lean",                   # ADDITIVE/STAGED: the umem-form per-effect cohort registry
+    "EmitUMemCohortMulti.lean",              # ADDITIVE/STAGED: the MULTI-DOMAIN umem-form cohort registry
+    "EmitWideUMemWeldRegistryProbe.lean",    # ADDITIVE/STAGED: the WIDE+umem welded registry (covers wide V3)
 ]
 
 
@@ -213,6 +216,31 @@ def split_bilateral(stdout: str, written):
 CROSS_CELL_CONSERVATION_FILE = "dregg-cross-cell-conservation-v1.json"
 
 
+# ADDITIVE / STAGED: the umem-form per-effect cohort registries (`EmitUMemCohort.lean` /
+# `EmitUMemCohortMulti.lean`) + the WIDE+umem welded registry (`EmitWideUMemWeldRegistryProbe.lean`).
+# Each emitter prints ONE `key\tname\tjson` line per registry member via `IO.println` (so its stdout
+# is the lines + a trailing newline, no blank lines) — the checked-in artifact is exactly those
+# bytes. These are STAGED sets beside the deployed per-map / wide registries: nothing rides the live
+# wire, the deployed FP/VK are untouched. (The wide-welded TSV is FP-pinned by
+# `WIDE_UMEM_WELD_REGISTRY_TSV`/`_FP`; the two cohort TSVs carry no `*_FP` constant.)
+UMEM_COHORT_TSV = "umem-cohort-v1-staged-registry.tsv"
+UMEM_COHORT_MULTI_TSV = "umem-cohort-multidomain-v1-staged-registry.tsv"
+WIDE_UMEM_WELD_REGISTRY_TSV = "rotation-wide-umem-welded-registry-staged.tsv"
+
+
+def split_member_tsv(stdout: str, written, filename: str):
+    """A registry emitter that prints one `key\tname\tjson` line per member (`IO.println`,
+    trailing newline). The checked-in artifact is the non-empty lines joined with a trailing
+    newline; every line must carry the exact 2-tab `key\tname\tjson` shape."""
+    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+    if not lines:
+        sys.exit(f"emit_descriptors: {filename} emitter produced no lines")
+    for ln in lines:
+        if ln.count("\t") != 2:
+            sys.exit(f"emit_descriptors: {filename} line malformed: {ln[:80]!r}")
+    write_file(filename, "\n".join(lines) + "\n", written)
+
+
 def split_cross_cell_conservation(stdout: str, written):
     """`EmitCrossCellConservation.lean` emits the bare descriptor JSON via `IO.println`
     (no TSV prefix), so its stdout is the descriptor JSON + one trailing newline — exactly
@@ -302,6 +330,12 @@ def main():
             split_bilateral(out, written)
         elif lean.endswith("EmitCrossCellConservation.lean"):
             split_cross_cell_conservation(out, written)
+        elif lean.endswith("EmitUMemCohortMulti.lean"):
+            split_member_tsv(out, written, UMEM_COHORT_MULTI_TSV)
+        elif lean.endswith("EmitUMemCohort.lean"):
+            split_member_tsv(out, written, UMEM_COHORT_TSV)
+        elif lean.endswith("EmitWideUMemWeldRegistryProbe.lean"):
+            split_member_tsv(out, written, WIDE_UMEM_WELD_REGISTRY_TSV)
         else:
             sys.exit(f"emit_descriptors: no split routine for {lean}")
 
