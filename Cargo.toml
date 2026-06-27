@@ -238,6 +238,9 @@ zeroize = { version = "1", features = ["std", "derive"] }
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 assign_op_pattern = "allow"
+# Stylistic `chunks_exact(N)` -> `as_chunks::<N>()` nudge; a fresh clippy flags it
+# but it's a readability preference, not a correctness lint — allowed like the rest.
+chunks_exact_to_as_chunks = "allow"
 collapsible_if = "allow"
 collapsible_match = "allow"
 derivable_impls = "allow"
