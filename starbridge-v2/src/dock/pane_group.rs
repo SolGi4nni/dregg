@@ -846,6 +846,7 @@ mod element {
             self
         }
 
+        #[allow(clippy::too_many_arguments)] // resize math needs the full geometry context
         fn compute_resize(
             flexes: &Arc<Mutex<Vec<f32>>>,
             e: &MouseMoveEvent,

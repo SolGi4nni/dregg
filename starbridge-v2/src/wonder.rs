@@ -241,7 +241,7 @@ impl ArmedDrag {
 #[derive(Debug)]
 pub enum DragOutcome {
     /// The drag committed a real conserving transfer — the executor's own receipt.
-    Moved(dregg_turn::turn::TurnReceipt),
+    Moved(Box<dregg_turn::turn::TurnReceipt>),
     /// The drag was REFUSED (a guarantee fired — over-drag, an ocap gate). The
     /// reason is the executor's own; the live world moved nothing.
     Refused { reason: String },

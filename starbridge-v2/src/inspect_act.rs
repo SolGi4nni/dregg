@@ -34,8 +34,8 @@
 //!
 //! gpui-free and `cargo test`-able: a test asserts the messages-understood are real
 //! + cap-annotated, that firing an authorized one commits a real turn whose effect
-//! the re-inspected object reflects, and that firing an unauthorized one is refused
-//! in-band. The cockpit renders exactly this model.
+//!   the re-inspected object reflects, and that firing an unauthorized one is refused
+//!   in-band. The cockpit renders exactly this model.
 
 use dregg_cell::{is_attenuation, AuthRequired, CellId};
 use dregg_firmament::Capability;
@@ -100,7 +100,7 @@ pub enum SendResult {
     /// [`TurnReceipt`] (the proof the send happened) AND the fresh [`Inspectable`]
     /// re-read off the POST-state ledger — the result object you inspect next.
     Committed {
-        receipt: TurnReceipt,
+        receipt: Box<TurnReceipt>,
         /// The focused object re-inspected after the turn (the loop closing:
         /// inspect → act → **inspect**). Reflects the committed change.
         reinspected: Inspectable,

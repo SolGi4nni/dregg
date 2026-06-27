@@ -14,10 +14,9 @@
 //! ring is *data*, extended per object kind) and `docs/deos/HIG.md` ("Reflection is a
 //! halo/flip on any cell"). This module is the desktop's concrete realization.
 
-use gpui::prelude::FluentBuilder;
 use gpui::{
     div, px, AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Point, SharedString, StatefulInteractiveElement, Styled,
+    ParentElement, Point, SharedString, Styled,
 };
 
 use dregg_types::CellId;

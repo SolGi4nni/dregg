@@ -267,13 +267,13 @@ pub fn reflect_proof_status(r: &TurnReceipt) -> Inspectable {
         kind: ObjectKind::Proof,
         title: format!("Proof status · {}", short_hex(&r.receipt_hash())),
         subtitle: format!(
-            "{} · {} · pre {} → post {}",
+            "{} · {:?} · pre {} → post {}",
             if signed {
                 "executor-signed"
             } else {
                 "verified-by-construction"
             },
-            format!("{:?}", r.finality),
+            r.finality,
             short_hex(&r.pre_state_hash),
             short_hex(&r.post_state_hash),
         ),

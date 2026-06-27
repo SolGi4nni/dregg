@@ -588,7 +588,6 @@ fn main() {
             // through the embedded executor before the window ever opened.)
             let (world, anchors, seed) = world::demo_genesis();
             run_window(world, anchors, seed, node_url);
-            return;
         }
     }
 
@@ -1304,7 +1303,7 @@ fn render_woven_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
@@ -1585,7 +1584,7 @@ fn render_doc_collab_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
@@ -1784,7 +1783,7 @@ fn render_welcome_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
@@ -1851,7 +1850,7 @@ fn render_welcome_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 ///      sidecar (the #1 missing thing — spatial persistence),
 ///   4. opens a context menu so the right-click ACTUATION surface is visible in the
 ///      shot,
-/// then bakes `<out>.png`. Uses a throwaway sidecar path so the bake is hermetic.
+///      then bakes `<out>.png`. Uses a throwaway sidecar path so the bake is hermetic.
 #[cfg(all(
     feature = "render-capture",
     feature = "gpui-ui",
@@ -1860,7 +1859,7 @@ fn render_welcome_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use starbridge_v2::deos_desktop::{id_hex, DeosDesktop, DesktopLayout, WinKindTag};
+    use starbridge_v2::deos_desktop::{id_hex, DeosDesktop, DesktopLayout};
     use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -1887,7 +1886,7 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
@@ -2861,7 +2860,7 @@ fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
     // gpui-component init (the kit `Button`/widgets the cockpit now uses read the
     // kit `Theme`/global at render; without it they panic). See the same weld in
     // `render_cockpit_headless`.
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
     cx.update(|cx| apply_deos_theme(None, true, cx));
@@ -3085,7 +3084,7 @@ fn explore_ui_headless(outdir: &str) -> anyhow::Result<()> {
     // read the kit's `Theme`/global state at render; init it in this headless app
     // (the windowed path does so at boot) or any kit widget panics on the missing
     // global. (See `render_cockpit_headless` for the same weld.)
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
     cx.update(|cx| apply_deos_theme(None, true, cx));
@@ -3103,7 +3102,7 @@ fn explore_ui_headless(outdir: &str) -> anyhow::Result<()> {
     let wh = window.into();
 
     // root at HOME; capture the initial nav state to restore between nodes
-    let initial = window.update(&mut cx, |c, _window, cx| {
+    let initial = window.update(&mut cx, |c, _window, _cx| {
         c.select_tab_named("home");
         c.capture_nav()
     })?;
@@ -3284,7 +3283,7 @@ fn render_cockpit_headless(
     //     `App` and must do the same, or any kit widget panics on the missing
     //     `gpui_component::theme::Theme` global. This is what makes the seL4
     //     framebuffer bake + the dregg-mcp screenshot render the migrated buttons.
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
     cx.update(|cx| apply_deos_theme(None, true, cx));
@@ -3470,7 +3469,7 @@ fn render_agent_attach_headless(out: &str, w: f32, h: f32, fork: bool) -> anyhow
         .and_then(|c| {
             c.state
                 .get_field(AGENT_COUNTER_SLOT)
-                .map(|fe| deos_js::applet::unpack_u64(fe))
+                .map(deos_js::applet::unpack_u64)
         })
         .unwrap_or(0);
 
@@ -3503,7 +3502,7 @@ fn render_agent_attach_headless(out: &str, w: f32, h: f32, fork: bool) -> anyhow
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
 
     let shared = rendered_world.clone();
@@ -3632,7 +3631,7 @@ fn render_card_pane_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
 
     let card_applet = shared.clone();
@@ -3749,7 +3748,7 @@ fn render_first_card_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
 
     // The cockpit's real image — the SAME `World` the windowed cockpit runs. The
@@ -3911,7 +3910,7 @@ fn render_webshell_live_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
 
     // 2. The cockpit's real image, on the WEB-SHELL tab. The `Root` wrap is required —
@@ -4422,7 +4421,7 @@ fn extract_js_block(text: &str) -> String {
     feature = "dev-surfaces"
 ))]
 fn render_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
-    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use std::borrow::Cow;
     use std::cell::RefCell;
@@ -4443,7 +4442,7 @@ fn render_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     });
     // The surfaces use real gpui-component widgets (the editor's InputState, the
     // kit Buttons) which read the kit Theme global at render time — init it.
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
     cx.update(|cx| apply_deos_theme(None, true, cx));
@@ -4497,7 +4496,7 @@ fn render_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     feature = "app-registry"
 ))]
 fn render_guest_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
-    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use std::borrow::Cow;
     use std::cell::RefCell;
@@ -4514,7 +4513,7 @@ fn render_guest_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
 
     // The fully-seeded demo image — the real cell world the wonder strip reads off.
@@ -4606,7 +4605,7 @@ fn render_self_hosting_headless(
     h: f32,
     cmd: Option<(String, Vec<String>)>,
 ) -> anyhow::Result<()> {
-    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use std::borrow::Cow;
     use std::cell::RefCell;
@@ -4624,7 +4623,7 @@ fn render_self_hosting_headless(
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
     // The live PTY's child runs on a REAL OS thread and writes the grid
     // asynchronously; allow the test dispatcher to park on that real I/O so
@@ -4767,7 +4766,7 @@ fn render_unified_boot_headless(
     node_url: Option<String>,
     cmd: Option<(String, Vec<String>)>,
 ) -> anyhow::Result<()> {
-    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use std::borrow::Cow;
     use std::cell::RefCell;
@@ -4792,7 +4791,7 @@ fn render_unified_boot_headless(
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
     cx.allow_parking();
 
@@ -4995,7 +4994,7 @@ fn render_client_signed_turn_headless(
     node_url: Option<String>,
     cmd: Option<(String, Vec<String>)>,
 ) -> anyhow::Result<()> {
-    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use std::borrow::Cow;
     use std::cell::RefCell;
@@ -5020,7 +5019,7 @@ fn render_client_signed_turn_headless(
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
     cx.allow_parking();
 
@@ -5102,24 +5101,24 @@ fn render_client_signed_turn_headless(
         "  CLIENT-SIGNED COMMIT: node receipts {} -> {} (turn {}).",
         proof.before,
         proof.after,
-        &proof.turn_hash.chars().take(16).collect::<String>(),
+        proof.turn_hash.chars().take(16).collect::<String>(),
     );
     println!(
         "  AGENT IDENTITY (the load-bearing proof): committed receipt agent = {} (the USER's own cell)",
-        &proof.receipt_agent.chars().take(16).collect::<String>(),
+        proof.receipt_agent.chars().take(16).collect::<String>(),
     );
     println!(
         "    · == user cell   {}…  ✓",
-        &proof.user_cell.chars().take(16).collect::<String>(),
+        proof.user_cell.chars().take(16).collect::<String>(),
     );
     println!(
         "    · != operator    {}…  ✓ (the node did NOT impersonate — it validated + ordered \
          a turn the USER signed)",
-        &proof.operator_cell.chars().take(16).collect::<String>(),
+        proof.operator_cell.chars().take(16).collect::<String>(),
     );
     println!(
         "    · node-reported signer = {}…  (the user's pubkey, verified by the node before commit)",
-        &proof.signer.chars().take(16).collect::<String>(),
+        proof.signer.chars().take(16).collect::<String>(),
     );
     println!(
         "  => the logged-in user's OWN cell signed a turn the node committed under the USER's \
@@ -5158,7 +5157,7 @@ fn render_interactive_node_save_headless(
     node_url: Option<String>,
     cmd: Option<(String, Vec<String>)>,
 ) -> anyhow::Result<()> {
-    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use std::borrow::Cow;
     use std::cell::RefCell;
@@ -5183,7 +5182,7 @@ fn render_interactive_node_save_headless(
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
     cx.allow_parking();
 
@@ -5309,20 +5308,20 @@ fn render_interactive_node_save_headless(
          (proof leg {} -> {}, turn {}).",
         proof.before,
         proof.after,
-        &proof.turn_hash.chars().take(16).collect::<String>(),
+        proof.turn_hash.chars().take(16).collect::<String>(),
     );
     println!(
         "  AGENT IDENTITY (load-bearing): committed receipt agent = {} (the USER's own cell)",
-        &proof.receipt_agent.chars().take(16).collect::<String>(),
+        proof.receipt_agent.chars().take(16).collect::<String>(),
     );
     println!(
         "    · == user cell   {}…  ✓",
-        &proof.user_cell.chars().take(16).collect::<String>(),
+        proof.user_cell.chars().take(16).collect::<String>(),
     );
     println!(
         "    · != operator    {}…  ✓ (the node validated + ordered a turn the USER signed via \
          the EDITOR's own save path)",
-        &proof.operator_cell.chars().take(16).collect::<String>(),
+        proof.operator_cell.chars().take(16).collect::<String>(),
     );
     println!(
         "  => a real interactive editor save in the live --node cockpit landed on the NODE \
@@ -5355,7 +5354,7 @@ fn render_interactive_node_save_headless(
     feature = "embedded-executor"
 ))]
 fn render_self_hosting_full_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
-    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use std::borrow::Cow;
     use std::cell::RefCell;
@@ -5373,7 +5372,7 @@ fn render_self_hosting_full_headless(out: &str, w: f32, h: f32) -> anyhow::Resul
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
     cx.allow_parking();
 
@@ -5536,7 +5535,7 @@ fn render_login_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
     cx.update(|cx| apply_deos_theme(None, true, cx));
@@ -5599,7 +5598,7 @@ fn render_touch_headless(out: &str, w: f32, h: f32, mode: Option<&str>) -> anyho
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
     cx.update(|cx| apply_deos_theme(None, true, cx));
 
     // The fully-seeded demo image — the SAME `World` the desktop cockpit runs, so the

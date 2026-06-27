@@ -49,13 +49,13 @@ fn the_document_explorer_reflects_the_live_patch_substance() {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
     let desk_cell: Rc<RefCell<Option<gpui::Entity<DeosDesktop>>>> = Rc::new(RefCell::new(None));
     let desk_sink = desk_cell.clone();
-    let window = cx
+    let _window = cx
         .open_window(size(px(900.), px(640.)), move |window, cx| {
             let view = cx.new(|cx| DeosDesktop::new(world_for_view, user, lp, window, cx));
             *desk_sink.borrow_mut() = Some(view.clone());

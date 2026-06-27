@@ -40,7 +40,7 @@
 //! agent-js"`.
 
 use deos_js::card_editor::Author;
-use deos_js::{CardEditor, CardFork, CardStitch, EditError, SharedCard};
+use deos_js::{CardFork, CardStitch, EditError, SharedCard};
 use dregg_cell::AuthRequired;
 use serde::{Deserialize, Serialize};
 
@@ -198,14 +198,14 @@ pub fn rehydrate_fork(
 ///
 /// `a` is the carried envelope (the originator's driven view, off the wire); `b_card`
 /// + `b_fork` are the recipient's rebuilt card and its OWN driven fork. Both re-root
-/// on the SAME carried seed (the real common ancestor), so disjoint edits fold CLEAN
-/// (both kept) and an overlapping edit (both touched the same node) surfaces a
-/// first-class [`dregg_doc::ConflictRegion`] (both attributed alternatives live —
-/// never a silent overwrite). An unauthorized recipient's `b_fork` never advanced past
-/// the seed (its edits were refused in-band), so it contributes no patch.
+///   on the SAME carried seed (the real common ancestor), so disjoint edits fold CLEAN
+///   (both kept) and an overlapping edit (both touched the same node) surfaces a
+///   first-class [`dregg_doc::ConflictRegion`] (both attributed alternatives live —
+///   never a silent overwrite). An unauthorized recipient's `b_fork` never advanced past
+///   the seed (its edits were refused in-band), so it contributes no patch.
 pub fn stitch_with_fork(
     a: &CardForkEnvelope,
-    b_card: &SharedCard,
+    _b_card: &SharedCard,
     b_fork: &CardFork,
 ) -> CardStitch {
     CardStitch::from_sources(

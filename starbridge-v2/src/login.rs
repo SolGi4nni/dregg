@@ -47,6 +47,7 @@ use starbridge_v2::world::{self, World};
 /// roster the picker shows. A failed/refused login leaves an in-surface message.
 pub struct LoginSurface {
     world: Rc<RefCell<World>>,
+    #[allow(dead_code)] // carried for cockpit construction on a successful login
     anchors: [dregg_cell::CellId; 3],
     seed: Option<world::DemoSeed>,
     node_url: Option<String>,
@@ -722,11 +723,13 @@ pub struct SessionShell {
     anchors: [dregg_cell::CellId; 3],
     node_url: Option<String>,
     manager: LoginManager,
+    #[allow(dead_code)] // identity roster carried alongside the active session
     identities: Vec<DemoIdentity>,
     session: Session,
     identity: DemoIdentity,
     /// The deos image root dir — where the principal's durable session image lives,
     /// so logout can write the REVOKED record into it (SESSION RESUME).
+    #[allow(dead_code)] // held for the logout-revoke write into the session image
     base_dir: std::path::PathBuf,
     focus: FocusHandle,
 }

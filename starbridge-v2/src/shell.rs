@@ -210,7 +210,7 @@ pub struct Shell {
     next_id: u64,
     /// A deterministic seed counter mixed into each surface's fresh backing-cell
     /// + owner derivation (so two surfaces opened in a session get distinct,
-    /// non-confusable backing cells without an RNG dependency).
+    ///   non-confusable backing cells without an RNG dependency).
     cell_seq: u8,
     /// Recipient apps seeded in the fabric for window-SHARES, keyed by a caller
     /// app id → its fabric cell. Seeded once so re-sharing to the same app reuses

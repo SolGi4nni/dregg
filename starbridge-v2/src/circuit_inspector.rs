@@ -146,7 +146,7 @@ impl Presentable for ProvenTurn {
 
         // (2) DomainVisual — the three honest verification tiers as a lattice, with
         //     THIS turn's tier marked. The order is the real tier strength.
-        let tiers = vec![
+        let tiers = [
             VerificationTier::VerifiedByConstruction,
             VerificationTier::ExecutorSigned,
             VerificationTier::StarkAttached,

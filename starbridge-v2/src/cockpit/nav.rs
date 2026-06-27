@@ -384,7 +384,7 @@ impl Cockpit {
                     .iter()
                     .filter_map(|s| match s {
                         starbridge_v2::replay::RecordedStep::Committed { turn, .. } => {
-                            Some(turn.clone())
+                            Some((**turn).clone())
                         }
                         _ => None,
                     })

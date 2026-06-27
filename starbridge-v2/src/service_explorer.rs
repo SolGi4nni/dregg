@@ -88,7 +88,7 @@ pub enum InvokeOutcome {
     /// [`TurnReceipt`] and the fresh [`Inspectable`] re-read off the POST-state
     /// ledger — the object you inspect next.
     Committed {
-        receipt: TurnReceipt,
+        receipt: Box<TurnReceipt>,
         reinspected: Inspectable,
     },
     /// The invocation was REFUSED, surfaced IN-BAND (never swallowed). `reason`
@@ -421,6 +421,93 @@ fn method_name(_descriptor: &InterfaceDescriptor, m: &MethodSig) -> String {
     reflect::short_hex(&m.symbol)
 }
 
+impl ServiceExplorer {
+    /// [`ServiceExplorer::invoke`] against an EXPLICIT descriptor (e.g. an
+    /// app-registered one with richer per-method auth/semantics than the
+    /// derived-from-program interface). Routes/gates against `descriptor` rather
+    /// than re-deriving from the program — so a `Signature`-gated or `Serviced`
+    /// method declared only in the registry is honored.
+    #[allow(clippy::too_many_arguments)]
+    pub fn invoke_with_descriptor(
+        &self,
+        world: &mut World,
+        descriptor: &InterfaceDescriptor,
+        symbol: [u8; 32],
+        args: Vec<FieldElement>,
+        effects: Vec<Effect>,
+        viewer_rights: AuthRequired,
+    ) -> InvokeOutcome {
+        let method = reflect::short_hex(&symbol);
+        let sig = match descriptor.route_method(&symbol) {
+            Some(m) => m.clone(),
+            None => {
+                return InvokeOutcome::Refused {
+                    reason: format!("the interface publishes no method named `{method}`"),
+                    by_executor: false,
+                };
+            }
+        };
+        if sig.semantics == Semantics::Serviced {
+            return InvokeOutcome::Refused {
+                reason: format!(
+                    "method `{method}` is a Serviced method — its answer rides the OFE \
+                     cross-cell-read (a named seam), not a replay desugar"
+                ),
+                by_executor: false,
+            };
+        }
+        if !authority_satisfies(&viewer_rights, &sig.auth_required) {
+            return InvokeOutcome::Refused {
+                reason: format!(
+                    "method `{method}` requires {:?}; the viewer's authority {:?} does not \
+                     satisfy it (the cap-gate, before any turn)",
+                    sig.auth_required, viewer_rights
+                ),
+                by_executor: false,
+            };
+        }
+        let action = Action {
+            target: self.cell,
+            method: symbol,
+            args,
+            authorization: Authorization::Unchecked,
+            preconditions: Default::default(),
+            effects,
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let turn = self.wrap_invocation_turn(world, action);
+        match world.commit_turn(turn) {
+            CommitOutcome::Committed { receipt, .. } => {
+                let reinspected = world
+                    .ledger()
+                    .get(&self.cell)
+                    .map(|c| reflect::reflect_cell(&self.cell, c))
+                    .unwrap_or_else(|| Inspectable {
+                        kind: reflect::ObjectKind::Cell,
+                        title: format!("Cell {} (gone)", reflect::short_hex(self.cell.as_bytes())),
+                        subtitle: "the invocation retired this cell".to_string(),
+                        fields: vec![],
+                    });
+                InvokeOutcome::Committed {
+                    receipt,
+                    reinspected,
+                }
+            }
+            CommitOutcome::Rejected { reason, .. } => InvokeOutcome::Refused {
+                reason,
+                by_executor: true,
+            },
+            CommitOutcome::Queued { .. } => InvokeOutcome::Refused {
+                reason: "the world is suspended; the invocation was staged".to_string(),
+                by_executor: false,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -694,92 +781,5 @@ mod tests {
             &AuthRequired::None,
             &AuthRequired::Impossible
         ));
-    }
-}
-
-impl ServiceExplorer {
-    /// [`ServiceExplorer::invoke`] against an EXPLICIT descriptor (e.g. an
-    /// app-registered one with richer per-method auth/semantics than the
-    /// derived-from-program interface). Routes/gates against `descriptor` rather
-    /// than re-deriving from the program — so a `Signature`-gated or `Serviced`
-    /// method declared only in the registry is honored.
-    #[allow(clippy::too_many_arguments)]
-    pub fn invoke_with_descriptor(
-        &self,
-        world: &mut World,
-        descriptor: &InterfaceDescriptor,
-        symbol: [u8; 32],
-        args: Vec<FieldElement>,
-        effects: Vec<Effect>,
-        viewer_rights: AuthRequired,
-    ) -> InvokeOutcome {
-        let method = reflect::short_hex(&symbol);
-        let sig = match descriptor.route_method(&symbol) {
-            Some(m) => m.clone(),
-            None => {
-                return InvokeOutcome::Refused {
-                    reason: format!("the interface publishes no method named `{method}`"),
-                    by_executor: false,
-                };
-            }
-        };
-        if sig.semantics == Semantics::Serviced {
-            return InvokeOutcome::Refused {
-                reason: format!(
-                    "method `{method}` is a Serviced method — its answer rides the OFE \
-                     cross-cell-read (a named seam), not a replay desugar"
-                ),
-                by_executor: false,
-            };
-        }
-        if !authority_satisfies(&viewer_rights, &sig.auth_required) {
-            return InvokeOutcome::Refused {
-                reason: format!(
-                    "method `{method}` requires {:?}; the viewer's authority {:?} does not \
-                     satisfy it (the cap-gate, before any turn)",
-                    sig.auth_required, viewer_rights
-                ),
-                by_executor: false,
-            };
-        }
-        let action = Action {
-            target: self.cell,
-            method: symbol,
-            args,
-            authorization: Authorization::Unchecked,
-            preconditions: Default::default(),
-            effects,
-            may_delegate: DelegationMode::None,
-            commitment_mode: CommitmentMode::default(),
-            balance_change: None,
-            witness_blobs: vec![],
-        };
-        let turn = self.wrap_invocation_turn(world, action);
-        match world.commit_turn(turn) {
-            CommitOutcome::Committed { receipt, .. } => {
-                let reinspected = world
-                    .ledger()
-                    .get(&self.cell)
-                    .map(|c| reflect::reflect_cell(&self.cell, c))
-                    .unwrap_or_else(|| Inspectable {
-                        kind: reflect::ObjectKind::Cell,
-                        title: format!("Cell {} (gone)", reflect::short_hex(self.cell.as_bytes())),
-                        subtitle: "the invocation retired this cell".to_string(),
-                        fields: vec![],
-                    });
-                InvokeOutcome::Committed {
-                    receipt,
-                    reinspected,
-                }
-            }
-            CommitOutcome::Rejected { reason, .. } => InvokeOutcome::Refused {
-                reason,
-                by_executor: true,
-            },
-            CommitOutcome::Queued { .. } => InvokeOutcome::Refused {
-                reason: "the world is suspended; the invocation was staged".to_string(),
-                by_executor: false,
-            },
-        }
     }
 }

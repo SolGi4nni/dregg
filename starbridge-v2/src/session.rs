@@ -441,7 +441,7 @@ impl LoginManager {
             let turn = world.turn(self.system_principal, vec![effect]);
             match world.commit_turn(turn) {
                 CommitOutcome::Committed { receipt, .. } => {
-                    receipts.push(receipt);
+                    receipts.push(*receipt);
                     granted.push((entry.target, slot, entry.max_permissions.clone()));
                 }
                 CommitOutcome::Rejected { reason, .. } => {

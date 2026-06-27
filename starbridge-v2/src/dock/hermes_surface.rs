@@ -31,7 +31,7 @@
 
 use deos_hermes::cockpit_surface::HermesDockSurface;
 use deos_hermes::surface::AgentDockModel;
-use gpui::{AnyElement, App, FocusHandle, IntoElement, SharedString, Window};
+use gpui::{AnyElement, App, FocusHandle, SharedString, Window};
 
 use super::surface::{CockpitSurface, SurfaceId};
 

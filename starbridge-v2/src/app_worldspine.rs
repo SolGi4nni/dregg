@@ -233,7 +233,7 @@ impl AppWorldSpine {
             w.commit_turn(turn)
         };
         match outcome {
-            CommitOutcome::Committed { receipt, .. } => Ok(receipt),
+            CommitOutcome::Committed { receipt, .. } => Ok(*receipt),
             CommitOutcome::Rejected { reason, .. } => Err(WorldFireError::World { reason }),
             CommitOutcome::Queued { .. } => Err(WorldFireError::World {
                 reason: "app turn queued (World is suspended)".to_string(),
@@ -320,7 +320,7 @@ impl AppWorldSpine {
             w.commit_turn(turn)
         };
         match outcome {
-            CommitOutcome::Committed { receipt, .. } => Ok(receipt),
+            CommitOutcome::Committed { receipt, .. } => Ok(*receipt),
             CommitOutcome::Rejected { reason, .. } => Err(WorldFireError::World { reason }),
             CommitOutcome::Queued { .. } => Err(WorldFireError::World {
                 reason: "app turn queued (World is suspended)".to_string(),

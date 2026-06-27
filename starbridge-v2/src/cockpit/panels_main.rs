@@ -616,16 +616,14 @@ impl Cockpit {
             .border_color(theme::border())
             .bg(theme::panel());
         match &self.sim_outcome {
-            None => {
-                return box_
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::muted())
-                            .child("(no prediction yet — press ▶ SIMULATE)"),
-                    )
-                    .into_any_element();
-            }
+            None => box_
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::muted())
+                        .child("(no prediction yet — press ▶ SIMULATE)"),
+                )
+                .into_any_element(),
             Some(SimOutcome::Predicted {
                 receipt,
                 deltas,

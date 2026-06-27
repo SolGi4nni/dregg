@@ -47,9 +47,9 @@ use crate::world::{CommitOutcome, World};
 
 /// **A room — a cell.** Its durable core (name/description in user fields, exits
 /// + contained items in the c-list, "who may enter/post/build" in the permission
-/// lattice) is a [`Cell`](dregg_cell). Here a `Room` is just the room cell's id;
-/// the live state lives in the [`World`]'s ledger. The room's *history is its
-/// provenance chain* — every turn against it leaves a receipt.
+///   lattice) is a [`Cell`](dregg_cell). Here a `Room` is just the room cell's id;
+///   the live state lives in the [`World`]'s ledger. The room's *history is its
+///   provenance chain* — every turn against it leaves a receipt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Room {
     /// The cell this room IS.
@@ -165,7 +165,7 @@ pub enum ActionOutcome {
     /// The action committed against the verified executor; the receipt is the
     /// proof it happened (no-false-claim: you cannot claim an action with no
     /// receipt).
-    Done { receipt: TurnReceipt },
+    Done { receipt: Box<TurnReceipt> },
     /// The action was refused (you lacked the cap, the source did not hold the
     /// item, an amplification was attempted). Nothing happened — fail-closed.
     Refused { reason: String },

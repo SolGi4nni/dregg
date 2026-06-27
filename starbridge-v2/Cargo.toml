@@ -474,6 +474,13 @@ render-capture = [
 # gpui-free CI bake path use `headless` instead.
 headless-render = ["desktop"]
 
+[lints.rust]
+# `zed-full-pane` is a deliberately-undeclared feature (see src/lib.rs:
+# deos-zed-full's `links = "sqlite3"` collides with the cockpit's
+# matrix-sdk-sqlite, so the dep can't be declared without breaking the build);
+# the gated module still compiles standalone. Declare the cfg so it isn't flagged.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("zed-full-pane"))'] }
+
 [dependencies]
 # --- wire contract (always available: remote-node + sel4-thin + wasm paths) --
 # Target-AGNOSTIC deps (the model + wire contract). `reqwest`/`image` are

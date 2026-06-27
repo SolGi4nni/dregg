@@ -337,7 +337,7 @@ fn build_witness_graph(world: &World) -> Graph {
     // stable as the image evolves).
     let cells: Vec<CellId> = {
         let mut v: Vec<CellId> = world.ledger().iter().map(|(id, _)| *id).collect();
-        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v.sort_by_key(|a| a.0);
         v
     };
     let mut uris: Vec<(CellId, DreggUri)> = Vec::new();

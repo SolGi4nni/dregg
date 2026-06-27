@@ -111,7 +111,7 @@ impl LandingPortal {
         let last_beat = world
             .dynamics()
             .tail(1)
-            .into_iter()
+            .iter()
             .next()
             .map(|e| e.label())
             .unwrap_or_else(|| "the image is at rest, waiting for your first turn".to_string());

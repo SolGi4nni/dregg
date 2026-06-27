@@ -128,7 +128,7 @@ pub fn rank(query: &str, candidates: &[SpotterEntry]) -> Vec<SpotterEntry> {
         })
         .collect();
     // Sort by score descending; `sort_by` is stable, so equal scores keep input order.
-    scored.sort_by(|a, b| b.score.cmp(&a.score));
+    scored.sort_by_key(|b| std::cmp::Reverse(b.score));
     scored
 }
 

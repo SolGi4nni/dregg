@@ -488,7 +488,7 @@ impl DocEditor {
             resolutions(self.doc.graph(), &rendered, resolver.author());
         rendered
             .conflicts()
-            .zip(menu.into_iter())
+            .zip(menu)
             .map(|(region, region_res)| InlineConflict {
                 view: self.attribute(region),
                 choices: region_res.choices,

@@ -159,9 +159,8 @@ mod tests {
         let applet = attach_agent(sink, agent, held.clone(), affordances.clone());
 
         // The agent's JS: crawl the LIVE cells, fire a real turn, attempt an over-reach.
-        let script = format!(
-            r#"
-            var app = deos.applet({{ affordances: ["bump", "escalate"] }});
+        let script = r#"
+            var app = deos.applet({ affordances: ["bump", "escalate"] });
             // (a) CRAWL the live cockpit cells (the REAL ones, not a fresh demo).
             var n = deos.world.cells().length;
             // (b) FIRE a real verified turn on the agent's OWN cell (held).
@@ -172,7 +171,7 @@ mod tests {
             // pack a witness int: cells*1000 + after*10 + (over === -1 ? 1 : 0)
             (n * 1000) + (after * 10) + (over === -1 ? 1 : 0);
             "#
-        );
+        .to_string();
 
         let outcome = rt
             .run_attached(applet, &script)
@@ -218,7 +217,7 @@ mod tests {
             let cell = w.ledger().get(&agent).expect("agent cell live");
             cell.state
                 .get_field(AGENT_COUNTER_SLOT)
-                .map(|fe| deos_js::applet::unpack_u64(fe))
+                .map(deos_js::applet::unpack_u64)
                 .unwrap_or(0)
         };
         assert_eq!(
@@ -256,7 +255,7 @@ mod tests {
             let cell = w.ledger().get(&agent).expect("agent cell");
             cell.state
                 .get_field(AGENT_COUNTER_SLOT)
-                .map(|fe| deos_js::applet::unpack_u64(fe))
+                .map(deos_js::applet::unpack_u64)
                 .unwrap_or(0)
         };
         assert_eq!(live_after_fork, 7, "the fork did NOT touch the live World");

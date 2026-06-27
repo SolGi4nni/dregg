@@ -62,13 +62,13 @@ pub enum RecordedStep {
     /// A cell installed directly at genesis (bypasses the executor — the way a
     /// node seeds its genesis block). Carries the full cell so replay
     /// reinstalls it verbatim.
-    Genesis { cell: Cell },
+    Genesis { cell: Box<Cell> },
     /// A turn committed against the embedded verified executor. Carries the
     /// input turn (so replay RE-EXECUTES it), the real receipt, and the
     /// canonical ledger root tooth recorded immediately after the commit.
     Committed {
-        turn: Turn,
-        receipt: TurnReceipt,
+        turn: Box<Turn>,
+        receipt: Box<TurnReceipt>,
         /// The canonical [`Ledger::root`] of the post-state — the same
         /// commitment `snapshot.rs` binds against. Replay verifies the
         /// reconstructed ledger against this.
@@ -160,9 +160,9 @@ impl History {
     /// to the live engine's cost model so replay re-derives identically when the
     /// world is metered ([`World::with_costs`], the swarm-budget substrate).
     pub fn with_costs(timestamp: i64, costs: ComputronCosts) -> Self {
-        let mut roots = Vec::new();
-        roots.push(Ledger::new().root()); // root after 0 steps (the empty ledger)
-                                          // The umem boundary after 0 steps: the empty-ledger projection.
+        // root after 0 steps (the empty ledger); the umem boundary after 0 steps is
+        // the empty-ledger projection.
+        let roots = vec![Ledger::new().root()];
         let boundaries = vec![project_ledger(&Ledger::new())];
         History {
             steps: Vec::new(),
@@ -222,7 +222,9 @@ impl History {
         ledger
             .insert_cell(cell.clone())
             .expect("genesis insert is into a fresh slot");
-        self.steps.push(RecordedStep::Genesis { cell });
+        self.steps.push(RecordedStep::Genesis {
+            cell: Box::new(cell),
+        });
         self.roots.push(ledger.root());
         // Capture the umem boundary of the post-state (the reify_to fast-restore image).
         self.boundaries.push(project_ledger(ledger));
@@ -247,8 +249,8 @@ impl History {
                 executor.set_last_receipt_hash(receipt.agent, receipt.receipt_hash());
                 let post_root = ledger.root();
                 self.steps.push(RecordedStep::Committed {
-                    turn,
-                    receipt: receipt.clone(),
+                    turn: Box::new(turn),
+                    receipt: Box::new(receipt.clone()),
                     post_root,
                 });
                 self.roots.push(post_root);
@@ -450,7 +452,9 @@ impl History {
         let outcome = match executor.execute(&alt, &mut fork_ledger) {
             TurnResult::Committed { receipt, .. } => {
                 executor.set_last_receipt_hash(receipt.agent, receipt.receipt_hash());
-                ForkOutcome::Committed { receipt }
+                ForkOutcome::Committed {
+                    receipt: Box::new(receipt),
+                }
             }
             TurnResult::Rejected { reason, at_action } => ForkOutcome::Rejected {
                 reason: format!("{reason:?}"),
@@ -507,7 +511,7 @@ fn apply_step(
     match step {
         RecordedStep::Genesis { cell } => {
             // Genesis is an idempotent direct install (fresh slot on replay).
-            let _ = ledger.insert_cell(cell.clone());
+            let _ = ledger.insert_cell(*cell.clone());
             Ok(())
         }
         RecordedStep::Committed { turn, receipt, .. } => {
@@ -676,7 +680,7 @@ pub fn diff_ledgers(a: &Ledger, b: &Ledger) -> StateDiff {
 #[derive(Clone)]
 pub enum ForkOutcome {
     Committed {
-        receipt: TurnReceipt,
+        receipt: Box<TurnReceipt>,
     },
     Rejected {
         reason: String,

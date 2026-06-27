@@ -73,10 +73,10 @@
 //!     reads from the live cell's c-list, same as `AgentActivity`).
 //!   - `dregg_sdk::embed::DreggEngine::execute_turn` — the swarm's turns route
 //!     through the same verified executor, no special path.
-//! The inbox is LOCAL STATE here (starbridge-v2 tracks it from the dynamics
-//! stream); in a distributed setting it would be the recipient cell's own state
-//! field (a pending-event queue in the cell's storage), with the dregg-node
-//! routing `EmitEvent` as a network message and the cell's program draining it.
+//!     The inbox is LOCAL STATE here (starbridge-v2 tracks it from the dynamics
+//!     stream); in a distributed setting it would be the recipient cell's own state
+//!     field (a pending-event queue in the cell's storage), with the dregg-node
+//!     routing `EmitEvent` as a network message and the cell's program draining it.
 
 use std::collections::HashMap;
 
@@ -591,7 +591,7 @@ impl Swarm {
     ///   2. Confirm the backing cell is live; fail with `Unbacked` otherwise.
     ///   3. **CAP-GATE** — confirm the acting cell holds authority reaching the
     ///      effect target (same `has_access` check as `TerminalCell::run`).
-    ///   3b. **BUDGET GATE** — if the member has spent its metered-computron
+    ///      3b. **BUDGET GATE** — if the member has spent its metered-computron
     ///      ceiling, REFUSE here (fail-closed, before the executor runs — no turn
     ///      commits, no height advance; [`SwarmError::BudgetExhausted`]).
     ///   4. Run the turn through the REAL executor via `World::commit_turn`.
@@ -1551,7 +1551,7 @@ fn summarize_events(events: &[WorldEvent]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{emit_event, grant_capability, transfer};
+    use crate::world::{emit_event, transfer};
 
     /// A world with three swarm members: coordinator (holds caps to BOTH peers),
     /// worker-a, worker-b. Seeds a real mandate graph.

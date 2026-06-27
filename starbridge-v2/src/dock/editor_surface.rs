@@ -116,7 +116,7 @@ impl deos_zed::fs::LedgerSpine for WorldSpine {
             w.commit_turn(turn)
         };
         match outcome {
-            crate::world::CommitOutcome::Committed { receipt, .. } => Ok(receipt),
+            crate::world::CommitOutcome::Committed { receipt, .. } => Ok(*receipt),
             crate::world::CommitOutcome::Rejected { reason, .. } => Err(anyhow::anyhow!(
                 "save turn refused by the executor: {reason}"
             )),
@@ -182,20 +182,20 @@ impl EditorPane {
         {
             let _ = fs; // disk handle unused: the firmament pane is cell-backed.
             match EditorSurface::firmament(id, root.clone(), FIRMAMENT_SEED, window, cx) {
-                Ok(surface) => return EditorPane(surface),
+                Ok(surface) => EditorPane(surface),
                 Err(e) => {
                     // Fail-soft to the disk pane so a firmament mount error can
                     // never take down the cockpit — but say so loudly.
                     eprintln!(
                         "EditorPane::new: firmament mount failed, falling back to disk: {e:#}"
                     );
-                    return EditorPane(EditorSurface::new(
+                    EditorPane(EditorSurface::new(
                         id,
                         deos_zed::fs::RealFs::arc(),
                         root,
                         window,
                         cx,
-                    ));
+                    ))
                 }
             }
         }
@@ -237,6 +237,8 @@ impl EditorPane {
     ) -> anyhow::Result<Self> {
         let spine: std::rc::Rc<dyn deos_zed::fs::LedgerSpine> =
             std::rc::Rc::new(WorldSpine::new(world));
+        // single-threaded gpui context; the Arc is what `FirmamentFs` hands the editor API
+        #[allow(clippy::arc_with_non_send_sync)]
         let firm = std::sync::Arc::new(deos_zed::fs::FirmamentFs::over(spine));
         Ok(EditorPane(EditorSurface::firmament_over(
             id, firm, root, files, window, cx,

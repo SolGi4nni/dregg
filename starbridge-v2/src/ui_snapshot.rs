@@ -297,10 +297,10 @@ impl UiSnapshot {
         for recorded in &history.steps()[..step] {
             match recorded {
                 RecordedStep::Genesis { cell } => {
-                    rebuilt.genesis_install(cell.clone());
+                    rebuilt.genesis_install(*cell.clone());
                 }
                 RecordedStep::Committed { turn, .. } => {
-                    let outcome = rebuilt.commit_turn(turn.clone());
+                    let outcome = rebuilt.commit_turn(*turn.clone());
                     if !outcome.is_committed() {
                         // A recorded commit that does not re-commit means the log is
                         // not faithfully replayable into a world — surface honestly.

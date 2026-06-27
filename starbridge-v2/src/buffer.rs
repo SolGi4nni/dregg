@@ -521,7 +521,7 @@ mod tests {
         // THE GROUNDED SEAM: committing an edit writes the new digest into the
         // backing cell through the REAL executor, advancing the revision +
         // appending a receipt (the buffer's authority/provenance is real).
-        let (_shell, mut world, mut buf, cap) = writable_buffer();
+        let (_shell, mut world, buf, cap) = writable_buffer();
         assert!(buf.cap_can_write(&cap), "the opener holds the write cap");
 
         // Initially dirty: the cell stores the zero digest, the doc has text.
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn the_view_reflects_dirty_then_clean_and_the_read_only_badge() {
-        let (_shell, mut world, mut buf, cap) = writable_buffer();
+        let (_shell, mut world, buf, cap) = writable_buffer();
         // A writable buffer with uncommitted text: not read-only, dirty.
         let v0 = BufferView::build(&buf, &world, Some(&cap));
         assert!(

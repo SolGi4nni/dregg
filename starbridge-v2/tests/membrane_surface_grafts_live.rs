@@ -115,7 +115,7 @@ fn membrane_surface_grafts_windowed_and_a_message_is_a_real_world_fork() {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     // Build the dock surface over the SAME executor-backed source — exactly what
     // `Cockpit::open_membrane_pane` constructs before `graft_dev_pane`. The window

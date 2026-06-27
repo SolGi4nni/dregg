@@ -432,8 +432,8 @@ mod tests {
     /// **POLARITY 1 — a COMPATIBLE branch edit stitches CLEAN.** Two parties share a 3-config past.
     /// The peer rewinds to step 1, forks a confined branch, makes a compatible discovery (a new atom
     /// + a deletion main also wants), and stitches back conferring only authority it holds at the
-    /// settlement tip. The stitch SETTLES to the pushout: nothing main had is lost, the branch's
-    /// discovery is kept, and the conflict (main Dead vs branch Alive at key 0) resolves Dead-wins.
+    ///   settlement tip. The stitch SETTLES to the pushout: nothing main had is lost, the branch's
+    ///   discovery is kept, and the conflict (main Dead vs branch Alive at key 0) resolves Dead-wins.
     #[test]
     fn compatible_branch_stitches_clean() {
         let run = run_collaborative_rewind(
@@ -690,7 +690,7 @@ mod tests {
             "the GOOD part (atom 5) is kept"
         );
         assert!(
-            settled.atoms.get(&6).is_none(),
+            !settled.atoms.contains_key(&6),
             "the dropped part (atom 6) is explicitly gone"
         );
     }

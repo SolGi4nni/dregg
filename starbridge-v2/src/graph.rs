@@ -354,7 +354,7 @@ fn rights_label(rights: &AuthRequired) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{grant_capability, World};
+    use crate::world::World;
 
     /// A world with a three-hop delegation chain: root → a → b, plus an isolated
     /// cell. Root holds a cap to `a`; `a` holds a cap to `b`. Built with the real

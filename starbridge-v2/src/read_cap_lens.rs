@@ -29,9 +29,9 @@
 
 use dregg_cell::state::{FieldVisibility, STATE_SLOTS};
 use dregg_cell::{Cell, CellId};
-use dregg_cell_crypto::read_cap::{
-    is_read_attenuation, EncryptedState, FieldSet, ReadCap, ViewKey,
-};
+#[cfg(test)]
+use dregg_cell_crypto::read_cap::is_read_attenuation;
+use dregg_cell_crypto::read_cap::{EncryptedState, FieldSet, ReadCap, ViewKey};
 
 use crate::presentable::{
     LatticeView, PresentCtx, Presentable, Presentation, PresentationBody, PresentationKind,

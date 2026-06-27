@@ -894,7 +894,7 @@ mod tests {
             let mut tampered = ledger;
             // Forge the treasury balance in the checkpoint.
             if let Some(c) = tampered.get_mut(&treasury) {
-                let _ = c.state.set_balance(424_242);
+                c.state.set_balance(424_242);
             }
             store.checkpoint_ledger(&tampered, cp_height).unwrap();
         }

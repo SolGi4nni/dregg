@@ -1514,12 +1514,12 @@ fn tool_map(s: &Session, out: Option<&str>) -> Result<Value, String> {
     }
     edges.push(edge(
         "sys:root".into(),
-        "has-plane".into(),
+        "has-plane",
         "plane:dataplane".into(),
     ));
     edges.push(edge(
         "sys:root".into(),
-        "has-plane".into(),
+        "has-plane",
         "plane:federation".into(),
     ));
 

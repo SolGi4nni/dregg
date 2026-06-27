@@ -598,10 +598,10 @@ mod tests {
 
         // Strict loss: atom 1 is gone after the drop, present in the full merge.
         assert!(
-            dropped.atoms.get(&1).is_none(),
+            !dropped.atoms.contains_key(&1),
             "the drop removes the branch discovery at key 1"
         );
-        assert!(full.atoms.get(&1).is_some(), "the full pushout kept it");
+        assert!(full.atoms.contains_key(&1), "the full pushout kept it");
         assert_ne!(
             dropped, full,
             "a lossy stitch genuinely loses — the drop is not a no-op"

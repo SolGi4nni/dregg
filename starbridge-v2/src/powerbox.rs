@@ -117,7 +117,7 @@ pub enum PowerboxOutcome {
     /// [`GrantedCap`] the app received (so the UI shows what was conferred, and a test
     /// asserts it is `⊆` the user's authority).
     Granted {
-        receipt: TurnReceipt,
+        receipt: Box<TurnReceipt>,
         conferred: GrantedCap,
     },
     /// The designation was DENIED — no cap was minted, the app got nothing. `reason`

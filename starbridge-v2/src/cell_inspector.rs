@@ -484,13 +484,13 @@ fn mode_name(mode: &CellMode) -> &'static str {
 ///     edge, and the `delegation` snapshot staleness.
 fn field_cartography(id: &CellId, cell: &Cell) -> Inspectable {
     let st = &cell.state;
-    let mut fields: Vec<Field> = Vec::new();
-
     // ---- mode / identity-adjacent ----
-    fields.push(Field::text("mode", mode_name(&cell.mode)));
-    fields.push(Field::boolean("proved_state", st.proved_state()));
-    fields.push(Field::count("committed_height", st.committed_height()));
-    fields.push(Field::count("delegation_epoch", st.delegation_epoch()));
+    let mut fields: Vec<Field> = vec![
+        Field::text("mode", mode_name(&cell.mode)),
+        Field::boolean("proved_state", st.proved_state()),
+        Field::count("committed_height", st.committed_height()),
+        Field::count("delegation_epoch", st.delegation_epoch()),
+    ];
 
     // ---- delegate edge + delegation snapshot staleness ----
     match &cell.delegate {

@@ -357,7 +357,7 @@ pub struct AffordanceIntent {
 pub enum FireOutcome {
     /// The embedded executor COMMITTED the affordance's turn. This receipt is the
     /// executor's own, chained on `actor`'s receipt chain.
-    Committed(dregg_turn::turn::TurnReceipt),
+    Committed(Box<dregg_turn::turn::TurnReceipt>),
     /// The embedded executor REJECTED the turn (a guarantee fired). The reason is
     /// the executor's own — surfaced, not hidden.
     Refused {

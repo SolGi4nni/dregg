@@ -77,7 +77,7 @@ fn typing_into_the_real_input_widget_commits_to_the_cell_heap() {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     // The desktop must sit under a `gpui_component::Root` — the `InputState` widget
     // reaches `Root::read(window)` on interactive edits (it panics otherwise). We keep

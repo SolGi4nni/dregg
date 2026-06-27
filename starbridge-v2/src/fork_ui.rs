@@ -210,7 +210,7 @@ pub enum ConsentResolution {
     /// conditional turn COMMITTED through the boundary gate, and the boundary fired
     /// exactly once. Carries the gated commit (the executor's verdict + the fired
     /// boundary).
-    Approved { commit: GatedCommit },
+    Approved { commit: Box<GatedCommit> },
     /// The owner DENIED, or the approve path refused (an over-amplifying consent, an
     /// unheld target, an expired request, or the gate rejecting the turn). Fail-closed:
     /// the boundary did NOT fire, nothing reached the owner's real world.
@@ -357,7 +357,9 @@ pub fn approve(
         fork_used,
     );
     match &commit {
-        GatedCommit::Committed { .. } => ConsentResolution::Approved { commit },
+        GatedCommit::Committed { .. } => ConsentResolution::Approved {
+            commit: Box::new(commit),
+        },
         GatedCommit::Refused { reason, .. } => ConsentResolution::Refused {
             reason: format!("consent valid but the gated commit refused: {reason}"),
         },
@@ -655,7 +657,7 @@ mod tests {
         );
         if let ConsentResolution::Approved { commit } = &resolution {
             assert!(
-                matches!(commit, GatedCommit::Committed { fired_boundary: Some(t), .. } if *t == peer),
+                matches!(&**commit, GatedCommit::Committed { fired_boundary: Some(t), .. } if *t == peer),
                 "the boundary fired exactly once: {commit:?}"
             );
         }
@@ -665,7 +667,7 @@ mod tests {
     fn deny_refuses_the_boundary_with_no_effect() {
         // DENY: the owner declines. NO grant runs, NO turn commits — the pending turn
         // never resolves, nothing reaches the owner's real world (fail-closed).
-        let (mut world, owner, guest, _docs, peer, _seed) = fc_world();
+        let (world, owner, guest, _docs, peer, _seed) = fc_world();
         let mut fork_world = world.fork();
         let sf = SharedFork::construct(
             &mut fork_world,

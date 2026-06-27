@@ -53,9 +53,9 @@ use dregg_cell::{
 };
 use dregg_firmament::{NotifyCap, ObjectId, Rights};
 
-use crate::compositor::{
-    label_of, CompositedSurface, CompositorScene, Present, PresentError, RegionId,
-};
+#[cfg(test)]
+use crate::compositor::label_of;
+use crate::compositor::{CompositedSurface, CompositorScene, Present, PresentError, RegionId};
 use crate::dynamics::WorldEvent;
 use crate::world::{CommitOutcome, World};
 
@@ -331,6 +331,7 @@ impl VerifiedScene {
     /// Returns the compositor cell id. The surface's region-set is the authority
     /// the T1 tooth checks `granted ⊆ held` against; `source_state_root` is the
     /// projection the T2 label binds to.
+    #[allow(clippy::too_many_arguments)] // surface open binds world + caps + T1/T2 projections
     pub fn open_surface(
         &mut self,
         world: &mut World,

@@ -59,7 +59,7 @@ use crate::replay::History;
 pub enum CommitOutcome {
     /// The turn committed. The real receipt + the dynamics events it produced.
     Committed {
-        receipt: TurnReceipt,
+        receipt: Box<TurnReceipt>,
         events: Vec<WorldEvent>,
     },
     /// The real executor REJECTED the turn (e.g. unauthorized effect,
@@ -167,6 +167,7 @@ pub struct World {
     /// Every height/receipt advance busts it automatically; the genesis-path
     /// ledger writers (which mutate without a height bump) invalidate it with an
     /// explicit `set(None)`.
+    #[allow(clippy::type_complexity)] // (height, state_root, receipt_root) memo cell
     state_root_memo: StdCell<Option<(u64, [u8; 32], [u8; 32])>>,
     /// THE SUSPEND GATE (meta-debug, `docs/deos/FIRMAMENT-REFLEXIVE-SUBSTRATE.md`
     /// §3.2). When `true`, the live loop is HALTED: [`World::commit_turn`] stages
@@ -202,7 +203,7 @@ pub struct World {
     /// still fully applies (the abstract progress). [`World::collapse`]
     /// re-runs the buffered turns under Full to materialize the real witnesses
     /// + the tape, reproducing exactly what a Full run would have. Admission is
-    /// mode-independent — only the witness is deferred, never the decision.
+    ///   mode-independent — only the witness is deferred, never the decision.
     witness_mode: WitnessMode,
     /// The buffer of turns committed under [`WitnessMode::Symbolic`] whose
     /// witnesses are DEFERRED — recorded here (NOT on the replay tape) so
@@ -1241,7 +1242,10 @@ impl World {
                     self.dynamics.emit(ev.clone());
                 }
                 self.receipts.push(receipt.clone());
-                CommitOutcome::Committed { receipt, events }
+                CommitOutcome::Committed {
+                    receipt: Box::new(receipt),
+                    events,
+                }
             }
             Err(EmbedError::TurnRejected { reason, at_action }) => {
                 self.dynamics.emit(WorldEvent::TurnRejected {
@@ -2327,7 +2331,7 @@ impl SemihostCockpit {
                     // wire — the wire carries the RECEIPT (the executor-PD's
                     // commit_out), the dynamics live with the world the heart owns.
                     Ok(receipt) => CommitOutcome::Committed {
-                        receipt,
+                        receipt: Box::new(receipt),
                         events: Vec::new(),
                     },
                     Err(e) => CommitOutcome::Rejected {
@@ -3074,7 +3078,7 @@ mod tests {
         let a = w.genesis_cell(1, 100);
         let b = w.genesis_cell(2, 0);
         let mut cockpit = SemihostCockpit::boot(w);
-        let mut compositor = focused_compositor(cockpit.kernel().clone(), a);
+        let compositor = focused_compositor(cockpit.kernel().clone(), a);
         let fb_before = compositor.framebuffer_snapshot();
 
         let turn = cockpit.world().turn(a, vec![transfer(a, b, 1_000)]); // overspend

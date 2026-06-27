@@ -97,10 +97,7 @@ impl SseParser {
         self.buf.extend_from_slice(chunk);
         let mut out = Vec::new();
         // Split on '\n'; keep the trailing partial line in `buf`.
-        loop {
-            let Some(nl) = self.buf.iter().position(|&b| b == b'\n') else {
-                break;
-            };
+        while let Some(nl) = self.buf.iter().position(|&b| b == b'\n') {
             let line_bytes: Vec<u8> = self.buf.drain(..=nl).collect();
             // Strip the trailing '\n' (and a '\r' if the node used CRLF).
             let mut line = &line_bytes[..line_bytes.len() - 1];
@@ -527,7 +524,7 @@ mod tests {
             cells: vec!["11".repeat(32)],
             kinds: vec!["transfer".into()],
             height: 1880 + idx,
-            has_proof: idx % 2 == 0,
+            has_proof: idx.is_multiple_of(2),
             finality: "final".into(),
             timestamp: 1_718_000_000 + idx as i64,
         }

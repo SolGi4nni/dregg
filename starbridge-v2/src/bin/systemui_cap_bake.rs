@@ -60,7 +60,7 @@ fn main() {
     if let Some(receipt) = outcome.receipt() {
         println!(
             "  kernel receipt: agent {} · {} action(s) — a verified turn landed the cap in the app's c-list",
-            &hex8(receipt.agent.as_bytes()),
+            hex8(receipt.agent.as_bytes()),
             receipt.action_count
         );
     }

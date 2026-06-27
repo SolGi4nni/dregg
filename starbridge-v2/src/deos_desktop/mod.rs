@@ -137,8 +137,8 @@ use dregg_cell::lifecycle::CellLifecycle;
 use dregg_types::CellId;
 
 use dregg_doc::{
-    blame, blame_summary, content, resolutions_for, text_from_heap, walk_atoms, Author, Doc,
-    DocGraph, DocHeapCell, Granularity, History, PatchId, Regime, ResolutionChoice,
+    blame, blame_summary, content, resolutions_for, text_from_heap, Author, Doc, DocGraph,
+    DocHeapCell, Granularity, PatchId, Regime, ResolutionChoice,
 };
 
 use crate::world::{grant_capability, transfer, World};
@@ -660,7 +660,7 @@ impl DeosDesktop {
         // for windows, not just icons — and now for window TYPE too).
         let geoms: Vec<WinGeom> = desk.layout.windows.clone();
         for g in geoms {
-            if let Some(cell) = desk.cells.iter().find(|c| id_hex(&c) == g.cell).copied() {
+            if let Some(cell) = desk.cells.iter().find(|c| id_hex(c) == g.cell).copied() {
                 desk.open_window_at(cell, g.kind, g.x, g.y, g.w, g.h, g.minimized);
             }
         }
@@ -681,7 +681,7 @@ impl DeosDesktop {
 
     fn icon_pos(&self, idx: usize, cell: &CellId) -> Point<Pixels> {
         self.layout
-            .icon_pos(&id_hex(&cell))
+            .icon_pos(&id_hex(cell))
             .unwrap_or_else(|| self.default_icon_pos(idx))
     }
 
@@ -717,10 +717,13 @@ impl DeosDesktop {
             }
             // Other window TYPEs owned by concurrent surfaces fall back to an
             // inspector body until their own arm lands (swarm self-heal).
+            #[allow(unreachable_patterns)]
+            // defensive fallback for variants added by concurrent surfaces / non-default features
             _ => WinKind::Inspector,
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // window placement needs the full spatial + cell context
     fn open_window_at(
         &mut self,
         cell: CellId,
@@ -798,6 +801,8 @@ impl DeosDesktop {
             WinKindTag::ViewNodePane => (420.0, 320.0),
             // A phone-ish portrait window for the android-cell's SystemUI cap-chrome.
             WinKindTag::AndroidCell => (340.0, 520.0),
+            #[allow(unreachable_patterns)]
+            // defensive fallback for variants added by concurrent surfaces / non-default features
             _ => (380.0, 320.0),
         };
         if let Some(g) = self.layout.win_geom(&id_hex(&cell), tag) {
@@ -1308,7 +1313,7 @@ impl DeosDesktop {
                 self.status = format!(
                     "Grant cap {} → {} @{} → {} (height {}).",
                     id_short(&cell),
-                    id_short(&target),
+                    id_short(target),
                     slot,
                     if outcome.is_committed() {
                         "committed"
@@ -1528,7 +1533,7 @@ impl DeosDesktop {
     /// keystroke through [`Self::edit_doc`] into the cell's heap (a receipted patch +
     /// verified revision turn). Idempotent: a second call is a no-op. Needs `window`
     /// + `cx` to build the entity, so it runs from `render_doc_body` (which threads
-    /// them) rather than the `window`-less open paths.
+    ///   them) rather than the `window`-less open paths.
     fn ensure_doc_input(&mut self, cell: CellId, window: &mut Window, cx: &mut Context<Self>) {
         if self.doc_inputs.contains_key(&cell) {
             return;
@@ -2421,7 +2426,7 @@ impl DeosDesktop {
     /// Type `text` into `cell`'s document editor — a receipted patch + a verified
     /// SetField revision turn (what the live editor's keystrokes do).
     pub fn bake_edit_doc(&mut self, cell: CellId, text: &str) {
-        if self.windows.get(&(cell, WinKindTag::DocEditor)).is_none() {
+        if !self.windows.contains_key(&(cell, WinKindTag::DocEditor)) {
             self.open_kind(cell, WinKindTag::DocEditor);
         }
         self.edit_doc(cell, text.to_string());
@@ -2664,7 +2669,7 @@ impl DeosDesktop {
     /// proven `CardEditor` machinery (receipted patches, blamed on the agent, cap-toothed),
     /// and (4) SWAP the re-folded tree into the SAME live entity ([`AppletView::set_tree`])
     /// + `notify` — so the real desktop window repaints the agent's rewrite on the next
-    /// frame (a `refresh` button + the `World Status (live)` relabel reach the glass).
+    ///   frame (a `refresh` button + the `World Status (live)` relabel reach the glass).
     ///
     /// Returns the loop's witnesses (reflect counts, receipt count, blame, before/after
     /// button presence) so a bake can assert the agent rewrote a real cockpit surface.
@@ -3300,6 +3305,8 @@ impl DeosDesktop {
             WinKindTag::ViewNodePane => self.render_viewnode_body(cell, window, cx),
             #[cfg(feature = "android-systemui")]
             WinKindTag::AndroidCell => self.render_android_systemui_body(cell, cx),
+            #[allow(unreachable_patterns)]
+            // needed when card-pane / android-systemui features are off
             _ => self.render_inspector_body(cell, cx),
         };
 
@@ -4452,6 +4459,8 @@ impl DeosDesktop {
 
         // The revision rows: genesis(0) … tip(n). Clicking sets the scrub cursor.
         let cursor = scrub.unwrap_or(n);
+        // 0..=n runs one past `patches` on purpose: i==n is the synthetic "tip" row.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..=n {
             let is_tip = i == n;
             let selected = i == cursor;
@@ -4612,7 +4621,7 @@ impl DeosDesktop {
         }
         col = col.child(face_section("Contributions (by author)"));
         let mut tally: Vec<_> = summary.into_iter().collect();
-        tally.sort_by(|a, b| b.1.cmp(&a.1));
+        tally.sort_by_key(|b| std::cmp::Reverse(b.1));
         if tally.is_empty() {
             col = col.child(face_row(
                 "(none)",

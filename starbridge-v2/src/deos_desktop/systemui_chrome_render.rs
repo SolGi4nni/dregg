@@ -29,7 +29,6 @@
 //! chrome (the `SystemUiCapChrome` wrapping a real `PermWorld` + executor) is held per
 //! window in [`super::DeosDesktop::systemui_chromes`], minted lazily on first paint.
 
-use gpui::prelude::FluentBuilder;
 use gpui::{
     div, px, AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, SharedString, StatefulInteractiveElement, Styled,

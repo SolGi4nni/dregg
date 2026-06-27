@@ -32,7 +32,7 @@
 
 use std::collections::HashMap;
 
-use dregg_turn::eventual::{EventualRef, Pipeline, Target};
+use dregg_turn::eventual::{EventualRef, Pipeline};
 use dregg_turn::turn::Turn;
 
 pub use crate::held_promise::Guard;

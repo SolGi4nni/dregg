@@ -56,6 +56,7 @@
 //! `ReceiptFeed` + `remote_mirror`'s `MirrorCap`/`Bounds`, no network).
 
 use dregg_firmament::Bounds;
+#[cfg(test)]
 use dregg_types::CellId;
 
 use crate::live_node::ReceiptFeed;

@@ -217,7 +217,7 @@ impl UmemBranch {
 /// [`crate::shared_fork::MembraneFrustum`] and
 /// [`crate::distributed_card::CardForkEnvelope`]), carrying the universal-map projection
 /// + the anti-substitution root. The bytes are inert in transit; a recipient opens them
-/// (the root tooth fires fail-closed on a substituted payload) and stitches.
+///   (the root tooth fires fail-closed on a substituted payload) and stitches.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UmemEnvelope {
     /// The carried umem branch (focus, cull, the `UProjection`, the cursor).

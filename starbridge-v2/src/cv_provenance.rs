@@ -57,7 +57,6 @@
 //! Everything renders through the SAME generic `cockpit::render_presentation_body`
 //! (Timeline / Prose / Fields are already handled), so no new gpui code is needed.
 
-use std::path::Path;
 use std::process::Command;
 
 use dregg_cell::CellId;

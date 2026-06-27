@@ -108,7 +108,7 @@ pub struct CellRow {
     pub chrome_badge: String,
     /// Whether the full client-side attestation chain VERIFIED (content-addressed
     /// + receipt-in-stream + real receipt-stream-root reconstruction + quorum).
-    /// The page renders only on `true`.
+    ///   The page renders only on `true`.
     pub attested: bool,
     /// The finalized content commitment (`blake3` of the served bytes), short-hex
     /// — the field a transclusion would include, and the page's self-certifying
@@ -606,8 +606,10 @@ impl WebCellsBrowser {
     ///
     /// Returns the upgraded [`SemiReinteractiveTransclusion`] (with the conferred rights
     /// + the affordance the host may now fire) on a real grant, or the read-only quote
-    /// UNCHANGED plus the denial reason if the powerbox refused (no authority conferred —
-    /// the read is still free, the interact is simply not unlocked).
+    ///   UNCHANGED plus the denial reason if the powerbox refused (no authority conferred —
+    ///   the read is still free, the interact is simply not unlocked).
+    // Err carries the (unchanged read, reason) pair back to the caller by value.
+    #[allow(clippy::result_large_err)]
     pub fn upgrade_transclusion_via_powerbox(
         world: &mut World,
         read: Transclusion,

@@ -15,7 +15,7 @@
 //!     a swappable tab-bar renderer (the ~15% core of Zed's `Pane`).
 //!   * [`pane_group`] — [`PaneGroup`]/[`Member`]/[`PaneAxis`]/[`SplitDirection`]
 //!     + the custom `PaneAxisElement`: the recursive resizable-split tree with
-//!     the draggable divider (the ~90%-as-is engine).
+//!       the draggable divider (the ~90%-as-is engine).
 //!   * [`dock`] — [`Dock`]/[`DockPosition`]/[`DockPanel`]/[`DraggedDock`]: the
 //!     Left/Bottom/Right edge container with its 6px resize handle (slim).
 //!
@@ -32,6 +32,8 @@
 mod theme;
 
 #[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
+#[allow(clippy::module_inception)]
+// `dock::dock` holds the Dock widget; the parent module is the dock subsystem
 pub mod dock;
 #[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub mod pane;

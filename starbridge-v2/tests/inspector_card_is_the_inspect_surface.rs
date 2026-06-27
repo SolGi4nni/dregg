@@ -100,7 +100,7 @@ fn inspector_card_mounts_over_live_world_and_its_affordance_fires_a_real_turn() 
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     // Build the inspector card surface over the LIVE World + the `user` cell — the
     // EXACT builder `Cockpit::ensure_inspector_card` grafts as the Inspect surface.

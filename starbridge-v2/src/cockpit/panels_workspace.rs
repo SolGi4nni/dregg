@@ -394,7 +394,7 @@ impl Cockpit {
                     .active_item()
                     .map(|s| Tab::from_index(s.item_id().as_u64() as usize));
                 let is_torn = pane_tab
-                    .and_then(|t| weak.upgrade())
+                    .and_then(|_t| weak.upgrade())
                     .map(|c| c.read(cx).tab_is_torn_off(pane_tab.unwrap()))
                     .unwrap_or(false);
                 row = row.child(
@@ -649,12 +649,12 @@ impl Cockpit {
     /// Open a LIVE CARD pane: a hyperdreggmedia CARD ([`CardSurface`]) grafted as a
     /// split beside the active pane — THE keystone joy-path surface. The card binds
     /// + fires against the cockpit's LIVE `World` (the operator's `user` anchor
-    /// cell): its `bind` re-reads that cell's counter off the live ledger and its
-    /// `+1` button fires ONE cap-gated verified turn through `World::commit_turn` —
-    /// a receipt the cockpit's own cell inspector immediately sees (the SAME ledger
-    /// the editor pane saves onto). A child clicks the +1 and the count rises; the
-    /// turn bottoms out in the verified executor. Built only here (a live window) —
-    /// the headless bake (`render_card_pane_headless`) is the separate PNG path.
+    ///   cell): its `bind` re-reads that cell's counter off the live ledger and its
+    ///   `+1` button fires ONE cap-gated verified turn through `World::commit_turn` —
+    ///   a receipt the cockpit's own cell inspector immediately sees (the SAME ledger
+    ///   the editor pane saves onto). A child clicks the +1 and the count rises; the
+    ///   turn bottoms out in the verified executor. Built only here (a live window) —
+    ///   the headless bake (`render_card_pane_headless`) is the separate PNG path.
     ///
     /// Boots a SpiderMonkey runtime to AUTHOR the view-tree (the engine is a
     /// process-global singleton, so a second open after one already booted fails;
@@ -986,6 +986,7 @@ impl Cockpit {
     /// see [`Self::tear_off_tab_deferred`]). Driven by the ⌘K command (which holds a
     /// cockpit lease here), so it must NOT open the window inline; it schedules the
     /// unleased open on the next app pass exactly as the pane control does.
+    #[allow(dead_code)] // ⌘K-driven tear-off entry point; kept API alongside the pane control
     pub(crate) fn tear_off_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tear_off_tab_deferred(tab, cx);
     }
@@ -995,11 +996,11 @@ impl Cockpit {
     /// mirror callback re-enters the cockpit — does not nest inside a cockpit lease
     /// (the crash). It briefly leases the cockpit to take the [`WindowRegistry`] out
     /// + build the render seam, opens the window with the cockpit FREE, then briefly
-    /// re-leases to record the result + persist. Mints a window whose root renders
-    /// `tab`'s body via the host re-entry — the SAME body, over the SAME cell, the
-    /// dock pane showed (identity preserved). Idempotent: a second tear-off of an
-    /// already-torn `tab` re-focuses the existing window. A platform refusal is
-    /// surfaced fail-closed in the outcome banner (nothing is recorded).
+    ///   re-leases to record the result + persist. Mints a window whose root renders
+    ///   `tab`'s body via the host re-entry — the SAME body, over the SAME cell, the
+    ///   dock pane showed (identity preserved). Idempotent: a second tear-off of an
+    ///   already-torn `tab` re-focuses the existing window. A platform refusal is
+    ///   surfaced fail-closed in the outcome banner (nothing is recorded).
     fn tear_off_tab_unleased(weak: WeakEntity<Self>, tab: Tab, app: &mut App) {
         let id = DockSurfaceId(tab.index() as u64);
         let label = tab.label();
@@ -3114,7 +3115,7 @@ mod popout_crash_repro {
         let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
             gpui_platform::current_headless_renderer()
         });
-        cx.update(|cx| gpui_component::init(cx));
+        cx.update(gpui_component::init);
         cx
     }
 
@@ -3239,7 +3240,7 @@ mod agent_memory_cockpit_affordance {
         let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
             gpui_platform::current_headless_renderer()
         });
-        cx.update(|cx| gpui_component::init(cx));
+        cx.update(gpui_component::init);
         cx
     }
 

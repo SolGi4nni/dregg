@@ -561,7 +561,7 @@ pub enum ForestDeploy {
     /// embedded executor, which then applied its dynamic guarantees.
     Submitted {
         verdict: Verdict,
-        outcome: CommitOutcome,
+        outcome: Box<CommitOutcome>,
     },
 }
 
@@ -606,7 +606,10 @@ pub fn deploy_forest(world: &mut World, agent: CellId, forest: &CallForest) -> F
         .collect();
     let turn = world.turn(agent, effects);
     let outcome = world.commit_turn(turn);
-    ForestDeploy::Submitted { verdict, outcome }
+    ForestDeploy::Submitted {
+        verdict,
+        outcome: Box::new(outcome),
+    }
 }
 
 /// A one-line (or few-line) human description of a [`ForestDeploy`], for the
@@ -618,7 +621,7 @@ pub fn describe_forest_deploy(dep: &ForestDeploy) -> String {
             "REFUSED by the static rail — {} finding(s); NOT submitted (no gas spent)",
             verdict.all().len()
         ),
-        ForestDeploy::Submitted { outcome, .. } => match outcome {
+        ForestDeploy::Submitted { outcome, .. } => match &**outcome {
             CommitOutcome::Committed { receipt, events } => format!(
                 "static PASS → executor COMMITTED: {} actions, {} computrons, {} dynamics event(s)",
                 receipt.action_count,

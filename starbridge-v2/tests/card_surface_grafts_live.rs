@@ -67,7 +67,7 @@ fn card_surface_grafts_over_live_world_and_its_button_fires_a_real_turn() {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     // Boot SpiderMonkey ONCE (process-global engine), then build the dock card
     // surface over the LIVE World + the operator's `user` cell — exactly what

@@ -164,8 +164,8 @@ fn field_tail_u64(fe: &dregg_app_framework::FieldElement) -> u64 {
 /// Receives the launched [`DeosApp`] (for its cap rights + the app cell) and the
 /// shared `World`. Returns the [`AppWorldSpine`] (already seeded, app cell installed)
 /// + the committed [`TurnReceipt`]. The closure uses the app crate's OWN public
-/// effect-builders + program, so the World path re-expresses the SAME turn the
-/// framework path fires — only the ledger is the cockpit's now.
+///   effect-builders + program, so the World path re-expresses the SAME turn the
+///   framework path fires — only the ledger is the cockpit's now.
 #[cfg(feature = "embedded-executor")]
 type WorldDriveFn =
     fn(&DeosApp, Rc<RefCell<World>>) -> Result<(AppWorldSpine, TurnReceipt), WorldFireError>;
@@ -1905,7 +1905,7 @@ impl AppRegistry {
                         // DRAFT). No sender clause on a legacy charter, so the
                         // single-custody `commit` admits it; World's executor
                         // re-enforces the council machine.
-                        let proposal_hash = dregg_app_framework::field_from_u64(0x90_0_5A1);
+                        let proposal_hash = dregg_app_framework::field_from_u64(0x0090_05A1);
                         let members_commit = charter.members_commitment();
                         let receipt = spine.commit(
                             "propose",

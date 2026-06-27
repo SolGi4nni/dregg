@@ -356,13 +356,6 @@ mod tests {
         super::block_on(fut)
     }
 
-    fn field<'a>(
-        view: &'a crate::reflect::Inspectable,
-        key: &str,
-    ) -> Option<&'a crate::reflect::Field> {
-        view.fields.iter().find(|f| f.key == key)
-    }
-
     // ---- POLARITY ✓ : a read-mirror resolves a remote cell over the DIALED wire --
 
     #[test]

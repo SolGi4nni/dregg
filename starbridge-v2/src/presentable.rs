@@ -1238,7 +1238,7 @@ impl<'w> Spotter<'w> {
         }
 
         // Best score first; ties broken by object order (stable, via id sort above).
-        hits.sort_by(|a, b| b.score.cmp(&a.score));
+        hits.sort_by_key(|b| std::cmp::Reverse(b.score));
         hits
     }
 

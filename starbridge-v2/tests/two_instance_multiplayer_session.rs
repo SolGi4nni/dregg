@@ -45,12 +45,12 @@ use starbridge_v2::world::{make_open_cell, set_field, World};
 /// (a principal can only hold what it was granted; nobody self-grants). Returns the role
 /// cells:
 ///   * `room`    — the focus the membrane culls around (reaches both co-inhabitants + the
-///                 board); the cap-bounded co-inhabited surface.
+///     board); the cap-bounded co-inhabited surface.
 ///   * `ada` / `boris` — two DISTINCT principals.
 ///   * `board`   — the shared surface both hold a cap over (the collision candidate).
 ///   * `doc_ada` / `doc_boris` — each co-inhabitant's own doc (the disjoint edits).
 ///   * `offstage`— a cell NO principal in the room subgraph reaches (the confinement foil:
-///                 it must NOT ride the cap-bounded membrane — anti-amplification by omission).
+///     it must NOT ride the cap-bounded membrane — anti-amplification by omission).
 #[allow(clippy::type_complexity)]
 fn shared_world() -> (
     World,

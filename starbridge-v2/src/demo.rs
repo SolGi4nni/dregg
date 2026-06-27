@@ -23,12 +23,12 @@
 //!      OWN separate receipted turn. **TWO DISTINCT receipt hashes** — causality A→B
 //!      visible, independence proven (not a joint turn). *A hands off to B.*
 //!   4. **THE DUAL REFUSAL (the climax)** — compromised B tries BOTH:
-//!        (a) an **OVER-GRANT** (widen its mandate to a cell it holds no cap to) —
-//!            refused by the real executor's no-amplification rule (the
-//!            `granted ⊆ held` gate, `DelegationDenied`), AND
-//!        (b) an **OVER-SPEND** against the verified Stingray shared-budget ceiling
-//!            (`src/swarm_budget.rs`) — refused by the counter's conservation gate
-//!            (`PoolExhausted`) BEFORE the turn runs.
+//!      (a) an **OVER-GRANT** (widen its mandate to a cell it holds no cap to) —
+//!      refused by the real executor's no-amplification rule (the
+//!      `granted ⊆ held` gate, `DelegationDenied`), AND
+//!      (b) an **OVER-SPEND** against the verified Stingray shared-budget ceiling
+//!      (`src/swarm_budget.rs`) — refused by the counter's conservation gate
+//!      (`PoolExhausted`) BEFORE the turn runs.
 //!      BOTH fail-closed through the REAL executor / the REAL verified counter, each
 //!      surfaced WITH the executor's own reason. *The same no-amplification law fires
 //!      at the swarm seam AND at the budget ceiling.* (A third refusal — the pixel-
@@ -77,9 +77,9 @@ use crate::world::{self, World};
 ///     `m`, remaining → B − 2m (~900).
 ///   * frame 4 (over-spend): pre-check `DEMO_TURN_FEE > B − 2m` (1000 > ~900 ✓ BREACH)
 ///     → `PoolExhausted`, fail-closed, the counter UNMOVED.
-/// `B = DEMO_TURN_FEE + 500` lands in the admissible window `[DEMO_TURN_FEE + m,
+///     `B = DEMO_TURN_FEE + 500` lands in the admissible window `[DEMO_TURN_FEE + m,
 /// 2·DEMO_TURN_FEE − 2m)` for any single-dispatch metered cost `m < 500` — robust to
-/// the exact metered figure without hard-coding it.
+///     the exact metered figure without hard-coding it.
 const DEMO_BUDGET_CEILING: u64 = DEMO_TURN_FEE + 500;
 
 /// The per-turn fee stamped on every demo turn (the metered world's declared
@@ -571,9 +571,8 @@ impl HeadlineDemo {
         self.frames.push(DemoFrame::committed(
             3,
             "NOTIFY",
-            format!(
-                "agent-A notified agent-B (deposited a wake in B's inbox — async, NOT a joint turn)"
-            ),
+            "agent-A notified agent-B (deposited a wake in B's inbox — async, NOT a joint turn)"
+                .to_string(),
             receipt,
             height,
         ));

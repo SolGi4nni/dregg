@@ -630,7 +630,7 @@ mod tests {
     #[cfg(feature = "render-capture")]
     #[test]
     fn tear_off_registers_pop_back_removes_identity_preserved() {
-        use gpui::{AppContext, HeadlessAppContext, PlatformTextSystem};
+        use gpui::{HeadlessAppContext, PlatformTextSystem};
         use gpui_wgpu::CosmicTextSystem;
         use std::borrow::Cow;
         use std::sync::Arc;
@@ -651,7 +651,7 @@ mod tests {
         // The torn-off window's root view is now a `gpui_component::Root` (the
         // per-window crash fix), whose render reads the kit theme global — so the
         // headless app must `init` gpui-component before opening one.
-        cx.update(|cx| gpui_component::init(cx));
+        cx.update(gpui_component::init);
 
         let id = SurfaceId(42);
 
@@ -791,7 +791,7 @@ mod tests {
             });
             // The torn-off window root is a `gpui_component::Root` (the crash fix),
             // whose render reads the kit theme — init gpui-component for the bake.
-            cx.update(|cx| gpui_component::init(cx));
+            cx.update(gpui_component::init);
             cx
         }
 
@@ -914,7 +914,7 @@ mod tests {
             let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
                 gpui_platform::current_headless_renderer()
             });
-            cx.update(|cx| gpui_component::init(cx));
+            cx.update(gpui_component::init);
             cx
         }
 

@@ -261,7 +261,7 @@ fn circle_position(i: usize, n: usize) -> (f32, f32) {
 mod tests {
     use super::*;
     use crate::swarm::Swarm;
-    use crate::world::{emit_event, make_open_cell, transfer, World};
+    use crate::world::{emit_event, make_open_cell, World};
 
     /// A three-member swarm: coordinator (caps to BOTH workers), worker-a,
     /// worker-b — the same mandate graph the swarm tests use.

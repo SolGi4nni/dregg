@@ -397,7 +397,7 @@ mod tests {
         // membrane is a frustum of the real chat, not a separate toy world.
         let chat = WorldChatSource::seeded("@ember:deos.local");
         let rooms = chat.rooms().unwrap();
-        chat.send(&rooms[0].room_id.to_string(), "a message to snapshot")
+        chat.send(rooms[0].room_id.as_ref(), "a message to snapshot")
             .unwrap();
         let fork = chat.fork_world();
         assert!(

@@ -58,8 +58,8 @@
 //! - **hand-over sheet:** one button per `chrome.grant_sheet()` row whose
 //!   `.on_click` calls `chrome.hand_over(row.permission)` (the real `Effect::GrantCapability`)
 //!   then `cx.notify()` so the badge repaints lit. A revoke row mirrors it.
-//! That body is the collision-free `native-full` follow-up; THIS module is the
-//! load-bearing logic + the bake (`src/bin/systemui_cap_bake.rs`).
+//!   That body is the collision-free `native-full` follow-up; THIS module is the
+//!   load-bearing logic + the bake (`src/bin/systemui_cap_bake.rs`).
 
 use android_cell::{
     AndroidManifest, AndroidPermission, BadgeReason, BadgeState, CapBadge, CapBadgeSet,

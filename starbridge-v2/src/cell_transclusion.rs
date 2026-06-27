@@ -429,6 +429,13 @@ impl ComposedCellDocumentView {
     }
 }
 
+// A tiny compile-time witness that the unused-import lint stays honest about the
+// surface area this prototype welds (these are the organs the design leans on).
+#[allow(dead_code)]
+fn _organ_census() {
+    let _: Option<BTreeSet<String>> = None;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -796,11 +803,4 @@ mod tests {
         // The darkened embed STILL carries its provenance (never forged).
         assert_eq!(view.embed_views[0].provenance, *doc.embeds[0].cite());
     }
-}
-
-// A tiny compile-time witness that the unused-import lint stays honest about the
-// surface area this prototype welds (these are the organs the design leans on).
-#[allow(dead_code)]
-fn _organ_census() {
-    let _: Option<BTreeSet<String>> = None;
 }

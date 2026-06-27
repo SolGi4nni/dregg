@@ -278,7 +278,7 @@ pub fn group(n: u64) -> String {
     let bytes = s.as_bytes();
     let len = bytes.len();
     for (i, b) in bytes.iter().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(*b as char);

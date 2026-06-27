@@ -346,7 +346,7 @@ pub enum SimOutcome {
         verdict: Verdict,
         /// The predicted receipt (byte-identical to the live commit's — same
         /// timestamp + same pre-state).
-        receipt: TurnReceipt,
+        receipt: Box<TurnReceipt>,
         /// Per-cell predicted deltas (touched cells + any births/retirements).
         deltas: Vec<CellDelta>,
         /// The dynamics events the turn would emit (the live transition story).

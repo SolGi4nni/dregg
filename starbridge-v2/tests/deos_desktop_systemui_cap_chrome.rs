@@ -57,7 +57,7 @@ fn the_desktop_renders_a_confined_android_cells_systemui_cap_chrome() {
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
-    cx.update(|cx| gpui_component::init(cx));
+    cx.update(gpui_component::init);
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();

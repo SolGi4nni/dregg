@@ -346,13 +346,13 @@ pub enum Tab {
     Lanes,
     /// THE TEMPORAL COCKPIT (⏳ TIME) — the headline livability surface: time-travel
     /// + suspend + fractal meta-debug as ONE control panel. The REWIND SCRUBBER drags
-    /// over the verified witness history (genesis → head) and re-derives the focused
-    /// views at any past point (root-verified [`crate::replay::History::replay_to`])
-    /// with a live [`Liveness`] badge; the ⏸ SUSPEND button halts the real loop (the
-    /// M5 gate) and stages the continuation, ▶ RESUME drains it; the METASTACK
-    /// navigator climbs a reflective tower over the suspended world (debug the
-    /// debugger). All over the REAL models — see [`starbridge_v2::time_travel`] /
-    /// [`starbridge_v2::replay`] / [`starbridge_v2::meta_debug`].
+    ///   over the verified witness history (genesis → head) and re-derives the focused
+    ///   views at any past point (root-verified [`crate::replay::History::replay_to`])
+    ///   with a live [`Liveness`] badge; the ⏸ SUSPEND button halts the real loop (the
+    ///   M5 gate) and stages the continuation, ▶ RESUME drains it; the METASTACK
+    ///   navigator climbs a reflective tower over the suspended world (debug the
+    ///   debugger). All over the REAL models — see [`starbridge_v2::time_travel`] /
+    ///   [`starbridge_v2::replay`] / [`starbridge_v2::meta_debug`].
     Time,
     /// THE ⤳ SHARE surface (the FRUSTUM / SNAPSHOT EDITOR) — the share-with-
     /// attenuation pre-send editor: take a [`crate::ui_snapshot::UiSnapshot`] of the
@@ -725,9 +725,9 @@ pub struct Cockpit {
     ///
     /// LAZY (`None` until first needed): booting it builds a metered verified world
     /// + deploys the mint factory, and the demo's turns are the slow proof-bearing
-    /// metered path. It is therefore NOT booted at window-open — it boots on the
-    /// first navigation to the SWARM tab (or the first killer-demo verb), so it
-    /// never sits on the first-paint path. Access it through [`Self::killer_demo`].
+    ///   metered path. It is therefore NOT booted at window-open — it boots on the
+    ///   first navigation to the SWARM tab (or the first killer-demo verb), so it
+    ///   never sits on the first-paint path. Access it through [`Self::killer_demo`].
     killer_demo: Option<HeadlineDemo>,
     /// The render lines the killer demo has emitted so far (one per advanced frame),
     /// shown in the SWARM-tab demo strip. Newest appended last.
@@ -1183,6 +1183,7 @@ pub(crate) struct ModeCardMount {
 #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
 pub(crate) struct InspectorCardMount {
     pub(crate) entity: Entity<starbridge_v2::card_pane::CardPane>,
+    #[allow(dead_code)] // held to keep the live attached applet alive for the mounted card
     pub(crate) applet: starbridge_v2::card_pane::SharedAttached,
     pub(crate) focus: CellId,
 }

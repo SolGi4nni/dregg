@@ -238,7 +238,7 @@ mod tests {
             .ledger()
             .get(&agent)
             .and_then(|c| c.state.get_field(COUNTER_SLOT))
-            .map(|fe| super::deos_js_unpack_u64(fe))
+            .map(super::deos_js_unpack_u64)
             .unwrap_or(0);
         let effects = vec![
             Effect::SetField {
@@ -260,7 +260,7 @@ mod tests {
             .ledger()
             .get(&agent)
             .and_then(|c| c.state.get_field(COUNTER_SLOT))
-            .map(|fe| super::deos_js_unpack_u64(fe))
+            .map(super::deos_js_unpack_u64)
             .unwrap_or(0)
     }
 
