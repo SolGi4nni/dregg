@@ -55,6 +55,17 @@ ignore = [
     #    RSA decryption, so the timing oracle is not exercised. Tracked upstream;
     #    remove when rsa ships a constant-time fix.
     "RUSTSEC-2023-0071",
+
+    # ── ml-dsa — RUSTSEC-2025-0144 (timing side-channel in ML-DSA decomposition).
+    #    ml-dsa is the post-quantum (Dilithium) signature crate. It is LOCKFILE-
+    #    ONLY here — `cargo tree -i ml-dsa` finds NO active reverse path in the
+    #    audited workspace graph, and no first-party dregg code references it
+    #    (grep-clean). The deployed crypto floor signs with ed25519 / Pedersen and
+    #    commits with Poseidon2 — never ml-dsa's decomposition — so the timing
+    #    oracle is not exercised. A patched >=0.1.0-rc.3 exists but the locked
+    #    transitive graph does not yet pull it; remove on the next lock refresh
+    #    that does.
+    "RUSTSEC-2025-0144",
 ]
 
 # Informational advisories (unmaintained / yanked / unsound) are surfaced as
