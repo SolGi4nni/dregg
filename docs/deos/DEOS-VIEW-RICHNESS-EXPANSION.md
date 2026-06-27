@@ -337,3 +337,45 @@ gpui-component pixels and round-trips the JSON, proving the expansion path.
 The remaining vocabulary (§1) lands as the ladder (§5) reaches the surfaces that need it —
 `menu`/`halo` next (the actuation crown), then `slider`, `grid`, the extended `input`, and
 `tile` last.
+
+## 7. Batch 2 — the actuation crown + the rest of the vocabulary (VOCABULARY COMPLETE)
+
+The remaining §1 nodes are now implemented in lockstep across all four renderers + the deos-js
+authoring layer + the cockpit's `card_pane.rs` consumer, completing the target vocabulary:
+
+- **`grid`** (`{cols} + children`) — a wrapping spatial cell field; native `flex_wrap` (cols → a
+  per-cell `max_w`), web CSS grid/flex-wrap, discord recurses. Recurses children → the bind cursor
+  stays aligned (it is the one new node with `ViewNode` children, so `resolve_mounts`/`bind_plan`
+  recurse it).
+- **`breadcrumb`** (`{items:[{label, turn?, arg?}]}`) — a `→`-joined path; a crumb with a `turn`
+  is a clickable verified turn. Leaf (no bind cursor).
+- **`progress`** (`{value, max, label}`) — the STATIC (literal) gauge; same paint, baked fill.
+- **`pill`** (`{text, tag}`) / **`icon`** (`{glyph, tag}`) — the semantic-tag palette
+  (`good`/`warn`/`bad`/`accent`/`muted`) expressed as data (the cockpit's `pill(text, color)`).
+- **`menu`** (`{items:[{label, turn, arg, enabled}]}`) — the right-click actuation list; an
+  `enabled:false` row is the cap tooth SHOWN (dimmed `Label`), never hidden.
+- **`halo`** (`{targetSlot?, handles:[{glyph, turn, arg, enabled}]}`) — the Pharo handle-ring; each
+  handle is the same `{turn, arg}` affordance, ringed by renderer-side layout (the card carries the
+  glyph+affordance set, not the geometry). A `!enabled` handle is dimmed (cap-refused).
+- **`slider`** (`{slot, min, max, turn}`) — the bound scrubber; the thumb reads the slot
+  immediate-mode, and the native paint is discrete clickable ticks (the SAME `on_mouse_down`
+  actuation the native Time scrubber uses), each seeking `arg = its value`. Web is `<input
+  type=range>`; discord a single `seek` affordance.
+- **`toggle`** (`{slot, onTurn, offTurn, glyphOn?, glyphOff?, label?}`) — the affordance checkbox;
+  the glyph reflects the live slot, the click fires on/off by current state.
+- **`input` (extended)** (`{bindView, fireTurn?, submitLabel?}`) — the draft feeds a turn arg: a
+  paired submit button parses the draft into `fireTurn`'s `arg` (input → verified turn).
+- **`tile`** (`{handle, w, h}`) — the host-resolved region (the genuine ceiling): native paints a
+  sized framed placeholder, web an `<iframe>`/`<canvas>` slot, both carrying `handle` for the host
+  to resolve; the card never carries the pixels.
+
+The actuation contract (§3) holds unchanged: every interactive batch-2 node routes its
+`{turn, arg}` through the same `Applet::fire` → cap tooth → executor → receipt path the base
+`button` uses; `enabled`/cap-dim is the in-band refusal shown. The bind-cursor invariant (§2)
+holds: only `Bind` consumes the cursor; the bound batch-2 nodes (`slider`/`toggle`/`gauge`) read
+their slot immediate-mode and consume no cursor in any renderer, and `grid` recurses children in
+declaration order. The deos-js `deos.ui.*` prelude gained an authoring helper for every node
+(plus the batch-1 `section`/`tabs`/`gauge`/`divider` helpers), so a card author (or an agent via
+`run_js`) emits the rich nodes the renderers paint. Round-trip + render-to-pixels proofs:
+`deos-view/src/tree.rs` (`batch2_lift_tests`) + `deos-view/tests/renders_rich_nodes_to_pixels.rs`
+(`the_batch2_nodes_round_trip_and_render_to_pixels`).

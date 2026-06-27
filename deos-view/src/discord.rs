@@ -138,11 +138,26 @@ fn block(n: &ViewNode, binds: &[u64], cursor: &mut usize, acc: &mut Accum) {
             acc.buttons
                 .push((label.clone(), affordance_custom_id(turn, *arg)));
         }
-        ViewNode::Input { bind_view } => {
+        ViewNode::Input {
+            bind_view,
+            fire_turn,
+            submit_label,
+        } => {
             push_line(
                 &mut acc.description,
                 &format!("\u{2039}{bind_view}\u{203a}"),
             );
+            // An extended input's submit is an affordance the bot's component grid carries (the
+            // arg is supplied by the bot's modal/text input on press).
+            if !fire_turn.is_empty() {
+                let label = if submit_label.is_empty() {
+                    "submit"
+                } else {
+                    submit_label.as_str()
+                };
+                acc.buttons
+                    .push((label.to_string(), affordance_custom_id(fire_turn, 0)));
+            }
         }
         // The richness-expansion nodes flatten gracefully into the embed: a `section` is a
         // header line + its children; `tabs` is a labels line + all panels (cursor-aligned);
@@ -172,6 +187,87 @@ fn block(n: &ViewNode, binds: &[u64], cursor: &mut usize, acc: &mut Accum) {
             );
         }
         ViewNode::Divider => push_line(&mut acc.description, "\u{2500}\u{2500}\u{2500}"),
+        // The richness-expansion batch-2 nodes flatten gracefully: a `grid` recurses; structure /
+        // indicator nodes become description lines; actuation nodes (`menu`/`halo`/`toggle`/
+        // clickable `breadcrumb` crumbs) become buttons in the component grid.
+        ViewNode::Grid { children, .. } => {
+            for c in children {
+                block(c, binds, cursor, acc);
+            }
+        }
+        ViewNode::Breadcrumb { items } => {
+            let path = items
+                .iter()
+                .map(|c| c.label.clone())
+                .collect::<Vec<_>>()
+                .join(" \u{203a} ");
+            push_line(&mut acc.description, &path);
+            for c in items {
+                if !c.turn.is_empty() {
+                    acc.buttons
+                        .push((c.label.clone(), affordance_custom_id(&c.turn, c.arg)));
+                }
+            }
+        }
+        ViewNode::Progress { value, max, label } => {
+            push_line(&mut acc.description, &format!("{label}{value}/{max}"));
+        }
+        ViewNode::Pill { text, tag } => {
+            if tag.is_empty() {
+                push_line(&mut acc.description, &format!("`{text}`"));
+            } else {
+                push_line(&mut acc.description, &format!("`{text}` ({tag})"));
+            }
+        }
+        ViewNode::Icon { glyph, .. } => push_line(&mut acc.description, glyph),
+        ViewNode::Menu { items } => {
+            for item in items {
+                if item.enabled {
+                    acc.buttons.push((
+                        item.label.clone(),
+                        affordance_custom_id(&item.turn, item.arg),
+                    ));
+                } else {
+                    push_line(&mut acc.description, &format!("~~{}~~", item.label));
+                }
+            }
+        }
+        ViewNode::Halo { handles, .. } => {
+            for h in handles {
+                if h.enabled {
+                    acc.buttons
+                        .push((h.glyph.clone(), affordance_custom_id(&h.turn, h.arg)));
+                }
+            }
+        }
+        ViewNode::Slider {
+            slot,
+            min,
+            max,
+            turn,
+        } => {
+            // A slider reads its slot immediate-mode (it consumes NO bind cursor in any renderer).
+            push_line(
+                &mut acc.description,
+                &format!("\u{2039}slider slot {slot}: {min}..{max}\u{203a}"),
+            );
+            // A discord slider exposes a single seek affordance (the bot supplies the target value).
+            if !turn.is_empty() {
+                acc.buttons
+                    .push(("seek".to_string(), affordance_custom_id(turn, *min as i64)));
+            }
+        }
+        ViewNode::Toggle { on_turn, label, .. } => {
+            // Discord flattens the toggle to a single affordance button (the bot picks on/off by
+            // the live slot on press); the label carries the toggle's name.
+            let name = if label.is_empty() { "toggle" } else { label };
+            acc.buttons
+                .push((name.to_string(), affordance_custom_id(on_turn, 0)));
+        }
+        ViewNode::Tile { handle, w, h } => push_line(
+            &mut acc.description,
+            &format!("\u{25A6} tile {handle} ({w}\u{00D7}{h})"),
+        ),
         // The COMPOSITION KEYSTONE flattens gracefully: a `⌂ <cell>` header line + the mounted
         // cell's hosted subtree (cursor-aligned), or an unresolved placeholder line.
         ViewNode::Host { cell, view } => {
@@ -236,8 +332,8 @@ fn inline(
         ViewNode::Button { label, turn, arg } => {
             buttons.push((label.clone(), affordance_custom_id(turn, *arg)));
         }
-        ViewNode::Input { bind_view } => parts.push(format!("\u{2039}{bind_view}\u{203a}")),
-        // The richness-expansion nodes inline into a row: a `section`/`tabs` recurses; a
+        ViewNode::Input { bind_view, .. } => parts.push(format!("\u{2039}{bind_view}\u{203a}")),
+        // The richness-expansion nodes inline into a row: a `section`/`tabs`/`grid` recurses; a
         // `gauge` shows its bounds; a `divider` is a dash.
         ViewNode::Section { children, .. } => {
             for c in children {
@@ -249,10 +345,55 @@ fn inline(
                 inline(p, binds, cursor, parts, buttons);
             }
         }
+        ViewNode::Grid { children, .. } => {
+            for c in children {
+                inline(c, binds, cursor, parts, buttons);
+            }
+        }
         ViewNode::Gauge { slot, max, label } => {
             parts.push(format!("{label}\u{2039}{slot}/{max}\u{203a}"))
         }
         ViewNode::Divider => parts.push("\u{2014}".into()),
+        ViewNode::Breadcrumb { items } => {
+            parts.push(
+                items
+                    .iter()
+                    .map(|c| c.label.clone())
+                    .collect::<Vec<_>>()
+                    .join(" \u{203a} "),
+            );
+            for c in items {
+                if !c.turn.is_empty() {
+                    buttons.push((c.label.clone(), affordance_custom_id(&c.turn, c.arg)));
+                }
+            }
+        }
+        ViewNode::Progress { value, max, label } => parts.push(format!("{label}{value}/{max}")),
+        ViewNode::Pill { text, .. } => parts.push(format!("`{text}`")),
+        ViewNode::Icon { glyph, .. } => parts.push(glyph.clone()),
+        ViewNode::Menu { items } => {
+            for item in items {
+                if item.enabled {
+                    buttons.push((
+                        item.label.clone(),
+                        affordance_custom_id(&item.turn, item.arg),
+                    ));
+                }
+            }
+        }
+        ViewNode::Halo { handles, .. } => {
+            for h in handles {
+                if h.enabled {
+                    buttons.push((h.glyph.clone(), affordance_custom_id(&h.turn, h.arg)));
+                }
+            }
+        }
+        ViewNode::Slider { slot, .. } => parts.push(format!("\u{2039}slider {slot}\u{203a}")),
+        ViewNode::Toggle { on_turn, label, .. } => {
+            let name = if label.is_empty() { "toggle" } else { label };
+            buttons.push((name.to_string(), affordance_custom_id(on_turn, 0)));
+        }
+        ViewNode::Tile { handle, .. } => parts.push(format!("\u{25A6}{handle}")),
         // A host inlined into a row: a `⌂ <cell>` marker + the hosted subtree's inline parts.
         ViewNode::Host { cell, view } => {
             parts.push(format!("\u{2302}{cell}"));

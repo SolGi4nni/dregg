@@ -40,7 +40,21 @@ pub enum ViewNode {
         arg: i64,
     },
     /// `input(viewKey)` → a text input bound to ephemeral view-state `bind_view`.
-    Input { bind_view: String },
+    ///
+    /// EXTENDED (the richness expansion): the draft can feed a turn arg. When `fire_turn`
+    /// is non-empty the field's committed draft is parsed into the `arg` of `fire_turn` on
+    /// submit (Enter / a paired submit button); `submit_label` labels that button. An empty
+    /// `fire_turn` keeps the legacy ephemeral-draft-only behaviour. Unlocks the
+    /// `ServiceExplorer` arg rows, the `WebShell` URL bar, the predicate composer (input →
+    /// verified turn).
+    Input {
+        bind_view: String,
+        /// The affordance the submitted draft fires (its `arg` is the parsed draft). Empty →
+        /// a plain ephemeral draft field (no turn).
+        fire_turn: String,
+        /// The submit button's label (when `fire_turn` is set). Empty → a sensible default.
+        submit_label: String,
+    },
     /// `list(items)` → a vertical list of child nodes.
     List(Vec<ViewNode>),
     /// `table(rows)` → a table; each row is itself a node (a `row` of cells).
@@ -110,6 +124,102 @@ pub enum ViewNode {
         cell: String,
         view: Option<Box<ViewNode>>,
     },
+
+    // ── The RICHNESS EXPANSION batch 2 — the actuation crown + the rest of the §1 vocabulary
+    //    (docs/deos/DEOS-VIEW-RICHNESS-EXPANSION.md). Each node carries its affordance(s) in the
+    //    `{turn, arg}` shape so the cap-gated-verified-turn routing is reused unchanged; bound
+    //    nodes name their `slot` and read it immediate-mode (no bind cursor). ──────────────────
+    /// `grid({cols}, ...children)` → a wrapping spatial cell field. `cols` caps how many cells
+    /// sit per row (0 → free wrap). Unlocks Wonder's glowing-cell grid, the desktop icon field,
+    /// the Powerbox app tiles. Recurses children in declaration order (the bind cursor stays
+    /// aligned).
+    Grid {
+        cols: usize,
+        children: Vec<ViewNode>,
+    },
+    /// `breadcrumb({items})` → a navigation path joined by `→`. A crumb carrying a non-empty
+    /// `turn` is clickable (fires a verified turn). Unlocks Time's metastack breadcrumb, the
+    /// Docs transclusion path.
+    Breadcrumb { items: Vec<Crumb> },
+    /// `progress({value, max, label})` → a STATIC (literal-valued) progress bar — the non-bound
+    /// gauge. Unlocks a swarm-member completion bar, a download tile.
+    Progress { value: u64, max: u64, label: String },
+    /// `pill({text, tag})` → a colored status badge (leaf). `tag` selects the semantic palette
+    /// (`good`/`warn`/`bad`/`accent`/`muted`). Unlocks the cockpit's ubiquitous `pill(text,
+    /// color)` — authority badges, LIVE/REVOKED chips, kind/lifecycle badges.
+    Pill { text: String, tag: String },
+    /// `icon({glyph, tag})` → a glyph indicator (leaf), tinted by `tag`. Unlocks the Wonder ✦/○
+    /// glow glyphs, the scrubber markers, the toggle ✓/○.
+    Icon { glyph: String, tag: String },
+    /// `menu({items})` → a right-click / context actuation menu — a list of `{label, turn, arg,
+    /// enabled}` rows. A `!enabled` row is the cap tooth shown rather than hidden (a dimmed,
+    /// non-firing row). Unlocks the `deos_desktop` right-click actuation list.
+    Menu { items: Vec<MenuItem> },
+    /// `halo({targetSlot, handles})` → the Pharo direct-manipulation handle-ring: a node carrying
+    /// its handles, each a `{glyph, turn, arg, enabled}` affordance the renderer rings around the
+    /// target (the compass-anchor geometry is renderer-side layout, not card data). A `!enabled`
+    /// handle is cap-refused, shown dimmed. Unlocks `deos_desktop/halo.rs`.
+    Halo {
+        /// The slot whose object the ring floats on (informational; the geometry is the
+        /// renderer's). 0 if unbound.
+        target_slot: usize,
+        handles: Vec<HaloHandle>,
+    },
+    /// `slider({slot, min, max, turn})` → a bound draggable value → seek turn. The thumb sits at
+    /// `get_u64(slot)` (read immediate-mode); a drag fires `turn` with `arg = the chosen value`.
+    /// Unlocks Time's rewind scrubber, Replay.
+    Slider {
+        slot: usize,
+        min: u64,
+        max: u64,
+        turn: String,
+    },
+    /// `toggle({slot, onTurn, offTurn, glyphOn, glyphOff, label})` → an affordance checkbox. The
+    /// glyph is `glyph_on` when `get_u64(slot) != 0` else `glyph_off`; a click fires `on_turn`
+    /// when currently off, `off_turn` when currently on. Unlocks Share's cull toggles, any
+    /// boolean affordance.
+    Toggle {
+        slot: usize,
+        on_turn: String,
+        off_turn: String,
+        glyph_on: String,
+        glyph_off: String,
+        label: String,
+    },
+    /// `tile({handle, w, h})` → a card-referenced native paint region (the genuine ceiling). The
+    /// card does NOT carry the pixels; it references an opaque host-resolved region (a Servo
+    /// render, a video, a map). An unresolvable handle paints a labelled placeholder. Unlocks
+    /// `WebShell`'s Servo render tile, any embedded native surface.
+    Tile { handle: String, w: u32, h: u32 },
+}
+
+/// A `breadcrumb` crumb — a path segment, optionally clickable (a non-empty `turn` fires a
+/// verified turn carrying `arg`).
+#[derive(Debug, Clone)]
+pub struct Crumb {
+    pub label: String,
+    pub turn: String,
+    pub arg: i64,
+}
+
+/// A `menu` row — a `{label, turn, arg}` actuation with a cap-tooth `enabled` flag (a disabled
+/// row is shown dimmed, never hidden — the in-band refusal).
+#[derive(Debug, Clone)]
+pub struct MenuItem {
+    pub label: String,
+    pub turn: String,
+    pub arg: i64,
+    pub enabled: bool,
+}
+
+/// A `halo` handle — a `{glyph, turn, arg}` affordance the renderer rings around the target,
+/// with a cap-tooth `enabled` flag (a disabled handle is shown dimmed).
+#[derive(Debug, Clone)]
+pub struct HaloHandle {
+    pub glyph: String,
+    pub turn: String,
+    pub arg: i64,
+    pub enabled: bool,
 }
 
 /// The raw JSON mirror of a `deos.ui.*` node (`{ kind, props, children }`). The
@@ -172,6 +282,76 @@ pub struct RawProps {
     /// view-tree is read from its committed heap and mounted here (see [`ViewNode::Host`]).
     #[serde(default, alias = "cellId")]
     pub cell: Option<String>,
+
+    // ── batch-2 props (the actuation crown + the rest of §1). Every field optional; a node
+    //    reads only the ones for its kind. ────────────────────────────────────────────────
+    /// A `grid`'s column cap (cells per row; 0 → free wrap).
+    #[serde(default)]
+    pub cols: Option<usize>,
+    /// A `menu`/`breadcrumb`'s rows (the `{label, turn, arg, enabled}` list).
+    #[serde(default)]
+    pub items: Option<Vec<RawItem>>,
+    /// A `halo`'s handles (the `{glyph, turn, arg, enabled}` ring).
+    #[serde(default)]
+    pub handles: Option<Vec<RawItem>>,
+    /// A `halo`'s target slot (the object the ring floats on; camelCase `targetSlot`).
+    #[serde(default, rename = "targetSlot", alias = "target_slot")]
+    pub target_slot: Option<usize>,
+    /// A `progress`'s literal value (the non-bound gauge's fill numerator).
+    #[serde(default)]
+    pub value: Option<u64>,
+    /// A `slider`'s minimum (the low end of the draggable range).
+    #[serde(default)]
+    pub min: Option<u64>,
+    /// A single affordance `turn` (a `slider` seek; the `arg` is the chosen value).
+    #[serde(default)]
+    pub turn: Option<String>,
+    /// A `toggle`'s on/off affordances (camelCase `onTurn`/`offTurn`).
+    #[serde(default, rename = "onTurn", alias = "on_turn")]
+    pub on_turn: Option<String>,
+    #[serde(default, rename = "offTurn", alias = "off_turn")]
+    pub off_turn: Option<String>,
+    /// An `icon`'s glyph; a `toggle`'s on/off glyphs (camelCase `glyphOn`/`glyphOff`).
+    #[serde(default)]
+    pub glyph: Option<String>,
+    #[serde(default, rename = "glyphOn", alias = "glyph_on")]
+    pub glyph_on: Option<String>,
+    #[serde(default, rename = "glyphOff", alias = "glyph_off")]
+    pub glyph_off: Option<String>,
+    /// An extended `input`'s submit affordance + button label (camelCase `fireTurn`/`submitLabel`).
+    #[serde(default, rename = "fireTurn", alias = "fire_turn")]
+    pub fire_turn: Option<String>,
+    #[serde(default, rename = "submitLabel", alias = "submit_label")]
+    pub submit_label: Option<String>,
+    /// A `tile`'s host-side render-source handle + its pixel size.
+    #[serde(default)]
+    pub handle: Option<String>,
+    #[serde(default)]
+    pub w: Option<u32>,
+    #[serde(default)]
+    pub h: Option<u32>,
+}
+
+/// A raw `{label?, glyph?, turn?, arg?, enabled?}` row — the JSON mirror of a `menu` item, a
+/// `halo` handle, or a `breadcrumb` crumb (each node lifts only the fields it needs). `enabled`
+/// defaults to `true` (a row is fireable unless the author/cap explicitly dims it).
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawItem {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub glyph: String,
+    #[serde(default)]
+    pub turn: String,
+    #[serde(default)]
+    pub arg: i64,
+    #[serde(default = "raw_item_enabled_default")]
+    pub enabled: bool,
+}
+
+/// A `RawItem`'s `enabled` defaults to `true` (a row fires unless explicitly dimmed by the cap).
+fn raw_item_enabled_default() -> bool {
+    true
 }
 
 /// `onClick = { turn, arg }` — the affordance a button fires.
@@ -208,6 +388,8 @@ impl RawNode {
             }
             "input" => ViewNode::Input {
                 bind_view: self.props.bind_view.clone().unwrap_or_default(),
+                fire_turn: self.props.fire_turn.clone().unwrap_or_default(),
+                submit_label: self.props.submit_label.clone().unwrap_or_default(),
             },
             "list" => ViewNode::List(kids()),
             "table" => ViewNode::Table(kids()),
@@ -228,6 +410,87 @@ impl RawNode {
                 label: self.props.label.clone().unwrap_or_default(),
             },
             "divider" => ViewNode::Divider,
+            "grid" => ViewNode::Grid {
+                cols: self.props.cols.unwrap_or(0),
+                children: kids(),
+            },
+            "breadcrumb" => ViewNode::Breadcrumb {
+                items: self
+                    .props
+                    .items
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|i| Crumb {
+                        label: i.label,
+                        turn: i.turn,
+                        arg: i.arg,
+                    })
+                    .collect(),
+            },
+            "progress" => ViewNode::Progress {
+                value: self.props.value.unwrap_or(0),
+                max: self.props.max.unwrap_or(0),
+                label: self.props.label.clone().unwrap_or_default(),
+            },
+            "pill" => ViewNode::Pill {
+                text: self.props.text.clone().unwrap_or_default(),
+                tag: self.props.tag.clone().unwrap_or_default(),
+            },
+            "icon" => ViewNode::Icon {
+                glyph: self.props.glyph.clone().unwrap_or_default(),
+                tag: self.props.tag.clone().unwrap_or_default(),
+            },
+            "menu" => ViewNode::Menu {
+                items: self
+                    .props
+                    .items
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|i| MenuItem {
+                        label: i.label,
+                        turn: i.turn,
+                        arg: i.arg,
+                        enabled: i.enabled,
+                    })
+                    .collect(),
+            },
+            "halo" => ViewNode::Halo {
+                target_slot: self.props.target_slot.unwrap_or(0),
+                handles: self
+                    .props
+                    .handles
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|h| HaloHandle {
+                        glyph: h.glyph,
+                        turn: h.turn,
+                        arg: h.arg,
+                        enabled: h.enabled,
+                    })
+                    .collect(),
+            },
+            "slider" => ViewNode::Slider {
+                slot: self.props.slot.unwrap_or(0),
+                min: self.props.min.unwrap_or(0),
+                max: self.props.max.unwrap_or(0),
+                turn: self.props.turn.clone().unwrap_or_default(),
+            },
+            "toggle" => ViewNode::Toggle {
+                slot: self.props.slot.unwrap_or(0),
+                on_turn: self.props.on_turn.clone().unwrap_or_default(),
+                off_turn: self.props.off_turn.clone().unwrap_or_default(),
+                glyph_on: self.props.glyph_on.clone().unwrap_or_else(|| "✓".into()),
+                glyph_off: self.props.glyph_off.clone().unwrap_or_else(|| "○".into()),
+                label: self.props.label.clone().unwrap_or_default(),
+            },
+            "tile" => ViewNode::Tile {
+                handle: self.props.handle.clone().unwrap_or_default(),
+                w: self.props.w.unwrap_or(0),
+                h: self.props.h.unwrap_or(0),
+            },
             // `host(cellId)` — a child (if present) is the provided/pre-baked hosted subtree;
             // no child = an UNRESOLVED mount (filled later from the cell heap by
             // [`resolve_mounts`]). At most one hosted subtree (a host mounts ONE cell's tree).
@@ -369,13 +632,29 @@ fn resolve_rec(
             select_turn: select_turn.clone(),
             panels: recur(panels, path),
         },
-        // Leaves carry no mounts — cloned through unchanged.
+        // The `grid` container recurses its children (a child may host a cell), like the other
+        // containers.
+        ViewNode::Grid { cols, children } => ViewNode::Grid {
+            cols: *cols,
+            children: recur(children, path),
+        },
+        // Leaves carry no mounts — cloned through unchanged. (The actuation/indicator nodes hold
+        // affordance/value DATA, not `ViewNode` children, so no mount can hide inside them.)
         ViewNode::Text(_)
         | ViewNode::Bind { .. }
         | ViewNode::Button { .. }
         | ViewNode::Input { .. }
         | ViewNode::Gauge { .. }
-        | ViewNode::Divider => node.clone(),
+        | ViewNode::Divider
+        | ViewNode::Breadcrumb { .. }
+        | ViewNode::Progress { .. }
+        | ViewNode::Pill { .. }
+        | ViewNode::Icon { .. }
+        | ViewNode::Menu { .. }
+        | ViewNode::Halo { .. }
+        | ViewNode::Slider { .. }
+        | ViewNode::Toggle { .. }
+        | ViewNode::Tile { .. } => node.clone(),
     }
 }
 
@@ -547,5 +826,152 @@ mod mount_tests {
             matches!(&**inner, ViewNode::Text(t) if t == "inner resolved"),
             "the nested host inside a provided subtree resolved from the source"
         );
+    }
+}
+
+#[cfg(test)]
+mod batch2_lift_tests {
+    //! The richness-expansion batch-2 nodes lift from their `{kind, props, children}` wire shape
+    //! into the typed [`ViewNode`] (the serde round-trip on the new `RawProps` fields), and a
+    //! `grid` recurses through [`resolve_mounts`] so a hosted cell nested in a grid still mounts.
+    use super::*;
+
+    #[test]
+    fn the_actuation_and_indicator_nodes_lift_from_the_wire() {
+        // menu — a list of {label, turn, arg, enabled} rows; `enabled` defaults to true.
+        let menu = parse_view_tree(
+            r#"{ "kind":"menu", "props":{ "items":[
+                 { "label":"Open", "turn":"open", "arg":1 },
+                 { "label":"Delete", "turn":"del", "arg":2, "enabled":false } ] } }"#,
+        )
+        .expect("parse menu");
+        let ViewNode::Menu { items } = &menu else {
+            panic!("root is a menu")
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].turn, "open");
+        assert!(items[0].enabled, "absent enabled defaults true");
+        assert!(!items[1].enabled, "an explicit enabled:false dims the row");
+
+        // halo — a ring of {glyph, turn, arg} handles around a target slot.
+        let halo = parse_view_tree(
+            r#"{ "kind":"halo", "props":{ "targetSlot":3, "handles":[
+                 { "glyph":"✕", "turn":"close", "arg":0 },
+                 { "glyph":"⤢", "turn":"resize", "arg":0, "enabled":false } ] } }"#,
+        )
+        .expect("parse halo");
+        let ViewNode::Halo {
+            target_slot,
+            handles,
+        } = &halo
+        else {
+            panic!("root is a halo")
+        };
+        assert_eq!(*target_slot, 3);
+        assert_eq!(handles.len(), 2);
+        assert_eq!(handles[0].glyph, "✕");
+        assert!(!handles[1].enabled);
+
+        // slider — a bound draggable value firing `turn` with `arg = value`.
+        let slider = parse_view_tree(
+            r#"{ "kind":"slider", "props":{ "slot":2, "min":0, "max":99, "turn":"seek" } }"#,
+        )
+        .expect("parse slider");
+        assert!(matches!(
+            slider,
+            ViewNode::Slider { slot: 2, min: 0, max: 99, ref turn } if turn == "seek"
+        ));
+
+        // toggle — defaults the glyphs to ✓/○ when absent.
+        let toggle = parse_view_tree(
+            r#"{ "kind":"toggle", "props":{ "slot":4, "onTurn":"on", "offTurn":"off", "label":"cull " } }"#,
+        )
+        .expect("parse toggle");
+        let ViewNode::Toggle {
+            slot,
+            on_turn,
+            off_turn,
+            glyph_on,
+            glyph_off,
+            label,
+        } = &toggle
+        else {
+            panic!("root is a toggle")
+        };
+        assert_eq!(
+            (*slot, on_turn.as_str(), off_turn.as_str()),
+            (4, "on", "off")
+        );
+        assert_eq!((glyph_on.as_str(), glyph_off.as_str()), ("✓", "○"));
+        assert_eq!(label, "cull ");
+
+        // breadcrumb / progress / pill / icon / tile + the extended input.
+        assert!(matches!(
+            parse_view_tree(r#"{ "kind":"progress", "props":{ "value":3, "max":4, "label":"build " } }"#).unwrap(),
+            ViewNode::Progress { value: 3, max: 4, ref label } if label == "build "
+        ));
+        assert!(matches!(
+            parse_view_tree(r#"{ "kind":"pill", "props":{ "text":"LIVE", "tag":"good" } }"#).unwrap(),
+            ViewNode::Pill { ref text, ref tag } if text == "LIVE" && tag == "good"
+        ));
+        assert!(matches!(
+            parse_view_tree(r#"{ "kind":"icon", "props":{ "glyph":"✦", "tag":"accent" } }"#).unwrap(),
+            ViewNode::Icon { ref glyph, ref tag } if glyph == "✦" && tag == "accent"
+        ));
+        assert!(matches!(
+            parse_view_tree(r#"{ "kind":"tile", "props":{ "handle":"servo:webview-1", "w":640, "h":480 } }"#).unwrap(),
+            ViewNode::Tile { ref handle, w: 640, h: 480 } if handle == "servo:webview-1"
+        ));
+        let bc = parse_view_tree(
+            r#"{ "kind":"breadcrumb", "props":{ "items":[
+                 { "label":"BASE", "turn":"seek", "arg":0 }, { "label":"now" } ] } }"#,
+        )
+        .unwrap();
+        let ViewNode::Breadcrumb { items } = &bc else {
+            panic!("root is a breadcrumb")
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].turn, "seek");
+        assert!(items[1].turn.is_empty(), "a plain crumb has no turn");
+
+        // the extended input carries its submit affordance.
+        assert!(matches!(
+            parse_view_tree(r#"{ "kind":"input", "props":{ "bindView":"url", "fireTurn":"navigate", "submitLabel":"Go" } }"#).unwrap(),
+            ViewNode::Input { ref bind_view, ref fire_turn, ref submit_label }
+                if bind_view == "url" && fire_turn == "navigate" && submit_label == "Go"
+        ));
+        // a plain input keeps the legacy ephemeral-draft shape (empty fire_turn).
+        assert!(matches!(
+            parse_view_tree(r#"{ "kind":"input", "props":{ "bindView":"draft" } }"#).unwrap(),
+            ViewNode::Input { ref fire_turn, .. } if fire_turn.is_empty()
+        ));
+    }
+
+    #[test]
+    fn a_grid_recurses_a_hosted_cell_through_resolve_mounts() {
+        let grid = ViewNode::Grid {
+            cols: 3,
+            children: vec![
+                ViewNode::Icon {
+                    glyph: "✦".into(),
+                    tag: String::new(),
+                },
+                ViewNode::Host {
+                    cell: "tile".into(),
+                    view: None,
+                },
+            ],
+        };
+        let source =
+            MapMountSource::default().with("tile", ViewNode::Text("mounted in a grid".into()));
+        let resolved = resolve_mounts(&grid, &source);
+        let ViewNode::Grid { cols, children } = &resolved else {
+            panic!("root is a grid")
+        };
+        assert_eq!(*cols, 3);
+        let ViewNode::Host { view: Some(v), .. } = &children[1] else {
+            panic!("the grid's host child resolved")
+        };
+        assert!(matches!(&**v, ViewNode::Text(t) if t == "mounted in a grid"));
     }
 }

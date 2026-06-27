@@ -203,3 +203,128 @@ fn body() {
     println!("  state (tab 0)   : {}", png0.display());
     println!("  actions (tab 1) : {}", png1.display());
 }
+
+/// The view-tree exercising the BATCH-2 vocabulary (the actuation crown + the rest of §1): a
+/// `grid` of `icon`s, a `breadcrumb`, a `pill`, a `progress` bar, a `menu` (one enabled + one
+/// cap-dimmed row), a `halo` handle-ring, a `slider` (bound to slot 0), a `toggle` (bound to slot
+/// 2), an extended `input` (draft → a `seek` turn), and a `tile`. Every node-shape the design
+/// names, in one card.
+const BATCH2_VIEW_JSON: &str = r#"{
+  "kind": "vstack",
+  "props": {},
+  "children": [
+    { "kind": "breadcrumb", "props": { "items": [
+      { "label": "BASE", "turn": "seek", "arg": 0 }, { "label": "now" } ] } },
+    { "kind": "row", "props": {}, "children": [
+      { "kind": "pill", "props": { "text": "LIVE", "tag": "good" } },
+      { "kind": "pill", "props": { "text": "REVOKED", "tag": "bad" } } ] },
+    { "kind": "grid", "props": { "cols": 3 }, "children": [
+      { "kind": "icon", "props": { "glyph": "✦", "tag": "accent" } },
+      { "kind": "icon", "props": { "glyph": "○", "tag": "muted" } },
+      { "kind": "icon", "props": { "glyph": "✓", "tag": "good" } } ] },
+    { "kind": "progress", "props": { "value": 3, "max": 4, "label": "build " } },
+    { "kind": "menu", "props": { "items": [
+      { "label": "Open", "turn": "select", "arg": 1 },
+      { "label": "Delete", "turn": "del", "arg": 0, "enabled": false } ] } },
+    { "kind": "halo", "props": { "targetSlot": 0, "handles": [
+      { "glyph": "✕", "turn": "select", "arg": 0 },
+      { "glyph": "⊘", "turn": "x", "arg": 0, "enabled": false } ] } },
+    { "kind": "slider", "props": { "slot": 0, "min": 0, "max": 100, "turn": "select" } },
+    { "kind": "toggle", "props": { "slot": 2, "onTurn": "select", "offTurn": "select", "label": "cull" } },
+    { "kind": "input", "props": { "bindView": "url", "fireTurn": "select", "submitLabel": "Go" } },
+    { "kind": "tile", "props": { "handle": "servo:webview-1", "w": 240, "h": 120 } }
+  ]
+}"#;
+
+#[test]
+fn the_batch2_nodes_round_trip_and_render_to_pixels() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(batch2_body)
+        .expect("spawn big-stack render thread")
+        .join()
+        .expect("batch-2 render proof thread");
+}
+
+fn batch2_body() {
+    let out = out_dir();
+
+    // ROUND-TRIP: every batch-2 node lifts from the wire into its typed shape.
+    let tree = parse_view_tree(BATCH2_VIEW_JSON).expect("parse the batch-2 view-tree");
+    let ViewNode::VStack(top) = &tree else {
+        panic!("root vstack")
+    };
+    assert!(matches!(top[0], ViewNode::Breadcrumb { .. }), "breadcrumb");
+    assert!(
+        matches!(&top[2], ViewNode::Grid { cols: 3, .. }),
+        "grid cols 3"
+    );
+    assert!(
+        matches!(
+            top[3],
+            ViewNode::Progress {
+                value: 3,
+                max: 4,
+                ..
+            }
+        ),
+        "progress"
+    );
+    let ViewNode::Menu { items } = &top[4] else {
+        panic!("menu")
+    };
+    assert!(
+        items[0].enabled && !items[1].enabled,
+        "menu cap-dims the 2nd row"
+    );
+    assert!(
+        matches!(&top[5], ViewNode::Halo { handles, .. } if handles.len() == 2),
+        "halo ring"
+    );
+    assert!(
+        matches!(
+            top[6],
+            ViewNode::Slider {
+                slot: 0,
+                max: 100,
+                ..
+            }
+        ),
+        "slider"
+    );
+    assert!(
+        matches!(&top[7], ViewNode::Toggle { slot: 2, .. }),
+        "toggle"
+    );
+    assert!(
+        matches!(&top[8], ViewNode::Input { ref fire_turn, .. } if fire_turn == "select"),
+        "ext input"
+    );
+    assert!(
+        matches!(&top[9], ViewNode::Tile { w: 240, h: 120, .. }),
+        "tile"
+    );
+
+    // RENDER to real gpui-component pixels over a live applet (slot 0 = the slider/halo value;
+    // slot 2 = the toggle state). The whole batch-2 vocabulary paints in one frame.
+    let shared = Rc::new(RefCell::new(rich_card()));
+    let mut hr = HeadlessRender::boot("Lilex", &[LILEX, IBM_PLEX]).expect("boot headless gpui");
+    let tree_r = parse_view_tree(BATCH2_VIEW_JSON).expect("re-parse for the view");
+    let a0 = shared.clone();
+    let window = hr
+        .open(560.0, 900.0, move |_w, cx| {
+            cx.new(|_cx| AppletView::new(a0, tree_r))
+        })
+        .expect("open the batch-2 window");
+    let frame = hr
+        .capture(window.into())
+        .expect("capture the batch-2 frame");
+    let png = out.join("rich-nodes-batch2.png");
+    frame.save(&png).expect("save the batch-2 PNG");
+    assert!(
+        frame.width() > 0 && frame.height() > 0,
+        "the batch-2 card has pixels"
+    );
+    println!("RENDERED BATCH-2 PNG (grid/pill/icon/menu/halo/slider/toggle/progress/breadcrumb/tile/input):");
+    println!("  {}", png.display());
+}

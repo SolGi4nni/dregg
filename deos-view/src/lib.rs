@@ -27,8 +27,8 @@
 // always compiled, under BOTH the `native` and `web` renderers.
 pub mod tree;
 pub use tree::{
-    parse_view_tree, resolve_mounts, MapMountSource, MountSource, RawNode, RawProps, ViewNode,
-    MAX_MOUNT_DEPTH,
+    parse_view_tree, resolve_mounts, Crumb, HaloHandle, MapMountSource, MenuItem, MountSource,
+    RawItem, RawNode, RawProps, ViewNode, MAX_MOUNT_DEPTH,
 };
 
 // ── The NATIVE renderer: `ViewNode` → real gpui-component pixels (the heavy stack

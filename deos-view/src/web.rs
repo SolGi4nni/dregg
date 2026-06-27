@@ -111,12 +111,37 @@ fn node(n: &ViewNode, binds: &BindValues, cursor: &mut usize, out: &mut String) 
                 escape(label)
             ));
         }
-        ViewNode::Input { bind_view } => {
+        ViewNode::Input {
+            bind_view,
+            fire_turn,
+            submit_label,
+        } => {
+            // A real `<input>` carrying its bind-view; when `fire_turn` is set it also carries a
+            // submit button whose click fires `{turn, arg=the field value}` (input → verified
+            // turn). The in-tab wire reads the field value as the arg.
             out.push_str(&format!(
-                "<span class=\"deos-input\" data-bind-view=\"{}\">&lsaquo;{}&rsaquo;</span>",
+                "<span class=\"deos-inputgroup\" data-bind-view=\"{}\">",
+                escape(bind_view)
+            ));
+            out.push_str(&format!(
+                "<input class=\"deos-input\" data-bind-view=\"{}\" placeholder=\"{}\">",
                 escape(bind_view),
                 escape(bind_view)
             ));
+            if !fire_turn.is_empty() {
+                let label = if submit_label.is_empty() {
+                    "submit"
+                } else {
+                    submit_label.as_str()
+                };
+                out.push_str(&format!(
+                    "<button class=\"deos-input-submit\" data-turn=\"{}\" data-arg-from=\"{}\">{}</button>",
+                    escape(fire_turn),
+                    escape(bind_view),
+                    escape(label)
+                ));
+            }
+            out.push_str("</span>");
         }
         ViewNode::List(items) => {
             out.push_str("<div class=\"deos-list\">");
@@ -205,6 +230,173 @@ fn node(n: &ViewNode, binds: &BindValues, cursor: &mut usize, out: &mut String) 
         }
         ViewNode::Divider => {
             out.push_str("<hr class=\"deos-divider\">");
+        }
+
+        // ── The RICHNESS EXPANSION batch 2 — the IDENTICAL ViewNode → HTML, node-for-node. ────
+        ViewNode::Grid { cols, children } => {
+            out.push_str(&format!(
+                "<div class=\"deos-grid\" data-cols=\"{cols}\" style=\"{}\">",
+                if *cols > 0 {
+                    format!("grid-template-columns:repeat({cols},1fr);")
+                } else {
+                    String::new()
+                }
+            ));
+            for c in children {
+                node(c, binds, cursor, out);
+            }
+            out.push_str("</div>");
+        }
+        ViewNode::Breadcrumb { items } => {
+            out.push_str("<nav class=\"deos-breadcrumb\">");
+            for (i, crumb) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push_str("<span class=\"deos-crumb-sep\">&rsaquo;</span>");
+                }
+                if crumb.turn.is_empty() {
+                    out.push_str(&format!(
+                        "<span class=\"deos-crumb\">{}</span>",
+                        escape(&crumb.label)
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "<button class=\"deos-crumb deos-button\" data-turn=\"{}\" data-arg=\"{}\">{}</button>",
+                        escape(&crumb.turn),
+                        crumb.arg,
+                        escape(&crumb.label)
+                    ));
+                }
+            }
+            out.push_str("</nav>");
+        }
+        ViewNode::Progress { value, max, label } => {
+            // A static progress bar — the in-tab executor never drives it (literal value), so the
+            // fill width is baked from `value/max` right here.
+            let pct = if *max == 0 {
+                0.0
+            } else {
+                (*value as f64 / *max as f64).clamp(0.0, 1.0) * 100.0
+            };
+            out.push_str("<div class=\"deos-progress\">");
+            if !label.is_empty() {
+                out.push_str(&format!(
+                    "<span class=\"deos-progress-label\">{}</span>",
+                    escape(label)
+                ));
+            }
+            out.push_str(&format!(
+                "<div class=\"deos-progress-track\"><div class=\"deos-progress-fill\" style=\"width:{pct:.1}%\"></div></div>"
+            ));
+            out.push_str("</div>");
+        }
+        ViewNode::Pill { text, tag } => {
+            out.push_str(&format!(
+                "<span class=\"deos-pill\" data-tag=\"{}\">{}</span>",
+                escape(tag),
+                escape(text)
+            ));
+        }
+        ViewNode::Icon { glyph, tag } => {
+            out.push_str(&format!(
+                "<span class=\"deos-icon\" data-tag=\"{}\">{}</span>",
+                escape(tag),
+                escape(glyph)
+            ));
+        }
+        ViewNode::Menu { items } => {
+            out.push_str("<menu class=\"deos-menu\">");
+            for item in items {
+                if item.enabled {
+                    out.push_str(&format!(
+                        "<button class=\"deos-menuitem deos-button\" data-turn=\"{}\" data-arg=\"{}\">{}</button>",
+                        escape(&item.turn),
+                        item.arg,
+                        escape(&item.label)
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "<span class=\"deos-menuitem deos-disabled\">{}</span>",
+                        escape(&item.label)
+                    ));
+                }
+            }
+            out.push_str("</menu>");
+        }
+        ViewNode::Halo {
+            target_slot,
+            handles,
+        } => {
+            out.push_str(&format!(
+                "<div class=\"deos-halo\" data-target-slot=\"{target_slot}\">"
+            ));
+            for h in handles {
+                if h.enabled {
+                    out.push_str(&format!(
+                        "<button class=\"deos-handle deos-button\" data-turn=\"{}\" data-arg=\"{}\" title=\"{}\">{}</button>",
+                        escape(&h.turn),
+                        h.arg,
+                        escape(&h.turn),
+                        escape(&h.glyph)
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "<span class=\"deos-handle deos-disabled\">{}</span>",
+                        escape(&h.glyph)
+                    ));
+                }
+            }
+            out.push_str("</div>");
+        }
+        ViewNode::Slider {
+            slot,
+            min,
+            max,
+            turn,
+        } => {
+            // A bound scrubber: an `<input type=range>` carrying its slot + seek turn; the in-tab
+            // wire reads the slot live for the thumb and fires `turn` with `arg=the value` on input.
+            out.push_str(&format!(
+                "<input type=\"range\" class=\"deos-slider\" data-slot=\"{slot}\" data-turn=\"{}\" min=\"{min}\" max=\"{max}\">",
+                escape(turn)
+            ));
+        }
+        ViewNode::Toggle {
+            slot,
+            on_turn,
+            off_turn,
+            glyph_on,
+            glyph_off,
+            label,
+        } => {
+            // An affordance checkbox carrying both turns + glyphs; the in-tab wire reads the slot
+            // live to pick the glyph and fires on/off by current state.
+            out.push_str(&format!(
+                "<button class=\"deos-toggle deos-button\" data-slot=\"{slot}\" data-on-turn=\"{}\" data-off-turn=\"{}\" data-glyph-on=\"{}\" data-glyph-off=\"{}\">{} {}</button>",
+                escape(on_turn),
+                escape(off_turn),
+                escape(glyph_on),
+                escape(glyph_off),
+                escape(glyph_off),
+                escape(label)
+            ));
+        }
+        ViewNode::Tile { handle, w, h } => {
+            // The host-resolved region: an `<iframe>`/`<canvas>` placeholder sized `w×h`,
+            // carrying its `data-handle` for the host to resolve. An unresolved handle shows a
+            // labelled placeholder.
+            out.push_str(&format!(
+                "<div class=\"deos-tile\" data-handle=\"{}\" style=\"width:{}px;height:{}px;\">",
+                escape(handle),
+                if *w == 0 { 320 } else { *w },
+                if *h == 0 { 200 } else { *h }
+            ));
+            out.push_str(&format!(
+                "<span class=\"deos-tile-label\">&#9638; tile {}: host-painted region {}&times;{}</span>",
+                escape(handle),
+                w,
+                h
+            ));
+            out.push_str("</div>");
         }
 
         // ── The COMPOSITION KEYSTONE — the IDENTICAL host node → HTML: a framed region with a
@@ -838,6 +1030,39 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:'IBM Plex Sans',s
 .deos-host{display:flex;flex-direction:column;gap:.4rem;border:1px solid var(--border);border-radius:8px;padding:.5rem .6rem;}
 .deos-host-head{color:var(--muted);font-size:.8rem;font-weight:600;}
 .deos-host-unresolved{color:var(--muted);font-style:italic;}
+.deos-inputgroup{display:inline-flex;gap:.4rem;align-items:center;}
+.deos-input-submit{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:.35rem .7rem;font:inherit;cursor:pointer;}
+.deos-grid{display:flex;flex-wrap:wrap;gap:.5rem;}
+.deos-grid[style*=grid-template]{display:grid;}
+.deos-breadcrumb{display:flex;flex-direction:row;align-items:center;gap:.35rem;flex-wrap:wrap;}
+.deos-crumb{color:var(--fg);}
+.deos-crumb-sep{color:var(--muted);}
+button.deos-crumb{background:none;border:none;color:var(--accent);cursor:pointer;font:inherit;padding:0;}
+.deos-progress{display:flex;flex-direction:column;gap:.25rem;}
+.deos-progress-label{color:var(--fg);font-weight:700;}
+.deos-progress-track{width:140px;height:8px;background:var(--border);border-radius:4px;overflow:hidden;}
+.deos-progress-fill{height:8px;background:var(--fg);border-radius:4px;}
+.deos-pill{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:.78rem;font-weight:600;color:#fff;background:var(--accent);}
+.deos-pill[data-tag=good],.deos-pill[data-tag=genuine],.deos-pill[data-tag=live]{background:#3fb950;}
+.deos-pill[data-tag=warn],.deos-pill[data-tag=pending]{background:#d29922;}
+.deos-pill[data-tag=bad],.deos-pill[data-tag=refusal],.deos-pill[data-tag=revoked]{background:#f85149;}
+.deos-pill[data-tag=muted]{background:#9aa0aa;}
+.deos-icon{font-weight:700;color:var(--accent);}
+.deos-icon[data-tag=good],.deos-icon[data-tag=live]{color:#3fb950;}
+.deos-icon[data-tag=warn]{color:#d29922;}
+.deos-icon[data-tag=bad],.deos-icon[data-tag=refusal]{color:#f85149;}
+.deos-icon[data-tag=muted]{color:#9aa0aa;}
+.deos-menu{display:flex;flex-direction:column;gap:.2rem;margin:0;padding:.25rem;border:1px solid var(--border);border-radius:6px;list-style:none;}
+.deos-menuitem{text-align:left;}
+button.deos-menuitem{background:none;border:none;color:var(--fg);cursor:pointer;font:inherit;padding:.25rem .5rem;border-radius:4px;}
+button.deos-menuitem:hover{background:var(--border);}
+.deos-disabled{opacity:.4;cursor:default;padding:.25rem .5rem;}
+.deos-halo{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center;}
+.deos-handle{width:28px;height:28px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:var(--panel,#22242c);border:1px solid var(--border);color:var(--fg);cursor:pointer;font:inherit;}
+button.deos-handle:hover{border-color:var(--accent);}
+.deos-slider{width:200px;accent-color:var(--accent);}
+.deos-toggle{background:var(--panel,#22242c);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:.3rem .6rem;cursor:pointer;font:inherit;}
+.deos-tile{display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;background:#101216;color:var(--muted);font-size:.8rem;}
 ";
 
 /// The browser-side affordance wire — a button click reads its `data-turn`/`data-arg`,
@@ -893,6 +1118,55 @@ document.querySelectorAll('.deos-button').forEach(function(b){
       }
     } else {
       console.log('deos affordance (no in-tab executor bound):', turn, arg);
+    }
+  });
+});
+// THE EXTENDED INPUT — a submit button fires `{turn, arg=the paired field value}` (input →
+// verified turn). `data-arg-from` names the `<input>` whose value becomes the arg.
+document.querySelectorAll('.deos-input-submit[data-arg-from]').forEach(function(b){
+  b.addEventListener('click', function(){
+    var turn = b.getAttribute('data-turn');
+    var key = b.getAttribute('data-arg-from');
+    var field = document.querySelector('.deos-input[data-bind-view=\"' + key + '\"]');
+    var arg = parseInt((field && field.value) || '0', 10) || 0;
+    document.dispatchEvent(new CustomEvent('deos-affordance', {detail:{turn:turn, arg:arg}}));
+    var card = window.__deosCard;
+    if (card && typeof card.fire === 'function') {
+      try { card.fire(turn, arg); deosRepaintBinds(card); }
+      catch (e) { console.error('deos input submit refused:', turn, arg, e); }
+    }
+  });
+});
+// THE SLIDER / SCRUBBER — a range input fires `{turn, arg=the value}` on change (seek).
+document.querySelectorAll('.deos-slider[data-turn]').forEach(function(s){
+  s.addEventListener('change', function(){
+    var turn = s.getAttribute('data-turn');
+    var arg = parseInt(s.value || '0', 10) || 0;
+    document.dispatchEvent(new CustomEvent('deos-affordance', {detail:{turn:turn, arg:arg}}));
+    var card = window.__deosCard;
+    if (card && typeof card.fire === 'function') {
+      try { card.fire(turn, arg); deosRepaintBinds(card); }
+      catch (e) { console.error('deos slider seek refused:', turn, arg, e); }
+    }
+  });
+});
+// THE TOGGLE — a click fires the off-turn when currently on, else the on-turn (the live slot
+// picks the direction + the glyph). Reads the slot off the in-tab executor.
+document.querySelectorAll('.deos-toggle[data-slot]').forEach(function(t){
+  t.addEventListener('click', function(){
+    var slot = parseInt(t.getAttribute('data-slot') || '0', 10);
+    var card = window.__deosCard;
+    var on = false;
+    if (card && typeof card.read === 'function') { on = deosReadSlot(card, slot) != 0; }
+    var turn = on ? t.getAttribute('data-off-turn') : t.getAttribute('data-on-turn');
+    document.dispatchEvent(new CustomEvent('deos-affordance', {detail:{turn:turn, arg:0}}));
+    if (card && typeof card.fire === 'function' && turn) {
+      try {
+        card.fire(turn, 0);
+        deosRepaintBinds(card);
+        var nowOn = deosReadSlot(card, slot) != 0;
+        t.textContent = (nowOn ? t.getAttribute('data-glyph-on') : t.getAttribute('data-glyph-off')) + t.textContent.slice(1);
+      } catch (e) { console.error('deos toggle refused:', turn, e); }
     }
   });
 });

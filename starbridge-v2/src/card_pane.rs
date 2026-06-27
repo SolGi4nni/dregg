@@ -35,8 +35,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{
-    div, px, App, ClickEvent, Context, FontWeight, IntoElement, ParentElement, Render, Styled,
-    Window,
+    div, px, rgb, App, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Render, SharedString, Styled, Window,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::label::Label;
@@ -173,15 +173,21 @@ impl CardPane {
                     })
                     .into_any_element()
             }
-            ViewNode::Input { bind_view } => {
-                // Ephemeral view-state (draft text) — NOT cell state, never a turn.
+            ViewNode::Input {
+                bind_view,
+                fire_turn,
+                submit_label,
+            } => {
+                // Ephemeral view-state (draft text) — NOT cell state. When `fire_turn` is set a
+                // paired submit button parses the draft into the turn's `arg` and fires a REAL
+                // verified turn on the live World (input → verified turn).
                 let draft = self
                     .applet
                     .borrow()
                     .get_view(bind_view)
                     .unwrap_or("")
                     .to_string();
-                h_flex()
+                let field = h_flex()
                     .px_2()
                     .py_1()
                     .border_1()
@@ -190,8 +196,36 @@ impl CardPane {
                     .child(Label::new(if draft.is_empty() {
                         format!("‹{bind_view}›")
                     } else {
-                        draft
-                    }))
+                        draft.clone()
+                    }));
+                if fire_turn.is_empty() {
+                    return field.into_any_element();
+                }
+                let applet = self.applet.clone();
+                let turn = fire_turn.clone();
+                let draft_arg = draft.trim().parse::<i64>().unwrap_or(0);
+                let label = if submit_label.is_empty() {
+                    "submit".to_string()
+                } else {
+                    submit_label.clone()
+                };
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(field)
+                    .child(
+                        Button::new((
+                            "deos-card-input-submit",
+                            label_hash(&format!("{fire_turn}:{label}")),
+                        ))
+                        .primary()
+                        .label(label)
+                        .on_click(
+                            move |_ev: &ClickEvent, _window, _cx| {
+                                guarded_fire(&applet, &turn, draft_arg);
+                            },
+                        ),
+                    )
                     .into_any_element()
             }
             ViewNode::List(items) => {
@@ -322,6 +356,270 @@ impl CardPane {
                 .w_full()
                 .bg(cx.theme().border)
                 .into_any_element(),
+
+            // ── The RICHNESS EXPANSION batch 2 — mirror `deos_view::render`'s arms, but bound +
+            //    fired against the LIVE attached applet (every fire guarded at the gpui boundary). ─
+            ViewNode::Grid { cols, children } => {
+                let mut grid = div().flex().flex_wrap().gap_2();
+                let max_w = if *cols > 0 {
+                    Some(px(((520.0 / *cols as f32) - 12.0).max(48.0)))
+                } else {
+                    None
+                };
+                for c in children {
+                    let mut cell = div().child(self.node(c, _window, cx));
+                    if let Some(w) = max_w {
+                        cell = cell.max_w(w);
+                    }
+                    grid = grid.child(cell);
+                }
+                grid.into_any_element()
+            }
+            ViewNode::Breadcrumb { items } => {
+                let mut row = h_flex().gap_1().items_center();
+                for (i, crumb) in items.iter().enumerate() {
+                    if i > 0 {
+                        row = row.child(Label::new("→").text_color(cx.theme().muted_foreground));
+                    }
+                    if crumb.turn.is_empty() {
+                        row = row.child(Label::new(crumb.label.clone()).text_color(theme_fg));
+                    } else {
+                        let applet = self.applet.clone();
+                        let turn = crumb.turn.clone();
+                        let arg = crumb.arg;
+                        row = row.child(
+                            Button::new((
+                                "deos-card-crumb",
+                                label_hash(&format!("{}:{}", crumb.turn, i)),
+                            ))
+                            .label(crumb.label.clone())
+                            .on_click(
+                                move |_ev: &ClickEvent, _window, _cx| {
+                                    guarded_fire(&applet, &turn, arg);
+                                },
+                            ),
+                        );
+                    }
+                }
+                row.into_any_element()
+            }
+            ViewNode::Progress { value, max, label } => {
+                let ratio = if *max == 0 {
+                    0.0
+                } else {
+                    (*value as f64 / *max as f64).clamp(0.0, 1.0)
+                };
+                let track_w = 140.0_f32;
+                let fill_w = (track_w as f64 * ratio) as f32;
+                let text = if label.is_empty() {
+                    format!("{value}/{max}")
+                } else {
+                    format!("{label}{value}/{max}")
+                };
+                v_flex()
+                    .gap_1()
+                    .child(Label::new(text).text_color(theme_fg))
+                    .child(
+                        div()
+                            .w(px(track_w))
+                            .h(px(8.))
+                            .rounded(px(4.))
+                            .bg(cx.theme().border)
+                            .child(
+                                div()
+                                    .w(px(fill_w.max(0.0)))
+                                    .h(px(8.))
+                                    .rounded(px(4.))
+                                    .bg(theme_fg),
+                            ),
+                    )
+                    .into_any_element()
+            }
+            ViewNode::Pill { text, tag } => div()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .bg(tag_color(tag))
+                .child(Label::new(text.clone()).text_color(rgb(0xffffff)))
+                .into_any_element(),
+            ViewNode::Icon { glyph, tag } => {
+                let color = if tag.is_empty() {
+                    theme_fg
+                } else {
+                    tag_color(tag)
+                };
+                Label::new(glyph.clone())
+                    .text_color(color)
+                    .into_any_element()
+            }
+            ViewNode::Menu { items } => {
+                let mut col = v_flex()
+                    .gap_0p5()
+                    .p_1()
+                    .border_1()
+                    .border_color(cx.theme().border);
+                for (i, item) in items.iter().enumerate() {
+                    if item.enabled {
+                        let applet = self.applet.clone();
+                        let turn = item.turn.clone();
+                        let arg = item.arg;
+                        col = col.child(
+                            Button::new((
+                                "deos-card-menu",
+                                label_hash(&format!("{}:{}", item.turn, i)),
+                            ))
+                            .label(item.label.clone())
+                            .on_click(
+                                move |_ev: &ClickEvent, _window, _cx| {
+                                    guarded_fire(&applet, &turn, arg);
+                                },
+                            ),
+                        );
+                    } else {
+                        col = col.child(
+                            div()
+                                .opacity(0.4)
+                                .child(Label::new(item.label.clone()).text_color(theme_fg)),
+                        );
+                    }
+                }
+                col.into_any_element()
+            }
+            ViewNode::Halo {
+                target_slot: _,
+                handles,
+            } => {
+                let mut ring = div().flex().flex_wrap().gap_1().items_center();
+                for (i, h) in handles.iter().enumerate() {
+                    if h.enabled {
+                        let applet = self.applet.clone();
+                        let turn = h.turn.clone();
+                        let arg = h.arg;
+                        ring = ring.child(
+                            Button::new((
+                                "deos-card-halo",
+                                label_hash(&format!("{}:{}", h.turn, i)),
+                            ))
+                            .label(h.glyph.clone())
+                            .on_click(
+                                move |_ev: &ClickEvent, _window, _cx| {
+                                    guarded_fire(&applet, &turn, arg);
+                                },
+                            ),
+                        );
+                    } else {
+                        ring = ring.child(
+                            div()
+                                .opacity(0.4)
+                                .size(px(24.))
+                                .rounded_full()
+                                .bg(cx.theme().border)
+                                .child(Label::new(h.glyph.clone()).text_color(theme_fg)),
+                        );
+                    }
+                }
+                ring.into_any_element()
+            }
+            ViewNode::Slider {
+                slot,
+                min,
+                max,
+                turn,
+            } => {
+                // A bound scrubber over the LIVE ledger: discrete clickable ticks (the same
+                // actuation the native Time scrubber uses), each seeking `arg = its value`.
+                let value = self.applet.borrow().get_u64(*slot);
+                let lo = *min;
+                let hi = (*max).max(lo + 1);
+                let span = hi - lo;
+                let n_ticks = span.clamp(1, 20) as usize;
+                let mut track = h_flex().gap_0p5().items_center();
+                for k in 0..=n_ticks {
+                    let tick_val = lo + (span * k as u64) / n_ticks as u64;
+                    let filled = tick_val <= value;
+                    let applet = self.applet.clone();
+                    let turn_s = turn.clone();
+                    let seek = tick_val as i64;
+                    track = track.child(
+                        div()
+                            .id(SharedString::from(format!("deos-card-slider-{slot}-{k}")))
+                            .w(px(10.))
+                            .h(px(16.))
+                            .rounded(px(2.))
+                            .bg(if filled { theme_fg } else { cx.theme().border })
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, move |_ev, _window, _cx| {
+                                guarded_fire(&applet, &turn_s, seek);
+                            }),
+                    );
+                }
+                v_flex()
+                    .gap_1()
+                    .child(Label::new(format!("{lo} ≤ {value} ≤ {hi}")).text_color(theme_fg))
+                    .child(track)
+                    .into_any_element()
+            }
+            ViewNode::Toggle {
+                slot,
+                on_turn,
+                off_turn,
+                glyph_on,
+                glyph_off,
+                label,
+            } => {
+                let on = self.applet.borrow().get_u64(*slot) != 0;
+                let glyph = if on {
+                    glyph_on.clone()
+                } else {
+                    glyph_off.clone()
+                };
+                let applet = self.applet.clone();
+                let fire = if on {
+                    off_turn.clone()
+                } else {
+                    on_turn.clone()
+                };
+                let text = format!("{glyph} {label}");
+                Button::new((
+                    "deos-card-toggle",
+                    label_hash(&format!("{on_turn}:{off_turn}:{slot}")),
+                ))
+                .label(text)
+                .on_click(move |_ev: &ClickEvent, _window, _cx| {
+                    if !fire.is_empty() {
+                        guarded_fire(&applet, &fire, 0);
+                    }
+                })
+                .into_any_element()
+            }
+            ViewNode::Tile { handle, w, h } => {
+                let tw = if *w == 0 {
+                    320.0
+                } else {
+                    (*w as f32).min(960.0)
+                };
+                let th = if *h == 0 {
+                    200.0
+                } else {
+                    (*h as f32).min(720.0)
+                };
+                v_flex()
+                    .w(px(tw))
+                    .h(px(th))
+                    .gap_1()
+                    .items_center()
+                    .justify_center()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded(px(4.))
+                    .bg(cx.theme().background)
+                    .child(Label::new("▦").text_color(cx.theme().muted_foreground))
+                    .child(
+                        Label::new(format!("‹tile {handle}: host-painted region {w}×{h}›"))
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .into_any_element()
+            }
             ViewNode::Host { cell, view } => {
                 // The COMPOSITION KEYSTONE — mount a cell's WHOLE hosted view-tree as a
                 // subtree. A bordered frame with a muted `⌂ <cell>` header; an UNRESOLVED host
@@ -350,6 +648,34 @@ impl CardPane {
             }
         }
     }
+}
+
+/// Fire a live affordance through the attached applet, GUARDED at the gpui event boundary (the
+/// Obj-C callback is `nounwind`, so a re-entrant-borrow panic would `process::abort` the whole
+/// cockpit — contain it as a logged no-op instead). The shared weld every batch-2 actuating node
+/// (menu / halo / slider / toggle / breadcrumb / input-submit) routes its click through.
+fn guarded_fire(applet: &SharedAttached, turn: &str, arg: i64) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Err(e) = applet.borrow_mut().fire(turn, arg) {
+            eprintln!("card-pane: live affordance '{turn}' did not commit: {e}");
+        }
+    }))
+    .map_err(|_| {
+        eprintln!("card-pane: live affordance '{turn}' PANICKED — contained (no-op).");
+    });
+}
+
+/// The semantic-tag palette (mirrors `deos_view::render::tag_color`) — a `pill`/`icon` tag maps
+/// to a tint (the cockpit's `pill(text, color)` idiom expressed as data).
+fn tag_color(tag: &str) -> gpui::Hsla {
+    let c = match tag {
+        "good" | "genuine" | "live" => 0x3fb950,
+        "warn" | "pending" => 0xd29922,
+        "bad" | "refusal" | "revoked" => 0xf85149,
+        "muted" => 0x9aa0aa,
+        _ => 0x5b8cff, // accent
+    };
+    rgb(c).into()
 }
 
 /// Truncate a hex cell-id for a compact host header (mirrors `deos_view::render::short_cell`).
