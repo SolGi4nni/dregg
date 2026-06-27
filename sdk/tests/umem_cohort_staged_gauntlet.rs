@@ -15,7 +15,7 @@
 //! the effect is projected into the ONE universal map (`project_record_kernel_state`); the
 //! pre→post diff is the effect's umem op trace (single-domain by the cohort's design); and the
 //! staged SDK prover resolves the FIXED cohort descriptor, builds the single-domain width-7 rows
-//! + the REAL `UMemBoundaryWitness`, and proves through the deployed-form `prove_vm_descriptor2_umem`
+//! plus the REAL `UMemBoundaryWitness`, and proves through the deployed-form `prove_vm_descriptor2_umem`
 //! with that real boundary. The per-map agreement anchor (`record_kernel_boundary_agrees`) holds
 //! at both endpoints, grounding the umem-form touch in the deployed per-map roots.
 //!

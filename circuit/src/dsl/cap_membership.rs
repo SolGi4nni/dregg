@@ -81,56 +81,53 @@ pub mod pi {
 
 /// Build the capability-membership CircuitDescriptor.
 pub fn cap_membership_circuit_descriptor() -> CircuitDescriptor {
-    let mut constraints = Vec::new();
-
-    // C1: the direction bit is binary.
-    constraints.push(ConstraintExpr::Binary { col: col::DIR });
-
-    // C2: `cur` occupies the child slot `dir` selects:
-    //     (1 - dir)·(left - cur) + dir·(right - cur) == 0
-    //   ⇔ left - cur - dir·left + dir·right == 0
-    // (dir = 0 ⇒ left == cur; dir = 1 ⇒ right == cur). The OTHER slot is the
-    // prover-supplied sibling — unconstrained by design (any sibling defines
-    // SOME path; only a path whose top equals the pinned canonical root
-    // verifies).
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![col::LEFT],
-            },
-            PolyTerm {
-                coeff: -BabyBear::ONE,
-                col_indices: vec![col::CUR],
-            },
-            PolyTerm {
-                coeff: -BabyBear::ONE,
-                col_indices: vec![col::DIR, col::LEFT],
-            },
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![col::DIR, col::RIGHT],
-            },
-        ],
-    });
-
-    // C3: parent = cap_node(left, right) — REAL in-circuit Poseidon2 (one permutation
-    // aux block per row on the p3 path), the EXACT node hash `CanonicalCapTree` builds
-    // with since decision #1 (`cap_chip_absorb([FACT_MARK, left, right])`, the single
-    // in-circuit cap hash — NOT the capacity-tagged `hash_fact`).
-    constraints.push(ConstraintExpr::Hash3Cap {
-        output_col: col::PARENT,
-        left_col: col::LEFT,
-        right_col: col::RIGHT,
-    });
-
-    // C4: chain continuity — the next level authenticates THIS level's parent.
-    // (Transition constraints are when_transition-gated on the p3 path, so the
-    // last row has no wrap-around obligation.)
-    constraints.push(ConstraintExpr::Transition {
-        next_col: col::CUR,
-        local_col: col::PARENT,
-    });
+    let constraints = vec![
+        // C1: the direction bit is binary.
+        ConstraintExpr::Binary { col: col::DIR },
+        // C2: `cur` occupies the child slot `dir` selects:
+        //     (1 - dir)·(left - cur) + dir·(right - cur) == 0
+        //   ⇔ left - cur - dir·left + dir·right == 0
+        // (dir = 0 ⇒ left == cur; dir = 1 ⇒ right == cur). The OTHER slot is the
+        // prover-supplied sibling — unconstrained by design (any sibling defines
+        // SOME path; only a path whose top equals the pinned canonical root
+        // verifies).
+        ConstraintExpr::Polynomial {
+            terms: vec![
+                PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![col::LEFT],
+                },
+                PolyTerm {
+                    coeff: -BabyBear::ONE,
+                    col_indices: vec![col::CUR],
+                },
+                PolyTerm {
+                    coeff: -BabyBear::ONE,
+                    col_indices: vec![col::DIR, col::LEFT],
+                },
+                PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![col::DIR, col::RIGHT],
+                },
+            ],
+        },
+        // C3: parent = cap_node(left, right) — REAL in-circuit Poseidon2 (one permutation
+        // aux block per row on the p3 path), the EXACT node hash `CanonicalCapTree` builds
+        // with since decision #1 (`cap_chip_absorb([FACT_MARK, left, right])`, the single
+        // in-circuit cap hash — NOT the capacity-tagged `hash_fact`).
+        ConstraintExpr::Hash3Cap {
+            output_col: col::PARENT,
+            left_col: col::LEFT,
+            right_col: col::RIGHT,
+        },
+        // C4: chain continuity — the next level authenticates THIS level's parent.
+        // (Transition constraints are when_transition-gated on the p3 path, so the
+        // last row has no wrap-around obligation.)
+        ConstraintExpr::Transition {
+            next_col: col::CUR,
+            local_col: col::PARENT,
+        },
+    ];
 
     // Boundaries: leaf digest enters at the bottom, the root exits at the top.
     let boundaries = vec![

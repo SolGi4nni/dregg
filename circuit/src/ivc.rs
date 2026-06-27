@@ -2146,9 +2146,9 @@ pub enum MultiTurnVerification {
 /// Fails (`None`) if the chain is empty, too long, or internally broken
 /// (state-continuity / receipt-link / genesis violations) — the prover refuses
 /// to build a trace that the AIR would reject anyway, surfacing the break early.
-fn build_multi_turn_trace(
-    summaries: &[TurnTransitionSummary],
-) -> Option<(Vec<Vec<BabyBear>>, Vec<BabyBear>, BabyBear, BabyBear)> {
+type MultiTurnTraceBuild = (Vec<Vec<BabyBear>>, Vec<BabyBear>, BabyBear, BabyBear);
+
+fn build_multi_turn_trace(summaries: &[TurnTransitionSummary]) -> Option<MultiTurnTraceBuild> {
     if summaries.is_empty() {
         return None;
     }

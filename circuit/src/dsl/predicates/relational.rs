@@ -177,59 +177,55 @@ pub fn relational_predicate_descriptor() -> CircuitDescriptor {
         kind: ColumnKind::Value,
     });
 
-    let mut constraints = Vec::new();
-
-    // C1: result_bit matches public input
-    constraints.push(ConstraintExpr::PiBinding {
-        col: RESULT_BIT,
-        pi_index: PI_RESULT_BIT,
-    });
-
-    // C2: result_bit is 1
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![RESULT_BIT],
-            },
-            PolyTerm {
-                coeff: neg_one,
-                col_indices: vec![],
-            },
-        ],
-    });
-
-    // C3: Flags are binary
-    constraints.push(ConstraintExpr::Binary { col: RANGE_FLAG });
-    constraints.push(ConstraintExpr::Binary { col: EQ_FLAG });
-    constraints.push(ConstraintExpr::Binary { col: NEQ_FLAG });
-
-    // C4: Exactly one flag active
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![RANGE_FLAG],
-            },
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![EQ_FLAG],
-            },
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![NEQ_FLAG],
-            },
-            PolyTerm {
-                coeff: neg_one,
-                col_indices: vec![],
-            },
-        ],
-    });
-
-    // C5: At least one flag active
-    constraints.push(ConstraintExpr::AtLeastOne {
-        flag_cols: vec![RANGE_FLAG, EQ_FLAG, NEQ_FLAG],
-    });
+    let mut constraints = vec![
+        // C1: result_bit matches public input
+        ConstraintExpr::PiBinding {
+            col: RESULT_BIT,
+            pi_index: PI_RESULT_BIT,
+        },
+        // C2: result_bit is 1
+        ConstraintExpr::Polynomial {
+            terms: vec![
+                PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![RESULT_BIT],
+                },
+                PolyTerm {
+                    coeff: neg_one,
+                    col_indices: vec![],
+                },
+            ],
+        },
+        // C3: Flags are binary
+        ConstraintExpr::Binary { col: RANGE_FLAG },
+        ConstraintExpr::Binary { col: EQ_FLAG },
+        ConstraintExpr::Binary { col: NEQ_FLAG },
+        // C4: Exactly one flag active
+        ConstraintExpr::Polynomial {
+            terms: vec![
+                PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![RANGE_FLAG],
+                },
+                PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![EQ_FLAG],
+                },
+                PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![NEQ_FLAG],
+                },
+                PolyTerm {
+                    coeff: neg_one,
+                    col_indices: vec![],
+                },
+            ],
+        },
+        // C5: At least one flag active
+        ConstraintExpr::AtLeastOne {
+            flag_cols: vec![RANGE_FLAG, EQ_FLAG, NEQ_FLAG],
+        },
+    ];
 
     // C6: Bit binary constraints (gated by range_flag)
     for i in 0..NUM_DIFF_BITS {

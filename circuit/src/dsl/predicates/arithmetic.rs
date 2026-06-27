@@ -1218,6 +1218,8 @@ fn add_slot_constraints(
 }
 
 /// Add constraints for Min/Max operations (membership + range proofs).
+// signature kept as-is
+#[allow(clippy::too_many_arguments)]
 fn add_min_max_constraints(
     constraints: &mut Vec<ConstraintExpr>,
     slot_col: usize,
@@ -1317,6 +1319,8 @@ fn add_min_max_constraints(
 ///
 /// Uses the expansion: product(x - a_i) = sum_{S subset of indices} (-1)^|S| * x^(k-|S|) * product(a_j for j in S)
 /// where k = number of indices.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 fn expand_product_constraint(slot_col: usize, indices: &[usize]) -> Vec<PolyTerm> {
     let k = indices.len();
     // Generate all subsets of indices (2^k subsets).

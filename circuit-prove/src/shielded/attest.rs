@@ -622,6 +622,8 @@ mod tests {
     ///    rejected — if even this just-barely-negative diff were representable, the
     ///    gadget would pass everyone.
     #[test]
+    // Intentional compile-constant non-vacuity guard (RANGE_BITS is a const by design).
+    #[allow(clippy::assertions_on_constants)]
     fn threshold_range_gadget_is_not_vacuous() {
         // (1) The structural invariant: the window must lie below the field width.
         assert!(

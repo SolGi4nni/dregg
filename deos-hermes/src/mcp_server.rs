@@ -508,6 +508,8 @@ fn refusal_text(outcome: &PermissionOutcome) -> String {
 }
 
 /// Hex-encode a 32-byte receipt hash.
+// Only the `js-agent` run_js path formats receipt hashes; gated to match its sole caller.
+#[cfg(feature = "js-agent")]
 fn hex32(bytes: &[u8; 32]) -> String {
     let mut s = String::with_capacity(64);
     for b in bytes {

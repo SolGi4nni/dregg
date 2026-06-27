@@ -194,6 +194,8 @@ pub fn guardian_rotatable_identity_constraints(
 }
 
 /// The `CellProgram` for a guardian-rotatable identity cell.
+// Lib-public; surfaced as unused only inside the `#[path]`-included guardian-rotation test crate.
+#[allow(dead_code)]
 pub fn guardian_rotatable_identity_program(cooling_period: u64) -> Result<CellProgram, PolisError> {
     Ok(CellProgram::Predicate(
         guardian_rotatable_identity_constraints(cooling_period)?,

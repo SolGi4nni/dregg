@@ -115,96 +115,62 @@ pub mod pi {
 /// Encodes constraints C1-C12 for sorted-tree non-membership with 30-bit
 /// ordering range checks and binary Merkle path authentication.
 pub fn non_revocation_circuit_descriptor() -> CircuitDescriptor {
-    let mut constraints = Vec::new();
-
-    // C1-C3: Row type selectors are binary
-    constraints.push(ConstraintExpr::Binary {
-        col: col::IS_CONTROL,
-    });
-    constraints.push(ConstraintExpr::Binary {
-        col: col::IS_MERKLE_LEFT,
-    });
-    constraints.push(ConstraintExpr::Binary {
-        col: col::IS_MERKLE_RIGHT,
-    });
-    constraints.push(ConstraintExpr::Binary {
-        col: col::RIGHT_IS_SENTINEL,
-    });
-
-    // C4: direction_bit (col 3) is binary on Merkle rows
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: col::IS_MERKLE_LEFT,
-        inner: Box::new(ConstraintExpr::Binary { col: col::COL_3 }),
-    });
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: col::IS_MERKLE_RIGHT,
-        inner: Box::new(ConstraintExpr::Binary { col: col::COL_3 }),
-    });
-
-    // C5: Hash binding for Merkle rows: col2 = hash_fact(col0, [col1])
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: col::IS_MERKLE_LEFT,
-        inner: Box::new(ConstraintExpr::Hash {
-            output_col: col::COL_2,
-            input_cols: vec![col::COL_0, col::COL_1],
-        }),
-    });
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: col::IS_MERKLE_RIGHT,
-        inner: Box::new(ConstraintExpr::Hash {
-            output_col: col::COL_2,
-            input_cols: vec![col::COL_0, col::COL_1],
-        }),
-    });
-
-    // C6: Ordering diff_left consistency (control row):
-    // diff_left == ancestor_hash - left_neighbor - 1
-    // => col5 - col0 + col1 + 1 == 0
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: col::IS_CONTROL,
-        inner: Box::new(ConstraintExpr::Polynomial {
-            terms: vec![
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![col::DIFF_LEFT],
-                },
-                PolyTerm {
-                    coeff: -BabyBear::ONE,
-                    col_indices: vec![col::COL_0],
-                },
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![col::COL_1],
-                },
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![],
-                }, // constant +1
-            ],
-        }),
-    });
-
-    // C7: Ordering diff_right consistency (control row, unless the upper
-    // neighbor is the max sentinel):
-    // diff_right == right_neighbor - ancestor_hash - 1
-    // => col_DIFF_RIGHT - col2 + col0 + 1 == 0
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: col::IS_CONTROL,
-        inner: Box::new(ConstraintExpr::InvertedGated {
-            selector_col: col::RIGHT_IS_SENTINEL,
+    let mut constraints = vec![
+        // C1-C3: Row type selectors are binary
+        ConstraintExpr::Binary {
+            col: col::IS_CONTROL,
+        },
+        ConstraintExpr::Binary {
+            col: col::IS_MERKLE_LEFT,
+        },
+        ConstraintExpr::Binary {
+            col: col::IS_MERKLE_RIGHT,
+        },
+        ConstraintExpr::Binary {
+            col: col::RIGHT_IS_SENTINEL,
+        },
+        // C4: direction_bit (col 3) is binary on Merkle rows
+        ConstraintExpr::Gated {
+            selector_col: col::IS_MERKLE_LEFT,
+            inner: Box::new(ConstraintExpr::Binary { col: col::COL_3 }),
+        },
+        ConstraintExpr::Gated {
+            selector_col: col::IS_MERKLE_RIGHT,
+            inner: Box::new(ConstraintExpr::Binary { col: col::COL_3 }),
+        },
+        // C5: Hash binding for Merkle rows: col2 = hash_fact(col0, [col1])
+        ConstraintExpr::Gated {
+            selector_col: col::IS_MERKLE_LEFT,
+            inner: Box::new(ConstraintExpr::Hash {
+                output_col: col::COL_2,
+                input_cols: vec![col::COL_0, col::COL_1],
+            }),
+        },
+        ConstraintExpr::Gated {
+            selector_col: col::IS_MERKLE_RIGHT,
+            inner: Box::new(ConstraintExpr::Hash {
+                output_col: col::COL_2,
+                input_cols: vec![col::COL_0, col::COL_1],
+            }),
+        },
+        // C6: Ordering diff_left consistency (control row):
+        // diff_left == ancestor_hash - left_neighbor - 1
+        // => col5 - col0 + col1 + 1 == 0
+        ConstraintExpr::Gated {
+            selector_col: col::IS_CONTROL,
             inner: Box::new(ConstraintExpr::Polynomial {
                 terms: vec![
                     PolyTerm {
                         coeff: BabyBear::ONE,
-                        col_indices: vec![col::DIFF_RIGHT],
+                        col_indices: vec![col::DIFF_LEFT],
                     },
                     PolyTerm {
                         coeff: -BabyBear::ONE,
-                        col_indices: vec![col::COL_2],
+                        col_indices: vec![col::COL_0],
                     },
                     PolyTerm {
                         coeff: BabyBear::ONE,
-                        col_indices: vec![col::COL_0],
+                        col_indices: vec![col::COL_1],
                     },
                     PolyTerm {
                         coeff: BabyBear::ONE,
@@ -212,25 +178,54 @@ pub fn non_revocation_circuit_descriptor() -> CircuitDescriptor {
                     }, // constant +1
                 ],
             }),
-        }),
-    });
-
-    // C7b: A disabled right-gap check is allowed only for the canonical max sentinel.
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: col::IS_CONTROL,
-        inner: Box::new(ConstraintExpr::Polynomial {
-            terms: vec![
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![col::RIGHT_IS_SENTINEL, col::COL_2],
-                },
-                PolyTerm {
-                    coeff: -SENTINEL_MAX,
-                    col_indices: vec![col::RIGHT_IS_SENTINEL],
-                },
-            ],
-        }),
-    });
+        },
+        // C7: Ordering diff_right consistency (control row, unless the upper
+        // neighbor is the max sentinel):
+        // diff_right == right_neighbor - ancestor_hash - 1
+        // => col_DIFF_RIGHT - col2 + col0 + 1 == 0
+        ConstraintExpr::Gated {
+            selector_col: col::IS_CONTROL,
+            inner: Box::new(ConstraintExpr::InvertedGated {
+                selector_col: col::RIGHT_IS_SENTINEL,
+                inner: Box::new(ConstraintExpr::Polynomial {
+                    terms: vec![
+                        PolyTerm {
+                            coeff: BabyBear::ONE,
+                            col_indices: vec![col::DIFF_RIGHT],
+                        },
+                        PolyTerm {
+                            coeff: -BabyBear::ONE,
+                            col_indices: vec![col::COL_2],
+                        },
+                        PolyTerm {
+                            coeff: BabyBear::ONE,
+                            col_indices: vec![col::COL_0],
+                        },
+                        PolyTerm {
+                            coeff: BabyBear::ONE,
+                            col_indices: vec![],
+                        }, // constant +1
+                    ],
+                }),
+            }),
+        },
+        // C7b: A disabled right-gap check is allowed only for the canonical max sentinel.
+        ConstraintExpr::Gated {
+            selector_col: col::IS_CONTROL,
+            inner: Box::new(ConstraintExpr::Polynomial {
+                terms: vec![
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![col::RIGHT_IS_SENTINEL, col::COL_2],
+                    },
+                    PolyTerm {
+                        coeff: -SENTINEL_MAX,
+                        col_indices: vec![col::RIGHT_IS_SENTINEL],
+                    },
+                ],
+            }),
+        },
+    ];
 
     // C8: diff_left bits are binary (gated by is_control)
     for i in 0..ORDERING_BITS {

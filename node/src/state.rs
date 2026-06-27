@@ -2037,10 +2037,12 @@ mod witnessed_receipt_persistence_tests {
     use super::*;
 
     fn witnessed_with_marker(marker: u8) -> WitnessedReceipt {
-        let mut receipt = dregg_turn::TurnReceipt::default();
-        receipt.turn_hash = [marker; 32];
-        receipt.effects_hash = [marker.wrapping_add(1); 32];
-        receipt.agent = CellId::from_bytes([marker.wrapping_add(2); 32]);
+        let receipt = dregg_turn::TurnReceipt {
+            turn_hash: [marker; 32],
+            effects_hash: [marker.wrapping_add(1); 32],
+            agent: CellId::from_bytes([marker.wrapping_add(2); 32]),
+            ..Default::default()
+        };
         WitnessedReceipt::from_components(
             receipt,
             vec![marker, marker.wrapping_add(1)],

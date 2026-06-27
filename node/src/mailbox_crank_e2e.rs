@@ -29,6 +29,8 @@ use dregg_sdk_net::mailbox::{
     CrankDisposition, MailboxCrank, MailboxTurnIntent, RefusalReason, RelayHttpTransport,
     seal_intent,
 };
+// E2E fixture still constructs the legacy RelayOperator directly (factory migration is separate).
+#[allow(deprecated)]
 use dregg_storage::operator::RelayOperator;
 use dregg_storage_templates::cap_inbox;
 use tokio::sync::RwLock;
@@ -37,6 +39,7 @@ use crate::relay_service::{RelayConfig, RelayState, RelayTemplateState, relay_ro
 
 /// Spawn the REAL relay router on an ephemeral port inside a background
 /// runtime thread; return its base URL.
+#[allow(deprecated)] // constructs the legacy RelayOperator directly for the E2E fixture
 fn spawn_relay() -> String {
     let config = RelayConfig {
         operator_key: [0xAA; 32],

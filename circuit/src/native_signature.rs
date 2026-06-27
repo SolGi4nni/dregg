@@ -108,6 +108,8 @@ pub fn message_to_digits(message: &[u8]) -> [u8; WOTS_MSG_CHAINS] {
 /// Compute the checksum for a set of message digits.
 /// Checksum = sum(WOTS_CHAIN_STEPS - digit[i]) for all message digits.
 /// Encoded in base-16 as WOTS_CHECKSUM_CHAINS digits.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn compute_checksum(msg_digits: &[u8; WOTS_MSG_CHAINS]) -> [u8; WOTS_CHECKSUM_CHAINS] {
     let checksum: u32 = msg_digits
         .iter()
@@ -136,6 +138,8 @@ pub fn full_digits(message: &[u8]) -> [u8; WOTS_TOTAL_CHAINS] {
 ///
 /// The seed is expanded via BLAKE3 keyed derivation into 67 chain bottoms,
 /// then each bottom is walked 15 steps to produce the chain tops (public key).
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn wots_keygen(seed: &[u8; 32]) -> (WotsSecretKey, WotsPublicKey) {
     let mut chain_bottoms = [BabyBear::ZERO; WOTS_TOTAL_CHAINS];
 
@@ -190,6 +194,8 @@ pub fn wots_sign(sk: &WotsSecretKey, message: &[u8]) -> WotsSignature {
 ///   chain_walk(sig.chain_values[i], i, d, WOTS_CHAIN_STEPS - d) should equal pk.chain_tops[i]
 ///
 /// This is the function that will be proven inside a STARK.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn wots_verify(pk: &WotsPublicKey, sig: &WotsSignature, message: &[u8]) -> bool {
     // Recompute digits from message
     let recomputed_hash = *blake3::hash(message).as_bytes();
@@ -215,6 +221,8 @@ pub fn wots_verify(pk: &WotsPublicKey, sig: &WotsSignature, message: &[u8]) -> b
 /// This is the "in-circuit" variant: the message hash is provided directly
 /// (it would be a public input to the STARK). No BLAKE3 recomputation needed
 /// inside the arithmetic circuit.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn wots_verify_prehashed(
     pk: &WotsPublicKey,
     sig: &WotsSignature,

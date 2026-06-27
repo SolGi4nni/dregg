@@ -43,7 +43,8 @@ use crate::reflect_binding;
 /// so one set of bindings serves both the embedded spike and the live cockpit.
 pub enum JsTarget {
     /// deos-js's own fresh embedded engine — a private single-cell world.
-    Embedded(Applet),
+    /// Boxed: `Applet` is far larger than `AttachedApplet` (large_enum_variant).
+    Embedded(Box<Applet>),
     /// A provided live World (the cockpit's real ledger, or a fork) — the attach path.
     Attached(AttachedApplet),
 }
@@ -339,7 +340,7 @@ pub fn take_last_compose() -> Option<ComposeOutcome> {
 
 /// Install the embedded applet the native functions drive (deos-js's own engine).
 pub fn set_current_applet(applet: Applet) {
-    CURRENT_APPLET.with(|c| *c.borrow_mut() = Some(JsTarget::Embedded(applet)));
+    CURRENT_APPLET.with(|c| *c.borrow_mut() = Some(JsTarget::Embedded(Box::new(applet))));
 }
 
 /// Install an ATTACHED applet — the runtime bound to a PROVIDED live World (the
@@ -362,7 +363,7 @@ pub fn take_current_target() -> Option<JsTarget> {
 /// Preserves the existing `take_current_applet()` shape for the embedded callers.
 pub fn take_current_applet() -> Option<Applet> {
     match CURRENT_APPLET.with(|c| c.borrow_mut().take()) {
-        Some(JsTarget::Embedded(a)) => Some(a),
+        Some(JsTarget::Embedded(a)) => Some(*a),
         other => {
             // Not embedded — put it back so an attached caller can take it.
             if let Some(t) = other {

@@ -29,7 +29,7 @@ use dregg_cell::state::FieldElement;
 use dregg_cell::{AuthRequired, Cell};
 use serde::{Deserialize, Serialize};
 
-use crate::applet::{pack_u64, Affordance, Applet, CellModel, Slot};
+use crate::applet::{pack_u64, Affordance, Applet, Slot};
 
 /// The heap collection id reserved for the applet's program blob. Disjoint from any
 /// model/heap collection an applet would use for data.
@@ -57,7 +57,7 @@ pub enum ApplyOp {
 impl ApplyOp {
     /// Reconstitute the live apply closure. The closure is a pure function of the live
     /// model + the JS-supplied arg, exactly as the originally-minted affordance was.
-    pub(crate) fn into_closure(self) -> Box<dyn Fn(&CellModel, i64) -> Vec<(Slot, FieldElement)>> {
+    pub(crate) fn into_closure(self) -> crate::applet::ApplyFn {
         match self {
             ApplyOp::AddToSlot { slot } => Box::new(move |model, arg| {
                 let cur = model.field_u64(slot);

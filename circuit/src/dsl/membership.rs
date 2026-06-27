@@ -38,6 +38,8 @@ use crate::dsl::descriptors::{
 /// The parent hash is computed as `hash_fact(current, [sib0, sib1, sib2, position])`.
 ///
 /// Returns (trace, public_inputs) where public_inputs = [leaf_hash, root].
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn generate_merkle_poseidon2_trace(
     leaf_hash: BabyBear,
     siblings: &[[BabyBear; 3]],
@@ -107,6 +109,8 @@ pub fn generate_merkle_poseidon2_trace(
 /// Generate a test witness (deterministic siblings/positions).
 ///
 /// Returns (siblings, positions, expected_root).
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn create_test_witness(
     leaf_hash: BabyBear,
     depth: usize,
@@ -149,6 +153,8 @@ pub fn create_test_witness(
 ///   blinded_leaf = hash_fact(leaf_hash, [blinding_factor])
 ///
 /// The leaf_hash remains private (not bound to any public input).
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn generate_blinded_merkle_poseidon2_trace(
     leaf_hash: BabyBear,
     siblings: &[[BabyBear; 3]],

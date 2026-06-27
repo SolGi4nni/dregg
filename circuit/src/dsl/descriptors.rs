@@ -67,52 +67,50 @@ pub fn merkle_poseidon2_descriptor() -> CircuitDescriptor {
     let neg_6 = BabyBear::new(p - 6);
     let pos_11 = BabyBear::new(11);
 
-    let mut constraints = Vec::new();
-
-    // C1: Position validity -- pos*(pos-1)*(pos-2)*(pos-3) == 0
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                ],
-            },
-            PolyTerm {
-                coeff: neg_6,
-                col_indices: vec![
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                ],
-            },
-            PolyTerm {
-                coeff: pos_11,
-                col_indices: vec![merkle_col::POSITION, merkle_col::POSITION],
-            },
-            PolyTerm {
-                coeff: neg_6,
-                col_indices: vec![merkle_col::POSITION],
-            },
-        ],
-    });
-
-    // C2: Parent hash binding (position-independent 4-to-1 hash)
-    constraints.push(ConstraintExpr::MerkleHash {
-        output_col: merkle_col::PARENT,
-        current_col: merkle_col::CURRENT,
-        sib_cols: [merkle_col::SIB0, merkle_col::SIB1, merkle_col::SIB2],
-        position_col: merkle_col::POSITION,
-    });
-
-    // C3: Chain continuity
-    constraints.push(ConstraintExpr::Transition {
-        next_col: merkle_col::CURRENT,
-        local_col: merkle_col::PARENT,
-    });
+    let constraints = vec![
+        // C1: Position validity -- pos*(pos-1)*(pos-2)*(pos-3) == 0
+        ConstraintExpr::Polynomial {
+            terms: vec![
+                PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                    ],
+                },
+                PolyTerm {
+                    coeff: neg_6,
+                    col_indices: vec![
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                    ],
+                },
+                PolyTerm {
+                    coeff: pos_11,
+                    col_indices: vec![merkle_col::POSITION, merkle_col::POSITION],
+                },
+                PolyTerm {
+                    coeff: neg_6,
+                    col_indices: vec![merkle_col::POSITION],
+                },
+            ],
+        },
+        // C2: Parent hash binding (position-independent 4-to-1 hash)
+        ConstraintExpr::MerkleHash {
+            output_col: merkle_col::PARENT,
+            current_col: merkle_col::CURRENT,
+            sib_cols: [merkle_col::SIB0, merkle_col::SIB1, merkle_col::SIB2],
+            position_col: merkle_col::POSITION,
+        },
+        // C3: Chain continuity
+        ConstraintExpr::Transition {
+            next_col: merkle_col::CURRENT,
+            local_col: merkle_col::PARENT,
+        },
+    ];
 
     let boundaries = vec![
         BoundaryDef::PiBinding {
@@ -186,58 +184,55 @@ pub fn blinded_merkle_poseidon2_descriptor() -> CircuitDescriptor {
     let neg_6 = BabyBear::new(p - 6);
     let pos_11 = BabyBear::new(11);
 
-    let mut constraints = Vec::new();
-
-    // C1: Position validity
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                ],
-            },
-            PolyTerm {
-                coeff: neg_6,
-                col_indices: vec![
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                    merkle_col::POSITION,
-                ],
-            },
-            PolyTerm {
-                coeff: pos_11,
-                col_indices: vec![merkle_col::POSITION, merkle_col::POSITION],
-            },
-            PolyTerm {
-                coeff: neg_6,
-                col_indices: vec![merkle_col::POSITION],
-            },
-        ],
-    });
-
-    // C2: Parent hash binding (position-independent 4-to-1 hash)
-    constraints.push(ConstraintExpr::MerkleHash {
-        output_col: merkle_col::PARENT,
-        current_col: merkle_col::CURRENT,
-        sib_cols: [merkle_col::SIB0, merkle_col::SIB1, merkle_col::SIB2],
-        position_col: merkle_col::POSITION,
-    });
-
-    // C3: Chain continuity
-    constraints.push(ConstraintExpr::Transition {
-        next_col: merkle_col::CURRENT,
-        local_col: merkle_col::PARENT,
-    });
-
-    // C4: Blinding hash binding
-    constraints.push(ConstraintExpr::Hash {
-        output_col: merkle_col::BLINDED,
-        input_cols: vec![merkle_col::CURRENT, merkle_col::BLINDING],
-    });
+    let constraints = vec![
+        // C1: Position validity
+        ConstraintExpr::Polynomial {
+            terms: vec![
+                PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                    ],
+                },
+                PolyTerm {
+                    coeff: neg_6,
+                    col_indices: vec![
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                        merkle_col::POSITION,
+                    ],
+                },
+                PolyTerm {
+                    coeff: pos_11,
+                    col_indices: vec![merkle_col::POSITION, merkle_col::POSITION],
+                },
+                PolyTerm {
+                    coeff: neg_6,
+                    col_indices: vec![merkle_col::POSITION],
+                },
+            ],
+        },
+        // C2: Parent hash binding (position-independent 4-to-1 hash)
+        ConstraintExpr::MerkleHash {
+            output_col: merkle_col::PARENT,
+            current_col: merkle_col::CURRENT,
+            sib_cols: [merkle_col::SIB0, merkle_col::SIB1, merkle_col::SIB2],
+            position_col: merkle_col::POSITION,
+        },
+        // C3: Chain continuity
+        ConstraintExpr::Transition {
+            next_col: merkle_col::CURRENT,
+            local_col: merkle_col::PARENT,
+        },
+        // C4: Blinding hash binding
+        ConstraintExpr::Hash {
+            output_col: merkle_col::BLINDED,
+            input_cols: vec![merkle_col::CURRENT, merkle_col::BLINDING],
+        },
+    ];
 
     let boundaries = vec![
         BoundaryDef::PiBinding {
@@ -365,98 +360,94 @@ pub mod non_rev_col {
 ///
 /// Public inputs: [revocation_root]
 pub fn non_revocation_descriptor() -> CircuitDescriptor {
-    let mut constraints = Vec::new();
-
-    // C1-C3: Row type selectors are binary
-    constraints.push(ConstraintExpr::Binary {
-        col: non_rev_col::IS_CONTROL,
-    });
-    constraints.push(ConstraintExpr::Binary {
-        col: non_rev_col::IS_MERKLE_LEFT,
-    });
-    constraints.push(ConstraintExpr::Binary {
-        col: non_rev_col::IS_MERKLE_RIGHT,
-    });
-
-    // C4: direction_bit is binary (gated by Merkle selectors)
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: non_rev_col::IS_MERKLE_LEFT,
-        inner: Box::new(ConstraintExpr::Binary {
-            col: non_rev_col::COL_3,
-        }),
-    });
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: non_rev_col::IS_MERKLE_RIGHT,
-        inner: Box::new(ConstraintExpr::Binary {
-            col: non_rev_col::COL_3,
-        }),
-    });
-
-    // C5: Hash binding for Merkle rows
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: non_rev_col::IS_MERKLE_LEFT,
-        inner: Box::new(ConstraintExpr::Hash {
-            output_col: non_rev_col::COL_2,
-            input_cols: vec![non_rev_col::COL_0, non_rev_col::COL_1],
-        }),
-    });
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: non_rev_col::IS_MERKLE_RIGHT,
-        inner: Box::new(ConstraintExpr::Hash {
-            output_col: non_rev_col::COL_2,
-            input_cols: vec![non_rev_col::COL_0, non_rev_col::COL_1],
-        }),
-    });
-
-    // C6: Ordering diff_left consistency
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: non_rev_col::IS_CONTROL,
-        inner: Box::new(ConstraintExpr::Polynomial {
-            terms: vec![
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![non_rev_col::DIFF_LEFT],
-                },
-                PolyTerm {
-                    coeff: -BabyBear::ONE,
-                    col_indices: vec![non_rev_col::COL_0],
-                },
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![non_rev_col::COL_1],
-                },
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![],
-                },
-            ],
-        }),
-    });
-
-    // C7: Ordering diff_right consistency
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: non_rev_col::IS_CONTROL,
-        inner: Box::new(ConstraintExpr::Polynomial {
-            terms: vec![
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![non_rev_col::DIFF_RIGHT],
-                },
-                PolyTerm {
-                    coeff: -BabyBear::ONE,
-                    col_indices: vec![non_rev_col::COL_2],
-                },
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![non_rev_col::COL_0],
-                },
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![],
-                },
-            ],
-        }),
-    });
+    let mut constraints = vec![
+        // C1-C3: Row type selectors are binary
+        ConstraintExpr::Binary {
+            col: non_rev_col::IS_CONTROL,
+        },
+        ConstraintExpr::Binary {
+            col: non_rev_col::IS_MERKLE_LEFT,
+        },
+        ConstraintExpr::Binary {
+            col: non_rev_col::IS_MERKLE_RIGHT,
+        },
+        // C4: direction_bit is binary (gated by Merkle selectors)
+        ConstraintExpr::Gated {
+            selector_col: non_rev_col::IS_MERKLE_LEFT,
+            inner: Box::new(ConstraintExpr::Binary {
+                col: non_rev_col::COL_3,
+            }),
+        },
+        ConstraintExpr::Gated {
+            selector_col: non_rev_col::IS_MERKLE_RIGHT,
+            inner: Box::new(ConstraintExpr::Binary {
+                col: non_rev_col::COL_3,
+            }),
+        },
+        // C5: Hash binding for Merkle rows
+        ConstraintExpr::Gated {
+            selector_col: non_rev_col::IS_MERKLE_LEFT,
+            inner: Box::new(ConstraintExpr::Hash {
+                output_col: non_rev_col::COL_2,
+                input_cols: vec![non_rev_col::COL_0, non_rev_col::COL_1],
+            }),
+        },
+        ConstraintExpr::Gated {
+            selector_col: non_rev_col::IS_MERKLE_RIGHT,
+            inner: Box::new(ConstraintExpr::Hash {
+                output_col: non_rev_col::COL_2,
+                input_cols: vec![non_rev_col::COL_0, non_rev_col::COL_1],
+            }),
+        },
+        // C6: Ordering diff_left consistency
+        ConstraintExpr::Gated {
+            selector_col: non_rev_col::IS_CONTROL,
+            inner: Box::new(ConstraintExpr::Polynomial {
+                terms: vec![
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![non_rev_col::DIFF_LEFT],
+                    },
+                    PolyTerm {
+                        coeff: -BabyBear::ONE,
+                        col_indices: vec![non_rev_col::COL_0],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![non_rev_col::COL_1],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![],
+                    },
+                ],
+            }),
+        },
+        // C7: Ordering diff_right consistency
+        ConstraintExpr::Gated {
+            selector_col: non_rev_col::IS_CONTROL,
+            inner: Box::new(ConstraintExpr::Polynomial {
+                terms: vec![
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![non_rev_col::DIFF_RIGHT],
+                    },
+                    PolyTerm {
+                        coeff: -BabyBear::ONE,
+                        col_indices: vec![non_rev_col::COL_2],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![non_rev_col::COL_0],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![],
+                    },
+                ],
+            }),
+        },
+    ];
 
     // C8: diff_left bits are binary
     for i in 0..NON_REVOCATION_ORDERING_BITS {

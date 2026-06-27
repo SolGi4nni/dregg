@@ -849,6 +849,8 @@ pub fn prove_effect_vm_rotated_ir2(
 /// Used by [`prove_full_turn`] to record the rotated leg's `sub_public_inputs` and to extend
 /// the composed PI without re-proving.
 #[cfg(feature = "prover")]
+// Scaffolding for the in-flight rotated-leg composed-PI path; retained for the rotated VK epoch.
+#[allow(dead_code)]
 fn rotated_effect_pi_for(
     initial_state: &CellState,
     effects: &[VmEffectKind],
@@ -3154,6 +3156,8 @@ pub fn prove_cap_open_umem_welded_staged(
 /// registry JSON string from `V3_STAGED_REGISTRY_TSV`. Fails closed for empty / heterogeneous /
 /// non-cohort turns. Returns `(name, json)`.
 #[cfg(feature = "prover")]
+// Scaffolding for the in-flight rotated-leg descriptor resolution; retained for the rotated VK epoch.
+#[allow(dead_code)]
 fn rotated_descriptor_json_for_effects(
     effects: &[VmEffectKind],
 ) -> Result<(&'static str, &'static str), SdkError> {
@@ -3199,6 +3203,8 @@ fn rotated_descriptor_json_for_effects(
 /// tampered vk_hash. (The committed registry JSON is the canonical pin the rotated path already
 /// uses to resolve + parse the descriptor at prove/verify time, so fingerprinting it is consistent.)
 #[cfg(feature = "prover")]
+// Scaffolding for the in-flight rotated-leg vk_hash fingerprint; retained for the rotated VK epoch.
+#[allow(dead_code)]
 fn rotated_effect_vm_vk_hash(effects: &[VmEffectKind]) -> Result<[u8; 32], SdkError> {
     let (_name, json) = rotated_descriptor_json_for_effects(effects)?;
     Ok(*blake3::hash(json.as_bytes()).as_bytes())
@@ -5803,6 +5809,8 @@ mod tests {
     /// the authority-crown cap-open tail (the residual shrinks to the write-bearing wrappers only).
     #[cfg(feature = "prover")]
     #[test]
+    // WIDE/8felt is deliberate emphasis in the test name (the wide-commit flag-day).
+    #[allow(non_snake_case)]
     fn cap_open_attenuate_leg_proves_and_verifies_WIDE_8felt() {
         use dregg_circuit::cap_root::CapLeaf;
         use dregg_circuit::effect_vm::trace_rotated::{
@@ -5938,7 +5946,7 @@ mod tests {
     ///
     /// A single `Transfer` turn whose authority rides a REAL consumed transfer-cap proves through the
     /// LIVE TURN-BOUND transfer cap-open descriptor (`transferCapOpenTBVmDescriptor2R24` — transfer base
-    /// + the cap-membership appendix + the turn-identity weld), self-verifies, and re-verifies through
+    /// plus the cap-membership appendix + the turn-identity weld), self-verifies, and re-verifies through
     /// the live verify path with the
     /// transfer cap-open vk_hash. Then the NEGATIVE: a cap whose leaf facet permits a DIFFERENT effect
     /// (not EFFECT_TRANSFER) is rejected — first at witness build (`from_membership` fail-closed), AND
@@ -8178,6 +8186,8 @@ mod tests {
     /// 8-felt ~124-bit commit, and a narrow 1-felt delegate write-cap leg is REJECTED post-cutover.
     #[cfg(feature = "prover")]
     #[test]
+    // WIDE is deliberate emphasis in the test name (the wide-commit flag-day).
+    #[allow(non_snake_case)]
     fn cap_write_delegate_WIDE_flag_day() {
         use dregg_circuit::cap_root::CapLeaf;
         use dregg_circuit::effect_vm::AttenuateWitness;

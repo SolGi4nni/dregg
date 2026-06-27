@@ -240,7 +240,7 @@ impl MailTown {
         let mut names = BTreeMap::new();
         dir.insert("postmaster".to_string(), (postmaster, Kind::Postmaster));
         names.insert(postmaster, "postmaster".to_string());
-        debug_assert!(STATE_SLOTS >= 4, "mailtown uses slots 0..3");
+        const { assert!(STATE_SLOTS >= 4, "mailtown uses slots 0..3") };
         MailTown {
             engine,
             postmaster,

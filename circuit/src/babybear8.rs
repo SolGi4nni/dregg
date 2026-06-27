@@ -88,6 +88,8 @@ impl BabyBear8 {
     }
 
     /// Component-wise addition.
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn add(&self, other: &Self) -> Self {
         let mut r = [BabyBear::ZERO; 8];
         for i in 0..8 {
@@ -97,6 +99,8 @@ impl BabyBear8 {
     }
 
     /// Component-wise subtraction.
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn sub(&self, other: &Self) -> Self {
         let mut r = [BabyBear::ZERO; 8];
         for i in 0..8 {
@@ -106,6 +110,8 @@ impl BabyBear8 {
     }
 
     /// Negation.
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn neg(&self) -> Self {
         let mut r = [BabyBear::ZERO; 8];
         for i in 0..8 {
@@ -149,6 +155,8 @@ impl BabyBear8 {
     }
 
     /// Multiply by a base field scalar.
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn scale(&self, s: BabyBear) -> Self {
         let mut r = [BabyBear::ZERO; 8];
         for i in 0..8 {
@@ -162,6 +170,8 @@ impl BabyBear8 {
     /// Solves `self · x = 1` for `x` by Gaussian elimination over BabyBear on the
     /// 8×8 matrix `M` of the "multiply-by-self" map, where column `j` is the
     /// reduced coefficient vector of `self · z^j`. Returns `None` for zero.
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;

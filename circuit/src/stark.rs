@@ -126,6 +126,8 @@ impl ExtElem {
     }
 
     /// Extension field inverse via Gaussian elimination.
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn inverse(self) -> Option<Self> {
         if self.is_zero() {
             return None;
@@ -1304,16 +1306,18 @@ pub fn try_prove_full(
     })
 }
 
-fn fri_commit(
-    evals: &[BabyBear],
-    _points: &[BabyBear],
-    transcript: &mut Transcript,
-) -> (
+type FriCommitOutput = (
     Vec<[u8; 32]>,
     Vec<MerkleTree>,
     Vec<Vec<BabyBear>>,
     Vec<BabyBear>,
-) {
+);
+
+fn fri_commit(
+    evals: &[BabyBear],
+    _points: &[BabyBear],
+    transcript: &mut Transcript,
+) -> FriCommitOutput {
     let mut current_evals = evals.to_vec();
     let mut commitments = Vec::new();
     let mut trees = Vec::new();

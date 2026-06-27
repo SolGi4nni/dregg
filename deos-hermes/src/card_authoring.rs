@@ -171,6 +171,9 @@ impl CardAuthoringTool {
     /// `edit_card` tool-call is admitted (or refused) by the gateway, then the gesture is
     /// applied through the cap tooth (refused in-band on over-reach). This is the
     /// card-editor's `edit_view` path, banked + proven, exposed as a confined tool.
+    // The full edit gesture genuinely needs each arg (gateway, call, clock, card, edit
+    // params, sink); bundling them into a struct would only relocate the same surface.
+    #[allow(clippy::too_many_arguments)]
     pub fn edit_card(
         &self,
         gw: &mut HermesGateway<'_>,

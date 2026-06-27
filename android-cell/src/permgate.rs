@@ -686,7 +686,8 @@ pub enum KernelGrantOutcome {
         app_cell: CellId,
         /// The c-list slot the executor minted the cap into (assigned by the grantee's c-list).
         slot: u32,
-        receipt: TurnReceipt,
+        /// Boxed: `TurnReceipt` dwarfs the other variants (large_enum_variant).
+        receipt: Box<TurnReceipt>,
     },
     /// A no-op: a `Normal` permission is already held at install (auto-granted) — no turn runs.
     AlreadyHeldAtInstall { permission: AndroidPermission },
@@ -711,7 +712,7 @@ impl KernelGrantOutcome {
     /// The executor's verified receipt, if a grant committed.
     pub fn receipt(&self) -> Option<&TurnReceipt> {
         match self {
-            KernelGrantOutcome::Granted { receipt, .. } => Some(receipt),
+            KernelGrantOutcome::Granted { receipt, .. } => Some(receipt.as_ref()),
             _ => None,
         }
     }
@@ -962,7 +963,7 @@ impl PermWorld {
                     permission,
                     app_cell: self.app_cell,
                     slot,
-                    receipt,
+                    receipt: Box::new(receipt),
                 }
             }
             TurnResult::Rejected { reason, .. } => KernelGrantOutcome::RefusedByKernel {

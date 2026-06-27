@@ -388,6 +388,8 @@ impl Default for EffectVmContext {
 
 /// Stage 1 trace generator. Same as [`generate_effect_vm_trace`] but accepts
 /// the widened PI inputs ([`EffectVmContext`]).
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn generate_effect_vm_trace_ext(
     initial_state: &CellState,
     effects: &[Effect],

@@ -499,12 +499,19 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for DslP3Air {
     }
 }
 
+/// (local row vars, next row vars, public values) extracted at the start of `eval`.
+type EvalRows<AB> = (
+    Vec<<AB as AirBuilder>::Var>,
+    Vec<<AB as AirBuilder>::Var>,
+    Vec<<AB as AirBuilder>::Expr>,
+);
+
 impl<AB: AirBuilder> Air<AB> for DslP3Air
 where
     AB::F: PrimeField32,
 {
     fn eval(&self, builder: &mut AB) {
-        let (local, next, public_values): (Vec<AB::Var>, Vec<AB::Var>, Vec<AB::Expr>) = {
+        let (local, next, public_values): EvalRows<AB> = {
             let main = builder.main();
             let local: Vec<AB::Var> = main.current_slice().to_vec();
             let next: Vec<AB::Var> = main.next_slice().to_vec();

@@ -39,6 +39,8 @@ use dregg_captp::sturdy::SwissTable;
 use dregg_cell::{AuthRequired, CellId};
 use dregg_sdk::AgentCipherclerk;
 use dregg_sdk_net::mailbox::{MailboxTransport, RelayHttpTransport};
+// E2E fixture still constructs the legacy RelayOperator directly (factory migration is separate).
+#[allow(deprecated)]
 use dregg_storage::operator::RelayOperator;
 use dregg_types::{PublicKey, SigningKey, generate_keypair};
 use tokio::sync::RwLock;
@@ -47,6 +49,7 @@ use crate::relay_service::{RelayConfig, RelayState, RelayTemplateState, relay_ro
 
 /// Spawn the REAL relay HTTP router on an ephemeral port; return its base URL.
 /// (Same shape as `mailbox_crank_e2e::spawn_relay`.)
+#[allow(deprecated)] // constructs the legacy RelayOperator directly for the E2E fixture
 fn spawn_relay() -> String {
     let config = RelayConfig {
         operator_key: [0xAA; 32],

@@ -479,14 +479,14 @@ impl<'rt, P: AcpPeer> AcpClient<'rt, P> {
                 // turn AND (b) executes the model's chosen JS against the LIVE
                 // World, landing real verified turns on the cockpit ledger. The
                 // record (script + receipts) is kept for the caller to surface.
-                let outcome = if call.name == "run_js" && self.run_js_hook.is_some() {
-                    let now = self.clock;
-                    let hook = self.run_js_hook.as_mut().expect("hook present");
-                    let (outcome, record) = hook(&call, now);
-                    self.js_runs.push(record);
-                    outcome
-                } else {
-                    self.gateway.admit_call(&call, self.clock)
+                let outcome = match self.run_js_hook.as_mut() {
+                    Some(hook) if call.name == "run_js" => {
+                        let now = self.clock;
+                        let (outcome, record) = hook(&call, now);
+                        self.js_runs.push(record);
+                        outcome
+                    }
+                    _ => self.gateway.admit_call(&call, self.clock),
                 };
                 run.verdicts.push((call.clone(), outcome.clone()));
                 // The permission moment — surfaced the instant the gate decides.

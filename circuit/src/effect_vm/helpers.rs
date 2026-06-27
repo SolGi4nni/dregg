@@ -31,6 +31,8 @@ fn join_u64(lo: BabyBear, hi: BabyBear) -> u64 {
 /// This is the canonical full-32-byte limb decomposition used to bind hashes
 /// / field elements into the Effect VM PI. It matches the `bytes32_to_8_felts`
 /// convention already used for `Effect::EmitEvent` and `Effect::Custom`.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 #[inline]
 pub fn bytes32_to_8_limbs(b: &[u8; 32]) -> [BabyBear; 8] {
     let mut out = [BabyBear::ZERO; 8];

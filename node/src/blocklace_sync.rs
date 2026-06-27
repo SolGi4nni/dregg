@@ -4520,7 +4520,7 @@ mod tests {
 
         // A QUIC-transport-style id (random TLS-cert hash) is correctly unknown.
         let transport_style_id: [u8; 32] = [0x7c; 32];
-        assert!(peer_keys.get(&transport_style_id).is_none());
+        assert!(!peer_keys.contains_key(&transport_style_id));
     }
 
     // ── Block-production cadence: mutation-driven, no empty-block spam ──────
@@ -4950,15 +4950,14 @@ mod tests {
         // (committed_height + caveat tags) rides as zeros in this synthetic WR.
         let mut pi_bb = vec![BabyBear::ZERO; p::ACTIVE_BASE_COUNT];
         let (th, eg, _, prev) = dregg_turn::TurnExecutor::compute_turn_identity_pi(turn);
-        for i in 0..p::TURN_HASH_LEN {
-            pi_bb[p::TURN_HASH_BASE + i] = th[i];
-        }
-        for i in 0..p::EFFECTS_HASH_GLOBAL_LEN {
-            pi_bb[p::EFFECTS_HASH_GLOBAL_BASE + i] = eg[i];
-        }
-        for i in 0..p::PREVIOUS_RECEIPT_HASH_LEN {
-            pi_bb[p::PREVIOUS_RECEIPT_HASH_BASE + i] = prev[i];
-        }
+        pi_bb[p::TURN_HASH_BASE..p::TURN_HASH_BASE + p::TURN_HASH_LEN]
+            .copy_from_slice(&th[..p::TURN_HASH_LEN]);
+        pi_bb
+            [p::EFFECTS_HASH_GLOBAL_BASE..p::EFFECTS_HASH_GLOBAL_BASE + p::EFFECTS_HASH_GLOBAL_LEN]
+            .copy_from_slice(&eg[..p::EFFECTS_HASH_GLOBAL_LEN]);
+        pi_bb[p::PREVIOUS_RECEIPT_HASH_BASE
+            ..p::PREVIOUS_RECEIPT_HASH_BASE + p::PREVIOUS_RECEIPT_HASH_LEN]
+            .copy_from_slice(&prev[..p::PREVIOUS_RECEIPT_HASH_LEN]);
         pi_bb[p::ACTOR_NONCE] = BabyBear::new((turn.nonce & 0x7FFF_FFFF) as u32);
         project_into_pi(&mut pi_bb, &counts, &roots);
         pi_bb[p::IS_AGENT_CELL] = if cell_id == &turn.agent {

@@ -48,10 +48,12 @@ mod tests {
     use super::*;
 
     fn sample_witnessed() -> WitnessedReceipt {
-        let mut receipt = dregg_turn::TurnReceipt::default();
-        receipt.turn_hash = [7; 32];
-        receipt.effects_hash = [8; 32];
-        receipt.agent = dregg_types::CellId([9; 32]);
+        let receipt = dregg_turn::TurnReceipt {
+            turn_hash: [7; 32],
+            effects_hash: [8; 32],
+            agent: dregg_types::CellId([9; 32]),
+            ..Default::default()
+        };
         WitnessedReceipt::from_components(receipt, vec![1, 2, 3], vec![4, 5], None)
     }
 

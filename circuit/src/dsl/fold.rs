@@ -347,6 +347,8 @@ impl Air for FoldAir {
     }
 }
 
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn build_shared_tree(leaves: &[BabyBear], depth: usize) -> (BabyBear, Vec<MerkleWitness>) {
     let fan_out = 4usize;
     let max_leaves = fan_out.pow(depth as u32);

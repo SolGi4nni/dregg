@@ -44,6 +44,8 @@ use std::time::{Duration, Instant};
 /// Where the built `dregg-node` binary lives (Cargo sets this for integration tests).
 const NODE_BIN: &str = env!("CARGO_BIN_EXE_dregg-node");
 
+// `http`/`name` document each spawned node; `child` drives Drop. Not all are read in every test.
+#[allow(dead_code)]
 struct NodeProc {
     child: Child,
     http: u16,

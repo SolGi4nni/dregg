@@ -1821,6 +1821,7 @@ mod tests {
     ///     (`SubProofInvalid`) — the leg itself is UNSAT against the forged PI;
     ///   * step 4 (chain adjacency): even if a leg's PI/proof stayed self-consistent, the broken
     ///     NEW would fail `leg_1.OLD == leg_0.NEW` (`CommitmentMismatch{chain_adjacency}`).
+    ///
     /// So a spliced/forged middle state cannot launder a fictional intermediate transition onto the
     /// rotated chain.
     #[test]
@@ -1918,6 +1919,8 @@ mod tests {
     /// SECOND (non-lead) rotated leg and assert the rejection lands on THAT leg (not index 0) — so a
     /// forged interior/tail cohort cannot ride a valid lead onto the chain.
     #[test]
+    // NON_LEAD is deliberate emphasis in the test name (the non-lead-leg rejection witness).
+    #[allow(non_snake_case)]
     fn flow_b_heterogeneous_chain_tampered_NON_LEAD_leg_is_rejected() {
         let bob = CellId::from_bytes([0xB2; 32]);
         let pre_balance: u64 = 1_000;

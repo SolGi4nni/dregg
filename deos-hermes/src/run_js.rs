@@ -274,6 +274,9 @@ impl RunJsTool {
     /// `sink` is the host's live World reduced to the crawl + commit surface (the
     /// cockpit supplies `starbridge_v2::agent_attach::WorldSinkAdapter`). `agent` is
     /// the agent's cell on that World (the agent of every committed turn).
+    // Each arg is a distinct capability/context the attached run threads (runtime, sink,
+    // agent, gateway, call, clock, script); a bundling struct would not reduce the surface.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_attached_on(
         &self,
         rt: &mut JsRuntime,
@@ -419,6 +422,9 @@ impl RunJsAuthoringTool {
     ///
     /// `rt` is a CALLER-OWNED [`JsRuntime`] (SpiderMonkey's engine init is
     /// process-global + one-shot, so the host boots ONE and threads it here).
+    // Each arg is a distinct capability/context the authoring run threads (runtime, gateway,
+    // call, clock, card, edit params, sink); a bundling struct would not reduce the surface.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_on(
         &self,
         rt: &mut JsRuntime,

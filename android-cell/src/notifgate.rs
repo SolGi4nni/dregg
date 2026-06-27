@@ -125,17 +125,6 @@ impl NotificationImportance {
             NotificationImportance::High | NotificationImportance::Max
         )
     }
-
-    fn tag(&self) -> &'static str {
-        match self {
-            NotificationImportance::None => "none",
-            NotificationImportance::Min => "min",
-            NotificationImportance::Low => "low",
-            NotificationImportance::Default => "default",
-            NotificationImportance::High => "high",
-            NotificationImportance::Max => "max",
-        }
-    }
 }
 
 /// **An AOSP `NotificationChannel`** — the routing + importance unit a post names. graphideOS

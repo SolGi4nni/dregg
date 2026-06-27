@@ -192,6 +192,8 @@ impl StarkAir for GarbledEvaluationAir {
         combined
     }
 
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     fn boundary_constraints(
         &self,
         public_inputs: &[BabyBear],

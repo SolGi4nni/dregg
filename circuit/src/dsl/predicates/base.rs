@@ -672,6 +672,9 @@ pub fn compute_blinded_fact_commitment(
     }
 }
 
+/// A single STARK trace paired with its public inputs.
+type TraceWithPublicInputs = (Vec<Vec<BabyBear>>, Vec<BabyBear>);
+
 /// Prove an InRange predicate: value >= low AND value <= high.
 /// Returns two traces (one for low bound, one for high bound).
 pub fn generate_in_range_traces(
@@ -679,10 +682,7 @@ pub fn generate_in_range_traces(
     low: u32,
     high: u32,
     fact_commitment: BabyBear,
-) -> Option<(
-    (Vec<Vec<BabyBear>>, Vec<BabyBear>),
-    (Vec<Vec<BabyBear>>, Vec<BabyBear>),
-)> {
+) -> Option<(TraceWithPublicInputs, TraceWithPublicInputs)> {
     if private_value < low || private_value > high {
         return None;
     }

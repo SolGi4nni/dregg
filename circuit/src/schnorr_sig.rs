@@ -191,6 +191,8 @@ fn compute_challenge(r: &CurvePoint, pk: &CurvePoint, message: &[u8]) -> Scalar 
 /// Public so the in-circuit AIR (and its tests) can recompute the *exact* same
 /// Fiat–Shamir scalar `e` that the signer used — the verification equation
 /// `s·G + e·pk == R` only closes when both sides use the identical `e`.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn compute_challenge_from_elements(
     r: &CurvePoint,
     pk: &CurvePoint,

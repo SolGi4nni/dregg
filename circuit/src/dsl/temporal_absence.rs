@@ -127,41 +127,38 @@ pub fn temporal_absence_descriptor() -> CircuitDescriptor {
         },
     ];
 
-    let mut constraints = Vec::new();
-
-    // C1: leaf_hash == hash_fact(block_height, [event_type, attribute_hash, timeline_index])
-    constraints.push(ConstraintExpr::Hash {
-        output_col: LEAF_HASH,
-        input_cols: vec![BLOCK_HEIGHT, EVENT_TYPE, ATTRIBUTE_HASH, TIMELINE_INDEX],
-    });
-
-    // C2: is_before is binary
-    constraints.push(ConstraintExpr::Binary { col: IS_BEFORE });
-
-    // C3: adj_index_plus1 == timeline_index + 1
-    // adj_index_plus1 - timeline_index - 1 == 0
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![ADJ_INDEX_PLUS1],
-            },
-            PolyTerm {
-                coeff: neg_one,
-                col_indices: vec![TIMELINE_INDEX],
-            },
-            PolyTerm {
-                coeff: neg_one,
-                col_indices: vec![],
-            }, // constant -1
-        ],
-    });
-
-    // C4: Transition: next[TIMELINE_INDEX] == local[ADJ_INDEX_PLUS1] (adjacency)
-    constraints.push(ConstraintExpr::Transition {
-        next_col: TIMELINE_INDEX,
-        local_col: ADJ_INDEX_PLUS1,
-    });
+    let constraints = vec![
+        // C1: leaf_hash == hash_fact(block_height, [event_type, attribute_hash, timeline_index])
+        ConstraintExpr::Hash {
+            output_col: LEAF_HASH,
+            input_cols: vec![BLOCK_HEIGHT, EVENT_TYPE, ATTRIBUTE_HASH, TIMELINE_INDEX],
+        },
+        // C2: is_before is binary
+        ConstraintExpr::Binary { col: IS_BEFORE },
+        // C3: adj_index_plus1 == timeline_index + 1
+        // adj_index_plus1 - timeline_index - 1 == 0
+        ConstraintExpr::Polynomial {
+            terms: vec![
+                PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![ADJ_INDEX_PLUS1],
+                },
+                PolyTerm {
+                    coeff: neg_one,
+                    col_indices: vec![TIMELINE_INDEX],
+                },
+                PolyTerm {
+                    coeff: neg_one,
+                    col_indices: vec![],
+                }, // constant -1
+            ],
+        },
+        // C4: Transition: next[TIMELINE_INDEX] == local[ADJ_INDEX_PLUS1] (adjacency)
+        ConstraintExpr::Transition {
+            next_col: TIMELINE_INDEX,
+            local_col: ADJ_INDEX_PLUS1,
+        },
+    ];
 
     // Boundary constraints
     let boundaries = vec![

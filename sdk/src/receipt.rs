@@ -207,8 +207,10 @@ mod tests {
 
     #[test]
     fn receipt_derefs_and_roundtrips() {
-        let mut tr = TurnReceipt::default();
-        tr.turn_hash = [7u8; 32];
+        let tr = TurnReceipt {
+            turn_hash: [7u8; 32],
+            ..Default::default()
+        };
         let r = Receipt::new(tr.clone());
         assert_eq!(r.turn_hash, [7u8; 32]);
         assert_eq!(r.receipt_hash(), tr.receipt_hash());

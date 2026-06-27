@@ -3100,6 +3100,8 @@ fn perm_lanes(st: [BabyBear; POSEIDON2_WIDTH]) -> [BabyBear; CHIP_OUT_LANES] {
 /// returns `perm_lanes(seed)[1..8]` — `state[1..8]` of the SINGLE final permutation. This is the
 /// fill every chip-bearing producer writes into a hash site's lane columns so the 17-wide chip
 /// lookup matches (`out[i] == lane[i]`); a forged lane is UNSAT. `arity ≤ CHIP_RATE`.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub(crate) fn chip_absorb_lanes(
     arity: usize,
     inputs: &[BabyBear],
@@ -3143,6 +3145,8 @@ pub(crate) fn chip_absorb_lanes(
 /// `chip_absorb_lanes` it ALWAYS seeds the wide tail (matching the chip gather's
 /// `for i in 7..CHIP_WIDE_ARITY { st[i] = in_i }`), so the arity-9 final (which seeds genuine
 /// in7/in8) is faithful. `arity ≤ CHIP_RATE`; `inputs` is read up to `CHIP_RATE`, zero-padded.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CHIP_OUT_LANES] {
     debug_assert!(arity <= CHIP_RATE);
     let big = arity == 7;
@@ -3175,6 +3179,8 @@ pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CH
 /// misalign with the emitted tuple; out0 (the digest) is assumed already filled by the caller's
 /// hash chain. This is the exact column fill the AIR's `out[i] == lane[i]` equality demands — a
 /// forged lane is UNSAT (`ir2_forged_output_lane_refuses`). Idempotent on the lane columns.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn fill_chip_lanes(desc: &EffectVmDescriptor2, row: &mut [BabyBear]) {
     for k in &desc.constraints {
         let VmConstraint2::Lookup(l) = k else {
@@ -4750,6 +4756,18 @@ where
     )
 }
 
+/// Verify-path `(airs, table_public_inputs, common)` triple result of
+/// [`ir2_airs_and_common_for_config`] (extracted to satisfy `clippy::type_complexity`;
+/// exact type-equivalent of the prior inline return type).
+type Ir2AirsAndCommonResult<SC> = Result<
+    (
+        Vec<Ir2Air>,
+        Vec<Vec<P3BabyBear>>,
+        p3_batch_stark::CommonData<SC>,
+    ),
+    String,
+>;
+
 /// **`ir2_airs_and_common_for_config`** — the verify-path `(airs, table_public_inputs, common)`
 /// triple for a proven descriptor under a caller-supplied `SC` config: the present-table
 /// `Ir2Air` set, per-table public-input vectors (descriptor PIs on the main instance, empty
@@ -4764,14 +4782,7 @@ pub fn ir2_airs_and_common_for_config<SC>(
     proof: &BatchProof<SC>,
     public_inputs: &[BabyBear],
     config: &SC,
-) -> Result<
-    (
-        Vec<Ir2Air>,
-        Vec<Vec<P3BabyBear>>,
-        p3_batch_stark::CommonData<SC>,
-    ),
-    String,
->
+) -> Ir2AirsAndCommonResult<SC>
 where
     SC: StarkGenericConfig,
     Domain<SC>: PolynomialSpace<Val = P3BabyBear>,

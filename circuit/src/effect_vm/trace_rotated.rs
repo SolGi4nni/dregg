@@ -52,6 +52,26 @@ use crate::effect_vm::{CellState, Effect};
 use crate::field::BabyBear;
 use crate::poseidon2::hash_many;
 
+/// `(trace, dpis, map_heaps)` — the rotated trace plus its threaded map-op heap leaf sets.
+type RotatedTraceWithHeaps = Result<
+    (
+        Vec<Vec<BabyBear>>,
+        Vec<BabyBear>,
+        Vec<Vec<crate::heap_root::HeapLeaf>>,
+    ),
+    String,
+>;
+
+/// `(trace, dpis, mem_boundary)` — the rotated trace plus its overflow-memory boundary witness.
+type RotatedTraceWithMem = Result<
+    (
+        Vec<Vec<BabyBear>>,
+        Vec<BabyBear>,
+        crate::descriptor_ir2::MemBoundaryWitness,
+    ),
+    String,
+>;
+
 // ============================================================================
 // The rotated appendix geometry (Lean `EffectVmEmitRotationV3`, R = 24).
 // ============================================================================
@@ -496,6 +516,8 @@ pub const FEE_MAX: u64 = (1u64 << 30) - 1;
 /// GROUP-4 chain `[76..87] → 98/99/100 → 88`), so writing the fee there does NOT corrupt OLD/NEW
 /// COMMIT — only the BALANCE change (post-fee) flows into the commitment. Returns `(trace, pis)` ready
 /// for `transferFeeVmDescriptor2R24` (39 PIs).
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn generate_rotated_effect_vm_trace_with_fee(
     initial_state: &CellState,
     effects: &[Effect],
@@ -700,14 +722,7 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_nullifiers: &[crate::heap_root::HeapLeaf],
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     use super::columns::{PARAM_BASE, param};
     use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
 
@@ -792,14 +807,7 @@ pub fn generate_rotated_create_cell_trace_with_accounts_tree(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_accounts: &[crate::heap_root::HeapLeaf],
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     use super::columns::PARAM_BASE;
     use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
 
@@ -875,14 +883,7 @@ pub fn generate_rotated_note_create_trace_with_commitments_tree(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_commitments: &[crate::heap_root::HeapLeaf],
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     use super::columns::{PARAM_BASE, param};
     use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
 
@@ -968,14 +969,7 @@ pub fn generate_rotated_refusal_trace_with_fields_tree(
     caveat: &RotatedCaveatManifest,
     before_fields_leaves: &[crate::heap_root::HeapLeaf],
     audit_value: BabyBear,
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     use super::columns::PARAM_BASE;
     use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
 
@@ -2674,14 +2668,7 @@ pub fn generate_rotated_heap_write_wide(
     key: BabyBear,
     value: BabyBear,
     heap_leaves: &[crate::heap_root::HeapLeaf],
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     use super::columns::{AUX_BASE, PARAM_BASE};
     use crate::descriptor_ir2::chip_absorb_all_lanes;
     use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
@@ -2843,14 +2830,7 @@ pub fn generate_rotated_note_spend_wide(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_nullifiers: &[crate::heap_root::HeapLeaf],
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     let (mut trace, base_pis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(
         initial_state,
         effects,
@@ -2873,14 +2853,7 @@ pub fn generate_rotated_note_create_wide(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_commitments: &[crate::heap_root::HeapLeaf],
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     let (mut trace, base_pis, map_heaps) =
         generate_rotated_note_create_trace_with_commitments_tree(
             initial_state,
@@ -2904,14 +2877,7 @@ pub fn generate_rotated_create_cell_wide(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_accounts: &[crate::heap_root::HeapLeaf],
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     let (mut trace, base_pis, map_heaps) = generate_rotated_create_cell_trace_with_accounts_tree(
         initial_state,
         effects,
@@ -2941,14 +2907,7 @@ pub fn generate_rotated_create_from_factory_wide(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_accounts: &[crate::heap_root::HeapLeaf],
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     if !matches!(effects.first(), Some(Effect::CreateCellFromFactory { .. })) {
         return Err(
             "factory wide generator: lead effect is not a CreateCellFromFactory (route createCell / \
@@ -2990,14 +2949,7 @@ pub fn generate_rotated_spawn_wide(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_accounts: &[crate::heap_root::HeapLeaf],
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     if !matches!(effects.first(), Some(Effect::SpawnWithDelegation { .. })) {
         return Err(
             "spawn wide generator: lead effect is not a SpawnWithDelegation (route createCell / factory \
@@ -3034,14 +2986,7 @@ pub fn generate_rotated_refusal_wide(
     caveat: &RotatedCaveatManifest,
     before_fields_leaves: &[crate::heap_root::HeapLeaf],
     audit_value: BabyBear,
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        Vec<Vec<crate::heap_root::HeapLeaf>>,
-    ),
-    String,
-> {
+) -> RotatedTraceWithHeaps {
     let (mut trace, base_pis, map_heaps) = generate_rotated_refusal_trace_with_fields_tree(
         initial_state,
         effects,
@@ -3121,14 +3066,7 @@ pub fn generate_rotated_set_field_dyn_base(
     caveat: &RotatedCaveatManifest,
     slot: u32,
     prev_value: BabyBear,
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        crate::descriptor_ir2::MemBoundaryWitness,
-    ),
-    String,
-> {
+) -> RotatedTraceWithMem {
     use super::columns::PARAM_BASE;
 
     if slot >= 8 {
@@ -3214,14 +3152,7 @@ pub fn generate_rotated_set_field_dyn_wide(
     caveat: &RotatedCaveatManifest,
     slot: u32,
     prev_value: BabyBear,
-) -> Result<
-    (
-        Vec<Vec<BabyBear>>,
-        Vec<BabyBear>,
-        crate::descriptor_ir2::MemBoundaryWitness,
-    ),
-    String,
-> {
+) -> RotatedTraceWithMem {
     let (mut trace, base_pis, mem_boundary) = generate_rotated_set_field_dyn_base(
         initial_state,
         before_w,
@@ -3369,6 +3300,8 @@ fn cap_write_wide_plan(effect: &Effect) -> Option<(Option<CapTreeWriteOp>, bool)
 /// SAME 8-felt before/after anchors via the generic [`append_wide_carriers`] at their member host width
 /// (595 → 803 / `CAP_OPEN_TB_WIDTH` → 1029), exactly as supplyMint rides the transfer-shape host.
 #[allow(clippy::type_complexity)]
+// signature kept as-is
+#[allow(clippy::too_many_arguments)]
 pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
     initial_state: &CellState,
     effects: &[Effect],

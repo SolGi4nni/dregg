@@ -242,6 +242,8 @@ impl<AB: AirBuilder> Air<AB> for P3MerklePoseidon2Air
 where
     AB::F: PrimeField32,
 {
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
         let local = main.current_slice();
@@ -481,6 +483,8 @@ where
 /// Apply the internal linear layer (matching poseidon2.rs) over abstract expressions.
 ///
 /// Poseidon2 internal layer: x_i' = sum + (d_i - 1) * x_i
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 fn internal_linear_layer_expr<AB: AirBuilder>(
     state: &mut [AB::Expr; WIDTH],
     diag: &[P3BabyBear; WIDTH],
@@ -546,6 +550,8 @@ where
 /// output block from 1 to 8 (`CHIP_RATE`-faithful squeeze). The aux block and
 /// every internal constraint are byte-identical to [`poseidon2_permute_expr`];
 /// only the return arity differs.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn poseidon2_permute_expr_lanes<AB: AirBuilder>(
     builder: &mut AB,
     mut state: [AB::Expr; WIDTH],
@@ -632,6 +638,8 @@ where
 /// [`POSEIDON2_PERM_AUX_COLS`]) for a concrete input `state`, matching exactly
 /// what [`poseidon2_permute_expr`] constrains. Witness generators call this to
 /// fill the per-hash aux columns.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn poseidon2_permute_aux_witness(input: [BabyBear; WIDTH]) -> Vec<BabyBear> {
     let round_states = poseidon2_trace(&input);
     let mut out = Vec::with_capacity(POSEIDON2_AUX_COLS);
@@ -668,6 +676,8 @@ pub fn poseidon2_permute_aux_witness(input: [BabyBear; WIDTH]) -> Vec<BabyBear> 
 ///
 /// The auxiliary columns store the actual intermediate Poseidon2 states
 /// computed during hash evaluation, which the AIR constrains algebraically.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn generate_sound_merkle_trace(
     leaf_hash: BabyBear,
     siblings: &[[BabyBear; 3]],

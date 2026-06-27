@@ -112,6 +112,8 @@ pub static INTERNAL_DIAG: [BabyBear; WIDTH] = [
 pub static ROUND_CONSTANTS: std::sync::LazyLock<Vec<[BabyBear; WIDTH]>> =
     std::sync::LazyLock::new(compute_round_constants);
 
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 fn compute_round_constants() -> Vec<[BabyBear; WIDTH]> {
     let mut constants = Vec::with_capacity(TOTAL_ROUNDS);
     for round in 0..EXTERNAL_ROUNDS / 2 {
@@ -166,6 +168,8 @@ impl Poseidon2State {
     }
 
     /// Apply the external linear layer: MDSMat4 [2,3,1,1] applied blockwise + wider.
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn external_linear_layer(&mut self) {
         // Apply 4x4 MDS to each chunk of 4
         for cs in (0..WIDTH).step_by(4) {
@@ -199,6 +203,8 @@ impl Poseidon2State {
 
     /// Apply the internal linear layer: (1 + Diag(V)) * x.
     /// x_i' = sum(x) + (d_i - 1) * x_i
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn internal_linear_layer(&mut self) {
         let diag = &INTERNAL_DIAG;
         let sum: BabyBear = self
@@ -212,6 +218,8 @@ impl Poseidon2State {
     }
 
     /// Apply the full Poseidon2 permutation.
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn permute(&mut self) {
         let rc = &*ROUND_CONSTANTS;
 
@@ -619,6 +627,8 @@ pub fn hash_fact(predicate: BabyBear, terms: &[BabyBear]) -> BabyBear {
 /// This provides the intermediate values needed by the AIR to verify the hash.
 ///
 /// Returns all intermediate states (for witness generation).
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn poseidon2_trace(input_state: &[BabyBear; WIDTH]) -> Vec<[BabyBear; WIDTH]> {
     let mut trace = Vec::with_capacity(TOTAL_ROUNDS + 1);
     let mut state = Poseidon2State::from_elements(input_state);

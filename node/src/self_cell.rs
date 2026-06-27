@@ -89,6 +89,8 @@ fn pack_bool(b: bool) -> FieldElement {
 /// node already serves piecemeal (`/api/node/identity`, `/api/node/producer`,
 /// `/status`). This is the cell-shaped view's source of truth — every field is a
 /// live read, nothing is fabricated.
+// Reflexive node-as-cell view; some fields are informational and not yet read in the binary path.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct NodeSelfStatus {
     /// The operator's Ed25519 public key (the node's identity key).
@@ -195,12 +197,14 @@ pub struct BlocklaceFacts {
 /// The node projected AS A CELL — the reflexive image. Holds the node-self-cell id
 /// and a one-cell [`Ledger`] carrying it, so the node can be reflected by the SAME
 /// `deos_reflect::reflect_cell` deos-js's crawl uses.
+#[allow(dead_code)] // reflexive node-as-cell view; the read API is not yet wired in the binary path
 pub struct NodeSelfCell {
     id: CellId,
     ledger: Ledger,
     status: NodeSelfStatus,
 }
 
+#[allow(dead_code)] // reflexive node-as-cell read API; not yet wired in the binary path
 impl NodeSelfCell {
     /// Build the node-self-cell from the collected live status.
     ///

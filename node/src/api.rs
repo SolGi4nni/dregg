@@ -7822,10 +7822,12 @@ mod tests {
     }
 
     fn witnessed_with_marker(marker: u8) -> dregg_turn::WitnessedReceipt {
-        let mut receipt = dregg_turn::TurnReceipt::default();
-        receipt.turn_hash = [marker; 32];
-        receipt.effects_hash = [marker.wrapping_add(1); 32];
-        receipt.agent = CellId([marker.wrapping_add(2); 32]);
+        let receipt = dregg_turn::TurnReceipt {
+            turn_hash: [marker; 32],
+            effects_hash: [marker.wrapping_add(1); 32],
+            agent: CellId([marker.wrapping_add(2); 32]),
+            ..Default::default()
+        };
         dregg_turn::WitnessedReceipt::from_components(
             receipt,
             vec![marker, marker.wrapping_add(1)],
@@ -8900,6 +8902,8 @@ mod tests {
     /// coordinator with a "actual gate at execution time" comment that did not
     /// exist.
     #[test]
+    // Intentional compile-constant regression guard (both operands are consts by design).
+    #[allow(clippy::assertions_on_constants)]
     fn audit_f_p2_1_atomic_budget_is_bounded() {
         assert_eq!(
             MAX_ATOMIC_BUDGET, 1_000_000_000,
@@ -9465,6 +9469,8 @@ mod tests {
     /// coarse public liveness signal (`healthy` / `consensus_live` / `dag_height`)
     /// is still present.
     #[tokio::test]
+    // The env-lock guard must span the async request so the env scrub stays in effect throughout.
+    #[allow(clippy::await_holding_lock)]
     async fn f8_status_does_not_leak_private_counts_defended() {
         let _guard = F8_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Ensure the opt-in is OFF for this test regardless of ambient env.
@@ -9519,6 +9525,8 @@ mod tests {
     /// counters reappear — proving the default-off is a real, reversible gate
     /// (the test is non-vacuous: the same code path produces both outcomes).
     #[tokio::test]
+    // The env-lock guard must span the async request so the env opt-in stays in effect throughout.
+    #[allow(clippy::await_holding_lock)]
     async fn f8_opt_in_re_exposes_counts_control() {
         let _guard = F8_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {

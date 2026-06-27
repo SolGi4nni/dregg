@@ -123,48 +123,44 @@ pub mod pi {
 
 /// Build the openable-fields insertion CircuitDescriptor.
 pub fn openable_fields_insertion_circuit_descriptor() -> CircuitDescriptor {
-    let mut constraints = Vec::new();
-
-    // C1: the direction bit is binary.
-    constraints.push(ConstraintExpr::Binary { col: col::DIR });
-
-    // C2 (OLD placement): `cur_old` occupies the child slot `dir` selects, and
-    // the SHARED sibling occupies the other slot.
-    //   left_old  = (1 - dir)·cur_old + dir·sibling
-    //   right_old = (1 - dir)·sibling + dir·cur_old
-    // Encoded as two algebraic identities (left_old - … == 0, right_old - … == 0).
-    constraints.push(placement(col::LEFT_OLD, col::CUR_OLD, col::SIBLING));
-    constraints.push(placement(col::RIGHT_OLD, col::SIBLING, col::CUR_OLD));
-
-    // C3 (NEW placement): the NEW fold reuses the SAME `dir` and the SAME
-    // `sibling` column — this is what forces the two folds onto ONE path.
-    constraints.push(placement(col::LEFT_NEW, col::CUR_NEW, col::SIBLING));
-    constraints.push(placement(col::RIGHT_NEW, col::SIBLING, col::CUR_NEW));
-
-    // C4: parent_old = cap_node(left_old, right_old) — REAL in-circuit Poseidon2.
-    constraints.push(ConstraintExpr::Hash3Cap {
-        output_col: col::PARENT_OLD,
-        left_col: col::LEFT_OLD,
-        right_col: col::RIGHT_OLD,
-    });
-    // C5: parent_new = cap_node(left_new, right_new) — REAL in-circuit Poseidon2.
-    constraints.push(ConstraintExpr::Hash3Cap {
-        output_col: col::PARENT_NEW,
-        left_col: col::LEFT_NEW,
-        right_col: col::RIGHT_NEW,
-    });
-
-    // C6: chain continuity — the next level authenticates THIS level's parent,
-    // for BOTH folds (when_transition-gated on the p3 path, so the last row has
-    // no wrap-around obligation).
-    constraints.push(ConstraintExpr::Transition {
-        next_col: col::CUR_OLD,
-        local_col: col::PARENT_OLD,
-    });
-    constraints.push(ConstraintExpr::Transition {
-        next_col: col::CUR_NEW,
-        local_col: col::PARENT_NEW,
-    });
+    let constraints = vec![
+        // C1: the direction bit is binary.
+        ConstraintExpr::Binary { col: col::DIR },
+        // C2 (OLD placement): `cur_old` occupies the child slot `dir` selects, and
+        // the SHARED sibling occupies the other slot.
+        //   left_old  = (1 - dir)·cur_old + dir·sibling
+        //   right_old = (1 - dir)·sibling + dir·cur_old
+        // Encoded as two algebraic identities (left_old - … == 0, right_old - … == 0).
+        placement(col::LEFT_OLD, col::CUR_OLD, col::SIBLING),
+        placement(col::RIGHT_OLD, col::SIBLING, col::CUR_OLD),
+        // C3 (NEW placement): the NEW fold reuses the SAME `dir` and the SAME
+        // `sibling` column — this is what forces the two folds onto ONE path.
+        placement(col::LEFT_NEW, col::CUR_NEW, col::SIBLING),
+        placement(col::RIGHT_NEW, col::SIBLING, col::CUR_NEW),
+        // C4: parent_old = cap_node(left_old, right_old) — REAL in-circuit Poseidon2.
+        ConstraintExpr::Hash3Cap {
+            output_col: col::PARENT_OLD,
+            left_col: col::LEFT_OLD,
+            right_col: col::RIGHT_OLD,
+        },
+        // C5: parent_new = cap_node(left_new, right_new) — REAL in-circuit Poseidon2.
+        ConstraintExpr::Hash3Cap {
+            output_col: col::PARENT_NEW,
+            left_col: col::LEFT_NEW,
+            right_col: col::RIGHT_NEW,
+        },
+        // C6: chain continuity — the next level authenticates THIS level's parent,
+        // for BOTH folds (when_transition-gated on the p3 path, so the last row has
+        // no wrap-around obligation).
+        ConstraintExpr::Transition {
+            next_col: col::CUR_OLD,
+            local_col: col::PARENT_OLD,
+        },
+        ConstraintExpr::Transition {
+            next_col: col::CUR_NEW,
+            local_col: col::PARENT_NEW,
+        },
+    ];
 
     // Boundaries: the two leaves enter at the bottom; the two roots exit at the top.
     let boundaries = vec![

@@ -54,6 +54,9 @@ pub mod pi {
     pub const POLICY_ROOT: usize = 5;
 }
 
+/// One body Merkle proof: `(leaf, sibling path, position bits)`.
+type BodyMerkleProof = (BabyBear, Vec<[BabyBear; 3]>, Vec<u8>);
+
 /// Witness for a multi-step derivation.
 #[derive(Clone, Debug)]
 pub struct MultiStepWitness {
@@ -62,7 +65,7 @@ pub struct MultiStepWitness {
     pub steps: Vec<DerivationWitness>,
     pub allow_predicate: BabyBear,
     pub policy_root: BabyBear,
-    pub body_merkle_proofs: Option<Vec<(BabyBear, Vec<[BabyBear; 3]>, Vec<u8>)>>,
+    pub body_merkle_proofs: Option<Vec<BodyMerkleProof>>,
 }
 
 impl MultiStepWitness {

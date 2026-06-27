@@ -104,6 +104,8 @@ impl ExtElem {
     }
 
     /// Extension field inverse via Gaussian elimination.
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     pub fn inverse(self) -> Option<Self> {
         if self.is_zero() {
             return None;

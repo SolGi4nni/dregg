@@ -59,8 +59,11 @@ pub struct Affordance {
     pub required: AuthRequired,
     /// Pure: live model → the (slot, new-value) writes this affordance produces.
     /// `arg` is the JS-supplied argument (e.g. the increment amount).
-    pub apply: Box<dyn Fn(&CellModel, i64) -> Vec<(Slot, FieldElement)>>,
+    pub apply: ApplyFn,
 }
+
+/// The pure apply closure an affordance carries: live model + JS-supplied arg → field-writes.
+pub type ApplyFn = Box<dyn Fn(&CellModel, i64) -> Vec<(Slot, FieldElement)>>;
 
 /// A read-only view of the applet's MODEL (the cell's live state), the positions of
 /// the polynomial functor. Built from the engine ledger on demand.

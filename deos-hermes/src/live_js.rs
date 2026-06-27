@@ -288,8 +288,8 @@ where
 /// JS itself, and the whole story commits as ONE bounded, atomic, receipted gesture on
 /// the live ledger (or is refused in-band on over-reach, with nothing committed).
 ///
-/// It owns the agent's [`RunJsComposeTool`] (its `held` + scope — the cap/scope tooth)
-/// + its accountability [`HermesGateway`] + a SINK FACTORY (a fresh `Box<dyn WorldSink>`
+/// It owns the agent's [`RunJsComposeTool`] (its `held` + scope — the cap/scope tooth) +
+/// its accountability [`HermesGateway`] + a SINK FACTORY (a fresh `Box<dyn WorldSink>`
 /// over the SAME live World each call; it MUST implement
 /// [`WorldSink::mint_open_cell`](deos_js::WorldSink::mint_open_cell) for `mintCard`
 /// legs) + a process-global [`JsRuntime`].

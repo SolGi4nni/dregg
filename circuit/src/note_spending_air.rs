@@ -453,6 +453,8 @@ pub fn note_to_preimage_limbs(
 /// the nullifier and Merkle membership both chain off it), so an exact match to
 /// `hash_many` is not required for soundness; full-width binding is. See the
 /// residual note in this file's tests.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn commitment_chain(
     limbs: &[BabyBear; limb_col::PREIMAGE_LIMBS],
 ) -> (BabyBear, [BabyBear; limb_col::CHAIN_INTERMEDIATES]) {
@@ -576,6 +578,8 @@ impl NoteSpendingWitness {
     /// # Panics
     ///
     /// Panics if `merkle_siblings.len() != merkle_positions.len()`.
+    // signature kept as-is
+    #[allow(clippy::too_many_arguments)]
     pub fn from_real_proof(
         owner: BabyBear,
         value: BabyBear,
@@ -1157,6 +1161,8 @@ pub fn create_test_witness(
 ///
 /// Each limb is derived deterministically from the seed, giving a full 248-bit key
 /// while keeping tests reproducible.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
 pub fn test_spending_key(seed: u32) -> [BabyBear; SPENDING_KEY_LIMBS] {
     let mut limbs = [BabyBear::ZERO; SPENDING_KEY_LIMBS];
     for i in 0..SPENDING_KEY_LIMBS {

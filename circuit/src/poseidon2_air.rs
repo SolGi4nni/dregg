@@ -90,6 +90,8 @@ impl StarkAir for Poseidon2Air {
         false
     }
 
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     fn eval_constraints(
         &self,
         local: &[BabyBear],
@@ -118,6 +120,8 @@ impl StarkAir for Poseidon2Air {
         combined
     }
 
+    // crypto index loops kept verbatim
+    #[allow(clippy::needless_range_loop)]
     fn boundary_constraints(
         &self,
         public_inputs: &[BabyBear],
