@@ -122,9 +122,34 @@ which is the sandbox.
 
 | host fn | meaning | verified? |
 |---|---|---|
-| `t(turn, arg)` | **fire an affordance** — commit ONE cap-gated verified turn | yes — `is_attenuation` + executor + `TurnReceipt` |
-| `get(slot)` | witnessed read of a bound model slot off the live ledger | read, confers no authority |
-| `viewPatch(patch)` | emit a `ViewPatch` to the cell's own view-tree heap = a receipted edit | yes — a receipted heap write moving `heap_root` |
+| `t(turn, arg)` | **fire an affordance on the HOME cell** — commit ONE cap-gated verified turn | yes — `is_attenuation` + executor + `TurnReceipt` |
+| `tCell(cell, turn, arg)` | **fire an affordance on ANOTHER cell** the JS holds a cap to — the multi-cell coordination keystone | yes — same `is_attenuation` tooth, against the cap held for THAT cell |
+| `transfer(from, to, amount)` | **move value** between two cells the JS holds caps to | yes — `Effect::Transfer`, conservation enforced by the executor |
+| `get(slot)` / `get(cell, slot)` | witnessed read of a home / named-cell model slot off the live ledger | read, confers no authority |
+| `viewPatch(node)` | append a `{kind,props,children}` node to the home cell's view-tree, seal the blob into its committed heap, and bump the view version via a turn | yes — a receipted heap write moving `heap_root` + a `SetField` provenance turn |
+
+### The single-cell vs multi-cell substance
+
+`t(turn,arg)` against ONE cell is the [`CellApplet`] substance (slice 1). A starbridge-app
+is not one cell behaving but a program *coordinating* several cells, so the upgraded
+substance is [`CellWorld`] (`deos-js-runtime::world`): ONE embedded `DreggEngine` holding
+several cells, plus a **cap table** mapping each *string handle* the JS may use to
+`(cell id, held authority, affordance surface)`. `NativeRuntime::run_world` installs the
+full host surface (`t`/`tCell`/`transfer`/`get`/`viewPatch`) over it.
+
+**The confinement keystone (ocap).** The JS references cells ONLY by the handles the cap
+table installed — there are no ambient cell ids in the sandbox, exactly as there are no
+ambient host functions. A name absent from the table resolves to `NoCapability`: the cell
+it would have pointed at is never touched (you cannot even *name* what you do not hold). A
+name present whose held cap does not satisfy an affordance's `required` resolves to
+`Unauthorized` (the same `is_attenuation` tooth). A JS app can therefore touch only the
+cells it holds caps to, and only at the authority it holds — proven in
+`tests/native_js_app_coordinates_cells.rs` (the uncapped `vault` cell stays byte-untouched
+while a refused over-reach commits nothing).
+
+Each acting cell chains its OWN authority head (`previous_receipt_hash`), because the
+executor advances that head only for the submitting agent — a multi-cell app is several
+independent per-cell turn chains woven by one script, not a single chain.
 
 `t(turn, arg)` is the keystone and the subject of the first slice. It maps exactly
 onto the proven fire path (`deos-js::applet::Applet::fire` /
@@ -175,11 +200,26 @@ web shell binds the (SpiderMonkey today, boa-on-wasm tomorrow) `Context` to its
   fires a real verified turn through the executor and the model advances. The cap
   tooth is exercised too (an over-reach `t("reset", 0)` against a `Signature`-held
   surface commits nothing).
+- **Slice 2 (this pass) — DONE: userspace apps as pure JS-on-cells.** The host API is
+  upgraded toward full-app power over a multi-cell [`CellWorld`]: `get`/`getCell`
+  (witnessed read), `viewPatch` (receipted heap self-edit moving `heap_root`), `tCell`
+  (cap-gated turn on ANOTHER cell — the multi-cell-coordination keystone), and `transfer`
+  (conservation-respecting value movement). A pure-JS starbridge-app prototype
+  (`tests/native_js_app_coordinates_cells.rs`) runs in the native runtime with NO servo and
+  coordinates two cells — `tCell("store","put",42)` + `transfer("wallet","store",100)` +
+  `viewPatch(...)` + `get("store",0)` — committing THREE real verified turns, and an
+  over-reach to a cell it holds no cap to is refused in-band (the uncapped cell stays
+  byte-untouched).
 - **Next rung — cockpit wiring:** resolve a cell's `SCRIPT_COLL` handler on a
   surface event in `card_surface`/`card_pane` and run it in the native runtime bound
   to the live `World` (additive to the static `{turn,arg}` path).
+- **Next power-up — a literal-write `ApplyOp` + a published-interface bridge:** today an
+  affordance's effect is one of `AddToSlot`/`SubFromSlot`/`SetSlot{fixed}`; `put(reg,v)`
+  rides `AddToSlot` over a zeroed slot (post-state = `v`). A `SetSlotFromArg`/multi-write
+  `ApplyOp`, and a bridge that reads a cell's published `InterfaceDescriptor`
+  (`route_method`) so `tCell` names a *typed method* rather than a local affordance, close
+  the gap to expressing an arbitrary starbridge-app `CellProgram` in pure JS.
 - **Follow-up — `deos-js-core`:** lift the engine-free substance out of `deos-js` so
   both engines share one turn path and the cockpit crate never links mozjs.
-- **Follow-up — `get` / `viewPatch`:** the read + receipted-self-edit host fns.
 - **Follow-up — boa-on-wasm in the web shell:** retire the servo-only constraint by
   running the *same* `deos-js-runtime` compiled to `wasm32` in the web shell.

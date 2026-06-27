@@ -22,6 +22,8 @@
 
 pub mod applet;
 pub mod runtime;
+pub mod world;
 
 pub use applet::{Affordance, ApplyOp, CellApplet, FireError, Slot};
-pub use runtime::{NativeRuntime, RunOutcome};
+pub use runtime::{NativeRuntime, RunOutcome, WorldOutcome};
+pub use world::{CellWorld, Fired};

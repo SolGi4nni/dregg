@@ -33,3 +33,7 @@ dregg-sdk = { path = "../sdk" }     # DreggEngine: execute_turn -> real TurnRece
 dregg-cell = { path = "../cell" }   # Cell / AuthRequired / is_attenuation (the cap tooth).
 dregg-turn = { path = "../turn" }   # TurnBuilder / ActionBuilder / Effect / TurnReceipt.
 dregg-types = { path = "../types" } # CellId.
+
+# The view-tree node shape a `viewPatch` self-edit appends + serializes into the
+# cell's committed heap (the SAME {kind,props,children} JSON `deos-view` chunks).
+serde_json = "1"

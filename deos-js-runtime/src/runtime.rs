@@ -17,11 +17,16 @@ use std::cell::RefCell;
 use boa_engine::{js_string, Context, JsNativeError, JsValue, NativeFunction, Source};
 
 use crate::applet::{CellApplet, FireError};
+use crate::world::CellWorld;
 
 thread_local! {
     /// The applet the installed host functions drive, for the duration of one
     /// [`NativeRuntime::run`]. The native `t` borrows it, fires, and puts it back.
     static CURRENT_APPLET: RefCell<Option<CellApplet>> = const { RefCell::new(None) };
+    /// The multi-cell world the installed host functions drive, for the duration of one
+    /// [`NativeRuntime::run_world`]. The native `t`/`tCell`/`transfer`/`viewPatch`/`get`
+    /// borrow it, act, and put it back.
+    static CURRENT_WORLD: RefCell<Option<CellWorld>> = const { RefCell::new(None) };
     /// The last cap-tooth / executor refusal a host fn hit (surfaced to the caller even
     /// though the JS sees a thrown error).
     static LAST_FIRE_ERROR: RefCell<Option<FireError>> = const { RefCell::new(None) };
@@ -138,6 +143,201 @@ impl NativeRuntime {
                     last_fire_error,
                 })
             }
+            Err(e) => Err(format!("JS error: {e}")),
+        }
+    }
+}
+
+// ─── The multi-cell world host surface — a JS *app* coordinating several cells ──────
+
+/// Record a fire refusal for the host, then translate it into a thrown JS error (so the
+/// script's own `try/catch` sees it too). The over-reach is recorded AND surfaced.
+fn refuse(name: &str, e: FireError) -> JsNativeError {
+    LAST_FIRE_ERROR.with(|s| *s.borrow_mut() = Some(e.clone()));
+    JsNativeError::typ().with_message(format!("{name} refused: {e}"))
+}
+
+/// Borrow the installed world for one host-fn call.
+fn with_world<R>(f: impl FnOnce(&mut CellWorld) -> R) -> R {
+    CURRENT_WORLD.with(|c| {
+        let mut slot = c.borrow_mut();
+        let world = slot
+            .as_mut()
+            .expect("a CellWorld is installed for the duration of run_world()");
+        f(world)
+    })
+}
+
+/// `t(turn, arg)` — fire an affordance on the **home** cell (one cap-gated verified turn).
+fn world_t(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> boa_engine::JsResult<JsValue> {
+    let name = arg_string(args.first(), ctx, "t(turn, arg): missing affordance name")?;
+    let arg = arg_i64(args.get(1), ctx)?;
+    match with_world(|w| w.fire_home(&name, arg)) {
+        Ok(fired) => Ok(JsValue::from(fired.value)),
+        Err(e) => Err(refuse(&format!("t({name:?})"), e).into()),
+    }
+}
+
+/// `tCell(cell, turn, arg)` — **fire an affordance on ANOTHER cell** the JS holds a cap to
+/// (the multi-cell-coordination keystone). A cell the JS holds no cap to is unreachable.
+fn world_t_cell(
+    _this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> boa_engine::JsResult<JsValue> {
+    let cell = arg_string(
+        args.first(),
+        ctx,
+        "tCell(cell, turn, arg): missing cell handle",
+    )?;
+    let name = arg_string(
+        args.get(1),
+        ctx,
+        "tCell(cell, turn, arg): missing affordance",
+    )?;
+    let arg = arg_i64(args.get(2), ctx)?;
+    match with_world(|w| w.fire_on(&cell, &name, arg)) {
+        Ok(fired) => Ok(JsValue::from(fired.value)),
+        Err(e) => Err(refuse(&format!("tCell({cell:?}, {name:?})"), e).into()),
+    }
+}
+
+/// `transfer(from, to, amount)` — **move value** between two cells the JS holds caps to,
+/// conservation enforced by the executor. Returns `from`'s new balance.
+fn world_transfer(
+    _this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> boa_engine::JsResult<JsValue> {
+    let from = arg_string(
+        args.first(),
+        ctx,
+        "transfer(from, to, amount): missing from",
+    )?;
+    let to = arg_string(args.get(1), ctx, "transfer(from, to, amount): missing to")?;
+    let amount = arg_i64(args.get(2), ctx)?.max(0) as u64;
+    match with_world(|w| w.transfer(&from, &to, amount)) {
+        Ok(bal) => Ok(JsValue::from(bal)),
+        Err(e) => Err(refuse(&format!("transfer({from:?}->{to:?})"), e).into()),
+    }
+}
+
+/// `get(slot)` — witnessed read of a **home** slot; `get(cell, slot)` — witnessed read of a
+/// named cell's slot. Confers no authority.
+fn world_get(
+    _this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> boa_engine::JsResult<JsValue> {
+    // get(cell, slot) when the first arg is a string handle; get(slot) otherwise.
+    let read = match args.first() {
+        Some(v) if v.is_string() => {
+            let cell = v.to_string(ctx)?.to_std_string_escaped();
+            let slot = arg_i64(args.get(1), ctx)? as usize;
+            with_world(|w| w.get_slot(&cell, slot))
+        }
+        _ => {
+            let slot = arg_i64(args.first(), ctx)? as usize;
+            with_world(|w| w.get_home_slot(slot))
+        }
+    };
+    match read {
+        Ok(v) => Ok(JsValue::from(v as i64)),
+        Err(e) => Err(refuse("get", e).into()),
+    }
+}
+
+/// `viewPatch(node)` — a **receipted self-edit** of the home cell's committed view-tree.
+/// `node` is a JSON string of a `{kind,props,children}` node; a non-JSON string becomes a
+/// text node. Moves `heap_root` + leaves a receipt; returns the new view version.
+fn world_view_patch(
+    _this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> boa_engine::JsResult<JsValue> {
+    let raw = arg_string(args.first(), ctx, "viewPatch(node): missing node")?;
+    let node = serde_json::from_str::<serde_json::Value>(&raw).unwrap_or_else(
+        |_| serde_json::json!({ "kind": "text", "props": { "text": raw }, "children": [] }),
+    );
+    match with_world(|w| w.view_patch(node)) {
+        Ok(version) => Ok(JsValue::from(version as i64)),
+        Err(e) => Err(refuse("viewPatch", e).into()),
+    }
+}
+
+fn arg_string(
+    v: Option<&JsValue>,
+    ctx: &mut Context,
+    missing: &str,
+) -> boa_engine::JsResult<String> {
+    match v {
+        Some(v) => Ok(v.to_string(ctx)?.to_std_string_escaped()),
+        None => Err(JsNativeError::typ()
+            .with_message(missing.to_string())
+            .into()),
+    }
+}
+
+fn arg_i64(v: Option<&JsValue>, ctx: &mut Context) -> boa_engine::JsResult<i64> {
+    match v {
+        Some(v) if !v.is_undefined() => Ok(v.to_i32(ctx)? as i64),
+        _ => Ok(0),
+    }
+}
+
+/// What a [`NativeRuntime::run_world`] produced — the world handed back with its committed
+/// receipt tape + live cells, the script's coerced result, and any fire refusal.
+pub struct WorldOutcome {
+    /// The world handed back, carrying its committed receipt tape + live cell state.
+    pub world: CellWorld,
+    /// The script's completion value coerced to `i32`, if it produced a number.
+    pub result: Option<i32>,
+    /// The last fire refusal a host fn hit during the run (a cap tooth, a missing
+    /// capability, or the executor), if any — even though the JS observed a thrown error.
+    pub last_fire_error: Option<FireError>,
+}
+
+impl NativeRuntime {
+    /// **Run a native-JS *app*** against a multi-cell [`CellWorld`]. Installs the full
+    /// cap-bounded host surface — `t`/`tCell`/`transfer`/`get`/`viewPatch` — onto a fresh
+    /// global, evals `source`, then hands the world back with its committed receipt tape.
+    /// The script can do nothing but call these host functions + ECMAScript builtins; it
+    /// references cells only by the handles the cap table installed (no ambient cell ids),
+    /// and every effect is a verified turn bounded by the cap held for that cell.
+    pub fn run_world(&mut self, world: CellWorld, source: &str) -> Result<WorldOutcome, String> {
+        let installs: &[(&str, usize, NativeFunction)] = &[
+            ("t", 2, NativeFunction::from_fn_ptr(world_t)),
+            ("tCell", 3, NativeFunction::from_fn_ptr(world_t_cell)),
+            ("transfer", 3, NativeFunction::from_fn_ptr(world_transfer)),
+            ("get", 2, NativeFunction::from_fn_ptr(world_get)),
+            (
+                "viewPatch",
+                1,
+                NativeFunction::from_fn_ptr(world_view_patch),
+            ),
+        ];
+        for (name, arity, f) in installs {
+            self.context
+                .register_global_callable(js_string!(*name), *arity, f.clone())
+                .map_err(|e| format!("register {name}(): {e}"))?;
+        }
+
+        CURRENT_WORLD.with(|c| *c.borrow_mut() = Some(world));
+        LAST_FIRE_ERROR.with(|s| *s.borrow_mut() = None);
+
+        let eval = self.context.eval(Source::from_bytes(source));
+
+        let world = CURRENT_WORLD
+            .with(|c| c.borrow_mut().take())
+            .ok_or_else(|| "the world vanished during run".to_string())?;
+        let last_fire_error = LAST_FIRE_ERROR.with(|s| s.borrow_mut().take());
+
+        match eval {
+            Ok(value) => Ok(WorldOutcome {
+                world,
+                result: value.as_number().map(|n| n as i32),
+                last_fire_error,
+            }),
             Err(e) => Err(format!("JS error: {e}")),
         }
     }

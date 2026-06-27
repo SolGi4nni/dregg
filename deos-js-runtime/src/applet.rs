@@ -49,7 +49,7 @@ pub enum ApplyOp {
 impl ApplyOp {
     /// The (slot, new-value) write this op produces against the current slot value and
     /// the JS-supplied `arg`.
-    fn write(&self, current: u64, arg: i64) -> (Slot, FieldElement) {
+    pub fn write(&self, current: u64, arg: i64) -> (Slot, FieldElement) {
         match *self {
             ApplyOp::AddToSlot { slot } => {
                 let next = current.saturating_add(arg.max(0) as u64);
@@ -63,7 +63,8 @@ impl ApplyOp {
         }
     }
 
-    fn slot(&self) -> Slot {
+    /// The model slot this op writes.
+    pub fn slot(&self) -> Slot {
         match *self {
             ApplyOp::AddToSlot { slot }
             | ApplyOp::SubFromSlot { slot }
@@ -90,6 +91,12 @@ pub enum FireError {
     /// The held authority does not satisfy the affordance's `required` (the cap tooth
     /// refused — nothing committed, nothing reached the executor).
     Unauthorized(String),
+    /// The JS app named a cell it holds NO capability to. In the ocap stance a script
+    /// can only reference the cell handles the host installed; a name absent from the
+    /// cap table is unreachable — the over-reach commits NOTHING and the cell the name
+    /// would have pointed at is never touched. (The keystone confinement refusal for the
+    /// cross-cell host fns.)
+    NoCapability(String),
     /// The executor rejected the (authorized) turn.
     Executor(String),
 }
@@ -99,6 +106,7 @@ impl std::fmt::Display for FireError {
         match self {
             FireError::UnknownAffordance(n) => write!(f, "unknown affordance: {n}"),
             FireError::Unauthorized(n) => write!(f, "unauthorized affordance: {n}"),
+            FireError::NoCapability(n) => write!(f, "no capability to cell: {n}"),
             FireError::Executor(e) => write!(f, "executor rejected the turn: {e}"),
         }
     }
