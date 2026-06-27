@@ -403,6 +403,17 @@ pub mod inspect_act;
 // InterfaceDescriptor routing). The cockpit renders this model.
 #[cfg(feature = "embedded-executor")]
 pub mod service_explorer;
+// THE SERVICE DIRECTORY — the whole-image sibling of `service_explorer`: it
+// BROWSES every service-publishing cell in the live ledger (deriving each cell's
+// interface, the cells-as-service-objects directory of the image) and lets the
+// operator ANNOUNCE a service as a real verified turn (an `Effect::EmitEvent`
+// carrying the interface_id — the `dregg-directory` "emit standard effects"
+// stance), read back from the receipt history so the discover↔announce loop
+// closes over the real ledger. gpui-free, `cargo test`-able. See
+// `docs/deos/SERVICE-DISCOVERY-UI.md`. The cockpit panel that renders this model
+// is the named next build.
+#[cfg(feature = "embedded-executor")]
+pub mod service_directory;
 // THE LIVE WORKSPACE — the doIt / printIt / inspectIt evaluator: compose an
 // intent, evaluate it in a forked throwaway world (predict, never mutate), print
 // the predicted receipt, inspect the predicted post-state as live objects, then
