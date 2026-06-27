@@ -169,7 +169,7 @@ fn lean_rebalance(
         let missing = (0..n_silos as u8).filter(|s| !seen.contains(s)).count() as u64;
         cert_spent + missing * ceil
     };
-    let new_balance = if total > balance { 0 } else { balance - total };
+    let new_balance = balance.saturating_sub(total);
     LeanRebOutcome::Ok {
         total_spent: total,
         new_balance,

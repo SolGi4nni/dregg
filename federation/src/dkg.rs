@@ -1253,7 +1253,10 @@ mod tests {
         };
         let outs: Vec<DkgOutput> = parts
             .iter()
-            .map(|p| p.finalize(&complaints, &[bad_reveal.clone()]).unwrap())
+            .map(|p| {
+                p.finalize(&complaints, std::slice::from_ref(&bad_reveal))
+                    .unwrap()
+            })
             .collect();
         // Staying SILENT disqualifies identically (same QUAL, same key).
         let outs_silent: Vec<DkgOutput> = parts
@@ -1308,7 +1311,10 @@ mod tests {
         let reveal = parts[0].reveal(&complaint).unwrap();
         let outs: Vec<DkgOutput> = parts
             .iter()
-            .map(|p| p.finalize(&[complaint], &[reveal.clone()]).unwrap())
+            .map(|p| {
+                p.finalize(&[complaint], std::slice::from_ref(&reveal))
+                    .unwrap()
+            })
             .collect();
         // Full QUAL — identical to the run with no complaints at all.
         let honest: Vec<DkgOutput> = parts

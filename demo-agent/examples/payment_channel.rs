@@ -89,7 +89,7 @@ fn make_channel_receipt(
         effects_hash: [0u8; 32],
         computrons_used: 10,
         action_count: 1,
-        previous_receipt_hash: previous_receipt_hash,
+        previous_receipt_hash,
         agent,
         federation_id: [0u8; 32],
         routing_directives: Vec::new(),

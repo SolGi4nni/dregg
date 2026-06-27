@@ -2843,7 +2843,7 @@ mod tests {
         // federation-keyed registry, so it is correctly rejected as unknown.
         let transport_style_sender: NodeId = [0x99; 32];
         assert!(
-            peer_keys.get(&transport_style_sender).is_none(),
+            !peer_keys.contains_key(&transport_style_sender),
             "a non-federation (transport-cert) sender must be unknown"
         );
     }
@@ -3160,7 +3160,7 @@ mod tests {
             }
         }
         assert!(
-            stem_count >= 800 && stem_count <= 980,
+            (800..=980).contains(&stem_count),
             "stem continuation count {stem_count}/1000 outside expected range [800, 980]"
         );
     }

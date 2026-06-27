@@ -339,7 +339,7 @@ fn main() {
 
     // Generate signing keys for each silo
     let alice_signing_key = *blake3::hash(&alice_silo).as_bytes();
-    let bob_signing_key = *blake3::hash(&bob_silo).as_bytes();
+    let _bob_signing_key = *blake3::hash(&bob_silo).as_bytes();
     let w1_signing_key = *blake3::hash(&witness_1).as_bytes();
     let w2_signing_key = *blake3::hash(&witness_2).as_bytes();
     let bob_signing_key = *blake3::hash(&bob_silo).as_bytes();

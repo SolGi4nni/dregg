@@ -114,7 +114,6 @@ fn valid_credential_accepted() {
 
 #[test]
 fn wrong_issuer_key_rejected_by_membership_check() {
-    let real_key = issuer_key();
     let forged_key = other_key();
 
     // Mint a token using the FORGED key (not in the federation tree).

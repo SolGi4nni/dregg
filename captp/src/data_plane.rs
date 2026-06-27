@@ -29,7 +29,7 @@
 //!
 //! buildr's fleet voted unanimously to keep one asset: an append-only shared log
 //! + wake/spool/event-notify + receipt-identity. dregg has each piece already, in
-//! verified form:
+//!   verified form:
 //!
 //! | bb engine            | dregg substrate                                      |
 //! |----------------------|------------------------------------------------------|

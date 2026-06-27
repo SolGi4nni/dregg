@@ -502,7 +502,7 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
 
     let target_cell = cell(0x42);
     let target_fed = fed(0xCA);
-    let (alice_sk, alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
+    let (alice_sk, _alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
         make_delivery_setup(target_cell, target_fed);
 
     let cert = HandoffCertificate::create(

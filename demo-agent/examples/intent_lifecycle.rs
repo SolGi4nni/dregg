@@ -150,7 +150,7 @@ fn main() {
     // Local matching: evaluate if our token satisfies the intent
     let match_result = matcher::match_intent(
         &intent,
-        &[agent_token.clone()],
+        std::slice::from_ref(&agent_token),
         agent_commitment,
         VerificationMode::Private, // generate STARK proof (mock for speed)
         now,
@@ -514,7 +514,7 @@ fn main() {
     // Agent's cclerk tries to match against it
     let probe_result = matcher::match_intent(
         &probe_intent,
-        &[agent_token.clone()],
+        std::slice::from_ref(&agent_token),
         agent_commitment,
         VerificationMode::Trusted,
         now,

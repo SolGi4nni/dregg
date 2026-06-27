@@ -185,7 +185,7 @@ fn main() {
     };
 
     // The order book only sees commitments (not prices or quantities)
-    let order_book_commitments = vec![
+    let order_book_commitments = [
         &alice_bid.commitment,
         &bob_bid.commitment,
         &carol_bid.commitment,

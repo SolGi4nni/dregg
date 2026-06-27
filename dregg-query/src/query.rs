@@ -54,6 +54,15 @@ impl Atom {
     }
 }
 
+/// An anti-join index for one negated atom: the atom itself, the join positions
+/// of its bound variables, and the set of base-fact key tuples to probe against
+/// (the `()` value makes the map a hash set keyed by the projected tuple).
+type NegIndex<'a> = (
+    &'a Atom,
+    Vec<usize>,
+    std::collections::HashMap<Vec<Value>, ()>,
+);
+
 /// Comparison operators for filters. Ordered comparisons are defined on
 /// `Nat`-`Nat` pairs only; a type-mismatched ordered comparison is FALSE
 /// (fail closed). `Eq`/`Ne` compare any two values.
@@ -402,7 +411,7 @@ pub fn eval(base: &FactBase, q: &Query) -> Result<Vec<Bindings>, QueryError> {
     // and it can be checked against an anti-join index instead of re-scanning
     // the base per surviving row.
     if !q.negated.is_empty() {
-        let neg_indexes: Vec<(&Atom, Vec<usize>, std::collections::HashMap<Vec<Value>, ()>)> = q
+        let neg_indexes: Vec<NegIndex> = q
             .negated
             .iter()
             .map(|a| {

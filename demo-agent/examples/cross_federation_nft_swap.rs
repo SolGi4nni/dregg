@@ -522,7 +522,7 @@ fn main() {
     let trusted_roots = vec![(fed_beta_root, 100u64)]; // root attested at height 100
     let mut stark_nullifiers = HashSet::new();
 
-    let stark_result = dregg_turn::resolve_condition(
+    let _stark_result = dregg_turn::resolve_condition(
         &remote_condition,
         &stark_proof,
         110, // current height

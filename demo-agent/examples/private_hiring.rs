@@ -36,15 +36,14 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use dregg_circuit::compound_predicate_air::{
-    BooleanFormula, CompoundPredicateProof, prove_compound_predicate, verify_compound_predicate,
+    BooleanFormula, prove_compound_predicate, verify_compound_predicate,
 };
 use dregg_circuit::{
-    BabyBear, PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment, poseidon2,
-    prove_predicate, verify_predicate,
+    BabyBear, PredicateType, PredicateWitness, compute_fact_commitment, poseidon2, prove_predicate,
+    verify_predicate,
 };
 use dregg_intent::fulfillment::{
-    self, FulfillOptions, Fulfillment, FulfillmentWithPredicates,
-    verify_fulfillment_with_predicates,
+    self, FulfillOptions, FulfillmentWithPredicates, verify_fulfillment_with_predicates,
 };
 use dregg_intent::matcher::{HeldCapability, Sensitivity};
 use dregg_intent::{
@@ -424,7 +423,7 @@ fn main() {
     // Demonstrate that all 4 requirements can also be proven as a single compound proof
     let compound_start = Instant::now();
 
-    let compound_predicates = vec![
+    let compound_predicates = [
         (
             BabyBear::new(candidate_reputation),
             PredicateType::Gte,

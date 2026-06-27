@@ -122,7 +122,7 @@ mod tests {
         // Malformed committee with a duplicated member must not silently
         // collapse to a singleton id — we hash what we're given.
         let (_, a) = generate_keypair();
-        let single = derive_federation_id(&[a.clone()]);
+        let single = derive_federation_id(std::slice::from_ref(&a));
         let dup = derive_federation_id(&[a.clone(), a.clone()]);
         assert_ne!(single, dup);
     }

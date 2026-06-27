@@ -69,9 +69,9 @@ fn demo_url_prefix_routing() {
 /// The app's destination type: which handler pool to dispatch to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PoolKind {
-    AuthPool,
-    SwapPool,
-    StakingPool,
+    Auth,
+    Swap,
+    Staking,
 }
 
 impl PoolKind {
@@ -79,17 +79,17 @@ impl PoolKind {
 
     fn to_payload(&self) -> Vec<u8> {
         match self {
-            PoolKind::AuthPool => vec![0],
-            PoolKind::SwapPool => vec![1],
-            PoolKind::StakingPool => vec![2],
+            PoolKind::Auth => vec![0],
+            PoolKind::Swap => vec![1],
+            PoolKind::Staking => vec![2],
         }
     }
 
     fn from_payload(b: &[u8]) -> Option<Self> {
         match b {
-            [0] => Some(PoolKind::AuthPool),
-            [1] => Some(PoolKind::SwapPool),
-            [2] => Some(PoolKind::StakingPool),
+            [0] => Some(PoolKind::Auth),
+            [1] => Some(PoolKind::Swap),
+            [2] => Some(PoolKind::Staking),
             _ => None,
         }
     }
@@ -101,15 +101,15 @@ fn demo_userspace_destinations() {
     let table = RouteTableBuilder::new()
         .route(
             "/intents/auth/*",
-            RouteTarget::userspace(PoolKind::KIND, PoolKind::AuthPool.to_payload()),
+            RouteTarget::userspace(PoolKind::KIND, PoolKind::Auth.to_payload()),
         )
         .route(
             "/intents/swap/*",
-            RouteTarget::userspace(PoolKind::KIND, PoolKind::SwapPool.to_payload()),
+            RouteTarget::userspace(PoolKind::KIND, PoolKind::Swap.to_payload()),
         )
         .route(
             "/intents/stake/*",
-            RouteTarget::userspace(PoolKind::KIND, PoolKind::StakingPool.to_payload()),
+            RouteTarget::userspace(PoolKind::KIND, PoolKind::Staking.to_payload()),
         )
         .compile();
 

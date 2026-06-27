@@ -5,21 +5,8 @@ use hints::*;
 use ark_poly::DenseUVPolynomial;
 use ark_std::*;
 
-use serde::{Deserialize, Serialize};
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-
-#[serde_with::serde_as]
-#[derive(Serialize, Deserialize)]
-struct Committee {
-    pub pks: Vec<PublicKey>,
-    #[serde_as(as = "Vec<ark_serialize::CompressedChecked<F>>")]
-    pub weights: Vec<F>,
-    pub hints: Vec<Hint>,
-    pub sks: Vec<SecretKey>,
-    pub setup: UniverseSetup,
-}
 
 //const BIG_COMMITTEE: &str = include_str!("big_committee.json");
 

@@ -27,7 +27,7 @@ use std::collections::HashMap;
 
 use dregg_turn::action::{symbol, Action, Authorization, DelegationMode, Effect};
 use dregg_turn::forest::CallForest;
-use dregg_turn::turn::{Turn, TurnResult};
+use dregg_turn::turn::Turn;
 use dregg_turn::{ComputronCosts, TurnExecutor};
 use proptest::prelude::*;
 

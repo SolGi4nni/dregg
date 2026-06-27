@@ -71,7 +71,7 @@ fn http_get(port: u16, path: &str) -> Option<String> {
     let mut buf = String::new();
     stream.read_to_string(&mut buf).ok()?;
     // Split headers from body at the first blank line.
-    let body = buf.splitn(2, "\r\n\r\n").nth(1)?.to_string();
+    let body = buf.split_once("\r\n\r\n")?.1.to_string();
     Some(body)
 }
 

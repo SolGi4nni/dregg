@@ -40,8 +40,8 @@ use dregg_turn::builder::ActionBuilder;
 use dregg_turn::verify::verify_receipt_chain;
 use dregg_turn::{
     Action, Authorization, BudgetGate, BudgetSlice, CallForest, CommitmentMode, ComputronCosts,
-    DelegationMode, Effect, EventualRef, Pipeline, PipelineError, TurnBuilder, TurnExecutor,
-    TurnReceipt, TurnResult, execute_pipeline,
+    DelegationMode, Effect, EventualRef, Pipeline, TurnBuilder, TurnExecutor, TurnReceipt,
+    TurnResult, execute_pipeline,
 };
 
 // =========================================================================
@@ -896,7 +896,7 @@ fn main() {
             } => {
                 println!(
                     "    Receipt {i}: turn_hash={} computrons={computrons_used}",
-                    &hex_prefix(&receipt.turn_hash)
+                    hex_prefix(&receipt.turn_hash)
                 );
                 receipts.push(receipt);
             }

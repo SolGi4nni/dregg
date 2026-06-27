@@ -557,7 +557,8 @@ fn probe_wide(
             rw::apply_effect_to_cell(&mut after, &cell_id, &kernel, block_height);
             // The deployed Effect→VmEffect projection (byte-identical to the executor bridge): this is
             // what makes the producer's bound limb EQUAL the verifier's anchored limb.
-            let vm = AgentCipherclerk::convert_effects_to_vm(&cell_id, &[kernel.clone()]);
+            let vm =
+                AgentCipherclerk::convert_effects_to_vm(&cell_id, std::slice::from_ref(&kernel));
             // Refusal also needs the fields-tree write witness.
             let refusal_ctx = if matches!(kernel, dregg_turn::Effect::Refusal { .. }) {
                 let audit_bytes = after

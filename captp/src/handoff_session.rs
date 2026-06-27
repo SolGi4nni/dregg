@@ -613,8 +613,7 @@ mod tests {
                 .unwrap();
             // `accept_handoff` already tried to reply on the inbound-only conn
             // (which fails closed); re-send the verdict on a real dial-back leg.
-            let verdict = if resolution.is_some() {
-                let r = resolution.as_ref().unwrap();
+            let verdict = if let Some(r) = &resolution {
                 HandoffReply::Accepted {
                     routing_token: r.acceptance.routing_token,
                     cell_id: r.acceptance.cell_id.0,

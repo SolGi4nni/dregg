@@ -23,7 +23,7 @@
 use std::time::Instant;
 
 use dregg_sdk::{AgentCipherclerk, AuthorizationPresentation, FactIndex, VerificationMode};
-use dregg_token::{Attenuation, AuthRequest, BudgetSpec};
+use dregg_token::{Attenuation, AuthRequest};
 
 /// Format a JSON-RPC request the way it would appear on the wire.
 fn format_jsonrpc_request(id: u64, method: &str, params: &serde_json::Value) -> String {

@@ -187,15 +187,19 @@ fn lean_apply_delta_matches_rust_member_set_and_count() {
         .collect();
 
     // Real propose.
-    let mut transition =
-        propose_epoch_transition(&config, &[v4.clone()], &[v3.public_key.clone()]).unwrap();
+    let mut transition = propose_epoch_transition(
+        &config,
+        std::slice::from_ref(&v4),
+        std::slice::from_ref(&v3.public_key),
+    )
+    .unwrap();
     assert_eq!(transition.new_threshold, 3);
 
     // Lean applyDelta on the SAME delta.
     let lean_new = lean_apply_delta(
         &old_keys,
-        &[v4.public_key.clone()],
-        &[v3.public_key.clone()],
+        std::slice::from_ref(&v4.public_key),
+        std::slice::from_ref(&v3.public_key),
     );
 
     // Lean `applyDelta_count`: |old| - |removed| + |added|.

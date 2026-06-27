@@ -153,7 +153,8 @@ fn record_pin_fixture(
     let kernel = build_kernel(cell_id);
     let mut after = before.clone();
     rw::apply_effect_to_cell(&mut after, &cell_id, &kernel, block_height);
-    let vm_effects = AgentCipherclerk::convert_effects_to_vm(&cell_id, &[kernel.clone()]);
+    let vm_effects =
+        AgentCipherclerk::convert_effects_to_vm(&cell_id, std::slice::from_ref(&kernel));
 
     let refusal_fields = if matches!(kernel, dregg_turn::Effect::Refusal { .. }) {
         let audit_bytes = after

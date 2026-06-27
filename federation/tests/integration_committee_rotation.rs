@@ -50,7 +50,7 @@ fn federation_id_is_keyed_hash_of_committee_and_epoch() {
     let pks: Vec<PublicKey> = kps.iter().map(|(_, pk)| pk.clone()).collect();
 
     let fed = Federation::verifier_only(pks.clone(), 0, 2);
-    let expected = derive_federation_id_with_epoch(&fed.members().to_vec(), 0);
+    let expected = derive_federation_id_with_epoch(fed.members(), 0);
     assert_eq!(fed.id().0, expected, "id must be BLAKE3(members || epoch)");
 }
 

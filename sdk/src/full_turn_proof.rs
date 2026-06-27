@@ -6483,7 +6483,7 @@ mod tests {
         let before = RotatedBlockWitness::new(before_w.pre_limbs.clone(), before_w.iroot).unwrap();
         let after = RotatedBlockWitness::new(after_w.pre_limbs.clone(), after_w.iroot).unwrap();
         let caveat = empty_caveat_manifest();
-        let (mut trace, dpis) =
+        let (trace, _dpis) =
             generate_rotated_effect_vm_trace(&initial, &effects, &before, &after, &caveat).unwrap();
         // The base trace built by `widen_to_cap_open` ALONE leaves the rotated cap-root limbs
         // (`BEFORE_BASE + B_CAP_ROOT` / `AFTER_BASE + B_CAP_ROOT`, descriptor vars 213/264) EQUAL —
@@ -9651,7 +9651,7 @@ mod tests {
     #[test]
     fn freshness_binding_b_rejects_wrong_item() {
         use dregg_circuit::dsl::revocation::DslRevocationTree;
-        use dregg_circuit::effect_vm::pi as vmpi;
+
         use dregg_circuit::poseidon2::hash_many;
 
         let initial = CellState::new(1000, 0);

@@ -391,7 +391,7 @@ impl AuctionOutcome {
     ) -> AuctionOutcome {
         debug_assert!(!bids.is_empty());
         // Stable canonical order first (by id) so the recompute is reproducible.
-        bids.sort_by(|a, b| a.1.cmp(&b.1));
+        bids.sort_by_key(|a| a.1);
 
         let tie_key = |id: &[u8; 32]| -> [u8; 32] {
             let mut k = [0u8; 32];

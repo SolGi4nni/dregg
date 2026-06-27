@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(config.threshold, 3); // quorum_threshold(3) = ⌊6/3⌋+1 = 3 (strict supermajority)
 
         // Propose adding v3.
-        let transition = propose_epoch_transition(&config, &[v3.clone()], &[]).unwrap();
+        let transition = propose_epoch_transition(&config, std::slice::from_ref(&v3), &[]).unwrap();
 
         assert_eq!(transition.from_epoch, 0);
         assert_eq!(transition.to_epoch, 1);
@@ -681,7 +681,8 @@ mod tests {
         assert_eq!(config.threshold, 3); // quorum_threshold(4) = 4 - 1 = 3
 
         // Remove v3.
-        let transition = propose_epoch_transition(&config, &[], &[v3.public_key.clone()]).unwrap();
+        let transition =
+            propose_epoch_transition(&config, &[], std::slice::from_ref(&v3.public_key)).unwrap();
 
         assert_eq!(transition.new_threshold, 3); // quorum_threshold(3) = ⌊6/3⌋+1 = 3
 
@@ -722,7 +723,8 @@ mod tests {
 
         let config = EpochConfig::genesis(vec![v0.clone(), v1.clone(), v2.clone()], 100);
 
-        let mut transition = propose_epoch_transition(&config, &[v3.clone()], &[]).unwrap();
+        let mut transition =
+            propose_epoch_transition(&config, std::slice::from_ref(&v3), &[]).unwrap();
 
         // Empty attestation should fail verification.
         assert!(!verify_epoch_transition(&transition, &config));
@@ -834,11 +836,12 @@ mod tests {
         let config = EpochConfig::genesis(vec![v0.clone(), v1.clone()], 100);
 
         // Removing a validator not in the set.
-        let result = propose_epoch_transition(&config, &[], &[v_new.public_key.clone()]);
+        let result =
+            propose_epoch_transition(&config, &[], std::slice::from_ref(&v_new.public_key));
         assert!(matches!(result, Err(EpochError::ValidatorNotFound)));
 
         // Adding a validator already in the set.
-        let result = propose_epoch_transition(&config, &[v0.clone()], &[]);
+        let result = propose_epoch_transition(&config, std::slice::from_ref(&v0), &[]);
         assert!(matches!(result, Err(EpochError::ValidatorAlreadyExists)));
 
         // Removing all validators.

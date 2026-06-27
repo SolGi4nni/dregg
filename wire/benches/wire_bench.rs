@@ -157,8 +157,9 @@ fn bench_stark_over_wire(c: &mut Criterion) {
             let decoded = codec::decode(&frame[4..]).unwrap();
 
             // Extract proof and verify STARK
-            if let WireMessage::PresentToken { proof: _, .. } = &decoded {
-                black_box(stark::verify(&circuit, &proof, &public_inputs).unwrap());
+            if let WireMessage::PresentToken { .. } = &decoded {
+                stark::verify(&circuit, &proof, &public_inputs).unwrap();
+                black_box(());
             }
         });
     });

@@ -617,7 +617,7 @@ fn main() {
     // ─── 11. Macaroon token (non-proof context) ─────────────────────────────
 
     {
-        use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+        use dregg_token::{AuthRequest, AuthToken, MacaroonToken};
 
         let key = {
             let mut k = [0u8; 32];

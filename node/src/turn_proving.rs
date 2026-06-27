@@ -1712,8 +1712,8 @@ mod tests {
     /// maximal homogeneous runs `[Transfer] | [SetField]`, threading the interior boundary state),
     /// and the chained verifier checks endpoints + adjacency. Asserts: the composed proof carries
     /// >= 2 `"effect-vm-rotated"` legs and ZERO `"effect-vm"` (v1) legs, and the verify->accept gate
-    /// passes against the real-cell commitments. This is the live-path evidence the heterogeneous
-    /// shape no longer takes the v1 fallback (unblocking C7).
+    /// > passes against the real-cell commitments. This is the live-path evidence the heterogeneous
+    /// > shape no longer takes the v1 fallback (unblocking C7).
     #[test]
     fn flow_b_heterogeneous_turn_proves_rotated_chain() {
         let bob = CellId::from_bytes([0xB2; 32]);

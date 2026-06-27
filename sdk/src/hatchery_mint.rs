@@ -352,7 +352,7 @@ fn program_contains_constraints(program: &CellProgram, needed: &[StateConstraint
         CellProgram::Cases(cases) => cases.iter().flat_map(|c| c.constraints.iter()).collect(),
         CellProgram::None | CellProgram::Circuit { .. } => Vec::new(),
     };
-    needed.iter().all(|n| present.iter().any(|p| *p == n))
+    needed.iter().all(|n| present.contains(&n))
 }
 
 /// Build a [`CellState`] at the given nonce with one slot set — a test/helper

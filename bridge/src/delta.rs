@@ -316,13 +316,6 @@ mod tests {
     use super::*;
     use dregg_commit::verify_fold_chain;
 
-    fn test_key() -> [u8; 32] {
-        let mut key = [0u8; 32];
-        key[0] = 0x42;
-        key[31] = 0xFF;
-        key
-    }
-
     #[test]
     fn test_initial_attenuation_delta() {
         let mut symbols = SymbolTable::new();
@@ -343,7 +336,7 @@ mod tests {
         assert!(delta.apply_and_verify());
 
         // New state should have the check fact.
-        assert!(new_state.len() >= 1);
+        assert!(!new_state.is_empty());
     }
 
     #[test]

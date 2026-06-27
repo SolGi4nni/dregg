@@ -61,7 +61,7 @@
 use serde::{Deserialize, Serialize};
 
 use dregg_cell::Ledger;
-use dregg_cell::cell::{Cell, CellConfig, CellMode};
+use dregg_cell::cell::{Cell, CellConfig};
 use dregg_cell::factory::{FactoryCreationParams, FactoryDescriptor, FactoryError};
 use dregg_cell::id::CellId;
 use dregg_cell::program::CellProgram;
@@ -270,10 +270,7 @@ fn spec_cell_id(spec: &CellSpec) -> CellId {
 /// factory's program-for-life — and the caps the params request (already
 /// validated against the factory's templates by [`FactoryDescriptor::validate_creation`]).
 fn build_cell(spec: &CellSpec, factory: &FactoryDescriptor) -> Cell {
-    let mode = match factory.default_mode {
-        CellMode::Sovereign => CellMode::Sovereign,
-        CellMode::Hosted => CellMode::Hosted,
-    };
+    let mode = factory.default_mode.clone();
     // The perpetual program: the factory's slot caveats, baked on for life.
     let program = if factory.state_constraints.is_empty() {
         CellProgram::None
@@ -629,6 +626,7 @@ pub fn verify_image(artifact: &ImageArtifact) -> Result<ImageFacts, VerifyError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dregg_cell::cell::CellMode;
     use dregg_cell::factory::{CapTarget, CapTemplate, FieldConstraint};
     use dregg_cell::permissions::AuthRequired;
     use dregg_cell::program::StateConstraint;

@@ -1279,7 +1279,7 @@ mod tests {
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x11; 32]), 9999, None);
 
-        let index = IntentIndex::build_from_intents(&[intent.clone()]);
+        let index = IntentIndex::build_from_intents(std::slice::from_ref(&intent));
 
         // Should have two tags: "action:read" and "service:docs".
         assert_eq!(index.num_rows(), 2);

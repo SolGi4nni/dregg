@@ -453,7 +453,7 @@ fn main() {
         mkt.capabilities.grant(client_id, AuthRequired::None);
     }
 
-    let pre_settlement_root = ledger.root();
+    let _pre_settlement_root = ledger.root();
 
     let mut settle_builder = TurnBuilder::new(marketplace_id, 0);
     settle_builder.set_fee(0);
@@ -619,7 +619,7 @@ fn main() {
         + u64::try_from(ledger.get(&winner_id).unwrap().state.balance()).unwrap()
         + u64::try_from(ledger.get(&escrow_id).unwrap().state.balance()).unwrap();
     // The other providers still have their original balances
-    let others: u64 = u64::try_from(ledger.get(&provider_a_id).unwrap().state.balance()).unwrap()
+    let _others: u64 = u64::try_from(ledger.get(&provider_a_id).unwrap().state.balance()).unwrap()
         + u64::try_from(ledger.get(&provider_c_id).unwrap().state.balance()).unwrap();
     println!(
         "    Conservation: client + winner + escrow = {} (expected {})",

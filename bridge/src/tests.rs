@@ -5,7 +5,6 @@
 //! presentation proof.
 
 use dregg_circuit::fold_air::FoldAir;
-use dregg_circuit::merkle_air::MerkleAir;
 use dregg_circuit::{BabyBear, ConstraintProver, PresentationVerification};
 use dregg_commit::{Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain};
 use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
@@ -311,7 +310,7 @@ fn test_fold_chain_verification() {
 
     // The states should have increasing content.
     assert_eq!(state0.len(), 1); // just unrestricted
-    assert!(state1.len() >= 1); // check fact(s)
+    assert!(!state1.is_empty()); // check fact(s)
     assert!(state2.len() >= state1.len()); // state2 has more checks
 }
 

@@ -1115,7 +1115,7 @@ mod tests {
         //   C sends CC to B (B wants CC)
         //   B sends BB to A (A wants BB)
 
-        let ring_nodes = vec![
+        let ring_nodes = [
             IntentNode {
                 intent_id: [1; 32],
                 exchange: ExchangeSpec {

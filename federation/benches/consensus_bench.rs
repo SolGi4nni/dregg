@@ -74,7 +74,8 @@ fn bench_bls_verify_aggregate(c: &mut Criterion) {
             &(committee.clone(), qc.clone(), msg.as_slice()),
             |b, (committee, qc, msg)| {
                 b.iter(|| {
-                    black_box(committee.verify(qc, msg).unwrap());
+                    let _: () = committee.verify(qc, msg).unwrap();
+                    black_box(());
                 });
             },
         );
@@ -103,7 +104,8 @@ fn bench_full_consensus_round(c: &mut Criterion) {
             let qc = committee.aggregate(&shares, msg).unwrap();
 
             // 3. Verify the QC
-            black_box(committee.verify(&qc, msg).unwrap());
+            let _: () = committee.verify(&qc, msg).unwrap();
+            black_box(());
         });
     });
 }

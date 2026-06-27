@@ -163,7 +163,7 @@ impl MirrorTree {
     /// Entries are sorted by `cell_id` (order-canonical, like dregg's sorted
     /// roots) and padded with [`Self::SENTINEL`] to the next power of two.
     pub fn build(mut entries: Vec<([u8; 32], [u8; 32])>) -> Self {
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries.sort_by_key(|a| a.0);
         let cell_ids: Vec<[u8; 32]> = entries.iter().map(|(c, _)| *c).collect();
         let states: Vec<[u8; 32]> = entries.iter().map(|(_, s)| *s).collect();
         let mut leaves: Vec<Field> = entries.iter().map(|(c, s)| mirror_leaf(c, s)).collect();

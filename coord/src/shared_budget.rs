@@ -1433,7 +1433,7 @@ mod tests {
     fn test_would_overspend() {
         let agents = test_agents(3);
         let agent_a = agents[0];
-        let agent_b = agents[1];
+        let _agent_b = agents[1];
 
         let mut budget = SharedResourceBudget::new(pool_resource(), 3000, agents, 1).unwrap();
         // ceiling = 2000
