@@ -267,13 +267,17 @@ def mkWHostCtx (now blockHeight : UInt64) (frozen : List Nat) (storedHead budget
 `wstateOfState`. The post-state is read back at the input's cell/cap/bal orderings (positionally
 deterministic, matching the JSON path), and packaged into `WStatusResult` for the C reader. -/
 
-/-- The boundary RESULT: the post-state, the receipt-log length, and the three-way status code
-(0=rejected, 1=prologue-only, 2=body-committed). Mirrors `encodeWStatusOut`'s three outputs without
-the string. -/
+/-- The boundary RESULT: the post-state, the receipt-log length, the three-way status code
+(0=rejected, 1=prologue-only, 2=body-committed), and the theorem-backed admission `reason`
+(`AdmissionReason.reasonCode` of the FIRST failing prologue gate; `0` when admitted). Mirrors
+`encodeWStatusReasonOut`'s outputs without the string — the `reason` is what kept the no-copy
+direct path from being byte-identical to the JSON oracle (the JSON wire carries it; the direct ABI
+dropped it, so a rejection's legible "why" diverged). -/
 structure WStatusResult where
   state  : WState
   loglen : Nat
   status : Nat
+  reason : Nat
 
 /-- Run the gated complete-turn executor on ALREADY-CONSTRUCTED Lean values. This is
 `execFullForestAuthStep` with the JSON parse/encode shells removed — the admission/lift/run/read core
@@ -288,14 +292,18 @@ def execDirect (host : WHostCtx) (state : WState) (turn : WTurn) : WStatusResult
   let ctx := admCtxOfHost host
   let hdr := turnHdrOf turn.agent (eraseAuth turn.root) turn.nonce turn.fee turn.validUntil turn.prevHash
   let gforest : DForest := liftForestG turn.root
+  -- The theorem-backed refusal reason: the FIRST failing admission gate (or `admitted`),
+  -- computed from the SAME prologue-admission inputs `(ctx, hdr, s0)` the JSON path uses
+  -- (`execFullForestAuthStep`), so the no-copy direct result carries the legible "why" byte-for-byte.
+  let reason := AdmissionReason.reasonCode (AdmissionReason.admissionReason ctx hdr s0)
   let (st, res) := runGatedForestTurnStatus ctx hdr s0 gforest
   match res with
   | some s' =>
       { state := wstateOfState cellIds capLabels balKeys s'.kernel, loglen := s'.log.length,
-        status := turnStatusCode st }
+        status := turnStatusCode st, reason := reason }
   | none =>
       { state := wstateOfState cellIds capLabels balKeys s0.kernel, loglen := 0,
-        status := turnStatusCode st }
+        status := turnStatusCode st, reason := reason }
 
 /-! ## MEASUREMENT instrumentation (additive, env-gated; zero exec-path change).
 
@@ -368,6 +376,7 @@ def execDirectProfiledIO (host : WHostCtx) (state : WState) (turn : WTurn) : IO 
   let bodyRes := Dregg2.Exec.FullForestAuth.execFullForestG sP gforest
   let _ := bodyRes.isSome  -- force the body
   let c3 ← IO.monoNanosNow
+  let reason := AdmissionReason.reasonCode (AdmissionReason.admissionReason ctx hdr s0)
   let (st, res) := runGatedForestTurnStatus ctx hdr s0 gforest
   let _ := turnStatusCode st  -- force the status
   let t3 ← IO.monoNanosNow
@@ -376,10 +385,10 @@ def execDirectProfiledIO (host : WHostCtx) (state : WState) (turn : WTurn) : IO 
     match res with
     | some s' =>
         { state := wstateOfState cellIds capLabels balKeys s'.kernel, loglen := s'.log.length,
-          status := turnStatusCode st }
+          status := turnStatusCode st, reason := reason }
     | none =>
         { state := wstateOfState cellIds capLabels balKeys s0.kernel, loglen := 0,
-          status := turnStatusCode st }
+          status := turnStatusCode st, reason := reason }
   let _ := wstateFingerprint result.state  -- force the projected WState spine
   let t4 ← IO.monoNanosNow
   if on then
@@ -409,6 +418,10 @@ contract), so the C side iterates each list by length + index. -/
 @[export dregg_d_res_status] def resStatus (r : WStatusResult) : UInt64 := UInt64.ofNat r.status
 @[export dregg_d_res_loglen] def resLoglen (r : WStatusResult) : UInt64 := UInt64.ofNat r.loglen
 @[export dregg_d_res_state]  def resState  (r : WStatusResult) : WState := r.state
+/-- The admission-reason code (`AdmissionReason.reasonCode`) — the legible "why" of a refusal that
+the JSON wire already carries. With this reader the no-copy direct path returns the SAME reason the
+JSON oracle does (`reason:0` iff admitted, by `reasonCode_eq_zero_iff_admits`). -/
+@[export dregg_d_res_reason] def resReason (r : WStatusResult) : UInt64 := UInt64.ofNat r.reason
 
 /-- `Int → (mag : UInt64, neg : Bool)` reader: the C side reads the magnitude and sign separately
 (the wire/kernel `bal`/value ints can be negative). -/
@@ -519,18 +532,15 @@ private def directMatchesJson (input : String) : Bool :=
   | some w =>
       let r := execDirect w.host w.state w.turn
       let jsonOut := execFullForestAuthStep input
-      -- The teaching reason is computed from the same prologue-admission inputs the JSON path uses.
-      let s0 : RecChainedState := { kernel := stateOfWState w.state, log := [] }
-      let ctx := admCtxOfHost w.host
-      let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
-                    w.turn.validUntil w.turn.prevHash
-      let reason := AdmissionReason.reasonCode (AdmissionReason.admissionReason ctx hdr s0)
+      -- `execDirect` now CARRIES the teaching reason (the `AdmissionReason.reasonCode` of the first
+      -- failing prologue gate, computed from the same `(ctx, hdr, s0)` the JSON path uses), so the
+      -- direct re-encode reads it straight off the result — one source of truth, no recompute.
       let directOut := encodeWStatusReasonOut r.state r.loglen
         (match r.status with
          | 2 => TurnStatus.bodyCommitted
          | 1 => TurnStatus.prologueCommittedBodyFailed
          | _ => TurnStatus.rejected)
-        reason
+        r.reason
       directOut == jsonOut
 
 -- the genuine-credential gated demo: direct == JSON (both commit, identical post-state):

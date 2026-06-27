@@ -1132,6 +1132,24 @@ pub fn wire_state_to_ledger(
             let _ = ledger.insert_cell(cell.clone());
         }
     }
+    // CACHE-FIDELITY (the streaming-audit root-gap close): each reconstituted cell was built by
+    // CLONING the template and mutating its `state`/`capabilities` through `pub` fields OUTSIDE the
+    // ledger's `&mut`-handoff. `Cell` carries a `leaf_cache` (the cached canonical
+    // `compute_canonical_state_commitment` leaf) that `Ledger::root()` TRUSTS via `hash_cell_cached`;
+    // `Cell::clone` copies that cache, so the `*slot = cell.clone()` overwrite above re-installs the
+    // TEMPLATE's PRE-turn leaf digest (the `get_mut` handoff invalidation is clobbered by the very
+    // assignment). Left stale, `root()` would hash the pre-turn leaf for every reconstituted cell and
+    // DIVERGE from the Rust producer's root (e.g. a SetField on slot 6 leaves the field correct but
+    // the leaf cache pointing at the pre-write commitment). Re-take a `&mut` to each reconstituted
+    // cell so the ledger's `get_mut` invalidates the leaf cache (and `touch_value` keeps the
+    // incremental Merkle correct); the next `root()` recomputes each leaf from the honest post-state
+    // bytes. (The cap-root cache rides the same honesty: it is dirty-or-byte-identical, and a dirty
+    // leaf recompute reads it through `cached_cap_root`, recomputing when dirty — so this single
+    // invalidation closes the gap.) `insert_cell` already invalidates, so a redundant touch there and
+    // a `None` on any sovereign-removed id are both harmless.
+    for id in out_cells.keys() {
+        let _ = ledger.get_mut(id);
+    }
 
     // MAKE-SOVEREIGN STRUCTURAL REPLAY (the root-gap close for the cell-SET move): mirror
     // `apply_make_sovereign` → `Ledger::make_sovereign(cell)` — remove the cell from
