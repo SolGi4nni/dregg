@@ -196,8 +196,16 @@ fn main() {
     let fold_elapsed = fold_t0.elapsed();
     println!("  WholeChainProof folded in {fold_elapsed:?} (the EXPENSIVE step — done ONCE)");
     println!("  aggregate is ONE root recursion proof + 4 public commitments:");
-    println!("    genesis_root : {}", agg.genesis_root.as_u32());
-    println!("    final_root   : {}", agg.final_root.as_u32());
+    let lanes =
+        |a: &[dregg_circuit::field::BabyBear]| a.iter().map(|d| d.as_u32()).collect::<Vec<_>>();
+    println!(
+        "    genesis_root : {:?} (8-felt faithful anchor)",
+        lanes(&agg.genesis_root)
+    );
+    println!(
+        "    final_root   : {:?} (8-felt faithful anchor)",
+        lanes(&agg.final_root)
+    );
     println!(
         "    chain_digest : {:?}",
         agg.chain_digest
@@ -231,12 +239,12 @@ fn main() {
     );
     println!("    * the chain is correctly ordered (no reorder / drop / insert),");
     println!(
-        "    * final_root {} is the genuine fold of the whole history.",
-        attested.final_root.as_u32()
+        "    * final_root {} is the genuine fold of the whole history (head felt; full 8-felt anchor above).",
+        attested.final_root[0].as_u32()
     );
     assert_eq!(attested.num_turns, K);
-    assert_eq!(attested.genesis_root, genesis);
-    assert_eq!(attested.final_root, final_root);
+    assert_eq!(attested.genesis_root[0], genesis);
+    assert_eq!(attested.final_root[0], final_root);
 
     // --- 4. O(1): verify cost is independent of history length -----------------------------------
     rule("4. O(1) — verification cost is INDEPENDENT of history length N");

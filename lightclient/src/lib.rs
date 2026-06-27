@@ -116,8 +116,8 @@
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{
-    FinalizedTurn, RecursionVk, SEG_DIGEST_WIDTH, TurnChainError, WholeChainProof,
-    WholeChainProofBytes, prove_turn_chain_recursive, verify_turn_chain_recursive,
+    FinalizedTurn, RecursionVk, SEG_ANCHOR_WIDTH, SEG_DIGEST_WIDTH, TurnChainError,
+    WholeChainProof, WholeChainProofBytes, prove_turn_chain_recursive, verify_turn_chain_recursive,
     verify_whole_chain_proof_bytes,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -129,15 +129,17 @@ use ed25519_dalek::{Signature, VerifyingKey};
 /// from `genesis_root` to `final_root`, and `chain_digest` commits to that exact ordered history.*
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttestedHistory {
-    /// The genesis state root the attested history starts from (`WholeChainProof.genesis_root`,
-    /// the Lean `AggregateAttests.genesis_pinned`).
-    pub genesis_root: BabyBear,
-    /// The final state root the attested history reaches — the genuine fold of the whole history
-    /// (`WholeChainProof.final_root`, the Lean `AggregateAttests.final_is_genuine_fold`).
-    pub final_root: BabyBear,
+    /// The 8-felt (~124-bit faithful) genesis state anchor the attested history starts from
+    /// (`WholeChainProof.genesis_root`, the Lean `AggregateAttests.genesis_pinned`). The
+    /// FAITHFUL-FLOOR lift widened this from a single felt (~15-bit birthday) to the 8-felt anchor
+    /// the per-turn legs already publish (`docs/deos/COMMITMENT-WAIST-CENSUS.md` #1).
+    pub genesis_root: [BabyBear; SEG_ANCHOR_WIDTH],
+    /// The 8-felt final state anchor the attested history reaches — the genuine fold of the whole
+    /// history (`WholeChainProof.final_root`, the Lean `AggregateAttests.final_is_genuine_fold`).
+    pub final_root: [BabyBear; SEG_ANCHOR_WIDTH],
     /// The multi-felt Poseidon2 digest committing to the ORDERED `(old_root, new_root)` pairs —
     /// distinct histories with the same endpoints still differ here (`WholeChainProof.chain_digest`;
-    /// codex #3 — a genuine `SEG_DIGEST_WIDTH`-felt collision-resistant commitment).
+    /// codex #3, widened to a `SEG_DIGEST_WIDTH` = 8-felt collision-resistant commitment).
     pub chain_digest: [BabyBear; SEG_DIGEST_WIDTH],
     /// How many finalized turns the attested history folds (`WholeChainProof.num_turns`). The light
     /// client learns ALL of them executed correctly without seeing any.
@@ -220,8 +222,8 @@ pub fn verify_history_bytes(
     verify_whole_chain_proof_bytes(envelope_bytes, expected_vk)
         .map_err(LightClientError::AggregateInvalid)?;
     Ok(AttestedHistory {
-        genesis_root: BabyBear::new(env.genesis_root),
-        final_root: BabyBear::new(env.final_root),
+        genesis_root: core::array::from_fn(|i| BabyBear::new(env.genesis_root[i])),
+        final_root: core::array::from_fn(|i| BabyBear::new(env.final_root[i])),
         chain_digest: core::array::from_fn(|i| BabyBear::new(env.chain_digest[i])),
         num_turns: env.num_turns as usize,
     })
@@ -475,10 +477,14 @@ pub fn verify_finalized_history(
         LightClientError::AggregateInvalid(te) => FinalizedError::AggregateInvalid(te),
     })?;
 
-    // Leg 2 (seam, aggregate side): the proven endpoint must be the shown root.
-    if agg.final_root != finalized_root {
+    // Leg 2 (seam, aggregate side): the proven endpoint must be the shown root. The BFT quorum
+    // signs the single-felt head STATE root (the rotated commit the node finalizes), which is lane
+    // 0 of the 8-felt FAITHFUL-FLOOR final anchor (all eight lanes equal it for a narrow leg's
+    // broadcast); the seam binds that head felt. The full 8-felt anchor is bound by the segment
+    // tooth inside `verify_history` above — this seam only ties the finality cert to the head.
+    if agg.final_root[0] != finalized_root {
         return Err(FinalizedError::AggregateRootMismatch {
-            proven: agg.final_root.as_u32(),
+            proven: agg.final_root[0].as_u32(),
             shown: finalized_root.as_u32(),
         });
     }
@@ -563,7 +569,11 @@ mod tests {
             finalized_root: root,
         };
         assert_eq!(unsigned.listed_signers(), 3, "three keys are listed");
-        assert_eq!(unsigned.distinct_signers(), 0, "but none are signature-bound");
+        assert_eq!(
+            unsigned.distinct_signers(),
+            0,
+            "but none are signature-bound"
+        );
         assert!(!unsigned.has_quorum(), "an unsigned cert is NOT a quorum");
 
         // (b) WRONG-ROOT: real signatures by real validators, but over a DIFFERENT root — the
@@ -723,12 +733,12 @@ mod tests {
             "the light client learns ALL three turns are attested"
         );
         assert_eq!(
-            attested.genesis_root, genesis,
-            "attested genesis = real genesis root"
+            attested.genesis_root, [genesis; SEG_ANCHOR_WIDTH],
+            "attested genesis = real genesis root (narrow leg broadcasts across the 8 anchor lanes)"
         );
         assert_eq!(
-            attested.final_root, final_root,
-            "attested final = real folded final root"
+            attested.final_root, [final_root; SEG_ANCHOR_WIDTH],
+            "attested final = real folded final root (broadcast across the 8 anchor lanes)"
         );
         assert_eq!(
             attested.chain_digest, agg.chain_digest,
@@ -852,9 +862,10 @@ mod tests {
         let vk = agg.root_vk_fingerprint();
 
         // (a) Tamper: claim a DIFFERENT public final root than the one the aggregate proves.
+        let honest_final8 = agg.final_root;
         let other_final = final_root + BabyBear::ONE;
         assert_ne!(other_final, final_root, "the foreign root must differ");
-        agg.final_root = other_final;
+        agg.final_root = [other_final; SEG_ANCHOR_WIDTH];
 
         // A genuine quorum for the ORIGINAL finalized root — the relabeled aggregate must be
         // refused outright (the carried publics no longer verify against the binding proof).
@@ -870,7 +881,7 @@ mod tests {
                  got {other:?}"
             ),
         }
-        agg.final_root = final_root;
+        agg.final_root = honest_final8;
 
         // (b) The seam still bites for an HONEST aggregate shown a wrong finalized root: the
         // aggregate verifies, but its proven endpoint is not the root the client was shown.
@@ -1059,7 +1070,7 @@ mod tests {
 
         // Corrupt the PUBLIC final root + digest the aggregate claims — splice foreign public
         // claims onto THIS aggregate's root proof.
-        agg.final_root = agg.final_root + BabyBear::ONE;
+        agg.final_root[0] = agg.final_root[0] + BabyBear::ONE;
         agg.chain_digest[0] = agg.chain_digest[0] + BabyBear::ONE;
 
         match verify_history(&agg, &vk) {

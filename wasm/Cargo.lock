@@ -1225,6 +1225,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-circuit-prove",
  "dregg-turn",
+ "ed25519-dalek",
 ]
 
 [[package]]

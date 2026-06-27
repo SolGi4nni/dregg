@@ -223,8 +223,9 @@ pub struct ProofPublics {
 }
 
 /// The number of `BabyBear` lanes in the whole-chain ordered-history digest — kept in
-/// sync with `dregg_circuit_prove::ivc_turn_chain::SEG_DIGEST_WIDTH` (codex re-review #3).
-pub const WHOLE_CHAIN_DIGEST_LANES: usize = 4;
+/// sync with `dregg_circuit_prove::ivc_turn_chain::SEG_DIGEST_WIDTH`. The FAITHFUL-FLOOR lift
+/// widened it 4→8 (~124-bit; codex re-review #3 first introduced the multi-felt commitment).
+pub const WHOLE_CHAIN_DIGEST_LANES: usize = 8;
 
 // ============================================================================
 // S1 — the SQL-crossable transport for a whole-chain proof.
@@ -424,11 +425,19 @@ pub fn verify_serialized_proof(
         // attest. The publics ride as `[u8;32]` (a BabyBear is one field element,
         // packed little-endian, high bytes zero), so the low 4 bytes are its `u32`.
         let digest_lanes: Vec<u32> = transport.chain_digest.iter().map(le32).collect();
+        // The transport carries the single-felt HEAD state root (the rotated commit the node
+        // finalizes); the FAITHFUL-FLOOR segment tooth compares 8-felt anchors. Broadcast the head
+        // felt across the eight lanes — this matches the root-exposed segment for a deployed
+        // (narrow-leg) proof (all eight lanes equal the head felt) and FAILS CLOSED for a genuine
+        // wide-leg anchor (a mismatch is refused). Widening the transport to carry the genuine
+        // 8-felt anchors is the named pg-dregg follow-up.
+        let genesis_lanes = [le32(&transport.genesis_root); 8];
+        let final_lanes = [le32(&transport.final_root); 8];
         let publics = dregg_circuit_prove::ivc_turn_chain::verify_turn_chain_recursive_from_blobs(
             &transport.root_proof,
             &transport.binding_proof,
-            le32(&transport.genesis_root),
-            le32(&transport.final_root),
+            &genesis_lanes,
+            &final_lanes,
             &digest_lanes,
             transport.num_turns as usize,
             vk_anchor,

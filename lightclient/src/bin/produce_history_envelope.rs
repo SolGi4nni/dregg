@@ -119,8 +119,16 @@ fn main() {
 
     let anchor_hex = agg.root_vk_fingerprint().to_hex();
     let proof_bytes_b64 = b64(&agg.to_bytes());
-    let genesis = agg.genesis_root.as_u32();
-    let final_root = agg.final_root.as_u32();
+    let lanes_json = |a: &[dregg_circuit::field::BabyBear]| {
+        a.iter()
+            .map(|d| d.as_u32().to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let genesis_json = lanes_json(&agg.genesis_root);
+    let final_json = lanes_json(&agg.final_root);
+    let genesis = agg.genesis_root[0].as_u32();
+    let final_root = agg.final_root[0].as_u32();
     let chain_digest: Vec<u32> = agg.chain_digest.iter().map(|d| d.as_u32()).collect();
     let num_turns = agg.num_turns;
     let digest_json = chain_digest
@@ -138,8 +146,8 @@ fn main() {
     println!("    \"version\": 1,");
     println!("    \"vk_fingerprint_hex\": \"{anchor_hex}\",");
     println!("    \"proof_bytes_b64\": \"{proof_bytes_b64}\",");
-    println!("    \"genesis_root\": {genesis},");
-    println!("    \"final_root\": {final_root},");
+    println!("    \"genesis_root\": [{genesis_json}],");
+    println!("    \"final_root\": [{final_json}],");
     println!("    \"chain_digest\": [{digest_json}],");
     println!("    \"num_turns\": {num_turns}");
     println!("  }}");

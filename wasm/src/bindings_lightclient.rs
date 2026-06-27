@@ -57,10 +57,10 @@ pub struct AttestedHistoryView {
     /// Whether the aggregate verified (the headline). On a real verify failure
     /// this is the engine REJECTING the proof — no attestation granted.
     pub attested: bool,
-    /// The genesis state root the attested history starts from (decimal felt).
-    pub genesis_root: u32,
-    /// The final state root — the genuine fold of the whole history (decimal felt).
-    pub final_root: u32,
+    /// The 8-felt (~124-bit faithful) genesis state anchor (decimal felts).
+    pub genesis_root: Vec<u32>,
+    /// The 8-felt final state anchor — the genuine fold of the whole history (decimal felts).
+    pub final_root: Vec<u32>,
     /// The multi-felt Poseidon2 digest committing to the ORDERED `(old_root, new_root)`
     /// pairs (decimal felts) — distinct histories with the same endpoints still differ.
     pub chain_digest: Vec<u32>,
@@ -99,8 +99,8 @@ pub fn light_client_demo(k: usize, step: u64) -> Result<JsValue, JsError> {
 
     let view = AttestedHistoryView {
         attested: true,
-        genesis_root: attested.genesis_root.as_u32(),
-        final_root: attested.final_root.as_u32(),
+        genesis_root: attested.genesis_root.iter().map(|d| d.as_u32()).collect(),
+        final_root: attested.final_root.iter().map(|d| d.as_u32()).collect(),
         chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
         num_turns: attested.num_turns,
         engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
@@ -171,8 +171,8 @@ pub fn verify_history_against_anchor(
         Ok(attested) => {
             let view = AttestedHistoryView {
                 attested: true,
-                genesis_root: attested.genesis_root.as_u32(),
-                final_root: attested.final_root.as_u32(),
+                genesis_root: attested.genesis_root.iter().map(|d| d.as_u32()).collect(),
+                final_root: attested.final_root.iter().map(|d| d.as_u32()).collect(),
                 chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
                 num_turns: attested.num_turns,
                 engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
@@ -189,8 +189,8 @@ pub fn verify_history_against_anchor(
             // attestation granted). We do not launder a refusal as success.
             let view = AttestedHistoryView {
                 attested: false,
-                genesis_root: 0,
-                final_root: 0,
+                genesis_root: Vec::new(),
+                final_root: Vec::new(),
                 chain_digest: Vec::new(),
                 num_turns: 0,
                 engine: "recursive-stark (plonky3 fork)".to_string(),
@@ -237,10 +237,10 @@ pub struct ExternalHistoryEnvelope {
     /// (nothing to cryptographically check).
     #[serde(default)]
     pub proof_bytes_b64: String,
-    /// Carried public commitment: the genesis state root (decimal felt).
-    pub genesis_root: u32,
-    /// Carried public commitment: the final state root (decimal felt).
-    pub final_root: u32,
+    /// Carried public commitment: the 8-felt genesis state anchor (decimal felts).
+    pub genesis_root: Vec<u32>,
+    /// Carried public commitment: the 8-felt final state anchor (decimal felts).
+    pub final_root: Vec<u32>,
     /// Carried public commitment: the multi-felt ordered-history digest (decimal felts).
     pub chain_digest: Vec<u32>,
     /// Carried public commitment: how many finalized turns the aggregate folds.
@@ -310,8 +310,8 @@ pub fn verify_devnet_history(
     if claimed_bytes != cfg_bytes {
         let view = AttestedHistoryView {
             attested: false,
-            genesis_root: env.genesis_root,
-            final_root: env.final_root,
+            genesis_root: env.genesis_root.clone(),
+            final_root: env.final_root.clone(),
             chain_digest: env.chain_digest.clone(),
             num_turns: env.num_turns,
             engine: "recursive-stark (plonky3 fork)".to_string(),
@@ -329,8 +329,8 @@ pub fn verify_devnet_history(
     if env.proof_bytes_b64.is_empty() {
         let view = AttestedHistoryView {
             attested: false,
-            genesis_root: env.genesis_root,
-            final_root: env.final_root,
+            genesis_root: env.genesis_root.clone(),
+            final_root: env.final_root.clone(),
             chain_digest: env.chain_digest.clone(),
             num_turns: env.num_turns,
             engine: "recursive-stark (plonky3 fork)".to_string(),
@@ -353,8 +353,8 @@ pub fn verify_devnet_history(
         Ok(attested) => {
             let view = AttestedHistoryView {
                 attested: true,
-                genesis_root: attested.genesis_root.as_u32(),
-                final_root: attested.final_root.as_u32(),
+                genesis_root: attested.genesis_root.iter().map(|d| d.as_u32()).collect(),
+                final_root: attested.final_root.iter().map(|d| d.as_u32()).collect(),
                 chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
                 num_turns: attested.num_turns,
                 engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
@@ -407,8 +407,8 @@ pub fn produce_external_history_envelope(k: usize, step: u64) -> Result<String, 
         version: 1,
         vk_fingerprint_hex: agg.root_vk_fingerprint().to_hex(),
         proof_bytes_b64,
-        genesis_root: agg.genesis_root.as_u32(),
-        final_root: agg.final_root.as_u32(),
+        genesis_root: agg.genesis_root.iter().map(|d| d.as_u32()).collect(),
+        final_root: agg.final_root.iter().map(|d| d.as_u32()).collect(),
         chain_digest: agg.chain_digest.iter().map(|d| d.as_u32()).collect(),
         num_turns: agg.num_turns,
     };
@@ -589,22 +589,22 @@ mod tests {
             version: 1,
             vk_fingerprint_hex: "ab".repeat(32),
             proof_bytes_b64: String::new(),
-            genesis_root: 11,
-            final_root: 22,
-            chain_digest: vec![33, 0, 0, 0],
+            genesis_root: vec![11, 0, 0, 0, 0, 0, 0, 0],
+            final_root: vec![22, 0, 0, 0, 0, 0, 0, 0],
+            chain_digest: vec![33, 0, 0, 0, 0, 0, 0, 0],
             num_turns: 4,
         };
         let json = serde_json::to_string(&env).unwrap();
         let back: ExternalHistoryEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(back.version, 1);
         assert_eq!(back.vk_fingerprint_hex, "ab".repeat(32));
-        assert_eq!(back.genesis_root, 11);
-        assert_eq!(back.final_root, 22);
-        assert_eq!(back.chain_digest, vec![33, 0, 0, 0]);
+        assert_eq!(back.genesis_root, vec![11, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(back.final_root, vec![22, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(back.chain_digest, vec![33, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(back.num_turns, 4);
         // proof_bytes_b64 is `#[serde(default)]` — an envelope omitting it parses.
-        let minimal = r#"{"version":1,"vk_fingerprint_hex":"00","genesis_root":0,
-            "final_root":0,"chain_digest":[0,0,0,0],"num_turns":2}"#;
+        let minimal = r#"{"version":1,"vk_fingerprint_hex":"00","genesis_root":[0,0,0,0,0,0,0,0],
+            "final_root":[0,0,0,0,0,0,0,0],"chain_digest":[0,0,0,0,0,0,0,0],"num_turns":2}"#;
         let m: ExternalHistoryEnvelope = serde_json::from_str(minimal).unwrap();
         assert!(
             m.proof_bytes_b64.is_empty(),
