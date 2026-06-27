@@ -185,8 +185,11 @@ pub use dregg_app_framework::field_from_bytes;
 // [`subscription_program`] `Cases` is the AIR-bound AX1 program.
 
 pub mod card;
+pub mod obligation;
 pub mod reactor;
 pub mod service;
+
+pub use obligation::{BillingError, BillingPlan, Subscription, SubscriptionStatus};
 
 // =============================================================================
 // Slot layout

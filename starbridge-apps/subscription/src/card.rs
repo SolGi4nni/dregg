@@ -87,6 +87,48 @@ pub fn subscription_card_json() -> String {
     serde_json::to_string(&subscription_card_value()).expect("the subscription card serializes")
 }
 
+/// **The recurring-BILLING card** as a `deos.ui.*` view-tree — the face of the proven
+/// [`StandingObligation`](dregg_cell::obligation_standing) core
+/// ([`crate::obligation`]). Where [`subscription_card_value`] shows the pub/sub feed,
+/// this card shows the *billing* half of a subscription: the live plan price, the
+/// temporal cursor (next-due block), the periods paid, and the lapse status — plus the
+/// real lifecycle buttons (`subscribe` / `pay` / `renew` / `cancel`).
+///
+/// The values are rendered from a [`crate::obligation::SubscriptionStatus`] so the card
+/// always reflects the committed obligation state (not a hand-tracked counter). The
+/// `pay` button fires the real per-period [`Effect::Transfer`](dregg_app_framework::Effect)
+/// (the Payable DSI) while the proven obligation enforces the schedule.
+pub fn billing_card_value(status: &crate::obligation::SubscriptionStatus, price: i64) -> Value {
+    json!({
+        "kind": "vstack",
+        "props": {},
+        "children": [
+            text("Subscription Billing"),
+            text(&format!("price/period: {price}")),
+            text(&format!("next due @ block: {}", status.next_due_block)),
+            text(&format!("periods paid: {} (total {})", status.periods_paid, status.total_paid)),
+            text(if status.cancelled {
+                "status: cancelled"
+            } else if status.lapsed {
+                "status: LAPSED"
+            } else if status.completed {
+                "status: completed"
+            } else {
+                "status: active"
+            }),
+            button("Subscribe", "subscribe", 0),
+            button("Pay Period", "pay",       price),
+            button("Renew",      "renew",     1),
+            button("Cancel",     "cancel",    0),
+        ]
+    })
+}
+
+/// The billing card serialized to `deos.ui.*` JSON — the string a host serves / embeds.
+pub fn billing_card_json(status: &crate::obligation::SubscriptionStatus, price: i64) -> String {
+    serde_json::to_string(&billing_card_value(status, price)).expect("the billing card serializes")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +182,47 @@ mod tests {
         let back: Value = serde_json::from_str(&s).expect("the card JSON parses");
         assert_eq!(back["kind"], "vstack");
         assert_eq!(back["children"].as_array().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn the_billing_card_shows_the_obligation_status_and_lifecycle_buttons() {
+        use crate::obligation::{BillingPlan, Subscription};
+        use dregg_app_framework::CellId;
+
+        let plan = BillingPlan::new(
+            CellId::from_bytes([1; 32]),
+            CellId::from_bytes([2; 32]),
+            CellId::from_bytes([9; 32]),
+            50,
+            100,
+            1000,
+            0,
+        );
+        let mut sub = Subscription::subscribe(plan).unwrap();
+        sub.pay(1000).unwrap();
+        let card = billing_card_value(&sub.status(1050), 50);
+
+        assert_eq!(card["kind"], "vstack");
+        let children = card["children"].as_array().unwrap();
+        // header + 4 status texts + 4 lifecycle buttons.
+        let buttons: Vec<&Value> = children.iter().filter(|c| c["kind"] == "button").collect();
+        let turns: Vec<&str> = buttons
+            .iter()
+            .map(|b| b["props"]["onClick"]["turn"].as_str().unwrap())
+            .collect();
+        assert_eq!(turns, vec!["subscribe", "pay", "renew", "cancel"]);
+        // The status text reflects the committed obligation (one period paid, active).
+        assert!(
+            children
+                .iter()
+                .any(|c| c["props"]["text"] == "periods paid: 1 (total 50)")
+        );
+        assert!(
+            children
+                .iter()
+                .any(|c| c["props"]["text"] == "status: active")
+        );
+        // And it serializes.
+        let _ = billing_card_json(&sub.status(1050), 50);
     }
 }

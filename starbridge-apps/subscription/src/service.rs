@@ -295,6 +295,35 @@ impl SubscriptionService {
     }
 }
 
+/// **Build the per-period payment `Turn` for a billing plan, THROUGH the Payable DSI.**
+///
+/// The billing half of a subscription ([`crate::obligation`]) moves value with the SAME
+/// shared [`Payable`](dregg_app_framework::Payable) interface every value-bearing app
+/// speaks: the subscriber cell `pay`s the period `price` of the plan `asset` to the
+/// provider. The invocation routes through the verified DFA router and desugars to the
+/// ONE conserved kernel [`dregg_app_framework::Effect::Transfer`] (per-asset Σδ=0) — no
+/// `Effect::Invoke`, no new commitment field.
+///
+/// The proven [`StandingObligation`](dregg_cell::obligation_standing) core
+/// ([`crate::obligation::Subscription::pay`]) enforces the *schedule* (one-shot per
+/// period, never early, exact amount, lapse-on-miss); THIS builds the *value move*. Pair
+/// them: discharge the obligation period, submit this turn.
+pub fn build_period_payment(
+    cipherclerk: &AppCipherclerk,
+    plan: &crate::obligation::BillingPlan,
+    authority: InvokeAuthority,
+) -> Result<Turn, SubscriptionServiceError> {
+    dregg_app_framework::pay(
+        cipherclerk,
+        plan.subscriber,
+        *plan.asset.as_bytes(),
+        plan.price.max(0) as u64,
+        plan.provider,
+        authority,
+    )
+    .map_err(SubscriptionServiceError::Refused)
+}
+
 /// Why a [`SubscriptionService`] invocation could not be built.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SubscriptionServiceError {
@@ -349,5 +378,33 @@ mod tests {
         assert_eq!(publish.args_schema, ArgsSchema::Fixed(3));
         let consume = iface.method(&method_symbol(METHOD_CONSUME)).unwrap();
         assert_eq!(consume.args_schema, ArgsSchema::Fixed(1));
+    }
+
+    #[test]
+    fn build_period_payment_routes_through_the_payable_dsi() {
+        use crate::obligation::BillingPlan;
+        use dregg_app_framework::{AgentCipherclerk, AppCipherclerk};
+
+        let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32]);
+        let plan = BillingPlan::new(
+            cipherclerk.cell_id(),
+            CellId::from_bytes([2; 32]),
+            CellId::from_bytes([9; 32]),
+            50,
+            100,
+            1000,
+            0,
+        );
+        // A Signature-bearing caller builds the period payment turn (the conserved
+        // Transfer through the Payable interface).
+        assert!(
+            build_period_payment(&cipherclerk, &plan, InvokeAuthority::Signature).is_ok(),
+            "a signature-authorized subscriber pays the period through Payable"
+        );
+        // No authority → the sig-gated `pay` refuses at the front door (fail-closed).
+        assert!(matches!(
+            build_period_payment(&cipherclerk, &plan, InvokeAuthority::None),
+            Err(SubscriptionServiceError::Refused(_))
+        ));
     }
 }
