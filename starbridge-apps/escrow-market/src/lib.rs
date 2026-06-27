@@ -42,11 +42,12 @@
 //!   a refund ⇒ `RELEASED == 0, REFUNDED == ESCROWED` (or any conserving split).
 
 use dregg_app_framework::{
-    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellAffordance, CellId, CellMode,
-    CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor,
-    Event, FactoryDescriptor, FieldElement, FireExecuteError, GatedAffordance, InspectorDescriptor,
-    StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
-    canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    Action, AppCipherclerk, AssetId, AuthRequired, CapTarget, CapTemplate, CellAffordance, CellId,
+    CellMode, CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect,
+    EmbeddedExecutor, Event, FactoryDescriptor, FieldElement, FireExecuteError, GatedAffordance,
+    InspectorDescriptor, InvokeAuthority, InvokeRefused, Payable, StarbridgeAppContext,
+    StateConstraint, TransitionCase, TransitionGuard, Turn, TurnReceipt, canonical_program_vk,
+    field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
 
 /// The escrow as a SERVICE CELL on the `invoke()` front door (the
@@ -897,6 +898,70 @@ pub fn register_deos(ctx: &StarbridgeAppContext) -> DeosApp {
 }
 
 // =============================================================================
+// The PAYABLE face — the escrow's holding cell as a `Payable` cell.
+// =============================================================================
+//
+// `docs/deos/APPS-INTEROP-CENSUS.md` §5 (the cleanest first interop win): the
+// escrow's "value" is no longer a scalar `RELEASED`/`REFUNDED` field on the
+// escrow cell — it is a conserved credit balance held on a VAULT cell
+// (`token_id == the shared credit asset`). The escrow RECEIVES value as a real
+// `Effect::Transfer` (e.g. a bounty-board payout) and SETTLES IT ONWARD to the
+// payee through the SAME shared [`Payable`] interface — so the per-asset Σδ=0
+// conservation holds across both app boundaries (bounty→escrow→payee).
+//
+// The lifecycle cell (the four-organ TRUSTLINE/MAILBOX/FLASHWELL/LIFECYCLE state
+// machine above) is UNTOUCHED — `EscrowVault` is the value organ riding alongside
+// it: a deployment advances the order to SETTLED (the existing gated `settle`)
+// and, in the same breath, releases the held credit with [`EscrowVault::release`].
+
+/// **The escrow's holding VAULT, as a [`Payable`] cell.**
+///
+/// Wraps the cell that holds the escrowed credit (a holder of the shared credit
+/// `asset` — its `token_id` is the asset id). The escrow is paid INTO this cell
+/// by another app (a kernel `Transfer`), and `release` pays it ONWARD to the
+/// payee through the standard interface — the SAME `pay` shape bounty-board used
+/// to pay the escrow, so the two apps interoperate through ONE interface.
+#[derive(Clone, Copy, Debug)]
+pub struct EscrowVault {
+    /// The cell that holds (and releases) the escrowed credit.
+    pub vault: CellId,
+    /// The shared credit asset the escrow is denominated in (the vault's
+    /// `token_id`).
+    pub asset: AssetId,
+}
+
+impl EscrowVault {
+    /// A vault handle over `vault`, denominating value in `asset`.
+    pub fn new(vault: CellId, asset: AssetId) -> Self {
+        Self { vault, asset }
+    }
+
+    /// **Settle the escrow ONWARD: release the held credit to `payee`, through the
+    /// `Payable` interface** — the second leg of the cross-app value flow.
+    /// Desugars to a single conserving kernel `Effect::Transfer` (`vault → payee`)
+    /// routed through the shared interface. The returned [`Turn`] is submitted
+    /// through the embedded executor on the shared `World`.
+    pub fn release(
+        &self,
+        cipherclerk: &AppCipherclerk,
+        amount: u64,
+        payee: CellId,
+        authority: InvokeAuthority,
+    ) -> Result<Turn, InvokeRefused> {
+        self.pay(cipherclerk, amount, payee, authority)
+    }
+}
+
+impl Payable for EscrowVault {
+    fn payable_cell(&self) -> CellId {
+        self.vault
+    }
+    fn payable_asset(&self) -> AssetId {
+        self.asset
+    }
+}
+
+// =============================================================================
 // Tests — the cell program in isolation
 // =============================================================================
 
@@ -944,6 +1009,47 @@ mod tests {
             escrow_factory_descriptor().hash(),
             escrow_factory_descriptor().hash()
         );
+    }
+
+    // ── The PAYABLE face — escrow settle-onward as a cross-app value flow ─
+
+    #[test]
+    fn vault_implements_payable() {
+        let vault = CellId::from_bytes([5u8; 32]);
+        let asset = [0xCDu8; 32];
+        let v = EscrowVault::new(vault, asset);
+        assert_eq!(v.payable_cell(), vault);
+        assert_eq!(v.payable_asset(), asset);
+        // Shares the SAME canonical interface id as every other Payable app.
+        assert_eq!(
+            v.payable_interface().interface_id,
+            dregg_app_framework::payable_descriptor().interface_id
+        );
+    }
+
+    #[test]
+    fn release_routes_one_conserving_transfer_through_payable() {
+        use dregg_app_framework::{AgentCipherclerk, AppCipherclerk};
+        let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [3u8; 32]);
+        let vault = cclerk.cell_id();
+        let asset = [0xCDu8; 32];
+        let payee = CellId::from_bytes([9u8; 32]);
+        let v = EscrowVault::new(vault, asset);
+
+        let turn = v
+            .release(&cclerk, 500, payee, InvokeAuthority::Signature)
+            .expect("a signed release routes through the Payable interface");
+
+        let effects = &turn.call_forest.roots[0].action.effects;
+        assert_eq!(effects.len(), 1);
+        match effects[0] {
+            Effect::Transfer { from, to, amount } => {
+                assert_eq!(from, vault, "the escrow vault is the payer");
+                assert_eq!(to, payee, "value settles onward to the payee");
+                assert_eq!(amount, 500);
+            }
+            ref other => panic!("release must desugar to Transfer, got {other:?}"),
+        }
     }
 
     #[test]

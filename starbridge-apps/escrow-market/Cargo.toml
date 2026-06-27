@@ -46,6 +46,11 @@ serde_json = { workspace = true }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
+# The FIRST CROSS-APP TOKEN VALUE FLOW (`tests/cross_app_value_flow.rs`): a bounty-board
+# payout pays an escrow-market escrow cell THROUGH the shared `Payable` interface, proving
+# value flows across the app boundary, conservation-respecting (per-asset Σδ=0). Needs the
+# sibling bounty-board app co-resident on ONE World.
+starbridge-bounty-board = { path = "../bounty-board" }
 
 [lints]
 workspace = true

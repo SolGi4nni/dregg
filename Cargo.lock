@@ -16641,6 +16641,7 @@ dependencies = [
  "dregg-types",
  "serde",
  "serde_json",
+ "starbridge-bounty-board",
  "tokio",
  "tower",
 ]

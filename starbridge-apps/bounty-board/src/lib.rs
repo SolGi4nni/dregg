@@ -54,11 +54,12 @@
 //!   [`StarbridgeAppContext`].
 
 use dregg_app_framework::{
-    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellAffordance, CellId, CellMode,
-    CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor,
-    Event, FactoryDescriptor, FieldElement, FireExecuteError, GatedAffordance, InspectorDescriptor,
-    StarbridgeAppContext, StateConstraint, TurnReceipt, canonical_program_vk, field_from_bytes,
-    field_from_u64, hex_encode_32, symbol,
+    Action, AppCipherclerk, AssetId, AuthRequired, CapTarget, CapTemplate, CellAffordance, CellId,
+    CellMode, CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect,
+    EmbeddedExecutor, Event, FactoryDescriptor, FieldElement, FireExecuteError, GatedAffordance,
+    InspectorDescriptor, InvokeAuthority, InvokeRefused, Payable, StarbridgeAppContext,
+    StateConstraint, Turn, TurnReceipt, canonical_program_vk, field_from_bytes, field_from_u64,
+    hex_encode_32, symbol,
 };
 
 // The four modern app-framework axes this app demonstrates (the unified template):
@@ -752,6 +753,72 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 }
 
 // =============================================================================
+// The PAYABLE face — the bounty board's reward treasury as a `Payable` cell.
+// =============================================================================
+//
+// `docs/deos/APPS-INTEROP-CENSUS.md` §5 (the cleanest first interop win): a bounty
+// payout becomes a REAL cross-app value flow. The reward is no longer a scalar
+// `SetField` on the bounty cell — it is a conserved credit balance held on a
+// TREASURY cell (`token_id == the shared credit asset`), and a payout pays it out
+// THROUGH the shared [`Payable`] interface into ANOTHER app's cell (an
+// escrow-market escrow cell) as a kernel `Effect::Transfer`. The per-asset Σδ=0
+// conservation check then holds across the app boundary.
+//
+// The lifecycle cell (the `STATE`/`CLAIMANT` state machine above) is UNTOUCHED —
+// `BountyTreasury` is the value organ that rides alongside it. An app deployment
+// advances the lifecycle to PAID (the existing gated `payout`) and, in the same
+// breath, settles the reward with [`BountyTreasury::payout`].
+
+/// **The bounty board's reward TREASURY, as a [`Payable`] cell.**
+///
+/// Wraps the cell that holds the bounty's escrowed reward (a holder of the shared
+/// credit `asset` — its `token_id` is the asset id) so a payout pays another app
+/// through the standard interface. This is the bounty board's implementation of
+/// the cross-app DSI: `bounty_treasury.payout(reward, escrow_cell)` is
+/// bounty-board paying escrow-market via ONE shared interface, the SAME `pay`
+/// shape escrow uses to settle onward — not bespoke wiring.
+#[derive(Clone, Copy, Debug)]
+pub struct BountyTreasury {
+    /// The cell that holds (and pays out) the reward credit.
+    pub treasury: CellId,
+    /// The shared credit asset the reward is denominated in (the treasury's
+    /// `token_id`).
+    pub asset: AssetId,
+}
+
+impl BountyTreasury {
+    /// A treasury handle over `treasury`, denominating value in `asset`.
+    pub fn new(treasury: CellId, asset: AssetId) -> Self {
+        Self { treasury, asset }
+    }
+
+    /// **Pay a bounty reward INTO another app's cell, through the `Payable`
+    /// interface** — the cross-app value flow. `dest` is the receiving cell
+    /// (typically an escrow-market escrow cell); `reward` is the conserved credit
+    /// amount. Desugars to a single conserving kernel `Effect::Transfer`
+    /// (`treasury → dest`) routed through the shared interface. The returned
+    /// [`Turn`] is submitted through the embedded executor on the shared `World`.
+    pub fn payout(
+        &self,
+        cipherclerk: &AppCipherclerk,
+        reward: u64,
+        dest: CellId,
+        authority: InvokeAuthority,
+    ) -> Result<Turn, InvokeRefused> {
+        self.pay(cipherclerk, reward, dest, authority)
+    }
+}
+
+impl Payable for BountyTreasury {
+    fn payable_cell(&self) -> CellId {
+        self.treasury
+    }
+    fn payable_asset(&self) -> AssetId {
+        self.asset
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -1055,6 +1122,65 @@ mod tests {
         .expect("submit commits");
         exec.submit_action(&cclerk, build_payout_action(&cclerk, bounty))
             .expect("payout commits");
+    }
+
+    // ── The PAYABLE face — bounty payout as a cross-app value flow ───────
+
+    #[test]
+    fn treasury_implements_payable() {
+        let treasury = bounty_cell();
+        let asset = [0xCDu8; 32];
+        let t = BountyTreasury::new(treasury, asset);
+        assert_eq!(t.payable_cell(), treasury);
+        assert_eq!(t.payable_asset(), asset);
+        // Every Payable app shares the SAME canonical interface id.
+        assert_eq!(
+            t.payable_interface().interface_id,
+            dregg_app_framework::payable_descriptor().interface_id
+        );
+    }
+
+    #[test]
+    fn payout_routes_one_conserving_transfer_through_payable() {
+        let cclerk = test_cipherclerk();
+        let treasury = cclerk.cell_id();
+        let asset = [0xCDu8; 32];
+        let escrow = CellId::from_bytes([8u8; 32]);
+        let t = BountyTreasury::new(treasury, asset);
+
+        let turn = t
+            .payout(&cclerk, 500, escrow, InvokeAuthority::Signature)
+            .expect("a signed payout routes through the Payable interface");
+
+        // The desugared turn carries exactly ONE kernel Transfer treasury→escrow —
+        // the per-asset conserving effect, NOT a scalar SetField pretending to be money.
+        let effects = &turn.call_forest.roots[0].action.effects;
+        assert_eq!(effects.len(), 1);
+        match effects[0] {
+            Effect::Transfer { from, to, amount } => {
+                assert_eq!(from, treasury, "the bounty treasury is the payer");
+                assert_eq!(to, escrow, "value crosses into the escrow cell");
+                assert_eq!(amount, 500);
+            }
+            ref other => panic!("payout must desugar to Transfer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unauthorized_payout_is_refused_fail_closed() {
+        let cclerk = test_cipherclerk();
+        let t = BountyTreasury::new(cclerk.cell_id(), [0xCDu8; 32]);
+        // pay is Signature-gated; a caller presenting no authority is refused at
+        // the front door — no Transfer is ever built.
+        let refused = t
+            .payout(
+                &cclerk,
+                500,
+                CellId::from_bytes([8u8; 32]),
+                InvokeAuthority::None,
+            )
+            .expect_err("an unauthorized payout must be refused");
+        assert!(matches!(refused, InvokeRefused::Unauthorized { .. }));
     }
 
     #[test]
