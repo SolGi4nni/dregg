@@ -18,10 +18,10 @@
 //!        vocabulary; `headless` bakes any view to a PNG offscreen (the cockpit's path).
 //!
 //! * **`web`** (feature-gated, gpui-FREE + deos-js-FREE) — the IDENTICAL
-//!     [`tree::ViewNode`] → an HTML/DOM string ([`web::render_card_document`]),
-//!     node-for-node mirroring the gpui vocabulary, into a browser-loadable `.html`. This
-//!     is the web-projection of the reflective cockpit: the SAME card paints in a browser,
-//!     not just the native window. See the `web_render_card` example for the bake.
+//!   [`tree::ViewNode`] → an HTML/DOM string ([`web::render_card_document`]),
+//!   node-for-node mirroring the gpui vocabulary, into a browser-loadable `.html`. This
+//!   is the web-projection of the reflective cockpit: the SAME card paints in a browser,
+//!   not just the native window. See the `web_render_card` example for the bake.
 
 // The view-tree MODEL is renderer-independent (gpui-free serializable DATA): it is
 // always compiled, under BOTH the `native` and `web` renderers.

@@ -6,7 +6,7 @@
 //!   - `text`   → [`gpui_component::label::Label`]
 //!   - `bind`   → a [`Label`] re-read off the live applet ledger (the signal binding)
 //!   - `button` → [`gpui_component::button::Button`] whose `on_click` fires the
-//!                applet's affordance = a REAL cap-gated verified turn (a `TurnReceipt`)
+//!     applet's affordance = a REAL cap-gated verified turn (a `TurnReceipt`)
 //!   - `input`  → a bordered field showing the ephemeral view-state value
 //!   - `list` / `table` → a `v_flex` of the child nodes
 //!

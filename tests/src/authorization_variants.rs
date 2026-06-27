@@ -14,7 +14,7 @@
 //! `tests/src/main.rs`'s helper module.
 
 use dregg_cell::predicate::{
-    InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
+    PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
     WitnessedPredicateVerifier,
 };
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
