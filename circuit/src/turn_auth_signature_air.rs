@@ -41,8 +41,7 @@
 //! curve obligation (path a) is the named remaining scale, reported, not laundered.
 
 use crate::field::BabyBear;
-use crate::schnorr_air::{self, SchnorrVerificationWitness, col, generate_schnorr_trace, pi};
-use crate::schnorr_curve::CurvePoint;
+use crate::schnorr_air::{self, SchnorrVerificationWitness, generate_schnorr_trace, pi};
 use crate::schnorr_sig::{
     SchnorrPublicKey, SchnorrSignature, compute_challenge_from_elements, schnorr_keygen,
 };
@@ -258,6 +257,8 @@ fn felts_to_bytes(felts: &[BabyBear; 8]) -> [u8; 32] {
 mod tests {
     use super::*;
     use crate::babybear8::BabyBear8;
+    use crate::schnorr_air::col;
+    use crate::schnorr_curve::CurvePoint;
 
     /// Reconstruct a curve point from a trace row's x/y limb columns (mirrors the Schnorr
     /// AIR's private `point_from_row`: (0,0) is the infinity sentinel).

@@ -361,117 +361,117 @@ pub fn fri_query_verifier_dsl_circuit() -> DslCircuit {
 // Midnight ZkStdLib Relation sketch (not compilable — design reference)
 // ============================================================================
 
-/// Design sketch for how the FRI verifier maps to Midnight's `Relation` trait.
-///
-/// This is NOT real code — Midnight's types are not in our dependency tree.
-/// It documents the intended structure for when we build the production verifier.
-///
-/// ```text
-/// // In a crate that depends on midnight-zk-stdlib:
-///
-/// use midnight_zk_stdlib::{Relation, ZkStdLib, ZkStdLibArch};
-/// use midnight_proofs::circuit::{Layouter, Value};
-/// use midnight_curves::Fq;
-///
-/// #[derive(Clone)]
-/// struct FriVerifierRelation {
-///     num_queries: usize,
-///     num_layers: usize,
-///     merkle_depth: usize,
-/// }
-///
-/// impl Relation for FriVerifierRelation {
-///     type Instance = FriVerifierInstance;
-///     type Witness = FriVerifierWitness;
-///     type Error = Error;
-///
-///     fn format_instance(instance: &Self::Instance) -> Result<Vec<Fq>, Error> {
-///         // Public inputs: layer roots + final constant + initial eval commitment
-///         let mut pi = Vec::new();
-///         for root in &instance.layer_roots {
-///             pi.push(embed_babybear_in_fq(*root));
-///         }
-///         pi.push(embed_babybear_in_fq(instance.final_constant));
-///         Ok(pi)
-///     }
-///
-///     fn circuit(
-///         &self,
-///         std_lib: &ZkStdLib,
-///         layouter: &mut impl Layouter<Fq>,
-///         instance: Value<Self::Instance>,
-///         witness: Value<Self::Witness>,
-///     ) -> Result<(), Error> {
-///         // For each FRI query:
-///         for q in 0..self.num_queries {
-///             // 1. Assign layer evaluations
-///             // 2. Check folding constraint at each layer
-///             // 3. Verify Merkle path using Poseidon2-over-BabyBear
-///             //    (implemented as native Fq arithmetic with mod-BabyBear reduction)
-///             // 4. Check roots match public inputs
-///         }
-///         Ok(())
-///     }
-///
-///     fn used_chips(&self) -> ZkStdLibArch {
-///         ZkStdLibArch {
-///             poseidon: true,  // For transcript challenges (Fiat-Shamir)
-///             // No foreign curve needed — BabyBear arithmetic is native in Fq
-///             ..ZkStdLibArch::default()
-///         }
-///     }
-/// }
-///
-/// struct FriVerifierInstance {
-///     layer_roots: Vec<u32>,       // BabyBear field elements (FRI commitments)
-///     final_constant: u32,         // Final layer constant
-/// }
-///
-/// struct FriVerifierWitness {
-///     queries: Vec<FriQueryWitness>,
-/// }
-///
-/// struct FriQueryWitness {
-///     /// Per-layer: (eval_at_x, eval_at_neg_x, alpha, query_x)
-///     layers: Vec<(u32, u32, u32, u32)>,
-///     /// Per-layer: Merkle authentication path (siblings + index)
-///     merkle_paths: Vec<(Vec<u32>, u32)>,
-/// }
-///
-/// /// Embed a BabyBear element into BLS12-381 Fq.
-/// /// BabyBear p = 2^31 - 2^27 + 1 = 2013265921, which trivially fits in 255-bit Fq.
-/// fn embed_babybear_in_fq(val: u32) -> Fq {
-///     Fq::from(val as u64)
-/// }
-///
-/// /// Reduce an Fq value back to BabyBear (for intermediate computations).
-/// /// This is a single constrain_bits(31) followed by a subtraction gate.
-/// fn reduce_mod_babybear(std_lib: &ZkStdLib, layouter: &mut impl Layouter<Fq>,
-///                        val: &AssignedNative<Fq>) -> Result<AssignedNative<Fq>, Error> {
-///     // Decompose val = q * BABYBEAR_P + r where 0 <= r < BABYBEAR_P
-///     // Constrain r has at most 31 bits
-///     // Constrain val == q * BABYBEAR_P + r
-///     // Return r
-///     todo!()
-/// }
-/// ```
-///
-/// ## Gate Count Estimate for Midnight
-///
-/// Based on ZkStdLib's architecture:
-/// - Native Fq multiplication: 1 gate (single row in the arithmetic identity)
-/// - BabyBear mod reduction: ~3 gates (decompose + range check + equality)
-/// - Poseidon2 round (BabyBear, simulated): ~16 gates per round
-///   (width-16 state, but each element is a single Fq so no limbs)
-/// - Full Poseidon2 hash (14 full + 14 partial rounds): ~450 gates
-/// - Merkle path (20 hashes): 9,000 gates
-/// - Folding check per layer: ~10 gates
-/// - One FRI query (20 layers): 20 * (450 + 10) + 9000 = ~18,200 gates
-/// - 50 queries: 910,000 gates
-/// - Overhead (Fiat-Shamir, public input binding): ~10,000 gates
-/// - **Total: ~920K gates → fits in k=20 (1M rows)**
-///
-/// With Midnight's SRS supporting k up to 25, this is well within capacity.
+// Design sketch for how the FRI verifier maps to Midnight's `Relation` trait.
+//
+// This is NOT real code — Midnight's types are not in our dependency tree.
+// It documents the intended structure for when we build the production verifier.
+//
+// ```text
+// // In a crate that depends on midnight-zk-stdlib:
+//
+// use midnight_zk_stdlib::{Relation, ZkStdLib, ZkStdLibArch};
+// use midnight_proofs::circuit::{Layouter, Value};
+// use midnight_curves::Fq;
+//
+// #[derive(Clone)]
+// struct FriVerifierRelation {
+//     num_queries: usize,
+//     num_layers: usize,
+//     merkle_depth: usize,
+// }
+//
+// impl Relation for FriVerifierRelation {
+//     type Instance = FriVerifierInstance;
+//     type Witness = FriVerifierWitness;
+//     type Error = Error;
+//
+//     fn format_instance(instance: &Self::Instance) -> Result<Vec<Fq>, Error> {
+//         // Public inputs: layer roots + final constant + initial eval commitment
+//         let mut pi = Vec::new();
+//         for root in &instance.layer_roots {
+//             pi.push(embed_babybear_in_fq(*root));
+//         }
+//         pi.push(embed_babybear_in_fq(instance.final_constant));
+//         Ok(pi)
+//     }
+//
+//     fn circuit(
+//         &self,
+//         std_lib: &ZkStdLib,
+//         layouter: &mut impl Layouter<Fq>,
+//         instance: Value<Self::Instance>,
+//         witness: Value<Self::Witness>,
+//     ) -> Result<(), Error> {
+//         // For each FRI query:
+//         for q in 0..self.num_queries {
+//             // 1. Assign layer evaluations
+//             // 2. Check folding constraint at each layer
+//             // 3. Verify Merkle path using Poseidon2-over-BabyBear
+//             //    (implemented as native Fq arithmetic with mod-BabyBear reduction)
+//             // 4. Check roots match public inputs
+//         }
+//         Ok(())
+//     }
+//
+//     fn used_chips(&self) -> ZkStdLibArch {
+//         ZkStdLibArch {
+//             poseidon: true,  // For transcript challenges (Fiat-Shamir)
+//             // No foreign curve needed — BabyBear arithmetic is native in Fq
+//             ..ZkStdLibArch::default()
+//         }
+//     }
+// }
+//
+// struct FriVerifierInstance {
+//     layer_roots: Vec<u32>,       // BabyBear field elements (FRI commitments)
+//     final_constant: u32,         // Final layer constant
+// }
+//
+// struct FriVerifierWitness {
+//     queries: Vec<FriQueryWitness>,
+// }
+//
+// struct FriQueryWitness {
+//     /// Per-layer: (eval_at_x, eval_at_neg_x, alpha, query_x)
+//     layers: Vec<(u32, u32, u32, u32)>,
+//     /// Per-layer: Merkle authentication path (siblings + index)
+//     merkle_paths: Vec<(Vec<u32>, u32)>,
+// }
+//
+// /// Embed a BabyBear element into BLS12-381 Fq.
+// /// BabyBear p = 2^31 - 2^27 + 1 = 2013265921, which trivially fits in 255-bit Fq.
+// fn embed_babybear_in_fq(val: u32) -> Fq {
+//     Fq::from(val as u64)
+// }
+//
+// /// Reduce an Fq value back to BabyBear (for intermediate computations).
+// /// This is a single constrain_bits(31) followed by a subtraction gate.
+// fn reduce_mod_babybear(std_lib: &ZkStdLib, layouter: &mut impl Layouter<Fq>,
+//                        val: &AssignedNative<Fq>) -> Result<AssignedNative<Fq>, Error> {
+//     // Decompose val = q * BABYBEAR_P + r where 0 <= r < BABYBEAR_P
+//     // Constrain r has at most 31 bits
+//     // Constrain val == q * BABYBEAR_P + r
+//     // Return r
+//     todo!()
+// }
+// ```
+//
+// ## Gate Count Estimate for Midnight
+//
+// Based on ZkStdLib's architecture:
+// - Native Fq multiplication: 1 gate (single row in the arithmetic identity)
+// - BabyBear mod reduction: ~3 gates (decompose + range check + equality)
+// - Poseidon2 round (BabyBear, simulated): ~16 gates per round
+//   (width-16 state, but each element is a single Fq so no limbs)
+// - Full Poseidon2 hash (14 full + 14 partial rounds): ~450 gates
+// - Merkle path (20 hashes): 9,000 gates
+// - Folding check per layer: ~10 gates
+// - One FRI query (20 layers): 20 * (450 + 10) + 9000 = ~18,200 gates
+// - 50 queries: 910,000 gates
+// - Overhead (Fiat-Shamir, public input binding): ~10,000 gates
+// - **Total: ~920K gates → fits in k=20 (1M rows)**
+//
+// With Midnight's SRS supporting k up to 25, this is well within capacity.
 
 // ============================================================================
 // Tests
@@ -596,7 +596,6 @@ mod tests {
         // BabyBear modulus: 2^31 - 2^27 + 1 = 2013265921
         // BLS12-381 scalar field: ~2^255
         // BabyBear trivially embeds.
-        assert!(BABYBEAR_P < u32::MAX);
         assert_eq!(BABYBEAR_P, 2013265921);
         // 2^31 - 2^27 + 1 = 2147483648 - 134217728 + 1 = 2013265921 ✓
         assert_eq!(BABYBEAR_P, (1u32 << 31) - (1u32 << 27) + 1);

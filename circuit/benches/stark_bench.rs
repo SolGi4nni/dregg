@@ -64,7 +64,8 @@ fn bench_stark_verify(c: &mut Criterion) {
             |b, (proof, pi)| {
                 let air = MerkleStarkAir;
                 b.iter(|| {
-                    black_box(stark::verify(&air, proof, pi).unwrap());
+                    stark::verify(&air, proof, pi).unwrap();
+                    black_box(());
                 });
             },
         );
@@ -280,7 +281,8 @@ fn bench_ivc(c: &mut Criterion) {
                 for d in &deltas[..4] {
                     b2.add_fold(d.clone()).unwrap();
                 }
-                black_box(b2.add_fold(last_delta.clone()).unwrap());
+                b2.add_fold(last_delta.clone()).unwrap();
+                black_box(());
             });
         });
     }

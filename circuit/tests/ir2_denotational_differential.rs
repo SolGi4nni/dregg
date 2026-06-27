@@ -421,7 +421,7 @@ fn constraint_holds_at(
         }
         Constraint::Lookup(l) => {
             let tup: Vec<i128> = l.tuple.iter().map(|e| eval_z(e, loc)).collect();
-            t.table(l.table).iter().any(|r| *r == tup)
+            t.table(l.table).contains(&tup)
         }
         Constraint::MapOp(m) => {
             if eval_z(&m.guard, loc) != 1 {
@@ -588,7 +588,7 @@ fn eval_enforces(
         for c in &d.constraints {
             if let Constraint::Lookup(l) = c {
                 let tup: Vec<i128> = l.tuple.iter().map(|e| eval_z(e, &t.rows[r])).collect();
-                if !t.table(l.table).iter().any(|row| *row == tup) {
+                if !t.table(l.table).contains(&tup) {
                     return false;
                 }
             }

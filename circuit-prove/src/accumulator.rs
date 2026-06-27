@@ -108,8 +108,8 @@
 //!     op-list before it stabilizes — see the structural finding below);
 //!   - **depth 4 == depth 5 == depth 6 (== … ): byte-IDENTICAL VK material, including the preprocessed
 //!     commitment** (two measured iterations past the fixed point).
-//! The `degree_bits` are constant THROUGHOUT (`[9,9,15,14,15]`, natural max `2^15`); the transient lives
-//! entirely in the op-list (logical `rows` + preprocessed commitment).
+//!     The `degree_bits` are constant THROUGHOUT (`[9,9,15,14,15]`, natural max `2^15`); the transient lives
+//!     entirely in the op-list (logical `rows` + preprocessed commitment).
 //!
 //! **Why the fixed point is PERPETUAL — now MECHANIZED.** The fold-shape transition is a DETERMINISTIC
 //! function of the running input's VK SHAPE ALONE (`step : VkShape → VkShape`): the parent aggregation

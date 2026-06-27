@@ -1,5 +1,8 @@
 //! Tests for dregg-storage.
 
+// Exercises the deprecated legacy surface (CapInbox/MeteredRelay/PubSubTopic), deliberately kept.
+#![allow(deprecated)]
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -165,7 +168,7 @@ fn erasure_encode_reconstruct_roundtrip() {
 
     let chunks = encoder.encode(data);
     // With expansion_factor=2, we get 2N chunks.
-    let n_data = (data.len() + 31) / 32;
+    let n_data = data.len().div_ceil(32);
     assert_eq!(chunks.len(), n_data * 2);
 
     // Reconstruct from all chunks.
@@ -192,7 +195,7 @@ fn erasure_fails_with_too_few_chunks() {
     let data = b"need more chunks than this to reconstruct longer data yes indeed";
 
     let chunks = encoder.encode(data);
-    let n_data = (data.len() + 15) / 16;
+    let n_data = data.len().div_ceil(16);
 
     // Keep only 1 chunk (need n_data).
     let too_few = &chunks[..1];
@@ -426,9 +429,9 @@ fn space_bank_multi_tenant_isolation() {
     let mut store = ContentStore::new(bank);
 
     // Alice writes 50 bytes (cost: 500).
-    let hash_a = store.write(&vec![0xAA; 50], &alice).unwrap();
+    let hash_a = store.write(&[0xAA; 50], &alice).unwrap();
     // Bob writes 30 bytes (cost: 300).
-    let _hash_b = store.write(&vec![0xBB; 30], &bob).unwrap();
+    let _hash_b = store.write(&[0xBB; 30], &bob).unwrap();
 
     // Alice's quota consumed: 500, Bob's: 300.
     assert_eq!(store.bank.get(&alice).unwrap().total_consumed, 500);

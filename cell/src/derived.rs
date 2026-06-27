@@ -121,7 +121,7 @@ use crate::state::{CellState, FieldElement};
 /// cell's committed heap (so the binding is folded into the canonical state
 /// commitment). Chosen high to avoid colliding with application heap
 /// collections.
-pub const DERIVATION_COLL: u32 = 0x7DE_71_7E_u32; // a fixed reserved id ("DERIVE")
+pub const DERIVATION_COLL: u32 = 0x07DE_717E_u32; // a fixed reserved id ("DERIVE")
 
 /// Heap key (within [`DERIVATION_COLL`]) holding the 32-byte digest of the
 /// derived cell's [`DerivationSpec`]. Binds *which* derivation this cell claims.

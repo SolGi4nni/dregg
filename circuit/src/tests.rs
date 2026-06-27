@@ -12,7 +12,7 @@ use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationAir, Derivat
 use crate::field::BabyBear;
 use crate::fold_air::{FoldAir, FoldWitness, RemovedFact, build_shared_tree};
 use crate::merkle_air::{MerkleAir, create_test_witness};
-use crate::mock_prover::{Air, MockProof, MockProver};
+use crate::mock_prover::{Air, MockProver};
 use crate::poseidon2::{hash_4_to_1, hash_fact, hash_many};
 use crate::presentation::{PresentationAir, PresentationVerification, PresentationWitness};
 
@@ -747,7 +747,7 @@ fn proof_size_scaling() {
             })
             .collect();
         // Fix chain continuity: each fold's new_root must match next fold's old_root
-        for i in 0..folds.len().saturating_sub(1) {
+        for _i in 0..folds.len().saturating_sub(1) {
             // Already correct since each fold's old_root is its own tree_root
         }
 

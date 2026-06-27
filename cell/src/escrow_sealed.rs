@@ -94,7 +94,7 @@ use crate::state::FieldElement;
 /// committed heap (so the whole escrow is folded into the canonical state
 /// commitment). Chosen high to avoid colliding with application heap
 /// collections, in the same spirit as [`crate::derived::DERIVATION_COLL`].
-pub const ESCROW_COLL: u32 = 0x5_E5C_E0_u32; // a fixed reserved id ("ESCRoW")
+pub const ESCROW_COLL: u32 = 0x005E_5CE0_u32; // a fixed reserved id ("ESCRoW")
 
 /// Heap key holding the 32-byte digest of the escrow's [`EscrowTerms`]. Binds
 /// *which* exchange this cell escrows.

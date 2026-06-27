@@ -313,7 +313,8 @@ fn bench_proof_verification(c: &mut Criterion) {
 
         group.bench_function("verify_derivation_stark_4step", |b| {
             b.iter(|| {
-                black_box(verify_authorization_dsl(conclusion, acc_hash, &stark_proof).unwrap());
+                verify_authorization_dsl(conclusion, acc_hash, &stark_proof).unwrap();
+                black_box(());
             });
         });
 
@@ -342,7 +343,8 @@ fn bench_ivc_stark(c: &mut Criterion) {
         group.bench_function(format!("prove_verify_{steps}_step"), |b| {
             b.iter(|| {
                 let (sp, pi) = prove_ivc_stark(initial_root, &new_roots);
-                black_box(verify_ivc_stark(&sp, &pi).unwrap());
+                verify_ivc_stark(&sp, &pi).unwrap();
+                black_box(());
             });
         });
     }
@@ -462,9 +464,8 @@ fn bench_federation_ops(c: &mut Criterion) {
                 &num_ancestors,
                 |b, _| {
                     b.iter(|| {
-                        black_box(
-                            verify_non_revocation_dsl(&proof, revocation_root, first_hash).unwrap(),
-                        );
+                        verify_non_revocation_dsl(&proof, revocation_root, first_hash).unwrap();
+                        black_box(());
                     });
                 },
             );

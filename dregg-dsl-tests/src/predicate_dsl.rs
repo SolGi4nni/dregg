@@ -18,14 +18,6 @@ mod tests {
         BabyBear::new(999999)
     }
 
-    /// Helper: create a fact commitment and its components for derivation tests.
-    fn test_fact_commitment_parts(value: BabyBear) -> (BabyBear, BabyBear, BabyBear) {
-        let fact_hash = hash_fact(BabyBear::new(100), &[value, BabyBear::ZERO, BabyBear::ZERO]);
-        let state_root = BabyBear::new(99999);
-        let commitment = compute_fact_commitment(fact_hash, state_root);
-        (commitment, fact_hash, state_root)
-    }
-
     #[test]
     fn test_predicate_descriptor_validates() {
         let descriptor = predicate_descriptor();

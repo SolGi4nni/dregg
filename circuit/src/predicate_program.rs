@@ -3156,7 +3156,6 @@ mod tests {
 
     #[test]
     fn test_prove_verify_non_membership_via_program() {
-        use crate::non_membership::SetIdentifier;
         use crate::poseidon2::hash_many;
 
         let state_root = BabyBear::new(99999);
@@ -3204,8 +3203,6 @@ mod tests {
 
     #[test]
     fn test_prove_non_membership_fails_when_in_set() {
-        use crate::poseidon2::hash_many;
-
         let state_root = BabyBear::new(99999);
         let set_id_value = BabyBear::new(0xBBBB);
 

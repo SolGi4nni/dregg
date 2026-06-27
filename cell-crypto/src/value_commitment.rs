@@ -2167,11 +2167,11 @@ mod tests {
         let c_x = ValueCommitment::commit_hidden_asset(500, 3, &r1);
         let c_y = ValueCommitment::commit_hidden_asset(500, 999, &r2);
 
-        let px = prove_asset_equality(&[c_x.clone()], 3, &[500], &[r1]);
-        let py = prove_asset_equality(&[c_y.clone()], 999, &[500], &[r2]);
+        let px = prove_asset_equality(std::slice::from_ref(&c_x), 3, &[500], &[r1]);
+        let py = prove_asset_equality(std::slice::from_ref(&c_y), 999, &[500], &[r2]);
 
-        assert!(verify_asset_equality(&[c_x.clone()], &px).is_ok());
-        assert!(verify_asset_equality(&[c_y.clone()], &py).is_ok());
+        assert!(verify_asset_equality(std::slice::from_ref(&c_x), &px).is_ok());
+        assert!(verify_asset_equality(std::slice::from_ref(&c_y), &py).is_ok());
 
         // Both proofs have IDENTICAL structure (same number of fields / sizes),
         // so the proof shape leaks nothing about the asset type.

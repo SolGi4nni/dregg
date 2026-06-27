@@ -219,7 +219,7 @@ fn ir2_umem_vs_map_size_probe() {
         &map_rows,
         &[],
         &MemBoundaryWitness::default(),
-        &[heap.clone()],
+        std::slice::from_ref(&heap),
     )
     .expect("map write proves");
     let map_ms = t0.elapsed().as_millis();
@@ -641,9 +641,14 @@ fn ir2_mapop_interior_to_umem_chip_drop() {
     ];
     map_rows[0][5] = BabyBear::ONE;
     let t0 = Instant::now();
-    let map_proof =
-        prove_vm_descriptor2(&map_desc, &map_rows, &[], &MBW::default(), &[heap.clone()])
-            .expect("map-op interior proves");
+    let map_proof = prove_vm_descriptor2(
+        &map_desc,
+        &map_rows,
+        &[],
+        &MBW::default(),
+        std::slice::from_ref(&heap),
+    )
+    .expect("map-op interior proves");
     let map_ms = t0.elapsed().as_millis();
     verify_vm_descriptor2(&map_desc, &map_proof, &[]).expect("map-op interior verifies");
     let map_bytes = breakdown("clist-MAPOP", &map_proof);

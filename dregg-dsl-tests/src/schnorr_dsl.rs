@@ -474,10 +474,8 @@ mod tests {
         // Use a different key's public inputs
         let (_, other_pk) = schnorr_keygen(&[0xDDu8; 32]);
         let mut wrong_pi = pi_vec.clone();
-        for i in 0..8 {
-            wrong_pi[pi::PK_X + i] = other_pk.0.x.0[i];
-            wrong_pi[pi::PK_Y + i] = other_pk.0.y.0[i];
-        }
+        wrong_pi[pi::PK_X..pi::PK_X + 8].copy_from_slice(&other_pk.0.x.0[..8]);
+        wrong_pi[pi::PK_Y..pi::PK_Y + 8].copy_from_slice(&other_pk.0.y.0[..8]);
 
         // Boundary constraints should fail: trace[PHASE_1_START][BASE_X+i] != wrong pk
         let boundaries = circuit.boundary_constraints(&wrong_pi, trace.len());
@@ -530,9 +528,7 @@ mod tests {
         let wrong_blake = blake3::hash(b"wrong message");
         let wrong_hash = BabyBear::encode_hash(wrong_blake.as_bytes());
         let mut wrong_pi = correct_pi.clone();
-        for i in 0..8 {
-            wrong_pi[pi::MSG_HASH + i] = wrong_hash[i];
-        }
+        wrong_pi[pi::MSG_HASH..pi::MSG_HASH + 8].copy_from_slice(&wrong_hash[..8]);
 
         // The msg_hash is a public input. If we added PI boundary bindings for it,
         // the STARK would reject. Since the challenge derivation uses msg_hash,

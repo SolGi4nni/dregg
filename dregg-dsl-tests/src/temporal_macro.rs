@@ -240,7 +240,7 @@ mod tests {
         let sr = test_state_roots(3);
         let (trace, pi) = generate_temporal_trace(&[100, 100, 100], &sr, 50);
         let proof = stark::prove(&c, &trace, &pi);
-        assert!(stark::verify(&c, &proof, &vec![BabyBear::new(99), pi[1], pi[2], pi[3]]).is_err());
+        assert!(stark::verify(&c, &proof, &[BabyBear::new(99), pi[1], pi[2], pi[3]]).is_err());
     }
 
     #[test]
@@ -249,12 +249,8 @@ mod tests {
         let sr = test_state_roots(3);
         let (trace, pi) = generate_temporal_trace(&[100, 100, 100], &sr, 50);
         let proof = stark::prove(&c, &trace, &pi);
-        assert!(
-            stark::verify(&c, &proof, &vec![pi[0], pi[1], BabyBear::new(99999), pi[3]]).is_err()
-        );
-        assert!(
-            stark::verify(&c, &proof, &vec![pi[0], pi[1], pi[2], BabyBear::new(99999)]).is_err()
-        );
+        assert!(stark::verify(&c, &proof, &[pi[0], pi[1], BabyBear::new(99999), pi[3]]).is_err());
+        assert!(stark::verify(&c, &proof, &[pi[0], pi[1], pi[2], BabyBear::new(99999)]).is_err());
     }
 
     #[test]

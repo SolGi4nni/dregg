@@ -3159,7 +3159,7 @@ mod tests {
     /// Each step removes one fact from the tree. The tree is rebuilt without that fact
     /// for the next step (giving a genuine new_root).
     fn build_validated_ivc_chain(num_steps: usize) -> (BabyBear, Vec<FoldStepWitness>) {
-        use crate::poseidon2::{hash_4_to_1, hash_fact};
+        use crate::poseidon2::hash_fact;
 
         assert!(num_steps >= 1);
 
@@ -3454,7 +3454,7 @@ mod tests {
         let (initial_root, witnesses) = build_validated_ivc_chain(3);
 
         // Also build FoldDeltas from the same data (for the builder).
-        let deltas: Vec<FoldDelta> = witnesses
+        let _deltas: Vec<FoldDelta> = witnesses
             .iter()
             .map(|w| {
                 let fold = FoldWitness {

@@ -783,8 +783,8 @@ const B_CELLS_ROOT: usize = 0;
 ///   * the affected `wireCommitR` chain + `STATE_COMMIT` carriers are recomputed in place, and the
 ///     OLD/NEW rotated commit PIs are re-derived so the published commitment binds the grown set;
 ///   * the BEFORE tree's leaves are returned as the single `map_heaps` entry the prover threads.
-/// The new-cell key column is `param0` for createCell/spawn, `param1` (CHILD_VK_DERIVED) for factory
-/// (`new_cell_key_param_col`). Returns `(trace, dpis, map_heaps)`.
+///     The new-cell key column is `param0` for createCell/spawn, `param1` (CHILD_VK_DERIVED) for factory
+///     (`new_cell_key_param_col`). Returns `(trace, dpis, map_heaps)`.
 pub fn generate_rotated_create_cell_trace_with_accounts_tree(
     initial_state: &CellState,
     effects: &[Effect],
@@ -864,10 +864,10 @@ pub fn generate_rotated_create_cell_trace_with_accounts_tree(
 ///   * the affected `wireCommitR` chain + `STATE_COMMIT` carriers are recomputed in place, and the
 ///     OLD/NEW rotated commit PIs are re-derived so the published commitment binds the grown set;
 ///   * the BEFORE tree's leaves are returned as the single `map_heaps` entry the prover threads.
-/// The commitment key column is `param0` (`Effect::NoteCreate { commitment }`); the inserted leaf
-/// value is the note value (`param::NOTE_VALUE_LO = param1`). NoteCreate is append-only, so there
-/// is NO `.absent` freshness precondition (a re-published commitment is admissible). Returns
-/// `(trace, dpis, map_heaps)`.
+///     The commitment key column is `param0` (`Effect::NoteCreate { commitment }`); the inserted leaf
+///     value is the note value (`param::NOTE_VALUE_LO = param1`). NoteCreate is append-only, so there
+///     is NO `.absent` freshness precondition (a re-published commitment is admissible). Returns
+///     `(trace, dpis, map_heaps)`.
 pub fn generate_rotated_note_create_trace_with_commitments_tree(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2498,11 +2498,11 @@ pub fn generate_rotated_transfer_wide(
 ///     limbs the 1-felt block lays (so the 8-felt commit binds the same 37 limbs + iroot);
 ///   * APPENDS the 16 wide commit PIs PAST the base PIs: BEFORE commit (carrier 12, first row) then
 ///     AFTER commit (carrier 12, last row).
-/// `host_width` is the wide member's HOST width (`d.traceWidth` in Lean): `GRAD_ROT_WIDTH = 608` for
-/// the 816-wide families, `CAP_OPEN_WIDTH = 818` for the 1026-wide cap-open tail. The wide carriers
-/// land STRICTLY PAST the host's columns + gates (the appendix is purely additive), member-uniform
-/// because `BEFORE_BASE`/`AFTER_BASE` (187/238) are uniform across the cohort. The number of base
-/// PIs is preserved (the grow-gate families carry an extra PI[38]); the 16 wide PIs append after.
+///     `host_width` is the wide member's HOST width (`d.traceWidth` in Lean): `GRAD_ROT_WIDTH = 608` for
+///     the 816-wide families, `CAP_OPEN_WIDTH = 818` for the 1026-wide cap-open tail. The wide carriers
+///     land STRICTLY PAST the host's columns + gates (the appendix is purely additive), member-uniform
+///     because `BEFORE_BASE`/`AFTER_BASE` (187/238) are uniform across the cohort. The number of base
+///     PIs is preserved (the grow-gate families carry an extra PI[38]); the 16 wide PIs append after.
 pub fn append_wide_carriers(
     trace: &mut [Vec<BabyBear>],
     base_pis: Vec<BabyBear>,
@@ -3099,8 +3099,8 @@ const SET_FIELD_DYN_READBACK_COL: usize = 7; // PARAM_BASE + 7 = col 75
 ///     `MemBoundaryWitness` declares serial 0 for the touched address);
 ///   * col 75 (`READBACK`, param7) = `slot` — the read op transports the write's value (the read's
 ///     `value = prev_value = col 75`, `prev_serial = const 1` ties it to the write at serial 1).
-/// The write is the FIRST mem op (serial 1), so the read's `prev_serial = 1` matches the write's
-/// position — the Blum write→read transport with ZERO hashing (`satisfied2_mem_consistent`).
+///     The write is the FIRST mem op (serial 1), so the read's `prev_serial = 1` matches the write's
+///     position — the Blum write→read transport with ZERO hashing (`satisfied2_mem_consistent`).
 ///
 /// THE FIELDS-ROOT WELD (gate 31): the AFTER `fields_root` limb (col `AFTER_BASE + B_FIELDS_ROOT` =
 /// 275) is welded to `FIELD_INDEX` (col 68) on the active row; we force the AFTER fields_root limb to
@@ -3330,8 +3330,8 @@ pub struct CapWriteWideWitness {
 ///   * `GrantCapability` → `(None, true)` — the authority-only grant base FREEZES the cap-root
 ///     (pass-through, no map_op write), and rides the nonce-FREEZE face the bare transfer-shape route
 ///     (nonce-TICK) mis-shapes — so the freeze patch IS applied, but no cap-tree write witness.
-/// `None` for every other lead (the nonce-TICK passthrough cap bases revokeDelegation / introduce ride
-/// the transfer-shape route directly; the value/field/grow-gate/record families have their own arms).
+///     `None` for every other lead (the nonce-TICK passthrough cap bases revokeDelegation / introduce ride
+///     the transfer-shape route directly; the value/field/grow-gate/record families have their own arms).
 fn cap_write_wide_plan(effect: &Effect) -> Option<(Option<CapTreeWriteOp>, bool)> {
     match effect {
         Effect::AttenuateCapability { .. } => Some((Some(CapTreeWriteOp::Update), false)),

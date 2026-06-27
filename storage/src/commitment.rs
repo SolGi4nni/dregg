@@ -691,6 +691,34 @@ byte_slice_schema!(ErasureChunkMarker, domain::TAG_ERASURE_CHUNK);
 byte_slice_schema!(ErasureSetMarker, domain::TAG_ERASURE_SET);
 
 // =============================================================================
+// Stability constants (P4.E)
+// =============================================================================
+//
+// Hardcoded byte/felt values for the known-input stability test
+// `poseidon2_commitments_are_stable`. Filled in on 2026-05-24 from the
+// current Poseidon2 implementation in dregg_circuit::poseidon2.
+//
+// Update procedure: if a deliberate parameter change requires these to
+// drift, run the test with the eprintln! lines uncommented and
+// `cargo test ... -- --nocapture`, then paste the new values here AND
+// document the cause in the commit message.
+
+#[allow(
+    dead_code,
+    reason = "stability vector for the poseidon2_commitments_are_stable known-input test"
+)]
+const STABLE_BLINDED_ITEM_BLAKE3: [u8; 32] = [
+    86, 145, 129, 99, 44, 189, 254, 109, 128, 221, 85, 236, 60, 141, 65, 162, 118, 156, 199, 215,
+    161, 241, 152, 238, 116, 86, 134, 78, 220, 232, 30, 117,
+];
+#[allow(
+    dead_code,
+    reason = "stability vector for the poseidon2_commitments_are_stable known-input test"
+)]
+const STABLE_BLINDED_ITEM_POSEIDON2: [u32; 4] =
+    [1_763_016_687, 164_998_847, 1_721_525_161, 930_110_908];
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -860,34 +888,6 @@ mod tests {
         );
     }
 }
-
-// =============================================================================
-// Stability constants (P4.E)
-// =============================================================================
-//
-// Hardcoded byte/felt values for the known-input stability test
-// `poseidon2_commitments_are_stable`. Filled in on 2026-05-24 from the
-// current Poseidon2 implementation in dregg_circuit::poseidon2.
-//
-// Update procedure: if a deliberate parameter change requires these to
-// drift, run the test with the eprintln! lines uncommented and
-// `cargo test ... -- --nocapture`, then paste the new values here AND
-// document the cause in the commit message.
-
-#[allow(
-    dead_code,
-    reason = "stability vector for the poseidon2_commitments_are_stable known-input test"
-)]
-const STABLE_BLINDED_ITEM_BLAKE3: [u8; 32] = [
-    86, 145, 129, 99, 44, 189, 254, 109, 128, 221, 85, 236, 60, 141, 65, 162, 118, 156, 199, 215,
-    161, 241, 152, 238, 116, 86, 134, 78, 220, 232, 30, 117,
-];
-#[allow(
-    dead_code,
-    reason = "stability vector for the poseidon2_commitments_are_stable known-input test"
-)]
-const STABLE_BLINDED_ITEM_POSEIDON2: [u32; 4] =
-    [1_763_016_687, 164_998_847, 1_721_525_161, 930_110_908];
 
 // AUDIT[stage10-framework]: The two forms (BLAKE3 and Poseidon2) are
 // derived from the same canonical bytes via two independent paths.

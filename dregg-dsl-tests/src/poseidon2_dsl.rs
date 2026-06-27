@@ -410,9 +410,7 @@ mod tests {
         let (_, pi) = generate_poseidon2_trace(&input);
 
         let mut full_input = [BabyBear::ZERO; WIDTH];
-        for i in 0..8 {
-            full_input[i] = input[i];
-        }
+        full_input[..8].copy_from_slice(&input[..8]);
         let mut ps = Poseidon2State::from_elements(&full_input);
         ps.permute();
 

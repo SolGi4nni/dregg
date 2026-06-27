@@ -1004,7 +1004,7 @@ mod tests {
             BabyBear::new(1),               // no_challenger = 1 (LIE!)
             BabyBear::new(0),               // has_challenger = 0
         ];
-        let trace = vec![row.clone(), row];
+        let trace = [row.clone(), row];
 
         let circuit = dispute_dsl_circuit();
         let alpha = BabyBear::new(7);
@@ -1048,7 +1048,7 @@ mod tests {
             BabyBear::new(1), // no_challenger = 1
             BabyBear::new(1), // has_challenger = 1 (INVALID: both set)
         ];
-        let trace = vec![row.clone(), row];
+        let trace = [row.clone(), row];
 
         let circuit = dispute_dsl_circuit();
         let alpha = BabyBear::new(7);
@@ -1125,7 +1125,7 @@ mod tests {
             BabyBear::new(1),
             BabyBear::new(0),
         ];
-        let trace = vec![row.clone(), row];
+        let trace = [row.clone(), row];
 
         let circuit = dispute_dsl_circuit();
         let alpha = BabyBear::new(7);

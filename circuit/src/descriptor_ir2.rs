@@ -4204,9 +4204,8 @@ fn build_traces(
                 .entry(absorb2_tuple(key, value, &new_lanes))
                 .or_insert(0) += 1;
             cols[MAP_NEW_LEAF] = new_leaf;
-            for i in 0..CHIP_OUT_LANES - 1 {
-                cols[MAP_NEW_LEAF1 + i] = new_lanes[i + 1];
-            }
+            cols[MAP_NEW_LEAF1..MAP_NEW_LEAF1 + CHIP_OUT_LANES - 1]
+                .copy_from_slice(&new_lanes[1..CHIP_OUT_LANES]);
             if is_insert {
                 // Insert rows have no committed old leaf; the AIR's old-path legs are gated
                 // away by `op - 3`. Leave old-leaf / old-chain columns at zero.
@@ -4218,9 +4217,8 @@ fn build_traces(
                     .entry(absorb2_tuple(key, old_value, &old_lanes))
                     .or_insert(0) += 1;
                 cols[MAP_OLD_LEAF] = old_leaf;
-                for i in 0..CHIP_OUT_LANES - 1 {
-                    cols[MAP_OLD_LEAF1 + i] = old_lanes[i + 1];
-                }
+                cols[MAP_OLD_LEAF1..MAP_OLD_LEAF1 + CHIP_OUT_LANES - 1]
+                    .copy_from_slice(&old_lanes[1..CHIP_OUT_LANES]);
                 let mut cur_old = old_leaf;
                 for lvl in 0..HEAP_TREE_DEPTH {
                     let sib = sibs[lvl];
@@ -4346,14 +4344,10 @@ fn build_traces(
             st[6] = row[CHIP_S6];
             // Wide carrier/limb tail (lanes 7..10): genuine inputs on the wide row, pinned 0 on
             // every narrow arity (the tuple's in7..in10 are zero there), matching the AIR seeding.
-            for i in 7..CHIP_WIDE_ARITY {
-                st[i] = row[CHIP_IN0 + i];
-            }
+            st[7..CHIP_WIDE_ARITY].copy_from_slice(&row[CHIP_IN0 + 7..CHIP_IN0 + CHIP_WIDE_ARITY]);
             // Fill the 8 exposed output lanes from the genuine final permutation state.
             let lanes = perm_lanes(st);
-            for i in 0..CHIP_OUT_LANES {
-                row[CHIP_OUT + i] = lanes[i];
-            }
+            row[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&lanes[..CHIP_OUT_LANES]);
             let (aux, _digest) = perm_aux(st);
             row.extend(aux);
             chip_rows.push(row);
@@ -4375,9 +4369,7 @@ fn build_traces(
             // to fact rows too; only the fact bus's 3-wide `[l, r, out0]` is consumed though).
             let fst = fact_state_c(BabyBear::new(l), BabyBear::new(r));
             let lanes = perm_lanes(fst);
-            for i in 0..CHIP_OUT_LANES {
-                row[CHIP_OUT + i] = lanes[i];
-            }
+            row[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&lanes[..CHIP_OUT_LANES]);
             debug_assert_eq!(row[CHIP_OUT], BabyBear::new(out));
             let (aux, _digest) = perm_aux(fst);
             row.extend(aux);
@@ -4388,9 +4380,7 @@ fn build_traces(
         let (aux, digest) = perm_aux([BabyBear::ZERO; POSEIDON2_WIDTH]);
         let mut pad = vec![BabyBear::ZERO; CHIP_AUX0];
         debug_assert_eq!(pad_lanes[0], digest);
-        for i in 0..CHIP_OUT_LANES {
-            pad[CHIP_OUT + i] = pad_lanes[i];
-        }
+        pad[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&pad_lanes[..CHIP_OUT_LANES]);
         pad.extend(aux);
         let target = next_pow2(chip_rows.len());
         while chip_rows.len() < target {

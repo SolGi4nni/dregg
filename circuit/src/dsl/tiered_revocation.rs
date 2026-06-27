@@ -451,7 +451,7 @@ mod tests {
 
         // Generate a proof
         let clean = test_hash(500);
-        let proof1 = set.prove_non_revocation(clean).unwrap();
+        let _proof1 = set.prove_non_revocation(clean).unwrap();
 
         // Add more revocations to hot set (does NOT change accumulator)
         set.revoke(test_hash(30));

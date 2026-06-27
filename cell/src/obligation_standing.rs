@@ -111,7 +111,7 @@ use crate::state::FieldElement;
 /// the cell's committed heap (so the whole obligation is folded into the
 /// canonical state commitment). Chosen high to avoid colliding with application
 /// heap collections, in the same spirit as [`crate::escrow_sealed::ESCROW_COLL`].
-pub const OBLIGATION_COLL: u32 = 0x0_B11_6A_u32; // a fixed reserved id ("oBLIGAtion")
+pub const OBLIGATION_COLL: u32 = 0x000B_116A_u32; // a fixed reserved id ("oBLIGAtion")
 
 /// Heap key holding the 32-byte digest of the obligation's [`ObligationTerms`].
 /// Binds *which* schedule this cell owes.

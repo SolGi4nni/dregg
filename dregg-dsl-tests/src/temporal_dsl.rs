@@ -715,7 +715,7 @@ mod tests {
             stark::verify(
                 &DslCircuit::new(d.clone()),
                 &proof,
-                &vec![pi[0], pi[1], BabyBear::new(99999), pi[3]]
+                &[pi[0], pi[1], BabyBear::new(99999), pi[3]]
             )
             .is_err()
         );
@@ -723,7 +723,7 @@ mod tests {
             stark::verify(
                 &DslCircuit::new(d),
                 &proof,
-                &vec![pi[0], pi[1], pi[2], BabyBear::new(99999)]
+                &[pi[0], pi[1], pi[2], BabyBear::new(99999)]
             )
             .is_err()
         );
@@ -741,7 +741,7 @@ mod tests {
             stark::verify(
                 &DslCircuit::new(d),
                 &proof,
-                &vec![BabyBear::new(99), pi[1], pi[2], pi[3]]
+                &[BabyBear::new(99), pi[1], pi[2], pi[3]]
             )
             .is_err()
         );
@@ -886,7 +886,7 @@ mod tests {
     #[test]
     fn test_temporal_requirement_satisfied() {
         let sr = test_state_roots(30);
-        let claim = prove_temporal(&vec![200; 30], &sr, 100, TemporalPredicateKind::Gte).unwrap();
+        let claim = prove_temporal(&[200; 30], &sr, 100, TemporalPredicateKind::Gte).unwrap();
         let req = TemporalRequirement {
             attribute: "balance".into(),
             predicate_kind: TemporalPredicateKind::Gte,
@@ -899,7 +899,7 @@ mod tests {
     #[test]
     fn test_temporal_requirement_insufficient_duration() {
         let sr = test_state_roots(10);
-        let claim = prove_temporal(&vec![200; 10], &sr, 100, TemporalPredicateKind::Gte).unwrap();
+        let claim = prove_temporal(&[200; 10], &sr, 100, TemporalPredicateKind::Gte).unwrap();
         let req = TemporalRequirement {
             attribute: "balance".into(),
             predicate_kind: TemporalPredicateKind::Gte,
@@ -912,7 +912,7 @@ mod tests {
     #[test]
     fn test_temporal_requirement_wrong_predicate_type() {
         let sr = test_state_roots(10);
-        let claim = prove_temporal(&vec![200; 10], &sr, 100, TemporalPredicateKind::Gte).unwrap();
+        let claim = prove_temporal(&[200; 10], &sr, 100, TemporalPredicateKind::Gte).unwrap();
         let req = TemporalRequirement {
             attribute: "balance".into(),
             predicate_kind: TemporalPredicateKind::Gt,

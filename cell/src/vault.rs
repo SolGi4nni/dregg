@@ -117,7 +117,7 @@ use crate::state::FieldElement;
 /// cell's committed heap (so the whole vault is folded into the canonical state
 /// commitment). Chosen high to avoid colliding with application heap collections,
 /// in the same spirit as [`crate::escrow_sealed::ESCROW_COLL`].
-pub const VAULT_COLL: u32 = 0x0_5A_F_E0_u32; // a fixed reserved id ("vAultsAFE0")
+pub const VAULT_COLL: u32 = 0x0005_AFE0_u32; // a fixed reserved id ("vAultsAFE0")
 
 /// Heap key holding the 32-byte digest of the vault's [`VaultTerms`]. Binds
 /// *which* lock (beneficiary, amount, release rule) this cell carries.

@@ -119,7 +119,7 @@ use crate::state::FieldElement;
 /// canonical state commitment). Chosen high to avoid colliding with application
 /// heap collections, in the same spirit as
 /// [`crate::obligation_standing::OBLIGATION_COLL`].
-pub const ALLOWANCE_COLL: u32 = 0x0_A11_0E_u32; // a fixed reserved id ("ALLOwance")
+pub const ALLOWANCE_COLL: u32 = 0x000A_110E_u32; // a fixed reserved id ("ALLOwance")
 
 /// Heap key holding the 32-byte digest of the allowance's [`AllowanceTerms`].
 /// Binds *which* allowance (beneficiary, ceiling, epoch length) this cell carries.

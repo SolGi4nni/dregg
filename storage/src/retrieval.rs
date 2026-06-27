@@ -122,7 +122,7 @@ pub fn retrieve<S: ChunkSource>(
     let mut gathered: Vec<ErasureChunk> = Vec::with_capacity(manifest.n_data);
     let mut have: Vec<bool> = vec![false; manifest.n_total];
 
-    'indices: for index in 0..manifest.n_total {
+    'indices: for (index, slot) in have.iter_mut().enumerate() {
         if gathered.len() >= manifest.n_data {
             break;
         }
@@ -134,10 +134,10 @@ pub fn retrieve<S: ChunkSource>(
                     // (tampered data, or a valid chunk from another blob) fails
                     // here and is discarded — it never reaches reconstruction.
                     if chunk.index == index
-                        && !have[index]
+                        && !*slot
                         && erasure::verify_chunk_against_root(&chunk, &manifest.root)
                     {
-                        have[index] = true;
+                        *slot = true;
                         gathered.push(chunk);
                         continue 'indices;
                     }
@@ -223,13 +223,12 @@ pub fn sample_das<S: ChunkSource>(
     let mut found = 0usize;
     for &index in &indices {
         for source in sources {
-            if let Ok(Some(chunk)) = source.fetch_chunk(&manifest.root, index) {
-                if chunk.index == index
-                    && erasure::verify_chunk_against_root(&chunk, &manifest.root)
-                {
-                    found += 1;
-                    break;
-                }
+            if let Ok(Some(chunk)) = source.fetch_chunk(&manifest.root, index)
+                && chunk.index == index
+                && erasure::verify_chunk_against_root(&chunk, &manifest.root)
+            {
+                found += 1;
+                break;
             }
         }
     }

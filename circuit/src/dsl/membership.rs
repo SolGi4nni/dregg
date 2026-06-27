@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn standard_wrong_root_rejected() {
         let leaf = BabyBear::new(42424242);
-        let (siblings, positions, root) = create_test_witness(leaf, 4);
+        let (siblings, positions, _root) = create_test_witness(leaf, 4);
 
         let proof = prove_membership_dsl(leaf, &siblings, &positions).unwrap();
         let result = verify_membership_dsl(&proof, leaf, BabyBear::new(99999));

@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn discriminants_are_distinct() {
         use std::collections::HashSet;
-        let variants = vec![
+        let variants = [
             CellLifecycle::Live,
             CellLifecycle::Sealed {
                 reason_hash: [0u8; 32],

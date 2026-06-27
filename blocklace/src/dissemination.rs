@@ -1384,7 +1384,7 @@ mod tests {
     #[test]
     fn peer_knowledge_updated_on_receive() {
         let key_a = make_key(1);
-        let key_b = make_key(2);
+        let _key_b = make_key(2);
 
         let mut node_b = make_disseminator(2);
 
@@ -1403,7 +1403,7 @@ mod tests {
     #[test]
     fn peer_knowledge_includes_transitive_predecessors() {
         let key_a = make_key(1);
-        let key_b = make_key(2);
+        let _key_b = make_key(2);
 
         let mut node_b = make_disseminator(2);
 
@@ -1527,7 +1527,7 @@ mod tests {
     #[test]
     fn frontier_exchange_determines_delta() {
         let key_a = make_key(1);
-        let key_b = make_key(2);
+        let _key_b = make_key(2);
 
         let mut node_a = make_disseminator(1);
         let mut node_b = make_disseminator(2);
@@ -1571,7 +1571,7 @@ mod tests {
 
         // Create two conflicting blocks from the same creator at the same
         // sequence (equivocation). Both should be propagated as evidence.
-        let equivocator_key = make_key(99);
+        let _equivocator_key = make_key(99);
         let b1 = make_block(99, 0, vec![], b"version-A");
         let b2 = make_block(99, 0, vec![], b"version-B");
 
@@ -1688,7 +1688,7 @@ mod tests {
 
     #[test]
     fn blocks_to_send_always_causally_closed() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let key_b = make_key(2);
 
         let mut node_a = make_disseminator(1);
@@ -1718,7 +1718,7 @@ mod tests {
     #[test]
     fn pending_blocks_flushed_when_deps_arrive() {
         let key_a = make_key(1);
-        let key_b = make_key(2);
+        let _key_b = make_key(2);
 
         let mut node_b = make_disseminator(2);
 
@@ -1798,7 +1798,7 @@ mod tests {
 
     #[test]
     fn chunk_delta_group_single_chunk_when_small() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let mut node = make_disseminator(1);
 
         // Create 5 blocks (less than any reasonable chunk size).
@@ -1816,7 +1816,7 @@ mod tests {
 
     #[test]
     fn chunk_delta_group_splits_into_multiple() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let mut node = make_disseminator(1);
 
         // Create 10 blocks.
@@ -1838,7 +1838,7 @@ mod tests {
 
     #[test]
     fn chunk_delta_group_each_chunk_causally_closed() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let mut node = make_disseminator(1);
 
         // Create a chain of blocks.
@@ -1859,7 +1859,7 @@ mod tests {
 
     #[test]
     fn blocks_to_send_chunked_matches_full_delta() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let key_b = make_key(2);
         let mut node = make_disseminator(1);
 
@@ -1884,7 +1884,7 @@ mod tests {
 
     #[test]
     fn blocks_since_returns_new_blocks_only() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let mut node = make_disseminator(1);
 
         // Create initial blocks.
@@ -1914,9 +1914,9 @@ mod tests {
 
     #[test]
     fn filtered_push_subscribed_sent_non_subscribed_filtered() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let key_b = make_key(2);
-        let key_c = make_key(3);
+        let _key_c = make_key(3);
 
         let mut node_a = make_disseminator(1);
 
@@ -1941,9 +1941,9 @@ mod tests {
 
     #[test]
     fn causal_closure_non_subscribed_predecessor_included() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let key_b = make_key(2);
-        let key_c = make_key(3);
+        let _key_c = make_key(3);
 
         let mut node = make_disseminator(1);
 
@@ -1978,9 +1978,9 @@ mod tests {
 
     #[test]
     fn no_subscription_sends_everything_backward_compat() {
-        let key_a = make_key(1);
-        let key_b = make_key(2);
-        let key_c = make_key(3);
+        let _key_a = make_key(1);
+        let _key_b = make_key(2);
+        let _key_c = make_key(3);
 
         let mut node_a = make_disseminator(1);
 
@@ -2020,7 +2020,7 @@ mod tests {
 
     #[test]
     fn multiple_peers_different_subscriptions_different_blocks() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let key_b = make_key(2);
         let key_c = make_key(3);
 
@@ -2091,9 +2091,9 @@ mod tests {
 
     #[test]
     fn push_with_subscription_plus_causal_closure_is_causally_closed() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let key_b = make_key(2);
-        let key_c = make_key(3);
+        let _key_c = make_key(3);
 
         let mut node = make_disseminator(1);
 
@@ -2135,7 +2135,7 @@ mod tests {
 
     #[test]
     fn subscription_message_handling_updates_peer_knowledge() {
-        let key_a = make_key(1);
+        let _key_a = make_key(1);
         let key_b = make_key(2);
 
         let mut node_a = make_disseminator(1);

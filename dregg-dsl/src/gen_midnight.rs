@@ -25,7 +25,7 @@
 /// - IR `Match`             → CondSelect-based conditional paths
 /// - IR `Membership`        → TransientHash + ConstrainEq vs the set root
 /// - IR `MerkleAtPosition`  → depth-N DivModPowerOfTwo + CondSelect +
-///                            TransientHash fold, ConstrainEq vs the root
+///   TransientHash fold, ConstrainEq vs the root
 ///
 /// The generated JSON can be fed to Midnight's proof server or compiled to
 /// a prover key via `zkir-v3`.

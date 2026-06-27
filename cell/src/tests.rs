@@ -455,6 +455,8 @@ fn cell_spawn_child_sets_delegate() {
 }
 
 #[test]
+// Opaque-fixture VK: this test exercises the deprecated `new` blake3 hashing.
+#[allow(deprecated)]
 fn verification_key_hash_computed() {
     let data = vec![1, 2, 3, 4, 5];
     let vk = VerificationKey::new(data.clone());
@@ -1374,6 +1376,8 @@ fn scenario_permission_escalation_prevention() {
 }
 
 #[test]
+// Opaque-fixture VK: deprecated `new` is fine here (no real VK components).
+#[allow(deprecated)]
 fn scenario_zkapp_cell_with_verification_key() {
     let mut ledger = Ledger::new();
 

@@ -1591,7 +1591,7 @@ mod tests {
                                        _asset_type: u64,
                                        proof_bytes: &[u8]|
          -> Result<(), String> {
-            if proof_bytes == &[1, 2, 3, 4] {
+            if proof_bytes == [1, 2, 3, 4] {
                 Ok(())
             } else {
                 Err("STARK proof verification failed: commitment mismatch".to_string())

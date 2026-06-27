@@ -1,3 +1,6 @@
+// Exercises the deprecated legacy surface (RevocationFilter), deliberately kept.
+#![allow(deprecated)]
+
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use dregg_token::{
     Attenuation, AuthRequest, AuthToken, BiscuitToken, MacaroonToken, RevocationFilter, TokenFormat,

@@ -9,22 +9,18 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use dregg_circuit::dsl::verify_authorization_dsl;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::ivc::{
-    FoldDelta, create_test_chain, prove_ivc, prove_ivc_stark, verify_ivc, verify_ivc_stark,
+    create_test_chain, prove_ivc, prove_ivc_stark, verify_ivc, verify_ivc_stark,
 };
 use dregg_circuit::multi_step_air::{
-    MultiStepStarkAir, MultiStepWitness, build_multi_step_witness, prove_authorization_stark,
+    MultiStepWitness, build_multi_step_witness, prove_authorization_stark,
 };
 use dregg_circuit::note_spending_air::{
-    NoteSpendingAir, NoteSpendingWitness, create_test_witness as create_note_witness,
-    prove_note_spend, test_spending_key, verify_note_spend,
+    create_test_witness as create_note_witness, prove_note_spend, test_spending_key,
+    verify_note_spend,
 };
 use dregg_circuit::poseidon2::{Poseidon2State, WIDTH, hash_4_to_1, hash_many};
-use dregg_circuit::poseidon2_air::{
-    MerklePoseidon2StarkAir, Poseidon2Air, generate_merkle_poseidon2_trace,
-};
-use dregg_circuit::stark::{
-    self, MerkleStarkAir, StarkProof, generate_merkle_trace, proof_to_bytes,
-};
+use dregg_circuit::poseidon2_air::Poseidon2Air;
+use dregg_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
 use dregg_dsl_runtime::revocation::{
     DslRevocationTree, TREE_DEPTH as REVOCATION_TREE_DEPTH, prove_non_revocation_dsl,
     verify_non_revocation_dsl,
@@ -69,7 +65,10 @@ fn bench_poseidon2_stark_prove(c: &mut Criterion) {
     let proof = stark::prove(&air, &trace, &public_inputs);
 
     group.bench_function("verify", |b| {
-        b.iter(|| black_box(stark::verify(&air, &proof, &public_inputs).unwrap()));
+        b.iter(|| {
+            stark::verify(&air, &proof, &public_inputs).unwrap();
+            black_box(())
+        });
     });
 
     let proof_bytes = proof_to_bytes(&proof);
@@ -119,7 +118,10 @@ fn bench_merkle_membership(c: &mut Criterion) {
             BenchmarkId::new("verify", format!("d={depth}")),
             &(proof.clone(), public_inputs.clone()),
             |b, (proof, pi)| {
-                b.iter(|| black_box(stark::verify(&air, proof, pi).unwrap()));
+                b.iter(|| {
+                    stark::verify(&air, proof, pi).unwrap();
+                    black_box(())
+                });
             },
         );
 
@@ -161,16 +163,15 @@ fn bench_note_spending(c: &mut Criterion) {
 
     group.bench_function("verify_d4", |b| {
         b.iter(|| {
-            black_box(
-                verify_note_spend(
-                    nullifier,
-                    merkle_root,
-                    witness.value,
-                    witness.asset_type,
-                    &proof,
-                )
-                .unwrap(),
+            verify_note_spend(
+                nullifier,
+                merkle_root,
+                witness.value,
+                witness.asset_type,
+                &proof,
             )
+            .unwrap();
+            black_box(())
         });
     });
 
@@ -200,10 +201,8 @@ fn bench_note_spending(c: &mut Criterion) {
 
     group.bench_function("verify_d8", |b| {
         b.iter(|| {
-            black_box(
-                verify_note_spend(null8, root8, witness8.value, witness8.asset_type, &proof8)
-                    .unwrap(),
-            )
+            verify_note_spend(null8, root8, witness8.value, witness8.asset_type, &proof8).unwrap();
+            black_box(())
         });
     });
 
@@ -316,7 +315,10 @@ fn bench_multi_step_derivation(c: &mut Criterion) {
             BenchmarkId::new("verify", format!("{steps}_steps")),
             &(proof.clone(), conclusion, acc_hash),
             |b, (p, conc, ah)| {
-                b.iter(|| black_box(verify_authorization_dsl(*conc, *ah, p).unwrap()));
+                b.iter(|| {
+                    verify_authorization_dsl(*conc, *ah, p).unwrap();
+                    black_box(())
+                });
             },
         );
 
@@ -385,7 +387,10 @@ fn bench_state_transition_ivc(c: &mut Criterion) {
             BenchmarkId::new("stark_verify", format!("{steps}_steps")),
             &(stark_proof.clone(), pub_inputs.clone()),
             |b, (sp, pi)| {
-                b.iter(|| black_box(verify_ivc_stark(sp, pi).unwrap()));
+                b.iter(|| {
+                    verify_ivc_stark(sp, pi).unwrap();
+                    black_box(())
+                });
             },
         );
 
@@ -446,7 +451,10 @@ fn bench_non_revocation(c: &mut Criterion) {
             BenchmarkId::new("verify", format!("{num_ancestors}_ancestors")),
             &(revocation_root, first_hash, proof.clone()),
             |b, (root, hash, p)| {
-                b.iter(|| black_box(verify_non_revocation_dsl(p, *root, *hash).unwrap()));
+                b.iter(|| {
+                    verify_non_revocation_dsl(p, *root, *hash).unwrap();
+                    black_box(())
+                });
             },
         );
 
@@ -513,10 +521,9 @@ fn bench_body_membership_proof(c: &mut Criterion) {
 
     group.bench_function("verify_4_steps", |b| {
         b.iter(|| {
-            black_box(
-                verify_authorization_with_membership(&composed, conclusion, acc_hash, &body_hashes)
-                    .unwrap(),
-            )
+            verify_authorization_with_membership(&composed, conclusion, acc_hash, &body_hashes)
+                .unwrap();
+            black_box(())
         });
     });
 
@@ -572,7 +579,10 @@ fn bench_chunked_authorization(c: &mut Criterion) {
             BenchmarkId::new("verify", label),
             &(proof.clone(), conclusion, state_root),
             |b, (p, conc, sr)| {
-                b.iter(|| black_box(verify_chunked_authorization(p, *conc, *sr).unwrap()));
+                b.iter(|| {
+                    verify_chunked_authorization(p, *conc, *sr).unwrap();
+                    black_box(())
+                });
             },
         );
 
@@ -662,7 +672,8 @@ fn bench_full_authorization_pipeline(c: &mut Criterion) {
             let proof2 = stark::proof_from_bytes(&bytes).unwrap();
             // Verify
             let result = verify_authorization_dsl(conclusion, acc_hash, &proof2);
-            black_box(result.unwrap());
+            result.unwrap();
+            black_box(());
         });
     });
 
@@ -683,7 +694,10 @@ fn bench_full_authorization_pipeline(c: &mut Criterion) {
     });
 
     group.bench_function("verify_8step", |b| {
-        b.iter(|| black_box(verify_authorization_dsl(conclusion, acc_hash, &proof).unwrap()));
+        b.iter(|| {
+            verify_authorization_dsl(conclusion, acc_hash, &proof).unwrap();
+            black_box(())
+        });
     });
 
     eprintln!(
@@ -701,7 +715,7 @@ fn bench_full_authorization_pipeline(c: &mut Criterion) {
 
 #[cfg(feature = "plonky3")]
 fn bench_plonky3_backend(c: &mut Criterion) {
-    use dregg_circuit::plonky3_prover::{prove_membership_plonky3, prove_plonky3, verify_plonky3};
+    use dregg_circuit::plonky3_prover::{prove_plonky3, verify_plonky3};
     use dregg_circuit::poseidon2_air::{
         create_poseidon2_test_witness, generate_merkle_poseidon2_trace,
     };
@@ -731,7 +745,10 @@ fn bench_plonky3_backend(c: &mut Criterion) {
             BenchmarkId::new("verify_merkle", format!("d={depth}")),
             &public_inputs,
             |b, pi| {
-                b.iter(|| black_box(verify_plonky3(&proof, pi).unwrap()));
+                b.iter(|| {
+                    verify_plonky3(&proof, pi).unwrap();
+                    black_box(())
+                });
             },
         );
 

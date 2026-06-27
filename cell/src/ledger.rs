@@ -750,6 +750,7 @@ impl Ledger {
     ///   * `Values(set)` → a batch of O(log N) `update_leaf` (positions unchanged),
     ///     unless the tree was never built (then a full rebuild).
     ///   * `Structural` → a single O(N) full rebuild (positions shifted).
+    ///
     /// Idempotent; leaves `pending == Clean`.
     fn materialize(&mut self) {
         match std::mem::replace(&mut self.pending, Pending::Clean) {
@@ -967,7 +968,7 @@ impl Ledger {
             .iter()
             .map(|(cid, c)| (*cid, Self::hash_cell(c)))
             .collect();
-        all_hashes.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+        all_hashes.sort_by_key(|a| a.0.0);
 
         let leaves: Vec<[u8; 32]> = all_hashes.iter().map(|(_, h)| *h).collect();
         Self::merkle_root(&leaves)

@@ -602,7 +602,7 @@ fn cross_cell_read_proves_committed_peer_state() {
         &trace,
         &[root],
         &MemBoundaryWitness::default(),
-        &[heap.clone()],
+        std::slice::from_ref(&heap),
     )
     .expect("an honest cross-cell read of committed peer state must prove");
     verify_vm_descriptor2(&desc, &proof, &[root])
@@ -682,7 +682,7 @@ fn cross_cell_read_pi_mismatch_refuses() {
             &trace,
             &[wrong_pi],
             &MemBoundaryWitness::default(),
-            &[heap.clone()],
+            std::slice::from_ref(&heap),
         )
     });
     let refused = match outcome {

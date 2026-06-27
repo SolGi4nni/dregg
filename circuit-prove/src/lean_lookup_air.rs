@@ -24,8 +24,8 @@
 //! For a 30-bit wire:
 //! - **bit-decomp:**   30 aux columns + 31 constraints, on the prover's main trace.
 //! - **LogUp bus:**     4 byte limbs ⇒ 4 main aux columns + 1 recomposition gate,
-//!                      plus 4 auto-allocated permutation columns (extension field);
-//!                      the `[0,256)` range table is shared (1 column, amortized).
+//!   plus 4 auto-allocated permutation columns (extension field);
+//!   the `[0,256)` range table is shared (1 column, amortized).
 //!
 //! The headline reduction this module ships and *measures*: **main-trace aux
 //! columns per 30-bit wire drop from 30 to 4** (7.5×), and **booleanity

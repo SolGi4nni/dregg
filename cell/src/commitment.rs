@@ -1219,6 +1219,8 @@ mod tests {
     /// Adversarial test: changing the verification key must alter the
     /// canonical commitment.
     #[test]
+    // Opaque-fixture VK: deprecated `new` is fine here (no real VK components).
+    #[allow(deprecated)]
     fn changing_vk_changes_commitment() {
         let mut cell = Cell::new(test_key(7), test_token(11));
         let before = compute_canonical_state_commitment(&cell);
