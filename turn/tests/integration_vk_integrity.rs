@@ -6,6 +6,10 @@
 //! a hash deliberately wrong for the data. The executor must reject
 //! the apply with `InvalidEffect`.
 
+// Builds an opaque VK fixture via the deprecated `VerificationKey::new`; opaque
+// test fixtures are the sanctioned site for `new` per cell.rs.
+#![allow(deprecated)]
+
 use dregg_cell::{
     AuthRequired, Cell, CellId, Ledger, Permissions, VerificationKey, VerificationKeyIntegrityError,
 };

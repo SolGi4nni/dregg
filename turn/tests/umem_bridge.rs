@@ -6,7 +6,7 @@
 //! Covered verbs (the compressed kernel, `VerbCompression.compressed_kernel_three`):
 //!   * move   — `Effect::Transfer` (the paired debit/credit balance writes);
 //!   * gwrite — `Effect::SetField` (the record-field write) and
-//!              `Effect::AttenuateCapability` (the caps-domain guarded write);
+//!     `Effect::AttenuateCapability` (the caps-domain guarded write);
 //!   * create — `Effect::CreateCell` (the multi-address bundle birth).
 //!
 //! Teeth: discipline holds, `synthesized == 0` (the journal NAMES every touched address

@@ -151,8 +151,10 @@ fn burn_reduces_balance_and_sets_was_burn_flag() {
 #[test]
 fn receipt_hash_binds_was_burn_flag() {
     // Construct two receipts that are identical except for was_burn.
-    let mut r_no_burn = TurnReceipt::default();
-    r_no_burn.was_burn = false;
+    let r_no_burn = TurnReceipt {
+        was_burn: false,
+        ..Default::default()
+    };
     let mut r_with_burn = r_no_burn.clone();
     r_with_burn.was_burn = true;
 

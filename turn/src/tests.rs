@@ -15,6 +15,11 @@
 //! - Proof verification (fail-closed without verifier)
 //! - Receive permission enforcement
 
+// These tests build opaque VK fixtures via the deprecated `VerificationKey::new`
+// (a blake3(data) hash, not a canonical vk_v2). Opaque-fixture test use is the
+// sanctioned site for `new` per cell.rs; suppress the deprecation here.
+#![allow(deprecated)]
+
 use dregg_cell::{
     AuthRequired, CapabilityRef, Cell, CellId, Ledger, Permissions, VerificationKey,
     preconditions::Preconditions as CellPreconditions,
@@ -2268,8 +2273,8 @@ fn test_program_delegation_epoch_equals_enforced() {
 /// coverage classifier in `teasting/tests/protocol_coverage_gate.rs`.
 #[test]
 fn test_program_count_ge_enforced() {
+    use dregg_cell::count_ge_set_commitment;
     use dregg_cell::program::StateConstraint;
-    use dregg_cell::{count_ge_set_commitment, field_from_u64};
 
     const QC_SLOT: usize = 1;
     let program = dregg_cell::CellProgram::Predicate(vec![StateConstraint::CountGe {
@@ -6749,7 +6754,7 @@ fn test_committed_conservation_valid_proof_passes() {
     let excess_blinding = r_in - (r_out1 + r_out2);
     let turn_hash = turn.hash();
     let conservation_proof = prove_conservation(
-        &[input_vc.clone()],
+        std::slice::from_ref(&input_vc),
         &[output_vc1.clone(), output_vc2.clone()],
         &excess_blinding,
         &turn_hash,
@@ -6829,8 +6834,8 @@ fn test_committed_conservation_inflated_output_fails() {
     let blinding_diff = r_in - r_out;
     let turn_hash = turn.hash();
     let conservation_proof = prove_conservation(
-        &[input_vc.clone()],
-        &[output_vc.clone()],
+        std::slice::from_ref(&input_vc),
+        std::slice::from_ref(&output_vc),
         &blinding_diff,
         &turn_hash,
     );
@@ -8329,7 +8334,7 @@ fn make_bearer_delegation(
 }
 
 #[test]
-fn ZZZ_adversarial_verify_cli_golden_vector_matches_real_executor() {
+fn zzz_adversarial_verify_cli_golden_vector_matches_real_executor() {
     // THROWAWAY adversarial cross-check (verifier-added; to be reverted).
     // Confirms the CLI's pinned constant in cli/src/commands/cap.rs equals what
     // the REAL executor computes on the same inputs.
@@ -11627,6 +11632,7 @@ mod sender_authorized_membership_e2e {
     ///     a capability to the target,
     ///   * a target cell carrying a `SenderAuthorized { PublicRoot }` program
     ///     whose root slot (`ROOT_SLOT`) is seeded to `authorized_root`.
+    ///
     /// The action's effect writes a DIFFERENT slot (field 0) so the seeded root
     /// survives into `new_state` (where the constraint reads it).
     fn setup(

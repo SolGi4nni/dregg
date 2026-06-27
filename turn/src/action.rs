@@ -2585,11 +2585,10 @@ mod linearity_tests {
             cell: cid(1),
             slot: 0,
         };
-        for e in [revoke] {
-            assert_eq!(e.linearity(), LinearityClass::Terminal);
-            assert!(!e.linearity().requires_paired_sibling());
-            assert!(!e.linearity().is_disclosed_non_conservation());
-        }
+        let e = revoke;
+        assert_eq!(e.linearity(), LinearityClass::Terminal);
+        assert!(!e.linearity().requires_paired_sibling());
+        assert!(!e.linearity().is_disclosed_non_conservation());
     }
 
     #[test]

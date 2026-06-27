@@ -1180,11 +1180,10 @@ mod tests {
         let mut pi_bb = vec![BabyBear::ZERO; p::ACTIVE_BASE_COUNT];
         // Populate turn-identity slots.
         let (th, eg, _, prev) = crate::executor::TurnExecutor::compute_turn_identity_pi(turn);
-        for i in 0..4 {
-            pi_bb[p::TURN_HASH_BASE + i] = th[i];
-            pi_bb[p::EFFECTS_HASH_GLOBAL_BASE + i] = eg[i];
-            pi_bb[p::PREVIOUS_RECEIPT_HASH_BASE + i] = prev[i];
-        }
+        pi_bb[p::TURN_HASH_BASE..(4 + p::TURN_HASH_BASE)].copy_from_slice(&th);
+        pi_bb[p::EFFECTS_HASH_GLOBAL_BASE..(4 + p::EFFECTS_HASH_GLOBAL_BASE)].copy_from_slice(&eg);
+        pi_bb[p::PREVIOUS_RECEIPT_HASH_BASE..(4 + p::PREVIOUS_RECEIPT_HASH_BASE)]
+            .copy_from_slice(&prev);
         pi_bb[p::ACTOR_NONCE] = BabyBear::new((turn.nonce & 0x7FFF_FFFF) as u32);
         project_into_pi(&mut pi_bb, &counts, &roots);
         pi_bb[p::IS_AGENT_CELL] = if cell_id == &turn.agent {
@@ -1471,11 +1470,8 @@ mod tests {
         // so the reject below is provably caused by the forged COUNTS felt.
         let a_honest = fabricate_rotated_wr(&turn, &alice);
         let b_honest = fabricate_rotated_wr(&turn, &bob);
-        WitnessedReceipt::verify_bilateral_chain(
-            &vec![(alice, &a_honest), (bob, &b_honest)],
-            &turn,
-        )
-        .expect("honest rotated WRs must pass the cross-check before tamper");
+        WitnessedReceipt::verify_bilateral_chain(&[(alice, &a_honest), (bob, &b_honest)], &turn)
+            .expect("honest rotated WRs must pass the cross-check before tamper");
 
         let mut a_rot = fabricate_rotated_wr(&turn, &alice);
         let b_rot = fabricate_rotated_wr(&turn, &bob);
@@ -1505,11 +1501,8 @@ mod tests {
         // stripping the only schedule source (not a setup error).
         let a_honest = fabricate_rotated_wr(&turn, &alice);
         let b_honest = fabricate_rotated_wr(&turn, &bob);
-        WitnessedReceipt::verify_bilateral_chain(
-            &vec![(alice, &a_honest), (bob, &b_honest)],
-            &turn,
-        )
-        .expect("rotated WRs WITH native schedule must pass before stripping it");
+        WitnessedReceipt::verify_bilateral_chain(&[(alice, &a_honest), (bob, &b_honest)], &turn)
+            .expect("rotated WRs WITH native schedule must pass before stripping it");
 
         let mut a_rot = fabricate_rotated_wr(&turn, &alice);
         a_rot.bilateral_schedule = None; // strip the only schedule source

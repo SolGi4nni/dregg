@@ -215,15 +215,16 @@ fn adversary_amplifying_captp_handoff_is_rejected() {
 #[test]
 fn legitimate_captp_handoff_still_accepted() {
     // OPEN target cell: every action requires None (so a granted-None cert does NOT amplify).
-    let mut open = Permissions::default();
-    open.send = AuthRequired::None;
-    open.receive = AuthRequired::None;
-    open.set_state = AuthRequired::None;
-    open.set_permissions = AuthRequired::None;
-    open.set_verification_key = AuthRequired::None;
-    open.increment_nonce = AuthRequired::None;
-    open.delegate = AuthRequired::None;
-    open.access = AuthRequired::None;
+    let open = Permissions {
+        send: AuthRequired::None,
+        receive: AuthRequired::None,
+        set_state: AuthRequired::None,
+        set_permissions: AuthRequired::None,
+        set_verification_key: AuthRequired::None,
+        increment_nonce: AuthRequired::None,
+        delegate: AuthRequired::None,
+        access: AuthRequired::None,
+    };
 
     let target = make_cell(2, 100, open.clone());
     let target_id = target.id();
