@@ -427,15 +427,16 @@ mod linux {
             .map_err(|e| ConfineError::Linux(format!("landlock create: {e}")))?;
 
         for path in read_paths {
-            if let Ok(rule) = landlock::PathBeneath::new(
+            // landlock 0.4.x: `PathBeneath::new` is infallible (returns the rule
+            // directly, no longer a Result); only PathFd::new + add_rule can fail.
+            let rule = landlock::PathBeneath::new(
                 landlock::PathFd::new(path)
                     .map_err(|e| ConfineError::Linux(format!("landlock pathfd {path}: {e}")))?,
                 read_only,
-            ) {
-                ruleset = ruleset
-                    .add_rule(rule)
-                    .map_err(|e| ConfineError::Linux(format!("landlock rule {path}: {e}")))?;
-            }
+            );
+            ruleset = ruleset
+                .add_rule(rule)
+                .map_err(|e| ConfineError::Linux(format!("landlock rule {path}: {e}")))?;
         }
 
         let status = ruleset

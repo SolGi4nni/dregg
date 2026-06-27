@@ -25,7 +25,12 @@
 //! (`cfg(dregg_direct_present)`, set by build.rs). When absent the public entry returns `Err` and the
 //! caller falls back to the JSON path.
 
-use crate::marshal::{Auth, Cap, WForest, WireAuth, WireCaveat, WireHostCtx, WireState, WireValue};
+use crate::marshal::{WForest, WireHostCtx, WireState};
+// Auth/Cap/WireAuth/WireCaveat/WireValue are referenced only by the FFI-present
+// marshalling path (the `#[cfg(dregg_direct_present)]` block below) — gate the
+// import to match its consumer, or it reads as unused when the FFI is absent.
+#[cfg(dregg_direct_present)]
+use crate::marshal::{Auth, Cap, WireAuth, WireCaveat, WireValue};
 use crate::{ShadowState, ShadowVerdict, TurnStatus};
 
 /// Whether the no-copy direct boundary is available in this build (the archive exported
