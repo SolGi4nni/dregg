@@ -620,12 +620,17 @@ pub fn generate_garbled_trace(
         trace.push(trace.last().unwrap().clone());
     }
 
-    // Public inputs.
+    // Public inputs. The garbled AIR binds the FIRST 4 felts of each 8-felt WideHash in-circuit:
+    // `col::CIRCUIT_COMMITMENT` / `col::OUTPUT_LABEL_HASH` reserve 4-felt columns, and the
+    // descriptor declares `public_input_count = 8` (4 commitment + 4 output-label). The full
+    // 8-felt (~124-bit) binding is enforced by struct-level WideHash equality at the verify API
+    // (mirrors `crate::dsl::garbled` in dregg-circuit). Pushing all 8 felts of each WideHash would
+    // mis-align pi[4..8] onto the commitment tail and break the output-label PiBinding at row 0.
     let mut public_inputs = Vec::with_capacity(8);
-    for &elem in circuit_commitment.as_slice() {
+    for &elem in &circuit_commitment.as_slice()[..4] {
         public_inputs.push(elem);
     }
-    for &elem in output_label_hash.as_slice() {
+    for &elem in &output_label_hash.as_slice()[..4] {
         public_inputs.push(elem);
     }
 
@@ -760,12 +765,17 @@ pub fn generate_extended_garbled_trace(
         trace.push(pad_row);
     }
 
-    // Public inputs.
+    // Public inputs. The garbled AIR binds the FIRST 4 felts of each 8-felt WideHash in-circuit:
+    // `col::CIRCUIT_COMMITMENT` / `col::OUTPUT_LABEL_HASH` reserve 4-felt columns, and the
+    // descriptor declares `public_input_count = 8` (4 commitment + 4 output-label). The full
+    // 8-felt (~124-bit) binding is enforced by struct-level WideHash equality at the verify API
+    // (mirrors `crate::dsl::garbled` in dregg-circuit). Pushing all 8 felts of each WideHash would
+    // mis-align pi[4..8] onto the commitment tail and break the output-label PiBinding at row 0.
     let mut public_inputs = Vec::with_capacity(8);
-    for &elem in circuit_commitment.as_slice() {
+    for &elem in &circuit_commitment.as_slice()[..4] {
         public_inputs.push(elem);
     }
-    for &elem in output_label_hash.as_slice() {
+    for &elem in &output_label_hash.as_slice()[..4] {
         public_inputs.push(elem);
     }
 
