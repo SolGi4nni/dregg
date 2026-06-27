@@ -2548,7 +2548,7 @@ impl TurnExecutor {
         &self,
         ledger: &mut Ledger,
         path: &[usize],
-        action_target: &CellId,
+        _action_target: &CellId,
         actor: &CellId,
         journal: &mut LedgerJournal,
         target: &CellId,

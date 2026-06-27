@@ -51,7 +51,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::permissions::AuthRequired;
-use crate::program::{CellProgram, TransitionCase, TransitionGuard};
+use crate::program::{CellProgram, TransitionGuard};
 use crate::state::FieldElement;
 
 /// A method symbol — the BLAKE3 hash of a method name, stored as a field

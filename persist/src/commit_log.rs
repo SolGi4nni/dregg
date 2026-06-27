@@ -1074,7 +1074,7 @@ impl PersistentStore {
         // overlay re-asserts post-checkpoint cells last-writer-wins. We walk the
         // SAME reconstruction `recover` uses, but evaluate the canonical root after
         // EACH record so we find the last ordinal that converges to its claim.
-        let checkpoint_height = self.latest_ledger_checkpoint_height()?;
+        let _checkpoint_height = self.latest_ledger_checkpoint_height()?;
         let mut ledger = match self.load_latest_ledger_checkpoint()? {
             Some((_, l)) => l,
             None => dregg_cell::Ledger::new(),

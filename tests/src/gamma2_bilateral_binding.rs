@@ -21,11 +21,8 @@
 //! demonstrate the verifier schedule checks without paying proving cost.
 
 use dregg_cell::{AuthRequired, CapabilityRef, CellId};
-use dregg_turn::bilateral_schedule::{derive_intro_id, derive_intro_id_for_federation};
 use dregg_turn::{ActionBuilder, Turn, TurnBuilder, TurnReceipt};
-use dregg_verifier::{
-    BilateralBundle, BilateralEntry, fabricate_witnessed_receipt, verify_bilateral_bundle,
-};
+use dregg_verifier::{BilateralBundle, BilateralEntry, fabricate_witnessed_receipt};
 
 // ---------------------------------------------------------------------------
 // Canonical id derivations (testable today: pure-public-data functions)
