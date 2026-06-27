@@ -24,7 +24,10 @@ pub enum AdmissionReason {
     EmptyForest,
     /// Code 2: the agent cell is not a member account of this ledger.
     NoSuchAgent,
-    /// Code 3: the agent cell is a member but not lifecycle-live (Destroyed/Sealed).
+    /// Code 3: the agent cell is a member but in a TERMINAL lifecycle state
+    /// (Destroyed or Migrated) — a terminal tombstone cannot author a turn. A
+    /// Sealed cell is NOT terminal (reversible quiescence) and IS admitted, so
+    /// it can author its own unseal (`cellLifecycleCanAuthor`, fix `9e2c0e70`).
     DeadAgent,
     /// Code 4: the turn's `valid_until` has passed relative to the host clock.
     Expired,
@@ -97,7 +100,7 @@ impl AdmissionReason {
             Self::EmptyForest => "refused: the turn carries no actions (an empty call-forest)",
             Self::NoSuchAgent => "refused: the agent cell is not an account on this ledger",
             Self::DeadAgent => {
-                "refused: the agent cell is destroyed or sealed and cannot author a turn"
+                "refused: the agent cell is in a terminal lifecycle state (destroyed or migrated) and cannot author a turn"
             }
             Self::Expired => "refused: the turn's valid-until deadline has already passed",
             Self::NonceMismatch => {

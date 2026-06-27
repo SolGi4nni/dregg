@@ -332,6 +332,99 @@ fn lifecycle_destroy_with_certificate_then_terminal() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 5c (adversarial — the agent-lifecycle admission gate): a TERMINAL agent
+// (Destroyed) cannot author a turn that touches a DIFFERENT live cell.
+//
+// This is the hole the per-effect liveness gate could not see: that gate guards
+// only the effect's TARGET, never the acting agent. A destroyed agent acting on
+// a live victim it can reach therefore committed before the admission gate-3
+// (`cellLifecycleCanAuthor`) was wired into the Rust executor. The verified spec
+// rejects it (`deadAgent`); Rust must too — at ADMISSION, before any commit.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lifecycle_terminal_agent_cannot_author_on_other_cell() {
+    let agent = make_open_cell(50, 100);
+    let agent_id = agent.id();
+    let victim = make_open_cell(51, 100);
+    let victim_id = victim.id();
+
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(agent).unwrap();
+    ledger.insert_cell(victim).unwrap();
+
+    let executor = zero_executor();
+
+    // Destroy the agent (self-destroy commits; agent is now a terminal tombstone).
+    let cert = DeathCertificate {
+        cell_id: agent_id,
+        last_receipt_hash: [1u8; 32],
+        final_state_commitment: ledger.get(&agent_id).unwrap().state_commitment(),
+        destroyed_at_height: 7,
+        reason: DeathReason::Voluntary,
+    };
+    let destroy_turn = bare_turn(
+        agent_id,
+        0,
+        vec![Effect::CellDestroy {
+            target: agent_id,
+            certificate: cert,
+        }],
+    );
+    assert!(
+        executor.execute(&destroy_turn, &mut ledger).is_committed(),
+        "self-destroy of the agent must commit"
+    );
+    assert!(ledger.get(&agent_id).unwrap().lifecycle.is_destroyed());
+
+    // The destroyed agent now tries to set a field on the LIVE victim cell.
+    // The victim is Live, so the per-effect target-liveness gate would NOT catch
+    // this — only the agent-lifecycle admission gate does.
+    let mut forest = CallForest::new();
+    forest.add_root(Action {
+        target: victim_id,
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: Default::default(),
+        effects: vec![Effect::SetField {
+            cell: victim_id,
+            index: 0,
+            value: [0xAB; 32],
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+        witness_blobs: vec![],
+    });
+    let mut cross_turn = bare_turn(agent_id, 1, vec![]);
+    cross_turn.call_forest = forest;
+
+    let victim_pre = ledger.get(&victim_id).unwrap().state_commitment();
+    let result = executor.execute(&cross_turn, &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "a terminal (Destroyed) agent must be refused at admission; got {result:?}"
+    );
+    match result {
+        dregg_turn::TurnResult::Rejected { reason, .. } => assert_eq!(
+            reason,
+            dregg_turn::TurnError::AdmissionRefused {
+                reason: dregg_turn::AdmissionReason::DeadAgent,
+            },
+            "refusal must name the agent-lifecycle (deadAgent) gate"
+        ),
+        other => panic!("expected Rejected, got {other:?}"),
+    }
+    // The victim cell is untouched — the turn never committed.
+    assert_eq!(
+        ledger.get(&victim_id).unwrap().state_commitment(),
+        victim_pre,
+        "victim state must be unchanged by the refused turn"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Test 6 (adversarial): DeathCertificate with wrong cell_id is rejected.
 // ---------------------------------------------------------------------------
 

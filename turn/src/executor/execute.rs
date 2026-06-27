@@ -389,6 +389,28 @@ impl TurnExecutor {
             }
         };
 
+        // Gate 3 — agent lifecycle (`cellLifecycleCanAuthor`). A TERMINAL agent
+        // (Destroyed or Migrated) cannot author a turn. Mirrors the verified
+        // `Dregg2.Exec.Admission.admissible` agent-lifecycle leg
+        // (`cellLifecycleCanAuthor`, RecordKernel.lean), whose kernel-align fix
+        // (`9e2c0e70`) admits the NON-terminal states (Live / Sealed / Archived)
+        // — so a Sealed agent still self-unseals — and rejects ONLY the terminal
+        // tombstones. Without this gate the executor admitted a Destroyed/Migrated
+        // agent whose effects on a *non-terminal* target would then commit (the
+        // per-effect liveness gate only guards the TARGET, never the actor): a
+        // safe-direction divergence (Rust admits what the spec refuses). A
+        // Migrated cell is an inert tombstone with no authoring path
+        // (`cell/src/migration.rs`: the destination copy is the unique live home),
+        // so refusing the full `is_terminal()` set has no legitimate-flow cost.
+        if agent_cell.lifecycle.is_terminal() {
+            return TurnResult::Rejected {
+                reason: TurnError::AdmissionRefused {
+                    reason: crate::AdmissionReason::DeadAgent,
+                },
+                at_action: vec![],
+            };
+        }
+
         // Check nonce.
         if agent_cell.state.nonce() != turn.nonce {
             return TurnResult::Rejected {

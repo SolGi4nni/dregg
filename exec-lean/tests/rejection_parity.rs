@@ -96,6 +96,18 @@ fn make_sealed_cell(seed: u8, balance: i64) -> Cell {
     c
 }
 
+/// An open-permission cell in a TERMINAL lifecycle state (Destroyed). The verified kernel's
+/// admission leg `cellLifecycleCanAuthor` (RecordKernel.lean) refuses a terminal cell as the AGENT
+/// of a turn — the agent-lifecycle gate the Rust executor now mirrors at admission.
+fn make_destroyed_cell(seed: u8, balance: i64) -> Cell {
+    let mut c = make_open_cell(seed, balance);
+    c.lifecycle = dregg_cell::lifecycle::CellLifecycle::Destroyed {
+        death_certificate_hash: [9u8; 32],
+        destroyed_at: 1,
+    };
+    c
+}
+
 fn field_from_u64(v: u64) -> FieldElement {
     let mut out = [0u8; 32];
     out[24..32].copy_from_slice(&v.to_be_bytes());
@@ -765,6 +777,63 @@ fn build_corpus() -> Vec<Case> {
                     cell: b,
                     new_permissions: open_permissions(),
                 }],
+            ),
+            ledger: l,
+            control: true,
+        });
+    }
+
+    // ════════════════ AGENT-LIFECYCLE ADMISSION GATE (`cellLifecycleCanAuthor`) ══════════════════
+    // The verified `admissible` (Admission.lean §2) gate-3 leg refuses a turn whose AGENT cell is in
+    // a TERMINAL lifecycle state (Destroyed/Migrated). The per-effect target-liveness gates above
+    // guard only the AFFECTED cell, NEVER the actor — so a terminal agent acting on a LIVE cell it
+    // can reach slips past them. This pair pins the actor-side gate.
+
+    // ── (DA-from-destroyed) Terminal (Destroyed) AGENT transfers to a LIVE B ──────────────────────
+    // A is Destroyed; B is Live. The transfer's target/dest liveness gate would pass (B is Live) —
+    // only the agent-admission gate catches it. Lean `cellLifecycleCanAuthor` (admission gate 3)
+    // refuses; the Rust executor's admission now mirrors it. Expected AGREE-both-reject (the closed
+    // safe-direction gap — before the gate, Rust ACCEPTED this).
+    {
+        let a = make_destroyed_cell(1, 100);
+        let b = make_open_cell(2, 5);
+        let (ida, idb) = (a.id(), b.id());
+        let mut l = Ledger::new();
+        l.insert_cell(a).unwrap();
+        l.insert_cell(b).unwrap();
+        cases.push(Case {
+            gate: "agent-terminal-destroyed",
+            desc: "Transfer 30 from a DESTROYED agent A to a LIVE B (agent not authorable)",
+            turn: single_effect_turn(
+                ida,
+                idb,
+                0,
+                Effect::Transfer {
+                    from: ida,
+                    to: idb,
+                    amount: 30,
+                },
+            ),
+            ledger: l,
+            control: false,
+        });
+    }
+    // ── (DA-from-live) CONTROL — Transfer from a LIVE agent — both ACCEPT ─────────────────────────
+    // The honest counterpart proves the agent-lifecycle gate does NOT over-reject a live agent.
+    {
+        let (l, a, b) = two_open(100, 5);
+        cases.push(Case {
+            gate: "agent-live-control",
+            desc: "Transfer 30 from a LIVE agent A to a LIVE B (honest; both accept)",
+            turn: single_effect_turn(
+                a,
+                a,
+                0,
+                Effect::Transfer {
+                    from: a,
+                    to: b,
+                    amount: 30,
+                },
             ),
             ledger: l,
             control: true,
