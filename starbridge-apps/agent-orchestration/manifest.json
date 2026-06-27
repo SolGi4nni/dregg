@@ -1,0 +1,51 @@
+{
+  "id": "agent-orchestration",
+  "name": "Verifiable Durable + Auditable Agent Orchestration",
+  "description": "Multi-agent orchestration where a COORDINATOR dispatch-board cell holds a conserved budget + a mandate and issues each WORKER an ATTENUATED mandate (a scope-narrowed tool-set ∧ a sub-budget ∧ a sub-task — strictly weaker than the coordinator holds: granted ⊑ held, the proven non-amplification). Every worker step is a cap-gated VERIFIED TURN the executor re-enforces the budget policy on (AffineLe(spent_a+spent_b<=budget) + Monotonic meters + StrictMonotonic epoch); a wider tool, an over-budget spend, or a replayed step is REFUSED, fail-closed, in the fire path. The whole run is a DURABLE workflow checkpointed to a receipt log (crash-recoverable, exactly-once on resume, modeled on pg-dregg::workflow), and it is AUDITABLE: an auditor (a light client) re-derives the run from the receipt chain (verify_receipt_extends + a per-step mandate re-check + the swarm-budget conservation check) and proves no agent ever exceeded its mandate — a clean run audits OK, a tampered or over-mandate step is DETECTABLE. The durable+auditable twin of swarm-orchestration (the SAME slots + coordinator_program). Rust mirror of metatheory/Dregg2/Apps/AgentOrchestration.lean (worker_authority_subset_orchestrator) + AgentOrchestrationBudget.lean (the affine budget tooth) + Deos/WorkflowBridge.lean + Protocol/Workflow.lean.",
+  "version": "0.1.0",
+  "status": "starbridge",
+  "crate": "starbridge-agent-orchestration",
+  "runtime_mode": "starbridge-native",
+  "caddy_prefix": "/ados",
+  "factory_vks": [
+    "737461726272696467652d6167656e742d6f726368657374722d666163747279"
+  ],
+  "page": null,
+  "inspectors": ["orchestration-board"],
+  "turn_builders": ["open_board", "worker_step"],
+  "required_apis": ["/turn/submit", "/cells/create-from-factory", "/api/cell/{id}"],
+  "deos": {
+    "surface": "DeosApp",
+    "mount": "register_deos (src/lib.rs) — folds the composed DeosApp into the StarbridgeAppContext affordance registry; DeosApp::mount yields the axum router",
+    "src_factory": "orchestration_app(cipherclerk, executor)",
+    "cell": "orchestration-board",
+    "discoverable": ["agent-orchestration", "ados", "swarm"],
+    "persistence": "pg-dregg (the durable workflow posture — the receipt chain is the commit log)",
+    "publish": "Signature (the board cell is a dregg:// sturdyref an auditor on another federation reacquires)",
+    "affordances": {
+      "view_audit": "cap-only, Signature (an AUDITOR reads + re-derives the run from the receipt chain)",
+      "worker_step": "GATED (cap∧state), Either — board-open precondition (EPOCH>=1); the fire submits the FULL step (meter + epoch), the executor re-enforcing AffineLe(spent_a+spent_b<=budget) + StrictMonotonic(epoch) + Monotonic(meters)",
+      "delegate_mandate": "cap-only, None/root, Effect::GrantCapability (the coordinator hands a worker an ATTENUATED slice — derive_no_amplify)"
+    },
+    "seam": "CLOSED — the fire runs against the FACTORY-BORN/seeded coordinator cell carrying coordinator_program(), so the AffineLe budget gate, WriteOnce mandate/lead, and StrictMonotonic epoch BITE in the deos fire path (tests/deos_surface.rs)"
+  },
+  "axes": {
+    "1_verified_core": "orchestration_factory_descriptor() + coordinator_program() (src/lib.rs)",
+    "2_deos_surface": "deos::orchestration_app (src/deos.rs, tests/deos_surface.rs)",
+    "3_service_cell": "service::BoardService over invoke() (src/service.rs, tests/service.rs)",
+    "4_deos_view_card": "card::board_card_value/json (src/card.rs)",
+    "5_reactor": "reactor::CoordinatorReactor (src/reactor.rs)"
+  },
+  "surfaces": {
+    "durable": "OrchestrationEngine + OrchestrationLog + audit_run/recover/resume (src/durable.rs + src/lib.rs) — the pg-dregg-shaped durable + auditable workflow",
+    "mcp": "mcp::step_from_mcp_call (src/mcp.rs) — a live MCP tools/call run AS a verified worker step, content-addressing the exact tool + arguments"
+  },
+  "lean_module": "Dregg2.Apps.AgentOrchestration",
+  "manifest_health": {
+    "status": "starbridge-native",
+    "verified_policy": "AgentOrchestrationBudget.dispatchConstraints (affineLe budget + immutable mandate + strictMono epoch)",
+    "verified_delegation": "AgentOrchestration.worker_authority_subset_orchestrator (derive_no_amplify)",
+    "durable_audit": "verify_receipt_extends over the chained TurnReceipts + the per-step mandate re-check",
+    "pre_submission_assurance": "dregg-userspace-verify::analyze (conservation + non-amplification + well-formedness)"
+  }
+}

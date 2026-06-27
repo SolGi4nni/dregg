@@ -71,6 +71,28 @@ pub mod durable;
 /// mandate is refused in the fire path.
 pub mod mcp;
 
+// The unified starbridge-app template axes this crate carries (after the `bounty-board` /
+// `swarm-orchestration` exemplars). The verified core (AX1: the `FactoryDescriptor` + the
+// `coordinator_program` budget policy) lives in this file; the runtime faces are the modules below.
+// AX2/AX3/AX5 all install/assume the SAME canonical [`coordinator_program`] the factory (AX1) bakes —
+// no divergent program is invented, so the budget gate + meters + epoch caveats re-enforce identically
+// on every runtime axis:
+//   - AX2 (deos surface): [`deos`] — the board as a composed `DeosApp` (per-viewer cap∧state surface).
+//   - AX3 (service cell): [`service`] — a typed `InterfaceDescriptor` + `invoke()` method dispatch.
+//   - AX4 (card): [`card`] — the UI as a renderer-independent `deos.ui.*` view-tree.
+//   - AX5 (reactor): [`reactor`] — the autonomous COORDINATOR agent-loop as a `Reactor` (the reactive
+//     twin of `invoke()`): watch a posted mandate, react by auto-dispatching the first worker step
+//     within the conserved budget.
+
+/// The deos-view CARD: the app's UI as a renderer-independent `deos.ui.*` view-tree.
+pub mod card;
+/// The autonomous COORDINATOR agent-loop as a `Reactor` (the reactive twin of `invoke()`): watch a
+/// posted mandate (an `open_board`), react by auto-dispatching the first worker step within the budget.
+pub mod reactor;
+/// The CELLS-AS-SERVICE-OBJECTS face: a typed `InterfaceDescriptor` + `invoke()` method dispatch over
+/// the orchestration lifecycle (`open_board` / `worker_step` / `delegate_mandate` / `view`).
+pub mod service;
+
 use crate::deos::orchestration_app;
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
@@ -357,7 +379,16 @@ pub fn build_open_board_action(
     lead: &str,
     budget: u64,
 ) -> Action {
-    let effects = vec![
+    cipherclerk.make_action(board, "open_board", open_board_effects(board, lead, budget))
+}
+
+/// **`open_board` effects** — the multi-effect open body: pin the `LEAD` identity + the `BUDGET`
+/// mandate (`WriteOnce`: bound once from zero, frozen), the two meters born at 0, and the epoch
+/// advanced 0 -> 1 (so the open turn itself satisfies `StrictMonotonic(EPOCH)`). The ONE coherent
+/// open transition the installed [`coordinator_program`] admits. The deos surface (AX2), the service
+/// face (AX3), and the reactor (AX5) all desugar to this SAME body — the non-degrading invariant.
+pub fn open_board_effects(board: CellId, lead: &str, budget: u64) -> Vec<Effect> {
+    vec![
         Effect::SetField {
             cell: board,
             index: LEAD_SLOT as usize,
@@ -390,8 +421,7 @@ pub fn build_open_board_action(
                 vec![identity_field(lead), field_from_u64(budget)],
             ),
         },
-    ];
-    cipherclerk.make_action(board, "open_board", effects)
+    ]
 }
 
 /// **WORKER STEP** — a worker performs one mandated action: it advances ITS cumulative spend meter on
@@ -413,7 +443,27 @@ pub fn build_worker_step_action(
     sub_task: &str,
 ) -> Action {
     let new_spent = prev_spent.saturating_add(cost);
-    let effects = vec![
+    let effects = worker_step_effects(board, worker, tool, new_spent, cost, new_epoch, sub_task);
+    cipherclerk.make_action(board, "worker_step", effects)
+}
+
+/// **`worker_step` effects** — the multi-effect worker-step body: advance `worker`'s cumulative spend
+/// meter to `new_spent` (`Monotonic`; summed by the `AffineLe` budget gate), strictly advance `EPOCH`
+/// to `new_epoch` (no-replay), and emit a content-addressed action record binding the `tool`, the
+/// `cost`, and the `sub_task` (the receipt's audit payload). The ONE coherent step transition the
+/// installed [`coordinator_program`] admits. The service face (AX3) and the reactor (AX5) desugar to
+/// this SAME body — the non-degrading invariant (the deos surface's [`crate::deos::fire_worker_step`]
+/// fires the equivalent meter+epoch advance state-parameterized off the live cell).
+pub fn worker_step_effects(
+    board: CellId,
+    worker: WorkerSlot,
+    tool: Tool,
+    new_spent: u64,
+    cost: u64,
+    new_epoch: u64,
+    sub_task: &str,
+) -> Vec<Effect> {
+    vec![
         Effect::SetField {
             cell: board,
             index: worker.spend_slot() as usize,
@@ -435,8 +485,7 @@ pub fn build_worker_step_action(
                 ],
             ),
         },
-    ];
-    cipherclerk.make_action(board, "worker_step", effects)
+    ]
 }
 
 // =============================================================================
