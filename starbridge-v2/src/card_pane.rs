@@ -43,7 +43,7 @@ use gpui_component::label::Label;
 use gpui_component::{h_flex, v_flex, ActiveTheme};
 
 use deos_js::AttachedApplet;
-use deos_view::{parse_view_tree, ViewNode};
+use deos_view::{disclose, parse_view_tree, pill_display, Disclosure, ViewNode};
 
 /// A shared, interior-mutable handle on the LIVE attached applet. The card reads the
 /// model through it (a `bind` re-read off the live ledger) and a button's `on_click`
@@ -127,7 +127,10 @@ impl CardPane {
         let applet: CardSubstanceRef = applet;
         Self {
             applet,
-            tree,
+            // Mount the CLEAN newcomer projection (progressive disclosure): drop the
+            // `props.adept` "see the bones" detail (raw hashes, slot indices), keeping the
+            // friendly card. An `adept` host can opt up by mounting the raw tree.
+            tree: disclose(&tree, Disclosure::Simple),
             title: title.into(),
         }
     }
@@ -143,7 +146,8 @@ impl CardPane {
     ) -> Self {
         Self {
             applet: substance,
-            tree,
+            // The clean newcomer projection (see [`Self::new`]).
+            tree: disclose(&tree, Disclosure::Simple),
             title: title.into(),
         }
     }
@@ -160,7 +164,8 @@ impl CardPane {
     /// paint draws the reshaped surface. The live applet (the substance binds/fires
     /// drive) is untouched — only the view changed (the view is data, not code).
     pub fn set_tree(&mut self, tree: ViewNode) {
-        self.tree = tree;
+        // Keep the same clean newcomer projection the constructors mount.
+        self.tree = disclose(&tree, Disclosure::Simple);
     }
 
     /// The card's current rendered view-tree (read-only) — so a mount can re-derive
@@ -195,16 +200,21 @@ impl CardPane {
                 // (which overlaps the next line) — a label keeps its own line height.
                 .flex_shrink_0()
                 .into_any_element(),
-            ViewNode::Bind { slot, label } => {
+            ViewNode::Bind { slot, label, fmt } => {
                 // THE SIGNAL BINDING over the LIVE ledger — re-read the bound model slot
                 // off the cockpit's real cell (the same witnessed read the JS closure
                 // made, now through `AttachedApplet`). Immediate-mode: this re-runs every
                 // render, so after a live turn the new value shows.
                 let value = self.applet.borrow().get_u64(*slot);
+                // CONSUMER-DELIGHT: an opaque key/hash paints SHORT + friendly
+                // (`🦊 swift-fox` / `0x8bf3…a3d8` / `1,234,567`) instead of a 20-digit
+                // decimal; `raw` keeps the plain decimal so a counter is unchanged. The
+                // SAME `deos_view::fmt` formatter the native/web/discord renderers call.
+                let shown = deos_view::fmt::format_value(value, *fmt);
                 let text = if label.is_empty() {
-                    value.to_string()
+                    shown
                 } else {
-                    format!("{label}{value}")
+                    format!("{label}{shown}")
                 };
                 Label::new(text)
                     .font_weight(FontWeight::BOLD)
@@ -508,13 +518,31 @@ impl CardPane {
                     )
                     .into_any_element()
             }
-            ViewNode::Pill { text, tag } => div()
-                .px_2()
-                .py_0p5()
-                .rounded_md()
-                .bg(tag_color(tag))
-                .child(Label::new(text.clone()).text_color(rgb(0xffffff)))
-                .into_any_element(),
+            ViewNode::Pill {
+                text,
+                tag,
+                slot,
+                cases,
+            } => {
+                // A colored status badge. LIVE variant (the static-phase-word cure): when bound
+                // to a `slot` with `cases`, read the slot IMMEDIATE-MODE off the live ledger and
+                // map the value to its word + color (a phase slot → COMMIT/REVEAL/RESOLVED), via
+                // the SAME `pill_display` resolver every renderer calls. No slot/cases → static.
+                let (shown_text, shown_tag) = match slot {
+                    Some(s) if !cases.is_empty() => {
+                        let value = self.applet.borrow().get_u64(*s);
+                        pill_display(text, tag, cases, value)
+                    }
+                    _ => (text.as_str(), tag.as_str()),
+                };
+                div()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(tag_color(shown_tag))
+                    .child(Label::new(shown_text.to_string()).text_color(rgb(0xffffff)))
+                    .into_any_element()
+            }
             ViewNode::Icon { glyph, tag } => {
                 let color = if tag.is_empty() {
                     theme_fg
@@ -718,6 +746,13 @@ impl CardPane {
                     }
                 }
                 frame.into_any_element()
+            }
+            ViewNode::Adept(inner) => {
+                // The progressive-disclosure marker. A `simple`-disclosed tree (the clean
+                // newcomer default this pane mounts) drops these before they reach `node`, so
+                // this arm only fires if an un-disclosed tree is rendered directly — then it is
+                // TRANSPARENT (render the wrapped node) so the adept detail still paints.
+                self.node(inner, _window, cx)
             }
         }
     }
