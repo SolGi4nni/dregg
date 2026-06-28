@@ -23,7 +23,7 @@ use deos_view::{
     parse_view_tree, render_card_document, render_card_live_document,
     render_doccollab_live_document, render_gallery_document, render_html,
     render_inspector_live_document, render_kvstore_live_document, render_tally_live_document,
-    GalleryCard,
+    render_trustless_cell_document, GalleryCard, TrustlessAttestation,
 };
 
 /// The EXACT `JSON.stringify(tree)` shape the SpiderMonkey engine produces for the
@@ -376,9 +376,9 @@ fn main() {
         "each Row paints its named tally's label"
     );
     assert!(
-        frag_tally.contains("data-slot=\"0\">3</span>")
-            && frag_tally.contains("data-slot=\"1\">1</span>")
-            && frag_tally.contains("data-slot=\"2\">4</span>"),
+        frag_tally.contains("data-slot=\"0\" data-fmt=\"raw\" data-label=\"\">3</span>")
+            && frag_tally.contains("data-slot=\"1\" data-fmt=\"raw\" data-label=\"\">1</span>")
+            && frag_tally.contains("data-slot=\"2\" data-fmt=\"raw\" data-label=\"\">4</span>"),
         "each Row's Bind paints its slot's seeded value (3 / 1 / 4)"
     );
     assert!(
@@ -429,9 +429,9 @@ fn main() {
         "the store renders a version Row + a Table of four register Rows"
     );
     assert!(
-        frag_kv.contains("data-slot=\"0\">4</span>")
-            && frag_kv.contains("data-slot=\"1\">10</span>")
-            && frag_kv.contains("data-slot=\"4\">40</span>"),
+        frag_kv.contains("data-slot=\"0\" data-fmt=\"raw\" data-label=\"\">4</span>")
+            && frag_kv.contains("data-slot=\"1\" data-fmt=\"raw\" data-label=\"\">10</span>")
+            && frag_kv.contains("data-slot=\"4\" data-fmt=\"raw\" data-label=\"\">40</span>"),
         "the version + register Binds paint their seeded values (version 4; regs 10/40)"
     );
     assert!(
@@ -481,6 +481,73 @@ fn main() {
         "a delegated click fires each affordance (stitch / resolve+publish) as a real verified turn"
     );
 
+    // ── 6e. Bake the TRUSTLESS PORTAL page — the dregg content gateway, browser-verified ──
+    // The orthogonal axis to the live cards: instead of (or as well as) firing turns in the tab,
+    // this page PROVES — in the browser, re-witnessing nothing — that the served card reflects a
+    // GENUINE verified cell, not a server's bare claim. The SAME gpui-free renderer bakes the
+    // counter card as the served content; above it a trust banner + an attestation readout; a
+    // module bootstrap loads the wasm `dregg-lightclient` and runs the REAL recursive-STARK verify.
+    // In `InTabDemo` mode the tab folds AND verifies a real k-turn history end-to-end (the
+    // produce→serialize→verify round-trip, self-anchored); the `ServerSupplied` arm is the
+    // production gateway shape (a node hands over the envelope + the client's config anchor). Until
+    // the light client attests, the card is marked the server's unverified claim; on success the
+    // page asserts it reflects a light-client-verified cell.
+    let trustless = render_trustless_cell_document(
+        "deos counter cell — trustlessly served",
+        &counter,
+        /*bind_values*/ &[0],
+        &TrustlessAttestation::InTabDemo { k: 3, step: 7 },
+        "./pkg/dregg_wasm.js",
+    );
+    let plive_trust = dist.join("trustless.html");
+    std::fs::write(&plive_trust, &trustless).expect("write the trustless portal page");
+
+    // ── PROVE the trustless portal is wired (not merely written) ──────────────────────
+    assert!(
+        trustless.contains("./pkg/dregg_wasm.js")
+            && trustless.contains("import init, { verify_devnet_history"),
+        "the portal imports the wasm light client's verify entry"
+    );
+    assert!(
+        trustless.contains("produce_external_history_envelope(3, 7n)")
+            && trustless.contains("genesis_vk_anchor(3, 7n)")
+            && trustless.contains("verify_devnet_history(env, anchor)"),
+        "the InTabDemo bootstrap folds a real 3-turn history, mints the shape anchor, and verifies"
+    );
+    assert!(
+        trustless.contains("id=\"deos-trust\"")
+            && trustless.contains("deos-unverified")
+            && trustless.contains("verdict.attested"),
+        "the page carries the trust banner, the unverified-by-default card, and the attest gate"
+    );
+    assert!(
+        trustless.contains("count: 0") && trustless.contains("data-turn=\"inc\""),
+        "the SAME counter card is the served content (the cell's card, rendered to HTML)"
+    );
+
+    // The ServerSupplied arm bakes the production gateway shape: a server-handed envelope JSON
+    // + a config anchor, verified tab-side against that config anchor (never read off the proof).
+    let trustless_srv = render_trustless_cell_document(
+        "deos counter cell — gateway-served",
+        &counter,
+        &[0],
+        &TrustlessAttestation::ServerSupplied {
+            envelope_json: r#"{"version":1,"vk_fingerprint_hex":"ab","genesis_root":[0],"final_root":[0],"chain_digest":[0],"num_turns":2,"proof_bytes_b64":""}"#,
+            config_anchor_hex: &"ab".repeat(32),
+        },
+        "./pkg/dregg_wasm.js",
+    );
+    assert!(
+        trustless_srv.contains("application/json\" id=\"deos-attestation\"")
+            && trustless_srv.contains("const anchor = '")
+            && trustless_srv.contains("verify_devnet_history(env, anchor)"),
+        "the ServerSupplied arm embeds the envelope island + the config anchor and verifies against it"
+    );
+    assert!(
+        !trustless_srv.contains("</script>\"}"),
+        "the embedded envelope JSON cannot break out of its script island (no raw </script>)"
+    );
+
     // ── 7. Bake the GALLERY / card-picker as the served home page (`/` = index.html) ──
     // Without a front door a visitor lands on one card and never finds the others. This is
     // a plain-HTML (no-wasm) landing of clickable tiles, one per live card — the
@@ -518,6 +585,15 @@ fn main() {
                         version bumping (a rollback is refused; get is a named OFE seam).",
             },
             GalleryCard {
+                href: "trustless.html",
+                name: "Trustless Portal",
+                blurb: "The dregg content gateway. The same card, served — but the page PROVES, \
+                        in your browser and re-witnessing nothing, that it reflects a genuine \
+                        verified cell. A light client checks the recursive STARK proof of the \
+                        cell's whole finalized history right in the tab; until it attests, the \
+                        content is marked the server's unverified claim.",
+            },
+            GalleryCard {
                 href: "doccollab.html",
                 name: "Document Collaboration",
                 blurb: "Pijul, in a tab. Fork a document, diverge two authors, then stitch — the \
@@ -537,8 +613,9 @@ fn main() {
             && gallery.contains("href=\"inspector.html\"")
             && gallery.contains("href=\"tally.html\"")
             && gallery.contains("href=\"kvstore.html\"")
+            && gallery.contains("href=\"trustless.html\"")
             && gallery.contains("href=\"doccollab.html\""),
-        "the gallery links to ALL FIVE live card pages (the card-picker)"
+        "the gallery links to ALL the live card pages incl. the trustless portal (the card-picker)"
     );
     assert!(
         gallery.contains("Counter")
@@ -559,6 +636,7 @@ fn main() {
     eprintln!("  LIVE tally page      : {}", plive_tally.display());
     eprintln!("  LIVE kvstore page    : {}", plive_kv.display());
     eprintln!("  LIVE doc-collab page : {}", plive_doc.display());
+    eprintln!("  TRUSTLESS portal     : {}", plive_trust.display());
     eprintln!();
     eprintln!("To serve the LIVE deos (a card firing real cap-gated verified turns in a TAB):");
     eprintln!("  1. wasm-pack build wasm --target web --out-dir pkg --release");

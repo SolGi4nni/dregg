@@ -1009,6 +1009,232 @@ body{align-items:flex-start;}
 .deos-tile-go{color:var(--accent);font-size:.8rem;font-weight:600;margin-top:.35rem;}
 ";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TRUSTLESS WEB PORTAL  (the @DreggNet "IPFS-gateway-like portal that
+// trustlessly serves dregg content")
+// ─────────────────────────────────────────────────────────────────────────────
+// The live cards above run a verified EXECUTOR in the tab — a click fires a real
+// turn. THIS document answers a different, orthogonal question: *can the browser
+// trust that the served page reflects a REAL verified cell, not a server's
+// claim?* It bakes the cell's card (the served content) PLUS a light-client
+// attestation, and a browser-side check (the wasm `dregg-lightclient` over the
+// recursive STARK aggregate) decides — IN THE TAB, re-witnessing nothing —
+// whether the cell's committed history is genuine. Until that check passes the
+// content is marked "the server's unverified claim"; on success the page asserts
+// it reflects a light-client-verified cell.
+
+/// How a [`render_trustless_cell_document`] page obtains the attestation its
+/// browser-side light client checks.
+///
+/// Both arms run the REAL `dregg-lightclient` recursion verify in the tab (the
+/// wasm `verify_devnet_history`). They differ only in WHERE the proof + the trust
+/// anchor come from — which is the whole substance of "trustless":
+pub enum TrustlessAttestation<'a> {
+    /// **The production / gateway shape.** A node/relayer produced the recursive
+    /// aggregate over the cell's finalized history and serialized it into an
+    /// `ExternalHistoryEnvelope` JSON (`wasm::bindings_lightclient`); the page also
+    /// carries the client's CONFIG VK anchor (a 64-hex fingerprint distributed at
+    /// genesis/checkpoint, held SEPARATELY from the artifact). The tab decodes the
+    /// envelope's proof bytes and runs `verify_devnet_history(envelope, anchor)` —
+    /// the anchor is config, NEVER read off the served envelope, so a tampered
+    /// proof or a foreign-circuit aggregate is REFUSED, never laundered into trust.
+    ServerSupplied {
+        /// The `ExternalHistoryEnvelope` JSON the server hands over (carries the
+        /// base64 proof bytes + the carried public commitments). Embedded verbatim.
+        envelope_json: &'a str,
+        /// The client's configured root-circuit VK fingerprint (64 hex chars). The
+        /// trust anchor — supplied by config, compared against the envelope's claim,
+        /// and re-pinned from the proof bytes during the real verify.
+        config_anchor_hex: &'a str,
+    },
+    /// **The self-contained demonstration.** The tab itself folds a real `k`-turn
+    /// chain (`produce_external_history_envelope`), mints the matching shape anchor
+    /// (`genesis_vk_anchor`), and verifies — so the whole produce→serialize→verify
+    /// round-trip is tactile with no external node. Honest about being SELF-ANCHORED
+    /// (the setup party proving its own fold): the config-not-artifact discipline is
+    /// what the [`TrustlessAttestation::ServerSupplied`] path exercises.
+    InTabDemo {
+        /// Turns to fold (clamped to `[2, 4]` in-tab — recursive proving is heavy).
+        k: usize,
+        /// Per-turn transfer step (any non-zero amount).
+        step: u64,
+    },
+}
+
+/// **THE TRUSTLESS PORTAL PAGE** — serve a dregg cell's card to a browser such that
+/// the page PROVES (in the tab, re-witnessing nothing) it reflects a genuine verified
+/// cell, not a server's bare claim.
+///
+/// The served content is the cell's deos-view card rendered to HTML by the SAME
+/// gpui-free renderer ([`render_html`]) — `bind_values` is the committed snapshot to
+/// paint (tree-walk order). Above it sits a TRUST BANNER and an attestation readout;
+/// a `type=module` bootstrap loads the playground wasm and runs the REAL
+/// `dregg-lightclient` recursion verify (`wasm::bindings_lightclient::verify_devnet_history`)
+/// per `attestation`. The card body starts marked `deos-unverified` ("the server's
+/// claim"); when the light client attests, the banner flips to verified and reveals the
+/// proven commitments (`num_turns`, the 8-felt `final_root`, the ordered-history digest).
+///
+/// ## What is trustless here, precisely (the honest claim)
+///
+/// - **VERIFIED, in the browser, re-witnessing nothing:** that the cell's state
+///   COMMITMENT (`final_root`) is the genuine recursive fold of a real, in-order,
+///   per-turn-correct finalized history of `num_turns` turns — under the one named
+///   floor `recursive_sound` (FRI/STARK engine soundness, surfaced not hidden). A
+///   tampered proof, a relabeled public, or a foreign circuit is REFUSED. This is
+///   exactly `light_client_verifies_whole_history`, run in wasm32.
+/// - **SERVED-PLAIN, the named next rung:** the binding from the card's painted slot
+///   VALUES to that verified `final_root` — i.e. a per-slot opening proving each
+///   rendered field is the committed state at `final_root` — is NOT yet checked here;
+///   the card is the server's rendering of the cell whose committed history is verified.
+///   Closing it is the umem per-cell heap-root opening work (`Heap.root_binds_get`):
+///   carry each `bind` value with its Merkle opening against `final_root` and verify it
+///   tab-side. Until then the page is precise: the COMMITMENT is light-client-verified;
+///   the per-field rendering is the server's, pending the opening rung.
+///
+/// `pkg_url` is the ES-module URL of the wasm bundle's JS shim (e.g.
+/// `./pkg/dregg_wasm.js`). Must be served over HTTP (module import + `.wasm` fetch are
+/// CORS-blocked on `file://`).
+pub fn render_trustless_cell_document(
+    title: &str,
+    tree: &ViewNode,
+    bind_values: &BindValues,
+    attestation: &TrustlessAttestation,
+    pkg_url: &str,
+) -> String {
+    let body = render_html(tree, bind_values);
+
+    // The per-mode verify call: both end at `verify_devnet_history(env, anchor)` with
+    // its `{attested, num_turns, final_root, chain_digest, named_floor}` verdict — the
+    // anchor a SEPARATE input, never read off the envelope under verification.
+    let (attest_block, obtain_js, mode_note) = match attestation {
+        TrustlessAttestation::ServerSupplied {
+            envelope_json,
+            config_anchor_hex,
+        } => {
+            // Embed the envelope as an inert JSON island (read via textContent) so its
+            // quotes/braces never collide with the surrounding script; `<` → < keeps
+            // it valid JSON while making `</script>` unrepresentable.
+            let safe_env = embed_json(envelope_json);
+            let block = format!(
+                "<script type=\"application/json\" id=\"deos-attestation\">{safe_env}</script>"
+            );
+            let obtain = format!(
+                "const env = document.getElementById('deos-attestation').textContent;\n\
+    const anchor = '{anchor}';\n\
+    const verdict = verify_devnet_history(env, anchor);  // REAL recursion verify, config anchor",
+                anchor = escape(config_anchor_hex),
+            );
+            (
+                block,
+                obtain,
+                "verified against a CONFIG-supplied anchor (held separately from the served proof)",
+            )
+        }
+        TrustlessAttestation::InTabDemo { k, step } => {
+            let block = String::new();
+            let obtain = format!(
+                "const env = produce_external_history_envelope({k}, {step}n);   // fold a real {k}-turn history\n\
+    const anchor = genesis_vk_anchor({k}, {step}n);                 // the matching-shape VK anchor\n\
+    const verdict = verify_devnet_history(env, anchor);  // REAL recursion verify, re-witnessing nothing",
+                k = k,
+                step = step,
+            );
+            (
+                block,
+                obtain,
+                "self-anchored demonstration: this tab folded AND verified a real history end-to-end",
+            )
+        }
+    };
+
+    let bootstrap = format!(
+        "import init, {{ verify_devnet_history, produce_external_history_envelope, genesis_vk_anchor }} from '{pkg}';\n\
+async function boot() {{\n\
+  const banner = document.getElementById('deos-trust');\n\
+  const detail = document.getElementById('deos-trust-detail');\n\
+  const content = document.getElementById('deos-content');\n\
+  try {{\n\
+    await init();                                  // instantiate the wasm light client\n\
+    {obtain}\n\
+    if (verdict && verdict.attested) {{\n\
+      const fr = (verdict.final_root || []).join(', ');\n\
+      banner.className = 'deos-trust verified';\n\
+      banner.textContent = '\\u2713 light-client verified \\u2014 ' + verdict.num_turns + ' finalized turns, checked in YOUR browser';\n\
+      content.className = content.className.replace('deos-unverified', 'deos-verified');\n\
+      detail.innerHTML = 'This page reflects a genuine verified cell. The recursive STARK aggregate over its whole finalized history verified in this tab, re-witnessing nothing \\u2014 ' +\n\
+        '{mode_note}.<br>commitment <code>final_root</code> = [' + fr + ']<br>engine: ' + verdict.engine + '<br><span class=\\\"deos-floor\\\">' + verdict.named_floor + '</span>';\n\
+    }} else {{\n\
+      banner.className = 'deos-trust refused';\n\
+      banner.textContent = '\\u2717 UNVERIFIED \\u2014 the light client REFUSED this attestation';\n\
+      detail.innerHTML = 'Treat the content below as the server\\u2019s unproven claim. ' + ((verdict && verdict.named_floor) || 'no verdict returned');\n\
+    }}\n\
+  }} catch (e) {{\n\
+    banner.className = 'deos-trust refused';\n\
+    banner.textContent = '\\u2717 attestation check failed to run';\n\
+    if (detail) detail.textContent = 'the served content is unverified: ' + e;\n\
+    console.error('deos trustless portal: light-client verify failed to run', e);\n\
+  }}\n\
+}}\n\
+boot();\n",
+        pkg = pkg_url,
+        obtain = obtain_js,
+        mode_note = mode_note,
+    );
+
+    format!(
+        "<!doctype html>\n\
+<html lang=\"en\">\n\
+<head>\n\
+<meta charset=\"utf-8\">\n\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+<title>{title}</title>\n\
+<style>{CSS}{TRUSTLESS_CSS}</style>\n\
+</head>\n\
+<body>\n\
+<div class=\"deos-portal\">\n\
+<div class=\"deos-trust pending\" id=\"deos-trust\">&#9203; verifying the cell&rsquo;s attestation in your browser&hellip;</div>\n\
+<div class=\"deos-trust-detail\" id=\"deos-trust-detail\">A light client is checking the recursive proof of this cell&rsquo;s whole finalized history &mdash; locally, trusting no server.</div>\n\
+<main class=\"deos-card deos-unverified\" id=\"deos-content\">{body}</main>\n\
+</div>\n\
+{attest_block}\n\
+<script>{JS}</script>\n\
+<script type=\"module\">{bootstrap}</script>\n\
+</body>\n\
+</html>\n",
+        title = escape(title),
+        CSS = CSS,
+        TRUSTLESS_CSS = TRUSTLESS_CSS,
+        body = body,
+        attest_block = attest_block,
+        JS = js(),
+        bootstrap = bootstrap,
+    )
+}
+
+/// Embed a JSON string inside a `<script type="application/json">` island safely:
+/// escape every `<` as the `<` JSON escape. In well-formed JSON `<` only occurs
+/// inside string values, so this stays valid JSON while making the `</script>` close
+/// sequence unrepresentable (the one XSS/breakout hazard of inline JSON).
+fn embed_json(json: &str) -> String {
+    json.replace('<', "\\u003c")
+}
+
+/// Styling for the trustless portal: the trust banner (pending / verified / refused)
+/// + the attestation detail readout + the de-emphasised "unverified" card state.
+/// Shares the cockpit dark palette (`CSS`'s `:root`).
+const TRUSTLESS_CSS: &str = "
+.deos-portal{max-width:560px;width:100%;margin:0 auto;display:flex;flex-direction:column;gap:.6rem;}
+.deos-trust{padding:.55rem .8rem;border-radius:8px;font-weight:600;font-size:.92rem;border:1px solid var(--border);}
+.deos-trust.pending{color:var(--muted);background:rgba(110,160,255,.06);border-color:#34384a;}
+.deos-trust.verified{color:#0c1410;background:#3fb950;border-color:#3fb950;}
+.deos-trust.refused{color:#fff;background:#f85149;border-color:#f85149;}
+.deos-trust-detail{font-size:.78rem;color:var(--muted);line-height:1.45;padding:0 .2rem;}
+.deos-trust-detail code{font-family:ui-monospace,Menlo,monospace;font-size:.72rem;color:var(--fg);word-break:break-all;}
+.deos-trust-detail .deos-floor{display:block;margin-top:.35rem;font-style:italic;opacity:.85;}
+.deos-card.deos-unverified{opacity:.62;filter:grayscale(.4);border-style:dashed;transition:opacity .25s,filter .25s,border-color .25s;}
+.deos-card.deos-verified{opacity:1;filter:none;border-color:#3fb950;border-style:solid;transition:opacity .25s,filter .25s,border-color .25s;}
+";
+
 /// Extra styling for the live page's status strip (the receipt-count audit readout) + the
 /// unobtrusive back-link to the gallery (the card-picker home).
 const LIVE_CSS: &str = "
@@ -1258,3 +1484,74 @@ document.querySelectorAll('.deos-toggle[data-slot]').forEach(function(t){
   });
 });
 ";
+
+#[cfg(test)]
+mod trustless_tests {
+    use super::*;
+    use crate::tree::ViewNode;
+
+    /// The minimal served card: a titled counter binding slot 0.
+    fn counter() -> ViewNode {
+        ViewNode::VStack(vec![
+            ViewNode::Text("Counter".into()),
+            ViewNode::Bind {
+                slot: 0,
+                label: "count: ".into(),
+                fmt: crate::fmt::BindFmt::Raw,
+            },
+            ViewNode::Button {
+                label: "+1".into(),
+                turn: "inc".into(),
+                arg: 1,
+            },
+        ])
+    }
+
+    /// THE TRUSTLESS PORTAL CONTRACT (in-tab demo). The served content is the card
+    /// rendered to HTML; the page carries the trust banner + the unverified-by-default
+    /// card + a module bootstrap that runs the REAL wasm light-client verify, gating the
+    /// "verified" flip on `verdict.attested`.
+    #[test]
+    fn trustless_portal_serves_card_and_gates_on_light_client() {
+        let doc = render_trustless_cell_document(
+            "trustless counter",
+            &counter(),
+            &[0],
+            &TrustlessAttestation::InTabDemo { k: 3, step: 7 },
+            "./pkg/dregg_wasm.js",
+        );
+        // The served content IS the cell's card.
+        assert!(doc.contains("count: 0") && doc.contains("data-turn=\"inc\""));
+        // The light-client verify is the trust gate (not a server claim).
+        assert!(doc.contains("import init, { verify_devnet_history"));
+        assert!(doc.contains("produce_external_history_envelope(3, 7n)"));
+        assert!(doc.contains("verify_devnet_history(env, anchor)"));
+        // The card starts unverified; the flip is gated on a real attestation.
+        assert!(doc.contains("deos-unverified") && doc.contains("verdict.attested"));
+        assert!(doc.contains("id=\"deos-trust\""));
+    }
+
+    /// THE CONFIG-NOT-ARTIFACT SHAPE (server-supplied). The envelope is embedded as an
+    /// inert JSON island; the config anchor is a SEPARATE input the verify runs against;
+    /// a `</script>` in the envelope cannot break out of the island.
+    #[test]
+    fn trustless_portal_server_supplied_embeds_envelope_and_config_anchor() {
+        let anchor = "ab".repeat(32);
+        let doc = render_trustless_cell_document(
+            "gateway counter",
+            &counter(),
+            &[0],
+            &TrustlessAttestation::ServerSupplied {
+                envelope_json: r#"{"version":1,"note":"</script><b>x</b>","num_turns":2}"#,
+                config_anchor_hex: &anchor,
+            },
+            "./pkg/dregg_wasm.js",
+        );
+        assert!(doc.contains("application/json\" id=\"deos-attestation\""));
+        assert!(doc.contains(&format!("const anchor = '{anchor}'")));
+        assert!(doc.contains("verify_devnet_history(env, anchor)"));
+        // The breakout `</script>` is neutralised (escaped `<`), never raw in the island.
+        assert!(!doc.contains("</script><b>x</b>"));
+        assert!(doc.contains("\\u003c/script>\\u003cb>x\\u003c/b>"));
+    }
+}

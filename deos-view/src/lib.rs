@@ -69,7 +69,8 @@ pub mod web;
 pub use web::{
     render_card_document, render_card_live_document, render_doccollab_live_document,
     render_gallery_document, render_html, render_inspector_live_document,
-    render_kvstore_live_document, render_tally_live_document, GalleryCard,
+    render_kvstore_live_document, render_tally_live_document, render_trustless_cell_document,
+    GalleryCard, TrustlessAttestation,
 };
 
 // ── The DISCORD renderer: the SAME `ViewNode` → a serenity `CreateEmbed` + button
