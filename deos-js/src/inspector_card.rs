@@ -291,8 +291,11 @@ fn push_child(tree: &mut ViewTree, node: ViewTree) -> bool {
     }
 }
 
-/// Relabel the FIRST text node whose current text equals `from` to `to` (depth-first).
-/// Returns whether a node was relabelled.
+/// Relabel the FIRST node whose label equals `from` to `to` (depth-first). Matches a
+/// [`ViewTree::Text`] body OR a [`ViewTree::Section`] heading (the inspector's warm,
+/// disclosable face titles live in `Section.title`, so relabeling one IS the keystone
+/// "rename a face from within"), and recurses through section children. Returns whether a
+/// node was relabelled.
 fn relabel_text(tree: &mut ViewTree, from: &str, to: &str) -> bool {
     if let ViewTree::Text { props } = tree {
         if props.text == from {
@@ -300,8 +303,16 @@ fn relabel_text(tree: &mut ViewTree, from: &str, to: &str) -> bool {
             return true;
         }
     }
+    if let ViewTree::Section { props, .. } = tree {
+        if props.title == from {
+            props.title = to.to_string();
+            return true;
+        }
+    }
     match tree {
-        ViewTree::VStack { children } | ViewTree::Row { children } => {
+        ViewTree::VStack { children }
+        | ViewTree::Row { children }
+        | ViewTree::Section { children, .. } => {
             for c in children.iter_mut() {
                 if relabel_text(c, from, to) {
                     return true;

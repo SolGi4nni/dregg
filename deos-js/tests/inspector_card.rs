@@ -71,12 +71,18 @@ fn focus_generates_a_view_from_the_cells_raw_fields_and_affordances() {
     );
 
     // The faces' section labels are rendered as text (relabelable from within — see (c)).
+    // The default face uses warm, jargon-free section titles (the consumer-delight pass):
+    // the RawFields section is "What this holds", the Affordances section "What you can do".
     assert!(
-        tree.walk().iter().any(|n| n.label() == Some("Cell State")),
+        tree.walk()
+            .iter()
+            .any(|n| n.label() == Some("What this holds")),
         "the RawFields section is labeled"
     );
     assert!(
-        tree.walk().iter().any(|n| n.label() == Some("Affordances")),
+        tree.walk()
+            .iter()
+            .any(|n| n.label() == Some("What you can do")),
         "the Affordances section is labeled"
     );
 }
@@ -114,10 +120,10 @@ fn editing_the_inspector_view_from_within_is_a_receipted_patch_with_blame() {
     let source_before = card.view_source();
     let blame_before = card.view_blame().len();
 
-    // RELABEL a face from within: "Cell State" → "Substance".
+    // RELABEL a face from within: "What this holds" → "Substance".
     let edit = card
         .edit_view(ViewPatch::Relabel {
-            from: "Cell State".into(),
+            from: "What this holds".into(),
             to: "Substance".into(),
         })
         .expect("the authorized relabel reshape is admitted");
@@ -140,7 +146,7 @@ fn editing_the_inspector_view_from_within_is_a_receipted_patch_with_blame() {
             .tree
             .walk()
             .iter()
-            .any(|n| n.label() == Some("Cell State")),
+            .any(|n| n.label() == Some("What this holds")),
         "the old label is gone"
     );
 
