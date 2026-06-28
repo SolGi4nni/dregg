@@ -1,0 +1,27 @@
+[package]
+name = "starbridge-execution-lease"
+version = "0.1.0"
+edition = "2024"
+description = "Durable execution as a payable resource — a fly.io-lite/cloudflare-lite provider that LEASES durable container execution to agents: a metered (StandingObligation per-period) + paid (Payable Transfer) lease over a committed umem cell-heap checkpoint (the durable, passable, witnessed execution image), lapsing on non-payment."
+
+# The first primary resource of the agent service economy: durable container
+# execution for agents, metered + paid through the dregg value layer. Models a
+# provider that leases durable execution slots; reuses the StandingObligation
+# capacity (cell/src/obligation_standing.rs) for the meter, the Payable DSI
+# (app-framework/src/payable.rs) for the payment, and the committed cell heap
+# (umem) for the durable state. See src/lib.rs and README.md.
+
+[lib]
+name = "starbridge_execution_lease"
+
+[dependencies]
+dregg-app-framework = { path = "../../app-framework" }
+dregg-cell = { path = "../../cell", default-features = false }
+dregg-types = { path = "../../types" }
+
+blake3 = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

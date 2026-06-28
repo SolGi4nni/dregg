@@ -1,0 +1,77 @@
+{
+  "id": "execution-lease",
+  "name": "Durable Execution Lease",
+  "description": "Durable execution as a payable resource — a fly.io-lite/cloudflare-lite provider that leases durable container execution to agents: a metered (StandingObligation per-period) + paid (Payable Transfer) lease over a committed umem cell-heap checkpoint (the durable, passable, witnessed execution image), lapsing on non-payment.",
+  "version": "0.1.0",
+  "factory_vks": [
+    "737461726272696467652d657865637574696f6e2d6c656173652d6661637421"
+  ],
+  "inspectors": [
+    "dregg-execution-lease"
+  ],
+  "host_inspectors": [
+    { "id": "lease", "label": "Execution Lease", "tag": "dregg-execution-lease", "uri_attribute": "uri" }
+  ],
+  "host_actions": [
+    { "id": "open_lease", "label": "Open lease", "builder": "open_lease", "kind": "turn" },
+    { "id": "pay", "label": "Pay rent", "builder": "pay", "kind": "turn" },
+    { "id": "advance", "label": "Advance checkpoint", "builder": "advance", "kind": "turn" }
+  ],
+  "host_controls": [
+    { "id": "lease_uri", "label": "Lease URI", "type": "uri", "default": "dregg://cell/execution-lease-default" },
+    { "id": "rent", "label": "Rent per period", "type": "number", "default": 100 },
+    { "id": "period", "label": "Period (blocks)", "type": "number", "default": 50 }
+  ],
+  "turn_builders": [
+    "open_lease",
+    "pay",
+    "advance"
+  ],
+  "required_apis": [
+    "signTurn",
+    "blake3",
+    "cell.readField",
+    "cell.readHeap"
+  ],
+  "slot_layout": {
+    "STEP_SLOT": 0,
+    "STATE_DIGEST_SLOT": 1,
+    "LAPSED_SLOT": 2,
+    "PERIODS_PAID_SLOT": 3,
+    "RENT_SLOT": 4,
+    "PERIOD_SLOT": 5,
+    "PROVIDER_SLOT": 6
+  },
+  "heap_collections": {
+    "EXEC_COLL": "0x0000E3EC — the durable execution image (umem cell-heap checkpoint): KEY_STEP, KEY_DIGEST, plus working-memory keys >= 16",
+    "OBLIGATION_COLL": "the rent StandingObligation ledger (the meter)"
+  },
+  "state_constraints": [
+    "WriteOnce(RENT_SLOT)",
+    "WriteOnce(PERIOD_SLOT)",
+    "WriteOnce(PROVIDER_SLOT)",
+    "Monotonic(STEP_SLOT)",
+    "Monotonic(LAPSED_SLOT)",
+    "Monotonic(PERIODS_PAID_SLOT)"
+  ],
+  "deos": {
+    "surface": "DeosApp",
+    "mount": "register_deos (src/lib.rs) — folds the composed DeosApp into the StarbridgeAppContext affordance registry",
+    "src_factory": "lease_app(cipherclerk, executor)",
+    "cell": "lease",
+    "discoverable": ["compute", "durable-execution"],
+    "publish": "Signature",
+    "affordances": {
+      "advance": "GATED (cap∧state), Signature — not-lapsed precondition (LAPSED_SLOT == 0); the fire submits the cursor-advancing turn (reading the LIVE STEP_SLOT + 1), the executor re-enforcing Monotonic(STEP_SLOT), then mirrors the committed umem heap image + working memory",
+      "pay": "cap-only, Signature (the agent pays one period's rent — a conserving Transfer through Payable)",
+      "lapse": "cap-only, root (the provider reclaims a delinquent slot)"
+    },
+    "seam": "PARTIAL — the PAYMENT (a conserving Transfer) and the durable-cursor forward-only tooth (Monotonic(STEP_SLOT)) are REAL verified turns; the METER advance (the StandingObligation discharge) and the heap-checkpoint mirror are executor-side ledger steps (the named DischargeObligation in-circuit seam StandingObligation describes). This is a MODEL of a durable-execution provider on the dregg value layer, not a real container runtime."
+  },
+  "manifest_health": {
+    "status": "ready",
+    "embedded": true,
+    "deos_native_src": true,
+    "source_of_truth": "starbridge-apps/execution-lease/src/lib.rs"
+  }
+}

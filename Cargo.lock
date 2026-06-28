@@ -16658,6 +16658,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-execution-lease"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "starbridge-first-room"
 version = "0.1.0"
 dependencies = [
