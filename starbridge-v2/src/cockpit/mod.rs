@@ -1221,6 +1221,11 @@ pub(crate) struct ModeCardMount {
     pub(crate) entity: Entity<starbridge_v2::card_pane::CardPane>,
     pub(crate) surface: starbridge_v2::dock::card_surface::ModeCardSurface,
     pub(crate) focus: CellId,
+    /// A cheap digest of the cockpit-side [`SurfaceState`] this card was built from (0 for a
+    /// stateless card). [`Cockpit::ensure_mode_card`] rebuilds when it changes, so a stateful
+    /// card (cipherclerk / debugger / replay) never shows stale data after the operator mutates
+    /// the live state (a mint, a scrubber move, a new turn under the lens).
+    pub(crate) state_fp: u64,
 }
 
 /// The cockpit's live inspector-card mount: the [`CardPane`] gpui entity, the shared

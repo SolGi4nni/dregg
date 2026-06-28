@@ -307,9 +307,63 @@ impl CockpitSurface for CardSurface {
 // is data, not compiled code; the reshape is a receipted patch, not a recompile).
 // ===========================================================================
 
+// ===========================================================================
+// SURFACE-STATE THREADING — the cockpit-side state a STATEFUL card needs that
+// the live `World` alone does not carry.
+//
+// The reflective survey cards (objects / graph / proofs / …) are pure functions
+// of the live ledger, so `view_tree(world, focus, viewer)` is enough. But the
+// STATEFUL surfaces (Cipherclerk / Debugger / Replay) render cockpit-OWNED state
+// that is NOT on the ledger: the live HD-identity clerk, the turn under the
+// debugger's lens + its breakpoints, the replay scrubber cursor + pinned fork.
+// Carding those over the bare-`world` mount would show STALE data (an empty
+// clerk, a genesis cursor) — a regression in honesty. `SurfaceState` threads the
+// live cockpit state INTO the mount so a carded surface renders the SAME live
+// state its gpui panel shows.
+//
+// Every field is OPTIONAL: a stateless card ignores it (`SurfaceState::default()`
+// is empty), so the existing cards build byte-identically.
+// ===========================================================================
+
+/// The live cockpit-side state a stateful [`ModeCard`] reads (additive; a
+/// stateless card ignores it). Borrowed for the duration of one card build.
+#[derive(Clone, Copy, Default)]
+pub struct SurfaceState<'a> {
+    /// CIPHERCLERK · the live HD-derived identity vault.
+    pub clerk: Option<&'a crate::cipherclerk::Cipherclerk>,
+    /// DEBUGGER · the turn under inspection + its active breakpoints.
+    pub debugger: Option<DebuggerState<'a>>,
+    /// REPLAY · the scrubber cursor + an optional pinned what-if fork (the
+    /// recorded history itself is read off the live `World`).
+    pub replay: Option<ReplayState<'a>>,
+}
+
+/// The DEBUGGER surface's cockpit-side state: the turn under the lens + the
+/// breakpoints the operator armed. (The world is the card mount's own `world`,
+/// against which [`crate::debug::render`] re-executes the turn faithfully.)
+#[derive(Clone, Copy)]
+pub struct DebuggerState<'a> {
+    /// The turn the debugger inspects (re-executed against the live World).
+    pub turn: &'a dregg_turn::turn::Turn,
+    /// The breakpoints evaluated over the turn's steps.
+    pub breakpoints: &'a [crate::debug::Breakpoint],
+}
+
+/// The REPLAY surface's cockpit-side state: the scrubber cursor + an optional
+/// pinned fork. The recorded history is read off the live `World`
+/// ([`crate::world::World::recorded_turns`]), so it is not threaded here.
+#[derive(Clone, Copy)]
+pub struct ReplayState<'a> {
+    /// The scrubber cursor (a step in `0..=history.len()`).
+    pub cursor: usize,
+    /// An optional pinned what-if fork to summarize.
+    pub fork: Option<&'a crate::replay::Fork>,
+}
+
 /// Which landed card a [`ModeCardSurface`] mounts — the deos-js card that IS a given
 /// cockpit mode's main-pane surface. Each names a `deos_js::*_card` whose view-tree is a
-/// pure function of the live ledger (plus a focus, for the links card).
+/// pure function of the live ledger (plus a focus, for the links card; plus a
+/// [`SurfaceState`] for the stateful cards).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ModeCard {
     /// AUTHOR · the composition composer (`deos_js::composer_card`).
@@ -365,6 +419,24 @@ pub enum ModeCard {
     /// drag-value grab/drop conserving turn stays in the gpui room). The card the new
     /// `grid`/`icon` vocabulary was built for.
     Wonder,
+    /// DEV · the cipherclerk vault (`crate::cipherclerk`) — the agent's HD-derived signing
+    /// identities, the capability tokens they hold, and the recipient-targeted delegations,
+    /// each a uniform reflective object. COCKPIT-STATEFUL: reads the live `Cipherclerk`
+    /// threaded through [`SurfaceState::clerk`] (NOT the ledger), so a mint/attenuate/delegate
+    /// the operator just fired shows live. Read-only card (the genuine crypto stays in the
+    /// gpui panel, the card-pane-off fallback).
+    Cipherclerk,
+    /// DEV · the step-debugger (`crate::debug`) — the turn under the lens re-executed faithfully
+    /// against the live World, its per-effect step list with conservation deltas, the refusal
+    /// explanation (the prize) or the conserving-commit line, and the witness inspection.
+    /// COCKPIT-STATEFUL: the turn + breakpoints come through [`SurfaceState::debugger`].
+    /// Read-only card.
+    Debugger,
+    /// DEV · the replay / time-travel scrubber (`crate::replay`) — the recorded history timeline,
+    /// the VERIFIED reconstruction at the cursor (root-checked), the prev-step diff, and a pinned
+    /// what-if fork's divergence. COCKPIT-STATEFUL: the cursor + fork come through
+    /// [`SurfaceState::replay`] (the history is read off the live World). Read-only card.
+    Replay,
 }
 
 impl ModeCard {
@@ -385,12 +457,25 @@ impl ModeCard {
             ModeCard::WebCells => "web-of-cells · live dregg:// docuverse (deos-js card)",
             ModeCard::Trust => "trust · who-i-am + recovery (deos-js card)",
             ModeCard::Wonder => "wonder · the glowing room (deos-js card)",
+            ModeCard::Cipherclerk => {
+                "cipherclerk · identities · tokens · delegations (deos-js card)"
+            }
+            ModeCard::Debugger => "debugger · step · inspect · explain (deos-js card)",
+            ModeCard::Replay => "replay · verified time-travel (deos-js card)",
         }
     }
 
     /// GENERATE this card's view-tree from the live ledger (the card's OWN public
-    /// view-builder), focused on `focus` where the card is per-cell (links / agent).
-    fn view_tree(self, world: &World, focus: CellId, viewer: &AuthRequired) -> ViewTree {
+    /// view-builder), focused on `focus` where the card is per-cell (links / agent), and
+    /// reading the cockpit-side `state` where the card is stateful (cipherclerk / debugger /
+    /// replay). The stateless cards ignore `state`.
+    fn view_tree(
+        self,
+        world: &World,
+        focus: CellId,
+        viewer: &AuthRequired,
+        state: &SurfaceState,
+    ) -> ViewTree {
         let ledger = world.ledger();
         match self {
             ModeCard::Composer => {
@@ -596,6 +681,39 @@ impl ModeCard {
                 let room = WonderRoom::build(world);
                 wonder_view(&room)
             }
+            ModeCard::Cipherclerk => {
+                // The clerk vault is cockpit-side state (NOT on the ledger), threaded through
+                // `state.clerk`. Absent (a stateless/default build) → an honest empty state
+                // rather than a fabricated roster.
+                match state.clerk {
+                    Some(clerk) => cipherclerk_view(&crate::cipherclerk::render(clerk)),
+                    None => empty_state_view(
+                        "⚷ The cipherclerk",
+                        "(no live clerk threaded into this surface)",
+                    ),
+                }
+            }
+            ModeCard::Debugger => match state.debugger {
+                // The debugger re-executes the threaded turn against the LIVE World (the same
+                // `debug::render` the gpui panel calls), so the step list / refusal / witness
+                // are the live truth, never a stale snapshot.
+                Some(dbg) => debugger_view(&crate::debug::render(world, dbg.turn, dbg.breakpoints)),
+                None => empty_state_view("🔬 The debugger", "(no turn threaded into this surface)"),
+            },
+            ModeCard::Replay => match state.replay {
+                // The replay model is the VERIFIED reconstruction at the threaded cursor over
+                // the live World's recorded history (the same `ReplayPanelModel::build` the
+                // gpui panel calls), so scrubbing reflects live.
+                Some(rp) => {
+                    let history = world.recorded_turns();
+                    replay_view(&crate::replay::ReplayPanelModel::build(
+                        history, rp.cursor, rp.fork,
+                    ))
+                }
+                None => {
+                    empty_state_view("⟲ Replay", "(no replay cursor threaded into this surface)")
+                }
+            },
         }
     }
 }
@@ -724,6 +842,250 @@ fn wonder_view(room: &WonderRoom) -> ViewTree {
             card_grid(5, tiles),
         ],
     }
+}
+
+/// A small "nothing threaded here" placeholder (an honest empty state, never fabricated
+/// data) for a stateful card built without its cockpit-side [`SurfaceState`] (the default
+/// stateless mount, e.g. the bake).
+fn empty_state_view(title: &str, note: &str) -> ViewTree {
+    ViewTree::VStack {
+        children: vec![card_text(title.to_string()), card_text(note.to_string())],
+    }
+}
+
+/// Render one uniform reflective [`crate::reflect::Inspectable`] as a card section: a title
+/// line, its friendly scalar fields up front, the raw ids/hashes tucked into an adept drawer.
+fn inspectable_card(obj: &crate::reflect::Inspectable) -> ViewTree {
+    let mut friendly: Vec<ViewTree> = Vec::new();
+    let mut raw: Vec<ViewTree> = Vec::new();
+    for f in &obj.fields {
+        let row = card_text(format!("{}: {}", f.key, field_value_display(&f.value)));
+        match f.value {
+            FieldValue::Id(_) | FieldValue::Hash(_) => raw.push(row),
+            _ => friendly.push(row),
+        }
+    }
+    let mut children = Vec::new();
+    if obj.subtitle.is_empty() {
+        children.push(card_text(obj.title.clone()));
+    } else {
+        children.push(card_text(format!("{} · {}", obj.title, obj.subtitle)));
+    }
+    children.extend(friendly);
+    if !raw.is_empty() {
+        children.push(card_section_adept("raw ids", raw));
+    }
+    card_section("", children)
+}
+
+/// THE CIPHERCLERK vault as a portable card — the live HD-identity roster, the capability
+/// tokens those identities hold, and the recipient-targeted delegations, each a uniform
+/// reflective object. A pure function of the live `Cipherclerk` (cockpit-side state threaded
+/// through [`SurfaceState::clerk`]), so a mint/attenuate/delegate the operator just fired
+/// shows live. Read-only (the genuine crypto loop stays in the gpui panel).
+fn cipherclerk_view(panel: &crate::cipherclerk::CipherclerkPanel) -> ViewTree {
+    let section_or_note =
+        |items: &[crate::reflect::Inspectable], title: &str, empty: &str| -> ViewTree {
+            let rows: Vec<ViewTree> = if items.is_empty() {
+                vec![card_text(empty.to_string())]
+            } else {
+                items.iter().map(inspectable_card).collect()
+            };
+            card_section(title, rows)
+        };
+    ViewTree::VStack {
+        children: vec![
+            card_text("⚷ The cipherclerk — your signing identities and the caps they hold"),
+            card_row(vec![
+                card_pill(
+                    format!(
+                        "{} identit{}",
+                        panel.identities.len(),
+                        if panel.identities.len() == 1 {
+                            "y"
+                        } else {
+                            "ies"
+                        }
+                    ),
+                    "accent",
+                ),
+                card_pill(format!("{} token(s)", panel.tokens.len()), "good"),
+                card_pill(
+                    format!("{} delegation(s)", panel.delegations.len()),
+                    "accent",
+                ),
+            ]),
+            section_or_note(
+                &panel.identities,
+                "who you can act as",
+                "(no identities yet — mint one in the clerk panel)",
+            ),
+            section_or_note(
+                &panel.tokens,
+                "capability tokens you hold",
+                "(no tokens minted yet)",
+            ),
+            section_or_note(
+                &panel.delegations,
+                "capabilities handed to others",
+                "(no delegations yet)",
+            ),
+        ],
+    }
+}
+
+/// THE STEP-DEBUGGER as a portable card — the turn under the lens re-executed against the
+/// live World, its per-effect step list (conservation deltas, the break/refusal markers), the
+/// refusal explanation (THE prize) or the conserving-commit line, and the witness inspection
+/// tucked into an adept drawer. A pure function of the live [`crate::debug::DebuggerPanel`]
+/// (built from the cockpit-threaded turn + breakpoints), so it tracks the operator's lens.
+fn debugger_view(panel: &crate::debug::DebuggerPanel) -> ViewTree {
+    let mut steps: Vec<ViewTree> = Vec::new();
+    for s in &panel.steps {
+        let (glyph, tag) = if !s.committed {
+            ("✗", "bad")
+        } else if s.is_break {
+            ("◆", "warn")
+        } else {
+            ("·", "muted")
+        };
+        steps.push(card_row(vec![
+            card_icon(glyph, tag),
+            card_text(format!("k{} {}", s.index, s.label)),
+            card_pill(format!("Σδ={}", s.conservation_delta), tag),
+        ]));
+    }
+    if steps.is_empty() {
+        steps.push(card_text("(the turn has no steps)".to_string()));
+    }
+    let verdict = match &panel.refusal {
+        Some(r) => card_section(
+            "what happened",
+            vec![
+                card_pill(format!("REFUSED · guard: {}", r.guard), "bad"),
+                card_text(r.headline.clone()),
+                card_section_adept("why", vec![card_text(r.detail.clone())]),
+            ],
+        ),
+        None => card_row(vec![card_pill(
+            format!(
+                "COMMITS · final Σδ = {} (conserves)",
+                panel.final_conservation_delta
+            ),
+            "good",
+        )]),
+    };
+    let w = &panel.witness;
+    let witness = card_section_adept(
+        "under the hood",
+        vec![
+            card_text(format!("conservation proof: {}", w.has_conservation_proof)),
+            card_text(format!("execution proof: {}", w.has_execution_proof)),
+            card_text(format!("witness blobs: {}", w.witness_blob_count)),
+            card_text(format!("binding proofs: {}", w.binding_proof_count)),
+        ],
+    );
+    ViewTree::VStack {
+        children: vec![
+            card_text(format!("🔬 {}", panel.title)),
+            card_text(panel.subtitle.clone()),
+            card_section("steps", steps),
+            verdict,
+            witness,
+        ],
+    }
+}
+
+/// THE REPLAY / TIME-TRAVEL scrubber as a portable card — the recorded history timeline (the
+/// cursor's landing marked), the VERIFIED reconstruction at the cursor (root-checked; a
+/// mismatch surfaced as a red pill), the prev-step diff (what the cursor's turn did), and a
+/// pinned what-if fork's divergence. A pure function of the live
+/// [`crate::replay::ReplayPanelModel`] (built at the cockpit-threaded cursor over the live
+/// World's recorded history), so scrubbing reflects live.
+fn replay_view(model: &crate::replay::ReplayPanelModel) -> ViewTree {
+    // The timeline — every recorded landing point; the cursor's step marked.
+    let mut timeline: Vec<ViewTree> = Vec::new();
+    for e in &model.timeline {
+        let here = e.step == model.cursor;
+        let (glyph, tag) = if here {
+            ("▶", "good")
+        } else {
+            ("·", "muted")
+        };
+        timeline.push(card_row(vec![
+            card_icon(glyph, tag),
+            card_text(format!("step {} · {}", e.step, e.label)),
+        ]));
+    }
+    if timeline.is_empty() {
+        timeline.push(card_text("(no history yet)".to_string()));
+    }
+    // The VERIFIED reconstruction at the cursor.
+    let cs = &model.cursor_state;
+    let mut cursor_rows: Vec<ViewTree> = vec![card_row(vec![
+        card_text(format!("reconstructed at step {}", cs.step)),
+        if cs.root_verified {
+            card_pill("root verified", "good")
+        } else {
+            card_pill("ROOT MISMATCH", "bad")
+        },
+    ])];
+    for (id, bal, caps) in &cs.cells {
+        cursor_rows.push(card_text(format!(
+            "{} · balance {} · {} cap(s)",
+            crate::reflect::short_hex(id.as_bytes()),
+            bal,
+            caps
+        )));
+    }
+    cursor_rows.push(card_section_adept(
+        "root",
+        vec![card_text(format!(
+            "root {}",
+            crate::reflect::short_hex(&cs.root)
+        ))],
+    ));
+    let mut children = vec![
+        card_text(
+            "⟲ Replay — scrub history; every landing is re-derived from genesis and root-checked",
+        ),
+        card_pill(format!("cursor at step {}", model.cursor), "accent"),
+        card_section("timeline", timeline),
+        card_section("reconstructed state (verified)", cursor_rows),
+    ];
+    // The prev-step diff (what the cursor's turn did).
+    if let Some(diff) = &model.diff_from_prev {
+        let rows: Vec<ViewTree> = if diff.is_empty() {
+            vec![card_text("(no change)".to_string())]
+        } else {
+            diff.changes
+                .iter()
+                .map(|(_, c)| card_text(c.label()))
+                .collect()
+        };
+        children.push(card_section("what this step did", rows));
+    }
+    // A pinned what-if fork's divergence.
+    if let Some(fork) = &model.fork {
+        let mut rows = vec![card_row(vec![
+            card_text(format!("forked at step {}", fork.branch_step)),
+            if fork.committed {
+                card_pill("committed", "good")
+            } else {
+                card_pill("refused", "bad")
+            },
+            if fork.diverged {
+                card_pill("diverged", "warn")
+            } else {
+                card_pill("identical", "muted")
+            },
+        ])];
+        for (_, c) in &fork.divergence.changes {
+            rows.push(card_text(c.label()));
+        }
+        children.push(card_section("what-if fork", rows));
+    }
+    ViewTree::VStack { children }
 }
 
 /// The SERVICE DIRECTORY as a portable card — a summary pill row + one row per discovered
@@ -870,6 +1232,12 @@ fn field_value_display(v: &FieldValue) -> String {
 ///
 /// `held` is the operator's authority the affordance fires + the view-edits mount under. A
 /// build error is returned for the caller to surface fail-soft (the Rust panel stays).
+///
+/// This is the STATELESS mount (the reflective survey cards): it delegates to
+/// [`build_mode_card_surface_with_state`] with an empty [`SurfaceState`], so the existing
+/// cards build byte-identically. A stateful card (cipherclerk / debugger / replay) is built
+/// through the `_with_state` entry, threading the live cockpit state so it renders the SAME
+/// live state its gpui panel shows (no staleness).
 #[allow(clippy::result_large_err)]
 pub fn build_mode_card_surface(
     id: u64,
@@ -879,16 +1247,38 @@ pub fn build_mode_card_surface(
     held: AuthRequired,
     cx: &mut App,
 ) -> Result<ModeCardSurface, String> {
+    build_mode_card_surface_with_state(id, kind, world, focus, held, &SurfaceState::default(), cx)
+}
+
+/// **Mount a landed card as a cockpit mode's main-pane surface, threading the live
+/// cockpit-side [`SurfaceState`]** — the stateful generalization of
+/// [`build_mode_card_surface`]. Identical machinery (the view-tree is generated in Rust,
+/// bridged to a [`ViewNode`], hosted as a [`CardPane`] over an applet attached to the live
+/// `World`, and adopted as an editable view document), but the view-tree is generated WITH
+/// `state`, so a stateful card (cipherclerk / debugger / replay) reflects the operator's live
+/// cockpit state rather than a fabricated/stale snapshot. The stateless cards pass an empty
+/// `state` and are unaffected.
+#[allow(clippy::result_large_err)]
+pub fn build_mode_card_surface_with_state(
+    id: u64,
+    kind: ModeCard,
+    world: Rc<RefCell<World>>,
+    focus: CellId,
+    held: AuthRequired,
+    state: &SurfaceState,
+    cx: &mut App,
+) -> Result<ModeCardSurface, String> {
     // The card's affordance surface over the focused cell: `bump` (Signature — held,
     // admitted) advances a state slot so a fired button visibly moves a bound row. The
     // fire commits THROUGH `World::commit_turn` onto the live ledger.
     let affordances = vec![("bump".to_string(), AuthRequired::Signature)];
 
-    // GENERATE the card's view-tree from the live ledger BEFORE attaching (the builder
-    // reads the World through a shared borrow; the attach takes the `Rc` next).
+    // GENERATE the card's view-tree from the live ledger + the threaded cockpit state BEFORE
+    // attaching (the builder reads the World through a shared borrow; the attach takes the
+    // `Rc` next).
     let tree_doc: ViewTree = {
         let w = world.borrow();
-        kind.view_tree(&w, focus, &held)
+        kind.view_tree(&w, focus, &held, state)
     };
 
     // Attach an applet to the LIVE cockpit World, focused on `focus` — the card's
@@ -961,6 +1351,9 @@ fn mode_card_pk(kind: ModeCard, focus: CellId) -> [u8; 32] {
         ModeCard::WebCells => 0x7B,
         ModeCard::Trust => 0x7E,
         ModeCard::Wonder => 0x77,
+        ModeCard::Cipherclerk => 0xCC,
+        ModeCard::Debugger => 0xDB,
+        ModeCard::Replay => 0x4E,
     };
     pk
 }
@@ -1333,5 +1726,145 @@ impl CockpitSurface for AppCardSurface {
             substance: self.substance.clone(),
             focus: self.focus.clone(),
         })
+    }
+}
+
+// ===========================================================================
+// TESTS — the stateful cards render LIVE state, not stale data. The honesty
+// claim: a carded surface reflects the SAME live cockpit state its gpui panel
+// shows. These exercise the pure view-builders over the render-models (the same
+// models the gpui panels consume), proving that a change in the threaded state
+// changes the rendered view-tree (no staleness) and that the absent-state mount
+// is an honest empty state, never fabricated data.
+// ===========================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dregg_cell::CellId;
+
+    /// CIPHERCLERK: a fresh clerk and a clerk with one identity render DIFFERENT cards —
+    /// the live roster is reflected, not a stale/empty snapshot.
+    #[test]
+    fn cipherclerk_card_tracks_live_identities() {
+        let empty = crate::cipherclerk::Cipherclerk::new();
+        let empty_json = cipherclerk_view(&crate::cipherclerk::render(&empty)).to_json();
+        assert!(empty_json.contains("0 identit"));
+
+        let mut clerk = crate::cipherclerk::Cipherclerk::new();
+        clerk.create_identity("alice", "dns", 7);
+        let one_json = cipherclerk_view(&crate::cipherclerk::render(&clerk)).to_json();
+        assert!(one_json.contains("1 identit"));
+        assert!(one_json.contains("alice") || one_json.contains("who you can act as"));
+        assert_ne!(
+            empty_json, one_json,
+            "the clerk card must reflect the live roster"
+        );
+    }
+
+    /// REPLAY: moving the scrubber cursor renders a different card (the cursor's verified
+    /// reconstruction is live, not pinned to genesis).
+    #[test]
+    fn replay_card_tracks_live_cursor() {
+        let mk = |cursor: usize, verified: bool| crate::replay::ReplayPanelModel {
+            timeline: vec![
+                crate::replay::TimelineEntry {
+                    step: 0,
+                    root: [0u8; 32],
+                    label: "genesis (empty)".to_string(),
+                },
+                crate::replay::TimelineEntry {
+                    step: 1,
+                    root: [1u8; 32],
+                    label: "transfer".to_string(),
+                },
+            ],
+            cursor,
+            cursor_state: crate::replay::CursorState {
+                step: cursor,
+                root: [cursor as u8; 32],
+                root_verified: verified,
+                cells: vec![(CellId([2u8; 32]), 100, 1)],
+            },
+            diff_from_prev: None,
+            fork: None,
+        };
+        let at0 = replay_view(&mk(0, true)).to_json();
+        let at1 = replay_view(&mk(1, true)).to_json();
+        assert!(at0.contains("cursor at step 0"));
+        assert!(at1.contains("cursor at step 1"));
+        assert_ne!(at0, at1, "the replay card must track the live cursor");
+
+        // A failed root tooth surfaces honestly (a red mismatch pill), never silently.
+        let bad = replay_view(&mk(1, false)).to_json();
+        assert!(bad.contains("ROOT MISMATCH"));
+    }
+
+    /// DEBUGGER: a committing turn and a refused turn render different verdicts — the live
+    /// re-execution's outcome is reflected (the refusal explanation is the prize).
+    #[test]
+    fn debugger_card_tracks_live_verdict() {
+        let witness = crate::debug::WitnessInspection {
+            has_conservation_proof: true,
+            has_execution_proof: true,
+            witness_blob_count: 2,
+            binding_proof_count: 1,
+            public_inputs: None,
+        };
+        let commits = crate::debug::DebuggerPanel {
+            title: "transfer".to_string(),
+            subtitle: "commits".to_string(),
+            steps: vec![crate::debug::StepRow {
+                index: 0,
+                label: "Transfer".to_string(),
+                conservation_delta: 0,
+                committed: true,
+                is_break: false,
+            }],
+            current_state: Vec::new(),
+            final_conservation_delta: 0,
+            breakpoints: Vec::new(),
+            break_hit: None,
+            refusal: None,
+            witness: witness.clone(),
+        };
+        let refused = crate::debug::DebuggerPanel {
+            title: "over-spend".to_string(),
+            subtitle: "refused".to_string(),
+            steps: vec![crate::debug::StepRow {
+                index: 0,
+                label: "Transfer".to_string(),
+                conservation_delta: -5,
+                committed: false,
+                is_break: true,
+            }],
+            current_state: Vec::new(),
+            final_conservation_delta: -5,
+            breakpoints: Vec::new(),
+            break_hit: Some(0),
+            refusal: Some(crate::debug::RefusalRender {
+                guard: "Conservation".to_string(),
+                headline: "value would not conserve".to_string(),
+                detail: "Σδ = -5 at effect 0".to_string(),
+                effect_index: Some(0),
+                cells: Vec::new(),
+            }),
+            witness,
+        };
+        let ok = debugger_view(&commits).to_json();
+        let no = debugger_view(&refused).to_json();
+        assert!(ok.contains("COMMITS"));
+        assert!(no.contains("REFUSED"));
+        assert_ne!(
+            ok, no,
+            "the debugger card must reflect the live re-execution verdict"
+        );
+    }
+
+    /// The absent-state mount (a stateless/default build, e.g. the bake) is an HONEST empty
+    /// state — never fabricated data.
+    #[test]
+    fn stateful_cards_absent_state_is_honest() {
+        let json = empty_state_view("⚷ The cipherclerk", "(no live clerk threaded)").to_json();
+        assert!(json.contains("no live clerk"));
     }
 }

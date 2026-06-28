@@ -331,8 +331,37 @@ impl Cockpit {
             ),
             #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Objects => self.objects_panel().into_any_element(),
+            // DEV · the step-debugger card AS the surface (the turn under the lens re-executed
+            // live over the cockpit's threaded state), the gpui debugger panel as fail-soft
+            // fallback + the card-pane-off home.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::Debugger => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::Debugger,
+                cx,
+                |this, _cx| this.debugger_panel().into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Debugger => self.debugger_panel().into_any_element(),
+            // DEV · the replay / time-travel card AS the surface (the verified reconstruction at
+            // the cockpit's threaded cursor), the gpui replay panel as fail-soft fallback.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::Replay => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::Replay,
+                cx,
+                |this, _cx| this.replay_panel().into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Replay => self.replay_panel().into_any_element(),
+            // DEV · the cipherclerk vault card AS the surface (the live HD-identity roster +
+            // tokens + delegations threaded through `SurfaceState`), the gpui clerk panel
+            // (which fires the genuine mint/attenuate/delegate crypto) as fail-soft fallback.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::Cipherclerk => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::Cipherclerk,
+                cx,
+                |this, cx| this.cipherclerk_panel(cx).into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Cipherclerk => self.cipherclerk_panel(cx).into_any_element(),
             Tab::Editor => self.editor_panel().into_any_element(),
         }

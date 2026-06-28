@@ -134,6 +134,12 @@ impl Render for Cockpit {
                 ModeCard::WebCells,
                 ModeCard::Trust,
                 ModeCard::Wonder,
+                // The STATEFUL cards — each generated from the cockpit-side state threaded
+                // through `SurfaceState` (the live clerk / the turn under the lens / the
+                // scrubber cursor), rebuilt when that state changes (no staleness).
+                ModeCard::Cipherclerk,
+                ModeCard::Debugger,
+                ModeCard::Replay,
             ] {
                 self.ensure_mode_card(kind, cx);
             }

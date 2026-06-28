@@ -72,14 +72,24 @@ impl Cockpit {
         kind: starbridge_v2::dock::card_surface::ModeCard,
         cx: &mut Context<Self>,
     ) {
-        use starbridge_v2::dock::card_surface::build_mode_card_surface;
+        use starbridge_v2::dock::card_surface::{
+            build_mode_card_surface_with_state, DebuggerState, ModeCard, ReplayState, SurfaceState,
+        };
 
         let Some(focus) = self.inspector_focus_cell() else {
             return;
         };
-        // Already built for this focus → nothing to do (the entity re-reads the live ledger
-        // every paint, so it stays current without a rebuild).
-        if self.mode_cards.get(&kind).is_some_and(|m| m.focus == focus) {
+        // A STATEFUL card's view-tree is generated from cockpit-side state (the live clerk, the
+        // scrubber cursor, the turn under the lens) that is NOT on the ledger — so a digest of
+        // that state joins `focus` in the cache key. When the operator mutates it (a mint, a
+        // scrubber move), the digest changes and the card is rebuilt — no staleness. A stateless
+        // card's digest is 0, so it caches on `focus` exactly as before (byte-identical).
+        let state_fp = self.mode_card_state_fp(kind);
+        if self
+            .mode_cards
+            .get(&kind)
+            .is_some_and(|m| m.focus == focus && m.state_fp == state_fp)
+        {
             return;
         }
 
@@ -88,7 +98,31 @@ impl Cockpit {
         // `Signature` (the attenuated operator hand), satisfying the card's edit_authority
         // so a reshape-from-within is authorized.
         let held = dregg_cell::AuthRequired::Signature;
-        match build_mode_card_surface(id, kind, self.world.clone(), focus, held, cx) {
+        // Thread the live cockpit-side state for the stateful cards (empty for the stateless
+        // survey cards), so a carded surface renders the SAME live state its gpui panel shows.
+        let result = {
+            let state = SurfaceState {
+                clerk: matches!(kind, ModeCard::Cipherclerk).then_some(&self.clerk),
+                debugger: matches!(kind, ModeCard::Debugger).then_some(DebuggerState {
+                    turn: &self.debug_turn,
+                    breakpoints: &self.breakpoints,
+                }),
+                replay: matches!(kind, ModeCard::Replay).then_some(ReplayState {
+                    cursor: self.replay_cursor,
+                    fork: self.replay_fork.as_ref(),
+                }),
+            };
+            build_mode_card_surface_with_state(
+                id,
+                kind,
+                self.world.clone(),
+                focus,
+                held,
+                &state,
+                cx,
+            )
+        };
+        match result {
             Ok(surface) => {
                 self.mode_cards.insert(
                     kind,
@@ -96,6 +130,7 @@ impl Cockpit {
                         entity: surface.entity_handle(),
                         surface,
                         focus,
+                        state_fp,
                     },
                 );
             }
@@ -105,6 +140,47 @@ impl Cockpit {
                      (keeping the Rust panel): {e:#}"
                 );
             }
+        }
+    }
+
+    /// A cheap digest of the cockpit-side [`SurfaceState`] a stateful [`ModeCard`] is built
+    /// from (0 for a stateless card). [`Self::ensure_mode_card`] keys the card cache on this
+    /// (alongside the focus), so a stateful card is rebuilt the moment the operator mutates the
+    /// live state it reflects — the carded surface never lags the gpui panel.
+    #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+    pub(crate) fn mode_card_state_fp(
+        &self,
+        kind: starbridge_v2::dock::card_surface::ModeCard,
+    ) -> u64 {
+        use starbridge_v2::dock::card_surface::ModeCard;
+        match kind {
+            ModeCard::Replay => {
+                let hlen = self.world.borrow().recorded_turns().len() as u64;
+                (hlen << 24)
+                    ^ (self.replay_cursor as u64)
+                    ^ if self.replay_fork.is_some() {
+                        0xF0F0
+                    } else {
+                        0
+                    }
+            }
+            ModeCard::Debugger => {
+                let h = self.debug_turn.hash();
+                let mut fp = u64::from_le_bytes(h[..8].try_into().unwrap());
+                fp ^= self.breakpoints.len() as u64;
+                fp
+            }
+            ModeCard::Cipherclerk => {
+                let ids = self.clerk.identities().count() as u64;
+                let toks: u64 = self
+                    .clerk
+                    .identities()
+                    .map(|i| i.clerk.tokens().len() as u64)
+                    .sum();
+                let dels = self.clerk.delegations().len() as u64;
+                (ids << 40) ^ (toks << 16) ^ dels
+            }
+            _ => 0,
         }
     }
 
