@@ -111,6 +111,13 @@ impl Cockpit {
                     cursor: self.replay_cursor,
                     fork: self.replay_fork.as_ref(),
                 }),
+                swarm: matches!(kind, ModeCard::Swarm).then_some(
+                    starbridge_v2::dock::card_surface::SwarmCardState {
+                        swarm: &self.swarm,
+                        demo: self.killer_demo.as_ref(),
+                        demo_lines: self.killer_demo_lines.as_slice(),
+                    },
+                ),
             };
             build_mode_card_surface_with_state(
                 id,
@@ -179,6 +186,26 @@ impl Cockpit {
                     .sum();
                 let dels = self.clerk.delegations().len() as u64;
                 (ids << 40) ^ (toks << 16) ^ dels
+            }
+            ModeCard::Swarm => {
+                // Members + their committed actions + pending wakes + the demo cursor/transcript:
+                // any emit/drain/transfer or demo-frame moves this, so the card rebuilds live.
+                let members = self.swarm.members();
+                let actions: u64 = members.iter().map(|m| m.action_count as u64).sum();
+                let pending: u64 = members
+                    .iter()
+                    .map(|m| m.pending_notify_count() as u64)
+                    .sum();
+                let demo = self
+                    .killer_demo
+                    .as_ref()
+                    .map(|d| d.cursor() as u64)
+                    .unwrap_or(0);
+                ((members.len() as u64) << 48)
+                    ^ (actions << 24)
+                    ^ (pending << 12)
+                    ^ (demo << 6)
+                    ^ (self.killer_demo_lines.len() as u64)
             }
             _ => 0,
         }

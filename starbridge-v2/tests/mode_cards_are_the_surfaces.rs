@@ -68,6 +68,9 @@ fn every_mode_card_mounts_over_the_live_world_and_reshapes_from_within() {
         ModeCard::Agent,
         ModeCard::Links,
         ModeCard::Inspector,
+        // The pure-function survey cards (built from the live World + focus, no threaded state).
+        ModeCard::ServiceExplorer,
+        ModeCard::Powerbox,
     ]
     .into_iter()
     .enumerate()

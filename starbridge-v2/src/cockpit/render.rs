@@ -111,7 +111,7 @@ impl Render for Cockpit {
         // data, no gpui entity), built once; a `move:` affordance reshapes it in place.
         #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
         self.ensure_layout_card();
-        // THE SIX LANDED CARDS — build (or rebuild on a focus change) each card that IS a
+        // THE LANDED CARDS — build (or rebuild on a focus change) each card that IS a
         // cockpit mode's main-pane surface, over the live `World`. Built here on the paint
         // path (entity creation needs a live `&mut Context`), so the `&self` dispatch can
         // host the prebuilt `CardPane` entity this very frame. The Inhabit dynamics feed
@@ -140,6 +140,10 @@ impl Render for Cockpit {
                 ModeCard::Cipherclerk,
                 ModeCard::Debugger,
                 ModeCard::Replay,
+                ModeCard::Swarm,
+                // The stateless survey cards (pure functions of the live World + focus).
+                ModeCard::ServiceExplorer,
+                ModeCard::Powerbox,
             ] {
                 self.ensure_mode_card(kind, cx);
             }

@@ -520,7 +520,7 @@ impl Cockpit {
             // (`ensure_inspector_card` builds it from the focused cell over the World).
             #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
             inspector_card: None,
-            // The six landed cards mount lazily as their mode's surface on first paint
+            // The landed cards mount lazily as their mode's surface on first paint
             // (`ensure_mode_card` builds each from the live ledger over the World).
             #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
             mode_cards: std::collections::HashMap::new(),

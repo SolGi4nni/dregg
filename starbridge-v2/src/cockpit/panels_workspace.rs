@@ -208,6 +208,16 @@ impl Cockpit {
             ),
             #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Agent => self.agent_panel(cx).into_any_element(),
+            // OPERATE · the A2 swarm card AS the surface (the live coordinator + the killer-demo
+            // threaded through `SurfaceState`), the gpui swarm panel (which fires the genuine
+            // emit/drain/transfer turns) as fail-soft fallback + the card-pane-off home.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::Swarm => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::Swarm,
+                cx,
+                |this, cx| this.swarm_panel(cx).into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Swarm => self.swarm_panel(cx).into_any_element(),
             // INHABIT · the ocap-graph card AS the surface (the live cap web as a card).
             #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
@@ -257,6 +267,16 @@ impl Cockpit {
             ),
             #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::LinksHere => self.links_here_panel(cx).into_any_element(),
+            // SERVICES · the powerbox / CapDesk card AS the surface (the focused cell as granter +
+            // its live grantable-target picker), the gpui powerbox (which fires the genuine
+            // attenuated grant turn) as fail-soft fallback + the card-pane-off home.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::Powerbox => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::Powerbox,
+                cx,
+                |this, cx| this.powerbox_panel(cx).into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Powerbox => self.powerbox_panel(cx).into_any_element(),
             Tab::Moldable => self.moldable_panel(cx).into_any_element(),
             // INSPECT · the focused cell's reflected state + cap-gated affordances AS a
@@ -271,6 +291,16 @@ impl Cockpit {
             ),
             #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::InspectAct => self.inspect_act_panel(cx).into_any_element(),
+            // SERVICES · the per-cell service-explorer card AS the surface (the focused cell's
+            // derived interface, cap-annotated for the viewer), the gpui explorer (which fires the
+            // genuine method invoke) as fail-soft fallback + the card-pane-off home.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::ServiceExplorer => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::ServiceExplorer,
+                cx,
+                |this, cx| this.service_explorer_panel(cx).into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::ServiceExplorer => self.service_explorer_panel(cx).into_any_element(),
             // SERVICES · the whole-image directory card AS the surface (services × interfaces),
             // the gpui directory panel (which fires the genuine announce turn) as fail-soft

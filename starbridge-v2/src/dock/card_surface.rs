@@ -336,6 +336,21 @@ pub struct SurfaceState<'a> {
     /// REPLAY · the scrubber cursor + an optional pinned what-if fork (the
     /// recorded history itself is read off the live `World`).
     pub replay: Option<ReplayState<'a>>,
+    /// SWARM · the live A2 swarm coordinator (+ the optional killer-demo script).
+    pub swarm: Option<SwarmCardState<'a>>,
+}
+
+/// The SWARM surface's cockpit-side state: the live [`crate::swarm::Swarm`] coordinator (the
+/// members · inboxes · activity · budget are read off it, NOT the ledger) and the optional
+/// killer-demo (N5 pug-handoff) script the Swarm tab drives. Borrowed for one card build.
+#[derive(Clone, Copy)]
+pub struct SwarmCardState<'a> {
+    /// The live swarm coordinator the card surveys ([`crate::swarm::SwarmView::build`]).
+    pub swarm: &'a crate::swarm::Swarm,
+    /// The killer-demo script (frame cursor · next step · the Stingray budget), if booted.
+    pub demo: Option<&'a crate::demo::HeadlineDemo>,
+    /// The captured killer-demo frame transcript (the run lines), as the panel shows them.
+    pub demo_lines: &'a [String],
 }
 
 /// The DEBUGGER surface's cockpit-side state: the turn under the lens + the
@@ -437,6 +452,26 @@ pub enum ModeCard {
     /// what-if fork's divergence. COCKPIT-STATEFUL: the cursor + fork come through
     /// [`SurfaceState::replay`] (the history is read off the live World). Read-only card.
     Replay,
+    /// OPERATE · the A2 swarm coordinator (`crate::swarm`) — N agent cells coordinating as
+    /// cap-confined Surface cells: each member's mandate/backing/balance + its notify-edge inbox,
+    /// the aggregate budget strip, the killer-demo (N5 pug-handoff) frame/budget headline, and the
+    /// activity feed of executor receipts + notify edges. COCKPIT-STATEFUL: the live `Swarm` (and
+    /// the optional killer-demo) come through [`SurfaceState::swarm`] (the coordinator is cockpit
+    /// state, NOT the ledger). Read-only card (the genuine emit/drain/transfer turns stay in the
+    /// gpui panel, the card-pane-off fallback).
+    Swarm,
+    /// SERVICES · the per-cell service explorer (`crate::service_explorer`) — the focused cell's
+    /// DERIVED interface as the viewer sees it: one row per declared method (name · arity · auth ·
+    /// replayable/serviced semantics · the cap badge `authorized`). A pure function of the live
+    /// World + focus (`ServiceExplorer::build`); read-only (the genuine method invocation — a real
+    /// verified turn — stays in the gpui panel).
+    ServiceExplorer,
+    /// SERVICES · the powerbox / CapDesk designation surface (`crate::powerbox`) — the focused cell
+    /// as the granter, a standing app request, and the picker of GRANTABLE targets (every cell the
+    /// granter actually holds a cap reaching, read live off its c-list — `mint_needs_held_factory`
+    /// made visible). A pure function of the live World + focus (`Powerbox::present`); read-only (the
+    /// genuine designation — a real attenuated grant turn — stays in the gpui panel).
+    Powerbox,
 }
 
 impl ModeCard {
@@ -462,6 +497,9 @@ impl ModeCard {
             }
             ModeCard::Debugger => "debugger · step · inspect · explain (deos-js card)",
             ModeCard::Replay => "replay · verified time-travel (deos-js card)",
+            ModeCard::Swarm => "swarm · multi-agent cap-coordination (deos-js card)",
+            ModeCard::ServiceExplorer => "explorer · live service interface (deos-js card)",
+            ModeCard::Powerbox => "powerbox · CapDesk designation (deos-js card)",
         }
     }
 
@@ -714,6 +752,46 @@ impl ModeCard {
                     empty_state_view("⟲ Replay", "(no replay cursor threaded into this surface)")
                 }
             },
+            ModeCard::Swarm => match state.swarm {
+                // The swarm coordinator is cockpit-side state (NOT the ledger), threaded through
+                // `state.swarm`. The survey (members · inboxes · activity · budget) is built off
+                // it live; the killer-demo headline is appended when its script is booted. Absent
+                // (a stateless/default build) → an honest empty state, never a fabricated roster.
+                Some(sw) => {
+                    let view = crate::swarm::SwarmView::build(sw.swarm, world);
+                    swarm_view(&view, sw.demo, sw.demo_lines)
+                }
+                None => empty_state_view(
+                    "⛂ The swarm",
+                    "(no live swarm coordinator threaded into this surface)",
+                ),
+            },
+            ModeCard::ServiceExplorer => {
+                // The focused cell's DERIVED service interface as the viewer sees it (a pure
+                // function of the live World + focus — the same `ServiceExplorer::build` the gpui
+                // panel consumes). Read-only: the genuine method invoke stays in the gpui panel.
+                let se = crate::service_explorer::ServiceExplorer::build(
+                    world,
+                    focus,
+                    focus,
+                    viewer.clone(),
+                );
+                service_explorer_view(&se)
+            }
+            ModeCard::Powerbox => {
+                // The CapDesk designation surface over the focused cell as the granter: the picker
+                // of GRANTABLE targets is read live off `focus`'s c-list (`mint_needs_held_factory`
+                // made visible — a thing the granter does not hold never appears). A standing app
+                // request stands in for a launched app's real `CapabilityRequest`. Read-only: the
+                // genuine attenuated grant turn stays in the gpui panel.
+                let request = crate::powerbox::CapabilityRequest::new(
+                    focus,
+                    "a confined app would reach one peer/resource — designate exactly one",
+                    AuthRequired::None,
+                );
+                let pb = crate::powerbox::Powerbox::present(world, focus, &request);
+                powerbox_view(&pb)
+            }
         }
     }
 }
@@ -1088,6 +1166,299 @@ fn replay_view(model: &crate::replay::ReplayPanelModel) -> ViewTree {
     ViewTree::VStack { children }
 }
 
+/// THE A2 SWARM as a portable card — N agent cells coordinating as cap-confined Surface cells.
+/// The header strip (members · committed actions · pending wakes · aggregate budget), one section
+/// per member (backing/balance/action-count/inbox + per-member budget meter), the killer-demo (N5
+/// pug-handoff) frame/budget headline + its captured transcript when the script is booted, and the
+/// activity feed of executor receipts + inter-member notify edges. A pure function of the live
+/// [`crate::swarm::SwarmView`] (built off the cockpit-threaded coordinator), so it tracks every
+/// emit/drain. Read-only (the genuine emit/drain/transfer turns stay in the gpui panel).
+fn swarm_view(
+    view: &crate::swarm::SwarmView,
+    demo: Option<&crate::demo::HeadlineDemo>,
+    demo_lines: &[String],
+) -> ViewTree {
+    let mut children: Vec<ViewTree> = vec![card_text(
+        "⛂ The swarm — agents coordinating as cap-confined cells. Every action is a receipted turn.",
+    )];
+
+    // The header strip — swarm-wide counts + the conserved aggregate budget over bounded members.
+    let mut header = vec![
+        card_pill(format!("{} member(s)", view.members.len()), "accent"),
+        card_pill(format!("{} action(s)", view.total_actions), "good"),
+        card_pill(
+            format!("{} pending wake(s)", view.total_pending),
+            if view.total_pending > 0 {
+                "warn"
+            } else {
+                "muted"
+            },
+        ),
+    ];
+    if view.budget.bounded_members > 0 {
+        header.push(card_pill(
+            format!(
+                "budget {}/{} computrons",
+                view.budget.total_spent, view.budget.total_ceiling
+            ),
+            "accent",
+        ));
+    }
+    children.push(card_row(header));
+
+    // One section per member: a status row (live/unbacked · balance · actions · inbox · budget)
+    // followed by the member's inbox of pending/drained notify edges.
+    let mut member_sections: Vec<ViewTree> = Vec::new();
+    for m in &view.members {
+        let (glyph, gtag) = if m.backed {
+            ("●", "good")
+        } else {
+            ("○", "bad")
+        };
+        let mut status = vec![
+            card_icon(glyph, gtag),
+            card_text(format!("{} · {}", m.name, m.short)),
+            card_pill(if m.backed { "live" } else { "UNBACKED" }, gtag),
+            card_pill(format!("bal {}", m.balance), "muted"),
+            card_pill(format!("{} action(s)", m.action_count), "good"),
+            card_pill(
+                format!("{} pending", m.pending_notify),
+                if m.pending_notify > 0 {
+                    "warn"
+                } else {
+                    "muted"
+                },
+            ),
+        ];
+        if let Some(ceiling) = m.budget.ceiling {
+            status.push(card_pill(
+                format!("{}/{} cmp", m.budget.spent, ceiling),
+                if m.budget.is_exhausted() {
+                    "bad"
+                } else {
+                    "accent"
+                },
+            ));
+        }
+        let mut entry = vec![card_row(status)];
+        for n in &m.inbox {
+            let (mark, mtag) = if n.drained {
+                ("✓", "muted")
+            } else {
+                ("⚡", "warn")
+            };
+            entry.push(card_row(vec![card_icon(mark, mtag), card_text(n.label())]));
+        }
+        member_sections.push(card_section("", entry));
+    }
+    if member_sections.is_empty() {
+        member_sections.push(card_text("(no members yet — boot the swarm to coordinate)"));
+    }
+    children.push(card_section(
+        "members (cap-confined, mandate-gated)",
+        member_sections,
+    ));
+
+    // THE KILLER DEMO (N5 pug-handoff) headline + captured transcript, when the script is booted.
+    if let Some(d) = demo {
+        let mut demo_hdr = vec![card_pill(
+            format!(
+                "frame {}/{}",
+                d.cursor(),
+                crate::demo::HeadlineDemo::TOTAL_STEPS
+            ),
+            "accent",
+        )];
+        match d.next_step_label() {
+            Some(label) => demo_hdr.push(card_pill(format!("next: {label}"), "warn")),
+            None => demo_hdr.push(card_pill("script complete", "good")),
+        }
+        if let Some(v) = d.swarm().stingray_view() {
+            demo_hdr.push(card_pill(
+                format!("budget {}/{} computrons", v.total_drawn, v.ceiling),
+                if v.exhausted { "bad" } else { "good" },
+            ));
+        }
+        let mut demo_kids = vec![card_row(demo_hdr)];
+        if demo_lines.is_empty() {
+            demo_kids.push(card_text(
+                "(press ▶ next frame, or ⏩ run all, in the swarm panel to drive the script)",
+            ));
+        } else {
+            for line in demo_lines {
+                // A refusal line is the teaching moment (warn); the executor's reason sub-lines
+                // (indented) are muted. We split multi-line entries so each row is one line.
+                let is_refusal = line.contains("REFUSED");
+                for (i, sub) in line.lines().enumerate() {
+                    let tag = if is_refusal && i == 0 {
+                        "warn"
+                    } else {
+                        "muted"
+                    };
+                    demo_kids.push(card_row(vec![card_pill(sub.trim_end().to_string(), tag)]));
+                }
+            }
+        }
+        children.push(card_section(
+            "⚑ the killer demo (N5) · the pug-handoff evaluation artifact",
+            demo_kids,
+        ));
+    }
+
+    // The activity feed — recent committed/refused actions with their height + notify edges.
+    let mut feed: Vec<ViewTree> = Vec::new();
+    for e in &view.activity {
+        let (mark, mtag) = if e.committed {
+            ("✓", "good")
+        } else {
+            ("✗", "bad")
+        };
+        let h = e
+            .height
+            .map(|h| format!("h{h}"))
+            .unwrap_or_else(|| "—".to_string());
+        let mut rows = vec![card_row(vec![
+            card_icon(mark, mtag),
+            card_text(format!("{h} · {} · {}", e.member_short, e.summary)),
+        ])];
+        for edge in &e.notify_edges {
+            rows.push(card_row(vec![
+                card_icon("→", "accent"),
+                card_text(edge.clone()),
+            ]));
+        }
+        feed.push(card_section("", rows));
+    }
+    if feed.is_empty() {
+        feed.push(card_text(
+            "(no swarm actions yet — use the panel's verbs to run the first turns)",
+        ));
+    }
+    children.push(card_section(
+        "activity feed (executor receipts · notify edges)",
+        feed,
+    ));
+
+    ViewTree::VStack { children }
+}
+
+/// THE SERVICE EXPLORER as a portable card — a focused cell's DERIVED service interface as the
+/// viewer sees it: a summary pill row + one row per declared method (name · arity · auth tier ·
+/// replayable/serviced semantics · the cap badge `authorized`). A pure function of the live
+/// [`crate::service_explorer::ServiceExplorer`] (built off the live World + focus). Read-only: the
+/// genuine method invocation (a real verified turn) stays in the gpui panel.
+fn service_explorer_view(se: &crate::service_explorer::ServiceExplorer) -> ViewTree {
+    let authorized = se.methods.iter().filter(|m| m.authorized).count();
+    let mut rows: Vec<ViewTree> = Vec::new();
+    if se.methods.is_empty() {
+        rows.push(card_text(
+            "(this cell publishes no methods — its program dispatches on no method symbol)",
+        ));
+    }
+    for m in &se.methods {
+        let semantics = if m.is_invokable() {
+            "replayable"
+        } else {
+            "serviced (named OFE seam)"
+        };
+        let arity = match m.arity {
+            Some(n) => format!("{n} arg(s)"),
+            None => "variadic".to_string(),
+        };
+        let mut r = vec![
+            card_icon(
+                if m.authorized { "🔓" } else { "🔒" },
+                if m.authorized { "good" } else { "muted" },
+            ),
+            card_text(format!("{} · {} · {}", m.name, arity, semantics)),
+        ];
+        r.push(card_pill(
+            format!("needs {:?}", m.required),
+            if m.authorized { "good" } else { "warn" },
+        ));
+        r.push(card_section_adept(
+            "symbol",
+            vec![card_text(format!(
+                "0x{}",
+                crate::reflect::short_hex(&m.symbol)
+            ))],
+        ));
+        rows.push(card_row(r));
+    }
+    ViewTree::VStack {
+        children: vec![
+            card_text("📐 What this cell can do — its service interface"),
+            card_row(vec![
+                card_pill(format!("{} method(s)", se.methods.len()), "accent"),
+                card_pill(format!("{authorized} you may call"), "good"),
+            ]),
+            card_section("methods (cap-annotated for you)", rows),
+            card_section_adept(
+                "interface id",
+                vec![card_text(format!(
+                    "interface 0x{}",
+                    crate::reflect::short_hex(&se.interface_id)
+                ))],
+            ),
+        ],
+    }
+}
+
+/// THE POWERBOX / CapDesk as a portable card — the focused cell as the granter, a standing app
+/// request, and the picker of GRANTABLE targets (every cell the granter actually holds a cap
+/// reaching, read live off its c-list — `mint_needs_held_factory` made visible: a thing the granter
+/// does not hold never appears, so the user can only ever designate from their own authority). A
+/// pure function of the live [`crate::powerbox::Powerbox`]. Read-only: the genuine attenuated grant
+/// turn stays in the gpui panel.
+fn powerbox_view(pb: &crate::powerbox::Powerbox) -> ViewTree {
+    let mut targets: Vec<ViewTree> = Vec::new();
+    if pb.grantable.is_empty() {
+        targets.push(card_text(
+            "(you hold no caps reaching another cell — nothing to designate. The powerbox is \
+             not ambient: it can only offer your own authority.)",
+        ));
+    }
+    for g in &pb.grantable {
+        targets.push(card_row(vec![
+            card_icon("⬡", "accent"),
+            card_text(format!("{} (you may hand this app)", g.label)),
+            card_pill(format!("ceiling {:?}", g.held_rights), "good"),
+        ]));
+    }
+    ViewTree::VStack {
+        children: vec![
+            card_text("🗝 The powerbox — hand a confined app exactly one capability, narrowed."),
+            card_row(vec![
+                card_pill(
+                    format!(
+                        "granter {}",
+                        crate::reflect::short_hex(pb.principal.as_bytes())
+                    ),
+                    "accent",
+                ),
+                card_pill(
+                    format!("{} grantable target(s)", pb.grantable.len()),
+                    "good",
+                ),
+            ]),
+            card_section(
+                "the app's request",
+                vec![
+                    card_text(pb.reason.clone()),
+                    card_pill(
+                        format!(
+                            "asks for {:?} (a ceiling, not a command)",
+                            pb.desired_rights
+                        ),
+                        "warn",
+                    ),
+                ],
+            ),
+            card_section("what you can designate (your own authority)", targets),
+        ],
+    }
+}
+
 /// The SERVICE DIRECTORY as a portable card — a summary pill row + one row per discovered
 /// service. Read-only (the genuine announce is a real verified turn in the gpui panel).
 fn service_directory_view(dir: &ServiceDirectory) -> ViewTree {
@@ -1354,6 +1725,9 @@ fn mode_card_pk(kind: ModeCard, focus: CellId) -> [u8; 32] {
         ModeCard::Cipherclerk => 0xCC,
         ModeCard::Debugger => 0xDB,
         ModeCard::Replay => 0x4E,
+        ModeCard::Swarm => 0x52,
+        ModeCard::ServiceExplorer => 0x5E,
+        ModeCard::Powerbox => 0xB0,
     };
     pk
 }
@@ -1866,5 +2240,125 @@ mod tests {
     fn stateful_cards_absent_state_is_honest() {
         let json = empty_state_view("⚷ The cipherclerk", "(no live clerk threaded)").to_json();
         assert!(json.contains("no live clerk"));
+    }
+
+    /// SWARM: more committed actions / a pending wake render a DIFFERENT card — the live
+    /// coordinator's counts are reflected, not a stale snapshot.
+    #[test]
+    fn swarm_card_tracks_live_members_and_actions() {
+        use crate::swarm::{SwarmBudget, SwarmMemberView, SwarmView};
+        let mk = |actions: usize, pending: usize| SwarmView {
+            members: vec![SwarmMemberView {
+                agent: CellId([3u8; 32]),
+                short: "ab12".into(),
+                name: "coordinator".into(),
+                backed: true,
+                balance: 100,
+                action_count: actions,
+                pending_notify: pending,
+                inbox: Vec::new(),
+                budget: crate::swarm::BudgetMeter {
+                    spent: 0,
+                    ceiling: None,
+                },
+            }],
+            activity: Vec::new(),
+            total_pending: pending,
+            total_actions: actions,
+            budget: SwarmBudget::default(),
+        };
+        let none = swarm_view(&mk(0, 0), None, &[]).to_json();
+        let busy = swarm_view(&mk(2, 1), None, &[]).to_json();
+        assert!(
+            none.contains("0 action(s)"),
+            "quiet swarm shows zero actions"
+        );
+        assert!(busy.contains("2 action(s)"));
+        assert!(busy.contains("1 pending wake(s)"));
+        assert!(busy.contains("coordinator"));
+        assert_ne!(
+            none, busy,
+            "the swarm card must reflect the live action/pending counts"
+        );
+    }
+
+    /// SERVICE EXPLORER: the method list reflects the cell's interface AND the per-method cap
+    /// badge (authorized vs not), so the read-only card is anti-ghost (it shows the full
+    /// interface and which calls the viewer may make).
+    #[test]
+    fn service_explorer_card_lists_methods_with_cap_badges() {
+        use crate::service_explorer::{MethodEntry, ServiceExplorer};
+        use dregg_cell::interface::Semantics;
+        let se = ServiceExplorer {
+            cell: CellId([1u8; 32]),
+            viewer: CellId([1u8; 32]),
+            viewer_rights: AuthRequired::Signature,
+            interface_id: [9u8; 32],
+            inspectable: None,
+            methods: vec![
+                MethodEntry {
+                    name: "transfer".into(),
+                    symbol: [2u8; 32],
+                    arity: Some(1),
+                    required: AuthRequired::Signature,
+                    semantics: Semantics::Replayable,
+                    authorized: true,
+                },
+                MethodEntry {
+                    name: "admin".into(),
+                    symbol: [3u8; 32],
+                    arity: None,
+                    required: AuthRequired::Proof,
+                    semantics: Semantics::Serviced,
+                    authorized: false,
+                },
+            ],
+        };
+        let json = service_explorer_view(&se).to_json();
+        assert!(json.contains("transfer") && json.contains("admin"));
+        assert!(json.contains("2 method(s)"));
+        assert!(
+            json.contains("1 you may call"),
+            "the cap badge counts authorized methods"
+        );
+        assert!(
+            json.contains("serviced"),
+            "a serviced method is surfaced honestly"
+        );
+    }
+
+    /// POWERBOX: the grantable-target picker is exactly the granter's reachable authority — a
+    /// thing the granter holds appears; the card is a pure projection of the user's own caps.
+    #[test]
+    fn powerbox_card_shows_grantable_targets() {
+        use crate::powerbox::{GrantableTarget, Powerbox};
+        let pb = Powerbox {
+            principal: CellId([1u8; 32]),
+            app_cell: CellId([2u8; 32]),
+            reason: "needs to reach one peer".into(),
+            desired_rights: AuthRequired::None,
+            grantable: vec![GrantableTarget {
+                target: CellId([5u8; 32]),
+                held_slot: 0,
+                held_rights: AuthRequired::Signature,
+                label: "cd34".into(),
+            }],
+        };
+        let json = powerbox_view(&pb).to_json();
+        assert!(json.contains("1 grantable target(s)"));
+        assert!(json.contains("cd34"), "the held target is offered");
+        assert!(
+            json.contains("needs to reach one peer"),
+            "the app's reason is shown"
+        );
+
+        // An empty c-list → nothing to designate (the powerbox is not ambient).
+        let empty = Powerbox {
+            grantable: Vec::new(),
+            ..pb
+        };
+        let ejson = powerbox_view(&empty).to_json();
+        assert!(ejson.contains("0 grantable target(s)"));
+        assert!(ejson.contains("not ambient"));
     }
 }

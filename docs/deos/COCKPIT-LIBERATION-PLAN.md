@@ -60,17 +60,17 @@ Complexity = read-only display vs. rich interaction (input state, drag, menus, s
 | Replay | panels_workspace.rs:2585 | med (delegates) | scrub history | no |
 | Cipherclerk | panels_workspace.rs:2599 | high | macaroon lifecycle buttons | no |
 | Editor | panels_web.rs:1678 | high (delegates) | monospace text | no |
-| Swarm | panels_workspace.rs:2150 | high | member roster + pills | no |
+| Swarm | panels_workspace.rs:2150 | high | member roster + pills | **carded** (`ModeCard::Swarm`) |
 | Organs | panels_workspace.rs:2940 | high | sectioned read-only | **carded** (`ModeCard::Organs`) |
 | Graph | panels_workspace.rs:2814 | high | edge-list iteration | **carded** (`ModeCard::Graph`) |
 | Proofs | panels_web.rs:10 | high | verification-tier board | **carded** (`ModeCard::Proofs`) |
 | WebOfCells | panels_web.rs:98 | high | tier toggle + affordances | no |
 | WebShell | panels_webshell.rs:619 | high | URL bar + Servo tile | no |
 | LinksHere | panels_web.rs:719 | high | backlink list + depth | **carded** (`ModeCard::Links`) |
-| Powerbox | panels_web.rs:983 | high | app picker + grant | no |
+| Powerbox | panels_web.rs:983 | high | app picker + grant | **carded** (`ModeCard::Powerbox`) |
 | Moldable | panels_moldable.rs:227 | med-high | tab-strip + Halo + Spotter | **carded** (inspector card) |
 | InspectAct | panels_moldable.rs:697 | high | state rows + affordance buttons | partial (inspector) |
-| ServiceExplorer | panels_moldable.rs:2187 | high | method list + arg inputs | no |
+| ServiceExplorer | panels_moldable.rs:2187 | high | method list + arg inputs | **carded** (`ModeCard::ServiceExplorer`) |
 | Workspace | panels_moldable.rs:840 | high | cycle chips + predict/commit | no |
 | Wonder | panels_moldable.rs:993 | high | glowing-cell grid + hover halos | no |
 | Lanes | panels_moldable.rs:1108 | high | 4-lane tab-strip + gadgets | no |
