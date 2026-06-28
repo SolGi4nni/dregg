@@ -169,6 +169,7 @@ pub mod columns;
 pub mod pi;
 
 mod air;
+pub mod authority_digest_weld;
 mod cell_state;
 mod effect;
 mod helpers;

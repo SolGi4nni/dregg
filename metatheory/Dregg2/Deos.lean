@@ -133,6 +133,16 @@ import Dregg2.Deos.SettleEscrowSelectorBinding
 -- flip distance: the wide producer + STARK prove, the in-AIR B_AUTHORITY_DIGEST→selector forcing
 -- (§6 item 2, the terminal blocker), and live-path admission. #assert_all_clean.
 import Dregg2.Deos.SettleEscrowSatWideDescriptor
+-- The GENTIAN KEYSTONE — the in-AIR authority-digest→selector forcing gadget (the TERMINAL blocker of
+-- the escrow VK flip, §6 item 2). Three degree-≤2 in-AIR gates (recompute-bind, decode-boolean,
+-- selector-force) on the WIDE welded descriptor FORCE the capacity selector ON from the COMMITTED
+-- authority-digest limb (r23, wide-bound) under the `DeclCommitBinds` collision-resistance floor — so a
+-- PURE light client demands the satisfaction weld with NO off-band verifier discipline, discharging
+-- `SettleEscrowSelectorBinding.escrow_selector_bound_to_declaration`'s `hverifier` obligation in-AIR.
+-- STAGED — a Lean definition; nothing emitted into the deployed VK, nothing routed, no flip. The named
+-- remaining: the literal in-AIR `hash_bytes` recompute over the witnessed declaration + the
+-- required-tag decode (the VK-affecting byte-sponge / felt-domain-limb work). #assert_all_clean.
+import Dregg2.Deos.InAirAuthorityDigestSelector
 -- The HATCHERY abstraction-mint house-capacity, GROUNDED (the LAST of the six — the house COMPLETE):
 -- a user-defined verified KIND's declared invariant IS enforced, forever, and its attestation is REAL.
 -- Enforcement is the SAME `CellProgram::evaluate_with_meta` gate (`evalStep`), a violating turn →
