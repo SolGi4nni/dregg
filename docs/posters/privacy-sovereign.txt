@@ -1,0 +1,105 @@
+ ╔════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+ ║                                                                                                        ║
+ ║  ██████╗  ██████╗  ██╗ ██╗   ██╗  █████╗   ██████╗ ██╗   ██╗   the easiest thing to overclaim, so      ║
+ ║  ██╔══██╗ ██╔══██╗ ██║ ██║   ██║ ██╔══██╗ ██╔════╝ ╚██╗ ██╔╝   it is graded HONESTLY here:             ║
+ ║  ██████╔╝ ██████╔╝ ██║ ██║   ██║ ███████║ ██║       ╚████╔╝    REAL · DEMO · DESIGNED — each claim     ║
+ ║  ██╔═══╝  ██╔══██╗ ██║ ╚██╗ ██╔╝ ██╔══██║ ██║        ╚██╔╝     traced to code. you hold your CAPS,     ║
+ ║  ██║      ██║  ██║ ██║  ╚████╔╝  ██║  ██║ ╚██████╗    ██║      your CELL, your KEYS — and you pick     ║
+ ║  ╚═╝      ╚═╝  ╚═╝ ╚═╝   ╚═══╝   ╚═╝  ╚═╝  ╚═════╝    ╚═╝      disclosure turn by turn.                ║
+ ║                                                                                                        ║
+ ║   ▸ the tag rides every claim — and the UNLINKABILITY verdict is stated plainly, in full, below.       ║
+ ╚════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+  ░▒▓ THE FRAME · a SEMISOVEREIGN dregg in use ▓▒░   sovereign over your slice, interoperable in the commons
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────
+          ┌─ YOU ──────────────────────────────────────────────────┐    not a WALLED GARDEN:
+   keys ─▶│  BYO keypair — no admin issues you an identity         │    you can leave · fork · verify.
+   caps ─▶│  you HOLD them — none granted that you didn't hold     │  not a SURVEILLANCE LEDGER:
+   cell ─▶│  your state, your beliefs — only your predicate writes │    you choose what to disclose.
+          └────────────────────────────┬───────────────────────────┘
+                                       ▼  live in your MEMBRANE — a cap-bounded fork of your world
+            transact ── choosing disclosure per turn ── stitch to other worlds BY CONSENT
+        a person or an agent: holds caps · makes a transfer · shows ONE fact (not the rest) · forks a world.
+
+  ░▒▓ WHAT'S REAL TODAY · the deployed privacy you can use now ▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+
+   ① SELECTIVE DISCLOSURE — the most mature privacy feature.                                  ‹ REAL ›
+        ‹ credentials/src/presentation.rs · bridge/src/present.rs ›
+        prove "I hold a valid credential / attenuation chain satisfying this request" —
+        WITHOUT revealing the chain or the caps. only the public inputs are shown.
+            holder ──STARK──▶ verifier:  ⟦ predicate over HIDDEN attributes holds ⟧
+        modes: cleartext attribute · predicate-over-hidden · anonymous multi-show (fresh blinding).
+        ‹ honest: the proof DOES reveal WHICH federation (federation_root is public); multi-show
+          unlinkability bounded by federation size + a BabyBear birthday bound (~2^15.5). ›
+
+   ② COMMITTED VALUE PATH — Pedersen, AMOUNTS ONLY, opt-in.                            ‹ REAL · opt-in ›
+        ‹ turn/src/executor/finalize.rs — detect_commitment_mode ›
+        default:  Transfer{ from, bob, 42, $DREGG }   amounts + parties PUBLIC   ◀── the COMMON path
+        opt-in :  NoteSpend{ …, value_commitment }    Pedersen hides the AMOUNT (range-proofed, Σ≡0)
+            mode → Cleartext | Committed (Schnorr excess + Bulletproof) | Mixed (REJECTED).
+        ‹ honest: hides AMOUNTS, NOT linkage. spend + create sit in the SAME verified turn, so the
+          input→output mapping is still seen. cleartext is the default; committed is never automatic. ›
+
+   ③ NULLIFIERS — spend-once.                                                                 ‹ REAL ›
+        ‹ cell/src/nullifier_set.rs · note.rs:179 · executor/apply.rs ›
+        a spend reveals a secret-derived nullifier, not the note id.  contains?→reject · else insert.
+            n = BLAKE3("dregg-note nullifier v1", commitment‖spending_key‖nonce)   in checkpoint root.
+        ‹ honest: deployed; its WORK is double-spend prevention. spend↔note unlinking only bites in the
+          shielded path (③ feeds ⑧). the append-only set still leaks the temporal ORDER of spends. ›
+
+   ④ MEMBRANE / CONFINED WORLD — your private cap-bounded fork.                               ‹ REAL ›
+        ‹ cell/src/membrane.rs ›   seal→None on over-grant; re-checked at exercise:  exposed ⊑ a & b
+        ‹ honest: this is AUTHORITY confinement — it bounds what a world may DO/REACH. it is NOT a
+          data- or metadata-privacy primitive: it does not hide content from the host. reach, not bytes. ›
+
+   ⑤ NETWORK-ORIGIN ANONYMITY — Dandelion++.                                                  ‹ REAL ›
+        ‹ net/src/gossip.rs · node/src/gossip.rs ›   stem (≈10 hops) → fluff; adaptive by peer count.
+        ‹ honest: hides WHICH NODE first broadcast a message from a passive observer. that's ALL. ›
+
+  ░▒▓ THE DEMOS · real primitives, not yet woven into the live executor ▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+
+   ⑥ GARBLED-CIRCUIT 2PC — a real Yao garbling primitive.                          ‹ REAL primitive ›
+        ‹ circuit/src/garbled.rs · GarbledJoint.lean ›   2-party threshold compare (b ≥ a) over Poseidon2.
+        ‹ honest: the ANONYMOUS AUCTION (demo-agent/examples/private_auction.rs) does NOT wire the garbled
+          MPC — its compare step is stubbed; even the real test SIMULATES oblivious transfer. DEMO. ›
+
+   ⑦ PRIVATE VOTING — unlinkable ballot real; secret tally not.                     ‹ REAL + DESIGNED ›
+        ‹ starbridge-apps/privacy-voting ›
+        REAL:  ballot-cell id from a caller's blinding token → ballot NOT linkable to your agent cell;
+               WriteOnce VOTE slot (one vote / ballot) · Monotonic tally — substrate-enforced.
+        ‹ honest: the VOTE slot stores the CLEARTEXT choice. "tally without revealing votes" is
+          DESIGNED-only — the crate's docstring says a ZK secret-tally tier composes ON TOP. ›
+
+   ⑧ FULL SHIELDED TRANSFER/POOL — value AND owner hiding.                          ‹ DEMO · library ›
+        ‹ circuit-prove/src/shielded/ ›   tested prover: hiding uni-STARK membership/nullifier + Pedersen.
+        ‹ honest: NOT wired into effect_vm / the live executor; callers are tests only. there is NO live
+          shielded pool — a real proof construction sitting BESIDE the deployed path, not inside it. ›
+
+  ░▒▓ ⚖ THE HONESTY DIAL · what privacy IS vs the FRONTIER ▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+        REAL, deployed, usable now ──────────────────┐   ┌────────────────── FRONTIER, not yet deployed
+          selective-disclosure ZK presentation       │   │  default sender↔receiver unlinkability
+          opt-in Pedersen amount-hiding (conserved)  │   │  a LIVE shielded pool (value + owner hidden)
+          nullifier double-spend gate                │   │  secret-tally voting (ZK choice + proof)
+          membrane authority confinement             │   │  metadata privacy: IP / timing / msg size
+          Dandelion++ tx-origin anonymity            │   │  a mixnet (Sphinx / Loopix / Tor) — designed
+        ‹ the metadata leak is not hidden — it is PROVEN: metatheory/Dregg2/Privacy/Metadata.lean: an
+          observer recovers partners, slot/timing, volume, while the shielded payload stays hidden. ›
+
+  ░▒▓ ‼ THE UNLINKABILITY VERDICT · stated plainly, no hedging ▓▒░
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────
+        full sender↔receiver unlinkability is NOT the default, and is NOT deployed in the live executor.
+          · the default value path is CLEARTEXT (Transfer): amounts and parties are public.
+          · the opt-in COMMITTED path hides AMOUNTS ONLY (Pedersen); spend→output is still seen in-turn.
+          · value+owner shielding EXISTS as a REAL, TESTED prover library (circuit-prove/src/shielded/) —
+            but it is a DEMO, not woven into the node. there is no live shielded pool.
+        the honest sentence:  "privacy PRIMITIVES + opt-in amount-hiding + mature selective disclosure" —
+        NOT  "private or unlinkable transactions by default."   the parts are real; the default is open.
+
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────
+     a semisovereign dregg: you hold the caps no admin can mint, the cell only you can write, the keys you
+     brought. you disclose what you choose, transact with the privacy you opt into, and live in a membrane
+     you can fork and leave. not a surveillance ledger — and not yet a shielded pool. both are true.
+
+          ░▒▓█  the magic is that it is all real — and the privacy NOT yet built is named, not hidden.  █▓▒░
+                sovereign over your slice · interoperable in a verifiable commons  ·  built with Claude
+                              🐉   https://www.dregg.net   ·   $DREGG
