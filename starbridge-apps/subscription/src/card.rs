@@ -42,14 +42,14 @@ use crate::{
     PUBLISHERS_ROOT_SLOT, SEQ_HEAD_SLOT, SEQ_TAIL_SLOT,
 };
 
+/// A `deos.ui.pill` node — a colored status badge.
+fn pill(label: &str, tag: &str) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
+}
+
 /// A `deos.ui.text` node.
 fn text(s: &str) -> Value {
     json!({ "kind": "text", "props": { "text": s } })
-}
-
-/// A `deos.ui.pill` node — a colored status badge tinted by `tag`.
-fn pill(label: &str, tag: &str) -> Value {
-    json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
 }
 
 /// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a word +

@@ -59,11 +59,6 @@ fn text(s: &str) -> Value {
     json!({ "kind": "text", "props": { "text": s } })
 }
 
-/// A `deos.ui.pill` node — a colored status badge.
-fn pill(label: &str, tag: &str) -> Value {
-    json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
-}
-
 /// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a
 /// word + color via `cases` (the first `{value,label,tag}` matching the slot wins).
 /// `text`/`tag` are the static fallback (discord, or no match).

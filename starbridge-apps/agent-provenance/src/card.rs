@@ -61,14 +61,14 @@ use crate::{ENTRY_CAPACITY, HEAD_SLOT, TIP_SLOT};
 /// predecessor), so a full gauge marks a cell-boundary handover, not a limit.
 const LOG_GAUGE_MAX: u64 = ENTRY_CAPACITY as u64;
 
-/// A `deos.ui.text` node.
-fn text(s: &str) -> Value {
-    json!({ "kind": "text", "props": { "text": s } })
-}
-
 /// A `deos.ui.pill` node — a colored status badge.
 fn pill(label: &str, tag: &str) -> Value {
     json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
+}
+
+/// A `deos.ui.text` node.
+fn text(s: &str) -> Value {
+    json!({ "kind": "text", "props": { "text": s } })
 }
 
 /// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a

@@ -52,6 +52,11 @@ use crate::room::{InhabitantView, Room, RoomView};
 /// The welded lifecycle the room composes: the JOB drives `work`, the ECONOMY drives the rest.
 const WELD_LIFECYCLE: [&str; 6] = ["list", "fund", "work", "ship", "settle", "paid"];
 
+/// A `deos.ui.pill` node — a colored status badge.
+fn pill(label: &str, tag: &str) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
+}
+
 /// A `deos.ui.text` node.
 fn text(s: &str) -> Value {
     json!({ "kind": "text", "props": { "text": s } })
@@ -61,11 +66,6 @@ fn text(s: &str) -> Value {
 /// `simple` disclosure projection hides and the `adept` projection reveals.
 fn adept_text(s: &str) -> Value {
     json!({ "kind": "text", "props": { "text": s, "adept": true } })
-}
-
-/// A `deos.ui.pill` node — a colored status badge tinted by `tag`.
-fn pill(label: &str, tag: &str) -> Value {
-    json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
 }
 
 // ── The avatar wordlists — a small local palette in the family of `deos-view`'s `fmt:"id"`
