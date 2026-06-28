@@ -379,3 +379,78 @@ declaration order. The deos-js `deos.ui.*` prelude gained an authoring helper fo
 `run_js`) emits the rich nodes the renderers paint. Round-trip + render-to-pixels proofs:
 `deos-view/src/tree.rs` (`batch2_lift_tests`) + `deos-view/tests/renders_rich_nodes_to_pixels.rs`
 (`the_batch2_nodes_round_trip_and_render_to_pixels`).
+
+## 8. The CONSUMER-DELIGHT layer ("home, not lab")
+
+The rich vocabulary made cards EXPRESSIVE; this layer makes them LEGIBLE + warm. It lives
+entirely at the **rendering layer** (`deos-view/src/{fmt,tree,render,web,discord}.rs`), so all
+cards that already use `bind`/`pill`/`section` improve at once — no per-card re-authoring. The
+features are renderer-INDEPENDENT (a single shared formatter; the native/web/discord projections
+inherit identical behaviour) and preserve the bind-cursor invariant.
+
+### 8.1 Short-hash / friendly identity display (`bind props.fmt`)
+
+A `bind` carries a display format chosen by `props.fmt`
+(`"id"|"key"|"hash"|"hex"|"amount"|"raw"`), lifted to `crate::fmt::BindFmt`. The DEFAULT is
+`raw` (the plain decimal — a counter stays `count: 1`, nothing changes). The opt-in formats turn
+an opaque integer into something human:
+
+- `id`/`key` → a deterministic **emoji-avatar handle** (`🦊 swift-fox`) — a stable, memorable
+  stand-in for a 20-digit key (a splitmix64 mix indexes 16·16·16 = 4096 friendly handles).
+- `hash`/`hex` → a **truncated hex digest** (`0x8bf3…a3d8`).
+- `amount` → **grouped digits** (`1,234,567`).
+
+The derivation is pure + deterministic; the web JS mirror (`fmt::fmt_js`) is built FROM the same
+wordlists, so the live in-tab re-read formats byte-identically to the server bake (no drift). The
+bind span carries `data-fmt` + `data-label` so the SolidJS-shaped repaint re-formats instead of
+clobbering the friendly text with a raw number. This single feature kills most of the dev-y feel.
+
+### 8.2 Live value→word pill (`pill props.slot` + `props.cases`)
+
+The static phase-word pill is cured: a `pill` with a bound `slot` + `cases:[{value, label,
+tag}]` READS the live cell and maps the value to a word + color — e.g. a phase slot →
+`0:"COMMIT"(warn) 1:"REVEAL"(accent) 2:"RESOLVED"(good)`. `pill_display(text, tag, cases,
+value)` is the one resolver every renderer calls. Native reads the slot immediate-mode (like
+`gauge`, no bind cursor); web carries `data-slot` + `data-cases` and the wire's `deosRepaintPills`
+maps the live value; discord (no immediate-mode ledger) flattens to the static fallback word. A
+static `pill{text,tag}` (no slot) is unchanged.
+
+### 8.3 Progressive disclosure (`props.adept` + `disclosure`)
+
+Delight and moldability are TWO PROJECTIONS OF ONE CARD. Any node tagged `props.adept:true`
+lifts wrapped in the transparent `ViewNode::Adept` marker (the "see the bones" detail: raw
+hashes, slot indices, internal fields). `disclose(tree, level)` is a pure pre-walk run BEFORE any
+renderer/bind-cursor walk: `Disclosure::Simple` (the clean default) DROPS adept subtrees;
+`Disclosure::Adept` UNWRAPS them. Because the filter runs first in EVERY renderer, the simple and
+adept projections each have a self-consistent bind cursor (a dropped adept `bind` is dropped
+identically everywhere). The result tree carries no markers, so renderers paint a clean tree. The
+host chooses the level (a card/section `props.disclosure` hint reads via `Disclosure::from_prop`).
+
+### 8.4 Renderer polish
+
+The native `section` gains rounded corners + a quieter, uppercase-muted header and more
+breathing room; pills are fully-rounded chips. The web CSS warms the palette, adds antialiasing +
+tabular-nums for bound values, renders section titles as quiet uppercase labels and pills as
+letter-spaced status chips, and adds button hover/active feedback — the calmer, finished
+1990-delight register, tasteful not gaudy.
+
+### 8.5 Which cards adopt which props next (the follow-up — NOT done here, cards untouched)
+
+The mechanism is renderer-side; the app cards adopt the props when convenient. The highest-value
+adoptions (these cards already emit the carrier node, so it's a one-line prop add):
+
+- **`sealed-auction`** — `bind(SELLER_SLOT, "seller key · ", fmt:"id")` + `WINNER_SLOT fmt:"id"`;
+  the `COMMIT` header pill → a live `pill{slot:PHASE_SLOT, cases:[COMMIT/REVEAL/RESOLVED]}`; the
+  raw `bind`s on `COMMIT_BASE`/`HIGH_BID_SLOT` → `fmt:"amount"`; slot-index detail → `adept`.
+- **`escrow-market`** — the leg-status `bind` → a live `pill` with `cases` (open/deposited/
+  settled/reclaimed); party-key binds → `fmt:"id"`.
+- **`sealed-auction`/`compute-exchange`/`bounty-board`/`subscription`/`supply-chain-provenance`/
+  `governed-namespace`/`identity`/`nameservice`** and the rest of the ~18 — any `bind` on a
+  cell/issuer/owner id → `fmt:"id"`; any digest → `fmt:"hash"`; any balance/quantity →
+  `fmt:"amount"`; any lifecycle-phase header pill → a live `pill` with `cases`; the raw-slot /
+  internal rows → `adept` so the simple projection stays clean.
+
+Proofs: `deos-view/src/fmt.rs` (the formatter + JS-mirror unit tests), `deos-view/src/tree.rs`
+(`delight_tests`: fmt lift, live-pill cases + `pill_display`, disclosure + bind-cursor
+consistency), `deos-view/tests/web_delight_renders.rs` (the short-hash / live-pill / disclosure
+HTML projection).

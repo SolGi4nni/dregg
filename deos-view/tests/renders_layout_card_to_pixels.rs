@@ -103,7 +103,7 @@ fn bake_layout(hr: &mut HeadlessRender, out: &PathBuf) -> (PathBuf, PathBuf) {
     let tree0 = card.view_tree().expect("derive the layout view-tree");
     let source0 = tree0.to_json();
     assert!(
-        source0.contains("Cockpit layout · 5 modes · 31 surfaces"),
+        source0.contains("Cockpit layout · 5 modes · 32 surfaces"),
         "the generated layout view counts the live arrangement"
     );
     let (frame0, png0) = render_to_png(hr, &source0, out.join("layout-card.png"));

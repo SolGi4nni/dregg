@@ -14,6 +14,8 @@
 
 use serde::Deserialize;
 
+use crate::fmt::BindFmt;
+
 /// A node of the view-tree, mirroring the JS `deos.ui.*` shape exactly.
 ///
 /// The JS shape is `{ kind, props, children? , read? }`. We deserialize via the raw
@@ -30,8 +32,16 @@ pub enum ViewNode {
     /// `bind(() => expr)` → a signal binding. The closure does not survive
     /// serialization; the renderer re-reads the bound value off the live ledger
     /// (the model slot the JS closure read). `slot` is the model slot to re-read
-    /// (the counter shape binds slot 0); `label` is an optional prefix.
-    Bind { slot: usize, label: String },
+    /// (the counter shape binds slot 0); `label` is an optional prefix. `fmt` (the
+    /// consumer-delight knob, `props.fmt`) chooses how the bound integer paints: the
+    /// default [`BindFmt::Raw`] is the plain decimal (a counter stays `count: 1`), while
+    /// `id`/`hash`/`amount` turn an opaque 20-digit key into a short friendly handle /
+    /// truncated hex / grouped digits (see [`crate::fmt`]). Identical across all renderers.
+    Bind {
+        slot: usize,
+        label: String,
+        fmt: BindFmt,
+    },
     /// `button(label, aff, arg)` → a `Button` whose onClick fires affordance `turn`
     /// with `arg` (a REAL cap-gated verified turn through the applet).
     Button {
@@ -147,7 +157,21 @@ pub enum ViewNode {
     /// `pill({text, tag})` → a colored status badge (leaf). `tag` selects the semantic palette
     /// (`good`/`warn`/`bad`/`accent`/`muted`). Unlocks the cockpit's ubiquitous `pill(text,
     /// color)` — authority badges, LIVE/REVOKED chips, kind/lifecycle badges.
-    Pill { text: String, tag: String },
+    ///
+    /// LIVE variant (the static-pill cure): when `slot` is `Some` and `cases` is non-empty the
+    /// pill reads its bound slot IMMEDIATE-MODE (like `gauge`, NOT a `Bind` — it consumes no
+    /// bind cursor) and maps the live value to the matching case's `{label, tag}` — e.g. a
+    /// phase slot → `0:"COMMIT"(warn) 1:"REVEAL"(accent) 2:"RESOLVED"(good)`. No case matches
+    /// (or no slot) → the static `text`/`tag` fallback. So a status pill READS the cell instead
+    /// of being a hard-coded word.
+    Pill {
+        text: String,
+        tag: String,
+        /// The model slot the live pill reads (immediate-mode); `None` → a static pill.
+        slot: Option<usize>,
+        /// The value→`{label, tag}` cases; the first whose `value` equals the live slot wins.
+        cases: Vec<PillCase>,
+    },
     /// `icon({glyph, tag})` → a glyph indicator (leaf), tinted by `tag`. Unlocks the Wonder ✦/○
     /// glow glyphs, the scrubber markers, the toggle ✓/○.
     Icon { glyph: String, tag: String },
@@ -191,6 +215,108 @@ pub enum ViewNode {
     /// render, a video, a map). An unresolvable handle paints a labelled placeholder. Unlocks
     /// `WebShell`'s Servo render tile, any embedded native surface.
     Tile { handle: String, w: u32, h: u32 },
+
+    /// **An ADEPT-ONLY wrapper (progressive disclosure).** Any node tagged `props.adept:true`
+    /// lifts wrapped in this transparent marker — the "see the bones" detail (raw hashes, slot
+    /// indices, internal fields) a newcomer should NOT see. [`disclose`] with [`Disclosure::Simple`]
+    /// DROPS these (the clean 1990-delight projection); [`Disclosure::Adept`] UNWRAPS them (the
+    /// Pharo moldable projection). A renderer handed an un-disclosed tree paints the inner node
+    /// transparently, so the marker is invisible unless the disclosure filter acts on it. Two
+    /// projections of ONE card — never two cards.
+    Adept(Box<ViewNode>),
+}
+
+/// A `pill` value→word case — the live pill maps its bound slot value to this `{label, tag}`
+/// (the first case whose `value` equals the slot wins). The cure for the static phase-word pill.
+#[derive(Debug, Clone)]
+pub struct PillCase {
+    /// The slot value this case matches.
+    pub value: u64,
+    /// The word the pill shows when the live value matches (`COMMIT`/`REVEAL`/`RESOLVED`).
+    pub label: String,
+    /// The semantic palette tag for the matched word (`warn`/`accent`/`good`/…).
+    pub tag: String,
+}
+
+/// **The disclosure projection of a card** — `simple` (the newcomer's clean view: friendly
+/// labels, gauges, pills, breadcrumbs; raw hashes/slot-indices/internal fields HIDDEN) vs
+/// `adept` (the Pharo "see the bones" view: everything shown). One card, two projections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Disclosure {
+    /// Hide [`ViewNode::Adept`]-marked detail — the clean, delightful default.
+    #[default]
+    Simple,
+    /// Reveal everything — unwrap the adept-marked detail.
+    Adept,
+}
+
+impl Disclosure {
+    /// Lift a card/section `props.disclosure` string into a [`Disclosure`]. Unknown / absent →
+    /// [`Disclosure::Simple`] (the clean default).
+    pub fn from_prop(s: Option<&str>) -> Self {
+        match s.unwrap_or("") {
+            "adept" => Disclosure::Adept,
+            _ => Disclosure::Simple,
+        }
+    }
+}
+
+/// **Apply progressive disclosure** — a pure pre-walk producing the projection of `tree` at
+/// `level`, run BEFORE any renderer walk (and before `bind_plan`'s cursor walk), so the simple
+/// and adept projections each have a self-consistent bind cursor (a dropped adept `bind` is
+/// dropped in ALL renderers identically — the renderer-independence + bind-cursor invariants
+/// hold). At [`Disclosure::Simple`] an [`ViewNode::Adept`] node (and its whole subtree) is
+/// DROPPED; at [`Disclosure::Adept`] it is UNWRAPPED (the inner node kept). Either way the
+/// result contains no `Adept` markers, so the renderers paint a clean tree.
+pub fn disclose(tree: &ViewNode, level: Disclosure) -> ViewNode {
+    // `None` ⇒ this node is dropped entirely (an adept node in the simple projection).
+    fn rec(node: &ViewNode, level: Disclosure) -> Option<ViewNode> {
+        match node {
+            ViewNode::Adept(inner) => match level {
+                Disclosure::Simple => None,
+                Disclosure::Adept => rec(inner, level),
+            },
+            ViewNode::VStack(cs) => Some(ViewNode::VStack(kids(cs, level))),
+            ViewNode::Row(cs) => Some(ViewNode::Row(kids(cs, level))),
+            ViewNode::List(cs) => Some(ViewNode::List(kids(cs, level))),
+            ViewNode::Table(cs) => Some(ViewNode::Table(kids(cs, level))),
+            ViewNode::Section {
+                title,
+                tag,
+                children,
+            } => Some(ViewNode::Section {
+                title: title.clone(),
+                tag: tag.clone(),
+                children: kids(children, level),
+            }),
+            ViewNode::Tabs {
+                tabs,
+                selected_slot,
+                select_turn,
+                panels,
+            } => Some(ViewNode::Tabs {
+                tabs: tabs.clone(),
+                selected_slot: *selected_slot,
+                select_turn: select_turn.clone(),
+                panels: kids(panels, level),
+            }),
+            ViewNode::Grid { cols, children } => Some(ViewNode::Grid {
+                cols: *cols,
+                children: kids(children, level),
+            }),
+            ViewNode::Host { cell, view } => Some(ViewNode::Host {
+                cell: cell.clone(),
+                view: view.as_ref().and_then(|v| rec(v, level)).map(Box::new),
+            }),
+            // Leaves: cloned through (no adept marker can hide inside — they hold DATA, not
+            // `ViewNode` children).
+            other => Some(other.clone()),
+        }
+    }
+    fn kids(children: &[ViewNode], level: Disclosure) -> Vec<ViewNode> {
+        children.iter().filter_map(|c| rec(c, level)).collect()
+    }
+    rec(tree, level).unwrap_or(ViewNode::VStack(Vec::new()))
 }
 
 /// A `breadcrumb` crumb — a path segment, optionally clickable (a non-empty `turn` fires a
@@ -330,6 +456,35 @@ pub struct RawProps {
     pub w: Option<u32>,
     #[serde(default)]
     pub h: Option<u32>,
+
+    // ── The CONSUMER-DELIGHT props (short-hash/avatar · value→word pill · disclosure). Every
+    //    field optional; default behaviour is unchanged so existing cards are untouched. ──────
+    /// A `bind`'s display format (`"id"|"key"|"hash"|"hex"|"amount"|"raw"`) — turns an opaque
+    /// integer into a short friendly handle / hex / grouped digits. Absent → the plain decimal.
+    #[serde(default)]
+    pub fmt: Option<String>,
+    /// A live `pill`'s value→`{label, tag}` cases (the first matching the bound `slot` wins).
+    #[serde(default)]
+    pub cases: Option<Vec<RawPillCase>>,
+    /// `props.adept:true` tags a node (+ its subtree) as adept-only — hidden in the `simple`
+    /// disclosure projection, revealed in `adept`. Absent/false → always shown.
+    #[serde(default)]
+    pub adept: Option<bool>,
+    /// A card/section `props.disclosure` (`"simple"|"adept"`) — the projection hint a host reads
+    /// via [`Disclosure::from_prop`] to choose which level to [`disclose`] before rendering.
+    #[serde(default)]
+    pub disclosure: Option<String>,
+}
+
+/// The raw `{value, label, tag}` mirror of a live `pill`'s case (the value→word mapping).
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawPillCase {
+    #[serde(default)]
+    pub value: u64,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub tag: String,
 }
 
 /// A raw `{label?, glyph?, turn?, arg?, enabled?}` row — the JSON mirror of a `menu` item, a
@@ -366,6 +521,19 @@ impl RawNode {
     /// Lift a raw JSON node into the typed [`ViewNode`]. An unknown kind renders as a
     /// labelled placeholder text (honest: the renderer shows what it could not map).
     pub fn lift(&self) -> ViewNode {
+        let node = self.lift_inner();
+        // Progressive disclosure: a `props.adept:true` node lifts wrapped in the transparent
+        // [`ViewNode::Adept`] marker so [`disclose`] can drop/reveal it. Default (absent/false)
+        // → the node is shown directly (no wrapper).
+        if self.props.adept == Some(true) {
+            ViewNode::Adept(Box::new(node))
+        } else {
+            node
+        }
+    }
+
+    /// The kind-dispatch half of [`lift`] (before the adept wrapper is applied).
+    fn lift_inner(&self) -> ViewNode {
         let kids = || self.children.iter().map(|c| c.lift()).collect::<Vec<_>>();
         match self.kind.as_str() {
             "vstack" => ViewNode::VStack(kids()),
@@ -374,6 +542,7 @@ impl RawNode {
             "bind" => ViewNode::Bind {
                 slot: self.props.slot.unwrap_or(0),
                 label: self.props.label.clone().unwrap_or_default(),
+                fmt: BindFmt::from_prop(self.props.fmt.as_deref()),
             },
             "button" => {
                 let oc = self.props.on_click.clone().unwrap_or(RawOnClick {
@@ -436,6 +605,19 @@ impl RawNode {
             "pill" => ViewNode::Pill {
                 text: self.props.text.clone().unwrap_or_default(),
                 tag: self.props.tag.clone().unwrap_or_default(),
+                slot: self.props.slot,
+                cases: self
+                    .props
+                    .cases
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|c| PillCase {
+                        value: c.value,
+                        label: c.label,
+                        tag: c.tag,
+                    })
+                    .collect(),
             },
             "icon" => ViewNode::Icon {
                 glyph: self.props.glyph.clone().unwrap_or_default(),
@@ -538,6 +720,23 @@ impl MountSource for MapMountSource {
     }
 }
 
+/// Resolve a live `pill`'s display `(label, tag)` from its bound slot `value`: the first
+/// [`PillCase`] whose `value` matches wins, else the static `(text, tag)` fallback. The one
+/// helper every renderer calls so the value→word mapping is identical across them.
+pub fn pill_display<'a>(
+    text: &'a str,
+    tag: &'a str,
+    cases: &'a [PillCase],
+    value: u64,
+) -> (&'a str, &'a str) {
+    for c in cases {
+        if c.value == value {
+            return (c.label.as_str(), c.tag.as_str());
+        }
+    }
+    (text, tag)
+}
+
 /// The maximum mount DEPTH (`host` nesting) the resolver unfolds before fail-safing. Bounds
 /// a huge-but-acyclic mount tree so it can never blow the stack (cycles are caught separately
 /// by the visited-path check). 16 levels of cells-host-cells is far past any real surface.
@@ -638,6 +837,11 @@ fn resolve_rec(
             cols: *cols,
             children: recur(children, path),
         },
+        // The adept-only wrapper is transparent to mount resolution — recurse the wrapped node
+        // (it may host a cell) and keep the marker (disclosure runs separately).
+        ViewNode::Adept(inner) => {
+            ViewNode::Adept(Box::new(resolve_rec(inner, source, path, depth)))
+        }
         // Leaves carry no mounts — cloned through unchanged. (The actuation/indicator nodes hold
         // affordance/value DATA, not `ViewNode` children, so no mount can hide inside them.)
         ViewNode::Text(_)
@@ -912,7 +1116,7 @@ mod batch2_lift_tests {
         ));
         assert!(matches!(
             parse_view_tree(r#"{ "kind":"pill", "props":{ "text":"LIVE", "tag":"good" } }"#).unwrap(),
-            ViewNode::Pill { ref text, ref tag } if text == "LIVE" && tag == "good"
+            ViewNode::Pill { ref text, ref tag, .. } if text == "LIVE" && tag == "good"
         ));
         assert!(matches!(
             parse_view_tree(r#"{ "kind":"icon", "props":{ "glyph":"✦", "tag":"accent" } }"#).unwrap(),
@@ -973,5 +1177,171 @@ mod batch2_lift_tests {
             panic!("the grid's host child resolved")
         };
         assert!(matches!(&**v, ViewNode::Text(t) if t == "mounted in a grid"));
+    }
+}
+
+#[cfg(test)]
+mod delight_tests {
+    //! The CONSUMER-DELIGHT layer: a `bind`'s `fmt`, a LIVE value→word `pill`, and progressive
+    //! disclosure — all lifting from the wire shape and behaving at the IR level (renderer-
+    //! independent, so every renderer inherits them).
+    use super::*;
+
+    #[test]
+    fn a_bind_lifts_its_display_fmt() {
+        // The identity key shows a friendly avatar instead of a 20-digit decimal.
+        let id = parse_view_tree(
+            r#"{ "kind":"bind", "props":{ "slot":3, "label":"seller · ", "fmt":"id" } }"#,
+        )
+        .expect("parse id bind");
+        assert!(matches!(
+            id,
+            ViewNode::Bind {
+                slot: 3,
+                fmt: BindFmt::Id,
+                ..
+            }
+        ));
+        // The aliases all map; an absent fmt stays Raw (the unchanged default).
+        for (p, want) in [
+            ("\"hash\"", BindFmt::Hex),
+            ("\"hex\"", BindFmt::Hex),
+            ("\"key\"", BindFmt::Id),
+            ("\"amount\"", BindFmt::Amount),
+        ] {
+            let j = format!(r#"{{ "kind":"bind", "props":{{ "slot":0, "fmt":{p} }} }}"#);
+            let ViewNode::Bind { fmt, .. } = parse_view_tree(&j).unwrap() else {
+                panic!("a bind")
+            };
+            assert_eq!(fmt, want, "fmt {p}");
+        }
+        let plain = parse_view_tree(r#"{ "kind":"bind", "props":{ "slot":0 } }"#).unwrap();
+        assert!(
+            matches!(
+                plain,
+                ViewNode::Bind {
+                    fmt: BindFmt::Raw,
+                    ..
+                }
+            ),
+            "default stays raw"
+        );
+    }
+
+    #[test]
+    fn a_live_pill_lifts_slot_and_maps_the_value_to_a_word() {
+        let pill = parse_view_tree(
+            r#"{ "kind":"pill", "props":{ "text":"…", "tag":"muted", "slot":7, "cases":[
+                 { "value":0, "label":"COMMIT", "tag":"warn" },
+                 { "value":1, "label":"REVEAL", "tag":"accent" },
+                 { "value":2, "label":"RESOLVED", "tag":"good" } ] } }"#,
+        )
+        .expect("parse live pill");
+        let ViewNode::Pill {
+            text,
+            tag,
+            slot,
+            cases,
+        } = &pill
+        else {
+            panic!("a pill")
+        };
+        assert_eq!(*slot, Some(7));
+        assert_eq!(cases.len(), 3);
+        // The live value picks the word + color — NOT a frozen label.
+        assert_eq!(pill_display(text, tag, cases, 0), ("COMMIT", "warn"));
+        assert_eq!(pill_display(text, tag, cases, 1), ("REVEAL", "accent"));
+        assert_eq!(pill_display(text, tag, cases, 2), ("RESOLVED", "good"));
+        // An out-of-range value falls back to the static text/tag (honest, never a crash).
+        assert_eq!(pill_display(text, tag, cases, 9), ("…", "muted"));
+    }
+
+    #[test]
+    fn a_static_pill_is_unchanged() {
+        let pill = parse_view_tree(r#"{ "kind":"pill", "props":{ "text":"LIVE", "tag":"good" } }"#)
+            .unwrap();
+        assert!(matches!(&pill, ViewNode::Pill { slot: None, .. }));
+        let ViewNode::Pill {
+            text, tag, cases, ..
+        } = &pill
+        else {
+            panic!()
+        };
+        assert!(cases.is_empty());
+        assert_eq!(pill_display(text, tag, cases, 42), ("LIVE", "good"));
+    }
+
+    #[test]
+    fn an_adept_node_lifts_wrapped() {
+        let n = parse_view_tree(
+            r#"{ "kind":"bind", "props":{ "slot":1, "label":"raw hash · ", "fmt":"hash", "adept":true } }"#,
+        )
+        .unwrap();
+        let ViewNode::Adept(inner) = &n else {
+            panic!("adept-tagged node wraps")
+        };
+        assert!(matches!(&**inner, ViewNode::Bind { slot: 1, .. }));
+    }
+
+    #[test]
+    fn disclosure_simple_hides_adept_detail_and_adept_reveals_it() {
+        // A header bind (friendly) + an adept-only raw-hash bind. Simple shows ONE; adept shows BOTH.
+        let card = parse_view_tree(
+            r#"{ "kind":"vstack", "props":{}, "children":[
+                 { "kind":"bind", "props":{ "slot":0, "label":"seller · ", "fmt":"id" } },
+                 { "kind":"bind", "props":{ "slot":0, "label":"raw · ", "adept":true } } ] }"#,
+        )
+        .unwrap();
+
+        let simple = disclose(&card, Disclosure::Simple);
+        let ViewNode::VStack(s) = &simple else {
+            panic!("vstack")
+        };
+        assert_eq!(s.len(), 1, "simple drops the adept bind");
+        assert!(
+            !format!("{simple:?}").contains("Adept"),
+            "no markers leak into the rendered tree"
+        );
+
+        let adept = disclose(&card, Disclosure::Adept);
+        let ViewNode::VStack(a) = &adept else {
+            panic!("vstack")
+        };
+        assert_eq!(a.len(), 2, "adept reveals both binds");
+        assert!(
+            !format!("{adept:?}").contains("Adept"),
+            "adept unwraps the marker"
+        );
+    }
+
+    #[test]
+    fn disclosure_keeps_a_self_consistent_bind_cursor() {
+        // Dropping an adept `bind` shifts the surviving binds' positions identically in every
+        // renderer (the filter runs before the cursor walk), so the projection is coherent.
+        let card = parse_view_tree(
+            r#"{ "kind":"vstack", "props":{}, "children":[
+                 { "kind":"bind", "props":{ "slot":5 } },
+                 { "kind":"bind", "props":{ "slot":6, "adept":true } },
+                 { "kind":"bind", "props":{ "slot":7 } } ] }"#,
+        )
+        .unwrap();
+        fn slots(n: &ViewNode, out: &mut Vec<usize>) {
+            match n {
+                ViewNode::Bind { slot, .. } => out.push(*slot),
+                ViewNode::VStack(cs) => cs.iter().for_each(|c| slots(c, out)),
+                ViewNode::Adept(i) => slots(i, out),
+                _ => {}
+            }
+        }
+        let mut simple = Vec::new();
+        slots(&disclose(&card, Disclosure::Simple), &mut simple);
+        assert_eq!(
+            simple,
+            vec![5, 7],
+            "simple binds in pre-order, adept slot 6 dropped"
+        );
+        let mut adept = Vec::new();
+        slots(&disclose(&card, Disclosure::Adept), &mut adept);
+        assert_eq!(adept, vec![5, 6, 7], "adept keeps all three in pre-order");
     }
 }

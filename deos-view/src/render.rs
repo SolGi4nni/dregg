@@ -90,6 +90,10 @@ fn bind_plan(tree: &ViewNode, out: &mut Vec<Slot>) {
                 bind_plan(c, out);
             }
         }
+        // The adept-only wrapper is transparent to the bind cursor — recurse the wrapped node.
+        // (A tree handed to a renderer has usually been `disclose`d, which removes the marker;
+        // an un-disclosed tree still registers the inner node's binds here.)
+        ViewNode::Adept(inner) => bind_plan(inner, out),
         // A `host`'s resolved hosted subtree is recursed at the host's position so the bind
         // cursor stays aligned across all renderers; an unresolved host (`view: None`)
         // consumes no cursor positions (so it can't desync them).
@@ -298,7 +302,7 @@ impl AppletView {
             ViewNode::Text(s) => Label::new(s.clone())
                 .text_color(theme_fg)
                 .into_any_element(),
-            ViewNode::Bind { slot, label } => {
+            ViewNode::Bind { slot, label, fmt } => {
                 // THE SIGNAL BINDING — paint out of the fine-grained value CACHE. The
                 // cache fills lazily off the live ledger on first paint (the same
                 // witnessed read the JS closure made), then is updated ONLY for the
@@ -306,10 +310,14 @@ impl AppletView {
                 // clean binding repaints its cached value without re-reading the ledger —
                 // the SolidJS-shaped fine-grained re-render.
                 let value = self.next_bind_value(*slot);
+                // CONSUMER-DELIGHT: an opaque key/hash paints SHORT + friendly (`🦊 swift-fox` /
+                // `0x8bf3…a3d8` / `1,234,567`) instead of a 20-digit decimal; the default keeps
+                // the plain decimal so a counter is unchanged. Identical across all renderers.
+                let shown = crate::fmt::format_value(value, *fmt);
                 let text = if label.is_empty() {
-                    value.to_string()
+                    shown
                 } else {
-                    format!("{label}{value}")
+                    format!("{label}{shown}")
                 };
                 Label::new(text)
                     .font_weight(FontWeight::BOLD)
@@ -418,18 +426,25 @@ impl AppletView {
                 children,
             } => {
                 // A titled, bordered container — the uniform "styled section". `tag=="genuine"`
-                // accents the border (the existing `props.tag` styling convention).
+                // accents the border (the existing `props.tag` styling convention). Polished
+                // toward a calmer, finished look: rounded corners + a touch more breathing room.
                 let accent = if tag == "genuine" {
                     theme_fg
                 } else {
                     cx.theme().border
                 };
-                let mut card = v_flex().gap_1().p_2().border_1().border_color(accent);
+                let mut card = v_flex()
+                    .gap_2()
+                    .p_3()
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(accent);
                 if !title.is_empty() {
+                    // A quiet, slightly-muted header so it reads as a label, not a shout.
                     card = card.child(
                         Label::new(title.clone())
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme_fg),
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(cx.theme().muted_foreground),
                     );
                 }
                 for c in children {
@@ -609,14 +624,31 @@ impl AppletView {
                     )
                     .into_any_element()
             }
-            ViewNode::Pill { text, tag } => {
-                // A colored status badge tinted by the semantic `tag` palette.
+            ViewNode::Pill {
+                text,
+                tag,
+                slot,
+                cases,
+            } => {
+                // A colored status badge. LIVE variant: when bound to a `slot` with `cases`, read
+                // the slot IMMEDIATE-MODE and map the live value to its word + color (a phase slot
+                // → COMMIT/REVEAL/RESOLVED) — the status pill READS the cell, not a frozen label.
+                let (shown_text, shown_tag) = if let Some(s) = slot {
+                    if cases.is_empty() {
+                        (text.as_str(), tag.as_str())
+                    } else {
+                        let value = self.applet.borrow().get_u64(*s);
+                        crate::tree::pill_display(text, tag, cases, value)
+                    }
+                } else {
+                    (text.as_str(), tag.as_str())
+                };
                 div()
                     .px_2()
                     .py_0p5()
-                    .rounded_md()
-                    .bg(tag_color(tag))
-                    .child(Label::new(text.clone()).text_color(rgb(0xffffff)))
+                    .rounded(px(999.))
+                    .bg(tag_color(shown_tag))
+                    .child(Label::new(shown_text.to_string()).text_color(rgb(0xffffff)))
                     .into_any_element()
             }
             ViewNode::Icon { glyph, tag } => {
@@ -810,6 +842,10 @@ impl AppletView {
                     )
                     .into_any_element()
             }
+
+            // The adept-only wrapper renders its inner node transparently (the disclosure filter,
+            // when applied, removes the marker before paint; an un-filtered tree shows the bones).
+            ViewNode::Adept(inner) => self.node(inner, _window, cx),
 
             // ── The COMPOSITION KEYSTONE — mount a cell's WHOLE hosted view-tree as a
             //    subtree (the cell is a component, not a leaf). A bordered frame with a muted

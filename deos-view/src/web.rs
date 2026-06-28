@@ -44,6 +44,14 @@
 
 use crate::tree::ViewNode;
 
+/// The browser-side script for a card document: the shared [`fmt`](crate::fmt) JS mirror (so the
+/// in-tab re-read formats a bound value identically to the server bake) followed by the
+/// affordance wire ([`JS`]). Built fresh per document; the mirror is derived from the shared
+/// wordlists so it can never drift from the Rust formatter.
+fn js() -> String {
+    format!("{}{}", crate::fmt::fmt_js(), JS)
+}
+
 /// The live values of the `bind` nodes, in tree-walk (pre-order) appearance — the SAME
 /// order the native renderer's `bind_plan` mints `BindingId`s in. Element `n` is the value the
 /// `n`th `bind` node shows. A caller that has a live applet reads these off the ledger
@@ -83,19 +91,25 @@ fn node(n: &ViewNode, binds: &BindValues, cursor: &mut usize, out: &mut String) 
             out.push_str(&escape(s));
             out.push_str("</span>");
         }
-        ViewNode::Bind { slot, label } => {
+        ViewNode::Bind { slot, label, fmt } => {
             // THE SIGNAL BINDING — paint the live value (the same witnessed read the JS
             // closure / gpui `bind` made), and carry `data-slot` so a browser re-read
             // after a turn knows which slot to refresh (the fine-grained signal source).
+            // CONSUMER-DELIGHT: `fmt` paints an opaque key/hash SHORT + friendly; `data-fmt` +
+            // `data-label` let the in-tab re-read re-format identically (the JS mirror) instead
+            // of clobbering the friendly text with a raw number.
             let value = binds.get(*cursor).copied().unwrap_or(0);
             *cursor += 1;
+            let shown = crate::fmt::format_value(value, *fmt);
             let text = if label.is_empty() {
-                value.to_string()
+                shown
             } else {
-                format!("{label}{value}")
+                format!("{label}{shown}")
             };
             out.push_str(&format!(
-                "<span class=\"deos-bind\" data-slot=\"{slot}\">{}</span>",
+                "<span class=\"deos-bind\" data-slot=\"{slot}\" data-fmt=\"{}\" data-label=\"{}\">{}</span>",
+                fmt.as_str(),
+                escape(label),
                 escape(&text)
             ));
         }
@@ -289,12 +303,31 @@ fn node(n: &ViewNode, binds: &BindValues, cursor: &mut usize, out: &mut String) 
             ));
             out.push_str("</div>");
         }
-        ViewNode::Pill { text, tag } => {
-            out.push_str(&format!(
-                "<span class=\"deos-pill\" data-tag=\"{}\">{}</span>",
-                escape(tag),
-                escape(text)
-            ));
+        ViewNode::Pill {
+            text,
+            tag,
+            slot,
+            cases,
+        } => {
+            // A static pill OR a LIVE one: a bound pill carries its `data-slot` + cases JSON so
+            // the in-tab re-read maps the live value to the matching word + color (the static
+            // phase-word cure). First paint shows the case matching value 0 (or the fallback).
+            if let (Some(s), false) = (slot, cases.is_empty()) {
+                let (l0, t0) = crate::tree::pill_display(text, tag, cases, 0);
+                let cases_json = pill_cases_json(cases);
+                out.push_str(&format!(
+                    "<span class=\"deos-pill\" data-tag=\"{}\" data-slot=\"{s}\" data-cases=\"{}\">{}</span>",
+                    escape(t0),
+                    escape(&cases_json),
+                    escape(l0)
+                ));
+            } else {
+                out.push_str(&format!(
+                    "<span class=\"deos-pill\" data-tag=\"{}\">{}</span>",
+                    escape(tag),
+                    escape(text)
+                ));
+            }
         }
         ViewNode::Icon { glyph, tag } => {
             out.push_str(&format!(
@@ -399,6 +432,10 @@ fn node(n: &ViewNode, binds: &BindValues, cursor: &mut usize, out: &mut String) 
             out.push_str("</div>");
         }
 
+        // The adept-only wrapper renders its inner node transparently (the disclosure filter
+        // removes the marker before render; an un-filtered tree still paints the inner node).
+        ViewNode::Adept(inner) => node(inner, binds, cursor, out),
+
         // ── The COMPOSITION KEYSTONE — the IDENTICAL host node → HTML: a framed region with a
         //    `⌂ <cell>` header carrying the mounted cell's whole hosted subtree (or the honest
         //    unresolved placeholder). `data-cell` carries the mount reference for the in-tab
@@ -446,7 +483,7 @@ pub fn render_card_document(title: &str, tree: &ViewNode, bind_values: &BindValu
 </html>\n",
         title = escape(title),
         CSS = CSS,
-        JS = JS,
+        JS = js(),
     )
 }
 
@@ -523,7 +560,7 @@ boot();\n",
         CSS = CSS,
         LIVE_CSS = LIVE_CSS,
         body = body,
-        JS = JS,
+        JS = js(),
         bootstrap = bootstrap,
     )
 }
@@ -616,7 +653,7 @@ boot();\n",
         CSS = CSS,
         LIVE_CSS = LIVE_CSS,
         body = body,
-        JS = JS,
+        JS = js(),
         bootstrap = bootstrap,
     )
 }
@@ -701,7 +738,7 @@ boot();\n",
         CSS = CSS,
         LIVE_CSS = LIVE_CSS,
         body = body,
-        JS = JS,
+        JS = js(),
         bootstrap = bootstrap,
     )
 }
@@ -791,7 +828,7 @@ boot();\n",
         CSS = CSS,
         LIVE_CSS = LIVE_CSS,
         body = body,
-        JS = JS,
+        JS = js(),
         bootstrap = bootstrap,
     )
 }
@@ -878,7 +915,7 @@ boot();\n",
         CSS = CSS,
         LIVE_CSS = LIVE_CSS,
         DOC_CSS = DOC_CSS,
-        JS = JS,
+        JS = js(),
         bootstrap = bootstrap,
     )
 }
@@ -980,6 +1017,28 @@ const LIVE_CSS: &str = "
 .deos-back:hover{color:var(--accent);}
 ";
 
+/// Serialize a live pill's cases to a compact JSON array for the `data-cases` attribute — the
+/// payload the in-tab re-read (`deosRepaintPills`) maps the live slot value against. Quotes are
+/// HTML-escaped by the caller's `escape`; here we emit minimal JSON (labels/tags are short
+/// status words, so a plain `\`-escape of `"`/`\` is sufficient).
+fn pill_cases_json(cases: &[crate::tree::PillCase]) -> String {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut out = String::from("[");
+    for (i, c) in cases.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"value\":{},\"label\":\"{}\",\"tag\":\"{}\"}}",
+            c.value,
+            esc(&c.label),
+            esc(&c.tag)
+        ));
+    }
+    out.push(']');
+    out
+}
+
 /// HTML-escape text content / attribute values (the view-tree carries author/cell data).
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -1000,22 +1059,23 @@ fn escape(s: &str) -> String {
 /// the gpui `headless` dark-mode bake. `deos-vstack`/`deos-row` are flex; the button is
 /// the cockpit's primary accent.
 const CSS: &str = "
-:root{--bg:#121317;--fg:#e6e7eb;--muted:#9aa0aa;--accent:#5b8cff;--border:#2a2c33;}
+:root{--bg:#15161c;--fg:#ece9e3;--muted:#9a958c;--accent:#6ea0ff;--border:#2c2e36;--panel:#22242c;--card:#1b1d24;}
 *{box-sizing:border-box;}
-body{margin:0;background:var(--bg);color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;display:flex;justify-content:center;padding:2rem;}
-.deos-card{background:#181a20;border:1px solid var(--border);border-radius:10px;padding:.5rem;min-width:240px;}
-.deos-vstack{display:flex;flex-direction:column;gap:.5rem;padding:.75rem;}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;display:flex;justify-content:center;padding:2rem;line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+.deos-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:.6rem;min-width:248px;box-shadow:0 1px 3px rgba(0,0,0,.25);}
+.deos-vstack{display:flex;flex-direction:column;gap:.55rem;padding:.8rem;}
 .deos-row{display:flex;flex-direction:row;gap:.5rem;align-items:center;}
 .deos-text{color:var(--fg);}
-.deos-bind{font-weight:700;color:var(--fg);}
-.deos-input{padding:.25rem .5rem;border:1px solid var(--border);border-radius:4px;color:var(--muted);}
-.deos-button{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:.4rem .8rem;font:inherit;cursor:pointer;}
-.deos-button:hover{filter:brightness(1.1);}
+.deos-bind{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums;}
+.deos-input{padding:.3rem .55rem;border:1px solid var(--border);border-radius:6px;color:var(--muted);background:var(--bg);}
+.deos-button{background:var(--accent);color:#101216;font-weight:600;border:none;border-radius:7px;padding:.42rem .85rem;font-family:inherit;font-size:.9rem;cursor:pointer;transition:filter .12s,transform .06s;}
+.deos-button:hover{filter:brightness(1.08);}
+.deos-button:active{transform:translateY(1px);}
 .deos-list,.deos-table{display:flex;flex-direction:column;gap:.25rem;}
 .deos-table{border:1px solid var(--border);border-radius:6px;padding:.25rem;}
-.deos-section{display:flex;flex-direction:column;gap:.4rem;border:1px solid var(--border);border-radius:6px;padding:.5rem .6rem;}
-.deos-section[data-tag=genuine]{border-color:var(--fg);}
-.deos-section-title{font-weight:700;color:var(--fg);}
+.deos-section{display:flex;flex-direction:column;gap:.5rem;border:1px solid var(--border);border-radius:9px;padding:.7rem .8rem;background:rgba(255,255,255,.012);}
+.deos-section[data-tag=genuine]{border-color:#3a4d6b;}
+.deos-section-title{font-weight:600;font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
 .deos-tabs{display:flex;flex-direction:column;gap:.5rem;}
 .deos-tabstrip{display:flex;flex-direction:row;gap:.4rem;}
 .deos-tab{background:var(--panel,#22242c);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:.3rem .7rem;font:inherit;cursor:pointer;}
@@ -1042,7 +1102,7 @@ button.deos-crumb{background:none;border:none;color:var(--accent);cursor:pointer
 .deos-progress-label{color:var(--fg);font-weight:700;}
 .deos-progress-track{width:140px;height:8px;background:var(--border);border-radius:4px;overflow:hidden;}
 .deos-progress-fill{height:8px;background:var(--fg);border-radius:4px;}
-.deos-pill{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:.78rem;font-weight:600;color:#fff;background:var(--accent);}
+.deos-pill{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#fff;background:var(--accent);transition:background .15s;}
 .deos-pill[data-tag=good],.deos-pill[data-tag=genuine],.deos-pill[data-tag=live]{background:#3fb950;}
 .deos-pill[data-tag=warn],.deos-pill[data-tag=pending]{background:#d29922;}
 .deos-pill[data-tag=bad],.deos-pill[data-tag=refusal],.deos-pill[data-tag=revoked]{background:#f85149;}
@@ -1094,10 +1154,37 @@ function deosRepaintBinds(card){
   // Re-read the live ledger for every bound slot and repaint it — the witnessed read the
   // native `bind` makes, here `card.read(slot)`. Each `deos-bind` span carries its own
   // `data-slot`, so a multi-field card (the inspector) repaints each row from ITS slot.
+  // CONSUMER-DELIGHT: a span carrying `data-label`+`data-fmt` re-formats through the shared
+  // `deosFmt` mirror (so a friendly handle/hex stays friendly on re-read); a legacy span (no
+  // data-label) falls back to the trailing-digit replace.
   document.querySelectorAll('.deos-bind[data-slot]').forEach(function(span){
     var slot = parseInt(span.getAttribute('data-slot') || '0', 10);
-    var label = span.textContent.replace(/[0-9]+$/, '');
-    span.textContent = label + deosReadSlot(card, slot);
+    var raw = deosReadSlot(card, slot);
+    var label = span.getAttribute('data-label');
+    if (label !== null && typeof deosFmt === 'function') {
+      span.textContent = label + deosFmt(raw, span.getAttribute('data-fmt') || 'raw');
+    } else {
+      span.textContent = span.textContent.replace(/[0-9]+$/, '') + raw;
+    }
+  });
+  deosRepaintPills(card);
+}
+function deosRepaintPills(card){
+  // A LIVE pill re-reads its bound slot and maps the value to the matching case's word + color
+  // (the static phase-word cure) — the witnessed read the native pill makes.
+  document.querySelectorAll('.deos-pill[data-slot][data-cases]').forEach(function(p){
+    var slot = parseInt(p.getAttribute('data-slot') || '0', 10);
+    var v = deosReadSlot(card, slot);
+    try {
+      var cases = JSON.parse(p.getAttribute('data-cases') || '[]');
+      for (var i=0;i<cases.length;i++){
+        if (String(cases[i].value) === String(v)) {
+          p.textContent = cases[i].label;
+          p.setAttribute('data-tag', cases[i].tag);
+          break;
+        }
+      }
+    } catch(e) { /* a malformed cases blob leaves the static first paint — honest, never a crash */ }
   });
 }
 document.querySelectorAll('.deos-button').forEach(function(b){

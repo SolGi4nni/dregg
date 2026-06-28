@@ -25,10 +25,13 @@
 
 // The view-tree MODEL is renderer-independent (gpui-free serializable DATA): it is
 // always compiled, under BOTH the `native` and `web` renderers.
+pub mod fmt;
 pub mod tree;
+pub use fmt::BindFmt;
 pub use tree::{
-    parse_view_tree, resolve_mounts, Crumb, HaloHandle, MapMountSource, MenuItem, MountSource,
-    RawItem, RawNode, RawProps, ViewNode, MAX_MOUNT_DEPTH,
+    disclose, parse_view_tree, pill_display, resolve_mounts, Crumb, Disclosure, HaloHandle,
+    MapMountSource, MenuItem, MountSource, PillCase, RawItem, RawNode, RawPillCase, RawProps,
+    ViewNode, MAX_MOUNT_DEPTH,
 };
 
 // ── The NATIVE renderer: `ViewNode` → real gpui-component pixels (the heavy stack

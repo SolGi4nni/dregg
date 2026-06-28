@@ -129,10 +129,13 @@ fn block(n: &ViewNode, binds: &[u64], cursor: &mut usize, acc: &mut Accum) {
         }
         ViewNode::Row(_) => row_field(n, binds, cursor, acc),
         ViewNode::Text(s) => push_line(&mut acc.description, s),
-        ViewNode::Bind { label, .. } => {
+        ViewNode::Bind { label, fmt, .. } => {
             let value = binds.get(*cursor).copied().unwrap_or(0);
             *cursor += 1;
-            push_line(&mut acc.description, &format!("{label}{value}"));
+            // CONSUMER-DELIGHT: format an opaque key/hash SHORT + friendly (the SAME `crate::fmt`
+            // mapping the native/web renderers use); the default keeps the plain decimal.
+            let shown = crate::fmt::format_value(value, *fmt);
+            push_line(&mut acc.description, &format!("{label}{shown}"));
         }
         ViewNode::Button { label, turn, arg } => {
             acc.buttons
@@ -212,11 +215,20 @@ fn block(n: &ViewNode, binds: &[u64], cursor: &mut usize, acc: &mut Accum) {
         ViewNode::Progress { value, max, label } => {
             push_line(&mut acc.description, &format!("{label}{value}/{max}"));
         }
-        ViewNode::Pill { text, tag } => {
-            if tag.is_empty() {
-                push_line(&mut acc.description, &format!("`{text}`"));
+        ViewNode::Pill {
+            text, tag, cases, ..
+        } => {
+            // Discord can't read an arbitrary live slot (no immediate-mode ledger), so a LIVE pill
+            // flattens to its static `text` fallback — or, when text is empty, the first case word.
+            let word = if text.is_empty() {
+                cases.first().map(|c| c.label.as_str()).unwrap_or("")
             } else {
-                push_line(&mut acc.description, &format!("`{text}` ({tag})"));
+                text.as_str()
+            };
+            if tag.is_empty() {
+                push_line(&mut acc.description, &format!("`{word}`"));
+            } else {
+                push_line(&mut acc.description, &format!("`{word}` ({tag})"));
             }
         }
         ViewNode::Icon { glyph, .. } => push_line(&mut acc.description, glyph),
@@ -280,6 +292,9 @@ fn block(n: &ViewNode, binds: &[u64], cursor: &mut usize, acc: &mut Accum) {
                 ),
             }
         }
+        // The adept-only wrapper flattens transparently (the disclosure filter removes the marker
+        // before render; an un-filtered tree still recurses the inner node).
+        ViewNode::Adept(inner) => block(inner, binds, cursor, acc),
     }
 }
 
@@ -324,10 +339,10 @@ fn inline(
                 parts.push(s.clone());
             }
         }
-        ViewNode::Bind { label, .. } => {
+        ViewNode::Bind { label, fmt, .. } => {
             let value = binds.get(*cursor).copied().unwrap_or(0);
             *cursor += 1;
-            parts.push(format!("{label}{value}"));
+            parts.push(format!("{label}{}", crate::fmt::format_value(value, *fmt)));
         }
         ViewNode::Button { label, turn, arg } => {
             buttons.push((label.clone(), affordance_custom_id(turn, *arg)));
@@ -402,6 +417,8 @@ fn inline(
                 None => parts.push(format!("\u{2039}{cell}\u{203a}")),
             }
         }
+        // The adept-only wrapper inlines transparently (recurse the wrapped node).
+        ViewNode::Adept(inner) => inline(inner, binds, cursor, parts, buttons),
     }
 }
 

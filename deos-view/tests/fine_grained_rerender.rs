@@ -60,10 +60,12 @@ fn two_bind_tree() -> ViewNode {
         ViewNode::Bind {
             slot: 0,
             label: "a: ".into(),
+            fmt: deos_view::BindFmt::Raw,
         },
         ViewNode::Bind {
             slot: 1,
             label: "b: ".into(),
+            fmt: deos_view::BindFmt::Raw,
         },
     ])
 }
