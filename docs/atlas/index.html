@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dregg · DreggNet — architecture atlas</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand">dregg atlas<span class="sub">a grounded map of the whole system · for ember</span></div>
+    <div class="search-box"><input id="search" type="search" placeholder="filter components…" autocomplete="off"></div>
+    <nav id="nav"></nav>
+  </aside>
+
+  <main>
+    <header class="hero">
+      <h1>Architecture atlas</h1>
+      <div class="lede">A navigable, grounded, honest map of everything built (and being built) across <b>dregg</b> (the open AGPL verified substrate) and <b>DreggNet</b> (the private operated moat). Status badges distinguish proven truth from staged-not-flipped from designed. Every component cites <code>file:line</code> — click to open the source (serve from the repo root).</div>
+      <div class="one-line">A light client holding one root knows every transition in the whole history was authorized, conservative, fresh, and correctly committed — re-executing nothing. <i>That sentence is the system; everything here is how it is true.</i></div>
+      <div class="legend" id="legend"></div>
+      <div class="viewtabs">
+        <button id="tab-map" class="active" onclick="setView('map')">Map &amp; sections</button>
+        <button id="tab-open" onclick="setView('open')">Honest open items (what's staged vs deployed)</button>
+      </div>
+    </header>
+
+    <div id="view-map">
+      <div class="map">
+        <h2>The two-layer split</h2>
+        <div class="stack" id="mapstack"></div>
+      </div>
+      <div id="sections"></div>
+    </div>
+
+    <div id="view-open" class="openitems hidden"></div>
+
+    <div class="foot">
+      Generated as a static, no-build site. Open with <code>open docs/atlas/index.html</code>, or for clickable source refs serve from the repo root: <code>cd ~/dev/breadstuffs &amp;&amp; python3 -m http.server</code> then visit <code>localhost:8000/docs/atlas/</code>. DreggNet refs (separate repo) are shown as plain code. Status is grounded to HEAD; verify code vs HEAD for the live state.
+    </div>
+  </main>
+</div>
+
+<script src="data.js"></script>
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+// breadstuffs root, relative to docs/atlas/
+const ROOT = "../../";
+let activeStatuses = new Set(Object.keys(STATUS));
+
+function fileRef(fr) {
+  if (fr.repo === "DreggNet") {
+    const span = el("span", "noref");
+    span.append("DreggNet/" + fr.path + (fr.line ? ":" + fr.line : ""));
+    if (fr.label) { const l = el("span", "lbl"); l.textContent = " — " + fr.label; span.append(l); }
+    return span;
+  }
+  const a = el("a");
+  a.href = ROOT + fr.path + (fr.line ? "#L" + fr.line : "");
+  a.target = "_blank"; a.rel = "noopener";
+  a.append(fr.path);
+  if (fr.line) { const ln = el("span", "ln"); ln.textContent = ":" + fr.line; a.append(ln); }
+  if (fr.label) { const l = el("span", "lbl"); l.textContent = " — " + fr.label; a.append(l); }
+  return a;
+}
+
+function badge(status) {
+  const s = STATUS[status] || STATUS.REAL;
+  const b = el("span", "badge " + s.cls, s.label);
+  b.title = s.blurb;
+  return b;
+}
+
+// ── legend / filter ──
+function buildLegend() {
+  const leg = $("#legend");
+  for (const [k, s] of Object.entries(STATUS)) {
+    const chip = el("div", "chip"); chip.dataset.status = k;
+    const sw = el("span", "sw " + s.cls); chip.append(sw, document.createTextNode(s.label));
+    chip.title = s.blurb;
+    chip.onclick = () => {
+      if (activeStatuses.has(k)) { activeStatuses.delete(k); chip.classList.add("off"); }
+      else { activeStatuses.add(k); chip.classList.remove("off"); }
+      applyFilter();
+    };
+    leg.append(chip);
+  }
+}
+
+// ── sidebar nav ──
+function buildNav() {
+  const nav = $("#nav");
+  const layerColor = { substrate:"var(--c-real)", economy:"var(--c-proven)", deos:"var(--c-deployed)", welds:"var(--c-staged)", dreggnet:"var(--c-design)" };
+  for (const layer of ATLAS.layers) {
+    const wrap = el("div", "nav-layer");
+    const lh = el("div", "lh"); lh.append(layer.name);
+    const dot = el("span", "dot"); dot.style.background = layerColor[layer.id]; lh.append(dot);
+    wrap.append(lh);
+    for (const secId of layer.sections) {
+      const sec = ATLAS.sections.find(s => s.id === secId);
+      if (!sec) continue;
+      const a = el("a", "navlink", sec.title); a.href = "#" + sec.id; a.dataset.sec = sec.id;
+      wrap.append(a);
+    }
+    nav.append(wrap);
+  }
+}
+
+// ── map ──
+function buildMap() {
+  const stack = $("#mapstack");
+  ATLAS.layers.forEach((layer, i) => {
+    const row = el("div", "maprow l-" + layer.id);
+    const head = el("div", "mr-head");
+    head.append(el("span", "mr-name", layer.name));
+    head.append(el("span", "mr-kind", layer.kind));
+    head.append(el("span", "mr-tag", layer.tagline));
+    row.append(head);
+    const boxes = el("div", "boxes");
+    for (const secId of layer.sections) {
+      const sec = ATLAS.sections.find(s => s.id === secId);
+      if (!sec) continue;
+      const b = el("div", "box", sec.title);
+      b.onclick = () => { location.hash = sec.id; };
+      boxes.append(b);
+    }
+    row.append(boxes);
+    stack.append(row);
+    if (layer.id === "economy" || layer.id === "deos" || layer.id === "dreggnet")
+      stack.append(el("div", "consumes", "▼ consumes / builds on ▼"));
+  });
+}
+
+// ── sections ──
+function buildSections() {
+  const host = $("#sections");
+  for (const sec of ATLAS.sections) {
+    const s = el("section", "sec"); s.id = sec.id;
+    const head = el("div", "sec-head");
+    head.append(el("h2", null, sec.title));
+    head.append(el("span", "layer-tag", sec.layer));
+    s.append(head);
+    s.append(el("p", "what", sec.what));
+    const cards = el("div", "cards");
+    for (const c of sec.components) {
+      const card = el("div", "card");
+      card.dataset.status = c.status;
+      card.dataset.text = (c.name + " " + c.what + " " + c.files.map(f=>f.path).join(" ")).toLowerCase();
+      const ch = el("div", "c-head");
+      ch.append(el("div", "c-name", c.name));
+      ch.append(badge(c.status));
+      card.append(ch);
+      card.append(el("div", "c-what", c.what));
+      const files = el("div", "c-files");
+      for (const fr of c.files) files.append(fileRef(fr));
+      card.append(files);
+      cards.append(card);
+    }
+    s.append(cards);
+    host.append(s);
+  }
+}
+
+// ── open-items view ──
+function buildOpenItems() {
+  const host = $("#view-open");
+  host.append(el("p", "what", "Everything that is NOT plain REAL/PROVEN/DEPLOYED — the honest frontier. EXECUTOR-WITNESSED = enforced by the running executor but the light-client (circuit/VK) witness is still staged. STAGED = built+proven+emitted but not flipped into the deployed default. GREEN-SCAFFOLD = builds, but the real path is mock/errors until a named rung. DESIGNED = blueprint, not shipped."));
+  const tbl = el("table");
+  const thead = el("tr");
+  ["Status","Component","Section","What remains"].forEach(h => thead.append(el("th", null, h)));
+  tbl.append(thead);
+  const order = ["STAGED","EXEC","SCAFFOLD","DESIGN"];
+  const rows = [];
+  for (const sec of ATLAS.sections)
+    for (const c of sec.components)
+      if (order.includes(c.status)) rows.push({ c, sec });
+  rows.sort((a,b) => order.indexOf(a.c.status) - order.indexOf(b.c.status));
+  for (const { c, sec } of rows) {
+    const tr = el("tr");
+    const td0 = el("td"); td0.append(badge(c.status)); tr.append(td0);
+    const td1 = el("td"); td1.append(el("span", "comp", c.name)); tr.append(td1);
+    const td2 = el("td"); const a = el("a", "sec-ref", sec.title); a.href = "#"+sec.id; a.onclick=()=>setView('map'); td2.append(a); tr.append(td2);
+    tr.append(el("td", null, c.what));
+    tbl.append(tr);
+  }
+  host.append(tbl);
+}
+
+// ── filter ──
+function applyFilter() {
+  const q = $("#search").value.trim().toLowerCase();
+  for (const card of document.querySelectorAll(".card")) {
+    const okStatus = activeStatuses.has(card.dataset.status);
+    const okText = !q || card.dataset.text.includes(q);
+    card.classList.toggle("hidden", !(okStatus && okText));
+  }
+  for (const sec of document.querySelectorAll("section.sec")) {
+    const anyVisible = sec.querySelector(".card:not(.hidden)");
+    sec.classList.toggle("hidden", !anyVisible);
+  }
+}
+
+// ── view switch ──
+function setView(v) {
+  $("#view-map").style.display = v === "map" ? "" : "none";
+  $("#view-open").classList.toggle("hidden", v !== "open");
+  $("#tab-map").classList.toggle("active", v === "map");
+  $("#tab-open").classList.toggle("active", v === "open");
+}
+
+// ── scroll-spy ──
+function initScrollSpy() {
+  const links = [...document.querySelectorAll(".navlink")];
+  const obs = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.toggle("active", l.dataset.sec === e.target.id));
+      }
+    }
+  }, { rootMargin: "-10% 0px -80% 0px" });
+  document.querySelectorAll("section.sec").forEach(s => obs.observe(s));
+}
+
+// ── boot ──
+buildLegend(); buildNav(); buildMap(); buildSections(); buildOpenItems();
+$("#search").addEventListener("input", applyFilter);
+initScrollSpy();
+</script>
+</body>
+</html>
