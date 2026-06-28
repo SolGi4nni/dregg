@@ -236,6 +236,16 @@ impl Cockpit {
             ),
             #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Proofs => self.proofs_panel().into_any_element(),
+            // AUTHOR/BROWSE · the dregg:// web-of-cells card AS the surface (the addressable
+            // docuverse), the gpui web-of-cells browser as fail-soft fallback + the
+            // card-pane-off home.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::WebOfCells => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::WebCells,
+                cx,
+                |this, cx| this.web_of_cells_panel(cx).into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::WebOfCells => self.web_of_cells_panel(cx).into_any_element(),
             Tab::WebShell => self.webshell_panel(cx).into_any_element(),
             // AUTHOR · the what-links-here card AS the surface (live backlinks as a card).
@@ -262,6 +272,16 @@ impl Cockpit {
             #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::InspectAct => self.inspect_act_panel(cx).into_any_element(),
             Tab::ServiceExplorer => self.service_explorer_panel(cx).into_any_element(),
+            // SERVICES · the whole-image directory card AS the surface (services × interfaces),
+            // the gpui directory panel (which fires the genuine announce turn) as fail-soft
+            // fallback + the card-pane-off home.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::ServiceDirectory => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::ServiceDirectory,
+                cx,
+                |this, cx| this.service_directory_panel(cx).into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::ServiceDirectory => self.service_directory_panel(cx).into_any_element(),
             Tab::Workspace => self.workspace_panel(cx).into_any_element(),
             Tab::Wonder => self.wonder_panel(cx).into_any_element(),
@@ -269,6 +289,15 @@ impl Cockpit {
             Tab::Time => self.time_panel(cx).into_any_element(),
             Tab::Share => self.share_panel(cx).into_any_element(),
             Tab::Docs => self.docs_panel(cx).into_any_element(),
+            // TRUST · the human-layer who-i-am + recovery card AS the surface, the gpui
+            // trust panel as fail-soft fallback + the card-pane-off home.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::Trust => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::Trust,
+                cx,
+                |this, cx| this.trust_tab(cx).into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Trust => self.trust_tab(cx).into_any_element(),
             Tab::Devtools => self.devtools_panel(cx).into_any_element(),
             Tab::Buffer => self.buffer_panel(cx).into_any_element(),

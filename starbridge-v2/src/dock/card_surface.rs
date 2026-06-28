@@ -34,9 +34,14 @@ use gpui::{
 use deos_view::ViewNode;
 use dregg_cell::{AuthRequired, CellId};
 
-use deos_js::card_editor::{CardEditor, ViewPatch};
+use deos_js::card_editor::{CardEditor, PillProps, SectionProps, TextProps, ViewPatch};
 use deos_js::portable::{AppletManifest, PortableApplet};
 use deos_js::{Author, ViewTree};
+
+use crate::reflect::FieldValue;
+use crate::service_directory::{ServiceDirectory, ServiceFilter, ServiceKind};
+use crate::trust_panel::TrustPanel;
+use crate::web_cells::WebCellsBrowser;
 
 use crate::agent_attach::{attach_agent, WorldSinkAdapter, AGENT_COUNTER_SLOT};
 use crate::card_pane::{build_card_over_live, CardPane, SharedAttached};
@@ -333,6 +338,22 @@ pub enum ModeCard {
     /// (so it gets the live-World bind + the edit-from-within seam for free), rather than
     /// the hardcoded gpui `inspect_act_panel` tree.
     Inspector,
+    /// SERVICES · the whole-image service directory (`crate::service_directory`). A survey
+    /// of every service-publishing cell in the live image (each interface derived live),
+    /// rendered as a summary pill row + one row per service (handle · kind · interface ·
+    /// method count · an ANNOUNCED badge). Read-only: the genuine ANNOUNCE (a real verified
+    /// turn) lives in the gpui directory panel, which stays as the card-pane-off fallback +
+    /// the deployed default (the same card-as-alternative posture as the other mode cards).
+    ServiceDirectory,
+    /// AUTHOR/BROWSE · the `dregg://` web-of-cells (`crate::web_cells`). A survey of the
+    /// addressable cells (each a real attested fetch), rendered as one row per page
+    /// (`dregg://` uri · preview · an attested/unverified badge). Read-only.
+    WebCells,
+    /// TRUST · the human-layer who-i-am + recovery surface (`crate::trust_panel`). The
+    /// identity card (devices + guardians as labeled rows), the recovery gauge, and the
+    /// key-event-log (KEL) timeline — all real projections off the identity decode.
+    /// Read-only.
+    Trust,
 }
 
 impl ModeCard {
@@ -349,6 +370,9 @@ impl ModeCard {
             ModeCard::Organs => "organs · live organ cell-state (deos-js card)",
             ModeCard::Home => "home · the live landing portal (deos-js card)",
             ModeCard::Inspector => "inspect · live cell state + affordances (deos-js card)",
+            ModeCard::ServiceDirectory => "directory · live services (deos-js card)",
+            ModeCard::WebCells => "web-of-cells · live dregg:// docuverse (deos-js card)",
+            ModeCard::Trust => "trust · who-i-am + recovery (deos-js card)",
         }
     }
 
@@ -538,7 +562,181 @@ impl ModeCard {
                 ];
                 deos_js::inspector_card::inspector_view_for(focus, ledger, &specs, viewer)
             }
+            ModeCard::ServiceDirectory => {
+                // The whole-image directory survey: discover every service-publishing cell
+                // off the live ledger (each interface derived live), rendered as data.
+                let dir = ServiceDirectory::discover(world, &ServiceFilter::default());
+                service_directory_view(&dir)
+            }
+            ModeCard::WebCells => {
+                // The dregg:// web-of-cells over the live image, projected for the focused
+                // cell as the viewer (the same membrane the gpui panel projects through).
+                let browser = WebCellsBrowser::build(world, focus, viewer.clone(), None);
+                web_cells_view(&browser)
+            }
+            // The trust surface is a projection off the identity decode (a representative
+            // identity until an on-ledger identity cell is wired — the same posture as the
+            // gpui `trust_tab`), so it does not read the cockpit's `world`.
+            ModeCard::Trust => trust_view(&TrustPanel::demo()),
         }
+    }
+}
+
+/// A `text` leaf node (the card vocabulary's label).
+fn card_text(s: impl Into<String>) -> ViewTree {
+    ViewTree::Text {
+        props: TextProps { text: s.into() },
+    }
+}
+
+/// A colored status `pill` (badge) node.
+fn card_pill(s: impl Into<String>, tag: &str) -> ViewTree {
+    ViewTree::Pill {
+        props: PillProps {
+            text: s.into(),
+            tag: tag.to_string(),
+        },
+    }
+}
+
+/// A titled `section` container node.
+fn card_section(title: impl Into<String>, children: Vec<ViewTree>) -> ViewTree {
+    ViewTree::Section {
+        props: SectionProps {
+            title: title.into(),
+            tag: String::new(),
+        },
+        children,
+    }
+}
+
+/// A horizontal `row` node.
+fn card_row(children: Vec<ViewTree>) -> ViewTree {
+    ViewTree::Row { children }
+}
+
+/// The SERVICE DIRECTORY as a portable card — a summary pill row + one row per discovered
+/// service. Read-only (the genuine announce is a real verified turn in the gpui panel).
+fn service_directory_view(dir: &ServiceDirectory) -> ViewTree {
+    let mut rows: Vec<ViewTree> = Vec::new();
+    if dir.services.is_empty() {
+        rows.push(card_text(
+            "(no service-publishing cells in this image — a cell publishes an interface \
+             when its program dispatches on a method symbol)",
+        ));
+    }
+    for s in &dir.services {
+        let kind = match s.kind {
+            ServiceKind::Service => "service",
+            ServiceKind::Capability => "capability",
+        };
+        let mut r = vec![card_text(format!(
+            "⬡ {} · {} · iface {} · {} method(s)",
+            s.label,
+            kind,
+            crate::reflect::short_hex(&s.interface_id),
+            s.method_count,
+        ))];
+        if s.announced {
+            r.push(card_pill("ANNOUNCED", "good"));
+        }
+        rows.push(card_row(r));
+    }
+    ViewTree::VStack {
+        children: vec![
+            card_text("📇 DIRECTORY · every service-publishing cell in the live image"),
+            card_row(vec![
+                card_pill(format!("{} service(s)", dir.services.len()), "accent"),
+                card_pill(format!("{} announced", dir.announced_count), "good"),
+            ]),
+            card_section("discovered services", rows),
+            card_text(
+                "Announce (a real verified turn that publishes a service's interface) is \
+                 fired from the gpui directory panel.",
+            ),
+        ],
+    }
+}
+
+/// The dregg:// WEB-OF-CELLS as a portable card — one row per addressable cell (its uri +
+/// preview + an attested/unverified badge), drawn off the real attested fetch. Read-only.
+fn web_cells_view(browser: &WebCellsBrowser) -> ViewTree {
+    let mut rows: Vec<ViewTree> = Vec::new();
+    if browser.cells.is_empty() {
+        rows.push(card_text("(no addressable cells in this image)"));
+    }
+    for c in &browser.cells {
+        rows.push(card_row(vec![
+            card_text(format!("🔗 {} · {}", c.uri, c.preview)),
+            if c.attested {
+                card_pill("attested", "good")
+            } else {
+                card_pill("unverified", "warn")
+            },
+        ]));
+    }
+    ViewTree::VStack {
+        children: vec![
+            card_text("🌐 WEB-OF-CELLS · the dregg:// docuverse (attested fetch)"),
+            card_pill(
+                format!("{} addressable cell(s)", browser.cells.len()),
+                "accent",
+            ),
+            card_section("addressable cells", rows),
+        ],
+    }
+}
+
+/// The human-layer TRUST surface as a portable card — the identity card (devices/guardians
+/// as labeled rows), the recovery gauge, and the KEL timeline. All real projections.
+fn trust_view(panel: &TrustPanel) -> ViewTree {
+    let card = panel.identity_card();
+    let id_rows: Vec<ViewTree> = card
+        .fields
+        .iter()
+        .map(|f| card_text(format!("{}: {}", f.key, field_value_display(&f.value))))
+        .collect();
+
+    let mut recovery: Vec<ViewTree> = Vec::new();
+    match panel.recovery_gauge() {
+        Some(g) => recovery.push(card_text(format!(
+            "{}: {}{}",
+            g.label,
+            g.value,
+            g.ceiling.map(|c| format!(" / {c}")).unwrap_or_default(),
+        ))),
+        None => recovery.push(card_text("(no recovery in progress)")),
+    }
+
+    let kel = panel.kel_timeline();
+    let kel_rows: Vec<ViewTree> = kel
+        .events
+        .iter()
+        .map(|e| card_text(format!("h{} · {}", e.at, e.label)))
+        .collect();
+
+    ViewTree::VStack {
+        children: vec![
+            card_text(format!("⚷ TRUST · {}", panel.summary())),
+            card_section("who I am", id_rows),
+            card_section("recovery", recovery),
+            card_section("key-event log (KEL)", kel_rows),
+        ],
+    }
+}
+
+/// Flatten a reflected [`FieldValue`] to a compact display string for a card `text` row.
+fn field_value_display(v: &FieldValue) -> String {
+    match v {
+        FieldValue::Text(s) => s.clone(),
+        FieldValue::Balance(n) => n.to_string(),
+        FieldValue::Count(n) => n.to_string(),
+        FieldValue::Bool(b) => b.to_string(),
+        FieldValue::Id(b) | FieldValue::Hash(b) => crate::reflect::short_hex(b),
+        FieldValue::CapEdge { target, slot } => {
+            format!("→ {} @{}", crate::reflect::short_hex(target), slot)
+        }
+        FieldValue::FieldSlot { index, hex } => format!("[{index}] {hex}"),
     }
 }
 
@@ -642,6 +840,9 @@ fn mode_card_pk(kind: ModeCard, focus: CellId) -> [u8; 32] {
         ModeCard::Organs => 0x06,
         ModeCard::Home => 0x40,
         ModeCard::Inspector => 0x15,
+        ModeCard::ServiceDirectory => 0xD1,
+        ModeCard::WebCells => 0x7B,
+        ModeCard::Trust => 0x7E,
     };
     pk
 }

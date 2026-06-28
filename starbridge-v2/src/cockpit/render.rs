@@ -130,6 +130,9 @@ impl Render for Cockpit {
                 ModeCard::Organs,
                 ModeCard::Home,
                 ModeCard::Inspector,
+                ModeCard::ServiceDirectory,
+                ModeCard::WebCells,
+                ModeCard::Trust,
             ] {
                 self.ensure_mode_card(kind, cx);
             }
