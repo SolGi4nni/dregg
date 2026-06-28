@@ -114,6 +114,13 @@ import Dregg2.Deos.CapacitySatisfaction
 -- the sealed-escrow gate (both legs Deposited before / Consumed after) IN-PROOF, with partial/phantom
 -- UNSAT teeth. STAGED beside the deployed cohort (no live routing, no VK committed). #assert_all_clean.
 import Dregg2.Deos.SettleEscrowSatDescriptor
+-- The escrow capacity SELECTOR is bound to the cell's COMMITTED declaration (§6 item-2 soundness
+-- keystone for the flip): HALF A — under DeclCommitBinds the selector demand is un-dodgeable by a
+-- hollow declaration; HALF B — the descriptor's PI pin forces the demanded selector ON, which the
+-- refinement keystone turns into the welded gate over the committed fields. So a forger can dodge the
+-- weld neither by an alternate declaration nor by sel=0. SPEC + soundness of the verifier obligation
+-- the still-unbuilt realization must meet; the weld is NOT yet flipped. #assert_all_clean.
+import Dregg2.Deos.SettleEscrowSelectorBinding
 -- The HATCHERY abstraction-mint house-capacity, GROUNDED (the LAST of the six — the house COMPLETE):
 -- a user-defined verified KIND's declared invariant IS enforced, forever, and its attestation is REAL.
 -- Enforcement is the SAME `CellProgram::evaluate_with_meta` gate (`evalStep`), a violating turn →
