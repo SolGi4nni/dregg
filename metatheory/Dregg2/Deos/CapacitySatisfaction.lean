@@ -248,6 +248,230 @@ private def phantomBefore : Block := [0, 0, 0, 0, stEmpty, stDeposited, 0, 0, 0,
 
 end Witnesses
 
+/-! ## §8 — DISCHARGE-OBLIGATION (tag 18) satisfaction over the rotated field columns.
+
+The standing-obligation per-period discharge weld (the Lean `StandingObligation.DischargeGate`, the
+deployed `verify.rs` `DISCHARGE_OBLIGATION` arm), now read from the rotated BEFORE/AFTER field columns
+the wide commit binds. UNLIKE the sealed-escrow gate (pure status-code EQUALITY), the discharge gate
+carries a DUE-NESS INEQUALITY (`due_block ≤ clock`) and PER-CELL-PARAM additive equalities (the cursor
+advances by `period`, the total by `amount` — `period`/`amount` are caveat-manifest params bound via
+the carrier `caveatCommit`, and `clock` is the batch block height, both EXTERNALLY bound; the field
+columns the satisfaction binding transports are `next_due`/`total`/`due_block`).
+
+This rung proves the SATISFACTION SOUNDNESS the in-AIR weld WOULD carry — equal before/after state
+commits ⟹ the same gate verdict, INCLUDING the inequality leg — exactly as the escrow rung. It does
+NOT itself build the in-AIR constraint: a faithful in-AIR discharge gate needs the additive equality
+gates over the manifest-param columns AND a RANGE-CHECK aux column for the `due_block ≤ clock`
+inequality (NOT a selector-gated equality — see the honest scope note in
+`docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md` §6). -/
+
+open Dregg2.Deos.ConstraintBinding (tagDischargeObligation tagVaultDeposit)
+
+/-- **The in-AIR discharge gate over the rotated field columns.** Reads the committed `next_due`
+cursor (slot `curSlot`), discharged total (slot `totSlot`), and due-block (slot `dueSlot`) from the
+BEFORE/AFTER field columns the wide commit binds; `period`/`amount`/`clock` are the externally-bound
+scalars (manifest params + batch height). The Lean image of the deployed `DISCHARGE_OBLIGATION`
+off-AIR arm, now over the bound rotated columns. -/
+def DischargeFieldGate (before after : Block) (curSlot totSlot dueSlot : Nat)
+    (period amount clock : ℤ) : Prop :=
+  fieldAt before dueSlot ≤ clock ∧
+  fieldAt after curSlot = fieldAt before curSlot + period ∧
+  fieldAt after totSlot = fieldAt before totSlot + amount
+
+instance (before after : Block) (curSlot totSlot dueSlot : Nat) (period amount clock : ℤ) :
+    Decidable (DischargeFieldGate before after curSlot totSlot dueSlot period amount clock) := by
+  unfold DischargeFieldGate; infer_instance
+
+/-- **THE NO-EARLY TOOTH.** A discharge whose batch clock is BELOW the committed due block fails the
+in-AIR gate — paying before due is INEXPRESSIBLE. The rotated-field face of
+`StandingObligation.discharge_gate_early_rejected`. -/
+theorem discharge_early_field_rejected (before after : Block) (curSlot totSlot dueSlot : Nat)
+    (period amount clock : ℤ) (hearly : clock < fieldAt before dueSlot) :
+    ¬ DischargeFieldGate before after curSlot totSlot dueSlot period amount clock := by
+  intro hgate; exact absurd hgate.1 (not_le.mpr hearly)
+
+/-- **THE NO-NON-ADVANCED TOOTH.** A discharge whose `after` cursor does not advance by exactly one
+period (a replay that leaves the one-shot cursor where it was) fails the gate. The field face of
+`StandingObligation.cursor_not_advanced_rejected`. -/
+theorem discharge_cursor_not_advanced_field_rejected (before after : Block)
+    (curSlot totSlot dueSlot : Nat) (period amount clock : ℤ)
+    (hne : fieldAt after curSlot ≠ fieldAt before curSlot + period) :
+    ¬ DischargeFieldGate before after curSlot totSlot dueSlot period amount clock :=
+  fun hgate => hne hgate.2.1
+
+/-- **THE NO-WRONG-AMOUNT TOOTH.** A discharge whose `after` total does not advance by exactly the
+schedule amount (over/under-pay) fails the gate. The field face of
+`StandingObligation.wrong_amount_rejected`. -/
+theorem discharge_wrong_amount_field_rejected (before after : Block)
+    (curSlot totSlot dueSlot : Nat) (period amount clock : ℤ)
+    (hne : fieldAt after totSlot ≠ fieldAt before totSlot + amount) :
+    ¬ DischargeFieldGate before after curSlot totSlot dueSlot period amount clock :=
+  fun hgate => hne hgate.2.2
+
+/-- **THE DISCHARGE SATISFACTION KEYSTONE (pure light client).** Equal before/after state commits ⟹
+the same discharge-gate verdict — including the due-ness inequality leg (the dueBlock is a committed
+field column, so a forger cannot present alternate committed-equal state that flips dueness, advance,
+or amount). REUSE of `fieldAt_bound_in_commit`; the one named `Poseidon2SpongeCR` floor. The discharge
+face of `satisfaction_witnessed`. -/
+theorem discharge_satisfaction_witnessed (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {before after before' after' : Block} (curSlot totSlot dueSlot : Nat) (period amount clock : ℤ)
+    (hb : stateCommit hash before = stateCommit hash before')
+    (ha : stateCommit hash after = stateCommit hash after')
+    (hgate : DischargeFieldGate before after curSlot totSlot dueSlot period amount clock) :
+    DischargeFieldGate before' after' curSlot totSlot dueSlot period amount clock := by
+  obtain ⟨h1, h2, h3⟩ := hgate
+  refine ⟨?_, ?_, ?_⟩
+  · rw [← fieldAt_bound_in_commit hash hCR hb dueSlot]; exact h1
+  · rw [← fieldAt_bound_in_commit hash hCR hb curSlot, ← fieldAt_bound_in_commit hash hCR ha curSlot]
+    exact h2
+  · rw [← fieldAt_bound_in_commit hash hCR hb totSlot, ← fieldAt_bound_in_commit hash hCR ha totSlot]
+    exact h3
+
+/-- **THE DISCHARGE CAPACITY KEYSTONE (pure light client).** Coverage (PIECE 1, the carrier) ∧
+satisfaction (this rung): a pure light client binding the caveat commit + before/after state commits
+witnesses BOTH that the tag-18 entry is present AND that the discharge gate held over the committed
+state. The discharge face of `capacity_witnessed_pure_lightclient`. -/
+theorem discharge_capacity_witnessed_pure_lightclient (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (gate : RotCaveatEntry → Bool)
+    {mBound mPub : RotCaveatManifest}
+    (hccommit : caveatCommit hash mPub = caveatCommit hash mBound)
+    (hcov : covers (toConstraintManifest gate mBound) tagDischargeObligation)
+    {before after before' after' : Block} (curSlot totSlot dueSlot : Nat) (period amount clock : ℤ)
+    (hb : stateCommit hash before = stateCommit hash before')
+    (ha : stateCommit hash after = stateCommit hash after')
+    (hgate : DischargeFieldGate before after curSlot totSlot dueSlot period amount clock) :
+    covers (toConstraintManifest gate mPub) tagDischargeObligation ∧
+      DischargeFieldGate before' after' curSlot totSlot dueSlot period amount clock := by
+  refine ⟨?_, ?_⟩
+  · rw [carrier_manifest_forced hash hCR gate hccommit]; exact hcov
+  · exact discharge_satisfaction_witnessed hash hCR curSlot totSlot dueSlot period amount clock hb ha hgate
+
+/-! ## §9 — VAULT-DEPOSIT (tag 19) satisfaction over the rotated field columns.
+
+The share-vault no-dilution weld (the Lean `Vault.VaultDepositGate`, the deployed `verify.rs`
+`VAULT_DEPOSIT` arm), over the rotated BEFORE/AFTER `total_assets`/`total_shares` field columns. This
+gate is ENTIRELY INEQUALITIES: a genuine deposit (`Ta < Ta'`, i.e. `d > 0`), a positive mint
+(`Sa < Sa'`, i.e. `m > 0`, the zero-mint/inflation tooth), and no dilution (`Ta·m ≤ Sa·d`, a PRODUCT
+inequality). It has NO equality conjunct — so it CANNOT be mirrored as selector-gated equality gates
+like the escrow weld. A faithful in-AIR vault gate needs range-checked strict inequalities AND an
+OVERFLOW-SAFE product comparison (the off-AIR arm uses u128 because `Ta·m`/`Sa·d` exceed the ~31-bit
+BabyBear field). This rung proves the SATISFACTION SOUNDNESS — equal before/after state commits ⟹ the
+same verdict — but the in-AIR constraint is the named, genuinely-harder VK-affecting work (NOT a
+mirror of the escrow template; see `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md` §6). -/
+
+/-- **The in-AIR vault-deposit gate over the rotated field columns.** Reads committed `total_assets`
+(slot `assetSlot`) and `total_shares` (slot `shareSlot`) from the BEFORE/AFTER field columns; the
+deposit `d = Ta' − Ta` and mint `m = Sa' − Sa` are the across-transition deltas. Requires the deposit
+genuine, the mint positive, and no holder diluted. The Lean image of the deployed `VAULT_DEPOSIT`
+off-AIR arm over the bound rotated columns. -/
+def VaultDepositFieldGate (before after : Block) (assetSlot shareSlot : Nat) : Prop :=
+  fieldAt before assetSlot < fieldAt after assetSlot ∧
+  fieldAt before shareSlot < fieldAt after shareSlot ∧
+  fieldAt before assetSlot * (fieldAt after shareSlot - fieldAt before shareSlot)
+    ≤ fieldAt before shareSlot * (fieldAt after assetSlot - fieldAt before assetSlot)
+
+instance (before after : Block) (assetSlot shareSlot : Nat) :
+    Decidable (VaultDepositFieldGate before after assetSlot shareSlot) := by
+  unfold VaultDepositFieldGate; infer_instance
+
+/-- **THE INFLATION-ATTACK TOOTH.** A deposit minting ZERO (or negative) shares fails the in-AIR gate
+(the `Sa < Sa'` leg): the ERC-4626 first-depositor inflation exploit is INEXPRESSIBLE. The field face
+of `Vault.inflation_attack_rejected`. -/
+theorem vault_inflation_attack_field_rejected (before after : Block) (assetSlot shareSlot : Nat)
+    (hzero : fieldAt after shareSlot ≤ fieldAt before shareSlot) :
+    ¬ VaultDepositFieldGate before after assetSlot shareSlot :=
+  fun hgate => absurd hgate.2.1 (not_lt.mpr hzero)
+
+/-- **THE NO-DILUTION (OVER-MINT) TOOTH.** A deposit minting more shares than the fair ratio yields —
+diluting the existing holders (`Sa·d < Ta·m`) — fails the in-AIR gate (the `Ta·m ≤ Sa·d` leg). The
+field face of `Vault.dilution_rejected`. -/
+theorem vault_dilution_field_rejected (before after : Block) (assetSlot shareSlot : Nat)
+    (hdil : fieldAt before shareSlot * (fieldAt after assetSlot - fieldAt before assetSlot)
+      < fieldAt before assetSlot * (fieldAt after shareSlot - fieldAt before shareSlot)) :
+    ¬ VaultDepositFieldGate before after assetSlot shareSlot :=
+  fun hgate => absurd hgate.2.2 (not_le.mpr hdil)
+
+/-- **THE NO-DEPOSIT TOOTH.** A "deposit" that does not advance committed `total_assets` upward
+(`d ≤ 0`) fails the in-AIR gate (the `Ta < Ta'` leg). -/
+theorem vault_no_deposit_field_rejected (before after : Block) (assetSlot shareSlot : Nat)
+    (hnd : fieldAt after assetSlot ≤ fieldAt before assetSlot) :
+    ¬ VaultDepositFieldGate before after assetSlot shareSlot :=
+  fun hgate => absurd hgate.1 (not_lt.mpr hnd)
+
+/-- **THE VAULT SATISFACTION KEYSTONE (pure light client).** Equal before/after state commits ⟹ the
+same vault-gate verdict — including BOTH strict inequalities and the product no-dilution floor (all
+four reads are committed field columns). A forger cannot present alternate committed-equal state that
+turns a diluting/zero-mint deposit into a passing one. REUSE of `fieldAt_bound_in_commit`; the one
+named `Poseidon2SpongeCR` floor. The vault face of `satisfaction_witnessed`. -/
+theorem vault_satisfaction_witnessed (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {before after before' after' : Block} (assetSlot shareSlot : Nat)
+    (hb : stateCommit hash before = stateCommit hash before')
+    (ha : stateCommit hash after = stateCommit hash after')
+    (hgate : VaultDepositFieldGate before after assetSlot shareSlot) :
+    VaultDepositFieldGate before' after' assetSlot shareSlot := by
+  have ea := fieldAt_bound_in_commit hash hCR hb assetSlot
+  have es := fieldAt_bound_in_commit hash hCR hb shareSlot
+  have ea' := fieldAt_bound_in_commit hash hCR ha assetSlot
+  have es' := fieldAt_bound_in_commit hash hCR ha shareSlot
+  unfold VaultDepositFieldGate at hgate ⊢
+  rw [← ea, ← es, ← ea', ← es']
+  exact hgate
+
+/-- **THE VAULT CAPACITY KEYSTONE (pure light client).** Coverage (PIECE 1, the carrier) ∧
+satisfaction (this rung): a pure light client binding the caveat commit + before/after state commits
+witnesses BOTH that the tag-19 entry is present AND that the no-dilution gate held over the committed
+state. The vault face of `capacity_witnessed_pure_lightclient`. -/
+theorem vault_capacity_witnessed_pure_lightclient (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (gate : RotCaveatEntry → Bool)
+    {mBound mPub : RotCaveatManifest}
+    (hccommit : caveatCommit hash mPub = caveatCommit hash mBound)
+    (hcov : covers (toConstraintManifest gate mBound) tagVaultDeposit)
+    {before after before' after' : Block} (assetSlot shareSlot : Nat)
+    (hb : stateCommit hash before = stateCommit hash before')
+    (ha : stateCommit hash after = stateCommit hash after')
+    (hgate : VaultDepositFieldGate before after assetSlot shareSlot) :
+    covers (toConstraintManifest gate mPub) tagVaultDeposit ∧
+      VaultDepositFieldGate before' after' assetSlot shareSlot := by
+  refine ⟨?_, ?_⟩
+  · rw [carrier_manifest_forced hash hCR gate hccommit]; exact hcov
+  · exact vault_satisfaction_witnessed hash hCR assetSlot shareSlot hb ha hgate
+
+/-! ## §10 — NON-VACUITY TEETH (`#guard`) for tags 18/19, both polarities. -/
+
+section Witnesses1819
+
+-- DISCHARGE: slots cursor=0 (limb 4), total=1 (limb 5), due=2 (limb 6); period 100, amount 50.
+private def dBefore : Block := [0, 0, 0, 0, 1000, 0, 1000, 0, 0, 0, 0, 0]
+private def dAfter  : Block := [0, 0, 0, 0, 1100, 50, 1000, 0, 0, 0, 0, 0]
+#guard fieldAt dBefore 0 == 1000      -- committed cursor
+#guard fieldAt dBefore 2 == 1000      -- committed due block
+#guard fieldAt dAfter 0 == 1100       -- cursor advanced one period
+-- HONEST: due (1000 ≤ clock 1000), cursor +100, total +50.
+#guard decide (DischargeFieldGate dBefore dAfter 0 1 2 100 50 1000)
+-- NO-EARLY: clock 999 below the committed due block 1000.
+#guard !decide (DischargeFieldGate dBefore dAfter 0 1 2 100 50 999)
+-- NO-WRONG-AMOUNT: an after total of 9999 (≠ 0+50).
+private def dWrongTot : Block := [0, 0, 0, 0, 1100, 9999, 1000, 0, 0, 0, 0, 0]
+#guard !decide (DischargeFieldGate dBefore dWrongTot 0 1 2 100 50 1000)
+-- THE BINDING BITES: forging the after total moves the committed state commit.
+#guard stateCommit refSponge dAfter != stateCommit refSponge dWrongTot
+
+-- VAULT: slots assets=0 (limb 4), shares=1 (limb 5). Established vault T=2,S=4; deposit d=10, m=20.
+private def vBefore : Block := [0, 0, 0, 0, 2, 4, 0, 0, 0, 0, 0, 0]
+private def vAfter  : Block := [0, 0, 0, 0, 12, 24, 0, 0, 0, 0, 0, 0]
+-- HONEST: 2<12, 4<24, 2·20 ≤ 4·10 (40 ≤ 40).
+#guard decide (VaultDepositFieldGate vBefore vAfter 0 1)
+-- INFLATION: a zero-mint deposit (shares unchanged) fails.
+private def vZeroMint : Block := [0, 0, 0, 0, 12, 4, 0, 0, 0, 0, 0, 0]
+#guard !decide (VaultDepositFieldGate vBefore vZeroMint 0 1)
+-- DILUTION: minting 21 for a deposit of 10 (2·21 = 42 > 4·10 = 40) fails.
+private def vDilute : Block := [0, 0, 0, 0, 12, 25, 0, 0, 0, 0, 0, 0]
+#guard !decide (VaultDepositFieldGate vBefore vDilute 0 1)
+-- THE BINDING BITES: forging the after shares moves the committed state commit.
+#guard stateCommit refSponge vAfter != stateCommit refSponge vDilute
+
+end Witnesses1819
+
 /-! ## §7 — Axiom hygiene. -/
 
 #assert_all_clean [
@@ -256,7 +480,17 @@ end Witnesses
   phantom_settle_field_rejected,
   satisfaction_witnessed,
   forged_field_moves_commit,
-  capacity_witnessed_pure_lightclient
+  capacity_witnessed_pure_lightclient,
+  discharge_early_field_rejected,
+  discharge_cursor_not_advanced_field_rejected,
+  discharge_wrong_amount_field_rejected,
+  discharge_satisfaction_witnessed,
+  discharge_capacity_witnessed_pure_lightclient,
+  vault_inflation_attack_field_rejected,
+  vault_dilution_field_rejected,
+  vault_no_deposit_field_rejected,
+  vault_satisfaction_witnessed,
+  vault_capacity_witnessed_pure_lightclient
 ]
 
 end Dregg2.Deos.CapacitySatisfaction

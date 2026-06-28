@@ -227,15 +227,48 @@ VK beside the deployed, and flip. The deployed descriptors/VK are byte-identical
   BEFORE/AFTER field columns carries pure-light-client satisfaction. It is STAGED — NOT yet in a
   committed VK and NOT flipped, so satisfaction is **not light-client-witnessed in production yet**.
 
-* **REMAINING (the genuinely-VK-affecting tail — narrower than "the carrier"):**
-  1. **Emit + commit the welded descriptor (the actual VK bump)** — the soundness and the constraint
-     polynomials for the sealed-escrow gate are done (above); what remains is to EMIT the staged
-     `settleEscrowSatVmDescriptor2R24` from its Lean emit keystone (the `EffectVmEmit*` shape carrying
-     `settle_escrow_satisfaction_gates`), register it in a staged registry beside the deployed
-     `transferVmDescriptor2R24`, and COMMIT its VK — **new VK bytes**, staged, deployed default
-     untouched. Then repeat the gate-polynomial + emit for `DischargeObligation` (tag 18) and
-     `VaultDeposit` (tag 19) following the SAME `satisfaction_weld.rs` pattern (their Lean
-     `DischargeGate`/`VaultDepositGate` field-column twins). The escrow gate is the proven template.
+* **DONE (2026-06-28 — the tags 18/19 SATISFACTION SOUNDNESS rungs):** `CapacitySatisfaction.lean`
+  now carries the discharge (tag 18) and vault (tag 19) field-column satisfaction keystones beside the
+  escrow one: `discharge_satisfaction_witnessed` / `vault_satisfaction_witnessed` (equal before/after
+  state commits ⟹ the SAME full gate verdict — inequalities included — by REUSE of
+  `fieldAt_bound_in_commit`), their teeth (`discharge_{early,cursor_not_advanced,wrong_amount}_field_rejected`;
+  `vault_{inflation_attack,dilution,no_deposit}_field_rejected`), and the composed
+  `{discharge,vault}_capacity_witnessed_pure_lightclient`. `#assert_all_clean`, 16 keystones, lake green.
+  This proves the soundness an in-AIR weld WOULD carry for all three tags. It is NOT the in-AIR
+  constraint and NOT a VK bump (see the blockers below).
+
+* **REMAINING (the genuinely-VK-affecting tail — the FLIP is NOT yet soundly takeable; two
+  independent, verified blockers):**
+
+  * **BLOCKER 1 — the emit/producer/selector/VK/routing MACHINERY is absent even for the proven
+    escrow template.** The escrow satisfaction gate's soundness + in-AIR `VmConstraint::Gate`
+    polynomials are done (`satisfaction_weld.rs`, `satisfaction_witnessed`), but emitting + flipping
+    needs ALL of: a Lean welded `EffectVmDescriptor2` emit keystone (no `settleEscrowSatVmDescriptor2R24`
+    exists — it is named-only); a **capacity-selector column** filled by a producer (`satisfaction_weld.rs`
+    uses a placeholder `SEL = 320`; the rotated trace producer fills no such column); a staged registry +
+    FP-pin + **committed VK**; a prover dispatch that routes a capacity turn through the welded
+    descriptor; and the verify-path routing. There is moreover **no live capacity-caveat-bearing
+    proving path** (no deployed cell declares a capacity caveat), so even a flipped default has no
+    exerciser and "prove the teeth bite for a pure light client against the flipped VK" cannot be
+    demonstrated without first building that proving path. This is umem-flip-scale work
+    (`da0c47dd6` was "the 13th attempt", with extensive producer + gauntlet validation).
+
+  * **BLOCKER 2 — tags 18/19 in-AIR gates are NOT a mirror of the escrow EQUALITY template.** The
+    escrow gate is pure status-code equality (`sel·(col − const) == 0`), the whole gate. The discharge
+    gate adds a DUE-NESS INEQUALITY (`due_block ≤ clock`) — a range-check aux column, not an equality
+    gate — plus additive equalities over per-cell manifest-param columns (`period`/`amount`, not
+    constants). The vault gate is ENTIRELY inequalities: two strict positivities and the no-dilution
+    PRODUCT inequality `Tb·m ≤ Sb·d`, whose products exceed the ~31-bit BabyBear field (the off-AIR arm
+    uses u128) — an overflow-safe multi-limb comparison gadget. Emitting an equality-only weld for
+    18/19 and flipping would DROP the early-discharge / inflation-attack / dilution disciplines from
+    what a pure light client witnesses — i.e. ACCEPT FORGERIES. So the sound order is: (a) build +
+    validate the escrow welded descriptor + selector + producer + VK + routing (the proven template);
+    (b) build the range-checked / product in-AIR gates for tags 18/19; (c) only then flip.
+
+  * Until (a)+(b)+(c), SATISFACTION is **not light-client-witnessed in production** — only a verifier
+    holding the committed-state opening witnesses it (the cap-membership posture). The earlier framing
+    below ("emit the staged `settleEscrowSatVmDescriptor2R24`") understated this: the descriptor, its
+    selector column, its producer, and its VK do not yet exist.
   2. **In-AIR coverage-forcing from the authority digest** — bind the required-tag floor to the
      committed declaration **in-proof**: open the witnessed `state_constraints` against the
      `B_AUTHORITY_DIGEST` r23 limb the wide commit carries (recompute `compute_authority_digest_felt`,

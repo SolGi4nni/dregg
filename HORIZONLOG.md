@@ -9,6 +9,24 @@ should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
 ## NOW-STATE (late-2026-06-25 cluster — lanes that landed AFTER the entries below, recorded here for durability)
+- CAPACITY-SATISFACTION tags 18/19 (Piece 2 of the constraint-binding VK epoch) — SATISFACTION SOUNDNESS RUNGS LANDED STAGED,
+  the VK FLIP **NOT** taken (left staged, default unflipped — 2026-06-28). `metatheory/Dregg2/Deos/CapacitySatisfaction.lean` now
+  carries the discharge (tag 18) + vault (tag 19) field-column satisfaction keystones beside escrow's: `discharge_satisfaction_witnessed`
+  / `vault_satisfaction_witnessed` (equal before/after state commits ⟹ same FULL gate verdict, inequalities included; REUSE of
+  `fieldAt_bound_in_commit`) + their teeth (no-early/no-wrong-amount/no-non-advanced; inflation/dilution/no-deposit) +
+  `{discharge,vault}_capacity_witnessed_pure_lightclient` (coverage ∧ satisfaction). `#assert_all_clean`, 16 keystones, lake green.
+  **WHY THE FLIP WAS NOT TAKEN (two independent, VERIFIED blockers — honesty over a green-looking-but-wrong flip):**
+  (1) MACHINERY ABSENT even for the proven escrow template — there is NO welded `EffectVmDescriptor` emit keystone, NO capacity
+  selector column filled by a producer (`satisfaction_weld.rs` uses a placeholder `SEL=320`), NO registry/VK commitment, NO
+  prover dispatch, and NO live capacity-caveat-bearing proving path (no deployed cell declares a capacity caveat). Building +
+  validating this is umem-flip-scale (`da0c47dd6` was "the 13th attempt").
+  (2) tags 18/19 are NOT a mirror of escrow's pure-EQUALITY gate: discharge carries a due-ness INEQUALITY (`due_block ≤ clock`)
+  needing a range-check aux column; vault is ENTIRELY inequalities including a PRODUCT (`Tb·m ≤ Sb·d`) that overflows the ~31-bit
+  BabyBear field (off-AIR uses u128) — needing overflow-safe multi-limb comparison. An equality-only weld would DROP the
+  early-discharge / inflation-attack / dilution disciplines from the light-client witness and ACCEPT FORGERIES if flipped.
+  NAMED REMAINING (the genuinely-VK-affecting tail): build the welded descriptor emit + selector + producer + VK + routing
+  (escrow first, the proven template), THEN the range-checked/product in-AIR gates for 18/19, THEN flip. SATISFACTION is NOT
+  light-client-witnessed in production. Doc: `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md` §6.
 - CAPACITY-CARRIER (Piece 1 of the constraint-binding VK epoch) — LANDED STAGED, NOT VK-affecting (2026-06-27). The capacity
   manifest (tags 17/18/19) now rides the AIR-bound rotated caveat carrier (`caveatCommit` → PI 45, already in the deployed
   R=24 cohort VK), not just the unbound off-AIR v1 PI leg. Lean `metatheory/Dregg2/Deos/CapacityCarrier.lean` (`#assert_all_clean`,
