@@ -49,7 +49,8 @@
 use serde_json::{Value, json};
 
 use crate::{
-    COMMIT_SEAL_SLOT, METHOD_COMMIT, METHOD_RESOLVE, METHOD_REVEAL, PHASE_SLOT, RESOLVED, slot,
+    COMMIT, COMMIT_SEAL_SLOT, METHOD_COMMIT, METHOD_RESOLVE, METHOD_REVEAL, PHASE_SLOT, RESOLVED,
+    REVEAL, slot,
 };
 
 /// A `deos.ui.text` node.
@@ -60,6 +61,13 @@ fn text(s: &str) -> Value {
 /// A `deos.ui.pill` node — a colored status badge.
 fn pill(label: &str, tag: &str) -> Value {
     json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
+}
+
+/// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a word +
+/// color via `cases` (the first `{value,label,tag}` matching the slot wins). `text`/`tag`
+/// are the static fallback (discord, or no match).
+fn pill_live(slot: usize, label: &str, tag: &str, cases: Value) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag, "slot": slot, "cases": cases } })
 }
 
 /// A `deos.ui.icon` node — a glyph indicator tinted by `tag`.
@@ -82,14 +90,25 @@ fn section(title: &str, tag: &str, children: Vec<Value>) -> Value {
     json!({ "kind": "section", "props": { "title": title, "tag": tag }, "children": children })
 }
 
-/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label prefix.
-fn bind(slot: usize, label: &str) -> Value {
-    json!({ "kind": "bind", "props": { "slot": slot, "label": label } })
+/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label prefix and a
+/// display `fmt` (`"id"` avatar-handle / `"hash"` short-hex / `"amount"` grouped / `"raw"`
+/// plain) so an opaque digest/score paints short + friendly.
+fn bind(slot: usize, label: &str, fmt: &str) -> Value {
+    json!({ "kind": "bind", "props": { "slot": slot, "label": label, "fmt": fmt } })
+}
+
+/// An `adept`-tagged `bind` — the dev-y "see the bones" detail (here the raw `Commit/Reveal/
+/// Resolved` phase integer) the `simple` projection hides and `adept` reveals. The live pill
+/// + the breadcrumb already name the stage as a word, so the raw integer is adept-only.
+fn bind_adept(slot: usize, label: &str, fmt: &str) -> Value {
+    json!({ "kind": "bind", "props": { "slot": slot, "label": label, "fmt": fmt, "adept": true } })
 }
 
 /// A `deos.ui.gauge` node — a bound progress bar (`slot_value / max`, immediate-mode).
-fn gauge(slot: usize, max: u64, label: &str) -> Value {
-    json!({ "kind": "gauge", "props": { "slot": slot, "max": max, "label": label } })
+/// `adept` hides the raw numeric in the simple projection (the live pill + breadcrumb already
+/// show the stage); revealed in the adept "see the bones" view.
+fn gauge(slot: usize, max: u64, label: &str, adept: bool) -> Value {
+    json!({ "kind": "gauge", "props": { "slot": slot, "max": max, "label": label, "adept": adept } })
 }
 
 /// A `deos.ui.breadcrumb` node — the joint-turn path; the `active` step is marked `›`.
@@ -165,16 +184,20 @@ pub fn tussle_card_value() -> Value {
         "kind": "vstack",
         "props": {},
         "children": [
-            row(vec![text("Tussle"), pill("REVEALING", "accent")]),
+            row(vec![text("Tussle"), pill_live(PHASE_SLOT, "REVEALING", "accent", json!([
+                { "value": COMMIT,   "label": "COMMITTING", "tag": "warn" },
+                { "value": REVEAL,   "label": "REVEALING",  "tag": "accent" },
+                { "value": RESOLVED, "label": "RESOLVED",   "tag": "good" },
+            ]))]),
             breadcrumb(&["Commit", "Reveal", "Resolve"], 1),
             divider(),
             section("Frame", "genuine", vec![
-                gauge(PHASE_SLOT, RESOLVED, "frame phase "),
+                gauge(PHASE_SLOT, RESOLVED, "frame phase ", true),
                 figure_row("●", "You",   true, true),
                 figure_row("○", "Rival", true, false),
-                bind(PHASE_SLOT, "phase · "),
-                bind(COMMIT_SEAL_SLOT, "your seal · "),
-                bind(slot::SCORE, "outcome · "),
+                bind_adept(PHASE_SLOT, "phase · ", "raw"),
+                bind(COMMIT_SEAL_SLOT, "your seal · ", "hash"),
+                bind(slot::SCORE, "outcome · ", "amount"),
             ]),
             section("Actions", "", vec![
                 action("◈", "Commit",  METHOD_COMMIT),
@@ -222,14 +245,21 @@ mod tests {
             texts.iter().any(|t| t["props"]["text"] == "Tussle"),
             "the header names the app"
         );
-        // The header status pill names the live frame stage as a WORD.
+        // The header status pill is LIVE: it reads PHASE_SLOT and maps the value to a WORD.
         let header_pill = &card["children"][0]["children"][1];
         assert_eq!(header_pill["kind"], "pill");
         let stage = header_pill["props"]["text"].as_str().unwrap();
         assert!(
             matches!(stage, "COMMITTING" | "REVEALING" | "RESOLVED"),
-            "the status pill names a frame stage, got {stage:?}"
+            "the static-fallback word names a frame stage, got {stage:?}"
         );
+        assert_eq!(header_pill["props"]["slot"], PHASE_SLOT);
+        let cases = header_pill["props"]["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 3, "COMMITTING / REVEALING / RESOLVED");
+        assert_eq!(cases[0]["value"], COMMIT);
+        assert_eq!(cases[0]["label"], "COMMITTING");
+        assert_eq!(cases[2]["value"], RESOLVED);
+        assert_eq!(cases[2]["label"], "RESOLVED");
     }
 
     #[test]
@@ -295,6 +325,29 @@ mod tests {
             ],
             "the binds surface phase / sealed-commit / resolved-outcome"
         );
+
+        // The delight `fmt` per bind: the raw phase integer stays plain (+ adept-hidden), the
+        // seal paints short hex, the score groups its digits.
+        let fmt = |slot: usize| -> String {
+            binds
+                .iter()
+                .find(|b| b["props"]["slot"].as_u64() == Some(slot as u64))
+                .and_then(|b| b["props"]["fmt"].as_str())
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(fmt(PHASE_SLOT), "raw", "the raw phase integer stays plain");
+        assert_eq!(fmt(COMMIT_SEAL_SLOT), "hash", "the seal paints short hex");
+        assert_eq!(fmt(slot::SCORE), "amount", "the outcome groups digits");
+
+        // The raw phase integer is adept-only (the live pill + breadcrumb already name it).
+        let phase_bind = binds
+            .iter()
+            .find(|b| b["props"]["slot"].as_u64() == Some(PHASE_SLOT as u64))
+            .unwrap();
+        assert_eq!(phase_bind["props"]["adept"], true);
+        // The phase gauge is likewise adept-only.
+        assert_eq!(gauges[0]["props"]["adept"], true);
     }
 
     #[test]

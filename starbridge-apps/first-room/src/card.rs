@@ -28,9 +28,21 @@
 //! decorative (a read against nothing). Instead the card renders the snapshot HONESTLY with
 //! the rich STATIC vocabulary — `section` per inhabitant, a status `pill`, a lifecycle
 //! `breadcrumb`, a `progress` of the welded chain, `icon`-tagged genuine actions / refusals,
-//! a `divider` — and gets consumer-delight from INLINE formatting (grouped amounts) plus
-//! **progressive disclosure**: the raw bones (full cell hex, receipt hashes) lift as
-//! `adept`-tagged nodes, so the simple projection stays clean and an adept can see the bones.
+//! a `divider`.
+//!
+//! ## Consumer-delight on a static card — the inline analogues of the delight props
+//!
+//! The live cards get their delight from slot-bound props (`bind`'s `fmt`, a live value→word
+//! `pill`). A static composed view has no slot to read, so it gets the SAME delight INLINE,
+//! computed from the snapshot:
+//!   - an **identity** renders as a deterministic emoji-avatar handle ([`handle_for`], `🦊
+//!     swift-fox`) — the static analogue of `fmt:"id"` — instead of an opaque hex prefix;
+//!   - an **amount** groups its digits ([`group_digits`], `1,234,567`) — the static analogue
+//!     of `fmt:"amount"`;
+//!   - each inhabitant's **lifecycle** renders as a value→word status `pill` ([`status_pill`],
+//!     `PAID`/`WORKING`/`PRESENT`) — the static analogue of the live value→word pill;
+//!   - and **progressive disclosure** keeps the raw bones (full cell hex, receipt hashes) as
+//!     `adept`-tagged nodes, so the simple projection stays clean and an adept sees the bones.
 //! The actions themselves live on the organs' own service/affordance surfaces.
 
 use serde_json::{Value, json};
@@ -54,6 +66,59 @@ fn adept_text(s: &str) -> Value {
 /// A `deos.ui.pill` node — a colored status badge tinted by `tag`.
 fn pill(label: &str, tag: &str) -> Value {
     json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
+}
+
+// ── The avatar wordlists — a small local palette in the family of `deos-view`'s `fmt:"id"`
+//    handle (16-emoji fauna / adjective / noun), so a static identity paints `🦊 swift-fox`
+//    instead of a dev-y hex prefix. 16·16·16 = 4096 distinct friendly handles. ─────────────
+const AVATAR_EMOJI: [&str; 16] = [
+    "🦊", "🐢", "🦉", "🐙", "🦋", "🐝", "🐬", "🦁", "🐼", "🦅", "🦄", "🐳", "🦖", "🦜", "🦦", "🦩",
+];
+const AVATAR_ADJ: [&str; 16] = [
+    "swift", "brave", "calm", "bright", "lucky", "noble", "quiet", "merry", "bold", "gentle",
+    "clever", "sunny", "cozy", "keen", "jolly", "wise",
+];
+const AVATAR_NOUN: [&str; 16] = [
+    "fox", "owl", "wren", "lynx", "moth", "hare", "finch", "otter", "crane", "vole", "newt", "koi",
+    "dove", "elk", "mole", "swan",
+];
+
+/// A splitmix64 finalizer — decorrelates inputs so near-identical cells get visually-distinct
+/// handles. Pure, wrapping.
+fn mix(value: u64) -> u64 {
+    let mut z = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// A deterministic emoji-avatar handle for a cell (`🦊 swift-fox`) — the static-card analogue of
+/// a `bind`'s `fmt:"id"`: a stable, human-memorable stand-in for an opaque cell id. Same cell →
+/// same handle, forever. Keyed off the cell's leading 8 bytes.
+fn handle_for(cell: &dregg_app_framework::CellId) -> String {
+    let b = cell.as_bytes();
+    let mut seed = [0u8; 8];
+    let n = b.len().min(8);
+    seed[..n].copy_from_slice(&b[..n]);
+    let m = mix(u64::from_be_bytes(seed));
+    let e = AVATAR_EMOJI[(m & 15) as usize];
+    let a = AVATAR_ADJ[((m >> 8) & 15) as usize];
+    let noun = AVATAR_NOUN[((m >> 16) & 15) as usize];
+    format!("{e} {a}-{noun}")
+}
+
+/// An inhabitant's lifecycle as a value→word status `pill` — the static-card analogue of the
+/// live value→word pill, computed from the snapshot: `PAID` (held the reward) > `WORKING` (took
+/// genuine actions) > `PRESENT` (entered, nothing yet). Tags: `good`/`accent`/`muted`.
+fn status_pill(i: &InhabitantView) -> Value {
+    let (word, tag) = if i.paid > 0 {
+        ("PAID", "good")
+    } else if !i.committed_actions.is_empty() {
+        ("WORKING", "accent")
+    } else {
+        ("PRESENT", "muted")
+    };
+    pill(word, tag)
 }
 
 /// A `deos.ui.icon` node — a glyph indicator tinted by `tag`.
@@ -127,9 +192,15 @@ fn full_hex(cell: &dregg_app_framework::CellId) -> String {
 fn inhabitant_section(i: &InhabitantView) -> Value {
     // The colonist (the one that took genuine actions AND was refused) carries the section accent.
     let tag = if i.refusals.is_empty() { "" } else { "genuine" };
+    // The identity paints as a friendly avatar handle (`fmt:"id"` static analogue) + the name +
+    // a value→word lifecycle pill; the opaque hex prefix + full hex are adept-only bones.
     let mut children = vec![
-        row(vec![pill(&i.short, "accent"), text(&i.name)]),
-        adept_text(&format!("cell · 0x{}", full_hex(&i.cell))),
+        row(vec![
+            pill(&handle_for(&i.cell), "accent"),
+            text(&i.name),
+            status_pill(i),
+        ]),
+        adept_text(&format!("cell · 0x{} ({})", full_hex(&i.cell), i.short)),
         text(&format!("mandate: {}", i.mandate)),
     ];
     if i.paid > 0 {
@@ -377,6 +448,71 @@ mod tests {
                 .unwrap()
                 .contains("receipt · 0x")),
             "the receipt hash is adept-only"
+        );
+    }
+
+    #[test]
+    fn the_inhabitant_identity_paints_an_avatar_handle_and_a_status_pill() {
+        let card = card_for_room(&demo_room());
+        let section = card["children"].as_array().unwrap().last().unwrap();
+        let pills = of_kind(section, "pill");
+        // The identity paints a friendly emoji-avatar handle (the `fmt:"id"` static analogue) —
+        // `🦊 swift-fox`, an `adj-noun` form — not the opaque `0202…` hex prefix (now adept-only).
+        assert!(
+            pills.iter().any(|p| {
+                let t = p["props"]["text"].as_str().unwrap();
+                t.contains(' ') && t.contains('-') && !t.contains('…')
+            }),
+            "the identity paints a friendly avatar handle, not a hex prefix"
+        );
+        assert!(
+            of_kind(section, "text")
+                .iter()
+                .all(|t| !t["props"]["text"].as_str().unwrap().starts_with("0")),
+            "the bare hex prefix is no longer in the simple identity row"
+        );
+        // The colonist holds the reward → a PAID/good lifecycle pill (the value→word analogue).
+        assert!(
+            pills
+                .iter()
+                .any(|p| p["props"]["text"] == "PAID" && p["props"]["tag"] == "good"),
+            "the paid colonist shows a PAID status pill"
+        );
+    }
+
+    #[test]
+    fn the_status_pill_maps_each_lifecycle_to_a_word() {
+        let base = InhabitantView {
+            cell: CellId::from_bytes([3u8; 32]),
+            short: "0303…".into(),
+            name: "x".into(),
+            mandate: "m".into(),
+            committed_actions: vec![],
+            refusals: vec![],
+            paid: 0,
+        };
+        assert_eq!(status_pill(&base)["props"]["text"], "PRESENT");
+        let working = InhabitantView {
+            committed_actions: vec![GenuineAction {
+                summary: "s".into(),
+                receipt_hash: [0u8; 32],
+            }],
+            ..base.clone()
+        };
+        assert_eq!(status_pill(&working)["props"]["text"], "WORKING");
+        let paid = InhabitantView { paid: 5, ..base };
+        assert_eq!(status_pill(&paid)["props"]["text"], "PAID");
+    }
+
+    #[test]
+    fn the_avatar_handle_is_deterministic_per_cell() {
+        let c = CellId::from_bytes([7u8; 32]);
+        assert_eq!(handle_for(&c), handle_for(&c), "same cell → same handle");
+        let d = CellId::from_bytes([8u8; 32]);
+        assert_ne!(
+            handle_for(&c),
+            handle_for(&d),
+            "distinct cells → distinct handles (here)"
         );
     }
 
