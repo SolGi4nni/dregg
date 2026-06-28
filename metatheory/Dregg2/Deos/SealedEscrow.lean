@@ -320,7 +320,93 @@ theorem forged_leg_moves_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     root hash h₁ ≠ root hash h₂ :=
   fun hroot => hne (leg_status_bound_in_root hash hCR hroot side)
 
-/-! ## §6 — NON-VACUITY TEETH (`#guard`): the swap invariant BITES, both polarities.
+/-! ## §6 — THE CIRCUIT-WELD RUNG (STAGED): settlement atomicity a LIGHT CLIENT witnesses.
+
+§3–§5 are the EXECUTOR-witnessed teeth: a verifier holding the committed heap rejects forges
+and replays out of band. THIS section is the LIGHT-CLIENT rung — the soundness an off-AIR
+`SettleEscrow` manifest entry (a new slot/heap caveat tag carried in PUBLIC INPUTS,
+re-evaluated against the bound `state_before`/`state_after` committed-heap views, with the AIR
+constraint polynomials — the VK bytes — UNCHANGED) inherits, exactly as the temporal-caveat
+verifier arms (`circuit/src/effect_vm/verify.rs` tags 13–16) inherit `temporalStateStepGuarded`.
+The full staging is `docs/deos/SETTLE-ESCROW-WELD-DESIGN.md`.
+
+The gate is over a (before, after) PAIR of committed heaps — the genuine kernel TRANSITION a
+batch proves — not a single state (§2's `Ready`/`ClaimOk` read one state). A satisfying witness
+FORCES atomic both-legs-or-none: both legs `Deposited` before AND both `Consumed` after. A
+forged PARTIAL settle (one leg flipped, the half-open trade) is INEXPRESSIBLE — it fails the
+gate — so atomicity is light-client-witnessed, not re-run out of band. The verdict is fixed by
+the committed roots (the light-client tooth), so a forger must move a root where §5 bites. -/
+
+/-- **The settlement gate over a TRANSITION.** The Lean image of the off-AIR `SettleEscrow`
+manifest re-evaluation: read both legs' status from the bound `before`/`after` committed-heap
+views and require both `Deposited` before, both `Consumed` after. The both-or-none CONJUNCTION
+in ONE entry is what makes settlement ATOMIC — a per-leg-independent caveat could not bind it. -/
+abbrev SettleGate (hash : List ℤ → ℤ) (before after : FeltHeap) : Prop :=
+  boundStatus hash before Side.A = some stDeposited ∧
+  boundStatus hash before Side.B = some stDeposited ∧
+  boundStatus hash after  Side.A = some stConsumed ∧
+  boundStatus hash after  Side.B = some stConsumed
+
+/-- **HONEST SETTLE PASSES THE GATE** (non-vacuity, accept polarity). The genuine kernel
+transition — both legs `Ready`, then `settle` — satisfies the gate, so an honest batch's
+`SettleEscrow` entry verifies. Without this the rung would be vacuous (true by no-witness). -/
+theorem settle_passes_gate (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (h : FeltHeap)
+    (hready : Ready hash h) :
+    SettleGate hash h (settle hash h) :=
+  ⟨hready.1, hready.2, (settle_consumes_both hash hCR h).1, (settle_consumes_both hash hCR h).2⟩
+
+/-- **THE ATOMICITY TOOTH.** A satisfying gate witness FORCES the atomic shape: both legs were
+`Deposited` before (the swap was genuinely double-locked) and both `Consumed` after (both legs
+moved). There is no accepting witness in which only one leg transitioned. -/
+theorem settle_gate_forces_atomic (hash : List ℤ → ℤ) (before after : FeltHeap)
+    (hgate : SettleGate hash before after) :
+    Ready hash before ∧
+      boundStatus hash after Side.A = some stConsumed ∧
+      boundStatus hash after Side.B = some stConsumed :=
+  ⟨⟨hgate.1, hgate.2.1⟩, hgate.2.2.1, hgate.2.2.2⟩
+
+/-- **THE NO-PARTIAL-SETTLE TOOTH.** A forged "partial settle" — leg A consumed but leg B left
+`Deposited` (B walks away with its leg un-swapped) — is REFUSED by the gate: it requires B
+`Consumed`, and `Deposited ≠ Consumed`. The half-open trade is INEXPRESSIBLE in-circuit; this
+is the light-client face of the executor's atomic `settle`. -/
+theorem partial_settle_rejected (hash : List ℤ → ℤ) (before after : FeltHeap)
+    (hpartial : boundStatus hash after Side.B = some stDeposited) :
+    ¬ SettleGate hash before after := by
+  intro hgate
+  have hB := hgate.2.2.2
+  rw [hpartial] at hB
+  exact (by decide : stDeposited ≠ stConsumed) (Option.some.inj hB)
+
+/-- **THE NO-PHANTOM-SETTLE TOOTH.** A settle whose before-leg was never `Deposited` (no
+genuine conforming lock — `Empty`, or an already-`Consumed` replay) is REFUSED: the gate
+requires `Deposited` before. A consumption cannot be conjured from a leg that never locked. -/
+theorem phantom_settle_rejected (hash : List ℤ → ℤ) (before after : FeltHeap) (s : ℤ)
+    (hbefore : boundStatus hash before Side.A = some s) (hne : s ≠ stDeposited) :
+    ¬ SettleGate hash before after := by
+  intro hgate
+  have hA := hgate.1
+  rw [hbefore] at hA
+  exact hne (Option.some.inj hA)
+
+/-- **THE LIGHT-CLIENT TOOTH (root-transport).** The gate verdict is FIXED by the committed
+ROOTS of the before/after views — so a light client that checks the gate against the
+public-input-bound before/after roots reads the GENUINE verdict; a forger presenting fake leg
+slots must MOVE a root (where §5's status binding bites). Equal-root before/after views give
+the same gate verdict. Proven by REUSE of `leg_status_bound_in_root` — no escrow-local
+commitment, the one named `Poseidon2SpongeCR` floor. -/
+theorem settle_gate_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {before before' after after' : FeltHeap}
+    (hb : root hash before = root hash before') (ha : root hash after = root hash after')
+    (hgate : SettleGate hash before after) :
+    SettleGate hash before' after' := by
+  obtain ⟨h1, h2, h3, h4⟩ := hgate
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [← leg_status_bound_in_root hash hCR hb Side.A]; exact h1
+  · rw [← leg_status_bound_in_root hash hCR hb Side.B]; exact h2
+  · rw [← leg_status_bound_in_root hash hCR ha Side.A]; exact h3
+  · rw [← leg_status_bound_in_root hash hCR ha Side.B]; exact h4
+
+/-! ## §7 — NON-VACUITY TEETH (`#guard`): the swap invariant BITES, both polarities.
 
 Computed on the reference sponge (`Substrate.Heap.refSponge`) so the honest swap settles, a replay
 fails AND moves the root, and an over-claim fails — the executable shadow of §3/§4/§5. -/
@@ -358,9 +444,20 @@ private def onlyA : FeltHeap := deposit refSponge [] Side.A 100
 #guard boundStatus refSponge onlyA Side.B == none
 #guard !decide (ClaimOk refSponge onlyA ⟨Side.B, Side.A, 250, 100⟩ 100)
 
+-- §6 THE CIRCUIT-WELD GATE (the `SettleEscrow` manifest re-evaluation), both polarities:
+-- HONEST: the genuine settle TRANSITION (both → settled) passes the gate.
+#guard decide (SettleGate refSponge both settled)
+-- NO-PARTIAL: leg A consumed, leg B still deposited — the half-open trade — fails the gate.
+private def partialA : FeltHeap := hset refSponge both escrowColl (statusKey Side.A) stConsumed
+#guard boundStatus refSponge partialA Side.A == some stConsumed
+#guard boundStatus refSponge partialA Side.B == some stDeposited
+#guard !decide (SettleGate refSponge both partialA)
+-- NO-PHANTOM: settling from a not-both-deposited before (B never locked) fails the gate.
+#guard !decide (SettleGate refSponge onlyA settled)
+
 end Witnesses
 
-/-! ## §7 — Axiom hygiene. -/
+/-! ## §8 — Axiom hygiene. -/
 
 #assert_all_clean [
   deposit_both_ready,
@@ -373,7 +470,12 @@ end Witnesses
   over_claim_rejected,
   leg_status_bound_in_root,
   leg_amount_bound_in_root,
-  forged_leg_moves_root
+  forged_leg_moves_root,
+  settle_passes_gate,
+  settle_gate_forces_atomic,
+  partial_settle_rejected,
+  phantom_settle_rejected,
+  settle_gate_root_bound
 ]
 
 end Dregg2.Deos.SealedEscrow

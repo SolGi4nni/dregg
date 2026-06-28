@@ -188,3 +188,19 @@ transition) rather than re-running the check out of band:
 
 Until that lands, sealed escrows are sound under the executor checks and the
 commitment binding; the circuit rung is the named follow-up, not a silent gap.
+
+**Design + first rung (landed).** The in-circuit weld is now designed and begun,
+STAGED and VK-risk-free, in `docs/deos/SETTLE-ESCROW-WELD-DESIGN.md`. Rather than a
+new `SettleEscrow` `Effect` with new AIR columns (VK-affecting), the gate is carried
+as an off-AIR `SettleEscrow` manifest entry (a new slot/heap caveat tag, re-evaluated
+against the bound `state_before`/`state_after` views) — the same vehicle that staged
+the temporal caveats (`circuit/src/effect_vm/verify.rs` tags 13–16), so the AIR
+constraint polynomials (the VK bytes) are **unchanged**. The first soundness rung is
+built and `#assert_axioms`-clean in `metatheory/Dregg2/Deos/SealedEscrow.lean` §6:
+`SettleGate` (the transition gate), `settle_gate_forces_atomic` (a satisfying witness
+forces both-legs-or-none), `partial_settle_rejected` (the half-open trade is
+inexpressible), `phantom_settle_rejected`, and `settle_gate_root_bound` (the
+light-client tooth: the gate verdict is fixed by the committed roots, so a forger must
+move a root where the §5 status binding bites). The eventual verifier arm inherits this
+proof; deploying it is the named **sealed-escrow verifier epoch** (a verifier-code
+rollout, not a VK rotation).
