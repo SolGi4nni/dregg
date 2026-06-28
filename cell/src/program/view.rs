@@ -410,6 +410,14 @@ pub enum StateConstraintView {
         period: u32,
         amount: u32,
     },
+    /// The share-vault no-dilution deposit gate: across the transition the committed
+    /// `total_assets` must advance by the deposit, the committed `total_shares` by the
+    /// minted count (positive — the inflation tooth), with no existing holder diluted
+    /// (the Lean `VaultDepositGate`). Surfaces the two field-mirrored counter slots.
+    VaultDeposit {
+        assets_slot: u8,
+        shares_slot: u8,
+    },
 }
 
 /// [`BoundBranch`] view (nested in [`StateConstraintView::AnyOfBound`]). The
@@ -1115,6 +1123,13 @@ impl StateConstraint {
                 amount_slot: *amount_slot,
                 period: *period,
                 amount: *amount,
+            },
+            StateConstraint::VaultDeposit {
+                assets_slot,
+                shares_slot,
+            } => StateConstraintView::VaultDeposit {
+                assets_slot: *assets_slot,
+                shares_slot: *shares_slot,
             },
         }
     }

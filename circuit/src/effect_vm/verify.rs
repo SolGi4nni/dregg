@@ -461,6 +461,65 @@ pub fn verify_slot_caveat_manifest(
                     ));
                 }
             }
+            t if t == pi::SLOT_CAVEAT_TAG_VAULT_DEPOSIT => {
+                // The share-vault no-dilution weld (the Lean `VaultDepositGate`,
+                // `metatheory/Dregg2/Deos/Vault.lean` §6b). The SINGLE entry reads the
+                // committed `total_assets` and `total_shares` counter slots across the
+                // public-input-bound state_before/state_after views and re-evaluates
+                // the no-dilution share-price shape: the deposit is genuine (the assets
+                // advance by `d > 0`), the mint is POSITIVE (the shares advance by
+                // `m > 0` — the zero-mint / inflation-attack tooth), and NO existing
+                // holder is diluted (`before_assets·m ≤ before_shares·d`, the
+                // no-dilution floor). A forged ZERO-MINT deposit (the ERC-4626
+                // first-depositor inflation attack), an over-minting DILUTING deposit,
+                // or a NON-CONSERVING deposit (assets not advancing by exactly the
+                // deposit) FAILS this conjunction — INEXPRESSIBLE — so a light client
+                // re-running the manifest witnesses the no-dilution discipline (the
+                // off-AIR shadow of the Lean `vault_gate_forces_no_dilution` /
+                // `inflation_attack_rejected` / `dilution_rejected` /
+                // `assets_not_conserved_rejected` teeth). Encoding: slot_index = the
+                // total_assets counter slot (range-checked above); p0 = the
+                // total_shares counter slot. The deposit `d` and minted `m` are the
+                // across-transition deltas of those two slots, read in the
+                // verifier-visible 4-byte slot view (`SLOT-CAVEATS-DESIGN.md` §4; the
+                // executor does the full-width check). u128 products avoid overflow.
+                let shares_slot = p0.0 as usize;
+                if shares_slot >= 8 {
+                    return Err(format!(
+                        "slot-caveat[{i}] VaultDeposit shares slot_index {shares_slot} out of range (must be < 8)"
+                    ));
+                }
+                let before_assets = old_v.0 as u64;
+                let after_assets = new_v.0 as u64;
+                let before_shares = initial_fields[shares_slot].0 as u64;
+                let after_shares = final_fields[shares_slot].0 as u64;
+                // CONSERVING + GENUINE DEPOSIT: total_assets advances upward (d > 0).
+                if after_assets <= before_assets {
+                    return Err(format!(
+                        "slot-caveat[{i}] VaultDeposit on slot {slot_idx}: total_assets must advance by a positive deposit \
+                         (before {before_assets}, after {after_assets})"
+                    ));
+                }
+                let d = after_assets - before_assets;
+                // ZERO-MINT / INFLATION TOOTH: total_shares advances upward (m > 0).
+                if after_shares <= before_shares {
+                    return Err(format!(
+                        "slot-caveat[{i}] VaultDeposit on slot {shares_slot}: inflation-attack rejection — a positive deposit must mint positive shares \
+                         (before {before_shares}, after {after_shares})"
+                    ));
+                }
+                let m = after_shares - before_shares;
+                // NO-DILUTION FLOOR: before_assets·m ≤ before_shares·d (the existing
+                // price-per-share never decreases). u128 so the products cannot wrap.
+                if (before_assets as u128) * (m as u128) > (before_shares as u128) * (d as u128) {
+                    return Err(format!(
+                        "slot-caveat[{i}] VaultDeposit: dilution — minting {m} shares for a deposit of {d} dilutes the existing holders \
+                         (before_assets·m = {} > before_shares·d = {})",
+                        before_assets as u128 * m as u128,
+                        before_shares as u128 * d as u128
+                    ));
+                }
+            }
             // SenderAuthorized needs sender identity plus Merkle/blinded-set
             // witness verification context. The Effect-VM manifest only carries
             // the declaration shape, so production enforcement remains in the

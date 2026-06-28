@@ -289,6 +289,127 @@ theorem forged_state_moves_root (hash : List ℤ → ℤ) (hCR : Poseidon2Sponge
     root hash h₁ ≠ root hash h₂ :=
   fun hroot => hne (shares_bound_in_root hash hCR hroot)
 
+/-! ## §6b — THE CIRCUIT-WELD RUNG (STAGED): the no-dilution share-price invariant a LIGHT CLIENT
+witnesses.
+
+§1–§6 are the EXECUTOR-witnessed teeth: a verifier holding the committed `(total_assets,
+total_shares)` rejects a forged share count, a zero-mint (inflation-attack) deposit, and a skewed
+ratio out of band. THIS section is the LIGHT-CLIENT rung — the soundness an off-AIR `VaultDeposit`
+manifest entry (a new slot/heap caveat tag carried in PUBLIC INPUTS, re-evaluated against the bound
+`state_before`/`state_after` committed-heap views, with the AIR constraint polynomials — the VK bytes
+— UNCHANGED) inherits, exactly as the temporal-caveat verifier arms
+(`circuit/src/effect_vm/verify.rs` tags 13–16) inherit `temporalStateStepGuarded`, the sealed-escrow
+weld (tag 17) inherits `SettleGate`, and the standing-obligation weld (tag 18) inherits
+`DischargeGate`. The full staging is `docs/deos/VAULT-DEPOSIT-WELD-DESIGN.md`.
+
+The gate is over a (before, after) PAIR of committed heaps — the genuine kernel TRANSITION a batch
+proves — not a single state. A satisfying witness FORCES the no-dilution share-price shape: the
+deposit is genuine (`0 < d`), the committed `total_assets` advances by exactly the deposit, the
+committed `total_shares` advances by `m` minted shares, the mint is POSITIVE (`0 < m`, the zero-mint /
+inflation tooth), and NO existing holder is diluted (`Tb·m ≤ Sb·d`, the no-dilution floor — the
+existing price-per-share `Tb/Sb` never decreases). A forged ZERO-MINT deposit (the ERC-4626
+first-depositor inflation attack, where a victim's deposit rounds to nothing) and an over-minting
+DILUTING deposit (`Sb·d < Tb·m`) are both INEXPRESSIBLE — they fail the gate — so the no-dilution
+discipline is light-client-witnessed, not re-run out of band. The verdict is fixed by the committed
+roots (the light-client tooth), so a forger must move a root where §6 bites.
+
+The witnessed before-values `Tb` (assets) and `Sb` (shares) are the slot views the manifest reads
+from the cell's committed `total_assets`/`total_shares` slots (the `SHARE_VAULT_COLL` counters); `d`
+and `m` are the deposit and minted-share deltas read across the transition (`d = after_assets −
+before_assets`, `m = after_shares − before_shares`). -/
+
+/-- **The vault-deposit gate over a TRANSITION.** The Lean image of the off-AIR `VaultDeposit`
+manifest re-evaluation: read the committed `total_assets` (`Tb`) and `total_shares` (`Sb`) from the
+bound `before` view and require the `after` view's `total_assets` to advance by exactly the deposit
+`d`, the `after` `total_shares` to advance by exactly the minted `m`, the deposit to be genuine
+(`0 < d`), the mint to be positive (`0 < m`, the zero-mint / inflation tooth), and NO existing holder
+to be diluted (`Tb·m ≤ Sb·d`, the no-dilution floor). The conjunction in ONE entry is what binds the
+no-dilution discipline; a per-slot-independent caveat could not force the joint
+deposit ∧ minted ∧ positive ∧ no-dilution shape. -/
+abbrev VaultDepositGate (hash : List ℤ → ℤ) (before after : FeltHeap) (Tb Sb d m : ℤ) : Prop :=
+  boundAssets hash before = some Tb ∧
+  boundShares hash before = some Sb ∧
+  boundAssets hash after  = some (Tb + d) ∧
+  boundShares hash after  = some (Sb + m) ∧
+  0 < d ∧
+  0 < m ∧
+  Tb * m ≤ Sb * d
+
+/-- **HONEST DEPOSIT PASSES THE GATE** (`vault_passes_gate`, non-vacuity, accept polarity). The
+genuine kernel transition — a committed `(Tb, Sb)`, then `writeState` to `(Tb + d, Sb + m)` —
+satisfies the gate whenever the deposit and mint are positive and no holder is diluted. Without this
+the rung would be vacuous (true by no-witness). -/
+theorem vault_passes_gate (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (before : FeltHeap)
+    (Tb Sb d m : ℤ) (hbefa : boundAssets hash before = some Tb)
+    (hbefs : boundShares hash before = some Sb)
+    (hd : 0 < d) (hm : 0 < m) (hnodil : Tb * m ≤ Sb * d) :
+    VaultDepositGate hash before (writeState hash before (Tb + d) (Sb + m)) Tb Sb d m :=
+  ⟨hbefa, hbefs,
+    writeState_binds_assets hash hCR before (Tb + d) (Sb + m),
+    writeState_binds_shares hash before (Tb + d) (Sb + m),
+    hd, hm, hnodil⟩
+
+/-- **THE NO-DILUTION TOOTH** (`vault_gate_forces_no_dilution`). A satisfying gate witness FORCES the
+no-dilution share-price shape: the committed `total_assets` advanced by exactly the deposit and the
+`total_shares` by exactly the minted count (assets ∧ shares conserve), the mint is positive, and NO
+existing holder is diluted (`Tb·m ≤ Sb·d` — the existing price-per-share never decreases). There is
+no accepting witness that dilutes the existing holders or conjures shares from nothing. -/
+theorem vault_gate_forces_no_dilution (hash : List ℤ → ℤ) (before after : FeltHeap) (Tb Sb d m : ℤ)
+    (hgate : VaultDepositGate hash before after Tb Sb d m) :
+    boundAssets hash after = some (Tb + d) ∧
+      boundShares hash after = some (Sb + m) ∧
+      0 < m ∧
+      Tb * m ≤ Sb * d :=
+  ⟨hgate.2.2.1, hgate.2.2.2.1, hgate.2.2.2.2.2.1, hgate.2.2.2.2.2.2⟩
+
+/-- **THE INFLATION-ATTACK TOOTH** (`inflation_attack_rejected`). A deposit that would mint ZERO (or
+negative) shares is REFUSED by the gate (the `0 < m` leg): the ERC-4626 first-depositor inflation
+exploit — a skewed ratio rounds a victim's positive deposit to nothing — is INEXPRESSIBLE in-circuit.
+The light-client face of §5's `zero_mint_rejected`. -/
+theorem inflation_attack_rejected (hash : List ℤ → ℤ) (before after : FeltHeap) (Tb Sb d m : ℤ)
+    (hzero : m ≤ 0) : ¬ VaultDepositGate hash before after Tb Sb d m := by
+  intro hgate
+  exact absurd hgate.2.2.2.2.2.1 (not_lt.mpr hzero)
+
+/-- **THE NO-DILUTION (OVER-MINT) TOOTH** (`dilution_rejected`). A deposit that mints MORE shares than
+the fair ratio yields — diluting the existing holders (`Sb·d < Tb·m`) — is REFUSED by the gate (the
+`Tb·m ≤ Sb·d` leg). Over-minting is INEXPRESSIBLE in-circuit; the light-client face of the executor's
+`forged_shares_rejected`. -/
+theorem dilution_rejected (hash : List ℤ → ℤ) (before after : FeltHeap) (Tb Sb d m : ℤ)
+    (hdil : Sb * d < Tb * m) : ¬ VaultDepositGate hash before after Tb Sb d m := by
+  intro hgate
+  exact absurd hgate.2.2.2.2.2.2 (not_le.mpr hdil)
+
+/-- **THE NON-CONSERVING TOOTH** (`assets_not_conserved_rejected`). A deposit whose committed `after`
+`total_assets` does NOT advance by exactly the deposit (the pooled value conjured or lost) is REFUSED:
+the gate requires `after assets = before assets + d`. The light-client face of the committed internal
+accounting that closes the ERC-4626 donation skew (a raw donation cannot move the committed counter). -/
+theorem assets_not_conserved_rejected (hash : List ℤ → ℤ) (before after : FeltHeap)
+    (Tb Sb d m wrong : ℤ) (hafter : boundAssets hash after = some wrong) (hne : wrong ≠ Tb + d) :
+    ¬ VaultDepositGate hash before after Tb Sb d m := by
+  intro hgate
+  have h := hgate.2.2.1
+  rw [hafter] at h
+  exact hne (Option.some.inj h)
+
+/-- **THE LIGHT-CLIENT TOOTH (root-transport)** (`vault_gate_root_bound`). The gate verdict is FIXED
+by the committed ROOTS of the before/after views — so a light client that checks the gate against the
+public-input-bound before/after roots reads the GENUINE verdict; a forger presenting fake asset/share
+slots must MOVE a root (where §6's binding bites). Equal-root before/after views give the same gate
+verdict. Proven by REUSE of `assets_bound_in_root` / `shares_bound_in_root` — no vault-local
+commitment, the one named `Poseidon2SpongeCR` floor. -/
+theorem vault_gate_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {before before' after after' : FeltHeap} (Tb Sb d m : ℤ)
+    (hb : root hash before = root hash before') (ha : root hash after = root hash after')
+    (hgate : VaultDepositGate hash before after Tb Sb d m) :
+    VaultDepositGate hash before' after' Tb Sb d m := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hgate
+  refine ⟨?_, ?_, ?_, ?_, h5, h6, h7⟩
+  · rw [← assets_bound_in_root hash hCR hb]; exact h1
+  · rw [← shares_bound_in_root hash hCR hb]; exact h2
+  · rw [← assets_bound_in_root hash hCR ha]; exact h3
+  · rw [← shares_bound_in_root hash hCR ha]; exact h4
+
 /-! ## §7 — NON-VACUITY TEETH (`#guard`): the share-price invariant BITES, both polarities.
 
 Computed on the reference sponge (`Substrate.Heap.refSponge`) for the heap binding, and directly for
@@ -342,6 +463,30 @@ private def afterVictim : FeltHeap := writeState refSponge afterBoot 101 101
 -- a FORGED share supply (pad shares 1 → 9999) MOVES the committed root (cannot hide under the honest):
 #guard (root refSponge (writeState refSponge afterBoot 1 9999) != root refSponge afterBoot)
 
+-- §6b THE CIRCUIT-WELD GATE (the `VaultDeposit` manifest re-evaluation), both polarities.
+-- HONEST: an established vault (T=2, S=4) takes a deposit of d=10 minting m=20 (the share-price
+-- relation sharesOut 2 4 10 = 20); assets advance 2→12, shares 4→24, and the no-dilution floor
+-- 2·20 ≤ 4·10 (40 ≤ 40) holds — the gate passes.
+private def estab : FeltHeap := writeState refSponge [] 2 4
+private def afterDep : FeltHeap := writeState refSponge estab 12 24
+#guard decide (VaultDepositGate refSponge estab afterDep 2 4 10 20)
+-- THE INFLATION ATTACK: a deposit that mints ZERO shares (m = 0) fails the gate (the 0 < m leg) —
+-- the ERC-4626 first-depositor exploit (a skewed ratio rounds a victim's deposit to nothing) refused.
+private def afterZeroMint : FeltHeap := writeState refSponge estab 12 4
+#guard !decide (VaultDepositGate refSponge estab afterZeroMint 2 4 10 0)
+-- THE DILUTION (OVER-MINT): minting m = 21 when the fair ratio yields 20 dilutes the existing
+-- holders (2·21 = 42 > 4·10 = 40) — fails the no-dilution floor.
+private def afterDilute : FeltHeap := writeState refSponge estab 12 25
+#guard !decide (VaultDepositGate refSponge estab afterDilute 2 4 10 21)
+-- NON-CONSERVING: an `after` total_assets that did not advance by exactly the deposit (forged to 99)
+-- fails the gate (the pooled value cannot be conjured).
+private def afterForgedAssets : FeltHeap := writeState refSponge estab 99 24
+#guard !decide (VaultDepositGate refSponge estab afterForgedAssets 2 4 10 20)
+-- THE BOOTSTRAP: the first deposit into the empty vault (T=0, S=0) mints 1:1 (d=m=100); the
+-- no-dilution floor 0·100 ≤ 0·100 holds and the mint is positive — the gate passes.
+private def afterBootDep : FeltHeap := writeState refSponge empty 100 100
+#guard decide (VaultDepositGate refSponge empty afterBootDep 0 0 100 100)
+
 end Witnesses
 
 /-! ## §8 — Axiom hygiene. -/
@@ -361,7 +506,13 @@ end Witnesses
   writeState_binds_shares,
   assets_bound_in_root,
   shares_bound_in_root,
-  forged_state_moves_root
+  forged_state_moves_root,
+  vault_passes_gate,
+  vault_gate_forces_no_dilution,
+  inflation_attack_rejected,
+  dilution_rejected,
+  assets_not_conserved_rejected,
+  vault_gate_root_bound
 ]
 
 end Dregg2.Deos.Vault

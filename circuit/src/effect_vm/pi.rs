@@ -467,6 +467,28 @@ pub const SETTLE_ESCROW_STATUS_CONSUMED: u32 = 2;
 /// an old verifier rejects this tag as `unknown type_tag` (the lockstep
 /// standing-obligation verifier epoch), NOT a proving-key rotation.
 pub const SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION: u32 = 18;
+/// The share-vault no-dilution deposit gate
+/// (`docs/deos/VAULT-DEPOSIT-WELD-DESIGN.md`, the Lean `VaultDepositGate` in
+/// `metatheory/Dregg2/Deos/Vault.lean` §6b). A SINGLE manifest entry that reads the
+/// committed `total_assets` and `total_shares` counter slots across the (before,
+/// after) transition and forces the no-dilution share-price shape: the deposit is
+/// genuine (`after_assets > before_assets`, the assets advance by the deposit `d`),
+/// the mint is POSITIVE (`after_shares > before_shares`, the shares advance by `m` —
+/// the zero-mint / inflation-attack tooth), and NO existing holder is diluted
+/// (`before_assets·m ≤ before_shares·d`, the no-dilution floor — the existing
+/// price-per-share never decreases). Encoding: `slot_index` = the `total_assets`
+/// counter slot (old_v = before, new_v = after); `p0` = the `total_shares` counter
+/// slot. The deposit `d` and minted `m` are read as the across-transition deltas of
+/// those two slots (no per-deposit constant). A ZERO-MINT deposit (the ERC-4626
+/// first-depositor inflation attack, a victim's deposit rounding to nothing), an
+/// over-minting DILUTING deposit, or a NON-CONSERVING deposit (assets that do not
+/// advance by exactly the deposit) FAILS the conjunction — inexpressible — so a light
+/// client re-evaluating this entry witnesses the no-dilution discipline. STAGED: the
+/// AIR constraint polynomials (the VK bytes) are UNCHANGED (manifest in PI + off-AIR
+/// re-evaluation, exactly the temporal tags 13–16, the sealed-escrow tag 17, and the
+/// standing-obligation tag 18); an old verifier rejects this tag as `unknown
+/// type_tag` (the lockstep share-vault verifier epoch), NOT a proving-key rotation.
+pub const SLOT_CAVEAT_TAG_VAULT_DEPOSIT: u32 = 19;
 
 // ---- Cross-effect within-turn chain pinning (Proof-to-Action Binding §3.3) ----
 //

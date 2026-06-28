@@ -329,6 +329,14 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         // circuit/tests/discharge_obligation_air_teeth.rs). Conservatively `false` per
         // the honesty contract (under-claim).
         StateConstraint::DischargeObligation { .. } => false,
+
+        // The share-vault no-dilution deposit gate landed STAGED (the in-circuit weld,
+        // docs/deos/VAULT-DEPOSIT-WELD-DESIGN.md): the scalar evaluator + the manifest
+        // projection + the off-AIR verifier re-evaluation are wired, but no
+        // executor-commit accept/reject coverage pair has been authored yet (the teeth
+        // live circuit-side, circuit/tests/vault_deposit_air_teeth.rs). Conservatively
+        // `false` per the honesty contract (under-claim).
+        StateConstraint::VaultDeposit { .. } => false,
     }
 }
 
@@ -366,6 +374,10 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
     // weld); scalar evaluator + manifest projection + off-AIR verifier wired, but no
     // executor-commit accept/reject pair authored yet (teeth are circuit-side).
     "DischargeObligation",
+    // The share-vault no-dilution deposit gate landed STAGED (in-circuit weld); scalar
+    // evaluator + manifest projection + off-AIR verifier wired, but no executor-commit
+    // accept/reject pair authored yet (teeth are circuit-side).
+    "VaultDeposit",
 ];
 
 /// Ratchet for StateConstraint executor-enforcement coverage — may only shrink.
@@ -375,8 +387,10 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
 /// dedicated executor accept/reject coverage pair; 20 → 21 when the sealed-escrow
 /// atomic-swap gate landed STAGED (in-circuit weld, teeth circuit-side); 21 → 22 when
 /// the standing-obligation per-period discharge gate landed STAGED (in-circuit weld,
-/// teeth circuit-side). Shrink as each gains an executor accept/reject coverage pair.
-const MAX_UNCOVERED_CONSTRAINTS: usize = 22;
+/// teeth circuit-side); 22 → 23 when the share-vault no-dilution deposit gate landed
+/// STAGED (in-circuit weld, teeth circuit-side). Shrink as each gains an executor
+/// accept/reject coverage pair.
+const MAX_UNCOVERED_CONSTRAINTS: usize = 23;
 
 #[test]
 fn state_constraint_coverage_ratchet_only_shrinks() {

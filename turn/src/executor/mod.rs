@@ -408,6 +408,32 @@ pub fn project_slot_caveat_manifest(
                     BabyBear::new(*amount),
                 ],
             }),
+            // The share-vault no-dilution deposit gate (the Lean `VaultDepositGate`,
+            // `metatheory/Dregg2/Deos/Vault.lean` §6b — the staged weld,
+            // `docs/deos/VAULT-DEPOSIT-WELD-DESIGN.md`). A SINGLE entry: slot_index =
+            // the `total_assets` counter slot, p0 = the `total_shares` counter slot.
+            // The verifier re-evaluates the no-dilution shape (assets advance by a
+            // positive deposit ∧ shares advance by a positive mint ∧ no existing holder
+            // diluted) off-AIR against the bound state_before/state_after views — the
+            // deposit `d` and minted `m` are the across-transition slot deltas, so no
+            // per-deposit constant is needed. VK UNCHANGED, exactly like the temporal
+            // tags 13–16, the sealed-escrow tag 17, and the standing-obligation tag 18.
+            // Additive + gated by a cell DECLARING the caveat, so it is dead-by-default
+            // until a cell opts in at the share-vault verifier epoch (no deployed cell
+            // declares it).
+            dregg_cell::StateConstraint::VaultDeposit {
+                assets_slot,
+                shares_slot,
+            } => Some(SlotCaveatEntry {
+                type_tag: pi::SLOT_CAVEAT_TAG_VAULT_DEPOSIT,
+                slot_index: *assets_slot,
+                params: [
+                    BabyBear::new(*shares_slot as u32),
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                ],
+            }),
             // Deferred — no AIR teeth in Block 3 first wave.
             dregg_cell::StateConstraint::SumEquals { .. }
             | dregg_cell::StateConstraint::FieldLteField { .. }

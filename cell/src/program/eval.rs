@@ -1176,6 +1176,72 @@ fn evaluate_constraint_full(
             Ok(())
         }
 
+        // The share-vault no-dilution deposit gate (the Lean `VaultDepositGate`,
+        // `metatheory/Dregg2/Deos/Vault.lean` §6b), evaluated over the field-mirrored
+        // `total_assets` / `total_shares` counter slots. Across the (old, new)
+        // transition the committed total_assets must advance by the deposit `d > 0`,
+        // the committed total_shares must advance by `m > 0` minted shares (the
+        // zero-mint / inflation-attack tooth), and NO existing holder may be diluted
+        // (`before_assets·m ≤ before_shares·d`, the no-dilution floor). A zero-mint /
+        // diluting / non-conserving step fails this conjunction: there is no accepting
+        // witness that mints nothing, dilutes the existing holders, or conjures pooled
+        // value. The deposit `d` and minted `m` are the across-transition deltas of the
+        // two slots (no per-deposit constant); products in `u128` so they cannot wrap.
+        StateConstraint::VaultDeposit {
+            assets_slot,
+            shares_slot,
+        } => {
+            let as_ = check_index(*assets_slot)?;
+            let ss = check_index(*shares_slot)?;
+            let Some(old) = old_state else {
+                return Err(ProgramError::TransitionCheckRequiresOldState {
+                    constraint: constraint.clone(),
+                    index: *assets_slot,
+                });
+            };
+            let before_assets = field_to_u64(&old.fields[as_]);
+            let after_assets = field_to_u64(&new_state.fields[as_]);
+            let before_shares = field_to_u64(&old.fields[ss]);
+            let after_shares = field_to_u64(&new_state.fields[ss]);
+            // CONSERVING + GENUINE DEPOSIT: total_assets advances by a positive deposit.
+            if after_assets <= before_assets {
+                return violated(
+                    constraint,
+                    format!(
+                        "VaultDeposit: total_assets must advance by a positive deposit \
+                         (slot[{as_}] before {before_assets}, after {after_assets})"
+                    ),
+                );
+            }
+            let d = after_assets - before_assets;
+            // THE INFLATION-ATTACK TOOTH: a positive deposit must mint positive shares.
+            if after_shares <= before_shares {
+                return violated(
+                    constraint,
+                    format!(
+                        "VaultDeposit: inflation-attack rejection — a positive deposit must mint positive shares \
+                         (slot[{ss}] before {before_shares}, after {after_shares})"
+                    ),
+                );
+            }
+            let m = after_shares - before_shares;
+            // THE NO-DILUTION FLOOR: before_assets·m ≤ before_shares·d (the existing
+            // price-per-share never decreases). u128 so the products cannot overflow.
+            if u128::from(before_assets) * u128::from(m) > u128::from(before_shares) * u128::from(d)
+            {
+                return violated(
+                    constraint,
+                    format!(
+                        "VaultDeposit: dilution — minting {m} shares for a deposit of {d} dilutes the existing holders \
+                         (before_assets·m = {} > before_shares·d = {})",
+                        u128::from(before_assets) * u128::from(m),
+                        u128::from(before_shares) * u128::from(d)
+                    ),
+                );
+            }
+            Ok(())
+        }
+
         StateConstraint::TemporalPredicate {
             dsl_hash,
             witness_index,

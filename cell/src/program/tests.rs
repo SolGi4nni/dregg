@@ -3160,6 +3160,13 @@ fn view_projection_is_total_and_kind_tagged() {
             },
             "DischargeObligation",
         ),
+        (
+            StateConstraint::VaultDeposit {
+                assets_slot: 0,
+                shares_slot: 1,
+            },
+            "VaultDeposit",
+        ),
     ];
 
     // COVERAGE TOOTH: this match must name every variant exactly once.
@@ -3232,7 +3239,8 @@ fn view_projection_is_total_and_kind_tagged() {
             | StateConstraint::SinceEvent { .. }
             | StateConstraint::ChallengeWindow { .. }
             | StateConstraint::SettleEscrow { .. }
-            | StateConstraint::DischargeObligation { .. } => {}
+            | StateConstraint::DischargeObligation { .. }
+            | StateConstraint::VaultDeposit { .. } => {}
         }
     }
 

@@ -1841,4 +1841,58 @@ pub enum StateConstraint {
         /// The schedule amount — the exact discharged-total advance per discharge.
         amount: u32,
     },
+
+    /// **The share-vault no-dilution deposit gate** (the share-vault house-capacity
+    /// in-circuit weld, `docs/deos/VAULT-DEPOSIT-WELD-DESIGN.md`). Forces an
+    /// ERC-4626-style deposit to honor the share-price relation ACROSS the (old, new)
+    /// transition: the committed `total_assets` counter must advance by the deposit
+    /// `d > 0`, the committed `total_shares` counter must advance by `m > 0` minted
+    /// shares (the zero-mint / inflation-attack tooth), and NO existing holder may be
+    /// diluted (`before_assets·m ≤ before_shares·d`, the no-dilution floor — the
+    /// existing price-per-share never decreases). A forged ZERO-MINT deposit (the
+    /// ERC-4626 first-depositor inflation attack, where a victim's deposit rounds to
+    /// nothing), an over-minting DILUTING deposit, or a NON-CONSERVING deposit (assets
+    /// that do not advance by exactly the deposit) is INEXPRESSIBLE: it fails this
+    /// single conjunctive entry. This is the Lean `VaultDepositGate`
+    /// (`metatheory/Dregg2/Deos/Vault.lean` §6b) lifted to a declared cell-program
+    /// caveat — a SINGLE entry binding the joint deposit ∧ minted ∧ positive ∧
+    /// no-dilution shape, which the per-slot-independent caveats (`Monotonic`,
+    /// `FieldDelta`, …) cannot express.
+    ///
+    /// The named slots carry the **field-mirrored counter scalars** (the
+    /// `total_assets` and `total_shares` counters `cell/src/vault.rs` writes into the
+    /// committed `SHARE_VAULT_COLL` heap, mirrored into register slots for the
+    /// AIR-teeth view — stage (a) of the weld design): `assets_slot` the committed
+    /// `total_assets` (before/after), `shares_slot` the committed `total_shares`
+    /// (before/after). The deposit `d` and minted `m` are read as the across-transition
+    /// deltas of those two slots (no per-deposit constant — a deposit varies per turn,
+    /// unlike the standing obligation's fixed schedule). The executor evaluator
+    /// (`evaluate_constraint_full`) enforces the gate over the (old, new) pair; the
+    /// projection (`dregg_turn::executor::project_slot_caveat_manifest`) emits the
+    /// tag-19 `SLOT_CAVEAT_TAG_VAULT_DEPOSIT` manifest entry, which a light client
+    /// re-evaluates against the public-input-bound `state_before`/`state_after` views
+    /// (`dregg_circuit::effect_vm::verify_slot_caveat_manifest`). The AIR constraint
+    /// polynomials — hence the VK bytes — are UNCHANGED (manifest in public inputs +
+    /// off-AIR re-evaluation, exactly the temporal-caveat / sealed-escrow /
+    /// standing-obligation vehicle): an old verifier rejects tag 19 as `unknown
+    /// type_tag`, so adopting it is a verifier-code epoch, not a proving-key rotation.
+    ///
+    /// STAGED: no deployed cell declares this caveat yet (dead-by-default until a cell
+    /// opts in at the share-vault verifier epoch). Fail-closed: a transition with no
+    /// `old_state` surfaces `TransitionCheckRequiresOldState`; a bad slot index is
+    /// `InvalidFieldIndex`; any zero-mint / diluting / non-conserving step is
+    /// `ConstraintViolated`. A `StateConstraint` (reads the (old, new) pair, does not
+    /// lift into the post-state-local [`SimpleStateConstraint`] fragment). APPEND-ONLY
+    /// (declared LAST so every existing postcard/serde variant index is preserved —
+    /// factory VKs / content addresses byte-identical).
+    VaultDeposit {
+        /// Register slot mirroring the committed `total_assets` counter
+        /// (before/after the transition); the gate requires it to advance by the
+        /// deposit `d > 0`.
+        assets_slot: u8,
+        /// Register slot mirroring the committed `total_shares` counter
+        /// (before/after); the gate requires it to advance by `m > 0` minted shares,
+        /// with no existing holder diluted.
+        shares_slot: u8,
+    },
 }
