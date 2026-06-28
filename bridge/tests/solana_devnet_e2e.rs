@@ -51,7 +51,7 @@
 //! validator's voter keypair sits in the local ledger dir; devnet cannot.
 
 use dregg_bridge::midnight::EpochKey;
-use dregg_bridge::solana_consensus::BankHashComponents;
+use dregg_bridge::solana_consensus::{BankHashComponents, ValidatorVote};
 use dregg_bridge::solana_mirror::{MirrorConfig, MirrorState, SolanaLockAttestation};
 use dregg_bridge::solana_provenance::decode_authorized_voter;
 use dregg_bridge::solana_trustless::{
@@ -282,7 +282,16 @@ fn devnet_solana_lock_mirrors_and_pays_a_lease() {
             // leg that is NOT a trustless guarantee on devnet.
             voted_stake: 3,
             total_stake: 3,
-            votes: vec![],
+            // One structurally-present placeholder vote so the proof is
+            // well-formed (`verify_lock_proof` requires a non-empty vote set but
+            // does NOT count/verify it — the StructureOnly path explicitly does
+            // not anchor consensus; the real devnet validators' authorized-voter
+            // keys are not obtainable off-chain, see the module doc).
+            votes: vec![ValidatorVote::sign(
+                &SigningKey::from_bytes(&[0x77u8; 32]),
+                slot,
+                bank_hash,
+            )],
             bank_components,
             poh: None,
         },

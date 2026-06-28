@@ -11,6 +11,41 @@ devnet cannot expose off-chain (see "trustless vs oracle" below).
 stand-in SPL token of the same shape (0 decimals) — devnet is for proving the
 plumbing, not for the real asset.
 
+## Proven run (real devnet, 2026-06-28)
+
+The full path ran end-to-end against the real public devnet. The harness minted
+a stand-in `$DREGG`, locked an amount into a vault, harvested the real on-chain
+artifacts, and the gated `solana_devnet_e2e` test verified all three legs.
+
+| Fact | Value |
+| --- | --- |
+| Cluster / RPC | devnet / `https://api.devnet.solana.com` |
+| Payer wallet | `9zbZqitgHv2G9fYKKvhUujvWEuNkFtA1Z4qCQJsmrN42` (funded with 5 SOL) |
+| Stand-in `$DREGG` SPL mint | `BdEF6jxFUtydj3eMRWhSHVD1kSvSW4swBrJ3RxT7dcJ4` (0 decimals, supply 1000) |
+| Vault account | `CWVuZdJ5WSMtB7JJSzN7bbLTefhdWPfexxq6rxC8c7MY` |
+| Locked amount | **250** `$DREGG` (confirmed on-chain: vault token balance = 250) |
+| Slot / epoch | 472650199 / 1094 |
+
+What the gated test proved against those real artifacts:
+
+- **Leg 1 — oracle-attested mirror mint.** The real devnet lock of **250** was
+  attested and minted into conserved mirror credit: `live_supply = 250`,
+  `currently_locked = 250`, conservation invariant holds. A second mint of the
+  same lock id was rejected (replay-safe). The mirror credit then paid an
+  execution-lease of **100** (`min(locked, 100)`) through the same `resolve_pay`
+  rail — exactly one conserving `Transfer` — and conservation survived the pay.
+- **Leg 2 — trustless `StructureOnly` inclusion** over the real devnet vault
+  bytes (real lamports `2039280`, owner `Tokenkeg…`, executable/rent_epoch). The
+  inclusion + binding machinery accepted the genuine devnet account leaf
+  (`LockProofTrust::StructureOnly` — structure, not a counted consensus).
+- **Leg 3 — real-byte `VoteState` decode.** A real devnet vote account
+  (`vgcDar2pryHvMgPkKaZfh8pQy4BJxv7SpwUG7zinWjG`) was decoded; the bank-state
+  decoder recovered authorized voter `dv3qDFk1DTF36Z62bNvrCXe9sKATA6xvVy6A798xxAS`.
+
+Note: devnet accounts are ephemeral; the mint/vault pubkeys above are a snapshot
+of this run. Re-running the harness produces a fresh set. The ungated suite still
+skips cleanly (no devnet access ever required to keep CI green).
+
 ## What you need
 
 - The free Agave/Solana toolchain (`solana`, `solana-keygen`, `spl-token`) and `jq`:
@@ -25,7 +60,8 @@ plumbing, not for the real asset.
   the airdrop loop cannot fund the keypair, the harness prints the keypair pubkey
   and exits with a clear message. Fund it once at <https://faucet.solana.com> (or
   wait for the rate limit to clear) and re-run — nothing else in the harness needs
-  the faucet.
+  the faucet. The proven run above used a keypair funded out-of-band (5 SOL); once
+  funded, the harness skips the airdrop loop and runs the whole path.
 
 ## How to run it
 
