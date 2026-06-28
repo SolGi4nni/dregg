@@ -886,6 +886,26 @@ pub const FIGHTER_RIGHTS: AuthRequired = AuthRequired::Either;
 /// The referee rights tier (root — resolve the frame + all). See [`SPECTATOR_RIGHTS`].
 pub const REFEREE_RIGHTS: AuthRequired = AuthRequired::None;
 
+// ---------------------------------------------------------------------------
+// The figure-cell verb vocabulary — the affordance names the deos surface, the
+// fires, and the deos-view CARD all speak. Naming them once keeps the card's
+// action buttons (`card::tussle_card_value`) and the cell affordances
+// ([`figure_cell`]) on the SAME method words (the card↔method coupling tooth).
+// ---------------------------------------------------------------------------
+
+/// The `view_figure` verb — a SPECTATOR watches a figure's pose (the read tier).
+pub const METHOD_VIEW: &str = "view_figure";
+/// The `commit_move` verb — a FIGHTER seals its next pose (the fog-of-war commit).
+pub const METHOD_COMMIT: &str = "commit_move";
+/// The `reveal_move` verb — a FIGHTER opens its sealed pose (the reveal).
+pub const METHOD_REVEAL: &str = "reveal_move";
+/// The `resolve_frame` verb — the REFEREE resolves the frame (the 2-party joint turn).
+pub const METHOD_RESOLVE: &str = "resolve_frame";
+
+/// The deos-view CARD: the TUSSLE frame surface as a renderer-independent
+/// `deos.ui.*` view-tree (pure `serde_json`, no `deos-view` dep).
+pub mod card;
+
 /// FIGURE B's companion cell id for `agent_pubkey` — `derive_raw(agent_pubkey,
 /// FIGURE_B_TOKEN)`, distinct from figure A (the agent's own cell). The fires that target
 /// figure B name this id, so it must be seeded into the executor ([`seed_figure_b`]) for
@@ -976,7 +996,7 @@ fn figure_cell(figure: CellId, label: &'static str) -> DeosCell {
     // `view_figure` — a SPECTATOR watches this figure's pose. Cap-only (the read surface),
     // the narrowest tier.
     let view = CellAffordance::new(
-        "view_figure",
+        METHOD_VIEW,
         SPECTATOR_RIGHTS,
         Effect::EmitEvent {
             cell: figure,
@@ -990,7 +1010,7 @@ fn figure_cell(figure: CellId, label: &'static str) -> DeosCell {
     // (the htmx tooth). The actual fire ([`fire_commit_move`]) submits the FULL commit turn.
     let commit = GatedAffordance::new(
         CellAffordance::new(
-            "commit_move",
+            METHOD_COMMIT,
             FIGHTER_RIGHTS,
             Effect::SetField {
                 cell: figure,
@@ -1006,7 +1026,7 @@ fn figure_cell(figure: CellId, label: &'static str) -> DeosCell {
     // `SymMemberOf` on the produced transition — an ILLEGAL joint value is a real refusal.
     let reveal = GatedAffordance::new(
         CellAffordance::new(
-            "reveal_move",
+            METHOD_REVEAL,
             FIGHTER_RIGHTS,
             Effect::SetField {
                 cell: figure,
@@ -1022,7 +1042,7 @@ fn figure_cell(figure: CellId, label: &'static str) -> DeosCell {
     // rewind is refused.
     let resolve = GatedAffordance::new(
         CellAffordance::new(
-            "resolve_frame",
+            METHOD_RESOLVE,
             REFEREE_RIGHTS,
             Effect::SetField {
                 cell: figure,
