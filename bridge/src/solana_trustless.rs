@@ -9,58 +9,76 @@
 //! threshold [`crate::midnight::FederationAttestation`] that the Solana lock
 //! happened. This module replaces that trusted *word* with a verifiable
 //! *proof-of-lock* — a [`SolanaLockProof`] carrying Solana consensus evidence +
-//! an account-inclusion proof — verified by [`verify_lock_proof`] and routed
-//! through the SAME conservation accounting
+//! an account-inclusion proof — verified by [`verify_lock_proof_consensus`] and
+//! routed through the SAME conservation accounting
 //! ([`crate::solana_mirror::MirrorState::credit_lock`]) as the trusted path.
 //!
-//! # What is real vs. what is the named-hard STUB
+//! # What is real vs. what is the remaining adapter layer
 //!
-//! - **Real:** the typed lock-proof shape, its structural well-formedness, and
-//!   the *binding* checks — the inclusion proof's claimed fields must match the
-//!   bound claim (amount/recipient/lock_id) and the mirror config (spl_mint,
-//!   amount bounds). A malformed or mis-bound proof is refused.
-//! - **Named-hard STUB:** [`verify_consensus`] does NOT yet verify Solana's
-//!   consensus — no Tower-BFT stake-weighted vote-set verification, no PoH
-//!   linkage, no real accounts-hash inclusion against Solana's live state. It
-//!   currently checks only that the evidence is *structurally present and
-//!   self-consistent*. Until that is replaced, a verified proof carries
-//!   [`LockProofTrust::StructureOnly`], NOT [`LockProofTrust::ConsensusVerified`].
-//!   The caller is told exactly which it got, so the structural check can never
-//!   be mistaken for the (not-yet-built) consensus check.
+//! The consensus verification is **no longer a stub.** It is the real
+//! cryptographic check in [`crate::solana_consensus`]:
 //!
-//! This is deliberately honest: the consensus verification IS the trustless
-//! bridge, and it is large (the whole Option-B circuit). We structure it, name
-//! it, and refuse to fake it as done.
+//! - **Real (REACHES [`LockProofTrust::ConsensusVerified`]):** given a tracked
+//!   per-epoch [`EpochStakeTable`], [`verify_lock_proof_consensus`] verifies that
+//!   ≥ 2/3 of the epoch's active stake validly voted the claimed `bank_hash` at
+//!   the claimed slot (real per-vote Ed25519 + stake-weighted sum + duplicate
+//!   collapse), that the `bank_hash` recomputes from its committed components
+//!   (binding the accounts hash + PoH tail to what was voted), that the vault
+//!   account's lock record is included in that accounts hash (domain-separated
+//!   sorted Merkle), and — when present — that the PoH tick chain links the
+//!   slot's blockhash to a verified anchor.
+//! - **Real (structural, [`LockProofTrust::StructureOnly`]):** [`verify_lock_proof`]
+//!   checks proof structure + binding (well-formedness, the claim fields match
+//!   the mirror config and the included record) and a *claimed-tally* sanity
+//!   check, WITHOUT a stake table. It can never reach `ConsensusVerified`.
+//! - **Remaining adapter layer (honest):** the cryptography and consensus
+//!   arithmetic are real, but the mainnet **wire-format ingestion** is not yet
+//!   reproduced — parsing real vote `Transaction`s into [`ValidatorVote`]s,
+//!   sourcing/rotating the [`EpochStakeTable`] from Solana's stake program, the
+//!   exact accounts-hash fan-out/preimage, and a bounded/recursive PoH anchor
+//!   policy. See [`crate::solana_consensus`] for the precise modeled-vs-mainnet
+//!   boundary.
+//!
+//! The [`LockProofTrust`] dial tells the caller exactly which level a given
+//! verification achieved, so the structural check can never be mistaken for the
+//! consensus check.
 
 use dregg_types::CellId;
 use serde::{Deserialize, Serialize};
 
+use crate::solana_consensus::{
+    BankHashComponents, EpochStakeTable, PohSegment, ValidatorVote, VoteSetError,
+    verify_accounts_inclusion, verify_poh_segment, verify_supermajority,
+};
 use crate::solana_mirror::{MirrorError, MirrorMint, MirrorState};
 
 /// Solana Tower-BFT consensus evidence for one slot: the voted bank hash, the
-/// stake that voted it, and the (succinct) vote-set proof.
-///
-/// In a finished bridge `vote_proof` is the succinct proof that ≥ `voted_stake`
-/// of `total_stake` (the epoch's active stake) voted `bank_hash` at `slot` with
-/// consistent lockouts, plus the PoH linkage. **Today its contents are not
-/// verified** (see [`verify_consensus`]).
+/// epoch + the real stake-weighted votes, the bank-hash components that bind the
+/// accounts hash to the voted hash, and (optionally) the PoH linkage.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsensusEvidence {
     /// The Solana slot the lock was finalized in.
     pub slot: u64,
     /// The bank hash the super-majority voted (the state commitment for `slot`).
     pub bank_hash: [u8; 32],
-    /// Active stake (this epoch) that voted `bank_hash`. For real finality this
-    /// must be ≥ 2/3 of `total_stake`.
+    /// The epoch whose [`EpochStakeTable`] weights these votes.
+    pub epoch: u64,
+    /// **Claimed** voted stake — a hint used only by the structure-only
+    /// [`verify_lock_proof`] sanity check. The real path
+    /// ([`verify_lock_proof_consensus`]) IGNORES this and recomputes the voted
+    /// stake from `votes` against the tracked stake table.
     pub voted_stake: u128,
-    /// Total active stake for the epoch (the denominator of the 2/3 threshold).
+    /// **Claimed** total stake — a hint, as `voted_stake`.
     pub total_stake: u128,
-    /// The succinct proof of the stake-weighted vote set + PoH linkage.
-    ///
-    /// STUB: its bytes are not yet checked — only its presence. In Option B this
-    /// is the relayer's light-client SNARK/STARK over the vote transactions and
-    /// the epoch stake table.
-    pub vote_proof: Vec<u8>,
+    /// The real per-validator Ed25519 votes for `(slot, bank_hash)`. The
+    /// consensus path verifies each signature and stake-weights the valid ones.
+    pub votes: Vec<ValidatorVote>,
+    /// The components the bank hash commits to (parent hash, accounts hash,
+    /// signature count, PoH tail). Recomputed and bound to `bank_hash`.
+    pub bank_components: BankHashComponents,
+    /// Optional PoH segment linking a verified anchor to the slot's blockhash
+    /// (`bank_components.last_blockhash`). When present it is verified.
+    pub poh: Option<PohSegment>,
 }
 
 /// Inclusion proof that the Solana vault account, in the proven bank state,
@@ -77,11 +95,9 @@ pub struct AccountInclusionProof {
     pub recorded_lock_id: [u8; 32],
     /// The accounts hash the bank hash commits to (the root the path proves into).
     pub accounts_hash: [u8; 32],
-    /// The inclusion path of `vault_account` into `accounts_hash`.
-    ///
-    /// STUB: the path is required to be non-empty but is NOT yet verified against
-    /// `accounts_hash` (the real accounts-hash format is version-coupled to the
-    /// Solana release — see the design doc, Option A row "Accounts inclusion").
+    /// The sibling path of `vault_account`'s lock-record leaf into
+    /// `accounts_hash`, folded with the domain-separated sorted-Merkle node hash
+    /// ([`crate::solana_consensus::merkle_node`]).
     pub merkle_path: Vec<[u8; 32]>,
 }
 
@@ -104,19 +120,20 @@ pub struct SolanaLockProof {
     pub inclusion: AccountInclusionProof,
 }
 
-/// The trust level a [`verify_lock_proof`] call actually achieved.
+/// The trust level a verification call actually achieved.
 ///
 /// This is the honesty dial: it tells the caller whether the consensus
 /// verification — the part that makes the bridge trustless — actually ran.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LockProofTrust {
     /// Only the proof's STRUCTURE and BINDING were checked (well-formedness +
-    /// the claim fields match). The Solana consensus verification is STUBBED
-    /// (see [`verify_consensus`]); this is NOT yet a trustless guarantee.
+    /// the claim fields match), plus a claimed-tally sanity check — WITHOUT a
+    /// stake table. Reached by [`verify_lock_proof`]. NOT a trustless guarantee.
     StructureOnly,
-    /// Solana consensus was genuinely verified (Tower-BFT stake-weighted votes,
-    /// PoH, accounts-hash inclusion). **Not reachable yet** — reserved for when
-    /// [`verify_consensus`] is built. A real trustless mint.
+    /// Solana consensus was genuinely verified against a tracked stake table:
+    /// real Ed25519 stake-weighted ≥ 2/3 votes on the bank hash, the bank-hash
+    /// component binding, the accounts-hash inclusion of the lock record, and
+    /// (when present) the PoH linkage. Reached by [`verify_lock_proof_consensus`].
     ConsensusVerified,
 }
 
@@ -133,13 +150,39 @@ pub enum LockProofError {
     /// (amount / recipient / lock_id mismatch — the proof binds to a different
     /// lock than it claims).
     ClaimMismatch,
-    /// The proof is structurally empty/ill-formed (missing vote proof, empty
-    /// inclusion path, or a zero stake denominator).
+    /// The proof is structurally empty/ill-formed (no votes, empty inclusion
+    /// path, or a zero claimed-stake denominator).
     Malformed,
-    /// The consensus evidence is internally inconsistent (voted stake does not
-    /// meet the ≥ 2/3 threshold of total stake). This is a structural sanity
-    /// check, NOT the real consensus verification.
-    StakeBelowThreshold { voted: u128, total: u128 },
+    /// The voted stake does not meet the ≥ 2/3 threshold of total stake.
+    ///
+    /// In [`verify_lock_proof`] this is the *claimed-tally* sanity check; in
+    /// [`verify_lock_proof_consensus`] the `voted`/`total` are the REAL
+    /// cryptographically-counted stake against the tracked stake table.
+    StakeBelowThreshold {
+        /// The voted stake (claimed, or real in the consensus path).
+        voted: u128,
+        /// The total stake (claimed, or real in the consensus path).
+        total: u128,
+    },
+    /// The proof's evidence epoch does not match the supplied stake table's epoch
+    /// — the wrong epoch's stake distribution would be applied.
+    WrongEpoch {
+        /// The epoch the evidence claims.
+        evidence: u64,
+        /// The epoch the stake table is for.
+        table: u64,
+    },
+    /// The bank-hash components do not recompute to the voted `bank_hash`, or the
+    /// accounts hash they commit to does not match the inclusion proof's root.
+    BankHashMismatch,
+    /// The vault account's lock record does not include into the voted bank
+    /// state's accounts hash via the supplied path.
+    AccountsInclusionInvalid,
+    /// The PoH segment is present but does not verify (bad tick chain, or its
+    /// tail is not the slot's blockhash).
+    PohInvalid,
+    /// PoH verification was required but no PoH segment was supplied.
+    PohMissing,
 }
 
 impl std::fmt::Display for LockProofError {
@@ -154,14 +197,29 @@ impl std::fmt::Display for LockProofError {
                 f,
                 "voted stake {voted} does not meet the 2/3 threshold of total stake {total}"
             ),
+            Self::WrongEpoch { evidence, table } => write!(
+                f,
+                "evidence epoch {evidence} does not match stake-table epoch {table}"
+            ),
+            Self::BankHashMismatch => {
+                write!(f, "bank-hash components do not bind the voted bank hash")
+            }
+            Self::AccountsInclusionInvalid => {
+                write!(
+                    f,
+                    "vault account lock record is not included in the voted accounts hash"
+                )
+            }
+            Self::PohInvalid => write!(f, "PoH segment does not verify against the slot blockhash"),
+            Self::PohMissing => write!(f, "PoH verification required but no segment supplied"),
         }
     }
 }
 
 impl std::error::Error for LockProofError {}
 
-/// Error from [`MirrorState::mint_against_lock_proof`]: either the proof failed
-/// to verify, or the (verified) mint broke the mirror's accounting.
+/// Error from the mint-against-proof methods: either the proof failed to verify,
+/// or the (verified) mint broke the mirror's accounting.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProofMintError {
     /// The lock proof did not verify.
@@ -182,27 +240,15 @@ impl std::fmt::Display for ProofMintError {
 
 impl std::error::Error for ProofMintError {}
 
-/// Verify a Solana lock proof against the mirror config.
-///
-/// Checks (all REAL):
-/// 1. The proof's `spl_mint` matches the mirror and `amount` is within bounds.
-/// 2. The inclusion proof's recorded fields bind to THIS claim (amount,
-///    recipient, lock_id) — a proof cannot claim one lock and include another.
-/// 3. Structural well-formedness (non-empty vote proof + inclusion path, nonzero
-///    total stake) and a stake-threshold sanity check.
-///
-/// Then delegates to [`verify_consensus`] for the **named-hard STUBBED** Solana
-/// consensus verification, and returns the [`LockProofTrust`] level achieved.
-///
-/// Returns [`LockProofTrust::StructureOnly`] today: the structure and binding
-/// are verified, but the consensus check is a stub, so this is NOT yet a
-/// trustless guarantee. See `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
-pub fn verify_lock_proof(
+/// Check the proof's structure and binding (mint, amount bounds, the included
+/// record matches the bound claim, non-empty votes + inclusion path). Shared by
+/// both the structure-only and consensus paths.
+fn check_binding(
     proof: &SolanaLockProof,
     spl_mint: &[u8; 32],
     min_amount: u64,
     max_amount: u64,
-) -> Result<LockProofTrust, LockProofError> {
+) -> Result<(), LockProofError> {
     // (1) config binding.
     if proof.spl_mint != *spl_mint {
         return Err(LockProofError::WrongMint);
@@ -214,9 +260,7 @@ pub fn verify_lock_proof(
         return Err(LockProofError::AboveMax);
     }
 
-    // (2) the inclusion proof must bind to exactly the claimed lock. A proof that
-    // includes a different amount/recipient/lock_id than it claims is a forgery
-    // attempt and is refused regardless of the (stubbed) consensus check.
+    // (2) the inclusion proof must bind to exactly the claimed lock.
     let inc = &proof.inclusion;
     if inc.recorded_amount != proof.amount
         || inc.recorded_recipient != proof.dregg_recipient
@@ -226,72 +270,141 @@ pub fn verify_lock_proof(
     }
 
     // (3) structural well-formedness.
-    if proof.consensus.vote_proof.is_empty() || inc.merkle_path.is_empty() {
+    if proof.consensus.votes.is_empty() || inc.merkle_path.is_empty() {
         return Err(LockProofError::Malformed);
     }
-    if proof.consensus.total_stake == 0 {
-        return Err(LockProofError::Malformed);
-    }
-
-    // The Solana consensus verification (the trustless core) — STUBBED.
-    verify_consensus(&proof.consensus, inc)
+    Ok(())
 }
 
-/// **NAMED-HARD STUB — the trustless core.**
+/// Verify a Solana lock proof's **structure and binding only**, WITHOUT a stake
+/// table. Returns [`LockProofTrust::StructureOnly`] — the consensus is NOT
+/// verified, so this is NOT a trustless guarantee. Use
+/// [`verify_lock_proof_consensus`] for the real trustless check.
 ///
-/// In a finished bridge this verifies, against Solana's own consensus:
-/// - **Tower-BFT stake-weighted votes:** that ≥ 2/3 of the epoch's active stake
-///   voted `consensus.bank_hash` at `consensus.slot`, with consistent lockouts —
-///   tracking the per-epoch stake table (the hard part; the sync-committee
-///   analogue, but over the full ~1–2k vote accounts and rotated per epoch);
-/// - **PoH linkage:** that the slot's blockhash is the genuine tail of the PoH
-///   tick chain;
-/// - **Accounts inclusion:** that `inclusion.merkle_path` genuinely proves
-///   `inclusion.vault_account` (carrying the lock record) into the
-///   `inclusion.accounts_hash` that the voted `bank_hash` commits to.
-///
-/// **Today it does NONE of that.** It performs only a structural sanity check:
-/// the voted stake meets the ≥ 2/3 ratio of total stake. The `vote_proof` bytes,
-/// the PoH chain, and the `merkle_path` against `accounts_hash` are NOT verified.
-/// It therefore returns [`LockProofTrust::StructureOnly`] — never
-/// [`LockProofTrust::ConsensusVerified`]. Replacing this function (and flipping
-/// the returned trust level) is the whole Option-B circuit; see the design doc.
-fn verify_consensus(
-    consensus: &ConsensusEvidence,
-    _inclusion: &AccountInclusionProof,
+/// Checks (all real): the mint/amount config binding, that the included record
+/// matches the bound claim, well-formedness, and a *claimed-tally* sanity check
+/// (`voted/total ≥ 2/3` over the untrusted claimed scalars).
+pub fn verify_lock_proof(
+    proof: &SolanaLockProof,
+    spl_mint: &[u8; 32],
+    min_amount: u64,
+    max_amount: u64,
 ) -> Result<LockProofTrust, LockProofError> {
-    // Structural sanity only: voted stake must clear the 2/3 threshold. This is
-    // NOT a verification that the votes are real — that requires the stake table
-    // and the vote-set proof, which are not checked here.
-    //   voted/total >= 2/3   ⟺   3*voted >= 2*total   (overflow-safe in u128)
-    if consensus.voted_stake.saturating_mul(3) < consensus.total_stake.saturating_mul(2) {
+    check_binding(proof, spl_mint, min_amount, max_amount)?;
+
+    // Claimed-tally structural sanity (a hint, NOT a consensus check).
+    let c = &proof.consensus;
+    if c.total_stake == 0 {
+        return Err(LockProofError::Malformed);
+    }
+    if c.voted_stake.saturating_mul(3) < c.total_stake.saturating_mul(2) {
         return Err(LockProofError::StakeBelowThreshold {
-            voted: consensus.voted_stake,
-            total: consensus.total_stake,
+            voted: c.voted_stake,
+            total: c.total_stake,
         });
     }
-
-    // STUB: the real Tower-BFT vote-set / PoH / accounts-inclusion verification
-    // goes here. Until it exists, this is structure-only — NOT trustless.
     Ok(LockProofTrust::StructureOnly)
 }
 
+/// Verify a Solana lock proof against a **tracked epoch stake table** — the real
+/// trustless check. Returns [`LockProofTrust::ConsensusVerified`] only when:
+///
+/// 1. structure + binding pass ([`check_binding`]);
+/// 2. the evidence epoch matches `stake_table.epoch`;
+/// 3. ≥ 2/3 of the epoch's active stake validly voted the claimed `(slot,
+///    bank_hash)` — real per-vote Ed25519 + stake-weighted sum;
+/// 4. the bank-hash components recompute to the voted `bank_hash` and commit to
+///    the inclusion proof's `accounts_hash`;
+/// 5. the vault account's lock record is included in that accounts hash;
+/// 6. if `require_poh` (or a PoH segment is present), the PoH tick chain links
+///    the anchor to the slot's blockhash.
+pub fn verify_lock_proof_consensus(
+    proof: &SolanaLockProof,
+    spl_mint: &[u8; 32],
+    min_amount: u64,
+    max_amount: u64,
+    stake_table: &EpochStakeTable,
+    require_poh: bool,
+) -> Result<LockProofTrust, LockProofError> {
+    check_binding(proof, spl_mint, min_amount, max_amount)?;
+    verify_consensus(&proof.consensus, &proof.inclusion, stake_table, require_poh)?;
+    Ok(LockProofTrust::ConsensusVerified)
+}
+
+/// The real Solana-consensus verification (see [`verify_lock_proof_consensus`]).
+fn verify_consensus(
+    consensus: &ConsensusEvidence,
+    inclusion: &AccountInclusionProof,
+    stake_table: &EpochStakeTable,
+    require_poh: bool,
+) -> Result<(), LockProofError> {
+    // (2) the stake table must be for the evidence's epoch.
+    if stake_table.epoch != consensus.epoch {
+        return Err(LockProofError::WrongEpoch {
+            evidence: consensus.epoch,
+            table: stake_table.epoch,
+        });
+    }
+
+    // (3) real stake-weighted Ed25519 super-majority on the voted bank hash.
+    match verify_supermajority(
+        stake_table,
+        consensus.slot,
+        &consensus.bank_hash,
+        &consensus.votes,
+    ) {
+        Ok(_tally) => {}
+        Err(VoteSetError::EmptyStakeTable) => return Err(LockProofError::Malformed),
+        Err(VoteSetError::StakeBelowSupermajority { voted, total }) => {
+            return Err(LockProofError::StakeBelowThreshold { voted, total });
+        }
+    }
+
+    // (4) bind the accounts hash (and PoH tail) to the voted bank hash.
+    if consensus.bank_components.accounts_hash != inclusion.accounts_hash
+        || !consensus.bank_components.binds(&consensus.bank_hash)
+    {
+        return Err(LockProofError::BankHashMismatch);
+    }
+
+    // (5) the vault account's lock record must include into that accounts hash.
+    if !verify_accounts_inclusion(
+        &inclusion.vault_account,
+        inclusion.recorded_amount,
+        &inclusion.recorded_recipient,
+        &inclusion.recorded_lock_id,
+        &inclusion.merkle_path,
+        &inclusion.accounts_hash,
+    ) {
+        return Err(LockProofError::AccountsInclusionInvalid);
+    }
+
+    // (6) PoH linkage: if present it must verify and tail at the slot blockhash;
+    // if required and absent, refuse.
+    match &consensus.poh {
+        Some(seg) => {
+            if verify_poh_segment(seg).is_err()
+                || seg.tail_hash != consensus.bank_components.last_blockhash
+            {
+                return Err(LockProofError::PohInvalid);
+            }
+        }
+        None => {
+            if require_poh {
+                return Err(LockProofError::PohMissing);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 impl MirrorState {
-    /// **Mirror-mint against a trustless [`SolanaLockProof`]** — the honest
-    /// upgrade from [`MirrorState::mint_against_lock`].
-    ///
-    /// Verifies the lock proof via [`verify_lock_proof`], then routes through the
-    /// SAME conservation accounting ([`MirrorState::credit_lock`]) the trusted
-    /// path uses. The conservation invariant (`live_supply ≤ currently_locked`),
-    /// replay dedup, and the emitted [`Effect::Mint`](dregg_turn::action::Effect::Mint)
-    /// are identical — only the lock *evidence* (proof vs signature) differs.
-    ///
-    /// Returns the [`LockProofTrust`] level alongside the mint, so the caller
-    /// knows whether the consensus check actually ran. **Today that is always
-    /// [`LockProofTrust::StructureOnly`]** — the consensus verification is
-    /// stubbed (see [`verify_consensus`]). The trusted
-    /// [`MirrorState::mint_against_lock`] remains the production fallback until
-    /// the consensus core is built.
+    /// **Structure-only** mirror-mint against a [`SolanaLockProof`] — verifies
+    /// structure + binding (NOT consensus) via [`verify_lock_proof`], then routes
+    /// through the SAME [`MirrorState::credit_lock`] accounting the trusted path
+    /// uses. Returns [`LockProofTrust::StructureOnly`]; use
+    /// [`MirrorState::mint_against_lock_proof_consensus`] for the trustless mint.
     ///
     /// On any error the state is left unchanged.
     pub fn mint_against_lock_proof(
@@ -312,12 +425,43 @@ impl MirrorState {
 
         Ok((mint, trust))
     }
+
+    /// **Trustless** mirror-mint against a [`SolanaLockProof`], verified against
+    /// a tracked epoch `stake_table` via [`verify_lock_proof_consensus`]. Routes
+    /// through the SAME [`MirrorState::credit_lock`] accounting — only the lock
+    /// *evidence* (verified consensus proof vs trusted signature) differs.
+    /// Returns [`LockProofTrust::ConsensusVerified`].
+    ///
+    /// On any error the state is left unchanged.
+    pub fn mint_against_lock_proof_consensus(
+        &mut self,
+        proof: &SolanaLockProof,
+        stake_table: &EpochStakeTable,
+        require_poh: bool,
+    ) -> Result<(MirrorMint, LockProofTrust), ProofMintError> {
+        let trust = verify_lock_proof_consensus(
+            proof,
+            &self.config.spl_mint,
+            self.config.min_amount,
+            self.config.max_amount,
+            stake_table,
+            require_poh,
+        )
+        .map_err(ProofMintError::Proof)?;
+
+        let mint = self
+            .credit_lock(proof.lock_id, proof.amount, proof.dregg_recipient)
+            .map_err(ProofMintError::Mint)?;
+
+        Ok((mint, trust))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::midnight::EpochKey;
+    use crate::solana_consensus::{account_leaf, merkle_node};
     use crate::solana_mirror::MirrorConfig;
     use dregg_turn::action::Effect;
     use ed25519_dalek::SigningKey;
@@ -328,6 +472,7 @@ mod tests {
 
     const SPL_MINT: [u8; 32] = [0xABu8; 32];
     const MIRROR_ASSET: [u8; 32] = [0xCDu8; 32];
+    const EPOCH: u64 = 5;
 
     fn config() -> MirrorConfig {
         let o = SigningKey::from_bytes(&[7u8; 32]);
@@ -344,39 +489,98 @@ mod tests {
         }
     }
 
-    /// A well-formed proof that locks `amount` for `recipient` (binding fields
-    /// consistent, stake over threshold, non-empty stub evidence).
-    fn well_formed(amount: u64, recipient: CellId, lock_id: u8) -> SolanaLockProof {
+    fn vk(seed: u8) -> SigningKey {
+        SigningKey::from_bytes(&[seed; 32])
+    }
+
+    /// Three validators with 400/400/200 stake. The first two (800/1000 = 80%)
+    /// clear the 2/3 threshold.
+    fn stake_table() -> EpochStakeTable {
+        EpochStakeTable::from_entries(
+            EPOCH,
+            [
+                (vk(11).verifying_key().to_bytes(), 400),
+                (vk(12).verifying_key().to_bytes(), 400),
+                (vk(13).verifying_key().to_bytes(), 200),
+            ],
+        )
+    }
+
+    /// A fully real, consensus-grade proof: real Ed25519 votes from ≥2/3 stake,
+    /// a bank hash that recomputes from its components, a real accounts-inclusion
+    /// path, and a real PoH segment.
+    fn consensus_grade(amount: u64, recipient: CellId, lock_id: u8) -> SolanaLockProof {
+        let slot = 12_345u64;
+        let vault = [0x22u8; 32];
+        let lid = [lock_id; 32];
+
+        // Accounts hash: include the lock-record leaf with one sibling.
+        let leaf = account_leaf(&vault, amount, &recipient, &lid);
+        let sib = [0xEEu8; 32];
+        let accounts_hash = merkle_node(&leaf, &sib);
+
+        // PoH: a short real tick chain ending at the slot's last_blockhash.
+        use sha2::{Digest, Sha256};
+        let anchor = [0x55u8; 32];
+        let mut tail = anchor;
+        for _ in 0..256u64 {
+            let mut h = Sha256::new();
+            h.update(tail);
+            tail = h.finalize().into();
+        }
+
+        let bank_components = BankHashComponents {
+            parent_bank_hash: [0x01; 32],
+            accounts_hash,
+            signature_count: 3,
+            last_blockhash: tail,
+        };
+        let bank_hash = bank_components.compute();
+
+        // Real votes from the two big validators (800/1000 stake).
+        let votes = vec![
+            ValidatorVote::sign(&vk(11), slot, bank_hash),
+            ValidatorVote::sign(&vk(12), slot, bank_hash),
+        ];
+
         SolanaLockProof {
-            lock_id: [lock_id; 32],
+            lock_id: lid,
             spl_mint: SPL_MINT,
             amount,
             dregg_recipient: recipient,
             consensus: ConsensusEvidence {
-                slot: 12_345,
-                bank_hash: [0x01; 32],
-                voted_stake: 700,
+                slot,
+                bank_hash,
+                epoch: EPOCH,
+                voted_stake: 800,
                 total_stake: 1000,
-                vote_proof: vec![0xEE; 8], // non-empty stub
+                votes,
+                bank_components,
+                poh: Some(PohSegment {
+                    anchor_hash: anchor,
+                    num_hashes: 256,
+                    tail_hash: tail,
+                }),
             },
             inclusion: AccountInclusionProof {
-                vault_account: [0x22; 32],
+                vault_account: vault,
                 recorded_amount: amount,
                 recorded_recipient: recipient,
-                recorded_lock_id: [lock_id; 32],
-                accounts_hash: [0x33; 32],
-                merkle_path: vec![[0x44; 32]], // non-empty stub
+                recorded_lock_id: lid,
+                accounts_hash,
+                merkle_path: vec![sib],
             },
         }
     }
 
+    // ---- structure-only path (no stake table) ------------------------------
+
     #[test]
     fn well_formed_proof_accepted_as_structure_only() {
         let cfg = config();
-        let proof = well_formed(500, cid(1), 1);
+        let proof = consensus_grade(500, cid(1), 1);
         let trust =
             verify_lock_proof(&proof, &cfg.spl_mint, cfg.min_amount, cfg.max_amount).expect("ok");
-        // HONEST: structure verified, consensus is stubbed — NOT trustless yet.
         assert_eq!(trust, LockProofTrust::StructureOnly);
     }
 
@@ -385,7 +589,7 @@ mod tests {
         let mut mirror = MirrorState::new(config());
         let recipient = cid(1);
         let (mint, trust) = mirror
-            .mint_against_lock_proof(&well_formed(500, recipient, 1))
+            .mint_against_lock_proof(&consensus_grade(500, recipient, 1))
             .expect("a well-formed proof mirror-mints");
 
         assert_eq!(trust, LockProofTrust::StructureOnly);
@@ -397,7 +601,6 @@ mod tests {
             }
             ref other => panic!("expected Effect::Mint, got {other:?}"),
         }
-        // Same conservation accounting as the trusted path.
         assert_eq!(mirror.live_supply, 500);
         assert_eq!(mirror.currently_locked, 500);
         assert!(mirror.invariant_holds());
@@ -406,7 +609,7 @@ mod tests {
     #[test]
     fn double_mint_via_proof_is_rejected() {
         let mut mirror = MirrorState::new(config());
-        let proof = well_formed(500, cid(1), 1);
+        let proof = consensus_grade(500, cid(1), 1);
         mirror.mint_against_lock_proof(&proof).expect("first ok");
         assert_eq!(
             mirror.mint_against_lock_proof(&proof).unwrap_err(),
@@ -416,10 +619,10 @@ mod tests {
     }
 
     #[test]
-    fn malformed_proof_refused_empty_vote_proof() {
+    fn malformed_proof_refused_empty_votes() {
         let cfg = config();
-        let mut proof = well_formed(500, cid(1), 1);
-        proof.consensus.vote_proof.clear();
+        let mut proof = consensus_grade(500, cid(1), 1);
+        proof.consensus.votes.clear();
         assert_eq!(
             verify_lock_proof(&proof, &cfg.spl_mint, cfg.min_amount, cfg.max_amount).unwrap_err(),
             LockProofError::Malformed
@@ -429,7 +632,7 @@ mod tests {
     #[test]
     fn malformed_proof_refused_empty_inclusion_path() {
         let cfg = config();
-        let mut proof = well_formed(500, cid(1), 1);
+        let mut proof = consensus_grade(500, cid(1), 1);
         proof.inclusion.merkle_path.clear();
         assert_eq!(
             verify_lock_proof(&proof, &cfg.spl_mint, cfg.min_amount, cfg.max_amount).unwrap_err(),
@@ -440,16 +643,14 @@ mod tests {
     #[test]
     fn claim_mismatch_refused() {
         let cfg = config();
-        // Inclusion records a DIFFERENT recipient than the claim binds.
-        let mut proof = well_formed(500, cid(1), 1);
+        let mut proof = consensus_grade(500, cid(1), 1);
         proof.inclusion.recorded_recipient = cid(9);
         assert_eq!(
             verify_lock_proof(&proof, &cfg.spl_mint, cfg.min_amount, cfg.max_amount).unwrap_err(),
             LockProofError::ClaimMismatch
         );
 
-        // Inclusion records a different amount than the claim.
-        let mut proof2 = well_formed(500, cid(1), 2);
+        let mut proof2 = consensus_grade(500, cid(1), 2);
         proof2.inclusion.recorded_amount = 501;
         assert_eq!(
             verify_lock_proof(&proof2, &cfg.spl_mint, cfg.min_amount, cfg.max_amount).unwrap_err(),
@@ -460,7 +661,7 @@ mod tests {
     #[test]
     fn wrong_mint_refused() {
         let cfg = config();
-        let mut proof = well_formed(500, cid(1), 1);
+        let mut proof = consensus_grade(500, cid(1), 1);
         proof.spl_mint = [0xFF; 32];
         assert_eq!(
             verify_lock_proof(&proof, &cfg.spl_mint, cfg.min_amount, cfg.max_amount).unwrap_err(),
@@ -471,12 +672,12 @@ mod tests {
     #[test]
     fn amount_bounds_enforced() {
         let cfg = config();
-        let below = well_formed(0, cid(1), 1);
+        let below = consensus_grade(0, cid(1), 1);
         assert_eq!(
             verify_lock_proof(&below, &cfg.spl_mint, cfg.min_amount, cfg.max_amount).unwrap_err(),
             LockProofError::BelowMin
         );
-        let above = well_formed(2_000_000, cid(1), 2);
+        let above = consensus_grade(2_000_000, cid(1), 2);
         assert_eq!(
             verify_lock_proof(&above, &cfg.spl_mint, cfg.min_amount, cfg.max_amount).unwrap_err(),
             LockProofError::AboveMax
@@ -484,10 +685,9 @@ mod tests {
     }
 
     #[test]
-    fn stake_below_threshold_refused() {
+    fn claimed_stake_below_threshold_refused() {
         let cfg = config();
-        // 600/1000 < 2/3 — even the structural sanity check refuses this.
-        let mut proof = well_formed(500, cid(1), 1);
+        let mut proof = consensus_grade(500, cid(1), 1);
         proof.consensus.voted_stake = 600;
         proof.consensus.total_stake = 1000;
         assert_eq!(
@@ -497,5 +697,234 @@ mod tests {
                 total: 1000
             }
         );
+    }
+
+    // ---- consensus path (real verification against a stake table) ----------
+
+    #[test]
+    fn consensus_verified_for_genuine_lock() {
+        let cfg = config();
+        let proof = consensus_grade(500, cid(1), 1);
+        let trust = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            true, // require PoH — the proof carries a real segment
+        )
+        .expect("genuine lock verifies consensus");
+        assert_eq!(trust, LockProofTrust::ConsensusVerified);
+    }
+
+    #[test]
+    fn consensus_mint_credits_and_reports_verified() {
+        let mut mirror = MirrorState::new(config());
+        let recipient = cid(1);
+        let (mint, trust) = mirror
+            .mint_against_lock_proof_consensus(
+                &consensus_grade(500, recipient, 1),
+                &stake_table(),
+                true,
+            )
+            .expect("trustless mint");
+        assert_eq!(trust, LockProofTrust::ConsensusVerified);
+        assert_eq!(mint.amount, 500);
+        assert_eq!(mirror.live_supply, 500);
+        assert_eq!(mirror.currently_locked, 500);
+        assert!(mirror.invariant_holds());
+    }
+
+    #[test]
+    fn consensus_refused_below_two_thirds() {
+        let cfg = config();
+        // Drop one big vote: only 400/1000 = 40% of real stake votes.
+        let mut proof = consensus_grade(500, cid(1), 1);
+        proof.consensus.votes.truncate(1);
+        let err = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LockProofError::StakeBelowThreshold {
+                voted: 400,
+                total: 1000
+            }
+        );
+    }
+
+    #[test]
+    fn consensus_refused_forged_vote_signature() {
+        let cfg = config();
+        let mut proof = consensus_grade(500, cid(1), 1);
+        // Corrupt the second vote's signature: it no longer verifies, so only
+        // 400/1000 of real stake remains — below 2/3.
+        proof.consensus.votes[1].signature[0] ^= 0xFF;
+        let err = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LockProofError::StakeBelowThreshold {
+                voted: 400,
+                total: 1000
+            }
+        );
+    }
+
+    #[test]
+    fn consensus_refused_inclusion_against_wrong_bank_hash() {
+        let cfg = config();
+        // Tamper the inclusion's accounts_hash so it no longer matches the
+        // bank-hash components — the accounts hash is not the voted one.
+        let mut proof = consensus_grade(500, cid(1), 1);
+        proof.inclusion.accounts_hash[0] ^= 0xFF;
+        let err = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(err, LockProofError::BankHashMismatch);
+    }
+
+    #[test]
+    fn consensus_refused_tampered_bank_hash() {
+        let cfg = config();
+        // The votes are over a bank_hash that no longer recomputes from the
+        // components (and the votes would not match it either).
+        let mut proof = consensus_grade(500, cid(1), 1);
+        proof.consensus.bank_hash[0] ^= 0xFF;
+        let err = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            false,
+        )
+        .unwrap_err();
+        // The votes are for the old bank_hash, so none count for the new one →
+        // zero voted stake → below threshold.
+        assert_eq!(
+            err,
+            LockProofError::StakeBelowThreshold {
+                voted: 0,
+                total: 1000
+            }
+        );
+    }
+
+    #[test]
+    fn consensus_refused_tampered_inclusion_record() {
+        let cfg = config();
+        // Inflate the recorded amount AND the claim so binding passes but the
+        // Merkle leaf no longer matches the committed accounts hash.
+        let mut proof = consensus_grade(500, cid(1), 1);
+        proof.amount = 600;
+        proof.inclusion.recorded_amount = 600;
+        // bank_components.accounts_hash still commits the old (500) leaf root.
+        let err = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(err, LockProofError::AccountsInclusionInvalid);
+    }
+
+    #[test]
+    fn consensus_refused_wrong_epoch() {
+        let cfg = config();
+        let proof = consensus_grade(500, cid(1), 1);
+        let wrong_epoch_table =
+            EpochStakeTable::from_entries(EPOCH + 1, [(vk(11).verifying_key().to_bytes(), 800)]);
+        let err = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &wrong_epoch_table,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LockProofError::WrongEpoch {
+                evidence: EPOCH,
+                table: EPOCH + 1
+            }
+        );
+    }
+
+    #[test]
+    fn consensus_refused_bad_poh() {
+        let cfg = config();
+        let mut proof = consensus_grade(500, cid(1), 1);
+        if let Some(seg) = proof.consensus.poh.as_mut() {
+            seg.tail_hash[0] ^= 0xFF; // tail no longer matches the chain
+        }
+        let err = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(err, LockProofError::PohInvalid);
+    }
+
+    #[test]
+    fn consensus_refused_missing_required_poh() {
+        let cfg = config();
+        let mut proof = consensus_grade(500, cid(1), 1);
+        proof.consensus.poh = None;
+        let err = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            true, // require PoH
+        )
+        .unwrap_err();
+        assert_eq!(err, LockProofError::PohMissing);
+    }
+
+    #[test]
+    fn consensus_ok_without_poh_when_not_required() {
+        let cfg = config();
+        let mut proof = consensus_grade(500, cid(1), 1);
+        proof.consensus.poh = None;
+        let trust = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            false,
+        )
+        .expect("ok without PoH when not required");
+        assert_eq!(trust, LockProofTrust::ConsensusVerified);
     }
 }

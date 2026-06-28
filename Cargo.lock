@@ -4084,6 +4084,7 @@ dependencies = [
  "getrandom 0.3.4",
  "postcard",
  "serde",
+ "sha2 0.10.9",
  "tokio",
 ]
 

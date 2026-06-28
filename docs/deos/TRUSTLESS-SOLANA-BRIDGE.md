@@ -174,32 +174,73 @@ the trusted one (the trusted attestation stays as the fallback while the proof
 system matures), and flipped per-mirror by config without touching the value
 layer.
 
-## First slice (what is built now)
+## What is built now (the real consensus verification)
 
-`bridge/src/solana_trustless.rs`:
+`bridge/src/solana_consensus.rs` is the genuine cryptographic core; `bridge/src/solana_trustless.rs` wires it into the mirror. The consensus verification is **no longer a stub** — it is real Ed25519 + SHA-256 arithmetic.
 
-- `SolanaLockProof` — the **typed lock-proof**: the consensus evidence shape
-  (`ConsensusEvidence`: voted `bank_hash`, slot, a stake-threshold witness) +
-  the **accounts inclusion proof** (`AccountInclusionProof`: the vault account,
-  the claimed lock record fields, and the inclusion path to the bank's accounts
-  hash) + the bound claim (`lock_id`, `spl_mint`, `amount`, `dregg_recipient`).
-- `verify_lock_proof` — the **verifier skeleton**. It checks proof *structure and
-  binding* for real (well-formedness, the claim fields match the mirror config,
-  the inclusion proof's claimed amount/recipient match the bound claim, non-empty
-  evidence). The **actual Solana-consensus verification is the named-hard STUBBED
-  part**, isolated behind `verify_consensus` and clearly marked: today it checks
-  only that the evidence is *structurally* present and self-consistent — it does
-  NOT yet verify Tower-BFT stake-weighted votes, PoH, or the accounts-hash
-  inclusion against Solana's real state. A `LockProofTrust` enum reports exactly
-  which trust level a given verification achieved, so a caller can never mistake
-  the structural check for the consensus check.
-- `MirrorState::mint_against_lock_proof` — routes a `SolanaLockProof` through
-  `verify_lock_proof` into the **same** `credit_lock` accounting as the trusted
-  path, with the trusted `mint_against_lock` retained as the fallback.
+### Real (reaches `LockProofTrust::ConsensusVerified`)
 
-**Honest status:** the structure, binding, and routing are real; the consensus
-verification — the part that makes the bridge actually trustless — is stubbed and
-named, not faked. The distance from here to an actually-trustless Solana bridge is
-the entire Option-B circuit (stake-table commitment + epoch rotation + vote-set
-aggregation + PoH + accounts inclusion) plus its dregg-side succinct verifier
-binding. That is large. The watchtower interim is the realistic next deliverable.
+- **Stake-weighted vote verification (the core).** `EpochStakeTable` maps each
+  validator's authorized vote pubkey → active stake. `verify_supermajority`
+  verifies, for the claimed `(slot, bank_hash)`: each `ValidatorVote`'s **real
+  Ed25519 signature** (`ValidatorVote::verify_signature`), collapses duplicate
+  voters, sums the stake of the *cryptographically valid* voters, and enforces
+  `3·voted ≥ 2·total` (the ≥ 2/3 super-majority) in `u128`. A forged signature
+  contributes **zero** stake, so a set that needs a forged vote to clear 2/3 is
+  refused.
+- **Bank-hash binding.** `BankHashComponents::compute` recomputes
+  `bank_hash = H(parent_bank_hash, accounts_hash, signature_count,
+  last_blockhash)` and binds it to the voted `bank_hash`, tying the accounts hash
+  (and the PoH tail) the inclusion opens into to *what the super-majority voted*.
+- **Accounts-hash inclusion.** `verify_accounts_inclusion` folds a
+  domain-separated **sorted-Merkle** sibling path from the vault account's
+  lock-record leaf (`account_leaf` binds `vault_account, amount, recipient,
+  lock_id`) to the committed `accounts_hash`. Distinct leaf/node domain tags
+  prevent replaying an interior node as a leaf.
+- **PoH linkage.** `verify_poh_segment` re-hashes a real SHA-256 tick chain from
+  a verified `anchor_hash` to the slot's `last_blockhash`, bounded by
+  `MAX_POH_REHASH` so a malicious `num_hashes` cannot make the verifier spin.
+
+`verify_lock_proof_consensus(proof, …, stake_table, require_poh)` runs
+structure+binding, then all of the above against the **tracked epoch stake
+table**, and returns `ConsensusVerified` only when every check passes.
+`MirrorState::mint_against_lock_proof_consensus` routes such a verified proof
+through the **same** `credit_lock` conservation accounting as the trusted path.
+`verify_lock_proof` / `mint_against_lock_proof` remain as a **structure-only**
+path (no stake table → `StructureOnly`, never `ConsensusVerified`).
+
+### The remaining adapter layer (honest — the next grind passes)
+
+The *cryptography and consensus arithmetic* are real; the **mainnet wire-format
+ingestion + provenance** are not yet reproduced:
+
+1. **Vote-transaction ingestion.** `vote_message` is a canonical
+   domain-separated `(slot, bank_hash)` encoding, not the bincode-serialized vote
+   `Transaction`/`VoteInstruction` a mainnet authorized voter signs. A relayer
+   that parses real vote transactions into `ValidatorVote`s (and confirms the
+   signer is the epoch's authorized voter) is the next piece. **Dominant
+   remaining item.**
+2. **Stake-table provenance + epoch rotation.** `EpochStakeTable` is tracked
+   *input* today; sourcing it from Solana's stake program / bank state and
+   proving its rotation across epoch boundaries (the sync-committee analogue,
+   heavier) is unbuilt.
+3. **Accounts-hash format fidelity.** `merkle_node` is a SHA-256 sorted-pair
+   node; mainnet's accounts hash is a 16-ary fan-out merkle over a
+   version-coupled account-hash preimage (lamports/owner/data/…). Matching the
+   exact format is version-coupled work.
+4. **PoH anchoring policy.** The tick-chain verifier is real but bounded; a
+   trust-minimized full-slot (~432k hashes) PoH needs a recursive proof or a
+   bounded-anchor checkpoint policy.
+5. **Option-B succinct wrapper (optional).** Wrapping (1)–(4) in an off-dregg
+   relayer circuit + a dregg-side succinct verify keeps the on-dregg cost
+   constant; the in-process verification above is the Option-A logic it would
+   encode.
+
+**Honest status:** for a lock whose `ValidatorVote` set, stake table, bank-hash
+components, accounts-inclusion path, and PoH segment are supplied,
+`verify_lock_proof_consensus` now genuinely verifies a ≥ 2/3 stake-weighted
+Ed25519 attestation that binds the lock record to the voted bank hash, and
+returns `ConsensusVerified`. The trust gap that remains is the **adapter** —
+proving those inputs are the *real mainnet artifacts* (items 1–4) — not the
+consensus arithmetic. The watchtower interim remains a cheap complementary
+hardening for the trusted path.

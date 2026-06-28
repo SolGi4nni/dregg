@@ -21,6 +21,7 @@ dregg-token = { path = "../token", default-features = false, features = ["macaro
 dregg-macaroon = { path = "../macaroon" }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
+sha2 = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 getrandom = { workspace = true }
 serde = { version = "1", features = ["derive"] }

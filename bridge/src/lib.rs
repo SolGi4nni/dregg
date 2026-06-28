@@ -48,9 +48,13 @@ pub mod solana_mirror;
 /// The TRUSTLESS inbound proof-of-lock for the Solana mirror — the honest
 /// upgrade from the trusted-oracle attestation: verify a `SolanaLockProof`
 /// (consensus evidence + account inclusion) instead of trusting a signature.
-/// The Solana-consensus verification itself is the named-hard stubbed core.
 /// See `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
 pub mod solana_trustless;
+
+/// The real Solana Tower-BFT consensus primitives the trustless bridge verifies:
+/// the per-epoch stake table, real Ed25519 stake-weighted vote aggregation, the
+/// bank-hash binding, the accounts-hash inclusion, and the PoH tick-chain check.
+pub mod solana_consensus;
 
 /// Full-fidelity bridge-action binding: a thin re-export plus a wrapper for
 /// the new sibling AIR `dregg_circuit::bridge_action_air` that pins
@@ -89,12 +93,17 @@ pub use present::{
     verify_presentation_complete, verify_presentation_full, verify_proof_complete,
     verify_revealed_facts_commitment, verify_wire_fold_chain,
 };
+pub use solana_consensus::{
+    BankHashComponents, EpochStakeTable, PohError, PohSegment, ValidatorVote, VoteSetError,
+    VoteTally, account_leaf, merkle_node, tally_votes, verify_accounts_inclusion,
+    verify_poh_segment, verify_supermajority, vote_message,
+};
 pub use solana_mirror::{
     MirrorConfig, MirrorError, MirrorMint, MirrorRedeem, MirrorState, SolanaLockAttestation,
     SolanaUnlockRequest,
 };
 pub use solana_trustless::{
     AccountInclusionProof, ConsensusEvidence, LockProofError, LockProofTrust, ProofMintError,
-    SolanaLockProof, verify_lock_proof,
+    SolanaLockProof, verify_lock_proof, verify_lock_proof_consensus,
 };
 pub use verifier::{DslAwareProofVerifier, StarkProofVerifier};
