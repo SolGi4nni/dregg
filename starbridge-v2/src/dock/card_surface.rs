@@ -917,7 +917,7 @@ fn wonder_view(room: &WonderRoom) -> ViewTree {
                 format!("{} thing(s) · {glowing} glowing", room.cells.len()),
                 "accent",
             ),
-            card_grid(5, tiles),
+            card_grid(4, tiles),
         ],
     }
 }

@@ -539,6 +539,10 @@ pub struct DeosDesktop {
     /// view concern). Keyed by the window's anchor cell.
     #[cfg(feature = "android-systemui")]
     systemui_shades: std::collections::HashSet<CellId>,
+    /// The last rendered viewport size (logical px), captured each `render`. Tile /
+    /// cascade read it so they fill the ACTUAL desktop instead of a hardcoded
+    /// 1600×1000 — at higher bake resolutions the windows spread the whole room.
+    last_viewport: (f32, f32),
 }
 
 /// The live state of the open Spotter command palette overlay.
@@ -655,6 +659,7 @@ impl DeosDesktop {
             systemui_chromes: HashMap::new(),
             #[cfg(feature = "android-systemui")]
             systemui_shades: std::collections::HashSet::new(),
+            last_viewport: (1600.0, 1000.0),
         };
         // Re-open any windows the persisted layout remembers (spatial persistence
         // for windows, not just icons — and now for window TYPE too).
@@ -2237,15 +2242,18 @@ impl DeosDesktop {
         let n = keys.len().max(1);
         let cols = (n as f32).sqrt().ceil() as usize;
         let rows = n.div_ceil(cols);
-        // Tile across the left ~2/3 of a 1600-wide desktop so the icons + summary
-        // widget on the right stay legible (the desktop is laid out for ~1600×1000),
-        // and RESERVE the chrome margins — below the menu bar, above the taskbar +
-        // status bar (46px) — so no window tucks under the system chrome.
+        // Tile across the room, reserving the left icon column (~232px) and the
+        // top-right World-summary widget (~300px), and the chrome margins — below the
+        // menu bar, above the taskbar + status bar (46px) — so no window tucks under
+        // the system chrome. Sized to the ACTUAL viewport (captured each render) so a
+        // high-res bake fills the whole frame, not a hardcoded 1600×1000 corner.
+        let (vw, vh) = self.last_viewport;
         let gap = 10.0;
         let area_x = 232.0;
         let area_y = MENUBAR_H + gap;
-        let area_w = 1112.0;
-        let area_h = 1000.0 - area_y - 46.0 - gap;
+        let right_reserve = 300.0;
+        let area_w = (vw - area_x - right_reserve - gap).max(WIN_MIN_W);
+        let area_h = (vh - area_y - 46.0 - gap).max(WIN_MIN_H);
         let cw = (area_w / cols as f32).max(WIN_MIN_W);
         let ch = (area_h / rows as f32).max(WIN_MIN_H);
         for (i, key) in keys.iter().enumerate() {
@@ -2979,6 +2987,12 @@ impl DeosDesktop {
 
 impl Render for DeosDesktop {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Remember the real desktop size so Tile/Cascade fill the ACTUAL room (a
+        // high-res bake spreads windows over the whole frame, not a 1600×1000 corner).
+        {
+            let vp = window.viewport_size();
+            self.last_viewport = (f32::from(vp.width), f32::from(vp.height));
+        }
         let mut root = div()
             .id("deos-desktop-root")
             .size_full()

@@ -41,6 +41,30 @@ use starbridge_v2::{cockpit, login};
 #[cfg(feature = "embedded-executor")]
 use starbridge_v2::{demo, reflect, world};
 
+/// All font blobs the bake/UI text systems load. The UI fonts (Lilex, IBM Plex
+/// Sans) PLUS symbol + emoji fallback fonts (Noto Emoji, Noto Sans Symbols, Noto
+/// Sans Symbols 2) so chrome glyphs — locks, gauges, crosshairs, gears, ballot
+/// checkboxes, 🌐 ⏳ 📄 🔑 — render real glyphs instead of missing-glyph □ boxes.
+/// The headless bake's text system carries no system fonts, so without these the
+/// shaper has nothing to fall back to; cosmic-text picks whichever LOADED font
+/// covers a codepoint, so order is irrelevant to coverage.
+#[allow(dead_code)] // unused in the gpui-free sel4-thin build
+fn bake_font_blobs() -> Vec<std::borrow::Cow<'static, [u8]>> {
+    use std::borrow::Cow as C;
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+    static EMOJI: &[u8] = include_bytes!("../assets/fonts/NotoEmoji-Regular.ttf");
+    static SYMBOLS: &[u8] = include_bytes!("../assets/fonts/NotoSansSymbols-Regular.ttf");
+    static SYMBOLS2: &[u8] = include_bytes!("../assets/fonts/NotoSansSymbols2-Regular.ttf");
+    vec![
+        C::Borrowed(LILEX),
+        C::Borrowed(IBM_PLEX),
+        C::Borrowed(EMOJI),
+        C::Borrowed(SYMBOLS),
+        C::Borrowed(SYMBOLS2),
+    ]
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let headless = args.iter().any(|a| a == "--headless");
@@ -876,12 +900,7 @@ fn run_window(
         // font) — without this, every panel renders with BLANK text (the chrome lays
         // out, but no glyphs). The headless render paths load these the same way.
         {
-            static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-            static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
-            if let Err(e) = cx.text_system().add_fonts(vec![
-                std::borrow::Cow::Borrowed(LILEX),
-                std::borrow::Cow::Borrowed(IBM_PLEX),
-            ]) {
+            if let Err(e) = cx.text_system().add_fonts(bake_font_blobs()) {
                 eprintln!("warning: failed to register embedded UI fonts: {e}");
             }
         }
@@ -997,12 +1016,7 @@ fn run_desktop_window() {
         // Register the embedded UI fonts (CoreText lacks "Lilex"/"IBM Plex"); without
         // this every panel lays out but renders BLANK text — same as `run_window`.
         {
-            static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-            static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
-            if let Err(e) = cx.text_system().add_fonts(vec![
-                std::borrow::Cow::Borrowed(LILEX),
-                std::borrow::Cow::Borrowed(IBM_PLEX),
-            ]) {
+            if let Err(e) = cx.text_system().add_fonts(bake_font_blobs()) {
                 eprintln!("warning: failed to register embedded UI fonts: {e}");
             }
         }
@@ -1391,13 +1405,9 @@ fn render_woven_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use starbridge_v2::deos_desktop::DeosDesktop;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     // A hermetic, fresh sidecar so `welcomed = false` → the warm card shows (a fresh
     // image is exactly the newcomer's first run). Start clean.
@@ -1413,7 +1423,7 @@ fn render_woven_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -1617,12 +1627,14 @@ fn render_woven_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         );
     }
 
-    // Leave the woven room in frame, every surface present at once: cascade the open
-    // windows so the doc-collab editor, the World-Status board, the Android cap-chrome, and
-    // the agent-composed board are all visible as ONE coherent workbench, with the calm
-    // "type anything" Spotter pill showing (the unifying entry that reached them all).
+    // Leave the woven room in frame, every surface present at once: TILE the open
+    // windows into a grid so the doc-collab editor, the World-Status board, the Android
+    // cap-chrome, and the agent-composed board are each fully visible side by side as ONE
+    // coherent workbench (cascade piled them into the top-left corner; tiling spreads them
+    // across the room), with the calm "type anything" Spotter pill showing (the unifying
+    // entry that reached them all).
     desk.update(&mut cx, |d, _cx| {
-        d.bake_cascade_windows();
+        d.bake_tile_windows();
     });
     cx.run_until_parked();
     cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
@@ -1676,13 +1688,9 @@ fn render_doc_collab_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use starbridge_v2::deos_desktop::DeosDesktop;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     let layout_path =
         std::env::temp_dir().join(format!("deos-doccollab-bake-{}.json", std::process::id()));
@@ -1694,7 +1702,7 @@ fn render_doc_collab_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -1871,13 +1879,9 @@ fn render_welcome_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use starbridge_v2::deos_desktop::DeosDesktop;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     // A hermetic, fresh sidecar so `welcomed = false` → the warm card shows (a fresh
     // image is exactly the newcomer's first run). Start clean.
@@ -1893,7 +1897,7 @@ fn render_welcome_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -1974,13 +1978,9 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use starbridge_v2::deos_desktop::{id_hex, DeosDesktop, DesktopLayout};
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     // A hermetic sidecar for this bake (so the persistence write/read is real but
     // does not clobber a user's layout). Start clean.
@@ -1996,7 +1996,7 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -3017,7 +3017,6 @@ fn serve_ie6_arg(args: &[String]) -> Option<u16> {
 fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -3052,11 +3051,9 @@ fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
         "replay",
     ];
 
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -3258,7 +3255,6 @@ fn explore_ui_headless(outdir: &str) -> anyhow::Result<()> {
     use cockpit::NavAction;
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::collections::{HashSet, VecDeque};
     use std::rc::Rc;
@@ -3274,11 +3270,9 @@ fn explore_ui_headless(outdir: &str) -> anyhow::Result<()> {
     let states_dir = format!("{outdir}/states");
     std::fs::create_dir_all(&states_dir)?;
 
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -3451,7 +3445,6 @@ fn render_cockpit_headless(
 ) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
@@ -3464,13 +3457,11 @@ fn render_cockpit_headless(
 
     // Vendored OFL fonts (the cockpit uses "Menlo"; unknown families fall back
     // to the system_font_fallback — here Lilex — inside CosmicTextSystem).
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     // 1. Real text shaping with no system fonts (deterministic), Lilex fallback.
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
 
     // 2. Headless app over TestPlatform + the Linux offscreen wgpu renderer.
     //    `current_headless_renderer` returns the `WgpuHeadlessRenderer` (lavapipe
@@ -3609,13 +3600,9 @@ fn render_agent_attach_headless(out: &str, w: f32, h: f32, fork: bool) -> anyhow
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use starbridge_v2::agent_attach::{attach_agent, WorldSinkAdapter, AGENT_COUNTER_SLOT};
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     // 1. The cockpit's real image — the SAME `World` the windowed cockpit runs.
     let (world, anchors) = world::demo_world();
@@ -3701,7 +3688,7 @@ fn render_agent_attach_headless(out: &str, w: f32, h: f32, fork: bool) -> anyhow
     // 4. Bake the cockpit INSPECTOR over the SAME World (the agent's field is on glass).
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -3759,13 +3746,9 @@ fn render_card_pane_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui_wgpu::CosmicTextSystem;
     use starbridge_v2::agent_attach::{attach_agent, WorldSinkAdapter, AGENT_COUNTER_SLOT};
     use starbridge_v2::card_pane::{build_card_over_live, CardPane};
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     // 1. The cockpit's real image — the SAME `World` the windowed cockpit runs. The card
     //    is backed by the demo `user` cell (the agent's OWN vessel).
@@ -3830,7 +3813,7 @@ fn render_card_pane_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     //    + the gpui-component theme, then open the card pane → bake the BEFORE shot.
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -3936,18 +3919,14 @@ fn render_first_card_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use starbridge_v2::agent_attach::AGENT_COUNTER_SLOT;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
 
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
-
     // 1. Headless app + the kit + the dark theme (the cockpit's panels use kit widgets).
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -4313,13 +4292,9 @@ fn render_apps_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use starbridge_v2::app_registry::{app_card, AppCardSubstance};
     use starbridge_v2::card_pane::{CardPane, CardSubstanceRef};
     use starbridge_v2::powerbox::RegistryLauncher;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     // The federation the cockpit's launcher births app substrates into (mirrors
     // `panels_app_launcher::APPS_FEDERATION`).
@@ -4327,7 +4302,7 @@ fn render_apps_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -4553,19 +4528,15 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
     use starbridge_v2::app_registry::{app_card, AppCardSubstance};
     use starbridge_v2::card_pane::{CardPane, CardSubstanceRef};
     use starbridge_v2::powerbox::RegistryLauncher;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     const APPS_FED: [u8; 32] = [0x5Eu8; 32];
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -4894,19 +4865,15 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
     use starbridge_v2::app_registry::{app_card, AppCardSubstance, CardFireFn};
     use starbridge_v2::card_pane::{CardPane, CardSubstanceRef};
     use starbridge_v2::powerbox::RegistryLauncher;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     const APPS_FED: [u8; 32] = [0x5Eu8; 32];
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -5189,19 +5156,15 @@ fn render_app_card_fire_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
     use starbridge_v2::app_registry::{app_card, AppCardSubstance};
     use starbridge_v2::card_pane::{CardPane, CardSubstanceRef};
     use starbridge_v2::powerbox::RegistryLauncher;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     const APPS_FED: [u8; 32] = [0x5Eu8; 32];
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -5307,13 +5270,9 @@ fn render_app_card_fire_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
 fn render_webshell_live_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     // A page taller than the 460px tile: a 600px red band over a 600px lime band, so
     // scrolling down flips the visible band (an UNMISTAKABLE before/after). `%23` is the
@@ -5328,7 +5287,7 @@ fn render_webshell_live_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
     //    cockpit bakes through), with the vendored OFL fonts.
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -5495,15 +5454,11 @@ fn bake_inspector_over_world(
 ) -> anyhow::Result<(u32, u32)> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -5845,19 +5800,15 @@ fn extract_js_block(text: &str) -> String {
 fn render_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     // Real text shaping, no system fonts (deterministic), Lilex fallback — the
     // cockpit + every surface asks for "Menlo" and falls back to Lilex.
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
 
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
@@ -5920,17 +5871,13 @@ fn render_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
 fn render_guest_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
 
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
-
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
 
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
@@ -6029,18 +5976,14 @@ fn render_self_hosting_headless(
 ) -> anyhow::Result<()> {
     use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
     use std::time::Instant;
 
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
-
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
 
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
@@ -6190,14 +6133,10 @@ fn render_unified_boot_headless(
 ) -> anyhow::Result<()> {
     use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
     use std::time::Instant;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     let node_url = node_url.ok_or_else(|| {
         anyhow::anyhow!(
@@ -6208,7 +6147,7 @@ fn render_unified_boot_headless(
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
 
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
@@ -6418,13 +6357,9 @@ fn render_client_signed_turn_headless(
 ) -> anyhow::Result<()> {
     use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     let node_url = node_url.ok_or_else(|| {
         anyhow::anyhow!(
@@ -6436,7 +6371,7 @@ fn render_client_signed_turn_headless(
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
 
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
@@ -6581,13 +6516,9 @@ fn render_interactive_node_save_headless(
 ) -> anyhow::Result<()> {
     use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
 
     let node_url = node_url.ok_or_else(|| {
         anyhow::anyhow!(
@@ -6599,7 +6530,7 @@ fn render_interactive_node_save_headless(
 
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
 
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
@@ -6778,18 +6709,14 @@ fn render_interactive_node_save_headless(
 fn render_self_hosting_full_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
-
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
 
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
@@ -6944,16 +6871,13 @@ fn render_self_hosting_full_headless(out: &str, w: f32, h: f32) -> anyhow::Resul
 fn render_login_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
 
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });
@@ -7007,16 +6931,13 @@ fn render_touch_headless(out: &str, w: f32, h: f32, mode: Option<&str>) -> anyho
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use starbridge_v2::touch;
-    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
 
-    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
-    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
     let text_system: Arc<dyn PlatformTextSystem> =
         Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
-    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    text_system.add_fonts(bake_font_blobs())?;
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         gpui_platform::current_headless_renderer()
     });

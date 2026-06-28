@@ -443,18 +443,25 @@ impl CardPane {
             // ── The RICHNESS EXPANSION batch 2 — mirror `deos_view::render`'s arms, but bound +
             //    fired against the LIVE attached applet (every fire guarded at the gpui boundary). ─
             ViewNode::Grid { cols, children } => {
-                let mut grid = div().flex().flex_wrap().gap_2();
-                let max_w = if *cols > 0 {
-                    Some(px(((520.0 / *cols as f32) - 12.0).max(48.0)))
+                // Each tile is a DEFINITE-width box that clips its own overflow, so a
+                // long unbreakable token (a short cell-id like `0ce097…9b3`, which has
+                // no break opportunity to wrap on) is contained instead of bleeding
+                // sideways into the neighbouring tile. `flex_wrap` then packs as many
+                // uniform tiles per row as the real pane width allows.
+                let mut grid = div().flex().flex_wrap().gap_3();
+                let cell_w = if *cols > 0 {
+                    px(((640.0 / *cols as f32) - 14.0).max(120.0))
                 } else {
-                    None
+                    px(160.0)
                 };
                 for c in children {
-                    let mut cell = div().child(self.node(c, _window, cx));
-                    if let Some(w) = max_w {
-                        cell = cell.max_w(w);
-                    }
-                    grid = grid.child(cell);
+                    grid = grid.child(
+                        div()
+                            .w(cell_w)
+                            .flex_none()
+                            .overflow_hidden()
+                            .child(self.node(c, _window, cx)),
+                    );
                 }
                 grid.into_any_element()
             }
