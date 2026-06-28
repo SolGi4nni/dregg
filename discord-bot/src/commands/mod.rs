@@ -36,6 +36,11 @@ pub mod dashboard;
 // The deos surface inside Discord — cap-gated affordance buttons (progressive
 // attenuation), live transclusion into embeds, and dregg:// what-links-here.
 pub mod deos;
+// `/coordinate` — two channel-agents cooperate over the promise-pipeline and
+// settle ATOMICALLY (`crate::coordinate_flow`): a producer hands a promise, the
+// consumer pipelines its payment against it, the round settles all-or-nothing
+// through the verified executor.
+pub mod coordinate;
 pub mod federation;
 pub mod governance;
 pub mod handoff;

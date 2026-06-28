@@ -34,6 +34,11 @@ pub mod captp_client;
 pub mod cards;
 mod cipherclerk;
 mod commands;
+// Two channel-agents cooperate over the promise-pipeline and settle ATOMICALLY:
+// a producer hands a promise (`EventualRef`), the consumer pipelines its payment
+// against it, the round settles all-or-nothing through the verified executor
+// (`dregg_app_framework::agent_coordination`). Discord-independent + proven.
+pub mod coordinate_flow;
 // §4.7 canonical, Discord-independent capability-handoff flow: produces and
 // validates *real* `dregg_captp::handoff::HandoffCertificate` artifacts.
 pub mod handoff_flow;
@@ -272,6 +277,7 @@ impl EventHandler for Handler {
             commands::deos::register(),
             // ─── interactive ViewNode card ──────────────────────────────────
             commands::card::register(),
+            commands::coordinate::register(),
             // ─── DreggNet Cloud per-user channel ────────────────────────────
             commands::channel::register(),
             // ─── BYO-LLM-keys ───────────────────────────────────────────────
@@ -393,6 +399,7 @@ impl EventHandler for Handler {
                 "bounty" => commands::bounty::handle(&ctx, &command, &self.state).await,
                 "deos" => commands::deos::handle(&ctx, &command, &self.state).await,
                 "card" => commands::card::handle(&ctx, &command, &self.state).await,
+                "coordinate" => commands::coordinate::handle(&ctx, &command, &self.state).await,
                 "channel" => commands::channel::handle(&ctx, &command, &self.state).await,
                 "key" => commands::key::handle(&ctx, &command, &self.state).await,
                 _ => {

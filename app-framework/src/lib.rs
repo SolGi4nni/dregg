@@ -46,6 +46,7 @@
 
 pub mod affordance;
 pub mod affordance_endpoint;
+pub mod agent_coordination;
 pub mod auth;
 pub mod authorizer;
 pub mod batch_executor;
@@ -202,6 +203,14 @@ pub use dregg_types::FederationId;
 pub use fee_policy::{AcceptedAsset, FeePolicy};
 pub use multi_group::MultiGroupConfig;
 pub use ring_trade::{LegId, RingTradeParticipant};
+
+// The N-party agent-coordination promise-pipeline: N agents do cooperative work,
+// hand each other results as promises ([`EventualRef`] handoffs), compute their
+// parts off-chain in parallel, and settle the whole cooperation ATOMICALLY as one
+// verified conserving fold — a broken promise rolls the round back whole.
+pub use agent_coordination::{
+    CoordinationError, CoordinationLeg, CoordinationReceipt, LegOutput, PromiseFill, coordinate,
+};
 
 // Starbridge mounting point. The canonical surface every
 // starbridge-app receives via `register(ctx)`.
