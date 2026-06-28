@@ -731,6 +731,266 @@ fn debit_v1_block_balance(
     row[base + state::STATE_COMMIT] = hash_many(&[i1, i2, i3, row[record_digest_col]]);
 }
 
+/// **THE SEALED-ESCROW SATISFACTION-WELD satisfying-trace producer (`settleEscrowSatVmDescriptor2R24`,
+/// STAGED).**
+///
+/// Emits a SATISFYING rotated trace for the welded escrow-satisfaction descriptor (the Lean
+/// `Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatVmDescriptor2R24`). The descriptor is the
+/// transfer base with the two leg field-freezes dropped, PLUS the four selector-gated satisfaction
+/// gates over the rotated BEFORE/AFTER field columns (`satisfaction_weld::{before,after}_field_col`),
+/// PLUS the selector PI pin. A satisfying trace is a ZERO-AMOUNT settle CARRIER: the economic block is
+/// identity (balance unchanged), and the settle is expressed by flipping the two leg STATUS fields
+/// `Deposited → Consumed`, with the capacity selector (`satisfaction_weld::ESCROW_SEL_COL`, col 70)
+/// ON on the settle row.
+///
+/// The field surgery mirrors the fee producer's balance surgery
+/// ([`generate_rotated_effect_vm_trace_with_fee`]):
+///   * the BEFORE block carries `Deposited` on the settle row (row 0 — the genuine pre-lock state,
+///     so the native v1 `OLD_COMMIT` already binds it) and `Consumed` on the carry-forward NoOp rows
+///     (the cross-row continuity `next.before == local.after` forces the post-settle state forward);
+///   * the AFTER block carries `Consumed` on EVERY row (the post-settle status);
+///   * each touched v1 state block has its `STATE_COMMIT` recomputed (the descriptor's bound GROUP-4
+///     poseidon lookups — the AFTER intermediates land on cols 98/99/100; the carrier is residue-free
+///     so the record-digest aux at col 186 is `ZERO`), and its rotated block re-welded
+///     (`fill_block` overrides the rotated field limbs from the v1 block, then re-chains
+///     `wireCommitR` → rotated `STATE_COMMIT`);
+///   * the selector rides col 70 = `1` on the settle row, `0` on padding (the welded gates are inert
+///     off the selector); pinned to PI 46 by the descriptor.
+///
+/// The legs ride field slots `leg_a_slot`/`leg_b_slot` (the emitted descriptor member is `legA=0,
+/// legB=1`). Returns `(trace, dpis)` (47 PIs: the rotated 46 + the appended selector slot) ready for
+/// `prove_vm_descriptor2(&settleEscrowSatVmDescriptor2R24, …)`. The `initial_state`'s leg fields are
+/// FORCED to `Deposited` inside (so the row-0 BEFORE block + the native `OLD_COMMIT` read `Deposited`);
+/// the caller's other state (balance/nonce/cap_root) is preserved.
+///
+/// STAGED: no live path calls this; it is the producer the staged welded descriptor's first real
+/// STARK prove/verify consumes (`circuit/tests/settle_escrow_capacity_weld.rs`). NOT routed; the
+/// deployed cohort is untouched.
+pub fn generate_rotated_settle_escrow_trace(
+    initial_state: &CellState,
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    leg_a_slot: usize,
+    leg_b_slot: usize,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    let dep = super::pi::SETTLE_ESCROW_STATUS_DEPOSITED;
+    let con = super::pi::SETTLE_ESCROW_STATUS_CONSUMED;
+    // The honest both-legs settle: `Deposited` before, `Consumed` after.
+    settle_carrier_trace(
+        initial_state,
+        before_w,
+        after_w,
+        caveat,
+        leg_a_slot,
+        leg_b_slot,
+        (dep, dep),
+        (con, con),
+    )
+}
+
+/// **THE FORGED-STATUS settle carrier (adversarial teeth, `#[doc(hidden)]`).** Identical machinery to
+/// [`generate_rotated_settle_escrow_trace`] but with caller-chosen leg STATUS values before/after, so
+/// an adversarial test can build a FULLY-CONSISTENT trace (every commitment + continuity constraint
+/// satisfied) whose ONLY violated relation is a welded satisfaction gate — isolating the teeth in a
+/// real STARK prove:
+///   * a PARTIAL settle (`after = (Consumed, Deposited)`) leaves leg B unswapped — the leg-B AFTER
+///     gate `sel·(after_B − Consumed)` is non-zero;
+///   * a PHANTOM settle (`before = (Empty, Deposited)`) consumes a leg that never locked — the leg-A
+///     BEFORE gate `sel·(before_A − Deposited)` is non-zero.
+/// Both are genuine cell state transitions (the carrier balances, commits, and chains are all
+/// recomputed), so the descriptor's REFUSAL is the welded gate alone, not a stale commitment.
+#[doc(hidden)]
+pub fn generate_rotated_settle_escrow_trace_forged(
+    initial_state: &CellState,
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    leg_a_slot: usize,
+    leg_b_slot: usize,
+    before_status: (u32, u32),
+    after_status: (u32, u32),
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    settle_carrier_trace(
+        initial_state,
+        before_w,
+        after_w,
+        caveat,
+        leg_a_slot,
+        leg_b_slot,
+        before_status,
+        after_status,
+    )
+}
+
+/// The shared settle-carrier core: a zero-amount transfer carrier whose two leg STATUS fields are
+/// flipped `before_status → after_status`, with every dependent commitment recomputed. The honest
+/// path passes `(Deposited, Deposited) → (Consumed, Consumed)`; the adversarial teeth pass forged
+/// statuses (see [`generate_rotated_settle_escrow_trace_forged`]).
+#[allow(clippy::too_many_arguments)]
+fn settle_carrier_trace(
+    initial_state: &CellState,
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    leg_a_slot: usize,
+    leg_b_slot: usize,
+    before_status: (u32, u32),
+    after_status: (u32, u32),
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    use super::columns::{AUX_BASE, PARAM_BASE, aux_off, state};
+    use super::pi as pimod;
+    use super::satisfaction_weld::ESCROW_SEL_COL;
+
+    if leg_a_slot >= 8 || leg_b_slot >= 8 || leg_a_slot == leg_b_slot {
+        return Err(format!(
+            "settle-escrow carrier: legs must be DISTINCT field slots in 0..8, got {leg_a_slot}/\
+             {leg_b_slot}"
+        ));
+    }
+
+    let before_a = BabyBear::new(before_status.0);
+    let before_b = BabyBear::new(before_status.1);
+    let after_a = BabyBear::new(after_status.0);
+    let after_b = BabyBear::new(after_status.1);
+
+    // Seed the carrier's pre-state with the BEFORE leg statuses so the row-0 BEFORE block (and the
+    // native v1 `OLD_COMMIT`) read them — the welded gate's before-leg precondition.
+    let mut pre = initial_state.clone();
+    pre.fields[leg_a_slot] = before_a;
+    pre.fields[leg_b_slot] = before_b;
+
+    // The zero-amount settle carrier: a `Transfer` of 0 (balance unchanged) under the transfer
+    // selector the settle base inherits; the settle is the field flip, not an economic move.
+    let effects = vec![Effect::Transfer {
+        amount: 0,
+        direction: 0,
+    }];
+    let (mut trace, base_pis) =
+        generate_rotated_effect_vm_trace(&pre, &effects, before_w, after_w, caveat)?;
+
+    let rec_col = AUX_BASE + aux_off::STATE_RECORD_DIGEST; // 186 (ZERO for a residue-free carrier)
+    let a_i1 = AUX_BASE + aux_off::STATE_INTER1; // 98
+    let a_i2 = AUX_BASE + aux_off::STATE_INTER2; // 99
+    let a_i3 = AUX_BASE + aux_off::STATE_INTER3; // 100
+    let fa = state::FIELD_BASE + leg_a_slot;
+    let fb = state::FIELD_BASE + leg_b_slot;
+
+    let n = trace.len();
+    for r in 0..n {
+        let is_settle_row = r == 0;
+        // BEFORE block: the chosen before-statuses on the settle row (the pre-lock state); the
+        // after-statuses on the carry-forward rows (cross-row continuity `next.before == local.after`
+        // carries the post-settle state forward).
+        let (bval_a, bval_b) = if is_settle_row {
+            (before_a, before_b)
+        } else {
+            (after_a, after_b)
+        };
+        trace[r][STATE_BEFORE_BASE + fa] = bval_a;
+        trace[r][STATE_BEFORE_BASE + fb] = bval_b;
+        // AFTER block: the after-statuses on every row (the post-settle status).
+        trace[r][STATE_AFTER_BASE + fa] = after_a;
+        trace[r][STATE_AFTER_BASE + fb] = after_b;
+
+        // Recompute each v1 block's GROUP-4 STATE_COMMIT over the (flipped) fields, byte-identical
+        // to the descriptor's poseidon lookups (`compute_commitment`): i1 = [bal_lo, bal_hi, nonce,
+        // field0], i2 = [field1..4], i3 = [field5..7, cap_root], commit = [i1, i2, i3, record_digest].
+        // The AFTER block's three intermediates ARE descriptor-bound (cols 98/99/100); the BEFORE
+        // block's are not (its STATE_COMMIT is only consumed by the cross-row continuity).
+        recommit_v1_block(&mut trace[r], STATE_BEFORE_BASE, rec_col, None);
+        recommit_v1_block(
+            &mut trace[r],
+            STATE_AFTER_BASE,
+            rec_col,
+            Some((a_i1, a_i2, a_i3)),
+        );
+
+        // Re-weld both rotated blocks from the modified v1 fields, re-chaining `wireCommitR` →
+        // rotated STATE_COMMIT (`fill_block` overrides the welded field limbs r3..r10 from the v1
+        // block, so the rotated field columns the welded gates read carry the flipped status).
+        fill_block(&mut trace[r], BEFORE_BASE, STATE_BEFORE_BASE, before_w);
+        fill_block(&mut trace[r], AFTER_BASE, STATE_AFTER_BASE, after_w);
+
+        // The capacity selector (col 70): ON on the settle row, OFF on padding.
+        trace[r][PARAM_BASE + 2] = if is_settle_row {
+            BabyBear::ONE
+        } else {
+            BabyBear::ZERO
+        };
+        debug_assert_eq!(PARAM_BASE + 2, ESCROW_SEL_COL, "selector col 70");
+    }
+
+    // Re-derive the PI vector. The row-0 BEFORE block kept its `Deposited` fields, so OLD_COMMIT +
+    // the rotated OLD pin are unchanged from the base; the AFTER block flipped to `Consumed`, so
+    // NEW_COMMIT (the 8-felt faithful commit) + the rotated NEW pin move.
+    let last = trace.len() - 1;
+    let sa = STATE_AFTER_BASE;
+    let bal = (trace[last][sa + state::BALANCE_LO].as_u32() as u64)
+        | ((trace[last][sa + state::BALANCE_HI].as_u32() as u64) << 30);
+    let nonce = trace[last][sa + state::NONCE].as_u32();
+    let mut after_fields = [BabyBear::ZERO; 8];
+    for (k, slot) in after_fields.iter_mut().enumerate() {
+        *slot = trace[last][sa + state::FIELD_BASE + k];
+    }
+    let new8 = CellState::compute_commitment_8(
+        bal,
+        nonce,
+        &after_fields,
+        trace[last][sa + state::CAP_ROOT],
+        trace[last][rec_col],
+    );
+
+    let mut dpis: Vec<BabyBear> = base_pis[..ROT_PI_COUNT].to_vec();
+    dpis[pimod::NEW_COMMIT_BASE..pimod::NEW_COMMIT_BASE + pimod::NEW_COMMIT_LEN]
+        .copy_from_slice(&new8[..pimod::NEW_COMMIT_LEN]);
+    dpis[V1_PI_COUNT] = trace[0][BEFORE_BASE + B_STATE_COMMIT]; // rotated OLD commit (unchanged)
+    dpis[V1_PI_COUNT + 1] = trace[last][AFTER_BASE + B_STATE_COMMIT]; // rotated NEW commit (moved)
+    dpis.push(BabyBear::ONE); // PI 46: the escrow selector (settle-row), the descriptor pins it here.
+    debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
+
+    Ok((trace, dpis))
+}
+
+/// Recompute one v1 state block's GROUP-4 `STATE_COMMIT` from its (possibly mutated) state columns,
+/// byte-identical to [`CellState::compute_commitment`] and the descriptor's poseidon lookups: i1 =
+/// `[bal_lo, bal_hi, nonce, field0]`, i2 = `[field1..4]`, i3 = `[field5..7, cap_root]`, commit =
+/// `[i1, i2, i3, record_digest]`. When `inters` is `Some`, the three intermediates are written to
+/// those AUX columns (the AFTER block, whose intermediates the descriptor binds); `None` for the
+/// BEFORE block (only its `STATE_COMMIT` is published, via the cross-row continuity).
+fn recommit_v1_block(
+    row: &mut [BabyBear],
+    base: usize,
+    record_digest_col: usize,
+    inters: Option<(usize, usize, usize)>,
+) {
+    use super::columns::state;
+    let i1 = hash_many(&[
+        row[base + state::BALANCE_LO],
+        row[base + state::BALANCE_HI],
+        row[base + state::NONCE],
+        row[base + state::FIELD_BASE],
+    ]);
+    let i2 = hash_many(&[
+        row[base + state::FIELD_BASE + 1],
+        row[base + state::FIELD_BASE + 2],
+        row[base + state::FIELD_BASE + 3],
+        row[base + state::FIELD_BASE + 4],
+    ]);
+    let i3 = hash_many(&[
+        row[base + state::FIELD_BASE + 5],
+        row[base + state::FIELD_BASE + 6],
+        row[base + state::FIELD_BASE + 7],
+        row[base + state::CAP_ROOT],
+    ]);
+    if let Some((c1, c2, c3)) = inters {
+        row[c1] = i1;
+        row[c2] = i2;
+        row[c3] = i3;
+    }
+    row[base + state::STATE_COMMIT] = hash_many(&[i1, i2, i3, row[record_digest_col]]);
+}
+
 /// Resolve the rotated registry descriptor name for one EFFECT on the FEE-IN-PROOF path. A plain
 /// sovereign `Transfer` lead routes to `transferFeeVmDescriptor2R24` (the fee debited in-proof);
 /// every other effect falls back to [`rotated_descriptor_name_for_effect`] (the unfee'd cohort —
