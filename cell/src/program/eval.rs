@@ -1059,6 +1059,54 @@ fn evaluate_constraint_full(
             Ok(())
         }
 
+        // The sealed-escrow atomic-swap gate (the Lean `SettleGate`,
+        // `metatheory/Dregg2/Deos/SealedEscrow.lean` §6), evaluated over the
+        // field-mirrored leg-status slots. Both legs must be `Deposited` (1)
+        // before AND `Consumed` (2) after — the atomic both-or-none transition.
+        // A partial/half-open settle (one leg left `Deposited`) fails this
+        // conjunction: there is no accepting witness with only one leg moving.
+        // Status codes mirror `crate::escrow_sealed::LegStatus` (Empty/Deposited/
+        // Consumed = 0/1/2), read off the u64 lane so the slot mirror is the
+        // small status integer.
+        StateConstraint::SettleEscrow {
+            leg_a_index,
+            leg_b_index,
+        } => {
+            const DEPOSITED: u64 = 1;
+            const CONSUMED: u64 = 2;
+            let a = check_index(*leg_a_index)?;
+            let b = check_index(*leg_b_index)?;
+            let Some(old) = old_state else {
+                return Err(ProgramError::TransitionCheckRequiresOldState {
+                    constraint: constraint.clone(),
+                    index: *leg_a_index,
+                });
+            };
+            let before_a = field_to_u64(&old.fields[a]);
+            let before_b = field_to_u64(&old.fields[b]);
+            let after_a = field_to_u64(&new_state.fields[a]);
+            let after_b = field_to_u64(&new_state.fields[b]);
+            if before_a != DEPOSITED || before_b != DEPOSITED {
+                return violated(
+                    constraint,
+                    format!(
+                        "SettleEscrow: both legs must be Deposited before settle \
+                         (leg A slot[{a}]={before_a}, leg B slot[{b}]={before_b})"
+                    ),
+                );
+            }
+            if after_a != CONSUMED || after_b != CONSUMED {
+                return violated(
+                    constraint,
+                    format!(
+                        "SettleEscrow: both legs must be Consumed after settle \
+                         (leg A slot[{a}]={after_a}, leg B slot[{b}]={after_b})"
+                    ),
+                );
+            }
+            Ok(())
+        }
+
         StateConstraint::TemporalPredicate {
             dsl_hash,
             witness_index,

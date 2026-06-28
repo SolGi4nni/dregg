@@ -429,6 +429,25 @@ pub const SLOT_CAVEAT_TAG_RATE_BOUND: u32 = 13;
 pub const SLOT_CAVEAT_TAG_UNTIL_EVENT: u32 = 14;
 pub const SLOT_CAVEAT_TAG_SINCE_EVENT: u32 = 15;
 pub const SLOT_CAVEAT_TAG_CHALLENGE_WINDOW: u32 = 16;
+/// The sealed-escrow atomic-swap gate (`docs/deos/SETTLE-ESCROW-WELD-DESIGN.md`,
+/// the Lean `SettleGate` in `metatheory/Dregg2/Deos/SealedEscrow.lean` §6). A
+/// SINGLE manifest entry that reads BOTH leg-status slots and forces the atomic
+/// both-or-none transition: both legs `Deposited` before, both `Consumed` after.
+/// Encoding: `slot_index` = leg A's status slot; `p0` = leg B's status slot. A
+/// partial settle (one leg flipped) FAILS the conjunction — inexpressible — so a
+/// light client re-evaluating this entry witnesses settlement atomicity. STAGED:
+/// the AIR constraint polynomials (the VK bytes) are UNCHANGED (manifest in PI +
+/// off-AIR re-evaluation, exactly the temporal tags 13–16); an old verifier
+/// rejects this tag as `unknown type_tag` (the lockstep sealed-escrow verifier
+/// epoch), NOT a proving-key rotation.
+pub const SLOT_CAVEAT_TAG_SETTLE_ESCROW: u32 = 17;
+/// The field-mirrored `LegStatus::Deposited` code (matches the Lean
+/// `stDeposited` and `cell/src/escrow_sealed.rs::LegStatus`): a leg is locked
+/// and unconsumed before settlement.
+pub const SETTLE_ESCROW_STATUS_DEPOSITED: u32 = 1;
+/// The field-mirrored `LegStatus::Consumed` code (matches the Lean `stConsumed`):
+/// a leg has been consumed (settled) after the atomic transition.
+pub const SETTLE_ESCROW_STATUS_CONSUMED: u32 = 2;
 
 // ---- Cross-effect within-turn chain pinning (Proof-to-Action Binding §3.3) ----
 //

@@ -1741,4 +1741,48 @@ pub enum StateConstraint {
         /// [`CollPred`] vocabulary [`Self::CollectionAggregate`] uses).
         pred: CollPred,
     },
+
+    /// **The sealed-escrow atomic-swap gate** (the sealed-escrow house-capacity
+    /// in-circuit weld, `docs/deos/SETTLE-ESCROW-WELD-DESIGN.md`). Forces the
+    /// 2-of-2 swap to settle ALL-OR-NOTHING: BOTH leg-status slots must read
+    /// `Deposited` before the transition AND BOTH read `Consumed` after. A
+    /// forged PARTIAL settle (one leg flipped, the other left `Deposited` — the
+    /// half-open trade) is INEXPRESSIBLE: it fails this single conjunctive
+    /// entry. This is the Lean `SettleGate` (`metatheory/Dregg2/Deos/
+    /// SealedEscrow.lean` §6) lifted to a declared cell-program caveat — a SINGLE
+    /// entry reading BOTH legs, which the per-slot-independent caveats
+    /// (`AllowedTransitions`, `Monotonic`, …) cannot express (two independent
+    /// `Deposited→Consumed` entries do not bind atomicity — a forge would present
+    /// one and omit the other).
+    ///
+    /// The two named slots carry the **field-mirrored leg status** (the
+    /// `LegStatus` code `cell/src/escrow_sealed.rs` writes into the committed
+    /// heap, mirrored into a register slot for the AIR-teeth view — stage (a) of
+    /// the weld design): `Empty = 0`, `Deposited = 1`, `Consumed = 2`. The
+    /// executor evaluator (`evaluate_constraint_full`) enforces the gate over the
+    /// (old, new) field-slot pair; the projection
+    /// (`dregg_turn::executor::project_slot_caveat_manifest`) emits the tag-17
+    /// `SLOT_CAVEAT_TAG_SETTLE_ESCROW` manifest entry, which a light client
+    /// re-evaluates against the public-input-bound `state_before`/`state_after`
+    /// views (`dregg_circuit::effect_vm::verify_slot_caveat_manifest`). The AIR
+    /// constraint polynomials — hence the VK bytes — are UNCHANGED (manifest in
+    /// public inputs + off-AIR re-evaluation, exactly the temporal-caveat
+    /// vehicle): an old verifier rejects tag 17 as `unknown type_tag`, so
+    /// adopting it is a verifier-code epoch, not a proving-key rotation.
+    ///
+    /// STAGED: no deployed cell declares this caveat yet (dead-by-default until a
+    /// cell opts in at the sealed-escrow verifier epoch). Fail-closed: a transition
+    /// with no `old_state` surfaces `TransitionCheckRequiresOldState`; a bad slot
+    /// index is `InvalidFieldIndex`; any non-atomic leg state is
+    /// `ConstraintViolated`. A `StateConstraint` (reads the (old, new) pair, does
+    /// not lift into the post-state-local [`SimpleStateConstraint`] fragment).
+    /// APPEND-ONLY (declared LAST so every existing postcard/serde variant index
+    /// is preserved — factory VKs / content addresses byte-identical, §2).
+    SettleEscrow {
+        /// Register slot mirroring leg A's status code (`Empty`/`Deposited`/
+        /// `Consumed` = 0/1/2).
+        leg_a_index: u8,
+        /// Register slot mirroring leg B's status code.
+        leg_b_index: u8,
+    },
 }

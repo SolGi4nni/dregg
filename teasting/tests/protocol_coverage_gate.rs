@@ -312,6 +312,14 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         StateConstraint::UntilEvent { .. } => false,
         StateConstraint::SinceEvent { .. } => false,
         StateConstraint::ChallengeWindow { .. } => false,
+
+        // The sealed-escrow atomic-swap gate landed STAGED (the in-circuit weld,
+        // docs/deos/SETTLE-ESCROW-WELD-DESIGN.md): the scalar evaluator + the
+        // manifest projection + the off-AIR verifier re-evaluation are wired, but
+        // no executor-commit accept/reject coverage pair has been authored yet
+        // (the teeth live circuit-side, circuit/tests/settle_escrow_air_teeth.rs).
+        // Conservatively `false` per the honesty contract (under-claim).
+        StateConstraint::SettleEscrow { .. } => false,
     }
 }
 
@@ -341,14 +349,20 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
     "UntilEvent",
     "SinceEvent",
     "ChallengeWindow",
+    // The sealed-escrow atomic-swap gate landed STAGED (in-circuit weld); scalar
+    // evaluator + manifest projection + off-AIR verifier wired, but no
+    // executor-commit accept/reject pair authored yet (teeth are circuit-side).
+    "SettleEscrow",
 ];
 
 /// Ratchet for StateConstraint executor-enforcement coverage — may only shrink.
 ///
 /// History: 15 → 20 when the register-reading temporal algebra became writable
 /// (rate/until/since/cooled/challenge as enforced caveats, staged) without a
-/// dedicated executor accept/reject coverage pair; shrink as each gains one.
-const MAX_UNCOVERED_CONSTRAINTS: usize = 20;
+/// dedicated executor accept/reject coverage pair; 20 → 21 when the sealed-escrow
+/// atomic-swap gate landed STAGED (in-circuit weld, teeth circuit-side). Shrink as
+/// each gains an executor accept/reject coverage pair.
+const MAX_UNCOVERED_CONSTRAINTS: usize = 21;
 
 #[test]
 fn state_constraint_coverage_ratchet_only_shrinks() {

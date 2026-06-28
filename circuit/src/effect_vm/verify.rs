@@ -359,6 +359,46 @@ pub fn verify_slot_caveat_manifest(
                     ));
                 }
             }
+            t if t == pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW => {
+                // The sealed-escrow atomic-swap weld (the Lean `SettleGate`,
+                // `metatheory/Dregg2/Deos/SealedEscrow.lean` §6). The SINGLE entry
+                // reads BOTH leg-status slots and re-evaluates the atomic
+                // both-or-none transition against the public-input-bound
+                // state_before/state_after slot views: both legs `Deposited`
+                // before AND both `Consumed` after. A forged PARTIAL settle (one
+                // leg flipped, the half-open trade) FAILS this conjunction —
+                // INEXPRESSIBLE — so a light client re-running the manifest
+                // witnesses settlement atomicity (the off-AIR shadow of the Lean
+                // `settle_gate_forces_atomic` / `partial_settle_rejected` /
+                // `phantom_settle_rejected` teeth). Encoding: slot_index = leg A's
+                // status slot (already range-checked above); p0 = leg B's status
+                // slot. The slot views carry the field-mirrored `LegStatus` code
+                // (Empty=0, Deposited=1, Consumed=2).
+                let leg_b = p0.0 as usize;
+                if leg_b >= 8 {
+                    return Err(format!(
+                        "slot-caveat[{i}] SettleEscrow leg-B slot_index {leg_b} out of range (must be < 8)"
+                    ));
+                }
+                let before_a = old_v;
+                let after_a = new_v;
+                let before_b = initial_fields[leg_b];
+                let after_b = final_fields[leg_b];
+                let deposited = BabyBear::new(pi::SETTLE_ESCROW_STATUS_DEPOSITED);
+                let consumed = BabyBear::new(pi::SETTLE_ESCROW_STATUS_CONSUMED);
+                if before_a != deposited || before_b != deposited {
+                    return Err(format!(
+                        "slot-caveat[{i}] SettleEscrow: both legs must be Deposited before \
+                         (leg A slot {slot_idx} = {before_a:?}, leg B slot {leg_b} = {before_b:?})"
+                    ));
+                }
+                if after_a != consumed || after_b != consumed {
+                    return Err(format!(
+                        "slot-caveat[{i}] SettleEscrow: both legs must be Consumed after \
+                         (leg A slot {slot_idx} = {after_a:?}, leg B slot {leg_b} = {after_b:?})"
+                    ));
+                }
+            }
             // SenderAuthorized needs sender identity plus Merkle/blinded-set
             // witness verification context. The Effect-VM manifest only carries
             // the declaration shape, so production enforcement remains in the

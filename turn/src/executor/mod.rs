@@ -358,6 +358,29 @@ pub fn project_slot_caveat_manifest(
                 })
             }
             dregg_cell::StateConstraint::AllowedTransitions { .. } => None,
+            // The sealed-escrow atomic-swap gate (the Lean `SettleGate`,
+            // `metatheory/Dregg2/Deos/SealedEscrow.lean` §6 — the staged weld,
+            // `docs/deos/SETTLE-ESCROW-WELD-DESIGN.md`). A SINGLE entry reading
+            // BOTH leg slots: slot_index = leg A's status slot, p0 = leg B's
+            // status slot. The verifier re-evaluates the atomic both-or-none
+            // transition (both Deposited before, both Consumed after) off-AIR
+            // against the bound state_before/state_after views — VK UNCHANGED,
+            // exactly like the temporal tags 13–16. Additive + gated by a cell
+            // DECLARING the caveat, so it is dead-by-default until a cell opts in
+            // at the sealed-escrow verifier epoch (no deployed cell declares it).
+            dregg_cell::StateConstraint::SettleEscrow {
+                leg_a_index,
+                leg_b_index,
+            } => Some(SlotCaveatEntry {
+                type_tag: pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW,
+                slot_index: *leg_a_index,
+                params: [
+                    BabyBear::new(*leg_b_index as u32),
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                ],
+            }),
             // Deferred — no AIR teeth in Block 3 first wave.
             dregg_cell::StateConstraint::SumEquals { .. }
             | dregg_cell::StateConstraint::FieldLteField { .. }

@@ -392,6 +392,13 @@ pub enum StateConstraintView {
         root_index: u8,
         edges: Vec<(String, String)>,
     },
+    /// The sealed-escrow atomic-swap gate: both leg-status slots must read
+    /// `Deposited` before and `Consumed` after (the Lean `SettleGate`). Surfaces
+    /// the two field-mirrored leg-status slots.
+    SettleEscrow {
+        leg_a_index: u8,
+        leg_b_index: u8,
+    },
 }
 
 /// [`BoundBranch`] view (nested in [`StateConstraintView::AnyOfBound`]). The
@@ -1077,6 +1084,13 @@ impl StateConstraint {
                     .iter()
                     .map(|(hi, lo)| (view_hex(hi), view_hex(lo)))
                     .collect(),
+            },
+            StateConstraint::SettleEscrow {
+                leg_a_index,
+                leg_b_index,
+            } => StateConstraintView::SettleEscrow {
+                leg_a_index: *leg_a_index,
+                leg_b_index: *leg_b_index,
             },
         }
     }

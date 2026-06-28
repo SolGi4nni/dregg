@@ -3143,6 +3143,13 @@ fn view_projection_is_total_and_kind_tagged() {
             },
             "ChallengeWindow",
         ),
+        (
+            StateConstraint::SettleEscrow {
+                leg_a_index: 3,
+                leg_b_index: 4,
+            },
+            "SettleEscrow",
+        ),
     ];
 
     // COVERAGE TOOTH: this match must name every variant exactly once.
@@ -3213,7 +3220,8 @@ fn view_projection_is_total_and_kind_tagged() {
             | StateConstraint::CooledSince { .. }
             | StateConstraint::UntilEvent { .. }
             | StateConstraint::SinceEvent { .. }
-            | StateConstraint::ChallengeWindow { .. } => {}
+            | StateConstraint::ChallengeWindow { .. }
+            | StateConstraint::SettleEscrow { .. } => {}
         }
     }
 

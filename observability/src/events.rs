@@ -860,6 +860,12 @@ fn constraint_dissect(
         SC::ChallengeWindow {
             challenge_index, ..
         } => ("challenge_window", Some(*challenge_index), vec![]),
+        // The sealed-escrow atomic-swap gate: primary slot = leg A's status slot,
+        // leg B's status slot is the extra (both leg slots are bound jointly).
+        SC::SettleEscrow {
+            leg_a_index,
+            leg_b_index,
+        } => ("settle_escrow", Some(*leg_a_index), vec![*leg_b_index]),
     }
 }
 

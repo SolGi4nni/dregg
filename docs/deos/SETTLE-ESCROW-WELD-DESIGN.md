@@ -133,27 +133,39 @@ window can carry all the off-AIR manifest tags at once).
 
 ## 5. The precise staged-build plan (VK-risk-free, in order)
 
-1. **(DONE, this pass)** the Lean rung — `SealedEscrow.lean` §6, `#assert_all_clean`, green.
-2. `pub const SLOT_CAVEAT_TAG_SETTLE_ESCROW: u32 = 17;` in `circuit/src/effect_vm/pi.rs` beside
-   the existing tags. **No AIR change.**
-3. A verifier arm in `verify_slot_caveat_manifest` (`circuit/src/effect_vm/verify.rs`) reading
-   the two named leg slots from `initial_fields`/`final_fields` (stage (a)) and asserting the
-   `SettleGate` conjunction, value-for-value mirroring the Lean teeth. The `other =>` unknown-tag
-   arm already gives the lockstep-epoch rejection for old verifiers.
-4. A projection arm in `turn/src/executor/mod.rs::project_slot_caveat_manifest` that, for an
-   escrow cell declaring settlement, emits the tag-17 entry with the two leg-slot indices —
-   beside the existing `TemporalGate`/`RateBound` cases. (This is the one step outside
-   `circuit/`; it is additive and gated by the new caveat being declared, so it is dead-by-
-   default until a cell opts in.)
-5. Teeth tests in `circuit/tests/` (a `settle_escrow_air_teeth.rs` mirroring the Lean `#guard`
-   non-vacuity, both polarities: honest passes, partial fails, phantom fails) and the executor
-   projection round-trip in `turn/`.
+1. **(DONE)** the Lean rung — `SealedEscrow.lean` §6, `#assert_all_clean`, green.
+2. **(DONE)** `pub const SLOT_CAVEAT_TAG_SETTLE_ESCROW: u32 = 17;` (+ the field-mirrored status
+   codes `SETTLE_ESCROW_STATUS_DEPOSITED = 1` / `SETTLE_ESCROW_STATUS_CONSUMED = 2`) in
+   `circuit/src/effect_vm/pi.rs` beside the existing tags. **No AIR change** — a tag VALUE, not a
+   PI-layout offset, so `BASE_COUNT` and every offset are byte-identical (the `pi_v3` drift guard
+   and the descriptor fingerprints stay green).
+3. **(DONE)** a verifier arm in `verify_slot_caveat_manifest` (`circuit/src/effect_vm/verify.rs`)
+   reading leg A from `slot_index` and leg B from `p0` out of `initial_fields`/`final_fields`
+   (stage (a)) and asserting the `SettleGate` conjunction (both `Deposited` before, both
+   `Consumed` after), value-for-value mirroring the Lean teeth, with a leg-B-out-of-range
+   fail-closed. The `other =>` unknown-tag arm already gives the lockstep-epoch rejection for old
+   verifiers. There is ALSO an executor-side scalar evaluator arm
+   (`cell/src/program/eval.rs`, the `StateConstraint::SettleEscrow` case) so the gate is enforced
+   out-of-band as well as in the manifest.
+4. **(DONE)** a projection arm in `turn/src/executor/mod.rs::project_slot_caveat_manifest` that,
+   for a cell declaring `StateConstraint::SettleEscrow { leg_a_index, leg_b_index }`, emits the
+   tag-17 entry (`slot_index = leg A`, `p0 = leg B`) — beside the existing
+   `TemporalGate`/`RateBound` cases. Additive and gated by the new caveat being declared, so it is
+   dead-by-default until a cell opts in (no deployed cell declares it).
+5. **(DONE)** teeth tests: `circuit/tests/settle_escrow_air_teeth.rs` mirrors the Lean `#guard`
+   non-vacuity over both polarities (honest both-legs settle passes; partial settle on either leg
+   fails; phantom/replayed-leg settle fails; an exhaustive sweep over the two legs × three status
+   codes confirms the ONLY accepting shape is both-`Deposited`→both-`Consumed`), and
+   `turn/tests/settle_escrow_projection.rs` closes the executor projection round-trip end-to-end
+   (the projected manifest accepts honest, refuses partial). The new
+   `StateConstraint::SettleEscrow` variant also rides the existing coverage teeth
+   (`cell/src/program/tests.rs` view/serde totality; `teasting/.../protocol_coverage_gate.rs`).
 6. **(future epoch only)** the sealed-escrow verifier epoch: ship the upgraded verifier, then
    allow cells to declare the caveat.
 
-Steps 2–5 are VK-risk-free (PI + off-AIR check + additive projection); only step 6 is the
-coordinated rollout, and it is a verifier-code rollout, not a VK rotation. Stage (b) (heap-plane
-witnesses) is a later fidelity upgrade with the **same** Lean rung.
+Steps 2–5 are landed and VK-risk-free (PI + off-AIR check + additive projection); only step 6 —
+**the named gated verifier-epoch flip** — remains, and it is a verifier-code rollout, not a VK
+rotation. Stage (b) (heap-plane witnesses) is a later fidelity upgrade with the **same** Lean rung.
 
 ## 6. Why escrow first (leverage × tractability)
 
