@@ -147,6 +147,13 @@ discord = ["dep:serenity"]
 name = "web_render_card"
 required-features = ["web"]
 
+# THE PORTAL BAKE — generate the `portal.dregg.studio` static site (the live network view +
+# the trustless cell cards), gpui-free, reusing `web::portal_css` + `render_trustless_cell_document`:
+#   cd deos-view && cargo run --no-default-features --features web --example portal_bake -- <out-dir>
+[[example]]
+name = "portal_bake"
+required-features = ["web"]
+
 # ─── THE FORK SEAMS — replicated from deos-js + starbridge-v2 (the two standalone
 #     workspaces this crate path-deps). Because deos-view is its OWN workspace root,
 #     neither the repo-root `[patch]` nor deos-js's/starbridge-v2's reaches it, so the

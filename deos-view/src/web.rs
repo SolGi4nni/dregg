@@ -1350,6 +1350,15 @@ boot();\n",
     )
 }
 
+/// The portal's full stylesheet — the cockpit card palette ([`CSS`]) + the trustless trust-banner
+/// states ([`TRUSTLESS_CSS`]) + the live-status strip ([`LIVE_CSS`]) + the gallery/tile grid
+/// ([`GALLERY_CSS`]), concatenated. Exposed so a `portal/` generator reuses the EXACT styling the
+/// baked card shell carries (no hand-copied drift): the `portal.dregg.studio` static site links
+/// this verbatim, so its network view and trustless cards look like the native cockpit.
+pub fn portal_css() -> String {
+    format!("{CSS}{TRUSTLESS_CSS}{LIVE_CSS}{GALLERY_CSS}")
+}
+
 /// Embed a JSON string inside a `<script type="application/json">` island safely:
 /// escape every `<` as the `<` JSON escape. In well-formed JSON `<` only occurs
 /// inside string values, so this stays valid JSON while making the `</script>` close
