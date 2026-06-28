@@ -315,6 +315,16 @@ pub enum ModeCard {
     Agent,
     /// AUTHOR · what-links-here (`deos_js::links_card`).
     Links,
+    /// INHABIT · the proof-attach + STARK verification-status board (`deos_js::proofs_card`).
+    /// A whole-image survey (not per-cell): a summary pill row + one section per committed
+    /// turn. Read-only (it never mints a STARK in a paint — the honest stance).
+    Proofs,
+    /// INHABIT · live organ cell-state (`deos_js::organs_card`). A whole-image survey:
+    /// trustlines · flash wells · remote-path, each a section. Read-only.
+    Organs,
+    /// HOME · the warm landing portal / boot view (`deos_js::home_card`). A whole-image
+    /// reflection: the masthead (liveness pills) + a section per portal section. Read-only.
+    Home,
     /// INSPECT · the focused cell's reflected state + its cap-gated affordances
     /// (`deos_js::inspector_card`). The INSPECT-ACT surface reborn as card data: the
     /// RawFields face → live `Bind` rows + labeled `Text`, the Affordances face →
@@ -335,6 +345,9 @@ impl ModeCard {
             ModeCard::Dynamics => "dynamics · live transition feed (deos-js card)",
             ModeCard::Agent => "agent · live mandate + activity (deos-js card)",
             ModeCard::Links => "what-links-here · live backlinks (deos-js card)",
+            ModeCard::Proofs => "proofs · live verification status (deos-js card)",
+            ModeCard::Organs => "organs · live organ cell-state (deos-js card)",
+            ModeCard::Home => "home · the live landing portal (deos-js card)",
             ModeCard::Inspector => "inspect · live cell state + affordances (deos-js card)",
         }
     }
@@ -406,6 +419,108 @@ impl ModeCard {
                 let (backlinks, total) =
                     deos_js::links_card::build_backlinks(focus, &cells, viewer);
                 deos_js::links_card::links_view(focus, viewer, &backlinks, total)
+            }
+            ModeCard::Proofs => {
+                // The proof board over the live image (most-recent-first, capped) → one card
+                // row per committed turn, tier-tagged for the renderer's styling accent.
+                let board = crate::proofs::ProofBoard::build(world, 16);
+                let rows: Vec<deos_js::ProofCardRow> = board
+                    .entries
+                    .iter()
+                    .map(|e| deos_js::ProofCardRow {
+                        height: e.height,
+                        receipt_short: e.receipt_short.clone(),
+                        tier_label: e.tier.label().to_string(),
+                        tag: proof_tier_tag(e.tier),
+                        summary: e.summary(),
+                        route: e.upgrade_route().map(|s| s.to_string()),
+                    })
+                    .collect();
+                deos_js::proofs_view(
+                    board.by_construction,
+                    board.signed,
+                    board.stark_attached,
+                    &rows,
+                )
+            }
+            ModeCard::Organs => {
+                // The organ survey over the live image → three groups (trustlines · flash
+                // wells · remote-path), each a section of organ rows.
+                let survey = crate::organs::OrganSurvey::build(world);
+                let trustlines: Vec<deos_js::OrganCardRow> = survey
+                    .trustlines
+                    .iter()
+                    .map(|t| deos_js::OrganCardRow {
+                        glyph: "⬡".to_string(),
+                        short: format!("{} (trustline)", t.short),
+                        summary: t.summary(),
+                    })
+                    .collect();
+                let flash_wells: Vec<deos_js::OrganCardRow> = survey
+                    .flash_wells
+                    .iter()
+                    .map(|f| deos_js::OrganCardRow {
+                        glyph: "⬡".to_string(),
+                        short: format!("{} (flash well)", f.short),
+                        summary: f.summary(),
+                    })
+                    .collect();
+                let remote: Vec<deos_js::OrganCardRow> = survey
+                    .remote
+                    .iter()
+                    .map(|r| deos_js::OrganCardRow {
+                        glyph: "◌".to_string(),
+                        short: format!("{} (remote)", r.kind),
+                        summary: format!("seam {} · route {}", r.seam, r.route),
+                    })
+                    .collect();
+                deos_js::organs_view(
+                    survey.live_count(),
+                    survey.remote.len(),
+                    &trustlines,
+                    &flash_wells,
+                    &remote,
+                )
+            }
+            ModeCard::Home => {
+                // The landing portal over the live image (its numbers are the running image's
+                // actual numbers) → the masthead (liveness pills) + a section per portal section.
+                let portal = crate::landing::LandingPortal::build(world);
+                let pills: Vec<(String, String)> = vec![
+                    ("● live".to_string(), "good".to_string()),
+                    ("embedded verified executor".to_string(), "good".to_string()),
+                    (format!("h{}", world.height()), "accent".to_string()),
+                    (
+                        format!("{} cells", world.cell_count()),
+                        "accent".to_string(),
+                    ),
+                    (
+                        format!("{} receipts", world.receipts().len()),
+                        "accent".to_string(),
+                    ),
+                ];
+                let sections: Vec<deos_js::HomeSection> = portal
+                    .sections
+                    .iter()
+                    .map(|s| deos_js::HomeSection {
+                        title: s.title.clone(),
+                        lines: s
+                            .lines
+                            .iter()
+                            .map(|l| deos_js::HomeLine {
+                                text: l.text.clone(),
+                                heading: matches!(l.tone, crate::landing::Tone::Heading),
+                            })
+                            .collect(),
+                    })
+                    .collect();
+                deos_js::home_view(
+                    &portal.headline,
+                    &portal.subtitle,
+                    &pills,
+                    &sections,
+                    &portal.invitation,
+                )
             }
             ModeCard::Inspector => {
                 // The inspector view-tree over the focused cell: its RawFields face (scalar
@@ -523,9 +638,24 @@ fn mode_card_pk(kind: ModeCard, focus: CellId) -> [u8; 32] {
         ModeCard::Dynamics => 0xD7,
         ModeCard::Agent => 0xA9,
         ModeCard::Links => 0x11,
+        ModeCard::Proofs => 0x9F,
+        ModeCard::Organs => 0x06,
+        ModeCard::Home => 0x40,
         ModeCard::Inspector => 0x15,
     };
     pk
+}
+
+/// The renderer's styling-accent tag for a verification tier (the existing `props.tag`
+/// convention the pill/section nodes read): STARK is the strongest (`good`), an
+/// executor-signed turn `accent`, a verified-by-construction turn `muted`.
+fn proof_tier_tag(tier: crate::proofs::VerificationTier) -> String {
+    match tier {
+        crate::proofs::VerificationTier::StarkAttached => "good",
+        crate::proofs::VerificationTier::ExecutorSigned => "accent",
+        crate::proofs::VerificationTier::VerifiedByConstruction => "muted",
+    }
+    .to_string()
 }
 
 /// **MAKE YOUR FIRST CARD** — mint a fresh, editable starter card over the cockpit's LIVE

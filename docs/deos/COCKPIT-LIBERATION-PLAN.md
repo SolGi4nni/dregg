@@ -48,7 +48,7 @@ Complexity = read-only display vs. rich interaction (input state, drag, menus, s
 
 | Surface | File:function (approx) | Coupling | Complexity | Card today? |
 |---|---|---|---|---|
-| Home | panels_workspace.rs:1175 | high | static prose + pills | no |
+| Home | panels_workspace.rs:1175 | high | static prose + pills | **carded** (`ModeCard::Home`) |
 | Shell | panels_workspace.rs:1273 | high | layout picker + ops | optional (card-pane) |
 | Agent | panels_workspace.rs:1640 | high | activity list | **carded** (`ModeCard::Agent`) |
 | Buffer | panels_web.rs:1387 | high | text-buffer + commit | no |
@@ -61,9 +61,9 @@ Complexity = read-only display vs. rich interaction (input state, drag, menus, s
 | Cipherclerk | panels_workspace.rs:2599 | high | macaroon lifecycle buttons | no |
 | Editor | panels_web.rs:1678 | high (delegates) | monospace text | no |
 | Swarm | panels_workspace.rs:2150 | high | member roster + pills | no |
-| Organs | panels_workspace.rs:2940 | high | sectioned read-only | no |
+| Organs | panels_workspace.rs:2940 | high | sectioned read-only | **carded** (`ModeCard::Organs`) |
 | Graph | panels_workspace.rs:2814 | high | edge-list iteration | **carded** (`ModeCard::Graph`) |
-| Proofs | panels_web.rs:10 | high | verification-tier board | no |
+| Proofs | panels_web.rs:10 | high | verification-tier board | **carded** (`ModeCard::Proofs`) |
 | WebOfCells | panels_web.rs:98 | high | tier toggle + affordances | no |
 | WebShell | panels_webshell.rs:619 | high | URL bar + Servo tile | no |
 | LinksHere | panels_web.rs:719 | high | backlink list + depth | **carded** (`ModeCard::Links`) |
@@ -126,10 +126,14 @@ whole vocabulary:
 | `list(...)` | vertical list | `v_flex` of children | `deos-list` |
 | `table(...)` | table of row-nodes | `v_flex` of children | `deos-table` |
 
-The same 8 nodes are mirrored in deos-js's `card_editor::ViewTree` (the gpui-free authoring
-mirror, with `VStack/Row/Text/Bind/Button`) and produced by the JS prelude
+The nodes are mirrored in deos-js's `card_editor::ViewTree` (the gpui-free authoring
+mirror — `VStack/Row/Text/Bind/Button` plus `Section`/`Pill`, the two batch-1 richness
+nodes the read-mostly cards needed) and produced by the JS prelude
 (`deos-js/src/js.rs:430`'s `deos.ui.*`). The wire format is `{kind, props, children}`;
 an unknown kind renders as a visible `‹unmapped node: …›` placeholder (honest fallback).
+The renderer (`deos-view`'s `ViewNode`) carries the full richness vocabulary already; the
+authoring mirror catches up node-by-node as a surface needs to *emit* one (a card builds a
+`ViewTree`, so a richer card needs the richer mirror, not just the richer renderer).
 
 **Two load-bearing serialization facts:** a `bind`'s closure is dropped by
 `JSON.stringify`, so the author tags the node with `props.slot` (the model slot to re-read);

@@ -1152,6 +1152,32 @@ mod batch2_lift_tests {
     }
 
     #[test]
+    fn a_section_lifts_from_the_authoring_mirror_wire_shape() {
+        // The EXACT shape a deos-js `card_editor::ViewTree::Section` serializes to (a
+        // `{kind:"section", props:{title,tag}, children:[…]}`), as the proofs/organs/home
+        // cards emit — proving the authoring-mirror extension bridges losslessly into the
+        // renderer's `ViewNode::Section`.
+        let tree = parse_view_tree(
+            r#"{ "kind":"section", "props":{ "title":"TRUSTLINES (live)", "tag":"good" },
+                 "children":[ { "kind":"text", "props":{ "text":"⬡ ab12" } },
+                              { "kind":"pill", "props":{ "text":"LIVE", "tag":"good" } } ] }"#,
+        )
+        .expect("parse section");
+        let ViewNode::Section {
+            title,
+            tag,
+            children,
+        } = &tree
+        else {
+            panic!("root is a section")
+        };
+        assert_eq!(title, "TRUSTLINES (live)");
+        assert_eq!(tag, "good");
+        assert_eq!(children.len(), 2, "the section carries its children");
+        assert!(matches!(&children[1], ViewNode::Pill { text, .. } if text == "LIVE"));
+    }
+
+    #[test]
     fn a_grid_recurses_a_hosted_cell_through_resolve_mounts() {
         let grid = ViewNode::Grid {
             cols: 3,

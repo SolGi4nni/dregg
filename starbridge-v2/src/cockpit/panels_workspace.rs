@@ -187,6 +187,15 @@ impl Cockpit {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         match tab {
+            // HOME · the landing-portal card AS the surface (the live front door as a card),
+            // the Rust home panel as fail-soft fallback.
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::Home => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::Home,
+                cx,
+                |this, _cx| this.home_panel().into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Home => self.home_panel().into_any_element(),
             Tab::Shell => self.shell_panel(cx).into_any_element(),
             // OPERATE · the agent-activity card AS the surface (the mode's main pane is a
@@ -209,7 +218,23 @@ impl Cockpit {
             ),
             #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Graph => self.graph_panel().into_any_element(),
+            // INHABIT · the organ-survey card AS the surface (live organ cell-state as a card).
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::Organs => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::Organs,
+                cx,
+                |this, _cx| this.organs_panel().into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Organs => self.organs_panel().into_any_element(),
+            // INHABIT · the proof-board card AS the surface (live verification status as a card).
+            #[cfg(all(feature = "dev-surfaces", feature = "card-pane"))]
+            Tab::Proofs => self.mode_card_surface(
+                starbridge_v2::dock::card_surface::ModeCard::Proofs,
+                cx,
+                |this, _cx| this.proofs_panel().into_any_element(),
+            ),
+            #[cfg(not(all(feature = "dev-surfaces", feature = "card-pane")))]
             Tab::Proofs => self.proofs_panel().into_any_element(),
             Tab::WebOfCells => self.web_of_cells_panel(cx).into_any_element(),
             Tab::WebShell => self.webshell_panel(cx).into_any_element(),

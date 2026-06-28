@@ -33,6 +33,7 @@ pub mod coauthored_card;
 pub mod composer_card;
 pub mod dynamics_card;
 pub mod graph_card;
+pub mod home_card;
 pub mod inspector_card;
 pub mod js;
 pub mod layout_card;
@@ -40,8 +41,10 @@ pub mod links_card;
 pub mod mailtown;
 pub mod multi_cell;
 pub mod objects_card;
+pub mod organs_card;
 pub mod portable;
 pub mod program_doc;
+pub mod proofs_card;
 pub mod reflect_binding;
 pub mod signals;
 
@@ -57,6 +60,7 @@ pub use coauthored_card::{CardFork, CardStitch, SharedCard, COUNT_SLOT};
 pub use composer_card::{ComposedChild, ComposerCard, ComposerViewEdit, Role as ComposerRole};
 pub use dynamics_card::{DynamicsCard, FeedEntry, FEED_LEN_SLOT};
 pub use graph_card::{GraphCard, GraphRow, GRAPH_AUTHORSHIP_SLOT};
+pub use home_card::{home_view, HomeLine, HomeSection};
 pub use inspector_card::{InspectorCard, INSPECTOR_AUTHORSHIP_SLOT};
 pub use js::{
     set_current_composer, set_current_editor, take_current_composer, take_current_editor,
@@ -65,6 +69,8 @@ pub use js::{
 pub use layout_card::{LayoutCard, LayoutMode, LayoutModel, LayoutPatch, LAYOUT_AUTHORSHIP_SLOT};
 pub use links_card::{BacklinkRow, LinksCard, LINK_COUNT_SLOT};
 pub use objects_card::{ObjectRow, ObjectsCard, OBJECTS_AUTHORSHIP_SLOT};
+pub use organs_card::{organs_view, OrganCardRow};
 pub use portable::{AffordanceSpec, AppletManifest, ApplyOp, PortableApplet};
 pub use program_doc::{GadgetCite, ProgramSource, TranscludedFragment};
+pub use proofs_card::{proofs_view, ProofCardRow};
 pub use reflect_binding::id_hex;
