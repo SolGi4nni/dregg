@@ -743,49 +743,27 @@ impl NodeState {
                 for cell in overlay {
                     upsert_cell(&mut ledger, cell);
                 }
-                let recovered_root = crate::blocklace_sync::canonical_ledger_root(&ledger);
-                // Convergence assertion: the reconstructed root MUST equal the
-                // root the committing node durably recorded for the last turn.
-                match store.recovered_ledger_root() {
-                    Ok(Some(expected)) if expected == recovered_root => {
-                        tracing::info!(
-                            overlaid_cells = overlay_len,
-                            commit_cursor = store.commit_cursor().unwrap_or(0),
-                            recovered_root = %dregg_types::hex_encode(&recovered_root),
-                            "applied durable commit-log overlay — recovered ledger CONVERGED to the \
-                             recorded finalized root (crash-consistent)"
-                        );
-                    }
-                    Ok(Some(expected)) => {
-                        // A mismatch means the checkpoint and the commit log are
-                        // from inconsistent eras (e.g. a manually edited DB) — a
-                        // real integrity event. The reconstructed ledger does NOT
-                        // equal the finalized state the committing node recorded,
-                        // so serving it would serve a SILENTLY-WRONG ledger as
-                        // truth: a soundness event. FAIL CLOSED — surface loudly
-                        // AND refuse to start rather than fall through.
-                        tracing::error!(
-                            overlaid_cells = overlay_len,
-                            recovered_root = %dregg_types::hex_encode(&recovered_root),
-                            expected_root = %dregg_types::hex_encode(&expected),
-                            "commit-log overlay recovered a ledger root that does NOT match the \
-                             durably recorded finalized root — STORE INTEGRITY EVENT, refusing to start"
-                        );
-                        return Err(format!(
-                            "recovery convergence failed: reconstructed ledger root {} does not \
-                             match the durably recorded finalized root {} — refusing to serve a \
-                             divergent ledger (STORE INTEGRITY EVENT)",
-                            dregg_types::hex_encode(&recovered_root),
-                            dregg_types::hex_encode(&expected),
-                        ));
-                    }
-                    _ => {
-                        tracing::info!(
-                            overlaid_cells = overlay_len,
-                            "applied durable commit-log overlay (no recorded root to compare)"
-                        );
-                    }
-                }
+                // The recovery-convergence verdict is DEFERRED to
+                // `verify_recovery_convergence`, which `run_node` calls AFTER the
+                // genesis/baseline cells are (re)seeded onto this overlay.
+                //
+                // A node that finalized turns BELOW the first ledger checkpoint
+                // has NO checkpoint to restore its UNTOUCHED genesis cells from,
+                // and `cell_overlay_since` carries only the cells a turn TOUCHED.
+                // So the ledger reconstructed HERE is the touched-cell delta on
+                // an empty base — NOT yet the full finalized ledger. The recorded
+                // finalized root commits the FULL ledger (genesis ⊕ touched);
+                // comparing against it before the genesis baseline is reseeded
+                // would fail-close every legitimate sub-checkpoint restart (the
+                // node would need a redb wipe to rejoin). The verdict still runs,
+                // still fail-CLOSED on genuine divergence — just once the
+                // baseline is in place and the root is meaningful.
+                tracing::info!(
+                    overlaid_cells = overlay_len,
+                    commit_cursor = store.commit_cursor().unwrap_or(0),
+                    "applied durable commit-log overlay — recovery convergence is verified \
+                     after the genesis baseline is reseeded (see verify_recovery_convergence)"
+                );
             }
             Ok(_) => {}
             Err(e) => {
@@ -1082,6 +1060,75 @@ impl NodeState {
             public_key: hex::encode(&pk.0),
             token_count: state.cclerk.tokens().len(),
             receipt_chain_length: state.cclerk.receipt_chain_length(),
+        }
+    }
+
+    /// Verify recovery convergence: the canonical root of the CURRENTLY-LOADED
+    /// ledger must equal the durably recorded finalized root.
+    ///
+    /// This is the recovery-side analogue of LaceMerge convergence: independent
+    /// of HOW the ledger was rebuilt (checkpoint + commit-log overlay + genesis
+    /// baseline), the resulting root MUST equal the root the committing node
+    /// recorded. A mismatch means the reconstructed ledger does NOT equal the
+    /// finalized state that was committed — serving it would serve a
+    /// SILENTLY-WRONG ledger as truth (a soundness event). FAIL CLOSED: return
+    /// `Err` so the caller refuses to start rather than serve divergent state.
+    ///
+    /// MUST be called AFTER the genesis/baseline cells have been (re)seeded onto
+    /// the recovered commit-log overlay. The verdict is deliberately deferred out
+    /// of `NodeState::new_with_key_file`: a node that finalized turns BELOW the
+    /// first ledger checkpoint has no checkpoint to restore its UNTOUCHED genesis
+    /// cells from, and the commit-log overlay carries only the cells a turn
+    /// touched — so the ledger at construction time is the touched-cell delta on
+    /// an empty base, not yet the full finalized ledger. Reseeding the genesis
+    /// baseline (insert-if-absent; the overlaid touched cells are preserved)
+    /// completes the ledger to `genesis ⊕ touched`, the exact state the recorded
+    /// root commits. Only then is the comparison meaningful.
+    ///
+    /// Returns `Ok(())` when there is no recorded finalized root (a fresh genesis
+    /// boot has nothing to converge to) or when the roots match.
+    pub async fn verify_recovery_convergence(&self) -> Result<(), String> {
+        let s = self.read().await;
+        let expected = match s.store.recovered_ledger_root() {
+            Ok(Some(root)) => root,
+            Ok(None) => {
+                // No finalized turn recorded — a fresh genesis boot. Nothing to
+                // converge to.
+                return Ok(());
+            }
+            Err(e) => {
+                // Could not read the recorded root; do not treat a read failure
+                // as a soundness violation (matches the pre-deferral behavior,
+                // which logged-and-continued when no comparable root was found).
+                tracing::warn!(error = %e, "could not read recorded finalized root for recovery convergence");
+                return Ok(());
+            }
+        };
+        let recovered_root = crate::blocklace_sync::canonical_ledger_root(&s.ledger);
+        if recovered_root == expected {
+            tracing::info!(
+                cells = s.ledger.len(),
+                commit_cursor = s.store.commit_cursor().unwrap_or(0),
+                recovered_root = %dregg_types::hex_encode(&recovered_root),
+                "recovery convergence verified — reconstructed ledger CONVERGED to the \
+                 recorded finalized root (crash-consistent)"
+            );
+            Ok(())
+        } else {
+            tracing::error!(
+                cells = s.ledger.len(),
+                recovered_root = %dregg_types::hex_encode(&recovered_root),
+                expected_root = %dregg_types::hex_encode(&expected),
+                "reconstructed ledger root does NOT match the durably recorded finalized \
+                 root — STORE INTEGRITY EVENT, refusing to start"
+            );
+            Err(format!(
+                "recovery convergence failed: reconstructed ledger root {} does not match \
+                 the durably recorded finalized root {} — refusing to serve a divergent \
+                 ledger (STORE INTEGRITY EVENT)",
+                dregg_types::hex_encode(&recovered_root),
+                dregg_types::hex_encode(&expected),
+            ))
         }
     }
 
@@ -2226,8 +2273,9 @@ mod crash_recovery_overlay_tests {
     #[tokio::test]
     async fn convergence_root_mismatch_refuses_to_start() {
         // Same overlay, but the durably recorded finalized root is WRONG (does
-        // not match the reconstructed root). `new_with_key_file` runs the
-        // convergence check and MUST fail closed.
+        // not match the reconstructed root). The convergence verdict
+        // (`verify_recovery_convergence`, deferred out of construction so the
+        // genesis baseline can be reseeded first) MUST fail closed.
         let seed = 0x3c;
         let tmp = tempfile::tempdir().expect("tempdir");
         seed_store_with_overlay(
@@ -2238,8 +2286,13 @@ mod crash_recovery_overlay_tests {
             [0xde; 32], // deliberately NOT the post-overlay root
         );
 
-        let result = NodeState::new_with_key_file(tmp.path(), vec![], "node.key");
-        let err = result
+        // Construction itself succeeds (it reconstructs the overlay); the verdict
+        // is the separate fail-closed step.
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construction reconstructs the overlay; the verdict is a separate step");
+        let err = state
+            .verify_recovery_convergence()
+            .await
             .err()
             .expect("a convergence-root mismatch must FAIL CLOSED, not log-and-continue");
         assert!(
@@ -2250,19 +2303,170 @@ mod crash_recovery_overlay_tests {
 
     #[tokio::test]
     async fn convergence_root_match_starts_normally() {
-        // Control: the SAME path with a CORRECT recorded root must start (proves
-        // the fail-closed Err is reached only on genuine divergence, not always).
+        // Control: the SAME path with a CORRECT recorded root must pass the
+        // verdict (proves the fail-closed Err is reached only on genuine
+        // divergence, not always). With a checkpoint present, the reconstructed
+        // ledger is already complete, so the verdict converges with no reseed.
         let seed = 0x77;
         let tmp = tempfile::tempdir().expect("tempdir");
         seed_store_with_overlay(tmp.path(), seed, 7, 42, converged_root(seed, 42));
 
         let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
-            .expect("a converging recovery must start normally");
+            .expect("a converging recovery must construct");
+        state
+            .verify_recovery_convergence()
+            .await
+            .expect("a converging recovery must pass the verdict");
         let guard = state.read().await;
         let recovered = guard
             .ledger
             .get(&cell(seed, 0).id())
             .expect("recovered cell present");
         assert_eq!(recovered.state.balance(), 42);
+    }
+
+    /// Seed a store with NO checkpoint (the sub-first-checkpoint case) and a
+    /// single finalized turn at `height` whose ONLY touched cell is `touched`.
+    /// The recorded finalized root is `record_root`. This reproduces the
+    /// federation bring-up bug: a node that finalized a turn while still below
+    /// `LEDGER_CHECKPOINT_INTERVAL` has no checkpoint to restore its UNTOUCHED
+    /// genesis cells from, and the commit-log overlay carries only `touched`.
+    fn seed_sub_checkpoint_store(dir: &Path, height: u64, touched: &Cell, record_root: [u8; 32]) {
+        let db_path = dir.join("dregg.redb");
+        let store = PersistentStore::open(&db_path).expect("open store");
+        let rec = dregg_persist::CommitRecord {
+            ordinal: 0,
+            height,
+            block_id: [0u8; 32],
+            block_executed_up_to: 0,
+            turn_hash: [0xa1; 32],
+            creator: [0u8; 32],
+            receipt_hash: [0xa2; 32],
+            ledger_root: record_root,
+            touched_cells: vec![touched.clone()],
+        };
+        store
+            .commit_finalized_turn(0, &rec)
+            .expect("commit sub-checkpoint turn");
+    }
+
+    /// The federation bring-up bug, fixed: a node that finalized ONE turn below
+    /// the first ledger checkpoint, then RESTARTED with its redb intact (NOT
+    /// wiped), recovers cleanly — same finalized state/root, no STORE INTEGRITY
+    /// EVENT — once the genesis baseline is reseeded (as `run_node` does).
+    #[tokio::test]
+    async fn sub_checkpoint_restart_with_untouched_genesis_recovers() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        // A turn rewrote cell A; the genesis cells G1/G2 were NEVER touched.
+        let touched = cell(0xa1, 500);
+        let g1 = cell(0xb1, 10);
+        let g2 = cell(0xb2, 20);
+
+        // The committing node recorded the root of the FULL ledger {A', G1, G2}.
+        let mut full = Ledger::new();
+        full.insert_cell(touched.clone()).expect("A'");
+        full.insert_cell(g1.clone()).expect("G1");
+        full.insert_cell(g2.clone()).expect("G2");
+        let recorded_root = crate::blocklace_sync::canonical_ledger_root(&full);
+
+        // Store: NO checkpoint, one finalized turn at height 5 (< 100) touching
+        // ONLY A. recovered_ledger_root() == recorded_root (the full ledger).
+        seed_sub_checkpoint_store(tmp.path(), 5, &touched, recorded_root);
+
+        // Construction reconstructs ONLY {A'} (no checkpoint → empty base; the
+        // overlay carries only the touched cell).
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construction reconstructs the touched-cell overlay");
+
+        // BEFORE reseeding the genesis baseline the verdict FAILS — exactly the
+        // sub-checkpoint fail-close the fix targets. (This also proves the verdict
+        // is non-vacuous: the missing untouched cells DO move the root.)
+        assert!(
+            state.verify_recovery_convergence().await.is_err(),
+            "without the genesis baseline the reconstructed root is incomplete"
+        );
+
+        // Reseed the genesis baseline exactly as `run_node` does: insert-if-absent
+        // (first-writer-wins; the already-overlaid touched cell is preserved).
+        {
+            let mut s = state.write().await;
+            let _ = s.ledger.insert_cell(g1.clone());
+            let _ = s.ledger.insert_cell(g2.clone());
+        }
+
+        // AFTER reseed the ledger is the full finalized ledger {A', G1, G2}; the
+        // verdict converges and the node recovers cleanly — no wipe required.
+        state
+            .verify_recovery_convergence()
+            .await
+            .expect("a legitimate sub-checkpoint restart must recover after genesis reseed");
+
+        let guard = state.read().await;
+        assert_eq!(
+            guard
+                .ledger
+                .get(&touched.id())
+                .expect("touched cell present")
+                .state
+                .balance(),
+            500,
+            "the finalized turn's post-state must survive the restart"
+        );
+        assert_eq!(
+            guard
+                .ledger
+                .get(&g1.id())
+                .expect("G1 reseeded")
+                .state
+                .balance(),
+            10
+        );
+        assert_eq!(
+            crate::blocklace_sync::canonical_ledger_root(&guard.ledger),
+            recorded_root,
+            "the recovered root must equal the finalized root the committing node recorded"
+        );
+    }
+
+    /// The integrity guarantee is PRESERVED: a genuinely corrupt store still
+    /// fails closed even AFTER the genesis baseline is reseeded. The overlay
+    /// carries a TAMPERED value for the touched cell; reseeding is insert-if-
+    /// absent and cannot overwrite it, so the verdict MUST still refuse to start.
+    #[tokio::test]
+    async fn sub_checkpoint_corrupt_overlay_still_fails_closed_after_reseed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let genuine = cell(0xa1, 500); // what the recorded root commits
+        let corrupt = cell(0xa1, 999); // SAME id, tampered balance (in the overlay)
+        let g1 = cell(0xb1, 10);
+
+        let mut full = Ledger::new();
+        full.insert_cell(genuine.clone()).expect("genuine A");
+        full.insert_cell(g1.clone()).expect("G1");
+        let recorded_root = crate::blocklace_sync::canonical_ledger_root(&full);
+
+        // Store records the genuine root but the overlay holds the TAMPERED cell.
+        seed_sub_checkpoint_store(tmp.path(), 5, &corrupt, recorded_root);
+
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construction reconstructs the (tampered) overlay");
+
+        // Reseed the genesis baseline — insert-if-absent leaves the tampered
+        // touched cell untouched (it is already present in the overlay).
+        {
+            let mut s = state.write().await;
+            let _ = s.ledger.insert_cell(g1.clone());
+        }
+
+        let err = state
+            .verify_recovery_convergence()
+            .await
+            .err()
+            .expect("a corrupt overlay must STILL fail closed even after genesis reseed");
+        assert!(
+            err.contains("convergence"),
+            "the refusal must name the convergence failure; got: {err}"
+        );
     }
 }

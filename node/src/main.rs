@@ -749,6 +749,21 @@ async fn run_node(
         }
     }
 
+    // Recovery-convergence verdict (DEFERRED from NodeState construction). The
+    // genesis/baseline cells are now (re)seeded on top of the recovered
+    // commit-log overlay, so the in-memory ledger is the FULL finalized ledger
+    // (genesis ⊕ touched). Verify its canonical root equals the durably recorded
+    // finalized root. A node that finalized turns BELOW the first ledger
+    // checkpoint converges HERE (the genesis baseline restores the untouched
+    // cells the overlay can't carry) — it no longer fail-closes on a clean
+    // restart. A genuinely corrupt/divergent store STILL fails closed: reseeding
+    // is insert-if-absent and cannot paper over a tampered touched cell. FAIL
+    // CLOSED on mismatch — refuse to serve wrong state.
+    if let Err(e) = node_state.verify_recovery_convergence().await {
+        error!("{e}");
+        std::process::exit(1);
+    }
+
     // Load known federations from disk so cross-federation receipt verification
     // can route through the unified registry on startup.
     {
