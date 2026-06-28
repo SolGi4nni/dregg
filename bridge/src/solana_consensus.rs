@@ -44,14 +44,18 @@
 //!   **16-ary fan-out** accounts-hash Merkle over the real blake3 per-account
 //!   preimage; [`merkle_node`] is the pass-1 modeled SHA-256 sorted-pair node
 //!   that the structure-only path still uses.
-//! - The epoch [`EpochStakeTable`] is *tracked input* — sourcing it from (and
-//!   proving its rotation against) Solana's own stake program / bank state is the
-//!   stake-table-provenance layer (pass 3), together with the vote-account →
-//!   authorized-voter binding.
+//! - The epoch [`EpochStakeTable`] can be supplied directly (the lower-level
+//!   [`verify_supermajority`] primitive) **or derived from bank state** by
+//!   [`crate::solana_provenance`] (pass 3): the stake table + the authorized-voter
+//!   binding are sourced from the stake/vote program accounts proven into the
+//!   voted accounts hash, rotated across epochs from a weak-subjectivity anchor.
+//!   [`EpochStakeTable::root`] is the commitment that anchor pins.
 //!
-//! So the remaining trust gap is bank-state *provenance* (stake table + authority
-//! binding) + PoH anchoring policy, not the consensus arithmetic or the wire
-//! decoding. See `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
+//! So with the pass-3 provenance the only remaining trust beyond the
+//! weak-subjectivity anchor is the named stake-timing / lock-layout /
+//! bank-hash-version refinements — not the consensus arithmetic, the wire
+//! decoding, the stake weights, or the voter authority. See
+//! `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -109,6 +113,9 @@ const VOTE_MSG_TAG: &[u8] = b"dregg-solana-tower-vote:v1";
 const ACCT_LEAF_TAG: &[u8] = b"dregg-solana-accounts-leaf:v1";
 /// Domain tag for an accounts-inclusion Merkle *interior node*.
 const ACCT_NODE_TAG: &[u8] = b"dregg-solana-accounts-node:v1";
+/// Domain tag for the [`EpochStakeTable::root`] commitment (the value a
+/// [`crate::solana_provenance::WeakSubjectivityAnchor`] pins).
+const STAKE_TABLE_ROOT_TAG: &[u8] = b"dregg-solana-stake-table-root:v1";
 
 // ============================================================================
 // Epoch stake table
@@ -173,6 +180,29 @@ impl EpochStakeTable {
     /// Whether the table is empty.
     pub fn is_empty(&self) -> bool {
         self.stakes.is_empty()
+    }
+
+    /// Iterate `(vote_pubkey, stake)` in canonical (sorted-by-pubkey) order.
+    pub fn entries(&self) -> impl Iterator<Item = (&[u8; 32], &u64)> {
+        self.stakes.iter()
+    }
+
+    /// A binding commitment to this table's full contents: a domain-separated
+    /// SHA-256 over `epoch` and every `(vote_pubkey, stake)` entry in canonical
+    /// (sorted) order. This is the value a
+    /// [`crate::solana_provenance::WeakSubjectivityAnchor`] pins: two tables
+    /// commit to the same root iff they have the same epoch and the same
+    /// `(pubkey → stake)` map.
+    pub fn root(&self) -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update(STAKE_TABLE_ROOT_TAG);
+        h.update(self.epoch.to_le_bytes());
+        h.update((self.stakes.len() as u64).to_le_bytes());
+        for (pubkey, stake) in &self.stakes {
+            h.update(pubkey);
+            h.update(stake.to_le_bytes());
+        }
+        h.finalize().into()
     }
 }
 
@@ -519,6 +549,63 @@ pub enum PohError {
     },
     /// The re-hashed tail does not match the claimed `tail_hash`.
     TailMismatch,
+}
+
+/// A **bounded-anchor PoH policy**: the verifier's trusted PoH checkpoint. A
+/// [`PohSegment`] satisfies it only when it chains from exactly the
+/// `anchor_blockhash` (a known-good, weak-subjectivity-rooted blockhash) and is
+/// no longer than `max_hashes` ticks.
+///
+/// This is what makes `require_poh` a real *policy* rather than a structural
+/// check: a relayer cannot pick its own PoH anchor (which would let it fabricate
+/// a tick chain to any tail). The segment must start at the checkpoint blockhash
+/// the verifier already trusts and stay within a bounded number of re-hashed
+/// ticks (so verification terminates). Full-slot trust-minimized PoH
+/// (~432k hashes/slot) is still a recursive-proof item; this bounds the
+/// in-process re-hash to a checkpoint-anchored window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PohAnchorPolicy {
+    /// The trusted checkpoint blockhash the segment must chain from.
+    pub anchor_blockhash: [u8; 32],
+    /// The maximum number of ticks the segment may span (≤ [`MAX_POH_REHASH`]).
+    pub max_hashes: u64,
+}
+
+/// Why an anchored PoH check failed (beyond the plain [`PohError`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PohAnchorError {
+    /// The segment does not chain from the policy's trusted `anchor_blockhash`.
+    WrongAnchor,
+    /// The segment is longer than the policy's `max_hashes`.
+    ExceedsPolicyBound {
+        /// The segment's requested tick count.
+        num_hashes: u64,
+        /// The policy's bound.
+        max_hashes: u64,
+    },
+    /// The underlying tick chain did not re-hash to the claimed tail.
+    Segment(PohError),
+}
+
+/// Verify a PoH segment against a [`PohAnchorPolicy`]: it must chain from the
+/// trusted `anchor_blockhash`, stay within `max_hashes`, and re-hash to its
+/// claimed tail. Returns the verified `tail_hash` (the slot blockhash the caller
+/// then binds to the voted bank state).
+pub fn verify_poh_anchored(
+    seg: &PohSegment,
+    policy: &PohAnchorPolicy,
+) -> Result<[u8; 32], PohAnchorError> {
+    if seg.anchor_hash != policy.anchor_blockhash {
+        return Err(PohAnchorError::WrongAnchor);
+    }
+    if seg.num_hashes > policy.max_hashes {
+        return Err(PohAnchorError::ExceedsPolicyBound {
+            num_hashes: seg.num_hashes,
+            max_hashes: policy.max_hashes,
+        });
+    }
+    verify_poh_segment(seg).map_err(PohAnchorError::Segment)?;
+    Ok(seg.tail_hash)
 }
 
 /// Verify a PoH segment by re-hashing `num_hashes` SHA-256 iterations from the

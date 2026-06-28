@@ -240,43 +240,88 @@ avoided).
    account hash into the voted accounts hash, decoding the lock record from the
    account `data`.
 
-### The remaining adapter layer (honest — pass 3)
+### Bank-state provenance — pass 3 (`bridge/src/solana_provenance.rs`)
 
-The *cryptography, consensus arithmetic, vote-transaction wire format, and
-accounts-hash format* are now real; what remains is **bank-state provenance** and
-the succinct wrapper:
+Pass 3 closes the dominant remaining trust gap: the stake table and the
+authorized-voter binding were **trusted input**; they are now **derived from
+Solana's own bank state**, verified against the voted accounts hash and rotated
+from an irreducible weak-subjectivity anchor.
 
-1. **Authorized-voter binding.** Ingestion verifies the real signature of the key
-   the vote instruction *designates* as the vote authority, and that it is a real
-   signer. Confirming that this key is genuinely the vote account's on-chain
-   `authorized_voter` (so a relayer cannot name an attacker key as authority)
-   requires the vote account's bank state — the **same provenance family as the
-   stake table**.
-2. **Stake-table provenance + epoch rotation.** `EpochStakeTable` is tracked
-   *input* today; sourcing it from Solana's stake program / bank state and
-   proving its rotation across epoch boundaries (the sync-committee analogue,
-   heavier) is unbuilt. Pass-3 dominant item, bundled with (1).
-3. **PoH anchoring policy.** The tick-chain verifier is real but bounded; a
-   trust-minimized full-slot (~432k hashes) PoH needs a recursive proof or a
-   bounded-anchor checkpoint policy.
-4. **Account-data lock-record layout.** The vault account's `data` carries the
+1. **Stake table from bank state — REAL (done).** `solana_provenance::derive_stake_table`
+   proves each stake-program and vote-program account is included in the voted
+   accounts hash (reusing pass-2's `verify_account_inclusion_16ary`) and decodes
+   their data: each stake account's `Delegation` (decoded from the mainnet
+   `StakeStateV2` bincode layout — tag + `Meta` + `Stake.delegation`) contributes
+   its active stake (`activation_epoch ≤ epoch < deactivation_epoch`) to its
+   delegated vote account, and each vote account's `VoteState` (decoded with the
+   type-only `solana-vote-interface`, all of V1_14_11/V3/V4) yields the
+   authorized voter. The `EpochStakeTable` is now **proven from the bank hash the
+   votes attest**, not supplied as trusted input. A tampered stake/vote account
+   fails inclusion and is refused.
+2. **Authorized-voter binding — REAL (done).** `VerifiedStakeTable::tally_authorized`
+   counts a vote only when it is witness-backed (a real vote transaction, pass 2)
+   **and** its signer equals the vote account's on-chain `authorized_voter` for
+   the epoch (decoded from the proven vote-account state). A vote naming an
+   attacker key as authority — or a placeholder vote with no on-chain authority —
+   contributes **zero** stake. This closes pass-2's named gap.
+3. **Epoch rotation from a trusted anchor — REAL (done).** A
+   `WeakSubjectivityAnchor { epoch, stake_table_root }` pins one known-good
+   checkpoint (the irreducible trust root, like every light client's). The anchor
+   epoch's table is admitted only when its `EpochStakeTable::root` (a
+   domain-separated commitment over the sorted `pubkey → stake` map) equals the
+   pinned root; `solana_provenance::rotate` then advances the trusted table one
+   epoch at a time, admitting each next-epoch table only when it is (a) derived
+   from bank state and (b) attested by ≥ 2/3 of the *already-trusted* epoch's
+   stake. Everything after the anchor is verified; a forged rotation (not
+   attested by trusted stake) is refused.
+4. **PoH anchoring policy — REAL (done).** `solana_consensus::PohAnchorPolicy`
+   makes `require_poh` a real policy: a PoH segment must chain from exactly the
+   trusted checkpoint blockhash (`anchor_blockhash`) and stay within `max_hashes`
+   ticks before re-hashing to the slot's blockhash. A relayer can no longer pick
+   its own PoH anchor. (Full-slot ~432k-hash trust-minimization is still the
+   recursive-proof item; this bounds the in-process re-hash to a checkpoint
+   window.)
+
+The trustless entry point is `verify_lock_proof_consensus_anchored(proof,
+spl_mint, min, max, anchor, require_poh, poh_policy)` (and
+`MirrorState::mint_against_lock_proof_anchored`): it takes **no trusted stake
+table** — only the anchor + the proof's `StakeProvenance`. The older
+`verify_lock_proof_consensus(…, stake_table, …)` remains as the lower-level
+consensus primitive (the supermajority arithmetic over an already-obtained
+table).
+
+### What still remains (honest — pass 4 and the named refinements)
+
+1. **The weak-subjectivity anchor itself** is trusted. This is irreducible: a
+   from-genesis-trustless Solana light client would replay all history. Every
+   deployed light client (ETH included) trusts a recent finalized checkpoint;
+   `WeakSubjectivityAnchor` is dregg's, named as such.
+2. **Stake-activation timing nuance.** `active_stake` counts a delegation at full
+   weight inside its `[activation, deactivation)` window; Solana's warmup/cooldown
+   effective-stake curve and the two-epoch leader-schedule snapshot offset are
+   refinements. The *security* property — stake weights proven against a bank hash
+   rather than trusted — holds regardless; the derived total can differ from the
+   cluster's only by the warmup/cooldown delta on freshly (de)activated stake.
+3. **Account-data lock-record layout.** The vault account's `data` carries the
    lock record in an *adapter-defined* layout (`encode_lock_record`); the
    per-account hash + the 16-ary tree are mainnet-faithful, but the lock
    program's account schema is a deploy-time choice, not a Solana constant.
-5. **Bank-hash version extras.** The classic 4-field recipe is byte-faithful;
-   the epoch-accounts-hash (at EAH slots) and the accounts lt-hash (SIMD-0215)
-   the modern bank folds in at specific slots are not modeled.
-6. **Option-B succinct wrapper (optional).** Wrapping the above in an off-dregg
+4. **Bank-hash version extras.** The classic 4-field recipe is byte-faithful; the
+   epoch-accounts-hash (at EAH slots) and the accounts lt-hash (SIMD-0215) the
+   modern bank folds in at specific slots are not modeled.
+5. **Option-B succinct wrapper (optional).** Wrapping the above in an off-dregg
    relayer circuit + a dregg-side succinct verify keeps the on-dregg cost
    constant; the in-process verification is the Option-A logic it would encode.
 
-**Honest status:** for a lock whose votes are supplied as **real signed vote
-transactions** and whose accounts inclusion uses the **real 16-ary format**,
-`verify_lock_proof_consensus` genuinely verifies a ≥ 2/3 stake-weighted Ed25519
-attestation — over real mainnet vote transactions — binding the lock record (via
-the real bank-hash recipe + real accounts-hash Merkle) to the voted bank hash,
-and returns `ConsensusVerified`. The trust gap that remains is bank-state
-**provenance** (the stake table + the authorized-voter binding) + the PoH
-anchoring policy — not the consensus arithmetic, the vote-transaction wire
-format, or the accounts-hash format. The watchtower interim remains a cheap
-complementary hardening for the trusted path.
+**Honest status:** the bridge is now **trustless modulo the weak-subjectivity
+anchor** (plus the named stake-timing / lock-layout / bank-hash-version
+refinements above, none of which is a consensus-soundness hole). For a lock whose
+votes are real signed vote transactions, whose accounts inclusion uses the real
+16-ary format, and whose `StakeProvenance` derives the stake table + authorized
+voters from bank state anchored at a `WeakSubjectivityAnchor`,
+`verify_lock_proof_consensus_anchored` verifies — with **no trusted stake-table
+input** — a ≥ 2/3 stake-weighted Ed25519 attestation by the on-chain authorized
+voters over a stake distribution proven from the voted bank hash, binds the lock
+record to that bank hash, and (when required) checks PoH against a bounded-anchor
+policy. The watchtower interim remains a cheap complementary hardening for the
+trusted path.

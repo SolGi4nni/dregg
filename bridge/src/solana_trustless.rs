@@ -47,10 +47,14 @@ use dregg_types::CellId;
 use serde::{Deserialize, Serialize};
 
 use crate::solana_consensus::{
-    BankHashComponents, EpochStakeTable, PohSegment, ValidatorVote, VoteSetError,
-    verify_accounts_inclusion, verify_poh_segment, verify_supermajority,
+    BankHashComponents, EpochStakeTable, PohAnchorPolicy, PohSegment, ValidatorVote, VoteSetError,
+    verify_accounts_inclusion, verify_poh_anchored, verify_poh_segment, verify_supermajority,
 };
 use crate::solana_mirror::{MirrorError, MirrorMint, MirrorState};
+use crate::solana_provenance::{
+    ProvenAccount, ProvenanceError, RotationStep, VerifiedStakeTable, WeakSubjectivityAnchor,
+    rotate,
+};
 use crate::solana_wire::{
     AccountsInclusionProof16, decode_lock_record, solana_account_hash,
     verify_account_inclusion_16ary,
@@ -152,6 +156,36 @@ pub struct SolanaLockProof {
     pub consensus: ConsensusEvidence,
     /// Inclusion of the vault account (with the lock record) into the bank state.
     pub inclusion: AccountInclusionProof,
+    /// **Bank-state provenance** (pass 3): the stake/vote accounts (and any epoch
+    /// rotation chain) that *derive* the stake table + authorized voters from
+    /// Solana's own bank state, anchored at a [`WeakSubjectivityAnchor`]. When
+    /// present, [`verify_lock_proof_consensus_anchored`] needs only the anchor +
+    /// this proof — no trusted stake-table input. Absent on the legacy
+    /// supplied-table path ([`verify_lock_proof_consensus`]).
+    #[serde(default)]
+    pub stake_provenance: Option<StakeProvenance>,
+}
+
+/// The bank-state provenance for a [`SolanaLockProof`]: everything needed to
+/// *derive and verify* the lock epoch's stake table + authorized voters from the
+/// [`WeakSubjectivityAnchor`], with no trusted table input.
+///
+/// - The anchor-epoch fields reconstruct the anchored distribution (their
+///   derived [`EpochStakeTable::root`] must equal the anchor's pinned root).
+/// - `rotation` advances the trusted table forward one attested epoch at a time
+///   until it reaches the lock's epoch; empty when the lock is at the anchor
+///   epoch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StakeProvenance {
+    /// The accounts hash the anchor-epoch stake/vote accounts prove into.
+    pub anchor_accounts_hash: [u8; 32],
+    /// Stake accounts deriving the anchor epoch's delegations.
+    pub anchor_stake_accounts: Vec<ProvenAccount>,
+    /// Vote accounts deriving the anchor epoch's authorized voters.
+    pub anchor_vote_accounts: Vec<ProvenAccount>,
+    /// Rotation steps from the anchor epoch to the lock's epoch (each attested by
+    /// the prior trusted epoch's ≥ 2/3 stake). Empty at the anchor epoch.
+    pub rotation: Vec<RotationStep>,
 }
 
 /// The trust level a verification call actually achieved.
@@ -217,6 +251,27 @@ pub enum LockProofError {
     PohInvalid,
     /// PoH verification was required but no PoH segment was supplied.
     PohMissing,
+    /// The anchored consensus path was used but the proof carried no
+    /// [`StakeProvenance`] to derive the stake table from bank state.
+    StakeProvenanceMissing,
+    /// Deriving / rotating the stake table from bank state failed (a stake/vote
+    /// account did not include in the accounts hash, the derived root did not
+    /// match the anchor, or a rotation step was not attested by trusted stake).
+    Provenance(ProvenanceError),
+    /// The provenance chain reached a different epoch than the lock's evidence
+    /// epoch (the supplied rotation does not land on the lock's epoch).
+    ProvenanceEpochMismatch {
+        /// The epoch the provenance chain reached.
+        reached: u64,
+        /// The lock evidence's epoch.
+        lock: u64,
+    },
+    /// PoH was required and a segment supplied, but no [`PohAnchorPolicy`] was
+    /// provided to anchor it to a trusted checkpoint blockhash.
+    PohPolicyMissing,
+    /// The PoH segment does not satisfy the bounded-anchor policy (wrong anchor
+    /// blockhash, or it exceeds the policy's tick bound).
+    PohPolicyViolated,
 }
 
 impl std::fmt::Display for LockProofError {
@@ -246,6 +301,23 @@ impl std::fmt::Display for LockProofError {
             }
             Self::PohInvalid => write!(f, "PoH segment does not verify against the slot blockhash"),
             Self::PohMissing => write!(f, "PoH verification required but no segment supplied"),
+            Self::StakeProvenanceMissing => {
+                write!(
+                    f,
+                    "anchored verification requires bank-state stake provenance"
+                )
+            }
+            Self::Provenance(e) => write!(f, "stake-table provenance failed: {e}"),
+            Self::ProvenanceEpochMismatch { reached, lock } => write!(
+                f,
+                "provenance reached epoch {reached}, lock evidence is epoch {lock}"
+            ),
+            Self::PohPolicyMissing => {
+                write!(f, "PoH required but no bounded-anchor policy supplied")
+            }
+            Self::PohPolicyViolated => {
+                write!(f, "PoH segment violates the bounded-anchor policy")
+            }
         }
     }
 }
@@ -406,10 +478,156 @@ fn verify_consensus(
     }
 
     // (5) the vault account's lock record must include into that accounts hash.
+    verify_inclusion(inclusion)?;
+
+    // (6) PoH linkage: if present it must verify and tail at the slot blockhash;
+    // if required and absent, refuse.
+    match &consensus.poh {
+        Some(seg) => {
+            if verify_poh_segment(seg).is_err()
+                || seg.tail_hash != consensus.bank_components.last_blockhash
+            {
+                return Err(LockProofError::PohInvalid);
+            }
+        }
+        None => {
+            if require_poh {
+                return Err(LockProofError::PohMissing);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Derive the lock epoch's [`VerifiedStakeTable`] from a [`StakeProvenance`],
+/// anchored at `anchor`: admit the anchor-epoch table (root must match the
+/// anchor), then rotate forward through each attested step, and require the
+/// reached epoch to be the lock's evidence epoch.
+fn derive_verified_table(
+    lock_epoch: u64,
+    provenance: &StakeProvenance,
+    anchor: &WeakSubjectivityAnchor,
+) -> Result<VerifiedStakeTable, LockProofError> {
+    let mut table = VerifiedStakeTable::from_anchor(
+        anchor,
+        &provenance.anchor_accounts_hash,
+        &provenance.anchor_stake_accounts,
+        &provenance.anchor_vote_accounts,
+    )
+    .map_err(LockProofError::Provenance)?;
+    for step in &provenance.rotation {
+        table = rotate(&table, step).map_err(LockProofError::Provenance)?;
+    }
+    if table.epoch() != lock_epoch {
+        return Err(LockProofError::ProvenanceEpochMismatch {
+            reached: table.epoch(),
+            lock: lock_epoch,
+        });
+    }
+    Ok(table)
+}
+
+/// Verify a Solana lock proof **anchored at a [`WeakSubjectivityAnchor`]** — the
+/// fully trustless check (modulo the anchor). Unlike
+/// [`verify_lock_proof_consensus`], this takes **no trusted stake table**: the
+/// stake distribution + authorized voters are *derived from bank state* via the
+/// proof's [`StakeProvenance`] and trusted only back to the anchor.
+///
+/// Returns [`LockProofTrust::ConsensusVerified`] only when:
+/// 1. structure + binding pass;
+/// 2. the lock epoch's stake table is derived from bank state and trusted back
+///    to `anchor` (root match at the anchor epoch + attested rotation to the
+///    lock epoch);
+/// 3. ≥ 2/3 of that *derived* stake validly voted the `(slot, bank_hash)` with
+///    each counted vote signed by the vote account's **on-chain authorized
+///    voter** (the [`VerifiedStakeTable::tally_authorized`] binding);
+/// 4. the bank-hash components bind the voted hash + the inclusion accounts hash;
+/// 5. the vault account's lock record includes into that accounts hash;
+/// 6. if `require_poh`, a [`PohAnchorPolicy`] must be supplied and the PoH segment
+///    must chain from its trusted checkpoint blockhash, within bound, to the
+///    slot's blockhash.
+///
+/// **What remains trusted:** only the weak-subjectivity `anchor` itself (and the
+/// named stake-activation-timing / bank-hash-version / lock-record-layout
+/// refinements in `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`). Everything after the
+/// anchor — the stake weights, the voter authority, the votes, the inclusion,
+/// the PoH — is verified.
+pub fn verify_lock_proof_consensus_anchored(
+    proof: &SolanaLockProof,
+    spl_mint: &[u8; 32],
+    min_amount: u64,
+    max_amount: u64,
+    anchor: &WeakSubjectivityAnchor,
+    require_poh: bool,
+    poh_policy: Option<&PohAnchorPolicy>,
+) -> Result<LockProofTrust, LockProofError> {
+    check_binding(proof, spl_mint, min_amount, max_amount)?;
+    let provenance = proof
+        .stake_provenance
+        .as_ref()
+        .ok_or(LockProofError::StakeProvenanceMissing)?;
+    let verified = derive_verified_table(proof.consensus.epoch, provenance, anchor)?;
+    verify_consensus_anchored(
+        &proof.consensus,
+        &proof.inclusion,
+        &verified,
+        require_poh,
+        poh_policy,
+    )?;
+    Ok(LockProofTrust::ConsensusVerified)
+}
+
+/// The real anchored-consensus verification (see
+/// [`verify_lock_proof_consensus_anchored`]): the supermajority is the
+/// authorized-voter-bound tally over the *verified-from-bank-state* table, and
+/// PoH (when required) is checked against the bounded-anchor policy.
+fn verify_consensus_anchored(
+    consensus: &ConsensusEvidence,
+    inclusion: &AccountInclusionProof,
+    verified: &VerifiedStakeTable,
+    require_poh: bool,
+    poh_policy: Option<&PohAnchorPolicy>,
+) -> Result<(), LockProofError> {
+    // (3) authorized-voter-bound ≥ 2/3 over the derived stake table.
+    match verified.tally_authorized(consensus.slot, &consensus.bank_hash, &consensus.votes) {
+        Ok(_voted) => {}
+        Err((voted, total)) => {
+            return Err(LockProofError::StakeBelowThreshold { voted, total });
+        }
+    }
+
+    // (4) bind the accounts hash (and PoH tail) to the voted bank hash.
+    if consensus.bank_components.accounts_hash != inclusion.accounts_hash
+        || !consensus.bank_components.binds(&consensus.bank_hash)
+    {
+        return Err(LockProofError::BankHashMismatch);
+    }
+
+    // (5) the vault account's lock record must include into that accounts hash.
+    verify_inclusion(inclusion)?;
+
+    // (6) anchored PoH: when required, the segment must satisfy the bounded-anchor
+    // policy and tail at the slot blockhash.
+    match (&consensus.poh, require_poh) {
+        (Some(seg), _) => {
+            let policy = poh_policy.ok_or(LockProofError::PohPolicyMissing)?;
+            let tail =
+                verify_poh_anchored(seg, policy).map_err(|_| LockProofError::PohPolicyViolated)?;
+            if tail != consensus.bank_components.last_blockhash {
+                return Err(LockProofError::PohInvalid);
+            }
+        }
+        (None, true) => return Err(LockProofError::PohMissing),
+        (None, false) => {}
+    }
+    Ok(())
+}
+
+/// The vault-account lock-record inclusion check shared by the legacy and
+/// anchored consensus paths (mainnet 16-ary or modeled sorted-pair).
+fn verify_inclusion(inclusion: &AccountInclusionProof) -> Result<(), LockProofError> {
     match &inclusion.mainnet {
-        // Mainnet-faithful: recompute the real blake3 per-account hash, prove it
-        // into the accounts hash via the 16-ary fan-out tree, and confirm the
-        // account's data decodes to exactly the claimed lock record.
         Some(m) => {
             let leaf = solana_account_hash(
                 m.lamports,
@@ -430,7 +648,6 @@ fn verify_consensus(
                 _ => return Err(LockProofError::AccountsInclusionInvalid),
             }
         }
-        // Modeled: the pass-1 domain-separated sorted-pair sibling path.
         None => {
             if !verify_accounts_inclusion(
                 &inclusion.vault_account,
@@ -444,24 +661,6 @@ fn verify_consensus(
             }
         }
     }
-
-    // (6) PoH linkage: if present it must verify and tail at the slot blockhash;
-    // if required and absent, refuse.
-    match &consensus.poh {
-        Some(seg) => {
-            if verify_poh_segment(seg).is_err()
-                || seg.tail_hash != consensus.bank_components.last_blockhash
-            {
-                return Err(LockProofError::PohInvalid);
-            }
-        }
-        None => {
-            if require_poh {
-                return Err(LockProofError::PohMissing);
-            }
-        }
-    }
-
     Ok(())
 }
 
@@ -512,6 +711,38 @@ impl MirrorState {
             self.config.max_amount,
             stake_table,
             require_poh,
+        )
+        .map_err(ProofMintError::Proof)?;
+
+        let mint = self
+            .credit_lock(proof.lock_id, proof.amount, proof.dregg_recipient)
+            .map_err(ProofMintError::Mint)?;
+
+        Ok((mint, trust))
+    }
+
+    /// **Trustless** mirror-mint against a [`SolanaLockProof`] verified **only
+    /// against a [`WeakSubjectivityAnchor`]** (no trusted stake table) via
+    /// [`verify_lock_proof_consensus_anchored`]. The stake distribution +
+    /// authorized voters are derived from bank state and trusted only back to the
+    /// anchor. Routes through the SAME [`MirrorState::credit_lock`] accounting.
+    ///
+    /// On any error the state is left unchanged.
+    pub fn mint_against_lock_proof_anchored(
+        &mut self,
+        proof: &SolanaLockProof,
+        anchor: &WeakSubjectivityAnchor,
+        require_poh: bool,
+        poh_policy: Option<&PohAnchorPolicy>,
+    ) -> Result<(MirrorMint, LockProofTrust), ProofMintError> {
+        let trust = verify_lock_proof_consensus_anchored(
+            proof,
+            &self.config.spl_mint,
+            self.config.min_amount,
+            self.config.max_amount,
+            anchor,
+            require_poh,
+            poh_policy,
         )
         .map_err(ProofMintError::Proof)?;
 
@@ -637,6 +868,7 @@ mod tests {
                 merkle_path: vec![sib],
                 mainnet: None,
             },
+            stake_provenance: None,
         }
     }
 
@@ -725,6 +957,7 @@ mod tests {
                     proof,
                 }),
             },
+            stake_provenance: None,
         }
     }
 
@@ -1173,5 +1406,304 @@ mod tests {
         )
         .expect("ok without PoH when not required");
         assert_eq!(trust, LockProofTrust::ConsensusVerified);
+    }
+
+    // ---- anchored path: NO trusted stake table, only a WS anchor -----------
+
+    use crate::solana_consensus::PohAnchorPolicy;
+    use crate::solana_provenance::tests as prov;
+    use crate::solana_provenance::{STAKE_PROGRAM_ID, derive_stake_table, vote_program_id};
+    use crate::solana_wire::{encode_lock_record, solana_account_hash};
+
+    /// A fully **bank-state-provenance** proof: the stake table + authorized
+    /// voters are derived from proven stake/vote accounts, the votes are real
+    /// signed vote transactions by the on-chain authorized voters, and the vault
+    /// lock record + the stake/vote accounts all root into ONE accounts hash that
+    /// the bank hash commits to and the super-majority voted. Returns
+    /// `(proof, anchor, poh_policy)`.
+    #[allow(clippy::type_complexity)]
+    fn anchored_grade(
+        amount: u64,
+        recipient: CellId,
+        lock_id: u8,
+    ) -> (SolanaLockProof, WeakSubjectivityAnchor, PohAnchorPolicy) {
+        let epoch = 42u64;
+        let slot = 7_000u64;
+        let vault = [0x22u8; 32];
+        let lid = [lock_id; 32];
+
+        // Validators + their on-chain authorized voters.
+        let va1 = [0xA1u8; 32];
+        let va2 = [0xA2u8; 32];
+        let a1 = prov::sk(11);
+        let a2 = prov::sk(12);
+        let a1pk = a1.verifying_key().to_bytes();
+        let a2pk = a2.verifying_key().to_bytes();
+        let vote_program = vote_program_id();
+        let stake_program = STAKE_PROGRAM_ID;
+
+        // Account data.
+        let vd1 = prov::build_vote_account_data(&[0x01u8; 32], &a1pk, epoch);
+        let vd2 = prov::build_vote_account_data(&[0x02u8; 32], &a2pk, epoch);
+        let sd1 = prov::build_stake_account_data(&va1, 700, 0, u64::MAX);
+        let sd2 = prov::build_stake_account_data(&va2, 300, 0, u64::MAX);
+        let vault_data = encode_lock_record(&lid, &recipient, amount);
+
+        let sa1 = [0x51u8; 32];
+        let sa2 = [0x52u8; 32];
+
+        // One 16-ary chunk: [vault, vote1, vote2, stake1, stake2].
+        let vault_leaf =
+            solana_account_hash(2_000_000, &[0x07u8; 32], false, 5, &vault_data, &vault);
+        let leaves = [
+            vault_leaf,
+            solana_account_hash(1_000_000, &vote_program, false, 0, &vd1, &va1),
+            solana_account_hash(1_000_000, &vote_program, false, 0, &vd2, &va2),
+            solana_account_hash(1_000_000, &stake_program, false, 0, &sd1, &sa1),
+            solana_account_hash(1_000_000, &stake_program, false, 0, &sd2, &sa2),
+        ];
+        let (accounts_hash, proofs) = prov::single_chunk(&leaves);
+
+        // PoH: a short real tick chain from a known anchor blockhash.
+        use sha2::{Digest, Sha256};
+        let poh_anchor = [0x55u8; 32];
+        let mut tail = poh_anchor;
+        for _ in 0..256u64 {
+            let mut h = Sha256::new();
+            h.update(tail);
+            tail = h.finalize().into();
+        }
+
+        let bank_components = BankHashComponents {
+            parent_bank_hash: [0x01; 32],
+            accounts_hash,
+            signature_count: 3,
+            last_blockhash: tail,
+        };
+        let bank_hash = bank_components.compute();
+
+        // REAL signed vote transactions by the on-chain authorized voters.
+        let votes = vec![
+            prov::tower_sync_tx(&a1, &va1, slot, bank_hash),
+            prov::tower_sync_tx(&a2, &va2, slot, bank_hash),
+        ];
+
+        // Bank-state provenance accounts.
+        let vote_accounts = vec![
+            prov::proven_account(va1, vote_program, vd1, proofs[1].clone()),
+            prov::proven_account(va2, vote_program, vd2, proofs[2].clone()),
+        ];
+        let stake_accounts = vec![
+            prov::proven_account(sa1, stake_program, sd1, proofs[3].clone()),
+            prov::proven_account(sa2, stake_program, sd2, proofs[4].clone()),
+        ];
+
+        // The anchor pins the GENUINE derived distribution at this epoch.
+        let derived = derive_stake_table(epoch, &accounts_hash, &stake_accounts, &vote_accounts)
+            .expect("derive anchor table");
+        let anchor = WeakSubjectivityAnchor::from_table(&derived.table);
+
+        let proof = SolanaLockProof {
+            lock_id: lid,
+            spl_mint: SPL_MINT,
+            amount,
+            dregg_recipient: recipient,
+            consensus: ConsensusEvidence {
+                slot,
+                bank_hash,
+                epoch,
+                voted_stake: 1000,
+                total_stake: 1000,
+                votes,
+                bank_components,
+                poh: Some(PohSegment {
+                    anchor_hash: poh_anchor,
+                    num_hashes: 256,
+                    tail_hash: tail,
+                }),
+            },
+            inclusion: AccountInclusionProof {
+                vault_account: vault,
+                recorded_amount: amount,
+                recorded_recipient: recipient,
+                recorded_lock_id: lid,
+                accounts_hash,
+                merkle_path: vec![],
+                mainnet: Some(MainnetAccountInclusion {
+                    lamports: 2_000_000,
+                    owner: [0x07u8; 32],
+                    executable: false,
+                    rent_epoch: 5,
+                    data: vault_data,
+                    proof: proofs[0].clone(),
+                }),
+            },
+            stake_provenance: Some(StakeProvenance {
+                anchor_accounts_hash: accounts_hash,
+                anchor_stake_accounts: stake_accounts,
+                anchor_vote_accounts: vote_accounts,
+                rotation: vec![],
+            }),
+        };
+        let policy = PohAnchorPolicy {
+            anchor_blockhash: poh_anchor,
+            max_hashes: 1024,
+        };
+        (proof, anchor, policy)
+    }
+
+    #[test]
+    fn anchored_consensus_verified_with_no_trusted_stake_table() {
+        let cfg = config();
+        let (proof, anchor, policy) = anchored_grade(500, cid(1), 1);
+        // The ONLY trusted input is the weak-subjectivity anchor; the stake table
+        // is derived from bank state inside the call.
+        let trust = verify_lock_proof_consensus_anchored(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &anchor,
+            true, // require PoH against the bounded-anchor policy
+            Some(&policy),
+        )
+        .expect("anchored consensus verifies with derived stake table");
+        assert_eq!(trust, LockProofTrust::ConsensusVerified);
+    }
+
+    #[test]
+    fn anchored_mint_credits_through_same_accounting() {
+        let mut mirror = MirrorState::new(config());
+        let recipient = cid(1);
+        let (proof, anchor, policy) = anchored_grade(500, recipient, 1);
+        let (mint, trust) = mirror
+            .mint_against_lock_proof_anchored(&proof, &anchor, true, Some(&policy))
+            .expect("trustless anchored mint");
+        assert_eq!(trust, LockProofTrust::ConsensusVerified);
+        assert_eq!(mint.amount, 500);
+        assert_eq!(mirror.live_supply, 500);
+        assert!(mirror.invariant_holds());
+    }
+
+    #[test]
+    fn anchored_refused_without_provenance() {
+        let cfg = config();
+        let (mut proof, anchor, policy) = anchored_grade(500, cid(1), 1);
+        proof.stake_provenance = None;
+        assert_eq!(
+            verify_lock_proof_consensus_anchored(
+                &proof,
+                &cfg.spl_mint,
+                cfg.min_amount,
+                cfg.max_amount,
+                &anchor,
+                false,
+                Some(&policy),
+            )
+            .unwrap_err(),
+            LockProofError::StakeProvenanceMissing
+        );
+    }
+
+    #[test]
+    fn anchored_refused_wrong_anchor_root() {
+        let cfg = config();
+        let (proof, _anchor, policy) = anchored_grade(500, cid(1), 1);
+        // An attacker supplies a DIFFERENT anchor root than the genuine
+        // distribution reconstructs to.
+        let bad_anchor = WeakSubjectivityAnchor {
+            epoch: proof.consensus.epoch,
+            stake_table_root: [0xDEu8; 32],
+        };
+        assert!(matches!(
+            verify_lock_proof_consensus_anchored(
+                &proof,
+                &cfg.spl_mint,
+                cfg.min_amount,
+                cfg.max_amount,
+                &bad_anchor,
+                false,
+                Some(&policy),
+            )
+            .unwrap_err(),
+            LockProofError::Provenance(_)
+        ));
+    }
+
+    #[test]
+    fn anchored_refused_unauthorized_voter() {
+        let cfg = config();
+        // Re-sign one vote with an imposter key (not the on-chain authorized
+        // voter): its stake (700) drops out, leaving 300/1000 < 2/3.
+        let (mut proof, anchor, policy) = anchored_grade(500, cid(1), 1);
+        let imposter = prov::sk(99);
+        let va1 = [0xA1u8; 32];
+        proof.consensus.votes[0] = prov::tower_sync_tx(
+            &imposter,
+            &va1,
+            proof.consensus.slot,
+            proof.consensus.bank_hash,
+        );
+        assert_eq!(
+            verify_lock_proof_consensus_anchored(
+                &proof,
+                &cfg.spl_mint,
+                cfg.min_amount,
+                cfg.max_amount,
+                &anchor,
+                false,
+                Some(&policy),
+            )
+            .unwrap_err(),
+            LockProofError::StakeBelowThreshold {
+                voted: 300,
+                total: 1000
+            }
+        );
+    }
+
+    #[test]
+    fn anchored_refused_poh_policy_violation() {
+        let cfg = config();
+        let (proof, anchor, _policy) = anchored_grade(500, cid(1), 1);
+        // A policy whose anchor blockhash is NOT the segment's anchor: the PoH
+        // cannot be tied to the trusted checkpoint.
+        let wrong_policy = PohAnchorPolicy {
+            anchor_blockhash: [0xFFu8; 32],
+            max_hashes: 1024,
+        };
+        assert_eq!(
+            verify_lock_proof_consensus_anchored(
+                &proof,
+                &cfg.spl_mint,
+                cfg.min_amount,
+                cfg.max_amount,
+                &anchor,
+                true,
+                Some(&wrong_policy),
+            )
+            .unwrap_err(),
+            LockProofError::PohPolicyViolated
+        );
+    }
+
+    #[test]
+    fn anchored_requires_poh_policy_when_required() {
+        let cfg = config();
+        let (proof, anchor, _policy) = anchored_grade(500, cid(1), 1);
+        // require_poh but no policy supplied → refused.
+        assert_eq!(
+            verify_lock_proof_consensus_anchored(
+                &proof,
+                &cfg.spl_mint,
+                cfg.min_amount,
+                cfg.max_amount,
+                &anchor,
+                true,
+                None,
+            )
+            .unwrap_err(),
+            LockProofError::PohPolicyMissing
+        );
     }
 }

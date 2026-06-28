@@ -33,16 +33,15 @@
 //!
 //! # The honest modeled-vs-mainnet boundary (still open after pass 2)
 //!
-//! - **Authorized-voter binding.** We verify the *real signature* of the key the
-//!   vote instruction *designates* as the vote authority, and that it is a real
-//!   signer of the transaction. Confirming that this key is genuinely the vote
-//!   account's on-chain `authorized_voter` (so a relayer cannot craft a tx naming
-//!   an attacker key as authority) requires the vote account's bank state — the
-//!   **same provenance family as the stake table**. It is bundled into the
-//!   stake-table-provenance pass (pass 3), not closed here.
-//! - **Stake-table provenance + epoch rotation, PoH anchoring policy, the
-//!   Option-B succinct wrapper** remain as named in
-//!   `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
+//! - **Authorized-voter binding — closed in pass 3.** Here we verify the *real
+//!   signature* of the key the vote instruction *designates* as the vote
+//!   authority, and that it is a real signer. [`crate::solana_provenance`] then
+//!   confirms that key is genuinely the vote account's on-chain `authorized_voter`
+//!   for the epoch (decoded from the vote-account bank state), so a relayer cannot
+//!   name an attacker key as authority.
+//! - **Stake-table provenance + epoch rotation + PoH anchoring policy** are built
+//!   in [`crate::solana_provenance`] (pass 3). The **Option-B succinct wrapper**
+//!   remains as named in `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
 //! - **Account-data lock-record layout.** The vault account's `data` carries the
 //!   lock record in an *adapter-defined* layout ([`encode_lock_record`]); the
 //!   per-account *hash* and the 16-ary tree are mainnet-faithful, but the lock
@@ -834,7 +833,7 @@ mod tests {
 
         let bank = [0x77u8; 32];
         let slot = 555_000u64;
-        let (a1, a2, a3) = (sk(11), sk(12), sk(13));
+        let (a1, a2, _a3) = (sk(11), sk(12), sk(13));
         let (va1, va2, va3) = ([0xA1u8; 32], [0xA2u8; 32], [0xA3u8; 32]);
 
         // Stake keyed by VOTE ACCOUNT (the real Solana weighting).

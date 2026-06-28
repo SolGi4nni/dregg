@@ -52,6 +52,10 @@ dregg-payable = { path = "../dregg-payable" }
 dregg-cell = { path = "../cell" }
 # Type-only: construct `solana_hash::Hash` when building real vote-tx fixtures.
 solana-hash = "4"
+# Type-only: construct `solana_pubkey::Pubkey` for the bank-state-provenance
+# (pass 3) vote-account-data fixtures. `solana-vote-interface` + `bincode` are
+# already normal deps and are reused by the provenance tests.
+solana-pubkey = "4"
 
 [[bench]]
 name = "presentation_bench"
