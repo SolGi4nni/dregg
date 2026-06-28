@@ -239,6 +239,43 @@ web shell binds the (SpiderMonkey today, boa-on-wasm tomorrow) `Context` to its
   DFA-routed), overwrites it with a second literal write, refuses `get` as a serviced seam,
   refuses an undeclared method, and gates on the published interface's cap — all real
   verified turns, with NO servo.
+- **Second app — a multi-cell, value-COORDINATING app (2-party escrow) as pure JS — DONE:**
+  the kvstore is a single cell behaving; an escrow is a JS program *coordinating several cells
+  and moving value through an intermediary*, which is the harder shape the multi-cell
+  `CellWorld` exists for. `tests/native_js_escrow_pure_js.rs` drives a whole 2-party escrow
+  across THREE cells — a buyer (`alice`), a seller (`bob`), and the `escrow` coordinator —
+  entirely in pure JS:
+  1. **arm** — `tCell("escrow", "arm", price)` records the agreed price through the escrow's
+     published typed interface (DFA-routed, `Signature`-gated, `SetSlotFromArg`);
+  2. **fund** — `transfer("alice", "escrow", price)` moves the buyer's value into the escrow,
+     conservation enforced by the executor;
+  3. **settle** — `tCell("escrow", "settle")` flips the escrow state machine to SETTLED (a
+     second typed turn);
+  4. **pay out** — the payout amount is READ BACK off committed escrow state
+     (`get("escrow", AMOUNT_SLOT)`) and `transfer("escrow", "bob", owed)` releases it to the
+     seller.
+
+  Four properties are proven by running: (a) the happy path settles and the three-cell
+  balance sum is CONSERVED (initial sum minus exactly one burned fee per committed turn —
+  value genuinely moves alice → escrow → bob, none created/destroyed); (b) a `reclaim`
+  instead of a settle REFUNDS the depositor and the seller never receives it; (c) an
+  unauthorized release leg (the published `settle` requires `Proof`, the app holds only
+  `Signature`) is refused IN-BAND (`Unauthorized`) — the funds stay LOCKED in the escrow,
+  nothing reaches the seller; (d) a drain to an UNHELD party (`transfer("escrow", "mallory",
+  ..)`) is `NoCapability` — the escrow funds untouched, the uncapped cell byte-identical, and
+  a legitimate payout still commits afterward. All real verified turns, NO servo.
+
+  **Named host-API gap (the fullest faithful version surfaced).** Each escrow leg is its own
+  verified turn: the host API exposes no compound/atomic multi-effect turn, so `settle` (the
+  state flip) and the payout `transfer` are two separate receipts, not one atomic "release",
+  and the runtime does not yet enforce the state-machine GUARD (it does not refuse a payout
+  unless `state == SETTLED`). The JS drives the ordering and the cap tooth gates WHO may
+  settle, but the conditional "only-if-funded" link between the state cell and the value move
+  is not yet a single witnessed turn. A conditional / compound-turn host fn (an
+  `Effect::ConditionalBatch`-shaped affordance — the partial-turn/promises machinery already
+  exists in `turn/`) is the named next power-up that would make the release atomic and
+  state-guarded. With that, an arbitrary multi-cell app — not just its value movement and
+  dispatch but its *guarded coordination* — is expressible as pure JS-on-cells.
 - **Follow-up — `deos-js-core`:** lift the engine-free substance out of `deos-js` so
   both engines share one turn path and the cockpit crate never links mozjs.
 - **Follow-up — boa-on-wasm in the web shell:** retire the servo-only constraint by
