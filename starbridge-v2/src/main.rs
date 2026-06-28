@@ -213,6 +213,36 @@ fn main() {
         }
     }
 
+    // `--render-apps-showcase <out>`: THE VISUAL-KILLER BAKE — launch the three apps
+    // whose deos-view cards carry the richest LIVE gauges (bounty-board · privacy-voting
+    // · governed-namespace) onto ONE shared live `World`, then DRIVE each with real
+    // cap-gated verified turns until its gauges/bars are MEANINGFULLY FILLED (cast a poll
+    // of yes/no/abstain votes so the tally bar-chart rises, gather a quorum of committee
+    // proposals so the quorum bar tops out, advance the bounty state machine so both the
+    // escrowed-reward AND stage gauges fill), and render the three bespoke cards side by
+    // side. ONE high-res PNG written to `<out>` (the r/claudeai hero shot). Asserts the
+    // ledger grew + names every fired turn so the gauges are the running World's real
+    // state. Default 2560x1600 (overridable via `--render-size`).
+    #[cfg(all(
+        feature = "render-capture",
+        feature = "gpui-ui",
+        feature = "card-pane",
+        feature = "app-registry",
+        feature = "embedded-executor"
+    ))]
+    {
+        if let Some(out) = render_apps_showcase_arg(&args) {
+            let (w, h) = render_size_arg(&args).unwrap_or((2560.0, 1600.0));
+            match render_apps_showcase_headless(&out, w, h) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("render-apps-showcase FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     // `--render-app-fire <out>`: THE CLICK → VERIFIED TURN close-up. Launches a real app
     // (gallery) onto a live `World`, mounts its bespoke deos-view card, bakes
     // `<out>.before.png`, FIRES the card's `submit` button = ONE cap-gated VERIFIED turn
@@ -2569,6 +2599,28 @@ fn render_apps_arg(args: &[String]) -> Option<String> {
     None
 }
 
+/// Parse the `--render-apps-showcase <out>` (or `=<out>`) argument — the output path for
+/// the VISUAL-KILLER hero bake (ONE PNG written to `<out>`). `None` when absent.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "card-pane",
+    feature = "app-registry",
+    feature = "embedded-executor"
+))]
+fn render_apps_showcase_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--render-apps-showcase" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--render-apps-showcase=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
 /// Parse the `--render-app-fire <out>` (or `=<out>`) argument — the output base path for
 /// the CLICK→VERIFIED-TURN app-card-button bake (`<out>.before.png` / `<out>.after.png` /
 /// `<out>.png`). `None` when absent.
@@ -4333,6 +4385,412 @@ fn render_apps_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         launched_summ.join("; ")
     );
     Ok(())
+}
+
+/// Big-endian tail `u64` of a 32-byte field element — the counter idiom every app crate
+/// stores its tallies / meters / vote-counts as (the bake reads them back off the live
+/// World ledger to drive each gauge toward its `max`).
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "card-pane",
+    feature = "app-registry",
+    feature = "embedded-executor"
+))]
+fn field_tail_u64_le(fe: &[u8; 32]) -> u64 {
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&fe[24..32]);
+    u64::from_be_bytes(b)
+}
+
+/// privacy-voting card fire — `record_tally` records ONE yes vote onto the live tally (a
+/// SetField increment under `ADMINISTRATOR_RIGHTS`, re-enforced by World's executor): the
+/// SAME accumulating turn the registry's world-drive fires. Any other method is the
+/// later-phase refusal (the card stays honest about what is live-fireable).
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "card-pane",
+    feature = "app-registry",
+    feature = "embedded-executor"
+))]
+fn voting_card_fire(
+    spine: &starbridge_v2::app_worldspine::AppWorldSpine,
+    method: &str,
+    _arg: i64,
+) -> Result<dregg_app_framework::TurnReceipt, starbridge_v2::app_worldspine::WorldFireError> {
+    use starbridge_privacy_voting as v;
+    use starbridge_v2::app_worldspine::WorldFireError;
+    let cell = spine.app_cell();
+    if method == v::service::METHOD_RECORD_TALLY {
+        let slot = v::tally_slot_for_choice(v::VOTE_YES);
+        spine.commit(
+            "record_tally",
+            &v::ADMINISTRATOR_RIGHTS,
+            &v::ADMINISTRATOR_RIGHTS,
+            |live| {
+                let t = field_tail_u64_le(&live.fields[slot]);
+                vec![dregg_app_framework::Effect::SetField {
+                    cell,
+                    index: slot,
+                    value: dregg_app_framework::field_from_u64(t.saturating_add(1)),
+                }]
+            },
+        )
+    } else {
+        Err(WorldFireError::World {
+            reason: format!(
+                "privacy-voting card: '{method}' is not the live-fireable record_tally affordance from the seeded OPEN poll"
+            ),
+        })
+    }
+}
+
+/// governed-namespace card fire — a committee `propose_table_update`/`vote_on_proposal`
+/// carries a `SenderAuthorized` membership proof the card surface alone cannot mint (the
+/// committee witness is supplied out-of-band by the launcher), so the card button surfaces
+/// that as an honest refusal. The live quorum bar is driven by the bake's authenticated
+/// `commit_as` fires (which DO carry the membership witness).
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "card-pane",
+    feature = "app-registry",
+    feature = "embedded-executor"
+))]
+fn governance_card_fire(
+    _spine: &starbridge_v2::app_worldspine::AppWorldSpine,
+    method: &str,
+    _arg: i64,
+) -> Result<dregg_app_framework::TurnReceipt, starbridge_v2::app_worldspine::WorldFireError> {
+    Err(starbridge_v2::app_worldspine::WorldFireError::World {
+        reason: format!(
+            "governed-namespace card: '{method}' binds a SenderAuthorized committee membership \
+             proof that the card surface cannot mint — the committee witness is supplied by the \
+             launcher's authenticated commit path"
+        ),
+    })
+}
+
+/// **THE VISUAL-KILLER SHOWCASE BAKE.** Launches the three apps whose deos-view cards carry
+/// the richest LIVE gauges onto ONE shared live [`World`](starbridge_v2::world::World), then
+/// DRIVES each with real cap-gated verified turns until its bars are MEANINGFULLY FILLED:
+///
+///   - **privacy-voting** — casts a poll of yes/no/abstain `record_tally` turns so the
+///     "Tally" section becomes a live bar-chart climbing toward `QUORUM_TARGET`;
+///   - **governed-namespace** — fires a quorum of authenticated committee
+///     `propose_table_update` turns (each carrying the single-member membership witness) so
+///     the quorum gauge tops out at `votes == QUORUM`;
+///   - **bounty-board** — the launch seeds a full escrowed-reward gauge (1000/1000) and
+///     claims the bounty; this advances the state machine CLAIMED → SUBMITTED so the stage
+///     gauge fills too (two filled gauges).
+///
+/// Then mounts each app's bespoke deos-view [`CardPane`](starbridge_v2::card_pane::CardPane)
+/// over its just-driven cell and renders the three side by side. ONE high-res PNG written
+/// to `<out>`. Asserts the live ledger height GREW and names every fired turn + the final
+/// gauge readings, so the hero frame is the running World's real state, never decorative.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "card-pane",
+    feature = "app-registry",
+    feature = "embedded-executor"
+))]
+fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use starbridge_v2::app_registry::{app_card, AppCardSubstance};
+    use starbridge_v2::card_pane::{CardPane, CardSubstanceRef};
+    use starbridge_v2::powerbox::RegistryLauncher;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+
+    const APPS_FED: [u8; 32] = [0x5Eu8; 32];
+
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+    cx.update(gpui_component::init);
+    cx.update(|cx| apply_deos_theme(None, true, cx));
+
+    let (world, _anchors) = world::demo_world();
+    let live = Rc::new(RefCell::new(world));
+    let pre_height = live.borrow().height();
+    let pre_receipts = live.borrow().receipts().len();
+
+    let launcher = RegistryLauncher::standard(APPS_FED);
+    let rows = launcher.rows();
+    let name_of = |id: &str| -> String {
+        rows.iter()
+            .find(|r| r.id == id)
+            .map(|r| r.name.clone())
+            .unwrap_or_else(|| id.to_string())
+    };
+
+    struct Pending {
+        name: String,
+        substance: AppCardSubstance,
+        tree: deos_view::ViewNode,
+    }
+    let mut pending: Vec<Pending> = Vec::new();
+    let mut summ: Vec<String> = Vec::new();
+    let mut total_fired = 0usize;
+
+    // ── (1) PRIVACY-VOTING — cast a poll so the tally bar-chart is alive ──
+    {
+        let id = "privacy-voting";
+        let launched = launcher
+            .launch_on_world(id, live.clone())
+            .ok_or_else(|| anyhow::anyhow!("no wired app '{id}'"))?
+            .map_err(|e| anyhow::anyhow!("launch '{id}' refused: {e}"))?;
+        let spine = launched.spine; // own it so we can drive more turns then mount
+        total_fired += 1; // the launch's representative yes vote
+        use starbridge_privacy_voting as v;
+        let cell = spine.app_cell();
+        // Cast a lively poll. The launch already recorded one YES (tally_yes = 1); top it
+        // up to a turnout where the bars are visibly full against QUORUM_TARGET.
+        let plan = [
+            (v::VOTE_YES, 12u64),    // -> 13 total yes
+            (v::VOTE_NO, 5u64),      // -> 5 no
+            (v::VOTE_ABSTAIN, 2u64), // -> 2 abstain
+        ];
+        for (choice, count) in plan {
+            let slot = v::tally_slot_for_choice(choice);
+            for _ in 0..count {
+                spine
+                    .commit(
+                        "record_tally",
+                        &v::ADMINISTRATOR_RIGHTS,
+                        &v::ADMINISTRATOR_RIGHTS,
+                        |st| {
+                            let t = field_tail_u64_le(&st.fields[slot]);
+                            vec![dregg_app_framework::Effect::SetField {
+                                cell,
+                                index: slot,
+                                value: dregg_app_framework::field_from_u64(t.saturating_add(1)),
+                            }]
+                        },
+                    )
+                    .map_err(|e| anyhow::anyhow!("privacy-voting record_tally refused: {e}"))?;
+                total_fired += 1;
+            }
+        }
+        let card = app_card_json_for(id)?;
+        let tree = deos_view::parse_view_tree(&card.0)
+            .map_err(|e| anyhow::anyhow!("'{id}' card view-tree parse: {e}"))?;
+        let substance = AppCardSubstance::new(spine, card.1);
+        let yes = substance.get_u64(v::TALLY_YES_SLOT);
+        let no = substance.get_u64(v::TALLY_NO_SLOT);
+        let abstain = substance.get_u64(v::TALLY_ABSTAIN_SLOT);
+        summ.push(format!(
+            "{} (poll tally yes={yes}/no={no}/abstain={abstain} of {} quorum)",
+            name_of(id),
+            v::card::QUORUM_TARGET
+        ));
+        pending.push(Pending {
+            name: name_of(id),
+            substance,
+            tree,
+        });
+    }
+
+    // ── (2) GOVERNED-NAMESPACE — gather a quorum so the quorum bar tops out ──
+    {
+        let id = "governed-namespace";
+        let launched = launcher
+            .launch_on_world(id, live.clone())
+            .ok_or_else(|| anyhow::anyhow!("no wired app '{id}'"))?
+            .map_err(|e| anyhow::anyhow!("launch '{id}' refused: {e}"))?;
+        let spine = launched.spine;
+        total_fired += 1; // the launch's representative proposal (pending -> 1)
+        use starbridge_governed_namespace as gn;
+        let board = spine.app_cell();
+        // The committee member IS the agent cell's pubkey; reconstruct the membership
+        // witness over it (the SAME single-member root `launch_on_world` seeded), so the
+        // authenticated `commit_as` clears `SenderAuthorized(committee_root)`.
+        let signer = live
+            .borrow()
+            .ledger()
+            .get(&board)
+            .map(|c| *c.public_key())
+            .ok_or_else(|| anyhow::anyhow!("governed-namespace cell missing on World"))?;
+        // Drive the pending-proposal count up to QUORUM so the quorum gauge fills.
+        let pending_now = live
+            .borrow()
+            .ledger()
+            .get(&board)
+            .map(|c| field_tail_u64_le(&c.state.fields[gn::PENDING_PROPOSAL_ROOT_SLOT as usize]))
+            .unwrap_or(0);
+        let more = gn::card::QUORUM.saturating_sub(pending_now);
+        for _ in 0..more {
+            let witness = dregg_turn::action::WitnessBlob::merkle_path(
+                dregg_turn::executor::single_member_membership_proof(&signer),
+            );
+            spine
+                .commit_as(
+                    signer,
+                    "propose_table_update",
+                    &gn::COMMITTEE_RIGHTS,
+                    &gn::COMMITTEE_RIGHTS,
+                    vec![witness],
+                    |st| {
+                        let p =
+                            field_tail_u64_le(&st.fields[gn::PENDING_PROPOSAL_ROOT_SLOT as usize]);
+                        let np = dregg_app_framework::field_from_u64(p.saturating_add(1));
+                        vec![
+                            dregg_app_framework::Effect::SetField {
+                                cell: board,
+                                index: gn::PENDING_PROPOSAL_ROOT_SLOT as usize,
+                                value: np,
+                            },
+                            dregg_app_framework::Effect::EmitEvent {
+                                cell: board,
+                                event: dregg_app_framework::Event::new(
+                                    dregg_app_framework::symbol("proposal-opened"),
+                                    vec![np],
+                                ),
+                            },
+                        ]
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("governed-namespace propose refused: {e}"))?;
+            total_fired += 1;
+        }
+        let card = app_card_json_for(id)?;
+        let tree = deos_view::parse_view_tree(&card.0)
+            .map_err(|e| anyhow::anyhow!("'{id}' card view-tree parse: {e}"))?;
+        let substance = AppCardSubstance::new(spine, card.1);
+        let votes = substance.get_u64(gn::PENDING_PROPOSAL_ROOT_SLOT as usize);
+        summ.push(format!(
+            "{} (quorum {votes}/{} proposals)",
+            name_of(id),
+            gn::card::QUORUM
+        ));
+        pending.push(Pending {
+            name: name_of(id),
+            substance,
+            tree,
+        });
+    }
+
+    // ── (3) BOUNTY-BOARD — full reward gauge + advance the stage gauge ──
+    {
+        let id = "bounty-board";
+        let launched = launcher
+            .launch_on_world(id, live.clone())
+            .ok_or_else(|| anyhow::anyhow!("no wired app '{id}'"))?
+            .map_err(|e| anyhow::anyhow!("launch '{id}' refused: {e}"))?;
+        let spine = launched.spine;
+        total_fired += 1; // the launch's representative claim (OPEN -> CLAIMED)
+        use starbridge_bounty_board as b;
+        let bcell = spine.app_cell();
+        // Advance CLAIMED -> SUBMITTED so the stage gauge climbs past the seeded claim
+        // (the escrowed-reward gauge is already full at the seeded 1000/1000).
+        spine
+            .commit("submit", &b::WORKER_RIGHTS, &b::WORKER_RIGHTS, |_st| {
+                b::submit_effects(bcell, "ipfs://bafy-the-registry-work")
+            })
+            .map_err(|e| anyhow::anyhow!("bounty-board submit refused: {e}"))?;
+        total_fired += 1;
+        let card = app_card(id).ok_or_else(|| anyhow::anyhow!("'{id}' ships no wired card"))?;
+        let tree = deos_view::parse_view_tree(&card.json)
+            .map_err(|e| anyhow::anyhow!("'{id}' card view-tree parse: {e}"))?;
+        let substance = AppCardSubstance::new(spine, card.fire);
+        let reward = substance.get_u64(b::REWARD_SLOT);
+        let state = substance.get_u64(b::STATE_SLOT);
+        summ.push(format!(
+            "{} (reward {reward}/1000 escrowed · stage {state}/{} SUBMITTED)",
+            name_of(id),
+            b::STATE_PAID
+        ));
+        pending.push(Pending {
+            name: name_of(id),
+            substance,
+            tree,
+        });
+    }
+
+    let post_height = live.borrow().height();
+    let post_receipts = live.borrow().receipts().len();
+    anyhow::ensure!(
+        post_height > pre_height,
+        "no verified turns committed ({pre_height} -> {post_height})"
+    );
+    anyhow::ensure!(
+        post_receipts >= pre_receipts + total_fired,
+        "expected at least {total_fired} new receipts, got {}",
+        post_receipts.saturating_sub(pre_receipts)
+    );
+
+    let subtitle = format!(
+        "three apps launched onto ONE shared live World, then DRIVEN with {total_fired} real \
+         cap-gated VERIFIED turns (ledger {pre_height}→{post_height}, receipts \
+         {pre_receipts}→{post_receipts}) until their gauges fill: a poll's yes/no/abstain \
+         tally bar-chart, a committee quorum bar, and a bounty's escrowed-reward + stage \
+         gauges — every bar below is the running World's real state."
+    );
+    let card_count = pending.len();
+    let apps = cx.open_window(size(px(w), px(h)), move |_window, cx| {
+        let cards = pending
+            .into_iter()
+            .map(|p| {
+                let sub: CardSubstanceRef = Rc::new(RefCell::new(p.substance));
+                let title = format!("{} · live app card (deos-view)", p.name);
+                cx.new(|_cx| CardPane::new_substance(sub, p.tree, title))
+            })
+            .collect();
+        cx.new(|_cx| AppsRowView { subtitle, cards })
+    })?;
+    cx.run_until_parked();
+    cx.update_window(apps.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let apps_png = cx.capture_screenshot(apps.into())?;
+    let (aw, ah) = (apps_png.width(), apps_png.height());
+    apps_png.save(out)?;
+
+    println!(
+        "OK apps-showcase render -> {out} ({aw}x{ah}), logical {w}x{h}; {card_count} VISUAL-KILLER \
+         app cards mounted on a shared live World, each DRIVEN with real verified turns until its \
+         gauges are FILLED ({total_fired} turns total, ledger {pre_height}->{post_height}, receipts \
+         {pre_receipts}->{post_receipts}): {}.",
+        summ.join("; ")
+    );
+    Ok(())
+}
+
+/// Resolve a showcase app's bespoke card JSON + its (reuse-layer) card-fire dispatch by
+/// id, for the apps whose cards are NOT in [`app_card`]'s launch-set. The JSON is the app
+/// crate's own glowed-up `*_card_json()`; the fire dispatch routes the card button to the
+/// app's representative live affordance (the SAME recipe the registry's world-drive uses).
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "card-pane",
+    feature = "app-registry",
+    feature = "embedded-executor"
+))]
+fn app_card_json_for(
+    id: &str,
+) -> anyhow::Result<(String, starbridge_v2::app_registry::CardFireFn)> {
+    match id {
+        "privacy-voting" => Ok((
+            starbridge_privacy_voting::card::voting_card_json(),
+            voting_card_fire as starbridge_v2::app_registry::CardFireFn,
+        )),
+        "governed-namespace" => Ok((
+            starbridge_governed_namespace::card::governance_card_json(),
+            governance_card_fire as starbridge_v2::app_registry::CardFireFn,
+        )),
+        other => Err(anyhow::anyhow!("no showcase card json wired for '{other}'")),
+    }
 }
 
 /// **THE CLICK → VERIFIED-TURN BAKE.** Launches the gallery app onto a live
