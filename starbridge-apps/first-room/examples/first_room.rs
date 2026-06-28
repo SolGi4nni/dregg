@@ -62,9 +62,13 @@ fn main() {
     println!();
     println!("  job done                          : {}", t.job_done);
     println!(
-        "  PAID (released, conserving)       : {}  (== escrowed: {})",
+        "  PAID — colonist HOLDS (a REAL Transfer): {}  (== escrowed: {})",
         t.paid,
         t.paid == t.funded_reward && t.conserved
+    );
+    println!(
+        "  value conserved (escrow Σ + CREDIT Σδ=0): {}",
+        t.conserved && t.credit_conserved
     );
     println!();
 
@@ -88,8 +92,19 @@ fn main() {
     let holds = t.first_room_holds();
     println!("════════════════════════════════════════════════════════════════════════");
     println!("  THE FIRST ROOM HOLDS: {}", holds);
-    println!("  (job done + paid in full + conserving + every cheat provably refused)");
+    println!("  (job done + colonist HOLDS the reward in full + escrow Σ conserving + CREDIT Σδ=0");
+    println!("   + every cheat provably refused)");
     println!("════════════════════════════════════════════════════════════════════════");
+    println!();
+
+    // The composed room ALSO ships as a renderer-independent `deos.ui.*` CARD (the one modern-app
+    // axis that fits a composition exemplar): a rich, legible composed-room view-tree.
+    let card_json = starbridge_first_room::room_card_json(&room);
+    println!(
+        "── THE COMPOSED-ROOM CARD (deos.ui.* JSON, {} bytes) ──",
+        card_json.len()
+    );
+    println!("  {card_json}");
 
     if !holds {
         std::process::exit(1);

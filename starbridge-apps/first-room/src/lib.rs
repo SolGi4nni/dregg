@@ -11,6 +11,11 @@
 //!   * the ESCROW ECONOMY — `starbridge_escrow_market`: a factory-born escrow cell driven
 //!     `list → fund → ship → settle`, value-conserving (`released + refunded == escrowed`). The payer
 //!     escrows the reward from a CONSERVED pool; settlement releases it to the inhabitant. (Organ 3.)
+//!     The pay is a REAL conserving value flow — riding alongside the lifecycle state machine, the
+//!     reward is a conserved CREDIT minted onto a vault, and on job completion the vault RELEASES it
+//!     to the colonist's wallet through the shared [`Payable`](dregg_app_framework::Payable)
+//!     interface (a single kernel `Effect::Transfer`). The colonist genuinely HOLDS the reward (a
+//!     real on-ledger balance) and per-asset Σδ=0 conserves across the move — not a read-only field.
 //!   * the ROOM + INHABITANT model — this crate's [`Room`]/[`InhabitantView`]: a place that contains
 //!     inhabitants, renders each one's held mandate + live (committed) actions, and SURFACES every
 //!     refusal in-room with the receipt-why. (Organ 5, mirrored gpui-free from
@@ -25,7 +30,15 @@
 //!   - a cell = an ENTITY (the inhabitant, the room, the escrow item);
 //!   - a turn = an ACTION (cap-gated + receipted) — every step here is a real signed turn;
 //!   - the held workflow-mandate = the colonist's JOB it provably can't exceed;
-//!   - the escrow settle = the pay-for-work ECONOMY (a conserving transfer);
+//!   - the escrow settle = the pay-for-work ECONOMY (a REAL conserving `Effect::Transfer`);
+//!   - SEAM (honest): the job→pay LINK — "release the reward only because the job finished" — is a
+//!     host-side SEQUENCING gate (`if job_done` in [`scenario`]), the same shape the proven
+//!     cross-app value flow and DAVID'S DOOR use. The *value* move is fully in-circuit (a conserving
+//!     `Transfer`, Σδ=0), and the JOB's own three legs are in-circuit; what is NOT yet in-circuit is
+//!     a CROSS-CELL caveat binding the pay-cell's Transfer to the job-cell's `cursor == terminal`.
+//!     `dregg_cell::Preconditions` constrains only the action's OWN target cell, so an
+//!     executor-enforced "pay iff that other cell is done" caveat is not expressible without a new
+//!     enforcement primitive (deliberately NOT invented here from a composition app). Flagged.
 //!   - DAVID'S DOOR — the gateway (`starbridge-storage-gateway-mandate`) is where a *buildr* agent
 //!     walks IN as a new inhabitant: it births a job cell under the gateway's physics and advances
 //!     it with the same three legs; see [`davids_door`] for the seam note.

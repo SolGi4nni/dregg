@@ -25,18 +25,18 @@
 //! a refusal is a REAL executor rejection on the produced transition, not an unhandled branch.
 
 use dregg_app_framework::{
-    AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, CellMode, EmbeddedExecutor,
-    field_from_u64,
+    AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, CellMode, Effect, EmbeddedExecutor,
+    InvokeAuthority, field_from_u64,
 };
-use dregg_cell::FactoryCreationParams;
+use dregg_cell::{Cell, EFFECT_MINT, FactoryCreationParams, Permissions};
 
 use starbridge_compartment_workflow_mandate::colonist_job::{
     self as job, FULL_BUDGET, JOB_CURSOR_SLOT, JOB_TERMINAL, SPEND_ACCUM_SLOT, TIGHT_BUDGET,
     WorkflowVerb,
 };
 use starbridge_escrow_market::{
-    self as escrow, ESCROW_FACTORY_VK, ESCROWED_SLOT, RELEASED_SLOT, STATE_SETTLED, STATE_SLOT,
-    escrow_child_program_vk, escrow_factory_descriptor,
+    self as escrow, ESCROW_FACTORY_VK, ESCROWED_SLOT, EscrowVault, RELEASED_SLOT, STATE_SETTLED,
+    STATE_SLOT, escrow_child_program_vk, escrow_factory_descriptor,
 };
 
 use crate::room::{GenuineAction, InRoomRefusal, InhabitantView, Room, short_hex};
@@ -45,6 +45,10 @@ use crate::room::{GenuineAction, InRoomRefusal, InhabitantView, Room, short_hex}
 pub const REWARD: u64 = 800;
 /// The listing ceiling the buyer's escrow draw is bounded by (the trustline `line`).
 pub const CEILING: u64 = 1000;
+/// The shared CREDIT asset the reward is denominated in (`AssetId := issuer-cell`). The pay is a
+/// REAL conserved credit moving between two cells of this asset — not a scalar field. The
+/// per-asset standing invariant `Σ holders(CREDIT) + well(CREDIT) = 0` holds across the value leg.
+pub const CREDIT_ASSET: [u8; 32] = [0xC0u8; 32];
 
 /// One job-step's record (a verb advanced, the spend it cost, the receipt that committed it).
 #[derive(Clone, Debug)]
@@ -123,10 +127,14 @@ pub struct Transcript {
     pub job_steps: Vec<JobStepRecord>,
     /// `true` iff the job reached its terminal (cursor == JOB_TERMINAL).
     pub job_done: bool,
-    /// The reward RELEASED to the inhabitant on settlement (the pay).
+    /// The reward the colonist HOLDS after the conserving Transfer (a real on-ledger CREDIT
+    /// balance, not a read-only field) — the pay.
     pub paid: u64,
-    /// `true` iff settlement conserved the escrow (released + refunded == escrowed).
+    /// `true` iff settlement conserved the escrow lifecycle (released + refunded == escrowed).
     pub conserved: bool,
+    /// `true` iff the REAL value leg conserved: per-asset Σδ=0 over CREDIT after the reward
+    /// Transfer (`Σ holders(CREDIT) + well(CREDIT) = 0`). The pay is genuine conserved value.
+    pub credit_conserved: bool,
     /// The cheat battery outcomes (one per class).
     pub cheats: Vec<CheatOutcome>,
     /// The rendered room (inhabitant + payer, mandate + genuine actions + in-room refusals).
@@ -140,6 +148,7 @@ impl Transcript {
         self.job_done
             && self.paid == self.funded_reward
             && self.conserved
+            && self.credit_conserved
             && self.cheats.iter().all(CheatOutcome::provably_refused)
     }
 }
@@ -272,6 +281,64 @@ fn birth_job_cell(
 }
 
 // =============================================================================
+// THE REAL VALUE LEG — the pay is a conserved CREDIT, not a read-only field.
+// =============================================================================
+//
+// The escrow lifecycle above (list→fund→ship→settle) is the ECONOMY's STATE MACHINE — the scalar
+// `ESCROWED`/`RELEASED` organs the cheat battery (c)/(e) bite on. Riding ALONGSIDE it (exactly as
+// `escrow-market`'s `EscrowVault` value organ rides alongside its lifecycle cell) is the REAL value
+// flow: the reward is a conserved CREDIT minted onto a reward-pool VAULT, and on job completion the
+// vault RELEASES it to the colonist's wallet through the shared `Payable` interface — a single
+// kernel `Effect::Transfer`. So the colonist genuinely HOLDS the pay (a real on-ledger balance),
+// and per-asset Σδ=0 conserves across the move. This is the weld made GENUINE: the JOB (organs 1&2)
+// gates a REAL conserving Transfer of the reward (organ 3, the SAME `Payable` DSI bounty-board uses).
+
+/// A fully-open CREDIT holder cell (a wallet / vault) at `seed`, starting at zero balance. Open
+/// permissions because the value flows by the EFFECT-level gates (the mint-authority cap + the
+/// conserved cross-cell move), not the holder's own permission tier.
+fn credit_holder(seed: u8) -> Cell {
+    let mut pk = [0u8; 32];
+    pk[0] = seed;
+    pk[31] = seed.wrapping_mul(37).wrapping_add(1);
+    let mut cell = Cell::with_balance(pk, CREDIT_ASSET, 0);
+    cell.permissions = Permissions {
+        send: AuthRequired::None,
+        receive: AuthRequired::None,
+        set_state: AuthRequired::None,
+        set_permissions: AuthRequired::None,
+        set_verification_key: AuthRequired::None,
+        increment_nonce: AuthRequired::None,
+        delegate: AuthRequired::None,
+        access: AuthRequired::None,
+    };
+    cell
+}
+
+/// The deterministic per-asset issuer well id (mirrors the executor's `derive_issuer_well`): the
+/// −supply account that makes a mint conserve (`Σ holders + well = 0`).
+fn credit_well_id() -> CellId {
+    let well_pubkey = blake3::derive_key("dregg-issuer-well-key-v1", &CREDIT_ASSET);
+    CellId::derive_raw(&well_pubkey, &CREDIT_ASSET)
+}
+
+/// Sum every CREDIT holder's balance (the per-asset supply). For the conserving CREDIT asset this is
+/// identically 0: `Σ holders(CREDIT) + well(CREDIT) = 0`.
+fn credit_supply(exec: &EmbeddedExecutor) -> i128 {
+    exec.with_ledger_mut(|ledger| {
+        ledger
+            .iter()
+            .filter(|(_, c)| c.token_id() == &CREDIT_ASSET)
+            .map(|(_, c)| c.state.balance() as i128)
+            .sum()
+    })
+}
+
+/// The live balance of `cell` (0 if absent).
+fn balance_of(exec: &EmbeddedExecutor, cell: CellId) -> i64 {
+    exec.with_ledger_mut(|ledger| ledger.get(&cell).map(|c| c.state.balance()).unwrap_or(0))
+}
+
+// =============================================================================
 // THE FIRST ROOM — the full runnable scenario.
 // =============================================================================
 
@@ -301,6 +368,47 @@ pub fn run_first_room() -> Transcript {
     .expect("fund the reward (≤ ceiling) commits");
     let funded_reward = read_u64(&exec.cell_state(escrow_cell).unwrap().fields[ESCROWED_SLOT]);
 
+    // ── ORGAN 3 (value): mint the reward as a CONSERVED CREDIT onto a reward-pool VAULT, and give
+    //    the colonist a WALLET to be paid into. The pay (below, on completion) is a REAL kernel
+    //    `Effect::Transfer` of this credit through the shared `Payable` interface — not a read-only
+    //    field — so the colonist genuinely HOLDS its reward and per-asset Σδ=0 conserves. ──────────
+    let reward_vault = credit_holder(0xA1);
+    let colonist_wallet = credit_holder(0xB2);
+    let reward_vault_id = reward_vault.id();
+    let colonist_wallet_id = colonist_wallet.id();
+    exec.ensure_cell(reward_vault)
+        .expect("the reward-pool vault co-places on the one ledger");
+    exec.ensure_cell(colonist_wallet)
+        .expect("the colonist's wallet co-places on the one ledger");
+    let credit_well = credit_well_id();
+    exec.with_ledger_mut(|ledger| {
+        let op = ledger
+            .get_mut(&payer.cell_id())
+            .expect("the operator cell exists");
+        op.capabilities
+            .grant_faceted(credit_well, AuthRequired::None, EFFECT_MINT)
+            .expect("grant the operator mint-authority over the CREDIT well");
+        op.capabilities
+            .grant(reward_vault_id, AuthRequired::None)
+            .expect("grant the operator access to the reward vault");
+        op.capabilities
+            .grant(colonist_wallet_id, AuthRequired::None)
+            .expect("grant the operator access to the colonist wallet");
+    });
+    exec.submit_action(
+        &payer,
+        payer.make_action(
+            reward_vault_id,
+            "mint_reward",
+            vec![Effect::Mint {
+                target: reward_vault_id,
+                slot: 0,
+                amount: REWARD,
+            }],
+        ),
+    )
+    .expect("the cap-gated mint of the conserved reward credit commits");
+
     // ── ORGANS 1 & 2 (mandate law + job): the inhabitant's JOB cell (full budget, crafter) ────────
     let job_cell = birth_job_cell(&exec, &payer, &owner, b"first-room-colonist", FULL_BUDGET);
 
@@ -321,28 +429,48 @@ pub fn run_first_room() -> Transcript {
 
     // ── (3) the job is DONE → the payer SHIPS + SETTLES → the escrow RELEASES → the inhabitant is
     //        PAID (a conserving transfer: released == escrowed). Only because the job finished. ────
-    let mut paid = 0u64;
-    let mut conserved = false;
+    let mut paid = 0u64; // the REAL credit the colonist HOLDS after the conserving Transfer.
+    let mut conserved = false; // the escrow lifecycle conserved (released + refunded == escrowed).
+    let mut credit_conserved = false; // per-asset Σδ=0 over CREDIT across the value leg.
     if job_done {
+        // (3a) the economy's STATE MACHINE: ship + settle the lifecycle escrow (the scalar organ
+        //      the cheat battery bites on).
         let delivery = escrow::sealed_delivery_digest(b"the-finished-work");
         exec.submit_action(
             &payer,
             escrow::build_ship_action(&payer, escrow_cell, &delivery),
         )
         .expect("ship the finished work commits");
-        // Release the escrow IN FULL to the inhabitant (released = escrowed, refunded = 0):
-        // conserving by construction.
+        // Settle the escrow IN FULL (released = escrowed, refunded = 0): conserving by construction.
         exec.submit_action(
             &payer,
             escrow::build_settle_action(&payer, escrow_cell, funded_reward, 0),
         )
         .expect("conserving settlement (release in full) commits");
         let st = exec.cell_state(escrow_cell).unwrap();
-        paid = read_u64(&st.fields[RELEASED_SLOT]);
+        let released = read_u64(&st.fields[RELEASED_SLOT]);
         let settled = read_u64(&st.fields[STATE_SLOT]) == STATE_SETTLED;
         let escrowed = read_u64(&st.fields[ESCROWED_SLOT]);
         let refunded = read_u64(&st.fields[starbridge_escrow_market::REFUNDED_SLOT]);
-        conserved = settled && (paid + refunded == escrowed);
+        conserved = settled && (released + refunded == escrowed);
+
+        // (3b) THE REAL VALUE FLOW — the JOB completion gates a REAL conserving Transfer of the
+        //      reward credit from the vault to the colonist's wallet, through the SAME `Payable`
+        //      interface escrow-market shares with bounty-board. The colonist now HOLDS the reward
+        //      as conserved value (a real on-ledger balance), not a read-only field.
+        let vault = EscrowVault::new(reward_vault_id, CREDIT_ASSET);
+        let pay_turn = vault
+            .release(
+                &payer,
+                funded_reward,
+                colonist_wallet_id,
+                InvokeAuthority::Signature,
+            )
+            .expect("the on-completion pay routes through the shared Payable interface");
+        exec.submit_turn(&pay_turn)
+            .expect("the conserving reward Transfer (vault → colonist) commits");
+        paid = balance_of(&exec, colonist_wallet_id) as u64; // the colonist HOLDS the reward.
+        credit_conserved = credit_supply(&exec) == 0; // Σ holders(CREDIT) + well = 0.
     }
 
     // ── THE HEADLINE: the try-to-cheat battery — each refused IN-BAND by the real executor ────────
@@ -527,7 +655,9 @@ pub fn run_first_room() -> Transcript {
                 receipt_hash: [0u8; 32],
             },
             GenuineAction {
-                summary: format!("escrow released: {paid} to the colonist (conserving) — the pay"),
+                summary: format!(
+                    "reward paid: {paid} CREDIT → the colonist — a REAL conserving Transfer (Σδ=0)"
+                ),
                 receipt_hash: [0u8; 32],
             },
         ],
@@ -542,6 +672,7 @@ pub fn run_first_room() -> Transcript {
         job_done,
         paid,
         conserved,
+        credit_conserved,
         cheats,
         room,
     }
@@ -645,10 +776,15 @@ mod tests {
         // Spend tracked the DAG (3, 7, 9) and stayed within budget.
         assert_eq!(t.job_steps[2].spend_after, 9, "total spend == budget");
         assert!(t.job_done, "the job reached its terminal");
-        // PAID — the conserved reward released in full.
-        assert_eq!(t.paid, REWARD, "paid the full reward");
+        // PAID — the colonist HOLDS the full reward as a REAL conserved CREDIT balance (a kernel
+        // Transfer through the shared Payable interface), not a read-only field.
+        assert_eq!(t.paid, REWARD, "the colonist holds the full reward");
         assert_eq!(t.paid, t.funded_reward, "paid exactly what was escrowed");
-        assert!(t.conserved, "the settlement conserved the escrow");
+        assert!(t.conserved, "the settlement conserved the escrow lifecycle");
+        assert!(
+            t.credit_conserved,
+            "the REAL value leg conserved (per-asset Σδ=0 over CREDIT)"
+        );
     }
 
     #[test]
