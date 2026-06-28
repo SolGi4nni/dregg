@@ -37,9 +37,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use dregg_sdk::{
-    AgentCipherclerk, AgentRuntime, GatewayRefusal, HeldToken, ToolCallError, ToolGateway,
-    ToolGrant,
+    AgentCipherclerk, AgentRuntime, Attenuation, CellId, Charge, GatewayRefusal, HeldToken,
+    SdkError, ToolCallError, ToolGateway, ToolGrant,
 };
+
+use crate::llm_provider::{LlmPolicy, PermissionDenied, Provider};
 
 /// The ACP tool classes deos confines a Hermes session under (mirrors
 /// `deos_hermes::ToolKind`). The classifier maps a message's leading verb to one
@@ -52,6 +54,11 @@ pub enum ToolKind {
     Execute,
     Edit,
     Chat,
+    /// The LLM "brain" call — a metered, cap-gated, PAID inference turn driven by
+    /// the user's OWN ported-in provider key ([`crate::llm_provider`]). Unlike the
+    /// other kinds (rate-only), the LLM gateway is admitted with a value `Charge`
+    /// so the user's token BUDGET is enforced on-ledger alongside the rate.
+    Llm,
 }
 
 impl ToolKind {
@@ -63,6 +70,7 @@ impl ToolKind {
             ToolKind::Execute => "Execute",
             ToolKind::Edit => "Edit",
             ToolKind::Chat => "Chat",
+            ToolKind::Llm => "Llm",
         }
     }
 
@@ -75,6 +83,7 @@ impl ToolKind {
             ToolKind::Execute => 40,
             ToolKind::Edit => 50,
             ToolKind::Chat => 90,
+            ToolKind::Llm => 80,
         }
     }
 
@@ -87,6 +96,7 @@ impl ToolKind {
             ToolKind::Execute => "tool.execute",
             ToolKind::Edit => "tool.edit",
             ToolKind::Chat => "tool.chat",
+            ToolKind::Llm => "tool.llm",
         }
     }
 
@@ -100,6 +110,7 @@ impl ToolKind {
             ToolKind::Execute => 20,
             ToolKind::Edit => 30,
             ToolKind::Chat => 500,
+            ToolKind::Llm => 100,
         }
     }
 }
@@ -188,6 +199,16 @@ pub struct ChannelHermes {
     deadline: i64,
     grants: HashMap<ToolKind, ToolGrant>,
     gateways: HashMap<ToolKind, ToolGateway>,
+    /// The BYO-key policy bounding LLM-brain calls (allowed providers/models,
+    /// token budget, rate). `None` until the user sets a key + policy.
+    policy: Option<LlmPolicy>,
+    /// The PRICED gateway for LLM-brain calls — admitted lazily from [`policy`]
+    /// on the first authorized call. Distinct from the rate-only [`gateways`]
+    /// because it carries a value [`Charge`] enforcing the token budget.
+    llm_gateway: Option<ToolGateway>,
+    /// The sink cell each LLM call's value charge is paid to (a spawned sibling
+    /// worker, so the conserving transfer commits offline). Spawned lazily.
+    llm_sink: Option<CellId>,
 }
 
 impl ChannelHermes {
@@ -228,7 +249,30 @@ impl ChannelHermes {
             deadline,
             grants,
             gateways: HashMap::new(),
+            policy: None,
+            llm_gateway: None,
+            llm_sink: None,
         }
+    }
+
+    /// Install the BYO-key policy bounding this user's LLM-brain calls (allowed
+    /// providers/models, token budget, rate). Chainable.
+    pub fn with_llm_policy(mut self, policy: LlmPolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
+    /// Set/replace the BYO-key policy (e.g. after the user rotates their key or
+    /// adjusts their budget via `/key`). Resets the priced gateway so the new
+    /// budget/rate take effect on the next call.
+    pub fn set_llm_policy(&mut self, policy: LlmPolicy) {
+        self.policy = Some(policy);
+        self.llm_gateway = None;
+    }
+
+    /// The currently installed policy, if any.
+    pub fn policy(&self) -> Option<&LlmPolicy> {
+        self.policy.as_ref()
     }
 
     /// Override a kind's grant (tighten a rate ceiling / deny a class). Used by
@@ -308,6 +352,196 @@ impl ChannelHermes {
     pub fn calls_made(&self, kind: ToolKind) -> i64 {
         self.gateways.get(&kind).map_or(0, |gw| gw.calls_made())
     }
+
+    /// Lazily admit (or fetch) the PRICED LLM gateway carrying the token budget.
+    /// Spawns a value sink (a sibling worker) on first use so the per-call charge
+    /// is a real conserving transfer between same-asset cells. The value budget is
+    /// quantized to call-units (`token_budget / est_tokens_per_call`) with a
+    /// per-call price of 1, so the charge commits within the worker's birth
+    /// balance while `OverBudget` bites exactly when the token allowance is spent.
+    fn llm_gateway_for(&mut self, policy: &LlmPolicy) -> Result<&mut ToolGateway, SdkError> {
+        if self.llm_gateway.is_none() {
+            let sink = match self.llm_sink {
+                Some(c) => c,
+                None => {
+                    let s = self.runtime.spawn_sub_agent_scoped(
+                        &Attenuation::default(),
+                        &self.root,
+                        &["sink"],
+                    )?;
+                    let c = s.cell_id();
+                    self.llm_sink = Some(c);
+                    c
+                }
+            };
+            let grant = ToolGrant {
+                tool_id: ToolKind::Llm.tool_id(),
+                rate_limit: policy.rate_limit,
+                deadline: self.deadline,
+                tool_method: ToolKind::Llm.method().to_string(),
+            };
+            let est = policy.est_tokens_per_call.max(1);
+            let budget_units = (policy.token_budget / est).max(1);
+            let charge = Charge::new(1, sink, budget_units);
+            let gw = ToolGateway::admit_priced(&self.runtime, &self.root, grant, Some(charge))?;
+            self.llm_gateway = Some(gw);
+        }
+        Ok(self.llm_gateway.as_mut().expect("just inserted"))
+    }
+
+    /// THE LLM BRAIN SEAM — authorize an inference call on the user's OWN key.
+    ///
+    /// All enforcement is IN-BAND, before any (paid) provider call:
+    ///
+    /// 1. **permission** — the policy must permit `provider` (and `model`);
+    /// 2. **token budget + rate** — the priced [`ToolGateway`] admits the call IFF
+    ///    rate AND token-budget head-room remain, committing a real cap-gated
+    ///    metered turn (the receipt) and charging one budget unit. An over-budget
+    ///    / over-rate / past-deadline call is REFUSED in-band naming the leg — no
+    ///    provider call, no spend.
+    ///
+    /// On `allowed`, the caller performs the actual provider call (mock in tests /
+    /// live behind `HERMES_LIVE_LLM`) with the user's key and may record the real
+    /// token usage; the budget the gateway enforces is the pre-call estimate (the
+    /// only thing knowable before the call).
+    pub fn authorize_llm(&mut self, provider: Provider, model: &str, now: i64) -> LlmVerdict {
+        let policy = match self.policy.clone() {
+            Some(p) => p,
+            None => {
+                return LlmVerdict::refused(
+                    provider,
+                    model,
+                    "no LLM policy set (the user has not ported in a key)",
+                );
+            }
+        };
+
+        // §1 — provider/model permission (deny-by-policy, in-band).
+        if let Err(denied) = policy.permit(provider, model) {
+            return LlmVerdict::refused(provider, model, &denied_reason(&denied));
+        }
+
+        // §2 — admit (lazily) the priced LLM gateway, then meter the call.
+        let est = policy.est_tokens_per_call.max(1);
+        let gw = match self.llm_gateway_for(&policy) {
+            Ok(gw) => gw,
+            Err(e) => {
+                return LlmVerdict::refused(
+                    provider,
+                    model,
+                    &format!("could not admit LLM worker: {e}"),
+                );
+            }
+        };
+        match gw.invoke(ToolKind::Llm.tool_id(), now, vec![]) {
+            Ok(receipt) => {
+                let spent_units = gw.spent();
+                let budget_units = gw.charge().map(|c| c.budget).unwrap_or(0);
+                LlmVerdict {
+                    provider,
+                    model: model.to_string(),
+                    allowed: true,
+                    receipt: Some(hex32(&receipt.receipt.turn_hash)),
+                    remaining_calls: Some(receipt.remaining),
+                    tokens_spent: spent_units.saturating_mul(est),
+                    token_budget: budget_units.saturating_mul(est),
+                    reason: None,
+                }
+            }
+            Err(ToolCallError::Refused(r)) => {
+                LlmVerdict::refused(provider, model, &describe_refusal_llm(&r, est))
+            }
+            Err(ToolCallError::Sdk(e)) => LlmVerdict::refused(
+                provider,
+                model,
+                &format!("executor rejected the metered LLM turn: {e}"),
+            ),
+        }
+    }
+
+    /// LLM-brain calls committed so far this session (0 if never invoked).
+    pub fn llm_calls_made(&self) -> i64 {
+        self.llm_gateway.as_ref().map_or(0, |gw| gw.calls_made())
+    }
+}
+
+/// The verdict of an [`ChannelHermes::authorize_llm`] decision — posted back to
+/// the user and recorded in the per-channel ledger.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LlmVerdict {
+    /// The provider this call was authorized against.
+    pub provider: Provider,
+    /// The model requested.
+    pub model: String,
+    /// Whether the metered LLM turn committed (the user's key-use was authorized).
+    pub allowed: bool,
+    /// The committed turn hash (hex), present iff `allowed`.
+    pub receipt: Option<String>,
+    /// LLM calls remaining on the rate mandate after this call.
+    pub remaining_calls: Option<i64>,
+    /// Tokens charged against the budget so far this window (estimate-based).
+    pub tokens_spent: u64,
+    /// The total token budget for the window.
+    pub token_budget: u64,
+    /// The refusal reason naming the leg that bit, present iff `!allowed`.
+    pub reason: Option<String>,
+}
+
+impl LlmVerdict {
+    fn refused(provider: Provider, model: &str, reason: &str) -> Self {
+        LlmVerdict {
+            provider,
+            model: model.to_string(),
+            allowed: false,
+            receipt: None,
+            remaining_calls: None,
+            tokens_spent: 0,
+            token_budget: 0,
+            reason: Some(reason.to_string()),
+        }
+    }
+
+    /// The user-facing one-line summary posted to the channel.
+    pub fn summary(&self) -> String {
+        if self.allowed {
+            let r = self.receipt.as_deref().unwrap_or("");
+            let short = &r[..r.len().min(16)];
+            format!(
+                "🧠 `{}`/`{}` — authorized · receipt `{}…` · {} tokens of {} budget · {} calls left",
+                self.provider.as_str(),
+                self.model,
+                short,
+                self.tokens_spent,
+                self.token_budget,
+                self.remaining_calls.unwrap_or_default()
+            )
+        } else {
+            format!(
+                "⛔ `{}`/`{}` LLM call refused in-band — {}",
+                self.provider.as_str(),
+                self.model,
+                self.reason.as_deref().unwrap_or("no mandate")
+            )
+        }
+    }
+}
+
+/// A human-readable permission refusal (the provider/model gate).
+fn denied_reason(denied: &PermissionDenied) -> String {
+    denied.to_string()
+}
+
+/// Like [`describe_refusal`] but translates the LLM gateway's call-unit
+/// `OverBudget` into a token-budget message (the user's mental model is tokens).
+fn describe_refusal_llm(r: &GatewayRefusal, est: u64) -> String {
+    match r {
+        GatewayRefusal::OverBudget { spent, budget, .. } => format!(
+            "token budget exhausted: {} of {} tokens used this window",
+            spent.saturating_mul(est),
+            budget.saturating_mul(est)
+        ),
+        other => describe_refusal(other),
+    }
 }
 
 /// A human-readable refusal naming the mandate leg that bit (the text the user
@@ -379,6 +613,21 @@ pub async fn on_message(
     }
 
     let now = now_secs();
+    let seed = crate::cipherclerk::seed_for(&state.config.bot_secret, owner);
+    let deadline = now + 60 * 60 * 24 * 30; // a generous 30-day session window
+
+    // ── BYO-key LLM brain ────────────────────────────────────────────────────
+    // A conversational message (classified `Chat`) is routed through the user's
+    // OWN ported-in provider key when one is set — metered + permissioned by the
+    // dregg gateway. Tool-verb messages (read/search/…) keep the existing
+    // cap-gated classifier path below.
+    if classify(content).kind == ToolKind::Chat {
+        if let Ok(Some(rec)) = state.db.get_llm_key(&owner.to_string()).await {
+            llm_brain_message(ctx, msg, state, owner, seed, deadline, now, content, rec).await;
+            return;
+        }
+    }
+
     // Drive the owner's session synchronously; the std lock is never held across
     // an await (the verdict is produced, then the guard drops).
     let verdict = {
@@ -386,11 +635,9 @@ pub async fn on_message(
             .channel_hermes
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        let hermes = sessions.entry(owner).or_insert_with(|| {
-            let seed = crate::cipherclerk::seed_for(&state.config.bot_secret, owner);
-            // A generous 30-day session window; the live bound is the per-kind rate.
-            ChannelHermes::for_user(seed, now + 60 * 60 * 24 * 30)
-        });
+        let hermes = sessions
+            .entry(owner)
+            .or_insert_with(|| ChannelHermes::for_user(seed, deadline));
         hermes.drive(content, now)
     };
 
@@ -412,6 +659,153 @@ pub async fn on_message(
         .await;
 
     let _ = msg.channel_id.say(&ctx.http, verdict.summary()).await;
+}
+
+/// THE BYO-KEY LLM BRAIN LOOP — drive a conversational channel message through
+/// the owner's OWN provider key, metered + permissioned by dregg.
+///
+/// Authorization (permission ∧ token-budget ∧ rate) is enforced IN-BAND on the
+/// gateway before any provider call; the actual call runs ONLY when the operator
+/// has enabled live calls (`HERMES_LIVE_LLM`). The decrypted key is held
+/// transiently for the request and dropped.
+#[allow(clippy::too_many_arguments)]
+async fn llm_brain_message(
+    ctx: &serenity::all::Context,
+    msg: &serenity::all::Message,
+    state: &crate::BotState,
+    owner: u64,
+    seed: [u8; 32],
+    deadline: i64,
+    now: i64,
+    content: &str,
+    rec: crate::db::LlmKeyRecord,
+) {
+    let channel_id = msg.channel_id.get().to_string();
+    let provider = Provider::parse(&rec.provider).unwrap_or(Provider::Anthropic);
+    let model = if rec.model.trim().is_empty() {
+        provider.default_model().to_string()
+    } else {
+        rec.model.clone()
+    };
+
+    // Authorize synchronously — the std lock is never held across an await.
+    let verdict = {
+        let mut sessions = state
+            .channel_hermes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let hermes = sessions
+            .entry(owner)
+            .or_insert_with(|| ChannelHermes::for_user(seed, deadline));
+        if hermes.policy().is_none() {
+            hermes.set_llm_policy(LlmPolicy::for_provider(
+                provider,
+                rec.token_budget.max(0) as u64,
+                rec.rate_limit,
+            ));
+        }
+        hermes.authorize_llm(provider, &model, now)
+    };
+
+    // Record the metered LLM verdict in the per-channel agent ledger.
+    let _ = state
+        .db
+        .record_hermes_activity(
+            &owner.to_string(),
+            &channel_id,
+            content,
+            "llm.chat",
+            "Llm",
+            verdict.allowed,
+            verdict.receipt.as_deref(),
+            verdict.remaining_calls,
+            verdict.reason.as_deref(),
+            now,
+        )
+        .await;
+
+    if !verdict.allowed {
+        let _ = msg.channel_id.say(&ctx.http, verdict.summary()).await;
+        return;
+    }
+
+    // Authorized. The live provider call runs only when the operator enabled it;
+    // otherwise post the enforcement verdict (the loop is proven offline).
+    let live = std::env::var("HERMES_LIVE_LLM")
+        .map(|v| v != "0" && !v.is_empty())
+        .unwrap_or(false);
+    if live {
+        match run_live_llm(state, owner, provider, &model, content).await {
+            Ok(text) => {
+                let footer = format!(
+                    "\n\n— {} tokens of {} budget · {} calls left",
+                    verdict.tokens_spent,
+                    verdict.token_budget,
+                    verdict.remaining_calls.unwrap_or_default()
+                );
+                let _ = msg
+                    .channel_id
+                    .say(&ctx.http, format!("{}{footer}", truncate_discord(&text)))
+                    .await;
+            }
+            Err(e) => {
+                let _ = msg
+                    .channel_id
+                    .say(&ctx.http, format!("⚠️ provider call failed: {e}"))
+                    .await;
+            }
+        }
+    } else {
+        let _ = msg
+            .channel_id
+            .say(
+                &ctx.http,
+                format!(
+                    "{}\n_(live calls disabled — set `HERMES_LIVE_LLM=1` to call your provider with your key)_",
+                    verdict.summary()
+                ),
+            )
+            .await;
+    }
+}
+
+/// Decrypt the user's key and call the provider (the live path). The plaintext
+/// key is held only for the request and dropped (zeroized). Errors are redacted —
+/// the key never appears in a returned message.
+async fn run_live_llm(
+    state: &crate::BotState,
+    owner: u64,
+    provider: Provider,
+    model: &str,
+    prompt: &str,
+) -> Result<String, String> {
+    let rec = state
+        .db
+        .get_llm_key(&owner.to_string())
+        .await
+        .map_err(|e| format!("db error: {e}"))?
+        .ok_or_else(|| "key not found".to_string())?;
+    let sealed = crate::key_vault::EncryptedKey::from_b64(&rec.nonce_b64, &rec.ciphertext_b64)
+        .map_err(|e| e.to_string())?;
+    let key = crate::key_vault::open(&state.config.bot_secret, owner, provider.as_str(), &sealed)
+        .map_err(|_| "could not decrypt your key — re-set it with /key".to_string())?;
+    let client = reqwest::Client::new();
+    crate::llm_provider::live_complete(&client, provider, model, &key, prompt, 1024)
+        .await
+        .map(|c| c.text)
+        .map_err(|e| e.to_string())
+}
+
+/// Clamp a provider reply to fit a Discord message.
+fn truncate_discord(s: &str) -> String {
+    const MAX: usize = 1800;
+    if s.chars().count() <= MAX {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(MAX).collect();
+        t.push('…');
+        t
+    }
 }
 
 /// Hex-encode a 32-byte receipt hash.
@@ -533,5 +927,115 @@ mod tests {
             0,
             "untouched class stays 0"
         );
+    }
+
+    // ─── BYO-key LLM brain: metered + permissioned key-use ───────────────────
+
+    use crate::key_vault::PlaintextKey;
+    use crate::llm_provider::{LlmTransport, MockTransport};
+
+    #[test]
+    fn an_llm_call_is_authorized_metered_and_drives_a_mock_provider() {
+        // GENUINE ✓ — a permitted, in-budget, in-rate LLM call commits a REAL
+        // cap-gated metered turn (a 64-hex receipt) and debits the token budget;
+        // then a MOCK provider drives the reply (no network, no paid call).
+        let policy = LlmPolicy::for_provider(Provider::Anthropic, 200_000, 50);
+        let mut hermes = ChannelHermes::for_user(seed(), 1_000_000).with_llm_policy(policy);
+
+        let v = hermes.authorize_llm(Provider::Anthropic, "claude-opus-4-8", 100);
+        assert!(v.allowed, "permitted in-budget call commits: {v:?}");
+        let receipt = v.receipt.clone().expect("a committed turn has a receipt");
+        assert_eq!(receipt.len(), 64, "receipt is a hex 32-byte turn hash");
+        assert_eq!(v.remaining_calls, Some(49), "one of 50 LLM calls consumed");
+        assert!(v.tokens_spent > 0, "the budget was debited");
+        assert_eq!(hermes.llm_calls_made(), 1);
+
+        // The provider call itself is mocked — proves the brain seam offline.
+        let mock = MockTransport::default();
+        let out = mock
+            .complete(
+                Provider::Anthropic,
+                "claude-opus-4-8",
+                &PlaintextKey::new("sk-ant-mock"),
+                "hello",
+            )
+            .unwrap();
+        assert_eq!(out.text, "mock reply");
+        assert_eq!(out.tokens_used, 1_500);
+    }
+
+    #[test]
+    fn over_token_budget_refused_before_the_call() {
+        // CHEAT ✗ — token_budget == est_tokens_per_call → exactly one call of
+        // budget. The second is refused IN-BAND on the budget leg, BEFORE any
+        // provider call (no spend).
+        let policy = LlmPolicy::for_provider(Provider::OpenAi, 2_000, 50); // est=2000 → 1 unit
+        let mut hermes = ChannelHermes::for_user(seed(), 1_000_000).with_llm_policy(policy);
+
+        let first = hermes.authorize_llm(Provider::OpenAi, "gpt-4o", 10);
+        assert!(first.allowed, "first call within budget: {first:?}");
+
+        let second = hermes.authorize_llm(Provider::OpenAi, "gpt-4o", 10);
+        assert!(!second.allowed, "second exceeds the token budget");
+        assert!(
+            second
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("token budget exhausted"),
+            "names the budget leg: {second:?}"
+        );
+        assert_eq!(
+            hermes.llm_calls_made(),
+            1,
+            "the over-budget refusal did not advance the meter"
+        );
+    }
+
+    #[test]
+    fn over_rate_llm_call_refused() {
+        // Rate 1 with a huge budget → the second call is refused on the RATE leg
+        // (distinct from the budget leg).
+        let policy = LlmPolicy::for_provider(Provider::DeepSeek, 1_000_000, 1);
+        let mut hermes = ChannelHermes::for_user(seed(), 1_000_000).with_llm_policy(policy);
+
+        assert!(
+            hermes
+                .authorize_llm(Provider::DeepSeek, "deepseek-chat", 10)
+                .allowed
+        );
+        let second = hermes.authorize_llm(Provider::DeepSeek, "deepseek-chat", 10);
+        assert!(!second.allowed);
+        assert!(
+            second.reason.as_deref().unwrap().contains("rate"),
+            "names the rate leg: {second:?}"
+        );
+    }
+
+    #[test]
+    fn disallowed_provider_refused_with_no_metered_turn() {
+        // The permission gate bites BEFORE the gateway: a provider not in the
+        // user's allowed set is refused with no metered turn.
+        let policy = LlmPolicy::for_provider(Provider::Anthropic, 200_000, 50);
+        let mut hermes = ChannelHermes::for_user(seed(), 1_000_000).with_llm_policy(policy);
+
+        let v = hermes.authorize_llm(Provider::OpenAi, "gpt-4o", 10);
+        assert!(!v.allowed);
+        assert!(v.reason.as_deref().unwrap().contains("not permitted"));
+        assert_eq!(
+            hermes.llm_calls_made(),
+            0,
+            "a permission refusal commits no metered turn"
+        );
+    }
+
+    #[test]
+    fn no_policy_refuses_the_llm_brain() {
+        // Without a ported-in key (no policy), the brain is unavailable; the
+        // classifier path still works.
+        let mut hermes = ChannelHermes::for_user(seed(), 1_000_000);
+        let v = hermes.authorize_llm(Provider::Anthropic, "claude-opus-4-8", 10);
+        assert!(!v.allowed);
+        assert!(v.reason.as_deref().unwrap().contains("not ported in a key"));
     }
 }

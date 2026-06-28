@@ -1308,6 +1308,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "bs58",
+ "chacha20poly1305",
  "deos-view",
  "dregg-app-framework",
  "dregg-captp",

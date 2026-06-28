@@ -20,6 +20,12 @@ pub mod channels;
 // a cap-gated, metered, receipted dregg turn through the proven `ToolGateway`,
 // bounded by the user's own cell. The confined per-user agent loop.
 pub mod hermes_channel;
+// BYO-LLM-keys: a user ports in their OWN provider key (Anthropic / OpenAI /
+// OpenRouter / Kimi / DeepSeek). `key_vault` seals it at rest (AEAD, per-user
+// derived key, redacted, zeroized); `llm_provider` is the multi-provider
+// abstraction + policy; `hermes_channel` drives the metered, permissioned brain.
+pub mod key_vault;
+pub mod llm_provider;
 // The bot's surfaces authored ONCE as `deos-view` `ViewNode` cards and rendered through
 // the Discord backend (`deos_view::discord`) — the card-authored-once-renders-everywhere
 // thesis extended to Discord (the FOURTH `ViewNode` backend, alongside native gpui / web
@@ -145,6 +151,8 @@ const REGISTERED_COMMAND_NAMES: &[&str] = &[
     "card",
     // ─── DreggNet Cloud: claim a semi-private channel to drive your Hermes ───────
     "channel",
+    // ─── BYO-LLM-keys: port in / rotate / revoke your own provider key ───────────
+    "key",
 ];
 
 #[cfg(test)]
@@ -266,6 +274,8 @@ impl EventHandler for Handler {
             commands::card::register(),
             // ─── DreggNet Cloud per-user channel ────────────────────────────
             commands::channel::register(),
+            // ─── BYO-LLM-keys ───────────────────────────────────────────────
+            commands::key::register(),
         ];
         debug_assert_eq!(commands.len(), REGISTERED_COMMAND_NAMES.len());
 
@@ -384,6 +394,7 @@ impl EventHandler for Handler {
                 "deos" => commands::deos::handle(&ctx, &command, &self.state).await,
                 "card" => commands::card::handle(&ctx, &command, &self.state).await,
                 "channel" => commands::channel::handle(&ctx, &command, &self.state).await,
+                "key" => commands::key::handle(&ctx, &command, &self.state).await,
                 _ => {
                     tracing::warn!("Unknown command: {name}");
                 }

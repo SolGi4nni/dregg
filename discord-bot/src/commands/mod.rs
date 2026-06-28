@@ -12,10 +12,14 @@
 // `/channel` — claim a semi-private DreggNet Cloud channel to drive your Hermes
 // (`crate::channels` + `crate::hermes_channel`).
 pub mod channel;
+// `/key` — port in / rotate / revoke YOUR OWN LLM provider key (encrypted at
+// rest, metered + permissioned by dregg). See `crate::key_vault` +
+// `crate::llm_provider` + `crate::hermes_channel`.
 pub mod cipherclerk;
 pub mod explorer;
 pub mod gallery;
 pub mod identity;
+pub mod key;
 pub mod presence;
 pub mod social;
 pub mod status;

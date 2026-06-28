@@ -183,6 +183,21 @@ pub struct HermesActivity {
     pub created_at: i64,
 }
 
+/// A user's BYO-LLM-key record as stored at rest. The key is ENCRYPTED — only
+/// the AEAD `nonce_b64` + `ciphertext_b64` are persisted; the plaintext never is
+/// (see `crate::key_vault`). Carries the user's provider + default model and the
+/// metering policy (token budget + rate). Does not derive `Debug` to keep the
+/// sealed material out of accidental logs.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LlmKeyRecord {
+    pub provider: String,
+    pub model: String,
+    pub nonce_b64: String,
+    pub ciphertext_b64: String,
+    pub token_budget: i64,
+    pub rate_limit: i64,
+}
+
 /// Database handle wrapping a SQLite connection pool.
 #[derive(Clone)]
 pub struct Database {
@@ -499,6 +514,28 @@ impl Database {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_hermes_activity_user
              ON hermes_activity (discord_id, created_at DESC)",
+        )
+        .execute(&pool)
+        .await?;
+
+        // ─── BYO-LLM-keys: per-user ported-in provider key, ENCRYPTED AT REST ─
+        // The plaintext key NEVER lands here: only the AEAD nonce + ciphertext
+        // (sealed under a key derived from the bot secret ‖ the user's id; see
+        // `crate::key_vault`). The row also carries the user's chosen provider +
+        // default model and the metering policy (token budget + rate). Revoke is
+        // a DELETE of this row.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS user_llm_keys (
+                discord_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                nonce_b64 TEXT NOT NULL,
+                ciphertext_b64 TEXT NOT NULL,
+                token_budget INTEGER NOT NULL,
+                rate_limit INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
         )
         .execute(&pool)
         .await?;
@@ -1506,6 +1543,79 @@ impl Database {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(hermes_activity_from_row).collect())
+    }
+
+    // ─── BYO-LLM-keys (encrypted at rest) ───────────────────────────────────
+
+    /// Set (or replace) a user's encrypted provider key + policy. The caller
+    /// passes the ALREADY-SEALED `nonce_b64`/`ciphertext_b64` — the plaintext
+    /// never reaches this layer. Upsert: re-running rotates the stored key.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn set_llm_key(
+        &self,
+        discord_id: &str,
+        provider: &str,
+        model: &str,
+        nonce_b64: &str,
+        ciphertext_b64: &str,
+        token_budget: i64,
+        rate_limit: i64,
+        now: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO user_llm_keys
+                (discord_id, provider, model, nonce_b64, ciphertext_b64, token_budget, rate_limit, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(discord_id) DO UPDATE SET
+                provider = excluded.provider,
+                model = excluded.model,
+                nonce_b64 = excluded.nonce_b64,
+                ciphertext_b64 = excluded.ciphertext_b64,
+                token_budget = excluded.token_budget,
+                rate_limit = excluded.rate_limit,
+                updated_at = excluded.updated_at",
+        )
+        .bind(discord_id)
+        .bind(provider)
+        .bind(model)
+        .bind(nonce_b64)
+        .bind(ciphertext_b64)
+        .bind(token_budget)
+        .bind(rate_limit)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Fetch a user's encrypted key record, if they have ported one in.
+    pub async fn get_llm_key(&self, discord_id: &str) -> Result<Option<LlmKeyRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT provider, model, nonce_b64, ciphertext_b64, token_budget, rate_limit
+             FROM user_llm_keys WHERE discord_id = ?",
+        )
+        .bind(discord_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|row| LlmKeyRecord {
+            provider: row.get("provider"),
+            model: row.get("model"),
+            nonce_b64: row.get("nonce_b64"),
+            ciphertext_b64: row.get("ciphertext_b64"),
+            token_budget: row.get("token_budget"),
+            rate_limit: row.get("rate_limit"),
+        }))
+    }
+
+    /// Revoke (delete) a user's stored key. Returns `true` if a row was removed.
+    /// After this nothing is recoverable — the sealed ciphertext is gone.
+    pub async fn revoke_llm_key(&self, discord_id: &str) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query("DELETE FROM user_llm_keys WHERE discord_id = ?")
+            .bind(discord_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
     }
 
     /// Ensure extra tables exist (called from connect).
