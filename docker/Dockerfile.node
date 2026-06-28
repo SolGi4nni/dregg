@@ -1,0 +1,42 @@
+# =============================================================================
+# Dockerfile.node — runtime image for the dregg federation node (linux/amd64).
+#
+# WHY THIS IS SEPARATE FROM docker/Dockerfile:
+#   dregg-node links `libdregg_lean.a` UNCONDITIONALLY on native (via
+#   dregg-turn -> dregg-lean-ffi). That archive is the native objects emitted by
+#   the Lean compiler for the verified kernel's entire transitive closure
+#   (Dregg2 + mathlib + batteries + ...). It is HOST-NATIVE and CANNOT be
+#   cross-compiled, and producing it requires the full Lean toolchain
+#   (elan/lake + mathlib). Compiling that inside a `docker build` would bake the
+#   whole Lean+mathlib toolchain into the build — wasteful and slow.
+#
+#   So the node binary is built OUTSIDE docker, natively, on a Lean-capable
+#   linux/amd64 builder (the "pulse builder" — see
+#   DreggNet deploy/staging/pulse-builder.sh). This Dockerfile simply wraps that
+#   prebuilt binary in a glibc-matched runtime base.
+#
+# BUILD CONTEXT CONTRACT:
+#   The build context must contain the prebuilt linux/amd64 `dregg-node` binary
+#   at its root. The pulse builder assembles this context
+#   (binary + this Dockerfile) and runs:
+#     docker build -f Dockerfile.node -t dregg-node:staging <ctx>
+#
+# GLIBC: the base is ubuntu:24.04 to match the builder's glibc (2.39). A binary
+#   linked against a newer glibc will NOT run on an older base, so keep the
+#   builder OS and this base in lockstep (both Ubuntu 24.04).
+# =============================================================================
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgmp10 \
+    && rm -rf /var/lib/apt/lists/*
+
+# The prebuilt linux/amd64 node binary (must be present at the context root).
+COPY dregg-node /usr/local/bin/dregg-node
+RUN chmod +x /usr/local/bin/dregg-node
+
+# localhost API + federation ports (match docker/Dockerfile node stage).
+EXPOSE 8420 9420
+
+ENTRYPOINT ["dregg-node"]
