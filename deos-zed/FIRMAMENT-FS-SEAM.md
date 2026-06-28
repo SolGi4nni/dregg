@@ -112,10 +112,36 @@ What is real vs. sketched in the first slice:
   intact — so the addition does not disturb starbridge-v2's host impl); the
   self-contained `OwnedSpine` (the headless / per-editor / in-tab path) overrides
   it with real tracking.
-- **Sketched (first slice):** the path → cell namespace is an in-memory flat
-  `BTreeMap<PathBuf, CellId>` (the simpler alternative this doc named), not yet
-  `rbg`'s richer `DirectoryCell` name→cap map; and the host-handoff (a deos image
-  handing `FirmamentFs` its own mounted root + shared executor) is the next wire.
+- **Real:** the path → cell namespace is now `rbg`'s capability-secure
+  `DirectoryCell` tree (`src/fs/namespace.rs`, `DirNamespace`), NOT a flat
+  `BTreeMap`. A path resolves component-by-component through a chain of
+  `DirectoryCell`s — recursive scoping, with the root directory cell as the
+  editor's mount point (the editor's `MemberId` = its cell id is a member of every
+  directory, so its cap reaches the whole tree). This buys four real things:
+    - **Capability-scoped listing.** `read_dir` is `DirectoryCell::list(editor)` —
+      holding the directory cap (membership) IS the authority to enumerate it; a
+      non-member is refused. Listing is no longer ambient.
+    - **`dregg://` sturdy refs (the distribution foundation).** Every leaf entry
+      carries a `SturdyRef = (federation, cell, swiss)`. So a path resolves NOT to
+      a bare local `CellId` but to a portable cross-federation capability URI a
+      remote node can enliven — `FirmamentFs::sturdy_ref(path)` surfaces it. A
+      file is reachable by any holder of its sturdy ref, not just this process.
+    - **Versioned CAS = decentralized coordination.** `bind` is an atomic
+      compare-and-swap; a second writer racing the same name loses with
+      `VersionConflict` — the same way two nodes coordinate through the version.
+    - **Real intermediate directories.** Sub-directories are first-class
+      `DirectoryCell`s (created on demand by `bind`), not inferred from flat path
+      prefixes; `..`-escape is rejected.
+  `dregg-rbg` is light + wasm-clean (only `blake3` + `dregg-types` + the
+  verifier-shape `dregg-cell`), so this rides the same `firmament` feature on both
+  native and the tab. Tests: `src/fs/namespace.rs` `mod tests`.
+- **Sketched (next wire):** the directory cells live in-process on the
+  `DirNamespace` (not yet committed as their own cells on the verified ledger — a
+  `bind`'s CAS is enforced locally, not yet a directory-cell turn); the swiss
+  number in a leaf sturdy ref is derived in-process (a host wires the cell's true
+  swiss + its real federation); and the host-handoff (a deos image handing
+  `FirmamentFs` its own mounted root + shared executor + federation) is the next
+  wire.
 
 Proof: `cargo test --features firmament` (unit + `tests/firmament_fs.rs`) and
 `cargo run --features firmament --bin demo -- --firmament`.

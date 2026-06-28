@@ -103,10 +103,12 @@ mod live {
     use anyhow::{anyhow, bail, Context as _, Result};
 
     use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions, STATE_SLOTS};
+    use dregg_rbg::{MemberId, SturdyRef};
     use dregg_turn::{
         ActionBuilder, ComputronCosts, Effect, TurnBuilder, TurnExecutor, TurnReceipt, TurnResult,
     };
 
+    use crate::fs::namespace::{DirNamespace, DEOS_ZED_FEDERATION};
     use crate::fs::{DirEntry, Fs, Metadata};
 
     // --- content <-> field-element encoding -----------------------------------
@@ -582,14 +584,6 @@ mod live {
 
     // --- the namespace --------------------------------------------------------
 
-    /// A path → file-cell entry in the in-memory namespace (the first-slice
-    /// directory: a flat path map, the simpler alternative the seam doc names to
-    /// `rbg`'s richer `DirectoryCell`). Each entry is a leaf file cell whose
-    /// content substance is the editable text.
-    struct Entry {
-        cell: CellId,
-    }
-
     /// The firmament-backed filesystem: file = cell, save = receipted turn.
     ///
     /// Mounts file-cells onto a [`LedgerSpine`] — either a FRESH in-process
@@ -603,8 +597,10 @@ mod live {
     pub struct FirmamentFs {
         /// The verified spine the file-cells live on (owned or host-shared).
         spine: Rc<dyn LedgerSpine>,
-        /// The path → file-cell namespace (single-threaded `RefCell`).
-        entries: RefCell<BTreeMap<PathBuf, Entry>>,
+        /// The path → file-cell namespace: a tree of capability-secure `rbg`
+        /// `DirectoryCell`s (recursive scoping, membership-scoped listing,
+        /// `dregg://` sturdy refs, versioned CAS). Single-threaded `RefCell`.
+        namespace: RefCell<DirNamespace>,
         /// OPTIONAL disk-mirror root (off by default). When `Some(root)`, every
         /// `save` — AFTER the verified turn commits (the cell update is the
         /// durable receipted source of truth) — ALSO writes the decoded content to
@@ -631,9 +627,12 @@ mod live {
         /// install onto the shared ledger). This is how the editor pane edits the
         /// ledger the cockpit inspects rather than a per-editor copy.
         pub fn over(spine: Rc<dyn LedgerSpine>) -> Self {
+            // The editor's directory member id = its cell id bytes; it is a member
+            // of every directory in the tree, so its cap reaches the whole mount.
+            let editor = MemberId(spine.editor_id().0);
             FirmamentFs {
+                namespace: RefCell::new(DirNamespace::new(DEOS_ZED_FEDERATION, editor)),
                 spine,
-                entries: RefCell::new(BTreeMap::new()),
                 mirror_root: RefCell::new(None),
             }
         }
@@ -655,9 +654,19 @@ mod live {
             self.spine.last_receipt()
         }
 
-        /// The file cell backing `path`, if it exists in the namespace.
+        /// The file cell backing `path`, if it resolves in the namespace.
         pub fn cell_for(&self, path: &Path) -> Option<CellId> {
-            self.entries.borrow().get(path).map(|e| e.cell)
+            self.namespace.borrow().resolve_file(path).ok()
+        }
+
+        /// The `dregg://` sturdy ref a file `path` resolves to — the portable,
+        /// cross-federation capability handle (`federation + cell + swiss`) a
+        /// remote node could enliven to reach this same file. The distribution
+        /// payoff of the directory namespace: a path is a portable cap, not a bare
+        /// local id. (The host wires its real federation + swiss; the owned path
+        /// derives an in-process swiss.)
+        pub fn sturdy_ref(&self, path: &Path) -> Result<SturdyRef> {
+            self.namespace.borrow().sturdy_ref(path)
         }
 
         /// **The verifiable save timeline for `path`** — the ordered receipts
@@ -706,11 +715,13 @@ mod live {
         pub fn seed_file(&self, path: impl Into<PathBuf>, content: &str) -> Result<CellId> {
             let path = path.into();
             let file = self.spine.install_file(content)?;
+            // Bind the path → file cell in the directory tree (creating
+            // intermediate `DirectoryCell`s as needed). A name clash loses the CAS.
+            self.namespace.borrow_mut().bind(&path, file)?;
             // If a disk mirror is configured, lay the seed content onto disk too,
             // so the legacy toolchain sees the genesis file (the cell remains the
             // source of truth; this is the derived read-mirror).
             self.mirror_write(&path, content)?;
-            self.entries.borrow_mut().insert(path, Entry { cell: file });
             Ok(file)
         }
 
@@ -730,13 +741,9 @@ mod live {
                 .with_context(|| format!("creating mirror root {}", root.display()))?;
             *self.mirror_root.borrow_mut() = Some(root);
             // Backfill: mirror every already-seeded file's current content so the
-            // disk view matches the ledger from the first command.
-            let snapshot: Vec<(PathBuf, CellId)> = self
-                .entries
-                .borrow()
-                .iter()
-                .map(|(p, e)| (p.clone(), e.cell))
-                .collect();
+            // disk view matches the ledger from the first command. `all_files`
+            // walks the directory tree to recover every (path, cell) leaf.
+            let snapshot: Vec<(PathBuf, CellId)> = self.namespace.borrow().all_files()?;
             for (path, cell_id) in snapshot {
                 if let Some(cell) = self.spine.cell(&cell_id) {
                     let content = decode_content(&cell)?;
@@ -786,12 +793,7 @@ mod live {
 
     impl Fs for FirmamentFs {
         fn load(&self, path: &Path) -> Result<String> {
-            let cell_id = self
-                .entries
-                .borrow()
-                .get(path)
-                .map(|e| e.cell)
-                .ok_or_else(|| anyhow!("no cell mounted at {}", path.display()))?;
+            let cell_id = self.namespace.borrow().resolve_file(path)?;
             let cell = self
                 .spine
                 .cell(&cell_id)
@@ -803,13 +805,12 @@ mod live {
             // Resolve the path → file cell; if the path is new, install a file cell
             // for it on the fly (a "save as" into the namespace) and grant the
             // editor its cap so this very save commits.
-            let file = match self.entries.borrow().get(path).map(|e| e.cell) {
+            let existing = self.namespace.borrow().resolve_file(path).ok();
+            let file = match existing {
                 Some(c) => c,
                 None => {
                     let file = self.spine.install_file("")?;
-                    self.entries
-                        .borrow_mut()
-                        .insert(path.to_path_buf(), Entry { cell: file });
+                    self.namespace.borrow_mut().bind(path, file)?;
                     file
                 }
             };
@@ -828,40 +829,22 @@ mod live {
         }
 
         fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-            let entries = self.entries.borrow();
-            // List the immediate children of `path` in the namespace. The flat
-            // map holds full paths; a child is an entry whose parent is `path`.
-            let mut out = Vec::new();
-            let mut seen_dirs = std::collections::BTreeSet::new();
-            for p in entries.keys() {
-                let Ok(rest) = p.strip_prefix(path) else {
-                    continue;
-                };
-                let mut comps = rest.components();
-                let Some(first) = comps.next() else { continue };
-                let child = path.join(first.as_os_str());
-                if comps.next().is_some() {
-                    // `child` is an intermediate directory (more path remains).
-                    if seen_dirs.insert(child.clone()) {
-                        out.push(DirEntry {
-                            path: child,
-                            is_dir: true,
-                        });
-                    }
-                } else {
-                    // `child` is a leaf file.
-                    out.push(DirEntry {
-                        path: child,
-                        is_dir: false,
-                    });
-                }
-            }
-            Ok(out)
+            // Capability-scoped listing: `DirectoryCell::list(editor)` over the
+            // directory cell at `path`. Holding the directory cap (membership) IS
+            // the authority to enumerate it.
+            let children = self.namespace.borrow().list_children(path)?;
+            Ok(children
+                .into_iter()
+                .map(|(name, is_dir)| DirEntry {
+                    path: path.join(&name),
+                    is_dir,
+                })
+                .collect())
         }
 
         fn metadata(&self, path: &Path) -> Result<Metadata> {
-            let cell_id = self.entries.borrow().get(path).map(|e| e.cell);
-            if let Some(cell_id) = cell_id {
+            let ns = self.namespace.borrow();
+            if let Ok(cell_id) = ns.resolve_file(path) {
                 let cell = self
                     .spine
                     .cell(&cell_id)
@@ -873,13 +856,8 @@ mod live {
                     len,
                 });
             }
-            // A directory iff some entry lives under it.
-            let is_dir = self
-                .entries
-                .borrow()
-                .keys()
-                .any(|p| p.starts_with(path) && p != path);
-            if is_dir {
+            // A directory iff the path resolves to a directory cell in the tree.
+            if ns.is_dir(path) {
                 Ok(Metadata {
                     is_dir: true,
                     is_symlink: false,
@@ -968,9 +946,7 @@ mod live {
             let file = spine.install_uncapped_file("secret");
             let fs = FirmamentFs::over(spine);
             let path = PathBuf::from("/locked.txt");
-            fs.entries
-                .borrow_mut()
-                .insert(path.clone(), Entry { cell: file });
+            fs.namespace.borrow_mut().bind(&path, file).unwrap();
             // NB: no capabilities.grant — the editor lacks the file's cap.
 
             // The read still works (a read is authority-checked at the namespace,

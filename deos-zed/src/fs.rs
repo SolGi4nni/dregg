@@ -158,6 +158,12 @@ impl Fs for RealFs {
 pub mod firmament;
 pub use firmament::FirmamentFs;
 
+/// The path → cell namespace, backed by `rbg`'s capability-secure
+/// `DirectoryCell` (recursive scoping, membership-scoped listing, `dregg://`
+/// sturdy refs, versioned CAS). Only present with `--features firmament`.
+#[cfg(feature = "firmament")]
+pub mod namespace;
+
 /// The verified-spine seam types — the [`LedgerSpine`](firmament::LedgerSpine)
 /// trait a host implements over its live ledger (e.g. the cockpit's `World`) so
 /// [`FirmamentFs::over`](firmament::FirmamentFs::over) mounts file-cells onto it,

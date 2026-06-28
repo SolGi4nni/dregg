@@ -118,7 +118,12 @@ screenshot = ["gui", "dep:image", "dep:gpui_wgpu", "gpui_wgpu/test-support", "gp
 # So `--no-default-features --features firmament --target wasm32-unknown-unknown`
 # is the in-browser editor's Fs backend: a save is a real turn in the tab's own
 # kernel.
-firmament = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types"]
+# `dregg-rbg` backs the path → cell NAMESPACE: the Robigalia-heritage
+# capability-secure `DirectoryCell` (recursive scoping, membership-scoped
+# listing, `dregg://` sturdy refs, versioned CAS). Light + wasm-clean — it pulls
+# only `blake3` + `dregg-types` + `dregg-cell` (the verifier shape), all already
+# in the firmament graph.
+firmament = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-rbg"]
 
 [dependencies]
 anyhow = "1"
@@ -179,6 +184,9 @@ gpui-component-assets = { git = "https://github.com/emberian/gpui-component", re
 dregg-turn = { path = "../turn", optional = true }
 dregg-cell = { path = "../cell", optional = true }
 dregg-types = { path = "../types", optional = true }
+# The capability-secure directory namespace (light: blake3 + dregg-types +
+# dregg-cell). Native resolution.
+dregg-rbg = { path = "../rbg", optional = true }
 
 # WASM32: the IN-BROWSER executor. `default-features = false` drops `dregg-turn`'s
 # `prover` + `threshold-sig` (the arkworks/circuit-prover/Lean-archive link wasm32
@@ -201,6 +209,9 @@ dregg-types = { path = "../types", optional = true }
 dregg-turn = { path = "../turn", optional = true, default-features = false, features = ["prover"] }
 dregg-cell = { path = "../cell", optional = true, default-features = false }
 dregg-types = { path = "../types", optional = true }
+# The capability-secure directory namespace — wasm-clean (blake3 + the
+# verifier-shape dregg-cell). Same source compiles for the tab.
+dregg-rbg = { path = "../rbg", optional = true }
 # wasm32 entropy backends — the getrandom majors the executor dep tree pulls, each
 # forced onto its js/wasm_js backend (mirrors starbridge-v2/Cargo.toml).
 getrandom = { version = "0.3", features = ["wasm_js"] }
