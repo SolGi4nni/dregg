@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dregg · DreggNet — architecture atlas</title>
+<style>
+:root {
+  --bg: #0b0e14;
+  --bg-2: #11151f;
+  --bg-3: #161b27;
+  --panel: #131825;
+  --border: #232a3a;
+  --border-2: #2e394f;
+  --fg: #d7def0;
+  --fg-dim: #8b97b3;
+  --fg-faint: #5d678a;
+  --accent: #7aa2f7;
+  --accent-2: #bb9af7;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+
+  /* status colors */
+  --c-proven: #9ece6a;
+  --c-deployed: #2ac3de;
+  --c-real: #7aa2f7;
+  --c-exec: #e0af68;
+  --c-staged: #ff9e64;
+  --c-scaffold: #c0a36e;
+  --c-design: #9d7cd8;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: var(--sans); font-size: 14px; line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.layout { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+
+/* ── sidebar ───────────────────────────── */
+aside {
+  position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+  background: var(--bg-2); border-right: 1px solid var(--border); padding: 18px 14px;
+}
+aside .brand { font-weight: 700; font-size: 16px; letter-spacing: .3px; color: #fff; }
+aside .brand .sub { display:block; font-weight: 400; font-size: 11px; color: var(--fg-dim); margin-top: 3px; letter-spacing: .2px; }
+aside .nav-layer { margin-top: 16px; }
+aside .nav-layer > .lh {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim);
+  padding: 4px 8px; display:flex; justify-content: space-between; align-items:center;
+}
+aside .nav-layer > .lh .dot { width:8px; height:8px; border-radius: 2px; }
+aside a.navlink {
+  display: block; padding: 5px 8px 5px 16px; color: var(--fg-dim); font-size: 13px;
+  border-radius: 6px; border-left: 2px solid transparent;
+}
+aside a.navlink:hover { color: var(--fg); background: var(--bg-3); text-decoration: none; }
+aside a.navlink.active { color: var(--fg); border-left-color: var(--accent); background: var(--bg-3); }
+
+.search-box { margin: 4px 0 8px; }
+.search-box input {
+  width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border-2);
+  border-radius: 7px; color: var(--fg); font-family: var(--sans); font-size: 13px;
+}
+.search-box input:focus { outline: none; border-color: var(--accent); }
+
+/* ── main ───────────────────────────── */
+main { padding: 0 0 120px; max-width: 1080px; }
+.wrap { padding: 28px 40px; }
+
+header.hero { padding: 40px 40px 26px; border-bottom: 1px solid var(--border); }
+header.hero h1 { margin: 0 0 6px; font-size: 26px; color: #fff; letter-spacing: .2px; }
+header.hero .lede { color: var(--fg-dim); max-width: 760px; font-size: 14.5px; }
+header.hero .one-line {
+  margin-top: 16px; padding: 12px 16px; background: var(--bg-3); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-2); border-radius: 7px; color: var(--fg);
+  font-size: 13.5px; max-width: 800px;
+}
+
+/* status legend / filter */
+.legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.legend .chip {
+  cursor: pointer; user-select: none; font-size: 11px; padding: 4px 9px; border-radius: 20px;
+  border: 1px solid var(--border-2); background: var(--bg-3); color: var(--fg-dim);
+  display: inline-flex; align-items: center; gap: 6px; transition: .12s;
+}
+.legend .chip .sw { width: 8px; height: 8px; border-radius: 50%; }
+.legend .chip.off { opacity: .35; }
+.legend .chip:hover { border-color: var(--fg-dim); }
+
+/* ── map ───────────────────────────── */
+.map { margin: 22px 40px 8px; }
+.map h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--fg-dim); margin: 0 0 14px; }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+.maprow {
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--panel);
+  position: relative; overflow: hidden;
+}
+.maprow::before { content:""; position:absolute; left:0; top:0; bottom:0; width: 3px; }
+.maprow.l-substrate::before { background: var(--c-real); }
+.maprow.l-economy::before { background: var(--c-proven); }
+.maprow.l-deos::before { background: var(--c-deployed); }
+.maprow.l-welds::before { background: var(--c-staged); }
+.maprow.l-dreggnet::before { background: var(--c-design); }
+.maprow .mr-head { display:flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.maprow .mr-name { font-weight: 700; color: #fff; font-size: 14.5px; }
+.maprow .mr-kind { font-size: 11px; color: var(--fg-dim); font-family: var(--mono); }
+.maprow .mr-tag { font-size: 12px; color: var(--fg-dim); flex-basis: 100%; }
+.maprow .boxes { display: flex; flex-wrap: wrap; gap: 7px; }
+.maprow .box {
+  font-size: 12px; padding: 5px 10px; border: 1px solid var(--border-2); border-radius: 6px;
+  background: var(--bg-3); color: var(--fg); cursor: pointer; transition: .12s;
+}
+.maprow .box:hover { border-color: var(--accent); color: #fff; }
+.consumes { text-align:center; color: var(--fg-dim); font-size: 18px; line-height: 1; margin: -2px 0; }
+
+/* ── sections ───────────────────────────── */
+section.sec { padding: 26px 40px; border-top: 1px solid var(--border); scroll-margin-top: 10px; }
+section.sec.hidden { display: none; }
+.sec-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.sec-head h2 { margin: 0; font-size: 19px; color: #fff; }
+.sec-head .layer-tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1px; padding: 2px 8px;
+  border-radius: 20px; border: 1px solid var(--border-2); color: var(--fg-dim); font-family: var(--mono);
+}
+.sec .what { color: var(--fg-dim); max-width: 820px; margin: 10px 0 18px; font-size: 13.5px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
+.card {
+  border: 1px solid var(--border); border-radius: 9px; background: var(--panel); padding: 13px 14px;
+  display: flex; flex-direction: column; gap: 8px; transition: .12s;
+}
+.card.hidden { display: none; }
+.card:hover { border-color: var(--border-2); }
+.card .c-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.card .c-name { font-weight: 650; color: #fff; font-size: 13.5px; }
+.card .c-what { color: var(--fg-dim); font-size: 12.5px; line-height: 1.5; }
+.card .c-files { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+.card .c-files a, .card .c-files span.noref {
+  font-family: var(--mono); font-size: 11px; color: var(--accent); display: inline-flex; gap: 4px;
+}
+.card .c-files span.noref { color: var(--fg-faint); }
+.card .c-files .ln { color: var(--fg-dim); }
+.card .c-files .lbl { color: var(--fg-faint); }
+
+/* status badge */
+.badge {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+  padding: 3px 7px; border-radius: 5px; white-space: nowrap; border: 1px solid transparent;
+}
+.s-proven   { color: var(--c-proven);   background: color-mix(in srgb, var(--c-proven) 14%, transparent);   border-color: color-mix(in srgb, var(--c-proven) 40%, transparent); }
+.s-deployed { color: var(--c-deployed); background: color-mix(in srgb, var(--c-deployed) 14%, transparent); border-color: color-mix(in srgb, var(--c-deployed) 40%, transparent); }
+.s-real     { color: var(--c-real);     background: color-mix(in srgb, var(--c-real) 14%, transparent);     border-color: color-mix(in srgb, var(--c-real) 40%, transparent); }
+.s-exec     { color: var(--c-exec);     background: color-mix(in srgb, var(--c-exec) 14%, transparent);     border-color: color-mix(in srgb, var(--c-exec) 40%, transparent); }
+.s-staged   { color: var(--c-staged);   background: color-mix(in srgb, var(--c-staged) 14%, transparent);   border-color: color-mix(in srgb, var(--c-staged) 40%, transparent); }
+.s-scaffold { color: var(--c-scaffold); background: color-mix(in srgb, var(--c-scaffold) 14%, transparent); border-color: color-mix(in srgb, var(--c-scaffold) 40%, transparent); }
+.s-design   { color: var(--c-design);   background: color-mix(in srgb, var(--c-design) 14%, transparent);   border-color: color-mix(in srgb, var(--c-design) 40%, transparent); }
+.sw.s-proven{background:var(--c-proven)} .sw.s-deployed{background:var(--c-deployed)} .sw.s-real{background:var(--c-real)}
+.sw.s-exec{background:var(--c-exec)} .sw.s-staged{background:var(--c-staged)} .sw.s-scaffold{background:var(--c-scaffold)} .sw.s-design{background:var(--c-design)}
+
+/* open-items view */
+.openitems { padding: 26px 40px; border-top: 1px solid var(--border); }
+.openitems.hidden { display: none; }
+.openitems table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.openitems th { text-align: left; color: var(--fg-dim); font-weight: 600; padding: 7px 10px; border-bottom: 1px solid var(--border-2); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+.openitems td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.openitems td .comp { color: #fff; font-weight: 600; }
+.openitems td .sec-ref { color: var(--fg-dim); font-size: 11px; }
+
+.viewtabs { display: flex; gap: 6px; margin-top: 16px; }
+.viewtabs button {
+  background: var(--bg-3); border: 1px solid var(--border-2); color: var(--fg-dim);
+  padding: 6px 14px; border-radius: 7px; cursor: pointer; font-family: var(--sans); font-size: 12.5px;
+}
+.viewtabs button.active { color: #fff; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+.empty { color: var(--fg-faint); padding: 40px; text-align: center; font-style: italic; }
+.foot { padding: 30px 40px; color: var(--fg-faint); font-size: 11.5px; border-top: 1px solid var(--border); }
+.foot code { font-family: var(--mono); color: var(--fg-dim); }
+
+@media (max-width: 820px) {
+  .layout { grid-template-columns: 1fr; }
+  aside { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+  .wrap, .map, section.sec, header.hero, .openitems, .foot { padding-left: 18px; padding-right: 18px; }
+}
+
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand">dregg atlas<span class="sub">a grounded map of the whole system · for ember</span></div>
+    <div class="search-box"><input id="search" type="search" placeholder="filter components…" autocomplete="off"></div>
+    <nav id="nav"></nav>
+  </aside>
+
+  <main>
+    <header class="hero">
+      <h1>Architecture atlas</h1>
+      <div class="lede">A navigable, grounded, honest map of everything built (and being built) across <b>dregg</b> (the open AGPL verified substrate) and <b>DreggNet</b> (the private operated moat). Status badges distinguish proven truth from staged-not-flipped from designed. Every component cites <code>file:line</code> — click to open the source (serve from the repo root).</div>
+      <div class="one-line">A light client holding one root knows every transition in the whole history was authorized, conservative, fresh, and correctly committed — re-executing nothing. <i>That sentence is the system; everything here is how it is true.</i></div>
+      <div class="legend" id="legend"></div>
+      <div class="viewtabs">
+        <button id="tab-map" class="active" onclick="setView('map')">Map &amp; sections</button>
+        <button id="tab-open" onclick="setView('open')">Honest open items (what's staged vs deployed)</button>
+      </div>
+    </header>
+
+    <div id="view-map">
+      <div class="map">
+        <h2>The two-layer split</h2>
+        <div class="stack" id="mapstack"></div>
+      </div>
+      <div id="sections"></div>
+    </div>
+
+    <div id="view-open" class="openitems hidden"></div>
+
+    <div class="foot">
+      Generated as a static, no-build site. Open with <code>open docs/atlas/index.html</code>, or for clickable source refs serve from the repo root: <code>cd ~/dev/breadstuffs &amp;&amp; python3 -m http.server</code> then visit <code>localhost:8000/docs/atlas/</code>. DreggNet refs (separate repo) are shown as plain code. Status is grounded to HEAD; verify code vs HEAD for the live state.
+    </div>
+  </main>
+</div>
+
+<script>
+// dregg / DreggNet architecture atlas — grounded data model.
+// Status vocabulary (the whole point — distinguish truth from staging from design):
+//   PROVEN      — Lean theorem, #assert_axioms-clean (only standard crypto carriers open)
+//   DEPLOYED    — live in the deployed VK / runtime default; a light client witnesses it today
+//   REAL        — shipped, working code + tests; enforced by the running system
+//   EXEC        — EXECUTOR-WITNESSED: enforced by the Rust executor today, but its circuit/VK
+//                 shadow (light-client witness) is named + STAGED, not yet flipped
+//   STAGED      — built + proven + emitted, but NOT flipped into the deployed VK / default
+//   SCAFFOLD    — green build, honest scaffold; the real path errors / is mock until a named rung
+//   DESIGN      — designed, not shipped (blueprint / frontier / one-wiring-away)
+//
+// File refs: paths are relative to the breadstuffs repo root unless repo:"DreggNet".
+// Serve from the repo root (python3 -m http.server) to make breadstuffs refs clickable.
+
+const STATUS = {
+  PROVEN:   { label: "PROVEN",   cls: "s-proven",   blurb: "Lean theorem, axiom-clean (only standard crypto carriers remain open)" },
+  DEPLOYED: { label: "DEPLOYED", cls: "s-deployed", blurb: "Live in the deployed VK / runtime default — a light client witnesses it today" },
+  REAL:     { label: "REAL",     cls: "s-real",     blurb: "Shipped, working code + tests; enforced by the running system" },
+  EXEC:     { label: "EXECUTOR-WITNESSED", cls: "s-exec", blurb: "Enforced by the Rust executor today; its circuit/VK (light-client) shadow is STAGED" },
+  STAGED:   { label: "STAGED",   cls: "s-staged",   blurb: "Built, proven, emitted — but NOT flipped into the deployed VK / default" },
+  SCAFFOLD: { label: "GREEN-SCAFFOLD", cls: "s-scaffold", blurb: "Green build / honest scaffold; the real path is mock or errors until a named rung" },
+  DESIGN:   { label: "DESIGNED", cls: "s-design",   blurb: "Designed, not shipped — blueprint / frontier / one-wiring-away" },
+};
+
+// f(path, line, label?) — a breadstuffs file ref.  d(...) — a DreggNet ref (separate repo).
+const f = (path, line, label) => ({ path, line, label, repo: "breadstuffs" });
+const d = (path, line, label) => ({ path, line, label, repo: "DreggNet" });
+
+const ATLAS = {
+  layers: [
+    {
+      id: "substrate",
+      name: "dregg substrate",
+      kind: "OPEN · AGPL · verified",
+      tagline: "A light client holding one root knows every transition in the whole history was authorized, conservative, fresh, and correctly committed — re-executing nothing.",
+      sections: ["cells", "turns", "predicates", "umem", "dregg3", "circuit", "lean", "capacities"],
+    },
+    {
+      id: "economy",
+      name: "service economy",
+      kind: "OPEN · the rail",
+      tagline: "Value, services, leases, and metered tool-access — every charge desugars to one conserving Transfer (Σδ=0). This is the rail DreggNet rents over.",
+      sections: ["economy"],
+    },
+    {
+      id: "deos",
+      name: "deos pillars",
+      kind: "OPEN · the desktop",
+      tagline: "A reflective workspace where every action is a verifiable turn and adds zero new trust: affordances are cap-gated turn templates, history is the receipt chain, sharing is a cap-confined membrane.",
+      sections: ["cockpit", "bridges", "apps"],
+    },
+    {
+      id: "welds",
+      name: "Gentian VK welds",
+      kind: "honesty-critical — STAGED vs DEPLOYED",
+      tagline: "Binding each capacity invariant into the EffectVM so a LIGHT CLIENT, not just a re-executing validator, witnesses it. Coverage is DEPLOYED; satisfaction is STAGED — the FLIP is not taken.",
+      sections: ["vkepoch"],
+    },
+    {
+      id: "dreggnet",
+      name: "DreggNet",
+      kind: "PRIVATE · proprietary moat / operator",
+      tagline: "The operated reality that consumes dregg's open execution-lease rail: durable polyglot execution on real metal, metered exactly-once, gated by a funded lease. The substrate is free + verifiable; the operated infra is the product.",
+      sections: ["dreggnet"],
+    },
+  ],
+
+  sections: [
+    // ───────────────────────────── SUBSTRATE ─────────────────────────────
+    {
+      id: "cells", layer: "substrate", title: "Cells & the four substances",
+      what: "The cell is the unit of sovereign, capability-secure state and identity. Each cell holds four orthogonal substances obeying distinct disciplines: value (per-asset signed balances, Σδ=0 exact), state (16 guarded fields + maps + heaps, a monotone nonce), authority (a capability tree / c-list), and evidence (append-only nullifier / commitment ledgers). A card, a document, an agent, a room, a service, you — each is a cell, folded into one canonical commitment.",
+      components: [
+        { name: "Cell", status: "REAL", what: "The bundle: identity, public_key, token_id, state, permissions, verification_key, delegate, capabilities, program, mode, lifecycle.",
+          files: [f("cell/src/cell.rs", 249), f("docs/reference/cells.md")] },
+        { name: "CellState — the four substances", status: "REAL", what: "16 user fields + monotone nonce; value = signed i64 balance (issuer well carries −supply); committed via sorted-Poseidon2 roots (fields/heap/system).",
+          files: [f("cell/src/state.rs", 101), f("cell/src/state.rs", 127, "balance / well")] },
+        { name: "Authority — CapabilitySet + Permissions", status: "REAL", what: "The c-list (attenuation lattice, tombstone revoke) + a permission lattice over 8 auth-required fields. You hold a cap iff you can PRODUCE its witness.",
+          files: [f("cell/src/capability.rs", 202), f("cell/src/permissions.rs")] },
+        { name: "Evidence — NullifierSet", status: "REAL", what: "Append-only Merkle nullifier set + note commitments — monotone, the anti-replay substance.",
+          files: [f("cell/src/nullifier_set.rs")] },
+        { name: "AssetId := issuer cell (Σδ=0)", status: "REAL", what: "W1 value unification: the asset IS its issuer cell; the issuer carries −supply, so every asset sums to exactly 0 across all cells, always.",
+          files: [f("types/src/lib.rs", 701, "CellId derivation"), f("cell/src/commitment.rs", 204, "canonical commitment")] },
+        { name: "CellLifecycle", status: "REAL", what: "Live / Sealed / Migrated / Destroyed / Archived transitions; mode = Hosted (default) vs Sovereign.",
+          files: [f("cell/src/lifecycle.rs", 37)] },
+      ],
+    },
+    {
+      id: "turns", layer: "substrate", title: "Turns & the Effect vocabulary",
+      what: "A turn is one authorized inference step: a forest of actions executed as an atomic transaction (all-or-nothing, journalled with rollback), each action gated by the kernel before it commits, chained via a receipt that binds the whole post-state (tampering an illegitimately-written field makes the turn unprovable — the anti-ghost property). The deployed Effect enum carries ~32 variants; the DREGG3 design abstracts these to 8 structural verbs.",
+      components: [
+        { name: "Turn → CallForest → Action → Effect", status: "REAL", what: "Turn{agent,nonce,call_forest,fee,valid_until,previous_receipt_hash,…} → Vec<CallTree> (Merkle forest_hash) → Action{target,method,args,authorization,preconditions,effects,…}.",
+          files: [f("turn/src/turn.rs", 258), f("turn/src/forest.rs", 30), f("turn/src/action.rs", 73), f("docs/reference/turns.md")] },
+        { name: "The Effect vocabulary (~32 variants)", status: "REAL", what: "SetField · Transfer · IncrementNonce · EmitEvent · Grant/Revoke/Attenuate/ExerciseViaCapability · CreateCell(/FromFactory) · SetPermissions/VerificationKey/Program · CellSeal/Unseal/Destroy · MakeSovereign · NoteSpend/NoteCreate · BridgeMint · Burn · Mint · Spawn/Refresh/RevokeDelegation · Introduce · PipelinedSend · Promise · Notify · React · Refusal.",
+          files: [f("turn/src/action.rs", 962, "Effect enum")] },
+        { name: "LinearityClass — the conservation discipline", status: "PROVEN", what: "Every effect is classed: Conservative (pair-sum-zero) · Monotonic · Terminal · Generative · Annihilative (Burn, with receipt disclosure) · Neutral. Σδ=0 is policed per-effect.",
+          files: [f("turn/src/action.rs", 855), f("metatheory/Dregg2/Spec/Conservation.lean", 78)] },
+        { name: "Executor — atomic apply + journal rollback", status: "REAL", what: "execute(turn,ledger) → Committed/Rejected/Expired/Pending. Admission (nonce/balance/receipt-chain), fee phase (never rolled back), STARK proof fast-path, depth-first forest walk with per-action auth, LedgerJournal undo on failure.",
+          files: [f("turn/src/executor/execute.rs", 152)] },
+        { name: "Verified Lean shadow (strict veto)", status: "PROVEN", what: "The Lean executor (execFullForestG) is the oracle: if Lean rejects and Rust commits, the ledger is restored and the result is Lean's Rejected. Conservation / no-amplification / unauthorized-fails are theorems.",
+          files: [f("turn/src/shadow.rs", 111), f("turn/src/executor/execute.rs", 168)] },
+        { name: "Receipt — the verifiable witness", status: "REAL", what: "turn_hash, forest_hash, pre/post state hash, effects_hash, consumed-capability Merkle proofs, disclosure bits, executor signature. The chain binds pre==prior.post for offline replay.",
+          files: [f("turn/src/turn.rs", 844)] },
+        { name: "Partial turns / promises (Promise/Notify/React)", status: "REAL", what: "Reactive effects: a guarded hole (Promise) is a guarded field write; React consumes it as a nullifier (fail-closed). CapTP promise pipelining braids into the effect layer.",
+          files: [f("turn/src/action.rs", 962), f("turn/src/eventual.rs"), f("turn/src/conditional.rs")] },
+      ],
+    },
+    {
+      id: "predicates", layer: "substrate", title: "Predicates / caveat algebra & dregg-dfa",
+      what: "One witnessed-predicate algebra unifies slot caveats, capability caveats, preconditions, and authorization guards under a single shape: a kind + a 32-byte commitment + an input reference + a proof witness index. The registry is extensible — 7 built-in verifier kinds plus a Custom escape hatch. dregg-dfa is the verified dispatch primitive: a boolean-closed derivative algebra over the same predicate shape.",
+      components: [
+        { name: "WitnessedPredicate", status: "REAL", what: "(kind, commitment[32], input_ref, proof_witness_index). The one shape behind caveats, guards, preconditions, intents.",
+          files: [f("cell/src/predicate.rs", 149)] },
+        { name: "The 7 verifier kinds + Custom", status: "REAL", what: "Dfa · Temporal · MerkleMembership · NonMembership · BlindedSet · BridgePredicate (Gte/Lte/…/InRange) · PedersenEquality · Custom{vk_hash}. Five+ wired with real verifiers.",
+          files: [f("cell/src/predicate.rs", 207)] },
+        { name: "InputRef resolution", status: "REAL", what: "Slot / Witness / PublicInput / Sender / SigningMessage / AuthContext — where a predicate's input comes from.",
+          files: [f("cell/src/predicate.rs", 167)] },
+        { name: "dregg-dfa — the verified dispatch primitive", status: "REAL", what: "NFA→DFA compilation (concat/alt/intersection/byte-ranges/repetition), RouteTable (BLAKE3 commitment), GovernedRouter (governance-gated atomic table swap), AirTrace for the STARK. Production routing: gossip filtering, intent pre-filter.",
+          files: [f("dfa/src/lib.rs"), f("docs/deos/DERIVATIVE-MATCHING-DESIGN.md")] },
+      ],
+    },
+    {
+      id: "umem", layer: "substrate", title: "Universal memory (umem)",
+      what: "A witnessed key→value store whose committed sorted-Poseidon2 root IS its boundary. Six disjoint domains tag the address space; one Blum memory-checking trace attests consistency across all of them at once. Whole-world state, per-cell heaps, transient scratch, and passable intermediate states all use the same construct — the substrate for time-travel, continuations, and checkpointable runtime.",
+      components: [
+        { name: "The six domains", status: "REAL", what: "Registers (transient VM regs) · Heap (per-cell record state) · Caps (authority state) · Nullifiers (insert-only) · Index (receipt MMR) · Working (service/interpreter scratch).",
+          files: [f("turn/src/umem.rs", 99)] },
+        { name: "umem IS the deployed prover", status: "DEPLOYED", what: "The umem-flip fired — umem is the live prover surface (per-cell heap, working domain, composable umem-refs all landed).",
+          files: [f("turn/src/umem.rs", 28)] },
+        { name: "Soundness keystones", status: "PROVEN", what: "universal_memory_sound (trace ⟹ per-domain projection), memcheck_pins_final, boundary_init_root_bound (init IS pinned to the committed root; tampered declared heap refused). #assert_axioms-clean.",
+          files: [f("metatheory/Dregg2/Crypto/UniversalMemory.lean", 197), f("metatheory/Dregg2/Crypto/UniversalMemory.lean", 475)] },
+        { name: "Time-travel · continuations · documents", status: "REAL", what: "O(1) reify_ledger inverse fold restores a past image (byte-identical reify↔project); suspended turns resume into the running ledger; a sovereign document is bound by one umem root.",
+          files: [f("turn/src/continuation.rs"), f("docs/reference/umem.md")] },
+        { name: "Stage-B checkpoint/resume effect surface", status: "DESIGN", what: "A first-class effect emitting a umem-ref + one consuming it; carrier wiring (EventualRef / CapTP / SharedFork) named, not built.",
+          files: [f("docs/deos/UMEM-STAGE-B-DESIGN.md")] },
+      ],
+    },
+    {
+      id: "dregg3", layer: "substrate", title: "DREGG3 — the kernel redesign (design)",
+      what: "The kernel's ideal shape: 6 nouns, 8 structural verbs, 6 unifications. It is a DESIGN ABSTRACTION with a minimality theorem — NOT the deployed variant count (the runtime carries ~32 Effect variants). Most underlying pieces are built and verified; the refactor to the literal 8-verb kernel is staged, not runtime-flipped.",
+      components: [
+        { name: "6 nouns", status: "DESIGN", what: "Pred (one guard algebra) · Cap (attenuable token) · Cell (four substances + program) · Asset (issuer's promise, AssetId:=CellId) · Turn (auth∘body∘receipt) · Q (receipt, committed postcondition).",
+          files: [f(".docs-history-noclaude/DREGG3.md", 115)] },
+        { name: "8 verbs (minimality theorem)", status: "DESIGN", what: "create · write · move · grant · revoke · shield/unshield · lifecycle. A design abstraction over the deployed Effect vocab + its minimality theorem over Substrate/VerbRegistry.lean.",
+          files: [f(".docs-history-noclaude/DREGG3.md", 151)] },
+        { name: "6 unifications", status: "STAGED", what: "R1 Fpu camera (returned partial/strong) · R2 AssetId:=issuer (LANDED) · R3 cell-programs cover storage · R4 svenvs≅mandate · R5 mediator≅joint-cell · R7 caps-in-slots (LANDED both sides).",
+          files: [f(".docs-history-noclaude/DREGG3.md", 281)] },
+      ],
+    },
+    {
+      id: "circuit", layer: "substrate", title: "Descriptor circuit & light-client unfoolability",
+      what: "Each turn carries a STARK proving it was a valid kernel transition. Turns fold into a constant-size recursive whole-chain aggregate. A light client holds no secrets, re-runs no cell, and — checking only a succinct root — learns the whole history is genuine. The apex theorem and the five guarantees are axiom-clean; the only genuine open items are the STANDARD crypto carriers (FRI/STARK soundness, Poseidon2 collision-resistance, deployed-tree faithfulness).",
+      components: [
+        { name: "lightclient_unfoolable — the apex", status: "PROVEN", what: "verifyBatch accepts ⟹ ∃ a genuine kernel transition s⟶s′ with commitments binding pre/post. Single-transition; lifted to whole-turn and whole-history. #assert_axioms-clean.",
+          files: [f("metatheory/Dregg2/Circuit/CircuitSoundness.lean", 453), f("docs/reference/lean-circuit.md")] },
+        { name: "Whole-history aggregation", status: "PROVEN", what: "light_client_verifies_whole_history — the verified aggregate attests every per-step transition, ordering, genesis pin, and genuine final fold.",
+          files: [f("metatheory/Dregg2/Circuit/RecursiveAggregation.lean", 200)] },
+        { name: "The five guarantee apexes", status: "PROVEN", what: "Authority · Conservation · Integrity · Freshness · Unfoolability — each a genuine conjunction of content-carrying keystones (no True anchors); #assert_axioms on each.",
+          files: [f("metatheory/Dregg2/AssuranceCase.lean", 166), f("docs/reference/lean-assurance.md")] },
+        { name: "The standard crypto carriers (the only open floor)", status: "DESIGN", what: "StarkSound (FRI/STARK soundness extraction) · Poseidon2SpongeCR (collision-resistance) · DeployedFaithful (deployed-tree). Carried as typeclass hypotheses, never as Lean axioms — the audited crypto foundation, by design terminal.",
+          files: [f("metatheory/Dregg2/Circuit/CircuitSoundness.lean", 382)] },
+        { name: "Circuit subsystem reference", status: "REAL", what: "The descriptor circuit, batch STARK, recursive fold — the running prover/verifier.",
+          files: [f("docs/reference/circuit.md"), f("circuit/")] },
+      ],
+    },
+    {
+      id: "lean", layer: "substrate", title: "The Lean theory (verified kernel)",
+      what: "An l4v-shaped stack: Spec states abstract laws (parametric over value monoids + rights lattices); Exec builds a fail-closed machine; refinement proves Exec ⊑ Spec. Authority = production under non-forgeability. Conservation = Σδ=0 over an arbitrary value monoid. The distributed theory reindexes the single-machine proofs over a topology.",
+      components: [
+        { name: "Kernel spec — Exec ⊑ Spec", status: "PROVEN", what: "exec k turn : Option KernelState commits only when authorized + 0≤amt≤bal + src≠dst, fail-closed otherwise. exec_conserves, exec_authorized; refinement square via two projections.",
+          files: [f("metatheory/Dregg2/Exec/Kernel.lean", 69), f("docs/reference/lean-kernel.md")] },
+        { name: "Authority — production under non-forgeability", status: "PROVEN", what: "The attenuation algebra (confers: reflexive/transitive non-amplifying order); only_connectivity_begets_connectivity (every reachable edge descends from a held edge or an authorized generative act).",
+          files: [f("metatheory/Dregg2/Spec/Authority.lean", 456), f("docs/reference/lean-authority.md")] },
+        { name: "Conservation — six-color linearity, Σδ=0", status: "PROVEN", what: "LinearityClass (6 colors); conservedInDomain := Σδ=0; conservation_over_monoid; multi_domain_independent (4 domains conserve independently).",
+          files: [f("metatheory/Dregg2/Spec/Conservation.lean", 217), f("docs/reference/lean-conserve.md")] },
+        { name: "macaroon ↔ kernel-gate bridge", status: "PROVEN", what: "The arrow from the macaroon/biscuit caveat algebra to the kernel's authority gate — CaveatCapBridge.",
+          files: [f("metatheory/Dregg2/Authority/CaveatCapBridge.lean", 168)] },
+        { name: "Distributed — settlement soundness", status: "PROVEN", what: "settlement_soundness: a settled turn exercised a LiveAtTip authority (held AND honored at the settlement tip). Eventual-bounded revocation; immediate at n=1. Composed against the real circuit.",
+          files: [f("metatheory/Metatheory/SettlementSoundness.lean", 153), f("docs/reference/lean-distributed.md")] },
+        { name: "Honesty ledger", status: "REAL", what: "The skeptic-facing inventory of exactly what is proved (and what is not); the conceptual spine.",
+          files: [f("metatheory/CLAIMS.md"), f("metatheory/CONSTRUCTIVE-KNOWLEDGE.md")] },
+      ],
+    },
+    {
+      id: "capacities", layer: "substrate", title: "House capacities & their welds",
+      what: "Six heap-committed cell-programs, each grounded as a Lean rung by reuse of a proven commitment lattice (the cap-lattice or the committed-heap-root). For each: the EXECUTOR tooth (the verifier holds sources/caps and rejects a forge) is REAL today; the CIRCUIT/VK weld (so a light client, not just a re-executing validator, witnesses the invariant) is the named shadow — STAGED per capacity in the weld plan.",
+      components: [
+        { name: "Membrane (cap conjunction / forwarder)", status: "EXEC", what: "reshare_chain_attenuates: re-sharing only attenuates, never amplifies. Executor tooth real; circuit weld STAGED (VK-affecting).",
+          files: [f("metatheory/Dregg2/Deos/Membrane.lean", 100), f("docs/deos/HOUSE-CAPACITY-FRAMEWORK.md")] },
+        { name: "Derived (materialized view = f(sources))", status: "EXEC", what: "claim_bound_in_root + forged/stale rejection. Circuit DerivedEquals constraint STAGED.",
+          files: [f("metatheory/Dregg2/Deos/DerivedCell.lean")] },
+        { name: "Sealed escrow (atomic 2-of-2 swap)", status: "EXEC", what: "leg_status_bound_in_root + replay/nonconforming/over-claim rejection. The SettleEscrow descriptor weld is STAGED (see Gentian).",
+          files: [f("metatheory/Dregg2/Deos/SealedEscrow.lean", 47)] },
+        { name: "Standing obligation (recurring duty/rent)", status: "EXEC", what: "cursor_strict_mono + cursor_bound_in_root + period/one-shot replay rejection. Factory descriptor STAGED.",
+          files: [f("metatheory/Dregg2/Deos/StandingObligation.lean")] },
+        { name: "Hatchery (abstraction-mint / custom verifier)", status: "DEPLOYED", what: "HpresProof::Attested IS a machine-checked CellContract carry (a forever-crown, not a trusted flag); invariant_forever. Custom cell programs live; the contract-binding weld is the named follow-up.",
+          files: [f("metatheory/Dregg2/Deos/Hatchery.lean"), f("docs/deos/HATCHERY-ABSTRACTION-MINT.md")] },
+        { name: "Vault (timelock + preimage + claim-once)", status: "DESIGN", what: "Provably immune to ERC-4626's inflation attack (deposit_no_dilution). Prototype + smoke tests; weld priority 1 (small, no new Effect, no VK change).",
+          files: [f("cell/src/vault.rs"), f("docs/deos/CONDITIONAL-VAULT.md")] },
+      ],
+    },
+
+    // ───────────────────────────── ECONOMY ─────────────────────────────
+    {
+      id: "economy", layer: "economy", title: "The service economy",
+      what: "The value + service layer above the kernel: Payable routes every charge through one shared interface that desugars to a single conserving Transfer; the intent ring matches offers/wants into atomic value cycles; the service-promise binds service-for-payment as a 2-cycle escrow; the ToolGateway meters pay-per-tool access under a cap-gated mandate; the execution-lease models durable metered workloads (the rail DreggNet rents). The SDKs (Rust/TS/Py) expose all of this in a few lines. Everything below landed and is tested.",
+      components: [
+        { name: "Payable — the conserving Transfer DSI", status: "REAL", what: "The one verified source of truth for cross-app value: pay() routes through resolve_pay and desugars to exactly one Effect::Transfer (Σδ=0). Used identically by framework turns, the SDK runtime, and the tool gateway.",
+          files: [f("dregg-payable/src/lib.rs", 17), f("app-framework/src/payable.rs", 52)] },
+        { name: "Intent ring + service-promise", status: "REAL", what: "RingCoordinator collects offers → matches a ring → verifies Σδ=0 → atomically drives apps (fail-closed). ServicePromise binds a service contract; committed-state escrow is release-XOR-refund one-shot. 4 e2e contracts proven (happy/refund/atomic/conserved).",
+          files: [f("app-framework/src/ring_trade.rs", 176), f("app-framework/src/service_promise.rs", 84)] },
+        { name: "ToolGateway — pay-per-tool", status: "REAL", what: "deleg_admit (byte-faithful Lean mirror: SCOPE ∧ DEADLINE ∧ RATE) + a mandate_program (FieldLte + Monotonic meter). Each admitted call charges one conserving Transfer. Unit + e2e + red-team tests (every overrun refused in-band).",
+          files: [f("sdk/src/tool_gateway.rs", 115), f("sdk/src/tool_gateway.rs", 220)] },
+        { name: "Execution-lease (the rail)", status: "REAL", what: "A durable-execution provider on the value layer (fly.io-lite): a lease cell holds a checkpoint, a cap-gated worker runs metered by FieldLte+Monotonic, payment is a conserving Transfer; lapse refuses on non-payment. This is what the DreggNet bridge fulfills.",
+          files: [f("sdk/src/service_economy.rs", 305), f("starbridge-apps/execution-lease/src/lib.rs", 1)] },
+        { name: "Rust SDK — dregg-sdk", status: "REAL", what: "AgentRuntime::pay() / invoke_service() / ExecutionLease — the mature core; embeds the verified executor.",
+          files: [f("sdk/src/service_economy.rs", 86), f("docs/reference/sdk.md")] },
+        { name: "TypeScript SDK — @dregg/sdk 0.3.0", status: "REAL", what: "Publish-ready npm package (standalone pure-TS core). Exports ServiceEconomy, Lease, LeaseStep, LeaseTerms, PayLeg.",
+          files: [f("sdk-ts/package.json", 1), f("sdk-ts/src/index.ts", 78)] },
+        { name: "Python SDK — dregg (pip)", status: "REAL", what: "maturin/pyo3 build; LIGHT kernel-free default wheel; opt-in dregg[kernel] (embedded verified Lean) + dregg[pg] (the no-reflexive-features architecture).",
+          files: [f("sdk-py/pyproject.toml", 6), f("sdk-py/src/lib.rs", 1)] },
+        { name: "Developer guides", status: "REAL", what: "SERVICE-ECONOMY-SDK.md (authoritative: each call → underlying turn/effect) · BUILD-WITH-DREGG.md · AGENT-QUICKSTART.md · WHAT-YOU-CAN-BUILD.md.",
+          files: [f("docs/guide/README.md"), f("docs/guide/SERVICE-ECONOMY-SDK.md")] },
+      ],
+    },
+
+    // ───────────────────────────── DEOS ─────────────────────────────
+    {
+      id: "cockpit", layer: "deos", title: "The deos pillars (desktop + runtime)",
+      what: "The reflective desktop: a cap-first window manager over a live local dregg world, where cells become windows, mutations are verified turns, and history carries provenance. One gpui-free view-tree model paints to native windows AND browser tabs; real SpiderMonkey drives cells (not a DOM) via cap-gated turns; a confined agent inhabits the cockpit; the whole substrate compiles to wasm and runs light-client-verified in a tab.",
+      components: [
+        { name: "starbridge-v2 — the cockpit shell", status: "REAL", what: "Cap-first window manager + verified-scene compositor (3 teeth: non-overlap, label-binding, focus-exclusivity, ported from Lean), shared_fork membrane, login/logout cap ceremony. --desktop boots the live workbench; embeds the verified executor.",
+          files: [f("starbridge-v2/src/shell.rs", 190), f("starbridge-v2/src/compositor.rs", 1), f("docs/reference/cockpit.md")] },
+        { name: "deos-view — renderer extraction", status: "REAL", what: "One serializable deos.ui.* view-tree (VStack/Row/Text/Bind/Button/Input/List/Table…) → native gpui pixels OR web HTML, from identical input. SolidJS-shaped fine-grained re-render.",
+          files: [f("deos-view/src/tree.rs", 22), f("docs/reference/deos-view.md")] },
+        { name: "deos-js — JS on cells", status: "REAL", what: "Real SpiderMonkey (mozjs) driving sovereign cells via cap-gated verified turns. drive (affordances = turns) + crawl (cap-bounded reflection). Transclusion is a provenanced include. The cap tooth (is_attenuation) is in-band.",
+          files: [f("deos-js/src/applet.rs", 164), f("deos-js/src/js.rs", 618), f("docs/deos/JS-ON-CELLS.md")] },
+        { name: "deos-hermes — confined agent", status: "STAGED", what: "An agent loop as a cap-gated surface cell: every ACP tool-call is intercepted → cap-gated, metered, RECEIPTED turn through the proven ToolGateway. End-to-end loop runs over a mock peer; live subprocess install is the seam.",
+          files: [f("deos-hermes/src/bridge.rs", 18), f("deos-hermes/src/acp_client.rs", 33), f("docs/deos/HERMES-INTEGRATION.md")] },
+        { name: "deos-zed — editor surface", status: "REAL", what: "A Zed-fork text editor as a deos surface; Fs trait (RealFs today). FirmamentFs stub maps load=cap-read, save=receipted turn — Level-1 (file=cell) is one host wiring away.",
+          files: [f("deos-zed/src/editor.rs", 65), f("deos-zed/src/fs/firmament.rs", 9)] },
+        { name: "deos-web-cells + wasm + deos-leptos", status: "DEPLOYED", what: "The real verified substrate compiled to wasm32 (71+ bindings); the cockpit renders in-browser on WebGPU; a cell's card is served to a browser, light-client-verified IN the tab. Frustum snapshots, per-viewer projection.",
+          files: [f("wasm/src/lib.rs"), f("deos-web-cells/src/document.rs"), f("docs/reference/wasm-web.md")] },
+        { name: "deos-matrix · deos-terminal · deos-reflect", status: "REAL", what: "Matrix client with a fog-of-war membrane (per-viewer vision projection, proved) · real PTY over alacritty with a platform-free transport (native + WebSocket) · a gpui-free cap-bounded attested reflective view of cells/ocap-graph/affordances.",
+          files: [f("deos-matrix/src/membrane.rs"), f("deos-terminal/src/model.rs", 204), f("deos-reflect/src/graph.rs")] },
+      ],
+    },
+    {
+      id: "bridges", layer: "deos", title: "The bridges (external world)",
+      what: "Connectors that bring outside value/state into a cell as a conserving, cap-gated turn. Each transforms an external authorization (a Solana lock, a Stripe webhook, a Midnight state root) into an Effect the kernel accepts, never letting the mirror claim more than was locked/paid.",
+      components: [
+        { name: "Solana mirror + trustless consensus", status: "REAL", what: "pump.fun $DREGG token mirroring → conserving Mint that pays a lease; real Tower-BFT consensus verification (stake-weighted Ed25519 votes + bank-hash + accounts inclusion + PoH). live_supply ≤ currently_locked invariant.",
+          files: [f("bridge/src/solana_mirror.rs", 366), f("bridge/src/solana_consensus.rs"), f("bridge/src/solana_trustless.rs")] },
+        { name: "Concurrency double-mint gate", status: "STAGED", what: "Consume-once lock_id nullifier + committed mirror-ledger cell, designed sound (BRIDGE-ARCHITECTURE-SOUNDNESS §3). Nullifier derivation real; per-relayer in-memory seen_locks is still the active dedup until the committed gate routes in the executor apply path.",
+          files: [f("bridge/src/solana_mirror.rs", 59), f("docs/deos/BRIDGE-ARCHITECTURE-SOUNDNESS.md")] },
+        { name: "Stripe payment rail", status: "REAL", what: "Webhook-verified payment → conserving mint → pays a DreggNet execution-lease.",
+          files: [f("bridge/src/stripe_mirror.rs")] },
+        { name: "Midnight state-inclusion + Ethereum/Mina", status: "REAL", what: "Native state-INCLUSION over a re-committed mirror root (splits 'is root valid' from 'is state in root'); permissionless watchtower. Ethereum + Mina ZK-proof connectors.",
+          files: [f("bridge/src/midnight.rs"), f("bridge/src/ethereum.rs"), f("docs/deos/DIFFERENT-MIDNIGHT-BRIDGE.md")] },
+        { name: "Custom-VK / recursive verification", status: "STAGED", what: "ProgramRegistry keyed by VK hash + Effect::Custom carrying program_vk_hash + proof_commitment. The in-circuit proof_bind constraint is STAGED (deployed descriptor is a bounds-check; genuine recursive verify runs in the Rust engine). Lift 4→8 felts in one gated epoch.",
+          files: [f("metatheory/Dregg2/Circuit/CustomApex.lean", 90), f("docs/deos/CUSTOM-VK-AUTHORIZATION.md")] },
+      ],
+    },
+    {
+      id: "apps", layer: "deos", title: "starbridge-apps (userspace apps-as-cells)",
+      what: "~24 native-primitive userspace apps, each a cap-bounded cell-program with its own Cargo crate, README, and green test suite. They are the worked exemplars of what the substrate enables — escrow, governance, identity, multiplayer, agent-orchestration — built on the real verified executor, not mockups.",
+      components: [
+        { name: "Value / market apps", status: "REAL", what: "bounty-board (escrow-backed bounties) · escrow-market (SealedEscrow atomic swap) · compute-exchange (requester↔provider, no intermediary) · sealed-auction (front-running-proof) · execution-lease (durable payable resource).",
+          files: [f("starbridge-apps/bounty-board/"), f("starbridge-apps/escrow-market/"), f("starbridge-apps/execution-lease/")] },
+        { name: "Governance / identity apps", status: "REAL", what: "polis (M-of-N councils, constitution-as-program, KERI pre-rotation) · governed-namespace (governance-bound atomic route-table swap) · identity (verifiable credentials) · nameservice (federation directory) · privacy-voting (one-vote-per-ballot, tamper-evident).",
+          files: [f("starbridge-apps/polis/"), f("starbridge-apps/identity/"), f("starbridge-apps/governed-namespace/")] },
+        { name: "Agent / delegation apps", status: "REAL", what: "agent-orchestration · swarm-orchestration · agent-provenance (proof-carrying agent memory) · tool-access-delegation (ocap model for AI) · compartment-workflow-mandate · storage-gateway-mandate.",
+          files: [f("starbridge-apps/agent-orchestration/"), f("starbridge-apps/tool-access-delegation/")] },
+        { name: "Distributed / composition apps", status: "REAL", what: "branch-stitch-multiplayer (disjoint edits merge clean) · tussle (2-party JOINT TURN with STARK ring settlement) · first-room (welds other apps' organs into one scenario) · supply-chain-provenance (custodianship as conservation) · kvstore · subscription · gallery.",
+          files: [f("starbridge-apps/branch-stitch-multiplayer/"), f("starbridge-apps/tussle/"), f("starbridge-apps/first-room/")] },
+      ],
+    },
+
+    // ───────────────────────────── GENTIAN VK WELDS ─────────────────────────────
+    {
+      id: "vkepoch", layer: "welds", title: "Gentian VK-epoch constraint-binding",
+      what: "The deliberately-gated work of binding each capacity invariant into the deployed VK, so a pure light client (not just a re-executing validator) witnesses it. The honesty distinction that this whole atlas exists to make: COVERAGE (the caveat manifest rides the live AIR-bound rotated carrier) is DEPLOYED today; SATISFACTION (the gate verdict in-AIR) is built, proven, emitted — but the FLIP is NOT taken. 'Deployed hverifier enforcement' names the SELECTOR column's real existence; the flip that makes it enforced in production is still ahead.",
+      components: [
+        { name: "Coverage carrier (tag 17, PIECE 1)", status: "DEPLOYED", what: "The caveat manifest rides the AIR-bound rotated carrier; the omission-proof coverage check is live; manifest pinned to PI 45 via caveatCommit. Zero VK impact — a pure light client witnesses coverage TODAY.",
+          files: [f("circuit/src/effect_vm/verify.rs"), f("metatheory/Dregg2/Deos/CapacityCarrier.lean"), f("docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md")] },
+        { name: "Escrow satisfaction weld (tag 17, PIECE 2)", status: "STAGED", what: "BUILT, PROVEN, EMITTED — NOT FLIPPED. Soundness proven (satisfaction_witnessed); real selector column (ESCROW_SEL_COL=70, pinned to PI 46); 4 gates over rotated field columns; emitted descriptor in the staged registry; exerciser validates at constraint level. Remaining: producer emitting a satisfying trace, a full STARK prove against a COMMITTED VK, and live routing.",
+          files: [f("metatheory/Dregg2/Deos/CapacitySatisfaction.lean"), f("metatheory/Dregg2/Deos/SettleEscrowSatDescriptor.lean", 133)] },
+        { name: "Tags 18/19 satisfaction (discharge, vault)", status: "STAGED", what: "Soundness PROVEN (2026-06-28); the in-AIR gates are NOT a mirror of the escrow equality template — discharge needs a range-checked due-ness inequality; vault needs strict inequalities + an overflow-safe product (exceeds BabyBear's ~31-bit field). An equality-only weld would DROP the early-discharge / inflation-attack disciplines — unsafe to flip until the range/product gadgets land.",
+          files: [f("metatheory/Dregg2/Deos/CapacitySatisfaction.lean")] },
+        { name: "The FLIP — not taken", status: "STAGED", what: "Deployed descriptors + VK are byte-identical (drift guard green); rotated_descriptor_name_for_effect is unchanged; no turn routes through the welded descriptor. The capability-membership posture: a light client witnesses satisfaction WITH the caller-supplied opening, not yet from the deployed VK alone. DEPLOYED ≠ FLIPPED.",
+          files: [f("docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md")] },
+        { name: "Host & container bridges (frontier)", status: "DESIGN", what: "Same Target/Capability/is_attenuation gate, only the backing moves — a drop-in rehearsal for native seL4. Design complete (phased H0–H2 / C0–C2); no circuit/execution code yet.",
+          files: [f("docs/deos/HOST-AND-CONTAINER-BRIDGES.md"), f("docs/deos/ETH-NATIVE-WRAP.md")] },
+      ],
+    },
+
+    // ───────────────────────────── DREGGNET ─────────────────────────────
+    {
+      id: "dreggnet", layer: "dreggnet", title: "DreggNet — the operated moat",
+      components: [
+          files: [d("ARCHITECTURE.md"), d("README.md")] },
+          files: [d("exec/src/lib.rs", 149)] },
+          files: [d("durable/src/lib.rs"), d("docs/DBOS-DURABLE-LAYER.md")] },
+        { name: "bridge — the lease⟷workload keystone (rung 3)", status: "REAL", what: "map_cap_grade (grade→tier), workflow_input_for_lease (the gate: refuses unfunded/ill-formed/below-floor), fulfill (launches the durable orchestration, meters against budget). End-to-end + over-budget tests pass. Live dregg-node read is feature-gated off-default (AGPL-clean).",
+          files: [d("bridge/src/lib.rs", 209), d("bridge/tests/lease_drives_durable_workflow.rs")] },
+        { name: "control — scheduler + providers (rung 4)", status: "REAL", what: "VmProvider trait; LocalProvider runs end-to-end in-process via the bridge; Scheduler places→fulfills→reaps (refuses unfunded before provisioning). Ec2Provider builds correct aws-cli argv but returns Unimplemented; mesh keypair real, TCP link Linux-only stub. (rung 6 Hetzner: abstraction ready, backend user-supplied.)",
+          files: [d("control/src/scheduler.rs"), d("control/src/local.rs"), d("control/src/ec2.rs")] },
+          files: [d("gateway/src/gateway.rs"), d("webapp/src/router.rs"), d("docs/AGENT-WEB-APPS.md")] },
+        { name: "cli + demo + self-host", status: "REAL", what: "dreggnet CLI (lease open / run / status, cross-invocation JSON state). demo/run-demo.sh drives both halves labeled [REAL] vs [NARRATED]. dreggnet-provider: anyone runs their own provider against their own cells/machines — the moat is the network, not the code.",
+          files: [d("cli/src/main.rs", 140), d("docs/SELF-HOST.md"), d("docs/HACKATHON-DEMO.md")] },
+      ],
+    },
+  ],
+};
+
+</script>
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+// breadstuffs root, relative to docs/atlas/
+const ROOT = "../../";
+let activeStatuses = new Set(Object.keys(STATUS));
+
+function fileRef(fr) {
+  if (fr.repo === "DreggNet") {
+    const span = el("span", "noref");
+    span.append("DreggNet/" + fr.path + (fr.line ? ":" + fr.line : ""));
+    if (fr.label) { const l = el("span", "lbl"); l.textContent = " — " + fr.label; span.append(l); }
+    return span;
+  }
+  const a = el("a");
+  a.href = ROOT + fr.path + (fr.line ? "#L" + fr.line : "");
+  a.target = "_blank"; a.rel = "noopener";
+  a.append(fr.path);
+  if (fr.line) { const ln = el("span", "ln"); ln.textContent = ":" + fr.line; a.append(ln); }
+  if (fr.label) { const l = el("span", "lbl"); l.textContent = " — " + fr.label; a.append(l); }
+  return a;
+}
+
+function badge(status) {
+  const s = STATUS[status] || STATUS.REAL;
+  const b = el("span", "badge " + s.cls, s.label);
+  b.title = s.blurb;
+  return b;
+}
+
+// ── legend / filter ──
+function buildLegend() {
+  const leg = $("#legend");
+  for (const [k, s] of Object.entries(STATUS)) {
+    const chip = el("div", "chip"); chip.dataset.status = k;
+    const sw = el("span", "sw " + s.cls); chip.append(sw, document.createTextNode(s.label));
+    chip.title = s.blurb;
+    chip.onclick = () => {
+      if (activeStatuses.has(k)) { activeStatuses.delete(k); chip.classList.add("off"); }
+      else { activeStatuses.add(k); chip.classList.remove("off"); }
+      applyFilter();
+    };
+    leg.append(chip);
+  }
+}
+
+// ── sidebar nav ──
+function buildNav() {
+  const nav = $("#nav");
+  const layerColor = { substrate:"var(--c-real)", economy:"var(--c-proven)", deos:"var(--c-deployed)", welds:"var(--c-staged)", dreggnet:"var(--c-design)" };
+  for (const layer of ATLAS.layers) {
+    const wrap = el("div", "nav-layer");
+    const lh = el("div", "lh"); lh.append(layer.name);
+    const dot = el("span", "dot"); dot.style.background = layerColor[layer.id]; lh.append(dot);
+    wrap.append(lh);
+    for (const secId of layer.sections) {
+      const sec = ATLAS.sections.find(s => s.id === secId);
+      if (!sec) continue;
+      const a = el("a", "navlink", sec.title); a.href = "#" + sec.id; a.dataset.sec = sec.id;
+      wrap.append(a);
+    }
+    nav.append(wrap);
+  }
+}
+
+// ── map ──
+function buildMap() {
+  const stack = $("#mapstack");
+  ATLAS.layers.forEach((layer, i) => {
+    const row = el("div", "maprow l-" + layer.id);
+    const head = el("div", "mr-head");
+    head.append(el("span", "mr-name", layer.name));
+    head.append(el("span", "mr-kind", layer.kind));
+    head.append(el("span", "mr-tag", layer.tagline));
+    row.append(head);
+    const boxes = el("div", "boxes");
+    for (const secId of layer.sections) {
+      const sec = ATLAS.sections.find(s => s.id === secId);
+      if (!sec) continue;
+      const b = el("div", "box", sec.title);
+      b.onclick = () => { location.hash = sec.id; };
+      boxes.append(b);
+    }
+    row.append(boxes);
+    stack.append(row);
+    if (layer.id === "economy" || layer.id === "deos" || layer.id === "dreggnet")
+      stack.append(el("div", "consumes", "▼ consumes / builds on ▼"));
+  });
+}
+
+// ── sections ──
+function buildSections() {
+  const host = $("#sections");
+  for (const sec of ATLAS.sections) {
+    const s = el("section", "sec"); s.id = sec.id;
+    const head = el("div", "sec-head");
+    head.append(el("h2", null, sec.title));
+    head.append(el("span", "layer-tag", sec.layer));
+    s.append(head);
+    s.append(el("p", "what", sec.what));
+    const cards = el("div", "cards");
+    for (const c of sec.components) {
+      const card = el("div", "card");
+      card.dataset.status = c.status;
+      card.dataset.text = (c.name + " " + c.what + " " + c.files.map(f=>f.path).join(" ")).toLowerCase();
+      const ch = el("div", "c-head");
+      ch.append(el("div", "c-name", c.name));
+      ch.append(badge(c.status));
+      card.append(ch);
+      card.append(el("div", "c-what", c.what));
+      const files = el("div", "c-files");
+      for (const fr of c.files) files.append(fileRef(fr));
+      card.append(files);
+      cards.append(card);
+    }
+    s.append(cards);
+    host.append(s);
+  }
+}
+
+// ── open-items view ──
+function buildOpenItems() {
+  const host = $("#view-open");
+  host.append(el("p", "what", "Everything that is NOT plain REAL/PROVEN/DEPLOYED — the honest frontier. EXECUTOR-WITNESSED = enforced by the running executor but the light-client (circuit/VK) witness is still staged. STAGED = built+proven+emitted but not flipped into the deployed default. GREEN-SCAFFOLD = builds, but the real path is mock/errors until a named rung. DESIGNED = blueprint, not shipped."));
+  const tbl = el("table");
+  const thead = el("tr");
+  ["Status","Component","Section","What remains"].forEach(h => thead.append(el("th", null, h)));
+  tbl.append(thead);
+  const order = ["STAGED","EXEC","SCAFFOLD","DESIGN"];
+  const rows = [];
+  for (const sec of ATLAS.sections)
+    for (const c of sec.components)
+      if (order.includes(c.status)) rows.push({ c, sec });
+  rows.sort((a,b) => order.indexOf(a.c.status) - order.indexOf(b.c.status));
+  for (const { c, sec } of rows) {
+    const tr = el("tr");
+    const td0 = el("td"); td0.append(badge(c.status)); tr.append(td0);
+    const td1 = el("td"); td1.append(el("span", "comp", c.name)); tr.append(td1);
+    const td2 = el("td"); const a = el("a", "sec-ref", sec.title); a.href = "#"+sec.id; a.onclick=()=>setView('map'); td2.append(a); tr.append(td2);
+    tr.append(el("td", null, c.what));
+    tbl.append(tr);
+  }
+  host.append(tbl);
+}
+
+// ── filter ──
+function applyFilter() {
+  const q = $("#search").value.trim().toLowerCase();
+  for (const card of document.querySelectorAll(".card")) {
+    const okStatus = activeStatuses.has(card.dataset.status);
+    const okText = !q || card.dataset.text.includes(q);
+    card.classList.toggle("hidden", !(okStatus && okText));
+  }
+  for (const sec of document.querySelectorAll("section.sec")) {
+    const anyVisible = sec.querySelector(".card:not(.hidden)");
+    sec.classList.toggle("hidden", !anyVisible);
+  }
+}
+
+// ── view switch ──
+function setView(v) {
+  $("#view-map").style.display = v === "map" ? "" : "none";
+  $("#view-open").classList.toggle("hidden", v !== "open");
+  $("#tab-map").classList.toggle("active", v === "map");
+  $("#tab-open").classList.toggle("active", v === "open");
+}
+
+// ── scroll-spy ──
+function initScrollSpy() {
+  const links = [...document.querySelectorAll(".navlink")];
+  const obs = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.toggle("active", l.dataset.sec === e.target.id));
+      }
+    }
+  }, { rootMargin: "-10% 0px -80% 0px" });
+  document.querySelectorAll("section.sec").forEach(s => obs.observe(s));
+}
+
+// ── boot ──
+buildLegend(); buildNav(); buildMap(); buildSections(); buildOpenItems();
+$("#search").addEventListener("input", applyFilter);
+initScrollSpy();
+</script>
+</body>
+</html>
