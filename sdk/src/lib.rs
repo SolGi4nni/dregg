@@ -143,6 +143,12 @@ pub mod receipt;
 // crown to the `AgentRuntime`/`SubAgent` cap-gated executor path. Usable by ANY
 // external loop (a buildr/hermes agent) via `ToolGateway::invoke`.
 pub mod runtime;
+// THE SERVICE-ECONOMY FACADE — buy a service in a few lines, over the verified
+// rail: `runtime.pay()` (the canonical `Payable` transfer), `invoke_service*`
+// (DFA-routed method invocation + optional pay leg), and `ExecutionLease`
+// (open/fund/run a durable, metered execution lease). Thin honest wrappers that
+// desugar to primitives the kernel already conserves.
+pub mod service_economy;
 pub mod tool_gateway;
 pub mod trustline;
 pub mod turns;
@@ -210,6 +216,15 @@ pub use tool_gateway::{
 pub use dregg_payable::{
     AssetId, InvokeAuthority, InvokeRefused, PAY_METHOD, Payable, pay_method_sig,
     payable_descriptor, resolve_pay,
+};
+
+// THE SERVICE-ECONOMY FACADE surface: the durable execution lease + the
+// payment-leg type for paid service invocation. `runtime.pay()` /
+// `runtime.invoke_service*()` are inherent methods on [`AgentRuntime`] (added by
+// the `service_economy` module); these are the standalone types its API speaks.
+pub use service_economy::{
+    DEFAULT_LEASE_METHOD, ExecutionLease, LEASE_STEP_SLOT, LeaseStep, LeaseTerms, PayLeg,
+    lease_program,
 };
 
 // Receipt-chain verification (the chain the Receipt noun links into).
