@@ -30,8 +30,8 @@ use dregg_app_framework::{
 use dregg_cell::interface::{Semantics, method_symbol};
 use dregg_cell::permissions::AuthRequired;
 use starbridge_kvstore::{
-    KvError, KvStore, METHOD_DELETE, METHOD_GET, METHOD_PUT, REG_MIN, VERSION_SLOT,
-    interface_descriptor, register_interface, store_program,
+    KvError, KvStore, LAST_KEY_SLOT, LAST_VALUE_SLOT, METHOD_DELETE, METHOD_GET, METHOD_PUT,
+    REG_MIN, VERSION_SLOT, interface_descriptor, register_interface, store_program,
 };
 
 /// A cipherclerk + an embedded executor whose agent cell IS the store cell,
@@ -105,6 +105,16 @@ fn an_authorized_put_commits_a_real_turn_and_bumps_the_version() {
         state.fields[VERSION_SLOT],
         field_from_u64(1),
         "the store version bumped to 1"
+    );
+    // The header signals: the front-door put records the last key + value it wrote.
+    assert_eq!(
+        state.fields[LAST_KEY_SLOT],
+        field_from_u64(REG_MIN as u64),
+        "the last-key header names the register written"
+    );
+    assert_eq!(
+        state.fields[LAST_VALUE_SLOT], value,
+        "the last-value header holds the put value"
     );
 
     // A second put to a different register, version 2 — Monotonic permits the

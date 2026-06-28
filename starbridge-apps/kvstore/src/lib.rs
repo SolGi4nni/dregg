@@ -15,11 +15,21 @@
 //!
 //! ## What the store is
 //!
-//! A single cell holding a small **register file**: slot [`VERSION_SLOT`] is a
-//! monotone store version, and slots [`REG_MIN`]`..=`[`REG_MAX`] are the
-//! key-addressed value registers (the "key" is the register index). It is a
-//! genuinely useful primitive — a verified, rollback-proof config/KV store whose
-//! every mutation is a receipted turn a light client can replay.
+//! A single cell holding a small **register file** with a live header:
+//!
+//! | slot                  | meaning                          | tooth            |
+//! |-----------------------|----------------------------------|------------------|
+//! | [`VERSION_SLOT`]      | monotone store version           | `Monotonic`      |
+//! | [`COUNT_SLOT`]        | live entry count (occupied regs) | `FieldLte` ≤ cap |
+//! | [`LAST_KEY_SLOT`]     | register index last touched      | —                |
+//! | [`LAST_VALUE_SLOT`]   | value last written (`0` on clear)| —                |
+//! | [`REG_MIN`]`..=`[`REG_MAX`] | key-addressed value registers | —             |
+//!
+//! The "key" is the register index ([`REG_MIN`]`..=`[`REG_MAX`], so [`CAPACITY`]
+//! entries). The header slots make the store **legible**: the entry count, the
+//! last key, and the last value are committed state a card binds and a peer reads.
+//! It is a genuinely useful primitive — a verified, rollback-proof config/KV store
+//! whose every mutation is a receipted turn a light client can replay.
 //!
 //! ## The published interface (three typed methods)
 //!
@@ -41,7 +51,10 @@
 //! [`VERSION_SLOT`] to the `put`/`delete` method cases. The version therefore
 //! never rolls back: a replayed or reordered mutation that would lower the store
 //! version is an EXECUTOR REFUSAL on the verified commit path — not a userspace
-//! check. The cap-gate (`Signature` on the mutators) is enforced twice over: at
+//! check. The `put` case additionally carries the **capacity tooth**
+//! ([`StateConstraint::FieldLte`] bounding [`COUNT_SLOT`] by [`CAPACITY`]) so the
+//! committed entry count can never overflow the register file. The cap-gate
+//! (`Signature` on the mutators) is enforced twice over: at
 //! the `invoke()` front door (an unauthorized caller is refused before any turn
 //! is built) and again by the executor (the desugared turn carries a real
 //! signature the kernel verifies).
@@ -59,8 +72,9 @@
 //!
 //! This crate demonstrates the unified starbridge-app template. The SAME
 //! [`store_program`] backs every axis:
-//!   - **AX1 — verified core**: [`store_program`] + `Monotonic(VERSION_SLOT)` (this
-//!     file) — the rollback-proof invariant the executor enforces.
+//!   - **AX1 — verified core**: [`store_program`] + `Monotonic(VERSION_SLOT)` +
+//!     the [`COUNT_SLOT`] capacity tooth (this file) — the invariants the executor
+//!     enforces.
 //!   - **AX2 — deos surface**: [`deos::kvstore_app`] / [`deos::register_deos`]
 //!     (`src/deos.rs`) — the store composed as a `DeosApp`.
 //!   - **AX3 — service cell**: [`KvStore`] / `invoke()` (this file) — the typed
@@ -96,12 +110,34 @@ use dregg_types::CellId;
 /// refusal). Slot indices are `0..16` (per `dregg_cell::STATE_SLOTS`).
 pub const VERSION_SLOT: usize = 0;
 
-/// The lowest register index a `put`/`delete`/`get` may address.
-pub const REG_MIN: usize = 1;
+/// State field slot carrying the **live entry count** — the number of occupied
+/// value registers. A `put` to a fresh key raises it, a `delete` of a present key
+/// lowers it; an overwrite leaves it unchanged. Scoped [`StateConstraint::FieldLte`]
+/// ≤ [`CAPACITY`] in [`store_program`] (the capacity tooth: the store can never
+/// commit a count claiming more entries than it has registers). Driven by the
+/// live-state fire path ([`deos::fire_put`] / [`deos::fire_delete`]).
+pub const COUNT_SLOT: usize = 1;
+
+/// State field slot carrying the **register index last touched** by a `put`/
+/// `delete` — a header signal a card binds so the surface names the last key.
+pub const LAST_KEY_SLOT: usize = 2;
+
+/// State field slot carrying the **value last written** — the value of the last
+/// `put` (or `0` after a `delete`). A header signal a card binds.
+pub const LAST_VALUE_SLOT: usize = 3;
+
+/// The lowest register index a `put`/`delete`/`get` may address. Registers
+/// `REG_MIN..=REG_MAX` are the key-addressed value slots (the header slots
+/// `0..REG_MIN` are the store's own, not keys).
+pub const REG_MIN: usize = 4;
 
 /// The highest register index a `put`/`delete`/`get` may address. Registers
 /// `REG_MIN..=REG_MAX` are the key-addressed value slots.
 pub const REG_MAX: usize = 15;
+
+/// The number of key-addressed value registers (`REG_MIN..=REG_MAX`) — the store
+/// capacity, the ceiling the [`COUNT_SLOT`] capacity tooth bounds.
+pub const CAPACITY: usize = REG_MAX - REG_MIN + 1;
 
 /// The `put` method name (a [`Semantics::Replayable`], `Signature`-gated mutator).
 pub const METHOD_PUT: &str = "put";
@@ -159,24 +195,34 @@ pub fn interface_descriptor() -> InterfaceDescriptor {
 /// A [`CellProgram::Cases`] whose `MethodIs` guards make the derived interface
 /// expose `put`/`delete`/`get`, and whose `put`/`delete` cases carry
 /// [`StateConstraint::Monotonic`] on [`VERSION_SLOT`] (the rollback-proof
-/// invariant). An `Always` catch-all admits the agent's own bookkeeping turns
-/// (nonce bumps) so a non-method turn is not default-denied.
+/// invariant). The `put` case additionally carries the **capacity tooth** —
+/// [`StateConstraint::FieldLte`] bounding [`COUNT_SLOT`] by [`CAPACITY`] — so the
+/// committed entry count can never claim more entries than the store has registers
+/// (an executor refusal, not a userspace check). An `Always` catch-all admits the
+/// agent's own bookkeeping turns (nonce bumps) so a non-method turn is not
+/// default-denied.
 pub fn store_program() -> CellProgram {
-    let bump_version = vec![StateConstraint::Monotonic {
+    let bump_version = StateConstraint::Monotonic {
         index: VERSION_SLOT as u8,
-    }];
+    };
+    // The capacity tooth: a committed entry count never exceeds the register
+    // capacity. Big-endian field compare (`COUNT <= CAPACITY`).
+    let count_within_capacity = StateConstraint::FieldLte {
+        index: COUNT_SLOT as u8,
+        value: field_from_u64(CAPACITY as u64),
+    };
     CellProgram::Cases(vec![
         TransitionCase {
             guard: TransitionGuard::MethodIs {
                 method: method_symbol(METHOD_PUT),
             },
-            constraints: bump_version.clone(),
+            constraints: vec![bump_version.clone(), count_within_capacity],
         },
         TransitionCase {
             guard: TransitionGuard::MethodIs {
                 method: method_symbol(METHOD_DELETE),
             },
-            constraints: bump_version,
+            constraints: vec![bump_version],
         },
         TransitionCase {
             guard: TransitionGuard::MethodIs {
@@ -257,6 +303,17 @@ impl KvStore {
                 index: VERSION_SLOT,
                 value: field_from_u64(new_version),
             },
+            // The header signals: the last key touched + the value written.
+            Effect::SetField {
+                cell: self.cell,
+                index: LAST_KEY_SLOT,
+                value: field_from_u64(reg as u64),
+            },
+            Effect::SetField {
+                cell: self.cell,
+                index: LAST_VALUE_SLOT,
+                value,
+            },
             Effect::SetField {
                 cell: self.cell,
                 index: reg,
@@ -293,6 +350,17 @@ impl KvStore {
                 cell: self.cell,
                 index: VERSION_SLOT,
                 value: field_from_u64(new_version),
+            },
+            // The header signals: the last key touched + a cleared value.
+            Effect::SetField {
+                cell: self.cell,
+                index: LAST_KEY_SLOT,
+                value: field_from_u64(reg as u64),
+            },
+            Effect::SetField {
+                cell: self.cell,
+                index: LAST_VALUE_SLOT,
+                value: [0u8; 32],
             },
             Effect::SetField {
                 cell: self.cell,

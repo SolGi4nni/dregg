@@ -1,7 +1,7 @@
 {
   "id": "kvstore",
   "name": "Key-Value Store",
-  "description": "A verified key-value register store exposed as a SERVICE CELL (cells-as-service-objects). A single cell holds a register file: slot 0 is a monotone store version, slots 1..=15 are key-addressed value registers. The published typed InterfaceDescriptor exposes put/delete (Replayable, Signature-gated) and get (Serviced — the named OFE read seam), driven through the invoke() front door — no Effect::Invoke, no kernel change. The store version is Monotonic, so a replayed or reordered mutation is an executor refusal.",
+  "description": "A verified key-value register store exposed as a SERVICE CELL (cells-as-service-objects). A single cell holds a register file with a live header: slot 0 is a monotone store version, slot 1 is the live entry count, slots 2/3 are the last key / last value touched, and slots 4..=15 are the 12 key-addressed value registers. The published typed InterfaceDescriptor exposes put/delete (Replayable, Signature-gated) and get (Serviced — the named OFE read seam), driven through the invoke() front door — no Effect::Invoke, no kernel change. The store version is Monotonic (a replayed or reordered mutation is an executor refusal) and the entry count is bounded by capacity (FieldLte) — both verified teeth.",
   "version": "0.1.0",
   "status": "starbridge",
   "crate": "starbridge-kvstore",
@@ -21,17 +21,17 @@
     "publish": "Signature (the store cell is a dregg:// sturdyref an indexer on another federation reacquires to read the live version)",
     "affordances": {
       "view": "cap-only, Signature (a READER reads the live store version) — EmitEvent kvstore-read",
-      "put": "cap-only, Either (a WRITER writes a register) — the fire submits the FULL two-effect turn (bump VERSION + SetField(reg, value)), the executor re-enforcing Monotonic(VERSION)",
-      "delete": "cap-only, Either (a WRITER clears a register) — the fire submits the FULL two-effect turn (bump VERSION + SetField(reg, 0)), the executor re-enforcing Monotonic(VERSION)"
+      "put": "cap-only, Either (a WRITER writes a register) — the fire reads live state and submits the FULL turn (bump VERSION + maintain COUNT/LAST_KEY/LAST_VALUE + SetField(reg, value)), the executor re-enforcing Monotonic(VERSION) + the COUNT capacity tooth",
+      "delete": "cap-only, Either (a WRITER clears a register) — the fire submits the FULL turn (bump VERSION + decrement COUNT if present + SetField(reg, 0)), the executor re-enforcing Monotonic(VERSION)"
     },
-    "seam": "The fire runs against the seeded store cell carrying store_program() (Monotonic(VERSION)), so a rollback/replay that would lower the store version BITES in the deos fire path (src/deos.rs::tests)."
+    "seam": "The fire runs against the seeded store cell carrying store_program() (Monotonic(VERSION) + the COUNT FieldLte capacity tooth), so a rollback/replay that would lower the store version BITES in the deos fire path (src/deos.rs::tests)."
   },
   "service": {
     "interface": "interface_descriptor() — three typed methods",
     "front_door": "KvStore::put / KvStore::delete / KvStore::get via invoke_with_descriptor()",
     "methods": {
-      "put": "Replayable, Signature, args (reg, value) — desugars to bump VERSION + SetField(reg, value)",
-      "delete": "Replayable, Signature, args (reg) — desugars to bump VERSION + SetField(reg, 0)",
+      "put": "Replayable, Signature, args (reg, value) — desugars to bump VERSION + record LAST_KEY/LAST_VALUE + SetField(reg, value)",
+      "delete": "Replayable, Signature, args (reg) — desugars to bump VERSION + record LAST_KEY + clear LAST_VALUE + SetField(reg, 0)",
       "get": "Serviced, None, args (reg) — the named OFE read seam, never desugared to a turn"
     }
   },

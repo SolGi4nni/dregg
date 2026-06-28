@@ -127,23 +127,52 @@ fn field_to_u64(f: &FieldElement) -> u64 {
     u64::from_be_bytes(buf)
 }
 
-/// Read the live store version off `cell` (defaulting to 0 if the cell is absent or
-/// the slot is unset).
-fn live_version(cell: CellId, executor: &EmbeddedExecutor) -> u64 {
+/// Read the `u64` at `slot` off `cell` (defaulting to 0 if the cell is absent or
+/// the slot is unset). The shared reader behind [`live_version`] / [`live_count`].
+fn live_field_u64(cell: CellId, slot: usize, executor: &EmbeddedExecutor) -> u64 {
     executor
         .cell_state(cell)
-        .and_then(|s| s.get_field(crate::VERSION_SLOT).copied())
+        .and_then(|s| s.get_field(slot).copied())
         .map(|f| field_to_u64(&f))
         .unwrap_or(0)
 }
 
-/// **Fire `put`** — write `value` into register `reg` and bump the store version.
+/// Read the live store version off `cell` (defaulting to 0 if the cell is absent or
+/// the slot is unset).
+fn live_version(cell: CellId, executor: &EmbeddedExecutor) -> u64 {
+    live_field_u64(cell, crate::VERSION_SLOT, executor)
+}
+
+/// Read the live entry count off `cell` (the number of occupied registers).
+fn live_count(cell: CellId, executor: &EmbeddedExecutor) -> u64 {
+    live_field_u64(cell, crate::COUNT_SLOT, executor)
+}
+
+/// Is register `reg` currently occupied (non-zero) on `cell`? A `put` to a free
+/// register raises the entry count; a `put` overwriting an occupied one leaves it
+/// unchanged; a `delete` of an occupied one lowers it. The whole lifecycle's
+/// entry-count truth turns on this read.
+fn register_occupied(cell: CellId, reg: usize, executor: &EmbeddedExecutor) -> bool {
+    executor
+        .cell_state(cell)
+        .and_then(|s| s.get_field(reg).copied())
+        .map(|f| f != [0u8; 32])
+        .unwrap_or(false)
+}
+
+/// **Fire `put`** — write `value` into register `reg`, bump the store version, and
+/// maintain the live header (entry count + last key/value).
 ///
-/// Reads the live `VERSION` off the cell, computes `new_version = version + 1`,
-/// builds the FULL two-effect turn (`SetField(VERSION = new_version)` +
-/// `SetField(reg = value)`) via [`AppCipherclerk::make_action`], and submits it
-/// through the executor. The executor re-enforces the installed
-/// [`crate::store_program`] (`Monotonic(VERSION)` — a rollback is a real refusal).
+/// Reads the live state off the cell and builds the FULL turn:
+///   - `SetField(VERSION = version + 1)` — the rollback-proof bump;
+///   - `SetField(COUNT = count + 1)` IF `reg` was free, else `COUNT` holds
+///     (overwriting an occupied register is not a new entry);
+///   - `SetField(LAST_KEY = reg)` + `SetField(LAST_VALUE = value)` — the header;
+///   - `SetField(reg = value)` — the register write itself.
+///
+/// Submitted via [`AppCipherclerk::make_action`] through the executor, which
+/// re-enforces the installed [`crate::store_program`] (`Monotonic(VERSION)` — a
+/// rollback is a real refusal — and the [`crate::COUNT_SLOT`] capacity tooth).
 /// Seed with [`seed_store`] first.
 pub fn fire_put(
     cell: CellId,
@@ -153,11 +182,28 @@ pub fn fire_put(
     executor: &EmbeddedExecutor,
 ) -> Result<TurnReceipt, FireExecuteError> {
     let new_version = live_version(cell, executor) + 1;
+    // A fresh register is a new entry; an overwrite is not.
+    let new_count = live_count(cell, executor) + u64::from(!register_occupied(cell, reg, executor));
     let effects = vec![
         Effect::SetField {
             cell,
             index: crate::VERSION_SLOT,
             value: field_from_u64(new_version),
+        },
+        Effect::SetField {
+            cell,
+            index: crate::COUNT_SLOT,
+            value: field_from_u64(new_count),
+        },
+        Effect::SetField {
+            cell,
+            index: crate::LAST_KEY_SLOT,
+            value: field_from_u64(reg as u64),
+        },
+        Effect::SetField {
+            cell,
+            index: crate::LAST_VALUE_SLOT,
+            value,
         },
         Effect::SetField {
             cell,
@@ -171,10 +217,12 @@ pub fn fire_put(
         .map_err(FireExecuteError::Executor)
 }
 
-/// **Fire `delete`** — clear register `reg` (write zero) and bump the store version.
+/// **Fire `delete`** — clear register `reg` (write zero), bump the store version,
+/// and maintain the live header.
 ///
-/// Same two-tempo shape as [`fire_put`], with a zero value. Seed with
-/// [`seed_store`] first.
+/// Same shape as [`fire_put`], with a zero value: `COUNT` drops by one IF `reg`
+/// was occupied (deleting an absent key is a no-op on the count), `LAST_KEY = reg`,
+/// `LAST_VALUE = 0`. Seed with [`seed_store`] first.
 pub fn fire_delete(
     cell: CellId,
     reg: usize,
@@ -182,11 +230,29 @@ pub fn fire_delete(
     executor: &EmbeddedExecutor,
 ) -> Result<TurnReceipt, FireExecuteError> {
     let new_version = live_version(cell, executor) + 1;
+    // Clearing an occupied register removes an entry; clearing a free one does not.
+    let new_count = live_count(cell, executor)
+        .saturating_sub(u64::from(register_occupied(cell, reg, executor)));
     let effects = vec![
         Effect::SetField {
             cell,
             index: crate::VERSION_SLOT,
             value: field_from_u64(new_version),
+        },
+        Effect::SetField {
+            cell,
+            index: crate::COUNT_SLOT,
+            value: field_from_u64(new_count),
+        },
+        Effect::SetField {
+            cell,
+            index: crate::LAST_KEY_SLOT,
+            value: field_from_u64(reg as u64),
+        },
+        Effect::SetField {
+            cell,
+            index: crate::LAST_VALUE_SLOT,
+            value: [0u8; 32],
         },
         Effect::SetField {
             cell,
@@ -260,6 +326,60 @@ mod tests {
             .and_then(|s| s.get_field(crate::REG_MIN).copied())
             .expect("register written");
         assert_eq!(val, [7u8; 32]);
+    }
+
+    #[test]
+    fn the_entry_count_tracks_puts_overwrites_and_deletes() {
+        let cclerk = test_cipherclerk();
+        let exec = EmbeddedExecutor::new(&cclerk, "default");
+        seed_store(&exec);
+        let store = cclerk.cell_id();
+
+        // A born store has zero entries.
+        assert_eq!(live_count(store, &exec), 0);
+
+        // Two puts to DISTINCT keys → two entries.
+        fire_put(store, crate::REG_MIN, [1u8; 32], &cclerk, &exec).expect("put k0");
+        assert_eq!(live_count(store, &exec), 1);
+        fire_put(store, crate::REG_MIN + 1, [2u8; 32], &cclerk, &exec).expect("put k1");
+        assert_eq!(live_count(store, &exec), 2);
+
+        // Overwriting an existing key does NOT raise the count, but DOES bump the
+        // version + record the header.
+        fire_put(store, crate::REG_MIN, [9u8; 32], &cclerk, &exec).expect("overwrite k0");
+        assert_eq!(
+            live_count(store, &exec),
+            2,
+            "an overwrite is not a new entry"
+        );
+
+        let st = exec.cell_state(store).unwrap();
+        assert_eq!(
+            st.get_field(crate::LAST_KEY_SLOT).copied(),
+            Some(field_from_u64(crate::REG_MIN as u64))
+        );
+        assert_eq!(
+            st.get_field(crate::LAST_VALUE_SLOT).copied(),
+            Some([9u8; 32])
+        );
+
+        // Deleting a present key lowers the count; deleting an absent key is a no-op
+        // on the count.
+        fire_delete(store, crate::REG_MIN, &cclerk, &exec).expect("delete k0");
+        assert_eq!(live_count(store, &exec), 1);
+        fire_delete(store, crate::REG_MAX, &cclerk, &exec).expect("delete absent key");
+        assert_eq!(
+            live_count(store, &exec),
+            1,
+            "deleting an absent key is a no-op on the count"
+        );
+
+        // The delete recorded the cleared header value.
+        let st = exec.cell_state(store).unwrap();
+        assert_eq!(
+            st.get_field(crate::LAST_VALUE_SLOT).copied(),
+            Some([0u8; 32])
+        );
     }
 
     #[test]

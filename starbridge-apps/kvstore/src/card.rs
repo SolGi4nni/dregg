@@ -18,18 +18,23 @@
 //! elephant. The deos world's renderers consume it; this module owns the card
 //! definition and proves it is well-formed.
 //!
-//! ## The card shape
+//! ## The card shape — a legible little key-value store
 //!
-//! A titled column ([`deos.ui.vstack`](deos_view)) carrying:
-//!   - a `text` header (`"Key-Value Store"`);
-//!   - a `bind` on [`VERSION_SLOT`](crate::VERSION_SLOT) — a fine-grained signal
-//!     that re-reads the live store version off the ledger (the SAME witnessed read
-//!     a native `bind` closure makes), so the displayed version advances when a
-//!     fired `put`/`delete` commits;
-//!   - one `button` per service method (`put` / `delete` / `get`), each carrying
-//!     its `onClick = { turn, arg }` — the EXACT cap-gated verified turn a click
-//!     fires through the [`invoke()`](crate)/affordance seam (the button's payload
-//!     is the method symbol the service routes).
+//! A titled column ([`deos.ui.vstack`](deos_view)) built from the rich deos-view
+//! vocabulary (`section` / `pill` / `gauge` / `divider` / `icon`):
+//!
+//!   - a **status header** — the app name + a `pill` reading `LIVE`;
+//!   - a **"Store" `section`** surfacing the LIVE cell header: a `gauge` bound to
+//!     [`COUNT_SLOT`](crate::COUNT_SLOT) (entries / [`CAPACITY`](crate::CAPACITY)),
+//!     plus `bind`s on the store [`VERSION_SLOT`](crate::VERSION_SLOT), the entry
+//!     count, and the [`LAST_KEY_SLOT`](crate::LAST_KEY_SLOT) /
+//!     [`LAST_VALUE_SLOT`](crate::LAST_VALUE_SLOT) — each a fine-grained signal that
+//!     re-reads the live value (the SAME witnessed read a native `bind` closure
+//!     makes), so the surface advances when a fired `put`/`delete` commits;
+//!   - an **"Actions" `section`** of one `icon`+`button` row per service method
+//!     (`put` / `get` / `delete`), each `button` carrying its
+//!     `onClick = { turn, arg }` — the EXACT cap-gated verified turn a click fires
+//!     through the [`invoke()`](crate)/affordance seam.
 //!
 //! The button `turn` names match the service method vocabulary
 //! ([`METHOD_PUT`](crate::METHOD_PUT), …) so the card and the service cell speak
@@ -37,17 +42,50 @@
 
 use serde_json::{Value, json};
 
-use crate::{METHOD_DELETE, METHOD_GET, METHOD_PUT, VERSION_SLOT};
+use crate::{
+    CAPACITY, COUNT_SLOT, LAST_KEY_SLOT, LAST_VALUE_SLOT, METHOD_DELETE, METHOD_GET, METHOD_PUT,
+    VERSION_SLOT,
+};
 
 /// A `deos.ui.text` node.
 fn text(s: &str) -> Value {
     json!({ "kind": "text", "props": { "text": s } })
 }
 
-/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label
-/// prefix (the engine drops the closure on serialize, so the slot is tagged).
+/// A `deos.ui.pill` node — a colored status badge.
+fn pill(label: &str, tag: &str) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
+}
+
+/// A `deos.ui.icon` node — a glyph indicator tinted by `tag`.
+fn icon(glyph: &str, tag: &str) -> Value {
+    json!({ "kind": "icon", "props": { "glyph": glyph, "tag": tag } })
+}
+
+/// A `deos.ui.divider` node — a full-width groove rule.
+fn divider() -> Value {
+    json!({ "kind": "divider", "props": {} })
+}
+
+/// A `deos.ui.row` node — a horizontal flex of children.
+fn row(children: Vec<Value>) -> Value {
+    json!({ "kind": "row", "props": {}, "children": children })
+}
+
+/// A `deos.ui.section` node — a titled, bordered container.
+fn section(title: &str, tag: &str, children: Vec<Value>) -> Value {
+    json!({ "kind": "section", "props": { "title": title, "tag": tag }, "children": children })
+}
+
+/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label prefix
+/// (the engine drops the closure on serialize, so the slot is tagged).
 fn bind(slot: usize, label: &str) -> Value {
     json!({ "kind": "bind", "props": { "slot": slot, "label": label } })
+}
+
+/// A `deos.ui.gauge` node — a bound progress bar (`slot_value / max`, immediate-mode).
+fn gauge(slot: usize, max: u64, label: &str) -> Value {
+    json!({ "kind": "gauge", "props": { "slot": slot, "max": max, "label": label } })
 }
 
 /// A `deos.ui.button` node carrying its affordance payload `onClick = {turn, arg}`.
@@ -58,23 +96,39 @@ fn button(label: &str, turn: &str, arg: i64) -> Value {
     })
 }
 
+/// An action row — an `icon` + a method `button` (the verified-turn affordance).
+fn action(glyph: &str, label: &str, turn: &str) -> Value {
+    row(vec![icon(glyph, "accent"), button(label, turn, 0)])
+}
+
 /// **The kvstore card as a `deos.ui.*` view-tree** (a `serde_json::Value`).
 ///
-/// A `vstack` of a header, a live `bind` on the store [`VERSION_SLOT`], and one
-/// button per service method (`put` / `delete` / `get`). Renderer-independent
-/// DATA: hand it to any `deos-view` renderer (native / web / discord) to paint the
-/// SAME card. The button `turn` names are the service method symbols
+/// A legible little key-value store: a status header (name + a `LIVE` pill), a
+/// "Store" section surfacing the live entry-count gauge and the version / count /
+/// last-key / last-value binds, and an "Actions" section of the three
+/// icon-labelled method buttons. Renderer-independent DATA: hand it to any
+/// `deos-view` renderer (native / web / discord) to paint the SAME card. The
+/// button `turn` names are the service method symbols
 /// ([`METHOD_PUT`](crate::METHOD_PUT), …).
 pub fn kvstore_card_value() -> Value {
     json!({
         "kind": "vstack",
         "props": {},
         "children": [
-            text("Key-Value Store"),
-            bind(VERSION_SLOT, "version: "),
-            button("Put",    METHOD_PUT,    0),
-            button("Delete", METHOD_DELETE, 0),
-            button("Get",    METHOD_GET,    0),
+            row(vec![text("Key-Value Store"), pill("LIVE", "good")]),
+            divider(),
+            section("Store", "genuine", vec![
+                gauge(COUNT_SLOT, CAPACITY as u64, "entries "),
+                bind(VERSION_SLOT, "version · "),
+                bind(COUNT_SLOT, "entries · "),
+                bind(LAST_KEY_SLOT, "last key · "),
+                bind(LAST_VALUE_SLOT, "last value · "),
+            ]),
+            section("Actions", "", vec![
+                action("+", "Put",    METHOD_PUT),
+                action("?", "Get",    METHOD_GET),
+                action("×", "Delete", METHOD_DELETE),
+            ]),
         ]
     })
 }
@@ -90,38 +144,90 @@ pub fn kvstore_card_json() -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_card_is_a_vstack_with_a_header_a_version_bind_and_three_buttons() {
-        let card = kvstore_card_value();
-        assert_eq!(card["kind"], "vstack");
-        let children = card["children"].as_array().expect("children");
-        // header, bind, put, delete, get
-        assert_eq!(children.len(), 5);
-        assert_eq!(children[0]["kind"], "text");
-        assert_eq!(children[0]["props"]["text"], "Key-Value Store");
+    fn collect<'a>(node: &'a Value, kind: &str, out: &mut Vec<&'a Value>) {
+        if node["kind"] == kind {
+            out.push(node);
+        }
+        if let Some(children) = node["children"].as_array() {
+            for c in children {
+                collect(c, kind, out);
+            }
+        }
+    }
+
+    fn of_kind<'a>(card: &'a Value, kind: &str) -> Vec<&'a Value> {
+        let mut out = Vec::new();
+        collect(card, kind, &mut out);
+        out
     }
 
     #[test]
-    fn the_version_bind_reads_the_version_slot() {
+    fn the_card_is_a_vstack_with_a_named_header_and_a_status_pill() {
         let card = kvstore_card_value();
-        let bind = &card["children"][1];
-        assert_eq!(bind["kind"], "bind");
-        assert_eq!(bind["props"]["slot"], VERSION_SLOT);
-        assert_eq!(bind["props"]["label"], "version: ");
+        assert_eq!(card["kind"], "vstack");
+        let texts = of_kind(&card, "text");
+        assert!(
+            texts
+                .iter()
+                .any(|t| t["props"]["text"] == "Key-Value Store"),
+            "the header names the app"
+        );
+        let pills = of_kind(&card, "pill");
+        assert_eq!(pills.len(), 1);
+        assert_eq!(pills[0]["props"]["text"], "LIVE");
+    }
+
+    #[test]
+    fn the_entry_count_gauge_reads_the_count_slot_against_capacity() {
+        let card = kvstore_card_value();
+        let gauges = of_kind(&card, "gauge");
+        assert_eq!(gauges.len(), 1, "one entry-count gauge");
+        assert_eq!(gauges[0]["props"]["slot"], COUNT_SLOT);
+        assert_eq!(gauges[0]["props"]["max"].as_u64().unwrap(), CAPACITY as u64);
+    }
+
+    #[test]
+    fn the_store_section_binds_the_live_header() {
+        let card = kvstore_card_value();
+        let binds = of_kind(&card, "bind");
+        let slots: Vec<u64> = binds
+            .iter()
+            .map(|b| b["props"]["slot"].as_u64().unwrap())
+            .collect();
+        assert_eq!(
+            slots,
+            vec![
+                VERSION_SLOT as u64,
+                COUNT_SLOT as u64,
+                LAST_KEY_SLOT as u64,
+                LAST_VALUE_SLOT as u64
+            ],
+            "the binds surface version / entries / last key / last value"
+        );
+    }
+
+    #[test]
+    fn the_card_has_a_store_section_and_an_actions_section() {
+        let card = kvstore_card_value();
+        let sections = of_kind(&card, "section");
+        let titles: Vec<&str> = sections
+            .iter()
+            .map(|s| s["props"]["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, vec!["Store", "Actions"]);
     }
 
     #[test]
     fn every_button_carries_its_service_method_as_the_turn_payload() {
         let card = kvstore_card_value();
-        let children = card["children"].as_array().unwrap();
-        let buttons: Vec<&Value> = children.iter().filter(|c| c["kind"] == "button").collect();
+        let buttons = of_kind(&card, "button");
         assert_eq!(buttons.len(), 3);
         let turns: Vec<&str> = buttons
             .iter()
             .map(|b| b["props"]["onClick"]["turn"].as_str().unwrap())
             .collect();
         // The card's button turns ARE the service method vocabulary.
-        assert_eq!(turns, vec![METHOD_PUT, METHOD_DELETE, METHOD_GET]);
+        assert_eq!(turns, vec![METHOD_PUT, METHOD_GET, METHOD_DELETE]);
     }
 
     #[test]
@@ -130,6 +236,7 @@ mod tests {
         // Round-trips through serde (the shape a deos-view renderer's parser reads).
         let back: Value = serde_json::from_str(&s).expect("the card JSON parses");
         assert_eq!(back["kind"], "vstack");
-        assert_eq!(back["children"].as_array().unwrap().len(), 5);
+        // header row, divider, store section, actions section
+        assert_eq!(back["children"].as_array().unwrap().len(), 4);
     }
 }
