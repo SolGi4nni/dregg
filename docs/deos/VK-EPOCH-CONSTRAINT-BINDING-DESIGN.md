@@ -95,9 +95,25 @@ The constraint-binding **soundness core is NOT VK-affecting**:
 
 What IS VK-adjacent is the **carrier** (§1, fact 2): for a **pure light client** (commitments only),
 the off-AIR manifest must ride the leg the light client actually binds — the rotated/wide leg — and
-be tied to committed state in-AIR. Getting the manifest (or the per-slot field-view openings) onto
-the rotated/wide leg with PI bindings is a new descriptor boundary = **new VK bytes**. That is the
-named, gated VK epoch.
+be tied to committed state in-AIR.
+
+### Correction (verified against HEAD): the manifest carrier is ALREADY in the deployed VK
+
+The rotated caveat carrier — the `RotCaveatManifest` (29 felts) chained by `caveatCommit` to a
+published caveat-commit PI — is **already in the deployed AIR** of every R=24 cohort descriptor.
+`circuit/descriptors/rotation-v3-staged-registry.tsv`'s `transferVmDescriptor2R24` (`public_input_count:46`)
+carries the manifest at cols 287.., chained by poseidon2 lookups to col 328, pinned `pi_index 45`.
+The Lean binding keystone `EffectVmEmitRotationCaveat.caveatCommit_binds` proves equal caveat commits
+force equal manifests under the ONE `Poseidon2SpongeCR` floor. So a pure light client that binds the
+caveat-commit PI (part of the ~124-bit wide commit) witnesses the **exact** manifest; a forger cannot
+publish a different (omitting) one without moving PI 45.
+
+Consequently, **porting the capacity manifest (tags 17/18/19) onto this carrier is NOT VK-affecting**:
+the carrier columns + the `caveatCommit` → PI binding already exist; the tag values are data on
+existing columns, not new constraint polynomials. The §4 framing above ("a new descriptor boundary =
+new VK bytes") over-stated the carrier's cost — the manifest-binding leg is already deployed.
+
+The genuinely-VK-affecting remainder is **narrower** than "the carrier" and is the §6 tail.
 
 ## 5. Staged wiring (built this pass, deployed default NOT flipped)
 
@@ -119,6 +135,37 @@ named, gated VK epoch.
 The deployed `verify_full_turn_bound` and the deployed default (no cell declares a capacity caveat)
 are unchanged.
 
+### The CARRIER staging (Piece 1, built this pass — NOT VK-affecting, NOT flipped)
+
+The capacity manifest now rides the **AIR-bound rotated carrier**, not just the unbound off-AIR
+full-v1 PI leg the deployed coverage check reads:
+
+* **Lean** — `metatheory/Dregg2/Deos/CapacityCarrier.lean`, `#assert_all_clean` (5 keystones). It
+  bridges `RotCaveatManifest` → `ConstraintBinding.Manifest` (`toConstraintManifest`) and proves:
+  - `carrier_manifest_forced` / `carrier_coverage_forced` — two manifests with the same caveat
+    commit project to the same coverage manifest (via `caveatCommit_binds`); coverage rides the
+    commit, not the prover's choice.
+  - **`carrier_omission_impossible`** — the sharp tooth: there is NO manifest a forger can publish
+    that both matches the committed caveat commit of an honest covering manifest AND omits a required
+    tag. This is the upgrade from "verifier HOLDS the committed manifest opening" (the soundness
+    core's posture) to a **pure light client** binding PI 45 — the manifest it checks IS forced.
+  - **`carrier_omission_caught_pure_lightclient`** — composed with `DeclCommitBinds`: both bindings
+    (caveat commit forces the manifest; authority-digest forces the required tags) discharge the
+    cap-membership posture. `escrow_carrier_omission_impossible` is the concrete tag-17 instance.
+  - Non-vacuity `#guard`s: an omitting (`count = 0`) manifest does not cover tag 17, and dropping the
+    entry MOVES the reference-sponge `caveatCommit` (a pure light client detects it).
+* **Circuit producer** — `slot_caveats_to_rotated_manifest` (`trace_rotated.rs`): projects the off-AIR
+  `SlotCaveatEntry` capacity entries onto the rotated carrier (registers domain, `slot_index` → felt
+  key, params preserved); refuses an over-width manifest (no silent truncation = no dropped gate).
+* **Circuit verifier** — `verify_rotated_caveat_coverage` (`verify.rs`): the bound-leg twin of
+  `verify_slot_caveat_coverage`, demanding every required tag is present in the rotated manifest the
+  wide commit forces. Tests: `circuit/tests/capacity_carrier.rs` (7 — faithful projection, honest
+  accept, omission/wrong-tag/multi-tag rejection, over-width fail-closed).
+
+STAGED: nothing on the live wire calls these (no deployed cell declares a capacity caveat); the
+deployed empty-manifest default and the deployed descriptors/VK are byte-identical (descriptor-drift
+guards green).
+
 ## 6. The true distance to "genuinely light-client-witnessed"
 
 * **DONE (this pass):** the soundness core. A verifier that holds (or re-derives from authoritative
@@ -126,22 +173,34 @@ are unchanged.
   deployed cap-membership expectation (`verify_full_turn_bound` step 9, where the caller re-derives
   `cap_root`/leaf from trusted data) — now **rejects omission**. The gate is no longer
   prover-optional. Proven in Lean, exercised in Rust.
-* **REMAINING (the named, gated VK epoch):**
-  1. **Carrier** — put the off-AIR manifest (or the field-view openings) on the rotated/wide leg PI,
-     bound in-AIR, so a **pure** light client (commitments only, no state opening) witnesses
-     coverage without trusting a caller-supplied field view. This is VK-affecting (new descriptor
-     boundary) and must be built STAGED beside the deployed descriptor.
-  2. **Authority-digest opening** — bind the caller-supplied `required_tags` to the committed
-     declaration in-proof: open the witnessed `state_constraints` against the `B_AUTHORITY_DIGEST`
-     limb the wide commit carries (recompute `compute_authority_digest_felt`, check equality), so the
-     required-tag set is provably the committed one, not caller-asserted. The Lean `DeclCommitBinds`
-     floor is the spec; this is its in-proof realization.
-  3. **Flip** — the lockstep verifier-code + descriptor epoch: ship the upgraded verifier and the
-     staged carrier descriptor to all consumers, then allow capacity cells to declare the caveat and
-     route the live path through `verify_full_turn_bound_with_caveat_coverage`. Coordinates with the
-     temporal-caveat and umem VK epochs (one upgrade window).
+* **DONE (this pass — Piece 1, the CARRIER, §5):** the capacity manifest rides the AIR-bound rotated
+  carrier; omission on the bound leg is **impossible** (`carrier_omission_impossible`), proven for a
+  pure light client binding PI 45. This discharges the COVERAGE half (the omission tooth) for a pure
+  light client: it no longer needs to be handed the manifest opening — the wide commit forces it.
+  NOT VK-affecting (the carrier binding is already deployed; see the §4 correction).
 
-Until (1)+(2)+(3), the staged path is light-client-witnessed **for a verifier with the committed-
-state opening** (the cap-membership posture), not yet for a pure commitments-only light client. That
-is the honest scope: the soundness CORE — omission is caught, not prover-optional — is built and
-proven; the carrier that extends it to a pure light client is the named remaining VK epoch.
+* **REMAINING (the genuinely-VK-affecting tail — narrower than "the carrier"):**
+  1. **In-AIR gate-satisfaction weld** — the SATISFACTION half is still off-AIR: the §6 capacity gates
+     (`SettleGate`/`DischargeGate`/`VaultDepositGate`) re-evaluate against caller-supplied
+     `initial_fields`/`final_fields`. For a pure light client to witness satisfaction (not just
+     coverage) without a state opening, the gate's slot reads must be welded **in-AIR** to the rotated
+     BEFORE/AFTER state-block field columns (the `r3..r10` limbs, cols 187+… / 237+…). This is a new
+     constraint = **new VK bytes**, built STAGED beside the deployed descriptor.
+  2. **In-AIR coverage-forcing from the authority digest** — bind the required-tag floor to the
+     committed declaration **in-proof**: open the witnessed `state_constraints` against the
+     `B_AUTHORITY_DIGEST` r23 limb the wide commit carries (recompute `compute_authority_digest_felt`,
+     check equality, force the manifest to carry the re-derived required tags). This removes the last
+     caller-asserted input (`required_tags`). The Lean `DeclCommitBinds` floor is the spec; this is its
+     in-proof realization. New constraint = **new VK bytes**, STAGED.
+  3. **Flip** — the lockstep verifier-code + descriptor epoch: ship the upgraded verifier and the
+     staged (1)+(2) descriptors to all consumers, route the live path through
+     `verify_full_turn_bound_with_caveat_coverage` reading the **rotated** leg
+     (`verify_rotated_caveat_coverage`) instead of the off-AIR v1 leg, then allow capacity cells to
+     declare the caveat. Coordinates with the temporal-caveat and umem VK epochs (one upgrade window).
+     Precedent: the umem flip (`da0c47dd6`) — every producer built + loud-probe-validated STAGED, the
+     flip a pure registry-default flip, PI-count-preserving, fail-closed, no coverage narrowing.
+
+The honest scope after this pass: COVERAGE (omission caught) is now pure-light-client-witnessed via
+the deployed carrier; SATISFACTION (the gate re-eval) is still witnessed only **for a verifier with
+the committed-state opening** (the cap-membership posture) until (1) lands; and the required-tag floor
+is caller-asserted until (2) binds it in-proof. (1)+(2)+(3) are the remaining gated VK epoch.

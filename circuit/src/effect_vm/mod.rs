@@ -221,6 +221,6 @@ pub use trace_rotated::{
 
 // ---- Re-export verify ----
 pub use verify::{
-    verify_balance_limb_pis, verify_balance_limb_ranges, verify_slot_caveat_coverage,
-    verify_slot_caveat_manifest, verify_state_integrity,
+    verify_balance_limb_pis, verify_balance_limb_ranges, verify_rotated_caveat_coverage,
+    verify_slot_caveat_coverage, verify_slot_caveat_manifest, verify_state_integrity,
 };

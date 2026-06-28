@@ -86,6 +86,15 @@ import Dregg2.Deos.Vault
 -- floor) + omission_rejected/unsatisfied_rejected + the escrow bridge to SealedEscrow.SettleGate.
 -- #assert_all_clean. docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md.
 import Dregg2.Deos.ConstraintBinding
+-- PIECE 1 of the VK epoch — the CARRIER rung: the capacity manifest is FORCED on the already-deployed
+-- rotated caveat carrier (caveatCommit → PI 45, in every R=24 cohort VK). Upgrades the soundness core
+-- from "verifier HOLDS the committed manifest opening" to a PURE light client (commitments only):
+-- carrier_manifest_forced + carrier_omission_impossible (omission on the bound leg is impossible —
+-- the published manifest IS the committed one, by caveatCommit_binds) + the composed pure-light-client
+-- keystone carrier_omission_caught_pure_lightclient (both bindings: caveat commit + DeclCommitBinds).
+-- NOT VK-affecting (the carrier binding is already deployed; capacity tags are DATA on existing cols).
+-- #assert_all_clean. docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md §6.
+import Dregg2.Deos.CapacityCarrier
 -- The HATCHERY abstraction-mint house-capacity, GROUNDED (the LAST of the six — the house COMPLETE):
 -- a user-defined verified KIND's declared invariant IS enforced, forever, and its attestation is REAL.
 -- Enforcement is the SAME `CellProgram::evaluate_with_meta` gate (`evalStep`), a violating turn →

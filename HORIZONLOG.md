@@ -9,6 +9,17 @@ should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
 ## NOW-STATE (late-2026-06-25 cluster — lanes that landed AFTER the entries below, recorded here for durability)
+- CAPACITY-CARRIER (Piece 1 of the constraint-binding VK epoch) — LANDED STAGED, NOT VK-affecting (2026-06-27). The capacity
+  manifest (tags 17/18/19) now rides the AIR-bound rotated caveat carrier (`caveatCommit` → PI 45, already in the deployed
+  R=24 cohort VK), not just the unbound off-AIR v1 PI leg. Lean `metatheory/Dregg2/Deos/CapacityCarrier.lean` (`#assert_all_clean`,
+  5 keystones): `carrier_omission_impossible` upgrades the soundness core from "verifier HOLDS the manifest opening" to a PURE
+  light client binding PI 45 (the manifest it checks IS forced, by `caveatCommit_binds`); `carrier_omission_caught_pure_lightclient`
+  composes both bindings (caveat commit + `DeclCommitBinds`). Circuit: `slot_caveats_to_rotated_manifest` (`trace_rotated.rs`) +
+  `verify_rotated_caveat_coverage` (`verify.rs`) + 7 tests (`circuit/tests/capacity_carrier.rs`). HONEST FINDING: the carrier
+  binding was ALREADY deployed → porting the manifest onto it is data-not-VK (corrects the design doc's §4 over-statement).
+  NAMED REMAINING (the genuinely-VK-affecting tail, now narrower): (1) in-AIR gate-satisfaction weld (capacity gate slot reads ↔
+  rotated state blocks); (2) in-AIR coverage-forcing from the r23 `B_AUTHORITY_DIGEST` (removes the caller-asserted `required_tags`);
+  (3) the lockstep flip (route the live verify through the rotated leg). Doc: `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md` §5–§6.
 - TEMPORAL ALGEBRA NOW WRITABLE (STAGED) — the proven-but-unwired register-reading temporal atoms became deployable caveats
   (2026-06-26). `StateConstraint::{RateBound, CooledSince, UntilEvent, SinceEvent, ChallengeWindow}` (`cell/src/program/types.rs`)
   honor the discharged Lean semantics (`temporalStateStepGuarded`/`temporalAtomsAdmit`, `TemporalAlgebra{,2}.lean`): rate < k,

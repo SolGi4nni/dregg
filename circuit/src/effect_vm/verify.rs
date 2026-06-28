@@ -613,3 +613,36 @@ pub fn verify_slot_caveat_coverage(
     }
     Ok(())
 }
+
+/// **THE ROTATED-LEG COVERAGE CHECK (PIECE 1 of the VK epoch, STAGED).** The bound-leg twin of
+/// [`verify_slot_caveat_coverage`]: assert every required capacity tag is present in the
+/// `RotatedCaveatManifest` carried on the AIR-bound rotated leg (manifest cols chained by
+/// `caveatCommit` to the published caveat-commit PI — `pi_index 45` on every R=24 cohort
+/// descriptor). Returns `Ok` iff every required tag appears; otherwise the first missing tag.
+///
+/// The difference from [`verify_slot_caveat_coverage`] is the LEG: that function scans the off-AIR
+/// full-v1 PI manifest (the `>= pi::BASE_COUNT` leg, NOT what a pure light client binds); this one
+/// runs against the manifest a pure light client DOES bind — the rotated carrier whose
+/// `caveatCommit` is folded into the ~124-bit wide commit. A forger cannot publish a manifest here
+/// that differs from the committed one without moving the bound caveat commit (the Lean
+/// `EffectVmEmitRotationCaveat.caveatCommit_binds`), so omission on this leg is impossible (the Lean
+/// `Dregg2.Deos.CapacityCarrier.carrier_omission_impossible`). The caller reconstructs the
+/// `RotatedCaveatManifest` and verifies its `caveatCommit` equals the bound PI before calling this.
+///
+/// STAGED beside the deployed empty-manifest default; NOT VK-affecting (the carrier binding is
+/// already deployed). See `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md` §6.
+pub fn verify_rotated_caveat_coverage(
+    manifest: &super::trace_rotated::RotatedCaveatManifest,
+    required_tags: &[u32],
+) -> Result<(), String> {
+    for &req in required_tags {
+        if !manifest.covers_tag(req) {
+            return Err(format!(
+                "rotated-leg coverage: declared capacity tag {req} is REQUIRED by the committed \
+                 declaration but ABSENT from the bound rotated caveat manifest — omission rejected \
+                 (fail-closed; the carrier binds the manifest into the wide commit)"
+            ));
+        }
+    }
+    Ok(())
+}

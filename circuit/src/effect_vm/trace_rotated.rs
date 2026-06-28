@@ -276,6 +276,58 @@ impl RotatedCaveatManifest {
     fn count(&self) -> u32 {
         self.entries.iter().take_while(|e| e.type_tag != 0).count() as u32
     }
+
+    /// Whether the manifest contains an entry carrying the given type tag (the rotated-leg
+    /// COVERAGE primitive — the rotated twin of the off-AIR `pi::SLOT_CAVEAT_*` scan). Reads
+    /// the active prefix (`type_tag != 0`); padding entries never match a capacity tag (17/19).
+    pub fn covers_tag(&self, tag: u32) -> bool {
+        self.entries
+            .iter()
+            .take_while(|e| e.type_tag != 0)
+            .any(|e| e.type_tag == tag)
+    }
+}
+
+/// **THE CAPACITY-CARRIER PROJECTION (PIECE 1 of the VK epoch, STAGED).** Project the off-AIR
+/// `SlotCaveatEntry` manifest (the live `pi::SLOT_CAVEAT_*` v1 layout, `{type_tag, slot_index,
+/// params}`) onto the AIR-bound rotated caveat carrier (`RotatedCaveatManifest`). The rotated
+/// region — manifest cols chained by `caveatCommit` to the published caveat-commit PI — is in the
+/// DEPLOYED AIR of every R=24 cohort descriptor, so a manifest projected here is BOUND into the
+/// ~124-bit wide commit a pure light client binds: a forger cannot omit it off-AIR (the Lean
+/// `Dregg2.Deos.CapacityCarrier.carrier_omission_impossible`).
+///
+/// Each slot-domain caveat maps to the registers domain (`cav::DOMAIN_REGISTERS`) with the
+/// `slot_index` widened to the felt `key` and the four params preserved positionally — the faithful
+/// rotated twin of the v1 entry (the producer side of the Lean `RotCaveatEntry` / `toEntry` bridge).
+/// At most `MAX_CAVEATS` entries fit (the carrier width is fixed); a longer manifest is REFUSED
+/// rather than truncated (truncation could silently drop a declared capacity gate — fail closed).
+///
+/// STAGED: nothing on the live wire calls this yet (no deployed cell declares a capacity caveat).
+/// It is the producer the carrier-coverage verifier (`verify_rotated_caveat_coverage`) consumes,
+/// built BESIDE the deployed empty-manifest default. NOT VK-affecting (the carrier columns + the
+/// `caveatCommit` PI binding already exist; the tags are data on existing columns). See
+/// `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md` §6.
+pub fn slot_caveats_to_rotated_manifest(
+    entries: &[crate::effect_vm::trace::SlotCaveatEntry],
+) -> Result<RotatedCaveatManifest, String> {
+    if entries.len() > cav::MAX_CAVEATS {
+        return Err(format!(
+            "capacity-carrier projection: {} slot caveats exceed the rotated carrier width \
+             ({} entries); truncation could drop a declared capacity gate — refused (fail-closed)",
+            entries.len(),
+            cav::MAX_CAVEATS
+        ));
+    }
+    let mut manifest = RotatedCaveatManifest::default();
+    for (i, e) in entries.iter().enumerate() {
+        manifest.entries[i] = RotatedCaveatEntry {
+            type_tag: e.type_tag,
+            domain_tag: cav::DOMAIN_REGISTERS,
+            key: BabyBear::new(e.slot_index as u32),
+            params: e.params,
+        };
+    }
+    Ok(manifest)
 }
 
 // ============================================================================
