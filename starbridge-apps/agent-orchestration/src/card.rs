@@ -59,9 +59,11 @@ fn text(s: &str) -> Value {
     json!({ "kind": "text", "props": { "text": s } })
 }
 
-/// A `deos.ui.pill` node — a colored status badge.
-fn pill(label: &str, tag: &str) -> Value {
-    json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
+/// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a
+/// word + color via `cases` (the first `{value,label,tag}` matching the slot wins).
+/// `text`/`tag` are the static fallback (discord, or no match).
+fn pill_live(slot: u8, label: &str, tag: &str, cases: Value) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag, "slot": slot as usize, "cases": cases } })
 }
 
 /// A `deos.ui.icon` node — a glyph indicator tinted by `tag`.
@@ -84,15 +86,23 @@ fn section(title: &str, tag: &str, children: Vec<Value>) -> Value {
     json!({ "kind": "section", "props": { "title": title, "tag": tag }, "children": children })
 }
 
-/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label prefix (the
-/// engine drops the closure on serialize, so the slot is tagged).
-fn bind(slot: u8, label: &str) -> Value {
-    json!({ "kind": "bind", "props": { "slot": slot as usize, "label": label } })
+/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label prefix and a
+/// display `fmt` (`"id"` avatar-handle / `"hash"` short-hex / `"amount"` grouped /
+/// `"raw"` plain) so an opaque 20-digit key/amount paints short + friendly.
+fn bind(slot: u8, label: &str, fmt: &str) -> Value {
+    json!({ "kind": "bind", "props": { "slot": slot as usize, "label": label, "fmt": fmt } })
+}
+
+/// A `deos.ui.bind` node marked `adept` — hidden in the simple projection (dev-y /
+/// internal signal); revealed in the adept "see the bones" view.
+fn bind_adept(slot: u8, label: &str, fmt: &str) -> Value {
+    json!({ "kind": "bind", "props": { "slot": slot as usize, "label": label, "fmt": fmt, "adept": true } })
 }
 
 /// A `deos.ui.gauge` node — a bound progress bar (`slot_value / max`, immediate-mode).
-fn gauge(slot: u8, max: u64, label: &str) -> Value {
-    json!({ "kind": "gauge", "props": { "slot": slot as usize, "max": max, "label": label } })
+/// `adept` hides the raw numeric in the simple projection; revealed in the adept view.
+fn gauge(slot: u8, max: u64, label: &str, adept: bool) -> Value {
+    json!({ "kind": "gauge", "props": { "slot": slot as usize, "max": max, "label": label, "adept": adept } })
 }
 
 /// A `deos.ui.breadcrumb` node — the lifecycle path; the `active` step is marked `›`.
@@ -139,17 +149,24 @@ pub fn board_card_value() -> Value {
         "kind": "vstack",
         "props": {},
         "children": [
-            row(vec![text("Agent Orchestration"), pill("COORDINATING", "accent")]),
+            // The header status pill is LIVE: it reads the dispatch EPOCH and shows
+            // whether the board is open. epoch 0 = the factory cell, not yet opened
+            // (PENDING); any opened/coordinating board (epoch ≥ 1, the seed sets 1)
+            // falls through to the COORDINATING fallback.
+            row(vec![text("Agent Orchestration"), pill_live(EPOCH_SLOT, "COORDINATING", "accent", json!([
+                { "value": 0, "label": "PENDING", "tag": "muted" },
+            ]))]),
             breadcrumb(&["Mandate", "Dispatch", "Worker Step", "Audit"], 1),
             divider(),
             section("Coordination", "genuine", vec![
-                gauge(SPENT_A_SLOT, BUDGET_GAUGE_MAX, "worker-a spend → budget "),
-                gauge(SPENT_B_SLOT, BUDGET_GAUGE_MAX, "worker-b spend → budget "),
-                bind(BUDGET_SLOT, "budget · "),
-                bind(SPENT_A_SLOT, "spent A · "),
-                bind(SPENT_B_SLOT, "spent B · "),
-                bind(EPOCH_SLOT, "epoch · "),
-                bind(LEAD_SLOT, "lead · "),
+                gauge(SPENT_A_SLOT, BUDGET_GAUGE_MAX, "worker-a spend → budget ", false),
+                gauge(SPENT_B_SLOT, BUDGET_GAUGE_MAX, "worker-b spend → budget ", false),
+                bind(BUDGET_SLOT, "budget · ", "amount"),
+                bind(SPENT_A_SLOT, "spent A · ", "amount"),
+                bind(SPENT_B_SLOT, "spent B · ", "amount"),
+                // The raw no-replay dispatch counter — internal bookkeeping, adept-only.
+                bind_adept(EPOCH_SLOT, "epoch · ", "raw"),
+                bind(LEAD_SLOT, "lead · ", "id"),
             ]),
             section("Actions", "", vec![
                 action("▸", "Open Board",       METHOD_OPEN_BOARD),
@@ -201,7 +218,41 @@ mod tests {
         );
         let pills = of_kind(&card, "pill");
         assert_eq!(pills.len(), 1);
-        assert_eq!(pills[0]["props"]["text"], "COORDINATING");
+        // The header pill is LIVE: it reads EPOCH_SLOT and maps the value to a word.
+        assert_eq!(
+            pills[0]["props"]["text"], "COORDINATING",
+            "the static fallback word (an opened board)"
+        );
+        assert_eq!(pills[0]["props"]["slot"], EPOCH_SLOT as usize);
+        let cases = pills[0]["props"]["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 1, "epoch 0 = PENDING (not yet opened)");
+        assert_eq!(cases[0]["value"], 0);
+        assert_eq!(cases[0]["label"], "PENDING");
+    }
+
+    #[test]
+    fn the_budget_and_identity_binds_carry_their_display_fmt() {
+        let card = board_card_value();
+        let binds = of_kind(&card, "bind");
+        let fmt = |slot: u8| -> String {
+            binds
+                .iter()
+                .find(|b| b["props"]["slot"].as_u64() == Some(slot as u64))
+                .and_then(|b| b["props"]["fmt"].as_str())
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(fmt(BUDGET_SLOT), "amount", "the budget groups digits");
+        assert_eq!(fmt(SPENT_A_SLOT), "amount", "worker-a spend groups digits");
+        assert_eq!(fmt(SPENT_B_SLOT), "amount", "worker-b spend groups digits");
+        assert_eq!(fmt(LEAD_SLOT), "id", "the lead paints an avatar handle");
+        assert_eq!(fmt(EPOCH_SLOT), "raw", "the dispatch counter stays plain");
+        // The raw dispatch counter is adept-only (hidden in the simple projection).
+        let epoch_bind = binds
+            .iter()
+            .find(|b| b["props"]["slot"].as_u64() == Some(EPOCH_SLOT as u64))
+            .unwrap();
+        assert_eq!(epoch_bind["props"]["adept"], true);
     }
 
     #[test]

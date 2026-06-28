@@ -69,6 +69,13 @@ fn pill(label: &str, tag: &str) -> Value {
     json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
 }
 
+/// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a
+/// word + color via `cases` (the first `{value,label,tag}` matching the slot wins).
+/// `text`/`tag` are the static fallback (discord, or no match).
+fn pill_live(slot: u8, label: &str, tag: &str, cases: Value) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag, "slot": slot as usize, "cases": cases } })
+}
+
 /// A `deos.ui.icon` node — a glyph indicator tinted by `tag`.
 fn icon(glyph: &str, tag: &str) -> Value {
     json!({ "kind": "icon", "props": { "glyph": glyph, "tag": tag } })
@@ -89,15 +96,24 @@ fn section(title: &str, tag: &str, children: Vec<Value>) -> Value {
     json!({ "kind": "section", "props": { "title": title, "tag": tag }, "children": children })
 }
 
-/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label prefix
-/// (the engine drops the closure on serialize, so the slot is tagged).
-fn bind(slot: usize, label: &str) -> Value {
-    json!({ "kind": "bind", "props": { "slot": slot, "label": label } })
+/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label prefix and a
+/// display `fmt` (`"id"` avatar-handle / `"hash"` short-hex / `"amount"` grouped /
+/// `"raw"` plain) so an opaque key/root paints short + friendly.
+fn bind(slot: usize, label: &str, fmt: &str) -> Value {
+    json!({ "kind": "bind", "props": { "slot": slot, "label": label, "fmt": fmt } })
+}
+
+/// A `deos.ui.bind` node marked `adept` — hidden in the simple projection (a raw
+/// state-machine numeric / internal root); revealed in the adept "see the bones" view.
+fn bind_adept(slot: usize, label: &str, fmt: &str) -> Value {
+    json!({ "kind": "bind", "props": { "slot": slot, "label": label, "fmt": fmt, "adept": true } })
 }
 
 /// A `deos.ui.gauge` node — a bound progress bar (`slot_value / max`, immediate-mode).
-fn gauge(slot: usize, max: u64, label: &str) -> Value {
-    json!({ "kind": "gauge", "props": { "slot": slot, "max": max, "label": label } })
+/// `adept` hides the raw numeric in the simple projection (the breadcrumb + live pill
+/// already show the stage); revealed in the adept "see the bones" view.
+fn gauge(slot: usize, max: u64, label: &str, adept: bool) -> Value {
+    json!({ "kind": "gauge", "props": { "slot": slot, "max": max, "label": label, "adept": adept } })
 }
 
 /// A `deos.ui.breadcrumb` node — the charter path; the `active` step is marked `›`.
@@ -146,14 +162,23 @@ pub fn workflow_card_value() -> Value {
         "kind": "vstack",
         "props": {},
         "children": [
-            row(vec![text("Compartment Workflow"), pill("REVIEW", "accent")]),
+            // The header status pill is LIVE: it reads the charter STEP_CURSOR and shows
+            // the entered phase as a WORD (review → redact → sign → sealed at terminal).
+            row(vec![text("Compartment Workflow"), pill_live(STEP_CURSOR_SLOT, "REVIEW", "accent", json!([
+                { "value": 0, "label": "REVIEW", "tag": "accent" },
+                { "value": 1, "label": "REDACT", "tag": "warn" },
+                { "value": 2, "label": "SIGN",   "tag": "good" },
+                { "value": 3, "label": "SEALED", "tag": "good" },
+            ]))]),
             breadcrumb(&["Review", "Redact", "Sign"], 0),
             divider(),
             section("Charter", "genuine", vec![
-                gauge(STEP_CURSOR_SLOT as usize, DEFAULT_CHARTER_STEPS, "step "),
-                bind(STEP_CURSOR_SLOT as usize, "current step · "),
-                bind(STEP_COMPARTMENT_SLOT as usize, "compartment · "),
-                bind(ACTOR_CLEARANCE_SLOT as usize, "clearance · "),
+                // The raw charter-progress numeric — the breadcrumb + live pill already
+                // show the stage, so the integer gauge/cursor/compartment are adept-only.
+                gauge(STEP_CURSOR_SLOT as usize, DEFAULT_CHARTER_STEPS, "step ", true),
+                bind_adept(STEP_CURSOR_SLOT as usize, "current step · ", "raw"),
+                bind_adept(STEP_COMPARTMENT_SLOT as usize, "compartment · ", "raw"),
+                bind(ACTOR_CLEARANCE_SLOT as usize, "clearance · ", "id"),
             ]),
             section("Clearance", "genuine", vec![
                 row(vec![
@@ -164,7 +189,9 @@ pub fn workflow_card_value() -> Value {
                     pill("ClearanceDominates", "good"),
                     text("officer ⊐ {review · redact · sign}"),
                 ]),
-                bind(CLEARANCE_GRAPH_ROOT_SLOT as usize, "charter graph root · "),
+                // The root-bound charter graph is a raw Merkle root — the friendly
+                // ClearanceDominates pill carries the signal; the root is adept-only.
+                bind_adept(CLEARANCE_GRAPH_ROOT_SLOT as usize, "charter graph root · ", "hash"),
             ]),
             section("Actions", "", vec![
                 action("›", "Advance", METHOD_ADVANCE_STEP),
@@ -215,11 +242,21 @@ mod tests {
             "the header names the app"
         );
         let pills = of_kind(&card, "pill");
-        // The status pill (the live step word) + the ClearanceDominates security pill.
-        assert!(
-            pills.iter().any(|p| p["props"]["text"] == "REVIEW"),
-            "the status pill names the live workflow step as a word"
+        // The header status pill is LIVE: it reads STEP_CURSOR_SLOT and maps the value
+        // to the entered phase word. (The ClearanceDominates pill is a static badge.)
+        let header = pills
+            .iter()
+            .find(|p| p["props"]["slot"] == STEP_CURSOR_SLOT as usize)
+            .expect("the status pill names the live workflow step as a word");
+        assert_eq!(
+            header["props"]["text"], "REVIEW",
+            "the static fallback word (the first charter step)"
         );
+        let cases = header["props"]["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 4, "review / redact / sign / sealed");
+        assert_eq!(cases[0]["label"], "REVIEW");
+        assert_eq!(cases[2]["value"], 2);
+        assert_eq!(cases[2]["label"], "SIGN");
     }
 
     #[test]
@@ -260,6 +297,34 @@ mod tests {
             ],
             "the binds surface step / compartment / clearance / charter graph root"
         );
+    }
+
+    #[test]
+    fn the_binds_carry_their_display_fmt_and_the_internals_are_adept() {
+        let card = workflow_card_value();
+        let binds = of_kind(&card, "bind");
+        let bind_at = |slot: u8| {
+            binds
+                .iter()
+                .find(|b| b["props"]["slot"].as_u64() == Some(slot as u64))
+                .unwrap()
+        };
+        // The officer clearance paints an avatar handle and stays in the simple view.
+        assert_eq!(bind_at(ACTOR_CLEARANCE_SLOT)["props"]["fmt"], "id");
+        assert!(
+            bind_at(ACTOR_CLEARANCE_SLOT)["props"]
+                .get("adept")
+                .is_none()
+        );
+        // The charter graph root paints short hex.
+        assert_eq!(bind_at(CLEARANCE_GRAPH_ROOT_SLOT)["props"]["fmt"], "hash");
+        // The raw state-machine numerics + the Merkle root are adept-only.
+        assert_eq!(bind_at(STEP_CURSOR_SLOT)["props"]["adept"], true);
+        assert_eq!(bind_at(STEP_COMPARTMENT_SLOT)["props"]["adept"], true);
+        assert_eq!(bind_at(CLEARANCE_GRAPH_ROOT_SLOT)["props"]["adept"], true);
+        // The charter-progress gauge is adept too (the breadcrumb shows the stage).
+        let gauges = of_kind(&card, "gauge");
+        assert_eq!(gauges[0]["props"]["adept"], true);
     }
 
     #[test]

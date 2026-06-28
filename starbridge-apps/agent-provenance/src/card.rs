@@ -71,6 +71,13 @@ fn pill(label: &str, tag: &str) -> Value {
     json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
 }
 
+/// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a
+/// word + color via `cases` (the first `{value,label,tag}` matching the slot wins).
+/// `text`/`tag` are the static fallback (discord, or no match).
+fn pill_live(slot: usize, label: &str, tag: &str, cases: Value) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag, "slot": slot, "cases": cases } })
+}
+
 /// A `deos.ui.icon` node — a glyph indicator tinted by `tag`.
 fn icon(glyph: &str, tag: &str) -> Value {
     json!({ "kind": "icon", "props": { "glyph": glyph, "tag": tag } })
@@ -91,15 +98,23 @@ fn section(title: &str, tag: &str, children: Vec<Value>) -> Value {
     json!({ "kind": "section", "props": { "title": title, "tag": tag }, "children": children })
 }
 
-/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label prefix
-/// (the engine drops the closure on serialize, so the slot is tagged).
-fn bind(slot: usize, label: &str) -> Value {
-    json!({ "kind": "bind", "props": { "slot": slot, "label": label } })
+/// A `deos.ui.bind` node tagged with the model `slot` it re-reads + a label prefix and a
+/// display `fmt` (`"id"` avatar-handle / `"hash"` short-hex / `"amount"` grouped /
+/// `"raw"` plain) so an opaque digest/count paints short + friendly.
+fn bind(slot: usize, label: &str, fmt: &str) -> Value {
+    json!({ "kind": "bind", "props": { "slot": slot, "label": label, "fmt": fmt } })
+}
+
+/// A `deos.ui.bind` node marked `adept` — hidden in the simple projection (a raw digest
+/// / internal signal); revealed in the adept "see the bones" view.
+fn bind_adept(slot: usize, label: &str, fmt: &str) -> Value {
+    json!({ "kind": "bind", "props": { "slot": slot, "label": label, "fmt": fmt, "adept": true } })
 }
 
 /// A `deos.ui.gauge` node — a bound progress bar (`slot_value / max`, immediate-mode).
-fn gauge(slot: usize, max: u64, label: &str) -> Value {
-    json!({ "kind": "gauge", "props": { "slot": slot, "max": max, "label": label } })
+/// `adept` hides the raw numeric in the simple projection; revealed in the adept view.
+fn gauge(slot: usize, max: u64, label: &str, adept: bool) -> Value {
+    json!({ "kind": "gauge", "props": { "slot": slot, "max": max, "label": label, "adept": adept } })
 }
 
 /// A `deos.ui.button` node carrying its affordance payload `onClick = {turn, arg}`.
@@ -128,14 +143,19 @@ pub fn provenance_card_value() -> Value {
         "kind": "vstack",
         "props": {},
         "children": [
-            row(vec![text("Agent Provenance"), pill("RECORDING", "good")]),
+            // The header status pill is LIVE: it reads the append cursor (HEAD) and
+            // shows EMPTY when the log has no entries, else falls through to RECORDING.
+            row(vec![text("Agent Provenance"), pill_live(HEAD_SLOT, "RECORDING", "good", json!([
+                { "value": 0, "label": "EMPTY", "tag": "muted" },
+            ]))]),
             divider(),
             // The live chain state — the append cursor (entry count) drives both the
             // gauge and a bind; the tip is the latest committed link digest.
             section("Log", "genuine", vec![
-                gauge(HEAD_SLOT, LOG_GAUGE_MAX, "entries "),
-                bind(HEAD_SLOT, "entries · "),
-                bind(TIP_SLOT, "chain tip · "),
+                gauge(HEAD_SLOT, LOG_GAUGE_MAX, "entries ", false),
+                bind(HEAD_SLOT, "entries · ", "raw"),
+                // The chain tip is a raw link digest — a dev-y hash row, adept-only.
+                bind_adept(TIP_SLOT, "chain tip · ", "hash"),
             ]),
             // The attested-query trust visual — the non-omission completeness
             // certificate over the log (see `derived::attested_provenance_log`). The
@@ -193,10 +213,19 @@ mod tests {
             "the header names the app"
         );
         let pills = of_kind(&card, "pill");
-        assert!(
-            pills.iter().any(|p| p["props"]["text"] == "RECORDING"),
-            "the header carries the live recorder-state pill"
+        // The header pill is LIVE: it reads HEAD_SLOT and maps 0 → EMPTY.
+        let header = pills
+            .iter()
+            .find(|p| p["props"]["slot"] == HEAD_SLOT)
+            .expect("the header carries the live recorder-state pill");
+        assert_eq!(
+            header["props"]["text"], "RECORDING",
+            "the static fallback word (a non-empty log)"
         );
+        let cases = header["props"]["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 1, "head 0 = EMPTY");
+        assert_eq!(cases[0]["value"], 0);
+        assert_eq!(cases[0]["label"], "EMPTY");
     }
 
     #[test]
@@ -217,6 +246,23 @@ mod tests {
             vec![HEAD_SLOT, TIP_SLOT],
             "the binds surface the entry count + the chain tip"
         );
+    }
+
+    #[test]
+    fn the_binds_carry_their_display_fmt_and_the_tip_is_adept() {
+        let card = provenance_card_value();
+        let binds = of_kind(&card, "bind");
+        let bind_at = |slot: usize| {
+            binds
+                .iter()
+                .find(|b| b["props"]["slot"].as_u64() == Some(slot as u64))
+                .unwrap()
+        };
+        // The entry count stays a plain small counter; the chain tip paints short hex.
+        assert_eq!(bind_at(HEAD_SLOT)["props"]["fmt"], "raw");
+        assert_eq!(bind_at(TIP_SLOT)["props"]["fmt"], "hash");
+        // The raw link digest is adept-only (hidden in the simple projection).
+        assert_eq!(bind_at(TIP_SLOT)["props"]["adept"], true);
     }
 
     #[test]
