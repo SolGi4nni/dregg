@@ -209,38 +209,74 @@ through the **same** `credit_lock` conservation accounting as the trusted path.
 `verify_lock_proof` / `mint_against_lock_proof` remain as a **structure-only**
 path (no stake table → `StructureOnly`, never `ConsensusVerified`).
 
-### The remaining adapter layer (honest — the next grind passes)
+### The mainnet wire-format adapter — pass 2 (`bridge/src/solana_wire.rs`)
 
-The *cryptography and consensus arithmetic* are real; the **mainnet wire-format
-ingestion + provenance** are not yet reproduced:
+Pass 2 closes the two dominant wire-format gaps, using the lightweight
+**type-only** Solana crate `solana-vote-interface` (verified: it pins
+curve25519-dalek 4.x / ed25519-dalek 2.x and unifies with the BabyBear/proof
+stack — **no version conflict**; the heavy `solana-sdk` monolith is deliberately
+avoided).
 
-1. **Vote-transaction ingestion.** `vote_message` is a canonical
-   domain-separated `(slot, bank_hash)` encoding, not the bincode-serialized vote
-   `Transaction`/`VoteInstruction` a mainnet authorized voter signs. A relayer
-   that parses real vote transactions into `ValidatorVote`s (and confirms the
-   signer is the epoch's authorized voter) is the next piece. **Dominant
-   remaining item.**
+1. **Vote-transaction ingestion — REAL (done).** `solana_wire::ingest_vote_transaction`
+   parses a real bincode-serialized vote `Transaction` (the compact-`u16`
+   `ShortVec` framing + the message), bincode-decodes its `VoteInstruction`
+   (`Vote` / `TowerSync` / `CompactUpdateVoteState` / `UpdateVoteState`),
+   **verifies the real Ed25519 signature** of the designated vote authority over
+   the real serialized message, and extracts the voted `(slot, bank_hash)` + the
+   vote account + the authorized voter. It produces a `ValidatorVote` (keyed by
+   the **vote account** — the real stake-weighting key) carrying a
+   `VoteTxWitness`; `ValidatorVote::verify_signature` re-verifies the real
+   transaction, so the pass-1 `verify_supermajority` tally now **runs over real
+   vote transactions**, not the canonical placeholder.
+2. **Accounts-hash format fidelity — REAL (done).** `solana_wire::solana_account_hash`
+   reproduces Solana's per-account hash `blake3(lamports_le ‖ rent_epoch_le ‖
+   data ‖ executable ‖ owner ‖ pubkey)` (zero-lamport → all-zero default), and
+   `verify_account_inclusion_16ary` folds the real **16-ary fan-out**
+   (`MERKLE_FANOUT = 16`) Merkle whose interior nodes are `sha256(child‖…)` over
+   up to 16 children. The bank-hash recipe is now the real
+   `sha256(parent ‖ accounts_delta_hash ‖ signature_count_le ‖ last_blockhash)`.
+   `verify_lock_proof_consensus` accepts an optional `MainnetAccountInclusion`
+   (the vault account's real fields + a 16-ary proof) and verifies the real
+   account hash into the voted accounts hash, decoding the lock record from the
+   account `data`.
+
+### The remaining adapter layer (honest — pass 3)
+
+The *cryptography, consensus arithmetic, vote-transaction wire format, and
+accounts-hash format* are now real; what remains is **bank-state provenance** and
+the succinct wrapper:
+
+1. **Authorized-voter binding.** Ingestion verifies the real signature of the key
+   the vote instruction *designates* as the vote authority, and that it is a real
+   signer. Confirming that this key is genuinely the vote account's on-chain
+   `authorized_voter` (so a relayer cannot name an attacker key as authority)
+   requires the vote account's bank state — the **same provenance family as the
+   stake table**.
 2. **Stake-table provenance + epoch rotation.** `EpochStakeTable` is tracked
    *input* today; sourcing it from Solana's stake program / bank state and
    proving its rotation across epoch boundaries (the sync-committee analogue,
-   heavier) is unbuilt.
-3. **Accounts-hash format fidelity.** `merkle_node` is a SHA-256 sorted-pair
-   node; mainnet's accounts hash is a 16-ary fan-out merkle over a
-   version-coupled account-hash preimage (lamports/owner/data/…). Matching the
-   exact format is version-coupled work.
-4. **PoH anchoring policy.** The tick-chain verifier is real but bounded; a
+   heavier) is unbuilt. Pass-3 dominant item, bundled with (1).
+3. **PoH anchoring policy.** The tick-chain verifier is real but bounded; a
    trust-minimized full-slot (~432k hashes) PoH needs a recursive proof or a
    bounded-anchor checkpoint policy.
-5. **Option-B succinct wrapper (optional).** Wrapping (1)–(4) in an off-dregg
+4. **Account-data lock-record layout.** The vault account's `data` carries the
+   lock record in an *adapter-defined* layout (`encode_lock_record`); the
+   per-account hash + the 16-ary tree are mainnet-faithful, but the lock
+   program's account schema is a deploy-time choice, not a Solana constant.
+5. **Bank-hash version extras.** The classic 4-field recipe is byte-faithful;
+   the epoch-accounts-hash (at EAH slots) and the accounts lt-hash (SIMD-0215)
+   the modern bank folds in at specific slots are not modeled.
+6. **Option-B succinct wrapper (optional).** Wrapping the above in an off-dregg
    relayer circuit + a dregg-side succinct verify keeps the on-dregg cost
-   constant; the in-process verification above is the Option-A logic it would
-   encode.
+   constant; the in-process verification is the Option-A logic it would encode.
 
-**Honest status:** for a lock whose `ValidatorVote` set, stake table, bank-hash
-components, accounts-inclusion path, and PoH segment are supplied,
-`verify_lock_proof_consensus` now genuinely verifies a ≥ 2/3 stake-weighted
-Ed25519 attestation that binds the lock record to the voted bank hash, and
-returns `ConsensusVerified`. The trust gap that remains is the **adapter** —
-proving those inputs are the *real mainnet artifacts* (items 1–4) — not the
-consensus arithmetic. The watchtower interim remains a cheap complementary
-hardening for the trusted path.
+**Honest status:** for a lock whose votes are supplied as **real signed vote
+transactions** and whose accounts inclusion uses the **real 16-ary format**,
+`verify_lock_proof_consensus` genuinely verifies a ≥ 2/3 stake-weighted Ed25519
+attestation — over real mainnet vote transactions — binding the lock record (via
+the real bank-hash recipe + real accounts-hash Merkle) to the voted bank hash,
+and returns `ConsensusVerified`. The trust gap that remains is bank-state
+**provenance** (the stake table + the authorized-voter binding) + the PoH
+anchoring policy — not the consensus arithmetic, the vote-transaction wire
+format, or the accounts-hash format. The watchtower interim remains a cheap
+complementary hardening for the trusted path.

@@ -51,6 +51,10 @@ use crate::solana_consensus::{
     verify_accounts_inclusion, verify_poh_segment, verify_supermajority,
 };
 use crate::solana_mirror::{MirrorError, MirrorMint, MirrorState};
+use crate::solana_wire::{
+    AccountsInclusionProof16, decode_lock_record, solana_account_hash,
+    verify_account_inclusion_16ary,
+};
 
 /// Solana Tower-BFT consensus evidence for one slot: the voted bank hash, the
 /// epoch + the real stake-weighted votes, the bank-hash components that bind the
@@ -97,8 +101,38 @@ pub struct AccountInclusionProof {
     pub accounts_hash: [u8; 32],
     /// The sibling path of `vault_account`'s lock-record leaf into
     /// `accounts_hash`, folded with the domain-separated sorted-Merkle node hash
-    /// ([`crate::solana_consensus::merkle_node`]).
+    /// ([`crate::solana_consensus::merkle_node`]). Used by the **modeled** path
+    /// (when `mainnet` is `None`).
     pub merkle_path: Vec<[u8; 32]>,
+    /// When present, the **mainnet-faithful** inclusion: the vault account's real
+    /// fields + a 16-ary fan-out proof of its blake3 per-account hash into
+    /// `accounts_hash` ([`crate::solana_wire`]). Supersedes `merkle_path`.
+    #[serde(default)]
+    pub mainnet: Option<MainnetAccountInclusion>,
+}
+
+/// The mainnet-faithful vault-account inclusion: the account's real fields (so
+/// its blake3 per-account hash can be recomputed) plus a 16-ary fan-out Merkle
+/// proof of that hash into the slot's accounts hash. The account's `data`
+/// carries the lock record in the adapter-defined layout
+/// ([`crate::solana_wire::encode_lock_record`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MainnetAccountInclusion {
+    /// The vault account's lamports (must be nonzero; zero-lamport accounts are
+    /// absent from the accounts hash).
+    pub lamports: u64,
+    /// The vault account's owner program.
+    pub owner: [u8; 32],
+    /// Whether the vault account is executable.
+    pub executable: bool,
+    /// The vault account's rent epoch.
+    pub rent_epoch: u64,
+    /// The vault account's `data`, carrying the lock record (adapter-defined
+    /// layout: `lock_id ‖ recipient ‖ amount_le`).
+    pub data: Vec<u8>,
+    /// The 16-ary fan-out inclusion proof of the account's blake3 hash into the
+    /// accounts hash.
+    pub proof: AccountsInclusionProof16,
 }
 
 /// A verifiable proof that `amount` of `spl_mint` was locked on a finalized
@@ -269,8 +303,12 @@ fn check_binding(
         return Err(LockProofError::ClaimMismatch);
     }
 
-    // (3) structural well-formedness.
-    if proof.consensus.votes.is_empty() || inc.merkle_path.is_empty() {
+    // (3) structural well-formedness: at least one vote, and an inclusion path
+    // (either the modeled sibling path or a mainnet-faithful 16-ary proof).
+    if proof.consensus.votes.is_empty() {
+        return Err(LockProofError::Malformed);
+    }
+    if inc.merkle_path.is_empty() && inc.mainnet.is_none() {
         return Err(LockProofError::Malformed);
     }
     Ok(())
@@ -368,15 +406,43 @@ fn verify_consensus(
     }
 
     // (5) the vault account's lock record must include into that accounts hash.
-    if !verify_accounts_inclusion(
-        &inclusion.vault_account,
-        inclusion.recorded_amount,
-        &inclusion.recorded_recipient,
-        &inclusion.recorded_lock_id,
-        &inclusion.merkle_path,
-        &inclusion.accounts_hash,
-    ) {
-        return Err(LockProofError::AccountsInclusionInvalid);
+    match &inclusion.mainnet {
+        // Mainnet-faithful: recompute the real blake3 per-account hash, prove it
+        // into the accounts hash via the 16-ary fan-out tree, and confirm the
+        // account's data decodes to exactly the claimed lock record.
+        Some(m) => {
+            let leaf = solana_account_hash(
+                m.lamports,
+                &m.owner,
+                m.executable,
+                m.rent_epoch,
+                &m.data,
+                &inclusion.vault_account,
+            );
+            if !verify_account_inclusion_16ary(leaf, &m.proof, &inclusion.accounts_hash) {
+                return Err(LockProofError::AccountsInclusionInvalid);
+            }
+            match decode_lock_record(&m.data) {
+                Some((lid, rec, amt))
+                    if lid == inclusion.recorded_lock_id
+                        && rec == inclusion.recorded_recipient
+                        && amt == inclusion.recorded_amount => {}
+                _ => return Err(LockProofError::AccountsInclusionInvalid),
+            }
+        }
+        // Modeled: the pass-1 domain-separated sorted-pair sibling path.
+        None => {
+            if !verify_accounts_inclusion(
+                &inclusion.vault_account,
+                inclusion.recorded_amount,
+                &inclusion.recorded_recipient,
+                &inclusion.recorded_lock_id,
+                &inclusion.merkle_path,
+                &inclusion.accounts_hash,
+            ) {
+                return Err(LockProofError::AccountsInclusionInvalid);
+            }
+        }
     }
 
     // (6) PoH linkage: if present it must verify and tail at the slot blockhash;
@@ -569,6 +635,95 @@ mod tests {
                 recorded_lock_id: lid,
                 accounts_hash,
                 merkle_path: vec![sib],
+                mainnet: None,
+            },
+        }
+    }
+
+    /// A consensus-grade proof whose accounts inclusion uses the **mainnet
+    /// 16-ary** format: the vault account's real blake3 per-account hash proven
+    /// into a real 16-ary accounts-hash tree, with the lock record carried in
+    /// the account `data`.
+    fn consensus_grade_mainnet(amount: u64, recipient: CellId, lock_id: u8) -> SolanaLockProof {
+        use crate::solana_wire::{
+            AccountsInclusionProof16, MerkleLevel, accounts_merkle_node, encode_lock_record,
+            solana_account_hash,
+        };
+
+        let slot = 12_345u64;
+        let vault = [0x22u8; 32];
+        let lid = [lock_id; 32];
+
+        // The vault account's data carries the lock record; its real per-account
+        // hash is the leaf of the 16-ary accounts tree.
+        let data = encode_lock_record(&lid, &recipient, amount);
+        let leaf = solana_account_hash(1_000_000, &[0x07u8; 32], false, 99, &data, &vault);
+
+        // A real 16-ary chunk: the leaf at position 2 among 5 siblings.
+        let sibs = [[0x01u8; 32], [0x02u8; 32], [0x03u8; 32], [0x04u8; 32]];
+        let position = 2usize;
+        let mut chunk = Vec::new();
+        chunk.extend_from_slice(&sibs[..position]);
+        chunk.push(leaf);
+        chunk.extend_from_slice(&sibs[position..]);
+        let accounts_hash = accounts_merkle_node(&chunk);
+        let proof = AccountsInclusionProof16 {
+            levels: vec![MerkleLevel {
+                position: position as u8,
+                siblings: sibs.to_vec(),
+            }],
+        };
+
+        use sha2::{Digest, Sha256};
+        let anchor = [0x55u8; 32];
+        let mut tail = anchor;
+        for _ in 0..256u64 {
+            let mut h = Sha256::new();
+            h.update(tail);
+            tail = h.finalize().into();
+        }
+        let bank_components = BankHashComponents {
+            parent_bank_hash: [0x01; 32],
+            accounts_hash,
+            signature_count: 3,
+            last_blockhash: tail,
+        };
+        let bank_hash = bank_components.compute();
+        let votes = vec![
+            ValidatorVote::sign(&vk(11), slot, bank_hash),
+            ValidatorVote::sign(&vk(12), slot, bank_hash),
+        ];
+
+        SolanaLockProof {
+            lock_id: lid,
+            spl_mint: SPL_MINT,
+            amount,
+            dregg_recipient: recipient,
+            consensus: ConsensusEvidence {
+                slot,
+                bank_hash,
+                epoch: EPOCH,
+                voted_stake: 800,
+                total_stake: 1000,
+                votes,
+                bank_components,
+                poh: None,
+            },
+            inclusion: AccountInclusionProof {
+                vault_account: vault,
+                recorded_amount: amount,
+                recorded_recipient: recipient,
+                recorded_lock_id: lid,
+                accounts_hash,
+                merkle_path: vec![],
+                mainnet: Some(crate::solana_trustless::MainnetAccountInclusion {
+                    lamports: 1_000_000,
+                    owner: [0x07u8; 32],
+                    executable: false,
+                    rent_epoch: 99,
+                    data,
+                    proof,
+                }),
             },
         }
     }
@@ -909,6 +1064,98 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, LockProofError::PohMissing);
+    }
+
+    // ---- mainnet 16-ary accounts-inclusion path ---------------------------
+
+    #[test]
+    fn consensus_verified_with_mainnet_16ary_inclusion() {
+        let cfg = config();
+        let proof = consensus_grade_mainnet(500, cid(1), 1);
+        let trust = verify_lock_proof_consensus(
+            &proof,
+            &cfg.spl_mint,
+            cfg.min_amount,
+            cfg.max_amount,
+            &stake_table(),
+            false,
+        )
+        .expect("genuine lock with real 16-ary inclusion verifies");
+        assert_eq!(trust, LockProofTrust::ConsensusVerified);
+    }
+
+    #[test]
+    fn mainnet_inclusion_tampered_account_refused() {
+        let cfg = config();
+        let mut proof = consensus_grade_mainnet(500, cid(1), 1);
+        // Mutate the vault account's lamports: its real blake3 hash changes, so
+        // the 16-ary proof no longer roots to the committed accounts hash.
+        if let Some(m) = proof.inclusion.mainnet.as_mut() {
+            m.lamports += 1;
+        }
+        assert_eq!(
+            verify_lock_proof_consensus(
+                &proof,
+                &cfg.spl_mint,
+                cfg.min_amount,
+                cfg.max_amount,
+                &stake_table(),
+                false,
+            )
+            .unwrap_err(),
+            LockProofError::AccountsInclusionInvalid
+        );
+    }
+
+    #[test]
+    fn mainnet_inclusion_wrong_bank_hash_refused() {
+        let cfg = config();
+        let mut proof = consensus_grade_mainnet(500, cid(1), 1);
+        // Tamper the committed accounts hash: it no longer matches the bank-hash
+        // components, so the binding to the voted bank hash fails first.
+        proof.inclusion.accounts_hash[0] ^= 0xFF;
+        assert_eq!(
+            verify_lock_proof_consensus(
+                &proof,
+                &cfg.spl_mint,
+                cfg.min_amount,
+                cfg.max_amount,
+                &stake_table(),
+                false,
+            )
+            .unwrap_err(),
+            LockProofError::BankHashMismatch
+        );
+    }
+
+    #[test]
+    fn mainnet_inclusion_lockrecord_mismatch_refused() {
+        let cfg = config();
+        // The account data encodes lock_id=1 / amount=500, but we claim a
+        // different recorded amount in the inclusion (binding passes since we
+        // also bump proof.amount + recorded_amount, but the account DATA decodes
+        // to the original 500 → mismatch).
+        let mut proof = consensus_grade_mainnet(500, cid(1), 1);
+        proof.amount = 500; // claim stays consistent for check_binding
+        if let Some(m) = proof.inclusion.mainnet.as_mut() {
+            // Corrupt the embedded amount in the account data only.
+            let n = m.data.len();
+            m.data[n - 1] ^= 0xFF;
+        }
+        // The leaf hash changed too (data changed), so this actually fails at
+        // the inclusion fold; either way it is refused as invalid.
+        assert_eq!(
+            verify_lock_proof_consensus(
+                &proof,
+                &cfg.spl_mint,
+                cfg.min_amount,
+                cfg.max_amount,
+                &stake_table(),
+                false,
+            )
+            .unwrap_err(),
+            LockProofError::AccountsInclusionInvalid
+        );
     }
 
     #[test]

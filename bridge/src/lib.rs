@@ -56,6 +56,12 @@ pub mod solana_trustless;
 /// bank-hash binding, the accounts-hash inclusion, and the PoH tick-chain check.
 pub mod solana_consensus;
 
+/// The mainnet **wire-format adapter** (pass 2): real Solana vote-transaction
+/// ingestion (bincode `Transaction` + `VoteInstruction` → a signature-verified
+/// [`solana_consensus::ValidatorVote`]) and the real 16-ary fan-out accounts-hash
+/// Merkle over blake3 per-account hashes. See `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
+pub mod solana_wire;
+
 /// Full-fidelity bridge-action binding: a thin re-export plus a wrapper for
 /// the new sibling AIR `dregg_circuit::bridge_action_air` that pins
 /// (nullifier, recipient, destination_federation, amount) at full byte/bit
@@ -95,7 +101,7 @@ pub use present::{
 };
 pub use solana_consensus::{
     BankHashComponents, EpochStakeTable, PohError, PohSegment, ValidatorVote, VoteSetError,
-    VoteTally, account_leaf, merkle_node, tally_votes, verify_accounts_inclusion,
+    VoteTally, VoteTxWitness, account_leaf, merkle_node, tally_votes, verify_accounts_inclusion,
     verify_poh_segment, verify_supermajority, vote_message,
 };
 pub use solana_mirror::{
@@ -105,5 +111,11 @@ pub use solana_mirror::{
 pub use solana_trustless::{
     AccountInclusionProof, ConsensusEvidence, LockProofError, LockProofTrust, ProofMintError,
     SolanaLockProof, verify_lock_proof, verify_lock_proof_consensus,
+};
+pub use solana_wire::{
+    AccountsInclusionProof16, IngestedVote, MERKLE_FANOUT, MerkleLevel, WireError,
+    accounts_merkle_node, compute_accounts_merkle_root, decode_lock_record, encode_lock_record,
+    fold_account_inclusion_16ary, ingest_vote_transaction, parse_verified_vote_tx,
+    solana_account_hash, verify_account_inclusion_16ary, witness_binds,
 };
 pub use verifier::{DslAwareProofVerifier, StarkProofVerifier};

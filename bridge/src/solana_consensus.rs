@@ -30,25 +30,28 @@
 //!
 //! # The modeled-vs-mainnet boundary (honest)
 //!
-//! The *logic and cryptography* of Solana finality are real here, but the exact
-//! mainnet **wire encodings** are modeled, not byte-reproduced:
+//! The *logic and cryptography* of Solana finality are real here. The mainnet
+//! **wire encodings** are reproduced by the pass-2 adapter [`crate::solana_wire`]:
 //!
-//! - [`vote_message`] is a canonical domain-separated `(slot, bank_hash)`
-//!   encoding, not the bincode-serialized vote `Transaction`/`VoteInstruction` a
-//!   mainnet authorized voter signs. Verifying that a [`ValidatorVote`] really
-//!   corresponds to an on-chain vote transaction is the relayer *ingestion*
-//!   layer.
+//! - [`crate::solana_wire::ingest_vote_transaction`] parses a **real** bincode
+//!   vote `Transaction` (the `VoteInstruction`/`Vote`/`TowerSync` types), verifies
+//!   the real Ed25519 signature, and produces a [`ValidatorVote`] (carrying a
+//!   [`VoteTxWitness`]) the [`verify_supermajority`] tally then runs over. The
+//!   canonical [`vote_message`] remains as the placeholder path for tests / votes
+//!   without a real-tx witness.
+//! - [`crate::solana_wire::solana_account_hash`] +
+//!   [`crate::solana_wire::verify_account_inclusion_16ary`] reproduce mainnet's
+//!   **16-ary fan-out** accounts-hash Merkle over the real blake3 per-account
+//!   preimage; [`merkle_node`] is the pass-1 modeled SHA-256 sorted-pair node
+//!   that the structure-only path still uses.
 //! - The epoch [`EpochStakeTable`] is *tracked input* — sourcing it from (and
 //!   proving its rotation against) Solana's own stake program / bank state is the
-//!   stake-table-provenance layer.
-//! - [`merkle_node`] is a SHA-256 sorted-pair node; mainnet's accounts hash is a
-//!   16-ary fan-out merkle over a version-coupled account-hash preimage.
+//!   stake-table-provenance layer (pass 3), together with the vote-account →
+//!   authorized-voter binding.
 //!
-//! So this module verifies that a *provided* vote set + inclusion + PoH are
-//! cryptographically a valid ≥2/3 stake-weighted attestation binding the lock
-//! record to the voted bank hash. The remaining trust gap is the *adapter*
-//! (mainnet wire-format ingestion + stake-table provenance + PoH anchoring
-//! policy), not the consensus arithmetic. See `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
+//! So the remaining trust gap is bank-state *provenance* (stake table + authority
+//! binding) + PoH anchoring policy, not the consensus arithmetic or the wire
+//! decoding. See `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -106,8 +109,6 @@ const VOTE_MSG_TAG: &[u8] = b"dregg-solana-tower-vote:v1";
 const ACCT_LEAF_TAG: &[u8] = b"dregg-solana-accounts-leaf:v1";
 /// Domain tag for an accounts-inclusion Merkle *interior node*.
 const ACCT_NODE_TAG: &[u8] = b"dregg-solana-accounts-node:v1";
-/// Domain tag for the bank-hash recomputation.
-const BANK_HASH_TAG: &[u8] = b"dregg-solana-bank-hash:v1";
 
 // ============================================================================
 // Epoch stake table
@@ -195,28 +196,67 @@ pub fn vote_message(slot: u64, bank_hash: &[u8; 32]) -> Vec<u8> {
     m
 }
 
-/// One validator's Ed25519-signed vote that it voted `bank_hash` at `slot`.
+/// A witness that a [`ValidatorVote`] was extracted from a **real mainnet vote
+/// transaction**, rather than the canonical placeholder [`vote_message`].
 ///
-/// `vote_pubkey` is the authorized voter's Ed25519 public key (the key the
-/// [`EpochStakeTable`] weights). `signature` is over [`vote_message`].
+/// When present, [`ValidatorVote::verify_signature`] re-parses and re-verifies
+/// this real transaction (its Ed25519 signature over the real serialized
+/// message) and confirms it votes exactly the vote's `(vote_pubkey, slot,
+/// bank_hash)` — so the super-majority tally runs over genuine vote
+/// transactions. Produced by [`crate::solana_wire::ingest_vote_transaction`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoteTxWitness {
+    /// The raw bincode-serialized Solana vote `Transaction` bytes.
+    pub tx_bytes: Vec<u8>,
+}
+
+/// One validator's vote that it voted `bank_hash` at `slot`.
+///
+/// `vote_pubkey` is the **vote account** the [`EpochStakeTable`] weights (stake
+/// is delegated to the vote account, not to the signer). The vote's authenticity
+/// is established one of two ways:
+///
+/// - **Real (mainnet):** `tx_witness` carries the real signed vote transaction;
+///   [`verify_signature`](Self::verify_signature) re-verifies it and confirms it
+///   votes exactly this `(vote_pubkey, slot, bank_hash)`. `signature` is unused.
+/// - **Placeholder (pass-1 model / tests):** no witness; `signature` is an
+///   Ed25519 signature over the canonical [`vote_message`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidatorVote {
-    /// The authorized voter's Ed25519 public key (matches the stake-table key).
+    /// The vote account's pubkey (matches the stake-table key).
     pub vote_pubkey: [u8; 32],
     /// The slot voted.
     pub slot: u64,
     /// The bank hash voted (the state commitment for `slot`).
     pub bank_hash: [u8; 32],
     /// Ed25519 signature over [`vote_message(slot, bank_hash)`](vote_message).
+    /// Ignored when `tx_witness` is present (the real transaction is verified
+    /// instead).
     #[serde(with = "sig64")]
     pub signature: [u8; 64],
+    /// When present, the real mainnet vote transaction this vote was ingested
+    /// from; its verification supersedes `signature`.
+    #[serde(default)]
+    pub tx_witness: Option<VoteTxWitness>,
 }
 
 impl ValidatorVote {
-    /// Verify this vote's Ed25519 signature under `vote_pubkey` over the
-    /// canonical [`vote_message`]. Returns `false` on a malformed key/signature
-    /// or a verification failure — never panics.
+    /// Verify this vote's authenticity. Returns `false` on any failure — never
+    /// panics.
+    ///
+    /// With a [`tx_witness`](Self::tx_witness): re-parse + re-verify the real
+    /// vote transaction and confirm it votes exactly `(vote_pubkey, slot,
+    /// bank_hash)`. Otherwise: verify the Ed25519 `signature` under `vote_pubkey`
+    /// over the canonical [`vote_message`] (the pass-1 placeholder path).
     pub fn verify_signature(&self) -> bool {
+        if let Some(witness) = &self.tx_witness {
+            return crate::solana_wire::witness_binds(
+                witness,
+                &self.vote_pubkey,
+                self.slot,
+                &self.bank_hash,
+            );
+        }
         let Ok(vk) = VerifyingKey::from_bytes(&self.vote_pubkey) else {
             return false;
         };
@@ -225,8 +265,10 @@ impl ValidatorVote {
             .is_ok()
     }
 
-    /// **Relayer/test helper:** produce a genuinely-signed vote for `(slot,
-    /// bank_hash)` from an [`ed25519_dalek::SigningKey`].
+    /// **Relayer/test helper:** produce a genuinely-signed *placeholder* vote for
+    /// `(slot, bank_hash)` from an [`ed25519_dalek::SigningKey`] (no real-tx
+    /// witness). For real mainnet ingestion use
+    /// [`crate::solana_wire::ingest_vote_transaction`].
     pub fn sign(signing_key: &ed25519_dalek::SigningKey, slot: u64, bank_hash: [u8; 32]) -> Self {
         use ed25519_dalek::Signer;
         let sig = signing_key.sign(&vote_message(slot, &bank_hash));
@@ -235,6 +277,7 @@ impl ValidatorVote {
             slot,
             bank_hash,
             signature: sig.to_bytes(),
+            tx_witness: None,
         }
     }
 }
@@ -344,8 +387,12 @@ pub fn verify_supermajority(
 /// binding it to the voted bank hash ties the accounts hash (and PoH tail) to
 /// what the super-majority attested.
 ///
-/// **Modeled hash:** Solana uses `hashv` (SHA-256 over the concatenation) with a
-/// version-coupled field layout; we hash the same fields with a domain tag.
+/// **Mainnet-faithful (classic recipe):** `bank_hash = sha256(parent_bank_hash ‖
+/// accounts_delta_hash ‖ signature_count_le ‖ last_blockhash)` — the real
+/// `hash_internal_state` reduction via `hashv`. Version-coupled extras the
+/// modern bank folds in at specific slots (the epoch-accounts-hash at EAH slots,
+/// and the accounts lt-hash under SIMD-0215) are NOT modeled here; for the
+/// pre-lt-hash recipe this is byte-faithful.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BankHashComponents {
     /// The parent slot's bank hash.
@@ -360,10 +407,11 @@ pub struct BankHashComponents {
 }
 
 impl BankHashComponents {
-    /// Recompute the bank hash from its components.
+    /// Recompute the bank hash from its components, using Solana's real
+    /// `hash_internal_state` reduction: `sha256(parent_bank_hash ‖
+    /// accounts_delta_hash ‖ signature_count_le ‖ last_blockhash)`.
     pub fn compute(&self) -> [u8; 32] {
         let mut h = Sha256::new();
-        h.update(BANK_HASH_TAG);
         h.update(self.parent_bank_hash);
         h.update(self.accounts_hash);
         h.update(self.signature_count.to_le_bytes());

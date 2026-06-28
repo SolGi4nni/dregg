@@ -25,6 +25,15 @@ sha2 = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 getrandom = { workspace = true }
 serde = { version = "1", features = ["derive"] }
+# Lightweight TYPE-ONLY Solana wire crate for real mainnet vote-transaction
+# ingestion (the `VoteInstruction`/`Vote`/`TowerSync`/`VoteStateUpdate` types).
+# Deliberately NOT the `solana-sdk` monolith: these split crates pin
+# curve25519-dalek 4.x / ed25519-dalek 2.x, unifying with the BabyBear/proof
+# stack (verified: no version conflict). See docs/deos/TRUSTLESS-SOLANA-BRIDGE.md.
+solana-vote-interface = { version = "6.0.2", default-features = false, features = ["serde", "bincode"] }
+# bincode 1.x (Solana's instruction-data codec) for decoding the `VoteInstruction`
+# carried in a real vote transaction's instruction data.
+bincode = "1"
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -34,6 +43,8 @@ dregg-bridge = { path = ".", features = ["test-utils"] }
 # execution-lease through the SAME `resolve_pay` rail the metered ToolGateway uses.
 dregg-payable = { path = "../dregg-payable" }
 dregg-cell = { path = "../cell" }
+# Type-only: construct `solana_hash::Hash` when building real vote-tx fixtures.
+solana-hash = "4"
 
 [[bench]]
 name = "presentation_bench"
