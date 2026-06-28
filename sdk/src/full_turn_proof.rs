@@ -677,6 +677,47 @@ pub struct CaveatCoverageExpectation {
     pub block_height: u64,
 }
 
+/// What the VERIFIER expects of a turn whose acting cell's COMMITTED declaration requires the
+/// sealed-escrow capacity (the §6 item-2 SELECTOR weld — the deployed realization of the proven
+/// Lean `Dregg2.Deos.SettleEscrowSelectorBinding.escrow_selector_bound_to_declaration` obligation).
+///
+/// The proven keystone shows: IF the verifier pins the escrow selector PI `= 1` whenever the
+/// re-derived required-tag floor demands the escrow selector (the `hverifier` discipline), THEN the
+/// welded descriptor's four satisfaction gates are forced over the committed BEFORE/AFTER field
+/// columns — a forger can dodge NEITHER by a hollow declaration (HALF A, the `DeclCommitBinds`
+/// floor) NOR by `sel = 0` (HALF B, the PI pin). This expectation is the deployed `hverifier`: when
+/// the cell's committed declaration requires the escrow tag, the verifier
+///
+///   1. DEMANDS the escrow selector PI (`ESCROW_SEL_PI = 46`) on the rotated effect-vm leg is `1`
+///      (so `sel = 0` cannot make the gates inert — HALF B), and
+///   2. DEMANDS the rotated leg verifies under the WELDED descriptor
+///      [`SETTLE_ESCROW_SAT_DESCRIPTOR_NAME`] (so a declared-escrow turn cannot be routed through a
+///      non-welded descriptor that carries no satisfaction gate).
+///
+/// Together a declared-escrow turn is FORCED through the welded gates. `required_tags` is the
+/// caller's `dregg_turn::executor::required_capacity_caveat_tags(state_constraints)` re-derivation
+/// over the committed declaration — the cap-membership posture (the same posture as
+/// [`CapMembershipExpectation`]: re-derived from data the verifier trusts, the `B_AUTHORITY_DIGEST`
+/// limb of the ~124-bit wide commit binds the declaration, never taken from the proof). A forger
+/// cannot escape via a hollow declaration: it would have to match the committed authority digest, and
+/// its collision-resistance forces the SAME required tags (the Lean `DeclCommitBinds` floor).
+///
+/// STAGED — built BESIDE the deployed [`verify_full_turn_bound`]:
+///   * `expected_escrow_weld = None` ⇒ byte-identical to [`verify_full_turn_bound`].
+///   * `Some(_)` with no escrow tag in `required_tags` ⇒ deployed-identical (no demand).
+///   * `Some(_)` requiring the escrow tag ⇒ the enforcement above. FAIL-CLOSED: until the welded
+///     descriptor is a WIDE member with a producer + committed VK (the FLIP — §6 BLOCKER 1), no
+///     honest proof verifies under it, so a declared-escrow turn is REJECTED rather than accepted
+///     half-open — the sound posture. No deployed cell declares the escrow caveat, so the deployed
+///     default is unaffected. See `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md` §6.
+pub struct EscrowWeldExpectation {
+    /// The capacity caveat tags the cell's COMMITTED declaration REQUIRES (the
+    /// `dregg_turn::executor::required_capacity_caveat_tags` re-derivation over the committed
+    /// `state_constraints`). The selector + welded-descriptor demand fires iff this contains the
+    /// sealed-escrow tag (`SLOT_CAVEAT_TAG_SETTLE_ESCROW = 17`).
+    pub required_tags: Vec<u32>,
+}
+
 // ============================================================================
 // Circuit Descriptor Construction
 // ============================================================================
@@ -5114,6 +5155,193 @@ pub fn verify_full_turn_bound_with_caveat_coverage(
     Ok(())
 }
 
+/// Whether the cell's COMMITTED-declaration required-tag floor DEMANDS the sealed-escrow selector
+/// (the Lean `Dregg2.Deos.SettleEscrowSelectorBinding.demandsEscrowSelector`: the floor includes the
+/// escrow tag `SLOT_CAVEAT_TAG_SETTLE_ESCROW = 17`). The Rust twin of the Lean predicate — a turn
+/// declaring the sealed-escrow capacity must be forced through the welded gates.
+pub fn demands_escrow_selector(required_tags: &[u32]) -> bool {
+    required_tags.contains(&dregg_circuit::effect_vm::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW)
+}
+
+/// **The escrow SELECTOR-PI demand (HALF B, the pure twin).** When the required-tag floor demands
+/// the escrow selector, the rotated effect-vm leg's selector PI (`ESCROW_SEL_PI = 46`) MUST be `1`
+/// — so a forger cannot dodge the welded satisfaction gates by leaving `sel = 0` (which makes every
+/// `sel · (col − const)` gate inert). This is the deployed realization of the Lean `hverifier`
+/// discipline `demandsEscrowSelector required → pub ESCROW_SEL_PI = 1`. Returns `Ok(())` when no
+/// demand fires (deployed-identical), else enforces the pin against the leg's published PI.
+///
+/// Pure (PI-slice in, verdict out) so it is unit-testable without building a full STARK proof; the
+/// staged [`verify_full_turn_bound_with_escrow_weld`] calls it on the rotated leg's public inputs.
+pub fn check_escrow_selector_pin(
+    required_tags: &[u32],
+    rotated_leg_pis: &[BabyBear],
+) -> Result<(), FullTurnVerifyError> {
+    if !demands_escrow_selector(required_tags) {
+        return Ok(());
+    }
+    let sel_pi = dregg_circuit::effect_vm::satisfaction_weld::ESCROW_SEL_PI;
+    let published = rotated_leg_pis.get(sel_pi).copied().ok_or_else(|| {
+        FullTurnVerifyError::EscrowWeldNotForced {
+            reason: format!(
+                "rotated effect-vm leg carries only {} PIs (< {}); the welded escrow descriptor's \
+                 selector PI is absent, so a declared-escrow turn was NOT proven under the welded \
+                 descriptor (non-welded route — rejected fail-closed)",
+                rotated_leg_pis.len(),
+                sel_pi + 1
+            ),
+        }
+    })?;
+    if published != BabyBear::ONE {
+        return Err(FullTurnVerifyError::EscrowWeldNotForced {
+            reason: format!(
+                "escrow selector PI[{sel_pi}] = {published:?} != 1 — a declared-escrow turn left \
+                 the capacity selector OFF, which would make the welded satisfaction gates inert \
+                 (the half-open-settle dodge, HALF B)"
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// **The STAGED sealed-escrow SELECTOR-weld verifier (§6 item 2 — the deployed `hverifier`).** Runs
+/// every deployed [`verify_full_turn_bound`] check, then — when the caller supplies an
+/// [`EscrowWeldExpectation`] whose re-derived required-tag floor demands the escrow capacity — FORCES
+/// the declared-escrow turn through the welded gates:
+///
+///   1. **HALF B (selector on):** the rotated effect-vm leg's selector PI (`ESCROW_SEL_PI = 46`) MUST
+///      be `1` ([`check_escrow_selector_pin`]) — a forger cannot leave `sel = 0` to make the gates
+///      inert.
+///   2. **Welded route:** the rotated leg MUST verify under the WELDED descriptor
+///      (`SETTLE_ESCROW_SAT_DESCRIPTOR_NAME` — the four selector-gated satisfaction gates over the
+///      committed BEFORE/AFTER field columns). A declared-escrow turn routed through a non-welded
+///      descriptor (e.g. a plain `transferVmDescriptor2R24`) is REJECTED.
+///
+/// This is the deployed realization of the proven Lean obligation
+/// `Dregg2.Deos.SettleEscrowSelectorBinding.escrow_selector_bound_to_declaration`: HALF A (the
+/// demand is un-dodgeable by a hollow declaration) is the `DeclCommitBinds` authority-digest floor
+/// (the caller re-derives `required_tags` from the committed declaration, the same cap-membership
+/// posture as [`CapMembershipExpectation`]); HALF B (the demanded selector forces the gate) is the
+/// PI pin checked here.
+///
+/// STAGED — built BESIDE the deployed [`verify_full_turn_bound`]:
+///   * `expected_escrow_weld = None` ⇒ byte-identical to [`verify_full_turn_bound`].
+///   * `Some(_)` with no escrow tag in `required_tags` ⇒ deployed-identical (no demand).
+///   * `Some(_)` requiring the escrow tag ⇒ the enforcement above. FAIL-CLOSED: until the welded
+///     descriptor is a WIDE member with a producer + committed VK (the FLIP — §6 BLOCKER 1), no
+///     honest proof verifies under it, so this path REJECTS a declared-escrow turn rather than
+///     accepting it half-open. No deployed cell declares the escrow caveat, so the deployed default
+///     is unaffected and the descriptors/VK are byte-identical.
+pub fn verify_full_turn_bound_with_escrow_weld(
+    proof: &FullTurnProof,
+    expected_old_commit: [BabyBear; 8],
+    expected_new_commit: [BabyBear; 8],
+    expected_revocation_root: Option<BabyBear>,
+    expected_cap_membership: Option<&CapMembershipExpectation>,
+    expected_escrow_weld: Option<&EscrowWeldExpectation>,
+) -> Result<(), FullTurnVerifyError> {
+    // 1. Every deployed check (cryptographic verify + commit/adjacency/auth/freshness/cap).
+    verify_full_turn_bound(
+        proof,
+        expected_old_commit,
+        expected_new_commit,
+        expected_revocation_root,
+        expected_cap_membership,
+    )?;
+
+    // 2. The staged escrow-selector weld (None ⇒ deployed-identical).
+    let Some(weld) = expected_escrow_weld else {
+        return Ok(());
+    };
+    if !demands_escrow_selector(&weld.required_tags) {
+        return Ok(());
+    }
+
+    // Locate the rotated effect-vm leg (the only leg that can carry the welded descriptor's PIs).
+    let rotated_leg = proof
+        .composed
+        .sub_proofs
+        .iter()
+        .find(|sp| sp.label == "effect-vm-rotated")
+        .ok_or_else(|| FullTurnVerifyError::EscrowWeldNotForced {
+            reason: "declared-escrow turn carries no rotated effect-vm leg — the welded \
+                     satisfaction gate is unwitnessed (rejected fail-closed)"
+                .into(),
+        })?;
+
+    // HALF B: the demanded selector PI must be 1 (so the welded gates are not inert).
+    check_escrow_selector_pin(&weld.required_tags, &rotated_leg.sub_public_inputs)?;
+
+    // WELDED ROUTE: the rotated leg must verify under the WELDED descriptor specifically — a
+    // declared-escrow turn proven under a non-welded descriptor (no satisfaction gate) is rejected.
+    // Prover-gated (the IR-v2 batch verifier lives behind `prover`); a non-prover verifier cannot
+    // confirm the welded gates, so it fails closed.
+    #[cfg(feature = "prover")]
+    {
+        use dregg_circuit::descriptor_ir2::{
+            DreggStarkConfig, Ir2BatchProof, parse_vm_descriptor2, verify_vm_descriptor2,
+        };
+        use dregg_circuit::effect_vm::SETTLE_ESCROW_SAT_DESCRIPTOR_NAME;
+        use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+
+        let welded_json = V3_STAGED_REGISTRY_TSV
+            .lines()
+            .find_map(|line| {
+                let mut it = line.splitn(3, '\t');
+                let name = it.next()?;
+                let _display = it.next()?;
+                let json = it.next()?;
+                (name == SETTLE_ESCROW_SAT_DESCRIPTOR_NAME).then_some(json)
+            })
+            .ok_or_else(|| FullTurnVerifyError::EscrowWeldNotForced {
+                reason: format!(
+                    "welded descriptor {SETTLE_ESCROW_SAT_DESCRIPTOR_NAME} not found in the staged \
+                     registry — cannot confirm the satisfaction gate"
+                ),
+            })?;
+        let desc = parse_vm_descriptor2(welded_json).map_err(|e| {
+            FullTurnVerifyError::EscrowWeldNotForced {
+                reason: format!("welded descriptor parse: {e}"),
+            }
+        })?;
+        let proof_obj: Ir2BatchProof<DreggStarkConfig> =
+            postcard::from_bytes(&rotated_leg.proof_bytes).map_err(|e| {
+                FullTurnVerifyError::EscrowWeldNotForced {
+                    reason: format!("rotated leg deserialize: {e}"),
+                }
+            })?;
+        if rotated_leg.sub_public_inputs.len() < desc.public_input_count {
+            return Err(FullTurnVerifyError::EscrowWeldNotForced {
+                reason: format!(
+                    "rotated leg carries {} PIs (< the welded descriptor's {}) — not a welded \
+                     escrow proof (non-welded route, rejected)",
+                    rotated_leg.sub_public_inputs.len(),
+                    desc.public_input_count
+                ),
+            });
+        }
+        let dpis = &rotated_leg.sub_public_inputs[..desc.public_input_count];
+        verify_vm_descriptor2(&desc, &proof_obj, dpis).map_err(|e| {
+            FullTurnVerifyError::EscrowWeldNotForced {
+                reason: format!(
+                    "rotated leg does NOT verify under the welded descriptor \
+                     {SETTLE_ESCROW_SAT_DESCRIPTOR_NAME} — a declared-escrow turn was routed \
+                     through a non-welded descriptor with no satisfaction gate: {e}"
+                ),
+            }
+        })?;
+        Ok(())
+    }
+    #[cfg(not(feature = "prover"))]
+    {
+        Err(FullTurnVerifyError::EscrowWeldNotForced {
+            reason: "the welded escrow descriptor verify requires the `prover` feature; a \
+                     non-prover verifier cannot confirm the satisfaction gate, so a declared-escrow \
+                     turn is rejected fail-closed"
+                .into(),
+        })
+    }
+}
+
 /// Errors that can occur during full turn proof verification.
 #[derive(Debug, Clone)]
 pub enum FullTurnVerifyError {
@@ -5132,6 +5360,17 @@ pub enum FullTurnVerifyError {
     /// raised on the staged [`verify_full_turn_bound_with_caveat_coverage`] path.
     CaveatCoverageFailed {
         /// The missing-tag diagnostic.
+        reason: String,
+    },
+    /// STAGED sealed-escrow SELECTOR weld (§6 item 2): a turn whose COMMITTED declaration requires
+    /// the escrow capacity was NOT forced through the welded gates — either the escrow selector PI
+    /// (`ESCROW_SEL_PI = 46`) on the rotated leg was not `1` (a forger trying to make the gates
+    /// inert by `sel = 0`), or the rotated leg did not verify under the welded descriptor (the turn
+    /// was routed through a non-welded descriptor with no satisfaction gate). The deployed
+    /// realization of the Lean `escrow_selector_bound_to_declaration` `hverifier` discipline. Only
+    /// raised on the staged [`verify_full_turn_bound_with_escrow_weld`] path.
+    EscrowWeldNotForced {
+        /// The selector / routing diagnostic.
         reason: String,
     },
     /// The composed main STARK proof failed verification.
@@ -5304,6 +5543,11 @@ impl std::fmt::Display for FullTurnVerifyError {
             Self::CaveatCoverageFailed { reason } => write!(
                 f,
                 "slot-caveat coverage failed (capacity-weld omission): {reason}"
+            ),
+            Self::EscrowWeldNotForced { reason } => write!(
+                f,
+                "sealed-escrow SELECTOR weld not forced (declared-escrow turn dodged the welded \
+                 gate): {reason}"
             ),
         }
     }
@@ -10587,6 +10831,90 @@ mod tests {
         assert!(
             res.is_err(),
             "SOUNDNESS: a wrong chain-summed conservation net MUST be rejected at prove time"
+        );
+    }
+
+    // ========================================================================
+    // The sealed-escrow SELECTOR weld (§6 item 2) — the deployed `hverifier`.
+    // ========================================================================
+
+    /// The pure selector-pin demand matches the Lean predicate `demandsEscrowSelector`: it fires
+    /// iff the re-derived required-tag floor includes the sealed-escrow tag (17), both polarities.
+    /// The Rust twin of the `SettleEscrowSelectorBinding.lean` `#guard` teeth.
+    #[test]
+    fn escrow_selector_demand_matches_lean_rung() {
+        let tag = dregg_circuit::effect_vm::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW;
+        assert_eq!(tag, 17, "the sealed-escrow capacity tag");
+        // DEMAND: a floor including the escrow tag demands the selector (Lean
+        // `demandsEscrowSelector [tagSettleEscrow]`).
+        assert!(demands_escrow_selector(&[tag]));
+        // A multi-capacity floor still demands it (Lean `demandsEscrowSelector [18, 17, 19]`).
+        assert!(demands_escrow_selector(&[18, tag, 19]));
+        // NO-DEMAND: a non-capacity floor demands nothing (Lean `!demandsEscrowSelector []` / `[6]`).
+        assert!(!demands_escrow_selector(&[]));
+        assert!(!demands_escrow_selector(&[6]));
+    }
+
+    /// HALF B (the selector pin), pure: a declared-escrow turn whose rotated leg leaves the selector
+    /// PI at `0` (the half-open-settle dodge) is REJECTED; the genuine `1` passes the pin; a leg too
+    /// short to carry the welded selector PI is rejected fail-closed; and a non-escrow floor is
+    /// deployed-identical (always Ok).
+    #[test]
+    fn escrow_selector_pin_rejects_sel_zero_and_short_leg() {
+        let tag = dregg_circuit::effect_vm::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW;
+        let sel_pi = dregg_circuit::effect_vm::satisfaction_weld::ESCROW_SEL_PI;
+
+        // A welded-width PI vector with the selector OFF (sel = 0) — the dodge — is rejected.
+        let mut pis_off = vec![BabyBear::ZERO; sel_pi + 1];
+        pis_off[sel_pi] = BabyBear::ZERO;
+        let err = check_escrow_selector_pin(&[tag], &pis_off).unwrap_err();
+        assert!(
+            matches!(err, FullTurnVerifyError::EscrowWeldNotForced { .. }),
+            "sel = 0 on a declared-escrow turn must be rejected (HALF B), got {err:?}"
+        );
+
+        // The selector ON (sel = 1) passes the pin.
+        let mut pis_on = vec![BabyBear::ZERO; sel_pi + 1];
+        pis_on[sel_pi] = BabyBear::ONE;
+        assert!(check_escrow_selector_pin(&[tag], &pis_on).is_ok());
+
+        // A leg too short to even carry the welded selector PI (e.g. a plain 38-PI rotated transfer
+        // leg) is rejected fail-closed — the welded descriptor was not the accepting one.
+        let short = vec![BabyBear::ONE; sel_pi]; // length sel_pi, index sel_pi absent
+        let err = check_escrow_selector_pin(&[tag], &short).unwrap_err();
+        assert!(
+            matches!(err, FullTurnVerifyError::EscrowWeldNotForced { .. }),
+            "a non-welded (too-short) rotated leg must be rejected, got {err:?}"
+        );
+
+        // A non-escrow declaration is deployed-identical: no demand, always Ok (even sel = 0).
+        assert!(check_escrow_selector_pin(&[], &pis_off).is_ok());
+        assert!(check_escrow_selector_pin(&[6], &pis_off).is_ok());
+    }
+
+    /// The staged declaration-keyed routing arm sends a declared-escrow turn to the WELDED descriptor
+    /// and a non-escrow declaration to the deployed default — keyed on the existing caveat, not a new
+    /// effect (the settle is still a `Transfer`).
+    #[test]
+    fn declared_escrow_routes_to_welded_descriptor() {
+        use dregg_circuit::effect_vm::{
+            Effect, SETTLE_ESCROW_SAT_DESCRIPTOR_NAME, rotated_descriptor_name_for_declared_escrow,
+            rotated_descriptor_name_for_effect,
+        };
+        let tag = dregg_circuit::effect_vm::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW;
+        // A settle is performed AS a transfer; with a declared escrow caveat it routes to the weld.
+        let transfer = Effect::Transfer {
+            amount: 0,
+            direction: 1,
+        };
+        assert_eq!(
+            rotated_descriptor_name_for_declared_escrow(&transfer, &[tag]),
+            Some(SETTLE_ESCROW_SAT_DESCRIPTOR_NAME)
+        );
+        // No escrow caveat ⇒ the deployed default (plain transfer descriptor).
+        assert_eq!(
+            rotated_descriptor_name_for_declared_escrow(&transfer, &[]),
+            rotated_descriptor_name_for_effect(&transfer)
         );
     }
 }

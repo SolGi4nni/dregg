@@ -215,7 +215,8 @@ pub use trace::{
 // ---- Re-export the LIVE rotated (R=24) trace generator (G1, staged-additive) ----
 pub use trace_rotated::{
     ROT_PI_COUNT, ROT_WIDTH, RotatedBlockWitness, RotatedCaveatEntry, RotatedCaveatManifest,
-    empty_caveat_manifest, generate_rotated_effect_vm_trace, rotated_descriptor_name,
+    SETTLE_ESCROW_SAT_DESCRIPTOR_NAME, empty_caveat_manifest, generate_rotated_effect_vm_trace,
+    rotated_descriptor_name, rotated_descriptor_name_for_declared_escrow,
     rotated_descriptor_name_for_effect, rotated_set_field_descriptor_name,
     transfer_caveat_manifest,
 };

@@ -1964,6 +1964,42 @@ pub fn rotated_descriptor_name_for_effect(effect: &Effect) -> Option<&'static st
     }
 }
 
+/// The registry name (TSV column 1) of the welded sealed-escrow satisfaction descriptor — the
+/// Lean `Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatVmDescriptor2R24` (piCount 47, the
+/// rotated 46-PI vector + the appended selector slot pinned at PI `ESCROW_SEL_PI = 46`). The
+/// descriptor carrying the four selector-gated `SETTLE_ESCROW` satisfaction gates over the rotated
+/// BEFORE/AFTER field columns. STAGED: a member of `rotation-v3-staged-registry.tsv` only (no wide
+/// twin, no producer, no committed VK yet — see `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md`
+/// §6 BLOCKER 1).
+pub const SETTLE_ESCROW_SAT_DESCRIPTOR_NAME: &str = "settleEscrowSatVmDescriptor2R24";
+
+/// **The DECLARATION-keyed escrow routing arm (STAGED — the §6 item-2 producer half).** Resolve the
+/// rotated descriptor for an effect whose ACTING CELL has a COMMITTED declaration requiring the
+/// sealed-escrow capacity tag (`required_caveat_tags` = the caller's
+/// `dregg_turn::executor::required_capacity_caveat_tags(state_constraints)` re-derivation over the
+/// `B_AUTHORITY_DIGEST`-bound declared constraint-set). A settle is performed AS a transfer (a
+/// zero-amount transfer that flips two leg status fields), so it would otherwise route to
+/// `transferVmDescriptor2R24` — a NON-welded descriptor with no satisfaction gate. This arm routes it
+/// to the WELDED [`SETTLE_ESCROW_SAT_DESCRIPTOR_NAME`] instead, so the four satisfaction gates ride
+/// the proof and the selector binds. It keys on the EXISTING caveat declaration — NOT a new kernel
+/// effect/verb (the settle is still a `Transfer`; effect-dispatch is untouched).
+///
+/// STAGED: this is NOT yet wired into the live prover (`rotated_descriptor_name_for_effect` is the
+/// deployed default and is unchanged). Routing a declared-escrow turn here on the live path requires
+/// the welded descriptor to be a WIDE member with a producer + committed VK first (the FLIP, §6
+/// BLOCKER 1). Until then this resolves the welded NAME for the staged verifier-enforcement and tests
+/// only. A non-escrow declaration delegates to [`rotated_descriptor_name_for_effect`] (deployed-identical).
+pub fn rotated_descriptor_name_for_declared_escrow(
+    effect: &Effect,
+    required_caveat_tags: &[u32],
+) -> Option<&'static str> {
+    if required_caveat_tags.contains(&super::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW) {
+        Some(SETTLE_ESCROW_SAT_DESCRIPTOR_NAME)
+    } else {
+        rotated_descriptor_name_for_effect(effect)
+    }
+}
+
 /// The cohort-general caveat manifest for a turn: by default EMPTY (most effects carry no
 /// in-circuit caveat operand — the manifest's `count = 0` and every entry is the zero
 /// sentinel, which `fill_caveat` commits to a well-defined `caveatCommit`). A turn that
