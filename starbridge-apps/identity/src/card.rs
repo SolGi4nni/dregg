@@ -18,33 +18,45 @@
 //! elephant. The deos world's renderers consume it; this module owns the card
 //! definition and proves it is well-formed.
 //!
-//! ## The card shape — a rich, live credential surface
+//! ## The card shape — a rich, live credential-authority surface
 //!
 //! A titled column ([`deos.ui.vstack`](deos_view)) built from the rich deos-view
 //! vocabulary (`section` / `pill` / `gauge` / `breadcrumb` / `divider` / `icon`):
 //!
-//!   - a **status header** — the app name + a `pill` naming the live credential
-//!     validity as a WORD (`VALID`), and a `breadcrumb` of the whole credential
-//!     lifecycle (issued → presented → verified → revoked) with the current step
-//!     marked;
-//!   - an **"Issuer" `section`** surfacing the LIVE cell state: a `gauge` bound to
-//!     the [`ISSUANCE_COUNTER_SLOT`](crate::ISSUANCE_COUNTER_SLOT) (the strictly-
-//!     monotonic issuance sequence) and a `gauge` on the
-//!     [`REVOCATION_ROOT_SLOT`](crate::REVOCATION_ROOT_SLOT) (the append-only
-//!     revocation horizon), plus `bind`s on the issuer-key root
-//!     ([`ISSUER_AUTH_ROOT_SLOT`](crate::ISSUER_AUTH_ROOT_SLOT)), the credential id
-//!     / issuance count ([`ISSUANCE_COUNTER_SLOT`](crate::ISSUANCE_COUNTER_SLOT)),
+//!   - a **status header** — the app name + a LIVE `pill` that reads the issuance
+//!     sequence ([`ISSUANCE_COUNTER_SLOT`](crate::ISSUANCE_COUNTER_SLOT)) and names
+//!     the issuer's live state as a WORD (`ISSUING`; a never-issued cell reads
+//!     `DORMANT`);
+//!   - a **cap-tier row** of static role `pill`s naming the three parties on this
+//!     credential's attenuation lattice (the ISSUER holds the signing authority; the
+//!     HOLDER presents; the VERIFIER checks) — the same role legend the
+//!     execution-lease / escrow cards carry;
+//!   - a **lifecycle `breadcrumb`** of the credential lifecycle
+//!     (issued → presented → verified → revoked) with the current step marked;
+//!   - an **"Issuer authority" `section`** surfacing the LIVE cell state that makes
+//!     the issuer trustworthy: a `gauge` bound to the strictly-monotonic
+//!     [`ISSUANCE_COUNTER_SLOT`](crate::ISSUANCE_COUNTER_SLOT) (the issuance sequence),
+//!     plus `bind`s on the issuer-key root ([`ISSUER_AUTH_ROOT_SLOT`](crate::ISSUER_AUTH_ROOT_SLOT)),
 //!     the pinned schema ([`SCHEMA_COMMITMENT_SLOT`](crate::SCHEMA_COMMITMENT_SLOT)),
-//!     and the revocation status ([`REVOCATION_ROOT_SLOT`](crate::REVOCATION_ROOT_SLOT))
-//!     — each a fine-grained signal that re-reads the live value (the SAME witnessed
-//!     read a native `bind` closure makes), so the surface advances when a fired
-//!     issuer turn commits;
+//!     and the raw credential-id counter (adept — the gauge already shows it);
+//!   - a **"Revocation" `section`** — the append-only revocation horizon: a `gauge`
+//!     on the [`REVOCATION_ROOT_SLOT`](crate::REVOCATION_ROOT_SLOT) plus a `bind` on
+//!     the live status digest, so a fired `revoke` turn advances the surface;
 //!   - an **"Actions" `section`** of one `icon`+`button` row per lifecycle method
 //!     (`issue` / `present` / `verify` / `revoke`), each `button` carrying its
 //!     `onClick = { turn, arg }` — the EXACT method symbol the
 //!     [`service`](crate::service) routes through the [`invoke()`](crate::service)
 //!     front door (the mutators `issue` / `revoke` desugar to verified issuer turns;
 //!     the reads `present` / `verify` name the serviced seam).
+//!
+//! ## The honest constraint — the cell is an ISSUER, not one credential
+//!
+//! The backing cell is a credential ISSUER (its slots are issuance sequence,
+//! revocation root, issuer-key root, schema), so the live header pill reflects
+//! ISSUER ACTIVITY (`ISSUING` vs `DORMANT`), not the validity of any single
+//! presented credential — there is no single-credential lifecycle slot on this
+//! cell to bind. The lifecycle `breadcrumb` therefore stands as the credential
+//! story; the live slot-bound nodes read what the cell genuinely holds.
 //!
 //! The button `turn` names match the [`service`](crate::service) method vocabulary
 //! ([`METHOD_ISSUE`](crate::service::METHOD_ISSUE), …) so the card and the service
@@ -71,9 +83,16 @@ fn text(s: &str) -> Value {
     json!({ "kind": "text", "props": { "text": s } })
 }
 
-/// A `deos.ui.pill` node — a colored status badge.
+/// A static `deos.ui.pill` node — a colored status badge (no live slot).
 fn pill(label: &str, tag: &str) -> Value {
     json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
+}
+
+/// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a
+/// word + color via `cases` (the first `{value,label,tag}` matching the slot wins).
+/// `text`/`tag` are the static fallback (discord, or no match).
+fn pill_live(slot: usize, label: &str, tag: &str, cases: Value) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag, "slot": slot, "cases": cases } })
 }
 
 /// A `deos.ui.icon` node — a glyph indicator tinted by `tag`.
@@ -145,27 +164,42 @@ fn action(glyph: &str, label: &str, turn: &str) -> Value {
 
 /// **The identity card as a `deos.ui.*` view-tree** (a `serde_json::Value`).
 ///
-/// A rich, live credential surface: a status header (name + `VALID` pill + the
-/// credential-lifecycle breadcrumb), an "Issuer" section surfacing the live issuance
-/// sequence gauge, the revocation horizon gauge, and the issuer-key / credential-id /
-/// schema / status binds, and an "Actions" section of the four icon-labelled lifecycle
-/// buttons. Renderer-independent DATA: hand it to any `deos-view` renderer
-/// (native / web / discord) to paint the SAME card. The button `turn` names are the
-/// [`service`](crate::service) method symbols.
+/// A rich, live credential-authority surface: a status header (name + a LIVE
+/// `ISSUING`/`DORMANT` pill), a cap-tier row naming the issuer / holder / verifier
+/// roles, the credential-lifecycle breadcrumb, an "Issuer authority" section
+/// surfacing the live issuance-sequence gauge + the issuer-key / schema / credential-id
+/// binds, a "Revocation" section surfacing the append-only revocation horizon, and an
+/// "Actions" section of the four icon-labelled lifecycle buttons. Renderer-independent
+/// DATA: hand it to any `deos-view` renderer (native / web / discord) to paint the SAME
+/// card. The button `turn` names are the [`service`](crate::service) method symbols.
 pub fn identity_card_value() -> Value {
     json!({
         "kind": "vstack",
         "props": {},
         "children": [
-            row(vec![text("Identity"), pill("VALID", "good")]),
+            // The header pill is LIVE: it reads the issuance sequence and names the
+            // issuer's state. A never-issued issuer cell (counter 0) reads DORMANT;
+            // any issuer that has minted ≥1 credential falls through to ISSUING.
+            row(vec![text("Identity"), pill_live(ISSUANCE_COUNTER_SLOT, "ISSUING", "good", json!([
+                { "value": 0, "label": "DORMANT", "tag": "muted" },
+            ]))]),
+            // The three roles on this credential's attenuation lattice.
+            row(vec![
+                pill("issuer · authority", "accent"),
+                pill("holder · presents", "muted"),
+                pill("verifier · checks", "muted"),
+            ]),
             breadcrumb(&["Issued", "Presented", "Verified", "Revoked"], 2),
             divider(),
-            section("Issuer", "genuine", vec![
+            section("Issuer authority", "genuine", vec![
                 gauge(ISSUANCE_COUNTER_SLOT, ISSUANCE_GAUGE_MAX, "issuance seq ", true),
-                gauge(REVOCATION_ROOT_SLOT, REVOCATION_GAUGE_MAX, "revocation horizon ", true),
                 bind(ISSUER_AUTH_ROOT_SLOT, "issuer key · ", "id", false),
-                bind(ISSUANCE_COUNTER_SLOT, "credential id · ", "raw", true),
                 bind(SCHEMA_COMMITMENT_SLOT, "schema · ", "hash", false),
+                // The raw credential-id counter — the gauge already shows it.
+                bind(ISSUANCE_COUNTER_SLOT, "credential id · ", "raw", true),
+            ]),
+            section("Revocation", "", vec![
+                gauge(REVOCATION_ROOT_SLOT, REVOCATION_GAUGE_MAX, "revocation horizon ", true),
                 bind(REVOCATION_ROOT_SLOT, "status · ", "hash", false),
             ]),
             section("Actions", "", vec![
@@ -207,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn the_card_is_a_vstack_with_a_named_header_and_a_validity_pill() {
+    fn the_card_is_a_vstack_with_a_named_header_and_a_live_status_pill() {
         let card = identity_card_value();
         assert_eq!(card["kind"], "vstack");
         let texts = of_kind(&card, "text");
@@ -215,9 +249,36 @@ mod tests {
             texts.iter().any(|t| t["props"]["text"] == "Identity"),
             "the header names the app"
         );
-        let pills = of_kind(&card, "pill");
-        assert_eq!(pills.len(), 1);
-        assert_eq!(pills[0]["props"]["text"], "VALID");
+        // The header pill is LIVE: it reads ISSUANCE_COUNTER_SLOT and maps 0 → DORMANT.
+        let live = of_kind(&card, "pill")
+            .into_iter()
+            .find(|p| p["props"].get("slot").is_some())
+            .expect("exactly one live status pill");
+        assert_eq!(live["props"]["text"], "ISSUING", "the active fallback word");
+        assert_eq!(live["props"]["slot"], ISSUANCE_COUNTER_SLOT);
+        let cases = live["props"]["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 1, "issuance 0 = DORMANT (never issued)");
+        assert_eq!(cases[0]["value"], 0);
+        assert_eq!(cases[0]["label"], "DORMANT");
+    }
+
+    #[test]
+    fn the_cap_tier_row_names_the_three_credential_roles() {
+        let card = identity_card_value();
+        // The static (no-slot) pills name the issuer / holder / verifier roles.
+        let static_pills: Vec<String> = of_kind(&card, "pill")
+            .into_iter()
+            .filter(|p| p["props"].get("slot").is_none())
+            .map(|p| p["props"]["text"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            static_pills,
+            vec![
+                "issuer · authority",
+                "holder · presents",
+                "verifier · checks"
+            ]
+        );
     }
 
     #[test]
@@ -242,8 +303,13 @@ mod tests {
     }
 
     #[test]
-    fn the_binds_surface_issuer_key_credential_id_schema_and_status() {
+    fn the_authority_and_revocation_sections_surface_the_live_slots() {
         let card = identity_card_value();
+        let titles: Vec<&str> = of_kind(&card, "section")
+            .iter()
+            .map(|s| s["props"]["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, vec!["Issuer authority", "Revocation", "Actions"]);
         let binds = of_kind(&card, "bind");
         let slots: Vec<u64> = binds
             .iter()
@@ -253,11 +319,11 @@ mod tests {
             slots,
             vec![
                 ISSUER_AUTH_ROOT_SLOT as u64,
-                ISSUANCE_COUNTER_SLOT as u64,
                 SCHEMA_COMMITMENT_SLOT as u64,
+                ISSUANCE_COUNTER_SLOT as u64,
                 REVOCATION_ROOT_SLOT as u64,
             ],
-            "the binds surface issuer key / credential id / schema / status"
+            "issuer key / schema / credential id (authority), then status (revocation)"
         );
     }
 
@@ -335,7 +401,7 @@ mod tests {
         // Round-trips through serde (the shape a deos-view renderer's parser reads).
         let back: Value = serde_json::from_str(&s).expect("the card JSON parses");
         assert_eq!(back["kind"], "vstack");
-        // header row, breadcrumb, divider, issuer section, actions section
-        assert_eq!(back["children"].as_array().unwrap().len(), 5);
+        // header row, cap-tier row, breadcrumb, divider, authority, revocation, actions
+        assert_eq!(back["children"].as_array().unwrap().len(), 7);
     }
 }

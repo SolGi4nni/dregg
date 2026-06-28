@@ -22,8 +22,12 @@
 //! A titled column ([`deos.ui.vstack`](deos_view)) built from the rich deos-view
 //! vocabulary (`section` / `pill` / `gauge` / `breadcrumb` / `divider` / `icon`):
 //!
-//!   - a **status header** — the app name + a `pill` naming the live coordination state
-//!     as a WORD (`COORDINATING`), and a `breadcrumb` of the orchestration lifecycle
+//!   - a **status header** — the app name + a LIVE `pill` naming the coordination state
+//!     as a WORD (`COORDINATING`; an unopened factory cell reads `PENDING`);
+//!   - a **cap-tier row** of static role `pill`s naming the two parties on the swarm's
+//!     attenuation lattice (the LEAD coordinates + delegates; the WORKERS spend against
+//!     the shared budget) — the same role legend the execution-lease / escrow cards carry;
+//!   - a **lifecycle `breadcrumb`** of the orchestration lifecycle
 //!     (mandate → dispatch → worker-step → audit) with the current step marked;
 //!   - a **"Coordination" `section`** surfacing the LIVE board state: the KILLER VISUAL —
 //!     two `gauge`s on the per-worker spend meters ([`SPENT_A_SLOT`](crate::SPENT_A_SLOT) /
@@ -57,6 +61,11 @@ const BUDGET_GAUGE_MAX: u64 = 1_000;
 /// A `deos.ui.text` node.
 fn text(s: &str) -> Value {
     json!({ "kind": "text", "props": { "text": s } })
+}
+
+/// A static `deos.ui.pill` node — a colored status badge (no live slot).
+fn pill(label: &str, tag: &str) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
 }
 
 /// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a
@@ -156,11 +165,19 @@ pub fn board_card_value() -> Value {
             row(vec![text("Agent Orchestration"), pill_live(EPOCH_SLOT, "COORDINATING", "accent", json!([
                 { "value": 0, "label": "PENDING", "tag": "muted" },
             ]))]),
+            // The two roles on the swarm's attenuation lattice: the lead opens the
+            // mandate + delegates; the workers spend against the shared budget.
+            row(vec![
+                pill("lead · coordinates", "accent"),
+                pill("workers · spend", "muted"),
+            ]),
             breadcrumb(&["Mandate", "Dispatch", "Worker Step", "Audit"], 1),
             divider(),
             section("Coordination", "genuine", vec![
                 gauge(SPENT_A_SLOT, BUDGET_GAUGE_MAX, "worker-a spend → budget ", false),
                 gauge(SPENT_B_SLOT, BUDGET_GAUGE_MAX, "worker-b spend → budget ", false),
+                // The conserved bound the executor's AffineLe gate enforces.
+                text("spent_a + spent_b ≤ budget (the AffineLe mandate-budget tooth)"),
                 bind(BUDGET_SLOT, "budget · ", "amount"),
                 bind(SPENT_A_SLOT, "spent A · ", "amount"),
                 bind(SPENT_B_SLOT, "spent B · ", "amount"),
@@ -216,18 +233,44 @@ mod tests {
                 .any(|t| t["props"]["text"] == "Agent Orchestration"),
             "the header names the app"
         );
-        let pills = of_kind(&card, "pill");
-        assert_eq!(pills.len(), 1);
         // The header pill is LIVE: it reads EPOCH_SLOT and maps the value to a word.
+        let live = of_kind(&card, "pill")
+            .into_iter()
+            .find(|p| p["props"].get("slot").is_some())
+            .expect("exactly one live status pill");
         assert_eq!(
-            pills[0]["props"]["text"], "COORDINATING",
+            live["props"]["text"], "COORDINATING",
             "the static fallback word (an opened board)"
         );
-        assert_eq!(pills[0]["props"]["slot"], EPOCH_SLOT as usize);
-        let cases = pills[0]["props"]["cases"].as_array().unwrap();
+        assert_eq!(live["props"]["slot"], EPOCH_SLOT as usize);
+        let cases = live["props"]["cases"].as_array().unwrap();
         assert_eq!(cases.len(), 1, "epoch 0 = PENDING (not yet opened)");
         assert_eq!(cases[0]["value"], 0);
         assert_eq!(cases[0]["label"], "PENDING");
+    }
+
+    #[test]
+    fn the_cap_tier_row_names_the_lead_and_worker_roles() {
+        let card = board_card_value();
+        // The static (no-slot) pills name the two roles on the attenuation lattice.
+        let static_pills: Vec<String> = of_kind(&card, "pill")
+            .into_iter()
+            .filter(|p| p["props"].get("slot").is_none())
+            .map(|p| p["props"]["text"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(static_pills, vec!["lead · coordinates", "workers · spend"]);
+    }
+
+    #[test]
+    fn the_coordination_section_names_the_conserved_affine_bound() {
+        let card = board_card_value();
+        let texts = of_kind(&card, "text");
+        assert!(
+            texts
+                .iter()
+                .any(|t| t["props"]["text"].as_str().unwrap().contains("AffineLe")),
+            "the conserved spent_a + spent_b ≤ budget bound is named"
+        );
     }
 
     #[test]
@@ -329,7 +372,7 @@ mod tests {
         // Round-trips through serde (the shape a deos-view renderer's parser reads).
         let back: Value = serde_json::from_str(&s).expect("the card JSON parses");
         assert_eq!(back["kind"], "vstack");
-        // header row, breadcrumb, divider, coordination section, actions section
-        assert_eq!(back["children"].as_array().unwrap().len(), 5);
+        // header row, cap-tier row, breadcrumb, divider, coordination, actions
+        assert_eq!(back["children"].as_array().unwrap().len(), 6);
     }
 }

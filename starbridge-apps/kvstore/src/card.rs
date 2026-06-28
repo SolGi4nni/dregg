@@ -23,7 +23,8 @@
 //! A titled column ([`deos.ui.vstack`](deos_view)) built from the rich deos-view
 //! vocabulary (`section` / `pill` / `gauge` / `divider` / `icon`):
 //!
-//!   - a **status header** — the app name + a `pill` reading `LIVE`;
+//!   - a **status header** — the app name + a LIVE `pill` reading
+//!     [`COUNT_SLOT`](crate::COUNT_SLOT) (`ACTIVE`; an empty store reads `EMPTY`);
 //!   - a **"Store" `section`** surfacing the LIVE cell header: a `gauge` bound to
 //!     [`COUNT_SLOT`](crate::COUNT_SLOT) (entries / [`CAPACITY`](crate::CAPACITY)),
 //!     plus `bind`s on the store [`VERSION_SLOT`](crate::VERSION_SLOT), the entry
@@ -31,6 +32,10 @@
 //!     [`LAST_VALUE_SLOT`](crate::LAST_VALUE_SLOT) — each a fine-grained signal that
 //!     re-reads the live value (the SAME witnessed read a native `bind` closure
 //!     makes), so the surface advances when a fired `put`/`delete` commits;
+//!   - an **"Invariants" `section`** — the store's distinctive trust visual: the two
+//!     verified teeth the executor enforces on every mutation (the version is
+//!     rollback-proof `Monotonic`; the entry count is capacity-bounded `FieldLte` ≤
+//!     [`CAPACITY`](crate::CAPACITY)) — what makes a deos kvstore more than a HashMap;
 //!   - an **"Actions" `section`** of one `icon`+`button` row per service method
 //!     (`put` / `get` / `delete`), each `button` carrying its
 //!     `onClick = { turn, arg }` — the EXACT cap-gated verified turn a click fires
@@ -50,6 +55,11 @@ use crate::{
 /// A `deos.ui.text` node.
 fn text(s: &str) -> Value {
     json!({ "kind": "text", "props": { "text": s } })
+}
+
+/// A static `deos.ui.pill` node — a colored status badge (no live slot).
+fn pill(label: &str, tag: &str) -> Value {
+    json!({ "kind": "pill", "props": { "text": label, "tag": tag } })
 }
 
 /// A LIVE `deos.ui.pill` node — reads `slot` immediate-mode and maps the value to a
@@ -131,6 +141,14 @@ pub fn kvstore_card_value() -> Value {
                 bind(COUNT_SLOT, "entries · ", "amount", true),
                 bind(LAST_KEY_SLOT, "last key · ", "id", false),
                 bind(LAST_VALUE_SLOT, "last value · ", "hash", false),
+            ]),
+            // The store's distinctive trust visual — the verified invariants the
+            // executor enforces on every put/delete (this is what makes a deos kvstore
+            // more than a HashMap): the version is rollback-proof and the entry count
+            // can never exceed the cell's capacity.
+            section("Invariants", "genuine", vec![
+                row(vec![icon("↑", "good"), text("version is monotone — no rollback (Monotonic tooth)")]),
+                row(vec![icon("≤", "good"), text("entries ≤ capacity — never overflows (FieldLte tooth)")]),
             ]),
             section("Actions", "", vec![
                 action("+", "Put",    METHOD_PUT),
@@ -269,14 +287,36 @@ mod tests {
     }
 
     #[test]
-    fn the_card_has_a_store_section_and_an_actions_section() {
+    fn the_card_has_store_invariants_and_actions_sections() {
         let card = kvstore_card_value();
         let sections = of_kind(&card, "section");
         let titles: Vec<&str> = sections
             .iter()
             .map(|s| s["props"]["title"].as_str().unwrap())
             .collect();
-        assert_eq!(titles, vec!["Store", "Actions"]);
+        assert_eq!(titles, vec!["Store", "Invariants", "Actions"]);
+    }
+
+    #[test]
+    fn the_invariants_section_names_the_two_verified_teeth() {
+        let card = kvstore_card_value();
+        let invariants = of_kind(&card, "section")
+            .into_iter()
+            .find(|s| s["props"]["title"] == "Invariants")
+            .expect("the invariants section is present");
+        let texts = of_kind(invariants, "text");
+        assert!(
+            texts
+                .iter()
+                .any(|t| t["props"]["text"].as_str().unwrap().contains("Monotonic")),
+            "the rollback-proof version tooth is named"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|t| t["props"]["text"].as_str().unwrap().contains("FieldLte")),
+            "the capacity-bound tooth is named"
+        );
     }
 
     #[test]
@@ -298,7 +338,7 @@ mod tests {
         // Round-trips through serde (the shape a deos-view renderer's parser reads).
         let back: Value = serde_json::from_str(&s).expect("the card JSON parses");
         assert_eq!(back["kind"], "vstack");
-        // header row, divider, store section, actions section
-        assert_eq!(back["children"].as_array().unwrap().len(), 4);
+        // header row, divider, store section, invariants section, actions section
+        assert_eq!(back["children"].as_array().unwrap().len(), 5);
     }
 }
