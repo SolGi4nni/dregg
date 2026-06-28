@@ -130,6 +130,12 @@ pub enum PermissionOutcome {
         receipt: String,
         /// Calls remaining on this tool's mandate after this one.
         remaining: i64,
+        /// The value CHARGED for this call (consumer → provider, conserved on the
+        /// metered turn); `0` for a free mandate. The market half of the verdict:
+        /// the editor / inspector sees what the call cost, the charge is recorded
+        /// alongside the receipt that witnesses it.
+        #[serde(default)]
+        paid: u64,
     },
     /// The gate REFUSED the call in-band (no turn, no spend). Maps to ACP
     /// `deny`. The `reason` names the leg that bit (scope/deadline/rate/error).

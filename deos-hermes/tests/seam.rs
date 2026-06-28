@@ -48,6 +48,7 @@ fn hermes_tool_call_becomes_a_cap_gated_receipted_turn() {
             tool_call_id,
             receipt,
             remaining,
+            ..
         } => {
             assert_eq!(tool_call_id, "tc-1");
             // A genuine 32-byte turn hash, hex-encoded — proof the metered turn

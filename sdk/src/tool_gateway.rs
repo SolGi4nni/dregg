@@ -122,6 +122,59 @@ pub struct ToolGrant {
     pub tool_method: String,
 }
 
+/// **The per-call PRICE a tool/model provider charges through the gateway** — the
+/// market half of the mandate. Where [`ToolGrant`] meters HOW MANY times a
+/// consumer may invoke (the rate budget), a [`Charge`] meters WHAT IT COSTS: each
+/// admitted invocation moves `price` of value from the consumer (the gateway's
+/// worker cell) to the `provider` cell, and the consumer's spend is capped at
+/// `budget`.
+///
+/// This is the "pay to access another agent's tools/models" layer of the agent
+/// service economy: a provider agent B offers a tool through the gateway with a
+/// price; a consumer agent A's call is cap-checked + rate-metered (the
+/// [`ToolGrant`]) AND charged (this [`Charge`]) — a real conserving
+/// [`Effect::Transfer`] from A to B riding the SAME metered turn, so the charge
+/// commits atomically with the meter or not at all.
+///
+/// The `Effect::Transfer` the charge emits is EXACTLY what the app-framework
+/// `Payable::pay` DSI desugars to (the one conserved per-asset Σδ=0 kernel
+/// effect): the gateway is the metered front door to the same value medium the
+/// `Payable` apps transact over, so a tool-call's payment is a balance the
+/// provider's cell can spend onward.
+///
+/// ## Two enforcement surfaces (mirroring the rate budget)
+///
+/// 1. **In-band, before submission** — `spent + price <= budget`. Over-budget is
+///    a [`GatewayRefusal::OverBudget`] returned as an `Err` (the anti-ghost
+///    tooth: no turn, no spend, no charge).
+/// 2. **In the executor** — the charge rides as an [`Effect::Transfer`]
+///    (`LinearityClass::Conservative`): if the consumer cannot actually pay
+///    (balance `< price`), the kernel's per-asset conservation check REJECTS the
+///    metered turn, so a non-paying call cannot meter. Over-budget is the fast
+///    in-band cap; insolvency is the conserved backstop under it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Charge {
+    /// The per-call price the provider charges (moved consumer → provider).
+    pub price: u64,
+    /// The provider cell that receives each call's payment (agent B).
+    pub provider: CellId,
+    /// The consumer's total spend allowance under this mandate: cumulative
+    /// `spent` may never exceed this (the VALUE budget, the money analogue of the
+    /// grant's rate ceiling).
+    pub budget: u64,
+}
+
+impl Charge {
+    /// A charge of `price` per call, paid to `provider`, capped at `budget` total.
+    pub fn new(price: u64, provider: CellId, budget: u64) -> Charge {
+        Charge {
+            price,
+            provider,
+            budget,
+        }
+    }
+}
+
 /// **`deleg_admit`** — the folded delegated-policy predicate, the byte-faithful
 /// Rust mirror of the Lean `delegAdmit g now tool old new`
 /// (`Dregg2.Apps.ToolAccessDelegation.delegAdmit`).
@@ -198,6 +251,18 @@ pub enum GatewayRefusal {
         /// The granted ceiling `N`.
         rate_limit: i64,
     },
+    /// VALUE BUDGET: paying for this call would push cumulative spend past the
+    /// consumer's allowance (`spent + price > budget`). The market analogue of
+    /// [`OverRate`](GatewayRefusal::OverRate): the consumer is out of money on
+    /// this mandate before the call is even attempted.
+    OverBudget {
+        /// The value already spent under this mandate.
+        spent: u64,
+        /// The per-call price that would have been charged.
+        price: u64,
+        /// The consumer's total spend allowance.
+        budget: u64,
+    },
 }
 
 impl std::fmt::Display for GatewayRefusal {
@@ -218,6 +283,14 @@ impl std::fmt::Display for GatewayRefusal {
                 f,
                 "tool call over rate: {calls_made} calls already made, mandate grants {rate_limit}"
             ),
+            GatewayRefusal::OverBudget {
+                spent,
+                price,
+                budget,
+            } => write!(
+                f,
+                "tool call over budget: {spent} already spent + {price} price exceeds the {budget} allowance"
+            ),
         }
     }
 }
@@ -234,6 +307,11 @@ pub struct ToolReceipt {
     pub calls_made: i64,
     /// How many calls remain on the mandate (`rate_limit - calls_made`).
     pub remaining: i64,
+    /// The value charged for THIS call (the per-call `price`; `0` for an
+    /// unpriced mandate). The conserved `Effect::Transfer` for this amount rode
+    /// the metered turn, so the receipt witnesses the payment as well as the
+    /// authorization — the "charge recorded in the verdict".
+    pub paid: u64,
 }
 
 /// A custody-receipt-shaped DELIVERY WITNESS: proof that a routed tool-call's
@@ -361,6 +439,14 @@ impl From<SdkError> for ToolCallError {
 pub struct ToolGateway {
     /// The grantor's pinned mandate.
     grant: ToolGrant,
+    /// The provider's per-call PRICE + the consumer's spend budget, if this is a
+    /// PAID (metered-market) mandate. `None` = a free mandate (rate-only, the
+    /// original gateway shape). When `Some`, every admitted call charges
+    /// `charge.price` consumer → `charge.provider` on the metered turn.
+    charge: Option<Charge>,
+    /// Cumulative value spent under this mandate (advances by `charge.price` on
+    /// each committed/reserved paid call). Capped at `charge.budget` in-band.
+    spent: u64,
     /// The cap-gated worker the gateway drives.
     worker: SubAgent,
     /// The worker cell id (the mandate cell carrying `calls_made`).
@@ -401,8 +487,11 @@ struct RoutedWork {
     routed_hash: [u8; 32],
     /// The new counter value this call commits (`old + 1`), reserved at enqueue.
     new_count: i64,
-    /// The tool's actual effects (beyond the metered counter advance).
+    /// The tool's actual effects (beyond the metered counter advance + charge).
     work: Vec<Effect>,
+    /// The value reserved for this routed call's charge at enqueue (`0` for a
+    /// free mandate); released back to the budget if the route breaks.
+    charged: u64,
     /// The height the call was enqueued (for the delivery receipt).
     enqueued_at: i64,
 }
@@ -422,6 +511,28 @@ impl ToolGateway {
         runtime: &AgentRuntime,
         parent_token: &HeldToken,
         grant: ToolGrant,
+    ) -> Result<Self, SdkError> {
+        Self::admit_priced(runtime, parent_token, grant, None)
+    }
+
+    /// Admit a worker under a delegated tool mandate WITH a per-call PRICE — the
+    /// metered, PAID market gateway.
+    ///
+    /// Identical to [`ToolGateway::admit`] (same cap-gated worker, same
+    /// rate/scope/deadline mandate, same executor-side backstop), but every
+    /// admitted call additionally CHARGES `charge.price` from the consumer (the
+    /// worker cell) to `charge.provider` via a conserving [`Effect::Transfer`]
+    /// riding the metered turn, with cumulative spend capped at `charge.budget`.
+    ///
+    /// Pass `None` for `charge` to admit a free (rate-only) mandate — exactly
+    /// what [`ToolGateway::admit`] does. This is the "pay to access agent B's
+    /// tools" gateway: B is `charge.provider`, the price is per-call, the
+    /// consumer (the worker A drives) pays out of its own balance, conserved.
+    pub fn admit_priced(
+        runtime: &AgentRuntime,
+        parent_token: &HeldToken,
+        grant: ToolGrant,
+        charge: Option<Charge>,
     ) -> Result<Self, SdkError> {
         // Spawn a worker scoped to EXACTLY the granted tool method. Its biscuit
         // credential covers only `grant.tool_method`, so the executor rejects a
@@ -448,6 +559,8 @@ impl ToolGateway {
 
         Ok(ToolGateway {
             grant,
+            charge,
+            spent: 0,
             worker,
             worker_cell,
             calls_made: 0,
@@ -485,6 +598,69 @@ impl ToolGateway {
         self.grant.rate_limit - self.calls_made
     }
 
+    /// The provider's price + consumer budget for a PAID mandate (`None` for a
+    /// free, rate-only mandate).
+    pub fn charge(&self) -> Option<&Charge> {
+        self.charge.as_ref()
+    }
+
+    /// The cumulative value spent under this mandate so far (`0` for an unpriced
+    /// mandate, or before any paid call commits/reserves).
+    pub fn spent(&self) -> u64 {
+        self.spent
+    }
+
+    /// The value budget remaining on the mandate (`budget - spent`); `None` for
+    /// an unpriced mandate.
+    pub fn budget_remaining(&self) -> Option<u64> {
+        self.charge
+            .as_ref()
+            .map(|c| c.budget.saturating_sub(self.spent))
+    }
+
+    /// The per-call price of a paid mandate (`0` for a free mandate).
+    fn price(&self) -> u64 {
+        self.charge.as_ref().map_or(0, |c| c.price)
+    }
+
+    /// IN-BAND value-budget check — the market analogue of the rate conjunct.
+    /// Returns the [`GatewayRefusal::OverBudget`] leg iff paying for one more
+    /// call would push cumulative spend past the consumer's allowance. `None`
+    /// (admit) for a free mandate or one with budget head-room.
+    fn budget_refusal(&self) -> Option<GatewayRefusal> {
+        let charge = self.charge.as_ref()?;
+        if self.spent + charge.price > charge.budget {
+            Some(GatewayRefusal::OverBudget {
+                spent: self.spent,
+                price: charge.price,
+                budget: charge.budget,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Prepend the per-call charge [`Effect::Transfer`] (consumer → provider) to
+    /// the tool's work, if this is a paid mandate. The conserving transfer rides
+    /// the SAME metered turn the counter advance does, so the charge commits
+    /// atomically with the meter (or the whole turn is rejected — e.g. the
+    /// consumer cannot pay, the conserved backstop under the in-band budget cap).
+    fn charged_effects(&self, work: Vec<Effect>) -> Vec<Effect> {
+        match self.charge.as_ref() {
+            Some(charge) => {
+                let mut v = Vec::with_capacity(work.len() + 1);
+                v.push(Effect::Transfer {
+                    from: self.worker_cell,
+                    to: charge.provider,
+                    amount: charge.price,
+                });
+                v.extend(work);
+                v
+            }
+            None => work,
+        }
+    }
+
     /// THE SEAM — admit an inbound tool-call.
     ///
     /// `tool` is the tool/MCP id the call presents; `now` is the presentation
@@ -508,7 +684,7 @@ impl ToolGateway {
         &mut self,
         tool: i64,
         now: i64,
-        mut work: Vec<Effect>,
+        work: Vec<Effect>,
     ) -> Result<ToolReceipt, ToolCallError> {
         let old = self.calls_made;
         let new = old + 1;
@@ -520,29 +696,45 @@ impl ToolGateway {
                 self.diagnose_refusal(tool, now, old),
             ));
         }
+        // §1b — IN-BAND value-budget admission (the market conjunct). A paid call
+        // whose price would exceed the consumer's allowance is refused in-band as
+        // `OverBudget` — no turn, no spend, no charge.
+        if let Some(refusal) = self.budget_refusal() {
+            return Err(ToolCallError::Refused(refusal));
+        }
 
-        // §2 — the metered write: advance the rate counter `c → c+1`. The
-        // worker presents its method-scoped biscuit credential; the executor's
-        // token path admits it, and the cell-program rate/monotonic backstop
-        // re-checks the counter. `work` rides the same turn (the tool's payload).
-        let mut effects = Vec::with_capacity(work.len() + 1);
+        // §2 — the metered write: advance the rate counter `c → c+1`, with the
+        // per-call CHARGE (a conserving consumer → provider `Effect::Transfer`)
+        // and the tool's `work` riding the SAME turn. The worker presents its
+        // method-scoped biscuit credential; the executor admits it, the
+        // cell-program rate/monotonic backstop re-checks the counter, AND the
+        // kernel's per-asset conservation check enforces the charge (an
+        // insolvent consumer's turn is rejected — the conserved backstop under
+        // the in-band budget cap).
+        let charged = self.charged_effects(work);
+        let mut effects = Vec::with_capacity(charged.len() + 1);
         effects.push(Effect::SetField {
             cell: self.worker_cell,
             index: CALLS_MADE_SLOT as usize,
             value: field_from_u64(new as u64),
         });
-        effects.append(&mut work);
+        effects.extend(charged);
 
         let receipt = self
             .worker
             .execute_method(&self.grant.tool_method, effects)?;
 
-        // The call committed: advance the tracked counter in lock-step.
+        // The call committed: advance the tracked counter AND the spend in
+        // lock-step (the on-ledger Transfer already moved the value; `spent`
+        // tracks it for the in-band budget cap).
         self.calls_made = new;
+        let paid = self.price();
+        self.spent += paid;
         Ok(ToolReceipt {
             receipt,
             calls_made: new,
             remaining: self.remaining(),
+            paid,
         })
     }
 
@@ -580,24 +772,35 @@ impl ToolGateway {
                 self.diagnose_refusal(tool, now, old),
             ));
         }
+        // §1b — IN-BAND value-budget admission (the market conjunct), the SAME
+        // gate the inline path runs. Over-budget short-circuits at the on-ramp:
+        // no enqueue, no reservation.
+        if let Some(refusal) = self.budget_refusal() {
+            return Err(ToolCallError::Refused(refusal));
+        }
 
-        // RESERVE the counter slot: the admitted call now owns `old → new`, so a
-        // second enqueue this turn gates against `new` (no double-spend of the rate
-        // budget between enqueue and drain). A broken drain releases the reservation.
+        // RESERVE the counter slot AND the spend: the admitted call now owns
+        // `old → new` of the rate budget and `price` of the value budget, so a
+        // second enqueue this turn gates against both reservations (no
+        // double-spend of either between enqueue and drain). A broken drain
+        // releases both reservations.
         self.calls_made = new;
+        let charged = self.price();
+        self.spent += charged;
 
         // Build the metered turn NOW (at enqueue) so the routed call's
         // content-address IS the turn hash — the same identity the executor will
         // commit, and the EventualRef::source_turn / pending-registry key for the
-        // result channel. The work rides this turn; the executor reruns the same
-        // shape at drain time through the cap-gated worker.
-        let mut effects = Vec::with_capacity(work.len() + 1);
+        // result channel. The charge + work ride this turn; the executor reruns
+        // the same shape at drain time through the cap-gated worker.
+        let charged_work = self.charged_effects(work.clone());
+        let mut effects = Vec::with_capacity(charged_work.len() + 1);
         effects.push(Effect::SetField {
             cell: self.worker_cell,
             index: CALLS_MADE_SLOT as usize,
             value: field_from_u64(new as u64),
         });
-        effects.extend(work.iter().cloned());
+        effects.extend(charged_work);
         let routed_turn = self.build_routed_turn(new, effects);
         let routed_hash = routed_turn.hash();
 
@@ -616,6 +819,7 @@ impl ToolGateway {
             routed_hash,
             new_count: new,
             work,
+            charged,
             enqueued_at: now,
         });
 
@@ -644,15 +848,17 @@ impl ToolGateway {
         while let Some(item) = self.inbox.pop_front() {
             drained.push(item.routed_hash);
 
-            // The metered write + the tool's payload ride one turn — identical to
-            // the inline path, but executed at DRAIN time, not enqueue time.
-            let mut effects = Vec::with_capacity(item.work.len() + 1);
+            // The metered write + the charge + the tool's payload ride one turn —
+            // identical to the inline path, but executed at DRAIN time, not
+            // enqueue time.
+            let charged_work = self.charged_effects(item.work.clone());
+            let mut effects = Vec::with_capacity(charged_work.len() + 1);
             effects.push(Effect::SetField {
                 cell: self.worker_cell,
                 index: CALLS_MADE_SLOT as usize,
                 value: field_from_u64(item.new_count as u64),
             });
-            effects.extend(item.work.iter().cloned());
+            effects.extend(charged_work);
 
             match self.worker.execute_method(&self.grant.tool_method, effects) {
                 Ok(receipt) => {
@@ -660,6 +866,7 @@ impl ToolGateway {
                         receipt,
                         calls_made: item.new_count,
                         remaining: self.grant.rate_limit - item.new_count,
+                        paid: item.charged,
                     };
                     let delivery = DeliveryReceipt {
                         routed_hash: item.routed_hash,
@@ -684,12 +891,14 @@ impl ToolGateway {
                     );
                 }
                 Err(e) => {
-                    // BROKEN ROUTE: release the reserved counter slot (the executor
-                    // did NOT commit, so the rate budget must not be consumed), then
+                    // BROKEN ROUTE: release the reserved counter slot AND the
+                    // reserved spend (the executor did NOT commit, so neither the
+                    // rate budget nor the value budget must be consumed), then
                     // mark the promise broken.
                     if self.calls_made == item.new_count {
                         self.calls_made = item.new_count - 1;
                     }
+                    self.spent = self.spent.saturating_sub(item.charged);
                     let reason = format!("routed execution rejected: {e}");
                     let _events = self.pending.resolve(
                         item.routed_hash,

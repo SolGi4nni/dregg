@@ -373,6 +373,7 @@ pub(crate) fn tool_line_from(call: &ToolCallRequest, outcome: &PermissionOutcome
             tool_call_id,
             receipt,
             remaining,
+            ..
         } => ToolLine {
             tool_call_id: tool_call_id.clone(),
             name: call.name.clone(),

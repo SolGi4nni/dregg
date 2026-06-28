@@ -89,7 +89,7 @@ pub use acp::{PermissionOutcome, ToolCallRequest, ToolKind};
 pub use acp_client::{
     AcpClient, AcpError, AcpPeer, AcpTransport, JsRunRecord, PromptRun, RunJsHook, StreamEvent,
 };
-pub use bridge::HermesGateway;
+pub use bridge::{HermesGateway, ToolMarket};
 #[cfg(unix)]
 pub use egress::{EgressGrant, EgressPolicy};
 pub use grant_registry::{GrantRegistry, MandateKey};
