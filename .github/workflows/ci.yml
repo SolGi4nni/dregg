@@ -33,6 +33,18 @@ jobs:
       - uses: actions/checkout@v4
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
+      # Reclaim the ~25 GB of preinstalled toolchains we never use. The hosted
+      # ubuntu runner ships with only ~14 GB free on /, which the full debug-build
+      # `target/` of this workspace overruns — see the root-cause note on the test
+      # step below. Freed BEFORE the cache restore + build so they have headroom.
+      - if: runner.os == 'Linux'
+        name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -41,21 +53,38 @@ jobs:
       # ld64 — green, so keep it whole.
       - if: runner.os == 'macOS'
         run: cargo test --workspace
-      # Linux: exclude ONLY deos-zed's heavy gpui executables from the link. deos-zed
-      # is a vendored Zed-editor integration (a whole IDE fork), not core protocol.
-      # Its windowed targets (bins demo/merge_demo, the gpui screenshot tests) link
-      # the ENTIRE Linux desktop/accessibility static graph (gpui-platform/linux,
-      # accesskit, atspi, wayland, x11rb, zbus) and crash GNU ld with SIGBUS
-      # ("ld terminated with signal 7 [Bus error]") on the hosted runner — a linker
-      # resource crash, NOT a missing system lib (the log shows no `cannot find -l*`,
-      # so no apt package can satisfy it). It is built/linked separately, not in the
-      # core-protocol test gate.
+      # Linux SIGBUS root cause: it is NOT one heavy crate. The full debug-build
+      # `target/` of the WHOLE workspace overruns the hosted runner's small disk,
+      # and whichever link steps are running when / hits zero ALL die at once as
+      # `collect2: ld terminated with signal 7 [Bus error]` — a write into GNU ld's
+      # mmap'd output faults when the file can't be extended (disk full). The proof:
+      # the crash hits SIMULTANEOUSLY across unrelated, LIGHT protocol crates
+      # (starbridge-agent-orchestration / starbridge-tool-access-delegation — no
+      # gpui/servo in their graph), and a sibling run surfaces the identical root
+      # cause as a plain `No space left on device (os error 28)`. Fixed at the root
+      # WITHOUT dropping any crate: (1) the disk-reclaim step above, and (2) build
+      # the tests with debuginfo OFF (CARGO_PROFILE_*_DEBUG=0), which slashes both
+      # the on-disk object footprint AND GNU ld's link-time memory so the link fits.
+      # Every crate — incl. all starbridge-apps — still LINKS and TESTS here.
+      #
+      # deos-zed alone stays off this gate (the vendored full Zed/IDE fork: its
+      # windowed gpui screenshot targets link the entire desktop/accessibility
+      # static graph and want a display at runtime); its protocol-relevant gpui-free
+      # core is covered by the firmament lane just below.
       - if: runner.os == 'Linux'
+        name: Test workspace (debuginfo off; deos-zed split out)
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
         run: cargo test --workspace --exclude deos-zed
-      # ...but still test deos-zed's gpui-FREE core on Linux: the FirmamentFs seam
+      # ...still test deos-zed's gpui-FREE core on Linux: the FirmamentFs seam
       # (a file is a cell, a save is a receipted turn) links only the light executor
       # spine, so it links cleanly. This keeps the protocol-relevant half covered.
       - if: runner.os == 'Linux'
+        name: Test deos-zed gpui-free firmament core
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
         run: cargo test -p deos-zed --no-default-features --features firmament
 
   clippy:
