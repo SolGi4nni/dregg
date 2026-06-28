@@ -3150,6 +3150,16 @@ fn view_projection_is_total_and_kind_tagged() {
             },
             "SettleEscrow",
         ),
+        (
+            StateConstraint::DischargeObligation {
+                cursor_slot: 1,
+                due_slot: 2,
+                amount_slot: 3,
+                period: 100,
+                amount: 50,
+            },
+            "DischargeObligation",
+        ),
     ];
 
     // COVERAGE TOOTH: this match must name every variant exactly once.
@@ -3221,7 +3231,8 @@ fn view_projection_is_total_and_kind_tagged() {
             | StateConstraint::UntilEvent { .. }
             | StateConstraint::SinceEvent { .. }
             | StateConstraint::ChallengeWindow { .. }
-            | StateConstraint::SettleEscrow { .. } => {}
+            | StateConstraint::SettleEscrow { .. }
+            | StateConstraint::DischargeObligation { .. } => {}
         }
     }
 

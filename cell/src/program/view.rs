@@ -399,6 +399,17 @@ pub enum StateConstraintView {
         leg_a_index: u8,
         leg_b_index: u8,
     },
+    /// The standing-obligation per-period discharge gate: the discharge must be due
+    /// (height ≥ due slot), the cursor advance by one period, and the total advance
+    /// by the schedule amount (the Lean `DischargeGate`). Surfaces the three
+    /// field-mirrored schedule slots and the period/amount constants.
+    DischargeObligation {
+        cursor_slot: u8,
+        due_slot: u8,
+        amount_slot: u8,
+        period: u32,
+        amount: u32,
+    },
 }
 
 /// [`BoundBranch`] view (nested in [`StateConstraintView::AnyOfBound`]). The
@@ -1091,6 +1102,19 @@ impl StateConstraint {
             } => StateConstraintView::SettleEscrow {
                 leg_a_index: *leg_a_index,
                 leg_b_index: *leg_b_index,
+            },
+            StateConstraint::DischargeObligation {
+                cursor_slot,
+                due_slot,
+                amount_slot,
+                period,
+                amount,
+            } => StateConstraintView::DischargeObligation {
+                cursor_slot: *cursor_slot,
+                due_slot: *due_slot,
+                amount_slot: *amount_slot,
+                period: *period,
+                amount: *amount,
             },
         }
     }

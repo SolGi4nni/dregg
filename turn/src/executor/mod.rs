@@ -381,6 +381,33 @@ pub fn project_slot_caveat_manifest(
                     BabyBear::ZERO,
                 ],
             }),
+            // The standing-obligation per-period discharge gate (the Lean
+            // `DischargeGate`, `metatheory/Dregg2/Deos/StandingObligation.lean` §6b —
+            // the staged weld, `docs/deos/DISCHARGE-OBLIGATION-WELD-DESIGN.md`). A
+            // SINGLE entry: slot_index = the `next_due` cursor slot, p0 = due-block
+            // slot, p1 = discharged-total slot, p2 = period, p3 = amount. The verifier
+            // re-evaluates the schedule shape (due ∧ cursor advanced one period ∧
+            // total advanced by the exact amount) off-AIR against the bound
+            // state_before/state_after views — VK UNCHANGED, exactly like the temporal
+            // tags 13–16 and the sealed-escrow tag 17. Additive + gated by a cell
+            // DECLARING the caveat, so it is dead-by-default until a cell opts in at
+            // the standing-obligation verifier epoch (no deployed cell declares it).
+            dregg_cell::StateConstraint::DischargeObligation {
+                cursor_slot,
+                due_slot,
+                amount_slot,
+                period,
+                amount,
+            } => Some(SlotCaveatEntry {
+                type_tag: pi::SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION,
+                slot_index: *cursor_slot,
+                params: [
+                    BabyBear::new(*due_slot as u32),
+                    BabyBear::new(*amount_slot as u32),
+                    BabyBear::new(*period),
+                    BabyBear::new(*amount),
+                ],
+            }),
             // Deferred — no AIR teeth in Block 3 first wave.
             dregg_cell::StateConstraint::SumEquals { .. }
             | dregg_cell::StateConstraint::FieldLteField { .. }

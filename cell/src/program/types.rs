@@ -1785,4 +1785,60 @@ pub enum StateConstraint {
         /// Register slot mirroring leg B's status code.
         leg_b_index: u8,
     },
+
+    /// **The standing-obligation per-period discharge gate** (the standing-obligation
+    /// house-capacity in-circuit weld, `docs/deos/DISCHARGE-OBLIGATION-WELD-DESIGN.md`).
+    /// Forces a recurring duty to be discharged ON SCHEDULE: across the (old, new)
+    /// transition the discharge must be DUE (the block height has reached the
+    /// committed due block), the `next_due` cursor must ADVANCE by exactly one
+    /// period, and the discharged total must advance by EXACTLY the schedule amount.
+    /// A forged EARLY discharge (clock below the due block), a WRONG-AMOUNT discharge,
+    /// or a NON-ADVANCED cursor (a replay that leaves the one-shot cursor where it
+    /// was) is INEXPRESSIBLE: it fails this single conjunctive entry. This is the Lean
+    /// `DischargeGate` (`metatheory/Dregg2/Deos/StandingObligation.lean` §6b) lifted to
+    /// a declared cell-program caveat — a SINGLE entry binding the joint
+    /// due ∧ advanced ∧ exact shape, which the per-slot-independent caveats
+    /// (`AllowedTransitions`, `Monotonic`, …) cannot express.
+    ///
+    /// The named slots carry the **field-mirrored schedule scalars** (the
+    /// `next_due` cursor and discharged total `cell/src/obligation_standing.rs` writes
+    /// into the committed heap, mirrored into register slots for the AIR-teeth view —
+    /// stage (a) of the weld design): `cursor_slot` the `next_due` cursor (before/after
+    /// the transition), `due_slot` the current period's due block, `amount_slot` the
+    /// cumulative discharged total (before/after). The executor evaluator
+    /// (`evaluate_constraint_full`) enforces the gate over the (old, new) pair using
+    /// the block height as the schedule clock; the projection
+    /// (`dregg_turn::executor::project_slot_caveat_manifest`) emits the tag-18
+    /// `SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION` manifest entry, which a light client
+    /// re-evaluates against the public-input-bound `state_before`/`state_after` views
+    /// (`dregg_circuit::effect_vm::verify_slot_caveat_manifest`). The AIR constraint
+    /// polynomials — hence the VK bytes — are UNCHANGED (manifest in public inputs +
+    /// off-AIR re-evaluation, exactly the temporal-caveat / sealed-escrow vehicle): an
+    /// old verifier rejects tag 18 as `unknown type_tag`, so adopting it is a
+    /// verifier-code epoch, not a proving-key rotation.
+    ///
+    /// STAGED: no deployed cell declares this caveat yet (dead-by-default until a cell
+    /// opts in at the standing-obligation verifier epoch). Fail-closed: a transition
+    /// with no `old_state` surfaces `TransitionCheckRequiresOldState`; a missing block
+    /// height is `MissingContextField`; a bad slot index is `InvalidFieldIndex`; any
+    /// early/wrong-amount/non-advanced step is `ConstraintViolated`. A `StateConstraint`
+    /// (reads the (old, new) pair, does not lift into the post-state-local
+    /// [`SimpleStateConstraint`] fragment). APPEND-ONLY (declared LAST so every existing
+    /// postcard/serde variant index is preserved — factory VKs / content addresses
+    /// byte-identical).
+    DischargeObligation {
+        /// Register slot mirroring the `next_due` cursor (before/after the
+        /// transition); the gate requires it to advance by exactly `period`.
+        cursor_slot: u8,
+        /// Register slot mirroring the current period's due block; the gate
+        /// requires the block height to have reached it.
+        due_slot: u8,
+        /// Register slot mirroring the cumulative discharged total (before/after);
+        /// the gate requires it to advance by exactly `amount`.
+        amount_slot: u8,
+        /// The schedule period — the exact cursor advance per discharge.
+        period: u32,
+        /// The schedule amount — the exact discharged-total advance per discharge.
+        amount: u32,
+    },
 }

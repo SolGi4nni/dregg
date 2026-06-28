@@ -64,14 +64,19 @@ StrictMonotonic discipline, and the BINDING is the proven sorted-Poseidon2 root.
 obligation is a NAMING of "a committed-heap binding whose `next_due` slot advances one period per
 one-shot discharge" — exactly as the escrow is a naming of a once-only two-leg swap.
 
-## The named follow-up (VK-affecting, NOT forced here)
+## The circuit weld (STAGED, VK-risk-free) — §6b
 
-This rung grounds the EXECUTOR-witnessed invariant. Binding "due ∧ not-yet-discharged ⟹ discharged ∧
-cursor advanced by one period" into the EffectVM circuit — so a light client verifying a *batch*
-sees the schedule honored as part of the proven kernel transition (a `DischargeObligation` effect
-descriptor) — is the VK-affecting weld named in `docs/deos/STANDING-OBLIGATION.md` §"Next slice:
-circuit binding" and `metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md`, the same lane the cap-root
-reshape drives. The teeth here are the *executor* teeth; the circuit tooth is their shadow.
+§3–§6 ground the EXECUTOR-witnessed invariant. §6b binds "due ∧ exact ∧ cursor advanced by one
+period" into what a LIGHT CLIENT verifying a *batch* witnesses — via the manifest-in-public-inputs +
+off-AIR re-evaluation vehicle the sealed-escrow weld (`SealedEscrow.lean` §6) and the temporal
+caveats (`circuit/src/effect_vm/verify.rs` tags 13–16) already ride. The `DischargeGate` over a
+(before, after) committed-heap transition is carried as a new slot-caveat tag
+(`SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION = 18`) in PUBLIC INPUTS and re-evaluated against the bound
+`state_before`/`state_after` views — the AIR constraint polynomials (the VK bytes) are UNCHANGED, so
+this is a verifier-code epoch, not a proving-key rotation. The teeth here are BOTH the *executor*
+teeth (§3–§6) AND the *light-client* gate (§6b); the Rust arm is the gate's mechanical shadow. Full
+staging: `docs/deos/DISCHARGE-OBLIGATION-WELD-DESIGN.md`,
+`metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md`.
 
 ## Axiom hygiene
 
@@ -154,6 +159,9 @@ def boundCursor (hash : List ℤ → ℤ) (h : FeltHeap) : Option ℤ := hget ha
 
 /-- The committed discharged count bound in a cell's heap. -/
 def boundCount (hash : List ℤ → ℤ) (h : FeltHeap) : Option ℤ := hget hash h obligColl keyCount
+
+/-- The committed cumulative discharged total bound in a cell's heap. -/
+def boundTotal (hash : List ℤ → ℤ) (h : FeltHeap) : Option ℤ := hget hash h obligColl keyTotal
 
 /-- **`openObl hash h digest t`** — seal the terms and initialize the cursor to the first due block,
 zero discharged. The Lean image of `cell/src/obligation_standing.rs::open_obligation`. -/
@@ -326,6 +334,148 @@ theorem forged_cursor_moves_root (hash : List ℤ → ℤ) (hCR : Poseidon2Spong
     root hash h₁ ≠ root hash h₂ :=
   fun hroot => hne (cursor_bound_in_root hash hCR hroot)
 
+/-- **THE REUSE KEYSTONE (total).** Equal roots ⟹ equal committed cumulative total — a forge
+cannot under-report (or pad) the discharged total while keeping the honest root. DIRECT instance of
+`Heap.root_binds_get`, the same anti-ghost the cursor/count keystones ride. -/
+theorem total_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+    boundTotal hash h₁ = boundTotal hash h₂ :=
+  root_binds_get hash hCR hroot obligColl keyTotal
+
+/-! ## §6b — THE CIRCUIT-WELD RUNG (STAGED): per-period discharge a LIGHT CLIENT witnesses.
+
+§3–§6 are the EXECUTOR-witnessed teeth: a verifier holding the committed heap rejects an early,
+double, over/under, or skipped discharge out of band. THIS section is the LIGHT-CLIENT rung — the
+soundness an off-AIR `DischargeObligation` manifest entry (a new slot/heap caveat tag carried in
+PUBLIC INPUTS, re-evaluated against the bound `state_before`/`state_after` committed-heap views, with
+the AIR constraint polynomials — the VK bytes — UNCHANGED) inherits, exactly as the temporal-caveat
+verifier arms (`circuit/src/effect_vm/verify.rs` tags 13–16) inherit `temporalStateStepGuarded` and
+the sealed-escrow weld (tag 17) inherits `SettleGate`. The full staging is
+`docs/deos/DISCHARGE-OBLIGATION-WELD-DESIGN.md`.
+
+The gate is over a (before, after) PAIR of committed heaps — the genuine kernel TRANSITION a batch
+proves — not a single state. A satisfying witness FORCES the schedule shape: the discharge is DUE
+(the schedule clock has reached the committed cursor's due block), the cursor ADVANCES by exactly one
+period, and the discharged total advances by EXACTLY the schedule amount. A forged EARLY discharge
+(clock below the due block), a WRONG-AMOUNT discharge, or a NON-ADVANCED cursor (a replay that does
+not move the one-shot cursor) is INEXPRESSIBLE — it fails the gate — so the per-period discipline is
+light-client-witnessed, not re-run out of band. The verdict is fixed by the committed roots (the
+light-client tooth), so a forger must move a root where §6 bites.
+
+The witnessed before-values `cb` (cursor) and `tb` (total) are the slot views the manifest reads
+from the cell's committed `next_due`/total slots (stage (a) field-mirror of the
+`DISCHARGE-OBLIGATION-WELD-DESIGN.md`); `clock` is the batch's block height, against which the due
+block is compared. -/
+
+/-- **READ-BACK after one discharge (cursor).** The discharge write advances the committed cursor by
+one period; the cursor slot survives the later total/count writes by `Heap.hget_hset_frame`. -/
+theorem advance_cursor (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (h : FeltHeap) (t : Terms) (cursor count total : ℤ) :
+    boundCursor hash (advance hash h t cursor count total) = some (cursor + t.period) := by
+  show hget hash (advance hash h t cursor count total) obligColl keyNextDue = some (cursor + t.period)
+  unfold advance
+  rw [hget_hset_frame hash hCR _ obligColl keyTotal obligColl keyNextDue (total + t.amount) (by decide),
+    hget_hset_frame hash hCR _ obligColl keyCount obligColl keyNextDue (count + 1) (by decide)]
+  exact hget_hset_self hash _ obligColl keyNextDue (cursor + t.period)
+
+/-- **READ-BACK after one discharge (total).** The discharge write adds exactly the schedule amount
+to the committed total — the outermost write, read back directly by `Heap.hget_hset_self`. -/
+theorem advance_total (hash : List ℤ → ℤ)
+    (h : FeltHeap) (t : Terms) (cursor count total : ℤ) :
+    boundTotal hash (advance hash h t cursor count total) = some (total + t.amount) := by
+  show hget hash (advance hash h t cursor count total) obligColl keyTotal = some (total + t.amount)
+  unfold advance
+  exact hget_hset_self hash _ obligColl keyTotal (total + t.amount)
+
+/-- **The discharge gate over a TRANSITION.** The Lean image of the off-AIR `DischargeObligation`
+manifest re-evaluation: read the committed cursor (`cb`) and total (`tb`) from the bound `before`
+view and require the discharge is DUE (clock reached the cursor's due block), the `after` cursor
+ADVANCES by exactly one period, and the `after` total advances by EXACTLY the schedule amount. The
+conjunction in ONE entry is what binds per-period discipline; a per-slot-independent caveat could not
+force the joint due ∧ advanced ∧ exact shape. -/
+abbrev DischargeGate (hash : List ℤ → ℤ) (t : Terms) (before after : FeltHeap) (clock cb tb : ℤ) :
+    Prop :=
+  boundCursor hash before = some cb ∧
+  boundTotal  hash before = some tb ∧
+  dueBlock t (expectedPeriod t cb) ≤ clock ∧
+  boundCursor hash after  = some (cb + t.period) ∧
+  boundTotal  hash after  = some (tb + t.amount)
+
+/-- **HONEST DISCHARGE PASSES THE GATE** (non-vacuity, accept polarity). The genuine kernel
+transition — a committed cursor/total, then `advance` — satisfies the gate whenever the clock has
+reached the due block. Without this the rung would be vacuous (true by no-witness). -/
+theorem discharge_passes_gate (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (h : FeltHeap)
+    (t : Terms) (cursor count total clock : ℤ)
+    (hcur : boundCursor hash h = some cursor) (htot : boundTotal hash h = some total)
+    (hdue : dueBlock t (expectedPeriod t cursor) ≤ clock) :
+    DischargeGate hash t h (advance hash h t cursor count total) clock cursor total :=
+  ⟨hcur, htot, hdue, advance_cursor hash hCR h t cursor count total,
+    advance_total hash h t cursor count total⟩
+
+/-- **THE DUE ∧ EXACT ∧ ADVANCED TOOTH.** A satisfying gate witness FORCES the schedule shape: the
+discharge was due, the cursor advanced exactly one period, and the total advanced by exactly the
+schedule amount. There is no accepting witness that skips the due block, under/over-pays, or leaves
+the one-shot cursor un-advanced. -/
+theorem discharge_gate_forces_due_exact (hash : List ℤ → ℤ) (t : Terms) (before after : FeltHeap)
+    (clock cb tb : ℤ) (hgate : DischargeGate hash t before after clock cb tb) :
+    boundCursor hash before = some cb ∧
+      dueBlock t (expectedPeriod t cb) ≤ clock ∧
+      boundCursor hash after = some (cb + t.period) ∧
+      boundTotal hash after = some (tb + t.amount) :=
+  ⟨hgate.1, hgate.2.2.1, hgate.2.2.2.1, hgate.2.2.2.2⟩
+
+/-- **THE NO-EARLY TOOTH.** A discharge whose schedule clock is BELOW the current period's due block
+is REFUSED by the gate. Paying before due is INEXPRESSIBLE in-circuit — the light-client face of
+§5's `early_discharge_rejected`. -/
+theorem discharge_gate_early_rejected (hash : List ℤ → ℤ) (t : Terms) (before after : FeltHeap)
+    (clock cb tb : ℤ) (hearly : clock < dueBlock t (expectedPeriod t cb)) :
+    ¬ DischargeGate hash t before after clock cb tb := by
+  intro hgate
+  exact absurd hgate.2.2.1 (not_le.mpr hearly)
+
+/-- **THE NO-WRONG-AMOUNT TOOTH.** A discharge whose committed `after` total does NOT advance by
+exactly the schedule amount (over- or under-pay) is REFUSED: the gate requires
+`after total = before total + amount`. The light-client face of §5's `over_discharge_rejected`. -/
+theorem wrong_amount_rejected (hash : List ℤ → ℤ) (t : Terms) (before after : FeltHeap)
+    (clock cb tb wrong : ℤ) (hafter : boundTotal hash after = some wrong)
+    (hne : wrong ≠ tb + t.amount) :
+    ¬ DischargeGate hash t before after clock cb tb := by
+  intro hgate
+  have h := hgate.2.2.2.2
+  rw [hafter] at h
+  exact hne (Option.some.inj h)
+
+/-- **THE NO-NON-ADVANCED TOOTH.** A discharge whose committed `after` cursor does NOT advance by one
+period (a replay that leaves the one-shot cursor where it was) is REFUSED: the gate requires
+`after cursor = before cursor + period`. The light-client face of §5's `replay_rejected` (the strict
+cursor advance). -/
+theorem cursor_not_advanced_rejected (hash : List ℤ → ℤ) (t : Terms) (before after : FeltHeap)
+    (clock cb tb stuck : ℤ) (hafter : boundCursor hash after = some stuck)
+    (hne : stuck ≠ cb + t.period) :
+    ¬ DischargeGate hash t before after clock cb tb := by
+  intro hgate
+  have h := hgate.2.2.2.1
+  rw [hafter] at h
+  exact hne (Option.some.inj h)
+
+/-- **THE LIGHT-CLIENT TOOTH (root-transport).** The gate verdict is FIXED by the committed ROOTS of
+the before/after views — so a light client that checks the gate against the public-input-bound
+before/after roots reads the GENUINE verdict; a forger presenting fake cursor/total slots must MOVE a
+root (where §6's binding bites). Equal-root before/after views give the same gate verdict. Proven by
+REUSE of `cursor_bound_in_root` / `total_bound_in_root` — no obligation-local commitment, the one
+named `Poseidon2SpongeCR` floor. -/
+theorem discharge_gate_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {before before' after after' : FeltHeap} (t : Terms) (clock cb tb : ℤ)
+    (hb : root hash before = root hash before') (ha : root hash after = root hash after')
+    (hgate : DischargeGate hash t before after clock cb tb) :
+    DischargeGate hash t before' after' clock cb tb := by
+  obtain ⟨h1, h2, h3, h4, h5⟩ := hgate
+  refine ⟨?_, ?_, h3, ?_, ?_⟩
+  · rw [← cursor_bound_in_root hash hCR hb]; exact h1
+  · rw [← total_bound_in_root hash hCR hb]; exact h2
+  · rw [← cursor_bound_in_root hash hCR ha]; exact h4
+  · rw [← total_bound_in_root hash hCR ha]; exact h5
+
 /-! ## §7 — NON-VACUITY TEETH (`#guard`): the schedule invariant BITES, both polarities.
 
 Computed on the reference sponge (`Substrate.Heap.refSponge`). The sample schedule (the Rust
@@ -374,6 +524,22 @@ private def stepped : FeltHeap := advance refSponge opened t0 1000 0 0
 #guard boundCount refSponge stepped == some 1
 #guard (root refSponge stepped != root refSponge opened)
 
+-- §6b THE CIRCUIT-WELD GATE (the `DischargeObligation` manifest re-evaluation), both polarities.
+-- The honest transition opened (cursor 1000, total 0) → stepped (cursor 1100, total 50): the period
+-- the schedule says is due at block 1000, advancing the cursor one period and the total by 50.
+-- HONEST: at clock 1000 (period 0 due at 1000) the due ∧ advanced ∧ exact discharge passes.
+#guard decide (DischargeGate refSponge t0 opened stepped 1000 1000 0)
+-- NO-EARLY: one block early (clock 999 < due block 1000) fails the gate.
+#guard !decide (DischargeGate refSponge t0 opened stepped 999 1000 0)
+-- NO-WRONG-AMOUNT: an `after` total that did not advance by exactly 50 (forged to 9999) fails.
+private def wrongAmt : FeltHeap := hset refSponge stepped obligColl keyTotal 9999
+#guard boundTotal refSponge wrongAmt == some 9999
+#guard !decide (DischargeGate refSponge t0 opened wrongAmt 1000 1000 0)
+-- NO-NON-ADVANCED: an `after` cursor reverted to 1000 (the one-shot cursor not advanced) fails.
+private def notAdvanced : FeltHeap := hset refSponge stepped obligColl keyNextDue 1000
+#guard boundCursor refSponge notAdvanced == some 1000
+#guard !decide (DischargeGate refSponge t0 opened notAdvanced 1000 1000 0)
+
 end Witnesses
 
 /-! ## §8 — Axiom hygiene. -/
@@ -392,7 +558,16 @@ end Witnesses
   behind_schedule_rejected,
   cursor_bound_in_root,
   count_bound_in_root,
-  forged_cursor_moves_root
+  forged_cursor_moves_root,
+  total_bound_in_root,
+  advance_cursor,
+  advance_total,
+  discharge_passes_gate,
+  discharge_gate_forces_due_exact,
+  discharge_gate_early_rejected,
+  wrong_amount_rejected,
+  cursor_not_advanced_rejected,
+  discharge_gate_root_bound
 ]
 
 end Dregg2.Deos.StandingObligation

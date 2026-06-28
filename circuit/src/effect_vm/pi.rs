@@ -448,6 +448,25 @@ pub const SETTLE_ESCROW_STATUS_DEPOSITED: u32 = 1;
 /// The field-mirrored `LegStatus::Consumed` code (matches the Lean `stConsumed`):
 /// a leg has been consumed (settled) after the atomic transition.
 pub const SETTLE_ESCROW_STATUS_CONSUMED: u32 = 2;
+/// The standing-obligation per-period discharge gate
+/// (`docs/deos/DISCHARGE-OBLIGATION-WELD-DESIGN.md`, the Lean `DischargeGate` in
+/// `metatheory/Dregg2/Deos/StandingObligation.lean` §6b). A SINGLE manifest entry
+/// that reads the committed `next_due` cursor and discharged-total slots across the
+/// (before, after) transition and forces the schedule shape: the discharge is DUE
+/// (block height ≥ the committed due block), the cursor ADVANCES by exactly one
+/// period, and the total advances by EXACTLY the schedule amount. Encoding:
+/// `slot_index` = the `next_due` cursor slot (old_v = before, new_v = after);
+/// `p0` = the due-block slot; `p1` = the discharged-total slot; `p2` = the period
+/// (the cursor advance per discharge); `p3` = the amount (the total advance per
+/// discharge). An EARLY discharge (height below the due block), a WRONG-AMOUNT
+/// discharge, or a NON-ADVANCED cursor (a replay that does not move the one-shot
+/// cursor) FAILS the conjunction — inexpressible — so a light client re-evaluating
+/// this entry witnesses the per-period discipline. STAGED: the AIR constraint
+/// polynomials (the VK bytes) are UNCHANGED (manifest in PI + off-AIR
+/// re-evaluation, exactly the temporal tags 13–16 and the sealed-escrow tag 17);
+/// an old verifier rejects this tag as `unknown type_tag` (the lockstep
+/// standing-obligation verifier epoch), NOT a proving-key rotation.
+pub const SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION: u32 = 18;
 
 // ---- Cross-effect within-turn chain pinning (Proof-to-Action Binding §3.3) ----
 //

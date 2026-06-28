@@ -320,6 +320,15 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         // (the teeth live circuit-side, circuit/tests/settle_escrow_air_teeth.rs).
         // Conservatively `false` per the honesty contract (under-claim).
         StateConstraint::SettleEscrow { .. } => false,
+
+        // The standing-obligation per-period discharge gate landed STAGED (the
+        // in-circuit weld, docs/deos/DISCHARGE-OBLIGATION-WELD-DESIGN.md): the scalar
+        // evaluator + the manifest projection + the off-AIR verifier re-evaluation are
+        // wired, but no executor-commit accept/reject coverage pair has been authored
+        // yet (the teeth live circuit-side,
+        // circuit/tests/discharge_obligation_air_teeth.rs). Conservatively `false` per
+        // the honesty contract (under-claim).
+        StateConstraint::DischargeObligation { .. } => false,
     }
 }
 
@@ -353,6 +362,10 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
     // evaluator + manifest projection + off-AIR verifier wired, but no
     // executor-commit accept/reject pair authored yet (teeth are circuit-side).
     "SettleEscrow",
+    // The standing-obligation per-period discharge gate landed STAGED (in-circuit
+    // weld); scalar evaluator + manifest projection + off-AIR verifier wired, but no
+    // executor-commit accept/reject pair authored yet (teeth are circuit-side).
+    "DischargeObligation",
 ];
 
 /// Ratchet for StateConstraint executor-enforcement coverage — may only shrink.
@@ -360,9 +373,10 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
 /// History: 15 → 20 when the register-reading temporal algebra became writable
 /// (rate/until/since/cooled/challenge as enforced caveats, staged) without a
 /// dedicated executor accept/reject coverage pair; 20 → 21 when the sealed-escrow
-/// atomic-swap gate landed STAGED (in-circuit weld, teeth circuit-side). Shrink as
-/// each gains an executor accept/reject coverage pair.
-const MAX_UNCOVERED_CONSTRAINTS: usize = 21;
+/// atomic-swap gate landed STAGED (in-circuit weld, teeth circuit-side); 21 → 22 when
+/// the standing-obligation per-period discharge gate landed STAGED (in-circuit weld,
+/// teeth circuit-side). Shrink as each gains an executor accept/reject coverage pair.
+const MAX_UNCOVERED_CONSTRAINTS: usize = 22;
 
 #[test]
 fn state_constraint_coverage_ratchet_only_shrinks() {

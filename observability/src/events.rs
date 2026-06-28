@@ -866,6 +866,19 @@ fn constraint_dissect(
             leg_a_index,
             leg_b_index,
         } => ("settle_escrow", Some(*leg_a_index), vec![*leg_b_index]),
+        // The standing-obligation per-period discharge gate: primary slot = the
+        // `next_due` cursor slot; the due-block and total slots are the extras (the
+        // three schedule slots are bound jointly).
+        SC::DischargeObligation {
+            cursor_slot,
+            due_slot,
+            amount_slot,
+            ..
+        } => (
+            "discharge_obligation",
+            Some(*cursor_slot),
+            vec![*due_slot, *amount_slot],
+        ),
     }
 }
 

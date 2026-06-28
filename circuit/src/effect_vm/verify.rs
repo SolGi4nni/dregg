@@ -399,6 +399,68 @@ pub fn verify_slot_caveat_manifest(
                     ));
                 }
             }
+            t if t == pi::SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION => {
+                // The standing-obligation per-period discharge weld (the Lean
+                // `DischargeGate`, `metatheory/Dregg2/Deos/StandingObligation.lean`
+                // §6b). The SINGLE entry reads the committed `next_due` cursor and
+                // discharged-total slots across the public-input-bound
+                // state_before/state_after views and re-evaluates the schedule shape:
+                // the discharge is DUE (block height ≥ the committed due block), the
+                // cursor ADVANCES by exactly one period, and the total advances by
+                // EXACTLY the schedule amount. A forged EARLY discharge, a
+                // WRONG-AMOUNT discharge, or a NON-ADVANCED cursor (a replay that does
+                // not move the one-shot cursor) FAILS this conjunction —
+                // INEXPRESSIBLE — so a light client re-running the manifest witnesses
+                // the per-period discipline (the off-AIR shadow of the Lean
+                // `discharge_gate_forces_due_exact` / `discharge_gate_early_rejected`
+                // / `wrong_amount_rejected` / `cursor_not_advanced_rejected` teeth).
+                // Encoding: slot_index = the cursor slot (range-checked above);
+                // p0 = due-block slot; p1 = total slot; p2 = period; p3 = amount. The
+                // slot views carry the field-mirrored schedule scalars (the 4-byte
+                // slot truncation, `SLOT-CAVEATS-DESIGN.md` §4; the executor does the
+                // full-width check).
+                let due_slot = p0.0 as usize;
+                let amount_slot = p1.0 as usize;
+                if due_slot >= 8 {
+                    return Err(format!(
+                        "slot-caveat[{i}] DischargeObligation due slot_index {due_slot} out of range (must be < 8)"
+                    ));
+                }
+                if amount_slot >= 8 {
+                    return Err(format!(
+                        "slot-caveat[{i}] DischargeObligation total slot_index {amount_slot} out of range (must be < 8)"
+                    ));
+                }
+                let period = p2;
+                let amount = p3;
+                let cursor_before = old_v;
+                let cursor_after = new_v;
+                let due_block = initial_fields[due_slot].0 as u64;
+                let total_before = initial_fields[amount_slot];
+                let total_after = final_fields[amount_slot];
+                // DUE: the schedule clock (block height) has reached the due block.
+                if block_height < due_block {
+                    return Err(format!(
+                        "slot-caveat[{i}] DischargeObligation: not yet due (height {block_height} < due block {due_block})"
+                    ));
+                }
+                // ADVANCED: the one-shot cursor advances by exactly one period.
+                let expected_cursor = cursor_before + period;
+                if cursor_after != expected_cursor {
+                    return Err(format!(
+                        "slot-caveat[{i}] DischargeObligation on slot {slot_idx}: cursor must advance one period \
+                         (expected {expected_cursor:?}, got {cursor_after:?})"
+                    ));
+                }
+                // EXACT: the discharged total advances by exactly the schedule amount.
+                let expected_total = total_before + amount;
+                if total_after != expected_total {
+                    return Err(format!(
+                        "slot-caveat[{i}] DischargeObligation: amount must be exact on slot {amount_slot} \
+                         (expected total {expected_total:?}, got {total_after:?})"
+                    ));
+                }
+            }
             // SenderAuthorized needs sender identity plus Merkle/blinded-set
             // witness verification context. The Effect-VM manifest only carries
             // the declaration shape, so production enforcement remains in the

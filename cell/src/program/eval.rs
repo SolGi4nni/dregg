@@ -1107,6 +1107,75 @@ fn evaluate_constraint_full(
             Ok(())
         }
 
+        // The standing-obligation per-period discharge gate (the Lean
+        // `DischargeGate`, `metatheory/Dregg2/Deos/StandingObligation.lean` §6b),
+        // evaluated over the field-mirrored schedule slots. Across the (old, new)
+        // transition the discharge must be DUE (block height ≥ the committed due
+        // block), the `next_due` cursor must ADVANCE by exactly one period, and the
+        // discharged total must advance by EXACTLY the schedule amount. An early /
+        // wrong-amount / non-advanced step fails this conjunction: there is no
+        // accepting witness that skips the due block, under/over-pays, or leaves the
+        // one-shot cursor un-advanced.
+        StateConstraint::DischargeObligation {
+            cursor_slot,
+            due_slot,
+            amount_slot,
+            period,
+            amount,
+        } => {
+            let cs = check_index(*cursor_slot)?;
+            let ds = check_index(*due_slot)?;
+            let as_ = check_index(*amount_slot)?;
+            let Some(old) = old_state else {
+                return Err(ProgramError::TransitionCheckRequiresOldState {
+                    constraint: constraint.clone(),
+                    index: *cursor_slot,
+                });
+            };
+            let clock = ctx
+                .ok_or(ProgramError::MissingContextField {
+                    field: "block_height",
+                })?
+                .block_height;
+            let cursor_before = field_to_u64(&old.fields[cs]);
+            let cursor_after = field_to_u64(&new_state.fields[cs]);
+            let due_block = field_to_u64(&old.fields[ds]);
+            let total_before = field_to_u64(&old.fields[as_]);
+            let total_after = field_to_u64(&new_state.fields[as_]);
+            // DUE: the schedule clock has reached the committed due block.
+            if clock < due_block {
+                return violated(
+                    constraint,
+                    format!(
+                        "DischargeObligation: not yet due (clock {clock} < due block {due_block})"
+                    ),
+                );
+            }
+            // ADVANCED: the one-shot cursor advances by exactly one period.
+            let expected_cursor = cursor_before.wrapping_add(u64::from(*period));
+            if cursor_after != expected_cursor {
+                return violated(
+                    constraint,
+                    format!(
+                        "DischargeObligation: cursor must advance one period \
+                         (slot[{cs}] expected {expected_cursor}, got {cursor_after})"
+                    ),
+                );
+            }
+            // EXACT: the discharged total advances by exactly the schedule amount.
+            let expected_total = total_before.wrapping_add(u64::from(*amount));
+            if total_after != expected_total {
+                return violated(
+                    constraint,
+                    format!(
+                        "DischargeObligation: amount must be exact \
+                         (slot[{as_}] expected total {expected_total}, got {total_after})"
+                    ),
+                );
+            }
+            Ok(())
+        }
+
         StateConstraint::TemporalPredicate {
             dsl_hash,
             witness_index,
