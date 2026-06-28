@@ -17,7 +17,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WASM_CRATE="$PROJECT_ROOT/wasm"
-TARGET_DIR="$PROJECT_ROOT/target"
+# The wasm/ crate is a STANDALONE cargo workspace (its Cargo.toml declares an
+# empty `[workspace]`), so cargo builds it into `wasm/target/`, NOT the repo-root
+# `target/`. Read the artifact from the wasm crate's own target dir.
+TARGET_DIR="$WASM_CRATE/target"
 WASM_OUT="$TARGET_DIR/wasm32-unknown-unknown/release/dregg_wasm.wasm"
 DIST_DIR="$SCRIPT_DIR/dist"
 

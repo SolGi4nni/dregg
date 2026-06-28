@@ -117,6 +117,10 @@ jobs:
           COMMIT_SHA="${{ github.sha }}"
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+          # The output dir is not tracked in the repo (results.json is a built
+          # artifact, never committed), so create it before writing into it.
+          mkdir -p site/demos
+
           # Combine all individual results into one array (use find to avoid ARG_MAX)
           find /tmp/demo_results -name '*.json' -print0 | xargs -0 cat | jq -s '.' > /tmp/all_results.json
 

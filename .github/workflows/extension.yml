@@ -1,0 +1,134 @@
+name: Extension
+
+# CI for the `extension/` Cipherclerk (MV3, Chrome + Firefox).
+#
+# TWO lanes, by cost:
+#   build-test  — node-only, fast, on every push/PR that touches the extension.
+#                 typecheck + esbuild bundle + unit tests + manifest validation.
+#                 This is the always-green gate.
+#   package     — workflow_dispatch ONLY. Builds the Rust crypto core to wasm32,
+#                 runs wasm-bindgen, and produces the Chrome .zip / Firefox .xpi
+#                 store artifacts (uploaded to the run). It is dispatch-gated
+#                 because the wasm build currently needs the plonky3-recursion
+#                 fork's in-flight `update-plonky3-rev` tip checked out as a
+#                 sibling (the same prerequisite pages.yml has): the standalone
+#                 `wasm/` workspace carries a TEMP
+#                 `[patch."https://github.com/emberian/plonky3-recursion"]` ->
+#                 `../../plonky3-recursion`. Until that fork rev is pushed and the
+#                 TEMP patch is replaced with a pinned git rev, a hosted runner
+#                 cannot reproduce the wasm build. Keeping it off the push lane
+#                 avoids red-by-design on the auto gate; trigger it by hand once
+#                 the fork is pushed (`gh workflow run Extension --ref main`).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'extension/**'
+      - '.github/workflows/extension.yml'
+  pull_request:
+    paths:
+      - 'extension/**'
+      - '.github/workflows/extension.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Typecheck + build + unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dev deps
+        run: npm ci || npm install
+      - name: Typecheck (tsc --noEmit)
+        run: npm run typecheck
+      - name: Build (esbuild -> dist/)
+        run: npm run build
+      - name: Unit tests (explain parity, SSE parser, golden derivation vector)
+        run: npm test
+      - name: Validate both MV3 manifests are well-formed + reference real files
+        run: |
+          set -euo pipefail
+          for m in manifest.json manifest-firefox.json; do
+            node -e "JSON.parse(require('fs').readFileSync('$m','utf8'))" \
+              && echo "OK: $m parses"
+            test "$(node -p "require('./$m').manifest_version")" = "3" \
+              || { echo "ERROR: $m is not manifest_version 3"; exit 1; }
+            if grep -q '"type"[[:space:]]*:[[:space:]]*"module"' "$m"; then
+              echo "ERROR: $m has a module-type background (Firefox MV3 incompatible)"; exit 1
+            fi
+          done
+          for f in dist/background.js dist/content.js dist/page.js dist/popup-script.js \
+                   popup.html settings.html settings-script.js; do
+            test -f "$f" || { echo "ERROR: referenced file missing: $f"; exit 1; }
+          done
+          echo "Both manifests valid; all bundled scripts present."
+
+  package:
+    name: Build WASM + package store artifacts (.zip / .xpi)
+    # Dispatch-only: see the header note. Requires the plonky3-recursion fork tip
+    # to be pushed before a hosted runner can reproduce the wasm build.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: extension-wasm
+      - name: Install binaryen (wasm-opt) + zip
+        run: sudo apt-get update && sudo apt-get install -y binaryen zip
+      - name: Install wasm-bindgen-cli (pinned to wasm/Cargo.lock)
+        run: |
+          set -euo pipefail
+          VER=$(awk '/^name = "wasm-bindgen"$/{getline; print}' wasm/Cargo.lock \
+                | head -1 | sed -E 's/version = "(.+)"/\1/')
+          echo "Installing wasm-bindgen-cli $VER"
+          cargo install wasm-bindgen-cli --version "$VER" --locked \
+            || cargo install wasm-bindgen-cli --version "$VER"
+      - name: Fetch the plonky3-recursion fork as a sibling (wasm/ TEMP patch target)
+        # The standalone wasm/ workspace patches p3-* to ../../plonky3-recursion.
+        # Replace REV once update-plonky3-rev is pushed; until then this clone is a
+        # stale tip and the wasm build will fail (documented prerequisite).
+        run: |
+          set -euo pipefail
+          REV=d959ff10f86495e81bd883e5d9dde1f0fcf00d81
+          if [ ! -d ../plonky3-recursion/.git ]; then
+            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
+            git -C ../plonky3-recursion fetch --depth 1 origin "$REV"
+            git -C ../plonky3-recursion checkout "$REV"
+          fi
+      - name: npm install + build + test
+        working-directory: extension
+        run: |
+          npm ci || npm install
+          npm run build
+          npm test
+      - name: Build WASM crypto core + package
+        working-directory: extension
+        run: |
+          ./build.sh wasm
+          ./build.sh package
+      - name: Upload store artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dregg-cipherclerk-extension
+          path: |
+            extension/dist/dregg-cipherclerk-chrome.zip
+            extension/dist/dregg-cipherclerk-firefox.xpi
+          retention-days: 30
