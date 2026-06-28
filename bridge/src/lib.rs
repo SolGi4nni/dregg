@@ -41,6 +41,9 @@ pub mod midnight_observer;
 pub mod midnight_verified;
 pub mod mina;
 pub mod present;
+/// Mirror a Solana/pump.fun SPL token (`$DREGG`) into dregg's value layer as a
+/// conserved, `Payable` asset. See `docs/deos/TOKEN-MIRROR-BRIDGE.md`.
+pub mod solana_mirror;
 
 /// Full-fidelity bridge-action binding: a thin re-export plus a wrapper for
 /// the new sibling AIR `dregg_circuit::bridge_action_air` that pins
@@ -78,5 +81,9 @@ pub use present::{
     verify_fold_chain, verify_predicate_program, verify_predicate_proof,
     verify_presentation_complete, verify_presentation_full, verify_proof_complete,
     verify_revealed_facts_commitment, verify_wire_fold_chain,
+};
+pub use solana_mirror::{
+    MirrorConfig, MirrorError, MirrorMint, MirrorRedeem, MirrorState, SolanaLockAttestation,
+    SolanaUnlockRequest,
 };
 pub use verifier::{DslAwareProofVerifier, StarkProofVerifier};

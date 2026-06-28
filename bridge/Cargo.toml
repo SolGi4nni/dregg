@@ -15,6 +15,7 @@ dregg-commit = { path = "../commit" }
 dregg-trace = { path = "../trace" }
 dregg-circuit = { path = "../circuit" }
 dregg-turn = { path = "../turn" }
+dregg-types = { path = "../types" }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 dregg-macaroon = { path = "../macaroon" }
@@ -28,6 +29,10 @@ serde = { version = "1", features = ["derive"] }
 criterion = { workspace = true }
 tokio = { version = "1", features = ["full"] }
 dregg-bridge = { path = ".", features = ["test-utils"] }
+# Used by the solana_mirror end-to-end test to prove bridged $DREGG pays an
+# execution-lease through the SAME `resolve_pay` rail the metered ToolGateway uses.
+dregg-payable = { path = "../dregg-payable" }
+dregg-cell = { path = "../cell" }
 
 [[bench]]
 name = "presentation_bench"
