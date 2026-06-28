@@ -143,6 +143,10 @@ import Dregg2.Deos.SettleEscrowSatWideDescriptor
 -- remaining: the literal in-AIR `hash_bytes` recompute over the witnessed declaration + the
 -- required-tag decode (the VK-affecting byte-sponge / felt-domain-limb work). #assert_all_clean.
 import Dregg2.Deos.InAirAuthorityDigestSelector
+-- The GENTIAN KEYSTONE with `hrecompute`/`hdecode` DISCHARGED: Option B realized (the felt-domain
+-- chip-lookup recompute + the in-AIR is-zero/OR-fold decode), so the selector-forcing holds under
+-- ONLY the two CR floors (`ChipTableSound`/`FloorDigestBinds`) — no off-band verifier discipline.
+import Dregg2.Deos.InAirAuthorityDigestGadget
 -- The HATCHERY abstraction-mint house-capacity, GROUNDED (the LAST of the six — the house COMPLETE):
 -- a user-defined verified KIND's declared invariant IS enforced, forever, and its attestation is REAL.
 -- Enforcement is the SAME `CellProgram::evaluate_with_meta` gate (`evalStep`), a violating turn →
