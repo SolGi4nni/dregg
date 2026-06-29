@@ -9,6 +9,36 @@ should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
 ## NOW-STATE (late-2026-06-25 cluster — lanes that landed AFTER the entries below, recorded here for durability)
+- LIVE EPOCH TRANSITION WIRED (2026-06-29) — validator add/remove/rotate is now a LIVE on-chain op on the running
+  blocklace consensus, not a genesis re-roll. `node/src/finalization_votes.rs::VoteCollector::reconfigure` +
+  `node/src/blocklace_sync.rs::{apply_passed_proposal→apply_committee_change, propose_membership}` advance the live
+  finalization committee + threshold + gossip-mesh admission when a membership change finalizes through the
+  EXISTING quorum-gated constitution path (gate proven by `MembershipSafety.lean`; spec twin
+  `EpochReconfig.lean::epoch_handoff_no_gap`). CLI `dregg-node propose-epoch-transition --add/--remove/--rotate`
+  + node API `POST /epoch/propose-transition`. Chain (blocklace + cell state) carries across; `federation_id`
+  UNCHANGED (the stable chain root the bot/bridge pin — no re-point). Tests: `finalization_votes` reconfigure unit
+  tests + `node/src/epoch_transition_e2e.rs` (multi-node add/remove/safety, chain continues).
+  NAMED RESIDUALS (the honest tail — each a real seam, not shipped-as-done):
+    (1) RECEIPT/ATTESTED-ROOT committee + `committee_epoch`/`chain_id` separation: `federation_id`/`committee_epoch`/
+        `known_federation_keys` are atomically coupled via the F1 receipt-verify invariant
+        `federation_id == derive(known_keys, committee_epoch)`, and `federation_id` is pinned by discord-bot,
+        Midnight bridge, and the executor signing domain. Advancing the RECEIPT identity live needs a stable
+        `chain_id` (genesis root) that those consumers pin instead — which touches the off-limits bot/bridge lanes.
+        Until then the federation-RECEIPT/attested-root quorum still attests under the GENESIS committee identity
+        (the consensus/finality committee DOES advance live; the receipt-identity does not). Closure: introduce
+        `chain_id` in genesis+state, migrate bot/bridge/executor pins, then let `committee_epoch` advance with the
+        committee. (CONSENSUS layer = done; RECEIPT-IDENTITY layer = this residual.)
+    (2) LIGHT-CLIENT in-circuit membership-evolution witness: a light client following the chain verifies the
+        committee evolution today by replaying the finalized membership blocks (each ratified by the prior
+        committee's quorum — the ARGUS correct-evolution property at the consensus layer). Binding that evolution
+        INTO the EffectVM/VK so a pure light client (not a re-executing validator) witnesses the validator-set
+        sequence is a VK-affecting circuit weld — the named circuit residual (cf. HOUSE-CAPACITIES-WELD-PLAN shape).
+    (3) CONSTITUTION restart-persistence: the evolved committee is reconstructed by blocklace replay of the
+        finalized membership blocks; a node restart rebuilds the constitution from the genesis committee and
+        re-applies via replay only if those membership blocks are re-served (cursor-gated). Pre-existing; verify the
+        membership blocks survive the execution-cursor on restart, else the evolved committee resets to genesis.
+    (4) removed-validator gossip-key deregistration (`apply_committee_change` leaves it registered — harmless:
+        non-participant, votes rejected) — optional tidy.
 - AGENT-COORDINATION LIVE (2026-06-29) — the `/coordinate` promise-pipeline now drives a REAL atomic settle on a live node.
   `discord-bot/src/coordinate_flow.rs::settle_round_live` translates a round's settled value moves into ONE signed conserving
   turn (the `/send` rail); `discord-bot/src/commands/coordinate.rs` wires it (real hosted cells, faucet, `fail:true` rollback);

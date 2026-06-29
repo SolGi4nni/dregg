@@ -182,6 +182,43 @@ impl VoteCollector {
         self.committee = committee.into_iter().collect();
     }
 
+    /// LIVE EPOCH TRANSITION: atomically replace BOTH the admissible signer set
+    /// AND the quorum threshold when a validator-set reconfiguration finalizes.
+    ///
+    /// A membership change shifts two coupled quantities at once — who may vote
+    /// (the committee) and how many distinct votes finalize a block (the
+    /// supermajority of the NEW count). Setting them together is what makes the
+    /// new validator's votes count *and* the threshold track the new membership
+    /// from the epoch boundary forward, in one step.
+    ///
+    /// MONOTONE-SAFE across the boundary: blocks already consensus-attested under
+    /// the old committee STAY attested (the `attested` set is sticky); only future
+    /// `record` calls gate on the new committee/threshold. The reconfiguration
+    /// itself is authorized by the OLD committee's quorum (the constitution
+    /// `apply_if_passed` gate + tau finality), so there is no instant in which an
+    /// unattested committee holds finalization authority — the epoch-handoff
+    /// no-gap property (`EpochReconfig.lean::epoch_handoff_no_gap`).
+    pub fn reconfigure(
+        &mut self,
+        committee: impl IntoIterator<Item = [u8; 32]>,
+        quorum_threshold: usize,
+    ) {
+        self.committee = committee.into_iter().collect();
+        self.quorum_threshold = quorum_threshold;
+    }
+
+    /// The current admissible committee size (number of distinct signer keys).
+    #[allow(dead_code)] // collector query/maintenance API; exercised by tests
+    pub fn committee_size(&self) -> usize {
+        self.committee.len()
+    }
+
+    /// Whether a given key is currently an admissible (committee) signer.
+    #[allow(dead_code)] // collector query/maintenance API; exercised by tests
+    pub fn is_committee_member(&self, key: &[u8; 32]) -> bool {
+        self.committee.contains(key)
+    }
+
     /// The quorum threshold this collector enforces.
     #[allow(dead_code)] // collector query/maintenance API; exercised by tests
     pub fn quorum_threshold(&self) -> usize {
@@ -476,5 +513,119 @@ mod tests {
         let v = FinalizationVote::sign(&a, blk, FinalityLevel::Bilateral);
         assert_eq!(col.record(&v), RecordOutcome::Rejected);
         assert_eq!(col.vote_count(&blk), 0);
+    }
+
+    /// LIVE EPOCH TRANSITION — ADD. Before the reconfigure, a vote from the
+    /// newly-added validator is REJECTED (not yet a committee member). After the
+    /// finalized membership change reconfigures the collector to the new
+    /// committee + new threshold, that same validator's vote COUNTS, and the
+    /// threshold has advanced to the supermajority of the larger set. This is the
+    /// "the new validator's votes count from epoch N+1" property.
+    #[test]
+    fn reconfigure_admits_new_validator_and_advances_threshold() {
+        let a = keypair(1);
+        let b = keypair(2);
+        let c = keypair(3);
+        let d = keypair(4); // the validator added live
+        let blk = BlockId([42; 32]);
+
+        // Epoch N: a 3-member committee, quorum = supermajority(3) = 3.
+        let q3 = dregg_blocklace::ordering::supermajority_threshold(3);
+        let mut col = VoteCollector::new([pk(&a), pk(&b), pk(&c)], q3);
+        assert_eq!(col.quorum_threshold(), 3);
+        assert!(!col.is_committee_member(&pk(&d)));
+
+        // D is not yet a member: its vote is rejected and never counts.
+        assert_eq!(
+            col.record(&FinalizationVote::sign(&d, blk, FinalityLevel::Ordered)),
+            RecordOutcome::Rejected
+        );
+        assert_eq!(col.vote_count(&blk), 0);
+
+        // Epoch N+1: the membership change finalized — reconfigure to the new
+        // 4-member committee, quorum = supermajority(4) = 3.
+        let q4 = dregg_blocklace::ordering::supermajority_threshold(4);
+        col.reconfigure([pk(&a), pk(&b), pk(&c), pk(&d)], q4);
+        assert_eq!(col.committee_size(), 4);
+        assert_eq!(col.quorum_threshold(), 3);
+        assert!(col.is_committee_member(&pk(&d)));
+
+        // D's vote now counts toward consensus-wide finality.
+        assert_eq!(
+            col.record(&FinalizationVote::sign(&d, blk, FinalityLevel::Ordered)),
+            RecordOutcome::Counted { distinct_votes: 1 }
+        );
+    }
+
+    /// LIVE EPOCH TRANSITION — REMOVE. After a validator is removed from the
+    /// committee, its finalization vote no longer counts (Sybil/ghost protection:
+    /// a departed member cannot keep contributing to quorum), and the quorum
+    /// threshold shrinks to the supermajority of the smaller set.
+    #[test]
+    fn reconfigure_drops_removed_validator() {
+        let a = keypair(1);
+        let b = keypair(2);
+        let c = keypair(3);
+        let d = keypair(4);
+        let blk = BlockId([7; 32]);
+
+        let q4 = dregg_blocklace::ordering::supermajority_threshold(4);
+        let mut col = VoteCollector::new([pk(&a), pk(&b), pk(&c), pk(&d)], q4);
+
+        // Remove D: epoch N+1 committee is {a,b,c}, quorum = supermajority(3) = 3.
+        let q3 = dregg_blocklace::ordering::supermajority_threshold(3);
+        col.reconfigure([pk(&a), pk(&b), pk(&c)], q3);
+        assert_eq!(col.committee_size(), 3);
+        assert_eq!(col.quorum_threshold(), 3);
+        assert!(!col.is_committee_member(&pk(&d)));
+
+        // D (removed) can no longer contribute to quorum.
+        assert_eq!(
+            col.record(&FinalizationVote::sign(&d, blk, FinalityLevel::Ordered)),
+            RecordOutcome::Rejected
+        );
+        // The three continuing members still finalize.
+        assert!(matches!(
+            col.record(&FinalizationVote::sign(&a, blk, FinalityLevel::Ordered)),
+            RecordOutcome::Counted { distinct_votes: 1 }
+        ));
+        assert!(matches!(
+            col.record(&FinalizationVote::sign(&b, blk, FinalityLevel::Ordered)),
+            RecordOutcome::Counted { distinct_votes: 2 }
+        ));
+        assert!(matches!(
+            col.record(&FinalizationVote::sign(&c, blk, FinalityLevel::Ordered)),
+            RecordOutcome::ReachedQuorum { distinct_votes: 3 }
+        ));
+    }
+
+    /// MONOTONE-SAFE BOUNDARY. A block already consensus-attested under the old
+    /// committee STAYS attested after a reconfigure — the epoch boundary never
+    /// retroactively un-finalizes a block (no safety violation across the
+    /// handoff).
+    #[test]
+    fn reconfigure_preserves_prior_attestation() {
+        let a = keypair(1);
+        let b = keypair(2);
+        let blk = BlockId([9; 32]);
+
+        let q2 = dregg_blocklace::ordering::supermajority_threshold(2);
+        let mut col = VoteCollector::new([pk(&a), pk(&b)], q2);
+        col.record(&FinalizationVote::sign(&a, blk, FinalityLevel::Ordered));
+        assert!(matches!(
+            col.record(&FinalizationVote::sign(&b, blk, FinalityLevel::Ordered)),
+            RecordOutcome::ReachedQuorum { .. }
+        ));
+        assert!(col.is_consensus_attested(&blk));
+
+        // A later membership change (add c, d) must not un-attest the block.
+        let c = keypair(3);
+        let d = keypair(4);
+        let q4 = dregg_blocklace::ordering::supermajority_threshold(4);
+        col.reconfigure([pk(&a), pk(&b), pk(&c), pk(&d)], q4);
+        assert!(
+            col.is_consensus_attested(&blk),
+            "a block finalized in the old epoch stays finalized across the boundary"
+        );
     }
 }

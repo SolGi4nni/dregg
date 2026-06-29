@@ -10,6 +10,20 @@
 //!
 //! Historical epoch configs are retained so that old-epoch signatures remain
 //! verifiable against the signing key roots that were active at the time.
+//!
+//! # Relationship to the LIVE consensus
+//!
+//! This module is the FORMAL SPEC of validator-set reconfiguration — its
+//! `propose` / `verify` / `apply` semantics are proven no-safety-gap by
+//! `metatheory/Dregg2/Distributed/EpochReconfig.lean::epoch_handoff_no_gap`
+//! (old-epoch quorum attests the successor; epoch advances by exactly one; the
+//! successor is born with the correct supermajority threshold) and pinned to
+//! this Rust by `epoch_diff.rs`. The RUNNING DreggNet node performs the live
+//! reconfiguration on the deployed blocklace consensus through the quorum-gated
+//! constitution path (`dregg_blocklace::constitution` →
+//! `dregg_node::blocklace_sync::apply_committee_change`), which refines this same
+//! semantics: a membership change applies only on a quorum of the CURRENT
+//! committee, and the live finalization committee advances atomically with it.
 
 use serde::{Deserialize, Serialize};
 

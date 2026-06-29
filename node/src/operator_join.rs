@@ -375,6 +375,159 @@ pub fn add_validator(data_dir: &str, pubkey_hexes: &[String], json: bool) -> Res
 }
 
 // =============================================================================
+// propose-epoch-transition (live, running-network path)
+// =============================================================================
+
+/// Propose a LIVE epoch transition (validator-set reconfiguration) to a RUNNING
+/// node via its HTTP API.
+///
+/// Validates each pubkey locally (real Ed25519 point) BEFORE contacting the
+/// node, then POSTs `{add, remove}` to `POST /epoch/propose-transition`. The node
+/// creates one on-chain membership proposal per validator and disseminates it;
+/// the change APPLIES only once a quorum of the CURRENT committee ratifies it
+/// through finality (proposing is not authority — the committee's votes are).
+///
+/// Dependency-free: a raw HTTP/1.1 request over a loopback TCP socket, mirroring
+/// `main.rs::check_status`. `token` is the node's bearer (omit on a loopback
+/// devnet node with no passphrase).
+pub async fn propose_epoch_transition(
+    port: u16,
+    token: Option<&str>,
+    add: &[String],
+    remove: &[String],
+    json_out: bool,
+) -> Result<(), String> {
+    if add.is_empty() && remove.is_empty() {
+        return Err(
+            "nothing to propose: pass --add <pubkey>, --remove <pubkey>, or --rotate <old> <new>"
+                .to_string(),
+        );
+    }
+    // Validate every key up front (a bad key fails before we touch the node).
+    let mut add_valid = Vec::with_capacity(add.len());
+    for h in add {
+        parse_validator_pubkey(h).map_err(|e| format!("--add {h}: {e}"))?;
+        add_valid.push(h.trim().to_string());
+    }
+    let mut remove_valid = Vec::with_capacity(remove.len());
+    for h in remove {
+        parse_validator_pubkey(h).map_err(|e| format!("--remove {h}: {e}"))?;
+        remove_valid.push(h.trim().to_string());
+    }
+
+    let body = serde_json::json!({ "add": add_valid, "remove": remove_valid }).to_string();
+    let (status, resp_body) =
+        http_post_localhost(port, "/epoch/propose-transition", token, &body).await?;
+
+    if json_out {
+        println!("{resp_body}");
+        if !(200..300).contains(&status) {
+            return Err(format!("node returned HTTP {status}"));
+        }
+        return Ok(());
+    }
+
+    if !(200..300).contains(&status) {
+        return Err(format!(
+            "node returned HTTP {status}: {resp_body}\n  \
+             (a 401/403 means the node has a passphrase — pass --token <bearer>.)"
+        ));
+    }
+
+    println!("Live epoch transition proposed on the running node (port {port}).");
+    // Best-effort pretty print of the JSON proposal list.
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&resp_body) {
+        if let Some(proposals) = v.get("proposals").and_then(|p| p.as_array()) {
+            for p in proposals {
+                let action = p.get("action").and_then(|a| a.as_str()).unwrap_or("?");
+                let validator = p.get("validator").and_then(|a| a.as_str()).unwrap_or("?");
+                let block = p
+                    .get("proposal_block")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("?");
+                println!(
+                    "  {action:<6} {validator}  (proposal block {})",
+                    &block[..block.len().min(16)]
+                );
+            }
+        }
+        if let (Some(size), Some(thr)) = (
+            v.get("committee_size").and_then(|x| x.as_u64()),
+            v.get("threshold").and_then(|x| x.as_u64()),
+        ) {
+            println!();
+            println!("  Current committee size : {size}");
+            println!("  Current BFT threshold  : {thr}");
+        }
+    }
+    println!();
+    println!("The proposal is now on-chain. It APPLIES once a quorum of the CURRENT");
+    println!("committee ratifies it through finality — the chain keeps advancing, no");
+    println!("federation_id change, no restart, no bot re-point. A new validator then");
+    println!("joins live with: dregg-node join --bootstrap <a-live-peer>:9420");
+    Ok(())
+}
+
+/// Minimal dependency-free HTTP/1.1 POST to `http://127.0.0.1:<port><path>` with
+/// a JSON body and optional bearer token. Returns `(status_code, body)`.
+async fn http_post_localhost(
+    port: u16,
+    path: &str,
+    token: Option<&str>,
+    body: &str,
+) -> Result<(u16, String), String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let addr = std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), port);
+    let mut stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .map_err(|e| format!("cannot connect to dregg-node on 127.0.0.1:{port}: {e}"))?;
+
+    let auth = match token {
+        Some(t) => format!("Authorization: Bearer {t}\r\n"),
+        None => String::new(),
+    };
+    let req = format!(
+        "POST {path} HTTP/1.1\r\n\
+         Host: 127.0.0.1:{port}\r\n\
+         {auth}\
+         Content-Type: application/json\r\n\
+         Content-Length: {len}\r\n\
+         Connection: close\r\n\r\n\
+         {body}",
+        len = body.len(),
+    );
+    stream
+        .write_all(req.as_bytes())
+        .await
+        .map_err(|e| format!("failed to send request: {e}"))?;
+    stream
+        .flush()
+        .await
+        .map_err(|e| format!("failed to flush request: {e}"))?;
+
+    let mut raw = Vec::new();
+    stream
+        .read_to_end(&mut raw)
+        .await
+        .map_err(|e| format!("failed to read response: {e}"))?;
+    let text = String::from_utf8_lossy(&raw);
+
+    // Parse the status code from the response line ("HTTP/1.1 200 OK").
+    let status = text
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| format!("malformed HTTP response from node: {text:.120}"))?;
+    // Body follows the first blank line.
+    let body = text
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b.to_string())
+        .unwrap_or_default();
+    Ok((status, body))
+}
+
+// =============================================================================
 // join (pre-flight)
 // =============================================================================
 

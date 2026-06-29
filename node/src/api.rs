@@ -1766,6 +1766,14 @@ pub fn router_with_cors(
         .route("/proofs/compose", post(post_compose_proofs))
         .route("/turns/bearer-auth", post(post_bearer_auth))
         .route("/turns/peer-exchange", post(post_peer_exchange))
+        // LIVE EPOCH TRANSITION (validator-set reconfiguration on a RUNNING
+        // node): propose adding/removing validators. The change only APPLIES
+        // once a quorum of the CURRENT committee ratifies it through finality —
+        // this endpoint only submits the proposal. Auth-protected (operator op).
+        .route(
+            "/epoch/propose-transition",
+            post(post_propose_epoch_transition),
+        )
         // Storage gateway (ORGANS §3): content-addressed put/get/stat/list
         // whose ADMISSION is the StorageGatewayMandate cell (capability +
         // op allowlist + prefix scope + executor-enforced volume debit).
@@ -7217,6 +7225,112 @@ fn hex_decode_32_result(hex: &str) -> Result<[u8; 32], String> {
             .map_err(|e| format!("invalid hex at byte {i}: {e}"))?;
     }
     Ok(result)
+}
+
+/// Request to propose a LIVE epoch transition (validator-set reconfiguration)
+/// on a running node. `add` / `remove` are 64-hex Ed25519 validator pubkeys; a
+/// rotation is `remove`(old) + `add`(new). The change only APPLIES once a quorum
+/// of the CURRENT committee ratifies it through finality.
+#[derive(serde::Deserialize)]
+pub struct ProposeEpochTransitionRequest {
+    #[serde(default)]
+    pub add: Vec<String>,
+    #[serde(default)]
+    pub remove: Vec<String>,
+}
+
+/// Response: the submitted proposal block ids (one per add/remove), plus the
+/// current committee size + threshold for operator visibility.
+#[derive(serde::Serialize)]
+pub struct ProposeEpochTransitionResponse {
+    pub success: bool,
+    pub proposals: Vec<EpochProposalEntry>,
+    pub committee_size: usize,
+    pub threshold: usize,
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct EpochProposalEntry {
+    pub action: String,
+    pub validator: String,
+    pub proposal_block: String,
+}
+
+/// Submit a live epoch-transition proposal. Each validator key is parsed +
+/// validated as a real Ed25519 point, then a `Leave`(remove) / `Join`(add)
+/// membership proposal block is created on the running blocklace and gossiped.
+async fn post_propose_epoch_transition(
+    State(state): State<NodeState>,
+    Json(req): Json<ProposeEpochTransitionRequest>,
+) -> Result<Json<ProposeEpochTransitionResponse>, StatusCode> {
+    // Parse + validate every requested key up front (a bad key fails the whole
+    // request before anything is submitted).
+    let mut removes: Vec<[u8; 32]> = Vec::with_capacity(req.remove.len());
+    for h in &req.remove {
+        removes.push(
+            crate::operator_join::parse_validator_pubkey(h).map_err(|_| StatusCode::BAD_REQUEST)?,
+        );
+    }
+    let mut adds: Vec<[u8; 32]> = Vec::with_capacity(req.add.len());
+    for h in &req.add {
+        adds.push(
+            crate::operator_join::parse_validator_pubkey(h).map_err(|_| StatusCode::BAD_REQUEST)?,
+        );
+    }
+    if removes.is_empty() && adds.is_empty() {
+        return Ok(Json(ProposeEpochTransitionResponse {
+            success: false,
+            proposals: vec![],
+            committee_size: 0,
+            threshold: 0,
+            error: Some("no --add or --remove validators given".to_string()),
+        }));
+    }
+
+    let Some(blocklace) = state.blocklace().await else {
+        return Ok(Json(ProposeEpochTransitionResponse {
+            success: false,
+            proposals: vec![],
+            committee_size: 0,
+            threshold: 0,
+            error: Some(
+                "node is not running blocklace consensus (no committee to reconfigure)".to_string(),
+            ),
+        }));
+    };
+
+    let mut proposals = Vec::new();
+    // Removals first, then additions (a rotation = remove old + add new).
+    for pk in &removes {
+        let block_id = blocklace.propose_membership(&state, *pk, false).await;
+        proposals.push(EpochProposalEntry {
+            action: "remove".to_string(),
+            validator: hex_encode(pk),
+            proposal_block: hex_encode(&block_id.0),
+        });
+    }
+    for pk in &adds {
+        let block_id = blocklace.propose_membership(&state, *pk, true).await;
+        proposals.push(EpochProposalEntry {
+            action: "add".to_string(),
+            validator: hex_encode(pk),
+            proposal_block: hex_encode(&block_id.0),
+        });
+    }
+
+    let (committee_size, threshold) = {
+        let c = blocklace.constitution.read().await;
+        (c.current.participant_count(), c.threshold())
+    };
+
+    Ok(Json(ProposeEpochTransitionResponse {
+        success: true,
+        proposals,
+        committee_size,
+        threshold,
+        error: None,
+    }))
 }
 
 // =============================================================================

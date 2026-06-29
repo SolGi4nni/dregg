@@ -36,6 +36,8 @@ mod mud_client_e2e;
 // the first real rung of MULTI-PERSON deos. Headless engine + its co-acting e2e proof.
 #[cfg(test)]
 mod captp_handoff_e2e;
+#[cfg(test)]
+mod epoch_transition_e2e;
 mod equivocation_court_service;
 mod events;
 mod execution_cursor;
@@ -472,6 +474,40 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+
+    /// LIVE validator-set reconfiguration on a RUNNING node (the chain-continuing
+    /// path — no genesis re-roll, no fresh chain, no federation_id change).
+    ///
+    /// Submits an on-chain membership proposal to a running node's API: `--add`
+    /// proposes a Join, `--remove` proposes a Leave, `--rotate <old> <new>` is a
+    /// remove-then-add. The change only APPLIES once a quorum of the CURRENT
+    /// committee ratifies it through finality — proposing is not authority, the
+    /// committee's votes are. Unlike the offline `add-validator` (which re-rolls
+    /// genesis and requires a coordinated restart), this is a live operation: the
+    /// new validator joins via `join --bootstrap`, syncs, and votes from the new
+    /// epoch while the chain keeps advancing.
+    ProposeEpochTransition {
+        /// Validator pubkey(s) to ADD (64-hex Ed25519). Repeat for several.
+        #[arg(long = "add")]
+        add: Vec<String>,
+        /// Validator pubkey(s) to REMOVE (64-hex Ed25519). Repeat for several.
+        #[arg(long = "remove")]
+        remove: Vec<String>,
+        /// Rotate one validator for another: `--rotate <old_pubkey> <new_pubkey>`
+        /// (desugars to remove(old) + add(new)).
+        #[arg(long = "rotate", num_args = 2, value_names = ["OLD", "NEW"])]
+        rotate: Vec<String>,
+        /// Running node's HTTP API port.
+        #[arg(long, default_value = "8420")]
+        port: u16,
+        /// Bearer token for the node API (if the node has a passphrase set). On a
+        /// loopback devnet node with no passphrase this can be omitted.
+        #[arg(long)]
+        token: Option<String>,
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[tokio::main]
@@ -626,6 +662,27 @@ async fn main() {
             json,
         } => {
             if let Err(e) = operator_join::add_validator(&data_dir, &pubkeys, json) {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::ProposeEpochTransition {
+            mut add,
+            mut remove,
+            rotate,
+            port,
+            token,
+            json,
+        } => {
+            // `--rotate OLD NEW` desugars to remove(OLD) + add(NEW).
+            if rotate.len() == 2 {
+                remove.push(rotate[0].clone());
+                add.push(rotate[1].clone());
+            }
+            if let Err(e) =
+                operator_join::propose_epoch_transition(port, token.as_deref(), &add, &remove, json)
+                    .await
+            {
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }

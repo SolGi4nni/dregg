@@ -1247,6 +1247,95 @@ impl BlocklaceHandle {
 
         self.push_new_blocks().await;
     }
+
+    /// LIVE EPOCH TRANSITION — advance the running consensus committee to a
+    /// newly-finalized validator set.
+    ///
+    /// Called from [`apply_passed_proposal`] once a membership change has been
+    /// ratified by a quorum of the CURRENT committee (the constitution
+    /// `apply_if_passed` gate) AND confirmed by tau finality. Two live pieces
+    /// advance, atomically with respect to consensus:
+    ///
+    /// 1. **The finalization-vote committee** — `self.votes` is reconfigured to
+    ///    the new participant set and the new supermajority threshold, so the
+    ///    added validator's signed finalization votes COUNT from this point and
+    ///    a removed validator's no longer do. Already-attested blocks stay
+    ///    attested (monotone), so the boundary introduces no safety gap.
+    /// 2. **The gossip mesh admission** — each current participant's federation
+    ///    key is (re-)registered in the gossip network's authenticated peer set
+    ///    (keyed by `blake3(public_key)`, the SAME derivation the mesh uses), so
+    ///    a newly-added validator's signed envelopes are accepted live without
+    ///    recreating the transport. (Authentication is by public key, not by
+    ///    `federation_id`, so this survives a committee change.)
+    ///
+    /// The constitution's participant set (which `tau` ordering reads live) was
+    /// already advanced by the caller. What is deliberately NOT touched here is
+    /// the federation/chain identity — see [`apply_passed_proposal`].
+    ///
+    /// A removed validator's gossip key is left registered (harmless: it is no
+    /// longer a `tau` participant and its finalization votes are now rejected by
+    /// the reconfigured collector). HORIZONLOG: optional deregistration on
+    /// removal.
+    pub async fn apply_committee_change(&self, participants: &[[u8; 32]], threshold: usize) {
+        // 1. Advance the finalization-vote committee + quorum threshold.
+        {
+            let mut votes = self.votes.write().await;
+            votes.reconfigure(participants.iter().copied(), threshold);
+        }
+        // 2. Admit every current participant to the authenticated gossip mesh.
+        for pk in participants {
+            let node_id = *blake3::hash(pk).as_bytes();
+            self.gossip
+                .register_peer_key(node_id, dregg_types::PublicKey(*pk))
+                .await;
+        }
+        info!(
+            participants = participants.len(),
+            quorum_threshold = threshold,
+            "live consensus committee advanced (epoch transition applied)"
+        );
+    }
+
+    /// OPERATOR-DRIVEN epoch transition: propose adding or removing a validator
+    /// on a RUNNING node (the live, chain-continuing path — distinct from the
+    /// offline `add-validator` genesis re-roll).
+    ///
+    /// Creates a `MembershipVote` proposal block (`Join` for an add, `Leave` for
+    /// a remove), self-votes it (the proposing validator's authority), persists
+    /// it, and disseminates it. The change only APPLIES once a quorum of the
+    /// CURRENT committee ratifies it through finality — proposing is not
+    /// authority, the current committee's votes are. Returns the proposal block
+    /// id so the caller can report / poll it.
+    ///
+    /// `add = true` proposes `Join(node_id)`; `add = false` proposes
+    /// `Leave(node_id)`. A rotation is two calls: `Leave(old)` then `Join(new)`.
+    pub async fn propose_membership(
+        &self,
+        state: &NodeState,
+        node_id: [u8; 32],
+        add: bool,
+    ) -> BlockId {
+        let action = if add {
+            MembershipAction::Join { node_id }
+        } else {
+            MembershipAction::Leave { node_id }
+        };
+        let block = {
+            let mut lace = self.lace.write().await;
+            lace.add_block(Payload::MembershipVote {
+                action: action.clone(),
+            })
+        };
+        let block_id = block.id();
+        Self::persist_block_to_store(state, &block).await;
+        info!(
+            block_id = %block_id,
+            add,
+            "operator proposed epoch transition (membership change) on running node"
+        );
+        self.push_new_blocks().await;
+        block_id
+    }
 }
 
 /// Build a `dregg_blocklace::Blocklace` (the ordering-compatible type) from
@@ -6578,14 +6667,19 @@ async fn execute_finalized_membership(
 
 /// Apply a membership proposal that has reached threshold.
 ///
-/// Amends the constitution and logs the change. The new participant list takes
-/// effect at the NEXT wave boundary (the current wave's ordering uses the old set).
+/// Amends the constitution AND advances the LIVE consensus committee so the
+/// validator-set reconfiguration is an on-chain, chain-continuing operation
+/// rather than a disruptive genesis re-roll. The new participant list takes
+/// effect at the NEXT wave boundary (the current wave's ordering uses the old
+/// set); the finalization-vote committee and the gossip mesh are advanced here.
 async fn apply_passed_proposal(handle: &BlocklaceHandle, proposal_block: &BlockId) {
     let mut constitution = handle.constitution.write().await;
     if constitution.apply_if_passed(proposal_block) {
+        let new_participants: Vec<[u8; 32]> = constitution.current.participants.clone();
         let new_count = constitution.current.participant_count();
         let new_version = constitution.version();
         let new_threshold = constitution.threshold();
+        drop(constitution);
         info!(
             proposal_block = %proposal_block,
             new_participant_count = new_count,
@@ -6593,6 +6687,17 @@ async fn apply_passed_proposal(handle: &BlocklaceHandle, proposal_block: &BlockI
             constitution_version = new_version,
             "constitution amended: membership change applied"
         );
+        // LIVE EPOCH TRANSITION: advance the running consensus committee to the
+        // newly-finalized validator set. The chain (blocklace + cell state) is
+        // carried across; only the committee that gates finality + the gossip
+        // mesh admission advance. The federation/chain identity
+        // (`federation_id` / `committee_epoch` / `known_federation_keys`) is
+        // INTENTIONALLY left unchanged — it is the STABLE chain root the bot /
+        // bridge / light client pin, so a committee change never forces a
+        // re-point (inflexibility #3). See `apply_committee_change`.
+        handle
+            .apply_committee_change(&new_participants, new_threshold)
+            .await;
     }
 }
 
