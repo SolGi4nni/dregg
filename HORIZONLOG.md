@@ -9,6 +9,15 @@ should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
 ## NOW-STATE (late-2026-06-25 cluster — lanes that landed AFTER the entries below, recorded here for durability)
+- AGENT-COORDINATION LIVE (2026-06-29) — the `/coordinate` promise-pipeline now drives a REAL atomic settle on a live node.
+  `discord-bot/src/coordinate_flow.rs::settle_round_live` translates a round's settled value moves into ONE signed conserving
+  turn (the `/send` rail); `discord-bot/src/commands/coordinate.rs` wires it (real hosted cells, faucet, `fail:true` rollback);
+  `discord-bot/src/bin/coordinate_live.rs` is the reproducible proof (RUN green vs a fresh recovered node: producer received
+  exactly the quoted price, turn landed as chain head, broken-promise variant left the ledger untouched). Doc:
+  `docs/COORDINATE-LIVE-DEMO.md`. NAMED GATE (the one honest remainder): N-party rings where SEVERAL agents each move value need
+  >1 signer in one atomic turn — `settle_round_live` returns `LiveSettleError::MultiPayer` rather than pretend; the live surface
+  is the node's multi-party atomic proposal (`/turn/atomic`), not yet driven. The off-chain coordinator already proves the
+  N-party ring; only the multi-signer on-chain settle is the gate.
 - GENTIAN FULCRUM — escrow welded descriptor GRADUATED to a WIDE member (2026-06-28). `metatheory/Dregg2/Deos/SettleEscrowSatWideDescriptor.lean`
   (`#assert_all_clean`, 9 keystones, lake green, wired into `Dregg2.Deos`): `settleEscrowSatVmDescriptor2R24Wide = wideAppend (graduateV1
   (rotateV3 settle-base)) bb (bb+51)` + the four satisfaction gates + the selector PI pin (piCount 63 = 46 rotated + 16 wide anchors +

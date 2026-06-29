@@ -24,18 +24,33 @@
 //!
 //! DEMO — the off-chain WORK each agent does is a small deterministic computation
 //! (the producer "prices" the task at a fixed amount; the consumer pays exactly
-//! that) and the round settles over a SEEDED ledger funded for the demonstration,
-//! not the agents' live custodial balances. The coordination MECHANISM around that
-//! work — the promise pipeline, the atomic verified settle, the conservation, the
-//! rollback — is the real, proven part. Swapping the deterministic work for a live
-//! agent's (a Hermes tool-call producing the result, a real funded ledger) changes
-//! only the work producer, exactly as `crate::hermes_channel`'s classifier seam
-//! changes only the tool-call producer.
+//! that). The coordination MECHANISM around that work — the promise pipeline, the
+//! atomic verified settle, the conservation, the rollback — is the real, proven
+//! part. Swapping the deterministic work for a live agent's (a Hermes tool-call
+//! producing the result) changes only the work producer, exactly as
+//! `crate::hermes_channel`'s classifier seam changes only the tool-call producer.
+//!
+//! # Driving it LIVE on the node
+//!
+//! [`run_pair_round`] proves the round OFF-CHAIN (the promise pipeline + the
+//! verified conserving fold over a representation ledger). [`settle_round_live`]
+//! then submits the round's settled value moves to the LIVE node as ONE real,
+//! atomic, conserving turn signed by the payer — the node's verified executor
+//! re-checks Σδ=0 and commits the whole turn or rejects it whole. A broken
+//! promise ([`run_pair_round_broken`]) refuses the round before that submit, so
+//! NOTHING lands on the node and the live ledger is untouched. That is the live
+//! "watch your agent civilization": real cells, a real on-chain settle, a real
+//! receipt — and a real rollback when a promise breaks.
 
 use dregg_app_framework::agent_coordination::{
     CoordinationError, CoordinationLeg, CoordinationReceipt, LegOutput, coordinate,
 };
 use dregg_app_framework::ring_trade::{CommitmentId, WideLedger, WideLeg};
+use dregg_sdk::CellId;
+use dregg_turn::{Action, Effect};
+
+use crate::cipherclerk::UserCipherclerk;
+use crate::devnet::{DevnetClient, DevnetError};
 
 /// The asset the demonstration round settles in (a fixed demo asset tag).
 const COORD_ASSET: [u8; 32] = {
@@ -152,6 +167,178 @@ pub fn run_pair_round(
         consumer,
         price,
         receipt,
+    })
+}
+
+/// **Run a two-agent round whose PRODUCER work FAILS** — the broken-promise
+/// path. The producer's off-chain work returns an error, so its promise BREAKS;
+/// the breakage propagates to the consumer's pipelined leg and
+/// [`coordinate`] refuses the round *before any settle*. Used to demonstrate the
+/// live rollback: because the round never reaches the settle, nothing is ever
+/// submitted to the node, so the live ledger is untouched (atomicity).
+///
+/// Returns the [`CoordinationError::Broken`] the round refuses with.
+pub fn run_pair_round_broken(
+    producer: CommitmentId,
+    consumer: CommitmentId,
+    task: &str,
+) -> CoordinationError {
+    let round_id = round_id_for(&producer, &consumer, task);
+    let mut ledger = WideLedger::new();
+    ledger.add_account(producer.0);
+    ledger.add_account(consumer.0);
+    ledger.set(consumer.0, &COORD_ASSET, 1000);
+
+    let legs = vec![
+        // The PRODUCER's off-chain work FAILS — its promise breaks.
+        CoordinationLeg::new(producer, "produce", move |_inputs| {
+            Err("producer could not complete the task — promise broken".to_string())
+        }),
+        // The CONSUMER would have pipelined a payment against the producer's
+        // promise; the broken promise propagates here and the round rolls back.
+        CoordinationLeg::new(consumer, "consume", move |inputs| {
+            let raw = inputs.get("produce").cloned().unwrap_or_default();
+            let quoted = u64::from_le_bytes(
+                raw.try_into()
+                    .map_err(|_| "producer promise was not a price".to_string())?,
+            );
+            Ok(LegOutput::with_moves(
+                b"paid",
+                vec![WideLeg {
+                    from: consumer.0,
+                    to: producer.0,
+                    asset: COORD_ASSET,
+                    amount: quoted as i128,
+                }],
+            ))
+        })
+        .after("produce"),
+    ];
+
+    coordinate(round_id, legs, &ledger)
+        .err()
+        .unwrap_or_else(|| unreachable!("a broken producer promise always refuses the round"))
+}
+
+// ─── The LIVE on-chain settle ────────────────────────────────────────────────
+
+/// Why a live coordination settle could not land on the node.
+#[derive(Debug)]
+pub enum LiveSettleError {
+    /// The round's value moves are paid from more than one cell. A single
+    /// signed turn moves value from ONE payer; a multi-payer ring's live
+    /// surface is the node's multi-party atomic proposal (`/turn/atomic`), which
+    /// this path does not drive. (A named gate, not a bug.)
+    MultiPayer { payers: usize },
+    /// A settled move's amount did not fit a `u64` computron value.
+    BadAmount(i128),
+    /// The node refused the settle turn (e.g. the payer could not afford it —
+    /// atomic: nothing committed).
+    Rejected(String),
+    /// The submission itself failed (transport / node error).
+    Submit(DevnetError),
+}
+
+impl std::fmt::Display for LiveSettleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MultiPayer { payers } => write!(
+                f,
+                "round settles value from {payers} distinct payers; a single signed turn cannot settle a multi-payer ring atomically (use the node's /turn/atomic multi-party proposal)"
+            ),
+            Self::BadAmount(a) => {
+                write!(f, "settled amount {a} does not fit a u64 computron value")
+            }
+            Self::Rejected(e) => write!(f, "node refused the settle turn (nothing committed): {e}"),
+            Self::Submit(e) => write!(f, "settle submission failed: {e:?}"),
+        }
+    }
+}
+
+impl std::error::Error for LiveSettleError {}
+
+/// The on-chain result of settling a coordination round on the LIVE node.
+#[derive(Clone, Debug)]
+pub enum LiveSettle {
+    /// The round's atomic settle landed on the live node as ONE real conserving
+    /// turn. `turn_hash` is the node's receipt; `moves` is how many value moves
+    /// folded into it.
+    Landed {
+        /// The node's receipt hash for the settle turn.
+        turn_hash: String,
+        /// How many value moves the turn settled.
+        moves: usize,
+    },
+    /// The round had no value moves (a pure promise-pipeline round); nothing to
+    /// settle on-chain. The off-chain promise receipt still stands.
+    NothingToSettle,
+}
+
+/// **Settle a coordination round's value moves on the LIVE node** as ONE real,
+/// atomic, conserving turn signed by `payer_cclerk`.
+///
+/// The off-chain [`coordinate`] round has already proven the promise pipeline
+/// and the conservation; this step submits the round's `settled_moves` to the
+/// node as a single signed turn (one [`Effect::Transfer`] per move, all from the
+/// one payer, in one atomic action group). The node's verified executor
+/// re-checks per-asset Σδ=0 and either commits the whole turn or rejects it
+/// whole — the same all-or-nothing atomicity the off-chain settle has, now on
+/// the real chain.
+///
+/// Every settled move must be paid FROM `payer_cclerk`'s cell. A multi-payer
+/// ring is a named gate ([`LiveSettleError::MultiPayer`]).
+pub async fn settle_round_live(
+    devnet: &DevnetClient,
+    payer_cclerk: &UserCipherclerk,
+    receipt: &CoordinationReceipt,
+    memo: impl Into<String>,
+) -> Result<LiveSettle, LiveSettleError> {
+    if receipt.settled_moves.is_empty() {
+        return Ok(LiveSettle::NothingToSettle);
+    }
+
+    let payer = payer_cclerk.cell_id_bytes();
+    // Every move must be paid from the single signer; otherwise the round needs
+    // the node's multi-party atomic proposal, which this turn cannot express.
+    let distinct_payers = receipt
+        .settled_moves
+        .iter()
+        .map(|m| m.from)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    if receipt.settled_moves.iter().any(|m| m.from != payer) {
+        return Err(LiveSettleError::MultiPayer {
+            payers: distinct_payers,
+        });
+    }
+
+    let mut actions: Vec<Action> = Vec::with_capacity(receipt.settled_moves.len());
+    for m in &receipt.settled_moves {
+        let amount = u64::try_from(m.amount).map_err(|_| LiveSettleError::BadAmount(m.amount))?;
+        let from = CellId(m.from);
+        let to = CellId(m.to);
+        actions.push(payer_cclerk.app.make_action(
+            from,
+            "transfer",
+            vec![Effect::Transfer { from, to, amount }],
+        ));
+    }
+
+    let result = devnet
+        .submit_app_actions(payer_cclerk, actions, Some(memo.into()))
+        .await
+        .map_err(LiveSettleError::Submit)?;
+    if !result.accepted {
+        return Err(LiveSettleError::Rejected(result.error.unwrap_or_else(
+            || "node rejected the coordination settle turn".to_string(),
+        )));
+    }
+    let turn_hash = result.turn_hash.ok_or_else(|| {
+        LiveSettleError::Rejected("node accepted but omitted turn_hash".to_string())
+    })?;
+    Ok(LiveSettle::Landed {
+        turn_hash,
+        moves: receipt.settled_moves.len(),
     })
 }
 
