@@ -37,7 +37,7 @@ finding is manufactured.
 | **SBX-1** | Sandbox | wasmtime provider default is **root**: empty cap slice from `exec` falls through to `CapabilitySet::default() = grant_all()` → preopen host `/` read-write + `inherit_network`; untrusted workload reads/writes whole host fs + all tenants | **CRITICAL** | live |
 | **GW-4a** | Gateway / bot | Discord `POST /api/op` is **unauthenticated custodial signing as any user** (signer derived from `bot_secret` + request-body `user_id`, no ownership proof) and is publicly proxied → forge credentials / squat names on arbitrary users' cells | **CRITICAL→HIGH** | live |
 | **LC-2** | Light-client | Finalized light client has **no trusted validator set**: leg-3 accepts any N signatures over an attacker-supplied `participant_count` → an equivocating prover finalizes a fork | HIGH (CRIT-by-design) | latent (demo/test only) |
-| **F1** | Consensus | Federation Ed25519 QC verifier **does not dedup `voter_id`** → one committee key forges a full quorum cert / checkpoint / epoch transition | **HIGH** | live (legacy path) |
+| **F1** | Consensus | Federation Ed25519 QC verifier **does not dedup `voter_id`** → one committee key forges a full quorum cert / checkpoint / epoch transition | **HIGH** | ✅ FIXED (voter_id dedup; duplicate-vote QC rejected) |
 | **LC-1** | Light-client | The wired web-surface `dregg://` content gate is **count-only, no crypto, no committee** (`has_quorum` = `len() >= threshold`, `threshold:0` passes) → malicious content server paints attacker bytes as "attested" | **HIGH** | live |
 | **LEASE-1a** | Lease / metering | Public machine-create synthesizes a `funded:true` lease from the *attacker's requested guest size* → free compute on the public API | **CRITICAL** | live (stub) |
 | **LEASE-3** | Settlement | Exactly-once `(lease,period)` is **in-memory only**; on-chain memo is not enforced → restart/2nd settler ⇒ duplicate real on-chain Transfers | **CRITICAL** | live |
@@ -462,7 +462,16 @@ settlement idempotency are wired (the code names this as next).
 | 3a | Recovery order soundness | **HOLDS** (`node/src/main.rs:1496-1513`) | — |
 | 4 | Weaponize Rust↔Lean divergence | **EXPLOITABLE** (F1 is exactly a Lean-assumption the Rust violates) | HIGH |
 
-### F1 (HIGH, live) — duplicate-vote quorum forgery
+### F1 (✅ FIXED) — duplicate-vote quorum forgery
+**Fixed:** both `is_valid_with_keys` and `verify_with_keys`
+(`federation/src/types.rs`) now track a `HashSet<usize>` of voter ids and
+reject the QC the moment a `voter_id` repeats, so only DISTINCT valid voters
+count toward the threshold. Tests in `types.rs::qc_dedup_tests`:
+`duplicate_voter_qc_is_rejected` (the `[(0,sig0),(0,sig0),(0,sig0)]` forgery is
+now rejected), `padded_duplicate_does_not_reach_threshold`, and
+`genuine_distinct_voter_qc_is_accepted` (an N-distinct-voter QC still verifies).
+Original report below.
+
 `QuorumCertificate::is_valid_with_keys`/`verify_with_keys`
 (`federation/src/types.rs:209-224,270-286`, lead-verified) check
 `votes.len() >= threshold` and verify each `(voter_id, sig)` but **never dedup
@@ -666,8 +675,9 @@ rides bearer + ACL + port scoping (which MESH-2 undercuts).
 4. **LEASE-1a + LEASE-3 (CRITICAL, live)** — read the verified on-chain lease before
    minting a funded lease; persist + kernel-enforce the `(lease,period)` settlement
    dedup.
-5. **F1 (HIGH, live)** — dedup `voter_id` in the Ed25519 QC verifier (one-line class
-   of fix; defeats single-key quorum forgery). Highest value-per-effort.
+5. **F1 (✅ FIXED)** — `voter_id` deduped in the Ed25519 QC verifier
+   (`is_valid_with_keys`/`verify_with_keys` reject duplicate voters; only distinct
+   voters count toward threshold). Single-key quorum forgery defeated.
 6. **LC-1 / LC-2 / LC-3 (HIGH)** — anchor every light/web acceptance to the signed
    committee attestation: gate on `is_valid(known_keys)`, pass the trusted
    validator set to `verify_finalized_history`, and wire a finality gate into the

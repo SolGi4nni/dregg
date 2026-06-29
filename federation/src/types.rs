@@ -211,7 +211,15 @@ impl QuorumCertificate {
         }
         // Build the vote message that was signed.
         let vote_message = Self::vote_message(&self.block_hash, self.height, self.view);
+        // Count only DISTINCT valid voters toward the threshold. The signed
+        // message is identical for every vote on a block, so without deduping a
+        // single committee key could submit duplicate votes and forge a quorum.
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for (voter_id, sig) in &self.votes {
+            // Reject any QC that carries the same voter more than once.
+            if !seen.insert(*voter_id) {
+                return false;
+            }
             match nodes.get(*voter_id) {
                 Some(node) => {
                     if !node.public_key.verify(&vote_message, sig) {
@@ -221,6 +229,7 @@ impl QuorumCertificate {
                 None => return false,
             }
         }
+        // With duplicates rejected, distinct voter count == votes.len() >= threshold.
         true
     }
 
@@ -272,7 +281,13 @@ impl QuorumCertificate {
             return false;
         }
         let vote_message = Self::vote_message(&self.block_hash, self.height, self.view);
+        // Count only DISTINCT valid voters toward the threshold; reject a QC that
+        // repeats a voter (one key cannot forge a quorum via duplicate votes).
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for (voter_id, sig) in &self.votes {
+            if !seen.insert(*voter_id) {
+                return false;
+            }
             match committee.get(*voter_id) {
                 Some(pk) => {
                     if !pk.verify(&vote_message, sig) {
@@ -566,4 +581,106 @@ pub fn current_timestamp() -> i64 {
 #[cfg(target_arch = "wasm32")]
 pub fn current_timestamp() -> i64 {
     1_700_000_000
+}
+
+#[cfg(test)]
+mod qc_dedup_tests {
+    use super::*;
+
+    /// Build a committee of `n` (SigningKey, NodeIdentity) entries.
+    fn committee(n: usize) -> (Vec<SigningKey>, Vec<NodeIdentity>) {
+        let mut sks = Vec::new();
+        let mut nodes = Vec::new();
+        for id in 0..n {
+            let (sk, pk) = generate_keypair();
+            nodes.push(NodeIdentity {
+                name: format!("node-{id}"),
+                id,
+                public_key: pk,
+            });
+            sks.push(sk);
+        }
+        (sks, nodes)
+    }
+
+    /// F1 regression: a QC whose votes repeat a single voter must be REJECTED,
+    /// even though `votes.len() >= threshold` and every signature is valid.
+    #[test]
+    fn duplicate_voter_qc_is_rejected() {
+        let (sks, nodes) = committee(3);
+        let block_hash = [7u8; 32];
+        let (height, view) = (1u64, 0u64);
+        let msg = QuorumCertificate::vote_message(&block_hash, height, view);
+        // Voter 0 signs the (identical) vote message three times.
+        let sig0 = sign(&sks[0], &msg);
+        let qc = QuorumCertificate {
+            block_hash,
+            height,
+            view,
+            aggregate_qc: None,
+            votes: vec![(0, sig0), (0, sig0), (0, sig0)],
+            threshold: 3,
+        };
+        // One key must NOT be able to forge a 3-of-3 quorum via duplicates.
+        assert!(
+            !qc.is_valid_with_keys(&nodes),
+            "duplicate-voter QC must be rejected (is_valid_with_keys)"
+        );
+        let keys: Vec<PublicKey> = nodes.iter().map(|n| n.public_key).collect();
+        assert!(
+            !qc.verify_with_keys(&keys),
+            "duplicate-voter QC must be rejected (verify_with_keys)"
+        );
+    }
+
+    /// A genuine QC with `threshold` DISTINCT valid voters still verifies.
+    #[test]
+    fn genuine_distinct_voter_qc_is_accepted() {
+        let (sks, nodes) = committee(3);
+        let block_hash = [9u8; 32];
+        let (height, view) = (2u64, 1u64);
+        let msg = QuorumCertificate::vote_message(&block_hash, height, view);
+        let votes: Vec<(usize, Signature)> = (0..3).map(|id| (id, sign(&sks[id], &msg))).collect();
+        let qc = QuorumCertificate {
+            block_hash,
+            height,
+            view,
+            aggregate_qc: None,
+            votes,
+            threshold: 3,
+        };
+        assert!(
+            qc.is_valid_with_keys(&nodes),
+            "genuine 3-distinct-voter QC must verify (is_valid_with_keys)"
+        );
+        let keys: Vec<PublicKey> = nodes.iter().map(|n| n.public_key).collect();
+        assert!(
+            qc.verify_with_keys(&keys),
+            "genuine 3-distinct-voter QC must verify (verify_with_keys)"
+        );
+    }
+
+    /// A QC padded with duplicates to reach threshold (2 distinct + 1 dup) is rejected.
+    #[test]
+    fn padded_duplicate_does_not_reach_threshold() {
+        let (sks, nodes) = committee(3);
+        let block_hash = [11u8; 32];
+        let (height, view) = (3u64, 0u64);
+        let msg = QuorumCertificate::vote_message(&block_hash, height, view);
+        let sig0 = sign(&sks[0], &msg);
+        let sig1 = sign(&sks[1], &msg);
+        // 2 distinct voters padded to length-3 with a duplicate of voter 0.
+        let qc = QuorumCertificate {
+            block_hash,
+            height,
+            view,
+            aggregate_qc: None,
+            votes: vec![(0, sig0), (1, sig1), (0, sig0)],
+            threshold: 3,
+        };
+        assert!(
+            !qc.is_valid_with_keys(&nodes),
+            "padding to threshold with a duplicate must be rejected"
+        );
+    }
 }
