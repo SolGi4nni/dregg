@@ -155,6 +155,10 @@ pub fn register_proof() -> CreateCommand {
 }
 
 /// Register the /metrics command.
+///
+/// Retired from the slash surface (folded into `/status` + `/dashboard`); kept
+/// so it can be re-registered if wanted.
+#[allow(dead_code)]
 pub fn register_metrics() -> CreateCommand {
     CreateCommand::new("metrics").description("Show key devnet metrics")
 }
@@ -162,21 +166,25 @@ pub fn register_metrics() -> CreateCommand {
 /// Handle /status interaction — the full node + producer-fidelity surface.
 pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     defer_ephemeral(ctx, command).await;
+    let embed = execute_status(state).await;
+    let _ = command
+        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+        .await;
+}
 
+/// Build the node-status embed (the read behind `/status` and the `/start`
+/// "Node status" button) — health, producer fidelity, and the federation table.
+pub(crate) async fn execute_status(state: &BotState) -> serenity::all::CreateEmbed {
     let status = match fetch_status_producer(state).await {
         Ok(status) => status,
         Err(e) => {
-            let embed = embeds::error_embed(
+            return embeds::error_embed(
                 "Node Offline",
                 &format!(
                     "Could not reach the node `{}`: {e}\n\nDevnet may be offline — try again shortly.",
                     state.config.devnet_url
                 ),
             );
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
         }
     };
 
@@ -277,9 +285,7 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
         _ => {}
     }
 
-    let _ = command
-        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-        .await;
+    embed
 }
 
 /// Handle /proof interaction — fetch the real proof artifact a committed turn
@@ -390,6 +396,7 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
 }
 
 /// Handle /metrics interaction.
+#[allow(dead_code)]
 pub async fn handle_metrics(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     defer_ephemeral(ctx, command).await;
 

@@ -425,7 +425,7 @@ async fn open_modal(ctx: &Context, component: &ComponentInteraction, modal: Crea
         .await;
 }
 
-async fn home_embed(user_id: u64, state: &BotState) -> CreateEmbed {
+pub(crate) async fn home_embed(user_id: u64, state: &BotState) -> CreateEmbed {
     let identity = state
         .db
         .get_user_identity(&user_id.to_string())
@@ -536,7 +536,7 @@ fn subscription_embed(guild_id: Option<u64>) -> CreateEmbed {
         .field("Starbridge App", "`starbridge-apps/subscription`", true)
 }
 
-fn home_components() -> Vec<CreateActionRow> {
+pub(crate) fn home_components() -> Vec<CreateActionRow> {
     vec![
         app_select(),
         CreateActionRow::Buttons(vec![

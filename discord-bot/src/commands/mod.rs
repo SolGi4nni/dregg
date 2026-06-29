@@ -18,6 +18,9 @@ pub mod channel;
 pub mod cipherclerk;
 pub mod explorer;
 pub mod gallery;
+// `credential` is retired from the slash surface (→ `/dregg` Identity panel); the
+// handlers are kept so the capability can be re-exposed without re-implementing.
+#[allow(dead_code)]
 pub mod identity;
 pub mod key;
 pub mod presence;
@@ -42,9 +45,20 @@ pub mod deos;
 // through the verified executor.
 pub mod coordinate;
 pub mod federation;
+// The gov-* / name-* / queue-* slash families are retired (→ `/dregg` dashboard
+// Governance / Names / Subscription panels, which build the same actions). The
+// handlers are kept so the capability can be re-exposed without re-implementing.
+#[allow(dead_code)]
 pub mod governance;
 pub mod handoff;
 pub mod intent;
+#[allow(dead_code)]
 pub mod names;
 pub mod polis;
+#[allow(dead_code)]
 pub mod queue;
+// `/start` + `/help` — the Telegram-style front door: onboarding, a button menu
+// for the common actions, and a funnel into the conversational channel. The
+// buttons fire the same real cap-gated turns the slash commands did. See
+// `crate::commands::start` + `discord-bot/UX-REDESIGN.md`.
+pub mod start;

@@ -168,38 +168,34 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 }
 
 async fn handle_create(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let discord_id = command.user.id.get().to_string();
-
     defer_ephemeral(ctx, command).await;
+    let embed = execute_create(state, command.user.id.get()).await;
+    let _ = command
+        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+        .await;
+}
 
-    // Check if user already has a cclerk.
+/// Create the invoker's custodial cell (the real turn behind both the
+/// `/cipherclerk create` slash command and the `/start` "Create my wallet"
+/// button): derive the per-user cipherclerk, register the cell on the devnet,
+/// and record the hosted identity. Returns the embed to show.
+pub(crate) async fn execute_create(state: &BotState, user_id: u64) -> serenity::all::CreateEmbed {
+    let discord_id = user_id.to_string();
+
     match state.db.user_exists(&discord_id).await {
         Ok(true) => {
-            let embed = embeds::warning_embed(
-                "Cipherclerk Exists",
-                "You already have a dregg cclerk. Use `/cipherclerk address` to see your cell ID.",
+            return embeds::warning_embed(
+                "Wallet Exists",
+                "You already have a dregg wallet. Use `/start` → **Balance** to see it.",
             );
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
         }
-        Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
-        }
+        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
         _ => {}
     }
 
     // Derive keys.
-    let cclerk = UserCipherclerk::derive(
-        &state.config.bot_secret,
-        command.user.id.get(),
-        state.federation_id_bytes,
-    );
+    let cclerk =
+        UserCipherclerk::derive(&state.config.bot_secret, user_id, state.federation_id_bytes);
     let cell_id = cclerk.cell_id_hex().to_string();
 
     // Register on devnet.
@@ -208,14 +204,10 @@ async fn handle_create(ctx: &Context, command: &CommandInteraction, state: &BotS
         .register_cell(&cell_id, cclerk.public_key_hex())
         .await
     {
-        let embed = embeds::error_embed(
+        return embeds::error_embed(
             "Devnet Error",
             &format!("Failed to register cell on devnet: {e}"),
         );
-        let _ = command
-            .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-            .await;
-        return;
     }
 
     // Store in database.
@@ -224,58 +216,42 @@ async fn handle_create(ctx: &Context, command: &CommandInteraction, state: &BotS
         .register_user_with_mode(&discord_id, &cell_id, IdentityMode::Hosted, None)
         .await
     {
-        let embed = embeds::error_embed("Database Error", &e.to_string());
-        let _ = command
-            .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-            .await;
-        return;
+        return embeds::error_embed("Database Error", &e.to_string());
     }
 
-    let embed = embeds::success_embed("Cipherclerk Created")
-        .description("Your dregg cclerk is ready!")
+    embeds::success_embed("Wallet Created")
+        .description("Your dregg wallet is ready! Grab some test DEC, then just chat.")
         .field("Cell ID", format!("`{}`", cclerk.cell_id_short()), true)
-        .field("Mode", "Hosted (custodial)", true);
+        .field("Mode", "Hosted (custodial)", true)
+}
 
+async fn handle_balance(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    defer_ephemeral(ctx, command).await;
+    let embed = execute_balance(state, command.user.id.get()).await;
     let _ = command
         .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
         .await;
 }
 
-async fn handle_balance(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let discord_id = command.user.id.get().to_string();
-
-    defer_ephemeral(ctx, command).await;
-
+/// Read the invoker's on-chain balance (the read behind `/cipherclerk balance`
+/// and the `/start` "Balance" button). Returns the embed to show.
+pub(crate) async fn execute_balance(state: &BotState, user_id: u64) -> serenity::all::CreateEmbed {
+    let discord_id = user_id.to_string();
     let cell_id = match state.db.get_cell_id(&discord_id).await {
         Ok(Some(id)) => id,
         Ok(None) => {
-            let embed = embeds::warning_embed(
-                "No Cipherclerk",
-                "You don't have a cclerk yet. Use `/cipherclerk create` first.",
+            return embeds::warning_embed(
+                "No Wallet",
+                "You don't have a wallet yet. Use `/start` → **Create my wallet** first.",
             );
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
         }
-        Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
-        }
+        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
     };
 
     match state.devnet.get_balance(&cell_id).await {
-        Ok(balance) => {
-            let embed = embeds::dregg_embed("Cipherclerk Balance")
-                .field("Balance", format!("{balance} DEC"), true)
-                .field("Cell ID", format!("`{}...`", &cell_id[..16]), true);
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-        }
+        Ok(balance) => embeds::dregg_embed("Your Balance")
+            .field("Balance", format!("{balance} DEC"), true)
+            .field("Cell ID", format!("`{}...`", &cell_id[..16]), true),
         Err(e) => {
             // A 404 here means the cell hasn't been materialized on-chain yet
             // (no faucet/transfer has touched it); user_message surfaces the
@@ -284,10 +260,7 @@ async fn handle_balance(ctx: &Context, command: &CommandInteraction, state: &Bot
                 crate::devnet::DevnetError::Status { code: 404, .. } => "No On-Chain Balance Yet",
                 _ => "Balance Unavailable",
             };
-            let embed = embeds::error_embed(title, &e.user_message("query your balance"));
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
+            embeds::error_embed(title, &e.user_message("query your balance"))
         }
     }
 }

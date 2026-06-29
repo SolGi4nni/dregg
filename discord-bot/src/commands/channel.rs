@@ -41,14 +41,31 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         .await;
     };
 
-    let discord_id = command.user.id.get();
+    let embed = execute_claim(ctx, guild_id, &command.user, state).await;
+    let _ = command
+        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+        .await;
+}
+
+/// Claim (or recover) a user's semi-private channel — the real flow behind both
+/// `/channel` and the `/start` "Claim my channel" button. Ensures the user has a
+/// custodial cell, is idempotent (returns the existing channel), creates the
+/// gated channel (the one live-Discord step), and records the binding so
+/// messages there drive the owner's confined Hermes. Returns the embed to show.
+pub(crate) async fn execute_claim(
+    ctx: &Context,
+    guild_id: serenity::all::GuildId,
+    user: &serenity::all::User,
+    state: &BotState,
+) -> serenity::all::CreateEmbed {
+    let discord_id = user.id.get();
     let discord_id_str = discord_id.to_string();
     let guild_str = guild_id.get().to_string();
 
     // Ensure the user has a custodial cell (derive + register on first claim).
     let cell_id = match ensure_cell(state, &discord_id_str, discord_id).await {
         Ok(cell_id) => cell_id,
-        Err(msg) => return reply_err(ctx, command, "Identity Error", &msg).await,
+        Err(msg) => return embeds::error_embed("Identity Error", &msg),
     };
 
     // Idempotent: if the user already owns an active channel here, return it.
@@ -58,25 +75,21 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         .await
     {
         Ok(Some(existing)) => {
-            let embed = embeds::dregg_embed("Your Channel")
+            return embeds::dregg_embed("Your Channel")
                 .description(format!(
-                    "You already have a semi-private channel: <#{}>.\nMessage it to drive your Hermes.",
+                    "You already have a semi-private channel: <#{}>.\nJust type in it to drive your Hermes.",
                     existing.channel_id
                 ))
                 .field("Cell", format!("`{}`", short(&existing.cell_id)), true);
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
         }
         Ok(None) => {}
-        Err(e) => return reply_err(ctx, command, "Database Error", &e.to_string()).await,
+        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
     }
 
     // Build the semi-private permission plan (pure; tested offline).
     let everyone = RoleId::new(guild_id.get()); // @everyone role id == guild id
     let admin = state.config.admin_discord_id.map(UserId::new);
-    let overwrites = channels::plan_private_overwrites(everyone, command.user.id, admin);
+    let overwrites = channels::plan_private_overwrites(everyone, user.id, admin);
 
     // The only live-Discord step: create the gated channel.
     let name = channels::channel_name_for(discord_id);
@@ -84,22 +97,19 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         .kind(ChannelType::Text)
         .topic(format!(
             "DreggNet Cloud — {}'s semi-private channel. Messages drive their confined Hermes (cap-gated, receipted). Admin-monitored.",
-            command.user.name
+            user.name
         ))
         .permissions(overwrites);
 
     let channel = match guild_id.create_channel(&ctx.http, builder).await {
         Ok(channel) => channel,
         Err(e) => {
-            return reply_err(
-                ctx,
-                command,
+            return embeds::error_embed(
                 "Channel Creation Failed",
                 &format!(
                     "Could not create the channel ({e}). The bot needs MANAGE_CHANNELS in this server.",
                 ),
-            )
-            .await;
+            );
         }
     };
 
@@ -115,19 +125,16 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         )
         .await
     {
-        return reply_err(ctx, command, "Database Error", &e.to_string()).await;
+        return embeds::error_embed("Database Error", &e.to_string());
     }
 
-    let embed = embeds::success_embed("Channel Claimed")
+    embeds::success_embed("Channel Claimed")
         .description(format!(
-            "Your semi-private channel is ready: <#{}>.\n\nMessage it to drive your Hermes. Each message becomes a cap-gated, metered, receipted dregg turn under YOUR cell. Try `read <path>`, `search <query>`, `fetch <url>`, `run <cmd>`, `write <path>`, or just chat.",
+            "Your semi-private channel is ready: <#{}>.\n\nJust type in it to drive your Hermes. Each message becomes a cap-gated, metered, receipted dregg turn under YOUR cell. Try `read <path>`, `search <query>`, `fetch <url>`, `run <cmd>`, `write <path>`, or just chat.",
             channel.id.get()
         ))
         .field("Cell", format!("`{}`", short(&cell_id)), true)
-        .field("Visibility", "You + admin (semi-private)", true);
-    let _ = command
-        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-        .await;
+        .field("Visibility", "You + admin (semi-private)", true)
 }
 
 /// Ensure the invoker has a custodial cell, deriving + registering one on first

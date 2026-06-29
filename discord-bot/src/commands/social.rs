@@ -30,31 +30,29 @@ pub fn register_activity() -> CreateCommand {
 
 /// Handle /faucet interaction.
 pub async fn handle_faucet(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let user_id = command.user.id.get();
-    let discord_id = user_id.to_string();
-
     defer_ephemeral(ctx, command).await;
+    let embed = execute_faucet(state, command.user.id.get()).await;
+    let _ = command
+        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+        .await;
+}
+
+/// Claim test DEC from the faucet (the real turn behind `/faucet` and the
+/// `/start` "Get test DEC" button): rate-limited to 1/hour, records the claim
+/// and a leaderboard transaction. Returns the embed to show.
+pub(crate) async fn execute_faucet(state: &BotState, user_id: u64) -> serenity::all::CreateEmbed {
+    let discord_id = user_id.to_string();
 
     // Check cclerk exists.
     let cell_id = match state.db.get_cell_id(&discord_id).await {
         Ok(Some(id)) => id,
         Ok(None) => {
-            let embed = embeds::warning_embed(
-                "No Cipherclerk",
-                "You need a cclerk to use the faucet. Use `/cipherclerk create` first.",
+            return embeds::warning_embed(
+                "No Wallet",
+                "You need a wallet to use the faucet. Use `/start` → **Create my wallet** first.",
             );
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
         }
-        Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
-        }
+        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
     };
 
     // Check rate limit (1 per hour).
@@ -70,26 +68,16 @@ pub async fn handle_faucet(ctx: &Context, command: &CommandInteraction, state: &
                 let remaining = 3600 - elapsed;
                 let mins = remaining / 60;
                 let secs = remaining % 60;
-                let embed = embeds::warning_embed(
+                return embeds::warning_embed(
                     "Rate Limited",
                     &format!(
                         "You can claim again in **{mins}m {secs}s**.\n\nThe faucet allows 1 claim per hour."
                     ),
                 );
-                let _ = command
-                    .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                    .await;
-                return;
             }
         }
         Ok(None) => {} // First claim ever.
-        Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
-        }
+        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
     }
 
     // Request from devnet faucet.
@@ -103,20 +91,11 @@ pub async fn handle_faucet(ctx: &Context, command: &CommandInteraction, state: &
                 .record_transaction("faucet", &discord_id, amount, "faucet")
                 .await;
 
-            let embed = embeds::success_embed("Faucet Claimed")
+            embeds::success_embed("Faucet Claimed")
                 .field("Amount", format!("{amount} DEC"), true)
-                .field("Next Claim", "In 1 hour", true);
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
+                .field("Next Claim", "In 1 hour", true)
         }
-        Err(e) => {
-            let embed =
-                embeds::error_embed("Faucet Error", &e.user_message("request faucet tokens"));
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-        }
+        Err(e) => embeds::error_embed("Faucet Error", &e.user_message("request faucet tokens")),
     }
 }
 

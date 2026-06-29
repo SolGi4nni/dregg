@@ -286,7 +286,7 @@ async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotS
 }
 
 /// Seal the key and persist it. Returns the redacted fingerprint on success.
-async fn store_key(
+pub(crate) async fn store_key(
     state: &BotState,
     owner: u64,
     provider: Provider,
@@ -317,7 +317,7 @@ async fn store_key(
 
 /// Drop the in-memory session so the new policy (or its absence) is applied on
 /// the next message.
-fn reset_session(state: &BotState, owner: u64) {
+pub(crate) fn reset_session(state: &BotState, owner: u64) {
     let mut sessions = state
         .channel_hermes
         .lock()
