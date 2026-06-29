@@ -65,12 +65,41 @@ async function sendMessage<T = unknown>(type: string, extra: Record<string, unkn
   return response?.result as T | undefined;
 }
 
-function escapeHtml(str: string): string {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+// Safe DOM construction. Every rendered value reaches the DOM through
+// `textContent` (never `innerHTML`), so dynamic data — balances, cell IDs,
+// origins, node responses, recovery words — can never be parsed as markup.
+// This is a key-handling wallet: no string ever becomes HTML.
+interface ElProps {
+  className?: string;
+  textContent?: string;
+  title?: string;
+  cssText?: string;
+}
+
+function makeEl<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  props: ElProps = {},
+  children: Node[] = [],
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (props.className !== undefined) node.className = props.className;
+  if (props.textContent !== undefined) node.textContent = props.textContent;
+  if (props.title !== undefined) node.title = props.title;
+  if (props.cssText !== undefined) node.style.cssText = props.cssText;
+  for (const c of children) node.appendChild(c);
+  return node;
+}
+
+// Render the standard "<div class='empty'>…</div>" placeholder via DOM.
+function renderEmpty(container: Element, text: string): void {
+  container.replaceChildren(makeEl("div", { className: "empty", textContent: text }));
+}
+
+// Build a fragment from a mix of text and nodes (text becomes text nodes).
+function frag(...parts: Array<Node | string>): DocumentFragment {
+  const f = document.createDocumentFragment();
+  f.append(...parts);
+  return f;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,15 +185,17 @@ async function loadLog(): Promise<void> {
   // locked). `getLog` already returns newest-first.
   const log = await sendMessage<LogEntryDisplay[]>("dregg:getLog");
   if (!log || log.length === 0) {
-    logContainer.innerHTML = '<div class="empty">No recent authorizations</div>';
+    renderEmpty(logContainer, "No recent authorizations");
     return;
   }
   const entries = log.slice(0, 5);
-  logContainer.innerHTML = entries.map(entry => {
+  logContainer.replaceChildren(...entries.map(entry => {
     const time = new Date(entry.timestamp).toLocaleTimeString();
-    const icon = entry.allowed ? "&#x2713;" : "&#x2717;";
-    return `<div class="log-entry"><span>${icon} ${escapeHtml(entry.action)} on ${escapeHtml(entry.resource)}</span><div class="time">${escapeHtml(time)}</div></div>`;
-  }).join("");
+    const icon = entry.allowed ? "✓" : "✗";
+    const label = makeEl("span", { textContent: `${icon} ${entry.action} on ${entry.resource}` });
+    const timeDiv = makeEl("div", { className: "time", textContent: time });
+    return makeEl("div", { className: "log-entry" }, [label, timeDiv]);
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +208,7 @@ function showProfileError(text: string): void {
 }
 
 function renderProfiles(profiles: ProfileInfo[]): void {
-  profileSelect.innerHTML = "";
+  profileSelect.replaceChildren();
   if (!profiles || profiles.length === 0) {
     const opt = document.createElement("option");
     opt.value = "";
@@ -237,20 +268,26 @@ async function loadReceipts(): Promise<void> {
   const result = await sendMessage<{ receipts: ReceiptEventSummary[]; unseen: number }>("dregg:getRecentReceipts");
   const receipts = result?.receipts || [];
   if (receipts.length === 0) {
-    receiptsContainer.innerHTML = '<div class="empty">No receipts observed yet</div>';
+    renderEmpty(receiptsContainer, "No receipts observed yet");
     return;
   }
-  receiptsContainer.innerHTML = receipts.slice(0, 8).map(r => {
+  receiptsContainer.replaceChildren(...receipts.slice(0, 8).map(r => {
     const short = r.receiptHash ? r.receiptHash.slice(0, 12) + "..." : "?";
     const kinds = r.kinds && r.kinds.length > 0 ? r.kinds.join(", ") : "(no effect summary)";
     const time = r.timestamp ? new Date(r.timestamp * 1000).toLocaleTimeString() : "";
-    const proof = r.hasProof ? " &#x2713;proof" : "";
-    return `<div class="log-entry">
-      <span style="font-family:monospace;color:#a78bfa;" title="${escapeHtml(r.receiptHash)}">${escapeHtml(short)}</span>
-      <span style="font-size:11px;"> ${escapeHtml(kinds)}${proof}</span>
-      <div class="time">${escapeHtml(r.finality || "")} · h${r.height} · ${escapeHtml(time)}</div>
-    </div>`;
-  }).join("");
+    const proof = r.hasProof ? " ✓proof" : "";
+    const hashSpan = makeEl("span", {
+      cssText: "font-family:monospace;color:#a78bfa;",
+      title: r.receiptHash || "",
+      textContent: short,
+    });
+    const kindsSpan = makeEl("span", { cssText: "font-size:11px;", textContent: ` ${kinds}${proof}` });
+    const timeDiv = makeEl("div", {
+      className: "time",
+      textContent: `${r.finality || ""} · h${r.height} · ${time}`,
+    });
+    return makeEl("div", { className: "log-entry" }, [hashSpan, kindsSpan, timeDiv]);
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -411,27 +448,37 @@ managePermsBtn.addEventListener("click", async () => {
 async function loadPermissions(): Promise<void> {
   const perms = await sendMessage<OriginPermissionDisplay[]>("dregg:getOriginPermissions");
   if (!perms || perms.length === 0) {
-    permissionsContainer.innerHTML = '<div class="empty">No origins approved</div>';
+    renderEmpty(permissionsContainer, "No origins approved");
     return;
   }
-  permissionsContainer.innerHTML = perms.map(p => {
+  permissionsContainer.replaceChildren(...perms.map(p => {
     const expiresIn = p.expiresIn ? Math.round(p.expiresIn / 60000) : 0;
     const expiresStr = expiresIn > 60 ? `${Math.round(expiresIn / 60)}h` : `${expiresIn}m`;
-    return `<div class="log-entry" style="display:flex;justify-content:space-between;align-items:center;">
-      <div>
-        <div style="font-size:11px;color:#fbbf24;word-break:break-all;">${escapeHtml(p.origin)}</div>
-        <div class="time">${escapeHtml(p.methods.join(", "))} - expires in ${expiresStr}</div>
-      </div>
-      <button class="revoke-btn" data-origin="${escapeHtml(p.origin)}" style="flex-shrink:0;padding:4px 8px;font-size:11px;background:#7f1d1d;color:#fca5a5;border:none;border-radius:4px;cursor:pointer;">Revoke</button>
-    </div>`;
-  }).join("");
-
-  permissionsContainer.querySelectorAll(".revoke-btn").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      await sendMessage("dregg:revokeOriginPermission", { origin: (btn as HTMLElement).dataset.origin });
+    const originDiv = makeEl("div", {
+      cssText: "font-size:11px;color:#fbbf24;word-break:break-all;",
+      textContent: p.origin,
+    });
+    const metaDiv = makeEl("div", {
+      className: "time",
+      textContent: `${p.methods.join(", ")} - expires in ${expiresStr}`,
+    });
+    const info = makeEl("div", {}, [originDiv, metaDiv]);
+    const revokeBtn = makeEl("button", {
+      className: "revoke-btn",
+      cssText: "flex-shrink:0;padding:4px 8px;font-size:11px;background:#7f1d1d;color:#fca5a5;border:none;border-radius:4px;cursor:pointer;",
+      textContent: "Revoke",
+    });
+    revokeBtn.dataset.origin = p.origin;
+    revokeBtn.addEventListener("click", async () => {
+      await sendMessage("dregg:revokeOriginPermission", { origin: p.origin });
       await loadPermissions();
     });
-  });
+    return makeEl(
+      "div",
+      { className: "log-entry", cssText: "display:flex;justify-content:space-between;align-items:center;" },
+      [info, revokeBtn],
+    );
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -455,9 +502,13 @@ backupBtn.addEventListener("click", async () => {
     backupBtn.textContent = "Backup (Show Recovery Phrase)";
   } else {
     const words = mnemonic.split(" ");
-    mnemonicDisplay.innerHTML = words.map((w, i) =>
-      `<span>${String(i + 1).padStart(2, "0")}. ${w}</span>`
-    ).join("&nbsp;&nbsp;");
+    const nodes: Node[] = [];
+    words.forEach((w, i) => {
+      // Preserve the original "&nbsp;&nbsp;" separator between words.
+      if (i > 0) nodes.push(document.createTextNode("  "));
+      nodes.push(makeEl("span", { textContent: `${String(i + 1).padStart(2, "0")}. ${w}` }));
+    });
+    mnemonicDisplay.replaceChildren(...nodes);
     mnemonicDisplay.style.display = "block";
     mnemonicWarning.style.display = "block";
     backupBtn.textContent = "Hide Recovery Phrase";
@@ -498,26 +549,32 @@ intentsBtn.addEventListener("click", async () => {
 async function loadFulfillableIntents(): Promise<void> {
   const intents = await sendMessage<FulfillableIntent[]>("dregg:getFulfillableIntents");
   if (!intents || intents.length === 0) {
-    intentsContainer.innerHTML = '<div class="empty">No fulfillable intents available</div>';
+    renderEmpty(intentsContainer, "No fulfillable intents available");
     return;
   }
-  intentsContainer.innerHTML = intents.map(item => {
+  intentsContainer.replaceChildren(...intents.map(item => {
     const actions = item.grantedActions ? item.grantedActions.join(", ") : "any";
     const expiresIn = Math.max(0, Math.round((item.expiry - Date.now()) / 60000));
     const expiresStr = expiresIn > 60 ? `${Math.round(expiresIn / 60)}h` : `${expiresIn}m`;
     const shortId = item.intentId.slice(0, 12) + "...";
-    return `<div class="log-entry" style="display:flex;justify-content:space-between;align-items:center;">
-      <div>
-        <div style="font-size:11px;color:#a78bfa;word-break:break-all;" title="${escapeHtml(item.intentId)}">${escapeHtml(shortId)}</div>
-        <div class="time">${escapeHtml(actions)} on ${escapeHtml(item.resource)} - expires in ${expiresStr}</div>
-      </div>
-      <button class="fulfill-btn" data-intent-id="${escapeHtml(item.intentId)}" data-token-id="${escapeHtml(item.matchedTokenId)}" style="flex-shrink:0;padding:4px 8px;font-size:11px;background:#065f46;color:#6ee7b7;border:none;border-radius:4px;cursor:pointer;">Fulfill</button>
-    </div>`;
-  }).join("");
-
-  intentsContainer.querySelectorAll(".fulfill-btn").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const button = btn as HTMLButtonElement;
+    const idDiv = makeEl("div", {
+      cssText: "font-size:11px;color:#a78bfa;word-break:break-all;",
+      title: item.intentId,
+      textContent: shortId,
+    });
+    const metaDiv = makeEl("div", {
+      className: "time",
+      textContent: `${actions} on ${item.resource} - expires in ${expiresStr}`,
+    });
+    const info = makeEl("div", {}, [idDiv, metaDiv]);
+    const button = makeEl("button", {
+      className: "fulfill-btn",
+      cssText: "flex-shrink:0;padding:4px 8px;font-size:11px;background:#065f46;color:#6ee7b7;border:none;border-radius:4px;cursor:pointer;",
+      textContent: "Fulfill",
+    });
+    button.dataset.intentId = item.intentId;
+    button.dataset.tokenId = item.matchedTokenId;
+    button.addEventListener("click", async () => {
       button.disabled = true;
       button.textContent = "...";
       const result = await sendMessage<{ fulfilled?: boolean }>("dregg:fulfillIntent", {
@@ -540,7 +597,12 @@ async function loadFulfillableIntents(): Promise<void> {
         }, 3000);
       }
     });
-  });
+    return makeEl(
+      "div",
+      { className: "log-entry", cssText: "display:flex;justify-content:space-between;align-items:center;" },
+      [info, button],
+    );
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -598,8 +660,8 @@ interface NodeIdentity {
 
 let cachedIdentity: NodeIdentity | null = null;
 
-function showAcctResult(html: string, color: string): void {
-  acctResult.innerHTML = html;
+function showAcctResult(content: Node | string, color: string): void {
+  acctResult.replaceChildren(content);
   acctResult.style.color = color;
   acctResult.style.display = "block";
 }
@@ -645,7 +707,7 @@ acctFaucetBtn.addEventListener("click", async () => {
     showAcctResult(`Funded ${result.amount ?? 0} DEC.`, "#6ee7b7");
     setTimeout(loadAccount, 1500);
   } else {
-    showAcctResult(`Faucet failed: ${escapeHtml(result?.error || "unknown")}`, "#f87171");
+    showAcctResult(`Faucet failed: ${result?.error || "unknown"}`, "#f87171");
   }
 });
 
@@ -687,15 +749,20 @@ acctSendBtn.addEventListener("click", async () => {
   acctSendBtn.textContent = "Operator Send";
   if (result?.accepted && result.turnHash) {
     const short = result.turnHash.slice(0, 16);
+    const code = makeEl("code", { textContent: `${short}...` });
     showAcctResult(
-      `Committed turn <code>${escapeHtml(short)}...</code> (${escapeHtml(result.proofStatus || "?")}, ${result.witnessCount ?? 0} witness).`,
+      frag(
+        "Committed turn ",
+        code,
+        ` (${result.proofStatus || "?"}, ${result.witnessCount ?? 0} witness).`,
+      ),
       "#6ee7b7",
     );
     acctSendTo.value = "";
     acctSendAmount.value = "";
     setTimeout(loadAccount, 1500);
   } else {
-    showAcctResult(`Rejected: ${escapeHtml(result?.error || "unknown error")}`, "#f87171");
+    showAcctResult(`Rejected: ${result?.error || "unknown error"}`, "#f87171");
   }
 });
 
@@ -722,26 +789,27 @@ interface LiveRefDisplay {
 async function loadLiveRefs(): Promise<void> {
   const refs = await sendMessage<LiveRefDisplay[]>("dregg:getLiveRefs");
   if (!refs || refs.length === 0) {
-    liveRefsContainer.innerHTML = '<div class="empty">No live references held</div>';
+    renderEmpty(liveRefsContainer, "No live references held");
     return;
   }
-  liveRefsContainer.innerHTML = refs.map(r => {
+  liveRefsContainer.replaceChildren(...refs.map(r => {
     const shortCell = r.cellId ? (r.cellId.slice(0, 12) + "..." + r.cellId.slice(-4)) : "?";
     const age = Math.round((Date.now() - r.createdAt) / 60000);
     const ageStr = age > 60 ? `${Math.round(age / 60)}h ago` : `${age}m ago`;
-    return `<div class="ref-item">
-      <div class="ref-cell">${escapeHtml(shortCell)}</div>
-      <div class="ref-meta">Node: ${escapeHtml(r.nodeId || "?")} | ${ageStr}</div>
-      <button class="small-btn danger drop-ref-btn" data-ref-id="${escapeHtml(r.refId)}" style="margin-top: 4px;">Drop</button>
-    </div>`;
-  }).join("");
-
-  liveRefsContainer.querySelectorAll(".drop-ref-btn").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      await sendMessage("dregg:dropLiveRef", { refId: (btn as HTMLElement).dataset.refId });
+    const cellDiv = makeEl("div", { className: "ref-cell", textContent: shortCell });
+    const metaDiv = makeEl("div", { className: "ref-meta", textContent: `Node: ${r.nodeId || "?"} | ${ageStr}` });
+    const dropBtn = makeEl("button", {
+      className: "small-btn danger drop-ref-btn",
+      cssText: "margin-top: 4px;",
+      textContent: "Drop",
+    });
+    dropBtn.dataset.refId = r.refId;
+    dropBtn.addEventListener("click", async () => {
+      await sendMessage("dregg:dropLiveRef", { refId: r.refId });
       await loadLiveRefs();
     });
-  });
+    return makeEl("div", { className: "ref-item" }, [cellDiv, metaDiv, dropBtn]);
+  }));
 }
 
 acceptCapBtn.addEventListener("click", async () => {
@@ -811,17 +879,16 @@ async function loadDirectory(): Promise<void> {
   if (result && result.entries) {
     const entries = result.entries || [];
     if (entries.length === 0) {
-      directoryContainer.innerHTML = '<div class="empty">No services mounted</div>';
+      renderEmpty(directoryContainer, "No services mounted");
     } else {
-      directoryContainer.innerHTML = entries.map(e => {
-        return `<div class="dir-item">
-          <div class="dir-path">${escapeHtml(e.name || e.path || "?")}</div>
-          <div class="dir-kind">${escapeHtml(e.kind || "-")} | v${e.version || 0}</div>
-        </div>`;
-      }).join("");
+      directoryContainer.replaceChildren(...entries.map(e => {
+        const pathDiv = makeEl("div", { className: "dir-path", textContent: e.name || e.path || "?" });
+        const kindDiv = makeEl("div", { className: "dir-kind", textContent: `${e.kind || "-"} | v${e.version || 0}` });
+        return makeEl("div", { className: "dir-item" }, [pathDiv, kindDiv]);
+      }));
     }
   } else {
-    directoryContainer.innerHTML = '<div class="empty">Could not load directory</div>';
+    renderEmpty(directoryContainer, "Could not load directory");
   }
 }
 
@@ -835,14 +902,13 @@ discoverBtn.addEventListener("click", async () => {
   (discoverBtn as HTMLButtonElement).disabled = false;
 
   if (result && result.results && result.results.length > 0) {
-    discoveryResults.innerHTML = result.results.map(r => {
-      return `<div class="dir-item">
-        <div class="dir-path">${escapeHtml(r.path || r.name || "?")}</div>
-        <div class="dir-kind">${escapeHtml(r.kind || "-")}</div>
-      </div>`;
-    }).join("");
+    discoveryResults.replaceChildren(...result.results.map(r => {
+      const pathDiv = makeEl("div", { className: "dir-path", textContent: r.path || r.name || "?" });
+      const kindDiv = makeEl("div", { className: "dir-kind", textContent: r.kind || "-" });
+      return makeEl("div", { className: "dir-item" }, [pathDiv, kindDiv]);
+    }));
   } else {
-    discoveryResults.innerHTML = '<div class="empty">No results found</div>';
+    renderEmpty(discoveryResults, "No results found");
   }
 });
 
