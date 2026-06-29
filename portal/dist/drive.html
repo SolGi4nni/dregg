@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DreggNet — drive the network</title>
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body class="portal-body">
+<a class="portal-back" href="./">&lsaquo; the live network</a>
+<main class="portal">
+<header class="portal-head">
+<h1>Drive the network</h1>
+<p>Connect an identity and fire <em>real cap-gated turns</em> in your browser &mdash; publish a minisite, open a metered lease, fire a transfer. Each is built, Ed25519-signed and submitted on the verified rail through the published <code>@dregg/sdk</code>; the resulting cell is verifiable trustlessly in-tab.</p>
+<div class="portal-status" id="drive-status">loading&hellip;</div>
+</header>
+
+<section class="portal-section" id="drive-connect"></section>
+<section id="drive-actions" class="drive-actions"></section>
+<section class="portal-section" id="drive-cells"></section>
+
+<footer class="portal-foot">interactive v1 &middot; turns are real cap-gated, Ed25519-signed turns over the published <code>@dregg/sdk</code> &mdash; not mocked. Trustless verification is the in-tab light client (the cell cards). On the live edge the faucet/submit may be gated; point at a node with <code>?api=&hellip;</code>.</footer>
+</main>
+<script type="module" src="./drive.bundle.js"></script>
+</body>
+</html>
