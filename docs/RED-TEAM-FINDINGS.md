@@ -31,7 +31,7 @@ finding is manufactured.
 
 | ID | Surface | Finding | Severity | Live? |
 |----|---------|---------|----------|-------|
-| **CAP-1** | Cap / authority | Kernel gate has a **default-allow hole**: `determine_required_permissions` is an allow-list with `_ => {}`, so `SetProgram`/`CellDestroy`/`CellSeal`/`CellUnseal`/`MakeSovereign` map to NO permission → `Authorization::Unchecked` accepted → overwrite/destroy a victim cell holding only any non-`Impossible` cap to it (cap amplification) | **CRITICAL** | live |
+| **CAP-1** | Cap / authority | Kernel gate had a **default-allow hole**: `determine_required_permissions` was an allow-list with `_ => {}`, so `SetProgram`/`CellDestroy`/`CellSeal`/`CellUnseal`/`MakeSovereign` mapped to NO permission → `Authorization::Unchecked` accepted → overwrite/destroy a victim cell holding only any non-`Impossible` cap to it (cap amplification) | **CRITICAL** | ✅ FIXED (exhaustive match — no `_ =>`; SetProgram/MakeSovereign → SetVerificationKey floor, CellSeal/Unseal/Destroy → SetPermissions floor; Lean-aligned; PoC now refused, owner-signed still passes) |
 | **BR-2** | Bridge (money) | Solana "trustless" verifier is forgeable at 4 points; deepest: inclusion proof proves an account *exists* on Solana, never that funds were *escrowed to the bridge* → mint arbitrary $DREGG having locked nothing | **CRITICAL** | latent |
 | **BR-3** | Bridge (money) | Conservation invariant is **vacuous** (`InsufficientLocked` is dead code: every mint credits both `currently_locked` and `live_supply` by the same amount); real conservation rests entirely on forgeable lock evidence (BR-2) | **CRITICAL** | latent |
 | **SBX-1** | Sandbox | wasmtime provider default is **root**: empty cap slice from `exec` falls through to `CapabilitySet::default() = grant_all()` → preopen host `/` read-write + `inherit_network`; untrusted workload reads/writes whole host fs + all tenants | **CRITICAL** | live |
@@ -77,7 +77,23 @@ The single most serious finding of this pass, and a real Rust↔Lean divergence.
 | 1c/3 | **Amplify a weak cap / bypass the gate via an unmapped state-mutating effect** | **EXPLOITABLE** | **CRITICAL** |
 | 2 | Forge a signature / replay a token | **HOLDS** — `verify_strict` + fed/nonce/position binding (`authorize.rs:889-943`) | — |
 
-### CAP-1 (CRITICAL) — default-allow hole for ~6 state-mutating effects
+### CAP-1 (CRITICAL) — default-allow hole for ~6 state-mutating effects — ✅ FIXED
+
+> **STATUS: FIXED** (`turn/src/executor/authorize.rs::determine_required_permissions`).
+> The trailing `_ => {}` is gone — the per-effect match is now **exhaustive (closed)**,
+> so `rustc` forces every present and future `Effect` variant to make a deliberate
+> authority decision (no silent default-allow). The five unguarded effects are mapped
+> to their Lean-aligned authority floor: `SetProgram` (direct, `cell == target`) and
+> `MakeSovereign` → the `SetVerificationKey` floor (a cell's VK / caveat-program /
+> hosting model are one authority surface); `CellSeal` / `CellUnseal` / `CellDestroy` →
+> the `SetPermissions` floor. With a non-`None` floor required on the target, a bare
+> `Authorization::Unchecked` no longer satisfies the gate — the PoC below is **REFUSED**.
+> Regression-pinned by `cap1_authority_tests` (5 refusal teeth + 2 owner-signed
+> no-false-reject + 1 required-permission-map check); the full `dregg-turn` lib suite
+> stays green. This restores Rust↔Lean rejection-parity for these effects
+> (`Dregg2.Exec.EffectsAuthority` / `EffectsState` gate them on the cell's authority).
+>
+> The original analysis follows.
 
 **Root.** The WHO/WHAT gate runs `verify_authorization` on every action before its
 effects apply; the required-permission set is computed by
@@ -684,11 +700,14 @@ rides bearer + ACL + port scoping (which MESH-2 undercuts).
 
 ## Prioritized fix list
 
-1. **CAP-1 (CRITICAL, live)** — close the kernel default-allow hole: make
-   `determine_required_permissions` an exhaustive match mapping `SetProgram`/
-   `CellDestroy`/`CellSeal`/`CellUnseal`/`MakeSovereign` to an authority floor, and
-   enforce the held cap's level + facet on the direct path. (Also restores
-   Rust↔Lean parity for these effects.)
+1. **CAP-1 (CRITICAL)** — ✅ FIXED: `determine_required_permissions` is now an
+   exhaustive (closed, no `_ =>`) match mapping `SetProgram`/`MakeSovereign` → the
+   `SetVerificationKey` floor and `CellSeal`/`CellUnseal`/`CellDestroy` → the
+   `SetPermissions` floor, so `Authorization::Unchecked` can no longer overwrite or
+   destroy a victim cell. Lean-aligned (`Dregg2.Exec.EffectsAuthority`/`EffectsState`);
+   regression-pinned by `cap1_authority_tests`. (Defense-in-depth follow-up: also
+   enforce the held cap's level + `allowed_effects` facet on the direct cross-cell
+   path the way `ExerciseViaCapability` does — separate from the closed Unchecked hole.)
 2. **SBX-1/2/3 (CRITICAL, live)** — wasmtime provider default empty (not root);
    override `instantiate_with_caps`; make `fs_preopen_from_cap` fail-closed; refuse
    `native-provider` on non-Linux. Do before ANY untrusted-guest deployment.

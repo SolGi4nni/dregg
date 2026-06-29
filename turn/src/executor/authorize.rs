@@ -2057,6 +2057,12 @@ impl TurnExecutor {
         let mut has_set_state = false;
         let mut has_increment_nonce = false;
         let mut has_delegate = false;
+        let mut has_set_permissions = false;
+        // The VK / caveat-program / hosting-model authority surface. A cell's
+        // verification key, its `CellProgram` (caveat guards), and its
+        // hosting/accounting model are ONE authority surface — editing any of
+        // them is gated on the cell's `SetVerificationKey` permission.
+        let mut has_program_authority = false;
 
         // A negative balance_change (withdrawal) requires Send permission.
         if let Some(delta) = action.balance_change {
@@ -2066,60 +2072,170 @@ impl TurnExecutor {
             }
         }
 
+        // SECURITY (CAP-1): this match is **exhaustive — NO `_ =>` catch-all**.
+        // Every `Effect` variant is named, so a future variant CANNOT silently
+        // default-allow: `rustc` forces a deliberate authority decision for it.
+        // The historical hole was a trailing `_ => {}` that mapped
+        // `SetProgram`/`MakeSovereign`/`CellSeal`/`CellUnseal`/`CellDestroy` to
+        // NO required permission, so they fell through to the general
+        // `Access` gate (`AuthRequired::None` for default cells) and were
+        // satisfied by `Authorization::Unchecked` — overwriting a victim cell's
+        // program or destroying it with no authority. The kernel `stateStep`
+        // (`Dregg2.Exec.EffectsState.lean` / `EffectsAuthority.lean`) gates
+        // these on the cell's authority; this map mirrors that gate.
+        //
+        // The permission named here is checked against `action.target`. Effects
+        // that name a DIFFERENT cell (cross-cell) carry their own
+        // `check_cross_cell_permission` gate in `apply.rs`; effects that are
+        // self-authorizing (ZK/nullifier/mint-cap) or create FRESH cells need
+        // no `action.target` permission. Those arms add nothing — but are
+        // listed EXPLICITLY so the exhaustiveness guarantee holds.
         for effect in &action.effects {
             match effect {
-                Effect::Transfer { from, .. } if from == &action.target && !has_send => {
-                    result.push((dregg_cell::permissions::Action::Send, "Send"));
-                    has_send = true;
+                // ── Value moves ────────────────────────────────────────────
+                // A withdrawal FROM the target requires Send on the target.
+                // A cross-cell transfer (`from != target`) is Send-gated on
+                // `from` in `apply_transfer`.
+                Effect::Transfer { from, .. } => {
+                    if from == &action.target && !has_send {
+                        result.push((dregg_cell::permissions::Action::Send, "Send"));
+                        has_send = true;
+                    }
                 }
-                Effect::SetField { .. } if !has_set_state => {
-                    result.push((dregg_cell::permissions::Action::SetState, "SetState"));
-                    has_set_state = true;
+                // ── State writes ───────────────────────────────────────────
+                Effect::SetField { .. } => {
+                    if !has_set_state {
+                        result.push((dregg_cell::permissions::Action::SetState, "SetState"));
+                        has_set_state = true;
+                    }
                 }
-                Effect::IncrementNonce { .. } if !has_increment_nonce => {
-                    result.push((
-                        dregg_cell::permissions::Action::IncrementNonce,
-                        "IncrementNonce",
-                    ));
-                    has_increment_nonce = true;
+                Effect::IncrementNonce { .. } => {
+                    if !has_increment_nonce {
+                        result.push((
+                            dregg_cell::permissions::Action::IncrementNonce,
+                            "IncrementNonce",
+                        ));
+                        has_increment_nonce = true;
+                    }
                 }
-                Effect::GrantCapability { .. } if !has_delegate => {
-                    result.push((dregg_cell::permissions::Action::Delegate, "Delegate"));
-                    has_delegate = true;
-                }
-                Effect::RevokeCapability { .. } if !has_delegate => {
-                    result.push((dregg_cell::permissions::Action::Delegate, "Delegate"));
-                    has_delegate = true;
-                }
-                Effect::SetPermissions { .. } => {
-                    result.push((
-                        dregg_cell::permissions::Action::SetPermissions,
-                        "SetPermissions",
-                    ));
-                }
-                Effect::SetVerificationKey { .. } => {
-                    result.push((
-                        dregg_cell::permissions::Action::SetVerificationKey,
-                        "SetVerificationKey",
-                    ));
-                }
-                // Locking funds in an escrow or obligation stake is equivalent to
-                // sending value out — require Send permission on the source cell.
-
-                // Settlement actions (release/refund/fulfill/slash) are checked for
-                // creator/beneficiary authorization in the handler, but still require
-                // at least Access permission to be mapped so that cells with
-                // Access: None cannot be targeted.
-
                 // Refusal mutates the target cell's audit slot + nonce
                 // (CROSS-CELL-CATEGORICAL-ANALYSIS.md §3.3); it requires
-                // SetState authority because it overwrites slot[4] with
+                // SetState authority because it overwrites an audit slot with
                 // a refusal-audit commitment.
-                Effect::Refusal { .. } if !has_set_state => {
-                    result.push((dregg_cell::permissions::Action::SetState, "SetState"));
-                    has_set_state = true;
+                Effect::Refusal { .. } => {
+                    if !has_set_state {
+                        result.push((dregg_cell::permissions::Action::SetState, "SetState"));
+                        has_set_state = true;
+                    }
                 }
-                _ => {}
+                // ── Delegation / cap-graph edits on the target ─────────────
+                Effect::GrantCapability { .. } | Effect::RevokeCapability { .. } => {
+                    if !has_delegate {
+                        result.push((dregg_cell::permissions::Action::Delegate, "Delegate"));
+                        has_delegate = true;
+                    }
+                }
+                // ── The authority surfaces (permissions / VK / program /
+                //    hosting / lifecycle) ───────────────────────────────────
+                Effect::SetPermissions { .. } => {
+                    if !has_set_permissions {
+                        result.push((
+                            dregg_cell::permissions::Action::SetPermissions,
+                            "SetPermissions",
+                        ));
+                        has_set_permissions = true;
+                    }
+                }
+                Effect::SetVerificationKey { .. } => {
+                    if !has_program_authority {
+                        result.push((
+                            dregg_cell::permissions::Action::SetVerificationKey,
+                            "SetVerificationKey",
+                        ));
+                        has_program_authority = true;
+                    }
+                }
+                // CAP-1 FIX. A `SetProgram` into the TARGET cell rewrites its
+                // caveat/predicate guards — the same authority surface as its
+                // VK (the cross-cell arm in `apply_set_program` already gates
+                // a non-target program write on `SetVerificationKey`). Require
+                // that floor on the direct (`cell == target`) path too, so a
+                // bare `Unchecked` can no longer overwrite a victim's program.
+                Effect::SetProgram { cell, .. } => {
+                    if cell == &action.target && !has_program_authority {
+                        result.push((
+                            dregg_cell::permissions::Action::SetVerificationKey,
+                            "SetProgram",
+                        ));
+                        has_program_authority = true;
+                    }
+                }
+                // CAP-1 FIX. MakeSovereign changes the cell's hosting/accounting
+                // model (`cell == action.target`, enforced in
+                // `apply_make_sovereign`) — an authority-surface edit; gate it
+                // on the `SetVerificationKey` floor.
+                Effect::MakeSovereign { .. } => {
+                    if !has_program_authority {
+                        result.push((
+                            dregg_cell::permissions::Action::SetVerificationKey,
+                            "MakeSovereign",
+                        ));
+                        has_program_authority = true;
+                    }
+                }
+                // CAP-1 FIX. Lifecycle freeze / unfreeze / irreversible tombstone
+                // of the TARGET cell (`target == action.target`, enforced in the
+                // `apply_cell_*` handlers). Require the `SetPermissions` authority
+                // floor so a non-owner cannot seal or destroy a victim cell.
+                Effect::CellSeal { .. }
+                | Effect::CellUnseal { .. }
+                | Effect::CellDestroy { .. } => {
+                    if !has_set_permissions {
+                        result.push((dregg_cell::permissions::Action::SetPermissions, "Lifecycle"));
+                        has_set_permissions = true;
+                    }
+                }
+                // ── No ADDITIONAL `action.target` permission (each is gated
+                //    elsewhere or needs none) — listed explicitly to keep the
+                //    match exhaustive (no silent default-allow). ─────────────
+                //
+                // * EmitEvent / ReceiptArchive — receipt-only; do not mutate
+                //   ledger cell state.
+                // * CreateCell / CreateCellFromFactory / SpawnWithDelegation —
+                //   create a FRESH cell (no victim to gate); spawn/factory
+                //   constraints are validated in their handlers.
+                // * NoteSpend / NoteCreate / BridgeMint — self-authorizing via
+                //   ZK proof / nullifier membership.
+                // * Burn / Mint — gated in `apply`: self-burn is permissionless,
+                //   cross-cell burn is Send-gated on the holder; mint requires a
+                //   mint-grade cap over the issuer well.
+                // * Introduce / RefreshDelegation / RevokeDelegation /
+                //   AttenuateCapability / ExerciseViaCapability — cap-graph ops
+                //   gated by the actor's held c-list slot (ExerciseViaCapability
+                //   enforces the cap permission-level AND `allowed_effects` facet
+                //   on every inner effect in `apply`).
+                // * PipelinedSend / Promise / Notify / React — the resolved
+                //   sub-action / reaction carries its own authorization; React is
+                //   a one-shot nullifier spend.
+                Effect::EmitEvent { .. }
+                | Effect::ReceiptArchive { .. }
+                | Effect::CreateCell { .. }
+                | Effect::CreateCellFromFactory { .. }
+                | Effect::SpawnWithDelegation { .. }
+                | Effect::NoteSpend { .. }
+                | Effect::NoteCreate { .. }
+                | Effect::BridgeMint { .. }
+                | Effect::Burn { .. }
+                | Effect::Mint { .. }
+                | Effect::Introduce { .. }
+                | Effect::RefreshDelegation { .. }
+                | Effect::RevokeDelegation { .. }
+                | Effect::AttenuateCapability { .. }
+                | Effect::ExerciseViaCapability { .. }
+                | Effect::PipelinedSend { .. }
+                | Effect::Promise { .. }
+                | Effect::Notify { .. }
+                | Effect::React { .. } => {}
             }
         }
 
@@ -2644,5 +2760,251 @@ mod anonymity_tests {
             "expected TokenAuthInvalid (tampered), got {:?}",
             err.0
         );
+    }
+}
+
+#[cfg(test)]
+mod cap1_authority_tests {
+    //! CAP-1 (CRITICAL): the kernel authority gate must NOT default-allow the
+    //! state-mutating effects `SetProgram` / `MakeSovereign` / `CellSeal` /
+    //! `CellUnseal` / `CellDestroy`. Before the fix `determine_required_permissions`
+    //! ended in a silent `_ => {}`, so these effects required NO permission on the
+    //! target and a bare `Authorization::Unchecked` overwrote / destroyed a victim
+    //! cell. These tests pin: (1) the PoC is now REFUSED, (2) a legitimately
+    //! signed owner operation still passes (no false-reject), (3) the
+    //! required-permission map is correct + exhaustive.
+    use super::*;
+    use crate::action::{Authorization, CommitmentMode, DelegationMode, Effect};
+    use crate::executor::ComputronCosts;
+    use crate::executor::TurnExecutor;
+    use dregg_cell::lifecycle::{DeathCertificate, DeathReason};
+    use dregg_cell::{Cell, Ledger, Preconditions};
+    use ed25519_dalek::{Signer, SigningKey};
+
+    const FED: [u8; 32] = [7u8; 32];
+
+    fn exec() -> TurnExecutor {
+        let mut e = TurnExecutor::new(ComputronCosts::zero());
+        e.local_federation_id = FED;
+        e
+    }
+
+    /// A victim cell with default_user permissions (set_state / set_permissions /
+    /// set_verification_key all require a Signature; access is None). Returns the
+    /// cell + its signing key (the only key that can legitimately authorize).
+    fn victim_cell(seed: u8) -> (Cell, SigningKey) {
+        let sk = SigningKey::from_bytes(&[seed; 32]);
+        let pk = sk.verifying_key().to_bytes();
+        (Cell::new(pk, [0u8; 32]), sk)
+    }
+
+    /// An attacker cell id (any non-Impossible holder / impersonated agent).
+    fn attacker_id() -> CellId {
+        Cell::new([0x42u8; 32], [0u8; 32]).id()
+    }
+
+    fn action_with(target: CellId, effect: Effect, authorization: Authorization) -> Action {
+        Action {
+            target,
+            method: [0u8; 32],
+            args: vec![],
+            authorization,
+            preconditions: Preconditions::default(),
+            effects: vec![effect],
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![],
+        }
+    }
+
+    fn death_cert(cell: CellId) -> DeathCertificate {
+        DeathCertificate {
+            cell_id: cell,
+            last_receipt_hash: [0u8; 32],
+            final_state_commitment: [0u8; 32],
+            destroyed_at_height: 0,
+            reason: DeathReason::Voluntary,
+        }
+    }
+
+    // ── (1) THE PoC: Unchecked auth on each unguarded effect is REFUSED. ──
+
+    fn assert_unchecked_refused(effect: Effect, name: &str) {
+        let (victim, _sk) = victim_cell(11);
+        let vid = victim.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(victim.clone()).unwrap();
+        let action = action_with(vid, effect, Authorization::Unchecked);
+        let res = exec().verify_authorization(&action, &victim, &ledger, &attacker_id(), &[0], 0);
+        assert!(
+            res.is_err(),
+            "CAP-1: {name} with Authorization::Unchecked on a victim cell MUST be refused, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn cap1_unchecked_set_program_refused() {
+        let (victim, _) = victim_cell(11);
+        assert_unchecked_refused(
+            Effect::SetProgram {
+                cell: victim.id(),
+                program: dregg_cell::CellProgram::None,
+            },
+            "SetProgram",
+        );
+    }
+
+    #[test]
+    fn cap1_unchecked_cell_destroy_refused() {
+        let (victim, _) = victim_cell(11);
+        assert_unchecked_refused(
+            Effect::CellDestroy {
+                target: victim.id(),
+                certificate: death_cert(victim.id()),
+            },
+            "CellDestroy",
+        );
+    }
+
+    #[test]
+    fn cap1_unchecked_cell_seal_refused() {
+        let (victim, _) = victim_cell(11);
+        assert_unchecked_refused(
+            Effect::CellSeal {
+                target: victim.id(),
+                reason: [0u8; 32],
+            },
+            "CellSeal",
+        );
+    }
+
+    #[test]
+    fn cap1_unchecked_cell_unseal_refused() {
+        let (victim, _) = victim_cell(11);
+        assert_unchecked_refused(
+            Effect::CellUnseal {
+                target: victim.id(),
+            },
+            "CellUnseal",
+        );
+    }
+
+    #[test]
+    fn cap1_unchecked_make_sovereign_refused() {
+        let (victim, _) = victim_cell(11);
+        assert_unchecked_refused(Effect::MakeSovereign { cell: victim.id() }, "MakeSovereign");
+    }
+
+    // ── (2) NO false-reject: a legitimately SIGNED owner op still passes. ──
+
+    #[test]
+    fn cap1_owner_signed_set_program_accepted() {
+        let (victim, sk) = victim_cell(11);
+        let vid = victim.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(victim.clone()).unwrap();
+
+        // Build the action, sign it with the VICTIM's (owner's) key.
+        let unsigned = action_with(
+            vid,
+            Effect::SetProgram {
+                cell: vid,
+                program: dregg_cell::CellProgram::None,
+            },
+            Authorization::Unchecked,
+        );
+        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED);
+        let sig = sk.sign(&msg).to_bytes();
+        let signed = action_with(
+            vid,
+            Effect::SetProgram {
+                cell: vid,
+                program: dregg_cell::CellProgram::None,
+            },
+            Authorization::from_sig_bytes(sig),
+        );
+        let res = exec().verify_authorization(&signed, &victim, &ledger, &vid, &[0], 0);
+        assert!(
+            res.is_ok(),
+            "owner-signed SetProgram on own cell must still be accepted (no false-reject), got {res:?}"
+        );
+    }
+
+    #[test]
+    fn cap1_owner_signed_cell_destroy_accepted() {
+        let (victim, sk) = victim_cell(11);
+        let vid = victim.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(victim.clone()).unwrap();
+        let mk = || Effect::CellDestroy {
+            target: vid,
+            certificate: death_cert(vid),
+        };
+        let unsigned = action_with(vid, mk(), Authorization::Unchecked);
+        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED);
+        let sig = sk.sign(&msg).to_bytes();
+        let signed = action_with(vid, mk(), Authorization::from_sig_bytes(sig));
+        let res = exec().verify_authorization(&signed, &victim, &ledger, &vid, &[0], 0);
+        assert!(
+            res.is_ok(),
+            "owner-signed CellDestroy on own cell must still be accepted, got {res:?}"
+        );
+    }
+
+    // ── (3) The required-permission MAP is correct (Lean-aligned floors). ──
+
+    fn required_for(effect: Effect, target: CellId) -> Vec<dregg_cell::permissions::Action> {
+        let action = action_with(target, effect, Authorization::Unchecked);
+        exec()
+            .determine_required_permissions(&action)
+            .into_iter()
+            .map(|(a, _)| a)
+            .collect()
+    }
+
+    #[test]
+    fn cap1_required_permission_map_is_correct() {
+        use dregg_cell::permissions::Action as P;
+        let t = victim_cell(11).0.id();
+        assert_eq!(
+            required_for(
+                Effect::SetProgram {
+                    cell: t,
+                    program: dregg_cell::CellProgram::None
+                },
+                t
+            ),
+            vec![P::SetVerificationKey],
+            "SetProgram must require SetVerificationKey-level authority"
+        );
+        assert_eq!(
+            required_for(Effect::MakeSovereign { cell: t }, t),
+            vec![P::SetVerificationKey],
+            "MakeSovereign must require SetVerificationKey-level authority"
+        );
+        for (e, label) in [
+            (
+                Effect::CellSeal {
+                    target: t,
+                    reason: [0u8; 32],
+                },
+                "CellSeal",
+            ),
+            (Effect::CellUnseal { target: t }, "CellUnseal"),
+            (
+                Effect::CellDestroy {
+                    target: t,
+                    certificate: death_cert(t),
+                },
+                "CellDestroy",
+            ),
+        ] {
+            assert_eq!(
+                required_for(e, t),
+                vec![P::SetPermissions],
+                "{label} must require SetPermissions-level authority"
+            );
+        }
     }
 }
