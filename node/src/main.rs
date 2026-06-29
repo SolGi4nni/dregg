@@ -787,7 +787,7 @@ async fn run_node(
     // committee-of-one federation; "full" turns BFT quorum on. Per
     // FEDERATION-UNIFICATION-DESIGN.md §5, "solo" is no longer a separate
     // runtime mode — it just configures threshold=1 and skips peer gossip.
-    let is_solo_mode = match federation_mode_str.to_lowercase().as_str() {
+    let mut is_solo_mode = match federation_mode_str.to_lowercase().as_str() {
         "solo" => true,
         "full" => false,
         other => {
@@ -816,13 +816,36 @@ async fn run_node(
             );
         }
 
+        // AUTO-UPGRADE: a node configured solo but with PEERS present (a peer
+        // list and/or a multi-key federation committee from genesis) should NOT
+        // sit silently solo — that is the "configured solo, never federates"
+        // footgun. Peer-presence drives the mode: detecting >1 committee member
+        // or any configured peer upgrades the node out of solo into full
+        // (BFT-quorum) operation, with a loud warning so the operator sees it.
+        let committee_size = s.known_federation_keys.len();
+        let peers_present = has_peers || committee_size > 1;
+        if solo_should_auto_upgrade(is_solo_mode, has_peers, committee_size) {
+            tracing::warn!(
+                peers = has_peers,
+                committee_size,
+                "configured --federation-mode solo but PEERS are present (peer list and/or a \
+                 multi-member genesis committee) — AUTO-UPGRADING to full (BFT-quorum) mode so \
+                 this node actually federates instead of sitting solo. Pass --federation-mode \
+                 full explicitly to silence this, or run with no peers for a genuine solo node."
+            );
+            is_solo_mode = false;
+        }
+
         // In solo mode, initialize the SoloConsensusState with the node's signing key.
         if is_solo_mode {
             let signing_key = s.cclerk.gossip_signing_key().to_bytes();
             s.solo_consensus = Some(dregg_federation::solo::SoloConsensusState::new(signing_key));
             info!("federation mode: solo (committee of one) — no quorum required");
         } else {
-            info!("federation mode: full — BFT quorum required for finality");
+            info!(
+                peers_present,
+                committee_size, "federation mode: full — BFT quorum required for finality"
+            );
         }
     }
 
@@ -1605,10 +1628,107 @@ fn run_register_federation(data_dir: &str, descriptor: &std::path::Path) {
     );
 }
 
-/// P2 Fix 8: Wait for Ctrl-C (SIGINT) to trigger graceful shutdown.
+/// Decide whether a node configured `--federation-mode solo` should AUTO-UPGRADE
+/// to full (BFT-quorum) mode because peers are present. Peer-presence drives the
+/// mode: a configured peer list (`has_peers`) and/or a multi-member genesis
+/// committee (`committee_size > 1`) means the node is meant to federate, not sit
+/// silently solo. Returns true only when the node is currently solo AND peers are
+/// present. A genuine solo node (no peers, committee of one) is left untouched.
+fn solo_should_auto_upgrade(is_solo_mode: bool, has_peers: bool, committee_size: usize) -> bool {
+    is_solo_mode && (has_peers || committee_size > 1)
+}
+
+/// Wait for a shutdown signal to trigger a graceful, checkpoint-then-exit stop.
+///
+/// Handles BOTH SIGINT (Ctrl-C) and SIGTERM. `docker stop` (and systemd) send
+/// SIGTERM, then SIGKILL after a grace period; the previous handler only caught
+/// SIGINT, so `docker stop` mid-checkpoint killed the process before
+/// `persist_on_shutdown` flushed a ledger checkpoint — leaving a sub-checkpoint
+/// divergence that surfaced as a STORE INTEGRITY EVENT on restart. Catching
+/// SIGTERM lets the normal stop path flush a checkpoint cleanly (the caller runs
+/// `persist_on_shutdown` after this returns), removing the cause for graceful
+/// stops. (The recovery side — a real crash / SIGKILL — is handled separately by
+/// the crash-consistent identity-cursor resume.)
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("failed to listen for Ctrl-C");
-    info!("received Ctrl-C, initiating graceful shutdown");
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("received SIGINT (Ctrl-C), initiating graceful checkpoint-then-exit shutdown");
+            }
+            _ = sigterm.recv() => {
+                info!(
+                    "received SIGTERM (docker stop / systemd), initiating graceful \
+                     checkpoint-then-exit shutdown"
+                );
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to listen for Ctrl-C");
+        info!("received Ctrl-C, initiating graceful checkpoint-then-exit shutdown");
+    }
+}
+
+#[cfg(test)]
+mod shutdown_and_federation_tests {
+    use super::*;
+
+    // ── BUG 2: federation auto-upgrade out of solo when peers are present ──────
+
+    #[test]
+    fn genuine_solo_node_is_not_upgraded() {
+        // No peer list, committee of one (or none) ⇒ a real solo node, untouched.
+        assert!(!solo_should_auto_upgrade(true, false, 0));
+        assert!(!solo_should_auto_upgrade(true, false, 1));
+    }
+
+    #[test]
+    fn solo_with_peer_list_upgrades() {
+        // Configured solo but a peer list is present ⇒ upgrade.
+        assert!(solo_should_auto_upgrade(true, true, 0));
+        assert!(solo_should_auto_upgrade(true, true, 1));
+    }
+
+    #[test]
+    fn solo_with_multi_member_committee_upgrades() {
+        // Configured solo but a multi-member genesis committee ⇒ upgrade even
+        // with no explicit peer list.
+        assert!(solo_should_auto_upgrade(true, false, 3));
+    }
+
+    #[test]
+    fn full_mode_is_never_force_downgraded_or_re_flagged() {
+        // A node already in full mode is never the subject of this upgrade
+        // (the helper only fires when currently solo).
+        assert!(!solo_should_auto_upgrade(false, true, 5));
+        assert!(!solo_should_auto_upgrade(false, false, 1));
+    }
+
+    // ── BUG 4: graceful shutdown wires SIGTERM (docker stop) ───────────────────
+    //
+    // The cause of the restart STORE INTEGRITY EVENT was that `docker stop`
+    // sends SIGTERM, which the old handler (SIGINT-only) ignored — the process
+    // was SIGKILLed before `persist_on_shutdown` flushed a checkpoint. The fix
+    // makes `shutdown_signal` select on a SIGTERM stream too. This test asserts
+    // the exact platform mechanism the fix relies on installs cleanly (a genuine
+    // raise-and-deliver test is avoided here because signal disposition is
+    // process-global and would be flaky under the parallel test harness).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sigterm_stream_installs() {
+        use tokio::signal::unix::{SignalKind, signal};
+        let s = signal(SignalKind::terminate());
+        assert!(
+            s.is_ok(),
+            "graceful shutdown requires a SIGTERM (terminate) stream to install on unix so \
+             `docker stop` checkpoints-then-exits instead of being SIGKILLed mid-checkpoint"
+        );
+    }
 }

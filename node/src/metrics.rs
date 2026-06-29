@@ -78,6 +78,19 @@ pub fn inc_tau_prefix_shift() {
     counter!("dregg_tau_prefix_shifts_total").increment(1);
 }
 
+/// Increment the consensus rust↔lean DIFFERENTIAL DIVERGENCE counter: on a
+/// Lean-shadowed node, the verified Lean `dregg_tau_order` and the Rust
+/// `ordering::tau` finalized DIFFERENT `(creator, seq)` sets for a poll. This is
+/// how a mixed rust/lean federation surfaces a real implementation divergence to
+/// monitoring continuously (every finalization), not only in a log line — a
+/// non-zero rate means the two finality implementations disagree and must be
+/// investigated (a Rust-side bug or a stale/mismatched archive). The verified
+/// Lean order is authoritative for that poll; this counter makes the divergence
+/// observable so the mixed-network differential is a SAFETY NET, not a silent drop.
+pub fn inc_consensus_differential_divergence() {
+    counter!("dregg_consensus_differential_divergence_total").increment(1);
+}
+
 // ─── Histograms ──────────────────────────────────────────────────────────────
 
 /// Record turn execution duration.

@@ -1007,13 +1007,22 @@ impl BlocklaceHandle {
                         v
                     };
                     if coord(&lean_order) != coord(&rust_order) {
+                        // MIXED-NETWORK DIFFERENTIAL (intentional): a Lean-shadowed node
+                        // cross-checks every finalization against the Rust `ordering::tau` that
+                        // rust-only consensus members run. A divergence here means the two finality
+                        // implementations DISAGREE — surface it LOUDLY (a warn line) AND to
+                        // monitoring (a Prometheus counter), never a silent drop. The verified Lean
+                        // order wins for this poll; the counter lets operators of a mixed federation
+                        // SEE a real rust↔lean divergence accumulate.
+                        crate::metrics::inc_consensus_differential_divergence();
                         warn!(
                             lean_len = lean_order.len(),
                             rust_len = rust_order.len(),
                             "consensus DIFFERENTIAL DIVERGENCE: the verified Lean `dregg_tau_order` \
                              and the Rust `ordering::tau` finalized DIFFERENT (creator, seq) sets — \
                              the VERIFIED Lean order is AUTHORITATIVE (Rust is the differential \
-                             sibling). This is a Rust-side bug or a stale archive; investigate."
+                             sibling). This is a Rust-side bug or a stale archive; investigate. \
+                             (dregg_consensus_differential_divergence_total incremented.)"
                         );
                     } else {
                         debug!(
@@ -1308,6 +1317,54 @@ fn build_ordering_blocklace(
 /// `--consensus blocklace` is specified.
 ///
 /// Key property: QUIESCENT operation. No periodic timers for consensus.
+/// Resolve a list of `host:port` peer specs to dialable socket addresses.
+///
+/// Each spec may be an `IP:PORT` literal (e.g. `127.0.0.1:9420`) OR a
+/// `hostname:port` (e.g. a genesis-emitted overlay hostname like `edge:9420`).
+/// Hostnames are resolved via DNS at dial time (`tokio::net::lookup_host`), not
+/// parsed as IP literals — the previous `p.parse::<SocketAddr>()` SILENTLY
+/// DROPPED every hostname peer, so overlay-named nodes never federated at the
+/// blocklace layer (the federation blocker). A spec that does not resolve (or
+/// resolves to zero addresses) is logged LOUDLY at `error` — never silently
+/// dropped — so a misconfigured overlay hostname / DNS failure is visible.
+///
+/// All resolved addresses are returned (a hostname may yield both an IPv4 and an
+/// IPv6 record); the gossip layer dials each, and the one reachable from our
+/// bound endpoint connects.
+async fn resolve_peer_addrs(peers: &[String]) -> Vec<SocketAddr> {
+    let mut resolved: Vec<SocketAddr> = Vec::new();
+    for p in peers {
+        match tokio::net::lookup_host(p.as_str()).await {
+            Ok(addrs) => {
+                let before = resolved.len();
+                for addr in addrs {
+                    resolved.push(addr);
+                }
+                let got = resolved.len() - before;
+                if got == 0 {
+                    error!(
+                        peer = %p,
+                        "peer address resolved to ZERO socket addresses — peer DROPPED; it will \
+                         NOT federate at the blocklace layer. Check the overlay hostname / DNS."
+                    );
+                } else {
+                    debug!(peer = %p, resolved = got, "resolved peer address for blocklace dial");
+                }
+            }
+            Err(e) => {
+                error!(
+                    peer = %p,
+                    error = %e,
+                    "failed to RESOLVE peer address (hostname lookup failed) — peer DROPPED; it \
+                     will NOT federate at the blocklace layer. A `host:port` spec needs a \
+                     resolvable host (an IP literal or an overlay hostname that resolves)."
+                );
+            }
+        }
+    }
+    resolved
+}
+
 /// Activity only when a turn is submitted or blocks arrive from peers.
 pub async fn run_blocklace_sync(
     state: NodeState,
@@ -1521,17 +1578,11 @@ pub async fn run_blocklace_sync(
         peer_keys_map,
     ));
 
-    // Parse peer addresses.
-    let peer_addrs: Vec<SocketAddr> = peers
-        .iter()
-        .filter_map(|p| match p.parse::<SocketAddr>() {
-            Ok(addr) => Some(addr),
-            Err(e) => {
-                warn!(peer = %p, error = %e, "invalid peer address, skipping");
-                None
-            }
-        })
-        .collect();
+    // Resolve peer addresses. A spec is `host:port` where `host` may be a
+    // HOSTNAME (e.g. a genesis-emitted overlay hostname like `edge:9420`), not
+    // only an `IP:PORT` literal — resolve via DNS at dial time. An unresolvable
+    // peer is logged LOUDLY (an `error`), never silently dropped.
+    let peer_addrs: Vec<SocketAddr> = resolve_peer_addrs(&peers).await;
 
     // Join the blocklace gossip topic.
     let topic = match gossip.join_topic(TOPIC_BLOCKLACE, &peer_addrs).await {
@@ -5455,6 +5506,55 @@ mod tests {
             ack_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pending_payloads: Arc::new(RwLock::new(std::collections::VecDeque::new())),
         }
+    }
+
+    // ─── BUG 1: hostname peer resolution (overlay hostnames federate) ───────────
+
+    /// A `hostname:port` peer (not an `IP:PORT` literal) RESOLVES via DNS and is
+    /// returned for dialing — the case the old `parse::<SocketAddr>()` silently
+    /// dropped, so genesis-emitted overlay hostnames never federated. `localhost`
+    /// is a hostname every host resolves; an IP literal still works too.
+    #[tokio::test]
+    async fn hostname_peer_resolves_and_is_dialed() {
+        // A hostname spec — the previously-dropped case.
+        let resolved = resolve_peer_addrs(&["localhost:9420".to_string()]).await;
+        assert!(
+            !resolved.is_empty(),
+            "a hostname peer (localhost:9420) must RESOLVE and be returned for dialing — the \
+             overlay-hostname federation case the IP-literal parser silently dropped"
+        );
+        assert!(
+            resolved.iter().all(|a| a.port() == 9420),
+            "resolved addresses must carry the spec's port"
+        );
+
+        // An IP literal still resolves (lookup_host accepts it verbatim).
+        let lit = resolve_peer_addrs(&["127.0.0.1:9420".to_string()]).await;
+        assert_eq!(lit, vec!["127.0.0.1:9420".parse::<SocketAddr>().unwrap()]);
+    }
+
+    /// An UNRESOLVABLE peer is dropped VISIBLY (logged loud, returns nothing) —
+    /// never a silent drop. `.invalid` is the RFC-2606 guaranteed-non-resolvable
+    /// TLD, so this is deterministic offline.
+    #[tokio::test]
+    async fn unresolvable_peer_errors_visibly_and_is_omitted() {
+        let resolved = resolve_peer_addrs(&["no-such-host.invalid:9420".to_string()]).await;
+        assert!(
+            resolved.is_empty(),
+            "an unresolvable peer must be omitted (and logged loudly at error), not crash or be \
+             treated as dialable"
+        );
+
+        // A mix: the good hostname survives, the bad one is dropped (visibly).
+        let mixed = resolve_peer_addrs(&[
+            "localhost:9420".to_string(),
+            "no-such-host.invalid:9420".to_string(),
+        ])
+        .await;
+        assert!(
+            !mixed.is_empty() && mixed.iter().all(|a| a.port() == 9420),
+            "a resolvable peer in a mixed list must still be dialed even when a sibling fails"
+        );
     }
 
     /// THE DISCOVERY TRUST GATE: a `PeerAddrs` announcement learns an address ONLY
