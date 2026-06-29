@@ -32,6 +32,46 @@ reason.)*
   is the TERMINAL blocker to a SOUND pure-light-client flip (without it a forger dodges by sel=0 or by routing through the bare wide
   transfer descriptor — a pure light client has only the commit, not the declaration preimage); (c) commit the welded VK + admit it on
   the live `verify_effect_vm_rotated_with_cutover` path as the default. Doc: `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md` §6 BLOCKER 1.
+- GENTIAN carrier-bound-floor — the `hcommitLimb` discharge, and the CORRECTED flip distance (2026-06-29, post `cfb66c37f`).
+  `metatheory/Dregg2/Deos/CarrierBoundFloorGadget.lean` (`#assert_all_clean`, 12 keystones, lake green) decodes the required-tag
+  floor from the caveat-manifest TYPE-TAG columns and forces the selector; `gentian_selector_forced_carrier`/`_settle_forced_carrier`
+  hold with `hcommitLimb` DISCHARGED — but the discharge is CONDITIONAL on the HYPOTHESIS `hbind` (caveatCommit(gadgetManifest row) =
+  caveatCommit(committedManifest)), and the rung's `gadgetManifest` reads FREE HEADROOM columns (`CARRIER_BASE = EFFECT_VM_WIDTH+200 =
+  388`, tags 389/396/403/410), NOT the deployed caveat-commit-bound columns 291/298/305/312. The Rust shadow
+  `circuit/src/effect_vm/carrier_floor_weld.rs` (13 gates, eval tests) decodes from the DEPLOYED columns (291/…) — so the Lean emit
+  source and the Rust shadow describe DIFFERENT descriptors; the Rust column choice is the sound one. `caveatCommit_binds` is a
+  pure-fn lever; the actual caveat→PI-45 binding lives as Poseidon CHIP LOOKUPS in the deployed cohort members, NOT as appendable
+  arithmetic gates — and `settleEscrowSatVmDescriptor2R24Wide` carries NO caveat carrier (grep-confirmed). So the emitted
+  `gentianCarrierDescriptor` (= wide settle + 13 gates) decodes from UNBOUND headroom: as-emitted, the forged-floor tooth would NOT
+  bite in a real STARK (a forger fills headroom with a no-escrow tag → floor=0 → selector free → forged settle proves). The "binding
+  gap closed" is true as a CONDITIONAL Lean theorem, NOT as an emit-realized deployed fact. CORRECTED REMAINING (the real flip
+  distance): (a) REALIZE `hbind` in the artifact — base the carrier descriptor on a deployed cohort member (or the NARROW
+  `settleEscrowSatVmDescriptor2R24`, which DOES carry the deployed caveat carrier + a genuine caveatCommit→PI 45 via its real
+  producer `generate_rotated_settle_escrow_trace`) and decode from cols 291/…, so the binding tooth bites via the PI-45 commit; (b)
+  THE BARE-DESCRIPTOR DODGE — there is NO `SettleEscrow` Effect variant; `SettleEscrow` is a `dregg_cell::StateConstraint` checked in
+  `turn/src/executor/mod.rs:371/593`, so escrow settlement rides a NORMAL effect whose honest proof verifies under the BARE wide
+  descriptor. A pure light client (no opt-in) cannot reject a forged settle routed through the bare descriptor UNLESS the decode+force
+  gates live on EVERY deployed normal wide member — a registry-wide VK FLAG-DAY (every fingerprint changes + every producer fills the
+  decode aux + every gauntlet re-proves + Lean apex re-verifies). This is the genuine VK epoch, not a one-descriptor delta. The
+  deployed-staged OPT-IN path `verify_full_turn_bound_with_escrow_weld` (re-derives `required_tags` from the committed declaration) is
+  sound TODAY for verifiers holding the declaration; the PURE-LC upgrade is what (a)+(b) gate. SettleEscrow is NOT a deployed
+  pure-light-client truth; the flip was NOT taken (it would be unsound). EMPIRICAL (2026-06-29, real STARK, `--release`, 4 green tests
+  `circuit/tests/gentian_carrier_floor_prove.rs`): welding `carrier_floor_gates()` onto the NARROW `settleEscrowSatVmDescriptor2R24`
+  the teeth do NOT bite as shaped — a THIRD, deeper blocker (c) ROW-LOCALITY. (i) `satisfaction_weld` makes `ESCROW_SEL_COL`
+  producer-controlled, =1 only on the settle row / =0 on carry-forward padding rows; `carrier_floor_weld`'s selector-force gate is
+  EVERY-ROW and decodes FLOOR from the uniformly-`fill_caveat`'d type-tag columns → forces sel=1 on every row → on a carry-forward
+  padding row (status `Consumed`, continuity `next.before==local.after`) sel=0 makes the carrier bite and sel=1 makes the base
+  satisfaction gate bite → the honest escrow-declared settle is UNSATISFIABLE (no verifying proof; `OodEvaluationMismatch`), so the
+  forged sel=0/partial/phantom teeth have no baseline to bite against. (ii) DECOUPLING: the committed caveat PI 45 is pinned to the
+  LAST row while the decode gates are EVERY-ROW with no cross-row caveat-uniformity gate, so the floor decode is decoupled from the
+  committed caveat (a prover could light the decode on the settle row while committing a no-escrow manifest to PI 45). The only
+  in-proof-SOUND direction confirmed: no-escrow ⇒ selector inert ⇒ proves+verifies (181 KiB BatchProof, the no-false-reject control).
+  No column collision (`GRAD_ROT_WIDTH` is actually 609, stale comment says 608; aux cols 609..619 sit above the chip lanes). The
+  single-row Lean rung (`envAt t i`, a non-last row) never modeled the multi-row carry-forward interaction NOR the last-row PI binding
+  — that is the gap. FIX OPTIONS for a biteable tooth (any one): gate the carrier decode by the settle-row-only capacity selector so
+  it is inert on carry-forward rows; force the caveat manifest uniform across rows in-AIR; or read the decode from the same LAST row
+  PI 45 binds. So the carrier flip distance is now (a) realize `hbind` over bound cols + (b) the bare-descriptor flag-day + (c) fix
+  the row-locality so an escrow-declared settle is satisfiable AND the decode is coupled to the committed caveat.
 - PERF-CHARACTERIZATION campaign — the perf-engineering FOUNDATION for DreggNet-as-a-cloud (2026-06-28). `docs/PERF-CHARACTERIZATION.md`
   inventories what exists (breadstuffs `dregg-perf` 16-bench suite + 13 per-crate criterion benches with last-known numbers; DreggNet
   (WIDE / VERTICAL / FEDERATION), methodology, and targets. NAMED GAPS the bench-building lanes close (in execution order): (1) the
