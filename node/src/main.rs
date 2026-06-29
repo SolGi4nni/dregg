@@ -172,7 +172,7 @@ enum Command {
         /// longer emits an empty block per tick. Set 0 to disable the cadence
         /// task entirely (purely quiescent: blocks only on turn submission).
         /// Default 2000ms (bounds turn-drain / reactive-ack latency).
-        #[arg(long, default_value = "2000")]
+        #[arg(long, default_value = "1000")]
         block_cadence_ms: u64,
 
         /// Idle heartbeat interval in milliseconds. When the node has produced
@@ -188,12 +188,22 @@ enum Command {
         /// multi-party (n>1) round-driven path — the quiescent-on-demand rate
         /// cap. The node emits at most one block per this interval: turns are
         /// batched within the window and each consensus wave is closed across a
-        /// few interval-spaced rounds (slower finality is the accepted tradeoff
-        /// for a quiet DAG). Independent of --block-cadence-ms (which is only the
-        /// CHECK interval) and of turn submission. Also configurable via the
-        /// DREGG_MIN_BLOCK_INTERVAL_MS env var (the env var wins when set).
-        /// Default 5000 (≤ one block / 5s, per the devnet quiescence bound).
-        #[arg(long, default_value = "5000")]
+        /// few interval-spaced rounds. Independent of --block-cadence-ms (which is
+        /// only the CHECK interval) and of turn submission. Also configurable via
+        /// the DREGG_MIN_BLOCK_INTERVAL_MS env var (the env var wins when set).
+        ///
+        /// Default 1000 (≤ one block / 1s). The cap is a SPAM floor, not the
+        /// pacer: round advancement is already gated by the cohort rule
+        /// (`plan_round_block` needs a supermajority of distinct creators at the
+        /// current round), so the committee never outruns its slowest honest
+        /// member regardless of this value — the cap only prevents a degenerate
+        /// empty-block burst. The old 5000ms default made finality artificially
+        /// slow: closing one wave took ~5 interval-spaced rounds ≈ 25-30s, so a
+        /// committee under sustained turn load could not finalize turn-after-turn
+        /// inside a reasonable window (the live n=4 stalled on this). At 1000ms a
+        /// wave closes in a few seconds while the idle DAG still stays quiet (the
+        /// 2s idle-heartbeat floor governs quiescence, not this cap).
+        #[arg(long, default_value = "2000")]
         min_block_interval_ms: u64,
 
         /// Enable the faucet endpoint (POST /api/faucet).

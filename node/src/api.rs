@@ -6544,17 +6544,45 @@ async fn post_faucet(
     // reject ("budget exceeded: limit=0, used=100"); the faucet cell holds the
     // genesis supply, so it covers a real fee. Size the fee to the estimated
     // cost so the gate passes deterministically.
-    let faucet_nonce = s
+    // PIPELINED nonce: the faucet's AUTHORITATIVE nonce only advances when a
+    // faucet turn FINALIZES through consensus (the scratch-clone execution below
+    // deliberately does NOT mutate the authoritative ledger in full mode). Reading
+    // it directly meant a second faucet request submitted before the first
+    // finalized re-used the same nonce and replayed. Reserve the next nonce as
+    // `max(authoritative, reserved)` and bump the reservation, so back-to-back
+    // submissions get fresh consecutive nonces that finalize in order. `max`
+    // reconciles the two sides: once the in-flight turns finalize, the
+    // authoritative nonce catches up and no permanent gap opens.
+    let authoritative_nonce = s
         .ledger
         .get(&faucet_cell_id)
         .map(|c| c.state.nonce())
         .unwrap_or(0);
-    // Link to the receipt-chain head BEFORE execution (same convention as
-    // post_submit_turn). The cipherclerk's `append_receipt` fills a `None`
-    // prev with the chain head, which CHANGES the appended receipt's hash —
-    // a WitnessedReceipt stored under the pre-append hash would then never be
-    // found for the chain's receipt and has_proof would stay false.
-    let faucet_prev_receipt = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
+    let faucet_nonce = authoritative_nonce.max(s.faucet_reserved_nonce.unwrap_or(0));
+    s.faucet_reserved_nonce = Some(faucet_nonce + 1);
+    // Receipt-chain head for the turn's verified ChainHead leg.
+    //
+    // SOLO (n=1): submission is authoritative, so bind to the local chain head
+    // (the cipherclerk's `append_receipt` fills a `None` prev with the chain
+    // head, changing the appended receipt's hash; binding it here keeps the
+    // stored WitnessedReceipt findable so has_proof can flip).
+    //
+    // FULL (n>1): the AUTHORITATIVE receipt-chain advance is `execute_finalized_turn`,
+    // which runs identically on EVERY node in tau order and — like the ledger — does
+    // NOT observe the submitter's local submission-time append. The finalized executor
+    // only seeds the LOCAL agent's receipt head, never the faucet's, so the verified
+    // ChainHead leg expects `None` for the faucet agent on every node. Binding to the
+    // local chain head here made every NON-submitter reject the faucet turn after the
+    // first ("receipt chain mismatch: expected None, got Some(..)"), AND made the
+    // submitter reject it (its own head had already advanced at submission) — so a
+    // second faucet turn provisioned its destination but the transfer never funded it
+    // (`found:true, balance:0`), silently breaking sustained faucet finality. `None`
+    // matches the finalized expectation uniformly on all nodes.
+    let faucet_prev_receipt = if is_solo {
+        s.cclerk.receipt_chain().last().map(|r| r.receipt_hash())
+    } else {
+        None
+    };
     let mut faucet_turn = Turn {
         agent: faucet_cell_id,
         nonce: faucet_nonce,
@@ -6629,6 +6657,18 @@ async fn post_faucet(
             &mut scratch,
             &faucet_turn.call_forest,
         );
+        // PIPELINING: this receipt-build runs against a clone of the AUTHORITATIVE
+        // ledger, whose faucet nonce only advances at finalization. For a turn
+        // submitted before the prior finalizes, `faucet_nonce` (the reserved
+        // pipelined nonce) is ahead of that authoritative nonce, so the executor's
+        // exact nonce gate would reject the receipt build. Reflect the reserved
+        // nonce onto the scratch faucet cell so the receipt builds for the turn that
+        // WILL be valid at finalization (turns finalize in submission/tau order, each
+        // advancing the authoritative nonce to meet the next). The authoritative
+        // ledger is untouched; only this throwaway scratch is adjusted.
+        if let Some(cell) = scratch.get_mut(&faucet_cell_id) {
+            cell.state.set_nonce(faucet_nonce);
+        }
         crate::executor_setup::execute_via_producer(
             &executor,
             &faucet_turn,
@@ -6757,6 +6797,13 @@ async fn post_faucet(
             }))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
+            // The turn we reserved a nonce for is NOT entering consensus, so roll
+            // the reservation back (it is still the value we set — `s` is write-
+            // locked across this whole handler) to avoid a permanent gap that
+            // would replay every subsequent faucet turn.
+            if s.faucet_reserved_nonce == Some(faucet_nonce + 1) {
+                s.faucet_reserved_nonce = Some(faucet_nonce);
+            }
             crate::metrics::inc_turns_executed("rejected");
             crate::metrics::note_turn_rejected(&reason);
             Ok(Json(FaucetResponse {
@@ -6767,13 +6814,18 @@ async fn post_faucet(
                 error: Some(format!("transfer rejected: {reason}")),
             }))
         }
-        _ => Ok(Json(FaucetResponse {
-            success: false,
-            tx_hash: None,
-            turn_hash: None,
-            amount: 0,
-            error: Some("faucet transfer did not commit".to_string()),
-        })),
+        _ => {
+            if s.faucet_reserved_nonce == Some(faucet_nonce + 1) {
+                s.faucet_reserved_nonce = Some(faucet_nonce);
+            }
+            Ok(Json(FaucetResponse {
+                success: false,
+                tx_hash: None,
+                turn_hash: None,
+                amount: 0,
+                error: Some("faucet transfer did not commit".to_string()),
+            }))
+        }
     }
 }
 

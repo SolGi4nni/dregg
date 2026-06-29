@@ -137,6 +137,17 @@ pub struct NodeStateInner {
     /// fulfillment turns, cross-cell operations). The blocklace sync driver
     /// drains this queue when assembling new blocks.
     pub consensus_queue: Vec<dregg_sdk::SignedTurn>,
+    /// In-flight (reserved) nonce floor for the faucet cell, enabling turn
+    /// PIPELINING. The faucet's authoritative nonce only advances when a faucet
+    /// turn FINALIZES through consensus; reading it directly meant a second
+    /// faucet request submitted before the first finalized re-used the same
+    /// nonce and replayed (`nonce replay: expected 1, got 0`). This tracks the
+    /// next nonce the faucet has already HANDED OUT, so each rapid submission
+    /// gets a fresh, monotonic, consecutive nonce. The issued nonce is
+    /// `max(authoritative, faucet_reserved_nonce)`; finalization advances the
+    /// authoritative side, and `max` keeps the two reconciled (no permanent gap
+    /// once the in-flight turns drain). `None` until the first faucet request.
+    pub faucet_reserved_nonce: Option<u64>,
     /// Pending conditional turns awaiting proof resolution.
     /// Garbage-collected on access when timeout_height is exceeded.
     pub pending_conditionals: Vec<dregg_turn::ConditionalTurn>,
@@ -811,6 +822,7 @@ impl NodeState {
                 bearer_seed,
                 intent_pool: HashMap::new(),
                 consensus_queue: Vec::new(),
+                faucet_reserved_nonce: None,
                 pending_conditionals: Vec::new(),
                 pending_turns: dregg_turn::PendingTurnRegistry::new(),
                 used_proof_hashes,
@@ -970,6 +982,7 @@ impl NodeState {
                 bearer_seed: None,
                 intent_pool: HashMap::new(),
                 consensus_queue: Vec::new(),
+                faucet_reserved_nonce: None,
                 pending_conditionals: Vec::new(),
                 pending_turns: dregg_turn::PendingTurnRegistry::new(),
                 used_proof_hashes: HashSet::new(),

@@ -202,6 +202,19 @@ pub struct BlocklaceHandle {
     /// peer while preserving eventual re-request (liveness). See
     /// `dregg_net::peer_score::RequestBackoff`.
     pub pull_backoff: Arc<RwLock<dregg_net::peer_score::RequestBackoff<BlockId>>>,
+    /// TIGHT, NON-ESCALATING backoff for the cohort-completion pull (a peer's
+    /// announced FRONTIER tip we lack — see `handle_frontier`). This pull is
+    /// LIVENESS-CRITICAL: the round-synchronous rule cannot advance until a node
+    /// holds a supermajority of distinct creators' blocks at its round, so a single
+    /// missing tip wedges the whole committee. The general `pull_backoff` escalates
+    /// to a 30s cap (correct for a possibly-withholding peer on a deep history gap),
+    /// but under load — where the eager push AND the pull response are both lossier —
+    /// that let a missing cohort tip go un-retried for tens of seconds, stalling the
+    /// chain for minutes. A committee member's current tip is neither withholding nor
+    /// a deep gap, so retry it briskly (base 500ms, cap 1500ms): recovery within a
+    /// couple seconds even under sustained loss, still bounded (≤ n−1 tips, ≤ one
+    /// frontier/peer/tick).
+    pub tip_pull_backoff: Arc<RwLock<dregg_net::peer_score::RequestBackoff<BlockId>>>,
     /// Instant of the last block WE produced (turn, ack, or heartbeat). The
     /// cadence task measures idleness against this so the low-frequency idle
     /// heartbeat fires only when the node has genuinely produced nothing for a
@@ -477,7 +490,6 @@ impl BlocklaceHandle {
             let c = self.constitution.read().await;
             dregg_blocklace::ordering::supermajority_threshold(c.current.participant_count())
         };
-
         let block = {
             let mut lace = self.lace.write().await;
             let plan = plan_round_block(&lace, lace.self_creator(), supermajority);
@@ -920,7 +932,21 @@ impl BlocklaceHandle {
     /// Returns all actionable finalized blocks (turns, membership votes, checkpoints).
     /// Ack and Data payloads are skipped as they need no consensus-level processing.
     pub async fn poll_finalized_blocks(&self) -> Vec<FinalizedBlock> {
-        let lace = self.lace.read().await;
+        // SNAPSHOT the lace and RELEASE the read lock immediately. The verified-Lean
+        // tau-order FFI (`VerifiedFinality::compute_order`) and the finality-gate FFI
+        // (`VerifiedFinality::compute`) below are O(history) and run on EVERY finality
+        // notification; holding `lace.read()` across them STARVED the block producer's
+        // `lace.write()` as the chain grew — round production halted under sustained
+        // load and `dag_height` froze (the live n=4 stall). Cloning is the same
+        // O(history) cost as the `build_ordering_blocklace` the poll already does, and a
+        // block produced after the snapshot is simply finalized on the NEXT poll
+        // (finality is monotone) — so the producer advances concurrently and the chain
+        // keeps climbing. The `cursor` write lock is likewise deferred (below) until
+        // after the FFI so it does not block the cadence's `wave_open` read.
+        let lace = {
+            let guard = self.lace.read().await;
+            (*guard).clone()
+        };
         let constitution = self.constitution.read().await;
         let raw_participants = constitution.current.participants.clone();
         drop(constitution);
@@ -949,8 +975,6 @@ impl BlocklaceHandle {
                  finality participant set"
             );
         }
-
-        let mut cursor = self.cursor.write().await;
 
         // For solo mode (n=1): every block is immediately finalized in topological
         // order. tau() handles this correctly because with a single participant,
@@ -1107,6 +1131,13 @@ impl BlocklaceHandle {
         // prefix shift is then absorbed correctly and surfaced as OBSERVABILITY: `observe_order`
         // diffs the previously computed order against the new one (the conclusion-level mirror of
         // the Lean `stableCheck`) so operators SEE reorgs-by-catchup happen.
+        //
+        // Acquire the cursor write lock HERE — AFTER the O(history) verified-Lean FFI above —
+        // so it is never held across that work (it would otherwise block the cadence's
+        // `wave_open` cursor read, the second half of the producer starvation). Only the
+        // single finality-executor task calls this function, so deferring the acquisition
+        // cannot race a concurrent poll.
+        let mut cursor = self.cursor.write().await;
         let prefix_stable = cursor.observe_order(&ordered);
         if !prefix_stable {
             crate::metrics::inc_tau_prefix_shift();
@@ -1818,6 +1849,10 @@ pub async fn run_blocklace_sync(
             Duration::from_secs(1),
             Duration::from_secs(30),
         ))),
+        tip_pull_backoff: Arc::new(RwLock::new(dregg_net::peer_score::RequestBackoff::new(
+            Duration::from_millis(500),
+            Duration::from_millis(1500),
+        ))),
         last_produced: Arc::new(RwLock::new(std::time::Instant::now())),
         ack_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         pending_payloads: Arc::new(RwLock::new(std::collections::VecDeque::new())),
@@ -2508,8 +2543,11 @@ async fn handle_push(
     // same id (after a re-org / GC) should start fresh, not deep in backoff.
     if !outcome.inserted.is_empty() {
         let mut bo = handle.pull_backoff.write().await;
+        let mut tbo = handle.tip_pull_backoff.write().await;
         for b in &outcome.inserted {
-            bo.clear(&b.id());
+            let id = b.id();
+            bo.clear(&id);
+            tbo.clear(&id);
         }
     }
 
@@ -2620,6 +2658,46 @@ async fn handle_frontier(
     from: SocketAddr,
     their_tips: HashMap<[u8; 32], BlockId>,
 ) {
+    // SELF-HEALING PULL (the other half of reconciliation): a Frontier is push-only
+    // on its own — the receiver computes what the SENDER lacks and pushes it. That
+    // converges a peer that is strictly BEHIND, but NOT the concurrent case where
+    // both sides hold blocks the other is missing. At n>1 the round-synchronous
+    // rule needs a SUPERMAJORITY of distinct creators at a round before any node may
+    // advance (n=3 ⇒ all three), so when the committee advances rounds concurrently
+    // every node ends a round holding its OWN newest block but missing its peers'
+    // newest blocks. The only holder of a peer's tip is that peer; if its one-shot
+    // eager push was lost, nothing ever re-requests it — the orphan-pull path never
+    // fires (the missing tip never arrives to reveal the gap), so the cluster wedges
+    // one block short of the round cohort FOREVER and `dag_height` freezes. Pulling
+    // every announced per-creator tip we do NOT hold closes that gap deterministically:
+    // a Pull response carries the block's full causal past (`handle_pull`), so any
+    // predecessor gap heals atomically. Backoff-gated (shared with the catch-up
+    // pull limiter), so a tip we already requested is not re-hammered and steady
+    // state — every announced tip known — stays quiet.
+    let tips_to_pull: Vec<BlockId> = {
+        let lace = handle.lace.read().await;
+        their_tips
+            .values()
+            .filter(|tip_id| !lace.contains(tip_id))
+            .copied()
+            .collect()
+    };
+    if !tips_to_pull.is_empty() {
+        let due: Vec<BlockId> = {
+            let mut bo = handle.tip_pull_backoff.write().await;
+            tips_to_pull
+                .into_iter()
+                .filter(|id| bo.should_request(*id))
+                .collect()
+        };
+        if !due.is_empty() {
+            debug!(from = %from, tips = due.len(), "frontier: pulling announced tips we lack");
+            handle
+                .broadcast_gossip_message(&BlocklaceGossipMessage::Pull(due))
+                .await;
+        }
+    }
+
     let to_send = {
         let lace = handle.lace.read().await;
 
@@ -2660,32 +2738,19 @@ async fn handle_frontier(
         result
     };
 
-    // VOTE ANTI-ENTROPY REPLY: whenever a peer's Frontier reaches us, reply with
-    // the finalization votes WE hold (a fresh Frontier carrying them). This is
-    // what makes votes reliably cross at small N: the eager spontaneous push is
-    // directionally lossy per boot (a node may receive a peer's BLOCKS — pulled
-    // by id via Frontier/Pull — yet never its peer's spontaneous vote pushes),
-    // but the Frontier request/response demonstrably crosses BOTH ways (it is how
-    // the DAG converges). Answering a frontier with our votes gives them that
-    // same bidirectional guarantee: a peer that requested catch-up also learns
-    // our finalization votes and can cross quorum. Empty when we hold no
-    // re-emittable votes, so steady-state stays quiet.
-    {
-        let votes = handle.frontier_votes().await;
-        if !votes.is_empty() {
-            let reply_tips: HashMap<[u8; 32], BlockId> = {
-                let lace = handle.lace.read().await;
-                lace.tips().iter().map(|(k, v)| (*k, *v)).collect()
-            };
-            handle
-                .broadcast_gossip_message(&BlocklaceGossipMessage::Frontier {
-                    tips: reply_tips,
-                    nonce: frontier_nonce(),
-                    votes,
-                })
-                .await;
-        }
-    }
+    // NOTE: a received Frontier must NOT be answered with another (votes-carrying)
+    // Frontier. Doing so was an UNBOUNDED AMPLIFICATION LOOP: every node that holds
+    // a re-emittable finalization vote (which is every member for the whole
+    // re-emit window after each finalization) replied to each inbound Frontier with
+    // an outbound one, which the peer in turn replied to — a frontier storm
+    // (thousands/sec at n=3) that saturated the gossip receive path and STARVED the
+    // very block/Pull deliveries the round-synchronous rule needs to advance, so the
+    // committee stalled after the first wave even though the transport was healthy.
+    // Vote anti-entropy already has TWO bounded channels that do not self-amplify:
+    // `reemit_pending_votes` (once per cadence tick, budget-capped) and the vote
+    // piggyback on each node's OWN periodic announcement Frontier (`send_frontier` →
+    // `frontier_votes`). A catching-up peer therefore still learns our votes within
+    // a tick — without the reply that turned reconciliation into a storm.
 
     if to_send.is_empty() {
         return;
@@ -2962,10 +3027,37 @@ pub(crate) fn round_cadence_decision(
 async fn wave_open(handle: &BlocklaceHandle) -> bool {
     let cursor = handle.cursor.read().await;
     let lace = handle.lace.read().await;
+
+    // The DAG depth (max round). A turn-bearing block needs the cluster to advance
+    // through its wave's last round and a later wave-leader to super-ratify it — a
+    // bounded number of rounds past where the turn LANDED. Once the tip is that far
+    // ahead, the turn is tau-FINALIZED; whether it has been EXECUTED yet is a
+    // separate, purely-local step the finality executor performs on its own.
+    //
+    // LIVELOCK GUARD: keying "wave open" off `!is_executed` ALONE means that when the
+    // finality executor lags the producer (e.g. under load, its O(history) verified
+    // tau poll falls behind), a turn stays "open" long after it is finalized, so the
+    // cadence keeps advancing EMPTY wave-closing rounds for it — which grows the DAG,
+    // makes the executor's next poll even slower, and drives a runaway (the DAG raced
+    // to dozens of rounds while finality stuck). Bounding "open" to turns within
+    // `2*wavelength` rounds of the tip stops that: a turn the chain has already moved
+    // well past is finalized-pending-execution (NOT a reason to mint more rounds), so
+    // production goes quiescent and lets the executor catch up — no runaway, and the
+    // turn still commits the moment its poll lands.
+    let tip_round = lace.tips().values().filter_map(|t| lace.round_of(t)).max();
+    const FINALITY_DEPTH_ROUNDS: u64 = 2 * 3; // 2 × wavelength (ordering default = 3)
+
     lace.iter().any(|(id, block)| {
-        // A non-`Ack` block (turn / membership / checkpoint / data) that `tau`
-        // has not yet finalized is unfinalized work: a wave is open for it.
-        block.payload != Payload::Ack && !cursor.is_executed(id)
+        if block.payload == Payload::Ack || cursor.is_executed(id) {
+            return false;
+        }
+        // Still needs ROUNDS to super-ratify (within the finality depth of the tip) ⇒
+        // genuinely open. Already finalized-but-unexecuted (the chain is far past it) ⇒
+        // not open: the executor will serve it without more rounds.
+        match (tip_round, lace.round_of(id)) {
+            (Some(tip), Some(r)) => tip.saturating_sub(r) <= FINALITY_DEPTH_ROUNDS,
+            _ => true,
+        }
     })
 }
 
@@ -3141,7 +3233,26 @@ async fn cadence_tick_round_driven(
     let since_last_block = handle.last_produced.read().await.elapsed();
     let idle_for = since_last_block;
 
-    let action = round_cadence_decision(
+    // EXECUTION BACKPRESSURE: is there a non-`Ack` block tau has finalized but the
+    // finality executor has NOT yet executed? (`wave_open` already covers turns still
+    // needing ROUNDS to super-ratify; this is the leftover set — finalized, awaiting
+    // local execution.) When the executor lags the producer under load, minting more
+    // (idle-heartbeat) rounds only grows the DAG, which makes the executor's
+    // O(history) verified poll EVEN slower — a runaway where the chain races dozens of
+    // rounds ahead while a finalized turn never commits. So when finalized work is
+    // pending execution we STOP producing and instead NUDGE the executor to re-poll:
+    // the DAG stops growing, the executor catches up on a now-stable lace, the turn
+    // commits, and only then does normal idle production resume. (Notifying is safe —
+    // the executor recomputes the full finalized set each poll, so it cannot miss the
+    // pending turn, and we do not depend on a fresh block to wake it.)
+    let exec_pending = {
+        let cursor = handle.cursor.read().await;
+        let lace = handle.lace.read().await;
+        lace.iter()
+            .any(|(id, b)| b.payload != Payload::Ack && !cursor.is_executed(id))
+    };
+
+    let mut action = round_cadence_decision(
         queued_turns,
         ack_pending,
         wave_is_open,
@@ -3150,6 +3261,16 @@ async fn cadence_tick_round_driven(
         idle_for,
         idle_heartbeat_ms,
     );
+
+    // EXECUTION BACKPRESSURE (see `exec_pending` above): if the only thing this tick
+    // would do is mint an idle-heartbeat round while a FINALIZED turn is still waiting
+    // to execute, hold off — growing the DAG would only slow the executor's catch-up.
+    // Nudge it to re-poll and produce nothing. (`DrainTurns`/`ReactiveAck`/`AdvanceWave`
+    // are real finalization work and are NOT held — they keep the committee live.)
+    if action == CadenceAction::IdleHeartbeat && exec_pending {
+        handle.finality_notify.notify_one();
+        action = CadenceAction::Nothing;
+    }
 
     // QUIESCENCE: nothing to finalize (or the rate cap is holding) → produce NO
     // block this tick. Rounds stop advancing; the DAG goes quiet. We still
@@ -3390,6 +3511,18 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
         loop {
             // QUIESCENT: sleep until signaled that new blocks have arrived.
             handle.finality_notify.notified().await;
+
+            // DEBOUNCE/COALESCE: one finality recompute is O(history) — it clones the
+            // lace and runs the verified-Lean tau-order FFI twice — and a notification
+            // fires on EVERY block this node produces OR receives. Under sustained load
+            // that drove back-to-back recomputes that pinned a worker on the FFI and
+            // starved everything else (the round-production crawl). A finalization is
+            // never time-critical to the millisecond (the rate cap is seconds), so wait
+            // a short window and let any notifications that land during it collapse into
+            // THIS single poll — `poll_finalized_blocks` already recomputes the whole
+            // finalized set, so nothing is missed. Cuts recompute frequency by ~an order
+            // of magnitude under load while keeping finality latency well under a round.
+            tokio::time::sleep(Duration::from_millis(150)).await;
 
             // Process all newly finalized blocks (turns, membership, checkpoints).
             let finalized_blocks = handle.poll_finalized_blocks().await;
@@ -5640,6 +5773,10 @@ mod tests {
             pull_backoff: Arc::new(RwLock::new(dregg_net::peer_score::RequestBackoff::new(
                 Duration::from_secs(1),
                 Duration::from_secs(30),
+            ))),
+            tip_pull_backoff: Arc::new(RwLock::new(dregg_net::peer_score::RequestBackoff::new(
+                Duration::from_millis(500),
+                Duration::from_millis(1500),
             ))),
             last_produced: Arc::new(RwLock::new(std::time::Instant::now())),
             ack_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
