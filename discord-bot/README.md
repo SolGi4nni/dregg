@@ -9,6 +9,21 @@ toplevel (`/discord-bot`), as a peer of `node/`, `sdk/`, `app-framework/`
 etc. — it is not an app, it is a *consumer of* the canonical dregg
 SDK surface.
 
+## The front door: `/start` → the 2-minute tour
+
+A newcomer learns **no commands**. They run `/start` and tap **Start the
+2-minute tour** — a guided, buttoned, can't-get-lost flow (get an identity → get
+test DEC → do one real paid turn) that ends with a real receipt and a portal
+link to verify it. The tour lives in `src/commands/start.rs` (the `start:tour:*`
+button namespace); each step fires the same real, cap-gated, receipted turn the
+corresponding slash command does (`execute_create` / `execute_faucet` /
+`transfer::execute_first_payment`). The step-3 turn needs the live edge node; on
+an outage it shows an honest "the node is recovering, your identity and DEC are
+still yours" message and a retry, never losing the user's place. The
+interaction-model rationale is in `UX-REDESIGN.md`; the user-facing walkthrough
+is `../docs/GETTING-STARTED.md`. The slash commands below are the advanced/
+optional surface, not the thing a newcomer must memorise.
+
 ## Cipherclerk handle
 
 Per-user cipherclerks are backed by the canonical

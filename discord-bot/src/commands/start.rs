@@ -30,6 +30,11 @@ use crate::llm_provider::Provider;
 const ID_HOME: &str = "start:home";
 const ID_CREATE: &str = "start:create";
 const ID_FAUCET: &str = "start:faucet";
+// The guided "first 5 minutes" tour: identity → test DEC → one real paid turn.
+const ID_TOUR: &str = "start:tour";
+const ID_TOUR_IDENTITY: &str = "start:tour:identity";
+const ID_TOUR_FAUCET: &str = "start:tour:faucet";
+const ID_TOUR_FIRSTTURN: &str = "start:tour:firstturn";
 const ID_BALANCE: &str = "start:balance";
 const ID_SEND: &str = "start:send";
 const ID_KEY: &str = "start:key";
@@ -57,6 +62,14 @@ pub enum StartAction {
     Status,
     Apps,
     Help,
+    /// Open the guided first-5-minutes tour intro.
+    Tour,
+    /// Tour step 1 — create the newcomer's identity (a real cell).
+    TourIdentity,
+    /// Tour step 2 — fund it from the faucet.
+    TourFaucet,
+    /// Tour step 3 — the aha: a real, paid, verifiable first turn.
+    TourFirstTurn,
     Unknown,
 }
 
@@ -66,6 +79,10 @@ pub fn action_for(custom_id: &str) -> StartAction {
         ID_HOME => StartAction::Home,
         ID_CREATE => StartAction::Create,
         ID_FAUCET => StartAction::Faucet,
+        ID_TOUR => StartAction::Tour,
+        ID_TOUR_IDENTITY => StartAction::TourIdentity,
+        ID_TOUR_FAUCET => StartAction::TourFaucet,
+        ID_TOUR_FIRSTTURN => StartAction::TourFirstTurn,
         ID_BALANCE => StartAction::Balance,
         ID_SEND => StartAction::Send,
         ID_KEY => StartAction::Key,
@@ -132,8 +149,9 @@ async fn home_view(state: &BotState, user_id: u64) -> (CreateEmbed, Vec<CreateAc
             .field("LLM key", if has_key { "set" } else { "not set" }, true)
     } else {
         embeds::dregg_embed("Welcome to DreggNet").description(
-            "You're new here — let's get you a wallet. Tap **Create my wallet** to mint your \
-                 own dregg cell (custodial), then grab some test DEC and start exploring. \
+            "You're new here. The fastest way to *get* what DreggNet is: take the **2-minute tour** \
+                 — it walks you to your first real, paid, verifiable thing on the network (get an \
+                 identity \u{2192} get test DEC \u{2192} do one real turn \u{2192} here's your receipt). \
                  You barely need to learn any commands: click the buttons, or just type.",
         )
     };
@@ -146,7 +164,8 @@ async fn home_view(state: &BotState, user_id: u64) -> (CreateEmbed, Vec<CreateAc
 pub fn home_components(has_wallet: bool, has_key: bool) -> Vec<CreateActionRow> {
     if !has_wallet {
         return vec![CreateActionRow::Buttons(vec![
-            button(ID_CREATE, "Create my wallet", ButtonStyle::Success),
+            button(ID_TOUR, "Start the 2-minute tour", ButtonStyle::Success),
+            button(ID_CREATE, "Just create my wallet", ButtonStyle::Secondary),
             button(ID_STATUS, "Node status", ButtonStyle::Secondary),
             button(ID_HELP, "Help", ButtonStyle::Secondary),
         ])];
@@ -207,6 +226,75 @@ fn help_embed() -> CreateEmbed {
         )
 }
 
+// ─── the guided first-5-minutes tour ─────────────────────────────────────────
+
+/// The tour intro — what DreggNet Cloud offers + the three steps ahead.
+fn tour_intro_embed() -> CreateEmbed {
+    embeds::dregg_embed("The 2-minute tour")
+        .description(
+            "DreggNet Cloud is a small, live network where **you, or your agent, run real metered \
+             work bounded by a capability you hold, and every run leaves a verifiable receipt**. \
+             It offers four things: durable metered cap-gated **compute**, a **BYO-key Hermes** you \
+             drive by typing, **agent coordination** that settles atomically, and **verifiable \
+             receipts** anyone can check.\n\n\
+             This tour walks you to your first real one. Three steps, ~2 minutes:",
+        )
+        .field("1. Get an identity", "A real dregg cell that's yours (custodial).", false)
+        .field("2. Get test DEC", "Free, subsidized test tokens so you can actually do something.", false)
+        .field(
+            "3. Do one real thing",
+            "A real, **paid**, **conserving** turn on the network — and a receipt you can verify.",
+            false,
+        )
+        .field(
+            "Honest state",
+            "Early/alpha: a small devnet on subsidized compute. The step-3 turn needs the edge node \
+             up; the tour tells you if it's recovering and never loses your place.",
+            false,
+        )
+}
+
+/// Tour intro buttons: begin, or skip to the plain menu.
+fn tour_intro_components() -> Vec<CreateActionRow> {
+    vec![CreateActionRow::Buttons(vec![
+        button(
+            ID_TOUR_IDENTITY,
+            "Step 1: Get my identity",
+            ButtonStyle::Success,
+        ),
+        button(ID_HOME, "Skip to the menu", ButtonStyle::Secondary),
+    ])]
+}
+
+/// Buttons shown after a tour step completes, pointing to the next step.
+fn tour_next_components(next: StartAction) -> Vec<CreateActionRow> {
+    let row = match next {
+        StartAction::TourFaucet => vec![
+            button(ID_TOUR_FAUCET, "Step 2: Get test DEC", ButtonStyle::Success),
+            button(ID_HOME, "Menu", ButtonStyle::Secondary),
+        ],
+        StartAction::TourFirstTurn => vec![
+            button(
+                ID_TOUR_FIRSTTURN,
+                "Step 3: Do one real thing",
+                ButtonStyle::Success,
+            ),
+            button(ID_HOME, "Menu", ButtonStyle::Secondary),
+        ],
+        // After the final step (or a retry prompt): offer the channel + retry.
+        _ => vec![
+            button(ID_CHANNEL, "Claim my channel", ButtonStyle::Primary),
+            button(
+                ID_TOUR_FIRSTTURN,
+                "Try the turn again",
+                ButtonStyle::Secondary,
+            ),
+            button(ID_HOME, "Menu", ButtonStyle::Secondary),
+        ],
+    };
+    vec![CreateActionRow::Buttons(row)]
+}
+
 // ─── component routing (`start:` prefix, dispatched from main.rs) ────────────
 
 /// Route a `start:` button press.
@@ -235,6 +323,51 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                     "Back",
                     ButtonStyle::Secondary,
                 )])],
+            )
+            .await;
+        }
+
+        // The guided tour. The intro is an in-place re-render; each step defers,
+        // fires the same real turn the corresponding button does, then offers the
+        // next step so a newcomer cannot get lost.
+        StartAction::Tour => {
+            update_message(ctx, component, tour_intro_embed(), tour_intro_components()).await;
+        }
+        StartAction::TourIdentity => {
+            defer_followup(ctx, component).await;
+            let embed =
+                crate::commands::cipherclerk::execute_create(state, component.user.id.get()).await;
+            edit_followup_with(
+                ctx,
+                component,
+                embed,
+                tour_next_components(StartAction::TourFaucet),
+            )
+            .await;
+        }
+        StartAction::TourFaucet => {
+            defer_followup(ctx, component).await;
+            let embed =
+                crate::commands::social::execute_faucet(state, component.user.id.get()).await;
+            edit_followup_with(
+                ctx,
+                component,
+                embed,
+                tour_next_components(StartAction::TourFirstTurn),
+            )
+            .await;
+        }
+        StartAction::TourFirstTurn => {
+            defer_followup(ctx, component).await;
+            let embed =
+                crate::commands::transfer::execute_first_payment(state, component.user.id.get())
+                    .await;
+            // The final screen offers the channel + a retry (covers a node outage).
+            edit_followup_with(
+                ctx,
+                component,
+                embed,
+                tour_next_components(StartAction::Home),
             )
             .await;
         }
@@ -516,6 +649,24 @@ async fn edit_followup(ctx: &Context, component: &ComponentInteraction, embed: C
         .await;
 }
 
+/// Like [`edit_followup`] but also carries the next-step buttons (used by the
+/// guided tour so each completed step offers the next one).
+async fn edit_followup_with(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    embed: CreateEmbed,
+    components: Vec<CreateActionRow>,
+) {
+    let _ = component
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .embed(embed)
+                .components(components),
+        )
+        .await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -532,6 +683,14 @@ mod tests {
         assert_eq!(action_for("start:apps"), StartAction::Apps);
         assert_eq!(action_for("start:help"), StartAction::Help);
         assert_eq!(action_for("start:home"), StartAction::Home);
+        // The guided tour routes the intro + each of its three steps.
+        assert_eq!(action_for("start:tour"), StartAction::Tour);
+        assert_eq!(action_for("start:tour:identity"), StartAction::TourIdentity);
+        assert_eq!(action_for("start:tour:faucet"), StartAction::TourFaucet);
+        assert_eq!(
+            action_for("start:tour:firstturn"),
+            StartAction::TourFirstTurn
+        );
         // Foreign ids (e.g. the dashboard's) are not ours.
         assert_eq!(action_for("dregg:home"), StartAction::Unknown);
         assert_eq!(action_for("deosturn:transfer:1"), StartAction::Unknown);
@@ -539,9 +698,30 @@ mod tests {
 
     #[test]
     fn newcomer_menu_is_a_single_clear_step() {
-        // No wallet → one row, the create button leading.
+        // No wallet → one row, the tour leading, within Discord's 5-per-row limit.
         let rows = home_components(false, false);
         assert_eq!(rows.len(), 1, "newcomers see a single uncluttered row");
+        if let CreateActionRow::Buttons(b) = &rows[0] {
+            assert!(b.len() <= 5, "at most 5 buttons per action row");
+        } else {
+            panic!("newcomer row is a button row");
+        }
+    }
+
+    #[test]
+    fn tour_steps_chain_to_the_next_step() {
+        // The intro offers a single clear "begin" row; each step's follow-up
+        // offers the next step — a can't-get-lost chain. (Structural check; the
+        // button ids themselves are routed by `action_for`, tested above.)
+        assert_eq!(tour_intro_components().len(), 1);
+        assert_eq!(tour_next_components(StartAction::TourFaucet).len(), 1);
+        assert_eq!(tour_next_components(StartAction::TourFirstTurn).len(), 1);
+        // The terminal screen (any non-step target) offers channel + retry + menu.
+        if let CreateActionRow::Buttons(b) = &tour_next_components(StartAction::Home)[0] {
+            assert_eq!(b.len(), 3, "final screen: channel, retry, menu");
+        } else {
+            panic!("final tour row is a button row");
+        }
     }
 
     #[test]
