@@ -143,6 +143,9 @@ name = "base_private_transfer"
 name = "private_auction"
 
 [[example]]
+name = "garbled_ot_auction"
+
+[[example]]
 name = "private_hiring"
 
 [[example]]

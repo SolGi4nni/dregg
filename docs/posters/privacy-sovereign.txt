@@ -58,10 +58,16 @@
 
   ░▒▓ THE DEMOS · real primitives, not yet woven into the live executor ▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
 
-   ⑥ GARBLED-CIRCUIT 2PC — a real Yao garbling primitive.                          ‹ REAL primitive ›
+   ⑥ GARBLED-CIRCUIT 2PC — a real Yao garbling primitive, now genuinely wired.   ‹ REAL primitive · wired ›
         ‹ circuit/src/garbled.rs · GarbledJoint.lean ›   2-party threshold compare (b ≥ a) over Poseidon2.
-        ‹ honest: the ANONYMOUS AUCTION (demo-agent/examples/private_auction.rs) does NOT wire the garbled
-          MPC — its compare step is stubbed; even the real test SIMULATES oblivious transfer. DEMO. ›
+        ‹ circuit/tests/garbled_ot_auction.rs · demo-agent/examples/garbled_ot_auction.rs ›
+        a genuine sealed-bid auction: the auctioneer garbles `bid ≥ reserve`; each bidder obtains its
+        bid-bit wire labels over REAL Chou-Orlandi 1-of-2 OT (cell-crypto/src/oblivious_transfer.rs),
+        evaluates, and settles with a STARK proof whose only public surface is the outcome bit — the
+        auctioneer never learns the bid, the bidder learns only one label per wire.
+        ‹ honest: this is a DEMO/test, not woven into the live executor. the older anonymous-auction
+          example (demo-agent/examples/private_auction.rs) instead uses committed-threshold STARK
+          proofs over Poseidon2 commitments — NOT the garbled MPC; that one's compare is not 2PC. ›
 
    ⑦ PRIVATE VOTING — unlinkable ballot real; secret tally not.                     ‹ REAL + DESIGNED ›
         ‹ starbridge-apps/privacy-voting ›
