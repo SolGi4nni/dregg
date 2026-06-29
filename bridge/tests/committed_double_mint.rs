@@ -117,6 +117,12 @@ fn solana_config(token: [u8; 32], o: &SigningKey) -> MirrorConfig {
         }],
         min_amount: 1,
         max_amount: 1_000_000,
+        // The committed path here goes through the trusted-oracle `verify_lock`
+        // (no inclusion proof), so the vault binding is not exercised; placeholders.
+        vault_account: [0u8; 32],
+        lock_program: [0u8; 32],
+        pinned_anchor_epoch: None,
+        pinned_anchor_root: None,
     }
 }
 

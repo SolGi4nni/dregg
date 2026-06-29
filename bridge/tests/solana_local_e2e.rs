@@ -412,6 +412,12 @@ fn local_solana_lock_verifies_and_mints() {
         oracle_keys: Vec::<EpochKey>::new(),
         min_amount: 1,
         max_amount: u64::MAX,
+        // The anchored trustless mint requires the lock to escrow into THIS
+        // bridge's vault: bind the config to the real harvested vault + owner.
+        vault_account: vault_pubkey,
+        lock_program: vault_owner,
+        pinned_anchor_epoch: None,
+        pinned_anchor_root: None,
     });
     let (mint, mint_trust) = mirror
         .mint_against_lock_proof_anchored(&proof, &anchor, false, None)

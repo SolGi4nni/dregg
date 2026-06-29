@@ -177,7 +177,12 @@ pub enum StripeMirrorError {
     /// the webhook-retry / duplicate-event case).
     DuplicatePayment,
     /// Minting `amount` would push `live_supply` above `total_verified_payments`
-    /// (the conservation invariant). Defence in depth.
+    /// (the conservation invariant). A LIVE gate (red-team BR-3): the backing is
+    /// raised ONLY by an independently-verified payment
+    /// ([`StripeMirrorState::record_payment_backing`]); a mint draws against it
+    /// ([`StripeMirrorState::draw_mint`]) and is refused here when it would exceed
+    /// the backing — so a mint with no verified payment, or a draw beyond it, is
+    /// rejected (not the old credit-both-sides-equally vacuity).
     InsufficientBacking {
         live: u64,
         backing: u64,
@@ -469,10 +474,76 @@ impl StripeMirrorState {
         self.seen_payments.contains(payment_intent_id)
     }
 
-    /// **Verify a raw webhook AND mirror-mint against it in one step.**
+    /// **Record an independently-verified payment** as conservation backing,
+    /// raising `total_verified_payments` by `amount`. Deduped by
+    /// `payment_intent_id` so a webhook retry can never inflate the backing twice.
+    /// The caller MUST have verified the webhook signature before calling. The
+    /// mint draws against this backing separately ([`Self::draw_mint`]) so
+    /// conservation is a real constraint (red-team BR-3).
     ///
-    /// Convenience over [`StripeWebhookEvent::verify`] + [`Self::mint_against_payment`]:
-    /// the exact path a webhook handler takes.
+    /// On any error the state is left unchanged.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn record_payment_backing(
+        &mut self,
+        payment_intent_id: &str,
+        amount: u64,
+    ) -> Result<(), StripeMirrorError> {
+        if self.seen_payments.contains(payment_intent_id) {
+            return Err(StripeMirrorError::DuplicatePayment);
+        }
+        let new_backing = self
+            .total_verified_payments
+            .checked_add(amount)
+            .ok_or(StripeMirrorError::Overflow)?;
+        self.total_verified_payments = new_backing;
+        self.seen_payments.insert(payment_intent_id.to_string());
+        Ok(())
+    }
+
+    /// **Draw a mint against the recorded payment backing**, raising `live_supply`
+    /// and emitting the REAL [`Effect::Mint`]. Conservation BITES here (red-team
+    /// BR-3): a draw exceeding `total_verified_payments` — e.g. a mint with no
+    /// verified payment — is refused with [`StripeMirrorError::InsufficientBacking`].
+    ///
+    /// On any error the state is left unchanged.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn draw_mint(
+        &mut self,
+        amount: u64,
+        recipient: CellId,
+    ) -> Result<StripeMint, StripeMirrorError> {
+        let new_live = self
+            .live_supply
+            .checked_add(amount)
+            .ok_or(StripeMirrorError::Overflow)?;
+        if new_live > self.total_verified_payments {
+            return Err(StripeMirrorError::InsufficientBacking {
+                live: self.live_supply,
+                backing: self.total_verified_payments,
+                amount,
+            });
+        }
+        self.live_supply = new_live;
+        debug_assert!(self.invariant_holds());
+
+        Ok(StripeMint {
+            effect: Effect::Mint {
+                target: recipient,
+                slot: 0,
+                amount,
+            },
+            recipient,
+            amount,
+        })
+    }
+
+    /// **Verify a raw webhook AND mirror-mint against it in one step — RAM path,
+    /// TEST/INTERNAL ONLY** (red-team BR-1).
+    ///
+    /// Convenience over [`StripeWebhookEvent::verify`] + [`Self::mint_against_payment`].
+    /// Gated behind `#[cfg(any(test, feature = "test-utils"))]`: the production
+    /// surface is [`Self::verify_payment`] → the committed `bridge_mint_against_lock`.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn mint_against_webhook(
         &mut self,
         webhook: &StripeWebhookEvent,
@@ -520,13 +591,18 @@ impl StripeMirrorState {
         })
     }
 
-    /// **Mirror-mint against a verified Stripe payment.**
+    /// **Mirror-mint against a verified Stripe payment — RAM path, TEST/INTERNAL
+    /// ONLY** (red-team BR-1).
     ///
-    /// Enforces currency match, amount bounds, replay dedup (the webhook-retry
-    /// case), and the conservation invariant, then produces the REAL kernel
-    /// [`Effect::Mint`] that mints `amount_cents` USD-credit to the recipient.
+    /// Enforces currency match, amount bounds, replay dedup, records the payment
+    /// backing, and draws the mint against it. Backing and supply are now distinct
+    /// accumulators, so [`StripeMirrorError::InsufficientBacking`] is genuinely
+    /// reachable (red-team BR-3). Gated behind
+    /// `#[cfg(any(test, feature = "test-utils"))]`; production uses
+    /// [`Self::verify_payment`] → the committed `bridge_mint_against_lock`.
     ///
     /// On any error the state is left unchanged.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn mint_against_payment(
         &mut self,
         att: &StripePaymentAttestation,
@@ -543,42 +619,20 @@ impl StripeMirrorState {
         if att.amount_cents > self.config.max_cents {
             return Err(StripeMirrorError::AboveMax);
         }
-        if self.seen_payments.contains(&att.payment_intent_id) {
-            return Err(StripeMirrorError::DuplicatePayment);
+
+        // Record the verified-payment backing, then draw the mint against it. On a
+        // draw failure, roll the backing back so the op is atomic.
+        self.record_payment_backing(&att.payment_intent_id, att.amount_cents)?;
+        match self.draw_mint(att.amount_cents, att.recipient) {
+            Ok(mint) => Ok(mint),
+            Err(e) => {
+                self.total_verified_payments = self
+                    .total_verified_payments
+                    .saturating_sub(att.amount_cents);
+                self.seen_payments.remove(&att.payment_intent_id);
+                Err(e)
+            }
         }
-
-        // Credit the verified-payment backing, then check the mint stays within it.
-        let new_backing = self
-            .total_verified_payments
-            .checked_add(att.amount_cents)
-            .ok_or(StripeMirrorError::Overflow)?;
-        let new_live = self
-            .live_supply
-            .checked_add(att.amount_cents)
-            .ok_or(StripeMirrorError::Overflow)?;
-        if new_live > new_backing {
-            return Err(StripeMirrorError::InsufficientBacking {
-                live: self.live_supply,
-                backing: new_backing,
-                amount: att.amount_cents,
-            });
-        }
-
-        // Commit.
-        self.total_verified_payments = new_backing;
-        self.live_supply = new_live;
-        self.seen_payments.insert(att.payment_intent_id.clone());
-        debug_assert!(self.invariant_holds());
-
-        Ok(StripeMint {
-            effect: Effect::Mint {
-                target: att.recipient,
-                slot: 0,
-                amount: att.amount_cents,
-            },
-            recipient: att.recipient,
-            amount: att.amount_cents,
-        })
     }
 }
 
@@ -802,6 +856,45 @@ mod tests {
         // Exactly one payment's worth of credit exists.
         assert_eq!(mirror.live_supply, 4000);
         assert_eq!(mirror.total_verified_payments, 4000);
+        assert!(mirror.invariant_holds());
+    }
+
+    /// BR-3 (conservation NON-VACUOUS): a mint draw with no recorded payment
+    /// backing is rejected, and a draw within the backing succeeds — the
+    /// true-and-false coverage proving the gate bites (it was dead code when both
+    /// sides moved by the same amount).
+    #[test]
+    fn draw_beyond_backing_breaks_conservation() {
+        let mut mirror = StripeMirrorState::new(config());
+
+        // No backing yet → any draw is over-mint.
+        assert_eq!(
+            mirror.draw_mint(2500, cid(1)).unwrap_err(),
+            StripeMirrorError::InsufficientBacking {
+                live: 0,
+                backing: 0,
+                amount: 2500,
+            }
+        );
+        assert_eq!(mirror.live_supply, 0);
+
+        // Record a verified payment of 2500; draw 2500 (within) → ok.
+        mirror
+            .record_payment_backing("pi_x", 2500)
+            .expect("backing recorded");
+        mirror.draw_mint(2500, cid(1)).expect("draw within backing");
+        assert_eq!(mirror.live_supply, 2500);
+
+        // A further draw exceeds the now-spent backing → rejected.
+        assert_eq!(
+            mirror.draw_mint(1, cid(2)).unwrap_err(),
+            StripeMirrorError::InsufficientBacking {
+                live: 2500,
+                backing: 2500,
+                amount: 1,
+            }
+        );
+        assert_eq!(mirror.live_supply, 2500);
         assert!(mirror.invariant_holds());
     }
 

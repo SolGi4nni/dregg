@@ -272,6 +272,11 @@ pub enum LockProofError {
         /// The lock evidence's epoch.
         lock: u64,
     },
+    /// The caller-supplied weak-subjectivity anchor does not match the
+    /// governance-pinned anchor in [`crate::solana_mirror::MirrorConfig`]
+    /// (red-team BR-2-C: the anchor was a per-call arg an attacker could swap for
+    /// a self-stake distribution; a pinned anchor refuses any other).
+    AnchorNotPinned,
     /// PoH was required and a segment supplied, but no [`PohAnchorPolicy`] was
     /// provided to anchor it to a trusted checkpoint blockhash.
     PohPolicyMissing,
@@ -317,6 +322,10 @@ impl std::fmt::Display for LockProofError {
             Self::ProvenanceEpochMismatch { reached, lock } => write!(
                 f,
                 "provenance reached epoch {reached}, lock evidence is epoch {lock}"
+            ),
+            Self::AnchorNotPinned => write!(
+                f,
+                "supplied weak-subjectivity anchor does not match the governance-pinned anchor"
             ),
             Self::PohPolicyMissing => {
                 write!(f, "PoH required but no bounded-anchor policy supplied")
@@ -673,6 +682,8 @@ impl SolanaConsensusStatement {
         spl_mint: &[u8; 32],
         min_amount: u64,
         max_amount: u64,
+        vault_account: &[u8; 32],
+        lock_program: &[u8; 32],
         anchor: &WeakSubjectivityAnchor,
         require_poh: bool,
         poh_policy: Option<&PohAnchorPolicy>,
@@ -687,6 +698,12 @@ impl SolanaConsensusStatement {
             require_poh,
             poh_policy,
         )?;
+        // (BR-2-B) and only for a lock that escrows into the BRIDGE's vault — a
+        // statement minted for a self-asserting lock in an arbitrary Solana
+        // account would let a relayer circuit attest a mint backed by nothing.
+        if !proof.binds_bridge_vault(vault_account, lock_program) {
+            return Err(LockProofError::ClaimMismatch);
+        }
         let new_rate_activation_epoch = proof
             .stake_provenance
             .as_ref()
@@ -794,40 +811,80 @@ fn verify_inclusion(inclusion: &AccountInclusionProof) -> Result<(), LockProofEr
     Ok(())
 }
 
+impl SolanaLockProof {
+    /// **Does this lock escrow into the bridge's OWN vault?** (red-team BR-2-B /
+    /// BR-3 — the deepest break.) A `verify_lock_proof_consensus*` pass proves the
+    /// inclusion `vault_account` holds the lock record in a finalized accounts
+    /// hash — but NOT that the account is the bridge's escrow vault. Without this
+    /// gate an attacker plants the self-asserting 72-byte lock blob
+    /// (`lock_id ‖ recipient ‖ amount_le`) in ANY ~0.001-SOL Solana account, lets
+    /// it land in a genuine 2/3-signed finalized accounts hash, and mints
+    /// arbitrary `$DREGG` having escrowed nothing — defeating even the anchored
+    /// path. The bridge therefore mints only against a proof whose escrow account
+    /// IS the canonical vault (`vault_account`) AND, on the mainnet inclusion
+    /// path, is OWNED by the bridge lock program (`lock_program`).
+    pub fn binds_bridge_vault(&self, vault_account: &[u8; 32], lock_program: &[u8; 32]) -> bool {
+        if &self.inclusion.vault_account != vault_account {
+            return false;
+        }
+        match &self.inclusion.mainnet {
+            // Mainnet path: the real account fields are present, so we can (and
+            // must) require the escrow account is owned by the bridge program.
+            Some(m) => &m.owner == lock_program,
+            // Modeled path: no owner field exists; the vault-account pin is the
+            // available escrow-to-bridge binding.
+            None => true,
+        }
+    }
+}
+
 impl MirrorState {
-    /// **Structure-only** mirror-mint against a [`SolanaLockProof`] — verifies
-    /// structure + binding (NOT consensus) via [`verify_lock_proof`], then routes
-    /// through the SAME [`MirrorState::credit_lock`] accounting the trusted path
-    /// uses. Returns [`LockProofTrust::StructureOnly`]; use
-    /// [`MirrorState::mint_against_lock_proof_consensus`] for the trustless mint.
-    ///
-    /// On any error the state is left unchanged.
-    pub fn mint_against_lock_proof(
-        &mut self,
-        proof: &SolanaLockProof,
-    ) -> Result<(MirrorMint, LockProofTrust), ProofMintError> {
-        let trust = verify_lock_proof(
-            proof,
-            &self.config.spl_mint,
-            self.config.min_amount,
-            self.config.max_amount,
-        )
-        .map_err(ProofMintError::Proof)?;
+    /// The escrow-to-bridge gate (red-team BR-2-B): the proof must escrow into
+    /// THIS mirror's configured vault, owned by its lock program.
+    #[cfg(any(test, feature = "test-utils"))]
+    fn check_bridge_vault(&self, proof: &SolanaLockProof) -> Result<(), ProofMintError> {
+        if proof.binds_bridge_vault(&self.config.vault_account, &self.config.lock_program) {
+            Ok(())
+        } else {
+            Err(ProofMintError::Proof(LockProofError::ClaimMismatch))
+        }
+    }
 
-        let mint = self
-            .credit_lock(proof.lock_id, proof.amount, proof.dregg_recipient)
-            .map_err(ProofMintError::Mint)?;
-
-        Ok((mint, trust))
+    /// Enforce the governance-pinned weak-subjectivity anchor (red-team BR-2-C):
+    /// if the config pins an anchor, a caller-supplied anchor that does not match
+    /// it (e.g. an attacker's 100%-self-stake distribution) is refused.
+    #[cfg(any(test, feature = "test-utils"))]
+    fn check_pinned_anchor(&self, anchor: &WeakSubjectivityAnchor) -> Result<(), ProofMintError> {
+        match (
+            self.config.pinned_anchor_epoch,
+            self.config.pinned_anchor_root,
+        ) {
+            (Some(epoch), Some(root)) => {
+                if anchor.epoch == epoch && anchor.stake_table_root == root {
+                    Ok(())
+                } else {
+                    Err(ProofMintError::Proof(LockProofError::AnchorNotPinned))
+                }
+            }
+            // No anchor pinned: governance has not constrained it (the caller is
+            // trusted to supply the right anchor).
+            _ => Ok(()),
+        }
     }
 
     /// **Trustless** mirror-mint against a [`SolanaLockProof`], verified against
-    /// a tracked epoch `stake_table` via [`verify_lock_proof_consensus`]. Routes
-    /// through the SAME [`MirrorState::credit_lock`] accounting — only the lock
-    /// *evidence* (verified consensus proof vs trusted signature) differs.
-    /// Returns [`LockProofTrust::ConsensusVerified`].
+    /// a tracked epoch `stake_table` via [`verify_lock_proof_consensus`] AND the
+    /// escrow-to-bridge-vault binding ([`SolanaLockProof::binds_bridge_vault`]).
+    ///
+    /// **RAM path, TEST/INTERNAL ONLY** (red-team BR-1): gated behind
+    /// `#[cfg(any(test, feature = "test-utils"))]`. It is also the LEGACY
+    /// supplied-table tally ([`verify_supermajority`]) which is NOT bound to the
+    /// on-chain authorized voter (BR-2-A) — production trustless minting uses the
+    /// anchored, authorized-voter-bound path. The sound production surface is the
+    /// `verify_*` functions + the committed `bridge_mint_against_lock`.
     ///
     /// On any error the state is left unchanged.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn mint_against_lock_proof_consensus(
         &mut self,
         proof: &SolanaLockProof,
@@ -843,6 +900,8 @@ impl MirrorState {
             require_poh,
         )
         .map_err(ProofMintError::Proof)?;
+        // The lock must escrow into the bridge vault, not merely exist on Solana.
+        self.check_bridge_vault(proof)?;
 
         let mint = self
             .credit_lock(proof.lock_id, proof.amount, proof.dregg_recipient)
@@ -853,11 +912,20 @@ impl MirrorState {
 
     /// **Trustless** mirror-mint against a [`SolanaLockProof`] verified **only
     /// against a [`WeakSubjectivityAnchor`]** (no trusted stake table) via
-    /// [`verify_lock_proof_consensus_anchored`]. The stake distribution +
-    /// authorized voters are derived from bank state and trusted only back to the
-    /// anchor. Routes through the SAME [`MirrorState::credit_lock`] accounting.
+    /// [`verify_lock_proof_consensus_anchored`], with the escrow-to-bridge-vault
+    /// binding and the governance-pinned anchor enforced.
+    ///
+    /// **RAM path, TEST/INTERNAL ONLY** (red-team BR-1): gated behind
+    /// `#[cfg(any(test, feature = "test-utils"))]`; the per-process `seen_locks`
+    /// dedup is not the global authority. Production routes the same verified
+    /// proof through the committed `bridge_mint_against_lock`. This method does,
+    /// however, demonstrate the full sound gate stack: the authorized-voter tally
+    /// (BR-2-A), the bridge-vault binding (BR-2-B), the pinned anchor (BR-2-C),
+    /// `ConsensusVerified`-only crediting (BR-2-D), and non-vacuous conservation
+    /// (BR-3).
     ///
     /// On any error the state is left unchanged.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn mint_against_lock_proof_anchored(
         &mut self,
         proof: &SolanaLockProof,
@@ -865,6 +933,8 @@ impl MirrorState {
         require_poh: bool,
         poh_policy: Option<&PohAnchorPolicy>,
     ) -> Result<(MirrorMint, LockProofTrust), ProofMintError> {
+        // (BR-2-C) the anchor must be the governance-pinned one, if pinned.
+        self.check_pinned_anchor(anchor)?;
         let trust = verify_lock_proof_consensus_anchored(
             proof,
             &self.config.spl_mint,
@@ -875,6 +945,8 @@ impl MirrorState {
             poh_policy,
         )
         .map_err(ProofMintError::Proof)?;
+        // (BR-2-B) the lock must escrow into the bridge vault.
+        self.check_bridge_vault(proof)?;
 
         let mint = self
             .credit_lock(proof.lock_id, proof.amount, proof.dregg_recipient)
@@ -913,6 +985,12 @@ mod tests {
             }],
             min_amount: 1,
             max_amount: 1_000_000,
+            // The consensus/anchored fixtures all escrow into vault [0x22; 32]
+            // owned by program [0x07; 32]; the config pins exactly that vault.
+            vault_account: [0x22u8; 32],
+            lock_program: [0x07u8; 32],
+            pinned_anchor_epoch: None,
+            pinned_anchor_root: None,
         }
     }
 
@@ -1102,15 +1180,37 @@ mod tests {
         assert_eq!(trust, LockProofTrust::StructureOnly);
     }
 
+    /// BR-2-D: the structure-only verify is purely advisory — there is NO
+    /// structure-only MINT method, so a `StructureOnly` proof can never mutate
+    /// mirror state (the old `mint_against_lock_proof` credited after only the
+    /// self-consistency check). Minting requires the consensus path below.
+    #[test]
+    fn structure_only_verify_does_not_mint() {
+        let cfg = config();
+        let proof = consensus_grade(500, cid(1), 1);
+        let trust =
+            verify_lock_proof(&proof, &cfg.spl_mint, cfg.min_amount, cfg.max_amount).expect("ok");
+        assert_eq!(trust, LockProofTrust::StructureOnly);
+        // A `MirrorState` exists and is untouched by a structure-only verify: the
+        // only public mint paths require ConsensusVerified.
+        let mirror = MirrorState::new(config());
+        assert_eq!(mirror.live_supply, 0);
+        assert_eq!(mirror.currently_locked, 0);
+    }
+
     #[test]
     fn mint_against_proof_credits_through_same_accounting() {
         let mut mirror = MirrorState::new(config());
         let recipient = cid(1);
         let (mint, trust) = mirror
-            .mint_against_lock_proof(&consensus_grade(500, recipient, 1))
-            .expect("a well-formed proof mirror-mints");
+            .mint_against_lock_proof_consensus(
+                &consensus_grade(500, recipient, 1),
+                &stake_table(),
+                true,
+            )
+            .expect("a consensus-verified proof mirror-mints");
 
-        assert_eq!(trust, LockProofTrust::StructureOnly);
+        assert_eq!(trust, LockProofTrust::ConsensusVerified);
         assert_eq!(mint.amount, 500);
         match mint.effect {
             Effect::Mint { target, amount, .. } => {
@@ -1124,13 +1224,41 @@ mod tests {
         assert!(mirror.invariant_holds());
     }
 
+    /// BR-2-B / BR-3 (the deepest break): a consensus-grade proof whose lock
+    /// record sits in an account that is NOT the bridge vault is REJECTED — even
+    /// though its consensus + inclusion are internally valid. Without this an
+    /// attacker mints having escrowed nothing into the bridge.
+    #[test]
+    fn mint_against_proof_for_foreign_vault_is_rejected() {
+        let mut mirror = MirrorState::new(config());
+        // The fixture escrows into vault [0x22; 32]; point the bridge config at a
+        // DIFFERENT canonical vault so this proof does not escrow into ours.
+        mirror.config.vault_account = [0x99u8; 32];
+        let err = mirror
+            .mint_against_lock_proof_consensus(
+                &consensus_grade(500, cid(1), 1),
+                &stake_table(),
+                true,
+            )
+            .unwrap_err();
+        assert_eq!(err, ProofMintError::Proof(LockProofError::ClaimMismatch));
+        // Nothing minted, nothing escrowed.
+        assert_eq!(mirror.live_supply, 0);
+        assert_eq!(mirror.currently_locked, 0);
+        assert!(mirror.invariant_holds());
+    }
+
     #[test]
     fn double_mint_via_proof_is_rejected() {
         let mut mirror = MirrorState::new(config());
         let proof = consensus_grade(500, cid(1), 1);
-        mirror.mint_against_lock_proof(&proof).expect("first ok");
+        mirror
+            .mint_against_lock_proof_consensus(&proof, &stake_table(), true)
+            .expect("first ok");
         assert_eq!(
-            mirror.mint_against_lock_proof(&proof).unwrap_err(),
+            mirror
+                .mint_against_lock_proof_consensus(&proof, &stake_table(), true)
+                .unwrap_err(),
             ProofMintError::Mint(MirrorError::DuplicateLock)
         );
         assert_eq!(mirror.live_supply, 500);
@@ -1742,6 +1870,8 @@ mod tests {
             &cfg.spl_mint,
             cfg.min_amount,
             cfg.max_amount,
+            &cfg.vault_account,
+            &cfg.lock_program,
             &anchor,
             true,
             Some(&policy),
@@ -1771,12 +1901,32 @@ mod tests {
                 &cfg.spl_mint,
                 cfg.min_amount,
                 cfg.max_amount,
+                &cfg.vault_account,
+                &cfg.lock_program,
                 &anchor,
                 false,
                 Some(&policy),
             )
             .unwrap_err(),
             LockProofError::StakeProvenanceMissing
+        );
+
+        // BR-2-B: a statement cannot be minted for a lock that escrows into a
+        // foreign vault (here: the bridge config expects a different vault).
+        assert_eq!(
+            SolanaConsensusStatement::of_verified(
+                &proof,
+                &cfg.spl_mint,
+                cfg.min_amount,
+                cfg.max_amount,
+                &[0x99u8; 32], // not the fixture's vault [0x22; 32]
+                &cfg.lock_program,
+                &anchor,
+                true,
+                Some(&policy),
+            )
+            .unwrap_err(),
+            LockProofError::ClaimMismatch
         );
     }
 
@@ -1792,6 +1942,69 @@ mod tests {
         assert_eq!(mint.amount, 500);
         assert_eq!(mirror.live_supply, 500);
         assert!(mirror.invariant_holds());
+    }
+
+    /// BR-2-C: with the anchor PINNED in governance config, an attacker who
+    /// supplies their own anchor (a 100%-self-stake distribution rooted at a
+    /// different value) is refused before any consensus check runs; the genuine
+    /// pinned anchor still mints.
+    #[test]
+    fn anchored_mint_pins_the_governance_anchor() {
+        let (proof, anchor, policy) = anchored_grade(500, cid(1), 1);
+
+        let mut cfg = config();
+        cfg.pinned_anchor_epoch = Some(anchor.epoch);
+        cfg.pinned_anchor_root = Some(anchor.stake_table_root);
+
+        // A different (attacker-chosen) anchor: same epoch, forged root.
+        let forged_anchor = WeakSubjectivityAnchor {
+            epoch: anchor.epoch,
+            stake_table_root: [0xABu8; 32],
+        };
+        let mut m1 = MirrorState::new(cfg.clone());
+        assert_eq!(
+            m1.mint_against_lock_proof_anchored(&proof, &forged_anchor, true, Some(&policy))
+                .unwrap_err(),
+            ProofMintError::Proof(LockProofError::AnchorNotPinned)
+        );
+        assert_eq!(m1.live_supply, 0);
+
+        // The genuine, governance-pinned anchor mints.
+        let mut m2 = MirrorState::new(cfg);
+        let (mint, trust) = m2
+            .mint_against_lock_proof_anchored(&proof, &anchor, true, Some(&policy))
+            .expect("pinned anchor mints");
+        assert_eq!(trust, LockProofTrust::ConsensusVerified);
+        assert_eq!(mint.amount, 500);
+        assert!(m2.invariant_holds());
+    }
+
+    /// BR-2-A (at the value-bearing mint): the anchored mint counts only votes
+    /// from the on-chain authorized voter. Re-signing a vote with an imposter key
+    /// drops its stake below 2/3, so the mint is refused and nothing is credited.
+    #[test]
+    fn anchored_mint_refused_unauthorized_voter() {
+        let (mut proof, anchor, policy) = anchored_grade(500, cid(1), 1);
+        let imposter = prov::sk(99);
+        let va1 = [0xA1u8; 32];
+        proof.consensus.votes[0] = prov::tower_sync_tx(
+            &imposter,
+            &va1,
+            proof.consensus.slot,
+            proof.consensus.bank_hash,
+        );
+        let mut mirror = MirrorState::new(config());
+        assert_eq!(
+            mirror
+                .mint_against_lock_proof_anchored(&proof, &anchor, true, Some(&policy))
+                .unwrap_err(),
+            ProofMintError::Proof(LockProofError::StakeBelowThreshold {
+                voted: 300,
+                total: 1000
+            })
+        );
+        assert_eq!(mirror.live_supply, 0);
+        assert_eq!(mirror.currently_locked, 0);
     }
 
     #[test]

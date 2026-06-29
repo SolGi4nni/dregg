@@ -211,6 +211,30 @@ pub struct MirrorConfig {
     pub min_amount: u64,
     /// Maximum per-lock amount (above this, governance is required).
     pub max_amount: u64,
+    /// **The canonical bridge vault account** (the Solana PDA that custodies
+    /// locked `$DREGG`). A trustless lock proof MUST escrow INTO this account:
+    /// proving that *some* account merely EXISTS on Solana is not enough to mint
+    /// (red-team BR-2-B / BR-3 — without this an attacker plants a self-asserting
+    /// lock blob in any ~0.001-SOL account, lands it in a genuine finalized
+    /// accounts hash, and mints having escrowed nothing). The trustless mint
+    /// rejects any proof whose `inclusion.vault_account` is not this account.
+    pub vault_account: [u8; 32],
+    /// **The bridge lock program** that owns the vault account. The mainnet
+    /// inclusion proof's account `owner` must equal this — so the escrow is held
+    /// by the bridge's own program, not an attacker-controlled account that
+    /// merely shares the vault pubkey shape.
+    pub lock_program: [u8; 32],
+    /// Pinned weak-subjectivity anchor epoch (governance constant). When set
+    /// alongside [`Self::pinned_anchor_root`], the anchored trustless mint
+    /// REFUSES any caller-supplied anchor whose `(epoch, stake_table_root)` does
+    /// not match — closing red-team BR-2-C (the anchor + stake table were
+    /// per-call args an attacker could swap for a 100%-self-stake distribution).
+    #[serde(default)]
+    pub pinned_anchor_epoch: Option<u64>,
+    /// Pinned weak-subjectivity anchor stake-table root (governance constant).
+    /// See [`Self::pinned_anchor_epoch`].
+    #[serde(default)]
+    pub pinned_anchor_root: Option<[u8; 32]>,
 }
 
 impl MirrorConfig {
@@ -239,8 +263,13 @@ pub enum MirrorError {
     /// This `lock_id` was already mirrored (double-mint prevention).
     DuplicateLock,
     /// Minting `amount` would push `live_supply` above `currently_locked`
-    /// (the conservation invariant). Should be unreachable for a truthful
-    /// attestation, but enforced structurally as defence in depth.
+    /// (the conservation invariant). This is a LIVE gate, not decorative: the
+    /// escrow backing (`currently_locked`) is raised ONLY by an independently
+    /// verified lock ([`MirrorState::record_escrow`]); a mint draws against it
+    /// ([`MirrorState::draw_mint`]) and is refused here when it would exceed the
+    /// backing — so a mint with no real escrow, or a second draw against an
+    /// already-spent escrow, is rejected (red-team BR-3: conservation is now
+    /// non-vacuous, not "credit both sides by the same amount").
     InsufficientLocked { live: u64, locked: u64, amount: u64 },
     /// Redeeming `amount` exceeds the circulating mirror supply.
     InsufficientMirrorSupply { live: u64, amount: u64 },
@@ -359,13 +388,21 @@ impl MirrorState {
         self.seen_locks.contains(lock_id)
     }
 
-    /// **Mirror-mint against an attested Solana lock.**
+    /// **Mirror-mint against an attested Solana lock — RAM path, TEST/INTERNAL
+    /// ONLY.**
     ///
     /// Verifies the threshold attestation, enforces replay/amount/mint bounds,
-    /// credits `currently_locked`, and produces the REAL kernel
-    /// [`Effect::Mint`] that mints `amount` mirror-$DREGG to the recipient.
+    /// records the escrow, and produces the REAL kernel [`Effect::Mint`].
+    ///
+    /// This is gated behind `#[cfg(any(test, feature = "test-utils"))]` and is
+    /// NOT part of the production surface (red-team BR-1): its replay dedup is a
+    /// per-process `seen_locks` set, so two relayer processes would double-mint
+    /// one lock. The SOUND production path is [`Self::verify_lock`] →
+    /// `dregg_turn::executor::bridge_ledger`'s `bridge_mint_against_lock`, whose
+    /// committed `note_nullifiers` set is the GLOBAL double-mint authority.
     ///
     /// On any error the state is left unchanged.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn mint_against_lock(
         &mut self,
         att: &SolanaLockAttestation,
@@ -433,47 +470,62 @@ impl MirrorState {
         })
     }
 
-    /// The shared lock-accounting routine, independent of how the lock is
-    /// evidenced (trusted attestation vs trustless proof). It enforces replay
-    /// dedup, the conservation invariant, and emits the REAL [`Effect::Mint`].
+    /// **Record an independently-verified escrow**, raising `currently_locked`
+    /// (the conservation backing) by `escrowed`. Deduped by `lock_id` so the same
+    /// escrow can never inflate the backing twice.
     ///
-    /// Callers MUST have verified the lock evidence (signature or proof) and the
-    /// amount bounds / mint match BEFORE calling this; `credit_lock` is the part
-    /// that is identical across trust models (see
-    /// `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`, "Migration").
+    /// This is the INDEPENDENT source of `currently_locked` (red-team BR-3): the
+    /// caller MUST have verified that `escrowed` was genuinely locked into the
+    /// bridge's vault (a signed attestation, or a vault-bound consensus proof)
+    /// BEFORE calling. The mint draws against this backing separately via
+    /// [`Self::draw_mint`] — escrow and mint are NOT one fused credit, so
+    /// conservation is a real constraint.
     ///
     /// On any error the state is left unchanged.
-    pub(crate) fn credit_lock(
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn record_escrow(
         &mut self,
         lock_id: [u8; 32],
-        amount: u64,
-        recipient: CellId,
-    ) -> Result<MirrorMint, MirrorError> {
+        escrowed: u64,
+    ) -> Result<(), MirrorError> {
         if self.seen_locks.contains(&lock_id) {
             return Err(MirrorError::DuplicateLock);
         }
-
-        // Credit the lock, then check the mint stays within it.
         let new_locked = self
             .currently_locked
-            .checked_add(amount)
+            .checked_add(escrowed)
             .ok_or(MirrorError::Overflow)?;
+        self.currently_locked = new_locked;
+        self.seen_locks.insert(lock_id);
+        Ok(())
+    }
+
+    /// **Draw a mint against the recorded escrow backing**, raising `live_supply`
+    /// by `amount` and emitting the REAL [`Effect::Mint`]. This is where
+    /// conservation BITES (red-team BR-3): if `live_supply + amount` would exceed
+    /// `currently_locked` — i.e. the mint is not covered by independently-recorded
+    /// escrow — it is refused with [`MirrorError::InsufficientLocked`]. A mint
+    /// with no escrow at all (`currently_locked == 0`) is therefore rejected.
+    ///
+    /// On any error the state is left unchanged.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn draw_mint(
+        &mut self,
+        amount: u64,
+        recipient: CellId,
+    ) -> Result<MirrorMint, MirrorError> {
         let new_live = self
             .live_supply
             .checked_add(amount)
             .ok_or(MirrorError::Overflow)?;
-        if new_live > new_locked {
+        if new_live > self.currently_locked {
             return Err(MirrorError::InsufficientLocked {
                 live: self.live_supply,
-                locked: new_locked,
+                locked: self.currently_locked,
                 amount,
             });
         }
-
-        // Commit.
-        self.currently_locked = new_locked;
         self.live_supply = new_live;
-        self.seen_locks.insert(lock_id);
         debug_assert!(self.invariant_holds());
 
         Ok(MirrorMint {
@@ -485,6 +537,37 @@ impl MirrorState {
             recipient,
             amount,
         })
+    }
+
+    /// The shared lock-accounting routine, independent of how the lock is
+    /// evidenced (trusted attestation vs trustless proof): record the escrow as
+    /// the conservation backing, then draw the mint against it. The two steps are
+    /// distinct accumulators (see [`Self::record_escrow`] / [`Self::draw_mint`]),
+    /// so `InsufficientLocked` is genuinely reachable — not the old
+    /// credit-both-sides-by-the-same-amount vacuity (red-team BR-3).
+    ///
+    /// Callers MUST have verified the lock evidence (signature or proof), the
+    /// amount bounds / mint match, AND that the lock escrows into the bridge vault
+    /// BEFORE calling this (see `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`).
+    ///
+    /// On any error the state is left unchanged.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn credit_lock(
+        &mut self,
+        lock_id: [u8; 32],
+        amount: u64,
+        recipient: CellId,
+    ) -> Result<MirrorMint, MirrorError> {
+        self.record_escrow(lock_id, amount)?;
+        match self.draw_mint(amount, recipient) {
+            Ok(mint) => Ok(mint),
+            Err(e) => {
+                // Roll the escrow back so the whole op is atomic on failure.
+                self.currently_locked = self.currently_locked.saturating_sub(amount);
+                self.seen_locks.remove(&lock_id);
+                Err(e)
+            }
+        }
     }
 
     /// **Redeem (burn) mirror-$DREGG and request the Solana unlock.**
@@ -564,6 +647,10 @@ mod tests {
             }],
             min_amount: 1,
             max_amount: 1_000_000,
+            vault_account: [0x22u8; 32],
+            lock_program: [0x07u8; 32],
+            pinned_anchor_epoch: None,
+            pinned_anchor_root: None,
         }
     }
 
@@ -630,6 +717,62 @@ mod tests {
         // No double credit.
         assert_eq!(mirror.live_supply, 500);
         assert_eq!(mirror.currently_locked, 500);
+    }
+
+    /// BR-3 (conservation is NON-VACUOUS): a mint draw with NO recorded escrow is
+    /// rejected. Under the old "credit both sides by the same amount" accounting
+    /// this was dead code (`live > locked` always false); now `currently_locked`
+    /// is an independent backing the draw is checked against.
+    #[test]
+    fn draw_without_escrow_breaks_conservation() {
+        let o = oracle();
+        let mut mirror = MirrorState::new(config(&o));
+        assert_eq!(mirror.currently_locked, 0);
+        assert_eq!(
+            mirror.draw_mint(500, cid(1)).unwrap_err(),
+            MirrorError::InsufficientLocked {
+                live: 0,
+                locked: 0,
+                amount: 500,
+            }
+        );
+        // No mint happened.
+        assert_eq!(mirror.live_supply, 0);
+        assert!(mirror.invariant_holds());
+    }
+
+    /// BR-3: conservation BITES — minting more than the recorded escrow is
+    /// rejected (the over-mint case), while minting WITHIN it succeeds (the
+    /// true-and-false coverage that proves the gate is non-vacuous).
+    #[test]
+    fn over_mint_beyond_escrow_is_rejected() {
+        let o = oracle();
+        let mut mirror = MirrorState::new(config(&o));
+
+        // Record an independently-verified escrow of 500.
+        mirror
+            .record_escrow([1u8; 32], 500)
+            .expect("escrow recorded");
+        assert_eq!(mirror.currently_locked, 500);
+
+        // Draw exactly 500: WITHIN backing → ok (the FALSE branch of the gate).
+        mirror.draw_mint(500, cid(1)).expect("draw within escrow");
+        assert_eq!(mirror.live_supply, 500);
+        assert!(mirror.invariant_holds());
+
+        // Draw 1 more against the same (now fully-drawn) escrow → over-mint, the
+        // TRUE branch of the gate fires.
+        assert_eq!(
+            mirror.draw_mint(1, cid(2)).unwrap_err(),
+            MirrorError::InsufficientLocked {
+                live: 500,
+                locked: 500,
+                amount: 1,
+            }
+        );
+        // The rejected draw left supply untouched; conservation holds.
+        assert_eq!(mirror.live_supply, 500);
+        assert!(mirror.invariant_holds());
     }
 
     #[test]

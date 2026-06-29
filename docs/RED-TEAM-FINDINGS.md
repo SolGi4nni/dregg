@@ -32,8 +32,8 @@ finding is manufactured.
 | ID | Surface | Finding | Severity | Live? |
 |----|---------|---------|----------|-------|
 | **CAP-1** | Cap / authority | Kernel gate had a **default-allow hole**: `determine_required_permissions` was an allow-list with `_ => {}`, so `SetProgram`/`CellDestroy`/`CellSeal`/`CellUnseal`/`MakeSovereign` mapped to NO permission → `Authorization::Unchecked` accepted → overwrite/destroy a victim cell holding only any non-`Impossible` cap to it (cap amplification) | **CRITICAL** | ✅ FIXED (exhaustive match — no `_ =>`; SetProgram/MakeSovereign → SetVerificationKey floor, CellSeal/Unseal/Destroy → SetPermissions floor; Lean-aligned; PoC now refused, owner-signed still passes) |
-| **BR-2** | Bridge (money) | Solana "trustless" verifier is forgeable at 4 points; deepest: inclusion proof proves an account *exists* on Solana, never that funds were *escrowed to the bridge* → mint arbitrary $DREGG having locked nothing | **CRITICAL** | latent |
-| **BR-3** | Bridge (money) | Conservation invariant is **vacuous** (`InsufficientLocked` is dead code: every mint credits both `currently_locked` and `live_supply` by the same amount); real conservation rests entirely on forgeable lock evidence (BR-2) | **CRITICAL** | latent |
+| **BR-2** | Bridge (money) | Solana "trustless" verifier is forgeable at 4 points; deepest: inclusion proof proves an account *exists* on Solana, never that funds were *escrowed to the bridge* → mint arbitrary $DREGG having locked nothing | **CRITICAL** | latent — ✅ **FIXED** |
+| **BR-3** | Bridge (money) | Conservation invariant is **vacuous** (`InsufficientLocked` is dead code: every mint credits both `currently_locked` and `live_supply` by the same amount); real conservation rests entirely on forgeable lock evidence (BR-2) | **CRITICAL** | latent — ✅ **FIXED** |
 | **SBX-1** | Sandbox | wasmtime provider default is **root**: empty cap slice from `exec` falls through to `CapabilitySet::default() = grant_all()` → preopen host `/` read-write + `inherit_network`; untrusted workload reads/writes whole host fs + all tenants | **CRITICAL** | live |
 | **GW-4a** | Gateway / bot | Discord `POST /api/op` was **unauthenticated custodial signing as any user** (signer derived from `bot_secret` + request-body `user_id`, no ownership proof) and publicly proxied → forge credentials / squat names on arbitrary users' cells | **CRITICAL→HIGH** | ✅ FIXED (per-user op-token ownership gate; unproven `user_id` → 401) — *needs redeploy* |
 | **LC-2** | Light-client | Finalized light client has **no trusted validator set**: leg-3 accepts any N signatures over an attacker-supplied `participant_count` → an equivocating prover finalizes a fork | HIGH (CRIT-by-design) | latent (demo/test only) |
@@ -47,7 +47,7 @@ finding is manufactured.
 | **NODE-2** | Recovery | **No anti-rollback / height monotonicity** on boot → swap an older internally-consistent snapshot ⇒ revert finalized spends/burns, resurrect consumed nullifiers | HIGH | live |
 | **MESH-2** | Mesh | dregg node `:8420`/`:9420` published to `0.0.0.0` (docker bypasses host ufw) with an **unauthenticated read API** → full ledger/receipt dump; gossip port exposed | HIGH | live |
 | **F2** | Consensus | Federation admission bonds are **self-asserted, unbacked** (`sign(owner‖amount)`, no escrow) → `Bond::post(sk, u64::MAX)` admits a free Sybil | HIGH | live (crate boundary) |
-| **BR-1** | Bridge (money) | Unsound RAM mint APIs (`mint_against_lock`/`mint_against_payment`) still `pub`, dedup only per-process → two relayers double-mint one lock | HIGH | latent |
+| **BR-1** | Bridge (money) | Unsound RAM mint APIs (`mint_against_lock`/`mint_against_payment`) still `pub`, dedup only per-process → two relayers double-mint one lock | HIGH | latent — ✅ **FIXED** |
 | **LEASE-1c/2** | Lease / metering | Settled meter total is self-reported by the backend (no `meter_units ≤ budget`); no atomic balance ⇒ same lease runs N times | HIGH | live |
 | **LC-3** | Light-client | The production-wired wasm light client has **no finality gate at all** (legs 1+2 only) → cannot tell a finalized chain from an equivocating fork | MED-HIGH | live |
 | **WALLET-3** | Wallet | Any origin can `dregg:subscribe` (unrestricted) → `notifySubscribers` broadcasts the user's receipt/activity/intent stream to every page, no origin check | MEDIUM | live |
@@ -180,6 +180,50 @@ has a non-amplification floor. The forgery surface is closed; the hole is that f
 webhook server, no binary wires a mint/verify API (every caller lives in doctests
 / `bridge/tests`). All bridge findings are therefore `(latent)`: they bite the
 moment the obvious API is deployed.
+
+> ✅ **BR-1/2/3 FIXED (2026-06-29), before any relayer/webhook deploy.** The
+> escrow-to-bridge binding, non-vacuous conservation, and RAM-mint gating below
+> are now enforced and tested in `bridge/src/{solana_mirror,solana_trustless,
+> stripe_mirror}.rs`. Summary of the closures:
+>
+> - **BR-2-B / BR-3 (deepest, "defeats even the anchored path"):**
+>   `MirrorConfig` now pins `vault_account` (the canonical bridge PDA) and
+>   `lock_program` (the vault owner). `SolanaLockProof::binds_bridge_vault`
+>   requires the inclusion's escrow account to BE that vault — and, on the
+>   mainnet path, to be OWNED by the lock program. Every trustless mint (and the
+>   `SolanaConsensusStatement::of_verified` succinct seam) enforces it. A
+>   consensus-valid proof whose lock record sits in a foreign account is now
+>   rejected with `ClaimMismatch` (test `mint_against_proof_for_foreign_vault_is_rejected`,
+>   and the statement-level `succinct_statement_…`).
+> - **BR-3 (conservation now NON-VACUOUS):** escrow accounting is decoupled from
+>   the mint draw. `currently_locked` / `total_verified_payments` is raised ONLY
+>   by an independently-verified lock/payment (`record_escrow` /
+>   `record_payment_backing`); the mint draws against it (`draw_mint`) and is
+>   refused by `InsufficientLocked` / `InsufficientBacking` when it would exceed
+>   the backing. A mint with no escrow, or a draw beyond it, is rejected — tested
+>   true AND false (`draw_without_escrow_breaks_conservation`,
+>   `over_mint_beyond_escrow_is_rejected`, `draw_beyond_backing_breaks_conservation`).
+> - **BR-2-D (structure-only mint):** the state-mutating `mint_against_lock_proof`
+>   (which credited after only a self-consistency check) is REMOVED; minting
+>   requires `ConsensusVerified` (`structure_only_verify_does_not_mint`).
+> - **BR-2-A (authorized voter):** the value-bearing mint routes through the
+>   anchored, on-chain-authorized-voter-bound tally; an imposter signer drops
+>   below 2/3 and the mint is refused (`anchored_mint_refused_unauthorized_voter`).
+> - **BR-2-C (pinned anchor):** `MirrorConfig` pins the weak-subjectivity anchor
+>   `(epoch, root)`; a caller-supplied anchor that differs is refused with
+>   `AnchorNotPinned` before any consensus check (`anchored_mint_pins_the_governance_anchor`).
+> - **BR-1 (RAM mint double-mint):** all RAM mint methods
+>   (`mint_against_lock`, `mint_against_lock_proof_consensus`,
+>   `mint_against_lock_proof_anchored`, `mint_against_payment`,
+>   `mint_against_webhook`) are now `#[cfg(any(test, feature = "test-utils"))]`
+>   — absent from the production build. The exposed production surface is the
+>   `verify_*` functions + the committed `bridge_mint_against_lock` (whose
+>   `note_nullifiers` set is the GLOBAL double-mint authority).
+>
+> Residual (named, not closed by this lane): the in-circuit binding of
+> `(nullifier, recipient, amount)` via `action_binding`/`bridge_action_air` is a
+> separate VK-affecting weld; and the mainnet wire-ingestion / stake-table
+> rotation refinements named in `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md` remain.
 
 ### Verdict table
 | # | Attack | Verdict | Severity |

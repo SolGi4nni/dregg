@@ -198,6 +198,12 @@ fn devnet_solana_lock_mirrors_and_pays_a_lease() {
         }],
         min_amount: 1,
         max_amount: u64::MAX,
+        // Leg 1 is the trusted-oracle mint (no inclusion proof), so the vault
+        // binding is not exercised here; bind it to the real devnet vault anyway.
+        vault_account: vault_pubkey,
+        lock_program: vault.owner,
+        pinned_anchor_epoch: None,
+        pinned_anchor_root: None,
     });
 
     let mint = mirror
