@@ -35,7 +35,7 @@ finding is manufactured.
 | **BR-2** | Bridge (money) | Solana "trustless" verifier is forgeable at 4 points; deepest: inclusion proof proves an account *exists* on Solana, never that funds were *escrowed to the bridge* → mint arbitrary $DREGG having locked nothing | **CRITICAL** | latent |
 | **BR-3** | Bridge (money) | Conservation invariant is **vacuous** (`InsufficientLocked` is dead code: every mint credits both `currently_locked` and `live_supply` by the same amount); real conservation rests entirely on forgeable lock evidence (BR-2) | **CRITICAL** | latent |
 | **SBX-1** | Sandbox | wasmtime provider default is **root**: empty cap slice from `exec` falls through to `CapabilitySet::default() = grant_all()` → preopen host `/` read-write + `inherit_network`; untrusted workload reads/writes whole host fs + all tenants | **CRITICAL** | live |
-| **GW-4a** | Gateway / bot | Discord `POST /api/op` is **unauthenticated custodial signing as any user** (signer derived from `bot_secret` + request-body `user_id`, no ownership proof) and is publicly proxied → forge credentials / squat names on arbitrary users' cells | **CRITICAL→HIGH** | live |
+| **GW-4a** | Gateway / bot | Discord `POST /api/op` was **unauthenticated custodial signing as any user** (signer derived from `bot_secret` + request-body `user_id`, no ownership proof) and publicly proxied → forge credentials / squat names on arbitrary users' cells | **CRITICAL→HIGH** | ✅ FIXED (per-user op-token ownership gate; unproven `user_id` → 401) — *needs redeploy* |
 | **LC-2** | Light-client | Finalized light client has **no trusted validator set**: leg-3 accepts any N signatures over an attacker-supplied `participant_count` → an equivocating prover finalizes a fork | HIGH (CRIT-by-design) | latent (demo/test only) |
 | **F1** | Consensus | Federation Ed25519 QC verifier **does not dedup `voter_id`** → one committee key forges a full quorum cert / checkpoint / epoch transition | **HIGH** | ✅ FIXED (voter_id dedup; duplicate-vote QC rejected) |
 | **LC-1** | Light-client | The wired web-surface `dregg://` content gate is **count-only, no crypto, no committee** (`has_quorum` = `len() >= threshold`, `threshold:0` passes) → malicious content server paints attacker bytes as "attested" | **HIGH** | live |
@@ -312,13 +312,35 @@ discarded → fail-open, `execve`+unaddressed `connect`/`socket` allowed).
 | 2 | Unauth machine create/delete/list | **EXPLOITABLE** | HIGH |
 | 3a | Portal: publish to another tenant's namespace | **HOLDS** (cap-gated) | — |
 | 3b | Portal: traversal / stored XSS | **HOLDS** (in-memory map, no fs, no dynamic innerHTML) | — |
-| 4a | Discord `/api/op` custodial-as-any-user | **EXPLOITABLE** | CRITICAL→HIGH |
+| 4a | Discord `/api/op` custodial-as-any-user | ✅ FIXED (ownership-proof gate) | CRITICAL→HIGH |
 | 4b | Discord BYO-LLM key exfil | **HOLDS** (sealed XChaCha20, redacted, fixed endpoints) | — |
 | 4c | Discord channel isolation | **HOLDS** (by design) | — |
 | 4d | Discord `/admin` authz | **HOLDS** (constant-time token, 404/401) | — |
 
-### GW-4a (CRITICAL→HIGH) — Discord `/api/op` unauthenticated custodial signing
-`POST /api/op` is registered with **no auth** (`discord-bot/src/http_server.rs:264`;
+### GW-4a (CRITICAL→HIGH) — Discord `/api/op` unauthenticated custodial signing — ✅ FIXED
+**Fixed** (`discord-bot/src/http_server.rs`, `discord-bot/src/cipherclerk.rs`):
+`drive_op` now calls `authorize_op` *before* any turn is built/signed. The caller
+must present an ownership proof for the *exact* `user_id` in the body, as
+`Authorization: Bearer <token>`: either the **per-user op token**
+(`cipherclerk::op_token(bot_secret, user_id)` = `blake3::derive_key`-keyed by the
+bot secret, domain-separated from the signing seed so it is NOT the Ed25519 key —
+the capability the bot hands a Discord-authenticated user) **or** the operator
+`ADMIN_TOKEN` (master override; the operator already holds the bot secret).
+Constant-time compare; a missing/wrong token, or a token bound to a *different*
+user, is `401`. The gate is always on (the per-user token is always derivable,
+so the endpoint is never an open custodial-signing surface even without
+`ADMIN_TOKEN`). The legit in-bot flow is unaffected: the desktop drives the bot
+**on-chain** (the command cell the reactor watches → `deos_drive::drive`
+in-process), never through this HTTP POST. Tests (`http_server::tests`):
+`op_refused_without_ownership_proof`, `op_refused_with_wrong_users_token`,
+`op_refused_with_garbage_token`, `op_authorized_with_per_user_token_passes_the_gate`,
+`op_authorized_with_operator_token`, `op_token_is_per_user_and_deterministic`.
+**Residual (defence-in-depth, gateway/deploy lane — not this fix):** scope the
+Caddy `/api/*` matcher to the read endpoints so `/api/op` is not proxied publicly
+at all. The bot is **live on the edge** → this fix needs a redeploy to take effect.
+
+#### Original finding (for the record)
+`POST /api/op` was registered with **no auth** (`discord-bot/src/http_server.rs:264`;
 only `/admin` is gated). `deos_drive::drive` (`deos_drive.rs:357-365`) derives the
 signing cipherclerk from `bot_secret` + **`req.user_id` from the request body** —
 no proof the caller owns that user_id. Any caller signs+submits a real on-chain
@@ -670,8 +692,10 @@ rides bearer + ACL + port scoping (which MESH-2 undercuts).
 2. **SBX-1/2/3 (CRITICAL, live)** — wasmtime provider default empty (not root);
    override `instantiate_with_caps`; make `fs_preopen_from_cap` fail-closed; refuse
    `native-provider` on non-Linux. Do before ANY untrusted-guest deployment.
-3. **GW-4a (CRITICAL→HIGH, live)** — authenticate `/api/op` to the owning user (or
-   remove the HTTP custodial path) and stop proxying it publicly.
+3. **GW-4a (CRITICAL→HIGH)** — ✅ FIXED: `/api/op` now requires a per-user
+   ownership-proof token (or the operator token); an unproven `user_id` is `401`.
+   Residual (gateway lane): scope the Caddy `/api/*` matcher so `/api/op` is not
+   proxied publicly. *Needs redeploy (bot is live on the edge).*
 4. **LEASE-1a + LEASE-3 (CRITICAL, live)** — read the verified on-chain lease before
    minting a funded lease; persist + kernel-enforce the `(lease,period)` settlement
    dedup.

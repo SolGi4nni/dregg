@@ -142,6 +142,26 @@ pub fn seed_for(bot_secret: &[u8; 32], discord_user_id: u64) -> [u8; 32] {
     blake3::derive_key("dregg-discord-bot-v1", &input)
 }
 
+/// Derive the **per-user op token** — the capability that proves a caller
+/// controls a given Discord user when driving a custodial op over HTTP
+/// (`POST /api/op`). Keyed by the bot's master secret, so it is unforgeable
+/// without that secret, yet deterministically reproducible by the bot for a
+/// Discord-AUTHENTICATED user (the bot hands it back in an authenticated
+/// interaction — e.g. a `/link`/DM reply). The HTTP surface then verifies the
+/// presented token equals this value *for the `user_id` in the request body*
+/// before custodially signing as that user — closing the GW-4a hole where a
+/// bare, unproven `user_id` was enough to sign as anyone.
+///
+/// Domain-separated from the signing seed (`-op-token-v1` vs `-v1`) so the token
+/// is NOT the signing key: leaking it lets a holder drive ops as that one user,
+/// never recover their Ed25519 secret.
+pub fn op_token(bot_secret: &[u8; 32], discord_user_id: u64) -> String {
+    let mut input = Vec::with_capacity(32 + 8);
+    input.extend_from_slice(bot_secret);
+    input.extend_from_slice(&discord_user_id.to_le_bytes());
+    hex::encode(blake3::derive_key("dregg-discord-bot-op-token-v1", &input))
+}
+
 /// Sign a string action using the legacy BLAKE3-MAC scheme accepted by
 /// old devnet endpoints. Returns a hex-encoded 32-byte MAC.
 ///

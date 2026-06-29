@@ -32,7 +32,7 @@ use std::time::Duration;
 use axum::{
     Router,
     extract::{Path, Request, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
     response::{
         Html, IntoResponse, Json,
@@ -445,10 +445,21 @@ async fn list_queues(
 /// nudge for a peer that already speaks HTTP, routing through the SAME custodial
 /// [`crate::deos_drive::drive`] the on-chain reactor uses. The command bus is the
 /// chain, not this POST.
+///
+/// Because this path custodially signs as `req.user_id`, it is gated by
+/// [`authorize_op`]: the caller must present an ownership proof (the per-user op
+/// token, or the operator token) for that exact user. An unproven `user_id` is
+/// `401` — closing GW-4a.
 async fn drive_op(
     State(state): State<Arc<BotState>>,
+    headers: HeaderMap,
     Json(req): Json<crate::deos_drive::DriveRequest>,
 ) -> Result<Json<crate::deos_drive::DriveOutcome>, HttpError> {
+    // GW-4a fix: a custodial `/api/op` drive signs as `req.user_id`, so the
+    // caller MUST prove they control that user. A bare, unproven `user_id` (the
+    // forge-credentials / squat-names exploit) is REFUSED here, before any turn
+    // is built or signed.
+    authorize_op(&state, &headers, req.user_id)?;
     match crate::deos_drive::drive(&state, &req).await {
         Ok(outcome) => {
             info!(
@@ -466,6 +477,66 @@ async fn drive_op(
             })
         }
     }
+}
+
+/// **GW-4a ownership gate for `/api/op`.** The custodial drive signs as the
+/// request body's `user_id`; this requires the caller to PROVE they control that
+/// user. Two proofs are accepted (constant-time compared, no length/early-exit
+/// leak):
+///   1. the **per-user op token** [`crate::cipherclerk::op_token`] — the
+///      capability the bot hands a Discord-authenticated user; it is bound to the
+///      *exact* `user_id` being driven, so a token for one user cannot drive
+///      another's cell; OR
+///   2. the operator's `ADMIN_TOKEN` (the master credential — the operator
+///      already holds the bot secret and can custodially act for anyone).
+///
+/// A missing token, or a token that matches neither, is `401 Unauthorized` — so a
+/// bare unproven `user_id` (the exploit: forge `gov_id`/`kyc`, squat names on a
+/// victim's cell) is REFUSED. The gate is always on: the per-user token is always
+/// derivable, so the endpoint is never an open custodial-signing surface even
+/// when `ADMIN_TOKEN` is unset.
+fn authorize_op(state: &BotState, headers: &HeaderMap, user_id: u64) -> Result<(), HttpError> {
+    let presented = bearer_token(headers).unwrap_or_default();
+    if presented.is_empty() {
+        warn!(user_id, "/api/op: rejected drive with no ownership proof");
+        return Err(op_unauthorized());
+    }
+
+    // Proof 1: the per-user op token for the EXACT user being driven.
+    let expected = crate::cipherclerk::op_token(&state.config.bot_secret, user_id);
+    if constant_time_eq(presented.as_bytes(), expected.as_bytes()) {
+        return Ok(());
+    }
+
+    // Proof 2: the operator master token (optional; only when configured).
+    if let Some(admin) = state.config.admin_token.as_deref() {
+        if constant_time_eq(presented.as_bytes(), admin.as_bytes()) {
+            return Ok(());
+        }
+    }
+
+    warn!(
+        user_id,
+        "/api/op: rejected drive — presented token does not prove control of this user"
+    );
+    Err(op_unauthorized())
+}
+
+/// The single 401 response for an unauthorized `/api/op` drive (no internals leak).
+fn op_unauthorized() -> HttpError {
+    HttpError {
+        status: StatusCode::UNAUTHORIZED,
+        message: "ownership proof required: present the per-user op token (or operator token) as `Authorization: Bearer <token>`".to_string(),
+    }
+}
+
+/// Extract a `Authorization: Bearer <token>` value from request headers.
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.trim().to_string())
 }
 
 async fn recent_activity(
@@ -1122,6 +1193,98 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ─── GW-4a: /api/op custodial-signing ownership gate ────────────────────
+
+    fn op_body(user_id: u64) -> Body {
+        Body::from(format!(
+            r#"{{"user_id":{user_id},"op":"register_name","name":"victimsquat"}}"#
+        ))
+    }
+
+    async fn post_op(
+        state: Arc<BotState>,
+        user_id: u64,
+        bearer: Option<&str>,
+    ) -> axum::response::Response {
+        let app = build_router(state);
+        let mut builder = HttpRequest::builder()
+            .method("POST")
+            .uri("/api/op")
+            .header("content-type", "application/json");
+        if let Some(token) = bearer {
+            builder = builder.header("Authorization", format!("Bearer {token}"));
+        }
+        app.oneshot(builder.body(op_body(user_id)).unwrap())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn op_refused_without_ownership_proof() {
+        // The GW-4a exploit: drive an op as some user_id with NO proof → REFUSED.
+        let state = state_with_admin(None).await;
+        let resp = post_op(state, 999_888, None).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn op_refused_with_wrong_users_token() {
+        // A token that proves control of user A cannot drive user B's cell.
+        let state = state_with_admin(None).await;
+        // bot_secret is [0u8;32] in the test state; token for a DIFFERENT user.
+        let other_token = crate::cipherclerk::op_token(&[0u8; 32], 111);
+        let resp = post_op(state, 999_888, Some(&other_token)).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn op_refused_with_garbage_token() {
+        let state = state_with_admin(None).await;
+        let resp = post_op(state, 999_888, Some("not-a-real-token")).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn op_authorized_with_per_user_token_passes_the_gate() {
+        // The legit path: the per-user op token for THAT user clears auth. The
+        // drive then fails only at the dead test node (502) — proving the gate
+        // let the proven caller THROUGH (it is not a 401).
+        let state = state_with_admin(None).await;
+        let token = crate::cipherclerk::op_token(&[0u8; 32], 999_888);
+        let resp = post_op(state, 999_888, Some(&token)).await;
+        assert_ne!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "a valid per-user op token must clear the ownership gate"
+        );
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_GATEWAY,
+            "auth passed; the drive then fails at the unreachable test node"
+        );
+    }
+
+    #[tokio::test]
+    async fn op_authorized_with_operator_token() {
+        // The operator master token (ADMIN_TOKEN) can drive any user.
+        let state = state_with_admin(Some("op-master".into())).await;
+        let resp = post_op(state, 999_888, Some("op-master")).await;
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn op_token_is_per_user_and_deterministic() {
+        let secret = [9u8; 32];
+        let a = crate::cipherclerk::op_token(&secret, 1);
+        let a2 = crate::cipherclerk::op_token(&secret, 1);
+        let b = crate::cipherclerk::op_token(&secret, 2);
+        assert_eq!(a, a2, "deterministic for a fixed (secret,user)");
+        assert_ne!(a, b, "distinct per user");
+        // Bound to the secret too.
+        assert_ne!(a, crate::cipherclerk::op_token(&[8u8; 32], 1));
     }
 
     #[test]
