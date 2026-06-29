@@ -42,8 +42,6 @@ jobs:
         platform:
           - runner: ubuntu-latest
             target: x86_64
-          - runner: ubuntu-latest
-            target: aarch64
           - runner: macos-14
             target: aarch64
           - runner: macos-13
