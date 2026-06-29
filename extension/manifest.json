@@ -2,14 +2,19 @@
   "manifest_version": 3,
   "name": "Dragon's Egg Cipherclerk",
   "version": "0.1.0",
-  "description": "Capability-based cipherclerk for dregg: manages signing keys, authorization tokens, and capability handles with zero-knowledge proofs",
+  "description": "Capability-based cipherclerk for dregg: signing keys, authorization tokens, and capability handles with zero-knowledge proofs",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "permissions": ["storage", "activeTab", "contextMenus", "alarms"],
+  "permissions": [
+    "storage",
+    "activeTab",
+    "contextMenus",
+    "alarms"
+  ],
   "host_permissions": [
     "https://devnet.dregg.fg-goose.online/*",
     "wss://devnet.dregg.fg-goose.online/*"
@@ -23,15 +28,30 @@
   "background": {
     "service_worker": "dist/background.js"
   },
-  "content_scripts": [{
-    "matches": ["<all_urls>"],
-    "js": ["dist/content.js"],
-    "run_at": "document_start"
-  }],
-  "web_accessible_resources": [{
-    "resources": ["dist/page.js", "bip39_english.txt", "dregg_wasm.js", "dregg_wasm_bg.wasm"],
-    "matches": ["<all_urls>"]
-  }],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "dist/content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "dist/page.js",
+        "bip39_english.txt",
+        "dregg_wasm.js",
+        "dregg_wasm_bg.wasm"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
