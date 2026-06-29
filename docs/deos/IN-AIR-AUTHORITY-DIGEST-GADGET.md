@@ -239,11 +239,47 @@ any committed VK / registry; the deployed descriptors are byte-identical.
       (`record_pin_offset`, welded to PI 38, verifier-anchored to `compute_authority_digest_felt`).
       Overwriting it with `hash_many(floor)` destroys those bindings and the authority-residue commit.
   The SOUND realization is a NEW dedicated felt-domain floor-digest limb (the `perms_digest` /
-  `vk_digest` pattern at limbs 33/34), which is UNBUILT and requires: (a) extending the pre-limb vector
-  (limbs 24..37 are fully packed today → a width/layout flag-day shifting iroot/state_commit/chain),
-  (b) a new Lean wide-commit absorption proof for that limb, (c) retargeting `gentianAuthDigestCol` off
-  limb 24 onto it in both the Lean gadget and `authority_digest_weld.rs`, (d) computing
-  `hash_many(floor)` into it in `compute_rotated_pre_limbs` + `rotation_witness`. Only THEN can:
+  `vk_digest` pattern at limbs 33/34).
+
+  **HEADROOM-LIMB REFINEMENT (verified 2026-06-28).** The "width/layout flag-day" earlier framed as the
+  cost of the new limb is NOT required. Pre-limb indices **12..23** (`r11..r22`, the "app-register
+  headroom") are GENUINELY UNCONSTRAINED-FREE columns, not zero-gated and not app-bound:
+    - no gate forces them to zero, and no weld reads them — `EffectVmEmitRotationV3.weldsAt`
+      (`EffectVmEmitRotationV3.lean:327`) welds ONLY offsets 1,2,3 (r0/r1/r2), 4..11 (fields[0..7]),
+      and 25 (`B_CAP_ROOT`); every gated authority sub-limb is ≥ 24 (`trace_rotated.rs:120-168`). The
+      rotation descriptor's constraint list is `v1-constraints ++ weldsAt ++ rotPins ++ hashSites`
+      (`rotateV3`, `:373`) — nothing constrains offsets 12..23.
+    - they ARE in the absorbed set — `wireCommitR`/`wire_commit` chains over all 37 limbs incl. 12..23
+      (`rotation_witness.rs:297`; `preLimbsAt`, `EffectVmEmitRotationV3.lean:194`), so a value there
+      lands in the wide commit a pure light client binds.
+    - the producer writes them as ZERO only by DEFAULT (`vec![ZERO]`, nothing assigns 12..23 —
+      `rotation_witness.rs:349,361`), i.e. they are reserved-for-future-app headroom, not a zero-gate.
+  So writing `hash_many(floor)` into one of them (say offset 12) is a VALUE-ONLY layout change:
+  same trace width + chain structure → deployed descriptors / base-layout VKs stay BYTE-IDENTICAL (only
+  each cell's commitment VALUE shifts → a devnet re-genesis). This removes obstacle (a) entirely — no
+  pre-limb-vector extension, no width/layout flag-day, no shifting of iroot/state_commit/chain.
+
+  **BUT the value-only write is NOT a sound flip by itself — the BINDING GAP remains.** A free headroom
+  limb carrying `hash_many(floor)` is bound INTO the commit by the anti-ghost keystone
+  (`wireCommit_binds`) but is NOT forced to equal `hash_many(real declared floor)` by any constraint —
+  exactly because it is unwelded. `gentian_selector_forced_discharged`
+  (`InAirAuthorityDigestGadget.lean:325`) is conditional on `hcommitLimb : limb = hash committedFloor`;
+  an HONEST producer satisfies it, but a forger writing the cell (at `CreateCell` or any
+  caveat-mutating effect) can witness the limb = `hash(empty)` while the cell declares escrow, get it
+  absorbed legitimately, and later dodge the gadget (`floorCol = 0` ⟹ no selector forcing). The
+  `perms_digest`/`vk_digest` limbs avoid this precisely because they are FORCED — pass-through
+  `colEq B_PERMS` welds + the setPerms/setVK declared-param force + the record-pin anti-ghost
+  (`EffectVmEmitRotationV3.lean:2203,2216,2605`). So a sound flip still requires:
+    (b) a new Lean wide-commit absorption proof for the chosen headroom limb,
+    (c) retargeting `gentianAuthDigestCol` off limb 24 onto it (Lean gadget + `authority_digest_weld.rs`),
+    (d) computing `hash_many(floor)` into it in `compute_rotated_pre_limbs` + `rotation_witness`, AND
+    (e) **the per-effect floor-digest BINDING welds** (the perms/vk pattern: force-to-`hash(floor)` at
+        creation/caveat-mutating effects + frozen pass-through + anti-ghost teeth) so the limb is bound
+        to the cell's REAL declaration — VK-affecting for the create/authority descriptor cohort, with
+        new Lean proofs. (An alternative that sidesteps (e): redesign the gadget to decode the floor
+        directly from the already-coverage-bound caveat manifest columns rather than from a digest limb.)
+  (e) is a TARGETED flag-day on the create/authority cohort — far smaller than the 190-site full-layout
+  flag-day, but NOT value-only. Only THEN can:
   1. EMIT the `gentianGadgetDescriptor` (now reading the new floor-digest limb) into a staged registry —
      the chip-lookup table-id + the floor / is-zero / lane columns — the flag-day VK bytes.
   2. A satisfying STARK PRODUCER fill the floor / is-zero-witness / lane columns + the genuine chip rows
@@ -251,10 +287,11 @@ any committed VK / registry; the deployed descriptors are byte-identical.
      `verify_vm_descriptor2` — honest proves, forged (sel=0 dodge / wrong floor / wrong digest) refuses.
   3. Commit the welded VK beside the deployed; route a declared-escrow turn through the gentian
      descriptor on the live verify path; the lockstep flip.
-  Until the new-limb design lands, the gadget is a CONDITIONAL truth (sound under `hcommitLimb`); the
-  flip MUST NOT be taken — forcing it would either make honest escrow turns unprovable/rejected or, via
-  the limb-24 overwrite, accept forgeries on the record-pin surfaces. SettleEscrow is NOT a deployed
-  pure-light-client truth.
+  Until the binding welds (e) (or the manifest-decode redesign) land, the gadget is a CONDITIONAL truth
+  (sound under `hcommitLimb`); the flip MUST NOT be taken — a value-only headroom-limb write alone leaves
+  the limb forger-choosable at the writing effect (the binding gap), and the limb-24 overwrite would
+  accept forgeries on the record-pin surfaces. SettleEscrow is NOT a deployed pure-light-client truth.
+  (The operative blocker is now the binding gap (e), NOT a width flag-day.)
 * **UNLOCKS 18/19/Custom/temporal:** the selector-forcing core is tag-agnostic — `gentian_selector_forced`
   is parametric in the required-tag predicate, so discharge (18) and vault (19) reuse it verbatim
   for the *coverage→selector* half once their satisfaction gates land (18 needs the range-checked
