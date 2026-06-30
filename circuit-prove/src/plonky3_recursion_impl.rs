@@ -413,6 +413,34 @@ pub mod recursive {
         BACKEND.with(|b| b.clone())
     }
 
+    /// Create the FRI recursion backend with the `recompose/coeff` table FORCED on.
+    ///
+    /// Identical to [`create_recursion_backend`] except it sets `with_coeff_lookups()`
+    /// (the fork's `force_coeff_lookups` flag), which ORs into the three `cl`
+    /// (coeff-lookups) gates in `recursion/src/backend/fri.rs`. For the D=4 width-16
+    /// challenger this config uses, `challenger.extension_degree() == D == 4`, so the
+    /// default `cl = (challenger_D != D)` is FALSE and the backend would NOT register
+    /// the `recompose/coeff` table's prover / preprocessor / air-builder. The flag
+    /// overrides that, opting the table in so a `decompose_ext_to_base_coeffs` whose
+    /// per-coefficient base values must ride the `WitnessChecks` bus (the custom
+    /// PI-commitment expose — 4 CONSECUTIVE base lanes of one ext limb) balances.
+    ///
+    /// SEPARATE from [`create_recursion_backend`] (left untouched) so existing leaves'
+    /// VKs do not move: this backend is used ONLY by the commitment-exposing custom
+    /// leaf ([`crate::custom_leaf_adapter::prove_custom_leaf_with_commitment`]). The
+    /// table is inert for any leaf that never calls the coeff-ctl decompose path.
+    pub fn create_recursion_backend_with_coeff_lookups()
+    -> p3_recursion::FriRecursionBackendForExt<D, WIDTH, RATE, Poseidon2Config> {
+        thread_local! {
+            static BACKEND: p3_recursion::FriRecursionBackendForExt<D, WIDTH, RATE, Poseidon2Config> = const {
+                FriRecursionBackend::new(Poseidon2Config::BABY_BEAR_D4_W16)
+                    .with_coeff_lookups()
+                    .for_extension_degree::<D>()
+            };
+        }
+        BACKEND.with(|b| b.clone())
+    }
+
     /// Trait alias capturing the bounds an AIR must satisfy to flow through this
     /// recursion path. Any AIR implementing `p3-air::Air` against both the
     /// uni-stark prover/verifier and the `InteractionSymbolicBuilder` (which is

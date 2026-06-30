@@ -1,0 +1,20 @@
+[package]
+name = "dregg-merge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "The I-confluent offchain merge/write runtime — the DREGG3 §2.4 `merge` interpretation made production. Two parties accumulate I-confluent (CvRDT) operations on their own cell copies with NO coordination, then merge to a single confluent state (commutative, associative, idempotent, order-independent). The confluence gate (the Rust face of Dregg2.Confluence / SemanticConvergence) refuses to merge non-I-confluent ops — they must settle at the boundary (SettlementSoundness). Each merge leaves a re-witnessable MergeReceipt over the read face's MMR. The WRITE half of the read face dregg-query."
+
+[dependencies]
+serde = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+blake3 = "1"
+hex = "0.4"
+dregg-query = { path = "../dregg-query" }
+
+[dev-dependencies]
+serde_json = { workspace = true }

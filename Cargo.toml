@@ -138,7 +138,7 @@ pr-run-mode = "plan"
 #
 # The plonky3-recursion path-patch the 12 crates carried is DROPPED on purpose:
 # the workspace.dependencies below pin `p3-recursion`/`p3-circuit`/
-# `p3-circuit-prover`/`p3-poseidon2-circuit-air` at git rev 72ffc56 (the pushed
+# `p3-circuit-prover`/`p3-poseidon2-circuit-air` at git rev be52a51 (the pushed
 # fork tip == the local `../plonky3-recursion` tree), so all crates resolve the
 # git rev — no path override needed.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -174,11 +174,7 @@ servo-net = { path = "servo-render/vendor/servo-net" }
 [workspace.dependencies]
 ## Local
 dregg-macaroon = { path = "macaroon", default-features = false }
-dregg-net = { path = "net" }
 dregg-types = { path = "types" }
-dregg-secrets = { path = "secrets" }
-dregg-token = { path = "token" }
-dregg-tokenizer = { path = "tokenizer" }
 
 ## Plonky3 core (rev 82cfad73 — the version dregg proofs were validated against)
 p3-air = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
@@ -203,10 +199,10 @@ p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a
 ## child-VK identity pinned in-band + table_public_inputs threaded = the constant-VK perpetual
 ## fold; validated end-to-end by incremental_accumulate_verifies_whole_history). PURE git deps,
 ## no `[patch]`, no sibling checkout — a fresh clone and CI resolve this identically.
-p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "d959ff10f86495e81bd883e5d9dde1f0fcf00d81" }
-p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "d959ff10f86495e81bd883e5d9dde1f0fcf00d81" }
-p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "d959ff10f86495e81bd883e5d9dde1f0fcf00d81" }
-p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "d959ff10f86495e81bd883e5d9dde1f0fcf00d81" }
+p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "be52a51b87c39e41ade632320697df983751471f" }
+p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "be52a51b87c39e41ade632320697df983751471f" }
+p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "be52a51b87c39e41ade632320697df983751471f" }
+p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "be52a51b87c39e41ade632320697df983751471f" }
 
 ## Crates.io
 ## --- TEMP LOCAL DSU-FIX ITERATION PATCH (REMOVE before CI-correct rev bump) ---
