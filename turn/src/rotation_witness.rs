@@ -1045,10 +1045,11 @@ mod tests {
     }
 
     #[test]
-    fn pre_limb_count_is_37_at_r24() {
+    fn pre_limb_count_is_67_at_r24() {
         // 1 cells_root + 24 registers + 4 (cap/nullifier/commitments/heap) + 3 (lifecycle/epoch/
-        // committed_height) + 5 (disc + perms + vk + mode + fields_root, the WAVE-2/3 flag-days).
-        assert_eq!(NUM_PRE_LIMBS, 37);
+        // committed_height) + 5 (disc + perms + vk + mode + fields_root, the WAVE-2/3 flag-days)
+        // + 30 v10 faithful-8-felt completion limbs (37..66: perms/vk/cap/heap/... lanes 1..7).
+        assert_eq!(NUM_PRE_LIMBS, 67);
     }
 
     /// THE iroot NON-OMISSION TOOTH (Lean `mroot_injective`): tamper / truncate / extend /
