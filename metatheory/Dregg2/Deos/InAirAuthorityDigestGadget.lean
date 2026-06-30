@@ -84,7 +84,7 @@ set_option autoImplicit false
 
 The witnessed required-tag floor rides two free PARAM columns; the per-slot is-zero gadget rides a
 boolean column + an inverse-witness column; the chip lookup squeezes 7 lane columns. (Arity 2 is the
-representative fixed arity; the chip lookup is fixed-arity ≤ `CHIP_RATE = 11`, so generalizing the
+representative fixed arity; the chip lookup is fixed-arity ≤ `CHIP_RATE = 16`, so generalizing the
 slot count is the same gadget repeated — the per-slot `isZero_from_gates` is reused verbatim.) -/
 
 /-- Witnessed floor slot 0 (`prmCol 5`). -/

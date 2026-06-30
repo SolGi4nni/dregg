@@ -56,7 +56,11 @@ impl CellState {
     /// tied the circuit to nothing. For a cell that already holds capabilities,
     /// the prover seeds the real root via [`CellState::with_capability_root`].
     pub fn new(balance: u64, nonce: u32) -> Self {
-        Self::with_capability_root(balance, nonce, crate::cap_root::empty_capability_root())
+        // The deployed `cap_root` column is the 1-felt LANE-0 of the native 8-felt
+        // cap-tree root (Phase H-CAP-8). The full 8 felts ride the rotated cap-open
+        // appendix's root-pins (limb 25 ‖ headroom 51..57); this carried column seeds
+        // lane 0. The VK epoch: lane-0's VALUE moves (node8 lane-0 ≠ old 1-felt cap_node).
+        Self::with_capability_root(balance, nonce, crate::cap_root::empty_capability_root()[0])
     }
 
     /// Create a new cell state seeding `capability_root` from a caller-supplied

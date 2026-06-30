@@ -4818,7 +4818,6 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "criterion",
- "dregg-blocklace",
  "dregg-captp",
  "dregg-cell",
  "dregg-circuit",
@@ -4830,7 +4829,6 @@ dependencies = [
  "dregg-token",
  "dregg-turn",
  "dregg-types",
- "ed25519-dalek",
  "postcard",
  "serde",
  "serde_json",
