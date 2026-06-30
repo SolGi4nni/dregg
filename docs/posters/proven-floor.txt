@@ -1,0 +1,79 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                                                                            ║
+║      ██████╗ ██████╗ ███████╗ ██████╗  ██████╗                             ║
+║      ██╔══██╗██╔══██╗██╔════╝██╔════╝ ██╔════╝     a proof system that      ║
+║      ██║  ██║██████╔╝█████╗  ██║  ███╗██║  ███╗    PROVES ITSELF            ║
+║      ██║  ██║██╔══██╗██╔══╝  ██║   ██║██║   ██║                            ║
+║      ██████╔╝██║  ██║███████╗╚██████╔╝╚██████╔╝   the light client         ║
+║      ╚═════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝  ╚═════╝     trusts only the floor    ║
+║                                                                            ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+  A pure light client downloads ONE small proof, checks it in O(1), and KNOWS
+  the entire history is real: every turn executed correctly, the chain is
+  ordered, conservation holds, authority only attenuated. It re-runs nothing.
+
+
+  THE TRUST FLOOR  ─ everything above the line is PROVEN, not assumed ─────────
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │   light-client unfoolability · conservation · authority non-amplification  │
+  │   chain ordering · freshness · settlement · capacity coverage              │  P
+  │   ····························  derived  ····························      │  R
+  │   binding_sound ─┐  recursive_sound ─┐  leaf_sound ─┐  WitnessDecodes ─┐   │  O
+  │                  └──────── each one a THEOREM ───────┴────────┴─────────┘  │  V
+  │   descriptorRefines  (∀ effect, the circuit means the kernel step)         │  E
+  ├════════════════════════════════════════════════════════════════════════════│  N
+  │      F R I   soundness  ·  Poseidon2  collision-resistance  ·  Ed25519       │ ▲
+  │      ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔  the irreducible crypto floor — nothing else  ▔▔▔▔▔▔▔   │ │ trust
+  └──────────────────────────────────────────────────────────────────────────┘ ▼ stops here
+
+      Before, the verifier *assumed* the circuit was sound. Now it *proves*
+      the circuit, and trusts only standard cryptography. Same for the whole
+      deployed assurance case: A ∧ B ∧ C ∧ D ∧ E rests on the floor alone.
+
+
+  THE PIPELINE  ──────────────────────────────────────────────────────────────
+
+     a turn                  proven                folded               pinned
+   ┌─────────┐  effect-vm  ┌─────────┐  recursion ┌─────────┐  one VK  ┌───────┐
+   │ exercise│  ────────▶  │  STARK  │  ────────▶ │ ∞ turns │ ───────▶ │  ◆    │
+   │ a token │   AIR over  │  leaf   │   step∘wrap│  → one  │  forever │ light │
+   │ over    │   owned     │ (R=24,  │   depth-1  │ running │  anchor  │ client│
+   │ state   │   state     │ 8-felt) │   fixed VK │  proof  │          │ pins ◆│
+   └─────────┘             └─────────┘            └─────────┘          └───────┘
+        │                                              │
+        └─ leaves a verifiable receipt ────────────────┘
+           "a turn is the exercise of an attenuable proof-carrying token
+            over owned state, leaving a verifiable receipt."
+
+   PICKLES-STYLE RECURSION: every fold normalizes to one canonical shape, so the
+   verifier circuit is identical at every depth. The chain compresses to a single
+   constant-size proof under a single eternal verification key — pin it once.
+
+
+  YOU DON'T ALWAYS PROVE  ─ pick the fidelity each consumer needs ─────────────
+
+     symbolic ──▶ full ──▶ witness-bundle ──▶ recursive ──▶ aggregated
+     (snappy      (commit  (ship the trace,   (one ZKP,     (whole chain →
+      local)       ments)   re-execute it)     no replay)    one proof, settle)
+       fast ········································ climb on demand ···· cross-chain
+
+   A private node stays quiet. A peer gets a witness bundle and re-runs it. A
+   light client gets a recursive proof and never re-runs anything. A bridge gets
+   one folded proof. One substrate, five rungs, climbed only when needed.
+
+
+  WHAT IT ENABLES
+   ·  run a verified store inside Postgres, attested, not trusted
+   ·  a stranger's light client follows the whole history from one anchor
+   ·  settle or bridge to another chain with a single constant-size proof
+   ·  custom programs, capacities, bridges — each WITNESSED, not asserted
+   ·  the Lean kernel is the executor the node actually runs
+
+         the circuit is derived from the proof; the proof rests on the floor;
+                        the floor is just cryptography.
+
+  ─────────────────────────────────────────────────────────────────────────────
+      proofs as additive attestation · the verification IS the trust
+            ( the receipt remembers what the witness obeyed )
+  ─────────────────────────────────────────────────────────────────────────────
