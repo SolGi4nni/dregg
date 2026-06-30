@@ -501,11 +501,140 @@ the deployed descriptor itself FORCES the cap-tree write (`Rfix tag` re-points h
 Same `EFFECT_VM_WIDTH + APPENDIX_SPAN` base width, so the `CAP_OPEN_SPAN`-widened width is unchanged; the
 authority appendix + `_authorizes` keystones apply verbatim (the appendix reads no base column). -/
 
+/-! ### §12-relocated: the after-spine write descriptor (moved up so the write wrappers can ride it). -/
+
+/-- An equality gate: `var a - var b = 0` (pins column `a` to column `b`). -/
+def eqGate (a b : Nat) : EmittedExpr :=
+  .add (.var a) (.mul (.const (-1)) (.var b))
+
+theorem eqGate_eval (a b : Nat) (env : VmRowEnv) :
+    (eqGate a b).eval env.loc = 0 ↔ env.loc a = env.loc b := by
+  simp only [eqGate, EmittedExpr.eval]; constructor <;> intro h <;> linarith
+
+/-- The after-spine appendix width: 7 after-leaf + 8 after-leaf-digest + `DEPTH·8` node = `15 + 8·DEPTH`. -/
+def AFTER_SPINE_SPAN : Nat := 15 + 8 * DEPTH
+
+/-- The first column of the after-spine appendix (past the 329-col cap-open appendix). -/
+def AFTER_SPINE_BASE (w : Nat) : Nat := w + CAP_OPEN_SPAN
+
+/-- The after-spine column layout. `sib`/`dir` SHARED with the cap-open read (`capOpenCols w`) so the path
+coincides; `capRoot` IS the committed AFTER cap-root block. The unused `src`/`effBit`/`bit` cols are parked
+past the node block (the `MembershipCore` reads only leaf/leafDigest/sib/dir/node/capRoot). -/
+def afterSpineCols (w : Nat) : CapOpenCols :=
+  { leaf       := fun i => AFTER_SPINE_BASE w + i.val
+  , leafDigest := fun i => AFTER_SPINE_BASE w + 7 + i.val
+  , sib        := (capOpenCols w).sib
+  , dir        := (capOpenCols w).dir
+  , node       := fun lvl i => AFTER_SPINE_BASE w + 15 + 8 * lvl + i.val
+  , capRoot    := fun i => Dregg2.Circuit.Emit.EffectVmEmitRotationV3.capRootGroupCol
+                             (EFFECT_VM_WIDTH + 91) i
+  , src        := AFTER_SPINE_BASE w + 15 + 8 * DEPTH
+  , effBit     := AFTER_SPINE_BASE w + 16 + 8 * DEPTH
+  , bit        := fun i => AFTER_SPINE_BASE w + 17 + 8 * DEPTH + i }
+
+/-- `afterSpineCols`'s `dir` is the read's `dir` (defeq) — so the read's `dirBool` discharges the after
+spine's too (no new dir gate needed). -/
+theorem afterSpineCols_dir (w : Nat) : (afterSpineCols w).dir = (capOpenCols w).dir := rfl
+
+/-- The after `capRoot` group is the committed AFTER cap-root block — `groupVal` over it IS
+`afterCapRootCols`. -/
+theorem afterSpine_capRoot_after (w : Nat) (env : VmRowEnv) :
+    groupVal env (afterSpineCols w).capRoot
+      = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.afterCapRootCols env := rfl
+
+/-- The 7 narrowed-leaf weld gates: the after leaf is the IN-PLACE narrow of the read leaf. `slot_hash`
+(leaf 0) = the read's key; `mask_lo` (leaf 3) = `param[KEEP_MASK]`; the other 5 fields = the held (read)
+leaf. -/
+def afterLeafWelds (w : Nat) : List VmConstraint2 :=
+  [ .base (.gate (eqGate ((afterSpineCols w).leaf 0) ((capOpenCols w).leaf 0)))
+  , .base (.gate (eqGate ((afterSpineCols w).leaf 1) ((capOpenCols w).leaf 1)))
+  , .base (.gate (eqGate ((afterSpineCols w).leaf 2) ((capOpenCols w).leaf 2)))
+  , .base (.gate (eqGate ((afterSpineCols w).leaf 3)
+      (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.KEEP_MASK)))
+  , .base (.gate (eqGate ((afterSpineCols w).leaf 4) ((capOpenCols w).leaf 4)))
+  , .base (.gate (eqGate ((afterSpineCols w).leaf 5) ((capOpenCols w).leaf 5)))
+  , .base (.gate (eqGate ((afterSpineCols w).leaf 6) ((capOpenCols w).leaf 6))) ]
+
+/-- The 8 BEFORE cap-root weld gates: the cap-open read's appendix `capRoot` group equals the committed
+BEFORE cap-root block — so `groupVal env (capOpenCols w).capRoot = beforeCapRootCols env`. -/
+def beforeRootWelds (w : Nat) : List VmConstraint2 :=
+  (List.finRange 8).map (fun i =>
+    VmConstraint2.base (.gate (eqGate ((capOpenCols w).capRoot i)
+      (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.capRootGroupCol EFFECT_VM_WIDTH i))))
+
+/-- The key-bind gate: the read leaf's `slot_hash` (leaf 0) equals `param[CAP_KEY]` — so the forced write
+is keyed at the committed `CAP_KEY` column. -/
+def keyBindGate (w : Nat) : EmittedExpr :=
+  eqGate ((capOpenCols w).leaf 0)
+    (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.CAP_KEY)
+
+/-- The after-spine constraint list (appended past the cap-open appendix): the after leaf absorb, the 16
+after-node absorbs, the 8 after root-pins, the 7 narrowed-leaf welds, the 8 before cap-root welds, and the
+key bind. -/
+def afterSpineConstraints (w : Nat) : List VmConstraint2 :=
+  .lookup (leafLookup (afterSpineCols w))
+  :: ((List.range DEPTH).map (fun lvl => VmConstraint2.lookup (nodeLookup (afterSpineCols w) lvl)))
+  ++ ((List.finRange 8).map (fun i => VmConstraint2.base (.gate (rootPinGate (afterSpineCols w) i))))
+  ++ afterLeafWelds w
+  ++ beforeRootWelds w
+  ++ [VmConstraint2.base (.gate (keyBindGate w))]
+
+/-- **`effCapOpenWriteV3 base name n`** — the cap-open membership descriptor (`effCapOpenV3`) WIDENED by the
+after-spine appendix: the deployed write descriptor a light client checks. Its `Satisfied2` FORCES the
+faithful 8-felt cap-write (`*_forces_write8`). -/
+def effCapOpenWriteV3 (base : EffectVmDescriptor2) (name : String) (n : Nat) : EffectVmDescriptor2 :=
+  { (effCapOpenV3 base name n) with
+    name        := name
+    traceWidth  := (effCapOpenV3 base name n).traceWidth + AFTER_SPINE_SPAN
+    constraints := (effCapOpenV3 base name n).constraints ++ afterSpineConstraints base.traceWidth }
+
+/-- Every after-spine constraint is a constraint of the write descriptor. -/
+theorem effCapOpenWriteV3_afterMem (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (c : VmConstraint2) (hc : c ∈ afterSpineConstraints base.traceWidth) :
+    c ∈ (effCapOpenWriteV3 base name n).constraints :=
+  List.mem_append_right _ hc
+
+/-- A `Satisfied2` of the write descriptor strips (constraint-subset) to a `Satisfied2` of the cap-open
+membership descriptor `effCapOpenV3` — the after-spine appendix is all `.lookup`/`.base (.gate …)`, reads no
+base column and contributes no map/mem op. -/
+theorem effCapOpenWriteV3_strips_to_capOpen (hash : List ℤ → ℤ) (base : EffectVmDescriptor2)
+    (name : String) (n : Nat) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+    (h : Satisfied2 hash (effCapOpenWriteV3 base name n) minit mfin maddrs t) :
+    Satisfied2 hash (effCapOpenV3 base name n) minit mfin maddrs t := by
+  have hmapOps : Dregg2.Circuit.DescriptorIR2.mapOpsOf (effCapOpenWriteV3 base name n)
+      = Dregg2.Circuit.DescriptorIR2.mapOpsOf (effCapOpenV3 base name n) := by
+    simp [Dregg2.Circuit.DescriptorIR2.mapOpsOf, effCapOpenWriteV3, afterSpineConstraints,
+      afterLeafWelds, beforeRootWelds, List.filterMap_append, List.filterMap_map, List.filterMap_cons]
+  have hmemOps : Dregg2.Circuit.DescriptorIR2.memOpsOf (effCapOpenWriteV3 base name n)
+      = Dregg2.Circuit.DescriptorIR2.memOpsOf (effCapOpenV3 base name n) := by
+    simp [Dregg2.Circuit.DescriptorIR2.memOpsOf, effCapOpenWriteV3, afterSpineConstraints,
+      afterLeafWelds, beforeRootWelds, List.filterMap_append, List.filterMap_map, List.filterMap_cons]
+  have hmemLog : Dregg2.Circuit.DescriptorIR2.memLog (effCapOpenWriteV3 base name n) t
+      = Dregg2.Circuit.DescriptorIR2.memLog (effCapOpenV3 base name n) t := by
+    simp [Dregg2.Circuit.DescriptorIR2.memLog, hmemOps]
+  have hmapLog : Dregg2.Circuit.DescriptorIR2.mapLog (effCapOpenWriteV3 base name n) t
+      = Dregg2.Circuit.DescriptorIR2.mapLog (effCapOpenV3 base name n) t := by
+    simp [Dregg2.Circuit.DescriptorIR2.mapLog, hmapOps]
+  exact
+    { rowConstraints := fun i hi c hc =>
+        h.rowConstraints i hi c (by
+          show c ∈ (effCapOpenV3 base name n).constraints ++ afterSpineConstraints base.traceWidth
+          exact List.mem_append_left _ hc)
+      rowHashes := h.rowHashes
+      rowRanges := h.rowRanges
+      memAddrsNodup := h.memAddrsNodup
+      memClosed := by have := h.memClosed; rwa [hmemLog] at this
+      memDisciplined := by have := h.memDisciplined; rwa [hmemLog] at this
+      memBalanced := by have := h.memBalanced; rwa [hmemLog] at this
+      memTableFaithful := by have := h.memTableFaithful; rwa [hmemLog] at this
+      mapTableFaithful := by have := h.mapTableFaithful; rwa [hmapLog] at this }
+
 /-- **`introduceWriteCapOpenV3`** — introduce-via-cap on the WRITE-FORCING base (`introduceWriteV3`): the
 authority READ appendix + the deployed `insertWriteOp` (the cap-tree write FORCED, not frozen off-row). -/
 def introduceWriteCapOpenV3 : EffectVmDescriptor2 :=
   withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.INTRODUCE
-    (effCapOpenV3 EffectVmEmitRotationV3.introduceWriteV3
+    (effCapOpenWriteV3 EffectVmEmitRotationV3.introduceWriteV3
       "dregg-effectvm-introduce-v1-rot24-v3-write-capopen" EFF_INTRODUCE)
 
 /-- **`revokeDelegationWriteCapOpenV3`** — revoke(Delegation)-via-cap on the WRITE-FORCING base
@@ -513,7 +642,7 @@ def introduceWriteCapOpenV3 : EffectVmDescriptor2 :=
 FORCED, not frozen off-row). -/
 def revokeDelegationWriteCapOpenV3 : EffectVmDescriptor2 :=
   withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_DELEGATION
-    (effCapOpenV3 EffectVmEmitRotationV3.revokeDelegationWriteV3
+    (effCapOpenWriteV3 EffectVmEmitRotationV3.revokeDelegationWriteV3
       "dregg-effectvm-revoke-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
 
 /-- **`revokeCapabilityWriteCapOpenV3`** — revokeCapability-via-cap on the WRITE-FORCING base
@@ -537,7 +666,7 @@ cap must permit `EFFECT_DELEGATION_OPS`. The apex (`Rfix 55` re-pointed) wires t
 A — refreshDelegation reaches Class-A. -/
 def refreshDelegationWriteCapOpenV3 : EffectVmDescriptor2 :=
   withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REFRESH_DELEGATION
-    (effCapOpenV3 EffectVmEmitRotationV3.refreshDelegationWriteV3
+    (effCapOpenWriteV3 EffectVmEmitRotationV3.refreshDelegationWriteV3
       "dregg-effectvm-refresh-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
 
 /-- **`delegateWriteCapOpenV3`** — delegate-via-cap on the WRITE-FORCING base (`grantCapWriteV3` = the moving
@@ -546,7 +675,7 @@ Unlike `delegateCapOpenV3` (base `grantCapV3`, no write leg, authority-only), TH
 appendix AND the cap-tree write — the apex (`Rfix 1` re-pointed) wires it for the FULL guarantee A. -/
 def delegateWriteCapOpenV3 : EffectVmDescriptor2 :=
   withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
-    (effCapOpenV3 EffectVmEmitRotationV3.grantCapWriteV3
+    (effCapOpenWriteV3 EffectVmEmitRotationV3.grantCapWriteV3
       "dregg-effectvm-delegate-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
 
 /-- **`spawnWriteCapOpenV3`** — spawn-via-cap on the WRITE-FORCING base (`spawnWriteV3` = the spawn actor
@@ -579,16 +708,16 @@ an attenuated grant is a delegation, so the delegator's HELD anchor cap must per
 `[KEEP_MASK, HELD_MASK]` then enforces `granted ⊑ held` on top of that membership. -/
 def delegateAttenWriteCapOpenV3 : EffectVmDescriptor2 :=
   withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
-    (effCapOpenV3 EffectVmEmitRotationV3.delegateAttenV3
+    (effCapOpenWriteV3 EffectVmEmitRotationV3.delegateAttenV3
       "dregg-effectvm-delegateAtten-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
 
 -- The write-forcing wrappers add the SAME +71 constraints (70 appendix + selector tooth) over their
 -- write base + `CAP_OPEN_SPAN` cols; the write base adds 2 map-ops over the frozen/genuine base.
-#guard introduceWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.introduceWriteV3.traceWidth + CAP_OPEN_SPAN
-#guard revokeDelegationWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeDelegationWriteV3.traceWidth + CAP_OPEN_SPAN
+#guard introduceWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.introduceWriteV3.traceWidth + CAP_OPEN_SPAN + AFTER_SPINE_SPAN
+#guard revokeDelegationWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeDelegationWriteV3.traceWidth + CAP_OPEN_SPAN + AFTER_SPINE_SPAN
 #guard revokeCapabilityWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeCapabilityV3.traceWidth + CAP_OPEN_SPAN
-#guard introduceWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.introduceWriteV3.constraints.length + 78
-#guard revokeDelegationWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeDelegationWriteV3.constraints.length + 78
+#guard introduceWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.introduceWriteV3.constraints.length + 78 + 41
+#guard revokeDelegationWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeDelegationWriteV3.constraints.length + 78 + 41
 #guard revokeCapabilityWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeCapabilityV3.constraints.length + 78
 #guard spawnWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.spawnWriteV3.traceWidth + CAP_OPEN_SPAN
 #guard spawnWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.spawnWriteV3.constraints.length + 78
@@ -608,15 +737,15 @@ effect-GENERAL appendix at `EFF_TRANSFER` (bit 1; the attenuate cap-open's leaf 
 facet + decoded tier, so an honest broad/None-tier cap PROVES. -/
 def attenuateCapOpenEffV3 : EffectVmDescriptor2 :=
   withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.ATTENUATE_CAPABILITY
-    (effCapOpenV3 attenuateV3 "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER)
+    (effCapOpenWriteV3 attenuateV3 "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER)
 
 -- The live transfer/attenuate effect-general descriptors share the appendix + the appended
 -- `selectorGate` tooth: +70 appendix constraints +1 selector gate = +71; +91 cols (the gate is
 -- a `.base`, no new column).
 #guard transferCapOpenEffV3.constraints.length == transferV3.constraints.length + 78
-#guard attenuateCapOpenEffV3.constraints.length == attenuateV3.constraints.length + 78
+#guard attenuateCapOpenEffV3.constraints.length == attenuateV3.constraints.length + 78 + 41
 #guard transferCapOpenEffV3.traceWidth == transferV3.traceWidth + CAP_OPEN_SPAN
-#guard attenuateCapOpenEffV3.traceWidth == attenuateV3.traceWidth + CAP_OPEN_SPAN
+#guard attenuateCapOpenEffV3.traceWidth == attenuateV3.traceWidth + CAP_OPEN_SPAN + AFTER_SPINE_SPAN
 
 -- Each fan-out descriptor adds the 70-constraint effect-general appendix + the selector-gate tooth
 -- (+71 constraints total) + 91 cols past its base.
@@ -706,6 +835,8 @@ theorem attenuateCapOpenEffV3_authorizes (S8 : Cap8Scheme) (hash : List ℤ → 
     ∧ (leafAt actor src).target = (src : ℤ) := by
   have hsat := withSelectorGate_satisfied2 hash
     Dregg2.Circuit.Emit.EffectVmEmit.sel.ATTENUATE_CAPABILITY _ minit mfin maddrs t hsat
+  have hsat := effCapOpenWriteV3_strips_to_capOpen hash attenuateV3
+    "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER minit mfin maddrs t hsat
   have h := effCapOpenV3_authorizes attenuateV3
     "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER (by decide)
     S8 hash vkOfTag provided minit mfin maddrs t hChip hsat i hi hnotlast caps leafAt hfaith
@@ -743,8 +874,10 @@ theorem attenuateCapOpenEffV3_rejects_wrong_facet (hash : List ℤ → ℤ)
     (Dregg2.Circuit.DescriptorIR2.envAt t i) EFF_TRANSFER hclear
     (effCapOpenV3_satisfiedEff attenuateV3 "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER
       hash minit mfin maddrs t
-      (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.ATTENUATE_CAPABILITY
-        _ minit mfin maddrs t hsat) i hi hnotlast)
+      (effCapOpenWriteV3_strips_to_capOpen hash attenuateV3
+        "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER minit mfin maddrs t
+        (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.ATTENUATE_CAPABILITY
+          _ minit mfin maddrs t hsat)) i hi hnotlast)
 
 /-- **`exerciseCapOpenV3_authorizes` — THE LIVE EXERCISE AUTHORITY KEYSTONE (the last named cap-open
 residual, CLOSED).** A `Satisfied2` witness of the LIVE `exerciseCapOpenV3` descriptor (the frozen
@@ -1626,132 +1759,7 @@ paths COINCIDE by construction. The after `capRoot` group IS the committed AFTER
 (`capRootGroupCol (EFFECT_VM_WIDTH+91)`), so `groupVal env afterSpineCols.capRoot = afterCapRootCols env` by
 `rfl`. -/
 
-/-- An equality gate: `var a - var b = 0` (pins column `a` to column `b`). -/
-def eqGate (a b : Nat) : EmittedExpr :=
-  .add (.var a) (.mul (.const (-1)) (.var b))
 
-theorem eqGate_eval (a b : Nat) (env : VmRowEnv) :
-    (eqGate a b).eval env.loc = 0 ↔ env.loc a = env.loc b := by
-  simp only [eqGate, EmittedExpr.eval]; constructor <;> intro h <;> linarith
-
-/-- The after-spine appendix width: 7 after-leaf + 8 after-leaf-digest + `DEPTH·8` node = `15 + 8·DEPTH`. -/
-def AFTER_SPINE_SPAN : Nat := 15 + 8 * DEPTH
-
-/-- The first column of the after-spine appendix (past the 329-col cap-open appendix). -/
-def AFTER_SPINE_BASE (w : Nat) : Nat := w + CAP_OPEN_SPAN
-
-/-- The after-spine column layout. `sib`/`dir` SHARED with the cap-open read (`capOpenCols w`) so the path
-coincides; `capRoot` IS the committed AFTER cap-root block. The unused `src`/`effBit`/`bit` cols are parked
-past the node block (the `MembershipCore` reads only leaf/leafDigest/sib/dir/node/capRoot). -/
-def afterSpineCols (w : Nat) : CapOpenCols :=
-  { leaf       := fun i => AFTER_SPINE_BASE w + i.val
-  , leafDigest := fun i => AFTER_SPINE_BASE w + 7 + i.val
-  , sib        := (capOpenCols w).sib
-  , dir        := (capOpenCols w).dir
-  , node       := fun lvl i => AFTER_SPINE_BASE w + 15 + 8 * lvl + i.val
-  , capRoot    := fun i => Dregg2.Circuit.Emit.EffectVmEmitRotationV3.capRootGroupCol
-                             (EFFECT_VM_WIDTH + 91) i
-  , src        := AFTER_SPINE_BASE w + 15 + 8 * DEPTH
-  , effBit     := AFTER_SPINE_BASE w + 16 + 8 * DEPTH
-  , bit        := fun i => AFTER_SPINE_BASE w + 17 + 8 * DEPTH + i }
-
-/-- `afterSpineCols`'s `dir` is the read's `dir` (defeq) — so the read's `dirBool` discharges the after
-spine's too (no new dir gate needed). -/
-theorem afterSpineCols_dir (w : Nat) : (afterSpineCols w).dir = (capOpenCols w).dir := rfl
-
-/-- The after `capRoot` group is the committed AFTER cap-root block — `groupVal` over it IS
-`afterCapRootCols`. -/
-theorem afterSpine_capRoot_after (w : Nat) (env : VmRowEnv) :
-    groupVal env (afterSpineCols w).capRoot
-      = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.afterCapRootCols env := rfl
-
-/-- The 7 narrowed-leaf weld gates: the after leaf is the IN-PLACE narrow of the read leaf. `slot_hash`
-(leaf 0) = the read's key; `mask_lo` (leaf 3) = `param[KEEP_MASK]`; the other 5 fields = the held (read)
-leaf. -/
-def afterLeafWelds (w : Nat) : List VmConstraint2 :=
-  [ .base (.gate (eqGate ((afterSpineCols w).leaf 0) ((capOpenCols w).leaf 0)))
-  , .base (.gate (eqGate ((afterSpineCols w).leaf 1) ((capOpenCols w).leaf 1)))
-  , .base (.gate (eqGate ((afterSpineCols w).leaf 2) ((capOpenCols w).leaf 2)))
-  , .base (.gate (eqGate ((afterSpineCols w).leaf 3)
-      (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.KEEP_MASK)))
-  , .base (.gate (eqGate ((afterSpineCols w).leaf 4) ((capOpenCols w).leaf 4)))
-  , .base (.gate (eqGate ((afterSpineCols w).leaf 5) ((capOpenCols w).leaf 5)))
-  , .base (.gate (eqGate ((afterSpineCols w).leaf 6) ((capOpenCols w).leaf 6))) ]
-
-/-- The 8 BEFORE cap-root weld gates: the cap-open read's appendix `capRoot` group equals the committed
-BEFORE cap-root block — so `groupVal env (capOpenCols w).capRoot = beforeCapRootCols env`. -/
-def beforeRootWelds (w : Nat) : List VmConstraint2 :=
-  (List.finRange 8).map (fun i =>
-    VmConstraint2.base (.gate (eqGate ((capOpenCols w).capRoot i)
-      (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.capRootGroupCol EFFECT_VM_WIDTH i))))
-
-/-- The key-bind gate: the read leaf's `slot_hash` (leaf 0) equals `param[CAP_KEY]` — so the forced write
-is keyed at the committed `CAP_KEY` column. -/
-def keyBindGate (w : Nat) : EmittedExpr :=
-  eqGate ((capOpenCols w).leaf 0)
-    (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.CAP_KEY)
-
-/-- The after-spine constraint list (appended past the cap-open appendix): the after leaf absorb, the 16
-after-node absorbs, the 8 after root-pins, the 7 narrowed-leaf welds, the 8 before cap-root welds, and the
-key bind. -/
-def afterSpineConstraints (w : Nat) : List VmConstraint2 :=
-  .lookup (leafLookup (afterSpineCols w))
-  :: ((List.range DEPTH).map (fun lvl => VmConstraint2.lookup (nodeLookup (afterSpineCols w) lvl)))
-  ++ ((List.finRange 8).map (fun i => VmConstraint2.base (.gate (rootPinGate (afterSpineCols w) i))))
-  ++ afterLeafWelds w
-  ++ beforeRootWelds w
-  ++ [VmConstraint2.base (.gate (keyBindGate w))]
-
-/-- **`effCapOpenWriteV3 base name n`** — the cap-open membership descriptor (`effCapOpenV3`) WIDENED by the
-after-spine appendix: the deployed write descriptor a light client checks. Its `Satisfied2` FORCES the
-faithful 8-felt cap-write (`*_forces_write8`). -/
-def effCapOpenWriteV3 (base : EffectVmDescriptor2) (name : String) (n : Nat) : EffectVmDescriptor2 :=
-  { (effCapOpenV3 base name n) with
-    name        := name
-    traceWidth  := (effCapOpenV3 base name n).traceWidth + AFTER_SPINE_SPAN
-    constraints := (effCapOpenV3 base name n).constraints ++ afterSpineConstraints base.traceWidth }
-
-/-- Every after-spine constraint is a constraint of the write descriptor. -/
-theorem effCapOpenWriteV3_afterMem (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    (c : VmConstraint2) (hc : c ∈ afterSpineConstraints base.traceWidth) :
-    c ∈ (effCapOpenWriteV3 base name n).constraints :=
-  List.mem_append_right _ hc
-
-/-- A `Satisfied2` of the write descriptor strips (constraint-subset) to a `Satisfied2` of the cap-open
-membership descriptor `effCapOpenV3` — the after-spine appendix is all `.lookup`/`.base (.gate …)`, reads no
-base column and contributes no map/mem op. -/
-theorem effCapOpenWriteV3_strips_to_capOpen (hash : List ℤ → ℤ) (base : EffectVmDescriptor2)
-    (name : String) (n : Nat) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
-    (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
-    (h : Satisfied2 hash (effCapOpenWriteV3 base name n) minit mfin maddrs t) :
-    Satisfied2 hash (effCapOpenV3 base name n) minit mfin maddrs t := by
-  have hmapOps : Dregg2.Circuit.DescriptorIR2.mapOpsOf (effCapOpenWriteV3 base name n)
-      = Dregg2.Circuit.DescriptorIR2.mapOpsOf (effCapOpenV3 base name n) := by
-    simp [Dregg2.Circuit.DescriptorIR2.mapOpsOf, effCapOpenWriteV3, afterSpineConstraints,
-      afterLeafWelds, beforeRootWelds, List.filterMap_append, List.filterMap_map, List.filterMap_cons]
-  have hmemOps : Dregg2.Circuit.DescriptorIR2.memOpsOf (effCapOpenWriteV3 base name n)
-      = Dregg2.Circuit.DescriptorIR2.memOpsOf (effCapOpenV3 base name n) := by
-    simp [Dregg2.Circuit.DescriptorIR2.memOpsOf, effCapOpenWriteV3, afterSpineConstraints,
-      afterLeafWelds, beforeRootWelds, List.filterMap_append, List.filterMap_map, List.filterMap_cons]
-  have hmemLog : Dregg2.Circuit.DescriptorIR2.memLog (effCapOpenWriteV3 base name n) t
-      = Dregg2.Circuit.DescriptorIR2.memLog (effCapOpenV3 base name n) t := by
-    simp [Dregg2.Circuit.DescriptorIR2.memLog, hmemOps]
-  have hmapLog : Dregg2.Circuit.DescriptorIR2.mapLog (effCapOpenWriteV3 base name n) t
-      = Dregg2.Circuit.DescriptorIR2.mapLog (effCapOpenV3 base name n) t := by
-    simp [Dregg2.Circuit.DescriptorIR2.mapLog, hmapOps]
-  exact
-    { rowConstraints := fun i hi c hc =>
-        h.rowConstraints i hi c (by
-          show c ∈ (effCapOpenV3 base name n).constraints ++ afterSpineConstraints base.traceWidth
-          exact List.mem_append_left _ hc)
-      rowHashes := h.rowHashes
-      rowRanges := h.rowRanges
-      memAddrsNodup := h.memAddrsNodup
-      memClosed := by have := h.memClosed; rwa [hmemLog] at this
-      memDisciplined := by have := h.memDisciplined; rwa [hmemLog] at this
-      memBalanced := by have := h.memBalanced; rwa [hmemLog] at this
-      memTableFaithful := by have := h.memTableFaithful; rwa [hmemLog] at this
-      mapTableFaithful := by have := h.mapTableFaithful; rwa [hmapLog] at this }
 
 /-- **`effCapOpenWriteV3_afterCore`** — the AFTER-spine `MembershipCore`, derived from `Satisfied2` of the
 write descriptor (cloning `effCapOpenV3_satisfiedEff`'s `core` block over `afterSpineConstraints`). The
