@@ -435,7 +435,7 @@ theorem node_sound {State : Type} (S : CapHashScheme State)
           else nodeOf S (env.loc (curCol c lvl)) (env.loc (c.sib lvl))) := by
   have hlen : ([EmittedExpr.const FACT_MARK, leftExpr c lvl, rightExpr c lvl]).length ≤ CHIP_RATE := by
     show 3 ≤ CHIP_RATE
-    rw [show CHIP_RATE = 11 from rfl]; omega
+    unfold CHIP_RATE; omega
   have hmem : (chipLookupTuple [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl)
       (c.lanes (lvl + 1))).map (·.eval env.loc) ∈ tf .poseidon2 := by
     have := hsat.nodeHashed lvl hlvl
@@ -876,7 +876,7 @@ theorem membershipCore_opens {State : Type} (S : CapHashScheme State)
             else nodeOf S (env.loc (curCol c lvl)) (env.loc (c.sib lvl))) := by
     intro lvl hlvl
     have hlen : ([EmittedExpr.const FACT_MARK, leftExpr c lvl, rightExpr c lvl]).length ≤ CHIP_RATE := by
-      show 3 ≤ CHIP_RATE; rw [show CHIP_RATE = 11 from rfl]; omega
+      show 3 ≤ CHIP_RATE; unfold CHIP_RATE; omega
     have hmem : (chipLookupTuple [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl)
         (c.lanes (lvl + 1))).map (·.eval env.loc) ∈ tf .poseidon2 := by
       have := hcore.nodeHashed lvl hlvl; unfold Lookup.holdsAt nodeLookup at this; exact this

@@ -123,9 +123,11 @@ permutation) seeds. This is DISTINCT from the Poseidon2 sponge rate ([`CHIP_SPON
 one permutation can SEED up to `width − capacity` lanes regardless of the multi-block sponge
 rate. Phase B-GATE-INPUT widened it `8 → 11` so a single permutation can absorb an 8-felt
 commitment carrier + 3 new limbs (the wide Merkle–Damgård step of the faithful 8-felt
-commitment, Phase B-ROTATION). The deployed commitment is STILL 1-felt after this phase; the
-wide arity is additive + unused. (`11 < width 16`, so the seed is well within the permutation.) -/
-def CHIP_RATE : Nat := 11
+commitment, Phase B-ROTATION). Phase H3 (native-8-felt Merkle root weld) widened it `11 → 16` =
+full `width`: the `node8` arity-16 row compresses two 8-felt child digests `L8 ‖ R8` in ONE
+permutation (no capacity — fixed-length compression domain-separated by the arity tag), reading
+lanes `0..8` for the node's 8-felt digest. (`16 = width`, the full-width seed.) -/
+def CHIP_RATE : Nat := 16
 
 /-- The Poseidon2 SPONGE RATE in base field elements (`babyBearD4W16.rate = rate_ext · d = 8`) —
 the REAL multi-block-sponge absorb width, a cryptographic parameter pinned in
@@ -1502,16 +1504,16 @@ def demoV2 : EffectVmDescriptor2 :=
 -- kind exercised; the chip params are the REAL babyBearD4W16 pins). The Rust v2 decoder's
 -- grammar is THIS string's grammar; v1 strings (no `"ir"` key) parse as version 1 unchanged.
 #guard emitVmJson2 demoV2 ==
-  "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":20,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":{\"t\":\"var\",\"v\":0},\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":25,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":{\"t\":\"var\",\"v\":0},\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}"
 
--- The chip's INPUT-LANE COUNT is 11 (Phase B-GATE-INPUT widened it 8 → 11 for the wide MD step);
--- the sponge rate stays the REAL babyBearD4W16 base rate (8). The chip row is 20 wide:
--- `1 (arity) + 11 (inputs) + 8 (output lanes)`.
-#guard CHIP_RATE == 11
+-- The chip's INPUT-LANE COUNT is 16 (Phase H3 widened it 11 → 16 = full width for the node8 L8‖R8
+-- Merkle compression); the sponge rate stays the REAL babyBearD4W16 base rate (8). The chip row is
+-- 25 wide: `1 (arity) + 16 (inputs) + 8 (output lanes)`.
+#guard CHIP_RATE == 16
 #guard CHIP_SPONGE_RATE == 8
 #guard CHIP_OUT_LANES == 8
 #guard poseidon2ChipTableDef.arity == CHIP_RATE + 1 + CHIP_OUT_LANES
-#guard poseidon2ChipTableDef.arity == 20
+#guard poseidon2ChipTableDef.arity == 25
 #guard (chipRow (fun _ => 0) [1, 2] [0, 0, 0, 0, 0, 0, 0]).length == CHIP_RATE + 1 + CHIP_OUT_LANES
 -- The five table ids are distinct on the wire.
 #guard ([TableId.main, .poseidon2, .range, .memory, .mapOps].map TableId.wireId).dedup.length == 5
