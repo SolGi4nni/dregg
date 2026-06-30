@@ -307,7 +307,7 @@ agents. The whole design is **one seam carried through three layers**:
 ```
 
 The seam is the product. Everything above it is the integrator's to keep
-(their loop is their moat); everything below it is dregg's proven metatheory
+(their loop is their own advantage); everything below it is dregg's proven metatheory
 (the firmament's one capability handle, the verified executor, the blocklace,
 conservation); the observation layer is the developer's window onto the truth.
 

@@ -5,7 +5,7 @@
 A **mirror** brings an external token (`$DREGG`, an SPL token launched on
 Solana via pump.fun) *into* dregg's value layer as a first-class conserved
 asset. Once mirrored, the asset is an ordinary dregg `AssetId` and is `Payable`:
-it pays for DreggNet services (the execution-lease / ToolGateway) over the
+it pays for on-substrate services (the execution-lease / ToolGateway) over the
 *existing* rails, with no new kernel verb.
 
 This is the asset analogue of the chain bridges already in this crate

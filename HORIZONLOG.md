@@ -138,19 +138,6 @@ reason.)*
   it is inert on carry-forward rows; force the caveat manifest uniform across rows in-AIR; or read the decode from the same LAST row
   PI 45 binds. So the carrier flip distance is now (a) realize `hbind` over bound cols + (b) the bare-descriptor flag-day + (c) fix
   the row-locality so an escrow-declared settle is satisfiable AND the decode is coupled to the committed caveat.
-- PERF-CHARACTERIZATION campaign — the perf-engineering FOUNDATION for DreggNet-as-a-cloud (2026-06-28). `docs/PERF-CHARACTERIZATION.md`
-  inventories what exists (breadstuffs `dregg-perf` 16-bench suite + 13 per-crate criterion benches with last-known numbers; DreggNet
-  (WIDE / VERTICAL / FEDERATION), methodology, and targets. NAMED GAPS the bench-building lanes close (in execution order): (1) the
-  DreggNet service-layer crates `exec`/`durable`/`bridge`/`control`/`gateway`/`webapp` have ZERO benches — integration-tested only — so
-  no lease-lifecycle-throughput / gateway-req-sec / webapp-req-sec / per-tier-workload-latency number exists; (2) NO macro/throughput
-  load-gen harness (everything is criterion micro) — build one driving N concurrent leases/workloads with the agent-business loop
-  (pay→lease→run→meter→reap, seeded by `perf/src/bin/orchestration_demo.rs`) as the default scenario, p50/p99/p99.9 tail; (3) NO WIDE
-  multi-node measurement — N cells / N agents / N leases sweeps + the named contention points (shared ledger `Ledger::root()`, nullifier
-  set, scheduler/`LeaseWatcher`, gateway, durable store); (4) cap-tier end-to-end workload latency (native-CPython / wasmtime / wasmi)
-  unmeasured wall-to-wall; (5) only a SMOKE baseline committed (`perf/baselines/smoke-2026-06-22-m2max`) — capture FULL on persvati;
-  (6) no flamegraph/`perf` bottleneck artifacts per axis. FEDERATION scaling is ANALYTIC now (one staging box) — real fleet bench
-  DEFERRED, named honestly. The DATED `~130,000×` per-turn-commit note (`metatheory/docs/CODEX-DISCHARGE-SKELETON.md:2505`) is flagged
-  NOT-live; the measured story is executor ~8.2µs / embedded-commit ~157µs / symbolic ~7,000× / proving-multiplier ~21,000×.
 - CAPACITY-SATISFACTION tags 18/19 (Piece 2 of the constraint-binding VK epoch) — SATISFACTION SOUNDNESS RUNGS LANDED STAGED,
   the VK FLIP **NOT** taken (left staged, default unflipped — 2026-06-28). `metatheory/Dregg2/Deos/CapacitySatisfaction.lean` now
   carries the discharge (tag 18) + vault (tag 19) field-column satisfaction keystones beside escrow's: `discharge_satisfaction_witnessed`
@@ -435,7 +422,7 @@ carries its closure shape. Pure-Lean ranks are VK-risk-free and can soak before 
   `CommitBindsMMR`) · PI v3 · RESERVED/selector-block death · universal-memory table assembly →
   ONE descriptor regen → differential gauntlets (cell≡circuit per map · per-effect AGREE · the
   memory-argument adversarial suite, `UniversalMemory.lean` §6 as the templates) → VK/commitment
-  bump → succession drill → persvati gauntlet → deploy when ember says deploy.
+  bump → succession drill → the Linux build box gauntlet → deploy when ember says deploy.
 
 ## web-deos DEEPENED: a SERVICE CELL invoked node-less in the browser (2026-06-25)
 - WHAT: the web `ViewNode` path gained a fourth, richer surface — a KV-store SERVICE CELL driven entirely in a
@@ -3653,11 +3640,11 @@ balances, cap counts, the issuer well at −supply), the INSPECTOR reflecting th
 receipts/`state_root`/"executor embedded verified (TurnExecutor)"), the BLOCKLACE provenance (the real
 receipt chain), and the HOME/SHELL/AGENT workspace. Rendered at 800×600 by the actual gpui renderer
 (`gpui_wgpu::WgpuRenderer::render_scene_to_image`, the offscreen patch) on lavapipe (`type=Cpu`, no GPU/
-window) on persvati, baked into the `#![no_std]` PD as raw RGBA8 (`src/cockpit_frame.rgba`, 1.92 MiB)
+window) on the Linux build box, baked into the `#![no_std]` PD as raw RGBA8 (`src/cockpit_frame.rgba`, 1.92 MiB)
 and swizzled RGBA→XRGB8888 at blit time. `make -C sel4 capture-image-modes` reproduces it end-to-end
 (boots headless, screendumps image, QMP `send-key TAB`, screendumps the LIVE cockpit). Evidence:
 `docs/desktop-os-research/patches/cockpit-on-sel4-framebuffer-LIVE.png` (the live cockpit scanned out
-of seL4 ramfb) + `cockpit-render-800x600-LIVE.png` (the persvati render).
+of seL4 ramfb) + `cockpit-render-800x600-LIVE.png` (the render-host render).
 
 THE LAST SWAP — CLOSED (was "the one remaining swap"): the blitted Scene used to be a hand-built
 cockpit-*shaped* `gpui::Scene`; it is now the live element tree, resolved the intended way. HOW: a
@@ -3694,7 +3681,7 @@ Groth16** — VALIDATED this session: the full production `dregg-circuit --featu
 
 CLOSURE LANES: (1) finish the (B) loop — host generates the IR-v2 proof (`prove_vm_descriptor2`), zkVM
 wraps to Groth16, `forge script DriveBridge` verifies on anvil + drives attest/lock/unlock/intent (the
-plumbing is built; the Poseidon2 guest+host compile on persvati; run the wrap on a 24-core box). (2) swap
+plumbing is built; the Poseidon2 guest+host compile on the Linux build box; run the wrap on a 24-core box). (2) swap
 the guest's leaf-proof verify for the full `WholeChainProof` root (`verify_history`) — one-line, heavier.
 (3) **THE COST ENDGAME — a Plonky3-native BN254 terminal** (§4.2/§2.4-C): make dregg's own recursion
 (`emberian/plonky3-recursion`, the `WholeChainProof` fold) terminate in a BN254 Groth16 proof instead of
@@ -3742,13 +3729,13 @@ runnable criterion benches (each drives the production PUBLIC API; numbers banke
   seL4-executor-PD hot path) over the GOLDEN firmament-boot turn: **~157 µs** (microseconds, same order
   as the Rust executor — verified-and-cheap admit).
 - (e) `ui_projection` — the deos desktop whole-system measure (gpui-free; the real GPU first-paint is on
-  persvati): per-frame scene/affordance projection is **nanoseconds** (compose_scene 102 ns, paint_list
+  the Linux build box): per-frame scene/affordance projection is **nanoseconds** (compose_scene 102 ns, paint_list
   472 ns, affordance_project 96 ns — never the bottleneck); the first-paint DATA cost is the five embedded
   commits (`demo_world_seed` ~5.8 s) — which is why the cockpit opens on the instant-genesis image and
   seeds turns async.
 
 The full perf crate is clippy-clean; `cargo bench -p dregg-perf --no-run` green. SMOKE is default; FULL
-(`PERF_FULL=1`) is the persvati ladder capture (the fold + cohort FULL ladders already captured + in the
+(`PERF_FULL=1`) is the Linux build box ladder capture (the fold + cohort FULL ladders already captured + in the
 doc). Named: performance pillar LANDED, 2026-06-15.
 
 ## ⚑ TWO PERF FINDINGS surfaced by the harness (closure lanes, named 2026-06-15)
@@ -3876,7 +3863,7 @@ tools), and DELETED outright where dead in both builds (the Silver joint surface
 `CUTOVER_READY_SELECTORS`/`EffectVmShapeAir`/`CrossSideExistenceAir`/`BundleTreeFoldAir`/the V2 bilateral
 all STAY (Bucket D/E). The recursion-leaf is the ROTATED `DescriptorParticipant`/`RotatedParticipantLeg`
 (Bucket F was already landed). **GREP-ZERO = 0 true live-under-recursion v1 refs** (236 literal matches,
-all comments/strings/not(recursion)-fenced). Gates GREEN on persvati: `cargo build --features recursion
+all comments/strings/not(recursion)-fenced). Gates GREEN on the Linux build box: `cargo build --features recursion
 -p dregg-circuit -p dregg-sdk -p dregg-turn -p dregg-node` (Finished, exit 0) + `cargo test --features
 recursion --no-run -p …` (exit 0) + circuit `not(recursion)` floor (exit 0). The executor secondary-verify
 arms (`verify_sovereign_witness_stark`, the atomic-turn/bearer-cap default-AIR, `verify_bundle_with_stark`)
@@ -3911,7 +3898,7 @@ rotated-leaf cutover first), (G) heterogeneous/non-synthetic finalized-turn cove
 only dregg-coherent way — *"build path-preserve for SURE; any other decision wouldn't be dregg"* — so the
 WEAKEN option (commit those turns proof-pending) is OFF the table. The C7 lane is now: **BUILD chained
 multi-cohort + non-synthetic rotated proving so EVERY finalized turn stays proven (ARGUS unfoolability
-intact), THEN bucket-F leaf cutover, THEN the bucket-A/C delete.** Staged persvati-green plan =
+intact), THEN bucket-F leaf cutover, THEN the bucket-A/C delete.** Staged the Linux build box-green plan =
 `docs/PATH-PRESERVE.md`. Each phase lands green; a half-landed prover-without-verifier is RED (forbidden).
 (The interrupted `wf_9a7d5e77-b48` was looping on exactly this G decision — now resolved; `cv`-dug the
 substantive thread, the decision is made.)
@@ -3946,7 +3933,7 @@ spike (`c93293686` — the pg-Tier-D + seL4-executor-PD blocker REFUTED by measu
 manager is lazy; the executor PD already BOOTS; pg full-D = DAYS).
 
 **⚑⚑ LEAD LANE (ember DECIDED 2026-06-14): FINISH THE CUTOVER to grep-zero — and HOLD the devnet redeploy until it lands.**
-The staged ladder, each persvati-green (every finalized turn is ALREADY proven on current main — this is CLEANUP, not a
+The staged ladder, each the Linux build box-green (every finalized turn is ALREADY proven on current main — this is CLEANUP, not a
 soundness gate): PATH-PRESERVE **Phase 3** (non-synthetic-cell witness — RUNNING `a100c225`) → **Phase 4** (the live cutover:
 heterogeneous / non-synthetic turns route to the chain in `node/src/blocklace_sync.rs`, not the v1 fallback) → **bucket F**
 (the 5-file recursion-leaf cutover, drop `EffectVmP3Proof`) → **#103** (executor off `EffectVmAir`) → **C7** (delete v1 +
@@ -3968,7 +3955,7 @@ MMU-process-v1 / real-Microkit) runs the SAME PD source three ways; the composit
 `docs/EMBEDDABLE-LEAN-RUNTIME.md`): the mimalloc-override / worker-thread premise was WRONG (mimalloc is a PRIVATE heap,
 the task manager is LAZY/single-threaded); the only real removal was the libuv thread (`dregg_ffi_init_st()`), and
 `sel4/dregg-pd/executor-{pd,rootserver}/` already boot the Lean executor in a real PD (fresh qemu → status:2 ok:1).
-**pg full Tier-D is now GREEN** (2026-06-14, persvati Linux + pg18.4 via cargo-pgrx): the verified `execFullForestG` RUNS
+**pg full Tier-D is now GREEN** (2026-06-14, the Linux build box Linux + pg18.4 via cargo-pgrx): the verified `execFullForestG` RUNS
 INSIDE a live pg18 backend under the SHARED Lean link (`DREGG_LEAN_LINK=shared`) — `pg_test`s
 `pg_the_verified_executor_runs_inside_the_backend` + `pg_drainer_drains_the_queue_…` + `pg_drainer_runs_execfullforest_in_backend`
 all OK; `runtime_available()`=true (`dregg_ffi_init_st` succeeds POST-FORK), the drainer's PRODUCE gate commits a real
@@ -4021,7 +4008,7 @@ surface/`, 20/0) · sdk pg-native (sdk-py 71/4-skip + sdk-ts 74/0). Open residua
   compile — `CollectionAggregate` was MISSING from the classifier match, RED at HEAD): added its honest executor
   accept/reject pair `collection_aggregate_accept_and_reject` (a seeded `heap_map` collection meeting/failing a
   CountSatGe statistic across a submitted SetField turn) + `CollectionAggregate => true` arm, so the gate is
-  exhaustive and the not-yet list is honest at 9. Green on persvati: `cargo check -p dregg-turn` clean;
+  exhaustive and the not-yet list is honest at 9. Green on the Linux build box: `cargo check -p dregg-turn` clean;
   `coverage_state_constraints` 25/25 + `protocol_coverage_gate` 3/3.
 - **`cargo check --workspace --tests` is broadly RED — pre-existing dregg3-reduction test-corpus rot** (named
   2026-06-14, surfaced by the ObservedFieldEquals convergence gauntlet once the WitnessBundle ripple closed):
@@ -4111,7 +4098,7 @@ circuit/sdk/turn/node = exit 0; no edits made). The four, file:line'd:
    wasm prover gains a `#[cfg(feature="recursion")]` rotated branch (shipped wasm has recursion ON);
    a bare `not(recursion)` fence would DELETE the in-browser prover (a degradation — not acceptable).
 
-SEQUENCING (each persvati-green): (1a) the additive `ir2_descriptor_accepts` checker + test [keystone,
+SEQUENCING (each the Linux build box-green): (1a) the additive `ir2_descriptor_accepts` checker + test [keystone,
 zero-risk] → (3) the `EffectVmP3Proof`→`Ir2BatchProof` alias + drop-v1-leg in aggregation → (1b)+(2)
 node commit-path rotation-witness assembly + rotated-only fail-closed → (4) wasm Option-A → then the
 mechanical DELETE of bucket A (`effect_vm_p3_full_air.rs`, `effect_vm/air.rs` v1 surface,
@@ -4175,7 +4162,7 @@ non-cohort behavior). Everything else is verified-ordinary engineering. A PARTIA
 1/2/3/4) leaves grep>0 in recursion AND ships RED (the v1 prover would be half-disconnected) — the mandate's
 #1 forbidden outcome — so the tree is held GREEN + UNTOUCHED at HEAD (baseline `pbuild hardswap` of
 circuit/sdk/turn/node = exit 0, "Finished `dev` profile") pending ember's call on blocker #2. Once decided,
-the full cutover is a single coherent lane (items 1→3→2→4→delete), each persvati-green.
+the full cutover is a single coherent lane (items 1→3→2→4→delete), each the Linux build box-green.
 
 ⚑ FIX-ROUND-2 (2026-06-14, deepest independent re-trace; one SCOPE-CORRECTION + one DECISION-REFRAME +
 the recommendation INVERTED). Re-verified the four legs at HEAD, then traced two things the prior C7 entries
@@ -4263,7 +4250,7 @@ SEQUENCING (each gated green; the main loop drives): walls A/B/C land + reviewed
 avoid the node/ collision) → **the VK epoch (C5/C6) = THE MAIN LOOP's irreversible act** (v3Registry→default regen
 + re-pin ~58 SHAs/11 guards + #103 sovereign graduation + notify Step-2 felt-batch + FFI reseed + the ONE
 VK/cell-commitment bump; §EXEC.3 recipe) → **C7** delete v1 + grep-zero (a Workflow fan-out) → the **Option-A
-wasm-rotated prover** (LAST — gates C7's full grep-zero, not the native cutover) → persvati gauntlet → held push →
+wasm-rotated prover** (LAST — gates C7's full grep-zero, not the native cutover) → the Linux build box gauntlet → held push →
 **devnet redeploy = EMBER's act** (fresh genesis). Prize: −65.6% proof size (350.5→120.4 KiB), verify 3.4× faster.
 
 --- (original flip-executor inventory, for the record) ---
@@ -4330,7 +4317,7 @@ the backbone v1 path is still UNCONDITIONAL per WALL A above.)
   found+fixed (NOT papered): stored NEW commit must be the trace's PI 35 (welds from the v1
   sub-trace after-state, ≠ `compute_v9(after_cell)`); verifier undoes `execute.rs` PHASE 1 (fee
   debit + nonce++) to reconstruct the producer's pre-state (cross-checked by OLD_COMMIT/PI 34).
-  RE-VERIFIED 2026-06-13 (fresh persvati build, not a self-report): `sovereign_rotated_c1` both
+  RE-VERIFIED 2026-06-13 (fresh the Linux build box build, not a self-report): `sovereign_rotated_c1` both
   tests green under `recursion`; `dregg-turn` compiles green under BOTH `--no-default-features`
   and default. MEASURED win (`effect_vm_ir2_size_measure`): v1 hand-AIR 358900 B (350.5 KiB),
   verify 16.8 ms → rotated IR-v2 123292 B (120.4 KiB), verify 5.0 ms — **0.344 ratio (−65.6 %
@@ -4354,7 +4341,7 @@ the backbone v1 path is still UNCONDITIONAL per WALL A above.)
   trace-fill helpers, `Ir2Traces`, `prove_batch`/`StarkInstance` + prover-only imports,
   `MIN_TABLE_HEIGHT`, test mod) `recursion`-only. `verify_batch` is prover-free + `from_airs_and_
   degrees(..).common` builds only symbolic `Lookups` (the IR-v2 AIRs have empty preprocessed).
-  Verified on persvati: verifier-only lib (zero `descriptor_ir2` warnings) AND default lib both
+  Verified on the Linux build box: verifier-only lib (zero `descriptor_ir2` warnings) AND default lib both
   green. Files: `circuit/Cargo.toml`, `circuit/src/lib.rs`, `circuit/src/descriptor_ir2.rs`.
 - ⚠️ HARD WALL (cutover **C3**, found 2026-06-13 — needs an ember architecture decision before C3
   can proceed): `prove_full_turn`'s effect-vm leg is an `EffectVmP3Proof` that THREE LIVE
@@ -4519,7 +4506,7 @@ the backbone v1 path is still UNCONDITIONAL per WALL A above.)
 - Trustline payment-channel parity: channel close (TL_STATE_CLOSED residual-escrow return) · one-factory collateral parameter · MCP `dregg_extend_trustline` · remote-silo pubkey registration (n=1 collapses it) · multilateral rippling (TRUSTLINES.md §7).
 - Trustline pureCredit HTTP lane: node OpenRequest has no `collateral` field → HTTP open is fullReserve-only; `trustline_service::parse_collateral` is dead (`#[allow(dead_code)]`+TODO(collateral-axis)). Rust semantics+SDK exist; wiring the request field is the lane. → turn/node.
 - Hosted-operator epoch-key custody posture (sovereign-member groups ride the SDK noun client-side; channels residue — partly an ember-decision).
-- Divergence-ledger doc churn: `turn/tests/rust_lean_divergence_finder.rs:684` overwrites the git-tracked `metatheory/docs/rebuild/_RUST-LEAN-DIVERGENCE-LEDGER.md` on every run, dirtying trees + blocking persvati pushes — emit to a build-artifact path (or commit deliberately). One-line fix. → turn/ (off-limits this run; STILL LIVE, tree dirty at HEAD).
+- Divergence-ledger doc churn: `turn/tests/rust_lean_divergence_finder.rs:684` overwrites the git-tracked `metatheory/docs/rebuild/_RUST-LEAN-DIVERGENCE-LEDGER.md` on every run, dirtying trees + blocking the Linux build box pushes — emit to a build-artifact path (or commit deliberately). One-line fix. → turn/ (off-limits this run; STILL LIVE, tree dirty at HEAD).
 - CLI `config init` not path-injectable: `cli/src/config.rs::config_path()` hardcodes `~/.dregg` → `dregg config init` mutates real home, preflight can only gate read-only `config show`. Honor `DREGG_HOME`-style override, then restore a hermetic preflight `cli_config_init` check. → cli/.
 - node recovery overlay first-writer-wins bug (surfaced by the snapshot lane): `node/src/state.rs` recovery uses `insert_cell` (strict insert), so a post-checkpoint write to a cell the checkpoint ALREADY holds is silently dropped; the convergence root-mismatch only LOGS, does not fail closed. Fix = `upsert_cell` (the verified `CrashRecovery.upd` point-update needs remove-then-insert). → node/persist, post-flip.
 - persist snapshot wire half: in-crate `ship_snapshot`/`apply_snapshot`/`apply_snapshot_verified`/`install_snapshot` LANDED green (persist/src/snapshot.rs, 7 tests, shape = CrashRecovery.lean). REMAINS: node-side `GET /snapshot/{from}` serve + joiner consume route so a fresh node bootstraps over the network. → node, post-flip.
@@ -6335,12 +6322,10 @@ prove/verify of the welded descriptor. PRECISE REMAINING to a flippable escrow w
      the flip. The deployed default is UNCHANGED; SATISFACTION is still NOT light-client-witnessed in
      production. `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md` §6.
 
-## ═══ THE SERVICE-ECONOMY + DREGGNET-CLOUD EPOCH (2026-06-28) ═══
+## ═══ THE SERVICE-ECONOMY EPOCH (2026-06-28) ═══
 
-The through-line: dregg grew an **agent service economy**, and **DreggNet** (a NEW private repo,
-`~/dev/DreggNet`) became the operator/cloud that runs real workloads on it. Open-core split:
-dregg = AGPL public verified substrate ⟂ DreggNet = proprietary moat (the `net/` crates are ember's
-SELF-HOSTABLE (anyone runs a provider against their own cells), not a monolith; the moat is the network.
+The through-line: dregg grew an **agent service economy** — pay, lease, run a metered workload, settle,
+leave a receipt — all on the verified substrate.
 
 ### LANDED (committed)
 - **Service economy (breadstuffs):** Payable DSI (`dregg-payable`), intent-ring + service-promise
@@ -6352,11 +6337,6 @@ SELF-HOSTABLE (anyone runs a provider against their own cells), not a monolith; 
   StakeHistory/warmup-cooldown-effective-stake all bank-state-derived + epoch rotation; passes 1-4).
   **Stripe rail** (webhook-HMAC → mint USD-credit → pays a lease, idempotent). **Double-mint CLOSED**
   (committed mirror-ledger + lock_id-as-note_nullifier, `turn/src/executor/bridge_ledger.rs`, no new verb).
-  native-CPython + wasmtime + wasmi tiers, real input-passing) · durable (DBOS duroxide, SQLite + pg
-  meter-outbox, crash-resume exactly-once) · bridge (lease→fulfill + watch→fulfill→reap) · control
-  (VmProvider + LocalProvider + Ec2Provider[real aws-cli] + scheduler + wireguard mesh) · gateway
-  (httpe fly.io-compat machines API, SERVES, Linux) · cli (operator + full-stack e2e) · webapp
-  (agent-served web APIs, durable+metered). Docker-runnable; CI gate; deploy/staging/ infra.
 - **VK Gentian (breadstuffs circuit/metatheory):** escrow weld teeth bite in a REAL STARK proof;
   WIDE-member fulcrum PROVEN (gate columns absorbed into the ~124-bit commit). FLIP NOT taken.
 - **deos pillars:** cockpit 17/31 surfaces carded + consumer-delight pass; hermes does PAID work in the
@@ -6367,17 +6347,9 @@ SELF-HOSTABLE (anyone runs a provider against their own cells), not a monolith; 
   `DREGG-CALCULUS.md` are the conceptual spine (authority = production-under-non-forgeability; a turn =
   an attenuable proof-carrying token over conserved state leaving a receipt).
 
-### INFRA STATE (LIVE — costs money)
-- **Staging box `i-03365e2bcf4ea08b2`** (t3.medium, `3.95.22.43`, us-east-1, key `~/.ssh/dreggnet-staging.pem`):
-  ~$30/mo running, ~$1.60/mo stopped. **STOP IT WHEN IDLE:** `aws ec2 stop-instances --region us-east-1 --instance-ids i-03365e2bcf4ea08b2`
-- A pulsed **node-image builder** was being provisioned (Lean-on-Linux dregg-node image — the staging seam).
-
 ### PERF (measured)
-- Solana verify: ~33µs/vote linear, ~50ms @1500 votes → **fast enough for staging**; Option-B O(1)
-  wrapper only when throughput/in-circuit needed. Perf-characterization campaign RUNNING (3 lanes:
-  inventory/plan `docs/PERF-CHARACTERIZATION.md`, DreggNet-cloud-bench, kernel-scaling-bench).
-
-### KEY DECISIONS
+- Solana verify: ~33µs/vote linear, ~50ms @1500 votes; Option-B O(1) wrapper only when
+  throughput/in-circuit needed.
 
 ### OPEN BURN-DOWN (named follow-ups)
 1. **Gentian FLIP — in-AIR authority-digest→selector gadget DISCHARGED, flip BLOCKED on commit-target**
@@ -6392,10 +6364,5 @@ SELF-HOSTABLE (anyone runs a provider against their own cells), not a monolith; 
    (limbs 24..37 fully packed → width/layout flag-day). FLIP NOT TAKEN; SettleEscrow stays a CONDITIONAL
    truth (sound under `hcommitLimb`), NOT a deployed pure-light-client truth. `IN-AIR-AUTHORITY-DIGEST-GADGET.md` §7. THE deep one.
 2. **18/19 welds:** range-check (discharge due-ness) + multi-limb-product (vault no-dilution, overflows BabyBear) gadgets — after (1).
-3. **node-image:** Lean-on-Linux build (builder baking it) → unblocks full staging end-to-end.
-4. **Solana mainnet-real:** geyser/custom-RPC validator plugin for real accounts-hash inclusion proofs
+3. **Solana mainnet-real:** geyser/custom-RPC validator plugin for real accounts-hash inclusion proofs
    (RPC exposes neither real bank hash nor Merkle inclusion → can't have real-vote-sig + real-inclusion both today).
-6. **DreggNet:** real-dregg-lease wire (`dregg-verify` feature needs the root arkworks `[patch]`); durable
-   per-request pg store + meter-ledger unification; **federation multi-node** (needs the fleet); a private GitHub remote.
-7. **Hackathon:** Hermes Accelerated Business demo (Nous/NVIDIA/Stripe) DUE TUE JUN 30 — demo ready
-   (live-Stripe-trigger + on-camera crash-resume strengtheners landed).

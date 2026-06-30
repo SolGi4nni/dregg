@@ -1,7 +1,7 @@
 # seL4 render path — getting the gpui cockpit to RE-FLOW live in the VM (parity with native)
 
 The deos cockpit is gpui (wgpu → Vulkan; the offscreen path uses Mesa lavapipe/llvmpipe
-software Vulkan). Today it **bakes a frame off-VM** (on persvati) and blits it static into the
+software Vulkan). Today it **bakes a frame off-VM** (on the render host) and blits it static into the
 seL4 PD (`GPUI-OFFSCREEN-FORK.md`). This note is the verdict on how to make the **same gpui
 renderer re-flow inside the seL4 VM** — i.e. drive `WgpuRenderer::render_scene_to_image`
 frame-by-frame on a target that lives in the seL4 image, not on a build host.
@@ -139,7 +139,7 @@ top rung. This is where parity-at-speed lives.
 
 ### THE FIRST CONCRETE BUILD STEP (near-term path)
 **Stand up lavapipe in the std-on-seL4 (musl/executor-class) PD profile and render one cockpit
-`Scene` frame from inside the VM** — i.e. lift the *exact* persvati bake into the PD:
+`Scene` frame from inside the VM** — i.e. lift the *exact* render-host bake into the PD:
 
 1. Switch the cockpit render PD from the current `#![no_std]` profile to the **std-on-seL4 musl
    PD** profile (the executor-PD class that already boots in this repo — see
@@ -151,7 +151,7 @@ top rung. This is where parity-at-speed lives.
 3. In the PD, point `VK_DRIVER_FILES`/`VK_ICD_FILENAMES` at that ICD and call the **already-built**
    `WgpuRenderer::render_scene_to_image` (the `gpui-offscreen` patch) on a hardcoded cockpit
    `Scene` → RGBA → the existing RGBA→XRGB8888 → ramfb blit. **Success = the very first
-   per-frame, in-VM gpui render reaches the framebuffer** (byte-compare against the persvati bake
+   per-frame, in-VM gpui render reaches the framebuffer** (byte-compare against the render-host bake
    `cockpit_frame.rgba` to prove parity).
 
 Step 2 (LLVM-on-seL4-musl) is the gate; do it as an isolated spike before touching the PD wiring.
@@ -168,7 +168,7 @@ for `aarch64-unknown-linux-musl`?** — is answered: **YES.**
 
 ### Gate 1 (LLVM-on-musl): PASSED — measured, not inferred
 `sel4/render-pd/scripts/build-llvm-elf.sh` cross-built a minimal static **LLVM 20.1.8**
-(the EXACT version the persvati bake uses — `llvmpipe (LLVM 20.1.8)`) for
+(the EXACT version the render-host bake uses — `llvmpipe (LLVM 20.1.8)`) for
 `aarch64-unknown-linux-musl`, using the brew `aarch64-unknown-linux-musl` GCC 15.2.0
 cross (the SAME toolchain the executor-PD's Lean runtime uses) + a host-native
 `llvm-tblgen` for the table generation. Two-stage CMake/Ninja (native tablegen → cross).
@@ -280,7 +280,7 @@ syscall/symbol/runtime at the musl layer.
   surface — `mmap`/`mprotect(PROT_EXEC)` for the JIT W→X, `getenv` (`LP_NUM_THREADS=0` ⇒
   single-thread, no rasterizer pool), no DRM/`/dev`; (c) drive `render_scene_to_image`
   on one cockpit `Scene` → RGBA → the existing `cockpit_frame.rs` ramfb blit (minus the
-  `include_bytes!` bake); (d) byte-compare the first in-VM frame against the persvati
+  `include_bytes!` bake); (d) byte-compare the first in-VM frame against the render host
   bake (same renderer, same LLVM 20.1.8, same Scene) to prove parity. This is the
   *weeks*-scale PD-integration the executor-PD precedent already showed is tractable —
   now with the renderer toolchain itself proven to build for the target.
@@ -329,7 +329,7 @@ flips for observability.
 [driver] STAGE 3: vkCreateDevice = -13 (VK_ERROR_UNKNOWN)
 ```
 - **lavapipe RUNS in-PD**: instance created, the `llvmpipe (LLVM 20.1.8)` physical
-  device — the EXACT renderer the persvati bake uses — enumerated in-VM, loader-less.
+  device — the EXACT renderer the render-host bake uses — enumerated in-VM, loader-less.
 - **The wall is `thrd_create`, NOT the W→X JIT.** lavapipe's `lvp_queue_init`
   UNCONDITIONALLY calls `vk_queue_enable_submit_thread` → `vk_queue_start_submit_thread`
   → `thrd_create` (Mesa `vk_queue.c:868`); it is *not* gated by `LP_NUM_THREADS`. The
@@ -347,7 +347,7 @@ it rather than `-ENOSYS`. This is the executor-PD-class follow-on (the executor 
 was single-threaded, so never hit it). Once the submit thread runs, `vkCreateDevice`
 succeeds → a pipeline JITs (the first W→X counter increments — the JIT exercise) →
 the gpui Scene → RGBA → ramfb blit is the Rust-side layer on top, and the
-byte-compare against the persvati bake proves parity. See `sel4/render-pd/WIRING.md`.
+byte-compare against the render-host bake proves parity. See `sel4/render-pd/WIRING.md`.
 
 ### Reproduce
 ```
@@ -478,7 +478,7 @@ The software-Vulkan + LLVM-JIT + W→X + submit-TCB substrate is all GREEN in-VM
 remaining rung (WIRING.md §"The render call"): link wgpu + gpui_wgpu, drive
 `WgpuRenderer::render_scene_to_image` on one cockpit `gpui::Scene` → RGBA → the
 `render_blit.rs` RGBA→XRGB8888→ramfb loop, then byte-compare the first in-VM frame
-against the persvati bake `cockpit_frame.rgba` to prove parity. This is Rust render
+against the render-host bake `cockpit_frame.rgba` to prove parity. This is Rust render
 wiring on top of a proven substrate, not an OS-capability wall.
 
 Touched only `sel4/render-pd/` (`scripts/llvm-target-diag.c` new + wired into

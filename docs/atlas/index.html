@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dregg · DreggNet — architecture atlas</title>
+<title>dregg — architecture atlas</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -17,7 +17,7 @@
   <main>
     <header class="hero">
       <h1>Architecture atlas</h1>
-      <div class="lede">A navigable, grounded, honest map of everything built (and being built) across <b>dregg</b> (the open AGPL verified substrate) and <b>DreggNet</b> (the private operated moat). Status badges distinguish proven truth from staged-not-flipped from designed. Every component cites <code>file:line</code> — click to open the source (serve from the repo root).</div>
+      <div class="lede">A navigable, grounded, honest map of everything built (and being built) across <b>dregg</b> (the open AGPL verified substrate). Status badges distinguish proven truth from staged-not-flipped from designed. Every component cites <code>file:line</code> — click to open the source (serve from the repo root).</div>
       <div class="one-line">A light client holding one root knows every transition in the whole history was authorized, conservative, fresh, and correctly committed — re-executing nothing. <i>That sentence is the system; everything here is how it is true.</i></div>
       <div class="legend" id="legend"></div>
       <div class="viewtabs">
@@ -37,7 +37,7 @@
     <div id="view-open" class="openitems hidden"></div>
 
     <div class="foot">
-      Generated as a static, no-build site. Open with <code>open docs/atlas/index.html</code>, or for clickable source refs serve from the repo root: <code>cd ~/dev/breadstuffs &amp;&amp; python3 -m http.server</code> then visit <code>localhost:8000/docs/atlas/</code>. DreggNet refs (separate repo) are shown as plain code. Status is grounded to HEAD; verify code vs HEAD for the live state.
+      Generated as a static, no-build site. Open with <code>open docs/atlas/index.html</code>, or for clickable source refs serve from the repo root: <code>cd ~/dev/breadstuffs &amp;&amp; python3 -m http.server</code> then visit <code>localhost:8000/docs/atlas/</code>. Status is grounded to HEAD; verify code vs HEAD for the live state.
     </div>
   </main>
 </div>
@@ -52,12 +52,6 @@ const ROOT = "../../";
 let activeStatuses = new Set(Object.keys(STATUS));
 
 function fileRef(fr) {
-  if (fr.repo === "DreggNet") {
-    const span = el("span", "noref");
-    span.append("DreggNet/" + fr.path + (fr.line ? ":" + fr.line : ""));
-    if (fr.label) { const l = el("span", "lbl"); l.textContent = " — " + fr.label; span.append(l); }
-    return span;
-  }
   const a = el("a");
   a.href = ROOT + fr.path + (fr.line ? "#L" + fr.line : "");
   a.target = "_blank"; a.rel = "noopener";
@@ -93,7 +87,7 @@ function buildLegend() {
 // ── sidebar nav ──
 function buildNav() {
   const nav = $("#nav");
-  const layerColor = { substrate:"var(--c-real)", economy:"var(--c-proven)", deos:"var(--c-deployed)", welds:"var(--c-staged)", dreggnet:"var(--c-design)" };
+  const layerColor = { substrate:"var(--c-real)", economy:"var(--c-proven)", deos:"var(--c-deployed)", welds:"var(--c-staged)" };
   for (const layer of ATLAS.layers) {
     const wrap = el("div", "nav-layer");
     const lh = el("div", "lh"); lh.append(layer.name);
@@ -129,7 +123,7 @@ function buildMap() {
     }
     row.append(boxes);
     stack.append(row);
-    if (layer.id === "economy" || layer.id === "deos" || layer.id === "dreggnet")
+    if (layer.id === "economy" || layer.id === "deos")
       stack.append(el("div", "consumes", "▼ consumes / builds on ▼"));
   });
 }

@@ -1,15 +1,13 @@
-# ONBOARDING — orient fast (dregg + DreggNet)
+# ONBOARDING — orient fast
 
 You are a new Claude session, a new human, or a new agent. Read **this one doc**
-and you will know the shape: what dregg is, what DreggNet is, the two repos and
-how they split, where the live infrastructure is, and the exact "read these
-first" path into the depth. Everything here is grounded to the real current
-state as of 2026-06-28 — it does not aspirational-ize. Where something is staged,
-partial, or single-token-gated, it says so.
+and you will know the shape: what dregg is, the repo layout, and the exact "read
+these first" path into the depth. Everything here is grounded to the real current
+state — it does not aspirational-ize. Where something is staged, partial, or
+single-token-gated, it says so.
 
 The one-sentence through-line: **dregg is the verified, open substrate that says
-what was promised, paid, and owed — verifiably; DreggNet is the private layer
-that actually runs the workload, serves it, hosts it, and bills for it.**
+what was promised, paid, and owed — verifiably.**
 
 ---
 
@@ -72,108 +70,26 @@ desktop. *deos runs on dregg runs in robigalia.*)
 
 ---
 
-## 2. What DreggNet is
-
-DreggNet is the **cloud / operator layer** — the thing that takes dregg's open,
-trustless rail and runs real workloads on real metal, serves them, and bills for
-them. dregg says *what was promised, paid, and owed*, verifiably; DreggNet
-*delivers it*. The substrate is the open rail; the operated infra is the moat.
-
-What composes there (repo `~/dev/DreggNet`):
-
-  from `wasmtime`/`v8` to `firecracker`/`native+seccomp+landlock`, durable
-  replay, capability gates at every boundary. This is what makes "durable
-  container execution for agents" real, not a model.
-- **net/** — the serving + transport layer (the `httpe` HTTP gateway +
-  WireGuard/Tailscale mesh). ember's own work; proprietary, Linux-targeted.
-- **the bridge + control plane** — turn a funded dregg `execution-lease` into a
-  rail; schedule + provision + dispatch over the private overlay.
-- **the surfaces** — the Discord bot (community front door), the
-  Fly-compatible machines API gateway, portal.dregg.studio (see + verify the
-  network), the CLI/SDKs.
-
-### The live infrastructure (as of 2026-06-28)
-
-The fabric today is a **2-node federation** (target: 5), a self-hosted headscale
-mesh, and a home compute backend:
-
-| node | host | role | overlay | state |
-|---|---|---|---|---|
-| **edge** (node-0) | AWS `34.224.208.52` (t3.medium, EIP) | the public door: Caddy (TLS + basic-auth), gateway, control, postgres, headscale + DERP relay, a `dregg-node` | `100.64.0.1` | live |
-| homelab ×3 | pug (target) | additional consensus nodes + compute backends | — | the path to 5-quorum |
-
-- **Federation:** two independent boxes in full BFT mode, finalizing by signed
-  quorum over the overlay. Cross-node deterministic finality is *verified* (a
-  turn submitted on the edge finalized + appeared on persvati with the identical
-  state commitment). Honest caveat: at n=2 the threshold is 2, so `f=0` (no
-  fault tolerance — both must be online). Fault tolerance begins at n=5
-  (threshold 4, `f=1`). See `DreggNet/deploy/FEDERATION.md`.
-- **Mesh:** self-hosted headscale at `headscale.dreggnet.fg-goose.online` (live,
-  real Let's Encrypt cert; `/health` → `{"status":"pass"}`). Nodes join the
-  private WireGuard overlay (`100.64.0.0/10`) and never expose a public port.
-- **Discord bot:** built, shipped to the edge, wired end-to-end, and
-  **token-gated** — it flips live the moment a real `DISCORD_TOKEN` is dropped
-  (the one remaining step). Source: `breadstuffs/discord-bot/`.
-- **portal.dregg.studio:** the public read-only web portal — see the live cell
-  network and trustlessly verify a cell *in your own browser* (a wasm light
-  client in the tab). Read-only v1; **coming up** (DNS + cert propagating);
-  drive-actions (lease/pay/turn) are the next rung.
-- **Solana bridge:** **devnet / oracle-attested** today ($DREGG proper lives on
-  Solana *mainnet*; devnet proves the plumbing). Mainnet-trustless is ahead. See
-  `breadstuffs/docs/deos/{SOLANA-DEVNET,TRUSTLESS-SOLANA-BRIDGE}.md`.
-
-Domains: `dregg.net` is kept pristine for production; `fg-goose.online` is the
-infra catch-all (`dreggnet.fg-goose.online` = the gated operator surface,
-`headscale.dreggnet.fg-goose.online` = the mesh control); `dregg.studio` carries
-the public portal.
-
-### Read these next (DreggNet depth)
-
-The operational + user-facing docs live in the **DreggNet repo**, not here:
-
-- **`DreggNet/docs/OPERATING.md`** — how to run/operate the live network
-  (topology, join the fabric, deploy/restart, cost, runbook index). For
-  operators.
-- **`DreggNet/docs/USING-DREGGNET.md`** — what you can *do* on the network: the
-  Discord bot, the portal, the SDKs, the browser extension. For the community.
-- `DreggNet/README.md` + `DreggNet/ARCHITECTURE.md` — the open-core split and the
-  build ladder.
-- `DreggNet/deploy/` — the operator reference set: `FABRIC-JOIN.md`,
-  `FEDERATION.md`, `PERSVATI-BACKEND.md`, `COMPUTE-OFFERING.md`,
-  `ARCHITECTURE-COMPUTE-BACKEND.md`, `staging/` (the deploy mechanics).
-
----
-
-## 3. The two repos + the open-core split
+## 2. The repo
 
 | | what it is | license | where |
 |---|---|---|---|
-| **dregg** (breadstuffs) | the verified ocap substrate — kernel, value layer, intent ring, Payable, the execution-lease (the on-substrate, light-client-witnessed record of a workload + metering + payment) | **AGPL-3.0, public** | `~/dev/breadstuffs` → `github.com/emberian/dregg` |
-| **DreggNet** | the thing that actually runs the workload, serves it, hosts it, and bills for it | **proprietary, private** | `~/dev/DreggNet` → `github.com/emberian/DreggNet` |
-
-The line: **dregg's half is verifiable; DreggNet's half is the operated, paid
-reality.** Neither claim outruns the other. The open substrate is the trustless
-third party (Apache-2.0, co-dev with pug) consumed by DreggNet, not absorbed.
-
-On disk the two are **siblings** (`~/dev/breadstuffs` + `~/dev/DreggNet`); some
-DreggNet path-deps (`dregg-verify`, `demo/stripe-receiver`) resolve against that
-layout, so keep them side by side.
+| **dregg** (breadstuffs) | the verified ocap substrate — kernel, value layer, intent ring, Payable, the execution-lease (the on-substrate, light-client-witnessed record of a workload + metering + payment) | **AGPL-3.0, public** | `~/dev/breadstuffs` |
 
 ---
 
-## 4. The orient path in one glance
+## 3. The orient path in one glance
 
 ```
-            ┌─ you are here: ONBOARDING.md ──────────────────────────┐
-            │                                                         │
-   want the SUBSTRATE?                              want the NETWORK?
-            │                                                         │
-   OVERVIEW.md → atlas.html →                    DreggNet/README.md →
-   CONSTRUCTIVE-KNOWLEDGE.md →                   DreggNet/ARCHITECTURE.md →
-   KERNEL.md → reference/                        OPERATING.md (run it) /
-            │                                    USING-DREGGNET.md (use it)
-   want to BUILD?                                         │
-   QUICKSTART.md → guide/ → MANUAL/              deploy/ runbooks · FEDERATION.md
+   ┌─ you are here: ONBOARDING.md ─┐
+
+   want the SUBSTRATE?
+   OVERVIEW.md → atlas.html →
+   CONSTRUCTIVE-KNOWLEDGE.md →
+   KERNEL.md → reference/
+
+   want to BUILD?
+   QUICKSTART.md → guide/ → MANUAL/
 ```
 
 For a fresh Claude session specifically: orient from the durable record
@@ -184,9 +100,7 @@ subsystem *is*.
 
 ---
 
-*Honest-state footnote: 2-node federation (→5); the Discord bot is wired +
-token-gated; the portal is read-only v1 coming up; the Solana bridge is
-devnet/oracle with mainnet-trustless ahead; the house-capacity circuit welds are
-partly staged (the executor tooth is real today, the light-client circuit tooth
-is its named shadow — see the memory index). This doc is dated 2026-06-28; verify
-against HEAD.*
+*Honest-state footnote: the Solana bridge is devnet/oracle today; the
+house-capacity circuit welds are partly staged (the executor tooth is real today,
+the light-client circuit tooth is its named shadow — see the memory index).
+Verify against HEAD.*

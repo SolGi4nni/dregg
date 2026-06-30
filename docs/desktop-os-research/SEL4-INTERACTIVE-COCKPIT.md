@@ -58,7 +58,7 @@ rendered HEADLESS off-VM and baked in at build time: `starbridge-v2
 `GPUI-OFFSCREEN-FORK.md:43`) drives a `gpui::HeadlessAppContext` over
 `TestPlatform`, resolves the frame's `gpui::Scene`, and
 `Window::render_to_image` runs it through the offscreen wgpu renderer on lavapipe
-(no GPU, no window) on persvati — 1600x1200@2x Lanczos-downscaled to 800x600. A
+(no GPU, no window) on the render host — 1600x1200@2x Lanczos-downscaled to 800x600. A
 `#![no_std]` PD cannot link wgpu, so the heavy render happens at build time and
 the RGBA is embedded, EXACTLY as `image_data.rs` bakes real cells.
 

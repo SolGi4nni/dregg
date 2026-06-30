@@ -99,7 +99,6 @@ header.hero .one-line {
 .maprow.l-economy::before { background: var(--c-proven); }
 .maprow.l-deos::before { background: var(--c-deployed); }
 .maprow.l-welds::before { background: var(--c-staged); }
-.maprow.l-dreggnet::before { background: var(--c-design); }
 .maprow .mr-head { display:flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .maprow .mr-name { font-weight: 700; color: #fff; font-size: 14.5px; }
 .maprow .mr-kind { font-size: 11px; color: var(--fg-dim); font-family: var(--mono); }

@@ -42,9 +42,6 @@ Read in order, or jump to what you need:
 - The **SDK surfaces** are `sdk/` (Rust, the offline core), `sdk-py/` (Python),
   and `sdk-ts/` (TypeScript). Each ships its own README and an `examples/`
   directory; the guides point at the specific example files.
-- **Running on the operated cloud** — these guides build against the substrate
-  (a local node, the in-tab executor). To run metered workloads on the *operated*
-  DreggNet cloud (the provider, the fly-compatible gateway, durable orchestration),
-  the single developer hub is `DreggNet/docs/DEVELOPERS.md` — it cross-links back
-  to these guides and walks the same identity → fund → lease → receipt loop
-  against DreggNet's compute fleet.
+- **Running against a node** — these guides build against the substrate (a local
+  node, the in-tab executor). The identity → fund → lease → receipt loop is the
+  same whether you run it on a local node or point it at any node you operate.

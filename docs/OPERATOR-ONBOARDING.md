@@ -5,10 +5,9 @@ homelab) walks to fold a new `dregg-node` into a federation and — when the
 federation operator admits it — turn it into a voting validator. It is the same
 path pug's homelab nodes use, so it is built to be clean and reusable.
 
-The companion deployment runbook (overlay/WireGuard join, the docker images, the
-live `edge` + `persvati` topology) is `DreggNet/deploy/FABRIC-JOIN.md` +
-`DreggNet/deploy/FEDERATION.md`. **This** file is the dregg-side command surface
-those runbooks call.
+The overlay/WireGuard join, the container images, and the live topology live in
+your federation's deployment runbook. **This** file is the dregg-side command
+surface those runbooks call.
 
 ## The model (what a federation actually is)
 
@@ -61,8 +60,8 @@ re-prints its pubkey. Hand the printed PUBLIC key to the federation operator.
 ```sh
 # On a committee node's data dir (the operator's box), fold in one or more keys:
 dregg-node add-validator --data-dir ~/.dregg \
-  --pubkey 48e5d1a9953db11eab8f71a94392bcf3f0e721fd433dd74a31bd47dece1da5b2 \
-  --pubkey ac8377fda37571d9dae424235d7bc8ac17e20d48ddc6881767de8e799ed4e755
+  --pubkey <node-b-public-key-hex> \
+  --pubkey <node-c-public-key-hex>
 ```
 
 Reads `genesis.json`, folds the pubkey(s) into the committee, **recomputes the
@@ -74,7 +73,7 @@ the new descriptor back to `genesis.json` plus a content-named sibling
 > **Authority.** Filesystem access to a committee node's data dir *is* the
 > authority — there is deliberately **no remote self-admit** (that would defeat
 > BFT: a node could vote itself in). The operator who controls the existing
-> federation runs this. On the live `edge` box, that is ember.
+> federation runs this.
 
 The re-roll changes `federation_id`, so it is a coordinated act: distribute the
 new `genesis.json` to **every** committee node (each keeps its own `node.key`)
@@ -83,8 +82,8 @@ and restart them.
 ### 3. `join` — peer, sync, follow / vote
 
 ```sh
-dregg-node join --bootstrap 100.64.0.1:9420 \
-  --data-dir ~/.dregg --bind 100.64.0.2
+dregg-node join --bootstrap <bootstrap-overlay-ip>:9420 \
+  --data-dir ~/.dregg --bind <this-node-overlay-ip>
 ```
 
 Pre-flights the data dir (auto-generates `node.key` if absent, printing the
@@ -95,32 +94,29 @@ catches up the DAG from the bootstrap; if this node's key is **in** the committe
 it casts finalization votes, otherwise it syncs as a **follower** and
 auto-proposes membership (`propose_join_if_needed`) until an operator admits it.
 
-- `--bind` should be the box's **overlay IP** (e.g. `100.64.0.2`) so authorized
+- `--bind` should be the box's **overlay IP** (your private overlay address) so authorized
   peers can sync. **Not** `127.0.0.1` (loopback-only — peers can't reach it) and
   **not** `0.0.0.0` (exposes every interface — red-team MESH-2). `join` warns if
   you pass `0.0.0.0`.
 - One live bootstrap peer is enough; gossip-of-peers fills in the rest of the
   mesh.
 
-## The full dance — growing edge → {edge, persvati, snoopy}
+## The full dance — growing a 1-node committee to 3
 
-Three independent boxes on the overlay (edge `100.64.0.1`, persvati `100.64.0.2`,
-snoopy `100.64.0.3`):
+Three independent boxes on the overlay (node-A the existing committee/bootstrap,
+node-B and node-C joining):
 
-1. **Keys.** On persvati and snoopy: `dregg-node gen-validator-key`. Each sends
+1. **Keys.** On node-B and node-C: `dregg-node gen-validator-key`. Each sends
    its PUBLIC key to the operator.
-   - persvati: `48e5d1a9953db11eab8f71a94392bcf3f0e721fd433dd74a31bd47dece1da5b2`
-   - snoopy:   `ac8377fda37571d9dae424235d7bc8ac17e20d48ddc6881767de8e799ed4e755`
-2. **Admit (operator/ember, on the edge).** `dregg-node add-validator --pubkey
-   <persvati> --pubkey <snoopy>` → a 3-member committee, **threshold 3** (f=0), a
+2. **Admit (operator, on a committee node).** `dregg-node add-validator --pubkey
+   <node-b> --pubkey <node-c>` → a 3-member committee, **threshold 3** (f=0), a
    new `federation_id`. This emits the descriptor `genesis-<id8>.json`.
-3. **Distribute.** Copy the new `genesis.json` to persvati's and snoopy's data
-   dirs (each keeps its own `node.key`). For a box that can't reach the edge's
-   read API (loopback-only), hand it the descriptor out of band (e.g. the
-   builders.dev `general` channel, the FABRIC-JOIN.md pattern).
-4. **Join + restart.** On persvati and snoopy:
-   `dregg-node join --bootstrap 100.64.0.1:9420 --bind <overlay-ip>`. Restart the
-   edge into full mode with the new genesis and `--bind 100.64.0.1`.
+3. **Distribute.** Copy the new `genesis.json` to node-B's and node-C's data
+   dirs (each keeps its own `node.key`). For a box that can't reach a committee
+   node's read API (loopback-only), hand it the descriptor out of band.
+4. **Join + restart.** On node-B and node-C:
+   `dregg-node join --bootstrap <bootstrap-overlay-ip>:9420 --bind <overlay-ip>`.
+   Restart node-A into full mode with the new genesis and its own `--bind`.
 5. **Verify.** Each `/status` shows `federation_mode: full`, the new
    `federation_id`, `peer_count` rising to 2 (each sees the other two), and they
    converge to the same `dag_height`. A faucet/transfer turn submitted on one
@@ -133,11 +129,11 @@ snoopy `100.64.0.3`):
   tested (`node/src/operator_join.rs`), and reusable for the homelab.
 - Binding the read API to the overlay is a run flag (`--bind <overlay-ip>`), not
   a code change — overlay-only, never `0.0.0.0`.
-- **The live validator-adds are gated on the federation operator.** Admitting
-  persvati + snoopy means running `add-validator` on the `edge` (which requires
-  ember's operator access to the edge box) and a coordinated restart. Until then,
-  a joining box syncs as a follower and auto-proposes membership; it anchors no
-  finality. This gate is by design — BFT membership is not self-grantable.
+- **Validator-adds are gated on the federation operator.** Admitting a new box
+  means running `add-validator` on a committee node (which requires operator
+  access to that box) and a coordinated restart. Until then, a joining box syncs
+  as a follower and auto-proposes membership; it anchors no finality. This gate
+  is by design — BFT membership is not self-grantable.
 
 ## Reboot / recovery
 
@@ -145,5 +141,5 @@ snoopy `100.64.0.3`):
 boot. A committee node rejoins by **catch-up**: clear its `dregg.redb` (keep
 `genesis.json` + `node.key`) and restart; it re-seeds genesis, re-peers, and
 replays the finalized DAG from the quorum, re-deriving the exact finalized state.
-See `DreggNet/deploy/FEDERATION.md` for the durable-state caveat below the first
-ledger checkpoint (the recovery-order fix landed in `node/src/main.rs`).
+See your federation deployment runbook for the durable-state caveat below the
+first ledger checkpoint (the recovery-order fix landed in `node/src/main.rs`).

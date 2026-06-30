@@ -1,6 +1,6 @@
 # dregg architecture atlas
 
-A navigable, grounded, honest map of everything across **dregg** and **DreggNet**.
+A navigable, grounded, honest map of everything across **dregg**.
 Vanilla HTML/CSS/JS, no build step required to develop.
 
 ## Files

@@ -20,7 +20,7 @@ The weld is closed end-to-end. The deos-image PD (`sel4/dregg-pd/deos-image/`) n
 
 The cockpit frame is rendered at the framebuffer's exact `800×600` by the **actual gpui
 renderer** (`gpui_wgpu::WgpuRenderer::render_scene_to_image`, the patch below) on lavapipe
-(llvmpipe, `type=Cpu`, no GPU/window) on persvati — `21` quads + `322` monochrome glyph
+(llvmpipe, `type=Cpu`, no GPU/window) on the render host — `21` quads + `322` monochrome glyph
 sprites, the title bar + the three master columns (WORLD/SHELL/REFLECT) + the four-substance
 tiles + the status bar — then baked into the `#![no_std]` PD as raw RGBA8
 (`src/cockpit_frame.rgba`, 1.92 MiB) exactly as `image_data.rs` bakes real cells. At blit
@@ -32,7 +32,7 @@ Reproduce + capture (both modes to PNG): `cd sel4 && make capture-image-modes` �
 headless, screendumps the live image, `send-key TAB` over QMP, screendumps the cockpit.
 Evidence: `patches/cockpit-on-sel4-framebuffer.png` (the cockpit-shaped gpui render, scanned
 out of seL4 ramfb) + `patches/deos-image-on-sel4-framebuffer.png` (the cell browser, same boot) +
-`patches/cockpit-render-800x600.png` (the persvati render). Serial confirms
+`patches/cockpit-render-800x600.png` (the render-host render). Serial confirms
 `ramfb CONFIGURED: addr=0x60600000 XRGB8888 800x600` then `-> MODE: the starbridge-v2 COCKPIT`.
 
 ## The live element tree (the swap, closed)
@@ -62,14 +62,14 @@ The mechanism is gpui's own headless capture path, with the missing Linux render
 Byte-proof the bake is the live render: the new `cockpit_frame.rgba` differs from the old
 hand-built one in 1,376,735 / 1,920,000 bytes. Evidence:
 `patches/cockpit-on-sel4-framebuffer-LIVE.png` (live cockpit out of seL4 ramfb) +
-`patches/cockpit-render-800x600-LIVE.png` (the persvati render). The plumbing
+`patches/cockpit-render-800x600-LIVE.png` (the render-host render). The plumbing
 (render → RGBA → XRGB8888 → ramfb → scanout → TAB mode) is unchanged and end-to-end.
 
 ## Proven (not theorized)
 
 `docs/desktop-os-research/patches/gpui-offscreen-proof.png` (1024×640 RGBA8) is a real gpui
 scene — a cockpit-shaped layout with crisp anti-aliased text, rounded bordered panels, the
-world/shell/reflect columns — rendered **with no GPU and no window** on persvati via lavapipe
+world/shell/reflect columns — rendered **with no GPU and no window** on the render host via lavapipe
 (`llvmpipe (LLVM 20.1.8), backend=Vulkan, type=Cpu`), through the *actual* `WgpuRenderer`
 the real cockpit uses. Scene = 18 quads + 258 monochrome glyph sprites; BGRA→RGBA + premultiplied
 alpha + 256-byte row alignment all correct.
@@ -90,7 +90,7 @@ modelled on the Metal `render_scene_to_image` (`gpui_macos/src/metal_renderer.rs
   + `poll(Wait)` → BGRA→RGBA swizzle (returns raw RGBA, adds no dep). **(c)** `new_offscreen()`
   surfaceless ctor.
 
-Reproduce: patched fork on persvati `~/src/zed`; harness `/tmp/gpui-offscreen-poc/`; run with
+Reproduce: patched fork on the render host `~/src/zed`; harness `/tmp/gpui-offscreen-poc/`; run with
 `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json ZED_OFFSCREEN_PREFER_CPU=1`.
 
 ## The dregg fork (where the patch lives)

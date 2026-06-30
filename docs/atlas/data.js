@@ -1,4 +1,4 @@
-// dregg / DreggNet architecture atlas — grounded data model.
+// dregg architecture atlas — grounded data model.
 // Status vocabulary (the whole point — distinguish truth from staging from design):
 //   PROVEN      — Lean theorem, #assert_axioms-clean (only standard crypto carriers open)
 //   DEPLOYED    — live in the deployed VK / runtime default; a light client witnesses it today
@@ -9,7 +9,7 @@
 //   SCAFFOLD    — green build, honest scaffold; the real path errors / is mock until a named rung
 //   DESIGN      — designed, not shipped (blueprint / frontier / one-wiring-away)
 //
-// File refs: paths are relative to the breadstuffs repo root unless repo:"DreggNet".
+// File refs: paths are relative to the breadstuffs repo root.
 // Serve from the repo root (python3 -m http.server) to make breadstuffs refs clickable.
 
 const STATUS = {
@@ -22,9 +22,8 @@ const STATUS = {
   DESIGN:   { label: "DESIGNED", cls: "s-design",   blurb: "Designed, not shipped — blueprint / frontier / one-wiring-away" },
 };
 
-// f(path, line, label?) — a breadstuffs file ref.  d(...) — a DreggNet ref (separate repo).
+// f(path, line, label?) — a breadstuffs file ref.
 const f = (path, line, label) => ({ path, line, label, repo: "breadstuffs" });
-const d = (path, line, label) => ({ path, line, label, repo: "DreggNet" });
 
 const ATLAS = {
   layers: [
@@ -39,7 +38,7 @@ const ATLAS = {
       id: "economy",
       name: "service economy",
       kind: "OPEN · the rail",
-      tagline: "Value, services, leases, and metered tool-access — every charge desugars to one conserving Transfer (Σδ=0). This is the rail DreggNet rents over.",
+      tagline: "Value, services, leases, and metered tool-access — every charge desugars to one conserving Transfer (Σδ=0). This is the rail an operator rents over.",
       sections: ["economy"],
     },
     {
@@ -55,13 +54,6 @@ const ATLAS = {
       kind: "honesty-critical — STAGED vs DEPLOYED",
       tagline: "Binding each capacity invariant into the EffectVM so a LIGHT CLIENT, not just a re-executing validator, witnesses it. Coverage is DEPLOYED; satisfaction is STAGED — the FLIP is not taken.",
       sections: ["vkepoch"],
-    },
-    {
-      id: "dreggnet",
-      name: "DreggNet",
-      kind: "PRIVATE · proprietary moat / operator",
-      tagline: "The operated reality that consumes dregg's open execution-lease rail: durable polyglot execution on real metal, metered exactly-once, gated by a funded lease. The substrate is free + verifiable; the operated infra is the product.",
-      sections: ["dreggnet"],
     },
   ],
 
@@ -203,7 +195,7 @@ const ATLAS = {
     // ───────────────────────────── ECONOMY ─────────────────────────────
     {
       id: "economy", layer: "economy", title: "The service economy",
-      what: "The value + service layer above the kernel: Payable routes every charge through one shared interface that desugars to a single conserving Transfer; the intent ring matches offers/wants into atomic value cycles; the service-promise binds service-for-payment as a 2-cycle escrow; the ToolGateway meters pay-per-tool access under a cap-gated mandate; the execution-lease models durable metered workloads (the rail DreggNet rents). The SDKs (Rust/TS/Py) expose all of this in a few lines. Everything below landed and is tested.",
+      what: "The value + service layer above the kernel: Payable routes every charge through one shared interface that desugars to a single conserving Transfer; the intent ring matches offers/wants into atomic value cycles; the service-promise binds service-for-payment as a 2-cycle escrow; the ToolGateway meters pay-per-tool access under a cap-gated mandate; the execution-lease models durable metered workloads (the rail an operator rents). The SDKs (Rust/TS/Py) expose all of this in a few lines. Everything below landed and is tested.",
       components: [
         { name: "Payable — the conserving Transfer DSI", status: "REAL", what: "The one verified source of truth for cross-app value: pay() routes through resolve_pay and desugars to exactly one Effect::Transfer (Σδ=0). Used identically by framework turns, the SDK runtime, and the tool gateway.",
           files: [f("dregg-payable/src/lib.rs", 17), f("app-framework/src/payable.rs", 52)] },
@@ -211,7 +203,7 @@ const ATLAS = {
           files: [f("app-framework/src/ring_trade.rs", 176), f("app-framework/src/service_promise.rs", 84)] },
         { name: "ToolGateway — pay-per-tool", status: "REAL", what: "deleg_admit (byte-faithful Lean mirror: SCOPE ∧ DEADLINE ∧ RATE) + a mandate_program (FieldLte + Monotonic meter). Each admitted call charges one conserving Transfer. Unit + e2e + red-team tests (every overrun refused in-band).",
           files: [f("sdk/src/tool_gateway.rs", 115), f("sdk/src/tool_gateway.rs", 220)] },
-        { name: "Execution-lease (the rail)", status: "REAL", what: "A durable-execution provider on the value layer (fly.io-lite): a lease cell holds a checkpoint, a cap-gated worker runs metered by FieldLte+Monotonic, payment is a conserving Transfer; lapse refuses on non-payment. This is what the DreggNet bridge fulfills.",
+        { name: "Execution-lease (the rail)", status: "REAL", what: "A durable-execution provider on the value layer (fly.io-lite): a lease cell holds a checkpoint, a cap-gated worker runs metered by FieldLte+Monotonic, payment is a conserving Transfer; lapse refuses on non-payment. This is what an operator bridge fulfills.",
           files: [f("sdk/src/service_economy.rs", 305), f("starbridge-apps/execution-lease/src/lib.rs", 1)] },
         { name: "Rust SDK — dregg-sdk", status: "REAL", what: "AgentRuntime::pay() / invoke_service() / ExecutionLease — the mature core; embeds the verified executor.",
           files: [f("sdk/src/service_economy.rs", 86), f("docs/reference/sdk.md")] },
@@ -253,7 +245,7 @@ const ATLAS = {
           files: [f("bridge/src/solana_mirror.rs", 366), f("bridge/src/solana_consensus.rs"), f("bridge/src/solana_trustless.rs")] },
         { name: "Concurrency double-mint gate", status: "STAGED", what: "Consume-once lock_id nullifier + committed mirror-ledger cell, designed sound (BRIDGE-ARCHITECTURE-SOUNDNESS §3). Nullifier derivation real; per-relayer in-memory seen_locks is still the active dedup until the committed gate routes in the executor apply path.",
           files: [f("bridge/src/solana_mirror.rs", 59), f("docs/deos/BRIDGE-ARCHITECTURE-SOUNDNESS.md")] },
-        { name: "Stripe payment rail", status: "REAL", what: "Webhook-verified payment → conserving mint → pays a DreggNet execution-lease.",
+        { name: "Stripe payment rail", status: "REAL", what: "Webhook-verified payment → conserving mint → pays an execution-lease.",
           files: [f("bridge/src/stripe_mirror.rs")] },
         { name: "Midnight state-inclusion + Ethereum/Mina", status: "REAL", what: "Native state-INCLUSION over a re-committed mirror root (splits 'is root valid' from 'is state in root'); permissionless watchtower. Ethereum + Mina ZK-proof connectors.",
           files: [f("bridge/src/midnight.rs"), f("bridge/src/ethereum.rs"), f("docs/deos/DIFFERENT-MIDNIGHT-BRIDGE.md")] },
@@ -291,23 +283,6 @@ const ATLAS = {
           files: [f("docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md")] },
         { name: "Host & container bridges (frontier)", status: "DESIGN", what: "Same Target/Capability/is_attenuation gate, only the backing moves — a drop-in rehearsal for native seL4. Design complete (phased H0–H2 / C0–C2); no circuit/execution code yet.",
           files: [f("docs/deos/HOST-AND-CONTAINER-BRIDGES.md"), f("docs/deos/ETH-NATIVE-WRAP.md")] },
-      ],
-    },
-
-    // ───────────────────────────── DREGGNET ─────────────────────────────
-    {
-      id: "dreggnet", layer: "dreggnet", title: "DreggNet — the operated moat",
-      components: [
-          files: [d("ARCHITECTURE.md"), d("README.md")] },
-          files: [d("exec/src/lib.rs", 149)] },
-          files: [d("durable/src/lib.rs"), d("docs/DBOS-DURABLE-LAYER.md")] },
-        { name: "bridge — the lease⟷workload keystone (rung 3)", status: "REAL", what: "map_cap_grade (grade→tier), workflow_input_for_lease (the gate: refuses unfunded/ill-formed/below-floor), fulfill (launches the durable orchestration, meters against budget). End-to-end + over-budget tests pass. Live dregg-node read is feature-gated off-default (AGPL-clean).",
-          files: [d("bridge/src/lib.rs", 209), d("bridge/tests/lease_drives_durable_workflow.rs")] },
-        { name: "control — scheduler + providers (rung 4)", status: "REAL", what: "VmProvider trait; LocalProvider runs end-to-end in-process via the bridge; Scheduler places→fulfills→reaps (refuses unfunded before provisioning). Ec2Provider builds correct aws-cli argv but returns Unimplemented; mesh keypair real, TCP link Linux-only stub. (rung 6 Hetzner: abstraction ready, backend user-supplied.)",
-          files: [d("control/src/scheduler.rs"), d("control/src/local.rs"), d("control/src/ec2.rs")] },
-          files: [d("gateway/src/gateway.rs"), d("webapp/src/router.rs"), d("docs/AGENT-WEB-APPS.md")] },
-        { name: "cli + demo + self-host", status: "REAL", what: "dreggnet CLI (lease open / run / status, cross-invocation JSON state). demo/run-demo.sh drives both halves labeled [REAL] vs [NARRATED]. dreggnet-provider: anyone runs their own provider against their own cells/machines — the moat is the network, not the code.",
-          files: [d("cli/src/main.rs", 140), d("docs/SELF-HOST.md"), d("docs/HACKATHON-DEMO.md")] },
       ],
     },
   ],
