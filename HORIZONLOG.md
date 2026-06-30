@@ -25,6 +25,26 @@ reason.)*
   (G2-shaped `proofBind` flip + 4→8-felt lift) for backing-existence + surface the nullifier consume into
   the per-turn commitment. The binding AIR + 18 green teeth (`circuit/src/bridge_action_air.rs`) + Lean
   `Crypto/Bridge.lean` (`#assert_axioms`-clean) already exist; only the fold is missing.
+  UPDATE (2026-06-30, G1 refute+assess pass): the vacuity is now LEAN-EXPLICIT —
+  `metatheory/Dregg2/Circuit/BridgeBackingAttack.lean` (`#assert_axioms`-clean, the G1 analog of
+  `CustomCarrierAttack`): `deployed_admits_unbacked_bridge` = a bridge-mint row SATISFYING the deployed
+  descriptor's row intent (credit `value_lo` + frame freeze + nonce tick) whose published `mint_hash`
+  (`prmCol 0`) is backed by NO verifying foreign spend; `deployed_intent_does_not_force_backing` = no
+  uniform "deployed-accepts ⟹ backed"; `deployed_admits_consumed_nullifier` = the consume-once guard is a
+  RE-EXEC tooth, not a light-client one. KEY ASSESSMENT (corrects the naive "expose the raw
+  nullifier/recipient/dest_fed/amount limbs as PIs" framing): the deployed `mintV3` row carries the backing
+  ONLY as the single `mint_hash` digest (param0, binds nullifier/root/dest_fed/asset_type) + `value_lo`
+  (param1) — there are NO raw-limb columns to expose (unlike custom's commit/vk columns). So the
+  parameter-binding is NOT a pure expose-existing-columns move; it is the ADDITIVE full-fidelity boundary
+  (the bridge_action_air 26-PI binding staged beside the deployed mint), exactly as CLOSURE (1) above. A
+  TWO-fold gap blocks a naive `mint_hash`-PI connect: (i) REPRESENTATION — deployed = one digest, leaf
+  (`circuit-prove/src/bridge_leaf_adapter.rs::prove_bridge_leaf`, already built + forged-reject tooth) = 26
+  raw limbs; (ii) TUPLE — `mint_hash` binds {nullifier,root,dest_fed,asset_type}; `bridge_action_air` binds
+  {nullifier,recipient,dest_fed,amount}. Backing-existence SHARES the sibling custom chain-prover restructure
+  (`prove_custom_binding_node` → `prove_chain_core_rotated`, the connect-tooth primitive); the bridge fold is
+  its analog over the bridge leaf. NOT force-landed: a premature `mint_hash`-PI exposure would move the
+  deployed VK (3 registry TSVs + sha256 pins + light-client-binding VK fingerprints + parity) without yet
+  buying a working connect — so the VK move waits for the additive-boundary + fold to land together.
 - LIVE EPOCH TRANSITION WIRED (2026-06-29) — validator add/remove/rotate is now a LIVE on-chain op on the running
   blocklace consensus, not a genesis re-roll. `node/src/finalization_votes.rs::VoteCollector::reconfigure` +
   `node/src/blocklace_sync.rs::{apply_passed_proposal→apply_committee_change, propose_membership}` advance the live
