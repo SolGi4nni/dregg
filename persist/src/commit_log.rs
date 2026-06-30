@@ -1075,6 +1075,40 @@ impl PersistentStore {
     ///
     /// Returns the number of divergent records truncated (0 ⇒ already consistent).
     pub fn recover_to_last_consistent(&self) -> Result<u64> {
+        // No genesis baseline: the reconstruction starts from the latest
+        // checkpoint, or an EMPTY ledger when none exists. Correct for a store
+        // whose every cell was established by a committed turn (e.g. a starbridge
+        // World) — there are no UNTOUCHED genesis cells to restore. A node with a
+        // genesis baseline (fee/issuer wells, faucet) must use
+        // [`Self::recover_to_last_consistent_from_base`] instead.
+        self.recover_to_last_consistent_from_base(&dregg_cell::Ledger::new())
+    }
+
+    /// [`Self::recover_to_last_consistent`] reconstructing on top of an explicit
+    /// genesis BASELINE instead of an empty ledger when no checkpoint exists.
+    ///
+    /// # Why a baseline is required for sub-checkpoint recovery
+    ///
+    /// A node that finalized turns BELOW its first ledger checkpoint has no
+    /// checkpoint to restore its UNTOUCHED genesis cells from (the fee well, the
+    /// issuer well, a faucet — cells genesis established but no turn has touched).
+    /// The commit-log overlay carries ONLY the cells a turn touched, so
+    /// reconstructing from an empty base yields the touched-cell delta, NOT the
+    /// full finalized ledger. But every record's `ledger_root` commits the FULL
+    /// ledger (genesis ⊕ touched). Comparing the delta's root against that claim
+    /// mismatches at EVERY ordinal, so the no-baseline walk finds NO converging
+    /// prefix and refuses a perfectly recoverable image as unsalvageable — a
+    /// FALSE store-integrity fatal on an abrupt power loss, exactly the
+    /// sub-checkpoint power-cycle that wedges a whole-cluster restart.
+    ///
+    /// Seeding `base` (the genesis baseline) first mirrors the node's
+    /// `reseed_genesis_then_overlay` recovery order — genesis baseline, the latest
+    /// checkpoint laid over it, then the commit-log overlay last-writer-wins — so
+    /// a torn tail recovers cleanly to the last root-converging ordinal while a
+    /// GENUINE divergence (no prefix reconstructs to its recorded root even with
+    /// the baseline in place) still fails closed. `base` empty reproduces
+    /// [`Self::recover_to_last_consistent`] exactly.
+    pub fn recover_to_last_consistent_from_base(&self, base: &dregg_cell::Ledger) -> Result<u64> {
         let floor = self.commit_compacted_floor()?;
         let cursor = self.commit_cursor()?;
         if cursor <= floor {
@@ -1082,16 +1116,22 @@ impl PersistentStore {
             return Ok(0);
         }
 
-        // Reconstruction base: the latest full ledger checkpoint (or empty). The
-        // checkpoint already folds in every record at/below its height; the live
+        // Reconstruction base: the genesis BASELINE first, with the latest full
+        // ledger checkpoint laid OVER it. A checkpoint is a full snapshot that
+        // normally already carries genesis; laying it over `base` also restores
+        // any untouched genesis cell a sub-checkpoint store has no checkpoint for.
+        // The checkpoint folds in every record at/below its height; the live
         // overlay re-asserts post-checkpoint cells last-writer-wins. We walk the
-        // SAME reconstruction `recover` uses, but evaluate the canonical root after
-        // EACH record so we find the last ordinal that converges to its claim.
-        let _checkpoint_height = self.latest_ledger_checkpoint_height()?;
-        let mut ledger = match self.load_latest_ledger_checkpoint()? {
-            Some((_, l)) => l,
-            None => dregg_cell::Ledger::new(),
-        };
+        // SAME reconstruction `recover` uses (genesis ⊕ checkpoint ⊕ overlay),
+        // evaluating the canonical root after EACH record so we find the last
+        // ordinal that converges to its claim.
+        let mut ledger = base.clone();
+        if let Some((_, checkpoint)) = self.load_latest_ledger_checkpoint()? {
+            for (_, cell) in checkpoint.iter() {
+                let _ = ledger.remove(&cell.id());
+                let _ = ledger.insert_cell(cell.clone());
+            }
+        }
 
         // Scan the live log in ordinal order, applying each record's touched cells
         // and remembering the last ordinal whose running root matches its claim.
@@ -2228,6 +2268,174 @@ mod tests {
         assert_eq!(store.commit_cursor().unwrap(), 3);
         assert!(store.commit_record_at(3).unwrap().is_none());
         assert!(store.verify_index_agrees_with_log().unwrap().ok());
+    }
+
+    /// A genesis BASELINE: cells genesis established (fee well, issuer well,
+    /// faucet) that NO turn touches — they live only in the baseline, never in a
+    /// commit record nor (at sub-checkpoint height) a checkpoint. High seeds so
+    /// they never collide with the per-turn `cell(k, …)` ids (k small).
+    fn genesis_baseline() -> Ledger {
+        let mut g = Ledger::new();
+        for seed in [0xf0u8, 0xf1, 0xf2] {
+            let _ = g.insert_cell(cell(seed, 1_000_000));
+        }
+        g
+    }
+
+    /// Like `commit_canonical` but each record's `ledger_root` is the canonical
+    /// root over the GENESIS BASELINE ⊕ the touched cells through that turn — the
+    /// real shape a node commits (the recorded root commits the FULL ledger, not
+    /// just the touched delta).
+    fn commit_canonical_over(store: &PersistentStore, genesis: &Ledger, n: u64) {
+        let mut ledger = genesis.clone();
+        for k in 0..n {
+            let c = cell(k as u8, 100 + k);
+            let _ = ledger.remove(&c.id());
+            let _ = ledger.insert_cell(c.clone());
+            let mut rec = record(k, k * 10, vec![c]);
+            rec.turn_hash[0] = 0xc0;
+            rec.turn_hash[1] = k as u8;
+            rec.receipt_hash[0] = 0xd0;
+            rec.receipt_hash[1] = k as u8;
+            rec.ledger_root = crate::canonical_ledger_root(&ledger);
+            store.commit_finalized_turn(k, &rec).unwrap();
+        }
+    }
+
+    /// THE SUB-CHECKPOINT POWER-CYCLE TOOTH (the real homelab bug): a node that
+    /// finalized turns BELOW its first ledger checkpoint has untouched genesis
+    /// cells the commit-log overlay does NOT carry. The recorded `ledger_root`
+    /// commits the FULL ledger (genesis ⊕ touched), so reconstructing from an
+    /// EMPTY base mismatches at EVERY ordinal — the no-baseline walk finds no
+    /// converging prefix and FALSELY refuses a perfectly consistent image as
+    /// unsalvageable. Reconstructing on the genesis baseline converges: a clean
+    /// image is a no-op (0 truncated), never a store-integrity fatal.
+    #[test]
+    fn recover_from_base_does_not_falsely_strand_a_sub_checkpoint_image() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let genesis = genesis_baseline();
+        // A genuinely CONSISTENT log over a non-empty baseline — no torn tail.
+        commit_canonical_over(&store, &genesis, 5);
+        let cursor_before = store.commit_cursor().unwrap();
+
+        // The no-baseline walk MISreads this consistent image as unsalvageable:
+        // every record's root commits genesis ⊕ touched, which the empty-base
+        // reconstruction can never reproduce. (This is the bug the fix removes.)
+        assert!(
+            matches!(
+                store.recover_to_last_consistent(),
+                Err(StoreError::Integrity(_))
+            ),
+            "no-baseline reconstruction falsely refuses a consistent sub-checkpoint image"
+        );
+
+        // The genesis-baseline walk converges at the head: clean image, 0 dropped.
+        assert_eq!(
+            store
+                .recover_to_last_consistent_from_base(&genesis)
+                .unwrap(),
+            0,
+            "a consistent image over its genesis baseline needs NO truncation \
+             (no false store-integrity fatal on a power-cycle restart)"
+        );
+        assert_eq!(
+            store.commit_cursor().unwrap(),
+            cursor_before,
+            "cursor untouched on a consistent image"
+        );
+        assert!(store.verify_index_agrees_with_log().unwrap().ok());
+    }
+
+    /// A TORN TAIL over a genesis baseline recovers cleanly: the consistent
+    /// prefix (reconstructed genesis ⊕ overlay) is kept, the torn records (bogus
+    /// recorded root) are truncated, and the post-recovery reconstruction MATCHES
+    /// the head's recorded root — the integrity check passes, the image opens.
+    #[test]
+    fn recover_from_base_truncates_a_torn_tail_over_genesis() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let genesis = genesis_baseline();
+        commit_canonical_over(&store, &genesis, 3);
+
+        // Model the abrupt power loss mid-write: two records land (cursor
+        // advances) whose recorded root does NOT match the post-state (a torn /
+        // poisoned tail), so the head no longer reconstructs to its claim.
+        for k in 3..5u64 {
+            let c = cell(k as u8, 100 + k);
+            let mut bad = record(k, k * 10, vec![c]);
+            bad.turn_hash[0] = 0xc0;
+            bad.turn_hash[1] = k as u8;
+            bad.receipt_hash[0] = 0xd0;
+            bad.receipt_hash[1] = k as u8;
+            bad.ledger_root = [0xde; 32]; // the tear: a root the post-state never reaches
+            store.commit_finalized_turn(k, &bad).unwrap();
+        }
+        assert_eq!(store.commit_cursor().unwrap(), 5);
+
+        let truncated = store
+            .recover_to_last_consistent_from_base(&genesis)
+            .unwrap();
+        assert_eq!(truncated, 2, "the two torn records are dropped");
+        assert_eq!(
+            store.commit_cursor().unwrap(),
+            3,
+            "cursor regresses to last-good + 1"
+        );
+        assert!(
+            store.commit_record_at(2).unwrap().is_some(),
+            "last-good kept"
+        );
+        assert!(store.commit_record_at(3).unwrap().is_none(), "tail dropped");
+
+        // THE CONVERGENCE CHECK PASSES at the recovered point — reconstructing
+        // genesis ⊕ overlay (the SOUND `reseed_genesis_then_overlay` order)
+        // equals the head's recorded root, so the node opens instead of stranding.
+        let mut ledger = genesis.clone();
+        for c in store.cell_overlay_since(0).unwrap() {
+            let _ = ledger.remove(&c.id());
+            let _ = ledger.insert_cell(c);
+        }
+        assert_eq!(
+            crate::canonical_ledger_root(&ledger),
+            store.recovered_ledger_root().unwrap().unwrap(),
+            "post-recovery reconstruction matches the head's recorded root"
+        );
+        assert!(store.verify_index_agrees_with_log().unwrap().ok());
+    }
+
+    /// FAIL-CLOSED on GENUINE corruption: when NO prefix reconstructs to its
+    /// recorded root even WITH the genesis baseline in place (a real divergence /
+    /// tamper, not a torn tail with a recoverable prefix), recovery refuses with
+    /// a store-integrity error rather than silently laundering corruption into an
+    /// empty image. The baseline fix never weakens fail-closed.
+    #[test]
+    fn recover_from_base_fails_closed_on_genuine_corruption() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let genesis = genesis_baseline();
+
+        // Every record carries a bogus recorded root — no prefix (even genesis ⊕
+        // overlay) reconstructs to any claim. There is NO salvageable last-good
+        // point: this is real divergence, not a torn tail.
+        for k in 0..3u64 {
+            let c = cell(k as u8, 100 + k);
+            let mut bad = record(k, k * 10, vec![c]);
+            bad.turn_hash[0] = 0xc0;
+            bad.turn_hash[1] = k as u8;
+            bad.receipt_hash[0] = 0xd0;
+            bad.receipt_hash[1] = k as u8;
+            bad.ledger_root = [0x5e ^ k as u8; 32]; // divergent at every ordinal
+            store.commit_finalized_turn(k, &bad).unwrap();
+        }
+
+        assert!(
+            matches!(
+                store.recover_to_last_consistent_from_base(&genesis),
+                Err(StoreError::Integrity(_))
+            ),
+            "genuine corruption (no converging prefix) must FAIL CLOSED, never \
+             silently recover to an empty image"
+        );
+        // Fail-closed = untouched: the cursor did not regress, nothing truncated.
+        assert_eq!(store.commit_cursor().unwrap(), 3, "no silent truncation");
     }
 
     /// THE SINGLE-WRITER GUARD (against the OTHER corruption cause — concurrent
