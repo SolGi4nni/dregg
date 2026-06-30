@@ -1863,7 +1863,8 @@ mod proof_verify;
 // mint, closing the multi-relayer double-mint gap.
 pub mod bridge_ledger;
 pub use bridge_ledger::{
-    BridgeMintError, BridgeMintReceipt, BridgeMintRequest, new_mirror_ledger_cell, read_supply,
+    BridgeEscrowReceipt, BridgeEscrowRecord, BridgeMintError, BridgeMintReceipt, BridgeMintRequest,
+    escrow_nullifier_for, new_mirror_ledger_cell, read_supply,
 };
 
 // MEASUREMENT-ONLY: env-gated (`DREGG_TURN_PROFILE=1`) per-turn phase profiler.

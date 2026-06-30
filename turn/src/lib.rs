@@ -155,11 +155,12 @@ pub use eventual::{
 };
 pub use execution_path::{ExecutionPath, compute_execution_path};
 pub use executor::{
-    AtomicProofEntry, AtomicSovereignTurn, AtomicTurnError, BridgeMintError, BridgeMintReceipt,
-    BridgeMintRequest, CellMigrationManager, ComputronCosts, MigrationCancelReason, MigrationError,
-    MigrationState, MixedAtomicResult, MixedAtomicTurn, ProofVerifier, ResolutionTable,
-    TurnExecutor, execute_pipeline, execute_pipeline_result, new_mirror_ledger_cell, read_supply,
-    resolve_eventual_ref,
+    AtomicProofEntry, AtomicSovereignTurn, AtomicTurnError, BridgeEscrowReceipt,
+    BridgeEscrowRecord, BridgeMintError, BridgeMintReceipt, BridgeMintRequest,
+    CellMigrationManager, ComputronCosts, MigrationCancelReason, MigrationError, MigrationState,
+    MixedAtomicResult, MixedAtomicTurn, ProofVerifier, ResolutionTable, TurnExecutor,
+    escrow_nullifier_for, execute_pipeline, execute_pipeline_result, new_mirror_ledger_cell,
+    read_supply, resolve_eventual_ref,
 };
 pub use fast_path::{
     CellLockEntry, CellLockTable, FastPathConfig, FastPathError, TurnCertificate, TurnSign,

@@ -596,6 +596,27 @@ impl ObservedDeposit {
             lock_nullifier: self.nullifier,
             recipient: self.recipient,
             amount: self.amount,
+            // The EVM relayer's trust gate is its finalized-head check + the
+            // escrow-to-bridge-contract binding (BR-2-B): a deposit is surfaced
+            // only from the configured bridge contract at the finalized head, and
+            // the committed mint draws against the independent escrow leg recorded
+            // by `to_escrow_record`. (The in-circuit witness of EVM finality — so a
+            // dregg LIGHT client, not this re-executing relayer, sees the backing —
+            // is the circuit swarm's VK-epoch.)
+            consensus_verified: true,
+        }
+    }
+
+    /// Build the INDEPENDENT escrow-record input that raises the committed
+    /// `currently_locked` this deposit will be minted against (red-team
+    /// BR-2/BR-3). The mint draws against it separately, so a draw with no
+    /// matching escrow is refused by conservation.
+    pub fn to_escrow_record(&self, ledger_cell: CellId) -> dregg_turn::BridgeEscrowRecord {
+        dregg_turn::BridgeEscrowRecord {
+            ledger_cell,
+            escrow_nullifier: dregg_turn::escrow_nullifier_for(&self.nullifier),
+            escrowed: self.amount,
+            consensus_verified: true,
         }
     }
 }

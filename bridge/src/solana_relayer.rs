@@ -27,12 +27,19 @@
 //! ([`verify_lock_proof_consensus_anchored`]) needs a snapshot/geyser pipeline
 //! and is the mainnet route.
 //!
-//! Crucially, the relayer is **not** the soundness root. Even a lying RPC cannot
-//! make the relayer mint something unbacked past these gates:
+//! Crucially, the relayer is **not** the soundness root, and the committed mint
+//! does **not** trust a plain RPC. The trust gate (red-team BR-1/BR-2):
+//! - the `StructureOnly` verify a plain/forged/MITM RPC can produce CANNOT mint:
+//!   [`ObservedLock::to_bridge_mint_request`] sets `consensus_verified = false`
+//!   for it, and `bridge_mint_against_lock` refuses that with `TrustTooLow`. Only
+//!   [`SolanaRelayer::observe_vault_lock_consensus`] (the stake-weighted
+//!   super-majority verify) reaches `ConsensusVerified` and can mint;
 //! - the escrow account MUST be the configured vault, owned by the configured
-//!   lock program (BR-2-B — [`SolanaLockProof::binds_bridge_vault`]); and
-//! - the mint is the committed `bridge_mint_against_lock`, whose consume-once
-//!   nullifier + conserving ledger are the global authority (BR-1/BR-3).
+//!   lock program (BR-2-B — [`SolanaLockProof::binds_bridge_vault`]);
+//! - conservation is non-vacuous: the committed `currently_locked` is raised by a
+//!   SEPARATE consensus-verified escrow leg (`TurnExecutor::bridge_record_escrow`),
+//!   and the mint DRAWS against it (refusing `live + amount > currently_locked`),
+//!   on top of the consume-once nullifier (the global double-mint authority).
 //!
 //! ## The in-circuit seam (the parallel circuit swarm's, NOT this module's)
 //!
@@ -45,11 +52,11 @@
 
 use base64::Engine as _;
 
-use crate::solana_consensus::{BankHashComponents, ValidatorVote};
+use crate::solana_consensus::{BankHashComponents, EpochStakeTable, ValidatorVote};
 use crate::solana_mirror::{MirrorConfig, lock_nullifier};
 use crate::solana_trustless::{
     AccountInclusionProof, ConsensusEvidence, LockProofError, LockProofTrust,
-    MainnetAccountInclusion, SolanaLockProof, verify_lock_proof,
+    MainnetAccountInclusion, SolanaLockProof, verify_lock_proof, verify_lock_proof_consensus,
 };
 use crate::solana_wire::{
     AccountsInclusionProof16, MerkleLevel, accounts_merkle_node, decode_lock_record,
@@ -184,13 +191,85 @@ pub struct SolanaJsonRpc<T: JsonRpcTransport> {
     transport: T,
 }
 
+/// The host authority (`host[:port]`) of a `scheme://` URL, lowercased, with any
+/// `userinfo@`, path, query, or fragment stripped.
+fn url_authority_host(url: &str) -> String {
+    let after_scheme = url.splitn(2, "://").nth(1).unwrap_or(url);
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_scheme);
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    // Strip the port. `[::1]:8899` → `[::1]`; `127.0.0.1:8899` → `127.0.0.1`.
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest)
+    } else {
+        authority.rsplit_once(':').map_or(authority, |(h, _)| h)
+    };
+    host.to_ascii_lowercase()
+}
+
+/// Is `host` an unambiguous loopback address? (`127.0.0.1` / `localhost` / `::1`).
+fn is_loopback_host(host: &str) -> bool {
+    host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]"
+}
+
+/// TLS-default endpoint gate (red-team BR-3): accept `https://`, refuse any
+/// plaintext `http://`. The explicit local-dev opt-in is
+/// [`SolanaJsonRpc::new_plaintext_local_dev`].
+fn require_tls_endpoint(url: &str) -> Result<(), RpcError> {
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    Err(RpcError::Transport(format!(
+        "plaintext RPC endpoint `{url}` refused: the default transport is TLS (BR-3 — a \
+         plaintext RPC lets an on-path MITM forge the lock response and mint). Use https://, \
+         or SolanaJsonRpc::new_plaintext_local_dev for an explicit loopback dev endpoint"
+    )))
+}
+
+/// Loopback-only plaintext gate: accept `http://` ONLY for a loopback host.
+fn require_loopback_plaintext(url: &str) -> Result<(), RpcError> {
+    let rest = url.strip_prefix("http://").ok_or_else(|| {
+        RpcError::Transport(format!("expected an http:// dev endpoint, got `{url}`"))
+    })?;
+    let host = url_authority_host(&format!("http://{rest}"));
+    if is_loopback_host(&host) {
+        Ok(())
+    } else {
+        Err(RpcError::Transport(format!(
+            "plaintext endpoint `{url}` is not loopback ({host}): plaintext is permitted only \
+             for 127.0.0.1 / localhost / [::1] (BR-3)"
+        )))
+    }
+}
+
 impl<T: JsonRpcTransport> SolanaJsonRpc<T> {
-    /// Build a client for `url` over `transport`.
-    pub fn new(url: impl Into<String>, transport: T) -> Self {
-        Self {
-            url: url.into(),
-            transport,
+    /// Build a TLS-default client for `url` over `transport` (red-team BR-3).
+    ///
+    /// The default transport posture is TLS: a plaintext `http://` endpoint is
+    /// REFUSED, because any on-path network attacker (not just the RPC operator)
+    /// can forge a plaintext `getAccountInfo` response and — combined with a
+    /// missing consensus gate — mint unbacked. For a local
+    /// `solana-test-validator` over plaintext loopback, use the explicit
+    /// localhost-only opt-in [`Self::new_plaintext_local_dev`].
+    pub fn new(url: impl Into<String>, transport: T) -> Result<Self, RpcError> {
+        let url = url.into();
+        require_tls_endpoint(&url)?;
+        Ok(Self { url, transport })
+    }
+
+    /// EXPLICIT local-dev opt-in: permit a plaintext `http://` endpoint ONLY when
+    /// it is loopback (`127.0.0.1` / `localhost` / `[::1]`). A non-loopback
+    /// plaintext URL — or a typo'd public host — is refused, so plaintext can
+    /// never silently reach a remote RPC. `https://` is always accepted here too.
+    pub fn new_plaintext_local_dev(url: impl Into<String>, transport: T) -> Result<Self, RpcError> {
+        let url = url.into();
+        if url.starts_with("https://") {
+            return Ok(Self { url, transport });
         }
+        require_loopback_plaintext(&url)?;
+        Ok(Self { url, transport })
     }
 
     fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, RpcError> {
@@ -657,6 +736,101 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
             trust,
         })
     }
+
+    /// **Observe the vault lock and verify it to [`LockProofTrust::ConsensusVerified`]**
+    /// against a tracked epoch `stake_table` — the trust level the committed mint
+    /// now REQUIRES (red-team BR-1). This wires the previously-dead consensus
+    /// machinery ([`verify_lock_proof_consensus`] → the stake-weighted Ed25519
+    /// super-majority tally) onto the live mint path: only an `ObservedLock` from
+    /// THIS path carries `trust == ConsensusVerified`, so only it produces a
+    /// mintable request (the `StructureOnly` [`Self::observe_vault_lock`] cannot).
+    ///
+    /// A plain JSON-RPC endpoint does not expose the bank-hash components / vote
+    /// set, so the `consensus` evidence + `stake_table` are supplied by the
+    /// operator's snapshot/geyser feed; the relayer cross-checks that evidence
+    /// against the REAL finalized account it reads itself (same lock_id /
+    /// recipient / amount, escrow-to-bridge-vault binding), then runs the real
+    /// consensus verify. The fully-trustless in-circuit witness (so a dregg LIGHT
+    /// client, not this re-executing relayer, sees the backing) remains the
+    /// circuit swarm's G1 VK-epoch.
+    pub fn observe_vault_lock_consensus(
+        &self,
+        consensus: ConsensusEvidence,
+        stake_table: &EpochStakeTable,
+        require_poh: bool,
+    ) -> Result<ObservedLock, RelayerError> {
+        let vault = self.config.vault_account;
+        self.observe_lock_at_consensus(&vault, consensus, stake_table, require_poh)
+    }
+
+    /// Consensus-verifying observe of a specific `pubkey` (see
+    /// [`Self::observe_vault_lock_consensus`]).
+    pub fn observe_lock_at_consensus(
+        &self,
+        pubkey: &[u8; 32],
+        consensus: ConsensusEvidence,
+        stake_table: &EpochStakeTable,
+        require_poh: bool,
+    ) -> Result<ObservedLock, RelayerError> {
+        // (1) finality gate over the REAL account, exactly as the structure path.
+        let finalized = self.rpc.get_slot(Commitment::Finalized)?;
+        let resp = self.rpc.get_account_info(pubkey, Commitment::Finalized)?;
+        let account = resp.account.ok_or(RelayerError::NotFinalized)?;
+        if resp.context_slot > finalized {
+            return Err(RelayerError::SlotAheadOfFinalized {
+                context: resp.context_slot,
+                finalized,
+            });
+        }
+
+        // (2) decode the lock record from the REAL on-chain bytes.
+        let (lock_id, recipient, amount) =
+            decode_lock_record(&account.data).ok_or(RelayerError::NoLockRecord)?;
+
+        // (3) assemble the proof binding the real finalized account to the
+        //     operator-supplied consensus evidence (the vote set + bank hash the
+        //     relayer cannot get from plain RPC). The inclusion is built over the
+        //     real bytes; the consensus leg is the supplied evidence.
+        let proof = build_consensus_proof(
+            pubkey,
+            &account,
+            lock_id,
+            recipient,
+            amount,
+            consensus,
+            &self.config,
+        );
+
+        // (4) BR-2-B: escrow-to-bridge-vault binding over the real account.
+        if !proof.binds_bridge_vault(&self.config.vault_account, &self.config.lock_program) {
+            return Err(RelayerError::NotBridgeVault);
+        }
+
+        // (5) the REAL consensus verify: ≥2/3 stake-weighted Ed25519 super-majority
+        //     over the supplied stake table, bank-hash binding, inclusion. Reaches
+        //     ConsensusVerified — or refuses (e.g. StakeBelowThreshold).
+        let trust = verify_lock_proof_consensus(
+            &proof,
+            &self.config.spl_mint,
+            self.config.min_amount,
+            self.config.max_amount,
+            stake_table,
+            require_poh,
+        )
+        .map_err(RelayerError::Proof)?;
+
+        Ok(ObservedLock {
+            lock_id,
+            spl_mint: self.config.spl_mint,
+            recipient,
+            amount,
+            nullifier: lock_nullifier(&self.config.spl_mint, &lock_id),
+            proof,
+            observed_slot: resp.context_slot,
+            finalized_slot: finalized,
+            trust,
+        })
+    }
 }
 
 /// Assemble a [`SolanaLockProof`] over the REAL finalized vault bytes with a
@@ -738,11 +912,76 @@ fn build_structure_proof(
     }
 }
 
+/// Assemble a [`SolanaLockProof`] binding the REAL finalized vault bytes (the
+/// single-leaf accounts inclusion the relayer builds itself) to the
+/// operator-supplied `consensus` evidence (the vote set + bank hash a snapshot/
+/// geyser feed provides, which plain RPC does not). The consensus leg is NOT
+/// re-derived; [`verify_lock_proof_consensus`] then cross-checks it against the
+/// inclusion (`bank_components.accounts_hash == inclusion.accounts_hash`) and the
+/// stake table — so a consensus bundle inconsistent with the real account, or one
+/// short of the 2/3 super-majority, is refused.
+fn build_consensus_proof(
+    pubkey: &[u8; 32],
+    account: &RpcAccount,
+    lock_id: [u8; 32],
+    recipient: CellId,
+    amount: u64,
+    consensus: ConsensusEvidence,
+    config: &MirrorConfig,
+) -> SolanaLockProof {
+    let vault_data = encode_lock_record(&lock_id, &recipient, amount);
+    let vault_leaf = solana_account_hash(
+        account.lamports,
+        &account.owner,
+        account.executable,
+        account.rent_epoch,
+        &vault_data,
+        pubkey,
+    );
+    let accounts_hash = accounts_merkle_node(&[vault_leaf]);
+    let vault_proof = AccountsInclusionProof16 {
+        levels: vec![MerkleLevel {
+            position: 0,
+            siblings: vec![],
+        }],
+    };
+    SolanaLockProof {
+        lock_id,
+        spl_mint: config.spl_mint,
+        amount,
+        dregg_recipient: recipient,
+        consensus,
+        inclusion: AccountInclusionProof {
+            vault_account: *pubkey,
+            recorded_amount: amount,
+            recorded_recipient: recipient,
+            recorded_lock_id: lock_id,
+            accounts_hash,
+            merkle_path: vec![],
+            mainnet: Some(MainnetAccountInclusion {
+                lamports: account.lamports,
+                owner: account.owner,
+                executable: account.executable,
+                rent_epoch: account.rent_epoch,
+                data: vault_data,
+                proof: vault_proof,
+            }),
+        },
+        stake_provenance: None,
+    }
+}
+
 impl ObservedLock {
     /// Build the committed-mint input (`dregg_turn::BridgeMintRequest`) for the
     /// SOUND, multi-relayer-safe path: `actor` holds the mirror's mint-cap and
     /// `ledger_cell` is the committed mirror-ledger cell. The consume-once
     /// nullifier carried here is the GLOBAL double-mint authority once consumed.
+    ///
+    /// The committed mint is GATED on `consensus_verified` (red-team BR-1): we set
+    /// it ONLY when the off-chain verify reached
+    /// [`LockProofTrust::ConsensusVerified`]. A `StructureOnly` observation (the
+    /// plain-RPC route a forged/MITM RPC can fabricate) yields `false`, so
+    /// `bridge_mint_against_lock` refuses it with `TrustTooLow` — it cannot mint.
     pub fn to_bridge_mint_request(
         &self,
         actor: CellId,
@@ -754,6 +993,23 @@ impl ObservedLock {
             lock_nullifier: self.nullifier,
             recipient: self.recipient,
             amount: self.amount,
+            consensus_verified: self.trust == LockProofTrust::ConsensusVerified,
+        }
+    }
+
+    /// Build the INDEPENDENT escrow-record input
+    /// (`dregg_turn::BridgeEscrowRecord`) that raises the committed
+    /// `currently_locked` backing this lock will be minted against (red-team
+    /// BR-2/BR-3). Gated on the same `ConsensusVerified` trust: a `StructureOnly`
+    /// observation cannot raise the backing, so a later draw against it is refused
+    /// by conservation. The escrow nullifier is domain-separated from the mint
+    /// nullifier so the same lock records its escrow exactly once and mints once.
+    pub fn to_escrow_record(&self, ledger_cell: CellId) -> dregg_turn::BridgeEscrowRecord {
+        dregg_turn::BridgeEscrowRecord {
+            ledger_cell,
+            escrow_nullifier: dregg_turn::escrow_nullifier_for(&self.nullifier),
+            escrowed: self.amount,
+            consensus_verified: self.trust == LockProofTrust::ConsensusVerified,
         }
     }
 }
@@ -943,14 +1199,15 @@ mod tests {
         let resp = format!(
             r#"{{"jsonrpc":"2.0","result":{{"context":{{"slot":12345}},"value":{{"data":["{data_b64}","base64"],"executable":false,"lamports":1000000,"owner":"{owner_b58}","rentEpoch":18446744073709551615}}}},"id":1}}"#
         );
-        let rpc = SolanaJsonRpc::new(
-            "http://unused",
+        let rpc = SolanaJsonRpc::new_plaintext_local_dev(
+            "http://127.0.0.1",
             CannedTransport {
                 expect_method: "getAccountInfo",
                 response: resp,
                 seen: std::cell::RefCell::new(None),
             },
-        );
+        )
+        .unwrap();
         let out = rpc
             .get_account_info(&VAULT, Commitment::Finalized)
             .expect("parse real getAccountInfo shape");
@@ -968,14 +1225,15 @@ mod tests {
     #[test]
     fn json_rpc_null_value_is_absent_account() {
         let resp = r#"{"jsonrpc":"2.0","result":{"context":{"slot":7},"value":null},"id":1}"#;
-        let rpc = SolanaJsonRpc::new(
-            "http://unused",
+        let rpc = SolanaJsonRpc::new_plaintext_local_dev(
+            "http://127.0.0.1",
             CannedTransport {
                 expect_method: "getAccountInfo",
                 response: resp.to_string(),
                 seen: std::cell::RefCell::new(None),
             },
-        );
+        )
+        .unwrap();
         let out = rpc.get_account_info(&VAULT, Commitment::Finalized).unwrap();
         assert!(out.account.is_none());
         assert_eq!(out.context_slot, 7);
@@ -984,14 +1242,15 @@ mod tests {
     #[test]
     fn json_rpc_surfaces_node_error() {
         let resp = r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid"},"id":1}"#;
-        let rpc = SolanaJsonRpc::new(
-            "http://unused",
+        let rpc = SolanaJsonRpc::new_plaintext_local_dev(
+            "http://127.0.0.1",
             CannedTransport {
                 expect_method: "getSlot",
                 response: resp.to_string(),
                 seen: std::cell::RefCell::new(None),
             },
-        );
+        )
+        .unwrap();
         let err = rpc.get_slot(Commitment::Finalized).unwrap_err();
         assert!(matches!(err, RpcError::Rpc { code: -32602, .. }));
     }

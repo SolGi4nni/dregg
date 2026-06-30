@@ -133,6 +133,10 @@ fn relayer_deposit_to_finalized_to_conserving_mint() {
     assert_eq!(observed.finalized_block, 100);
 
     // ── (2) MINT through the committed, conserving, multi-relayer-safe path ──
+    // The INDEPENDENT escrow leg (raising committed currently_locked) is recorded
+    // first; the mint DRAWS against it (non-vacuous conservation, red-team BR-2).
+    exec.bridge_record_escrow(&mut ledger, &observed.to_escrow_record(ledger_cell))
+        .expect("the deposit's escrow backing is recorded");
     let req = observed.to_bridge_mint_request(issuer, ledger_cell);
     let receipt = exec
         .bridge_mint_against_lock(&mut ledger, &req)
