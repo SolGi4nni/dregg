@@ -815,8 +815,9 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 /// createCell · factory · spawn · receiptArchive · cellUnseal · emitEvent). The TSV is
 /// `key\tname\tjson` per line, structurally covered by `v3_staged_registry_parses_and_covers`.
 /// STAGED: a new constant, no VK bump, the live wire untouched. Each descriptor's
-/// `trace_width = EFFECT_VM_WIDTH (186) + APPENDIX_SPAN (141) = 327`; the rotated
-/// commitments ride four appended PI slots (rotated OLD/NEW commit · height · caveat commit).
+/// `trace_width = EFFECT_VM_WIDTH (188) + APPENDIX_SPAN (221) = 409` (the v10 pre_limbs geometry),
+/// plus the graduated chip-lane columns; the rotated commitments ride four appended PI slots
+/// (rotated OLD/NEW commit · height · caveat commit).
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
@@ -1196,8 +1197,8 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 /// live `V3_STAGED_REGISTRY_TSV` member). ADDITIVE: the live 1-felt `V3_STAGED_REGISTRY_TSV` / FP / VK
 /// are UNTOUCHED — this is the parallel wide path beside them. The transfer row (row 0) is
 /// byte-identical to `WIDE_TRANSFER_STAGED_TSV`. The wide carriers land PAST each member's host width
-/// (581/595/609/819/821), re-absorbing the SAME rotated limbs the 1-felt block lays into a genuine
-/// 8-felt (~124-bit) commitment (wide widths 789/803/817/1027/1029, each carrying the 16 wide commit
+/// (801/815/829/1039/1041), re-absorbing the SAME rotated limbs the 1-felt block lays into a genuine
+/// 8-felt (~124-bit) commitment (wide widths 1169/1183/1197/1407/1409, each carrying the 16 wide commit
 /// PIs = the 8-felt before/after anchors).
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
@@ -1956,19 +1957,20 @@ mod tests {
         use crate::effect_vm::columns::rotation::caveat as cav;
         use crate::lean_descriptor_air::{LeanExpr, VmConstraint};
 
-        // The DEPLOYED rotated geometry (R=24 PLUS the `commitments_root` flag-day limb 27, so 32
-        // pre-iroot limbs — NOT the bare R=24 register probe `rotation_layout_for(24)`). Mirrors the
-        // Lean `EffectVmEmitRotationV3` §1 constants and the caveat region inside it.
-        const V1_WIDTH: usize = EFFECT_VM_WIDTH; // 186
-        const B_SPAN: usize = 51; // 37 limbs + iroot + state_commit + 12 chain carriers
-        const B_IROOT: usize = 37;
-        const B_STATE_COMMIT: usize = 38;
-        const B_CHAIN_BASE: usize = 39;
-        const B_NUM_CHAIN: usize = 12;
-        const B_COMMITTED_HEIGHT: usize = 31;
+        // The DEPLOYED rotated geometry (the v10 pre_limbs re-lay: NUM_PRE_LIMBS = 67 — the bare
+        // R=24 registers + cells/cap/nullifier/commitments/heap/lifecycle/epoch/height/disc roots +
+        // the +30 faithful-8-felt completion limbs 37..66). Source-of-truth = the canonical
+        // `trace_rotated` constants (which STEP-1 grew), NOT re-hardcoded literals; mirrors the Lean
+        // `EffectVmEmitRotationV3` §1 constants and the caveat region inside it.
+        use crate::effect_vm::trace_rotated::{
+            B_CHAIN_BASE, B_COMMITTED_HEIGHT, B_IROOT, B_SPAN, B_STATE_COMMIT,
+        };
+        const V1_WIDTH: usize = EFFECT_VM_WIDTH;
+        // chain carriers occupy `[B_CHAIN_BASE, B_SPAN)` (the head digest + one per 3-wide group).
+        const B_NUM_CHAIN: usize = B_SPAN - B_CHAIN_BASE; // 22 (v10: 67 limbs)
         const C_SPAN: usize = 39;
-        const C_COMMIT: usize = 38;
-        const APPENDIX_SPAN: usize = 2 * B_SPAN + C_SPAN; // 141
+        const C_COMMIT: usize = cav::MANIFEST_SIZE + cav::NUM_CHAIN; // 29 + 9 = 38
+        const APPENDIX_SPAN: usize = 2 * B_SPAN + C_SPAN; // 221 (v10)
 
         let mut n = 0usize;
         for line in V3_STAGED_REGISTRY_TSV.lines() {
@@ -2329,16 +2331,17 @@ mod tests {
             } else if key == "setFieldDynVmDescriptor2R24" {
                 // THE DYNAMIC setField fields-root weld (WAVE 3): the fifth pin welds the AFTER
                 // block's committed `fields_root` sub-limb to PI[46] (col `afterFieldsRootCol
-                // setFieldDynV1Face.traceWidth` = 263, the declared post-`fields_root` param), so a
-                // forged post-`fields_root` is UNSAT in-circuit (Lean `setFieldDynForcedV3`).
+                // setFieldDynV1Face.traceWidth` = 303 in the v10 pre_limbs geometry, the declared
+                // post-`fields_root` param), so a forged post-`fields_root` is UNSAT in-circuit
+                // (Lean `setFieldDynForcedV3`).
                 assert_eq!(
                     d.public_input_count, 47,
                     "setFieldDyn: rotated 46-PI + the appended fields-root weld slot"
                 );
                 assert_eq!(
                     nullifier_pins,
-                    vec![(263, pi_base + 4)],
-                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (263) to PI[46]"
+                    vec![(303, pi_base + 4)],
+                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (303) to PI[46]"
                 );
             } else if key == "settleEscrowSatVmDescriptor2R24" {
                 // THE WELDED SEALED-ESCROW SATISFACTION descriptor (VK-EPOCH §6 BLOCKER 1, STAGED):
@@ -2371,6 +2374,28 @@ mod tests {
                 assert!(
                     nullifier_pins.is_empty(),
                     "heapWrite: carries no fifth pin (the splice map_op rides the map_ops table)"
+                );
+            } else if key == "customVmDescriptor2R24" {
+                // G2 custom-leg PI exposure (`EffectVmEmitRotationV3.customPiExposure`): customV3
+                // publishes the deployed custom fold-binding anchors PAST the rotated 46-PI vector —
+                // `custom_proof_commitment` (PARAM_BASE+4..7) → PI[46..49] and `custom_program_vk_hash`
+                // (PARAM_BASE+0..3) → PI[50..53], all on the FIRST row (the binding is fold-enforced,
+                // like memOp/umemOp, NOT a row poly). So custom carries 54 PIs (46 + 8 anchors).
+                assert_eq!(
+                    d.public_input_count, 54,
+                    "custom: rotated 46-PI + the 8 custom fold-binding anchors (46..53)"
+                );
+                let mut expected: Vec<(usize, usize)> = Vec::new();
+                for i in 0..4 {
+                    expected.push((PARAM_BASE + 4 + i, pi_base + 4 + i)); // proof_commitment → 46..49
+                }
+                for i in 0..4 {
+                    expected.push((PARAM_BASE + i, pi_base + 8 + i)); // program_vk_hash → 50..53
+                }
+                assert_eq!(
+                    nullifier_pins, expected,
+                    "custom: 8 fold-binding pins weld proof_commitment (PARAM_BASE+4..7)→PI[46..49] \
+                     + program_vk_hash (PARAM_BASE+0..3)→PI[50..53]"
                 );
             } else {
                 assert_eq!(
@@ -2458,13 +2483,13 @@ mod tests {
                 "wide registry key {i} name-stable with the live registry"
             );
             let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key} wide parses: {e}"));
-            // the wide member is `host + 208` (two 13×8 carrier blocks) and `host.piCount + 16`.
-            // The host widths in play are 581 (custom/setFieldDyn → 789), 595 (heapWrite splice → 803),
-            // 609 (the rotated cohort → 817), 819 (cap-open → 1027) and 821 (the turn-identity-pinned
-            // transfer cap-open → 1029): every wide width is `host + 208` (188-base EffectVM row).
+            // the wide member is `host + 368` (the v10 pre_limbs re-lay grew the carrier blocks) and
+            // `host.piCount + 16`. The host widths in play are 801 (custom/setFieldDyn → 1169), 815
+            // (heapWrite splice → 1183), 829 (the rotated cohort → 1197), 1039 (cap-open → 1407) and
+            // 1041 (the turn-identity-pinned transfer cap-open → 1409): every wide width is `host + 368`.
             assert!(
-                matches!(d.trace_width, 789 | 803 | 817 | 1027 | 1029),
-                "{key}: wide width {} is a known wide geometry (789 / 803 / 817 / 1027 / 1029)",
+                matches!(d.trace_width, 1169 | 1183 | 1197 | 1407 | 1409),
+                "{key}: wide width {} is a known wide geometry (1169 / 1183 / 1197 / 1407 / 1409)",
                 d.trace_width
             );
             // Every wide member carries the 16 wide-commit PIs (the 8-felt ~124-bit before/after

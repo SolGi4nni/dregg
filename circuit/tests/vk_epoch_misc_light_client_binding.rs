@@ -38,9 +38,10 @@
 //!     generator feeds the 47th PI the descriptor declares.
 //!
 //!   * **`setFieldDyn` — the dynamic overflow write PROVES (the residual is CLOSED).** The dynamic
-//!     `SetField` (`field_idx > 7`) routes to `setFieldDynVmDescriptor2R24`, a DISTINCT 581-wide
-//!     V1Face geometry the standard generator could not produce (it panicked on `field_idx < 8` and
-//!     laid the 608-wide host). `generate_rotated_set_field_dyn_base` now builds it from scratch: the
+//!     `SetField` (`field_idx > 7`) routes to `setFieldDynVmDescriptor2R24`, a DISTINCT 801-wide
+//!     V1Face geometry (v10 pre_limbs) the standard generator could not produce (it panicked on
+//!     `field_idx < 8` and laid the 829-wide host). `generate_rotated_set_field_dyn_base` now builds
+//!     it from scratch: the
 //!     Blum write→read pair (`addr = value = col 69`, `prev_value = col 70`, `prev_serial = col 74`,
 //!     `readback = col 75`) over a `MemBoundaryWitness`, the fields-root weld (col 275 == col 68), and
 //!     the fifth pin (col 263 → PI[46]). The honest dynamic write PROVES + light-client VERIFIES; a
@@ -545,10 +546,10 @@ fn makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled(
 // setFieldDyn — the DYNAMIC overflow-field write PROVES (the residual is CLOSED).
 //
 // HISTORY (the residual that this test now CLOSES): the dynamic `SetField` (`field_idx >= 8`) routes
-// to `setFieldDynVmDescriptor2R24`, a DISTINCT 581-wide V1Face geometry the standard
+// to `setFieldDynVmDescriptor2R24`, a DISTINCT 801-wide V1Face geometry (v10 pre_limbs) the standard
 // `generate_rotated_effect_vm_trace` could not produce — it (a) hard-panicked on the v1
-// `field_idx < 8` assert and (b) laid the standard 608-wide host (40 chip sites), while setFieldDyn's
-// face carries four FEWER chip sites (581 = 328 ungraduated + 7·36 + 1 reserved). So the dynamic
+// `field_idx < 8` assert and (b) laid the standard 829-wide host, while setFieldDyn's
+// face carries four FEWER chip sites (801 = 408 ungraduated + 7·56 + 1 reserved). So the dynamic
 // overflow SetField was UNREACHABLE: its declared fields-root weld + Blum write→read pair were
 // exercised by no live path.
 //
@@ -558,12 +559,12 @@ fn makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled(
 // and the fifth pin (col 263 → PI[46]). An honest dynamic SetField now PROVES + light-client VERIFIES.
 // ============================================================================
 
-/// **setFieldDyn — the dynamic overflow `SetField` PROVES against its deployed 581-wide descriptor
+/// **setFieldDyn — the dynamic overflow `SetField` PROVES against its deployed 801-wide descriptor
 /// (the missing-generator residual is CLOSED), and a forged readback is REJECTED.**
 ///
-/// BEFORE: the live generator panicked on `field_idx >= 8` and produced only the 328/608-wide standard
-/// geometry — the 581-wide setFieldDyn descriptor was unprovable, so the effect did not exist in the
-/// living protocol. AFTER: `generate_rotated_set_field_dyn_base` builds the 581-wide V1Face geometry
+/// BEFORE: the live generator panicked on `field_idx >= 8` and produced only the 408/829-wide standard
+/// geometry — the 801-wide setFieldDyn descriptor was unprovable, so the effect did not exist in the
+/// living protocol. AFTER: `generate_rotated_set_field_dyn_base` builds the 801-wide V1Face geometry
 /// with the Blum write→read transport; the honest dynamic-field write PROVES + VERIFIES. The FORGE
 /// pole holds: a tampered read-back column (the read no longer transports the write's value) has no
 /// satisfying memory replay and is REJECTED.
@@ -576,16 +577,18 @@ fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
         desc.public_input_count, 47,
         "setFieldDyn descriptor DECLARES the fields-root weld pin (47 PIs)"
     );
-    // The DISTINCT geometry the generator now produces from scratch: 581-wide V1Face, NOT the 328-wide
-    // standard rotated trace (the structural reason the standard generator cannot satisfy it).
+    // The DISTINCT geometry the generator now produces from scratch: 801-wide V1Face (v10 pre_limbs
+    // re-lay), NOT the 408-wide ungraduated rotated trace (the structural reason the standard
+    // generator cannot satisfy it). 801 = 408 ungraduated + 7·56 + 1 reserved — four fewer chip sites
+    // (7·4 = 28 narrower) than the 829-wide standard graduated host.
     assert_eq!(
-        desc.trace_width, 581,
-        "setFieldDyn is a DISTINCT 581-wide V1Face geometry (four fewer chip sites than the standard \
-         608-wide host), NOT the 328-wide standard rotated trace"
+        desc.trace_width, 801,
+        "setFieldDyn is a DISTINCT 801-wide V1Face geometry (four fewer chip sites than the standard \
+         829-wide host), NOT the 408-wide ungraduated rotated trace"
     );
     assert_ne!(
         desc.trace_width, ROT_WIDTH,
-        "setFieldDyn's width (581) != the standard rotated width (328)"
+        "setFieldDyn's width (801) != the ungraduated rotated width (ROT_WIDTH)"
     );
 
     // The dynamic SetField (field_idx > 7) routes to the dyn descriptor by name.
