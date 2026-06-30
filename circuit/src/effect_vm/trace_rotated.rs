@@ -2059,23 +2059,35 @@ pub const CAP_OPEN_BASE: usize = GRAD_ROT_WIDTH; // 608
 /// `1 << n` (`n < 32`, up to `EFFECT_ATTENUATE_CAPABILITY = 1 << 23`) is selectable AND a broad cap
 /// (`mask_hi = 0xFFFF`) decomposes fully. The Lean twin is `DeployedCapOpen.MASK16_BITS`.
 pub const CAP_OPEN_MASK_BITS: usize = 32;
-/// The cap-MEMBERSHIP columns `fill_cap_open` writes (the genuine non-lane witness): 7 leaf + 1
-/// leafDigest + 16×(sib,dir,node) + capRoot + src + effBit + 32 mask-bit columns = 91. The trailing
-/// 32 mask-bit columns carry the boolean decomposition of the FULL effect mask the genuine SUBMASK
-/// facet gate (`maskBitBoolGate`/`maskReconGate`/`selectedBitGate`) reads — NOT the over-strict
-/// equality `mask_lo == effBit` (and NO `mask_hi == 0` pin, so a broad `EFFECT_ALL` cap is admitted).
-pub const CAP_OPEN_MEMBERSHIP_COLS: usize = 7 + 1 + 3 * CAP_OPEN_DEPTH + 3 + CAP_OPEN_MASK_BITS; // 91
-/// The number of poseidon2-chip lookup SITES the cap-membership appendix adds atop the graduated
-/// rotated layout: 1 leaf absorb (arity 7) + 16 node absorbs (arity 3) = 17. Phase B-GATE appends a
-/// 7-lane block per site, so the cap-open appendix's chip-lane columns number `7 × 17 = 119`.
+/// The number of felts in a native cap-tree digest (Phase H-CAP-8): a leaf-digest / sibling / node /
+/// cap-root group is 8-felt wide, byte-identical to `cap_root::CAP_DIGEST_W` (the arity-16 `node8`
+/// chip compression `cap_node8` + the 8-lane `CapLeaf::digest`), faithful to the FRI ~124-bit floor.
+pub const CAP_OPEN_DIGEST_W: usize = crate::cap_root::CAP_DIGEST_W; // 8
+/// The cap-MEMBERSHIP columns `fill_cap_open` writes — Phase H-CAP-8 NATIVE 8-FELT: 7 leaf (scalar) +
+/// 8 leafDigest + `DEPTH·(8 sib + 1 dir + 8 node) = DEPTH·17` + 8 capRoot + src + effBit + 32 mask-bit
+/// columns = `7 + 8 + 16·17 + 8 + 2 + 32 = 329`. The 7 spare permutation lanes per absorb are PROMOTED
+/// into the bound 8-felt fold (the whole `node8` group is committed), so there is NO separate
+/// chip-lane tail — the membership span IS the full appendix. The trailing 32 mask-bit columns carry
+/// the boolean decomposition of the FULL effect mask the genuine SUBMASK facet gate
+/// (`maskBitBoolGate`/`maskReconGate`/`selectedBitGate`) reads. Mirrors the Lean
+/// `CapOpenEmit.CAP_OPEN_SPAN = 7 + 8 + DEPTH·17 + 8 + 2 + MASK_BITS = 329`.
+pub const CAP_OPEN_MEMBERSHIP_COLS: usize = 7
+    + CAP_OPEN_DIGEST_W
+    + CAP_OPEN_DEPTH * (2 * CAP_OPEN_DIGEST_W + 1)
+    + CAP_OPEN_DIGEST_W
+    + 2
+    + CAP_OPEN_MASK_BITS; // 329
+/// The number of poseidon2-chip lookup SITES the cap-membership appendix carries: 1 leaf absorb
+/// (arity 7, 8-lane) + 16 node absorbs (arity-16 `node8`) = 17. Phase H-CAP-8 promotes the lane
+/// outputs INTO the committed 8-felt digest groups, so a site no longer adds a separate lane block.
 pub const CAP_OPEN_LANE_SITES: usize = 1 + CAP_OPEN_DEPTH; // 17
-/// The FULL cap-open appendix span: the 91 cap-membership columns PLUS the 7×17 = 119 appended
-/// chip-lane columns Phase B-GATE graduates = 210. The 91 membership columns are written by
-/// `fill_cap_open` at `CAP_OPEN_BASE + 0..91`; the 119 cap-lane columns (`CAP_OPEN_BASE + 91..210`)
-/// are filled automatically by the prove wrapper's `descriptor_ir2::fill_chip_lanes`.
-pub const CAP_OPEN_SPAN: usize = CAP_OPEN_MEMBERSHIP_COLS + 7 * CAP_OPEN_LANE_SITES; // 210
-/// The cap-open trace width (`GRAD_ROT_WIDTH + 210 = 818` = the committed
-/// `attenuateCapOpenEffVmDescriptor2R24.trace_width`).
+/// The FULL cap-open appendix span (Phase H-CAP-8): the native 8-felt membership columns ARE the whole
+/// appendix — `CAP_OPEN_SPAN = CAP_OPEN_MEMBERSHIP_COLS = 329`. No separate chip-lane tail (the `node8`
+/// groups are committed in place). Written by `fill_cap_open` at `CAP_OPEN_BASE + 0..329`. Mirrors the
+/// Lean `CapOpenEmit.CAP_OPEN_SPAN = 329`.
+pub const CAP_OPEN_SPAN: usize = CAP_OPEN_MEMBERSHIP_COLS; // 329
+/// The cap-open trace width (`GRAD_ROT_WIDTH + 329 = 937` = the committed
+/// `attenuateCapOpenEffVmDescriptor2R24.trace_width` under the native 8-felt cap tree).
 pub const CAP_OPEN_WIDTH: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN;
 
 /// The turn-identity `actor` column of the TB (turn-bound) cap-open weld
@@ -2120,12 +2132,13 @@ pub const SIGNATURE_AUTH_TAG: u32 = 1;
 pub struct CapOpenWitness {
     /// The 7 cap-leaf fields (`slot_hash, target, auth_tag, mask_lo, mask_hi, expiry, breadstuff`).
     pub leaf: [BabyBear; 7],
-    /// The 16 sibling digests of the membership path.
-    pub siblings: [BabyBear; CAP_OPEN_DEPTH],
+    /// The 16 NATIVE 8-FELT sibling digests of the membership path (Phase H-CAP-8: each level's
+    /// sibling subtree root is the full 8-felt `cap_node8` image, not the lossy 1-felt scalar).
+    pub siblings: [[BabyBear; CAP_OPEN_DIGEST_W]; CAP_OPEN_DEPTH],
     /// The 16 direction bits (0 ⇒ cur is the LEFT child at that level).
     pub directions: [u8; CAP_OPEN_DEPTH],
-    /// The recomposed committed cap-tree root (must equal node[15]).
-    pub cap_root: BabyBear,
+    /// The recomposed committed 8-felt cap-tree root (must equal the top `node8` group, lane-for-lane).
+    pub cap_root: [BabyBear; CAP_OPEN_DIGEST_W],
     /// The turn's source-cell id (must equal `leaf[1]`, the leaf target).
     pub src: BabyBear,
     /// **(residual (a))** The turn's ACTUAL effect-kind bit (`EFFECT_<kind> = 1 << n`), written to
@@ -2140,27 +2153,37 @@ pub struct CapOpenWitness {
 /// to `cap_root::CapLeaf::digest` and the Lean `capLeafDigest = sponge ∘ leafFields`. ONE chip
 /// row (no length tag; lanes 0..6 = the genuine fields), so the IR-v2 chip realizes it as one
 /// lookup — the unification that discharges `SchemeRealizedByChip`.
-pub fn cap_leaf_digest(leaf: &[BabyBear; 7]) -> BabyBear {
-    crate::cap_root::cap_chip_absorb(leaf)
+pub fn cap_leaf_digest(leaf: &[BabyBear; 7]) -> [BabyBear; CAP_OPEN_DIGEST_W] {
+    // The SINGLE rate-8 chip absorb of the 7 leaf fields (arity 7), squeezing ALL 8 output lanes —
+    // byte-identical to `cap_root::CapLeaf::digest` and the Lean `capLeafDigest8 = chipAbsorb8 ∘
+    // leafFields`. Native 8-felt, faithful to the FRI ~124-bit floor.
+    crate::descriptor_ir2::chip_absorb_all_lanes(7, leaf)
 }
 
-/// One node hash: the arity-3 rate-8 chip absorb of `[FACT_MARK, left, right]` (Lean
-/// `nodeOf = sponge [FACT_MARK, l, r]`), byte-identical to `cap_root::cap_node`. ONE chip row
-/// (FACT_MARK rides rate lane 0, length tag 3 in lane 4) — NOT the capacity-tagged `hash_fact`.
-pub fn cap_node(left: BabyBear, right: BabyBear) -> BabyBear {
-    crate::cap_root::cap_chip_absorb(&[BabyBear::new(FACT_MARK), left, right])
+/// One node hash: the NATIVE 8-FELT arity-16 `node8` chip compression `perm(L8 ‖ R8)[0..8]` (Lean
+/// `nodeOf8 = chipAbsorb8 (pack8 l r)`), byte-identical to `cap_root::cap_node8`. EQUALITY-binds all 8
+/// output lanes to both 8-felt children, so the per-node collision floor is full 8-felt width.
+pub fn cap_node(
+    left: [BabyBear; CAP_OPEN_DIGEST_W],
+    right: [BabyBear; CAP_OPEN_DIGEST_W],
+) -> [BabyBear; CAP_OPEN_DIGEST_W] {
+    crate::cap_root::cap_node8(left, right)
 }
 
-/// Mix `(cur, sib)` by the direction bit into `(left, right)` (Lean `leftExpr`/`rightExpr`):
-/// `dir = 0 ⇒ (cur, sib)` (cur is LEFT), `dir = 1 ⇒ (sib, cur)`.
-fn cap_mix(cur: BabyBear, sib: BabyBear, dir: u8) -> (BabyBear, BabyBear) {
+/// Mix `(cur, sib)` 8-felt groups by the direction bit into `(left, right)` (Lean
+/// `leftExpr`/`rightExpr`): `dir = 0 ⇒ (cur, sib)` (cur is LEFT), `dir = 1 ⇒ (sib, cur)`.
+fn cap_mix(
+    cur: [BabyBear; CAP_OPEN_DIGEST_W],
+    sib: [BabyBear; CAP_OPEN_DIGEST_W],
+    dir: u8,
+) -> ([BabyBear; CAP_OPEN_DIGEST_W], [BabyBear; CAP_OPEN_DIGEST_W]) {
     if dir == 0 { (cur, sib) } else { (sib, cur) }
 }
 
 impl CapOpenWitness {
-    /// Recompute the root from the leaf digest over the `(sib, dir)` path using ABSORB-node
-    /// `hash_many` compression. The self-check the fold's soundness rests on.
-    pub fn recomposes(&self) -> BabyBear {
+    /// Recompute the 8-felt root from the leaf digest over the `(sib, dir)` path using the native
+    /// arity-16 `node8` compression. The self-check the fold's soundness rests on.
+    pub fn recomposes(&self) -> [BabyBear; CAP_OPEN_DIGEST_W] {
         let mut cur = cap_leaf_digest(&self.leaf);
         for lvl in 0..CAP_OPEN_DEPTH {
             let (l, r) = cap_mix(cur, self.siblings[lvl], self.directions[lvl]);
@@ -2221,13 +2244,13 @@ impl CapOpenWitness {
         // current node. For a sparse tree with a single non-padding leaf, every sibling subtree
         // is a uniform-padding subtree whose root is a known per-level constant.
         let zero_leaf = cap_leaf_digest(&[BabyBear::ZERO; 7]);
-        // per-level padding subtree roots: pad[0] = zero leaf digest; pad[k+1] = node(pad,pad).
-        let mut pad = [BabyBear::ZERO; CAP_OPEN_DEPTH + 1];
+        // per-level 8-felt padding subtree roots: pad[0] = zero leaf digest; pad[k+1] = node8(pad,pad).
+        let mut pad = [[BabyBear::ZERO; CAP_OPEN_DIGEST_W]; CAP_OPEN_DEPTH + 1];
         pad[0] = zero_leaf;
         for k in 0..CAP_OPEN_DEPTH {
             pad[k + 1] = cap_node(pad[k], pad[k]);
         }
-        let mut siblings = [BabyBear::ZERO; CAP_OPEN_DEPTH];
+        let mut siblings = [[BabyBear::ZERO; CAP_OPEN_DIGEST_W]; CAP_OPEN_DEPTH];
         let mut directions = [0u8; CAP_OPEN_DEPTH];
         let mut idx = position;
         let mut cur = cap_leaf_digest(&chosen);
@@ -2274,7 +2297,7 @@ impl CapOpenWitness {
     ///     consumed cap does not actually confer the transfer authority the open asserts.
     pub fn from_membership(
         leaf: &crate::cap_root::CapLeaf,
-        siblings: &[BabyBear],
+        siblings: &[[BabyBear; CAP_OPEN_DIGEST_W]],
         directions: &[u8],
     ) -> Result<Self, String> {
         // residual (a): the LIVE transfer/attenuate cap-open now routes the effect-GENERAL
@@ -2296,7 +2319,7 @@ impl CapOpenWitness {
     /// `from_membership` is the `eff_bit := EFFECT_TRANSFER` instance.
     pub fn from_membership_for(
         leaf: &crate::cap_root::CapLeaf,
-        siblings: &[BabyBear],
+        siblings: &[[BabyBear; CAP_OPEN_DIGEST_W]],
         directions: &[u8],
         eff_bit: u32,
     ) -> Result<Self, String> {
@@ -2331,7 +2354,7 @@ impl CapOpenWitness {
                 leaf[4].as_u32()
             ));
         }
-        let mut sib_arr = [BabyBear::ZERO; CAP_OPEN_DEPTH];
+        let mut sib_arr = [[BabyBear::ZERO; CAP_OPEN_DIGEST_W]; CAP_OPEN_DEPTH];
         let mut dir_arr = [0u8; CAP_OPEN_DEPTH];
         sib_arr.copy_from_slice(siblings);
         dir_arr.copy_from_slice(directions);
@@ -2361,48 +2384,67 @@ impl CapOpenWitness {
     }
 }
 
-/// Fill the 91 cap-MEMBERSHIP columns at `base` for ONE row from `w` (Lean `CapOpenCols` layout):
-///   * leaf field `i` at `base + i` (i = 0..6);
-///   * `leafDigest = hash_many(&leaf)` at `base + 7`;
-///   * level `lvl`: `sib` at `base + 8 + 3·lvl`, `dir` at `base + 9 + 3·lvl`,
-///     `node = hash_many(&[FACT_MARK, left, right])` at `base + 10 + 3·lvl`;
-///   * `capRoot` at `base + 56`, `src` at `base + 57`, `effBit` at `base + 58`.
+/// Fill the 329 cap-MEMBERSHIP columns at `base` for ONE row from `w` — Phase H-CAP-8 NATIVE 8-FELT
+/// `CapOpenCols` layout (Lean `CapOpenEmit.capOpenCols`):
+///   * leaf field `i` (scalar) at `base + i` (i = 0..6);
+///   * `leafDigest` (8 felts, `CapLeaf::digest`) at `base + 7 + j` (j = 0..7);
+///   * level `lvl` 17-col block at `base + 15 + 17·lvl`: `sib` (8) at `+0..7`, `dir` at `+8`,
+///     `node = cap_node8(left, right)` (8) at `+9..16`;
+///   * `capRoot` (8) at `base + 15 + 17·DEPTH + j` (= `base + 287 + j`, j = 0..7);
+///   * `src` at `base + 295`, `effBit` at `base + 296`;
+///   * the 32 mask-bit columns at `base + 297 + i` (i = 0..31).
 ///
 /// The `effBit` column (residual (a)) carries the turn's ACTUAL effect-kind bit, pinned by the
-/// descriptor's `effBitGate` to `EFFECT_TRANSFER (= WRITE_MASK_LO)` for this transfer cap-open;
-/// the `facetEffGate` then binds `leaf.mask_lo == effBit` (the leaf's facet is bound to the
-/// committed effect column, NOT a literal constant). The top node (`lvl = 15`) MUST equal
-/// `w.cap_root` (asserted). Every digest is a genuine `hash_many`-absorb, so the auto-gathered
-/// chip table carries a matching row for each of the 1 + 16 chip lookups.
+/// descriptor's `effBitGateFor` to `EFFECT_TRANSFER (= WRITE_MASK_LO)` for the transfer cap-open;
+/// the `facetEffGate` then binds the leaf facet to the committed effect column, NOT a literal
+/// constant. The top `node8` GROUP (`lvl = 15`) MUST equal `w.cap_root` lane-for-lane (asserted).
+/// Every digest is a genuine `chip_absorb_all_lanes` absorb (arity-7 leaf, arity-16 `node8`), so the
+/// auto-gathered chip table carries a matching row for each of the 1 + 16 chip lookups.
 pub fn fill_cap_open(row: &mut [BabyBear], base: usize, w: &CapOpenWitness) {
+    // 7 scalar leaf fields at base + 0..6.
     for (i, &f) in w.leaf.iter().enumerate() {
         row[base + i] = f;
     }
+    // 8-felt leaf digest at base + 7..14.
     let leaf_digest = cap_leaf_digest(&w.leaf);
-    row[base + 7] = leaf_digest;
+    for (j, &d) in leaf_digest.iter().enumerate() {
+        row[base + 7 + j] = d;
+    }
     let mut cur = leaf_digest;
     for lvl in 0..CAP_OPEN_DEPTH {
         let sib = w.siblings[lvl];
         let dir = w.directions[lvl];
         let (l, r) = cap_mix(cur, sib, dir);
         let node = cap_node(l, r);
-        row[base + 8 + 3 * lvl] = sib;
-        row[base + 9 + 3 * lvl] = BabyBear::new(dir as u32);
-        row[base + 10 + 3 * lvl] = node;
+        let blk = base + 15 + 17 * lvl;
+        // 8-felt sibling group at blk + 0..7.
+        for (j, &s) in sib.iter().enumerate() {
+            row[blk + j] = s;
+        }
+        // direction bit at blk + 8.
+        row[blk + 8] = BabyBear::new(dir as u32);
+        // 8-felt node group at blk + 9..16.
+        for (j, &n) in node.iter().enumerate() {
+            row[blk + 9 + j] = n;
+        }
         cur = node;
     }
     debug_assert_eq!(
         cur, w.cap_root,
-        "cap-open fill: top node must equal cap_root"
+        "cap-open fill: top node8 group must equal cap_root"
     );
-    row[base + 56] = w.cap_root;
-    row[base + 57] = w.src;
-    // residual (a): the committed effect-bit column. Carries the turn's ACTUAL effect-kind bit
-    // (`w.eff_bit` — EFFECT_TRANSFER for transfer/attenuate, each fan-out leg its own `1<<n`); the
-    // `effBitGateFor` pins it.
-    row[base + 58] = BabyBear::new(w.eff_bit);
+    // 8-felt cap_root group at base + 287..294.
+    let root_base = base + 15 + 17 * CAP_OPEN_DEPTH;
+    for (j, &r) in w.cap_root.iter().enumerate() {
+        row[root_base + j] = r;
+    }
+    row[root_base + 8] = w.src; // base + 295
+    // residual (a): the committed effect-bit column at base + 296. Carries the turn's ACTUAL
+    // effect-kind bit (`w.eff_bit` — EFFECT_TRANSFER for transfer/attenuate, each fan-out leg its own
+    // `1<<n`); the `effBitGateFor` pins it.
+    row[root_base + 9] = BabyBear::new(w.eff_bit);
     // residual (a) — GENUINE MEMBERSHIP: the 32-bit decomposition of the FULL effect mask
-    // `maskOfLimbs(mask_lo, mask_hi) = mask_lo + mask_hi·65536` (leaf fields 3 + 4) at `base + 59 + i`.
+    // `maskOfLimbs(mask_lo, mask_hi) = mask_lo + mask_hi·65536` (leaf fields 3 + 4) at `base + 297 + i`.
     // The `maskBitBoolGate` booleans each bit, `maskReconGate` binds `full_mask = Σ bitᵢ·2ⁱ`, and
     // `selectedBitGate n` gates bit `n` (where `eff_bit = 1<<n`) set — the genuine `(eff_bit &
     // full_mask) == eff_bit` SUBMASK, NOT the over-strict equality `mask_lo == eff_bit`. A BROAD honest
@@ -2410,7 +2452,7 @@ pub fn fill_cap_open(row: &mut [BabyBear], base: usize, w: &CapOpenWitness) {
     // the effect — and no `mask_hi == 0` pin rejects it.
     let full_mask: u64 = w.leaf[3].as_u32() as u64 + (w.leaf[4].as_u32() as u64) * 65536;
     for i in 0..CAP_OPEN_MASK_BITS {
-        row[base + 59 + i] = BabyBear::new(((full_mask >> i) & 1) as u32);
+        row[root_base + 10 + i] = BabyBear::new(((full_mask >> i) & 1) as u32);
     }
 }
 
