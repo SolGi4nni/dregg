@@ -985,9 +985,20 @@ pub fn compute_rotated_pre_limbs(
     // gated disc-transition limb; byte-identical to `rotation_witness::lifecycle_disc_felt`).
     pre[32] = BabyBear::new(cell.lifecycle.discriminant() as u32);
     // limbs 33,34: perms_digest, vk_digest (the WAVE-2 flag-day committed authority sub-limbs — the
-    // declared-param felts the setPerms / setVK welds force).
-    pre[33] = perms_digest_felt(&cell.permissions);
-    pre[34] = vk_digest_felt(&cell.verification_key);
+    // declared-param felts the setPerms / setVK welds force). limb-0 stays here (historical); the
+    // v10 weld lands the SEVEN completion felts at the new extras 37..=43 (perms) / 44..=50 (vk).
+    let perms8 = perms_digest_8(&cell.permissions);
+    let vk8 = vk_digest_8(&cell.verification_key);
+    pre[33] = perms8[0];
+    pre[34] = vk8[0];
+    // v10 perms/vk faithful 8-felt completion: extras 37..=43 = perms8[1..8], 44..=50 = vk8[1..8].
+    // The 8-wide permsVKWeldGate forces EACH to its declared param, so a ~31-bit collision at limb-0
+    // that differs in any completion felt is UNSAT (GENTIAN law). Byte-identical to
+    // `rotation_witness`'s producer fill.
+    for i in 0..7 {
+        pre[37 + i] = perms8[1 + i];
+        pre[44 + i] = vk8[1 + i];
+    }
     // limbs 35,36: mode, fields_root (the WAVE-3 flag-day committed authority sub-limbs — the
     // makeSovereign mode CONSTANT-force limb and the setFieldDyn / refusal fields-root weld limb, the
     // NEW LAST pre-iroot limbs). Byte-identical to `rotation_witness::{mode_felt,fields_root_felt}`.
@@ -1033,9 +1044,21 @@ pub fn fields_root_felt(fields_root: &[u8; 32]) -> dregg_circuit::field::BabyBea
 pub fn perms_digest_felt(
     perms: &crate::permissions::Permissions,
 ) -> dregg_circuit::field::BabyBear {
+    perms_digest_8(perms)[0]
+}
+
+/// The FAITHFUL 8-felt permissions digest (v10 perms weld). BYTE-IDENTICAL to the deployed
+/// `permissions_hash = hash_to_8(...)` a setPermissions row carries (`effect_vm_bridge.rs:160`):
+/// `bytes32_to_8_limbs(blake3(postcard(permissions)))`. `[0]` is the historical limb-33 digest;
+/// `[1..8]` are the seven completion felts the v10 weld lands at extras 37..=43, each forced by the
+/// 8-wide `permsVKWeldGate` to the declared param (`effects_hash`-bound, NO new verifier PI). A
+/// ~31-bit collision at `[0]` differing in `[1..8]` is now caught — the GENTIAN law.
+pub fn perms_digest_8(
+    perms: &crate::permissions::Permissions,
+) -> [dregg_circuit::field::BabyBear; 8] {
     let bytes = postcard::to_allocvec(perms).unwrap_or_default();
     let h = blake3::hash(&bytes);
-    dregg_circuit::effect_vm::bytes32_to_8_limbs(h.as_bytes())[0]
+    dregg_circuit::effect_vm::bytes32_to_8_limbs(h.as_bytes())
 }
 
 /// The committed VERIFICATION-KEY-DIGEST sub-limb (`B_VK = 34`, WAVE-2 flag-day). BYTE-IDENTICAL to the
@@ -1044,13 +1067,24 @@ pub fn perms_digest_felt(
 /// forces the AFTER vk-digest limb to this declared param, closing the upgrade-safety (post-VK)
 /// light-client forgery. CANONICAL; `turn::rotation_witness::vk_digest_felt` calls it.
 pub fn vk_digest_felt(vk: &Option<crate::cell::VerificationKey>) -> dregg_circuit::field::BabyBear {
+    vk_digest_8(vk)[0]
+}
+
+/// The FAITHFUL 8-felt verification-key digest (v10 vk weld). BYTE-IDENTICAL to the deployed
+/// `vk_hash` 8-felt a setVK row carries: `bytes32_to_8_limbs(blake3(postcard(vk)))`, with `None`
+/// (revoke) mapping to the all-zero 8-felt (the deployed `vk_hash == [0; 8]` convention). `[0]` is
+/// the historical limb-34 digest; `[1..8]` are the seven completion felts the v10 weld lands at
+/// extras 44..=50, each forced by the 8-wide `permsVKWeldGate`. CANONICAL.
+pub fn vk_digest_8(
+    vk: &Option<crate::cell::VerificationKey>,
+) -> [dregg_circuit::field::BabyBear; 8] {
     match vk {
         Some(v) => {
             let bytes = postcard::to_allocvec(v).unwrap_or_default();
             let h = blake3::hash(&bytes);
-            dregg_circuit::effect_vm::bytes32_to_8_limbs(h.as_bytes())[0]
+            dregg_circuit::effect_vm::bytes32_to_8_limbs(h.as_bytes())
         }
-        None => dregg_circuit::field::BabyBear::ZERO,
+        None => [dregg_circuit::field::BabyBear::ZERO; 8],
     }
 }
 

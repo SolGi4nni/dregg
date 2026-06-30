@@ -654,15 +654,18 @@ pub fn generate_effect_vm_trace_ext(
                 new_state.nonce += 1;
             }
             Effect::SetPermissions { permissions_hash } => {
-                // 32-byte widening: anchor limb[0] into params[0]; AIR forbids
-                // any state column change; nonce ticks. Full 8 limbs bind via
-                // compute_effects_hash.
-                row[PARAM_BASE] = permissions_hash[0];
+                // v10 perms faithful-8-felt weld: carry ALL 8 declared-hash limbs in the param
+                // columns (params[0..8]) so the rotated `permsVKWeldGate` can force every committed
+                // perms-digest limb (limb-0 at B_PERMS + the 7 completion felts at extras 37..=43) to
+                // the declared param. Byte-identical to the 8 felts `compute_effects_hash` absorbs, so
+                // the effects_hash PI is unchanged. AIR forbids any state column change; nonce ticks.
+                row[PARAM_BASE..PARAM_BASE + 8].copy_from_slice(permissions_hash);
                 new_state.nonce += 1;
             }
             Effect::SetVerificationKey { vk_hash } => {
-                // Same shape as SetPermissions: VK lives off-trace. Anchor limb[0].
-                row[PARAM_BASE] = vk_hash[0];
+                // Same shape as SetPermissions (v10 vk weld): carry all 8 vk-hash limbs in params[0..8]
+                // (None → all-zero) so the vk weld forces the 8 committed vk-digest limbs.
+                row[PARAM_BASE..PARAM_BASE + 8].copy_from_slice(vk_hash);
                 new_state.nonce += 1;
             }
 

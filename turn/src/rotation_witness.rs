@@ -387,9 +387,17 @@ pub fn produce(
     // limb).
     pre_limbs[32] = lifecycle_disc_felt(&cell.lifecycle);
     // limbs 33,34: perms_digest, vk_digest (the WAVE-2 flag-day committed authority sub-limbs — the
-    // setPerms / setVK welds force these to the declared param).
-    pre_limbs[33] = perms_digest_felt(&cell.permissions);
-    pre_limbs[34] = vk_digest_felt(&cell.verification_key);
+    // setPerms / setVK welds force these to the declared param). limb-0 stays here (historical); the
+    // v10 weld lands the seven completion felts at extras 37..=43 (perms) / 44..=50 (vk).
+    let perms8 = dregg_cell::commitment::perms_digest_8(&cell.permissions);
+    let vk8 = dregg_cell::commitment::vk_digest_8(&cell.verification_key);
+    pre_limbs[33] = perms8[0];
+    pre_limbs[34] = vk8[0];
+    // v10 perms/vk faithful 8-felt completion (byte-identical to `commitment::compute_rotated_pre_limbs`).
+    for i in 0..7 {
+        pre_limbs[37 + i] = perms8[1 + i];
+        pre_limbs[44 + i] = vk8[1 + i];
+    }
     // limbs 35,36: mode, fields_root (the WAVE-3 flag-day committed authority sub-limbs — the
     // makeSovereign mode CONSTANT-force limb and the setFieldDyn / refusal fields-root weld limb, the
     // NEW LAST pre-iroot limbs).

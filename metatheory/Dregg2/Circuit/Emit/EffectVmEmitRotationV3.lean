@@ -2298,6 +2298,18 @@ def authorityHeadroomOffs : List Nat := [12, 13, 14, 15, 16, 17, 18]
 def authorityHeadroomFreezes (w : Nat) : List VmConstraint :=
   authorityHeadroomOffs.map (fun off => colEq (w + off) (w + AFTER_BLOCK_OFF + off))
 
+/-- **v10: the 14 faithful-8-felt completion-limb offsets** — the 7 perms extras (pre-iroot limbs
+37..=43 = `permsHash[1..7]`) and the 7 vk extras (44..=50 = `vkHash[1..7]`). For a VALUE turn the
+permissions / VK are UNCHANGED, so each completion limb is frozen BEFORE↔AFTER — closing the GENTIAN
+fail-open for the perms/vk halves (no unwelded wide-open limb can smuggle a ~31-bit-colliding authority
+into NEW_COMMIT during an innocuous value move). -/
+def permsVKCompletionOffs : List Nat :=
+  [37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
+
+/-- The 14 continuity `colEq` freezes welding each v10 perms/vk completion limb BEFORE↔AFTER. -/
+def permsVKCompletionFreezes (w : Nat) : List VmConstraint :=
+  permsVKCompletionOffs.map (fun off => colEq (w + off) (w + AFTER_BLOCK_OFF + off))
+
 /-- The full appended authority-continuity weld list: the six dedicated-sub-limb freezes (r23 ·
 lifecycle · perms · vk · mode · fields-root) PLUS the seven H1 headroom freezes — ONE right-operand of
 the single `++` so the v1 constraints stay the left operand (the keystones compose verbatim). -/
@@ -2309,6 +2321,7 @@ def frozenAuthorityColEqs (w : Nat) : List VmConstraint :=
   , colEq (w + B_MODE)          (w + AFTER_BLOCK_OFF + B_MODE)
   , colEq (w + B_FIELDS_ROOT)   (w + AFTER_BLOCK_OFF + B_FIELDS_ROOT) ]
   ++ authorityHeadroomFreezes w
+  ++ permsVKCompletionFreezes w
 
 /-! ### THE AUTHORITY-FROZEN CONTINUITY WELD (the value cohort's light-client close, #1 WAVE 0).
 
@@ -2955,6 +2968,13 @@ def afterVKCol (w : Nat) : Nat := w + AFTER_BLOCK_OFF + B_VK
 `effects_hash`. -/
 def declaredParamCol : Nat := prmCol 0
 
+/-- **v10**: the FIRST faithful-8-felt completion column for the perms digest in the AFTER block (the
+new pre-iroot limb 37, carrying `permsHash[1]`; the felts 2..7 follow at +1..+6, limbs 38..=43). -/
+def afterPermsExtraCol (w : Nat) : Nat := w + AFTER_BLOCK_OFF + 37
+/-- **v10**: the FIRST faithful-8-felt completion column for the vk digest (pre-iroot limb 44, carrying
+`vkHash[1]`; felts 2..7 at +1..+6, limbs 45..=50). -/
+def afterVKExtraCol (w : Nat) : Nat := w + AFTER_BLOCK_OFF + 44
+
 /-- **`rotateV3WithPermsVKGate sel afterCol d`** — `rotateV3WithRecordPin B_RECORD_DIGEST d` PLUS the
 LIVE perms/VK weld: the AFTER authority sub-limb `afterCol` (perms-digest for setPerms, vk-digest for
 setVK) is welded to the declared-param column, selector-gated on `sel`. Every v1 column/site/range and
@@ -3559,6 +3579,105 @@ theorem satisfied2_of_withRecordPin8Headroom2 (hash : List ℤ → ℤ) (g : Eff
     , memTableFaithful := by rw [← hmem]; exact h.memTableFaithful
     , mapTableFaithful := by rw [← hmap]; exact h.mapTableFaithful }
 
+/-- **v10 PERMS/VK FAITHFUL-8-FELT WELD — `withPermsVK8Weld` (post-graduation).** The limb-0 perms/vk
+weld (`rotateV3WithPermsVKGate`) forces ONLY `B_PERMS`/`B_VK` (limb-0 of the deployed `hash_to_8`
+`permissions_hash`/`vk_hash`) to `prmCol 0`. This appends the SEVEN completion-felt welds: the AFTER-block
+faithful-8-felt extras (`extra0 .. extra0+6`, the new pre-iroot limbs 37..=43 for perms / 44..=50 for vk,
+carrying `permsHash[1..7]` / `vkHash[1..7]`) are EACH welded to `prmCol 1..7` — the remaining 7 felts of
+the deployed 8-felt declared param, ALL already PI-anchored through the SAME `effects_hash` chain (so
+`piCount` is UNCHANGED — NO new verifier PI, which is why perms/vk are the TRACTABLE pair). With the
+limb-0 weld this forces the FULL 8-felt faithful digest, so a mover that forges a ~31-bit-colliding
+wide-open authority into ANY of the 8 perms/vk limbs is UNSAT — the GENTIAN fail-open ("a wider-but-
+unwelded limb") is CLOSED for the perms/vk movers. Additive (mirrors `withRecordPin8Headroom2`): every
+existing column/site/range/constraint is untouched, so the per-mover keystones compose verbatim
+(`List.mem_append_left`). -/
+def withPermsVK8Weld (sel extra0 : Nat) (g : EffectVmDescriptor2) : EffectVmDescriptor2 :=
+  { g with
+    constraints := g.constraints ++ (List.range 7).map (fun i =>
+      VmConstraint2.base (permsVKWeldGate sel (extra0 + i) (prmCol (i + 1)))) }
+
+/-- The 7 completion-felt welds are the ONLY constraints past the inner descriptor's — the inner stays
+the left operand of the single `++` (every per-mover membership / forcing lemma lifts verbatim). -/
+theorem withPermsVK8Weld_constraints (sel extra0 : Nat) (g : EffectVmDescriptor2) :
+    (withPermsVK8Weld sel extra0 g).constraints
+      = g.constraints ++ (List.range 7).map (fun i =>
+          VmConstraint2.base (permsVKWeldGate sel (extra0 + i) (prmCol (i + 1)))) :=
+  rfl
+
+/-- The 7 completion-felt welds are `.gate`s, so they contribute NO mem-op (the mem log is unchanged). -/
+theorem memOpsOf_withPermsVK8Weld (sel extra0 : Nat) (g : EffectVmDescriptor2) :
+    memOpsOf (withPermsVK8Weld sel extra0 g) = memOpsOf g := by
+  simp [memOpsOf, withPermsVK8Weld, List.filterMap_append, List.filterMap_map]
+
+/-- The 7 completion-felt welds contribute NO map-op (the map log is unchanged). -/
+theorem mapOpsOf_withPermsVK8Weld (sel extra0 : Nat) (g : EffectVmDescriptor2) :
+    mapOpsOf (withPermsVK8Weld sel extra0 g) = mapOpsOf g := by
+  simp [mapOpsOf, withPermsVK8Weld, List.filterMap_append, List.filterMap_map]
+
+/-- **THE PEEL — `Satisfied2 (withPermsVK8Weld sel extra0 g) ⟹ Satisfied2 g`.** The v10 weld only
+APPENDS `.gate` constraints: the inner constraints stay members (`List.mem_append_left`), hash sites /
+ranges and the mem/map logs are unchanged. So every existing per-mover soundness lemma (consuming
+`Satisfied2` of the inner descriptor) lifts to the deployed descriptor by peeling this wrap first. -/
+theorem satisfied2_of_withPermsVK8Weld (hash : List ℤ → ℤ) (g : EffectVmDescriptor2)
+    {sel extra0 : Nat} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash (withPermsVK8Weld sel extra0 g) minit mfin maddrs t) :
+    Satisfied2 hash g minit mfin maddrs t := by
+  have hmem : memLog (withPermsVK8Weld sel extra0 g) t = memLog g t := by
+    simp [memLog, memOpsOf_withPermsVK8Weld]
+  have hmap : mapLog (withPermsVK8Weld sel extra0 g) t = mapLog g t := by
+    simp [mapLog, mapOpsOf_withPermsVK8Weld]
+  exact
+    { rowConstraints := fun i hi c hc => h.rowConstraints i hi c (by
+        rw [withPermsVK8Weld_constraints]; exact List.mem_append_left _ hc)
+    , rowHashes := h.rowHashes
+    , rowRanges := h.rowRanges
+    , memAddrsNodup := h.memAddrsNodup
+    , memClosed := fun op hop => h.memClosed op (by rw [hmem]; exact hop)
+    , memDisciplined := by rw [← hmem]; exact h.memDisciplined
+    , memBalanced := by rw [← hmem]; exact h.memBalanced
+    , memTableFaithful := by rw [← hmem]; exact h.memTableFaithful
+    , mapTableFaithful := by rw [← hmap]; exact h.mapTableFaithful }
+
+/-- **`withPermsVK8Weld_forces` — the SEVEN completion-felt welds BITE.** On a TRANSITION row
+(`row + 1 ≠ t.rows.length`) of a `Satisfied2 hash (withPermsVK8Weld sel extra0 g)` witness whose `sel` is
+hot, EACH AFTER completion-felt limb `extra0 + i` (`i < 7`) EQUALS `prmCol (i + 1)`. Combined with the
+limb-0 weld (the inner `rotateV3WithPermsVKGate`) this forces all 8 felts of the faithful digest. -/
+theorem withPermsVK8Weld_forces (hash : List ℤ → ℤ) (sel extra0 : Nat) (g : EffectVmDescriptor2)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash (withPermsVK8Weld sel extra0 g) minit mfin maddrs t)
+    (row : Nat) (hrow : row < t.rows.length) (hnotlast : row + 1 ≠ t.rows.length)
+    (hsel : (envAt t row).loc sel = 1)
+    (i : Nat) (hi : i < 7) :
+    (envAt t row).loc (extra0 + i) = (envAt t row).loc (prmCol (i + 1)) := by
+  have hmemc : VmConstraint2.base (permsVKWeldGate sel (extra0 + i) (prmCol (i + 1)))
+      ∈ (withPermsVK8Weld sel extra0 g).constraints := by
+    rw [withPermsVK8Weld_constraints]
+    exact List.mem_append_right _ (List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩)
+  have hgate : (permsVKWeldGate sel (extra0 + i) (prmCol (i + 1))).holdsVm
+      (envAt t row) (row == 0) (row + 1 == t.rows.length) :=
+    h.rowConstraints row hrow _ hmemc
+  have hlastf : (row + 1 == t.rows.length) = false := by
+    simp only [beq_eq_false_iff_ne]; exact hnotlast
+  rw [hlastf] at hgate
+  exact permsVKWeldGate_forces (envAt t row) (row == 0) false rfl _ _ _ hsel hgate
+
+/-- **TOOTH — `withPermsVK8Weld_rejects_forged`.** A TRANSITION row whose committed AFTER completion-felt
+limb `extra0 + i` is NOT the declared `prmCol (i + 1)` (a forge whose faithful 8-felt diverges from the
+PI-anchored declared one in ANY of the 7 completion felts) does NOT satisfy the weld — UNSAT for a
+ledgerless client, no trusted post-cell. -/
+theorem withPermsVK8Weld_rejects_forged (hash : List ℤ → ℤ) (sel extra0 : Nat) (g : EffectVmDescriptor2)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (row : Nat) (hrow : row < t.rows.length) (hnotlast : row + 1 ≠ t.rows.length)
+    (hsel : (envAt t row).loc sel = 1)
+    (i : Nat) (hi : i < 7)
+    (hforged : (envAt t row).loc (extra0 + i) ≠ (envAt t row).loc (prmCol (i + 1))) :
+    ¬ Satisfied2 hash (withPermsVK8Weld sel extra0 g) minit mfin maddrs t :=
+  fun h => hforged (withPermsVK8Weld_forces hash sel extra0 g h row hrow hnotlast hsel i hi)
+
+#assert_axioms withPermsVK8Weld_forces
+#assert_axioms satisfied2_of_withPermsVK8Weld
+#assert_axioms withPermsVK8Weld_rejects_forged
+
 /-- **`setPermsV3`** — the LIVE rotated setPermissions WITH the record-digest-forcing pin AND the LIVE
 perms gate (WAVE 2): the AFTER block's committed PERMS-DIGEST sub-limb (`B_PERMS = 33`) is welded to the
 in-circuit declared-param column `prmCol 0` (= `permsHash[0]`, anchored to a light-client PI via
@@ -3568,9 +3687,11 @@ declared param) is now UNSAT via the in-circuit weld ALONE — no trusted post-c
 `RotatedKernelRefinementPermsVK.setPermissions_slot_forced`. The record pin on `B_RECORD_DIGEST` (PI 46)
 stays as belt-and-suspenders for the opaque full authority residue. -/
 def setPermsV3 : EffectVmDescriptor2 :=
-  withRecordPin8Headroom2 (graduateV1 (rotateV3WithPermsVKGate EffectVmEmitSetPermissions.SEL_SET_PERMS
-    (afterPermsCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth)
-    EffectVmEmitSetPermissions.setPermsVmDescriptor))
+  withPermsVK8Weld EffectVmEmitSetPermissions.SEL_SET_PERMS
+    (afterPermsExtraCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth)
+    (withRecordPin8Headroom2 (graduateV1 (rotateV3WithPermsVKGate EffectVmEmitSetPermissions.SEL_SET_PERMS
+      (afterPermsCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth)
+      EffectVmEmitSetPermissions.setPermsVmDescriptor)))
 
 /-- **`setVKV3`** — the LIVE rotated setVK WITH the record-digest-forcing pin AND the LIVE vk gate
 (WAVE 2): the AFTER block's committed VK-DIGEST sub-limb (`B_VK = 34`) is welded to the in-circuit
@@ -3579,9 +3700,44 @@ declared-param column `prmCol 0` (= `vkHash[0]`, PI-anchored via `effects_hash`)
 UNSAT via the in-circuit weld ALONE, no trusted post-cell — the LIVE realization of
 `RotatedKernelRefinementPermsVK.setVK_slot_forced`. -/
 def setVKV3 : EffectVmDescriptor2 :=
-  withRecordPin8Headroom2 (graduateV1 (rotateV3WithPermsVKGate EffectVmEmitSetVK.SEL_SET_VK
-    (afterVKCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth)
-    EffectVmEmitSetVK.setVKVmDescriptor))
+  withPermsVK8Weld EffectVmEmitSetVK.SEL_SET_VK
+    (afterVKExtraCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth)
+    (withRecordPin8Headroom2 (graduateV1 (rotateV3WithPermsVKGate EffectVmEmitSetVK.SEL_SET_VK
+      (afterVKCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth)
+      EffectVmEmitSetVK.setVKVmDescriptor)))
+
+/-- **FORCE-LEMMA #1 (perms) — `setPermsV3_forces8_extras`.** On an ACTIVE TRANSITION setPermissions row
+of a `Satisfied2 hash setPermsV3` witness, EACH of the 7 committed AFTER perms COMPLETION limbs
+(`afterPermsExtraCol … + i` = limb 37..=43, the faithful `permsHash[1..7]`) EQUALS its declared param
+`prmCol (i + 1)`. With the limb-0 weld (`setPermissions_forced_sat`) this is the full 8-felt close: a
+forge with the wrong faithful 8-felt is UNSAT. -/
+theorem setPermsV3_forces8_extras (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash setPermsV3 minit mfin maddrs t)
+    (row : Nat) (hrow : row < t.rows.length) (hnotlast : row + 1 ≠ t.rows.length)
+    (hsel : (envAt t row).loc EffectVmEmitSetPermissions.SEL_SET_PERMS = 1)
+    (i : Nat) (hi : i < 7) :
+    (envAt t row).loc
+        (afterPermsExtraCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth + i)
+      = (envAt t row).loc (prmCol (i + 1)) :=
+  withPermsVK8Weld_forces hash _ _ _ h row hrow hnotlast hsel i hi
+
+/-- **FORCE-LEMMA #2 (vk) — `setVKV3_forces8_extras`.** On an ACTIVE TRANSITION setVK row of a
+`Satisfied2 hash setVKV3` witness, EACH of the 7 committed AFTER vk COMPLETION limbs
+(`afterVKExtraCol … + i` = limb 44..=50, the faithful `vkHash[1..7]`) EQUALS its declared param
+`prmCol (i + 1)` — the full 8-felt close for setVK. -/
+theorem setVKV3_forces8_extras (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash setVKV3 minit mfin maddrs t)
+    (row : Nat) (hrow : row < t.rows.length) (hnotlast : row + 1 ≠ t.rows.length)
+    (hsel : (envAt t row).loc EffectVmEmitSetVK.SEL_SET_VK = 1)
+    (i : Nat) (hi : i < 7) :
+    (envAt t row).loc (afterVKExtraCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth + i)
+      = (envAt t row).loc (prmCol (i + 1)) :=
+  withPermsVK8Weld_forces hash _ _ _ h row hrow hnotlast hsel i hi
+
+#assert_axioms setPermsV3_forces8_extras
+#assert_axioms setVKV3_forces8_extras
 
 /-- **`refusalV3`** — the LIVE rotated refusal WITH the record-digest-forcing pin. The `.refusalA`
 arm sets the cell record's `"refusal"` audit slot to `1` (`TurnExecutorFull.refusalField`,
@@ -4072,10 +4228,12 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 -- cellDestroy: record pin (1) + after-disc (1, no before-pin) + lifecycle-payload weld (1) = +3.
 #guard cellDestroyV3.constraints.length
         == (v3Of EffectVmEmitCellDestroy.cellDestroyVmDescriptor).constraints.length + 3
+-- setPerms / setVK: record pin (1) + perms/vk limb-0 weld (1) + 7 H1 headroom pins + the v10
+-- 7 completion-felt welds (`withPermsVK8Weld`) = +16.
 #guard setPermsV3.constraints.length
-        == (v3Of EffectVmEmitSetPermissions.setPermsVmDescriptor).constraints.length + 9
+        == (v3Of EffectVmEmitSetPermissions.setPermsVmDescriptor).constraints.length + 16
 #guard setVKV3.constraints.length
-        == (v3Of EffectVmEmitSetVK.setVKVmDescriptor).constraints.length + 9
+        == (v3Of EffectVmEmitSetVK.setVKVmDescriptor).constraints.length + 16
 -- The WAVE-3 movers: makeSovereign carries the record pin + the mode gate (+2 over bare rotateV3);
 -- refusal carries the record pin ALONE (+1) — its deployed `param0`/`param1` carry the refusal
 -- target/reason, not a post-`fields_root` digest, so there is no in-circuit declared-param weld for
