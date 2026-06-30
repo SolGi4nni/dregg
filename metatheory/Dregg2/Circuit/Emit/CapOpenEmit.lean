@@ -101,38 +101,33 @@ column, then for each of `DEPTH = 16` levels a `(sib, dir, node)` triple, then t
 /-- The base column of the cap-open appendix (the first column past the rotated R=24 width). -/
 def CAP_OPEN_BASE : Nat := EFFECT_VM_WIDTH + APPENDIX_SPAN
 
-/-- The cap-open appendix width: 7 leaf + 1 digest + 16·(sib,dir,node) + capRoot + src + effBit +
-`MASK_BITS` mask-bit columns. The trailing `effBit` column carries the turn's ACTUAL effect-kind bit;
-the `MASK_BITS` bit columns (residual (a) — GENUINE MEMBERSHIP) carry the 24-bit decomposition of the
-leaf's low mask limb, against which the genuine SUBMASK gate `facetEffGate` (`maskBitBoolGate` +
-`maskReconGate` + `selectedBitGate`) checks `(effBit &&& mask_lo) = effBit` — NOT the over-strict
-equality `mask_lo == effBit`. The bit columns are appended at the END of the block to localize the shift. -/
-def CAP_OPEN_SPAN : Nat := 7 + 1 + DEPTH * 3 + 3 + MASK_BITS
-  + (Dregg2.Circuit.DescriptorIR2.CHIP_OUT_LANES - 1) * (DEPTH + 1)
+/-- The cap-open appendix width (Phase H-CAP-8): the digest groups are now 8-FELT wide. 7 leaf
+(scalar) + 8 leaf-digest + `DEPTH·(8 sib + 1 dir + 8 node) = DEPTH·17` + 8 cap_root + src + effBit +
+`MASK_BITS` mask-bit columns. `= 7 + 8 + 16·17 + 8 + 2 + 32 = 329`. The 7 spare permutation lanes per
+absorb are PROMOTED into the bound 8-felt fold (no separate `lanes` block — the whole `node8` group is
+committed), so there is no `CHIP_OUT_LANES` tail. The `MASK_BITS = 32` bit columns (residual (a) —
+GENUINE MEMBERSHIP) carry the 32-bit decomposition of the leaf's FULL mask, against which the genuine
+SUBMASK gate (`maskBitBoolGate` + `maskReconGate` + `selectedBitGate`) checks bit `n` set — NOT the
+over-strict equality `mask_lo == effBit`. -/
+def CAP_OPEN_SPAN : Nat := 7 + 8 + DEPTH * 17 + 8 + 2 + MASK_BITS
 
-/-- The concrete cap-open column layout, pinned to the appendix. Leaf fields 0..6 at
-`CAP_OPEN_BASE..+6`; leaf digest at `+7`; level `lvl`'s sibling/direction/node at `+8+3·lvl`,
-`+9+3·lvl`, `+10+3·lvl`; cap_root at `+56`; src at `+57`; effBit at `+58`; the 24 mask-bit columns at
-`+59..+82` (`bit i = CAP_OPEN_BASE + 59 + i`). -/
+/-- The concrete 8-felt cap-open column layout, pinned to the appendix. Leaf fields 0..6 at
+`CAP_OPEN_BASE..+6`; the 8 leaf-digest columns at `+7..+14`; level `lvl`'s 17-col block at
+`+15+17·lvl` (8 sib, 1 dir, 8 node); the 8 cap_root columns at `+15+17·DEPTH..+7` (= `+287..+294`);
+src at `+295`; effBit at `+296`; the 32 mask-bit columns at `+297..+328` (`bit i = +297 + i`). -/
 def capOpenCols (w : Nat) : CapOpenCols :=
   { leaf       := fun i => w + i.val
-  , leafDigest := w + 7
-  , sib        := fun lvl => w + 8 + 3 * lvl
-  , dir        := fun lvl => w + 9 + 3 * lvl
-  , node       := fun lvl => w + 10 + 3 * lvl
-  , capRoot    := w + 8 + 3 * DEPTH       -- = w + 56
-  , src        := w + 8 + 3 * DEPTH + 1   -- = w + 57
-  , effBit     := w + 8 + 3 * DEPTH + 2   -- = w + 58
-  , bit        := fun i => w + 8 + 3 * DEPTH + 3 + i -- = w + 59 + i
-    -- Phase B-GATE: the 17 chip absorbs (leaf + 16 nodes) each carry 7 exposed lanes 1..7. The
-    -- `7·17 = 119` lane columns are appended at the END of the appendix (past the mask bits),
-    -- block `k` (k=0 leaf, k=lvl+1 node) at `LANE_BASE + 7·k`.
-  , lanes      := fun k =>
-      (List.range (Dregg2.Circuit.DescriptorIR2.CHIP_OUT_LANES - 1)).map
-        (w + 8 + 3 * DEPTH + 3 + MASK_BITS + (Dregg2.Circuit.DescriptorIR2.CHIP_OUT_LANES - 1) * k + ·) }
+  , leafDigest := fun i => w + 7 + i.val                       -- = w + 7..14
+  , sib        := fun lvl i => w + 15 + 17 * lvl + i.val
+  , dir        := fun lvl => w + 15 + 17 * lvl + 8
+  , node       := fun lvl i => w + 15 + 17 * lvl + 9 + i.val
+  , capRoot    := fun i => w + 15 + 17 * DEPTH + i.val         -- = w + 287..294
+  , src        := w + 15 + 17 * DEPTH + 8                      -- = w + 295
+  , effBit     := w + 15 + 17 * DEPTH + 9                      -- = w + 296
+  , bit        := fun i => w + 15 + 17 * DEPTH + 10 + i }      -- = w + 297 + i
 
-/-- The cap-open appendix width is 210 (the 91-col base+mask block + `7·17 = 119` lane columns). -/
-theorem cap_open_span : CAP_OPEN_SPAN = 210 := by decide
+/-- The cap-open appendix width is 329 (the native 8-felt digest groups). -/
+theorem cap_open_span : CAP_OPEN_SPAN = 329 := by decide
 
 /-! ## §2 — the constraint list: the proven `DeployedCapOpen` constraints, assembled.
 
@@ -148,10 +143,16 @@ def nodeLookups (w : Nat) : List VmConstraint2 :=
 def dirBoolGates (w : Nat) : List VmConstraint2 :=
   (List.range DEPTH).map (fun lvl => .base (.gate (dirBoolGate (capOpenCols w) lvl)))
 
-/-- The `MASK_BITS` per-bit boolean gates for the `mask_lo` decomposition (`maskBitBoolGate
-(capOpenCols w) 0..23`) — each `mask_lo` bit column is `0` or `1`. -/
+/-- The `MASK_BITS` per-bit boolean gates for the full-mask decomposition (`maskBitBoolGate
+(capOpenCols w) 0..31`) — each mask bit column is `0` or `1`. -/
 def maskBitGates (w : Nat) : List VmConstraint2 :=
   (List.range MASK_BITS).map (fun i => .base (.gate (maskBitBoolGate (capOpenCols w) i)))
+
+/-- The 8 per-lane root-pin gates (`rootPinGate (capOpenCols w) 0..7`) — Phase H-CAP-8: the top
+`node8` output GROUP equals the committed 8-felt `cap_root` GROUP, lane-for-lane (the GENTIAN tooth:
+a colliding cap tree fails ≥1 lane pin). -/
+def rootPinGates (w : Nat) : List VmConstraint2 :=
+  (List.finRange 8).map (fun i => .base (.gate (rootPinGate (capOpenCols w) i)))
 
 /-! ## §3 — (DELETED) the Signature-pinned `capOpenAttenuateV3`/`transferCapOpenV3` descriptors.
 
@@ -196,17 +197,17 @@ def capOpenConstraintsEff (w : Nat) (n : Nat) : List VmConstraint2 :=
   :: nodeLookups w
   ++ dirBoolGates w
   ++ maskBitGates w
-  ++ [ .base (.gate (rootPinGate (capOpenCols w)))
-     , .base (.gate (targetBindGate (capOpenCols w)))
+  ++ rootPinGates w
+  ++ [ .base (.gate (targetBindGate (capOpenCols w)))
      , .base (.gate (effBitGateFor (capOpenCols w) ((1 <<< n : Nat) : ℤ)))
      , .base (.gate (maskReconGate (capOpenCols w)))
      , .base (.gate (selectedBitGate (capOpenCols w) n)) ]
 
-/-- The effect-general constraint count is 1 leaf + 16 node + 16 dir + 32 mask-bit + 5 binding gates
-(rootPin, targetBind, effBitGateFor, maskRecon, selectedBit) = 70. (NO `facetHiGate` — the FULL mask is
-decomposed, so a broad `EFFECT_ALL` cap with `mask_hi ≠ 0` is admitted.) -/
-theorem capOpenConstraintsEff_length (w : Nat) (n : Nat) : (capOpenConstraintsEff w n).length = 70 := by
-  simp [capOpenConstraintsEff, nodeLookups, dirBoolGates, maskBitGates, DEPTH, MASK_BITS]
+/-- The effect-general constraint count is 1 leaf + 16 node + 16 dir + 32 mask-bit + 8 root-pin
+(Phase H-CAP-8: per-lane) + 4 binding gates (targetBind, effBitGateFor, maskRecon, selectedBit) = 77.
+(NO `facetHiGate` — the FULL mask is decomposed, so a broad `EFFECT_ALL` cap with `mask_hi ≠ 0` is admitted.) -/
+theorem capOpenConstraintsEff_length (w : Nat) (n : Nat) : (capOpenConstraintsEff w n).length = 77 := by
+  simp [capOpenConstraintsEff, nodeLookups, dirBoolGates, maskBitGates, rootPinGates, DEPTH, MASK_BITS]
 
 /-- **`effCapOpenV3 base name n`** — the GENERIC per-effect cap-open descriptor: an effect's rotated base
 descriptor `base` (a `v3Of …` member, same `EFFECT_VM_WIDTH + APPENDIX_SPAN` width) widened by the cap-open
@@ -238,7 +239,7 @@ theorem effCapOpenV3_mapOpsOf (base : EffectVmDescriptor2) (name : String) (n : 
     Dregg2.Circuit.DescriptorIR2.mapOpsOf (effCapOpenV3 base name n)
       = Dregg2.Circuit.DescriptorIR2.mapOpsOf base := by
   simp [Dregg2.Circuit.DescriptorIR2.mapOpsOf, effCapOpenV3, capOpenConstraintsEff,
-    nodeLookups, dirBoolGates, maskBitGates, List.filterMap_append, List.filterMap_map,
+    nodeLookups, dirBoolGates, maskBitGates, rootPinGates, List.filterMap_append, List.filterMap_map,
     List.filterMap_cons]
 
 /-- `effCapOpenV3` gathers exactly `base`'s mem ops. -/
@@ -246,7 +247,7 @@ theorem effCapOpenV3_memOpsOf (base : EffectVmDescriptor2) (name : String) (n : 
     Dregg2.Circuit.DescriptorIR2.memOpsOf (effCapOpenV3 base name n)
       = Dregg2.Circuit.DescriptorIR2.memOpsOf base := by
   simp [Dregg2.Circuit.DescriptorIR2.memOpsOf, effCapOpenV3, capOpenConstraintsEff,
-    nodeLookups, dirBoolGates, maskBitGates, List.filterMap_append, List.filterMap_map,
+    nodeLookups, dirBoolGates, maskBitGates, rootPinGates, List.filterMap_append, List.filterMap_map,
     List.filterMap_cons]
 
 /-- ...so the gathered memory log is `base`'s, op-for-op. -/
@@ -324,19 +325,22 @@ theorem effCapOpenV3_satisfiedEff (base : EffectVmDescriptor2) (name : String) (
     · intro lvl hlvl
       have hin : VmConstraint2.lookup (nodeLookup (capOpenCols base.traceWidth) lvl) ∈ capOpenConstraintsEff base.traceWidth n := by
         refine List.mem_cons_of_mem _ ?_
-        refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ ?_))
+        refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ ?_)))
         exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
       have h := hrow _ (hmem _ hin)
       simpa [VmConstraint2.holdsAt] using h
     · intro lvl hlvl
       have hin : VmConstraint2.base (.gate (dirBoolGate (capOpenCols base.traceWidth) lvl)) ∈ capOpenConstraintsEff base.traceWidth n := by
         refine List.mem_cons_of_mem _ ?_
-        refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
+        refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_)))
         exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
       have h := hrow _ (hmem _ hin)
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
-    · have hin : VmConstraint2.base (.gate (rootPinGate (capOpenCols base.traceWidth))) ∈ capOpenConstraintsEff base.traceWidth n := by
-        simp [capOpenConstraintsEff]
+    · intro i
+      have hin : VmConstraint2.base (.gate (rootPinGate (capOpenCols base.traceWidth) i)) ∈ capOpenConstraintsEff base.traceWidth n := by
+        refine List.mem_cons_of_mem _ ?_
+        refine List.mem_append_left _ (List.mem_append_right _ ?_)
+        exact List.mem_map.mpr ⟨i, List.mem_finRange i, rfl⟩
       have h := hrow _ (hmem _ hin)
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
   · have hin : VmConstraint2.base (.gate (targetBindGate (capOpenCols base.traceWidth))) ∈ capOpenConstraintsEff base.traceWidth n := by
@@ -350,7 +354,7 @@ theorem effCapOpenV3_satisfiedEff (base : EffectVmDescriptor2) (name : String) (
   · intro j hj
     have hin : VmConstraint2.base (.gate (maskBitBoolGate (capOpenCols base.traceWidth) j)) ∈ capOpenConstraintsEff base.traceWidth n := by
       refine List.mem_cons_of_mem _ ?_
-      refine List.mem_append_left _ (List.mem_append_right _ ?_)
+      refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
       exact List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
     have h := hrow _ (hmem _ hin)
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
