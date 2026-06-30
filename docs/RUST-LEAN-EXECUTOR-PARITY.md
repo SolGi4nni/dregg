@@ -1,16 +1,19 @@
-# Rust ↔ Lean executor parity — the justification for shipping the Rust executor by default
+# Rust ↔ Lean executor parity — the justification for the Rust executor as cross-check + wasm/zkvm fallback
 
 dregg has two executors for the same kernel transition:
 
 - the **Rust executor** — `dregg_turn::TurnExecutor::execute` (`turn/src/executor/apply.rs`). Small,
-  fast, no FFI, compiles to wasm. This is what the SDKs run.
+  fast, no FFI, compiles to wasm. This is the producer on targets where Lean cannot link
+  (wasm32/zkvm), and the differential cross-check on native.
 - the **verified Lean executor** — `Dregg2.Exec.recKExec`, compiled into `libdregg_lean.a` and reached
   from Rust through `dregg-lean-ffi` (`dregg_exec_full_forest_auth`). This is the artifact the Lean
   metatheory proves `Exec ⊑ Spec` against. It is ~150MB linked and native-only.
 
-The SDKs ship the **Rust** executor by default and treat the Lean kernel as an **opt-in shadow** (a
-node may link it to gate or to differentially verify; see `dregg-exec-lean`). This document is the
-justification for that default: *the Rust executor is at parity with the verified Lean spec.*
+On native builds the SDK and node run the **verified Lean executor as the authoritative producer** by
+default (`default = ["exec-lean"]`; opt out with `DREGG_LEAN_PRODUCER=0`), with the Rust executor as a
+differential cross-check. On targets where Lean cannot link (wasm32/zkvm, `no-lean-link`) the **Rust**
+executor is the producer. This document justifies relying on the Rust path in those roles: *the Rust
+executor is at parity with the verified Lean spec.*
 
 It states honestly what is **proven**, what is **audited**, what the **differential gauntlet** adds
 empirically, and what the **residual** to a full equivalence *proof* is.

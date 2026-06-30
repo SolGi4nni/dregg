@@ -257,7 +257,7 @@ const MEM_GAP_BITS: usize = 30;
 /// MEASURED better than 8-bit byte limbs at every FRI grid point
 /// (docs/PROOF-ECONOMICS.md §2c): the table's degree_bits drop 8 → 4, which shortens
 /// the whole batch's FRI commit phase and the table's per-query Merkle paths
-/// (transfer at the production `ir2_config`: 124.1 → 120.4 KiB, prove ~330 → ~55 ms —
+/// (transfer at the production `ir2_config` [DATED measurement, approximate]: 124.1 → 120.4 KiB, prove ~330 → ~55 ms —
 /// the 2¹⁴-point byte-table LDE was the high-blowup prover's dominant cost), while
 /// the doubled limb count adds only a few opened main columns per query.
 pub const LIMB_BITS: usize = 4;

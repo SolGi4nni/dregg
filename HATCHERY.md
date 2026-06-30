@@ -210,7 +210,7 @@ Each phase: Sonnet drafts, Opus gates (build green + `#assert_axioms`-clean + re
 ## 7. Non-goals & honest boundaries
 
 - The Hatchery does **not** prove the crypto primitives sound — `crypto_portal` *organizes* the §8 assumptions, it doesn't discharge them.
-- It does **not** close the down-connection to the running binary (that's THE SWAP) — it verifies the Lean model; faithfulness of the model to Rust is a separate axis.
+- It does **not** prove the Lean model faithful to the running binary — it verifies the Lean model against the kernel spec; Lean↔Rust executor agreement is a separate axis (the node already runs the verified Lean executor as its authoritative producer).
 - `eventually%` / liveness needs the CTL/μ + fairness layer; until then the catalog is safety-only (□), which is most of what contracts want.
 - It automates the *regular* obligations. A genuinely novel one-step argument still gets written by hand — but `exec_frame` will have cleared the 45 boring arms around it.
 

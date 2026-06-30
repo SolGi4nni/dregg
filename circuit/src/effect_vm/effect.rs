@@ -276,8 +276,11 @@ pub enum Effect {
     ///
     /// State flows through normally (continuity enforced by the Effect VM).
     /// Domain-specific constraints are proven in a separate proof identified by
-    /// `custom_proof_commitment`. The verifier checks that the external proof is
-    /// valid and that its hash matches this commitment.
+    /// `custom_proof_commitment`. The Effect VM AIR only BINDS this commitment; it
+    /// does NOT verify the external sub-proof in-circuit. External verification (the
+    /// `custom_proof_bind` module, off-AIR today) checks that the sub-proof is valid
+    /// and that its PI commitment matches this value. Folding that verification into
+    /// the recursion so a pure light client witnesses it is the staged G2 work.
     Custom {
         /// VK hash identifying the custom program.
         ///

@@ -7,9 +7,11 @@ authorizes it, applies it, and emits a chained receipt.
 > Caveat (stated by the crate itself): `turn/src/lib.rs:3-27` declares this the
 > **legacy dregg1 Rust executor** — hand-written, UNVERIFIED, and NOT the source
 > of truth for dregg's semantics. The verified semantics live in Lean under
-> `metatheory/Dregg2/`. This Rust executor remains load-bearing because the
-> running node executes on it, "until the swap" to the verified Lean executor.
-> The Lean executor runs as a *shadow* over this path (below).
+> `metatheory/Dregg2/`. The verified Lean executor (`execFullForestG` via
+> `dregg-lean-ffi`) is the **authoritative** state producer the node runs by
+> default on native builds (opt out with `DREGG_LEAN_PRODUCER=0`); this Rust
+> executor now runs as a differential cross-check, and as the producer on targets
+> where Lean cannot link (wasm32/zkvm).
 
 ## The unit: Turn → CallForest → CallTree → Action → Effect
 
