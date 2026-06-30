@@ -57,7 +57,9 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
     the last; it GRADUATED via the new accumulator / recursive-proof-binding constraint kind
     (`DescriptorIR2.ProofBind`): the rotated `customV3` carries the `proofBind` op that ties the
     row's `custom_proof_commitment` to a VERIFYING external sub-proof of the named recursion engine
-    (the row commits to the verification, rather than trusting it). (`RevokeCapability` (24)
+    (the row commits to the verification, rather than trusting it), PLUS (the VK epoch) the eight
+    `customPiExposure` PI pins that PUBLISH the bound `(commit, vk)` columns so the per-turn FOLD
+    connects the custom sub-proof leaf — the binding is at the fold, not a row gate. (`RevokeCapability` (24)
     GRADUATED via the cap-crown `revokeCapabilityVmDescriptor2` — held-membership map-read +
     ZERO-value remove-write — rotated as `revokeCapabilityV3`.)
 
@@ -1364,12 +1366,39 @@ def refreshDelegationWriteV3 : EffectVmDescriptor2 :=
 def setFieldDynV3 : EffectVmDescriptor2 :=
   v3OfWith setFieldDynV1Face [.memOp fieldWriteOp, .memOp fieldReadbackOp]
 
+/-- **The VK-epoch PI exposure for the rotated Custom member.** Eight `.piBinding .first`
+constraints publishing the `proofBind` op's bound columns as PUBLIC INPUTS of the descriptor:
+the four `custom_proof_commitment` limbs (`prmCol (CUSTOM_COMMIT + k)` = cols 72..75) at IR2 PI
+slots `46..49` (the first slots past the four rotated commit pins, `rotateV3` produces
+`piCount = 46`), and the four low `custom_program_vk_hash` limbs (`prmCol (CUSTOM_VK + k)` =
+cols 68..71) at slots `50..53`, all pinned on the FIRST (the lead Custom) row — the row the
+`generate_rotated_custom_wide` generator lays the bound `(vk, commit)` on. Exposing these
+columns as PIs is THE change that lets the per-turn FOLD connect the custom sub-proof leaf's
+4-felt PI-commitment to the descriptor: the binding (a verifying sub-proof of `E` whose PI
+commitment EQUALS this column) is enforced at the FOLD via these PIs + the custom-leaf recursion
+(`StarkSoundCustom` / `EngineBinding`, the Lean model in `CustomApex`, axiom-clean), NOT by a
+row-local in-AIR gate — so the per-row `proofBind` denotation stays `True` like `memOp`/`umemOp`
+(`DescriptorIR2.VmConstraint2.holdsAt`). The full 8-felt `vk_hash` is carried by the wide host
+PI (`pi.rs::CUSTOM_PROOFS_BASE`) / the turn hash; the descriptor exposes only the four vk-hash
+limbs that exist as trace columns (`columns.rs::CUSTOM_VK_HASH_BASE = 4 elements`). -/
+def customPiExposure : List VmConstraint2 :=
+  (List.range 4).map (fun k =>
+    .base (.piBinding .first (prmCol (CUSTOM_COMMIT + k)) (46 + k)))
+  ++ (List.range 4).map (fun k =>
+    .base (.piBinding .first (prmCol (CUSTOM_VK + k)) (50 + k)))
+
 /-- The rotated CUSTOM (sel 8) WITH the recursive-proof-binding leg: the runtime passthrough face
 lifted through `rotateV3`, carrying the `proofBind` op (`customProofBind`) that ties the row's
 `custom_proof_commitment` to a verifying external sub-proof — the accumulator constraint the
-per-row IR gained. This is THE last rotation-cohort member: with it the HONEST RESIDUE is EMPTY. -/
+per-row IR gained — PLUS (the VK epoch) the eight `customPiExposure` PI bindings that publish the
+bound `(commit, vk)` columns so the per-turn FOLD can connect the custom sub-proof leaf. The
+`proofBind` row gate stays `True`; the binding is enforced at the fold (see `customPiExposure`).
+This is THE last rotation-cohort member: with it the HONEST RESIDUE is EMPTY. -/
 def customV3 : EffectVmDescriptor2 :=
-  v3OfWith customV1Face [.proofBind customProofBind]
+  let d := v3OfWith customV1Face [.proofBind customProofBind]
+  { d with
+    piCount     := d.piCount + 8
+    constraints := d.constraints ++ customPiExposure }
 
 /-! ### The note-spend nullifier PI weld (the C4 last-flip-gate close).
 
@@ -4012,9 +4041,10 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
 #guard (mapOpsOf delegateV3).length == 2
 #guard (mapOpsOf grantCapWriteV3).length == 2
 #guard (mapOpsOf delegateAttenV3).length == 2
--- The rotated Custom carries EXACTLY its one proof-binding op past the rotated passthrough base
--- (no mem/map ops — the recursive-proof binding is Custom's only NEWLY-EXPRESSIBLE leg).
-#guard customV3.constraints.length == (v3Of customV1Face).constraints.length + 1
+-- The rotated Custom carries EXACTLY its one proof-binding op + the eight `customPiExposure`
+-- PI pins past the rotated passthrough base (no mem/map ops — the recursive-proof binding is
+-- Custom's only NEWLY-EXPRESSIBLE leg; the eight pins publish its bound (commit, vk) columns).
+#guard customV3.constraints.length == (v3Of customV1Face).constraints.length + 1 + 8
 #guard (proofBindsOf customV3).length == 1
 #guard (memOpsOf customV3).length == 0
 #guard (mapOpsOf customV3).length == 0
@@ -4292,9 +4322,11 @@ contributes none; the extras add exactly `customProofBind`). -/
 theorem proofBindsOf_customV3 : proofBindsOf customV3 = [customProofBind] := by
   have hbase : proofBindsOf (v3Of customV1Face) = [] := proofBindsOf_graduateV1 (rotateV3 customV1Face)
   unfold proofBindsOf at hbase ⊢
-  show ((v3Of customV1Face).constraints ++ [VmConstraint2.proofBind customProofBind]).filterMap
-      _ = _
-  rw [List.filterMap_append, hbase]
+  -- `customV3.constraints = ((v3Of …).constraints ++ [proofBind customProofBind]) ++ customPiExposure`;
+  -- the eight `customPiExposure` pins are all `.base (.piBinding …)`, contributing no proof-binds.
+  show (((v3Of customV1Face).constraints ++ [VmConstraint2.proofBind customProofBind])
+      ++ customPiExposure).filterMap _ = _
+  rw [List.filterMap_append, List.filterMap_append, hbase]
   rfl
 
 /-- **The rotated cap-crown analog for Custom** — `customV2_binds_proof`, transported: on an active

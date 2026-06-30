@@ -223,8 +223,11 @@ fn incremental_accumulate_verifies_whole_history() {
     let summary = acc
         .summary()
         .expect("the accumulator has a summary after 3 turns");
-    assert_eq!(summary.genesis_root, genesis);
-    assert_eq!(summary.head_root, final_root);
+    // The running endpoints are now GENUINE 8-felt anchors (codex #4 closed). The mint fixture
+    // produces NARROW legs, so each anchor is the single rotated commit felt replicated across the
+    // eight lanes — hence `[genesis; 8]` / `[final_root; 8]`.
+    assert_eq!(summary.genesis_root, [genesis; 8]);
+    assert_eq!(summary.head_root, [final_root; 8]);
     assert_eq!(summary.num_turns, 3);
 
     // Finalize + self-verify (the setup-side entry mints the anchor it would distribute).

@@ -276,11 +276,14 @@ pub enum Effect {
     ///
     /// State flows through normally (continuity enforced by the Effect VM).
     /// Domain-specific constraints are proven in a separate proof identified by
-    /// `custom_proof_commitment`. The Effect VM AIR only BINDS this commitment; it
-    /// does NOT verify the external sub-proof in-circuit. External verification (the
-    /// `custom_proof_bind` module, off-AIR today) checks that the sub-proof is valid
-    /// and that its PI commitment matches this value. Folding that verification into
-    /// the recursion so a pure light client witnesses it is the staged G2 work.
+    /// `custom_proof_commitment`. The Effect VM AIR does not verify the external
+    /// sub-proof with a row-local gate; instead the rotated Custom descriptor
+    /// PUBLISHES `custom_proof_commitment` / `custom_program_vk_hash` as public
+    /// inputs (Lean `EffectVmEmitRotationV3.customPiExposure`), and the per-turn
+    /// FOLD connects those PIs to the custom sub-proof leaf (the `custom_proof_bind`
+    /// recursion / `EngineBinding` carrier) — so a pure light client verifying the
+    /// aggregate witnesses the binding. The remaining wire step is connecting the
+    /// custom leaf's 4-felt PI-commitment to these PI slots in the joint-turn fold.
     Custom {
         /// VK hash identifying the custom program.
         ///

@@ -12,18 +12,27 @@ STRONGER `Satisfied2Custom` / `proofBind_bound` / `proofBind_determined` keyston
 catch-all and is carved OUT (`RotatedKernelRefinementExercise.no_customA_arm`,
 `lean-circuit.md` §custom).
 
-## What this module does — IN LEAN, VK-risk-free, NO deployed change
+## What this module does — the Lean MODEL of the FOLD binding (decided architecture (a))
 
-1. **The STAGED in-AIR sub-proof verifier** (`VmConstraint2.holdsAtStaged` + `Satisfied2Staged`).
-   The staged AIR is the deployed row semantics with the ONE change the deployed VK epoch will later
-   carry: the `proofBind` op's row gate goes from `True` to `ProofBind.boundAt E env` — the in-AIR
-   recursion-verifier check (`E.boundTo commit vk`: the row commits to a VERIFYING sub-proof). It is
-   the Lean twin of laying `verify_p3_batch_proof_circuit` (`~/dev/plonky3-recursion`) through the
-   Custom row's `custom_proof_commitment` / `custom_program_vk_hash` columns, mirroring the turn-leaf
-   wrap in `circuit-prove/src/joint_turn_recursive.rs` / `ivc_turn_chain.rs`. STAGED beside the
-   deployed vacuous `holdsAt` (deployed `| .proofBind _ => True` is UNCHANGED) — additive, no VK / no
-   registry / no default touched. `satisfied2Staged_toCustom` proves a staged witness IS a
-   `Satisfied2Custom` (the in-AIR gate PRODUCES the §6c binding leg — not an external assumption).
+The custom binding is enforced at the per-turn FOLD — the custom sub-proof leaf folded into the
+recursion, its PI-commitment connected to the descriptor's exposed `custom_proof_commitment` /
+`custom_program_vk_hash` public inputs (the rotated Custom member's eight `customPiExposure` pins,
+DEPLOYED — `EffectVmEmitRotationV3.customV3` re-emit + column re-pin). It is NOT enforced by an
+in-AIR row gate (the rejected architecture (b)): the per-row `proofBind` denotation stays `True`
+(`DescriptorIR2.VmConstraint2.holdsAt`, UNCHANGED), exactly like `memOp`/`umemOp` whose content
+rides an offline argument rather than a row-local poly. This module is the LEAN MODEL of that fold
+binding.
+
+1. **The fold-binding model AIR** (`VmConstraint2.holdsAtStaged` + `Satisfied2Staged`). The model
+   AIR is the deployed row semantics with the `proofBind` arm carrying `ProofBind.boundAt E env` —
+   the recursion-verifier check (`E.boundTo commit vk`: the row commits to a VERIFYING sub-proof).
+   This is the Lean twin of the FOLD's leaf verifier (`circuit-prove/src/joint_turn_recursive.rs` /
+   `ivc_turn_chain.rs` / `custom_proof_bind`) connected through the published
+   `custom_proof_commitment` / `custom_program_vk_hash` PIs — NOT a literal in-row gate. It sits
+   BESIDE the deployed `holdsAt` (deployed `| .proofBind _ => True` is UNCHANGED): the deployed
+   binding lives in the published PIs + the fold, and `holdsAtStaged` models that the fold's
+   verifier accepts. `satisfied2Staged_toCustom` proves a model witness IS a `Satisfied2Custom`
+   (the fold's verification PRODUCES the §6c binding leg — not an external assumption).
 
 2. **The Custom companion apex** (`lightclient_unfoolable_custom` + `lightclient_unfoolable_custom_binds`).
    A `StarkSoundCustom` extraction (the staged-AIR FRI carrier — the EXACT analog of `StarkSound`, now
@@ -44,15 +53,19 @@ catch-all and is carved OUT (`RotatedKernelRefinementExercise.no_customA_arm`,
 The custom claim rests on `EngineBinding E` (the recursion engine's in-circuit verifier is
 PI-commitment-collision-free across verifying proofs — the irreducible FRI-recursion soundness floor,
 `DescriptorIR2.EngineBinding`, the same shape `RecursiveAggregation.recursive_sound` carries) PLUS the
-staged in-AIR verifier. It does NOT rest on an out-of-circuit Rust trust step. `EngineBinding` /
+fold's leaf verifier. It does NOT rest on an out-of-circuit Rust trust step. `EngineBinding` /
 `StarkSoundCustom` are HYPOTHESES (a `structure`/`class`), never axioms.
 
-## Out of scope (the deployed VK epoch — NOT here)
+## What is DEPLOYED vs the remaining fold-wire
 
-The deployed flip of `holdsAt`'s `proofBind` gate from `True` to `boundAt` (the 4→8-felt
-`custom_proof_commitment` lift + the effect-VM descriptor re-emit + column re-pin) is VK-affecting and
-is the SEPARATE, gated VK epoch (coordinated with the parked umem flip). This module STAGES it; it does
-not deploy it. Likewise a `FullActionA.customA` executor verb is NOT added: `Effect::Custom` is the
+DEPLOYED (this VK epoch): the rotated Custom member PUBLISHES `custom_proof_commitment` /
+`custom_program_vk_hash` as descriptor public inputs (`EffectVmEmitRotationV3.customPiExposure`,
+IR2 PI 46..53; the wide member 70 PI), re-emitted with the column re-pin and a moved fingerprint.
+The per-row `proofBind` gate STAYS `True` (the binding is at the fold, decided architecture (a), not
+a row gate (b)). REMAINING fold-wire (NOT a Lean change): connect the custom sub-proof leaf's 4-felt
+PI-commitment to these published PI slots in `joint_turn_recursive` / `ivc_turn_chain`, tied to the
+wide host `pi::CUSTOM_PROOFS_BASE + i*12 + 8..12`. `StarkSoundCustom`/`holdsAtStaged` are the Lean
+model of that wired fold. A `FullActionA.customA` executor verb is NOT added: `Effect::Custom` is the
 deployed AUTHORIZATION MODE (`Authorization::Custom { predicate }`, `turn/src/action.rs`), not a
 state-transition verb — adding it to the 35-constructor `FullActionA` (rippling through every total
 match) is a deployed-semantics change bundled with that epoch. The companion apex lands on its OWN

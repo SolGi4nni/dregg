@@ -474,6 +474,11 @@ pub struct MapOpSpec {
 /// could not express: none folds in another STARK proof; this one rides the named recursion
 /// argument (`joint_turn_recursive.rs` leaf verifier / `ivc_turn_chain.rs` aggregate prover),
 /// exactly as `MemOp`/`UMemOp` ride the offline-memory argument rather than a row-local poly.
+/// The binding is enforced at the per-turn FOLD, not by an in-AIR row gate: the rotated Custom
+/// member PUBLISHES these columns as descriptor public inputs (Lean
+/// `EffectVmEmitRotationV3.customPiExposure`, eight `.piBinding .first` pins), and the fold
+/// connects those PIs to the custom sub-proof leaf's PI-commitment. The per-row `proof_bind`
+/// denotation therefore stays a declaration (`True`, like `MemOp`/`UMemOp`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProofBindSpec {
     /// Selector guard (active iff it evaluates to 1).
@@ -1298,8 +1303,9 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
             }
             VmConstraint2::ProofBind(m) => {
                 // The proof-binding op declares the recursion binding; its columns must be in
-                // bounds (they are pinned to the verifying sub-proof's PI commitment / VK by
-                // the recursion argument, not by a row-local poly here).
+                // bounds. They are PUBLISHED as descriptor PIs (the rotated Custom member's eight
+                // `customPiExposure` pins) and bound to the verifying sub-proof's PI commitment /
+                // VK at the per-turn FOLD via the recursion argument — not by a row-local poly here.
                 for e in [&m.guard, &m.commit, &m.vk] {
                     chk(e, "proof_bind field", ci)?;
                 }

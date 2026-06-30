@@ -48,14 +48,16 @@ it per cohort effect.
     `circuit/descriptors/umem-cohort-v1-staged-registry.tsv` — a NEW staged set BESIDE the
     deployed v1, NOT a replacement.
 
-## VK-RISK-FREE
+## A STAGED v1-COHORT LANE (distinct from the deployed WIDE+UMEM weld)
 
-STAGED beside the deployed registry: a new registry constant, NO VK bump, nothing on the live
-wire. `umem_witness_enabled` is untouched (still defaults false); the deployed prover/registry
-keep using v1 until the gated VK epoch (the owner's separate go). The grammar these emit is the
-already-deployed `umemOp` shape (`demoU`'s wire golden), so the Rust IR-2 interpreter ALREADY
-parses them — only the registry routing (which descriptor a selector resolves to) is the flip,
-and that flip is NOT done here.
+This module emits the v1-cohort `umem-cohort-v1-staged-registry.tsv` — a STAGED alternative set,
+distinct from the deployed `rotation-wide-umem-welded-registry-staged.tsv` that the umem VK EPOCH
+(G4) made the deployed default. The G4 flip welds the universal-memory leg onto the WIDE rotated
+cohort and the deployed executor now REQUIRES it for a single-cohort sovereign turn; THIS v1-cohort
+registry is a separate emit lane whose own routing flip is NOT done here. The grammar these emit is
+the already-deployed `umemOp` shape (`demoU`'s wire golden), so the Rust IR-2 interpreter ALREADY
+parses them — only the registry routing (which descriptor a selector resolves to) would be its flip.
+`umem_witness_enabled` (the executor-state OBSERVATION bridge) is a separate toggle, untouched here.
 
 ## Axiom hygiene
 

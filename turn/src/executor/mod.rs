@@ -912,8 +912,10 @@ pub struct TurnExecutor {
     /// universal-memory witness lane, recursion-gated like the umem circuit leg): when
     /// set, `execute()` snapshots the universal-map projection (`crate::umem`) around
     /// the forest journal window and emits the turn's Blum op trace into
-    /// [`Self::last_umem_witness`]. OFF by default — the live proving path is
-    /// untouched.
+    /// [`Self::last_umem_witness`]. ON by default (the umem VK EPOCH — G4): the deployed
+    /// executor observes the universal-memory boundary alongside the welded proving path.
+    /// This is the OBSERVATION bridge, distinct from the producer weld toggle
+    /// (`cipherclerk::umem_weld_staged_enabled`) and the executor verify's `require_welded`.
     pub umem_witness_enabled: std::sync::atomic::AtomicBool,
     /// The most recent turn's universal-memory witness (pre/post projections + the
     /// Blum write trace whose fold connects them), or the emitter's refusal. `None`

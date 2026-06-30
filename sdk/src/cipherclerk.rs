@@ -1065,14 +1065,18 @@ pub struct AgentCipherclerk {
     /// keying. This set is *advisory*: authoritative non-revocation is
     /// proven against the published registry root, not this field.
     local_revocations: std::collections::HashSet<String>,
-    /// **THE DOMAIN-1 UMEM-WELD PRODUCER TOGGLE (STAGED / VK-RISK-FREE).** When `true`, the sovereign
-    /// rotated producer ([`Self::prove_sovereign_turn_rotated`]) mints the WIDE+UMEM **welded** form of
-    /// a single-cohort turn whose descriptor key has a Lean-emitted welded twin (and whose actor
-    /// projection diff is non-empty single-domain) — the universal-memory leg folded BESIDE the 8-felt
-    /// (~124-bit) commit, accepted ADDITIVELY by the deployed executor. `false` (the default) ⇒ the
-    /// byte-identical BARE wide leg the live fleet proves, so existing sovereign turns are UNAFFECTED.
-    /// This is the producer-path opt-in (the loud-probe enables it); the deployed default flip is the
-    /// gated VK epoch. Runtime-only, never serialized.
+    /// **THE DOMAIN-1 UMEM-WELD PRODUCER TOGGLE (the umem VK EPOCH — G4: welded IS the deployed
+    /// default).** When `true` (the DEFAULT), the sovereign rotated producer
+    /// ([`Self::prove_sovereign_turn_rotated`]) mints the WIDE+UMEM **welded** form of a single-cohort
+    /// turn whose descriptor key has a Lean-emitted welded twin (and whose actor projection diff is
+    /// non-empty single-domain) — the universal-memory leg folded BESIDE the 8-felt (~124-bit) commit.
+    /// The deployed executor now REQUIRES the welded form for such a turn
+    /// (`verify_one_cohort_run`'s `require_welded`), so a pure light client witnesses the umem
+    /// boundary. The 3 producer-bare wide members (heapWrite / supplyMint / transferCapOpenTB — a
+    /// multi-domain / turn-bound projection the single-domain cohort weld refuses) stay on the
+    /// byte-identical BARE wide leg, which the executor still admits for them. `false` disarms the weld
+    /// (the rollback path — emits the bare wide leg the pre-flip fleet proved). Runtime-only, never
+    /// serialized.
     umem_weld_staged_enabled: bool,
 }
 
@@ -1168,11 +1172,13 @@ impl AgentCipherclerk {
             sovereign_cells: HashMap::new(),
             sovereign_witness_sequences: HashMap::new(),
             local_revocations: std::collections::HashSet::new(),
-            // VK EPOCH (umem flip): the DOMAIN-1 welded producer is ARMED by default — a single-cohort
-            // sovereign turn whose descriptor key has a Lean-emitted welded twin mints the WIDE+UMEM
-            // welded form (the universal-memory leg BESIDE the 8-felt commit, accepted ADDITIVELY). A
-            // turn whose key has no welded twin (the 12 live-only members) falls through to the
-            // byte-identical BARE leg (the registry gate in `execute_sovereign_turn_with_proof`).
+            // VK EPOCH (umem flip — G4, welded IS the deployed default): the DOMAIN-1 welded producer is
+            // ARMED by default — a single-cohort sovereign turn whose descriptor key has a Lean-emitted
+            // welded twin mints the WIDE+UMEM welded form (the universal-memory leg BESIDE the 8-felt
+            // commit), which the deployed executor now REQUIRES for that turn. The 3 producer-bare wide
+            // members (heapWrite / supplyMint / transferCapOpenTB — a multi-domain / turn-bound
+            // projection the single-domain cohort weld refuses) fall through to the byte-identical BARE
+            // leg, which the executor still admits for them.
             umem_weld_staged_enabled: true,
         }
     }
@@ -1239,11 +1245,13 @@ impl AgentCipherclerk {
             sovereign_cells: HashMap::new(),
             sovereign_witness_sequences: HashMap::new(),
             local_revocations: std::collections::HashSet::new(),
-            // VK EPOCH (umem flip): the DOMAIN-1 welded producer is ARMED by default — a single-cohort
-            // sovereign turn whose descriptor key has a Lean-emitted welded twin mints the WIDE+UMEM
-            // welded form (the universal-memory leg BESIDE the 8-felt commit, accepted ADDITIVELY). A
-            // turn whose key has no welded twin (the 12 live-only members) falls through to the
-            // byte-identical BARE leg (the registry gate in `execute_sovereign_turn_with_proof`).
+            // VK EPOCH (umem flip — G4, welded IS the deployed default): the DOMAIN-1 welded producer is
+            // ARMED by default — a single-cohort sovereign turn whose descriptor key has a Lean-emitted
+            // welded twin mints the WIDE+UMEM welded form (the universal-memory leg BESIDE the 8-felt
+            // commit), which the deployed executor now REQUIRES for that turn. The 3 producer-bare wide
+            // members (heapWrite / supplyMint / transferCapOpenTB — a multi-domain / turn-bound
+            // projection the single-domain cohort weld refuses) fall through to the byte-identical BARE
+            // leg, which the executor still admits for them.
             umem_weld_staged_enabled: true,
         }
     }
@@ -5788,16 +5796,18 @@ impl AgentCipherclerk {
             effect_witness_index_map: Vec::new(),
         };
 
-        // DOMAIN-1 UMEM-WELD ROUTING (STAGED / VK-RISK-FREE). When the toggle is armed, build the
-        // turn's GENUINE actor projection diff (before→after record-kernel projection) and, when it is a
-        // NON-EMPTY single-domain change whose wide descriptor key has a Lean-emitted welded twin, mint
-        // the WIDE+UMEM WELDED form (the universal-memory leg folded BESIDE the 8-felt commit — the weld
-        // is PI-COUNT-PRESERVING, so the 16 wide commit PIs / `public_inputs` are UNTOUCHED, and the
-        // deployed executor admits the welded twin ADDITIVELY). The bare wide leg runs when the toggle is
-        // disarmed (the deployed default — the live fleet is unaffected), or for an empty / multi-domain
-        // diff / no-welded-twin turn (which the single-domain cohort cannot reconcile — kept bare, NOT a
-        // hidden weld failure). When the toggle IS armed and the turn is weldable, a weld error FAILS
-        // CLOSED (no silent downgrade).
+        // DOMAIN-1 UMEM-WELD ROUTING (the umem VK EPOCH — G4, welded IS the deployed default). The
+        // toggle is ARMED by default: build the turn's GENUINE actor projection diff (before→after
+        // record-kernel projection) and, when it is a NON-EMPTY single-domain change whose wide
+        // descriptor key has a Lean-emitted welded twin, mint the WIDE+UMEM WELDED form (the
+        // universal-memory leg folded BESIDE the 8-felt commit — the weld is PI-COUNT-PRESERVING, so the
+        // 16 wide commit PIs / `public_inputs` are UNTOUCHED). The deployed executor now REQUIRES the
+        // welded twin for such a turn (`verify_one_cohort_run`'s `require_welded`). The bare wide leg
+        // runs only when the toggle is disarmed (the rollback path), or for an empty / multi-domain diff
+        // / no-welded-twin turn (which the single-domain cohort cannot reconcile — the 3 producer-bare
+        // members heapWrite / supplyMint / transferCapOpenTB land here, and the executor still admits
+        // their bare form). When the toggle IS armed and the turn is weldable, a weld error FAILS CLOSED
+        // (no silent downgrade).
         let umem_weld = if self.umem_weld_staged_enabled {
             use dregg_turn::umem::{project_diff_ops, project_record_kernel_state};
             let pre = project_record_kernel_state(&before_cell);

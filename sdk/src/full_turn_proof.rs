@@ -190,23 +190,25 @@ pub struct FullTurnWitness {
     /// the node's cap-gated prove site (which holds the turn's `agent`/`from`/`to`).
     pub cap_turn_identity: Option<TurnIdentityFelts>,
 
-    // -- UNIVERSAL-MEMORY WELD witness (the umem-flip's PRODUCER PATH, STAGED / VK-RISK-FREE) --
-    /// Present ONLY when the caller deliberately threads the turn's universal-memory projection diff
-    /// (the genuine before→after cell projection + its Blum op trace) to mint the WIDE+UMEM **welded**
-    /// form of the effect-vm leg INSTEAD of the bare wide leg. When `Some` AND the turn is a SINGLE
-    /// cohort-run whose descriptor key has a welded twin in
+    // -- UNIVERSAL-MEMORY WELD witness (the umem VK EPOCH — G4, the PRODUCER PATH) --
+    /// Carries the turn's universal-memory projection diff (the genuine before→after cell projection +
+    /// its Blum op trace) so the effect-vm leg mints the WIDE+UMEM **welded** form INSTEAD of the bare
+    /// wide leg. When `Some` AND the turn is a SINGLE cohort-run whose descriptor key has a welded twin
+    /// in
     /// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV),
     /// [`prove_cohort_run_chain`] routes the run through the welded producer
     /// ([`prove_wide_umem_welded_cap_open_staged`] for a CAPS-domain cap-open member, or
     /// [`prove_wide_umem_welded_staged`] for a value/domain-1 plain member) so the leg carries the
     /// universal-memory reconciliation BESIDE the 8-felt (~124-bit) commit anchors. The welded leg
     /// verifies UNIQUELY through the deployed wire/executor verifiers under the Lean-emitted welded
-    /// registry member (admitted ADDITIVELY beside the bare wide form).
+    /// registry member, which the deployed executor now REQUIRES for a single-cohort sovereign turn
+    /// (`verify_one_cohort_run`'s `require_welded`) — so a pure light client witnesses the umem boundary.
     ///
-    /// STAGED, VK-RISK-FREE: the PRESENCE of this witness IS the opt-in. When `None` (the deployed
-    /// default), the byte-identical BARE wide leg runs — so an owner-authorized / cap-gated turn that
-    /// does NOT thread a witness is UNAFFECTED, no VK is committed, and `umem_witness_enabled` is
-    /// untouched. The deployed default flip (every turn welds) is the gated VK epoch, after this.
+    /// The deployed sovereign producer (`cipherclerk::prove_sovereign_turn_rotated`) and the node cap
+    /// path thread this by default. `None` falls back to the byte-identical BARE wide leg — used for the
+    /// 3 producer-bare wide members (heapWrite / supplyMint / transferCapOpenTB, a multi-domain /
+    /// turn-bound projection the single-domain cohort weld refuses, which the executor still admits
+    /// bare), for multi-cohort chain legs (welded only for a single-run turn), and on the rollback path.
     pub umem_witness: Option<UmemWeldWitness>,
 }
 
@@ -3940,13 +3942,16 @@ pub fn verify_effect_vm_rotated_with_cutover(
     // descriptor ⇒ REJECTED. Only genuine cap-open legs (the wide-twin-pending residual) survive the
     // fallback, and they bind their 1-felt commit (the residual waist for cap-gated turns only).
     let mut bound = collect_bound(WIDE_REGISTRY_STAGED_TSV);
-    // STAGED VERIFIER LEG (VK-RISK-FREE): the Lean-emitted WIDE+UMEM WELDED registry is a NEW accepted
-    // descriptor set BESIDE the bare wide registry. A welded proof (`prove_wide_umem_welded_staged`)
-    // binds the welded member here UNIQUELY — its welded width / extra umemOp constraint cannot verify
-    // against any BARE wide member (and a bare wide proof cannot verify against a welded member), so the
-    // 8-felt ~124-bit anchors stay bound and the uniqueness/ambiguity tooth below still holds. The
-    // deployed DEFAULT prover stays bare — this only ADMITS the staged welded form on the wire; it does
-    // not flip `umem_witness_enabled` nor the default route.
+    // THE umem VK EPOCH (G4): the Lean-emitted WIDE+UMEM WELDED registry is the deployed DEFAULT
+    // producer's accepted descriptor set. A welded proof (`prove_wide_umem_welded_staged`) binds the
+    // welded member here UNIQUELY — its welded width / extra umemOp constraint cannot verify against any
+    // BARE wide member (and a bare wide proof cannot verify against a welded member), so the 8-felt
+    // ~124-bit anchors stay bound and the uniqueness/ambiguity tooth below still holds. This SDK wire
+    // verifier admits BOTH registries: the welded set (the deployed sovereign/cap producers' default)
+    // AND the bare set (the 3 producer-bare members heapWrite / supplyMint / transferCapOpenTB,
+    // multi-cohort chain legs, and the rollback path). The deployed EXECUTOR verifier is the one that
+    // REQUIRES the welded twin for a single-cohort sovereign turn (`verify_one_cohort_run`'s
+    // `require_welded`), so a committed turn carries the umem boundary on the wire.
     bound.extend(collect_bound(WIDE_UMEM_WELD_REGISTRY_TSV));
     if bound.is_empty() {
         bound = collect_bound(V3_STAGED_REGISTRY_TSV)

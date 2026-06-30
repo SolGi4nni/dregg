@@ -701,18 +701,36 @@ impl TurnExecutor {
             TurnError::InvalidExecutionProof(format!("rotated descriptor parse: {e}"))
         })?;
 
-        // WELDED-AWARE RESOLUTION (the umem-flip staged verifier leg, VK-RISK-FREE — the flip's HARD
-        // BLOCKER closed). A cohort key with a welded twin in WIDE_UMEM_WELD_REGISTRY_TSV admits BOTH
-        // the welded proof (`prove_wide_umem_welded_staged`, resolve the welded descriptor) AND the
-        // bare wide proof. The weld is PI-COUNT-PRESERVING (`welded.public_input_count ==
-        // bare.public_input_count` — the parity tooth in `effect_vm_descriptors.rs`), so the SAME
-        // reconstructed `dpis` (the 8-felt before/after anchors + fee/record pins below) bind BOTH
-        // forms BYTE-IDENTICALLY; only the descriptor target differs. The 12 live-only members
-        // (heapWrite/supplyMint/transferCapOpenTB/exerciseCapOpen/spawnCapOpen + the 7 WriteCapOpen)
-        // have NO welded twin, so `welded_desc` is None and they FALL BACK to the bare wide member
-        // alone. STAGED: this only ADMITS the welded form on the wire — the deployed default prover
-        // stays bare and `umem_witness_enabled` is untouched (the gated VK epoch does the flip). This
-        // mirrors the SDK wire verifier's `bound.extend(collect_bound(WIDE_UMEM_WELD_REGISTRY_TSV))`.
+        // WELDED-AWARE RESOLUTION (the umem VK EPOCH — G4, the welded form is the DEPLOYED DEFAULT).
+        // The welded registry (WIDE_UMEM_WELD_REGISTRY_TSV) is a member-for-member 57/57 cover of the
+        // bare wide registry (the parity tooth in `effect_vm_descriptors.rs`), so EVERY cohort key now
+        // resolves a welded twin here. The weld is PI-COUNT-PRESERVING (`welded.public_input_count ==
+        // bare.public_input_count`), so the SAME reconstructed `dpis` (the 8-felt before/after anchors +
+        // fee/record pins below) bind BOTH forms BYTE-IDENTICALLY; only the descriptor target differs.
+        //
+        // THE FLIP: when a welded twin is present we REQUIRE it — the bare wide member is DROPPED from
+        // the accept set (`require_welded` below), so a single-cohort sovereign turn commits ONLY with a
+        // welded leg and a pure light client witnesses the universal-memory boundary BESIDE the 8-felt
+        // commit. The deployed sovereign producer (`cipherclerk::prove_sovereign_turn_rotated`) mints
+        // the welded form by default (`umem_weld_staged_enabled`), so this is fail-closed, not a new
+        // gate. Two carve-outs keep their BARE wide form (the producer cannot mint a single welded leg
+        // for them, so requiring welded would red an honest turn):
+        //   * MULTI-COHORT CHAIN LEGS (`is_chain_leg`): the chained producer (`prove_cohort_run_chain`)
+        //     welds ONLY a single-run turn (`umem_weld = umem_witness.filter(|_| n_runs == 1)`) — a
+        //     whole-turn umem diff does not split per leg — so every chain leg is bare by construction.
+        //   * THE 3 PRODUCER-BARE WIDE MEMBERS (heapWrite / supplyMint / transferCapOpenTB): their genuine
+        //     before→after projection is multi-domain (heap+registers / value+supply) or turn-bound, which
+        //     the single-domain cohort weld refuses, so the producer keeps them on the bare wide leg even
+        //     with the witness armed. They DO have welded twins in the registry (57/57), but no deployed
+        //     producer emits them, so the verifier still admits their bare form. (transferCapOpenTB is
+        //     cap-open-routed: it never surfaces as `name`, and its bare/welded cap-open members ride the
+        //     additive `cap_open_descs` set below — listed here for intent.)
+        // This mirrors the SDK wire verifier's `bound.extend(collect_bound(WIDE_UMEM_WELD_REGISTRY_TSV))`.
+        const LIVE_ONLY_BARE_KEYS: [&str; 3] = [
+            "heapWriteVmDescriptor2R24",
+            "supplyMintVmDescriptor2R24",
+            "transferCapOpenTBVmDescriptor2R24",
+        ];
         let welded_desc = WIDE_UMEM_WELD_REGISTRY_TSV
             .lines()
             .find_map(|line| {
@@ -1029,15 +1047,17 @@ impl TurnExecutor {
         }
 
         // 7. Verify through the multi-table batch verifier (the hand-AIR leg is gone). WELDED-AWARE
-        //    (the umem-flip staged verifier leg): try the welded twin (when present) AND the bare
-        //    wide member, requiring a UNIQUE accept. A welded proof verifies ONLY against the welded
-        //    member (its extra umemOp / +7 trace columns cannot satisfy the bare member) and a bare
-        //    proof verifies ONLY against the bare member, so the 8-felt ~124-bit anchors stay bound
-        //    and the ambiguity tooth (mirrored from the SDK wire verifier's unique-accept) still
-        //    holds. A post-state forgery surfaces as NO accept: the anchored after-commit PIs
-        //    disagree with the trace's after-block STATE_COMMIT carrier (the wide descriptor's
-        //    carrier-12 pi_bindings). The 12 live-only members (no welded twin) verify against the
-        //    bare member alone.
+        //    (the umem VK EPOCH — G4): the welded twin is the REQUIRED form for a single-cohort
+        //    sovereign turn (`require_welded` above drops the bare member), so a welded leg is the
+        //    SOLE accepted form and a pure light client witnesses the universal-memory boundary. A
+        //    welded proof verifies ONLY against the welded member (its extra umemOp / +7 trace
+        //    columns cannot satisfy the bare member) and a bare proof verifies ONLY against the bare
+        //    member, so the 8-felt ~124-bit anchors stay bound and the ambiguity tooth (mirrored from
+        //    the SDK wire verifier's unique-accept) still holds. A post-state forgery surfaces as NO
+        //    accept: the anchored after-commit PIs disagree with the trace's after-block STATE_COMMIT
+        //    carrier (the wide descriptor's carrier-12 pi_bindings). Multi-cohort chain legs and the 3
+        //    producer-bare wide members (heapWrite/supplyMint/transferCapOpenTB — no deployed welded
+        //    producer) keep the bare member admitted.
         // CAP-OPEN ROUTE (the executor twin of the SDK wire verifier's cap-open routing — the
         // domain-2 executor-commit gap CLOSED). A capability effect's authority is
         // light-client-verifiable ONLY under its cap-open descriptor (the in-circuit depth-16
@@ -1080,19 +1100,29 @@ impl TurnExecutor {
             }
         }
 
-        // The verify candidate set: the plain welded twin (when present), the plain bare wide member,
-        // and the cap-open bare + welded members. A SOUND rotated proof binds exactly ONE descriptor —
-        // a cap-open proof's membership-crown trace cannot satisfy a plain (narrower) member and a
-        // plain proof's narrower trace cannot satisfy a cap-open member — so requiring a UNIQUE accept
-        // preserves the ambiguity tooth. A post-state forgery surfaces as NO accept (the anchored
-        // after-commit PIs disagree with the trace's after-block STATE_COMMIT carrier). Admitting the
-        // cap-open members is STRICTLY STRONGER (more in-circuit constraints), never a widening of the
-        // plain path.
+        // THE FLIP (G4): require the welded twin when one is present and this is neither a multi-cohort
+        // chain leg nor one of the 3 producer-bare wide members. In that case the bare wide member
+        // `desc` is DROPPED from the accept set, so a welded leg is the SOLE accepted form and the bare
+        // wide proof is rejected fail-closed. For a chain leg / live-only key (no deployed welded
+        // producer) the bare `desc` stays admitted.
+        let require_welded =
+            welded_desc.is_some() && !is_chain_leg && !LIVE_ONLY_BARE_KEYS.contains(&name);
+
+        // The verify candidate set: the welded twin (when present), the plain bare wide member (UNLESS
+        // the flip requires welded), and the cap-open bare + welded members. A SOUND rotated proof binds
+        // exactly ONE descriptor — a cap-open proof's membership-crown trace cannot satisfy a plain
+        // (narrower) member and a plain proof's narrower trace cannot satisfy a cap-open member — so
+        // requiring a UNIQUE accept preserves the ambiguity tooth. A post-state forgery surfaces as NO
+        // accept (the anchored after-commit PIs disagree with the trace's after-block STATE_COMMIT
+        // carrier). Admitting the cap-open members is STRICTLY STRONGER (more in-circuit constraints),
+        // never a widening of the plain path.
         let mut candidates: Vec<&dregg_circuit::descriptor_ir2::EffectVmDescriptor2> = Vec::new();
         if let Some(welded) = welded_desc.as_ref() {
             candidates.push(welded);
         }
-        candidates.push(&desc);
+        if !require_welded {
+            candidates.push(&desc);
+        }
         for d in &cap_open_descs {
             candidates.push(d);
         }
@@ -1107,12 +1137,17 @@ impl TurnExecutor {
         }
         match accepted {
             0 => Err(TurnError::ProofVerificationFailed(format!(
-                "rotated effect-vm verify: proof bound NO descriptor (plain welded twin {}, {} \
-                 cap-open member(s)): {}",
+                "rotated effect-vm verify: proof bound NO descriptor (welded twin {}, bare wide {}, \
+                 {} cap-open member(s)): {}",
                 if welded_desc.is_some() {
                     "present"
                 } else {
                     "absent"
+                },
+                if require_welded {
+                    "DROPPED (welded required — G4 flip)"
+                } else {
+                    "admitted"
                 },
                 cap_open_descs.len(),
                 last_err.unwrap_or_default()

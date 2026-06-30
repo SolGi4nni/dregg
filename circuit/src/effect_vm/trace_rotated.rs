@@ -3527,26 +3527,33 @@ pub fn generate_rotated_set_field_dyn_wide(
 /// geometry is `append_wide_carriers` at 581.
 pub const CUSTOM_HOST_WIDTH: usize = 581;
 
-/// **THE WIDE custom trace generator (`customVmDescriptor2R24`, 789-wide / 62 PI).**
+/// **THE WIDE custom trace generator (`customVmDescriptor2R24`, 789-wide / 70 PI).**
 ///
 /// Lay the 789-wide custom row for a [`Effect::Custom`] lead. The descriptor's
-/// `proof_bind` op pins two row columns:
+/// `proof_bind` op names two row columns, and (the VK epoch) eight `.piBinding`
+/// pins PUBLISH them as the descriptor's own public inputs (Lean
+/// `EffectVmEmitRotationV3.customPiExposure`):
 ///   * col 68 (`PARAM_BASE + CUSTOM_VK_HASH_BASE`) ← the program VK handle (the
 ///     v1 builder writes `program_vk_hash[0..4]` into cols 68..72; the full 8-felt
-///     VK binds through the PI/turn-hash layer, NOT this row column — the column
-///     is the row-local handle the `proof_bind` op reads);
+///     VK binds through the wide-host PI (`pi::CUSTOM_PROOFS_BASE`) / turn-hash
+///     layer, so the descriptor exposes the four vk-hash limbs that exist as
+///     columns — IR2 PI slots 50..53);
 ///   * col 72 (`PARAM_BASE + CUSTOM_PROOF_COMMIT_BASE`) ← the sub-proof's PI
-///     commitment (the four `proof_commitment` limbs land in cols 72..76).
+///     commitment (the four `proof_commitment` limbs land in cols 72..76 — IR2 PI
+///     slots 46..49).
 ///
 /// The `Effect::Custom`'s `(program_vk_hash, proof_commitment)` MUST be the
 /// genuine values a verifying [`crate::custom_proof_bind::BoundCustomProof`]
 /// exposes — `bound.vk_hash_felts()` / `bound.proof_commitment()` — so the row
 /// the deployed prover mints carries exactly the binding the SDK-reachable
 /// `verify_proof_bind` engine (the light client's recursion) re-derives from the
-/// verified STARK. The `proof_bind` in-AIR op is a bounds/declaration check; the
-/// program-correctness recursion is the external engine. This generator's job is
-/// to lay a SAT trace whose bound columns hold that binding, so a custom turn
-/// mints a REAL wide receipt.
+/// verified STARK. The binding is enforced at the per-turn FOLD: the eight pins
+/// publish the bound columns as PIs the fold connects to the custom sub-proof
+/// leaf's 4-felt PI-commitment (the recursion / `EngineBinding` carrier), so the
+/// in-AIR `proof_bind` op is intentionally a declaration (like `mem_op`/`umem_op`,
+/// whose content rides the offline argument, not a row-local poly). This
+/// generator's job is to lay a SAT trace whose bound columns hold that binding
+/// AND publish them, so a custom turn mints a REAL wide receipt the fold can bind.
 ///
 /// Returns `(trace, dpis)` ready for `prove_vm_descriptor2` against the wide
 /// custom descriptor (the witness is `map_heaps = []` and `mem_boundary =
@@ -3574,9 +3581,28 @@ pub fn generate_rotated_custom_wide(
             base_pis.len()
         ));
     }
+    // VK epoch: PUBLISH the `proof_bind` op's bound columns as the descriptor's own public inputs
+    // (Lean `EffectVmEmitRotationV3.customPiExposure`, eight `.piBinding .first` pins at IR2 PI
+    // slots 46..53). The first (lead Custom) row carries the bound `(commit, vk)`: the four
+    // `custom_proof_commitment` limbs (cols 72..75) at slots 46..49, then the four low
+    // `custom_program_vk_hash` limbs (cols 68..71) at slots 50..53. Exposing them is what lets the
+    // per-turn FOLD connect the custom sub-proof leaf's 4-felt PI-commitment to this descriptor;
+    // the in-AIR `proof_bind` op stays a declaration (the binding is at the fold, not a row gate).
+    let mut base_pis = base_pis;
+    {
+        use super::columns::{PARAM_BASE, param};
+        let r0 = &trace[0];
+        for k in 0..4 {
+            base_pis.push(r0[PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + k]); // PI 46..49
+        }
+        for k in 0..4 {
+            base_pis.push(r0[PARAM_BASE + param::CUSTOM_VK_HASH_BASE + k]); // PI 50..53
+        }
+    }
+    debug_assert_eq!(base_pis.len(), ROT_PI_COUNT + 8); // 46 base + 8 custom-binding = 54
     let dpis = append_wide_carriers(&mut trace, base_pis, CUSTOM_HOST_WIDTH);
     debug_assert_eq!(trace[0].len(), CUSTOM_HOST_WIDTH + 208); // 789
-    debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 16); // 46 base + 16 wide = 62
+    debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 8 + 16); // 46 base + 8 custom + 16 wide = 70
     Ok((trace, dpis))
 }
 
