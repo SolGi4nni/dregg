@@ -487,8 +487,22 @@ pub fn generate_rotated_effect_vm_trace(
     // pre-state + the effect, so a forgery cannot match it. The 33 other cohort members keep the
     // 38-PI vector.
     if let Some(off) = record_pin_offset(effects.first()) {
-        dpis.push(last[AFTER_BASE + off]); // PI 38: the correctly-written post lifecycle / record digest
-        debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
+        dpis.push(last[AFTER_BASE + off]); // PI 46: the correctly-written post lifecycle / record digest
+        // H1: the RECORD-DIGEST movers (off == B_AUTHORITY_DIGEST: setPerms/setVK/makeSovereign/refusal)
+        // pin ALL 8 faithful authority limbs (`withRecordPin8Headroom2`): limb-0 above + the 7 headroom
+        // limbs (AFTER offsets 12..18) at PI 47..53. Push the honest post values (read from the LAST
+        // row's AFTER block, the columns the pins bind); the verifier anchors PI 46..53 to
+        // `compute_authority_digest_8(post_cell)`, so a 31-bit-colliding wide-open authority forged into
+        // ANY of the 8 limbs is UNSAT (the GENTIAN close for movers). Lifecycle movers (off ==
+        // B_LIFECYCLE) keep the single limb-0 pin.
+        if off == B_AUTHORITY_DIGEST {
+            for i in 0..7 {
+                dpis.push(last[AFTER_BASE + 12 + i]);
+            }
+            debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 8);
+        } else {
+            debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
+        }
     }
 
     // THE ACCOUNTS-SET GROW-GATE PIN (createCell / factory / spawn — the deployment-real account
@@ -2927,17 +2941,24 @@ pub fn generate_rotated_record_pin_wide(
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     let (mut trace, base_pis) =
         generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
-    if base_pis.len() != ROT_PI_COUNT + 1 {
+    let base_len = base_pis.len();
+    // The record-pin family carries either the single limb-0 pin (`ROT_PI_COUNT + 1`, the lifecycle
+    // movers + the historical record-digest pin) OR — H1 — the 8 authority record-pins for the
+    // record-digest movers (setPerms/setVK/makeSovereign/refusal pin all 8 faithful authority limbs,
+    // `ROT_PI_COUNT + 8`, `withRecordPin8Headroom2`). Both are valid; the wide descriptor
+    // (`wideAppend setPermsV3 …`) declares the matching `base_len + 16`.
+    if base_len != ROT_PI_COUNT + 1 && base_len != ROT_PI_COUNT + 8 {
         return Err(format!(
-            "record-pin wide generator: base PI vector {} != {} (the record-pin family carries the \
-             39-PI rotated vector — the record/lifecycle pin rides PI 38)",
-            base_pis.len(),
-            ROT_PI_COUNT + 1
+            "record-pin wide generator: base PI vector {} is neither {} (single record/lifecycle pin) \
+             nor {} (the H1 8-felt authority record-pin8)",
+            base_len,
+            ROT_PI_COUNT + 1,
+            ROT_PI_COUNT + 8
         ));
     }
     let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
     debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
-    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 39 base + 16 wide = 55
+    debug_assert_eq!(dpis.len(), base_len + 16); // base record-pins + 16 wide commit carriers
     Ok((trace, dpis))
 }
 
@@ -3344,9 +3365,12 @@ pub fn generate_rotated_refusal_wide(
         before_fields_leaves,
         audit_value,
     )?;
+    let base_len = base_pis.len();
     let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
     debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
-    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 39 base + 16 wide = 55
+    // H1: refusal is a record-digest mover, so its base carries the 8 authority record-pins
+    // (`ROT_PI_COUNT + 8`) → `base_len + 16` wide PIs (was the single-pin `WIDE_PI_COUNT + 1`).
+    debug_assert_eq!(dpis.len(), base_len + 16);
     Ok((trace, dpis, map_heaps))
 }
 

@@ -418,10 +418,13 @@ theorem base_constraints_hold :
           simp only [envReal]
           rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
             (by decide) (by decide) (by decide) (by decide)]; rfl
-  · -- the 6 frozen-authority colEqs: before vs after, all read 0 columns (record-digest / lifecycle
-    -- / perms / vk / mode / fields-root — none of which the natural transfer touches), so `0 = 0`.
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hfrozen
-    rcases hfrozen with rfl | rfl | rfl | rfl | rfl | rfl <;>
+  · -- the frozen-authority colEqs (6 dedicated + 7 H1 headroom limbs 12..18): before vs after, all
+    -- read 0 columns (record-digest / lifecycle / perms / vk / mode / fields-root / the headroom
+    -- authority limbs — none of which the natural transfer touches), so `0 = 0`.
+    simp only [frozenAuthorityColEqs, authorityHeadroomFreezes, authorityHeadroomOffs,
+      List.map_cons, List.map_nil, List.cons_append, List.nil_append,
+      List.mem_cons, List.not_mem_nil, or_false] at hfrozen
+    rcases hfrozen with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
       · rw [colEq_holds_iff _ _ _ _ _ rfl]
         simp only [envReal]
         rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
@@ -528,9 +531,12 @@ theorem row1_constraints_hold (hash : List ℤ → ℤ) :
         rcases hpins with rfl | rfl | rfl | rfl <;>
           · refine fun _ => ?_
             rfl
-    · -- the 6 frozen-authority colEqs: `.gate`, vacuous on the last row.
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hfrozen
-      rcases hfrozen with rfl | rfl | rfl | rfl | rfl | rfl <;> exact trivial
+    · -- the frozen-authority colEqs (6 dedicated + 7 H1 headroom): `.gate`, vacuous on the last row.
+      simp only [frozenAuthorityColEqs, authorityHeadroomFreezes, authorityHeadroomOffs,
+        List.map_cons, List.map_nil, List.cons_append, List.nil_append,
+        List.mem_cons, List.not_mem_nil, or_false] at hfrozen
+      rcases hfrozen with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+        exact trivial
   · -- a chip lookup: hits the `lastRow` (zero-row) summand of the union table.
     exact lookup_holdsAt_tfOf2_right (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor))
       realRow lastRow { loc := lastRow, nxt := zeroAsg, pub := realPub } rfl _ hc

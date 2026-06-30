@@ -982,10 +982,19 @@ impl TurnExecutor {
         // WIDE: the record-pin family ships at 63 PIs (47 base + 16 wide). The record/lifecycle
         // pin still rides PI ROT_PI_COUNT (46) (a base PI, BEFORE the 16 wide commit PIs at indices 39..54), so the
         // anchor index is unchanged — only the descriptor-PI-count gate widens 47 → 63.
-        // WIDE record-pin family: the base rotated record-pin vector (`ROT_PI_COUNT + 1`, the four
-        // commit pins + the fifth record/lifecycle pin) plus the 16 wide commit PIs.
-        let wide_record_pin_count = ROT_PI_COUNT + 1 + 16;
-        if desc.public_input_count == wide_record_pin_count && dpis.len() == wide_record_pin_count {
+        // WIDE record-pin family: the base rotated record-pin vector plus the 16 wide commit PIs.
+        // The base is either the SINGLE record/lifecycle pin (`ROT_PI_COUNT + 1`, the lifecycle movers)
+        // OR — H1 — the 8 authority record-pins (`ROT_PI_COUNT + 8`, the record-digest movers
+        // setPerms/setVK/makeSovereign/refusal, `withRecordPin8Headroom2`). The verifier re-derives the
+        // trace with PLACEHOLDER cells (above), so the record-pin PIs MUST be anchored here from the
+        // trusted post-cell — for the record-digest movers that means ALL 8 limbs, else the un-anchored
+        // headroom PIs stay at placeholder values and the proof's transcript diverges (InvalidPowWitness).
+        let wide_record_pin_count_1 = ROT_PI_COUNT + 1 + 16; // lifecycle / single-limb movers (63)
+        let wide_record_pin_count_8 = ROT_PI_COUNT + 8 + 16; // H1 record-digest movers (70)
+        if (desc.public_input_count == wide_record_pin_count_1
+            || desc.public_input_count == wide_record_pin_count_8)
+            && dpis.len() == desc.public_input_count
+        {
             use dregg_circuit::effect_vm::Effect as VmEffect;
             // The forced-limb anchor flavor for this lead: record-digest (Class-1) vs lifecycle (Class-2).
             enum Anchor {
@@ -1033,12 +1042,25 @@ impl TurnExecutor {
                         self.block_height,
                     );
                     // The record/lifecycle pin is the fifth appended PI at slot `ROT_PI_COUNT`.
-                    dpis[ROT_PI_COUNT] = match anchor {
+                    match anchor {
                         Anchor::RecordDigest => {
-                            dregg_cell::compute_authority_digest_felt(&post_cell)
+                            // H1: the record-digest movers now pin ALL 8 faithful authority limbs
+                            // (`withRecordPin8Headroom2`): limb-0 at `ROT_PI_COUNT` (PI 46) + the 7
+                            // headroom limbs at `ROT_PI_COUNT+1 .. ROT_PI_COUNT+7` (PI 47..53). Anchor
+                            // every one to the trusted post-cell's `compute_authority_digest_8`, so a
+                            // mover that forges a 31-bit-colliding wide-open authority into ANY limb is
+                            // UNSAT (the GENTIAN close for movers — no wider-but-unwelded limb).
+                            let auth8 = dregg_cell::compute_authority_digest_8(&post_cell);
+                            dpis[ROT_PI_COUNT] = auth8[0];
+                            for i in 0..7 {
+                                if ROT_PI_COUNT + 1 + i < dpis.len() {
+                                    dpis[ROT_PI_COUNT + 1 + i] = auth8[1 + i];
+                                }
+                            }
                         }
                         Anchor::Lifecycle => {
-                            crate::rotation_witness::lifecycle_felt_cell(&post_cell)
+                            dpis[ROT_PI_COUNT] =
+                                crate::rotation_witness::lifecycle_felt_cell(&post_cell);
                         }
                         Anchor::None => unreachable!(),
                     };

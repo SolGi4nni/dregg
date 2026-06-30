@@ -167,8 +167,8 @@ fn setpermissions_forced_on_wire_rejects_forged_perms_anchor_disabled() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated setPerms descriptor parses");
     assert_eq!(
-        desc.public_input_count, 47,
-        "setPerms carries the appended record-forcing pin (47 PIs)"
+        desc.public_input_count, 54,
+        "setPerms pins all 8 authority limbs (54 PIs — the H1 record-pin8)"
     );
 
     let st = CellState::new(balance as u64, 0);
@@ -346,8 +346,8 @@ fn setvk_forced_on_wire_rejects_forged_vk_anchor_disabled() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated setVK descriptor parses");
     assert_eq!(
-        desc.public_input_count, 47,
-        "setVK carries the appended record-forcing pin (47 PIs)"
+        desc.public_input_count, 54,
+        "setVK pins all 8 authority limbs (54 PIs — the H1 record-pin8)"
     );
 
     let st = CellState::new(balance as u64, 0);

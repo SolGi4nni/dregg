@@ -208,8 +208,8 @@ fn refusal_light_client_forge_rejected_by_fields_write_gate() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated refusal descriptor parses");
     assert_eq!(
-        desc.public_input_count, 47,
-        "refusal carries the appended record pin (47 PIs)"
+        desc.public_input_count, 54,
+        "refusal pins all 8 authority limbs (54 PIs — the H1 record-pin8)"
     );
 
     let st = CellState::new(balance as u64, 0);

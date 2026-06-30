@@ -260,15 +260,14 @@ fn wide_sovereign_forged_anchor_is_rejected() {
 // VERIFIES against the executor-anchored wide refusal descriptor. A prover refusal or a verifier
 // rejection FAILS the test (no catch_unwind — unambiguous).
 //
-// The refusal wide geometry is the record-pin geometry: 39 base PIs (the record/lifecycle pin at PI
-// 38) + 16 wide = 55; the wide refusal descriptor carries 63 PIs total — wait, the v1 prefix grew
-// 34→42, so the refusal rotated prefix is 47 (= 42 + 4 commit pins + 1 record pin) and the wide
-// descriptor carries 47 + 16 = 63. So the 16 wide commit PIs start at `REFUSAL_WIDE_PI_BASE = 47`.
+// H1: the refusal wide geometry is the record-pin8 geometry: the rotated prefix is 54 (= 42 v1 + 4
+// commit pins + the 8 authority record-pins, `withRecordPin8Headroom2`) and the wide descriptor carries
+// 54 + 16 = 70. So the 16 wide commit PIs start at `REFUSAL_WIDE_PI_BASE = 54`.
 
-/// Where the 16 wide commit PIs start for the REFUSAL cohort (the record-pin family carries the
-/// record pin at the rotated `ROT_PI_COUNT`, so the wide commit PIs sit one slot past the
-/// transfer-shape base — `refusalVmDescriptor2R24` wide = 63 PIs = 47 base + 16 wide).
-const REFUSAL_WIDE_PI_BASE: usize = 47;
+/// Where the 16 wide commit PIs start for the REFUSAL cohort (a record-digest mover: the 8 authority
+/// record-pins occupy PI 46..53, so the wide commit PIs sit at 54..70 —
+/// `refusalVmDescriptor2R24` wide = 70 PIs = 54 base + 16 wide).
+const REFUSAL_WIDE_PI_BASE: usize = 54;
 
 /// A sovereign refusal before/after cell pair: the after-cell carries the refusal audit slot written
 /// into `fields_map[REFUSAL_AUDIT_EXT_KEY]` (via the shared `apply_effect_to_cell` weld — the SAME
@@ -393,11 +392,11 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
     assert_eq!(
         producer_dpis.len(),
         desc.public_input_count,
-        "wide refusal PI count (47 base + 16 wide = 63)"
+        "wide refusal PI count (54 base + 16 wide = 70 — the H1 8-felt record-pin8)"
     );
     assert_eq!(
-        desc.public_input_count, 63,
-        "refusal wide descriptor carries 63 PIs"
+        desc.public_input_count, 70,
+        "refusal wide descriptor carries 70 PIs (all 8 authority record-pins + 16 wide commit PIs)"
     );
 
     // -- EXECUTOR LEG: anchor the 16 wide commit PIs to the TRUSTED before/after cell chip-commits

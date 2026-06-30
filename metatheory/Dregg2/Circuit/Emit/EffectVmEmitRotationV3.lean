@@ -2205,6 +2205,28 @@ def B_RECORD_DIGEST : Nat := 24
 /-- The rotated AFTER-block base offset (past the v1 layout + the BEFORE block, `B_SPAN = 51`). -/
 def AFTER_BLOCK_OFF : Nat := 51
 
+/-- **H1: the 7 headroom authority limb offsets** (offsets 12..=18 = r11..r17) carrying limb-1..7 of
+the faithful 8-felt authority digest (`compute_authority_digest_8`), beside limb-0 at
+`B_RECORD_DIGEST = 24`. These previously-unwelded headroom limbs now ride the absorption chain and are
+WELDED (continuity freeze for value effects / record-pin8 for movers) so all 8 limbs are forced. -/
+def authorityHeadroomOffs : List Nat := [12, 13, 14, 15, 16, 17, 18]
+
+/-- The 7 continuity `colEq` freezes welding each headroom authority limb BEFORE↔AFTER (value cohort). -/
+def authorityHeadroomFreezes (w : Nat) : List VmConstraint :=
+  authorityHeadroomOffs.map (fun off => colEq (w + off) (w + AFTER_BLOCK_OFF + off))
+
+/-- The full appended authority-continuity weld list: the six dedicated-sub-limb freezes (r23 ·
+lifecycle · perms · vk · mode · fields-root) PLUS the seven H1 headroom freezes — ONE right-operand of
+the single `++` so the v1 constraints stay the left operand (the keystones compose verbatim). -/
+def frozenAuthorityColEqs (w : Nat) : List VmConstraint :=
+  [ colEq (w + B_RECORD_DIGEST) (w + AFTER_BLOCK_OFF + B_RECORD_DIGEST)
+  , colEq (w + B_LIFECYCLE)     (w + AFTER_BLOCK_OFF + B_LIFECYCLE)
+  , colEq (w + B_PERMS)         (w + AFTER_BLOCK_OFF + B_PERMS)
+  , colEq (w + B_VK)            (w + AFTER_BLOCK_OFF + B_VK)
+  , colEq (w + B_MODE)          (w + AFTER_BLOCK_OFF + B_MODE)
+  , colEq (w + B_FIELDS_ROOT)   (w + AFTER_BLOCK_OFF + B_FIELDS_ROOT) ]
+  ++ authorityHeadroomFreezes w
+
 /-! ### THE AUTHORITY-FROZEN CONTINUITY WELD (the value cohort's light-client close, #1 WAVE 0).
 
 The deployed commitment now binds the authority residue `r23` (`B_RECORD_DIGEST`, the concrete
@@ -2226,26 +2248,17 @@ MOVERS (setPermissions/setVK/seal/unseal/destroy/refusal/receiptArchive/makeSove
 which legitimately change `r23`/lifecycle and keep their record-pin / future in-circuit recompute. -/
 def rotateV3FrozenAuthority (d : EffectVmDescriptor) : EffectVmDescriptor :=
   let r := rotateV3 d
-  { r with constraints := r.constraints
-      ++ [ colEq (d.traceWidth + B_RECORD_DIGEST) (d.traceWidth + AFTER_BLOCK_OFF + B_RECORD_DIGEST)
-         , colEq (d.traceWidth + B_LIFECYCLE)     (d.traceWidth + AFTER_BLOCK_OFF + B_LIFECYCLE)
-         , colEq (d.traceWidth + B_PERMS)         (d.traceWidth + AFTER_BLOCK_OFF + B_PERMS)
-         , colEq (d.traceWidth + B_VK)            (d.traceWidth + AFTER_BLOCK_OFF + B_VK)
-         , colEq (d.traceWidth + B_MODE)          (d.traceWidth + AFTER_BLOCK_OFF + B_MODE)
-         , colEq (d.traceWidth + B_FIELDS_ROOT)   (d.traceWidth + AFTER_BLOCK_OFF + B_FIELDS_ROOT) ] }
+  -- The six dedicated-sub-limb freezes PLUS the seven H1 headroom freezes (all 8 authority limbs
+  -- WELDED for a VALUE turn — the GENTIAN law: no unwelded limb can smuggle a 31-bit-colliding
+  -- wide-open authority into NEW_COMMIT). ONE appended right-operand so v1 stays the left operand.
+  { r with constraints := r.constraints ++ frozenAuthorityColEqs d.traceWidth }
 
-/-- The six continuity welds (r23 · lifecycle · perms-digest · vk-digest · mode · fields-root) are the
-only constraints past `rotateV3`'s — the WAVE-2 perms/VK split + the WAVE-3 mode/fields-root split add
-the sub-limb welds so a VALUE turn cannot smuggle an authority-shape change into NEW_COMMIT. -/
+/-- The continuity welds (r23 · lifecycle · perms · vk · mode · fields-root + the seven H1 headroom
+authority limbs) are the only constraints past `rotateV3`'s — the WAVE-2/3 sub-limb welds + the H1
+8-felt headroom welds so a VALUE turn cannot smuggle an authority-shape change into NEW_COMMIT. -/
 theorem rotateV3FrozenAuthority_constraints (d : EffectVmDescriptor) :
     (rotateV3FrozenAuthority d).constraints
-      = (rotateV3 d).constraints
-        ++ [ colEq (d.traceWidth + B_RECORD_DIGEST) (d.traceWidth + AFTER_BLOCK_OFF + B_RECORD_DIGEST)
-           , colEq (d.traceWidth + B_LIFECYCLE)     (d.traceWidth + AFTER_BLOCK_OFF + B_LIFECYCLE)
-           , colEq (d.traceWidth + B_PERMS)         (d.traceWidth + AFTER_BLOCK_OFF + B_PERMS)
-           , colEq (d.traceWidth + B_VK)            (d.traceWidth + AFTER_BLOCK_OFF + B_VK)
-           , colEq (d.traceWidth + B_MODE)          (d.traceWidth + AFTER_BLOCK_OFF + B_MODE)
-           , colEq (d.traceWidth + B_FIELDS_ROOT)   (d.traceWidth + AFTER_BLOCK_OFF + B_FIELDS_ROOT) ] := rfl
+      = (rotateV3 d).constraints ++ frozenAuthorityColEqs d.traceWidth := rfl
 
 /-- Continuity welds are CONSTRAINTS; `graduable` reads only sites/ranges (`rotateV3`'s verbatim). -/
 theorem graduable_rotateV3FrozenAuthority {d : EffectVmDescriptor}
@@ -2269,11 +2282,13 @@ theorem rotateV3FrozenAuthority_freezes (hash : List ℤ → ℤ) (d : EffectVmD
   refine ⟨?_, ?_⟩
   · have hmem : colEq (d.traceWidth + B_RECORD_DIGEST)
         (d.traceWidth + AFTER_BLOCK_OFF + B_RECORD_DIGEST) ∈ (rotateV3FrozenAuthority d).constraints := by
-      rw [rotateV3FrozenAuthority_constraints]; exact List.mem_append_right _ (by simp)
+      rw [rotateV3FrozenAuthority_constraints]
+      exact List.mem_append_right _ (by simp [frozenAuthorityColEqs])
     exact (colEq_holds_iff env isFirst isLast _ _ hlast).mp (hc _ hmem)
   · have hmem : colEq (d.traceWidth + B_LIFECYCLE)
         (d.traceWidth + AFTER_BLOCK_OFF + B_LIFECYCLE) ∈ (rotateV3FrozenAuthority d).constraints := by
-      rw [rotateV3FrozenAuthority_constraints]; exact List.mem_append_right _ (by simp)
+      rw [rotateV3FrozenAuthority_constraints]
+      exact List.mem_append_right _ (by simp [frozenAuthorityColEqs])
     exact (colEq_holds_iff env isFirst isLast _ _ hlast).mp (hc _ hmem)
 
 /-- **(authority drift ⇒ UNSAT)** — the NEGATIVE TOOTH: a row whose AFTER `r23` differs from the BEFORE
@@ -3401,6 +3416,66 @@ def cellDestroyV3 : EffectVmDescriptor2 :=
   graduateV1 (rotateV3WithLifecyclePayloadGate EffectVmEmitCellDestroy.SEL_CELLDESTROY none discDestroyed
     EffectVmEmitCellDestroy.cellDestroyVmDescriptor)
 
+/-- **H1 MOVER WELD — `withRecordPin8Headroom2` (post-graduation).** A record-digest mover's EXISTING
+limb-0 record pin (`B_RECORD_DIGEST` → PI 46) forces ONLY limb-0; this appends 7 last-row PI pins binding
+the 7 HEADROOM authority limbs (AFTER-block offsets 12..=18 = limb-1..7 of the faithful 8-felt
+`compute_authority_digest_8`) to the next 7 PIs (47..53), bumping `piCount 47→54`. The deployed verifier
+anchors `PI[46..53] = compute_authority_digest_8(post_cell)[0..7]` (step-6b, the 8-felt generalization of
+the single-felt anchor), so a mover that forges a 31-bit-colliding wide-open authority into ANY of the 8
+limbs is UNSAT — the GENTIAN fail-open ("a wider-but-unwelded limb") is CLOSED for movers, just as the
+value cohort's continuity freeze closed it for value turns. Additive (mirrors the `refusalFieldsWriteV3`
+/ Custom-exposure post-graduation append): every existing column/site/range and constraint is untouched,
+so the per-mover forcing keystones compose verbatim (the limb-0 pin + the gate weld stay members). -/
+def withRecordPin8Headroom2 (g : EffectVmDescriptor2) : EffectVmDescriptor2 :=
+  { g with
+    piCount := g.piCount + 7
+    constraints := g.constraints ++ (List.range 7).map (fun i =>
+      VmConstraint2.base (.piBinding .last (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (12 + i)) (g.piCount + i))) }
+
+/-- The 7 H1 headroom pins are the ONLY constraints past the inner descriptor's; the inner descriptor's
+constraints stay the left operand of the single `++` (so every per-mover membership / forcing lemma lifts
+verbatim — `List.mem_append_left`). -/
+theorem withRecordPin8Headroom2_constraints (g : EffectVmDescriptor2) :
+    (withRecordPin8Headroom2 g).constraints
+      = g.constraints ++ (List.range 7).map (fun i =>
+          VmConstraint2.base (.piBinding .last (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (12 + i)) (g.piCount + i))) :=
+  rfl
+
+/-- The 7 H1 headroom pins are `.piBinding`s, so they contribute NO mem-op (the mem log is unchanged). -/
+theorem memOpsOf_withRecordPin8Headroom2 (g : EffectVmDescriptor2) :
+    memOpsOf (withRecordPin8Headroom2 g) = memOpsOf g := by
+  simp [memOpsOf, withRecordPin8Headroom2, List.filterMap_append, List.filterMap_map]
+
+/-- The 7 H1 headroom pins contribute NO map-op (the map log is unchanged). -/
+theorem mapOpsOf_withRecordPin8Headroom2 (g : EffectVmDescriptor2) :
+    mapOpsOf (withRecordPin8Headroom2 g) = mapOpsOf g := by
+  simp [mapOpsOf, withRecordPin8Headroom2, List.filterMap_append, List.filterMap_map]
+
+/-- **THE PEEL — `Satisfied2 (withRecordPin8Headroom2 g) ⟹ Satisfied2 g`.** The H1 mover wrap only
+APPENDS `.piBinding` constraints (and bumps `piCount`): the inner descriptor's constraints stay members
+(`List.mem_append_left`), the hash sites / ranges are unchanged, and the mem/map logs are unchanged (the
+pins are not mem/map ops). So every existing per-mover soundness lemma (which consumes `Satisfied2` of the
+graduated GATE) lifts to the wrapped deployed descriptor by peeling the wrap first. -/
+theorem satisfied2_of_withRecordPin8Headroom2 (hash : List ℤ → ℤ) (g : EffectVmDescriptor2)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash (withRecordPin8Headroom2 g) minit mfin maddrs t) :
+    Satisfied2 hash g minit mfin maddrs t := by
+  have hmem : memLog (withRecordPin8Headroom2 g) t = memLog g t := by
+    simp [memLog, memOpsOf_withRecordPin8Headroom2]
+  have hmap : mapLog (withRecordPin8Headroom2 g) t = mapLog g t := by
+    simp [mapLog, mapOpsOf_withRecordPin8Headroom2]
+  exact
+    { rowConstraints := fun i hi c hc => h.rowConstraints i hi c (by
+        rw [withRecordPin8Headroom2_constraints]; exact List.mem_append_left _ hc)
+    , rowHashes := h.rowHashes
+    , rowRanges := h.rowRanges
+    , memAddrsNodup := h.memAddrsNodup
+    , memClosed := fun op hop => h.memClosed op (by rw [hmem]; exact hop)
+    , memDisciplined := by rw [← hmem]; exact h.memDisciplined
+    , memBalanced := by rw [← hmem]; exact h.memBalanced
+    , memTableFaithful := by rw [← hmem]; exact h.memTableFaithful
+    , mapTableFaithful := by rw [← hmap]; exact h.mapTableFaithful }
+
 /-- **`setPermsV3`** — the LIVE rotated setPermissions WITH the record-digest-forcing pin AND the LIVE
 perms gate (WAVE 2): the AFTER block's committed PERMS-DIGEST sub-limb (`B_PERMS = 33`) is welded to the
 in-circuit declared-param column `prmCol 0` (= `permsHash[0]`, anchored to a light-client PI via
@@ -3410,9 +3485,9 @@ declared param) is now UNSAT via the in-circuit weld ALONE — no trusted post-c
 `RotatedKernelRefinementPermsVK.setPermissions_slot_forced`. The record pin on `B_RECORD_DIGEST` (PI 46)
 stays as belt-and-suspenders for the opaque full authority residue. -/
 def setPermsV3 : EffectVmDescriptor2 :=
-  graduateV1 (rotateV3WithPermsVKGate EffectVmEmitSetPermissions.SEL_SET_PERMS
+  withRecordPin8Headroom2 (graduateV1 (rotateV3WithPermsVKGate EffectVmEmitSetPermissions.SEL_SET_PERMS
     (afterPermsCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth)
-    EffectVmEmitSetPermissions.setPermsVmDescriptor)
+    EffectVmEmitSetPermissions.setPermsVmDescriptor))
 
 /-- **`setVKV3`** — the LIVE rotated setVK WITH the record-digest-forcing pin AND the LIVE vk gate
 (WAVE 2): the AFTER block's committed VK-DIGEST sub-limb (`B_VK = 34`) is welded to the in-circuit
@@ -3421,9 +3496,9 @@ declared-param column `prmCol 0` (= `vkHash[0]`, PI-anchored via `effects_hash`)
 UNSAT via the in-circuit weld ALONE, no trusted post-cell — the LIVE realization of
 `RotatedKernelRefinementPermsVK.setVK_slot_forced`. -/
 def setVKV3 : EffectVmDescriptor2 :=
-  graduateV1 (rotateV3WithPermsVKGate EffectVmEmitSetVK.SEL_SET_VK
+  withRecordPin8Headroom2 (graduateV1 (rotateV3WithPermsVKGate EffectVmEmitSetVK.SEL_SET_VK
     (afterVKCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth)
-    EffectVmEmitSetVK.setVKVmDescriptor)
+    EffectVmEmitSetVK.setVKVmDescriptor))
 
 /-- **`refusalV3`** — the LIVE rotated refusal WITH the record-digest-forcing pin. The `.refusalA`
 arm sets the cell record's `"refusal"` audit slot to `1` (`TurnExecutorFull.refusalField`,
@@ -3512,7 +3587,8 @@ the graduated `rotateV3WithRecordPin` descriptor (the `refusalV3` base) it appen
 FORCES the audit write on limb 36, repointing it from a record-pin-only (light-client-vacuous) limb into a
 FORCED, written `fields_root`. -/
 def refusalFieldsWriteV3 : EffectVmDescriptor2 :=
-  let base := graduateV1 (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitRefusal.refusalVmDescriptor)
+  let base := withRecordPin8Headroom2
+    (graduateV1 (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitRefusal.refusalVmDescriptor))
   { base with
     constraints := base.constraints ++ [.mapOp refusalFieldsWriteOp] }
 
@@ -3556,7 +3632,7 @@ theorem refusalFieldsWriteV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
 #assert_axioms refusalFieldsWriteV3_satisfiedVm_v1
 
 -- The audit-write gate is the ONLY constraint past `refusalV3`'s, and it is a `.write` map-op on limb 36.
-#guard refusalFieldsWriteV3.constraints.length == refusalV3.constraints.length + 1
+#guard refusalFieldsWriteV3.constraints.length == refusalV3.constraints.length + 8
 #guard (mapOpsOf refusalFieldsWriteV3).length == 1
 #guard refusalFieldsWriteOp.op == MapOpKind.write
 #guard REFUSAL_AUDIT_FELT_COL == 70                          -- PARAM_BASE (68) + param2 (spare)
@@ -3591,6 +3667,10 @@ freeze), so its v1 face is `EffectVmEmitSetVK.setVKVmDescriptor`. (The deployed 
 own `sel::SET_PROGRAM`; giving SetProgram its OWN runtime selector + its own actionTag is the named
 executor-side residual — see `Dregg2.Circuit.Spec.cellstateprogram` / the
 `RotatedKernelRefinementProgram` rung.) -/
+-- H1 NOTE: setProgram rides the setVK runtime FACE (`trace.rs` maps it to `sel::SET_VERIFICATION_KEY`)
+-- and is the named actionTag residual — the rotated record-pin PRODUCER (`record_pin_offset`) does NOT
+-- yet pin it, so it stays limb-0-pinned (the record-pin8 headroom wrap lands when its producer path goes
+-- live, alongside setFieldDyn). No regression: limb-0 ~31-bit, exactly its pre-H1 strength.
 def setProgramV3 : EffectVmDescriptor2 :=
   graduateV1 (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitSetVK.setVKVmDescriptor)
 
@@ -3601,8 +3681,8 @@ selector-gated on `SEL_MAKE_SOVEREIGN_RT`. A makeSovereign whose committed AFTER
 (`rotateV3WithModeGate_rejects_unpromoted`). The record pin on `B_RECORD_DIGEST` (PI 46) stays as
 belt-and-suspenders for the opaque authority residue. -/
 def makeSovereignV3 : EffectVmDescriptor2 :=
-  graduateV1 (rotateV3WithModeGate EffectVmEmitMakeSovereign.SEL_MAKE_SOVEREIGN_RT modeSovereign
-    EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor)
+  withRecordPin8Headroom2 (graduateV1 (rotateV3WithModeGate EffectVmEmitMakeSovereign.SEL_MAKE_SOVEREIGN_RT
+    modeSovereign EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor))
 
 /-- **`setFieldDynForcedV3`** — the LIVE rotated DYNAMIC setField WITH its memory ops AND the LIVE
 fields-root weld (WAVE 3): the AFTER block's committed `fields_root` sub-limb (`B_FIELDS_ROOT = 36`) is
@@ -3610,6 +3690,9 @@ welded to the declared post-`fields_root` param column, selector-gated on `SEL_S
 post-`fields_root` (committed ≠ declared) is now UNSAT via the in-circuit weld ALONE
 (`rotateV3WithFieldsRootGate_rejects_forged`). The Blum write→read transport (`setFieldDynV3`) rides
 unchanged. -/
+-- H1 NOTE: dynamic setField uses its OWN rotated trace generator (not the `record_pin_offset` builder),
+-- so its record-pin8 headroom wrap lands when that producer emits the 7 headroom pins. Limb-0-pinned for
+-- now (no regression — its fields-root sub-limb `B_FIELDS_ROOT` is independently welded by the gate).
 def setFieldDynForcedV3 : EffectVmDescriptor2 :=
   let g := graduateV1 (rotateV3WithFieldsRootGate EffectVmEmitSetField.SEL_SET_FIELD
     (afterFieldsRootCol setFieldDynV1Face.traceWidth) setFieldDynV1Face)
@@ -3859,8 +3942,8 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 #guard cellSealV3.piCount == 47
 #guard cellUnsealV3.piCount == 47
 #guard cellDestroyV3.piCount == 47
-#guard setPermsV3.piCount == 47
-#guard setVKV3.piCount == 47
+#guard setPermsV3.piCount == 54
+#guard setVKV3.piCount == 54
 #guard refusalV3.piCount == 47
 #guard receiptArchiveV3.piCount == 47
 #guard graduable (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitRefusal.refusalVmDescriptor)
@@ -3907,9 +3990,9 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 #guard cellDestroyV3.constraints.length
         == (v3Of EffectVmEmitCellDestroy.cellDestroyVmDescriptor).constraints.length + 3
 #guard setPermsV3.constraints.length
-        == (v3Of EffectVmEmitSetPermissions.setPermsVmDescriptor).constraints.length + 2
+        == (v3Of EffectVmEmitSetPermissions.setPermsVmDescriptor).constraints.length + 9
 #guard setVKV3.constraints.length
-        == (v3Of EffectVmEmitSetVK.setVKVmDescriptor).constraints.length + 2
+        == (v3Of EffectVmEmitSetVK.setVKVmDescriptor).constraints.length + 9
 -- The WAVE-3 movers: makeSovereign carries the record pin + the mode gate (+2 over bare rotateV3);
 -- refusal carries the record pin ALONE (+1) — its deployed `param0`/`param1` carry the refusal
 -- target/reason, not a post-`fields_root` digest, so there is no in-circuit declared-param weld for
@@ -3918,7 +4001,7 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 -- single in-circuit close. setFieldDynForced carries the record pin + the fields-root weld + its 2
 -- mem ops.
 #guard makeSovereignV3.constraints.length
-        == (v3Of EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor).constraints.length + 2
+        == (v3Of EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor).constraints.length + 9
 #guard refusalV3.constraints.length
         == (v3Of EffectVmEmitRefusal.refusalVmDescriptor).constraints.length + 1
 -- The forced AFTER limbs are the lifecycle limb (col tw+51+29) and the record-digest limb (col

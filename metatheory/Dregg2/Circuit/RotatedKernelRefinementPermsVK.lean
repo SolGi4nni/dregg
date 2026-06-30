@@ -60,7 +60,8 @@ open Dregg2.Circuit.Emit.EffectVmEmit (satisfiedVm)
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (graduateV1 graduateV1_sound graduable)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
   (setPermsV3 setVKV3 afterPermsCol afterVKCol declaredParamCol
-   rotateV3WithPermsVKGate rotateV3WithPermsVKGate_forces)
+   rotateV3WithPermsVKGate rotateV3WithPermsVKGate_forces
+   satisfied2_of_withRecordPin8Headroom2)
 open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState
@@ -335,7 +336,7 @@ theorem setPermissions_forced_sat (hash : List ℤ → ℤ)
         EffectVmEmitSetPermissions.setPermsVmDescriptor)
       (envAt t rd.row) (rd.row == 0) (rd.row + 1 == t.rows.length) :=
     graduateV1_sound hash _ minit mfin maddrs t hside.chip hside.range setPerms_weld_graduable
-      hsat rd.row rd.hrow
+      (satisfied2_of_withRecordPin8Headroom2 hash _ hsat) rd.row rd.hrow
   have hlastf : (rd.row + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact rd.hrowNotLast
   rw [hlastf] at hv1
@@ -428,7 +429,7 @@ theorem setVK_forced_sat (hash : List ℤ → ℤ)
         EffectVmEmitSetVK.setVKVmDescriptor)
       (envAt t rd.row) (rd.row == 0) (rd.row + 1 == t.rows.length) :=
     graduateV1_sound hash _ minit mfin maddrs t hside.chip hside.range setVK_weld_graduable
-      hsat rd.row rd.hrow
+      (satisfied2_of_withRecordPin8Headroom2 hash _ hsat) rd.row rd.hrow
   have hlastf : (rd.row + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact rd.hrowNotLast
   rw [hlastf] at hv1

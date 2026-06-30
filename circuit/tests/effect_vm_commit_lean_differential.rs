@@ -257,3 +257,152 @@ fn differential_real_cell_authority_residue_flows() {
          real-cell P0-2 closure (the locked/wide-open collision the old ZERO fourth input left open)"
     );
 }
+
+/// **THE GENTIAN-WELD TOOTH (encoding leg) — the 31-bit authority forge is CLOSED at 8-felt.**
+///
+/// The H1 hole: the OLD authority digest was a SINGLE `hash_bytes` BabyBear felt (~2^31 image), so
+/// two genuinely-different authority states could COLLIDE — a verifier holding only the 1-felt commit
+/// could not tell a LOCKED-DOWN cell (`send = Impossible`) from a WIDE-OPEN one (`send = None`). This
+/// reconstructs a CONCRETE such collision (found by a birthday search over a free folded field,
+/// `fields[8]`; the two salts are pinned so the tooth is deterministic):
+///
+///   * locked-down salt 13664 vs wide-open salt 348206 → SAME old 1-felt digest (454814429).
+///
+/// At the NEW faithful 8-felt `compute_authority_digest_8` (`bytes32_to_8_limbs(blake3(residue))`,
+/// ~124 bits) the two are DISTINCT. So the value that the rotated commit absorbs (all 8 limbs, WELDED
+/// by the record-pin8 / continuity freezes) SEPARATES the locked cell from the wide-open one: the
+/// 31-bit forge that survived a 1-felt commit cannot survive the 8-felt one. This is the ENCODING leg
+/// of the GENTIAN-weld tooth (the circuit-level UNSAT leg rides the welded descriptor).
+#[test]
+fn gentian_weld_31bit_authority_collision_separated_at_8_felt() {
+    use dregg_cell::Cell;
+    use dregg_cell::commitment::{authority_residue_bytes, compute_authority_digest_8};
+    use dregg_cell::permissions::AuthRequired;
+    use dregg_circuit::poseidon2::hash_bytes;
+
+    // Reconstruct the two colliding cells: identical except for `permissions` (locked vs wide-open)
+    // and the free folded field `fields[8]` (the salt the birthday search varied).
+    fn make(open: bool, salt: u32) -> Cell {
+        let mut c = Cell::new([7u8; 32], [11u8; 32]);
+        if open {
+            c.permissions.send = AuthRequired::None;
+            c.permissions.set_permissions = AuthRequired::None;
+            c.permissions.set_state = AuthRequired::None;
+        } else {
+            c.permissions.send = AuthRequired::Impossible;
+            c.permissions.set_permissions = AuthRequired::Impossible;
+            c.permissions.set_state = AuthRequired::Impossible;
+        }
+        c.state.fields[8][0..4].copy_from_slice(&salt.to_le_bytes());
+        c
+    }
+
+    let locked = make(false, 13664);
+    let open = make(true, 348206);
+
+    // The cells are GENUINELY different authority states (locked-down vs wide-open send permission).
+    assert_eq!(locked.permissions.send, AuthRequired::Impossible);
+    assert_eq!(open.permissions.send, AuthRequired::None);
+    assert_ne!(
+        authority_residue_bytes(&locked),
+        authority_residue_bytes(&open),
+        "the two cells must be genuinely-different authority states (the forge's whole point)"
+    );
+
+    // OLD 1-felt scheme (`hash_bytes`, ~31-bit image): the locked and wide-open cells COLLIDE — a
+    // 1-felt commit cannot distinguish them. THIS IS THE HOLE.
+    let old_locked = hash_bytes(&authority_residue_bytes(&locked));
+    let old_open = hash_bytes(&authority_residue_bytes(&open));
+    assert_eq!(
+        old_locked, old_open,
+        "the OLD single-felt authority digest COLLIDES locked-down with wide-open — the 31-bit hole"
+    );
+
+    // NEW faithful 8-felt scheme (`blake3` → 8 limbs, ~124 bits): the two are SEPARATED. The forge
+    // that survived the 1-felt commit cannot survive the 8-felt welded commit.
+    let new_locked = compute_authority_digest_8(&locked);
+    let new_open = compute_authority_digest_8(&open);
+    assert_ne!(
+        new_locked, new_open,
+        "the NEW 8-felt authority digest must SEPARATE the 31-bit-colliding locked / wide-open cells \
+         — the GENTIAN close (a 124-bit commit no longer opens as either authority)"
+    );
+
+    // limb-0 (the v1 cross-anchor face, `compute_authority_digest_felt`) is BLAKE3 limb-0, so even
+    // the scalar face differs here — but soundness rests on the FULL 8-felt vector the rotated commit
+    // absorbs + the weld forces, not limb-0 alone.
+    assert_eq!(
+        dregg_cell::compute_authority_digest_felt(&locked),
+        new_locked[0],
+        "the scalar face is limb-0 of the faithful 8-felt digest"
+    );
+}
+
+/// **THE MOVER GENTIAN-WELD TOOTH — the record-pin8 headroom anchors BITE where limb-0 is blind.**
+///
+/// The H1 mover weld (`withRecordPin8Headroom2`) makes the record-digest movers
+/// (setPerms/setVK/makeSovereign/refusal) pin ALL 8 faithful authority limbs (PI 46..53), and the
+/// verifier anchors `PI[46..53] = compute_authority_digest_8(post_cell)[0..7]`. Before H1 the mover
+/// forced ONLY limb-0 (PI 46) — so a forger could present a setPerms whose committed authority is a
+/// DIFFERENT state that collides at limb-0 (~30-bit), and the single-limb anchor could not tell.
+///
+/// This reconstructs a CONCRETE such pair (found by birthday search over the free folded field
+/// `fields[8]`, salts pinned for determinism): a LOCKED-DOWN cell (salt 2409) and a WIDE-OPEN cell
+/// (salt 199912) whose `compute_authority_digest_8[0]` are EQUAL but whose 7 HEADROOM limbs DIFFER.
+///
+///   * single limb-0 pin (old): `digest8[0]` equal ⟹ the anchor cannot distinguish ⟹ forge survives.
+///   * 8-felt record-pin8 (new): the verifier anchors all 8; the 7 headroom anchors disagree ⟹ a
+///     forged mover authority is UNSAT.
+///
+/// So the GENTIAN fail-open the value-leg closed for value turns is now CLOSED for the movers too.
+#[test]
+fn gentian_mover_weld_headroom_anchors_bite_where_limb0_is_blind() {
+    use dregg_cell::Cell;
+    use dregg_cell::commitment::{authority_residue_bytes, compute_authority_digest_8};
+    use dregg_cell::permissions::AuthRequired;
+
+    fn make(open: bool, salt: u32) -> Cell {
+        let mut c = Cell::new([7u8; 32], [11u8; 32]);
+        if open {
+            c.permissions.send = AuthRequired::None;
+            c.permissions.set_permissions = AuthRequired::None;
+            c.permissions.set_state = AuthRequired::None;
+        } else {
+            c.permissions.send = AuthRequired::Impossible;
+            c.permissions.set_permissions = AuthRequired::Impossible;
+            c.permissions.set_state = AuthRequired::Impossible;
+        }
+        c.state.fields[8][0..4].copy_from_slice(&salt.to_le_bytes());
+        c
+    }
+
+    let locked = make(false, 2409);
+    let open = make(true, 199912);
+
+    // Genuinely-different authority states (locked-down vs wide-open).
+    assert_ne!(
+        authority_residue_bytes(&locked),
+        authority_residue_bytes(&open),
+        "the two cells must be genuinely-different authority states"
+    );
+
+    let d_locked = compute_authority_digest_8(&locked);
+    let d_open = compute_authority_digest_8(&open);
+
+    // LIMB-0 COLLIDES: the OLD single record-pin (PI 46) anchors only this felt — blind to the forge.
+    assert_eq!(
+        d_locked[0], d_open[0],
+        "the locked / wide-open authorities COLLIDE at limb-0 (the single-limb pin is blind here)"
+    );
+
+    // THE 7 HEADROOM LIMBS DIFFER: the NEW record-pin8 anchors PI[47..53] to these, so a mover that
+    // forges the wide-open authority while the post-cell is the locked one (or vice versa) has AFTER
+    // headroom cols that DISAGREE with the anchored PIs ⟹ the pin constraint is UNSAT. The weld BITES.
+    assert_ne!(
+        &d_locked[1..],
+        &d_open[1..],
+        "the 7 headroom authority limbs MUST differ — the record-pin8 anchors distinguish the \
+         limb-0-colliding locked / wide-open movers the single pin could not (the GENTIAN close for \
+         movers — forged mover authority UNSAT at 8-felt)"
+    );
+}

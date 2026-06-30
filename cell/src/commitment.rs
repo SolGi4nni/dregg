@@ -768,11 +768,47 @@ fn v9_lifecycle_felt(lc: &crate::lifecycle::CellLifecycle) -> dregg_circuit::fie
 /// limbs. The accumulated bytes are hashed to a felt via the same Poseidon2 `hash_bytes` the
 /// other byte-rooted limbs use, under a dedicated domain context.
 pub fn compute_authority_digest_felt(cell: &Cell) -> dregg_circuit::field::BabyBear {
-    use crate::state::STATE_SLOTS;
-    use dregg_circuit::poseidon2::hash_bytes;
+    // The v1-leg cross-anchor + the rotated `B_AUTHORITY_DIGEST` (limb 24) carry limb-0 of the
+    // faithful 8-felt digest (`compute_authority_digest_8`). H1: the residual authority digest is
+    // now a ~124-bit blake3-rooted 8-felt commitment; this scalar face is its first limb, kept so
+    // the v1 OLD_COMMIT `record_digest` cross-anchor and `pre_limbs[24]` stay byte-identical to the
+    // historical single-felt limb (the other 7 limbs ride the welded headroom; see
+    // `compute_authority_digest_8` / `compute_rotated_pre_limbs`).
+    compute_authority_digest_8(cell)[0]
+}
 
-    // Collect the authority residue into a byte buffer, domain-separated, then fold to a
-    // felt. Domain prefix so this digest can never collide with a bare root felt.
+/// **THE H1 FAITHFUL 8-FELT AUTHORITY DIGEST** — the ~124-bit blake3-rooted commitment to the WHOLE
+/// authority residue (the residual authority-bearing cell state no other rotated limb carries). This
+/// REPLACES the historical single ~31-bit poseidon felt (`hash_bytes`): two authority states that
+/// collide at one BabyBear felt (~2^31 image) but are genuinely different (e.g. locked-down vs
+/// wide-open permissions) are now SEPARATED by 8 limbs of `blake3(authority_residue)` (~124 bits).
+///
+/// The eight limbs are placed into the rotated pre-iroot vector as limb 24 (limb-0, the historical
+/// `B_AUTHORITY_DIGEST` position) plus the 7 previously-unwelded app-register headroom limbs
+/// (offsets 12..=18, r11..r17) — so the absorption vector does NOT grow and the chained
+/// `wireCommitR` ALREADY binds all 8 into the ~124-bit `state_commit`. The GENTIAN weld
+/// (`EffectVmEmitRotationV3.rotateV3WithRecordPin8` + the continuity freezes) FORCES every one of
+/// the 8 AFTER limbs to its genuine value, so a 31-bit-colliding wide-open authority cannot be
+/// smuggled into an unwelded limb. Byte-identical across the three producers (cell-side here,
+/// `dregg_turn::rotation_witness::produce`, and the circuit trace).
+pub fn compute_authority_digest_8(cell: &Cell) -> [dregg_circuit::field::BabyBear; 8] {
+    dregg_circuit::effect_vm::bytes32_to_8_limbs(
+        blake3::hash(&authority_residue_bytes(cell)).as_bytes(),
+    )
+}
+
+/// The domain-separated byte serialization of the authority residue (the authority-bearing cell
+/// state NO other rotated limb carries). Folded to the faithful 8-felt digest by
+/// [`compute_authority_digest_8`]. Walks the SAME byte layout v8 uses for these fields (so v8 and v9
+/// agree on "what is authority state"): identity, mode, permissions, VK, delegate, delegation,
+/// program, and the CellState authority sub-state (`field_visibility`, `commitments`,
+/// `proved_state`, `swiss_table_root`, `refcount_table_root`, `fields_root`, `system_roots_digest`,
+/// `fields[8..16]`).
+pub fn authority_residue_bytes(cell: &Cell) -> Vec<u8> {
+    use crate::state::STATE_SLOTS;
+
+    // Collect the authority residue into a byte buffer, domain-separated. Domain prefix so this
+    // digest can never collide with a bare root felt.
     let mut bytes: Vec<u8> = Vec::with_capacity(256);
     bytes.extend_from_slice(b"dregg-cell:v9-authority-digest v1");
 
@@ -891,7 +927,7 @@ pub fn compute_authority_digest_felt(cell: &Cell) -> dregg_circuit::field::BabyB
     bytes.extend_from_slice(&st.fields_root);
     bytes.extend_from_slice(&st.system_roots_digest());
 
-    hash_bytes(&bytes)
+    bytes
 }
 
 /// Build the 32 pre-iroot rotated limbs for a cell + turn-context, in the Lean-pinned
@@ -918,14 +954,20 @@ pub fn compute_rotated_pre_limbs(
         // r3..r10 ↔ fields[0..7] (the same Horner packing the v1 state block carries).
         pre[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]);
     }
-    // r11..r22 (limbs 12..=23): app-register headroom — zero for a kernel turn.
-    // r23 (limb 24): THE AUTHORITY DIGEST — folds ALL authority-bearing state no other
-    // rotated limb carries (permissions/VK/delegate/delegation/program/mode/token_id +
-    // visibility/commitments/proved/side-table roots + fields[8..16]). This closes the
-    // authority-state drop the rotated commitment would otherwise have (see
-    // `compute_authority_digest_felt`). The Lean welds leave r23 free, so the anti-ghost
-    // keystone binds it automatically.
-    pre[24] = compute_authority_digest_felt(cell);
+    // r11..r22 (limbs 12..=23): app-register headroom.
+    // r23 (limb 24) + r11..r17 (limbs 12..=18): THE FAITHFUL 8-FELT AUTHORITY DIGEST (H1) — the
+    // ~124-bit blake3-rooted commitment folding ALL authority-bearing state no other rotated limb
+    // carries (permissions/VK/delegate/delegation/program/mode/token_id + visibility/commitments/
+    // proved/side-table roots + fields[8..16]). limb 24 = limb-0 (the historical position, the v1
+    // cross-anchor); the 7 previously-zero headroom limbs 12..=18 carry limb-1..7. All 8 ride the
+    // existing absorption chain (no vector growth, `rotV3SitesAt` unchanged) and are WELDED by the
+    // record-pin / continuity freezes so a 31-bit-colliding authority cannot survive (GENTIAN law).
+    // r18..r22 (limbs 19..=23): remaining app-register headroom — zero for a kernel turn.
+    let auth8 = compute_authority_digest_8(cell);
+    pre[24] = auth8[0];
+    for i in 0..7 {
+        pre[12 + i] = auth8[1 + i];
+    }
     // limb 25: cap_root (welded) — the SAME openable sorted-Poseidon2 felt the circuit's
     // `cap_root` column carries.
     pre[25] = compute_canonical_capability_root_felt(&cell.capabilities);

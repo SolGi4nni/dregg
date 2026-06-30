@@ -820,7 +820,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "5e08554a03432cb3e0b7d9cdc4278a8e1f3a7ddedbda622cb4c6da687fc87c2e";
+    "f26be907f6a1dc3979a3366b2709f56a3480b210cf82f1c9d303f42456d44c03";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1202,7 +1202,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "811f8e7e0739f3d979dfd82d4ca9cc5f80ae57673200941057fd0f95eb7d879f";
+    "9806683b9e72fcc4911d97a739170a80272df28b9bdc4f8cf07a2a246ca5ba62";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1228,7 +1228,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "4a8865e1794200f07d1eee4c8c16af9809ba49c42c00253a4d4d531ce7a9f112";
+    "22e83a292e0444eca43ef6be086736da8c9d45527dfa6472523b0d9a72103eb3";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -2284,20 +2284,32 @@ mod tests {
                     "{key}: the fifth pin welds the new-cell key to PI[46] (the accounts-set \
                      grow-gate)"
                 );
+            } else if record_digest_pin_member {
+                // H1: the record-digest movers (setPerms/setVK/makeSovereign/refusal) pin ALL 8 faithful
+                // authority limbs (`withRecordPin8Headroom2`): limb-0 (`B_AUTHORITY_DIGEST`) → PI[46] +
+                // the 7 headroom limbs (AFTER offsets 12..18) → PI[47..53], so a 31-bit-colliding
+                // wide-open authority forged into ANY limb is UNSAT (the GENTIAN close for movers).
+                assert_eq!(
+                    d.public_input_count, 54,
+                    "{key}: rotated 46-PI + the 8 authority record-pins (47..53)"
+                );
+                let mut expected = vec![(after_base + B_AUTHORITY_DIGEST, pi_base + 4)];
+                for i in 0..7 {
+                    expected.push((after_base + 12 + i, pi_base + 5 + i));
+                }
+                assert_eq!(
+                    nullifier_pins, expected,
+                    "{key}: the 8 record-pins weld the AFTER authority limbs (24, 12..18) to PI[46..53]"
+                );
             } else if lifecycle_record_pin_member {
                 assert_eq!(
                     d.public_input_count, 47,
                     "{key}: rotated 46-PI + the appended record-forcing slot"
                 );
-                let forced_col = if record_digest_pin_member {
-                    after_base + B_AUTHORITY_DIGEST
-                } else {
-                    after_base + B_LIFECYCLE
-                };
                 assert_eq!(
                     nullifier_pins,
-                    vec![(forced_col, pi_base + 4)],
-                    "{key}: the fifth pin welds the AFTER block's correctly-written record/lifecycle \
+                    vec![(after_base + B_LIFECYCLE, pi_base + 4)],
+                    "{key}: the fifth pin welds the AFTER block's correctly-written lifecycle \
                      limb to PI[46] (the deployment-soundness gate)"
                 );
             } else if key == "transferFeeVmDescriptor2R24" {

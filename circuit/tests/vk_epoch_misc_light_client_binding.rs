@@ -386,8 +386,8 @@ fn makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled(
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated makeSovereign descriptor parses");
     assert_eq!(
-        desc.public_input_count, 47,
-        "makeSovereign descriptor DECLARES the record-forcing 47th PI"
+        desc.public_input_count, 54,
+        "makeSovereign descriptor DECLARES all 8 authority record-pins (54 PIs — the H1 record-pin8)"
     );
 
     let st = CellState::new(balance as u64, 0);

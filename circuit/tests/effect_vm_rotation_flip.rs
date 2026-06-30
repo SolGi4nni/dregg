@@ -1408,16 +1408,18 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
          bound, not a constant stub"
     );
 
-    // The pre-limb vectors differ at index 24 (the authority digest) AND index 33 (the WAVE-2
-    // perms-digest sub-limb, which folds the permissions) — every OTHER named limb (cells_root,
-    // balance/nonce/fields, cap_root, nullifier/heap roots, lifecycle/epoch/height/disc, vk) is
-    // identical, since only `permissions.send` changed (the VK is untouched, so limb 34 is frozen).
+    // The pre-limb vectors differ at the FAITHFUL 8-FELT AUTHORITY DIGEST (H1): limb 24 (limb-0) AND
+    // the 7 headroom limbs 12..=18 (limb-1..7 of `compute_authority_digest_8`), which all fold the
+    // permissions — plus index 33 (the WAVE-2 perms-digest sub-limb). Every OTHER named limb
+    // (cells_root, balance/nonce/fields, cap_root, nullifier/heap roots, lifecycle/epoch/height/disc,
+    // vk, mode, fields-root) is identical, since only `permissions.send` changed.
     let pre_locked = compute_rotated_pre_limbs(&locked, &ctx);
+    let authority_limbs = [24usize, 12, 13, 14, 15, 16, 17, 18];
     for i in 0..V9_NUM_PRE_LIMBS {
-        if i == 24 {
+        if authority_limbs.contains(&i) {
             assert_ne!(
                 pre[i], pre_locked[i],
-                "index 24 (authority digest) MUST move"
+                "authority-digest limb {i} (one of the faithful 8 felts) MUST move on a perms flip"
             );
         } else if i == 33 {
             assert_ne!(
@@ -2173,9 +2175,13 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
             desc.trace_width, GRAD_ROT_WIDTH,
             "graduated rotated width 608"
         );
+        // H1: a record-digest mover (refusal, pin offset `B_RECORD_DIGEST`) pins ALL 8 faithful
+        // authority limbs → 54 PIs (46 + 8); a lifecycle mover (archive, `B_LIFECYCLE`) keeps the
+        // single record-forcing pin → 47 PIs.
+        let expect_pis = if pin_limb == B_RECORD_DIGEST { 54 } else { 47 };
         assert_eq!(
-            desc.public_input_count, 47,
-            "{name} carries the appended record-forcing pin (47 PIs)"
+            desc.public_input_count, expect_pis,
+            "{name} carries the appended record-forcing pin(s) ({expect_pis} PIs)"
         );
 
         // A real audit turn: the audit slot is written (record_digest moves), nonce ticks, the
@@ -2288,11 +2294,13 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         };
         assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
-        // THE FIFTH PI: 47 elements, and PI[46] == the LAST row's AFTER record-digest limb.
+        // THE RECORD-FORCING PI(s): a record-digest mover (refusal) pins all 8 authority limbs (54
+        // PIs, PI[46..53]); a lifecycle mover (archive) keeps the single pin (47, PI[46]). PI[46] is
+        // the LAST row's AFTER record-digest / lifecycle limb in both cases.
         assert_eq!(
             dpis.len(),
-            47,
-            "{name} rotated PI is 47 (the record-forcing slot appended)"
+            expect_pis,
+            "{name} rotated PI is {expect_pis} (the record-forcing slot(s) appended)"
         );
         let last = &trace[trace.len() - 1];
         assert_eq!(
