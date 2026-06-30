@@ -582,13 +582,13 @@ pub struct RecordKernelBoundary {
     /// The openable sorted-Poseidon2 root over the `Heap` plane — the deployed
     /// `cell.state.heap_root`.
     pub heap_root: [u8; 32],
-    /// The canonical capability root over the `CapSlot` plane's LIVE caps PLUS
-    /// the `CapTombstone` plane's revoked ghost slots — the deployed
-    /// `compute_canonical_capability_root_felt(&cell.capabilities)` felt the
-    /// EffectVM `cap_root` column carries. Revoked cells are now faithful: the
-    /// tombstone plane re-derives the deployed root's ghost ZERO leaves (the
-    /// former reify residual #3).
-    pub cap_root: dregg_circuit::field::BabyBear,
+    /// The canonical FAITHFUL 8-felt capability root over the `CapSlot` plane's LIVE
+    /// caps PLUS the `CapTombstone` plane's revoked ghost slots — the deployed
+    /// `compute_canonical_capability_root_8(&cell.capabilities)` `Digest8` the
+    /// EffectVM 8-felt `cap_root` column GROUP carries. Revoked cells are now
+    /// faithful: the tombstone plane re-derives the deployed root's ghost ZERO
+    /// leaves (the former reify residual #3).
+    pub cap_root: [dregg_circuit::field::BabyBear; 8],
 }
 
 /// Derive the per-domain boundary roots from a `RecordKernelState` projection of
@@ -673,10 +673,10 @@ pub enum BoundaryDisagreement {
     },
     /// The derived `cap_root` ≠ the cell's canonical capability root.
     CapRoot {
-        /// `compute_canonical_capability_root_felt(&cell.capabilities)`.
-        committed: dregg_circuit::field::BabyBear,
-        /// The root re-derived from the projected `CapSlot` plane.
-        derived: dregg_circuit::field::BabyBear,
+        /// `compute_canonical_capability_root_8(&cell.capabilities)` (`Digest8`).
+        committed: [dregg_circuit::field::BabyBear; 8],
+        /// The 8-felt root re-derived from the projected `CapSlot` plane.
+        derived: [dregg_circuit::field::BabyBear; 8],
     },
 }
 
@@ -741,7 +741,7 @@ pub fn record_kernel_boundary_agrees(
         });
     }
     let committed_cap =
-        dregg_cell::commitment::compute_canonical_capability_root_felt(&cell.capabilities);
+        dregg_cell::commitment::compute_canonical_capability_root_8(&cell.capabilities);
     if derived.cap_root != committed_cap {
         return Err(BoundaryDisagreement::CapRoot {
             committed: committed_cap,

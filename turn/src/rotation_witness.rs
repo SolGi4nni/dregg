@@ -49,7 +49,7 @@
 //!   `cells_root` and `iroot` are the same for every effect row of the turn.
 
 use crate::action::Effect;
-use dregg_cell::commitment::{compute_authority_digest_8, compute_canonical_capability_root_felt};
+use dregg_cell::commitment::compute_authority_digest_8;
 use dregg_cell::{Cell, Ledger, lifecycle::CellLifecycle};
 use dregg_circuit::effect_vm::{fold_bytes32_to_bb, split_u64};
 use dregg_circuit::field::BabyBear;
@@ -369,10 +369,17 @@ pub fn produce(
     for i in 0..7 {
         pre_limbs[12 + i] = auth8[1 + i];
     }
-    // limb 25: cap_root (welded) — the SAME openable sorted-Poseidon2 felt the circuit's
-    // `cap_root` column carries (cell and circuit compute it through the SAME impl, the A2
-    // differential guards it), so the `cap_root ↔ cap_root` weld holds by construction.
-    pre_limbs[25] = compute_canonical_capability_root_felt(&cell.capabilities);
+    // limb 25: cap_root lane-0 (welded) ‖ extras 51..=57: the SEVEN cap-root completion felts
+    // (lanes 1..7) — THE FAITHFUL 8-FELT CAP ROOT the circuit's 8-felt `cap_root` column GROUP
+    // carries (`EffectVmEmitRotationV3.capRootGroupCol`: lane 0 = limb 25, lanes 1..7 = limbs
+    // 51..57). Cell and circuit fold through the SAME impl (the A2 / GENTIAN differentials guard
+    // it), so the `cap_root ↔ cap_root` weld holds lane-for-lane by construction. Byte-identical
+    // to `commitment::compute_rotated_pre_limbs`.
+    let cap8 = dregg_cell::commitment::compute_canonical_capability_root_8(&cell.capabilities);
+    pre_limbs[25] = cap8[0];
+    for i in 0..7 {
+        pre_limbs[51 + i] = cap8[1 + i];
+    }
     // limb 26: nullifier_root (the noteSpend shielded-set root).
     pre_limbs[26] = root_felt(nullifier_root);
     // limb 27: commitments_root (the noteCreate shielded-set root — the flag-day new limb).

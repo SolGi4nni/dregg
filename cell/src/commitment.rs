@@ -554,7 +554,6 @@ fn auth_required_to_tag(auth: &AuthRequired) -> dregg_circuit::field::BabyBear {
 pub fn compute_canonical_capability_root_felt(
     caps: &CapabilitySet,
 ) -> dregg_circuit::field::BabyBear {
-    use dregg_circuit::cap_root;
     // Per-cell sub-root cache (`docs/INCREMENTAL-COMMITMENT.md` step 2): a turn
     // that did not touch the cap set reuses the last-folded root instead of
     // re-folding the sorted-Poseidon2 tree. The cache is invalidated by EVERY
@@ -565,6 +564,28 @@ pub fn compute_canonical_capability_root_felt(
     if let Some(cached) = caps.cached_cap_root() {
         return cached;
     }
+    let root8 = compute_canonical_capability_root_8(caps);
+    // Cache the lane-0 projection (the historical single-felt root): a cache hit
+    // returns it directly; the full 8-felt fold is deterministic, so `_8(caps)[0]`
+    // always agrees with the cached lane-0 (pinned by `cap_root_cache_matches_fresh`).
+    caps.store_cap_root(root8[0]);
+    root8[0]
+}
+
+/// Compute the canonical **8-felt** capability root of a `CapabilitySet`: the FULL
+/// native-`node8` (arity-16) sorted-Poseidon2 Merkle root over the c-list — the
+/// `Digest8` ([`dregg_circuit::cap_root::CAP_DIGEST_W`] = 8) the EffectVM circuit's
+/// 8-felt `cap_root` column GROUP carries (lane 0 ‖ lanes 1..7). Lane 0 is
+/// byte-identical to [`compute_canonical_capability_root_felt`] (the historical
+/// scalar root); lanes 1..7 are the ~124-bit completion the v10 weld commits at the
+/// rotated-block extras 51..57 (`EffectVmEmitRotationV3.capRootGroupCol`). This is the
+/// faithful root — NEVER a lane-0 squeeze, the soundness downgrade the GENTIAN tooth
+/// closes. Cell and circuit fold through the SAME implementation, so they agree
+/// lane-for-lane (the A2 / GENTIAN differentials guard it).
+pub fn compute_canonical_capability_root_8(
+    caps: &CapabilitySet,
+) -> [dregg_circuit::field::BabyBear; 8] {
+    use dregg_circuit::cap_root;
     let leaves: Vec<cap_root::CapLeaf> = caps.iter().map(cap_ref_to_leaf).collect();
     // TOMBSTONE deletion (cap crown, the cell↔circuit revoke reconciliation):
     // a revoked slot leaves a ZERO/padding leaf at its sorted POSITION rather
@@ -578,9 +599,7 @@ pub fn compute_canonical_capability_root_felt(
     // this is byte-identical to the plain `compute_capability_root`.
     let tombstone_keys: Vec<dregg_circuit::field::BabyBear> =
         caps.tombstoned_slots().map(cap_root::slot_hash).collect();
-    let root = cap_root::compute_capability_root_with_tombstones(leaves, &tombstone_keys);
-    caps.store_cap_root(root);
-    root
+    cap_root::compute_capability_root_with_tombstones(leaves, &tombstone_keys)
 }
 
 /// Compute the canonical 32-byte capability root of a `CapabilitySet`.
@@ -606,13 +625,26 @@ pub fn felt_to_bytes32(felt: dregg_circuit::field::BabyBear) -> [u8; 32] {
     out
 }
 
+/// The canonical 32-byte encoding of a native-`node8` 8-felt cap digest (`Digest8`):
+/// each of the 8 lanes' 4 little-endian bytes, packed in lane order (8·4 = 32). Each
+/// BabyBear lane is `< p < 2^31`, so its 4 bytes recover it exactly — the encoding is
+/// injective on the FULL 8-felt digest (distinct digests encode to distinct strings).
+/// This replaces the old lane-0-only `felt_to_bytes32(digest)` for the 8-felt leaf.
+pub fn digest8_to_bytes32(digest: [dregg_circuit::field::BabyBear; 8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (i, lane) in digest.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&lane.as_u32().to_le_bytes());
+    }
+    out
+}
+
 /// The 32-byte commitment to a SINGLE capability's openable leaf: the encoding
-/// ([`felt_to_bytes32`]) of the cap's 7-field [`dregg_circuit::cap_root::CapLeaf`]
-/// digest. Used by [`crate::capability::CapabilitySet::attenuate_in_place`] so a
+/// ([`digest8_to_bytes32`]) of the cap's 7-field [`dregg_circuit::cap_root::CapLeaf`]
+/// 8-felt digest. Used by [`crate::capability::CapabilitySet::attenuate_in_place`] so a
 /// caller can update c-list audit indices with a value consistent with the
 /// canonical sorted-tree root.
 pub fn capability_ref_leaf_commitment(cap: &crate::capability::CapabilityRef) -> [u8; 32] {
-    felt_to_bytes32(cap_ref_to_leaf(cap).digest())
+    digest8_to_bytes32(cap_ref_to_leaf(cap).digest())
 }
 
 /// Convert a 32-byte canonical commitment into 8 BabyBear-shaped felts
@@ -873,7 +905,7 @@ pub fn authority_residue_bytes(cell: &Cell) -> Vec<u8> {
             for cap in &deleg.snapshot {
                 // The same 7-field leaf the cap_root absorbs, so a tampered delegated cap
                 // moves this digest (the snapshot is authority-bearing — audit P2-4).
-                bytes.extend_from_slice(&felt_to_bytes32(cap_ref_to_leaf(cap).digest()));
+                bytes.extend_from_slice(&digest8_to_bytes32(cap_ref_to_leaf(cap).digest()));
             }
         }
         None => bytes.push(0),
@@ -968,9 +1000,18 @@ pub fn compute_rotated_pre_limbs(
     for i in 0..7 {
         pre[12 + i] = auth8[1 + i];
     }
-    // limb 25: cap_root (welded) — the SAME openable sorted-Poseidon2 felt the circuit's
-    // `cap_root` column carries.
-    pre[25] = compute_canonical_capability_root_felt(&cell.capabilities);
+    // limb 25: cap_root lane-0 (welded) ‖ extras 51..=57: the SEVEN cap-root completion felts
+    // (lanes 1..7). THE FAITHFUL 8-FELT CAP ROOT — the native `node8` arity-16 sorted-Poseidon2
+    // root the circuit's 8-felt `cap_root` column GROUP carries (`EffectVmEmitRotationV3.
+    // capRootGroupCol`: lane 0 = limb 25, lanes 1..7 = limbs 51..57). The in-circuit cap-write
+    // gate FORCES the AFTER group to the `writesTo8` native update (`*_forces_write8`), so a
+    // ~31-bit collision at lane-0 differing in any completion felt is UNSAT (the GENTIAN law,
+    // ledgerless). Byte-identical to `rotation_witness`'s producer fill.
+    let cap8 = compute_canonical_capability_root_8(&cell.capabilities);
+    pre[25] = cap8[0];
+    for i in 0..7 {
+        pre[51 + i] = cap8[1 + i];
+    }
     // limb 26: nullifier_root (the noteSpend shielded-set root).
     pre[26] = hash_bytes(&ctx.nullifier_root);
     // limb 27: commitments_root (the noteCreate shielded-set root — the flag-day new limb).
