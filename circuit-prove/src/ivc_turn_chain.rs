@@ -1481,16 +1481,62 @@ pub fn prove_descriptor_leaf_dual_expose(
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     use crate::joint_turn_recursive::{CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO};
+    // The custom carrier is the original instance of the dual-expose: its claim slice is the
+    // `custom_proof_commitment` at IR2 PI [CUSTOM_COMMIT_PI_LO .. +CUSTOM_COMMIT_LEN). The
+    // generalized [`prove_descriptor_leaf_dual_expose_at`] takes any `(pi_lo, len)` so the
+    // FACTORY (`child_vk[8]`) and HATCHERY (`contract_hash[8]`) carriers can dual-expose their own
+    // teeth slices through the SAME segment-preserving wrap; this thin wrapper keeps every existing
+    // custom call working verbatim.
+    prove_descriptor_leaf_dual_expose_at(
+        desc,
+        proof,
+        descriptor_pis,
+        config,
+        CUSTOM_COMMIT_PI_LO,
+        CUSTOM_COMMIT_LEN,
+    )
+}
+
+/// **THE GENERALIZED DUAL-EXPOSE LEG LEAF** — [`prove_descriptor_leaf_dual_expose`] with the
+/// CLAIM slice `[claim_pi_lo .. claim_pi_lo+claim_len)` parameterized instead of pinned to the
+/// custom commitment lanes. It exposes, through ONE `expose_claim` table, BOTH:
+///
+///   * the constant-size ordered chain SEGMENT `[first_old8, last_new8, count, acc]` (lanes
+///     `[0 .. SEG_WIDTH)`), bound in-circuit to the descriptor's real rotated roots, and
+///   * the leg's CLAIMED teeth at IR2 PI `[claim_pi_lo .. claim_pi_lo+claim_len)` (lanes
+///     `[SEG_WIDTH .. SEG_WIDTH+claim_len)`), read from the same FRI-bound `air_public_targets`.
+///
+/// The custom carrier passes `(CUSTOM_COMMIT_PI_LO, CUSTOM_COMMIT_LEN)`; the FACTORY carrier passes
+/// its `child_vk[8]` tail-PI offset; the HATCHERY carrier passes its `contract_hash[8]` tail-PI
+/// offset. The binding nodes (`prove_factory_binding_node_segmented` /
+/// `prove_hatchery_binding_node_segmented` / `prove_custom_binding_node_segmented`) `connect` the
+/// appended teeth to the re-proven backing/attestation leaf and re-expose ONLY the segment, so the
+/// node folds into [`aggregate_tree`] like any segment leaf.
+///
+/// CONSTRAINT (the implementer of the deployed factory/hatchery descriptor must honor): on a WIDE
+/// descriptor the segment anchors are sourced from the LAST `2*SEG_ANCHOR_WIDTH` PIs
+/// (`n - 2*SEG_ANCHOR_WIDTH`), so the teeth tail-PIs MUST sit at a FIXED low offset (ahead of the
+/// wide rotated-commit anchors), exactly as the custom commitment sits at 46..49 ahead of them —
+/// never appended past `n - 2*SEG_ANCHOR_WIDTH`, or the wide-anchor sourcing would read the teeth
+/// as the rotated commits.
+pub fn prove_descriptor_leaf_dual_expose_at(
+    desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+    proof: &Ir2BatchProof<DreggRecursionConfig>,
+    descriptor_pis: &[BabyBear],
+    config: &DreggRecursionConfig,
+    claim_pi_lo: usize,
+    claim_len: usize,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
     use dregg_circuit::effect_vm_descriptors::{
         WIDE_UMEM_MULTIDOMAIN_WELD_SUFFIX, WIDE_UMEM_WELD_SUFFIX,
     };
 
-    let commit_hi = CUSTOM_COMMIT_PI_LO + CUSTOM_COMMIT_LEN;
+    let commit_hi = claim_pi_lo + claim_len;
     if descriptor_pis.len() < commit_hi {
         return Err(format!(
-            "dual-expose custom leg needs >= {commit_hi} descriptor PIs to carry the \
-             custom_proof_commitment at [{CUSTOM_COMMIT_PI_LO}..{commit_hi}), got {}",
+            "dual-expose leg needs >= {commit_hi} descriptor PIs to carry the claim slice at \
+             [{claim_pi_lo}..{commit_hi}), got {}",
             descriptor_pis.len()
         ));
     }
@@ -1528,8 +1574,7 @@ pub fn prove_descriptor_leaf_dual_expose(
             .expect("custom descriptor leaf has a main instance with descriptor PIs");
         debug_assert!(
             main.len() >= commit_hi.max(V1_PI_COUNT + 2),
-            "custom descriptor PI vector must carry both the rotated commitments and the \
-             custom_proof_commitment slice"
+            "descriptor PI vector must carry both the rotated commitments and the claim slice"
         );
         // -- The SEGMENT (lanes [0 .. SEG_WIDTH)) — byte-identical to the plain segment leaf.
         let (first_old8, last_new8): (Vec<p3_recursion::Target>, Vec<p3_recursion::Target>) =
@@ -1549,18 +1594,18 @@ pub fn prove_descriptor_leaf_dual_expose(
         acc_inputs.extend_from_slice(&first_old8);
         acc_inputs.extend_from_slice(&last_new8);
         let acc = seg_poseidon_commit(cb, &acc_inputs);
-        let mut claim = Vec::with_capacity(SEG_WIDTH + CUSTOM_COMMIT_LEN);
+        let mut claim = Vec::with_capacity(SEG_WIDTH + claim_len);
         claim.extend_from_slice(&first_old8);
         claim.extend_from_slice(&last_new8);
         claim.push(count);
         claim.extend_from_slice(&acc);
         debug_assert_eq!(claim.len(), SEG_WIDTH);
-        // -- The CLAIMED custom commitment (lanes [SEG_WIDTH .. SEG_WIDTH+CUSTOM_COMMIT_LEN)),
-        // read from the leaf's own FRI-bound descriptor PIs (not free scalars).
-        for k in 0..CUSTOM_COMMIT_LEN {
-            claim.push(main[CUSTOM_COMMIT_PI_LO + k]);
+        // -- The CLAIMED teeth (lanes [SEG_WIDTH .. SEG_WIDTH+claim_len)), read from the leaf's
+        // own FRI-bound descriptor PIs (not free scalars).
+        for k in 0..claim_len {
+            claim.push(main[claim_pi_lo + k]);
         }
-        debug_assert_eq!(claim.len(), SEG_WIDTH + CUSTOM_COMMIT_LEN);
+        debug_assert_eq!(claim.len(), SEG_WIDTH + claim_len);
         cb.expose_as_public_output(&claim);
     };
 
