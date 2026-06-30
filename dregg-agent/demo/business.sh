@@ -45,8 +45,9 @@ BIN="$REPO_ROOT/target/debug/dregg-agent-business"
 # Beat 6 (PROVE): re-witness the whole P&L offline, trusting no host.
 "$BIN" verify "$RUN_JSON"
 
-# The tamper tooth: flip one line → the proof rejects it.
-banner "THE TEETH — tamper one line, the audit catches it"
+# Beat 7 (THE TEETH): flip one line → the proof rejects it. The binary prints
+# its own "7 · THE TEETH" header so the verify beat and the tamper beat read as
+# two distinct beats on camera.
 "$BIN" verify --tamper "$RUN_JSON"
 
 echo

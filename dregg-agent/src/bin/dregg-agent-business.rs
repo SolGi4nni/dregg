@@ -255,7 +255,11 @@ fn cmd_verify(args: &[String]) -> ExitCode {
     };
 
     println!("════════════════════════════════════════════════════════════════════");
-    println!("  6 · PROVE — re-witness the whole P&L offline, trusting no host");
+    if tamper {
+        println!("  7 · THE TEETH — tamper one line, the audit catches it");
+    } else {
+        println!("  6 · PROVE — re-witness the whole P&L offline, trusting no host");
+    }
     println!("════════════════════════════════════════════════════════════════════\n");
 
     if tamper {
