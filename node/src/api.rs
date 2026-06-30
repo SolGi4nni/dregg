@@ -4568,15 +4568,46 @@ fn select_committed_events(
     }
 }
 
-/// GET /observability/stream — SSE live feed of dregg-observability events
-/// (Task #30). Currently serves a welcome event (proves the path + remote
-/// consumption). Full broadcast of TurnLifecycle etc. from node turns is
-/// future (would wire Emitter into submit path + shared tx in NodeState).
-async fn observability_stream() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let welcome = Event::default()
-        .event("observability")
-        .data(r#"{"schema_version":1,"schema_name":"dregg-observability-event-stream-v1","event_count":1,"events":[{"kind":"turn_lifecycle","envelope":{"seq":0,"timestamp":"2026-05-25T00:00:00.000Z"},"payload":{"phase":"stream_connected"}}]}"#);
-    let stream = stream::once(async move { Ok::<_, Infallible>(welcome) });
+/// GET /observability/stream — SSE liveness feed for the public portal.
+///
+/// Emits a `hello` frame (the node's spent-proof/nullifier count + the number of
+/// program-bearing "service" cells) then a 15s `ping` heartbeat. These are the
+/// SAME event names (`hello` / `ping`) the discord-bot read surface emits, so the
+/// public `portal.dregg.studio` "live" badge — which `addEventListener`s `hello`
+/// (and reloads the cell list on it) and `ping` — keeps working when its `/api/*`
+/// + `/observability/*` are proxied to the NODE directly rather than to the bot
+/// (the portal-decoupling repoint). Full broadcast of per-turn TurnLifecycle
+/// events from the node's submit path remains future work (would wire an Emitter
+/// + a shared broadcast tx into `NodeState`).
+async fn observability_stream(
+    State(state): State<NodeState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // Counts for the hello frame, read once at connect time (the bot freezes these
+    // the same way): the node's spent-proof (nullifier) set size and the number of
+    // program-bearing service cells in the ledger.
+    let (nullifiers, apps) = {
+        let s = state.read().await;
+        let apps = s
+            .ledger
+            .iter()
+            .filter(|(_, cell)| !matches!(cell.program, dregg_cell::CellProgram::None))
+            .count();
+        (s.used_proof_hashes.len(), apps)
+    };
+    // hello (seq 0) then a 15s ping heartbeat, all from one unfold.
+    let stream = stream::unfold(0u64, move |seq| async move {
+        let event = if seq == 0 {
+            Event::default().event("hello").data(format!(
+                r#"{{"nullifiers":{nullifiers},"apps":{apps},"msg":"dregg-node observability stream live"}}"#
+            ))
+        } else {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            Event::default()
+                .event("ping")
+                .data(format!(r#"{{"seq":{seq},"nullifiers":{nullifiers}}}"#))
+        };
+        Some((Ok::<_, Infallible>(event), seq + 1))
+    });
     Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())
 }
 
@@ -8144,6 +8175,75 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&body)
                 .unwrap_or_else(|err| panic!("{path} should return JSON: {err}"));
         }
+    }
+
+    /// THE PORTAL-DECOUPLING CONTRACT (read path). The public `portal.dregg.studio`
+    /// viewer (`portal/dist/portal.js`) is repointed off the Discord bot onto the
+    /// NODE's `/api/*`. Its `renderCells`/`fillCell` read exactly these fields off
+    /// `/api/cells` and `/api/cell/<id>`; lock the node's structs to that field set so
+    /// the node serves a portal-compatible shape (the bot is no longer load-bearing).
+    #[test]
+    fn portal_read_contract_cell_fields_present() {
+        let entry = serde_json::to_value(CellListEntry {
+            id: "abcd".into(),
+            balance: 7,
+            nonce: 1,
+            capability_count: 2,
+            has_delegate: false,
+            has_program: true,
+            found: true,
+        })
+        .expect("serialize CellListEntry");
+        for field in ["id", "balance", "nonce", "capability_count", "has_program"] {
+            assert!(
+                entry.get(field).is_some(),
+                "/api/cells entry missing portal field `{field}`: {entry}"
+            );
+        }
+    }
+
+    /// The portal's liveness badge (`portal.js`) opens an `EventSource` on
+    /// `/observability/stream` and `addEventListener`s `hello` (reloads the cell list)
+    /// + `ping`. After the bot→node repoint the node must speak that same contract, so
+    /// the FIRST frame is an immediate `hello` (no 15s wait) carrying the node's
+    /// nullifier count — proving the public viewer's live badge works reading the node
+    /// directly, with the bot down.
+    #[tokio::test]
+    async fn portal_observability_stream_opens_with_hello() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let app = router(state, false, recorder.handle());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/observability/stream")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Read just the first SSE frame (the stream is otherwise an infinite 15s
+        // ping heartbeat, so we must NOT `collect()` it).
+        let mut body = response.into_body();
+        let frame = body
+            .frame()
+            .await
+            .expect("a first SSE frame")
+            .expect("frame ok");
+        let data = frame.into_data().ok().expect("a data frame");
+        let text = String::from_utf8_lossy(&data);
+        assert!(
+            text.contains("hello"),
+            "first frame must be the hello event: {text}"
+        );
+        assert!(
+            text.contains("nullifiers"),
+            "hello carries the nullifier count for the badge: {text}"
+        );
     }
 
     #[tokio::test]

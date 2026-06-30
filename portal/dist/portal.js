@@ -2,7 +2,8 @@
 (function () {
   "use strict";
   var params = new URLSearchParams(location.search);
-  // API base: ?api= override, else same-origin (Caddy proxies /api/* to the edge bot).
+  // API base: ?api= override, else same-origin (Caddy proxies /api/* + /observability/*
+  // to the dregg node's read API, so the viewer is independent of the discord bot).
   var API = (params.get("api") || "").replace(/\/$/, "");
   function api(path) { return API + path; }
   function esc(s) {
