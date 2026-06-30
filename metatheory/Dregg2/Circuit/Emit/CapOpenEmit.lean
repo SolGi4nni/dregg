@@ -1796,4 +1796,115 @@ theorem effCapOpenWriteV3_afterCore (base : EffectVmDescriptor2) (name : String)
     have h := hrow _ (hmem _ hin)
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
 
+/-- Any after-spine `.base (.gate g)` constraint forces `g.eval = 0` on an active (non-last) row of a
+`Satisfied2` of the write descriptor (the gate binds under `when_transition`, reduced by `hlastf`). -/
+theorem afterSpine_gate_forces (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+    (hsat : Satisfied2 hash (effCapOpenWriteV3 base name n) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (g : EmittedExpr) (hin : VmConstraint2.base (.gate g) ∈ afterSpineConstraints base.traceWidth) :
+    g.eval (Dregg2.Circuit.DescriptorIR2.envAt t i).loc = 0 := by
+  have hrow := hsat.rowConstraints i hi
+  have hmem := effCapOpenWriteV3_afterMem base name n
+  have hlastf : (i + 1 == t.rows.length) = false := by
+    simp only [beq_eq_false_iff_ne]; exact hnotlast
+  have h := hrow _ (hmem _ hin)
+  simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+  simpa using h
+
+/-- **`effCapOpenWriteV3_forces_write8` — THE STEP-A DELIVERABLE.** A `Satisfied2` of the write descriptor
+TRACE-FORCES the faithful 8-felt cap-write over the FULL committed BEFORE/AFTER cap-root blocks: the read
+leaf is membership-authenticated against the before block, the narrowed after leaf (same key, rights
+`param[KEEP_MASK]`) against the after block, along the SHARED path. Forced from `Satisfied2` via the §11
+keystone — NEVER from `henc`'s `SpineCommits`. -/
+theorem effCapOpenWriteV3_forces_write8 (S8 : Cap8Scheme)
+    (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+    (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
+    (hsat : Satisfied2 hash (effCapOpenWriteV3 base name n) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.writesTo8 S8
+        (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeCapRootCols
+          (Dregg2.Circuit.DescriptorIR2.envAt t i))
+        ((Dregg2.Circuit.DescriptorIR2.envAt t i).loc
+          (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.CAP_KEY))
+        ((Dregg2.Circuit.DescriptorIR2.envAt t i).loc
+          (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.KEEP_MASK))
+        (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.afterCapRootCols
+          (Dregg2.Circuit.DescriptorIR2.envAt t i)) := by
+  set e := Dregg2.Circuit.DescriptorIR2.envAt t i with he
+  -- the BEFORE membership core (the cap-open read) + its dirBool.
+  have hbeforeSat := effCapOpenWriteV3_strips_to_capOpen hash base name n minit mfin maddrs t hsat
+  have hbeforeEff := effCapOpenV3_satisfiedEff base name n hash minit mfin maddrs t hbeforeSat i hi hnotlast
+  have hbeforeCore : MembershipCore hash t.tf (capOpenCols base.traceWidth) e := hbeforeEff.core
+  -- the AFTER membership core (reusing the read's dirBool over the SHARED dir column).
+  have hafterCore : MembershipCore hash t.tf (afterSpineCols base.traceWidth) e :=
+    effCapOpenWriteV3_afterCore base name n hash minit mfin maddrs t hsat i hi hnotlast
+      hbeforeCore.dirBool
+  -- weld: the read leaf's slot_hash equals the after leaf's slot_hash (leaf weld 0).
+  have hslot : e.loc ((afterSpineCols base.traceWidth).leaf 0)
+      = e.loc ((capOpenCols base.traceWidth).leaf 0) := by
+    have hin : VmConstraint2.base (.gate (eqGate ((afterSpineCols base.traceWidth).leaf 0)
+        ((capOpenCols base.traceWidth).leaf 0))) ∈ afterSpineConstraints base.traceWidth := by
+      refine List.mem_cons_of_mem _ ?_
+      refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
+      simp [afterLeafWelds]
+    exact (eqGate_eval _ _ e).mp
+      (afterSpine_gate_forces base name n hash minit mfin maddrs t hsat i hi hnotlast _ hin)
+  -- weld: the after leaf's mask_lo equals param[KEEP_MASK] (leaf weld 3).
+  have hmaskw : e.loc ((afterSpineCols base.traceWidth).leaf 3)
+      = e.loc (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.KEEP_MASK) := by
+    have hin : VmConstraint2.base (.gate (eqGate ((afterSpineCols base.traceWidth).leaf 3)
+        (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.KEEP_MASK)))
+        ∈ afterSpineConstraints base.traceWidth := by
+      refine List.mem_cons_of_mem _ ?_
+      refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
+      simp [afterLeafWelds]
+    exact (eqGate_eval _ _ e).mp
+      (afterSpine_gate_forces base name n hash minit mfin maddrs t hsat i hi hnotlast _ hin)
+  -- key bind: the read leaf's slot_hash equals param[CAP_KEY].
+  have hkeyb : e.loc ((capOpenCols base.traceWidth).leaf 0)
+      = e.loc (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.CAP_KEY) := by
+    have hin : VmConstraint2.base (.gate (keyBindGate base.traceWidth))
+        ∈ afterSpineConstraints base.traceWidth := by
+      refine List.mem_cons_of_mem _ ?_
+      refine List.mem_append_right _ ?_
+      simp
+    have := afterSpine_gate_forces base name n hash minit mfin maddrs t hsat i hi hnotlast _ hin
+    exact (eqGate_eval _ _ e).mp this
+  -- before-block cap-root weld: the read's appendix capRoot group IS the committed BEFORE block.
+  have hbroot : groupVal e (capOpenCols base.traceWidth).capRoot
+      = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeCapRootCols e := by
+    funext k
+    have hin : VmConstraint2.base (.gate (eqGate ((capOpenCols base.traceWidth).capRoot k)
+        (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.capRootGroupCol EFFECT_VM_WIDTH k)))
+        ∈ afterSpineConstraints base.traceWidth := by
+      refine List.mem_cons_of_mem _ ?_
+      refine List.mem_append_left _ (List.mem_append_right _ ?_)
+      exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
+    have := (eqGate_eval _ _ e).mp
+      (afterSpine_gate_forces base name n hash minit mfin maddrs t hsat i hi hnotlast _ hin)
+    simpa [groupVal, Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeCapRootCols] using this
+  -- assemble the §11 keystone over the two cores along the SHARED path.
+  have hkey : (leafOf (afterSpineCols base.traceWidth) e).slot_hash
+      = (leafOf (capOpenCols base.traceWidth) e).slot_hash := hslot
+  have hw := capOpen_writesTo8 S8 hash t.tf (capOpenCols base.traceWidth)
+    (afterSpineCols base.traceWidth) e hChip hbeforeCore hafterCore rfl rfl hkey
+  -- rewrite the keystone conclusion to the committed BEFORE/AFTER blocks + CAP_KEY / KEEP_MASK.
+  rw [hbroot] at hw
+  rw [afterSpine_capRoot_after] at hw
+  have hslot' : (leafOf (capOpenCols base.traceWidth) e).slot_hash
+      = e.loc (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.CAP_KEY) :=
+    hkeyb
+  have hmask' : (leafOf (afterSpineCols base.traceWidth) e).mask_lo
+      = e.loc (Dregg2.Circuit.Emit.EffectVmEmit.prmCol Dregg2.Circuit.Emit.EffectVmEmitV2.KEEP_MASK) :=
+    hmaskw
+  rw [hslot', hmask'] at hw
+  exact hw
+
+#assert_axioms effCapOpenWriteV3_afterCore
+#assert_axioms effCapOpenWriteV3_forces_write8
+
 end Dregg2.Circuit.Emit.CapOpenEmit
