@@ -1,55 +1,56 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Acme Test-as-a-Service, run by an agent — the one-command hackathon demo.
+# dregg-agent — a REAL, flexible, live operator agent you can audit.
 #
-#   bash demo/business.sh
+#   bash demo/business.sh "<natural-language goal>" [--budget N] [--caps a,b,…] [...]
+#   bash demo/business.sh                      # uses a real default goal
 #
-# Runs the five beats (EARN · FUND · OPERATE · SPEND · SCALE), emits a run.json
-# P&L, then PROVES it: re-witnesses the whole run offline (host untrusted), and
-# shows a tampered line caught. Deterministic + offline by default (recorded
-# brain + recorded signed webhook) so it ALWAYS films cleanly — no key, no
-# network needed.
+# Hands a LIVE model (NVIDIA Nemotron) an arbitrary goal + a budget + a cap
+# bundle, then runs a REAL reason→act→observe loop: the model decides the next
+# tool call, every call is cap-gated + metered + receipted and runs FOR REAL (a
+# real shell / fs / http / git, or a budget-gated spend). Then it PROVES the run:
+# re-witnesses run.json offline (host untrusted) and shows a tampered line caught.
 #
-#   --live   drive OPERATE/SPEND with a real Nemotron/Hermes model if a key is
-#            present (NVIDIA_API_KEY or NOUS_PORTAL_KEY); falls back to offline.
+# This is NOT a script. Hand it a different goal and the agent genuinely adapts —
+# that is the proof. Needs a model key in ~/.nvidiakey (or $NVIDIA_API_KEY).
+#
+# Flags after the goal pass straight through, e.g.:
+#   bash demo/business.sh "clone https://github.com/octocat/Hello-World and \
+#       run any tests, then report" --caps shell,fs,git:github.com --budget 800
+#   bash demo/business.sh --replay demo/resp.json     # replay a captured run
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-# Resolve repo root from this script's location (demo/ lives under dregg-agent/).
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 RUN_JSON="${RUN_JSON:-$HERE/run.json}"
 
-LIVE_FLAG=""
-FEATURES=""
-if [[ "${1:-}" == "--live" ]]; then
-  LIVE_FLAG="--live"
-  FEATURES="--features live-brain"
+# A leading non-flag argument is the goal; the rest pass through.
+RUN_ARGS=()
+if [[ $# -gt 0 && "${1:0:2}" != "--" ]]; then
+  RUN_ARGS+=(--goal "$1"); shift
 fi
+RUN_ARGS+=("$@")
 
-banner() {
-  echo
-  echo "════════════════════════════════════════════════════════════════════"
-  echo "  $1"
-  echo "════════════════════════════════════════════════════════════════════"
-}
+banner() { echo; echo "════════════════════════════════════════════════════════════════════"; echo "  $1"; echo "════════════════════════════════════════════════════════════════════"; }
 
-# Pre-build so the filmed run shows only the demo output, not cargo noise.
-banner "BUILDING (one-time; the filmed run is instant)"
-cargo build -q -p dregg-agent --bin dregg-agent-business $FEATURES --manifest-path "$REPO_ROOT/Cargo.toml"
-BIN="$REPO_ROOT/target/debug/dregg-agent-business"
+# Build once (the live path needs the `live-brain` feature for the model + http).
+banner "BUILDING dregg-agent (one-time)"
+cargo build -q -p dregg-agent --bin dregg-agent --features live-brain --manifest-path "$REPO_ROOT/Cargo.toml"
+BIN="$REPO_ROOT/target/debug/dregg-agent"
 
-# Beats 1–5 + write run.json.
-"$BIN" run --out "$RUN_JSON" $LIVE_FLAG
+# Run the LIVE agent on the goal (default goal if none given): real tools,
+# cap-gated + metered + receipted, narrated as it happens; writes run.json.
+"$BIN" run --out "$RUN_JSON" "${RUN_ARGS[@]}"
 
-# Beat 6 (PROVE): re-witness the whole P&L offline, trusting no host.
+# PROVE: re-witness the whole run offline, trusting no host.
 "$BIN" verify "$RUN_JSON"
 
-# Beat 7 (THE TEETH): flip one line → the proof rejects it. The binary prints
-# its own "7 · THE TEETH" header so the verify beat and the tamper beat read as
-# two distinct beats on camera.
+# THE TEETH: flip one receipted line → the proof rejects it (BadSignature).
 "$BIN" verify --tamper "$RUN_JSON"
 
 echo
-echo "Done. The P&L receipt is at: $RUN_JSON"
-echo "Anyone can re-verify it offline:  $BIN verify $RUN_JSON"
+echo "Done. The receipt is at: $RUN_JSON"
+echo "Re-verify it yourself, offline:  $BIN verify $RUN_JSON"
+echo "Hand the agent a DIFFERENT goal to see it adapt:"
+echo "  bash demo/business.sh \"list the 3 newest files in your workdir and summarize them\""

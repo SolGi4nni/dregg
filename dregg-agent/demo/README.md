@@ -1,13 +1,17 @@
-# Acme Test-as-a-Service — the autonomous business you can audit
+# dregg-agent — a real, flexible, live operator agent you can audit
 
-One agent runs a tiny automated service business: a customer pays it, it runs the
-customer's test job, it pays the vendors (compute / SaaS) it used, it forks a
-sub-agent to scale — and the **entire P&L is one cryptographic receipt chain you
-can re-verify yourself, offline, trusting no host**.
+Hand a **live model** an *arbitrary* natural-language goal, a **budget**, and a
+**cap bundle**. It runs a genuine **reason → act → observe** loop: the model
+decides the next tool call, and every call is **cap-gated · metered · receipted**
+and executed **for real** — a real shell, real fs, real http, real `git clone`,
+or a budget-gated spend. The whole run is one cryptographic receipt chain you can
+re-verify yourself, offline, trusting no host.
+
+There is **no script**. Hand it a different `--goal` and it genuinely adapts —
+that is the proof it is not a puppet.
 
 Built on [`dregg-agent`](../) — the open-source (AGPL), substrate-only,
-cap-bounded / budget-bounded / receipted autonomous-agent runtime. No cloud, no
-private control plane.
+cap-bounded / budget-bounded / receipted agent runtime. No cloud, no control plane.
 
 ## Run it (one command)
 
@@ -15,85 +19,87 @@ private control plane.
 bash demo/business.sh
 ```
 
-That's it. It builds once, then runs the five beats with narrated banners, writes
-`demo/run.json` (the P&L), re-witnesses the whole run, and shows a tampered line
-caught. **Deterministic and offline by default** (a recorded brain + a recorded
-signed webhook) — no API key, no network, so it always films cleanly. Fits in
-well under three minutes.
+Needs a model key in `~/.nvidiakey` (or `NVIDIA_API_KEY`). It builds once, runs
+the live agent on a real default goal (clone a tiny repo, inspect it, hit the
+GitHub API, pay for the work — all real), narrates each real step, writes
+`demo/run.json`, **re-witnesses it**, and shows a **tampered line caught**.
 
-## What the judge sees, beat by beat
-
-1. **EARN** — a customer pays Acme. A recorded, **genuinely signed** Stripe
-   `payment_intent.succeeded` webhook is verified the real Stripe way
-   (HMAC-SHA256 over `{t}.{body}`, replay window, currency/amount bounds) and
-   mints conserved, receipted USD-credit. A **retry is deduped**; a
-   **forged-signature** webhook is **refused**.
-2. **FUND** — the minted cents become the agent's budget ceiling (USD-cents
-   denominated). Earned money is now spendable: the P&L loop is closed.
-3. **OPERATE** — the agent (an OpenAI-compatible "Hermes/Nemotron" brain, on the
-   recorded transport here) runs the customer's test suite. The verdict is bound
-   into the receipt with a witnessed `(command · code_root · result)`, so a forged
-   "tests passed" is caught on re-witness.
-4. **SPEND** — the agent pays its vendors via the **budget-gated, variable-amount
-   Stripe-out spend tool** (`stripe_pay`) — the differentiator primitive. Each
-   spend's dollar amount is **drawn from the budget cell**, so two spends succeed
-   and an **over-ceiling spend is refused in-band, before any money moves**. The
-   budget is a theorem about the cell, not a watchdog.
-5. **SCALE** — `deploy_subagent` forks a sub-agent with an **attenuated budget +
-   a narrower cap bundle** it provably cannot exceed: an over-budget spend AND an
-   out-of-bundle call are both refused (no-amplify, both axes).
-6. **PROVE** — `dregg-agent-business verify run.json` re-witnesses the WHOLE P&L
-   offline: the earn mint chain, the agent + sub-agent receipt chains, the
-   witnessed QA, and the P&L arithmetic — host untrusted. Then we tamper one line
-   (`--tamper` flips a spend amount) and the proof **rejects it** (`BadSignature`).
-
-## The `run.json` P&L
-
-```jsonc
-{
-  "business": "Acme Test-as-a-Service",
-  "earn":     { "minted_cents": 5000, "events": [...], "receipts": [ /* signed mint chain */ ] },
-  "agent_run":    { /* OPERATE + SPEND: one signed receipt chain */ },
-  "subagent_run": { /* SCALE: attenuated, bounded */ },
-  "pnl": { "earned_cents": 5000, "vendor_spend_cents": 3000, "ops_metering_cents": 2,
-           "net_cents": 1998, "budget_cents": 5000, "headroom_cents": 1998 }
-}
-```
-
-Every figure is recomputable from the chains; `net = budget − consumed = the
-un-drawn headroom` (the hard bound on everything the agent *could* still have
-done).
-
-## Upgrade to a live model (`--live`)
-
-The brain drives **any OpenAI-compatible endpoint**. With a key present, point it
-at a real model — the demo does **not** depend on it (the recorded path is the
-filmable default):
+Hand it your own goal:
 
 ```sh
-# NVIDIA Nemotron 3 Ultra (free key from build.nvidia.com):
-export NVIDIA_API_KEY=nvapi-...
-bash demo/business.sh --live
-
-# or the Nous Portal (Hermes):
-export NOUS_PORTAL_KEY=...
-target/debug/dregg-agent-business run --live \
-  --llm-base http://127.0.0.1:8645/v1 --llm-model hermes-agent
+bash demo/business.sh "clone https://github.com/octocat/Hello-World, read its \
+   files, and report what the repo is" --caps shell,fs,git:github.com --budget 800
 ```
 
-The `--live` path is behind the `live-brain` cargo feature (the script enables it
-automatically). The BYO key reaches only the provider's `Authorization: Bearer`
-header — never a request body, a receipt, the report, or a log. If no key is set,
-`--live` falls back to the offline path with a notice.
+## What the judge sees
+
+1. **A live model reasons and acts.** The default goal makes a real NVIDIA
+   Nemotron agent `git clone` a repo, `list_dir` + `fs_read` it, `http_get` the
+   GitHub API, and `spend` from its budget — each decided live from the previous
+   observation. Native OpenAI `tool_calls` drive it (confirmed against the live
+   endpoint).
+2. **Every tool is on a leash.** Each call is cap-gated **per-tool AND
+   per-resource**: `shell` is granted but confined to the workdir; `fs` only
+   under the workdir root (a `/etc/passwd` read is refused **before it runs**, no
+   receipt); `http` only to granted hosts; the `spend` is drawn from the budget
+   cell, so an over-budget spend is refused **in-band before any money moves**.
+3. **It is all receipted.** Every admitted action is sealed into a prev-hash
+   chained, ed25519-signed receipt (with a witnessed `(command · inputs ·
+   result)` binding), so a forged "it succeeded / I barely spent" breaks the
+   signature.
+4. **SCALE — no amplify.** It forks a sub-agent with a *narrower* cap bundle it
+   provably cannot exceed (an out-of-bundle http / spend is refused on both axes).
+5. **PROVE.** `dregg-agent verify run.json` re-witnesses the whole run offline —
+   chain intact + signed, consumed ≤ ceiling, sub-agent chain too. Then
+   `--tamper` flips one receipted line and the proof **rejects it**
+   (`BadSignature`).
+
+## The operator toolkit (every tool rides the same cap · meter · receipt rail)
+
+| tool | what it does | cap (per-resource) |
+|------|--------------|--------------------|
+| `shell` | real bash: persistent cwd, pipes/`&&`, real stdout/stderr/exit, timeout | `shell` (workdir-confined) |
+| `fs_read`/`fs_write`/`list_dir`/`mkdir` | real fs, scoped to the workdir root | `fs-read:<path>` / `fs-write:<path>` (prefix grant) |
+| `http_get` | real outbound GET | `http:<host>` (per-host egress) |
+| `git_clone` | real shallow clone into the workdir | `http:<host>` |
+| `spend` (`stripe_pay`) | budget-gated payout | `invoke:stripe_pay` + the budget draw |
+| `cell_read`/`cell_write` | real committed state | `cell-read:`/`cell-write:<path>` |
+
+The cap bundle is a **signed** `dga1_` credential; resource scopes ride
+`AttrPrefix`, so a sub-agent can only ever **narrow** them (`attenuate_subset`).
+
+## Caps (`--caps`, comma-separated)
+
+`shell`, `fs`, `git:HOST`, `http:HOST`, `spend`, `run_tests`, `cell:/path` — each
+is a per-tool / per-resource grant. Default:
+`shell,fs,git:github.com,http:api.github.com,spend`.
+
+## The money leg (honest)
+
+The budget draw is **always real** (a metered ledger cell — the spend bound is a
+theorem about the cell, not a watchdog). The live **Stripe** leg is real **only
+with a test key**: put an `sk_test_…` key in `~/.stripekey` (or `STRIPE_API_KEY`)
+and `stripe_pay` makes a genuine Stripe **test-mode** PaymentIntent
+(`pm_card_visa`). Without it, the spend is a real budget draw labeled honestly
+("budget enforced; Stripe live leg needs a test key") — never a fake "✓ paid".
+
+## Capture a good run for the film
+
+```sh
+dregg-agent run --record demo/resp.json --out demo/run.json    # live; saves the brain
+dregg-agent run --replay demo/resp.json                        # re-runs it, tools FOR REAL
+```
+
+Replaying a captured **real** run is legit (the model's decisions are re-fed; the
+tools execute for real against the same workdir). The default is always live.
 
 ## Verify it yourself
 
 ```sh
-target/debug/dregg-agent-business verify demo/run.json          # re-witness (green)
-target/debug/dregg-agent-business verify --tamper demo/run.json # one line flipped → caught
+dregg-agent verify demo/run.json          # re-witness offline (green)
+dregg-agent verify --tamper demo/run.json # one line flipped → caught (BadSignature)
 ```
 
-Nothing in the demo claims more than the code runs: the verify logic (Stripe
-signature, receipt chains, witnessed re-execution, budget bound) is genuine; only
-the *transport* is recorded (the signed webhook fixture and the brain transcript)
-so the filmed run is deterministic.
+Nothing here is mocked: the model really reasons, the tools really run, the
+budget refusal is real, and the receipts really re-witness. The only recorded
+artifact is the optional `--replay` capture — and it re-executes the real tools.

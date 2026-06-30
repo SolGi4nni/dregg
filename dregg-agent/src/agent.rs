@@ -43,7 +43,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::cred::{Credential, PublicKey, RootKey, WireError};
-use crate::grant::{attenuate_caps, cap_context, mint_caps};
+use crate::grant::{CapGrant, attenuate_grants, cap_context, mint_grants};
 use crate::receipt::{
     BodyHasher, ChainError, ReceiptAttestation, ReceiptBody, ReceiptChain, verify_chain,
 };
@@ -66,6 +66,118 @@ fn cell_read_cap(path: &str) -> String {
 /// The cap a cell write requires (`cell-write:<path>`).
 fn cell_write_cap(path: &str) -> String {
     format!("cell-write:{path}")
+}
+
+// ---------------------------------------------------------------------------
+// The OPERATOR toolkit — a real, capable agent on a leash.
+// ---------------------------------------------------------------------------
+//
+// Beyond the flat `invoke`/`Spend`/cell rails, the agent reaches a rich operator
+// toolkit (a real shell, fs, http, git) through [`AgentAction::Op`]. Each op is
+// **per-tool AND per-resource** cap-gated: the required cap carries the resource
+// (the file path, the egress host), so the cap bundle can grant `shell` yet bound
+// it to `/workdir`, grant `http` only to `api.github.com`, etc. The grant rides
+// [`CapGrant::Prefix`] so the resource scope is part of the *signed* authority a
+// sub-agent can only narrow — not a check the run loop could forget.
+
+/// The operator-tool names the brain can call. Each rides [`AgentAction::Op`].
+pub mod op {
+    /// A real shell command (workdir-confined, timeout-bounded). Cap: `shell`.
+    pub const SHELL: &str = "shell";
+    /// Read a file under the workdir. Cap: `fs-read:<abs-path>`.
+    pub const FS_READ: &str = "fs_read";
+    /// Write a file under the workdir. Cap: `fs-write:<abs-path>`.
+    pub const FS_WRITE: &str = "fs_write";
+    /// List a directory under the workdir. Cap: `fs-read:<abs-path>`.
+    pub const LIST_DIR: &str = "list_dir";
+    /// Create a directory under the workdir. Cap: `fs-write:<abs-path>`.
+    pub const MKDIR: &str = "mkdir";
+    /// HTTP GET a URL. Cap: `http:<host>` (per-host egress).
+    pub const HTTP_GET: &str = "http_get";
+    /// `git clone` a repo into the workdir. Cap: `http:<host>` (the fetch egress).
+    pub const GIT_CLONE: &str = "git_clone";
+
+    /// Every operator tool name (for the spec helper / display).
+    pub const ALL: &[&str] = &[
+        SHELL, FS_READ, FS_WRITE, LIST_DIR, MKDIR, HTTP_GET, GIT_CLONE,
+    ];
+}
+
+/// One operator-tool call the brain decided: a tool name + its string args. The
+/// rich, freeform-argument path (a shell command, a file path + content, a URL) —
+/// the flexible counterpart to the fixed `invoke:<service>` rail. Cap-gated **per
+/// resource** via [`ToolCall::default_cap`] (the run loop resolves the path/host
+/// against the workdir first; see [`ToolKit::op_cap`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCall {
+    /// The operator tool (one of [`op`]).
+    pub tool: String,
+    /// The tool's string arguments (`cmd` for shell, `path`/`content` for fs,
+    /// `url`/`dest` for http/git).
+    pub args: BTreeMap<String, String>,
+}
+
+impl ToolCall {
+    /// A tool call from a name + arg pairs.
+    pub fn new(
+        tool: impl Into<String>,
+        args: impl IntoIterator<Item = (String, String)>,
+    ) -> ToolCall {
+        ToolCall {
+            tool: tool.into(),
+            args: args.into_iter().collect(),
+        }
+    }
+
+    /// An arg by key.
+    pub fn arg(&self, key: &str) -> Option<&str> {
+        self.args.get(key).map(String::as_str)
+    }
+
+    /// The host of a URL arg (for `http:<host>` egress caps) — the authority
+    /// between `://` and the next `/`, `?`, or `:`. `""` if not a URL.
+    pub fn url_host(&self, key: &str) -> String {
+        host_of(self.arg(key).unwrap_or(""))
+    }
+
+    /// The **resource-scoped** capability this call needs, computed from the raw
+    /// args alone (the run loop prefers [`ToolKit::op_cap`], which resolves fs
+    /// paths against the workdir; this is the fallback / no-toolkit form).
+    pub fn default_cap(&self) -> String {
+        match self.tool.as_str() {
+            op::SHELL => "shell".to_string(),
+            op::FS_READ | op::LIST_DIR => format!("fs-read:{}", self.arg("path").unwrap_or("")),
+            op::FS_WRITE | op::MKDIR => format!("fs-write:{}", self.arg("path").unwrap_or("")),
+            op::HTTP_GET => format!("http:{}", self.url_host("url")),
+            op::GIT_CLONE => format!("http:{}", self.url_host("url")),
+            other => format!("op:{other}"),
+        }
+    }
+
+    /// A short human label for logs/receipts (`shell:cargo test`, `git_clone:…`).
+    pub fn label(&self) -> String {
+        let detail = match self.tool.as_str() {
+            op::SHELL => self.arg("cmd").unwrap_or("").to_string(),
+            op::FS_READ | op::FS_WRITE | op::LIST_DIR | op::MKDIR => {
+                self.arg("path").unwrap_or("").to_string()
+            }
+            op::HTTP_GET | op::GIT_CLONE => self.arg("url").unwrap_or("").to_string(),
+            _ => String::new(),
+        };
+        let detail: String = detail.chars().take(48).collect();
+        if detail.is_empty() {
+            format!("op:{}", self.tool)
+        } else {
+            format!("{}:{}", self.tool, detail)
+        }
+    }
+}
+
+/// The host (authority) of a URL — between `://` and the next `/ ? :`, lowercased.
+fn host_of(url: &str) -> String {
+    let after = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let end = after.find(['/', '?', ':', '#']).unwrap_or(after.len());
+    after[..end].to_ascii_lowercase()
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +207,12 @@ pub struct AgentSpec {
     pub services: Vec<String>,
     /// The cells the agent may read+write (each becomes `cell-read:`/`cell-write:` caps).
     pub cells: Vec<String>,
+    /// **Resource-scoped operator grants** beyond the flat services/cells: e.g.
+    /// `Exact("shell")`, `Prefix("fs-read:/workdir")`, `Exact("http:api.github.com")`.
+    /// These ride [`CapGrant::Prefix`] so a path/host scope is part of the signed
+    /// bundle (per-tool AND per-resource authority), and a sub-agent can only narrow.
+    #[serde(default)]
+    pub grants: Vec<CapGrant>,
     /// The budget cost charged per action (drawn from the budget cell). Must be `> 0`.
     pub cost_per_action: i64,
 }
@@ -114,6 +232,7 @@ impl AgentSpec {
             start: 0,
             services: Vec::new(),
             cells: Vec::new(),
+            grants: Vec::new(),
             cost_per_action: 1,
         }
     }
@@ -130,6 +249,48 @@ impl AgentSpec {
         self
     }
 
+    /// Add a **resource-scoped operator grant** (per-tool / per-resource), e.g.
+    /// `CapGrant::Exact("shell")`, `CapGrant::Prefix("fs-read:/workdir")`,
+    /// `CapGrant::Exact("http:api.github.com")`.
+    pub fn with_grant(mut self, grant: CapGrant) -> AgentSpec {
+        self.grants.push(grant);
+        self
+    }
+
+    /// Grant `shell` (workdir-confined by the runner; the cap itself is coarse).
+    pub fn with_shell(self) -> AgentSpec {
+        self.with_grant(CapGrant::Exact("shell".to_string()))
+    }
+
+    /// Grant fs read+write **bounded to `root`** (a prefix grant: any path under
+    /// `root` is reachable, nothing outside it).
+    pub fn with_workdir_fs(self, root: impl AsRef<str>) -> AgentSpec {
+        let root = root.as_ref();
+        self.with_grant(CapGrant::Prefix(format!("fs-read:{root}")))
+            .with_grant(CapGrant::Prefix(format!("fs-write:{root}")))
+    }
+
+    /// Grant HTTP/git egress to a single `host` (per-host: `http:<host>`).
+    pub fn with_http_host(self, host: impl AsRef<str>) -> AgentSpec {
+        self.with_grant(CapGrant::Exact(format!("http:{}", host.as_ref())))
+    }
+
+    /// The full resource-scoped grant bundle: an `invoke:` exact per service, a
+    /// `cell-read:`/`cell-write:` exact pair per cell, plus the explicit
+    /// [`grants`](AgentSpec::grants).
+    fn grant_bundle(&self) -> Vec<CapGrant> {
+        let mut g = Vec::new();
+        for s in &self.services {
+            g.push(CapGrant::Exact(invoke_cap(s)));
+        }
+        for c in &self.cells {
+            g.push(CapGrant::Exact(cell_read_cap(c)));
+            g.push(CapGrant::Exact(cell_write_cap(c)));
+        }
+        g.extend(self.grants.iter().cloned());
+        g
+    }
+
     /// The replenishing-budget terms this spec opens.
     fn budget_terms(&self) -> BudgetTerms {
         BudgetTerms::new(
@@ -142,18 +303,9 @@ impl AgentSpec {
         )
     }
 
-    /// The full cap bundle the credential grants: an `invoke:` cap per service and
-    /// a `cell-read:`/`cell-write:` pair per cell.
+    /// The cap bundle as display strings (a prefix renders with a trailing `*`).
     fn caps(&self) -> Vec<String> {
-        let mut caps = Vec::new();
-        for s in &self.services {
-            caps.push(invoke_cap(s));
-        }
-        for c in &self.cells {
-            caps.push(cell_read_cap(c));
-            caps.push(cell_write_cap(c));
-        }
-        caps
+        self.grant_bundle().iter().map(CapGrant::display).collect()
     }
 }
 
@@ -199,6 +351,11 @@ pub enum AgentAction {
         /// The cell path.
         path: String,
     },
+    /// **A rich operator-tool call** — the real shell / fs / http / git path.
+    /// Cap-gated **per resource** (`shell`, `fs-read:<path>`, `http:<host>`, …),
+    /// metered, and receipted with a [`WitnessedRun`] over `(command, inputs,
+    /// result)` so the work is tamper-evident and re-witnessable.
+    Op(ToolCall),
 }
 
 impl AgentAction {
@@ -211,6 +368,7 @@ impl AgentAction {
             AgentAction::Spend { service, .. } => invoke_cap(service),
             AgentAction::CellWrite { path, .. } => cell_write_cap(path),
             AgentAction::CellRead { path } => cell_read_cap(path),
+            AgentAction::Op(call) => call.default_cap(),
         }
     }
 
@@ -223,6 +381,7 @@ impl AgentAction {
             AgentAction::Spend { service, .. } => format!("spend:{service}"),
             AgentAction::CellWrite { path, .. } => format!("cell-write:{path}"),
             AgentAction::CellRead { path } => format!("cell-read:{path}"),
+            AgentAction::Op(call) => call.label(),
         }
     }
 
@@ -408,6 +567,28 @@ pub trait ToolKit {
         amount_cents: Option<i64>,
         cells: &BTreeMap<String, String>,
     ) -> ToolOutcome;
+
+    /// The **resource-scoped capability** an [`AgentAction::Op`] needs — the place
+    /// a toolkit that owns a workdir resolves a (possibly relative) fs path to its
+    /// absolute form so the cap-gate compares against the granted prefix. The
+    /// default is the raw [`ToolCall::default_cap`] (no workdir resolution). The
+    /// run loop cap-gates against *this* before [`run_op`](ToolKit::run_op) runs,
+    /// so a tool/resource outside the bundle is refused **before** any effect.
+    fn op_cap(&self, call: &ToolCall) -> String {
+        call.default_cap()
+    }
+
+    /// Execute a rich operator-tool call (a real shell / fs / http / git op) and
+    /// return its verdict (with a [`WitnessedRun`] binding so the result is
+    /// tamper-evident). Reached only AFTER the cap-gate admitted
+    /// [`op_cap`](ToolKit::op_cap) and the meter drew the action's cost. The
+    /// default has no operator tools (a flat toolkit) and fails closed.
+    fn run_op(&self, call: &ToolCall, _cells: &BTreeMap<String, String>) -> ToolOutcome {
+        ToolOutcome::fail(format!(
+            "no operator tools on this toolkit (tool `{}`)",
+            call.tool
+        ))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -879,8 +1060,12 @@ pub struct AgentHandle {
     pub id: String,
     /// The cap bundle as the encoded `dga1_` bearer credential.
     pub credential: String,
-    /// The granted cap strings (display + the sub-agent subset check).
+    /// The granted cap strings (display form; a prefix renders with `*`).
     pub caps: Vec<String>,
+    /// The granted [`CapGrant`]s (exact + resource prefixes) — the no-amplify
+    /// `covers` check `deploy_subagent` uses.
+    #[serde(default)]
+    pub grants: Vec<CapGrant>,
     /// The budget ceiling.
     pub budget: i64,
     /// The asset.
@@ -969,12 +1154,14 @@ impl AgentCloud {
         self.meter
             .open(&spec.id, spec.budget_terms())
             .map_err(AgentError::Budget)?;
+        let grants = spec.grant_bundle();
         let caps = spec.caps();
-        let credential = mint_caps(&self.root, caps.clone(), None).encode();
+        let credential = mint_grants(&self.root, &grants, None).encode();
         Ok(AgentHandle {
             id: spec.id.clone(),
             credential,
             caps,
+            grants,
             budget: spec.budget,
             asset: spec.asset.clone(),
             cost_per_action: spec.cost_per_action,
@@ -993,11 +1180,14 @@ impl AgentCloud {
         parent: &AgentHandle,
         child: &AgentSpec,
     ) -> Result<AgentHandle, AgentError> {
+        let child_grants = child.grant_bundle();
         let child_caps = child.caps();
-        // (1) the no-amplify rule: every child cap must be held by the parent.
-        for c in &child_caps {
-            if !parent.caps.iter().any(|p| p == c) {
-                return Err(AgentError::Widen { cap: c.clone() });
+        // (1) the no-amplify rule: every child grant must be COVERED by some parent
+        // grant (exact==exact, or a parent prefix covering a child exact/prefix —
+        // a child can only narrow a resource scope, never widen it).
+        for cg in &child_grants {
+            if !parent.grants.iter().any(|pg| pg.covers(cg)) {
+                return Err(AgentError::Widen { cap: cg.display() });
             }
         }
         // (2) the child budget cell, attenuated off the parent (the meter refuses
@@ -1018,11 +1208,12 @@ impl AgentCloud {
         // the child verifies under the SAME root, and the parent's meet still
         // rejects anything the child tried to widen to.
         let parent_cred = Credential::decode(&parent.credential).map_err(AgentError::Cred)?;
-        let child_cred = attenuate_caps(parent_cred, child_caps.clone(), None);
+        let child_cred = attenuate_grants(parent_cred, &child_grants, None);
         Ok(AgentHandle {
             id: child.id.clone(),
             credential: child_cred.encode(),
             caps: child_caps,
+            grants: child_grants,
             budget: child.budget,
             asset: child.asset.clone(),
             cost_per_action: child.cost_per_action,
@@ -1084,7 +1275,12 @@ impl AgentCloud {
 
             // (1) AUTHORITY — cap-gate the action's required cap against the bundle.
             // Refused outside the bundle BEFORE any draw or commit (fail-closed).
-            let cap = action.required_cap();
+            // An Op resolves its resource cap through the toolkit (which owns the
+            // workdir), so a relative path is gated against its absolute prefix.
+            let cap = match (&action, toolkit) {
+                (AgentAction::Op(call), Some(tk)) => tk.op_cap(call),
+                _ => action.required_cap(),
+            };
             if cred
                 .verify(&root_pub, &cap_context(&cap, handle.block.max(0) as u64))
                 .is_err()
@@ -1183,6 +1379,16 @@ impl AgentCloud {
                 }
                 // cell_read leaves the committed heap unchanged.
                 AgentAction::CellRead { .. } => {}
+                AgentAction::Op(call) => {
+                    // The cap-gate already admitted this tool+resource; run the real
+                    // op (shell / fs / http / git) and bind its witnessed result.
+                    if let Some(tk) = toolkit {
+                        let oc = tk.run_op(call, &cells);
+                        tool_ok = Some(oc.ok);
+                        tool_summary = Some(oc.summary);
+                        tool_witnessed = oc.witnessed;
+                    }
+                }
             }
 
             // (4) RECEIPT — seal the admitted action (and any tool verdict) into

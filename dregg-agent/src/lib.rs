@@ -51,7 +51,8 @@ pub mod brain;
 pub mod federation_qa;
 pub mod harness;
 pub mod toolkit;
+pub mod tools;
 
-// ── the earn rail + the autonomous-business demo ──────────────────────────────
-pub mod business;
+// ── the flexible live run + the earn-rail crypto (Stripe webhook verify) ──────
+pub mod live;
 pub mod stripe;

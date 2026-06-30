@@ -63,7 +63,7 @@ use std::collections::VecDeque;
 
 use serde_json::{Value, json};
 
-use crate::agent::{ActionObservation, AgentAction, AgentBrain};
+use crate::agent::{ActionObservation, AgentAction, AgentBrain, ToolCall, op};
 
 /// The default Moonshot (Kimi) OpenAI-compatible chat endpoint. Moonshot serves
 /// the same API at `api.moonshot.ai` (global) and `api.moonshot.cn` (mainland).
@@ -413,6 +413,10 @@ pub struct OpenAICompatBrain<C: OpenAICompatCaller> {
     caller: C,
     services: Vec<String>,
     cells: Vec<String>,
+    /// The operator tools advertised (a subset of [`crate::agent::op::ALL`]):
+    /// `shell` / `fs_read` / `fs_write` / `list_dir` / `mkdir` / `http_get` /
+    /// `git_clone`. Each is mapped to an [`AgentAction::Op`].
+    op_tools: Vec<String>,
     /// The running OpenAI conversation (system + user + tool-call/result turns).
     /// The key is NEVER in here.
     messages: Vec<Value>,
@@ -451,6 +455,7 @@ impl<C: OpenAICompatCaller> OpenAICompatBrain<C> {
             caller,
             services,
             cells,
+            op_tools: Vec::new(),
             messages,
             pending: None,
             finished: false,
@@ -507,6 +512,31 @@ impl<C: OpenAICompatCaller> OpenAICompatBrain<C> {
     /// this bounds *turns* so a degenerate model cannot loop forever.
     pub fn with_step_cap(mut self, cap: u64) -> OpenAICompatBrain<C> {
         self.step_cap = cap;
+        self
+    }
+
+    /// Advertise the rich **operator tools** (`shell` / `fs_read` / `fs_write` /
+    /// `list_dir` / `mkdir` / `http_get` / `git_clone`) to the model, mapped to
+    /// [`AgentAction::Op`]. Pass the subset the agent's cap bundle grants (the
+    /// gate still has the final say — an advertised-but-ungranted tool is refused
+    /// in-band, and the model observes the refusal).
+    pub fn with_op_tools(mut self, tools: Vec<String>) -> OpenAICompatBrain<C> {
+        self.op_tools = tools;
+        self
+    }
+
+    /// Append a `note` to the system message (e.g. a per-model steering line like
+    /// `detailed thinking off` / "one tool call per turn"). Affects only the
+    /// system turn; the key is never placed here.
+    pub fn with_system_note(mut self, note: &str) -> OpenAICompatBrain<C> {
+        if let Some(first) = self.messages.first_mut() {
+            let base = first
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or(SYSTEM_PROMPT)
+                .to_string();
+            *first = json!({ "role": "system", "content": format!("{base}\n{note}") });
+        }
         self
     }
 
@@ -614,6 +644,14 @@ impl<C: OpenAICompatCaller> OpenAICompatBrain<C> {
                 }
             }));
         }
+        // The rich OPERATOR tools (real shell / fs / http / git). Each is cap-gated
+        // per-tool AND per-resource by the run loop, so advertising one the bundle
+        // did not grant is safe (it is refused in-band, and the model adapts).
+        for t in &self.op_tools {
+            if let Some(spec) = op_tool_spec(t) {
+                tools.push(spec);
+            }
+        }
         tools.push(json!({
             "type": "function",
             "function": {
@@ -651,27 +689,46 @@ impl<C: OpenAICompatCaller> AgentBrain for OpenAICompatBrain<C> {
         if self.finished || step >= self.step_cap {
             return None;
         }
-        let body = self.request_body();
-        // THE ONE PLACE THE BYO KEY IS READ — handed to the caller, in the auth
-        // header, never into `body`.
-        let resp = match self
-            .caller
-            .complete(&self.endpoint, self.key.secret(), &body)
-        {
-            Ok(r) => {
-                self.key_reached_provider = true;
-                r
+        // A bounded inner loop so an UNKNOWN-tool answer is fed back to the model
+        // (which then retries with a valid tool) without ending the turn — the
+        // model genuinely adapts. Capped so a model that only ever names bogus
+        // tools cannot spin forever (no budget is drawn by these turns).
+        for _ in 0..4 {
+            let body = self.request_body();
+            // THE ONE PLACE THE BYO KEY IS READ — handed to the caller, in the auth
+            // header, never into `body`.
+            let resp = match self
+                .caller
+                .complete(&self.endpoint, self.key.secret(), &body)
+            {
+                Ok(r) => {
+                    self.key_reached_provider = true;
+                    r
+                }
+                Err(e) => {
+                    // Fail-closed: a provider error finishes the turn (no fabricated
+                    // tool-call). `DREGG_AGENT_DEBUG=1` prints it to stderr (the
+                    // error strings never include the key).
+                    if std::env::var_os("DREGG_AGENT_DEBUG").is_some() {
+                        eprintln!("[dregg-agent] brain fail-closed: {e}");
+                    }
+                    self.finished = true;
+                    return None;
+                }
+            };
+            match self.parse_step(&resp) {
+                ParseOutcome::Act(action) => return Some(action),
+                ParseOutcome::Done => {
+                    self.finished = true;
+                    return None;
+                }
+                // Unknown tool — the error was folded into the conversation; ask again.
+                ParseOutcome::Retry => continue,
             }
-            Err(_e) => {
-                // Fail-closed: a provider error finishes the turn (no fabricated
-                // tool-call). The reason is intentionally not surfaced into the
-                // run — it could carry transport detail; the bound/receipt rails
-                // are what matters.
-                self.finished = true;
-                return None;
-            }
-        };
-        self.parse_step(&resp)
+        }
+        // Too many unknown-tool turns in a row — end the turn (fail-closed).
+        self.finished = true;
+        None
     }
 
     fn observe(&mut self, obs: &ActionObservation) {
@@ -703,12 +760,43 @@ impl<C: OpenAICompatCaller> AgentBrain for OpenAICompatBrain<C> {
     }
 }
 
+/// What parsing one model turn yielded.
+enum ParseOutcome {
+    /// A mapped tool call to dispatch (cap-gate + meter + receipt).
+    Act(AgentAction),
+    /// The turn ends (a `finish` tool call or a plain-text final answer).
+    Done,
+    /// The model named an unknown tool; an error was folded into the conversation
+    /// and the brain should re-ask (the model adapts to a valid tool).
+    Retry,
+}
+
 impl<C: OpenAICompatCaller> OpenAICompatBrain<C> {
-    /// Parse an OpenAI chat response into the next [`AgentAction`], stashing the
-    /// assistant turn for [`observe`](OpenAICompatBrain::observe). The first
-    /// tool-call wins; a `finish` call or a plain text answer ends the turn
-    /// (returns `None`).
-    fn parse_step(&mut self, resp: &Value) -> Option<AgentAction> {
+    /// The advertised tool names (for the unknown-tool error hint).
+    fn advertised_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .services
+            .iter()
+            .filter(|s| s.as_str() != "stripe_pay")
+            .map(|_| "invoke".to_string())
+            .collect();
+        if self.services.iter().any(|s| s == "stripe_pay") {
+            names.push("stripe_pay".to_string());
+        }
+        if !self.cells.is_empty() {
+            names.push("cell_write".to_string());
+            names.push("cell_read".to_string());
+        }
+        names.extend(self.op_tools.iter().cloned());
+        names.push("finish".to_string());
+        names.dedup();
+        names
+    }
+
+    /// Parse an OpenAI chat response into the next step. The first tool-call wins;
+    /// a `finish` call or a plain text answer ends the turn; an unknown tool is
+    /// fed back as an error so the model retries.
+    fn parse_step(&mut self, resp: &Value) -> ParseOutcome {
         let message = resp
             .get("choices")
             .and_then(|c| c.as_array())
@@ -716,17 +804,17 @@ impl<C: OpenAICompatCaller> OpenAICompatBrain<C> {
             .and_then(|c| c.get("message"));
         let Some(message) = message else {
             // Unparseable — fail-closed.
-            self.finished = true;
-            return None;
+            return ParseOutcome::Done;
         };
 
         if let Some(tcs) = message.get("tool_calls").and_then(|t| t.as_array()) {
             if let Some(tc) = tcs.first() {
                 let func = tc.get("function");
-                let name = func
+                let raw_name = func
                     .and_then(|f| f.get("name"))
                     .and_then(|n| n.as_str())
                     .unwrap_or("");
+                let name = canonical_tool(raw_name);
                 let args = parse_arguments(func.and_then(|f| f.get("arguments")));
                 let tool_call_id = tc
                     .get("id")
@@ -736,28 +824,158 @@ impl<C: OpenAICompatCaller> OpenAICompatBrain<C> {
                         self.tool_call_seq += 1;
                         format!("tc-{}", self.tool_call_seq)
                     });
+
+                // The loop is ONE tool call per turn, but a model may emit several
+                // in one message. Keep ONLY the chosen one in the stored assistant
+                // turn, so the single tool result we append matches it (else the
+                // conversation is invalid — N calls, 1 result — and the provider
+                // rejects the follow-up).
+                let mut assistant = message.clone();
+                if let Some(obj) = assistant.as_object_mut() {
+                    obj.insert("tool_calls".to_string(), json!([tc]));
+                }
+
+                if name == "finish" {
+                    self.messages.push(assistant);
+                    return ParseOutcome::Done;
+                }
                 match map_tool_call(name, &args) {
                     Some(action) => {
                         self.pending = Some(PendingCall {
-                            assistant: message.clone(),
+                            assistant,
                             tool_call_id,
                         });
-                        return Some(action);
+                        ParseOutcome::Act(action)
                     }
                     None => {
-                        // `finish` (or an unknown tool) — end the turn cleanly.
-                        self.messages.push(message.clone());
-                        self.finished = true;
-                        return None;
+                        // Feed the error back so the model retries instead of
+                        // giving up — distinguishing a bad-args call to a KNOWN
+                        // tool from a genuinely unknown tool name.
+                        let content = if is_known_tool(name) {
+                            format!(
+                                "tool `{name}` was called with missing/invalid arguments \
+                                 ({}). Fix the arguments and call it again.",
+                                arg_hint(name)
+                            )
+                        } else {
+                            format!(
+                                "no such tool `{raw_name}`. Available tools: {}. Call one of these.",
+                                self.advertised_names().join(", ")
+                            )
+                        };
+                        self.messages.push(assistant);
+                        self.messages.push(json!({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": content
+                        }));
+                        ParseOutcome::Retry
                     }
                 }
+            } else {
+                // Empty tool_calls array — treat as a final answer.
+                self.messages.push(message.clone());
+                ParseOutcome::Done
             }
+        } else {
+            // No tool-call — a final text answer. End the turn.
+            self.messages.push(message.clone());
+            ParseOutcome::Done
         }
+    }
+}
 
-        // No tool-call — a final text answer. End the turn.
-        self.messages.push(message.clone());
-        self.finished = true;
-        None
+/// The spend amount in **cents**, tolerant of how a model phrases it:
+/// `amount_cents` / `cents` (integer cents); or `amount` as a dollar figure (a
+/// float `0.12` → `12`¢, or an integer treated as cents to match the
+/// cents-denominated budget). `None` if no amount is given.
+fn spend_cents(args: &Value) -> Option<i64> {
+    let as_cents = |v: &Value| -> Option<i64> {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+    };
+    if let Some(v) = args.get("amount_cents").or_else(|| args.get("cents")) {
+        return as_cents(v);
+    }
+    let v = args.get("amount")?;
+    if let Some(f) = v.as_f64() {
+        // A fractional amount is dollars (`0.12` → 12¢); a whole number is cents.
+        if f.fract() != 0.0 {
+            return Some((f * 100.0).round() as i64);
+        }
+        return Some(f as i64);
+    }
+    if let Some(s) = v.as_str() {
+        let s = s.trim().trim_start_matches('$');
+        if let Ok(i) = s.parse::<i64>() {
+            return Some(i);
+        }
+        if let Ok(f) = s.parse::<f64>() {
+            return Some((f * 100.0).round() as i64);
+        }
+    }
+    None
+}
+
+/// A short required-argument hint for a known tool (for the bad-args feedback).
+fn arg_hint(name: &str) -> &'static str {
+    match name {
+        "stripe_pay" => "needs an integer `amount_cents`",
+        "invoke" => "needs a string `service`",
+        "cell_write" => "needs `path` and `value`",
+        "cell_read" => "needs `path`",
+        op::SHELL => "needs a string `cmd`",
+        op::FS_READ | op::LIST_DIR | op::MKDIR => "needs a string `path`",
+        op::FS_WRITE => "needs `path` and `content`",
+        op::HTTP_GET => "needs a string `url`",
+        op::GIT_CLONE => "needs a string `url`",
+        _ => "check the required arguments",
+    }
+}
+
+/// `true` iff `name` (already canonicalized) is a tool the brain can map — used
+/// to tell "unknown tool" apart from "known tool, bad arguments" in the feedback.
+fn is_known_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "invoke"
+            | "stripe_pay"
+            | "cell_write"
+            | "cell_read"
+            | "finish"
+            | op::SHELL
+            | op::FS_READ
+            | op::FS_WRITE
+            | op::LIST_DIR
+            | op::MKDIR
+            | op::HTTP_GET
+            | op::GIT_CLONE
+    )
+}
+
+/// Map a model's tool name (possibly an alias) to the canonical advertised name —
+/// models often emit `file_list`/`read_file`/`bash`/`fetch` instead of the exact
+/// schema name; canonicalizing keeps the loop robust without a fragile prompt.
+fn canonical_tool(name: &str) -> &str {
+    match name {
+        // operator ops + common aliases
+        "shell" | "bash" | "sh" | "run" | "run_shell" | "exec" | "command" | "terminal" => {
+            op::SHELL
+        }
+        "fs_read" | "read_file" | "readfile" | "cat" | "read" | "get_file" | "open_file" => {
+            op::FS_READ
+        }
+        "fs_write" | "write_file" | "writefile" | "write" | "put_file" | "save_file" => {
+            op::FS_WRITE
+        }
+        "list_dir" | "file_list" | "list_files" | "ls" | "listdir" | "dir" | "list_directory" => {
+            op::LIST_DIR
+        }
+        "mkdir" | "make_dir" | "makedir" | "create_dir" | "create_directory" => op::MKDIR,
+        "http_get" | "http" | "fetch" | "curl" | "http_fetch" | "wget" | "get_url" => op::HTTP_GET,
+        "git_clone" | "clone" | "git" | "gitclone" | "git_pull" => op::GIT_CLONE,
+        // flat rails (unchanged)
+        other => other,
     }
 }
 
@@ -775,16 +993,9 @@ fn parse_arguments(arguments: Option<&Value>) -> Value {
 /// `finish` and any unrecognized tool (the turn ends rather than fabricating).
 fn map_tool_call(name: &str, args: &Value) -> Option<AgentAction> {
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
-    // An amount can arrive as a JSON number or a numeric string.
-    let n = |k: &str| {
-        args.get(k).and_then(|v| {
-            v.as_i64()
-                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
-        })
-    };
     match name {
         "invoke" => s("service").map(|service| AgentAction::Invoke { service }),
-        "stripe_pay" => n("amount_cents").map(|amount_cents| AgentAction::Spend {
+        "stripe_pay" => spend_cents(args).map(|amount_cents| AgentAction::Spend {
             service: "stripe_pay".to_string(),
             amount_cents,
         }),
@@ -793,8 +1004,107 @@ fn map_tool_call(name: &str, args: &Value) -> Option<AgentAction> {
             _ => None,
         },
         "cell_read" => s("path").map(|path| AgentAction::CellRead { path }),
+        // The rich operator tools → AgentAction::Op (the run loop cap-gates the
+        // resource and runs the real shell / fs / http / git).
+        op::SHELL
+        | op::FS_READ
+        | op::FS_WRITE
+        | op::LIST_DIR
+        | op::MKDIR
+        | op::HTTP_GET
+        | op::GIT_CLONE => Some(AgentAction::Op(op_tool_call(name, args))),
         _ => None,
     }
+}
+
+/// Collect the string args an operator tool understands into a [`ToolCall`].
+fn op_tool_call(name: &str, args: &Value) -> ToolCall {
+    let keys: &[&str] = match name {
+        op::SHELL => &["cmd"],
+        op::FS_READ | op::LIST_DIR | op::MKDIR => &["path"],
+        op::FS_WRITE => &["path", "content"],
+        op::HTTP_GET => &["url"],
+        op::GIT_CLONE => &["url", "dest"],
+        _ => &[],
+    };
+    let mut map = std::collections::BTreeMap::new();
+    for k in keys {
+        if let Some(v) = args.get(*k) {
+            // Accept a string, or coerce a non-string scalar to its text form.
+            let val = v
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| match v {
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                });
+            if !val.is_empty() {
+                map.insert((*k).to_string(), val);
+            }
+        }
+    }
+    ToolCall {
+        tool: name.to_string(),
+        args: map,
+    }
+}
+
+/// The OpenAI function spec for one operator tool, or `None` for an unknown name.
+fn op_tool_spec(tool: &str) -> Option<Value> {
+    let f = match tool {
+        op::SHELL => json!({
+            "name": op::SHELL,
+            "description": "Run a real shell command (bash). The working directory persists \
+                            across calls (a `cd` sticks); it is confined to your workdir. \
+                            Pipes and `&&` work. You get the real stdout/stderr/exit code.",
+            "parameters": { "type": "object",
+                "properties": { "cmd": { "type": "string", "description": "the shell command" } },
+                "required": ["cmd"] }
+        }),
+        op::FS_READ => json!({
+            "name": op::FS_READ,
+            "description": "Read a UTF-8 file under your workdir. Returns its contents.",
+            "parameters": { "type": "object",
+                "properties": { "path": { "type": "string" } }, "required": ["path"] }
+        }),
+        op::FS_WRITE => json!({
+            "name": op::FS_WRITE,
+            "description": "Write a UTF-8 file under your workdir (creating parent dirs).",
+            "parameters": { "type": "object",
+                "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
+                "required": ["path", "content"] }
+        }),
+        op::LIST_DIR => json!({
+            "name": op::LIST_DIR,
+            "description": "List a directory under your workdir.",
+            "parameters": { "type": "object",
+                "properties": { "path": { "type": "string" } }, "required": ["path"] }
+        }),
+        op::MKDIR => json!({
+            "name": op::MKDIR,
+            "description": "Create a directory (and parents) under your workdir.",
+            "parameters": { "type": "object",
+                "properties": { "path": { "type": "string" } }, "required": ["path"] }
+        }),
+        op::HTTP_GET => json!({
+            "name": op::HTTP_GET,
+            "description": "HTTP GET a URL. Only granted hosts are reachable (egress is \
+                            cap-gated per host). Returns the status and body.",
+            "parameters": { "type": "object",
+                "properties": { "url": { "type": "string" } }, "required": ["url"] }
+        }),
+        op::GIT_CLONE => json!({
+            "name": op::GIT_CLONE,
+            "description": "Clone a git repo into your workdir (shallow). The host must be \
+                            granted. Then use shell/fs to work with it.",
+            "parameters": { "type": "object",
+                "properties": { "url": { "type": "string" },
+                                "dest": { "type": "string", "description": "optional subdir" } },
+                "required": ["url"] }
+        }),
+        _ => return None,
+    };
+    Some(json!({ "type": "function", "function": f }))
 }
 
 #[cfg(test)]
