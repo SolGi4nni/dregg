@@ -427,6 +427,149 @@ mod tests {
         }
     }
 
+    /// THE MAKE-OR-BREAK (Path-B gate): does a turn SUPER-RATIFY under the gate-ON (verified Lean,
+    /// memoized `tauOrderFast`) finalizer on an n=5-shaped cross-linked DAG (5 validators, the C3
+    /// shape, supermajority threshold `supermajority_threshold(5) == 4`)? And does the gate-OFF
+    /// (Rust `ordering::tau`) path do the SAME on the identical DAG?
+    ///
+    /// This is the local proof that GATES the live Path-B clean cut. It runs BOTH finalizers over one
+    /// canonical DAG and reports each verdict:
+    ///   * gate-ON  = `VerifiedFinality::compute_order` (the REAL node path: `dregg_tau_order` FFI =
+    ///     the memoized verified `tauOrderFast`).
+    ///   * gate-OFF = `dregg_blocklace::ordering::tau` (the Rust differential sibling the node runs
+    ///     when `DREGG_FINALITY_GATE=0`).
+    ///
+    /// A finalized turn block = the consensus precondition `execute_finalized_turn` fires on (height
+    /// 0 -> 1). The DAG is wavelength-3, rounds 1..3 = wave 0; the wave-0 leader is `participants[0]`
+    /// at round 1, super-ratified once a supermajority (4 of 5) of round-3 blocks ratify it. Every
+    /// block carries a `Turn` payload, so a non-empty finalized order == "a turn super-ratified".
+    ///
+    /// EXPECTED (and the finding to report): the two finalizers run the SAME rule (the Lean port is
+    /// proved order-faithful to the Rust `tau`), so on a CLEAN round-synchronous DAG BOTH super-ratify
+    /// and AGREE on the finalized `(creator, seq)` set. gate-ON finalizing here is the green light for
+    /// the Path-B cut; the Rust↔Lean agreement means the live gate-OFF non-finalization was NOT a
+    /// finalizer-RULE bug but a degenerate live DAG / the (now-fixed) FFI wedge — i.e. the fix is the
+    /// clean cut + the memoization, not a different finalization rule.
+    ///
+    /// Self-skips when the archive lacks the raw-order export (a stale/marshal-only build).
+    #[test]
+    fn gate_on_super_ratifies_n5_c3_shape() {
+        if !dregg_lean_ffi::tau_order_available() {
+            eprintln!(
+                "SKIP: Lean raw tau-order export not linked (tau_order_available()==false) — \
+                 the gate-ON finalizer cannot be proven; rebuild with the verified archive"
+            );
+            return;
+        }
+
+        // n=5, threshold 4 (== supermajority_threshold(5)). The C3 shape: a fully cross-linked,
+        // round-synchronous DAG. Three rounds = wave 0 (wavelength 3), the minimal shape that can
+        // super-ratify a wave-0 leader. Every block carries a Turn payload.
+        let keys: Vec<SigningKey> = (1u8..=5).map(key).collect();
+        let participants: Vec<[u8; 32]> =
+            keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+        assert_eq!(
+            dregg_blocklace::ordering::supermajority_threshold(participants.len()),
+            4,
+            "n=5 supermajority threshold is 4 (the C3 quorum)"
+        );
+        let mut lace = Blocklace::new(keys[0].clone(), 4);
+
+        let mut r1_ids = Vec::new();
+        for (i, k) in keys.iter().enumerate() {
+            let b = Block::new(k, 0, Payload::Turn(vec![i as u8]), vec![]);
+            r1_ids.push(b.id());
+            lace.receive_block(b).expect("genesis insert");
+        }
+        let mut round_prev: Vec<BlockId> = r1_ids;
+        for round in 1u64..=2 {
+            let mut this_round = Vec::new();
+            for (i, k) in keys.iter().enumerate() {
+                let b = Block::new(
+                    k,
+                    round,
+                    Payload::Turn(vec![(round * 10) as u8 + i as u8]),
+                    round_prev.clone(),
+                );
+                this_round.push(b.id());
+                lace.receive_block(b).expect("round insert");
+            }
+            round_prev = this_round;
+        }
+
+        // ── gate-OFF: the Rust `ordering::tau` over the same lace, projected to (creator, seq). ──
+        let mut ordering_lace = dregg_blocklace::Blocklace::new();
+        let mut fin_to_ord: HashMap<BlockId, dregg_blocklace::BlockId> = HashMap::new();
+        let mut blocks: Vec<_> = lace.iter().collect();
+        blocks.sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
+        let mut ord_to_cs: HashMap<dregg_blocklace::BlockId, ([u8; 32], u64)> = HashMap::new();
+        for (fin_id, b) in &blocks {
+            let preds: Vec<dregg_blocklace::BlockId> = b
+                .predecessors
+                .iter()
+                .filter_map(|p| fin_to_ord.get(p).copied())
+                .collect();
+            let ob = dregg_blocklace::Block::new(b.creator, b.seq, preds, vec![]);
+            let oid = ob.id();
+            ordering_lace.insert_unverified(ob).ok();
+            fin_to_ord.insert(**fin_id, oid);
+            ord_to_cs.insert(oid, (b.creator, b.seq));
+        }
+        let rust_order = dregg_blocklace::ordering::tau(&ordering_lace, &participants);
+        let gate_off_cs: std::collections::HashSet<([u8; 32], u64)> = rust_order
+            .iter()
+            .filter_map(|oid| ord_to_cs.get(oid).copied())
+            .collect();
+
+        // ── gate-ON: the REAL node path — verified Lean `tauOrderFast` via the FFI export. ──
+        let gate_on_order = VerifiedFinality::compute_order(&lace, &participants)
+            .expect("gate-ON verified raw-order ran (archive present + wire non-ERR)");
+        let gate_on_cs: std::collections::HashSet<([u8; 32], u64)> = gate_on_order
+            .iter()
+            .filter_map(|id| lace.get(id).map(|b| (b.creator, b.seq)))
+            .collect();
+
+        eprintln!(
+            "MAKE-OR-BREAK n=5/C3: gate-ON finalized {} turn-blocks; gate-OFF finalized {} turn-blocks",
+            gate_on_cs.len(),
+            gate_off_cs.len()
+        );
+
+        // VERDICT 1 — the make-or-break: a turn SUPER-RATIFIES under gate-ON (non-empty order ⇒ the
+        // wave-0 leader super-ratified and its coverage finalized ⇒ execute_finalized_turn's
+        // precondition is met, height 0 -> 1 can fire).
+        assert!(
+            !gate_on_cs.is_empty(),
+            "gate-ON (verified Lean tauOrderFast) MUST super-ratify a turn on the n=5 C3 DAG — \
+             this is the Path-B green light. EMPTY here ⇒ STOP the cut: the finalization-liveness \
+             bug is in the finalizer/consensus itself (gate-independent)."
+        );
+
+        // VERDICT 2 — gate-ON and gate-OFF run the SAME rule: they finalize the IDENTICAL
+        // (creator, seq) set on a clean DAG. (If they DIVERGED, gate-OFF would be a confirmed-buggy
+        // finalizer; they do not — the live gate-OFF non-finalization is a degenerate-DAG / wedge
+        // artifact, not a rule bug.)
+        assert_eq!(
+            gate_on_cs, gate_off_cs,
+            "gate-ON (Lean) and gate-OFF (Rust tau) must finalize the same (creator, seq) set on the \
+             clean n=5 C3 DAG — the Lean port is order-faithful to the Rust tau"
+        );
+
+        // The wave-0 leader (participants[0]) must be among the finalized creators (the super-ratified
+        // anchor), and all 5 genesis turns finalize (full wave-0 coverage).
+        assert!(
+            gate_on_cs
+                .iter()
+                .any(|(c, s)| *c == participants[0] && *s == 0),
+            "the super-ratified wave-0 leader's genesis turn must be finalized under gate-ON"
+        );
+        assert_eq!(
+            gate_on_cs.len(),
+            15,
+            "the n=5 / 3-round clean DAG finalizes all 15 turn-blocks (wave-0 coverage)"
+        );
+    }
+
     /// THE WEDGE REGRESSION TEST — the verified Lean tau-ordering completes FAST on an n=5
     /// cross-linked multi-round DAG (the shape that wedged the node). Before the
     /// `BlocklaceFinality.tauOrderFast` memoization (the Lean parallel of the Rust `PastCache`), the
