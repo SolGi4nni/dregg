@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dregg.works — a host that cannot tamper with what it serves</title>
+  <meta name="description" content="The web of cells. Publish a minisite by committing its blake3 hash to your cell on-chain; <name>.dregg.works serves the bytes; every visitor verifies in their own browser that the served bytes match the commitment. The host cannot tamper.">
+  <meta property="og:title" content="dregg.works — a host that cannot tamper">
+  <meta property="og:description" content="Publish a minisite by committing its hash on-chain. The host serves the bytes but cannot change them — every page is verifiable in your browser.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    main.wrap { max-width: 960px; }
+    .dw-lede { max-width: 60ch; margin: var(--s4) auto 0; color: var(--fg-dim);
+      font-size: clamp(1.02rem, 2vw, 1.18rem); line-height: 1.6; }
+    .dw-hero h1 { max-width: 18ch; margin: 0 auto; font-size: clamp(2.2rem, 5.5vw, 3.4rem);
+      line-height: 1.12; text-wrap: balance; }
+    .dw-hero h1 em { font-style: italic; color: var(--accent-bright); }
+    .dw-hero .hero__cta { justify-content: center; margin-top: var(--s6); }
+    /* the live tamper demo */
+    .demo { background: var(--bg-raised); border: 1px solid var(--line-strong);
+      border-radius: var(--r4); padding: var(--s6); margin-top: var(--s5); }
+    .demo__grid { display: grid; grid-template-columns: 1fr; gap: var(--s4); }
+    .demo textarea { width: 100%; min-height: 150px; resize: vertical; font-family: var(--font-mono);
+      font-size: 12.5px; line-height: 1.55; background: var(--bg-inset); color: var(--fg);
+      border: 1px solid var(--line-strong); border-radius: var(--r3); padding: var(--s4); }
+    .demo textarea:focus { outline: none; border-color: var(--accent); }
+    .demo__hashes { display: grid; grid-template-columns: 1fr; gap: var(--s3);
+      font-family: var(--font-mono); font-size: 11.5px; }
+    .demo__h { padding: var(--s3) var(--s4); border-radius: var(--r2); border: 1px solid var(--line);
+      background: var(--bg-inset); word-break: break-all; color: var(--fg-dim); }
+    .demo__h b { display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--fg-muted); margin-bottom: 3px; }
+    .demo__h.ok { border-color: rgba(122,171,111,0.45); }
+    .demo__verdict { font-family: var(--font-display); font-size: clamp(1.3rem, 3.5vw, 1.9rem);
+      text-align: center; padding: var(--s4); }
+    .demo__verdict.ok { color: var(--accent-bright); }
+    .demo__verdict.bad { color: var(--danger); }
+    .demo__controls { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: center;
+      justify-content: space-between; margin-top: var(--s2); }
+    .demo__hint { font-size: 0.84rem; color: var(--fg-muted); }
+    /* snippet */
+    .snippet { position: relative; }
+    .snippet pre { font-size: 12px; }
+    .copybtn { position: absolute; top: 10px; right: 10px; font-family: var(--font-mono);
+      font-size: 0.72rem; padding: 4px 10px; border-radius: var(--r2); cursor: pointer;
+      border: 1px solid var(--line-strong); background: var(--bg-raised); color: var(--fg-dim); }
+    .copybtn:hover { border-color: var(--accent); color: var(--accent-bright); }
+    /* a static rendering of the live badge, so visitors see what ships */
+    .badge-demo { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono);
+      font-size: 12.5px; font-weight: 600; padding: 9px 13px; border-radius: 999px;
+      border: 1px solid rgba(122,171,111,.55); background: rgba(8,12,10,.92); color: var(--accent-bright);
+      box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+    @media (min-width: 720px) {
+      .demo__hashes { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name"><a href="https://dregg.fg-goose.online/" style="color:var(--chalk)"><code>dregg</code> / deos</a></span>
+  <span class="nav__tag">dregg.works &middot; the web of cells</span>
+  <div class="nav__links">
+    <a class="nav__link" href="https://dregg.fg-goose.online/">Home</a>
+    <a class="nav__link" href="#how">How</a>
+    <a class="nav__link" href="#verify">Verify it</a>
+    <a class="nav__link" href="#badge">The badge</a>
+    <a class="nav__link" href="https://github.com/emberian/dregg">Source</a>
+  </div>
+</nav>
+
+<header class="dw-hero">
+  <p class="hero__eyebrow">the web of cells</p>
+  <h1>A host that cannot tamper with <em>what it serves.</em></h1>
+  <p class="dw-lede">
+    Publish a minisite and you commit its <code>blake3</code> hash to your cell — on-chain, in one cap-gated
+    receipted turn. <code>&lt;name&gt;.dregg.works</code> serves the bytes, but it holds no power to change
+    them. Every page you visit here proves itself in your own browser: the served bytes are re-hashed and
+    matched against the commitment. <strong>You never have to trust the host.</strong>
+  </p>
+  <div class="hero__cta">
+    <a class="btn btn--primary" href="#verify">See it can't lie</a>
+    <a class="btn btn--secondary" href="#publish">Publish a cell</a>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <section class="section" id="how">
+    <span class="section__label">The model</span>
+    <h2 class="section__title">A link is a capability, not a location</h2>
+    <p class="section__intro">
+      On the open web a link is a <em>place</em>: you trust DNS to find a host, TLS to authenticate it, and
+      then you trust whatever bytes that host hands back. A <code>dregg://</code> page is a
+      <em>capability into a specific cell</em>, and its bytes are content-addressed: the page is the page the
+      origin committed — checkable by anyone, from any source. <code>dregg.works</code> is that model wearing
+      ordinary HTTP, so any browser can reach it.
+    </p>
+    <div class="dw-flow">
+      <div class="dw-step"><span class="dw-step__n">1 · commit (the trust)</span><span class="dw-step__t">Publish to your cell</span>
+        <span class="dw-step__d">A cap-gated turn writes <code>blake3(page)</code> into slot&nbsp;0 of your cell. The commitment is on-chain, signed, receipted — and yours. This is the only trust-bearing step.</span></div>
+      <div class="dw-step"><span class="dw-step__n">2 · serve (just bytes)</span><span class="dw-step__t">&lt;name&gt;.dregg.works</span>
+        <span class="dw-step__d">The host ships the raw committed bytes over HTTP. It is untrusted infrastructure — convenience, never authority. It cannot forge a blake3 preimage.</span></div>
+      <div class="dw-step"><span class="dw-step__n">3 · verify (you)</span><span class="dw-step__t">Re-hash in your tab</span>
+        <span class="dw-step__d">The verify badge re-hashes the bytes your browser received and compares them to the cell's committed hash, fetched from a node you can point anywhere. ✓ or ✗.</span></div>
+    </div>
+  </section>
+
+  <!-- ============ THE LIVE TAMPER DEMO ============ -->
+  <section class="section" id="verify">
+    <span class="section__label">Prove it to yourself</span>
+    <h2 class="section__title">Tamper with the bytes — watch it get caught</h2>
+    <p class="section__intro">
+      This is the exact check every <code>dregg.works</code> page runs, here in your tab. The
+      <strong>committed hash</strong> is fixed (as if it were on-chain in a cell). Edit the page bytes below:
+      the <strong>served hash</strong> recomputes live. Change a single character and it diverges — the host
+      cannot slip anything past you.
+    </p>
+    <div class="demo">
+      <div class="demo__grid">
+        <label class="demo__hint" for="body">the served page bytes (edit me)</label>
+        <textarea id="body" spellcheck="false">&lt;!doctype html&gt;
+&lt;title&gt;hello.dregg.works&lt;/title&gt;
+&lt;h1&gt;served from a cell&lt;/h1&gt;
+&lt;p&gt;These bytes are committed on-chain. The host cannot change them.&lt;/p&gt;</textarea>
+      </div>
+      <div class="demo__controls">
+        <span class="demo__hint">the commitment is fixed — like a hash sealed in your cell's slot&nbsp;0</span>
+        <span>
+          <button class="btn btn--secondary" id="tamper" style="padding:6px 14px;font-size:0.8rem">Tamper one byte</button>
+          <button class="btn btn--secondary" id="reset" style="padding:6px 14px;font-size:0.8rem">Reset</button>
+        </span>
+      </div>
+      <div class="demo__verdict" id="verdict">…</div>
+      <div class="demo__hashes">
+        <div class="demo__h" id="committedBox"><b>committed on-chain (cell slot 0)</b><span id="committed">—</span></div>
+        <div class="demo__h" id="servedBox"><b>served bytes — blake3, computed in your tab</b><span id="served">—</span></div>
+      </div>
+    </div>
+    <p class="section__intro" style="margin-top:var(--s5);font-size:0.92rem">
+      On a real <code>dregg.works</code> page the committed hash is not baked in — it is fetched live from a
+      node via <code>GET /api/cell/&lt;id&gt;</code> (slot&nbsp;0), so the host serving the page never supplies
+      its own answer key. Same blake3, same comparison, against a commitment you can independently look up.
+    </p>
+  </section>
+
+  <!-- ============ THE BADGE ============ -->
+  <section class="section" id="badge">
+    <span class="section__label">The badge</span>
+    <h2 class="section__title">Every served page carries the proof</h2>
+    <p class="section__intro">
+      One self-contained script, dropped into a published page, gives every visitor the verdict in the corner
+      of the screen — no extension, no install. It re-fetches the page's own bytes, hashes them with a
+      vendored BLAKE3, and checks them against the on-chain commitment. A click opens the full reading.
+    </p>
+    <p style="text-align:center;margin:var(--s5) 0"><span class="badge-demo">✓ verified on-chain</span></p>
+    <div class="snippet">
+      <button class="copybtn" id="copy">copy</button>
+<pre><code>&lt;!-- in your published page, before &lt;/body&gt; --&gt;
+&lt;script src="https://dregg.works/verify-badge.js"
+        data-cell="&lt;your 64-hex cell id&gt;"
+        data-node="https://&lt;a-node&gt;"
+        data-name="mysite"&gt;&lt;/script&gt;</code></pre>
+    </div>
+    <p class="section__intro" style="margin-top:var(--s4);font-size:0.92rem">
+      Then commit <code>blake3</code> of the whole file — badge tag and all — to your cell. The page becomes
+      self-certifying: the bytes that include the badge are exactly the bytes the badge re-hashes and the
+      bytes the commitment pins. The check closes on itself. See the snippet's header for the meta-tag and
+      <code>window.__DREGG__</code> alternatives.
+    </p>
+  </section>
+
+  <!-- ============ BROWSE PUBLISHED CELLS ============ -->
+  <section class="section" id="cells">
+    <span class="section__label">Published</span>
+    <h2 class="section__title">Browse the web of cells</h2>
+    <p class="section__intro">
+      Each of these is a sovereign cell that committed its own bytes. The <code>dregg://</code> ref is the
+      content-addressed cell id; the <code>.dregg.works</code> name is just a convenient front for it.
+    </p>
+    <div class="dw-grid">
+      <a class="dw-cell" href="https://hello.dregg.works/">
+        <span class="dw-cell__name">hello</span>
+        <span class="dw-cell__uri">hello.dregg.works · dregg://&lt;cell&gt;</span>
+        <span class="dw-cell__desc">The first live minisite served from a cell — its bytes committed on-chain, verifiable in your browser.</span>
+      </a>
+      <a class="dw-cell" href="#publish">
+        <span class="dw-cell__name">+ publish yours</span>
+        <span class="dw-cell__uri">dregg id → turn → commit</span>
+        <span class="dw-cell__desc">Hold a cell, commit a page's hash with one cap-gated turn, point a name at it. Your bytes, your sovereignty boundary.</span>
+      </a>
+    </div>
+  </section>
+
+  <!-- ============ PUBLISH ============ -->
+  <section class="section" id="publish">
+    <span class="section__label">Publish</span>
+    <h2 class="section__title">Commit a page to a cell</h2>
+    <p class="section__intro">
+      Publishing is one verified turn: write <code>blake3(content)</code> into slot&nbsp;0 of your cell under
+      the <code>publish</code> method. The commitment is the trust-bearing half; serving the matching bytes is
+      just hosting. This is the <code>publishMinisite</code> drive action the interactive portal fires.
+    </p>
+    <pre><code>import { hexEncode } from "@dregg/sdk/browser";
+import { blake3 } from "@noble/hashes/blake3";
+
+// blake3(page) → the 32-byte content commitment a publish turn writes
+const contentHash = blake3(new TextEncoder().encode(pageHtml));
+
+// one cap-gated, receipted turn: write the hash into the cell's slot 0
+const receipt = await runtime.turn()
+  .method("publish")
+  .write(0, contentHash)        // SITE_CONTENT_SLOT
+  .sign()                        // Ed25519, federation-bound
+  .submit();                     // → Receipt
+
+// the page is now self-certifying at dregg://&lt;cell&gt;
+const dreggUri = `dregg://${runtime.cellIdHex()}`;</code></pre>
+    <p class="section__intro" style="margin-top:var(--s4);font-size:0.92rem">
+      The convention is realized in <code>portal/src/drive-actions.mjs</code> (<code>publishMinisite</code>) and
+      <code>starbridge-web-surface/src/web_of_cells.rs</code> (<code>WebOfCells::publish</code> / the
+      <code>ServedResourceCell</code> shape). The serving host that maps a name to a cell and ships the bytes
+      is untrusted infrastructure — by design, it never needs to be believed.
+    </p>
+  </section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left"><code>dregg.works</code> &mdash; the web of cells. A host that cannot tamper. AGPL-3.0-or-later.</span>
+    <div class="site-foot__links">
+      <a href="https://dregg.fg-goose.online/">dregg / deos</a>
+      <a href="https://dregg.fg-goose.online/light-client/">Light client</a>
+      <a href="#verify">Verify</a>
+      <a href="#badge">Badge</a>
+      <a href="https://github.com/emberian/dregg">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script type="module">
+  // The same standalone BLAKE3 the badge ships — here it powers the live tamper demo.
+  const IV = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
+  const MSG = [2,6,3,10,7,0,4,13,1,11,12,5,9,14,15,8];
+  const CS=1, CE=2, PAR=4, RT=8;
+  const rotr = (x,n)=>((x>>>n)|(x<<(32-n)))>>>0;
+  function compress(cv,block,lo,hi,blen,flags){
+    const s=new Uint32Array(16);
+    for(let i=0;i<8;i++)s[i]=cv[i];
+    s[8]=IV[0];s[9]=IV[1];s[10]=IV[2];s[11]=IV[3];s[12]=lo>>>0;s[13]=hi>>>0;s[14]=blen>>>0;s[15]=flags>>>0;
+    let m=block;
+    const g=(a,b,c,d,mx,my)=>{s[a]=(s[a]+s[b]+mx)>>>0;s[d]=rotr(s[d]^s[a],16);s[c]=(s[c]+s[d])>>>0;s[b]=rotr(s[b]^s[c],12);s[a]=(s[a]+s[b]+my)>>>0;s[d]=rotr(s[d]^s[a],8);s[c]=(s[c]+s[d])>>>0;s[b]=rotr(s[b]^s[c],7);};
+    for(let r=0;r<7;r++){
+      g(0,4,8,12,m[0],m[1]);g(1,5,9,13,m[2],m[3]);g(2,6,10,14,m[4],m[5]);g(3,7,11,15,m[6],m[7]);
+      g(0,5,10,15,m[8],m[9]);g(1,6,11,12,m[10],m[11]);g(2,7,8,13,m[12],m[13]);g(3,4,9,14,m[14],m[15]);
+      if(r<6){const p=new Uint32Array(16);for(let k=0;k<16;k++)p[k]=m[MSG[k]];m=p;}
+    }
+    for(let j=0;j<8;j++){s[j]=(s[j]^s[j+8])>>>0;s[j+8]=(s[j+8]^cv[j])>>>0;}
+    return s;
+  }
+  const wordsOf=(b,o,l)=>{const w=new Uint32Array(16);for(let i=0;i<l;i++)w[i>>2]|=b[o+i]<<((i&3)*8);return w;};
+  const outB=s=>{const o=new Uint8Array(32);for(let i=0;i<8;i++){o[i*4]=s[i]&255;o[i*4+1]=(s[i]>>>8)&255;o[i*4+2]=(s[i]>>>16)&255;o[i*4+3]=(s[i]>>>24)&255;}return o;};
+  function chunk(inp,off,len,ctr,root){let cv=IV.slice(0,8);const nb=Math.max(1,Math.ceil(len/64));for(let b=0;b<nb;b++){const bo=off+b*64,bl=Math.min(64,len-b*64);let f=0;if(b===0)f|=CS;if(b===nb-1){f|=CE;if(root)f|=RT;}const out=compress(cv,wordsOf(inp,bo,Math.max(0,bl)),ctr&0xffffffff,Math.floor(ctr/0x100000000),bl,f);if(b===nb-1&&root)return outB(out);cv=out.slice(0,8);}return cv;}
+  function parent(l,r,root){const bk=new Uint32Array(16);for(let i=0;i<8;i++){bk[i]=l[i];bk[i+8]=r[i];}const o=compress(IV.slice(0,8),bk,0,0,64,PAR|(root?RT:0));return root?outB(o):o.slice(0,8);}
+  const p2=n=>{let p=1;while(p*2<n)p*=2;return p;};
+  function tree(inp,off,len,ctr,root){if(len<=1024)return chunk(inp,off,len,ctr,root);const nc=Math.ceil(len/1024),lc=p2(nc),ll=lc*1024;const L=tree(inp,off,ll,ctr,false);const R=tree(inp,off+ll,len-ll,ctr+lc,false);return parent(L,R,root);}
+  function blake3hex(str){const b=new TextEncoder().encode(str);const o=tree(b,0,b.length,0,true);let s="";for(let i=0;i<32;i++)s+=(o[i]<16?"0":"")+o[i].toString(16);return s;}
+
+  const $ = s => document.querySelector(s);
+  const body = $('#body');
+  const pristine = body.value;
+  const committed = blake3hex(pristine);
+  $('#committed').textContent = committed;
+
+  function refresh() {
+    const served = blake3hex(body.value);
+    $('#served').textContent = served;
+    const ok = served === committed;
+    const v = $('#verdict');
+    v.className = 'demo__verdict ' + (ok ? 'ok' : 'bad');
+    v.textContent = ok ? '✓ these exact bytes are committed on-chain' : '✕ tampered — the served bytes do not match the commitment';
+    $('#servedBox').classList.toggle('ok', ok);
+    $('#committedBox').classList.toggle('ok', ok);
+  }
+  body.addEventListener('input', refresh);
+  $('#tamper').addEventListener('click', () => {
+    const i = Math.floor(body.value.length / 2);
+    body.value = body.value.slice(0, i) + (body.value[i] === '.' ? '!' : '.') + body.value.slice(i + 1);
+    refresh();
+  });
+  $('#reset').addEventListener('click', () => { body.value = pristine; refresh(); });
+  refresh();
+
+  $('#copy').addEventListener('click', (e) => {
+    const code = e.target.parentElement.querySelector('code').textContent;
+    navigator.clipboard.writeText(code).then(() => { e.target.textContent = 'copied ✓'; setTimeout(() => e.target.textContent = 'copy', 1400); });
+  });
+</script>
+</body>
+</html>

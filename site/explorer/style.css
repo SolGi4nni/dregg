@@ -1877,3 +1877,88 @@ button { font-family: inherit; cursor: pointer; }
   line-height: 1.5;
 }
 .ex-receipt-stream__note code { font-size: 11px; }
+
+/* ============================================================
+   SITE NAV — shared dregg / deos identity (used by the explorer
+   "caps as rows" page). Translucent, blurred, sticky at top.
+   Class names are .site-nav* to avoid any collision with the
+   .ex-* explorer shell and the .car-* caps-as-rows styles.
+   ============================================================ */
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  backdrop-filter: blur(12px) saturate(1.2);
+  border-bottom: 1px solid var(--border-2);
+}
+.site-nav__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.site-nav__mark {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--bg);
+  display: grid; place-items: center;
+  font-family: var(--mono);
+  font-size: 15px; font-weight: 600;
+  line-height: 1;
+  transition: background 0.15s, transform 0.15s;
+}
+.site-nav__brand:hover .site-nav__mark {
+  background: var(--accent-bright);
+  transform: translateY(-1px);
+}
+.site-nav__wordmark {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.site-nav__wordmark .accent { color: var(--accent-bright); }
+.site-nav__tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 1px solid var(--border-2);
+  padding-left: 16px;
+}
+.site-nav__links {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.site-nav__link {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  transition: color 0.15s, background 0.15s;
+}
+.site-nav__link:hover {
+  color: var(--text);
+  background: rgba(255,255,255,0.05);
+}
+@media (max-width: 680px) {
+  .site-nav { gap: 10px; padding: 8px 14px; flex-wrap: wrap; }
+  .site-nav__tag { display: none; }
+  .site-nav__links { gap: 0; }
+  .site-nav__link { padding: 5px 8px; font-size: 11px; }
+}

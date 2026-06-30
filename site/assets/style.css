@@ -32,6 +32,8 @@
   --accent-soft: rgba(91, 138, 90, 0.12);
   --warm:      var(--lantern);
   --warm-soft: rgba(196, 146, 69, 0.10);
+  --danger:    #d9663f;
+  --danger-soft: rgba(217, 102, 63, 0.12);
   --line:      rgba(228, 221, 208, 0.08);
   --line-strong: rgba(228, 221, 208, 0.15);
 
@@ -967,3 +969,249 @@ main {
     }
   }
 }
+
+/* ============================================================
+   v2 BUFF — deepened green-π identity: a living hero, the verify
+   motif, the proof-stage, and the trustless badge. All additive.
+   ============================================================ */
+
+/* ---- HERO: a slow drifting aurora + a faint proof lattice ---- */
+.hero {
+  padding-top: var(--s9);
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: -20% -10% auto -10%;
+  height: 140%;
+  background:
+    radial-gradient(ellipse 38% 32% at 22% 18%, rgba(122, 171, 111, 0.10), transparent 70%),
+    radial-gradient(ellipse 30% 40% at 82% 72%, rgba(196, 146, 69, 0.07), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .hero::after { animation: aurora 22s var(--ease) infinite alternate; }
+  @keyframes aurora {
+    from { transform: translate3d(-2%, -1%, 0) scale(1); opacity: 0.9; }
+    to   { transform: translate3d(3%, 2%, 0) scale(1.08); opacity: 1; }
+  }
+}
+.hero__inner { z-index: 2; }
+
+/* a small mono "status line" under the hero CTAs — the live receipt motif */
+.hero__pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: var(--s5);
+  padding: 8px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(8, 12, 10, 0.5);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+}
+.hero__pulse b { color: var(--accent-bright); font-weight: 600; }
+.pulse-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent-bright);
+  box-shadow: 0 0 0 0 rgba(122, 171, 111, 0.6);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pulse-dot { animation: ping 1.9s var(--ease) infinite; }
+  @keyframes ping {
+    0%   { box-shadow: 0 0 0 0 rgba(122, 171, 111, 0.5); }
+    70%  { box-shadow: 0 0 0 7px rgba(122, 171, 111, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(122, 171, 111, 0); }
+  }
+}
+
+/* ---- SECTION LABEL: a leading rule for sharper hierarchy ---- */
+.section__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.section__label::before {
+  content: '';
+  width: 22px; height: 1px;
+  background: var(--accent);
+  opacity: 0.7;
+}
+
+/* ---- CHIP / PILL ---- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--fg-dim);
+  background: rgba(8, 12, 10, 0.4);
+}
+.chip--ok { color: var(--accent-bright); border-color: rgba(122, 171, 111, 0.35); background: var(--accent-soft); }
+.chip--warm { color: var(--warm); border-color: rgba(196, 146, 69, 0.3); background: var(--warm-soft); }
+
+/* ============================================================
+   THE PROOF STAGE — the light-client centerpiece visual.
+   A whole history folds into one proof; the proof rests on a
+   named cryptographic floor. CSS-only; legible without JS.
+   ============================================================ */
+.stage {
+  position: relative;
+  border-radius: var(--r4);
+  border: 1px solid var(--line-strong);
+  background:
+    radial-gradient(ellipse 60% 80% at 50% 0%, rgba(122, 171, 111, 0.07), transparent 70%),
+    var(--bg-inset);
+  padding: var(--s7) var(--s6) var(--s6);
+  overflow: hidden;
+}
+.stage__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 520px;
+  margin: 0 auto var(--s5);
+}
+.stage__turn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--bg-raised);
+}
+.stage__turn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+.stage__turn .root { margin-left: auto; color: var(--fg-dim); }
+@media (prefers-reduced-motion: no-preference) {
+  .stage__turn { animation: foldIn 0.5s var(--ease) both; }
+  .stage__turn:nth-child(2) { animation-delay: 0.06s; }
+  .stage__turn:nth-child(3) { animation-delay: 0.12s; }
+  .stage__turn:nth-child(4) { animation-delay: 0.18s; }
+  .stage__turn:nth-child(5) { animation-delay: 0.24s; }
+  @keyframes foldIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+}
+.stage__fold {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  margin: var(--s3) 0;
+}
+.stage__proof {
+  max-width: 420px;
+  margin: 0 auto;
+  text-align: center;
+  padding: var(--s5);
+  border: 1px solid var(--accent);
+  border-radius: var(--r3);
+  background: var(--accent-soft);
+}
+.stage__proof .glyph {
+  font-family: var(--font-mono);
+  font-size: 1.6rem;
+  color: var(--accent-bright);
+}
+.stage__proof .cap { font-size: 0.82rem; color: var(--fg-dim); margin-top: 6px; }
+.stage__floor {
+  margin: var(--s5) auto 0;
+  max-width: 520px;
+  text-align: center;
+  padding-top: var(--s4);
+  border-top: 1px dashed rgba(196, 146, 69, 0.3);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--warm);
+  line-height: 1.6;
+}
+
+/* ============================================================
+   TRUSTLESS VERIFY BADGE — shipped on every <name>.dregg.works
+   page. The host can't tamper: the served bytes are committed
+   on-chain. (Style mirrored inline by verify-badge.js so it is
+   self-contained on served pages; kept here for the apex site.)
+   ============================================================ */
+.dw-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: rgba(8, 12, 10, 0.7);
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease);
+}
+.dw-badge:hover { border-color: var(--accent); }
+.dw-badge.ok { border-color: rgba(122, 171, 111, 0.5); color: var(--accent-bright); }
+.dw-badge.bad { border-color: rgba(217, 102, 63, 0.6); color: var(--danger, #d9663f); }
+.dw-badge.checking { color: var(--warm); }
+.dw-badge .mk { font-weight: 700; }
+
+/* ============================================================
+   dregg.works APEX — the WebOfCells front door cards
+   ============================================================ */
+.dw-hero {
+  position: relative;
+  overflow: hidden;
+  padding: var(--s9) var(--s5) var(--s7);
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 0%, rgba(122, 171, 111, 0.08), transparent 70%),
+    linear-gradient(180deg, var(--void), var(--canopy));
+  text-align: center;
+}
+.dw-flow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--s4);
+  margin-top: var(--s6);
+}
+.dw-step {
+  position: relative;
+  padding: var(--s5);
+  border-radius: var(--r3);
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  text-align: left;
+}
+.dw-step__n { font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent); margin-bottom: var(--s2); display: block; }
+.dw-step__t { font-family: var(--font-display); font-size: 1.1rem; color: var(--chalk); margin-bottom: var(--s2); }
+.dw-step__d { font-size: 0.86rem; color: var(--fg-muted); line-height: 1.55; }
+
+.dw-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--s4);
+}
+.dw-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s5);
+  border-radius: var(--r3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  background: var(--bg-raised);
+  text-decoration: none;
+  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.dw-cell:hover { border-color: var(--accent); transform: translateY(-2px); }
+.dw-cell__name { font-family: var(--font-display); font-size: 1.1rem; color: var(--chalk); }
+.dw-cell__uri { font-family: var(--font-mono); font-size: 0.72rem; color: var(--accent-bright); word-break: break-all; }
+.dw-cell__desc { font-size: 0.84rem; color: var(--fg-muted); line-height: 1.5; }

@@ -41,6 +41,23 @@
     .step__n { font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent); margin-bottom: var(--s2); }
     .step__t { font-family: var(--font-display); font-size: 1.05rem; color: var(--chalk); margin-bottom: var(--s2); }
     .step__d { font-size: 0.84rem; color: var(--fg-muted); line-height: 1.55; }
+    /* the dramatic verdict + verifying shimmer */
+    .verdict { font-family: var(--font-mono); font-weight: 700; }
+    .verdict.ok { color: var(--accent-bright); }
+    .verdict.no { color: var(--danger); }
+    .bigverdict { font-family: var(--font-display); font-size: clamp(1.5rem, 4vw, 2.4rem);
+      letter-spacing: -0.01em; display: block; margin-bottom: var(--s3); }
+    .bigverdict.ok { color: var(--accent-bright); }
+    .bigverdict.no { color: var(--danger); }
+    @media (prefers-reduced-motion: no-preference) {
+      .bigverdict { animation: vpop 0.4s var(--ease) both; }
+      @keyframes vpop { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+      .busy { position: relative; }
+      .busy::after { content: ' ▍'; animation: blink 1s steps(2) infinite; }
+      @keyframes blink { 50% { opacity: 0; } }
+    }
+    .lc-hero { padding-top: var(--s4); }
+    .lc-hero h1 { font-size: clamp(2rem, 5vw, 3rem); max-width: 18ch; }
   </style>
 </head>
 <body>
@@ -51,14 +68,17 @@
   <span class="nav__tag">light client &middot; verify a whole history</span>
   <div class="nav__links">
     <a class="nav__link" href="../">Home</a>
+    <a class="nav__link" href="../dregg-works/">dregg.works</a>
     <a class="nav__link" href="../cards/">Cards</a>
     <a class="nav__link" href="https://github.com/emberian/dregg">Source</a>
   </div>
 </nav>
 
 <main class="wrap">
+ <div class="lc-hero">
   <p class="lc-eyebrow">light client · in your tab</p>
   <h1>Verify a whole history in one proof</h1>
+ </div>
   <p class="lc-lede">
     A finalized history is a chain of turns: each turn's after-state is the next turn's before-state.
     Instead of re-executing every turn to trust the result, a <strong>producer</strong> (a node or relayer
@@ -67,6 +87,23 @@
     nothing: no re-execution, no re-hashing, no walk of the chain. If it verifies, every folded turn
     executed correctly, in order, from genesis to the final root.
   </p>
+
+  <div class="stage">
+    <div class="stage__rows" aria-hidden="true">
+      <div class="stage__turn"><span class="dot"></span> turn 1 · transfer <span class="root">root a3f1…</span></div>
+      <div class="stage__turn"><span class="dot"></span> turn 2 · set-field <span class="root">root 7b09…</span></div>
+      <div class="stage__turn"><span class="dot"></span> turn 3 · mint <span class="root">root e4c2…</span></div>
+      <div class="stage__turn"><span class="dot"></span> … k turns, in order <span class="root">final root c1d4…</span></div>
+    </div>
+    <div class="stage__fold">▼ folded once, natively, off the verifier ▼</div>
+    <div class="stage__proof">
+      <div class="glyph">π ✓</div>
+      <div class="cap">one recursive STARK — what your tab verifies below, re-witnessing nothing</div>
+    </div>
+    <p class="stage__floor">
+      the verification carries the recursion engine's FRI soundness. The verification <em>is</em> the trust.
+    </p>
+  </div>
 
   <div class="steps">
     <div class="step"><div class="step__n">produce · off the verifier</div><div class="step__t">Fold once</div>
@@ -130,7 +167,7 @@
 
   function renderAttested(view) {
     const ok = view.attested;
-    return `<span class="verdict ${ok ? 'ok' : 'no'}">${ok ? '✓ attested' : '✕ refused'}</span>\n` +
+    return `<span class="bigverdict ${ok ? 'ok' : 'no'}">${ok ? '✓ whole history attested' : '✕ refused'}</span>` +
       `<span class="k">turns folded</span> <span class="v">${view.num_turns}</span>\n` +
       `<span class="k">genesis root</span> <span class="v">${view.genesis_root}</span>\n` +
       `<span class="k">final root</span> <span class="v">${view.final_root}</span>\n` +

@@ -65,8 +65,14 @@ cp "$ROOT/site/root/index.html" "$DIST/index.html"
 cp -R "$ROOT/site/assets" "$DIST/assets"
 cp -R "$ROOT/site/explorer" "$DIST/explorer"
 cp -R "$ROOT/site/light-client" "$DIST/light-client"
+# dregg.works — the trustless-host front door + the injectable verify badge. Shipped
+# under /dregg-works/ on the main site; the same dir is what deploys to the dregg.works
+# apex (where verify-badge.js sits at the root as /verify-badge.js).
+cp -R "$ROOT/site/dregg-works" "$DIST/dregg-works"
 test -f "$DIST/explorer/index.html"
 test -f "$DIST/light-client/index.html"
+test -f "$DIST/dregg-works/index.html"
+test -f "$DIST/dregg-works/verify-badge.js"
 
 # ── 1. THE deos COCKPIT: the WebImage launcher (gpui-free skin), node-less ───────
 echo "=== 1/6 build the WebImage cockpit wasm (starbridge-v2/web, default) ==="

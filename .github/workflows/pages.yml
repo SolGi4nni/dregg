@@ -89,6 +89,10 @@ jobs:
           test -f site/dist/explorer/index.html
           test -f site/dist/explorer/caps-as-rows.js
           test -f site/dist/light-client/index.html
+          # dregg.works — the trustless-host front door + the injectable verify badge
+          test -f site/dist/dregg-works/index.html
+          test -s site/dist/dregg-works/verify-badge.js
+          grep -q 'cannot tamper' site/dist/dregg-works/index.html
           # the real pre-folded whole-history aggregate the light-client page verifies in-tab
           test -s site/dist/light-client/history.json
           # the atlas + its materialized (non-LFS-stub) images

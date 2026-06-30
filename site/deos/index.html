@@ -5,17 +5,18 @@
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>deos · the verified ocap desktop, live in your browser</title>
 <style>
-:root{--bg:#0d1117;--bg2:#161b22;--bg3:#0a0e14;--line:#21262d;--fg:#c9d1d9;--muted:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;--orange:#f0883e;--purple:#bc8cff}
+:root{--bg:#0a0f0d;--bg2:#121b16;--bg3:#080c0a;--line:rgba(228,221,208,0.10);--line2:rgba(228,221,208,0.15);--fg:#e4ddd0;--dim:#a89e8e;--muted:#7a7265;--accent:#7aab6f;--moss:#5b8a5a;--sage:#9cc08a;--green:#7aab6f;--red:#d9663f;--orange:#c49245;--purple:#9c8abf;--serif:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;--mono:'SF Mono','Cascadia Code','JetBrains Mono',ui-monospace,Menlo,monospace}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/1.5 ui-monospace,Menlo,monospace}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/1.5 var(--mono)}
 .app{display:flex;flex-direction:column;height:100vh}
 header{display:flex;align-items:center;gap:14px;padding:9px 16px;border-bottom:1px solid var(--line);background:var(--bg3)}
-header h1{font-size:15px;margin:0;color:var(--accent);white-space:nowrap}
-header h1 small{color:var(--muted);font-weight:normal;font-size:11px}
-.live{color:var(--green)}.stat{color:var(--muted);font-size:11px}
+header h1{font-family:var(--serif);font-size:17px;letter-spacing:.3px;margin:0;color:var(--sage);white-space:nowrap}
+header h1 small{font-family:var(--mono);color:var(--muted);font-weight:normal;font-size:11px;letter-spacing:0}
+.live{color:var(--green);text-shadow:0 0 7px rgba(122,171,111,.45);animation:pulse 1.8s ease-in-out infinite}
+.stat{color:var(--muted);font-size:11px}
 nav{margin-left:auto;display:flex;gap:6px;align-items:center}
 nav a{color:var(--muted);text-decoration:none;border:1px solid var(--line);border-radius:7px;padding:4px 10px;font-size:11px;white-space:nowrap}
-nav a:hover{border-color:var(--accent);color:var(--accent)}
+nav a:hover{border-color:var(--accent);color:var(--accent);background:#121b16}
 .main{flex:1;display:flex;min-height:0}
 .col{overflow:auto;padding:12px}
 .rail{width:280px;border-right:1px solid var(--line);background:var(--bg3)}
@@ -24,13 +25,13 @@ nav a:hover{border-color:var(--accent);color:var(--accent)}
 h2{font-size:13px;color:var(--accent);margin:0 0 8px}
 h3{font-size:12px;color:var(--green);border-bottom:1px solid var(--line);padding-bottom:3px;margin:16px 0 6px}
 .cell{padding:7px 9px;border:1px solid var(--line);border-radius:7px;margin-bottom:6px;cursor:pointer;background:var(--bg2)}
-.cell:hover{border-color:var(--accent)}.cell.sel{border-color:var(--orange);background:#1c2128}
+.cell:hover{border-color:var(--accent)}.cell.sel{border-color:#c49245;background:#182420}
 .cell .id{color:var(--accent)}.cell .bal{color:var(--orange);float:right}
 .muted{color:var(--muted)}.bal{color:var(--orange)}.id{color:var(--accent)}
 table{border-collapse:collapse;width:100%}td{padding:2px 7px;border-bottom:1px solid var(--bg2);vertical-align:top}
 td.k{color:var(--muted);width:38%}
 .face{margin:8px 0;border:1px solid var(--line);border-radius:7px;padding:9px;background:var(--bg2)}
-.prose{white-space:pre-wrap;color:#a5d6ff}
+.prose{white-space:pre-wrap;color:#c7d8b8}
 .msg{display:flex;justify-content:space-between;align-items:center;padding:6px 9px;border:1px solid var(--line);border-radius:7px;margin-bottom:6px;background:var(--bg2)}
 .msg.ok{cursor:pointer}.msg.ok:hover{border-color:var(--green)}.msg.no{opacity:.65}
 .send{font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--green);color:var(--green)}
@@ -38,19 +39,32 @@ td.k{color:var(--muted);width:38%}
 .log{font-size:11px}.log .committed{color:var(--green)}.log .refused{color:var(--red)}
 .log div{padding:3px 0;border-bottom:1px solid var(--bg2)}
 /* boot splash */
-#splash{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity .35s}
+#splash{position:fixed;inset:0;z-index:20;background:radial-gradient(120% 90% at 50% 32%,#121b16 0%,var(--bg) 62%);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity .35s}
 #splash.gone{opacity:0;pointer-events:none}
-#splash h1{font-size:22px;color:var(--accent);margin:0;letter-spacing:.5px}
-#splash p{color:var(--muted);max-width:520px;text-align:center;margin:0;line-height:1.6}
+#splash h1{font-family:var(--serif);font-size:54px;font-weight:600;color:var(--sage);margin:0;letter-spacing:1px;text-shadow:0 0 26px rgba(122,171,111,.28)}
+#splash p{color:var(--dim);max-width:520px;text-align:center;margin:0;line-height:1.6}
+#splash .lineage{color:var(--muted);font-size:11px;letter-spacing:.3px}
+#splash .lineage b{color:var(--moss);font-weight:600}
+#splash .pimark{font-family:var(--serif);color:var(--moss);font-size:15px}
 #splash .dot{color:var(--green)}
 #splash .err{color:var(--red);white-space:pre-wrap;font-size:11px;max-width:680px}
-.spin{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--green);animation:pulse 1s ease-in-out infinite}
+.spin{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+@media (max-width:760px){
+  header{flex-wrap:wrap;gap:8px}
+  nav{margin-left:0;flex-wrap:wrap}
+  .main{flex-direction:column;overflow:auto}
+  .rail,.center,.acts{width:auto;border-right:none;border-bottom:1px solid var(--line)}
+  .rail,.acts{flex:none}
+  .center{flex:none;min-height:260px}
+  #splash h1{font-size:40px}
+}
 </style>
 </head>
 <body>
 <div id=splash>
-  <h1>deos</h1>
+  <h1>deos <span class=pimark>π</span></h1>
+  <p class=lineage>part of <b>dregg</b> — a capability-secure, witnessed substrate</p>
   <p><span class=spin></span> launching the verified ocap desktop in your browser…</p>
   <p class=muted style="font-size:11px">no install · no backend server · the verified executor runs in <em>this tab</em>, in WebAssembly. Every act you take is a real cap-gated turn through it, leaving a receipt.</p>
   <p id=sperr class=err></p>

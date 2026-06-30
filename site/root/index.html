@@ -52,9 +52,10 @@
   <span class="nav__tag">capability-secure &middot; proof-carrying &middot; witnessed</span>
   <div class="nav__links">
     <a class="nav__link" href="#what">What it is</a>
+    <a class="nav__link nav__link--active" href="#verify">Verify</a>
     <a class="nav__link" href="#play">Play</a>
     <a class="nav__link" href="#quickstart">Quickstart</a>
-    <a class="nav__link" href="#enables">What it enables</a>
+    <a class="nav__link" href="./dregg-works/">dregg.works</a>
     <a class="nav__link" href="https://github.com/emberian/dregg">Source</a>
   </div>
 </nav>
@@ -71,10 +72,11 @@
       in WebAssembly: the verified executor runs <em>here</em>, with no backend server. Every click you make is a real, cap-gated, verified turn.
     </p>
     <div class="hero__cta">
-      <a class="btn btn--primary" href="./deos/">Open deos in your browser</a>
-      <a class="btn btn--secondary" href="./cards/">Play with the live cards</a>
+      <a class="btn btn--primary" href="./light-client/">Watch a whole history verify</a>
+      <a class="btn btn--secondary" href="./deos/">Open deos in your browser</a>
       <a class="btn btn--secondary" href="https://github.com/emberian/dregg">Read the source</a>
     </div>
+    <span class="hero__pulse"><span class="pulse-dot"></span> the verified executor runs <b>in this tab</b> — no backend, every click a real cap-gated turn</span>
   </div>
 </header>
 
@@ -114,6 +116,45 @@
       <div class="defn__k">receipt</div>
       <div class="defn__v">The verifiable record a turn leaves behind: the before-state, the after-state, the effects, the proof. A light client can fold a whole history of receipts into one proof and check it, re-witnessing nothing.</div>
     </div>
+  </div>
+</section>
+
+<!-- ==================== THE KILLER FEATURE: LIGHT CLIENT ==================== -->
+<section class="section" id="verify">
+  <span class="section__label">The killer feature</span>
+  <h2 class="section__title">Verify a whole history — re-executing nothing</h2>
+  <p class="section__intro">
+    A finalized history is a chain of turns: each turn's after-state is the next one's before-state. A
+    producer folds the whole chain into <em>one</em> succinct recursive STARK. Your browser tab verifies that
+    single proof — no re-execution, no re-hashing, no walk of the chain. If it verifies, every folded turn
+    executed correctly, in order, from genesis to the final root. <strong>This is the in-browser recursive-STARK
+    verification, and it runs right here.</strong>
+  </p>
+  <div class="stage">
+    <div class="stage__rows" aria-hidden="true">
+      <div class="stage__turn"><span class="dot"></span> turn 1 · transfer <span class="root">root a3f1…</span></div>
+      <div class="stage__turn"><span class="dot"></span> turn 2 · set-field <span class="root">root 7b09…</span></div>
+      <div class="stage__turn"><span class="dot"></span> turn 3 · mint <span class="root">root e4c2…</span></div>
+      <div class="stage__turn"><span class="dot"></span> … k turns <span class="root">final root c1d4…</span></div>
+    </div>
+    <div class="stage__fold">▼ folded once, off the verifier ▼</div>
+    <div class="stage__proof">
+      <div class="glyph">π ✓</div>
+      <div class="cap">one recursive proof — verified in your tab, independent of how many turns the history holds</div>
+    </div>
+    <p class="stage__floor">
+      named floor: the verification carries the recursion engine's FRI soundness. The verification <em>is</em>
+      the trust — not "re-run it and hope they match."
+    </p>
+  </div>
+  <p class="section__intro" style="margin-top:var(--s5)">
+    The trust anchor is <em>your</em> configuration, held separately — never read off the artifact under
+    verification. Tamper one hex digit of the anchor and the proof is refused, not laundered. This is the
+    executable counterpart of the Lean theorem <code>light_client_verifies_whole_history</code>.
+  </p>
+  <div class="hero__cta" style="margin-top:var(--s4)">
+    <a class="btn btn--primary" href="./light-client/">Run the verifier in your tab</a>
+    <a class="btn btn--secondary" href="./dregg-works/">See it on a live host &rarr; dregg.works</a>
   </div>
 </section>
 
@@ -293,6 +334,30 @@ cargo run --example three_pillars</code></pre>
   </div>
 </section>
 
+<!-- ==================== dregg.works — the trustless host ==================== -->
+<section class="section" id="works">
+  <span class="section__label">dregg.works</span>
+  <h2 class="section__title">A host that cannot tamper with what it serves</h2>
+  <p class="section__intro">
+    Publish a minisite and you commit its <code>blake3</code> hash to your cell, on-chain, in one cap-gated
+    receipted turn. <code>&lt;name&gt;.dregg.works</code> then serves the bytes — but the host has no way to
+    change them. Every served page carries a verify badge: your browser re-hashes the bytes it received and
+    checks them against the commitment fetched from the node. <strong>✓ match, or ✗ tampered — and you don't
+    have to take the host's word for either.</strong>
+  </p>
+  <div class="dw-flow">
+    <div class="dw-step"><span class="dw-step__n">1 · commit</span><span class="dw-step__t">Publish</span>
+      <span class="dw-step__d">A cap-gated turn writes <code>blake3(page)</code> into slot 0 of your cell. The commitment is the trust-bearing half — yours, on-chain, receipted.</span></div>
+    <div class="dw-step"><span class="dw-step__n">2 · serve</span><span class="dw-step__t">Host the bytes</span>
+      <span class="dw-step__d"><code>&lt;name&gt;.dregg.works</code> ships the raw bytes. Convenience, not trust — the host is untrusted infrastructure.</span></div>
+    <div class="dw-step"><span class="dw-step__n">3 · verify</span><span class="dw-step__t">Check it yourself</span>
+      <span class="dw-step__d">The badge re-hashes the served body in your tab and compares it to the cell's committed hash. A tampered byte is caught before you trust a word.</span></div>
+  </div>
+  <div class="hero__cta" style="margin-top:var(--s5)">
+    <a class="btn btn--primary" href="./dregg-works/">Enter dregg.works</a>
+  </div>
+</section>
+
 <!-- ==================== CLOSING THESIS ==================== -->
 <section class="section">
   <div class="arch" style="display:flex;align-items:center;justify-content:center;padding:var(--s8) var(--s6);">
@@ -306,10 +371,11 @@ cargo run --example three_pillars</code></pre>
   <div class="site-foot__inner">
     <span class="site-foot__left"><code>dregg</code> / deos &mdash; a capability-secure, witnessed substrate. AGPL-3.0-or-later.</span>
     <div class="site-foot__links">
+      <a href="./light-client/">Light client</a>
+      <a href="./dregg-works/">dregg.works</a>
       <a href="./deos/">deos</a>
       <a href="./cards/">Cards</a>
       <a href="./explorer/">Explorer</a>
-      <a href="./light-client/">Light client</a>
       <a href="./atlas/">Atlas</a>
       <a href="https://github.com/emberian/dregg">GitHub</a>
     </div>
