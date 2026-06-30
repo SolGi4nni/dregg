@@ -252,7 +252,7 @@ position 46): the readout extracts the cap-tree decode + the realizable `Delegat
 `grantCap_descriptorRefines_sat` — the post cap-root is pinned by the LIVE insert write. Editing
 `delegateWriteCapOpenV3`'s write op turns this — and the apex — RED. -/
 theorem closedLogExtract_delegate_closed {State : Type}
-    (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pubLogPost : ℤ) (pre post : RecChainedState),
       Satisfied2 hash (Rfix 1) minit mfin maddrs t →
@@ -274,7 +274,7 @@ theorem closedLogExtract_delegate_closed {State : Type}
 /-- **introduce (10) — CLASS A.** `Rfix 10 = introduceWriteCapOpenV3` (position 47): the cap-tree insert
 on the moving genuine face is FORCED via `introduce_descriptorRefines_capOpenSat`. Refines `DelegateSpec`. -/
 theorem closedLogExtract_introduce_closed {State : Type}
-    (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pubLogPost : ℤ) (pre post : RecChainedState),
       Satisfied2 hash (Rfix 10) minit mfin maddrs t →
@@ -300,7 +300,7 @@ authority appendix + selector tooth → `Satisfied2 attenuateV3` → `attenuateV
 The readout supplies the realizable submask table-fill `hsub` alongside the anchor. Editing `attenuateV3`'s
 write op reds this rung — and the apex. Refines `AttenuateSpec`. -/
 theorem closedLogExtract_attenuate_closed {State : Type}
-    (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pubLogPost : ℤ) (pre post : RecChainedState),
       Satisfied2 hash (Rfix 12) minit mfin maddrs t →
@@ -325,7 +325,7 @@ theorem closedLogExtract_attenuate_closed {State : Type}
 insert + the `granted ⊑ held` non-amplification are FORCED via `delegateAtten_descriptorRefines_capOpenSat`.
 The readout supplies the SUBMASK table-fill `hsub` (the realizable lookup carrier) alongside the anchor. -/
 theorem closedLogExtract_delegateAtten_closed {State : Type}
-    (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pubLogPost : ℤ) (pre post : RecChainedState),
       Satisfied2 hash (Rfix 11) minit mfin maddrs t →
@@ -351,7 +351,7 @@ cap-tree REMOVE on the moving genuine face is FORCED via `revokeDelegation_descr
 Refines the FAITHFUL `RevokeDelegationFullSpec` (cap-edge remove FORCED + the epoch step — parent epoch
 bumped + child snapshot staled — carried as the NAMED `RevokeDelegationFullEncodes` epoch residual, §3.EPOCH). -/
 theorem closedLogExtract_revokeDelegation_closed {State : Type}
-    (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pubLogPost : ℤ) (pre post : RecChainedState),
       Satisfied2 hash (Rfix 14) minit mfin maddrs t →
@@ -376,7 +376,7 @@ write-bearing descriptor tag 14 rides): the cap-tree REMOVE on the moving genuin
 `removeEdgeCaps` kernel step, so the `RevokeCapsTreeEncodes` + `RevokeDelegationWriteAnchor` readout that
 discharges tag 14 discharges tag 2 verbatim — `hsat` is now CONSUMED (the modelled floor is gone). -/
 theorem closedLogExtract_revoke_closed {State : Type}
-    (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pubLogPost : ℤ) (pre post : RecChainedState),
       Satisfied2 hash (Rfix 2) minit mfin maddrs t →
@@ -404,7 +404,7 @@ the published receipt-prepend, and the `RefreshDelegationCapsTreeEncodes` decode
 ride; the deleg WRITE is in-circuit-bound (the `delegRoot_runtime_column_pending` close). Receipt is
 `refreshDelegationReceipt actor child`. -/
 theorem closedLogExtract_refreshDelegation_closed {State : Type}
-    (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pubLogPost : ℤ) (pre post : RecChainedState),
       Satisfied2 hash (Rfix 55) minit mfin maddrs t →
@@ -784,7 +784,7 @@ structure ClosureReadouts
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (State : Type)
-    (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (cnCellSeal : List Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem
       → Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem)
     (cnLife : List Dregg2.Circuit.RotatedKernelRefinementLifecycle.FieldElem
@@ -1013,7 +1013,7 @@ theorem closedLogExtract_all_genuine
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
-    {Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State}
+    {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) :
@@ -1070,7 +1070,7 @@ theorem lightclient_unfoolable_closed_final_genuine
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
-    {Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State}
+    {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
     (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
