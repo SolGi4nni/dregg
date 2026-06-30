@@ -23,6 +23,11 @@ dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 dregg-macaroon = { path = "../macaroon" }
 blake3 = "1"
+# BlakeTwo256 (blake2b-256) is the Substrate extrinsic-hash function; the live
+# Midnight observer (`midnight_observer::LiveSubstrateRpc`) hashes the SCALE
+# extrinsic bytes with it. Pure-Rust RustCrypto, already in the workspace lock
+# (consistent with `sha2`/`hmac`); adds no new transitive crates.
+blake2 = "0.10"
 ed25519-dalek = { version = "2", features = ["std"] }
 sha2 = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
