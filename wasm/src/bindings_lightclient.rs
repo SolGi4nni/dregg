@@ -245,6 +245,38 @@ pub struct ExternalHistoryEnvelope {
     pub chain_digest: Vec<u32>,
     /// Carried public commitment: how many finalized turns the aggregate folds.
     pub num_turns: usize,
+    /// **LC-3 — the finality certificate (artifact side).** The producer's BFT finality cert over
+    /// the head root: the signed ratification votes a quorum cast. `None` for a legacy
+    /// legs-1+2-only envelope (which [`verify_finalized_devnet_history`] then refuses as
+    /// un-finalized). The verifier checks these votes against its OWN configured committee (a
+    /// separate argument, never read from here) — so a fabricated cert by foreign keys is rejected.
+    #[serde(default)]
+    pub finality_cert: Option<FinalityCertJson>,
+}
+
+/// A finality certificate as it rides in the [`ExternalHistoryEnvelope`] (artifact side). The
+/// verifier reconstructs a [`dregg_lightclient::FinalityCert`] from it and checks it against the
+/// client's CONFIG committee — the keys here are the producer's CLAIM, never trusted on their own.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+pub struct FinalityCertJson {
+    /// The ratifying votes (each a 64-hex validator key + a 128-hex Ed25519 signature).
+    pub votes: Vec<FinalityVoteJson>,
+    /// The group size the producer claims the supermajority was taken over (diagnostic only — the
+    /// verifier anchors the threshold to its OWN committee size, never this field).
+    pub participant_count: usize,
+    /// The head state root (lane-0 felt, decimal) the cert claims a quorum finalized. Must equal the
+    /// aggregate's proven head for the seam to bind.
+    pub finalized_root: u32,
+}
+
+/// One ratification vote in a [`FinalityCertJson`].
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+pub struct FinalityVoteJson {
+    /// The validator's Ed25519 verifying key (64 hex chars / 32 bytes).
+    pub validator_hex: String,
+    /// The Ed25519 signature over `finality_signing_message(finalized_root, participant_count)`
+    /// (128 hex chars / 64 bytes).
+    pub signature_hex: String,
 }
 
 /// **VERIFY AN EXTERNAL HISTORY against a config-pinned VK anchor** — the real
@@ -386,6 +418,235 @@ pub fn verify_devnet_history(
     }
 }
 
+/// **LC-3 — THE FINALIZED OVER-WIRE LIGHT-CLIENT CHECK.** The same byte-path verify as
+/// [`verify_devnet_history`] (legs 1+2: the aggregate is genuine, the publics are re-attested),
+/// PLUS the THIRD leg — finality — that the bare wasm client lacked: the head root the aggregate
+/// proves was QUORUM-FINALIZED by the client's TRUSTED committee.
+///
+/// Without this leg a *correct-looking* history is indistinguishable from a *finalized* one: an
+/// equivocating prover can fold a perfectly valid aggregate over a FORK the network never finalized
+/// (legs 1+2 pass). This entry runs the Rust embodiment of
+/// `FinalizedLightClient.light_client_accepts_finalized_history`'s third leg over the wire — the
+/// composition `verify_finalized_history` performs, realized for the byte path where the in-memory
+/// `WholeChainProof` is unavailable (only its publics are, which tooth 2 just re-attested):
+///
+/// 1. byte-verify the aggregate against the CONFIG anchor (legs 1+2, exactly [`verify_devnet_history`]);
+/// 2. the **root seam**: the envelope's finality cert finalizes the SAME head felt the aggregate proves;
+/// 3. the **committee-anchored quorum**: a supermajority of the TRUSTED `committee_hex_csv` (the
+///    client's CONFIG validator set — a separate argument, NEVER read from the envelope) cast a
+///    verifying Ed25519 vote over the head root. The threshold is taken over the committee size, not
+///    the cert-supplied `participant_count` — closing red-team LC-2/LC-3.
+///
+/// `committee_hex_csv` is a comma-separated list of 64-hex validator keys. An empty committee, a
+/// missing finality cert, a seam break, or a sub-quorum (e.g. a fork signed by foreign keys) all
+/// yield `attested: false` with the precise reason — NO finalized attestation is laundered.
+#[wasm_bindgen]
+pub fn verify_finalized_devnet_history(
+    envelope_json: &str,
+    config_anchor_hex: &str,
+    committee_hex_csv: &str,
+) -> Result<JsValue, JsError> {
+    use base64::Engine as _;
+    use dregg_circuit_prove::ivc_turn_chain::RecursionVk;
+    use dregg_lightclient::{LightClientError, verify_history_bytes};
+
+    // (1) Parse + version-check the envelope.
+    let env: ExternalHistoryEnvelope = serde_json::from_str(envelope_json)
+        .map_err(|e| JsError::new(&format!("envelope parse failed: {e}")))?;
+    if env.version != 1 {
+        return Err(JsError::new(&format!(
+            "unsupported envelope version {} (this client speaks v1)",
+            env.version
+        )));
+    }
+
+    // (2) Parse the SEPARATE config anchor + the SEPARATE config committee (both the client's own).
+    let cfg_bytes = parse_hex32(config_anchor_hex)
+        .map_err(|e| JsError::new(&format!("config VK anchor parse failed: {e}")))?;
+    let anchor = RecursionVk(cfg_bytes);
+    let committee = parse_committee_csv(committee_hex_csv)
+        .map_err(|e| JsError::new(&format!("config committee parse failed: {e}")))?;
+
+    // (3) Anchor-discipline pre-check (same as verify_devnet_history): claim vs config.
+    let claimed_bytes = parse_hex32(&env.vk_fingerprint_hex)
+        .map_err(|e| JsError::new(&format!("envelope claimed fingerprint malformed: {e}")))?;
+    if claimed_bytes != cfg_bytes {
+        return finalized_refusal(
+            &env,
+            format!(
+                "REFUSED at the anchor-discipline check: the envelope was built for circuit {} but \
+                 your configured anchor pins {}",
+                env.vk_fingerprint_hex, config_anchor_hex
+            ),
+        );
+    }
+    if env.proof_bytes_b64.is_empty() {
+        return finalized_refusal(
+            &env,
+            "REFUSED: the envelope carries no proof_bytes — nothing to cryptographically verify \
+             (fail-closed)."
+                .to_string(),
+        );
+    }
+    let proof_bytes = base64::engine::general_purpose::STANDARD
+        .decode(env.proof_bytes_b64.as_bytes())
+        .map_err(|e| JsError::new(&format!("proof_bytes_b64 is not valid base64: {e}")))?;
+
+    // (4) Legs 1+2 — the REAL over-wire aggregate verify against the CONFIG anchor.
+    let attested = match verify_history_bytes(&proof_bytes, &anchor) {
+        Ok(a) => a,
+        Err(LightClientError::AggregateInvalid(e)) => {
+            return finalized_refusal(
+                &env,
+                format!("REFUSED at the over-wire recursion verify (legs 1+2): {e}"),
+            );
+        }
+    };
+
+    // (5) Leg 3 — finality. The cert must be present and certify the proven head with a committee
+    // supermajority. The proven head is lane 0 of the byte-verified final anchor.
+    let Some(cert_json) = env.finality_cert.clone() else {
+        return finalized_refusal(
+            &env,
+            "REFUSED: legs 1+2 verified, but the envelope carries NO finality certificate — a \
+             correct-looking history is not a finalized one (it could be an equivocating fork). No \
+             finalized attestation."
+                .to_string(),
+        );
+    };
+    let cert = match reconstruct_finality_cert(&cert_json) {
+        Ok(c) => c,
+        Err(e) => return finalized_refusal(&env, format!("REFUSED: malformed finality cert: {e}")),
+    };
+    let proven_head = attested.final_root[0].as_u32();
+    if let Err(reason) = finality_leg(proven_head, &cert, &committee) {
+        return finalized_refusal(
+            &env,
+            format!("REFUSED at the finality leg (leg 3): {reason}"),
+        );
+    }
+
+    let signers = cert.distinct_committee_signers(&committee);
+    let view = AttestedHistoryView {
+        attested: true,
+        genesis_root: attested.genesis_root.iter().map(|d| d.as_u32()).collect(),
+        final_root: attested.final_root.iter().map(|d| d.as_u32()).collect(),
+        chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
+        num_turns: attested.num_turns,
+        engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
+        named_floor: format!(
+            "FINALIZED over the wire: legs 1+2 (aggregate + publics) held against your CONFIG \
+             anchor, AND leg 3 — {signers} of your {} trusted committee members ratified the \
+             proven head root. named floor: recursive_sound (FRI engine soundness)",
+            committee.len()
+        ),
+    };
+    serde_wasm_bindgen::to_value(&view).map_err(JsError::from)
+}
+
+/// The pure finality leg (host-testable, no `JsValue`): the root seam + the COMMITTEE-ANCHORED
+/// quorum, mirroring `dregg_lightclient::verify_finalized_history`'s legs 2+3 for the byte path.
+/// `proven_head` is lane 0 of the byte-verified final anchor (what tooth 2 re-attested). Returns the
+/// distinct trusted-committee signer count on success, or a precise refusal reason.
+fn finality_leg(
+    proven_head: u32,
+    cert: &dregg_lightclient::FinalityCert,
+    committee: &[[u8; 32]],
+) -> Result<usize, String> {
+    if committee.is_empty() {
+        return Err(
+            "unanchored — no trusted committee configured (a count-only quorum is never \
+                    accepted)"
+                .to_string(),
+        );
+    }
+    // Root seam: the cert must finalize the SAME head the aggregate proves.
+    let shown = cert.finalized_root.as_u32();
+    if shown != proven_head {
+        return Err(format!(
+            "root seam broke: the cert finalizes head {shown} but the aggregate proved head \
+             {proven_head}"
+        ));
+    }
+    // Committee-anchored quorum — threshold over the TRUSTED committee size, not the cert's count.
+    if !cert.has_committee_quorum(committee) {
+        let threshold = 2 * committee.len() / 3 + 1;
+        return Err(format!(
+            "sub-quorum: only {} of the {} trusted committee members cast a verifying vote ({} \
+             required) — a fork signed by foreign keys does not finalize",
+            cert.distinct_committee_signers(committee),
+            committee.len(),
+            threshold
+        ));
+    }
+    Ok(cert.distinct_committee_signers(committee))
+}
+
+/// Reconstruct a [`dregg_lightclient::FinalityCert`] from its JSON form (hex-decoding each vote).
+fn reconstruct_finality_cert(
+    json: &FinalityCertJson,
+) -> Result<dregg_lightclient::FinalityCert, String> {
+    use dregg_circuit::field::BabyBear;
+    use dregg_lightclient::SignedVote;
+    let mut votes = Vec::with_capacity(json.votes.len());
+    for v in &json.votes {
+        let validator = parse_hex32(&v.validator_hex).map_err(|e| format!("validator key: {e}"))?;
+        let signature = parse_hex64(&v.signature_hex).map_err(|e| format!("signature: {e}"))?;
+        votes.push(SignedVote {
+            validator,
+            signature,
+        });
+    }
+    Ok(dregg_lightclient::FinalityCert {
+        votes,
+        participant_count: json.participant_count,
+        finalized_root: BabyBear::new(json.finalized_root),
+    })
+}
+
+/// Build the `attested: false` finalized-refusal view (carries the envelope's publics for context).
+fn finalized_refusal(env: &ExternalHistoryEnvelope, reason: String) -> Result<JsValue, JsError> {
+    let view = AttestedHistoryView {
+        attested: false,
+        genesis_root: env.genesis_root.clone(),
+        final_root: env.final_root.clone(),
+        chain_digest: env.chain_digest.clone(),
+        num_turns: env.num_turns,
+        engine: "recursive-stark (plonky3 fork)".to_string(),
+        named_floor: reason,
+    };
+    serde_wasm_bindgen::to_value(&view).map_err(JsError::from)
+}
+
+/// Parse a comma-separated list of 64-hex validator keys into a trusted committee. Blank tokens are
+/// skipped; a malformed token is a hard error (a fat-fingered committee is never silently shrunk).
+fn parse_committee_csv(s: &str) -> Result<Vec<[u8; 32]>, String> {
+    s.split(',')
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .map(parse_hex32)
+        .collect()
+}
+
+/// Parse a 128-char hex string into a `[u8; 64]` (an Ed25519 signature). Mirrors [`parse_hex32`].
+fn parse_hex64(s: &str) -> Result<[u8; 64], String> {
+    let s = s.trim();
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    if s.len() != 128 {
+        return Err(format!(
+            "expected 128 hex chars (64 bytes), got {}",
+            s.len()
+        ));
+    }
+    let mut out = [0u8; 64];
+    for (i, byte) in out.iter_mut().enumerate() {
+        let hi = hex_nibble(s.as_bytes()[2 * i])?;
+        let lo = hex_nibble(s.as_bytes()[2 * i + 1])?;
+        *byte = (hi << 4) | lo;
+    }
+    Ok(out)
+}
+
 /// **THE PRODUCER** — fold a real `k`-turn chain in the tab and emit its
 /// [`ExternalHistoryEnvelope`] as JSON, with `proof_bytes_b64` populated from the
 /// proof's versioned byte envelope. This is the artifact a node/relayer ships and a
@@ -411,6 +672,10 @@ pub fn produce_external_history_envelope(k: usize, step: u64) -> Result<String, 
         final_root: agg.final_root.iter().map(|d| d.as_u32()).collect(),
         chain_digest: agg.chain_digest.iter().map(|d| d.as_u32()).collect(),
         num_turns: agg.num_turns,
+        // The demo producer holds no validator keys; a finalized envelope is produced by the node
+        // that ran consensus. `verify_finalized_devnet_history` refuses a cert-less envelope as
+        // un-finalized (legs 1+2 only) — exactly the LC-3 boundary.
+        finality_cert: None,
     };
     serde_json::to_string(&env)
         .map_err(|e| JsError::new(&format!("envelope serialize failed: {e}")))
@@ -697,6 +962,7 @@ mod tests {
             final_root: vec![22, 0, 0, 0, 0, 0, 0, 0],
             chain_digest: vec![33, 0, 0, 0, 0, 0, 0, 0],
             num_turns: 4,
+            finality_cert: None,
         };
         let json = serde_json::to_string(&env).unwrap();
         let back: ExternalHistoryEnvelope = serde_json::from_str(&json).unwrap();
@@ -728,10 +994,11 @@ mod tests {
             version: 1,
             vk_fingerprint_hex: "ab".repeat(32),
             proof_bytes_b64: b64.clone(),
-            genesis_root: 7,
-            final_root: 9,
+            genesis_root: vec![7, 0, 0, 0],
+            final_root: vec![9, 0, 0, 0],
             chain_digest: vec![13, 0, 0, 0],
             num_turns: 3,
+            finality_cert: None,
         };
         let json = serde_json::to_string(&env).unwrap();
         let back: ExternalHistoryEnvelope = serde_json::from_str(&json).unwrap();
@@ -831,6 +1098,119 @@ mod tests {
         assert_ne!(
             config, other_claim,
             "a claim for a different circuit is refused — never trusted from the envelope"
+        );
+    }
+
+    /// **LC-3 — THE FINALITY LEG (host tooth for the over-wire finalized check).** Exercises the
+    /// pure `finality_leg` / `reconstruct_finality_cert` helpers that the wasm
+    /// `verify_finalized_devnet_history` composes — no STARK fold — so the leg-3 anchor is validated
+    /// in milliseconds: an UNANCHORED client (empty committee) accepts nothing; a fork signed by
+    /// FOREIGN keys is sub-quorum; a ROOT-SEAM break is refused; and only a real committee quorum
+    /// over the proven head passes. The full byte-path is exercised by the playground at runtime;
+    /// the leg-3 LOGIC is identical to `dregg_lightclient`'s committee-anchored teeth.
+    #[test]
+    fn finality_leg_anchors_to_the_trusted_committee() {
+        use dregg_circuit::field::BabyBear;
+        use dregg_lightclient::{FinalityCert, SignedVote, finality_signing_message};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        // A deterministic committee of 4 (threshold = 2*4/3 + 1 = 3).
+        let n = 4usize;
+        let keys: Vec<SigningKey> = (0..n as u8)
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = i;
+                seed[31] = 0xC3;
+                SigningKey::from_bytes(&seed)
+            })
+            .collect();
+        let committee: Vec<[u8; 32]> = keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+
+        let root_felt = 555_123u32;
+        let root = BabyBear::new(root_felt);
+        let sign_vote = |k: &SigningKey| -> SignedVote {
+            let msg = finality_signing_message(root, n);
+            SignedVote {
+                validator: k.verifying_key().to_bytes(),
+                signature: k.sign(&msg).to_bytes(),
+            }
+        };
+
+        // (a) LEGIT — a 3-of-4 committee quorum over the proven head passes.
+        let honest = FinalityCert {
+            votes: keys[..3].iter().map(sign_vote).collect(),
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert_eq!(
+            finality_leg(root_felt, &honest, &committee),
+            Ok(3),
+            "a genuine committee quorum over the proven head finalizes"
+        );
+
+        // (b) UNANCHORED — no committee configured accepts nothing.
+        assert!(
+            finality_leg(root_felt, &honest, &[])
+                .unwrap_err()
+                .contains("unanchored"),
+            "an unanchored client refuses outright"
+        );
+
+        // (c) FOREIGN KEYS — a fork signed by 3 well-formed keys NOT in the committee is sub-quorum.
+        let foreign_keys: Vec<SigningKey> = (100..103u8)
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = i;
+                seed[31] = 0xC3;
+                SigningKey::from_bytes(&seed)
+            })
+            .collect();
+        let forged = FinalityCert {
+            votes: foreign_keys.iter().map(sign_vote).collect(),
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert!(
+            forged
+                .votes
+                .iter()
+                .all(|v| !committee.contains(&v.validator)),
+            "the forged keys are genuinely outside the trusted committee"
+        );
+        assert!(
+            finality_leg(root_felt, &forged, &committee)
+                .unwrap_err()
+                .contains("sub-quorum"),
+            "a fork signed by foreign keys does not finalize"
+        );
+
+        // (d) ROOT-SEAM break — a genuine committee quorum, but over a DIFFERENT head than the
+        // aggregate proved. The seam must break before the quorum even matters.
+        assert!(
+            finality_leg(root_felt + 1, &honest, &committee)
+                .unwrap_err()
+                .contains("root seam"),
+            "a cert finalizing a different head than the proven aggregate is refused"
+        );
+
+        // (e) reconstruct_finality_cert roundtrips the JSON wire form back to a verifying cert.
+        let json = FinalityCertJson {
+            votes: honest
+                .votes
+                .iter()
+                .map(|v| FinalityVoteJson {
+                    validator_hex: v.validator.iter().map(|b| format!("{b:02x}")).collect(),
+                    signature_hex: v.signature.iter().map(|b| format!("{b:02x}")).collect(),
+                })
+                .collect(),
+            participant_count: n,
+            finalized_root: root_felt,
+        };
+        let back = reconstruct_finality_cert(&json).expect("the wire cert reconstructs");
+        assert_eq!(
+            finality_leg(root_felt, &back, &committee),
+            Ok(3),
+            "the reconstructed wire cert verifies identically"
         );
     }
 }

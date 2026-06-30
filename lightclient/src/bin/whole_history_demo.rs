@@ -51,6 +51,20 @@ fn demo_signed_vote(
     }
 }
 
+/// The TRUSTED committee for a demo group of `n` validators — the verifying-key bytes of validators
+/// `0..n`, exactly the genesis/epoch-distributed set the light client holds. The committee-anchored
+/// `verify_finalized_history` counts ONLY votes by these keys (red-team LC-2).
+fn demo_committee(n: u8) -> Vec<[u8; 32]> {
+    (0..n)
+        .map(|i| {
+            let mut seed = [0u8; 32];
+            seed[0] = i;
+            seed[31] = 0xA5;
+            SigningKey::from_bytes(&seed).verifying_key().to_bytes()
+        })
+        .collect()
+}
+
 /// OPEN permissions so the rotated producer-witness path admits the actor cell without auth gating
 /// (mirrors `circuit/tests/rotation_batchstark_leaf_smoke.rs`).
 fn open_permissions() -> dregg_cell::Permissions {
@@ -336,8 +350,9 @@ fn main() {
         participant_count: 4,
         finalized_root: final_root,
     };
-    let finalized = verify_finalized_history(&agg, &vk_anchor, final_root, &cert)
-        .expect("aggregate + root-seam + 3-of-4 quorum cert all hold");
+    let finalized =
+        verify_finalized_history(&agg, &vk_anchor, final_root, &cert, &demo_committee(4))
+            .expect("aggregate + root-seam + 3-of-4 quorum cert all hold");
     println!(
         "  three legs hold: aggregate verifies, root seam binds, {} of 4 distinct signers ratify.",
         finalized.quorum_signers
@@ -359,7 +374,7 @@ fn main() {
         participant_count: 4,
         finalized_root: final_root,
     };
-    match verify_finalized_history(&agg, &vk_anchor, final_root, &weak) {
+    match verify_finalized_history(&agg, &vk_anchor, final_root, &weak, &demo_committee(4)) {
         Ok(_) => panic!("a sub-quorum cert must be refused"),
         Err(e) => println!("  sub-quorum finality cert REFUSED: {e}"),
     }

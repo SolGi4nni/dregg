@@ -1132,7 +1132,14 @@ impl NodeState {
                 "recovery convergence verified — reconstructed ledger CONVERGED to the \
                  recorded finalized root (crash-consistent)"
             );
-            Ok(())
+            // ── NODE-1 (signed anchor) + NODE-2 (anti-rollback) ──────────────
+            // The check above is crash-consistency: it binds the recovered ledger to a
+            // SELF-STORED root in the SAME redb, which an offline attacker with write
+            // access can tamper alongside the ledger. Anchor it instead to the
+            // federation's QUORUM-SIGNED finalization — which an attacker cannot forge
+            // (no committee keys) — and refuse a store rolled back below a witnessed
+            // finalized height.
+            Self::verify_signed_anchor_and_rollback(&s, recovered_root)
         } else {
             tracing::error!(
                 cells = s.ledger.len(),
@@ -1149,6 +1156,153 @@ impl NodeState {
                 dregg_types::hex_encode(&expected),
             ))
         }
+    }
+
+    /// NODE-1 (signed anchor) + NODE-2 (anti-rollback). Called only AFTER the
+    /// crash-consistency convergence above passes. Anchors the recovered ledger to
+    /// the federation's QUORUM-SIGNED finalization (which an offline attacker cannot
+    /// forge — they hold no committee keys) and enforces a monotonic anti-rollback
+    /// floor so a node refuses to boot on an older internally-consistent snapshot.
+    ///
+    /// Returns `Err` (refuse to start) on: a same-epoch attested root whose committee
+    /// quorum signature does NOT verify (a forged/unsigned finalization); a recovered
+    /// head whose canonical root contradicts the committee-signed root at the attested
+    /// height; or a recovered head BELOW a witnessed finalized height (rollback).
+    ///
+    /// Fail-SAFE where no signed anchor exists: a fresh/young chain (no attested root)
+    /// or a node with no committee keys loaded (solo / pre-federation) falls through
+    /// to the best-effort high-water mark and does not refuse on that basis.
+    fn verify_signed_anchor_and_rollback(
+        s: &NodeStateInner,
+        recovered_root: [u8; 32],
+    ) -> Result<(), String> {
+        let committee = &s.known_federation_keys;
+        let head_height = s.store.recovered_head_height().ok().flatten().unwrap_or(0);
+
+        // The UNFORGEABLE floor: the height of the latest VALIDLY-SIGNED attested root.
+        let mut signed_floor: u64 = 0;
+        match s.store.latest_attested_root() {
+            Ok(Some(signed)) => {
+                if committee.is_empty() {
+                    tracing::warn!(
+                        height = signed.height,
+                        "recovery signed-anchor SKIPPED: no committee keys loaded — cannot verify \
+                         the attested-root quorum signature (NODE-1); using the best-effort \
+                         high-water mark only"
+                    );
+                } else if signed.threshold_qc.is_some() {
+                    // A BLS threshold-QC root: Ed25519 quorum verification does not apply
+                    // (BLS aggregate verify is a higher layer). Do not enforce the signed
+                    // anchor this boot rather than false-refuse a QC root.
+                    tracing::warn!(
+                        height = signed.height,
+                        "recovery signed-anchor: the latest attested root uses a BLS threshold QC \
+                         — Ed25519 quorum verification not applicable; signed anchor not enforced \
+                         this boot (NODE-1)"
+                    );
+                } else if signed.federation_id.0 != s.federation_id {
+                    // From a DIFFERENT committee/epoch (e.g. before a rotation): its signers
+                    // are not the current committee, so `verify_signatures` would
+                    // false-refuse. Skip the strict signature anchor for a foreign-epoch root.
+                    tracing::warn!(
+                        height = signed.height,
+                        "recovery signed-anchor: the latest attested root is from a different \
+                         federation epoch — signed anchor not enforced this boot (NODE-1)"
+                    );
+                } else if signed.verify_signatures(committee) {
+                    // The federation quorum genuinely signed (its `merkle_root` IS the
+                    // canonical ledger root at finalization, see blocklace_sync) — an
+                    // offline attacker cannot forge this.
+                    signed_floor = signed.height;
+                    // Binding: if the recovered head IS the attested height, its canonical
+                    // root MUST equal the SIGNED merkle_root. A ledger tampered to a state
+                    // the federation never signed fails here.
+                    if head_height == signed.height && recovered_root != signed.merkle_root {
+                        tracing::error!(
+                            height = signed.height,
+                            recovered = %dregg_types::hex_encode(&recovered_root),
+                            signed = %dregg_types::hex_encode(&signed.merkle_root),
+                            "recovered ledger root does NOT match the FEDERATION-SIGNED attested \
+                             root at the head height — STORE INTEGRITY EVENT (NODE-1), refusing"
+                        );
+                        return Err(format!(
+                            "recovery anchor failed: recovered ledger root {} != the \
+                             committee-signed attested root {} at height {} — refusing to serve a \
+                             ledger the federation never signed (NODE-1)",
+                            dregg_types::hex_encode(&recovered_root),
+                            dregg_types::hex_encode(&signed.merkle_root),
+                            signed.height
+                        ));
+                    }
+                } else {
+                    // Same-epoch root, but its quorum signature does NOT verify against the
+                    // committee — a forged/tampered attestation. Refuse.
+                    tracing::error!(
+                        height = signed.height,
+                        "the latest stored attested root carries NO valid committee quorum \
+                         signature — STORE INTEGRITY EVENT (NODE-1), refusing to start"
+                    );
+                    return Err(format!(
+                        "recovery anchor failed: the latest stored attested root at height {} has \
+                         no valid committee quorum signature — refusing to trust an \
+                         unsigned/forged finalization (NODE-1)",
+                        signed.height
+                    ));
+                }
+            }
+            Ok(None) => {
+                // No attestation yet (a young chain) — nothing to anchor; the best-effort
+                // high-water mark below still applies.
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read latest attested root for recovery anchor");
+            }
+        }
+
+        // NODE-2 anti-rollback: the recovered head must not be BELOW a previously
+        // witnessed finalized height. The floor is the max of the just-verified signed
+        // height (the unforgeable part) and a persisted monotonic high-water mark (a
+        // best-effort backstop within the attestation window — it shares the redb's
+        // tamperability, so it is not the primary anchor).
+        const HWM_KEY: &str = "recovery_finalized_high_water";
+        let persisted_hwm: u64 = s
+            .store
+            .get_config(HWM_KEY)
+            .ok()
+            .flatten()
+            .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+            .map(u64::from_le_bytes)
+            .unwrap_or(0);
+        let floor = signed_floor.max(persisted_hwm);
+        if head_height < floor {
+            tracing::error!(
+                head_height,
+                floor,
+                signed_floor,
+                persisted_hwm,
+                "recovered head height is BELOW a witnessed finalized height — ANTI-ROLLBACK \
+                 violation (NODE-2), refusing to start"
+            );
+            return Err(format!(
+                "recovery anti-rollback failed: recovered head height {head_height} is below the \
+                 witnessed finalized floor {floor} (signed={signed_floor}, watermark={persisted_hwm}) \
+                 — refusing to revert finalized state / resurrect spent nullifiers (NODE-2)"
+            ));
+        }
+        // Advance the monotonic high-water mark (never decreases).
+        let new_hwm = floor.max(head_height);
+        if new_hwm > persisted_hwm {
+            if let Err(e) = s.store.set_config(HWM_KEY, &new_hwm.to_le_bytes()) {
+                tracing::warn!(error = %e, "failed to persist recovery high-water mark (NODE-2)");
+            }
+        }
+        tracing::info!(
+            head_height,
+            signed_floor,
+            high_water = new_hwm,
+            "recovery signed-anchor + anti-rollback verified (NODE-1/NODE-2)"
+        );
+        Ok(())
     }
 
     /// Subscribe to node events (returns a broadcast receiver).
@@ -2342,6 +2496,141 @@ mod crash_recovery_overlay_tests {
             .get(&cell(seed, 0).id())
             .expect("recovered cell present");
         assert_eq!(recovered.state.balance(), 42);
+    }
+
+    /// A small deterministic committee (signing keys → public keys) for the NODE-1/2 tests.
+    fn test_committee(n: u8) -> Vec<dregg_types::PublicKey> {
+        (0..n)
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = i;
+                seed[31] = 0x5a;
+                dregg_types::SigningKey::from_bytes(&seed).public_key()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn node1_forged_attested_root_refuses_to_start() {
+        // **NODE-1.** A converging store (crash-consistency passes), but the latest
+        // federation attested root carries committee public keys with GARBAGE signatures
+        // (a forged/unsigned finalization an offline attacker fabricated). The signed
+        // anchor verifies the quorum signature against the loaded committee — it does NOT
+        // verify — so the node REFUSES to start rather than serve a ledger the federation
+        // never signed.
+        let seed = 0x5a;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_store_with_overlay(tmp.path(), seed, 7, 42, converged_root(seed, 42));
+
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construction reconstructs the overlay");
+        let committee = test_committee(3);
+        let fed_id;
+        {
+            let mut s = state.write().await;
+            s.set_federation_keys(committee.clone());
+            fed_id = s.federation_id;
+        }
+        {
+            let s = state.read().await;
+            let forged = dregg_persist::StoredAttestedRoot {
+                merkle_root: converged_root(seed, 42),
+                note_tree_root: None,
+                nullifier_set_root: None,
+                height: 2, // the head height
+                timestamp: 0,
+                blocklace_block_id: None,
+                finality_round: None,
+                // in-committee keys, but NO valid signature (forged).
+                quorum_signatures: committee
+                    .iter()
+                    .map(|pk| (*pk, dregg_types::Signature([0u8; 64])))
+                    .collect(),
+                threshold_qc: None,
+                threshold: 3,
+                federation_id: dregg_types::FederationId(fed_id),
+                receipt_stream_root: None,
+            };
+            s.store
+                .store_attested_root(&forged)
+                .expect("store the forged attested root");
+        }
+
+        let err = state
+            .verify_recovery_convergence()
+            .await
+            .err()
+            .expect("a forged/unsigned attested root must FAIL CLOSED (NODE-1)");
+        assert!(
+            err.contains("NODE-1") || err.contains("quorum signature"),
+            "the refusal must name the signed-anchor failure; got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn node2_rollback_below_high_water_refuses_to_start() {
+        // **NODE-2.** A converging store at head height 2, but a persisted high-water
+        // mark records a previously-witnessed finalized height of 100 — i.e. an attacker
+        // swapped in an OLDER internally-consistent snapshot. The boot-time anti-rollback
+        // check refuses to start rather than revert finalized spends / resurrect spent
+        // nullifiers.
+        let seed = 0x6b;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_store_with_overlay(tmp.path(), seed, 7, 42, converged_root(seed, 42));
+        // Persist a high-water mark ABOVE the recovered head (a prior boot saw height 100).
+        {
+            let store = PersistentStore::open(&tmp.path().join("dregg.redb")).expect("open store");
+            store
+                .set_config("recovery_finalized_high_water", &100u64.to_le_bytes())
+                .expect("persist high-water mark");
+        }
+
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construction reconstructs the overlay");
+        let err = state
+            .verify_recovery_convergence()
+            .await
+            .err()
+            .expect("a head below the high-water mark must FAIL CLOSED (NODE-2 anti-rollback)");
+        assert!(
+            err.contains("anti-rollback") || err.contains("NODE-2"),
+            "the refusal must name the anti-rollback violation; got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn node2_high_water_allows_equal_or_higher_head_and_advances() {
+        // **NODE-2 control (non-vacuous).** A converging store at head 2 with no prior
+        // watermark boots cleanly, persists the watermark at 2, and a SECOND convergence
+        // at the SAME head still passes (monotonic ALLOWS equal — the gate refuses only a
+        // strictly-lower head). Proves the anti-rollback does not false-refuse a normal
+        // restart.
+        let seed = 0x77;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_store_with_overlay(tmp.path(), seed, 7, 42, converged_root(seed, 42));
+
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construction reconstructs the overlay");
+        // First boot: persists the high-water mark at the head (2).
+        state
+            .verify_recovery_convergence()
+            .await
+            .expect("first boot at a fresh head must pass and set the watermark");
+        // Second boot at the SAME head: equal height is allowed (monotonic, not strict).
+        state
+            .verify_recovery_convergence()
+            .await
+            .expect("a restart at the same finalized head must NOT be flagged as a rollback");
+        // The watermark is now pinned at the head height.
+        let s = state.read().await;
+        let hwm = s
+            .store
+            .get_config("recovery_finalized_high_water")
+            .unwrap()
+            .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+            .map(u64::from_le_bytes)
+            .unwrap_or(0);
+        assert_eq!(hwm, 2, "the high-water mark advanced to the recovered head");
     }
 
     /// Seed a store with NO checkpoint (the sub-first-checkpoint case) and a

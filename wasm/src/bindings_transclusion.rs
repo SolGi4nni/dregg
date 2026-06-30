@@ -458,6 +458,7 @@ fn fetch_err_name(e: &FetchError) -> String {
         FetchError::ReceiptNotInStream => "ReceiptNotInStream",
         FetchError::ReceiptStreamRootMismatch => "ReceiptStreamRootMismatch",
         FetchError::NoQuorum => "NoQuorum",
+        FetchError::Unattested => "Unattested",
         FetchError::NonceOverflow => "NonceOverflow",
     }
     .to_string()

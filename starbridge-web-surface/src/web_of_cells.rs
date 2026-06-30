@@ -42,7 +42,7 @@
 //! root → quorum-signed AttestedRoot) is the genuine shape either way.
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
-use dregg_types::{merkle_root_of_receipt_hashes, AttestedRoot, CellId, PublicKey, Signature};
+use dregg_types::{merkle_root_of_receipt_hashes, AttestedRoot, CellId, PublicKey, SigningKey};
 
 /// A parsed `dregg://<cell>` link — a sturdy ref into a cell.
 ///
@@ -128,7 +128,71 @@ impl AttestedResource {
     /// Returns `Ok(())` only when ALL hold; otherwise the specific
     /// [`FetchError`] — on which the caller renders a visible "dregg: unattested
     /// content" body and NEVER the bytes.
+    ///
+    /// **Note (red-team LC-1):** this keyless path is the STRUCTURAL gate. It now
+    /// refuses a degenerate `threshold:0` / empty-signature "quorum" (which the bare
+    /// `has_quorum()` count accepted), but it still cannot tell a fabricated root by
+    /// attacker-chosen keys from the federation's. A client that holds the committee
+    /// MUST use [`verify_anchored`](Self::verify_anchored) — the committee-anchored
+    /// cryptographic gate — as its acceptance check.
     pub fn verify(&self) -> Result<(), FetchError> {
+        self.verify_content_chain()?;
+        // (4) the structural quorum gate — but a degenerate `threshold:0` /
+        // empty-signature root is NEVER acceptance (LC-1: `threshold:0` passed the
+        // bare count check). A real attestation carries either a BLS QC or at least
+        // a non-empty Ed25519 quorum meeting a positive threshold.
+        let ar = &self.attested_root;
+        if ar.threshold_qc.is_none() && (ar.threshold == 0 || ar.quorum_signatures.is_empty()) {
+            return Err(FetchError::NoQuorum);
+        }
+        if !ar.has_quorum() {
+            return Err(FetchError::NoQuorum);
+        }
+        Ok(())
+    }
+
+    /// **COMMITTEE-ANCHORED CLIENT VERIFICATION (the LC-1 acceptance gate).** Runs
+    /// the content chain (steps 1–3 of [`verify`](Self::verify)) and then gates on the
+    /// federation's **cryptographic** quorum against the client's TRUSTED `committee`
+    /// — `attested_root.is_valid(committee)` — NOT a count. The committee is the set
+    /// of validator public keys the client holds from genesis/checkpoint config
+    /// (e.g. [`WebOfCells::committee`]); it is NEVER read from the fetched resource.
+    ///
+    /// This is the check a `dregg://` consumer must run before a byte reaches the
+    /// renderer. A malicious content server that fabricates an `AttestedRoot` with
+    /// its own keys, or a `threshold:0` root, is REFUSED here: the forged signatures
+    /// do not verify under the committee keys, and a threshold/QC-less root carries
+    /// no quorum.
+    pub fn verify_anchored(&self, committee: &[PublicKey]) -> Result<(), FetchError> {
+        self.verify_content_chain()?;
+        // Unanchored clients accept nothing — a count-only / fabricated quorum is
+        // never acceptance (LC-1).
+        if committee.is_empty() {
+            return Err(FetchError::Unattested);
+        }
+        let ar = &self.attested_root;
+        // This path requires a real Ed25519 committee quorum. A BLS `threshold_qc`
+        // is only STRUCTURALLY checked by `is_valid` (a separate, known MED finding),
+        // so refuse a QC-only root here rather than let it bypass the committee gate.
+        if ar.threshold_qc.is_some() {
+            return Err(FetchError::Unattested);
+        }
+        if ar.threshold == 0 {
+            return Err(FetchError::Unattested);
+        }
+        // The cryptographic committee gate: every counted signature must verify under
+        // a key IN the committee, and the distinct verified signers must meet the
+        // threshold (`AttestedRoot::is_valid`).
+        if !ar.is_valid(committee) {
+            return Err(FetchError::Unattested);
+        }
+        Ok(())
+    }
+
+    /// Steps 1–3 of the verification chain (content-addressing, receipt-in-stream,
+    /// receipt-stream root reconstruction) — the part shared by [`verify`](Self::verify)
+    /// and [`verify_anchored`](Self::verify_anchored).
+    fn verify_content_chain(&self) -> Result<(), FetchError> {
         // (1) content-addressed.
         let recomputed = *blake3::hash(&self.content_bytes).as_bytes();
         if recomputed != self.content_hash {
@@ -142,10 +206,6 @@ impl AttestedResource {
         //     (the REAL receipt-stream Merkle reconstruction).
         if !self.attested_root.verify_receipt_stream(&self.receipt_set) {
             return Err(FetchError::ReceiptStreamRootMismatch);
-        }
-        // (4) the structural quorum gate.
-        if !self.attested_root.has_quorum() {
-            return Err(FetchError::NoQuorum);
         }
         Ok(())
     }
@@ -168,8 +228,15 @@ pub enum FetchError {
     ReceiptNotInStream,
     /// The recomputed receipt-stream root ≠ the root the federation signed.
     ReceiptStreamRootMismatch,
-    /// The attested root does not carry a quorum (count < threshold).
+    /// The attested root does not carry a quorum (count < threshold, or a degenerate
+    /// `threshold:0` / empty-signature root).
     NoQuorum,
+    /// The attested root is not cryptographically valid against the client's TRUSTED
+    /// committee — its quorum signatures do not verify under the committee keys (a
+    /// fabricated root by attacker-chosen keys), the committee is empty (unanchored),
+    /// or the root carries no real Ed25519 committee quorum. Returned by
+    /// [`AttestedResource::verify_anchored`] (red-team LC-1).
+    Unattested,
     /// The origin cell's nonce overflowed, so the amend could not produce a
     /// distinct serve-receipt leaf (a silent overwrite is refused — this is the
     /// surface analogue of the kernel's P2-2 replay guard).
@@ -239,9 +306,13 @@ pub struct WebOfCells {
     /// advances it — `finality_round`/`height` is the monotone freshness field
     /// §2.2 names).
     height: u64,
-    /// The federation's signing keys' public halves (for the quorum — structural
-    /// here; the bytes are deterministic stand-ins).
-    quorum_pks: Vec<PublicKey>,
+    /// The federation's quorum SIGNING keys (deterministic, derived from a seed).
+    /// `attest` signs the real [`AttestedRoot::signing_message`] with each, so the
+    /// produced quorum signatures CRYPTOGRAPHICALLY verify against the committee
+    /// public keys (`[`Self::committee`]`) — a client that holds the committee can
+    /// gate on [`AttestedResource::verify_anchored`] (`is_valid(known_keys)`), not a
+    /// count (red-team LC-1).
+    quorum_sks: Vec<SigningKey>,
     /// The node-side content byte store: the bytes a serve ships out-of-band,
     /// keyed by the origin cell. They live BESIDE the real ledger (only the
     /// content COMMITMENT is in verified cell state) — exactly as a §2.1 envelope
@@ -261,23 +332,36 @@ const CONTENT_COMMITMENT_SLOT: usize = 0;
 
 impl WebOfCells {
     /// A fresh web-of-cells with an empty ledger and a `threshold`-of-N quorum.
+    ///
+    /// The quorum signing keys are deterministic (derived from a per-index seed) so
+    /// the committee is reproducible across runs, and `attest` produces REAL Ed25519
+    /// signatures over the attested root — the client gates on the committee keys
+    /// (`is_valid`), never a count.
     pub fn new(quorum_size: usize) -> Self {
-        // Deterministic stand-in quorum public keys (structural; full crypto is a
-        // higher layer per the AttestedRoot doc).
-        let quorum_pks = (0..quorum_size)
+        // Deterministic quorum signing keys. A fixed domain-separated seed keeps the
+        // committee reproducible while the produced signatures are genuine Ed25519.
+        let quorum_sks = (0..quorum_size)
             .map(|i| {
-                let mut k = [0u8; 32];
-                k[0] = 0xF0 ^ (i as u8);
-                PublicKey(k)
+                let mut seed = [0u8; 32];
+                seed[0] = 0xF0 ^ (i as u8);
+                seed[31] = (i as u8).wrapping_mul(31).wrapping_add(7);
+                SigningKey::from_bytes(&seed)
             })
             .collect();
         WebOfCells {
             ledger: Ledger::new(),
             height: 0,
-            quorum_pks,
+            quorum_sks,
             bytes_store: Vec::new(),
             url_store: Vec::new(),
         }
+    }
+
+    /// The federation's committee public keys — the trusted validator set a `dregg://`
+    /// client holds (from genesis/checkpoint config) and gates acceptance against via
+    /// [`AttestedResource::verify_anchored`]. NEVER read from a fetched resource.
+    pub fn committee(&self) -> Vec<PublicKey> {
+        self.quorum_sks.iter().map(|sk| sk.public_key()).collect()
     }
 
     /// The federation's current monotone attestation height (the `finality_round` a
@@ -458,8 +542,9 @@ impl WebOfCells {
     /// height (a real, monotone commitment); the `receipt_stream_root` is the
     /// genuine receipt-stream Merkle root (issue #80's v4 binding) — what makes
     /// "the receipt chain IS the persistence layer" enforceable. The quorum
-    /// signatures are structural stand-ins (full crypto is a higher layer per the
-    /// `AttestedRoot` doc), sized to meet the threshold so `has_quorum()` holds.
+    /// signatures are GENUINE Ed25519 signatures by the committee signing keys over
+    /// the root's canonical `signing_message()` — so a client that holds the
+    /// committee can gate on `is_valid(committee)` (red-team LC-1: never a count).
     fn attest(&self, receipt_set: &[[u8; 32]]) -> AttestedRoot {
         let receipt_stream_root = merkle_root_of_receipt_hashes(receipt_set);
         // A real monotone ledger-state root commitment for this height.
@@ -468,32 +553,32 @@ impl WebOfCells {
         h.update(&self.height.to_le_bytes());
         let merkle_root = *h.finalize().as_bytes();
 
-        // Structural quorum: one (pk, sig) per federation key, meeting threshold.
-        let quorum_signatures: Vec<(PublicKey, Signature)> = self
-            .quorum_pks
-            .iter()
-            .map(|pk| {
-                // A deterministic 64-byte signature stand-in (structural; the
-                // bytes are not crypto-verified at this layer).
-                let mut sig = [0u8; 64];
-                sig[..32].copy_from_slice(&pk.0);
-                sig[32..].copy_from_slice(&receipt_stream_root);
-                (*pk, Signature(sig))
-            })
-            .collect();
-        let threshold = self.quorum_pks.len();
+        let threshold = self.quorum_sks.len();
 
+        // Build the root with all signed fields set FIRST (signatures empty), so the
+        // canonical signing message we sign is exactly the one `is_valid` recomputes.
         let mut root = AttestedRoot::new_legacy(
             merkle_root,
             self.height,
             0, // timestamp (structural)
-            quorum_signatures,
+            Vec::new(),
             None,
             threshold,
         );
         // The v4 receipt-stream binding — the genuine #80 field the client checks.
         root.receipt_stream_root = Some(receipt_stream_root);
         root.finality_round = Some(self.height);
+
+        // Real quorum: each committee key signs the canonical message. `is_valid`
+        // recomputes this exact message and verifies every signature against the
+        // committee — so a fabricated root by attacker keys (or a threshold:0 root)
+        // is REJECTED by the anchored client.
+        let message = root.signing_message();
+        root.quorum_signatures = self
+            .quorum_sks
+            .iter()
+            .map(|sk| (sk.public_key(), dregg_types::sign(sk, &message)))
+            .collect();
         root
     }
 
@@ -574,6 +659,82 @@ mod tests {
         assert_eq!(chrome.cell, uri.cell);
         assert_eq!(chrome.committed_url.as_deref(), Some("dregg://home"));
         assert!(chrome.finalized);
+    }
+
+    #[test]
+    fn committee_anchored_verify_accepts_genuine_and_refuses_forgeries() {
+        // **THE LC-1 GATE.** The wired consumer must hold the committee keys and gate on the
+        // CRYPTOGRAPHIC `is_valid(committee)`, never a count. A genuine fetch verifies against the
+        // real committee; a fabricated `threshold:0` root and a root signed by attacker keys are
+        // both REFUSED by the anchored gate.
+        let mut web = WebOfCells::new(3);
+        let uri = web.publish(11, b"<h1>attested page</h1>", "dregg://anchored");
+        let committee = web.committee();
+
+        let (genuine, _chrome) = web.fetch(&uri).expect("fetch resolves");
+        // The genuine attestation verifies both the structural and the committee-anchored way.
+        assert!(genuine.verify().is_ok(), "structural verify holds");
+        assert!(
+            genuine.verify_anchored(&committee).is_ok(),
+            "the committee-anchored crypto gate accepts the genuine quorum"
+        );
+
+        // (a) THRESHOLD:0 — a malicious content server forges a root with `threshold:0` and no
+        // signatures over the SAME content chain (steps 1–3 still pass). The bare count check
+        // `has_quorum()` is FOOLED; both `verify()` (now hardened) and `verify_anchored` refuse.
+        let mut forged_zero = genuine.clone();
+        forged_zero.attested_root.threshold = 0;
+        forged_zero.attested_root.quorum_signatures = Vec::new();
+        assert!(
+            forged_zero.attested_root.has_quorum(),
+            "the count-only check is fooled by threshold:0 — exactly the LC-1 hole"
+        );
+        assert_eq!(
+            forged_zero.verify(),
+            Err(FetchError::NoQuorum),
+            "the hardened structural verify refuses a threshold:0 root"
+        );
+        assert_eq!(
+            forged_zero.verify_anchored(&committee),
+            Err(FetchError::Unattested),
+            "the committee gate refuses a threshold:0 root"
+        );
+
+        // (b) ATTACKER KEYS — a fabricated root with a real signature, but by a key NOT in the
+        // committee. The count-only `verify()` is fooled (1 sig ≥ threshold 1); the committee gate
+        // REFUSES because the signer is not a trusted validator.
+        let (atk_sk, atk_pk) = dregg_types::generate_keypair();
+        let mut forged_keys = genuine.clone();
+        forged_keys.attested_root.threshold = 1;
+        let msg = forged_keys.attested_root.signing_message();
+        forged_keys.attested_root.quorum_signatures =
+            vec![(atk_pk, dregg_types::sign(&atk_sk, &msg))];
+        assert!(
+            forged_keys.verify().is_ok(),
+            "the count-only check is fooled by an attacker-signed root"
+        );
+        assert_eq!(
+            forged_keys.verify_anchored(&committee),
+            Err(FetchError::Unattested),
+            "the committee gate refuses a root signed by keys outside the committee"
+        );
+
+        // (c) UNANCHORED — a client with no committee accepts nothing on the anchored path.
+        assert_eq!(
+            genuine.verify_anchored(&[]),
+            Err(FetchError::Unattested),
+            "an unanchored client refuses even a genuine resource"
+        );
+
+        // (d) WRONG COMMITTEE — the genuine resource is refused against a DIFFERENT (foreign)
+        // committee (the anchor is the client's own trusted set, never the resource's claimed
+        // signers). The keys are freshly generated, so they are genuinely not this federation's.
+        let foreign: Vec<PublicKey> = (0..3).map(|_| dregg_types::generate_keypair().1).collect();
+        assert_eq!(
+            genuine.verify_anchored(&foreign),
+            Err(FetchError::Unattested),
+            "a different committee does not attest this federation's root"
+        );
     }
 
     #[test]

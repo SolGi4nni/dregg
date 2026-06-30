@@ -466,6 +466,19 @@ impl PersistentStore {
         Ok(self.commit_record_at(cursor - 1)?.map(|r| r.ledger_root))
     }
 
+    /// The finalized HEIGHT the node converged to: the `height` of the last
+    /// committed turn, or `None` if no turn committed. Used by the boot-time
+    /// anti-rollback check (NODE-2): a recovered store whose head height is BELOW a
+    /// previously-witnessed signed finalization / high-water mark is a rollback and
+    /// must be refused.
+    pub fn recovered_head_height(&self) -> Result<Option<u64>> {
+        let cursor = self.commit_cursor()?;
+        if cursor == 0 {
+            return Ok(None);
+        }
+        Ok(self.commit_record_at(cursor - 1)?.map(|r| r.height))
+    }
+
     /// The last-writer-wins overlay of cell post-states committed since the most
     /// recent full ledger checkpoint at `checkpoint_height`.
     ///

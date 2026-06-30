@@ -1459,6 +1459,19 @@ impl TurnExecutor {
             .get(&turn.agent)
             .ok_or(TurnError::CellNotFound { id: turn.agent })?;
 
+        // Gate 3 — agent lifecycle (`cellLifecycleCanAuthor`). A TERMINAL agent
+        // (Destroyed or Migrated) cannot author a turn. This mirrors the gate in
+        // `execute_without_shadow` and the verified `Dregg2.Exec.Admission.admissible`
+        // agent-lifecycle leg. Without it, `validate_without_apply` (the
+        // admit-without-applying entry — pre-checks, mempool, fee estimation) admits
+        // a Destroyed/Migrated agent the executor would then reject, a validate↔execute
+        // divergence in the dangerous direction (validate accepts what apply refuses).
+        if agent_cell.lifecycle.is_terminal() {
+            return Err(TurnError::AdmissionRefused {
+                reason: crate::AdmissionReason::DeadAgent,
+            });
+        }
+
         if agent_cell.state.nonce() != turn.nonce {
             return Err(TurnError::NonceReplay {
                 expected: agent_cell.state.nonce(),

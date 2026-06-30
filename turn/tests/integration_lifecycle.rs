@@ -424,6 +424,85 @@ fn lifecycle_terminal_agent_cannot_author_on_other_cell() {
     );
 }
 
+/// **#26 — the admit-without-apply entry rejects a terminal agent too.** The
+/// `validate_without_apply` path (pre-checks / mempool admission / fee estimation)
+/// previously LACKED the agent-lifecycle gate that `execute` has — a validate↔execute
+/// divergence where validate accepted a Destroyed/Migrated agent the executor would
+/// then reject. This pins that both entries refuse a terminal agent, and that a LIVE
+/// agent still validates (no false-reject).
+#[test]
+fn validate_without_apply_rejects_terminal_agent() {
+    let agent = make_open_cell(0x5e, 100);
+    let agent_id = agent.id();
+    let victim = make_open_cell(0x5f, 100);
+    let victim_id = victim.id();
+
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(agent).unwrap();
+    ledger.insert_cell(victim).unwrap();
+
+    let executor = zero_executor();
+
+    // A LIVE agent's turn validates cleanly (the control — no false-reject).
+    let mut forest = CallForest::new();
+    forest.add_root(Action {
+        target: victim_id,
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: Default::default(),
+        effects: vec![Effect::SetField {
+            cell: victim_id,
+            index: 0,
+            value: [0xAB; 32],
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+        witness_blobs: vec![],
+    });
+    let mut live_turn = bare_turn(agent_id, 0, vec![]);
+    live_turn.call_forest = forest.clone();
+    assert!(
+        executor.validate_without_apply(&live_turn, &ledger).is_ok(),
+        "a LIVE agent's turn must validate (no false-reject)"
+    );
+
+    // Destroy the agent (self-destroy commits; agent is now a terminal tombstone).
+    let cert = DeathCertificate {
+        cell_id: agent_id,
+        last_receipt_hash: [1u8; 32],
+        final_state_commitment: ledger.get(&agent_id).unwrap().state_commitment(),
+        destroyed_at_height: 7,
+        reason: DeathReason::Voluntary,
+    };
+    let destroy_turn = bare_turn(
+        agent_id,
+        0,
+        vec![Effect::CellDestroy {
+            target: agent_id,
+            certificate: cert,
+        }],
+    );
+    assert!(executor.execute(&destroy_turn, &mut ledger).is_committed());
+    assert!(ledger.get(&agent_id).unwrap().lifecycle.is_destroyed());
+
+    // The destroyed agent's turn must now be REFUSED by validate_without_apply with the
+    // same agent-lifecycle (DeadAgent) reason execute uses — closing the divergence.
+    let mut cross_turn = bare_turn(agent_id, 1, vec![]);
+    cross_turn.call_forest = forest;
+    let err = executor
+        .validate_without_apply(&cross_turn, &ledger)
+        .expect_err("a terminal (Destroyed) agent must be refused at validate-admission (#26)");
+    assert_eq!(
+        err,
+        dregg_turn::TurnError::AdmissionRefused {
+            reason: dregg_turn::AdmissionReason::DeadAgent,
+        },
+        "the refusal must name the agent-lifecycle (deadAgent) gate"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Test 6 (adversarial): DeathCertificate with wrong cell_id is rejected.
 // ---------------------------------------------------------------------------

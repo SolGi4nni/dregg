@@ -1061,6 +1061,59 @@ async fn run_node(
         }
     }
 
+    // ── VERIFIED-CONSENSUS STARTUP HARD-CHECK (red-team parity #6/#7) ──────────
+    // A node in FULL (multi-party BFT) federation mode is a verified-consensus role:
+    // it finalizes over `BlocklaceFinality.tauOrder`, the order the Lean-exported
+    // `dregg_tau_order` computes. If the verified archive is NOT linked (a
+    // marshal-only / stale build where `tau_order_available()` is false), the node
+    // would SILENTLY degrade to the un-verified Rust `ordering::tau` per poll (a
+    // `warn!` only — see `blocklace_sync`'s fallback). For a node that is SUPPOSED to
+    // be Lean-shadowed that is fail-OPEN: it claims verified production+consensus
+    // while running unverified ordering. Refuse to start instead (fail-CLOSED for
+    // this role). A solo node (committee-of-one, trivial order) and a node that never
+    // federates are unaffected, so the intentional mixed rust/lean network keeps
+    // working — only the verified-role node refuses to run unverified.
+    //
+    // Escape hatch: `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1` lets an operator who
+    // deliberately accepts the un-verified Rust ordering proceed (e.g. a dev box with
+    // a marshal-only archive). It is opt-IN — the default for a full-mode node is to
+    // refuse.
+    if !is_solo_mode && !dregg_lean_ffi::tau_order_available() {
+        let allow_unverified = matches!(
+            std::env::var("DREGG_ALLOW_UNVERIFIED_CONSENSUS")
+                .ok()
+                .as_deref(),
+            Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
+        );
+        if allow_unverified {
+            tracing::warn!(
+                "VERIFIED-CONSENSUS HARD-CHECK OVERRIDDEN: this node is in FULL (multi-party BFT) \
+                 mode but the Lean verified-consensus archive is NOT linked (`dregg_tau_order` \
+                 absent). DREGG_ALLOW_UNVERIFIED_CONSENSUS is set, so the node will proceed on the \
+                 UN-VERIFIED Rust `ordering::tau` — its finality is NOT shadowed by the verified \
+                 rule. Do not use this in a federation that expects verified consensus."
+            );
+        } else {
+            error!(
+                "REFUSING TO START: this node is configured for VERIFIED consensus (federation \
+                 mode FULL — multi-party BFT finality), but the Lean verified-consensus archive is \
+                 not linked: `dregg_lean_ffi::tau_order_available()` is false (the build lacks the \
+                 `dregg_tau_order` export, e.g. a marshal-only / stale archive). A verified-role \
+                 node MUST NOT silently fall back to the un-verified Rust ordering. Rebuild the \
+                 node against the closure-complete verified archive (it splices \
+                 Dregg2.Distributed.FinalityGate), run this node in `--federation-mode solo` if it \
+                 is not meant to finalize, or set DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 to explicitly \
+                 accept un-verified ordering."
+            );
+            std::process::exit(1);
+        }
+    } else if !is_solo_mode {
+        info!(
+            "verified-consensus hard-check passed: the Lean `dregg_tau_order` archive is linked — \
+             this full-mode node finalizes over the VERIFIED ordering rule"
+        );
+    }
+
     // Phase C: Log multi-group participation if --groups is specified.
     // Actual group membership is resolved once the blocklace syncs and the
     // group registry is available. For now we validate the group IDs.
