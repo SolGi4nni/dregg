@@ -1250,6 +1250,89 @@ pub fn prove_descriptor_leaf_rotated_with_config(
     .map_err(|e| format!("rotated native-batch leaf-wrap failed: {e:?}"))
 }
 
+/// **RE-EXPOSE A CONTIGUOUS DESCRIPTOR-PI SLICE AS AN `expose_claim` CHANNEL.** Wrap an IR2
+/// descriptor batch in-circuit (exactly like [`prove_descriptor_leaf_rotated_with_config`]) AND
+/// re-expose its descriptor PIs `[pi_lo .. pi_lo+len)` through the `expose_claim` table so a parent
+/// aggregation node can READ + `connect` them.
+///
+/// **Why this is necessary (the fork's PI-threading reality).** A bare leaf wrap does NOT surface
+/// the inner descriptor's public inputs to a grandparent's combine hook: the in-circuit verifier
+/// allocates each child PI as `circuit.public_input()` (`Op::Public`), which lands in the parent's
+/// constraint-free `Public` PRIMITIVE table — and the next layer up threads child publics SOLELY
+/// from each child `non_primitives[].public_values` (primitive-table values are never re-threaded).
+/// So the inner PIs are CONSUMED one layer up and vanish before the combine hook ever runs. The
+/// ONLY host-readable, FRI-bound scalar channel a child surfaces to its parent's
+/// `air_public_targets` is a non-primitive `expose_claim` table's `public_values` — exactly what
+/// [`prove_descriptor_leaf_rotated_with_segment`] uses for the chain segment. This helper does the
+/// same for an arbitrary PI slice.
+///
+/// The deployed effect-VM custom leg (`customVmDescriptor2R24`) publishes its
+/// `custom_proof_commitment` at IR2 PI slots 46..49 (the Lean `customPiExposure`); calling this
+/// with `pi_lo = 46, len = 4` surfaces that claimed commitment as a 4-felt expose_claim the
+/// per-turn fold ties to the custom sub-proof leaf's genuine in-circuit commitment (see
+/// [`crate::joint_turn_recursive::prove_custom_binding_node`]).
+pub fn prove_descriptor_leaf_with_pi_slice_expose(
+    desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+    proof: &Ir2BatchProof<DreggRecursionConfig>,
+    descriptor_pis: &[BabyBear],
+    config: &DreggRecursionConfig,
+    pi_lo: usize,
+    len: usize,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    if descriptor_pis.len() < pi_lo + len {
+        return Err(format!(
+            "PI-slice expose needs >= {} descriptor PIs to carry [{pi_lo}..{}), got {}",
+            pi_lo + len,
+            pi_lo + len,
+            descriptor_pis.len()
+        ));
+    }
+    let (airs, table_public_inputs, common) =
+        dregg_circuit::descriptor_ir2::ir2_airs_and_common_for_config(
+            desc,
+            proof,
+            descriptor_pis,
+            config,
+        )?;
+
+    let input: RecursionInput<'_, DreggRecursionConfig, dregg_circuit::descriptor_ir2::Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof,
+            common_data: &common,
+            table_public_inputs,
+        };
+
+    let backend = create_recursion_backend();
+
+    let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+                       apt: &[Vec<p3_recursion::Target>]| {
+        let main = apt
+            .first()
+            .expect("descriptor leaf has a main instance carrying the descriptor PIs");
+        debug_assert!(
+            main.len() >= pi_lo + len,
+            "main instance must carry the PI slice being re-exposed"
+        );
+        let claim: Vec<p3_recursion::Target> = (0..len).map(|k| main[pi_lo + k]).collect();
+        cb.expose_as_public_output(&claim);
+    };
+
+    build_and_prove_next_layer_with_expose::<
+        DreggRecursionConfig,
+        dregg_circuit::descriptor_ir2::Ir2Air,
+        _,
+        D,
+    >(
+        &input,
+        config,
+        &backend,
+        &ProveNextLayerParams::default(),
+        Some(&expose),
+    )
+    .map_err(|e| format!("PI-slice-expose leaf-wrap failed: {e:?}"))
+}
+
 /// **THE SEGMENT-ACCUMULATOR DESCRIPTOR LEAF (the soundness-critical replacement for the
 /// separate binding leaf).** Wrap one rotated finalized-turn descriptor batch in-circuit
 /// AND emit its constant-size ordered SEGMENT through the `expose_claim` table, BOUND

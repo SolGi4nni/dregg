@@ -118,9 +118,20 @@
 //! `with_coeff_lookups()` flag) to OR the gate true. The table is inert for non-custom leaves (which
 //! never take the coeff-ctl decompose path), so existing leaves' VKs do not move. (The seg digest
 //! sidesteps the bus entirely: its host digest is lanes 0,4,8,12 = coeff-0 of separate ext limbs,
-//! exposable as-is with no decompose; the consecutive-lane custom commitment cannot.) The remaining
-//! connect-into-the-fold step (wiring the exposed claim to the Custom row's `proof_bind` column in
-//! `joint_turn_recursive`) is main-loop-owned and follows from here.
+//! exposable as-is with no decompose; the consecutive-lane custom commitment cannot.)
+//!
+//! ## The connect-into-the-fold step — DONE
+//!
+//! The exposed claim is now wired to the effect-vm leg's published `custom_proof_commitment` (IR2
+//! PI slots 46..49) by [`crate::joint_turn_recursive::prove_custom_binding_node`]: it folds this
+//! leaf against the effect-vm leg leaf (re-exposed via
+//! [`crate::ivc_turn_chain::prove_descriptor_leaf_with_pi_slice_expose`] — the inner descriptor PIs
+//! land in the primitive `Public` table and never reach a combine hook, so the leg must re-expose
+//! 46..49 through `expose_claim`) and `connect`s the two 4-felt claims in-circuit. A turn whose leg
+//! claims a commitment no verifying sub-proof backs is UNSAT (the `connect` is a conflict — no
+//! satisfying partner), so a PURE LIGHT CLIENT folding the tree now witnesses the binding
+//! `StarkSoundCustom` falsely assumed (the `forged_custom_commitment_is_rejected_by_the_fold`
+//! tooth).
 
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, Ir2Air, MemBoundaryWitness, UMemBoundaryWitness, VmConstraint2,

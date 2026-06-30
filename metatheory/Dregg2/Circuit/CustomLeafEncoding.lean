@@ -205,18 +205,11 @@ theorem cell_to_descriptor_faithful (hash : List ℤ → ℤ) (tf : TraceFamily)
       ↔ (∀ env ∈ envs, ∀ c ∈ p, CellLocalHolds env c) := by
   sorry -- LABELLED: mechanical row×constraint re-quantification over `encodeLocal_list_holdsAt_iff`.
 
-/-- **The bridge to the Custom apex.** Over the FAITHFUL encoding, the recursion engine's in-AIR
-proof-binding carrier (`DescriptorIR2.EngineBinding`, consumed by `CustomApex.lightclient_unfoolable_custom`)
-is realized for the leaf: the bound `(commit, vk)` columns attest a VERIFYING sub-proof whose OWN
-algebraic constraints (now preserved by `encodeProgram`) hold. This file supplies the encoding leg;
-the binding leg is `CustomApex`'s staged `boundAt` + `EngineBinding` carrier.
-
-LABELLED `sorry`: the proofBind realization rests on the staged AIR + `EngineBinding` that
-`CustomApex.lean` owns (deployed `holdsAt`'s `proofBind` is the vacuous `True`); stated here only to
-make the encoding's role in the apex explicit, not to re-derive the apex. -/
-theorem engineBinding_over_faithful_encoding
-    (E : ProofEngine) (_hE : EngineBinding E) (_p : CellProgramLocal) :
-    True := by
-  trivial
+-- (Retired: `engineBinding_over_faithful_encoding` was a `True := trivial` placeholder whose only
+-- role was to name the encoding's part in the now-deleted vacuous `CustomApex.lightclient_unfoolable
+-- _custom`. The deployed custom binding is real-as-deployed via the FOLD — `CustomBindingFromFold.
+-- custom_binding_from_fold` (the leg's exposed commitment is `connect`-bound to a verifying sub-proof
+-- the aggregate re-verifies) + the biting tooth in `joint_turn_recursive::prove_custom_binding_node`.
+-- This file supplies only the faithful-encoding leg; the binding leg is the fold, not a row carrier.)
 
 end Dregg2.Circuit.CustomLeafEncoding
