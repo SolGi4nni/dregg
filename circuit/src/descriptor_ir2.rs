@@ -272,8 +272,11 @@ pub const DOMAIN_BOUND: u32 = 16;
 /// SEED up to `WIDTH − capacity` lanes regardless of the multi-block sponge rate. Phase
 /// B-GATE-INPUT widened it `8 → 11` so a single permutation can absorb an 8-felt carrier + 3 new
 /// limbs (the wide Merkle–Damgård step of the faithful 8-felt commitment, Phase B-ROTATION).
-/// The deployed commitment is STILL 1-felt after this phase; the wide arity is additive + unused.
-pub const CHIP_RATE: usize = 11;
+/// Phase H3 (native-8-felt Merkle root weld) widened it `11 → 16` = full `WIDTH`: the `node8`
+/// arity-16 row compresses two 8-felt child digests `L8 ‖ R8` in ONE permutation (no capacity —
+/// fixed-length compression domain-separated by the arity tag), reading lanes `0..8` for the
+/// 8-felt node digest. Every per-node Merkle step (cap/heap/fields) routes through this lane.
+pub const CHIP_RATE: usize = 16;
 /// The Poseidon2 sponge rate in base-field elements (`babyBearD4W16.rate = rate_ext · d = 8`).
 /// This is the REAL multi-block-sponge absorb width of the permutation — a cryptographic
 /// parameter pinned in `circuit/src/poseidon2.rs` and the chip `params` JSON. It is NOT the
@@ -290,6 +293,13 @@ pub const CHIP_WIDE_ARITY: usize = 11;
 /// deployed chain folds `[d, limb, limb, limb]` (1 carrier + 3 limbs); the wide step folds
 /// `[d0..d7, limb, limb, limb]` (8 carrier + 3 limbs).
 pub const WIDE_K: usize = CHIP_WIDE_ARITY - 8;
+/// The `node8` Merkle-compression arity (Phase H3): two 8-felt child digests `L8 ‖ R8` seed
+/// ALL 16 lanes of ONE permutation; lanes `0..8` are read as the node's 8-felt digest. This is
+/// the COLLISION-FLOOR fix — a node whose children are 1-felt collides at ~2^15.5 regardless of
+/// root width, so EVERY node must absorb full 8-felt children and emit a full 8-felt digest.
+/// `= WIDTH = 16`: no capacity lane is reserved (fixed-length compression is domain-separated by
+/// the arity tag itself — only a genuine 16-seed row answers an `arity == 16` lookup).
+pub const CHIP_NODE8_ARITY: usize = 16;
 
 /// The effect-mask width of the submask custom table (`EffectVmEmitV2.MASK_BITS`).
 pub const SUBMASK_BITS: usize = 30;
@@ -1828,8 +1838,13 @@ const CHIP_S6: usize = CHIP_S5 + 1; // 15
 /// absorb (8-felt carrier ‖ 3 limbs). Lifts the narrow `in7..in10 = 0` pins (the wide row
 /// genuinely seeds state lanes 7..10) and, with `big`, drives lanes 4/5/6 from the inputs.
 const CHIP_WIDE: usize = CHIP_S6 + 1;
-const CHIP_AUX0: usize = CHIP_WIDE + 1;
-const CHIP_WIDTH: usize = CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS; // 368
+/// `node8 = [arity == 16]` (Phase H3): high EXACTLY on the full-width `node8` compression row
+/// (`L8 ‖ R8` → 8-felt digest). Like `wide` it drives lanes 4..6 from the inputs (`seed456`) and
+/// lifts the narrow `in7..` zero-pins; additionally it lifts the `in11..in15 = 0` pins so the
+/// second 8-felt child genuinely seeds lanes 11..15.
+const CHIP_NODE8: usize = CHIP_WIDE + 1;
+const CHIP_AUX0: usize = CHIP_NODE8 + 1;
+const CHIP_WIDTH: usize = CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS;
 
 /// The five-table interpreter AIR. One Rust type covering every instance of the batch
 /// (the batch prover is monomorphic in the AIR type), entirely descriptor-driven.
@@ -2213,21 +2228,25 @@ where
                 let is_fact: AB::Expr = local[CHIP_IS_FACT].into();
                 let big: AB::Expr = local[CHIP_BIG].into();
                 let wide: AB::Expr = local[CHIP_WIDE].into();
+                let node8: AB::Expr = local[CHIP_NODE8].into();
                 let two = AB::Expr::from_u64(2);
                 let three = AB::Expr::from_u64(3);
                 let four = AB::Expr::from_u64(4);
                 let seven = AB::Expr::from_u64(7);
                 let eleven = AB::Expr::from_u64(CHIP_WIDE_ARITY as u64);
+                let sixteen = AB::Expr::from_u64(CHIP_NODE8_ARITY as u64);
                 builder.assert_zero(is_fact.clone() * (is_fact.clone() - AB::Expr::ONE));
                 // arity ∈ {0 (pad/fact), 2, 3 (cap node [FACT_MARK,l,r]), 4, 7 (cap leaf), 11
-                // (Phase B-GATE-INPUT wide MD step: 8-felt carrier + 3 limbs)}.
+                // (Phase B-GATE-INPUT wide MD step: 8-felt carrier + 3 limbs), 16 (Phase H3 node8:
+                // L8 ‖ R8 full-width Merkle compression)}. Degree 7 (= the S-box budget).
                 builder.assert_zero(
                     arity.clone()
                         * (arity.clone() - two.clone())
                         * (arity.clone() - three.clone())
                         * (arity.clone() - four.clone())
                         * (arity.clone() - seven.clone())
-                        * (arity.clone() - eleven.clone()),
+                        * (arity.clone() - eleven.clone())
+                        * (arity.clone() - sixteen.clone()),
                 );
                 // A fact row carries arity 0 (so the genuine fact state's zero tag is
                 // expressible — no hybrid absorb/fact state is).
@@ -2238,81 +2257,109 @@ where
                 // `wide` selector drives lanes 4..6 (and 7..10) from inputs instead.
                 builder.assert_zero(big.clone() * (big.clone() - AB::Expr::ONE));
                 builder.assert_zero(big.clone() * (arity.clone() - seven.clone()));
-                // p7 ≠ 0 ⇔ arity ∈ {0,2,3,4,11} (= 0 exactly at arity 7); p7·(1−big) forces big
-                // HIGH on the arity-7 branch. (`(a−11)` adjoined so p7 also vanishes the wide row
-                // — big is LOW there. Degree 6 — a SIDE constraint, not S-boxed.)
+                // p7 ≠ 0 ⇔ arity ∈ {0,2,3,4,11,16} (= 0 exactly at arity 7); p7·(1−big) forces big
+                // HIGH on the arity-7 branch. (`(a−11)`/`(a−16)` adjoined so p7 also vanishes the
+                // wide + node8 rows — big is LOW there. Degree 7 — a SIDE constraint, not S-boxed.)
                 let p7 = arity.clone()
                     * (arity.clone() - two.clone())
                     * (arity.clone() - three.clone())
                     * (arity.clone() - four.clone())
-                    * (arity.clone() - eleven.clone());
+                    * (arity.clone() - eleven.clone())
+                    * (arity.clone() - sixteen.clone());
                 builder.assert_zero(p7 * (AB::Expr::ONE - big.clone()));
                 // `wide = [arity == 11]`: boolean, high EXACTLY on the wide arity. Lifts the narrow
                 // input-zeroing pins (in7..in10) and selects the input-seeded lanes 4..6.
                 builder.assert_zero(wide.clone() * (wide.clone() - AB::Expr::ONE));
                 builder.assert_zero(wide.clone() * (arity.clone() - eleven.clone()));
-                // p11 ≠ 0 ⇔ arity ∈ {0,2,3,4,7} (= 0 exactly at arity 11); p11·(1−wide) forces
-                // wide HIGH on the arity-11 branch. (Degree 6 — a SIDE constraint, not S-boxed.)
+                // p11 ≠ 0 ⇔ arity ∈ {0,2,3,4,7,16} (= 0 exactly at arity 11); p11·(1−wide) forces
+                // wide HIGH on the arity-11 branch. (Degree 7 — a SIDE constraint, not S-boxed.)
                 let p11 = arity.clone()
                     * (arity.clone() - two.clone())
                     * (arity.clone() - three.clone())
                     * (arity.clone() - four.clone())
-                    * (arity.clone() - seven.clone());
+                    * (arity.clone() - seven.clone())
+                    * (arity.clone() - sixteen.clone());
                 builder.assert_zero(p11 * (AB::Expr::ONE - wide.clone()));
-                // `seed456 = big + wide` (∈ {0,1}: big and wide are never both high, the membership
-                // gate forbids arity ∈ {7}∩{11}). When high, lanes 4/5/6 carry genuine in4/in5/in6
-                // (the rate-8 leaf AND the wide step); when low, lane 4 = arity tag / fact markers.
-                let seed456 = big.clone() + wide.clone();
+                // `node8 = [arity == 16]` (Phase H3): boolean, high EXACTLY on the full-width L8‖R8
+                // compression row. Lifts the narrow input-zeroing pins (in7..in15) and selects the
+                // input-seeded lanes 4..6.
+                builder.assert_zero(node8.clone() * (node8.clone() - AB::Expr::ONE));
+                builder.assert_zero(node8.clone() * (arity.clone() - sixteen.clone()));
+                // p16 ≠ 0 ⇔ arity ∈ {0,2,3,4,7,11} (= 0 exactly at arity 16); p16·(1−node8) forces
+                // node8 HIGH on the arity-16 branch. (Degree 7 — a SIDE constraint, not S-boxed.)
+                let p16 = arity.clone()
+                    * (arity.clone() - two.clone())
+                    * (arity.clone() - three.clone())
+                    * (arity.clone() - four.clone())
+                    * (arity.clone() - seven.clone())
+                    * (arity.clone() - eleven.clone());
+                builder.assert_zero(p16 * (AB::Expr::ONE - node8.clone()));
+                // `seed456 = big + wide + node8` (∈ {0,1}: at most one flag is high — the membership
+                // gate forces distinct arity values 7/11/16). When high, lanes 4/5/6 carry genuine
+                // in4/in5/in6 (rate-8 leaf, wide step, OR node8); when low, lane 4 = arity tag.
+                let seed456 = big.clone() + wide.clone() + node8.clone();
                 // Inputs beyond the arity are ZERO (the padTo discipline — a junk-padded row is
                 // not a genuine chipRow). The input lanes a row genuinely uses are exactly
                 // `i < arity`; the gates below vanish each lane on the arity classes that do
                 // NOT reach it. (None routed through the S-box.)
                 //
-                // in0/in1: used by every absorb arity {2,3,4,7,11} AND fact rows; pinned only on
-                // the bare pad row (arity 0, non-fact). q01 = (a−2)(a−3)(a−4)(a−7)(a−11) is 0 on
-                // arity∈{2,3,4,7,11} and −1848 on the pad/fact row (arity 0, FIVE negative factors
-                // ⇒ negative). Adding 1848·is_fact cancels it on fact rows (frees their in0/in1).
+                // in0/in1: used by every absorb arity {2,3,4,7,11,16} AND fact rows; pinned only on
+                // the bare pad row (arity 0, non-fact). q01 = (a−2)(a−3)(a−4)(a−7)(a−11)(a−16) is 0
+                // on arity∈{2,3,4,7,11,16} and +29568 on the pad/fact row (arity 0, SIX negative
+                // factors ⇒ positive). Subtracting 29568·is_fact cancels it on fact rows.
                 let q01 = (arity.clone() - two.clone())
                     * (arity.clone() - three.clone())
                     * (arity.clone() - four.clone())
                     * (arity.clone() - seven.clone())
-                    * (arity.clone() - eleven.clone());
-                // q01 on the pad row (arity 0): (−2)(−3)(−4)(−7)(−11) = −1848.
-                let q01_pad_abs = AB::Expr::from_u64(1848);
+                    * (arity.clone() - eleven.clone())
+                    * (arity.clone() - sixteen.clone());
+                // q01 on the pad row (arity 0): (−2)(−3)(−4)(−7)(−11)(−16) = +29568.
+                let q01_pad = AB::Expr::from_u64(1848 * CHIP_NODE8_ARITY as u64);
                 for i in 0..2 {
                     let inp: AB::Expr = local[CHIP_IN0 + i].into();
-                    builder
-                        .assert_zero(inp * (q01.clone() + q01_pad_abs.clone() * is_fact.clone()));
+                    builder.assert_zero(inp * (q01.clone() - q01_pad.clone() * is_fact.clone()));
                 }
-                // in2: genuine for arity ∈ {3,4,7,11}; pinned on {0,2} and fact.
+                // in2: genuine for arity ∈ {3,4,7,11,16}; pinned on {0,2} and fact.
                 builder.assert_zero(
                     local[CHIP_IN0 + 2].into()
                         * (arity.clone() - three.clone())
                         * (arity.clone() - four.clone())
                         * (arity.clone() - seven.clone())
-                        * (arity.clone() - eleven.clone()),
+                        * (arity.clone() - eleven.clone())
+                        * (arity.clone() - sixteen.clone()),
                 );
-                // in3: genuine only for arity ∈ {4,7,11}; pinned on {0,2,3} and fact.
+                // in3: genuine only for arity ∈ {4,7,11,16}; pinned on {0,2,3} and fact.
                 builder.assert_zero(
                     local[CHIP_IN0 + 3].into()
                         * (arity.clone() - four.clone())
                         * (arity.clone() - seven.clone())
-                        * (arity.clone() - eleven.clone()),
+                        * (arity.clone() - eleven.clone())
+                        * (arity.clone() - sixteen.clone()),
                 );
-                // in4/in5/in6: genuine only for arity ∈ {7 (rate-8 leaf), 11 (wide)}; pinned else.
+                // in4/in5/in6: genuine for arity ∈ {7 (rate-8 leaf), 11 (wide), 16 (node8)}; pinned
+                // else.
                 for i in 4..7 {
                     builder.assert_zero(
                         local[CHIP_IN0 + i].into()
                             * (arity.clone() - seven.clone())
-                            * (arity.clone() - eleven.clone()),
+                            * (arity.clone() - eleven.clone())
+                            * (arity.clone() - sixteen.clone()),
                     );
                 }
-                // in7..in10: genuine ONLY for the wide arity 11; pinned on EVERY narrow arity
-                // (incl. 7 — the largest narrow arity uses lanes 0..6). The old `state[7]=0` pin
-                // is now the in7 case here, LIFTED for arity 11 which genuinely seeds in7..in10.
+                // in7..in10: genuine for the wide arity 11 AND node8 arity 16 (the second 8-felt
+                // child's first 4 lanes ride here); pinned on every narrow arity ≤ 7.
                 for i in 7..CHIP_WIDE_ARITY {
+                    builder.assert_zero(
+                        local[CHIP_IN0 + i].into()
+                            * (arity.clone() - eleven.clone())
+                            * (arity.clone() - sixteen.clone()),
+                    );
+                }
+                // in11..in15: genuine ONLY for node8 arity 16 (the tail of the second 8-felt child);
+                // pinned on EVERY other arity (incl. the wide arity 11, which uses lanes 0..10).
+                for i in CHIP_WIDE_ARITY..CHIP_NODE8_ARITY {
                     builder
-                        .assert_zero(local[CHIP_IN0 + i].into() * (arity.clone() - eleven.clone()));
+                        .assert_zero(local[CHIP_IN0 + i].into() * (arity.clone() - sixteen.clone()));
                 }
                 // The three AMBIGUOUS seed-source columns S4/S5/S6, pinned by SIDE constraints
                 // (off the S-box path). When `seed456 = 0` (rate-4 / fact): S4 = arity tag,
@@ -2349,9 +2396,11 @@ where
                 st[4] = local[CHIP_S4].into();
                 st[5] = local[CHIP_S5].into();
                 st[6] = local[CHIP_S6].into();
-                // Lanes 7..10: the wide carrier/limb tail. On narrow arities these input columns
-                // are pinned 0 above, so seeding them directly preserves the narrow state shape.
-                for i in 7..CHIP_WIDE_ARITY {
+                // Lanes 7..15: the wide carrier/limb tail (7..10) AND the node8 second-child tail
+                // (11..15). On every arity that does not reach a lane it is pinned 0 above, so
+                // seeding them directly preserves the narrow/wide state shapes. arity 16 seeds all
+                // 16 lanes = WIDTH (full-width compression, no capacity).
+                for i in 7..CHIP_NODE8_ARITY {
                     st[i] = local[CHIP_IN0 + i].into();
                 }
                 let aux: Vec<AB::Var> =
@@ -3159,7 +3208,8 @@ pub(crate) fn chip_absorb_lanes(
     debug_assert!(arity <= CHIP_RATE && inputs.len() >= arity.min(CHIP_RATE));
     let big = arity == 7;
     let wide = arity == CHIP_WIDE_ARITY;
-    let seed456 = big || wide;
+    let node8 = arity == CHIP_NODE8_ARITY;
+    let seed456 = big || wide || node8;
     let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
     for i in 0..4 {
         st[i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO);
@@ -3171,14 +3221,13 @@ pub(crate) fn chip_absorb_lanes(
     } else {
         st[4] = BabyBear::new(arity as u32);
     }
-    // The wide carrier/limb tail (lanes 7..10): seeded from the genuine (zero-padded) inputs on
-    // EVERY arity — BYTE-IDENTICAL to the chip-row gather (`for i in 7..CHIP_WIDE_ARITY { st[i] =
-    // in_i }`, no `wide` guard). The narrow live arities (≤ 7) zero-pad in7..in10, so this is a
-    // no-op for them; the wide commitment's arity-9 final (`prev8 ‖ iroot`, 9 real inputs) genuinely
-    // seeds in7/in8, which the prior `if wide` guard DROPPED — making its lanes 1..7 disagree with
-    // the chip table (and the carrier pi_binding fail). Matching the gather closes that.
-    let _ = wide;
-    for i in 7..CHIP_WIDE_ARITY {
+    // The wide carrier/limb tail (lanes 7..10) AND the node8 second-child tail (lanes 11..15):
+    // seeded from the genuine (zero-padded) inputs on EVERY arity — BYTE-IDENTICAL to the chip-row
+    // gather (`for i in 7..CHIP_NODE8_ARITY { st[i] = in_i }`, no flag guard). Narrow live arities
+    // (≤ 7) zero-pad in7.., so this is a no-op for them; the wide commitment's arity-9 final
+    // (`prev8 ‖ iroot`, 9 real inputs) seeds in7/in8; node8's 16 real inputs seed all 16 lanes.
+    let _ = (wide, node8);
+    for i in 7..CHIP_NODE8_ARITY {
         st[i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO);
     }
     let lanes = perm_lanes(st);
@@ -3201,7 +3250,8 @@ pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CH
     debug_assert!(arity <= CHIP_RATE);
     let big = arity == 7;
     let wide = arity == CHIP_WIDE_ARITY;
-    let seed456 = big || wide;
+    let node8 = arity == CHIP_NODE8_ARITY;
+    let seed456 = big || wide || node8;
     let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
     for i in 0..4 {
         st[i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO);
@@ -3213,10 +3263,10 @@ pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CH
     } else {
         st[4] = BabyBear::new(arity as u32);
     }
-    // The wide carrier/limb tail (lanes 7..10): seeded from the genuine (zero-padded) inputs on
-    // EVERY arity — byte-identical to the chip-row gather (`for i in 7..CHIP_WIDE_ARITY`), so an
-    // arity-9 absorb (`prev8 ‖ iroot` with 9 real inputs) seeds in7/in8 faithfully.
-    for i in 7..CHIP_WIDE_ARITY {
+    // The wide carrier/limb tail (lanes 7..10) AND the node8 second-child tail (lanes 11..15):
+    // seeded from the genuine (zero-padded) inputs on EVERY arity — byte-identical to the chip-row
+    // gather (`for i in 7..CHIP_NODE8_ARITY`). node8 (arity 16) seeds all 16 lanes = WIDTH.
+    for i in 7..CHIP_NODE8_ARITY {
         st[i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO);
     }
     perm_lanes(st)
@@ -4356,14 +4406,15 @@ fn build_traces(
     let chip: Option<Vec<Vec<BabyBear>>> = if presence.chip {
         let mut chip_rows: Vec<Vec<BabyBear>> = Vec::new();
         for (tuple, mult) in &chip_hist {
-            // tuple = [arity, in0..in10, out0..out7] (CHIP_TUPLE_LEN = 20 wide).
+            // tuple = [arity, in0..in15, out0..out7] (CHIP_TUPLE_LEN = 25 wide).
             let arity_u = tuple[CHIP_ARITY];
             let big_row = arity_u == 7;
             let wide_row = arity_u as usize == CHIP_WIDE_ARITY;
-            // `seed456`: lanes 4/5/6 carry genuine in4/in5/in6 (the rate-8 leaf AND the wide step).
-            let seed456 = big_row || wide_row;
+            let node8_row = arity_u as usize == CHIP_NODE8_ARITY;
+            // `seed456`: lanes 4/5/6 carry genuine in4/in5/in6 (rate-8 leaf, wide step, OR node8).
+            let seed456 = big_row || wide_row || node8_row;
             let mut row = vec![BabyBear::ZERO; CHIP_AUX0];
-            // Copy only the [arity, in0..in10] prefix from the tuple; the out0..out7 lanes are
+            // Copy only the [arity, in0..in15] prefix from the tuple; the out0..out7 lanes are
             // DERIVED below from the genuine permutation (never trusted from the consumer's
             // tuple), so the AIR's `out[i] == lane[i]` equality constraints hold by construction.
             for j in 0..=CHIP_RATE {
@@ -4377,6 +4428,11 @@ fn build_traces(
                 BabyBear::ZERO
             };
             row[CHIP_WIDE] = if wide_row {
+                BabyBear::ONE
+            } else {
+                BabyBear::ZERO
+            };
+            row[CHIP_NODE8] = if node8_row {
                 BabyBear::ONE
             } else {
                 BabyBear::ZERO
@@ -4397,9 +4453,11 @@ fn build_traces(
             st[4] = row[CHIP_S4];
             st[5] = row[CHIP_S5];
             st[6] = row[CHIP_S6];
-            // Wide carrier/limb tail (lanes 7..10): genuine inputs on the wide row, pinned 0 on
-            // every narrow arity (the tuple's in7..in10 are zero there), matching the AIR seeding.
-            st[7..CHIP_WIDE_ARITY].copy_from_slice(&row[CHIP_IN0 + 7..CHIP_IN0 + CHIP_WIDE_ARITY]);
+            // Carrier/limb tail (lanes 7..15): genuine inputs on the wide (7..10) + node8 (7..15)
+            // rows, pinned 0 on every narrow arity (the tuple's in7.. are zero there), matching the
+            // AIR seeding. node8 (arity 16) seeds all 16 lanes = WIDTH.
+            st[7..CHIP_NODE8_ARITY]
+                .copy_from_slice(&row[CHIP_IN0 + 7..CHIP_IN0 + CHIP_NODE8_ARITY]);
             // Fill the 8 exposed output lanes from the genuine final permutation state.
             let lanes = perm_lanes(st);
             row[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&lanes[..CHIP_OUT_LANES]);
@@ -5583,12 +5641,16 @@ mod tests {
     }
 
     /// A descriptor with a SINGLE wide (arity-11) chip lookup binding ALL 8 output lanes to
-    /// columns. trace_width = 1 (arity tag) + 11 (inputs) + 8 (outputs) = 20; the lookup tuple is
-    /// `[11, var1..var11, var12..var19]`. (No other tables — a minimal wide-absorb subject.)
+    /// columns. trace_width = 1 (arity tag) + 11 (inputs) + 8 (outputs) = 20; the lookup tuple's
+    /// INPUT block is padded to CHIP_RATE (the in11..in15 slots are `Const 0` — the chip pins them
+    /// 0 off arity 16, so they cost no column). The tuple is `[11, var1..var11, 0×5, var12..var19]`.
     fn wide_test_desc() -> EffectVmDescriptor2 {
         let mut tuple = vec![LeanExpr::Const(CHIP_WIDE_ARITY as i64)];
         for i in 0..CHIP_WIDE_ARITY {
             tuple.push(LeanExpr::Var(1 + i)); // in0..in10 at cols 1..11
+        }
+        for _ in CHIP_WIDE_ARITY..CHIP_RATE {
+            tuple.push(LeanExpr::Const(0)); // in11..in15: padded to CHIP_RATE, no column
         }
         for i in 0..CHIP_OUT_LANES {
             tuple.push(LeanExpr::Var(1 + CHIP_WIDE_ARITY + i)); // out0..out7 at cols 12..19
@@ -5659,6 +5721,109 @@ mod tests {
                 res.is_err(),
                 "wide absorb with a forged carrier lane (in8) was accepted — the wide carrier is NOT load-bearing"
             ),
+        }
+    }
+
+    /// A descriptor with a SINGLE node8 (arity-16) chip lookup binding ALL 8 output lanes to
+    /// columns. trace_width = 1 (arity tag) + 16 (L8‖R8 inputs) + 8 (outputs) = 25; the lookup
+    /// tuple is `[16, var1..var16, var17..var24]`. The full-width Merkle-compression subject.
+    fn node8_test_desc() -> EffectVmDescriptor2 {
+        let mut tuple = vec![LeanExpr::Const(CHIP_NODE8_ARITY as i64)];
+        for i in 0..CHIP_NODE8_ARITY {
+            tuple.push(LeanExpr::Var(1 + i)); // in0..in15 at cols 1..17
+        }
+        for i in 0..CHIP_OUT_LANES {
+            tuple.push(LeanExpr::Var(1 + CHIP_NODE8_ARITY + i)); // out0..out7 at cols 17..25
+        }
+        EffectVmDescriptor2 {
+            name: "ir2-node8-test".to_string(),
+            trace_width: 1 + CHIP_NODE8_ARITY + CHIP_OUT_LANES,
+            public_input_count: 0,
+            tables: vec![],
+            constraints: vec![VmConstraint2::Lookup(LookupSpec {
+                table: TID_P2,
+                tuple,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        }
+    }
+
+    /// An honest node8 trace: 16 distinct inputs (two 8-felt children), all 8 lanes filled from the
+    /// genuine full-width permutation (`chip_absorb_all_lanes` at arity 16).
+    fn node8_test_trace() -> Vec<Vec<BabyBear>> {
+        let ins: [BabyBear; CHIP_NODE8_ARITY] =
+            core::array::from_fn(|i| BabyBear::new(200 + i as u32));
+        let lanes = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins);
+        let mut row = vec![BabyBear::ZERO]; // col 0 unused (arity is the const tuple[0])
+        row.extend_from_slice(&ins);
+        row.extend_from_slice(&lanes);
+        debug_assert_eq!(row.len(), 1 + CHIP_NODE8_ARITY + CHIP_OUT_LANES);
+        vec![row; 4]
+    }
+
+    /// **Phase H3 node8 — the full-width L8‖R8 compression is ADMITTED, SATISFIABLE, and binds all
+    /// 16 input lanes.** The honest arity-16 absorb proves (the node8 arity is admitted by the
+    /// membership gate); forging input felt 12 (a lane in the second 8-felt child, BEYOND the wide
+    /// cap of 11 that no other arity can seed) makes the lookup unsatisfiable — proving the node8
+    /// row genuinely seeds `state[0..16]` from both children. This is the chip-primitive tooth.
+    #[test]
+    fn ir2_node8_full_width_compression_binds_both_children() {
+        let desc = node8_test_desc();
+        let rows = node8_test_trace();
+        if let Err(e) = prove_vm_descriptor2(&desc, &rows, &[], &MemBoundaryWitness::default(), &[])
+        {
+            panic!("honest arity-16 node8 compression must prove — the node8 arity is unusable: {e}");
+        }
+        // Forge input felt 12 (col 13 = in12, in the SECOND child, past the wide cap of 11). The
+        // lanes were computed from the genuine in12; the perturbed in12 matches no chip row.
+        let mut bad = node8_test_trace();
+        for r in &mut bad {
+            r[1 + 12] += BabyBear::ONE; // in12 at col 13
+        }
+        let r = std::panic::catch_unwind(|| {
+            prove_vm_descriptor2_inner(
+                &desc,
+                &bad,
+                &[],
+                &MemBoundaryWitness::default(),
+                &[],
+                &UMemBoundaryWitness::default(),
+                false,
+                &ir2_config(),
+            )
+        });
+        match r {
+            Err(_) => {}
+            Ok(res) => assert!(
+                res.is_err(),
+                "node8 with a forged second-child lane (in12) was accepted — the node8 child is NOT load-bearing"
+            ),
+        }
+    }
+
+    /// **Phase H3 node8 — both 8-felt children are load-bearing.** Perturbing ANY of the 16 input
+    /// felts (across both children, including the tail lanes 11..15 that only node8 can seed)
+    /// changes the digest AND every lane — the COLLISION FLOOR is now per-node at full 8-felt width.
+    #[test]
+    fn ir2_node8_both_children_load_bearing() {
+        let base: [BabyBear; CHIP_NODE8_ARITY] =
+            core::array::from_fn(|i| BabyBear::new(13 + i as u32));
+        let lanes_base = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &base);
+        for j in 0..CHIP_NODE8_ARITY {
+            let mut alt = base;
+            alt[j] += BabyBear::ONE;
+            let lanes_alt = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &alt);
+            assert_ne!(
+                lanes_base[0], lanes_alt[0],
+                "node8 digest unchanged after perturbing child felt {j} — that input lane is dead"
+            );
+            for i in 0..CHIP_OUT_LANES {
+                assert_ne!(
+                    lanes_base[i], lanes_alt[i],
+                    "node8 lane {i} unchanged after perturbing child felt {j} — avalanche fails"
+                );
+            }
         }
     }
 
@@ -6975,7 +7140,7 @@ mod tests {
     #[test]
     fn deployed_notespend_wide_bracket_double_spend_rejected() {
         use crate::effect_vm::trace_rotated::{
-            ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
+            NUM_PRE_LIMBS, ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
             generate_rotated_note_spend_trace_with_nullifier_tree,
         };
         use crate::effect_vm::{CellState, Effect};
@@ -7043,8 +7208,8 @@ mod tests {
         // The witness-INDEPENDENT block witnesses (the verify path threads trusted commits; for a
         // self-contained descriptor-level prove/verify the placeholder pre-limbs suffice — the
         // generator overrides the nullifier-root limbs from the real accumulator).
-        let zero_w = RotatedBlockWitness::new(vec![BabyBear::ZERO; 37], BabyBear::ZERO)
-            .expect("37 pre-iroot limbs");
+        let zero_w = RotatedBlockWitness::new(vec![BabyBear::ZERO; NUM_PRE_LIMBS], BabyBear::ZERO)
+            .expect("NUM_PRE_LIMBS pre-iroot limbs");
         let caveat = empty_caveat_manifest();
 
         let (trace, dpis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(
