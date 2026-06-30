@@ -449,8 +449,8 @@ mod tests {
         // not make the two map families alias on empty).
         assert_ne!(
             a,
-            crate::cap_root::empty_capability_root(),
-            "empty heap root must not alias the empty capability root"
+            crate::cap_root::empty_capability_root()[0],
+            "empty heap root must not alias the empty capability root (lane 0)"
         );
     }
 

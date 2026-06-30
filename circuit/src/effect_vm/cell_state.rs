@@ -269,7 +269,9 @@ mod tests {
         let balance = 1_000u64;
         let nonce = 7u32;
         let fields = [BabyBear::new(3); 8];
-        let cap_root = crate::cap_root::empty_capability_root();
+        // The legacy v1 1-felt commitment takes a single cap-root felt; use the
+        // lane-0 projection of the faithful 8-felt empty root.
+        let cap_root = crate::cap_root::empty_capability_root()[0];
 
         // Same carried state, two DIFFERENT authority residues.
         let rd_a = BabyBear::new(11);
@@ -299,7 +301,9 @@ mod tests {
         let balance = 500u64;
         let nonce = 2u32;
         let fields = [BabyBear::new(9); 8];
-        let cap_root = crate::cap_root::empty_capability_root();
+        // The legacy v1 1-felt commitment takes a single cap-root felt; use the
+        // lane-0 projection of the faithful 8-felt empty root.
+        let cap_root = crate::cap_root::empty_capability_root()[0];
 
         let with_empty = CellState::compute_commitment(
             balance,
