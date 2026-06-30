@@ -1,0 +1,55 @@
+[package]
+name = "dregg-agent"
+description = "The open-source dregg agent runtime: a confined autonomous agent loop — bounded (a replenishing budget meter), cap-gated (an attenuable powerbox over the dregg-auth credential lattice), receipted (a prev-hash-chained ed25519-signed log re-witnessable by a non-witness), and driven by any OpenAI-compatible / Hermes model. Substrate-only; no cloud, no hosting."
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[lib]
+name = "dregg_agent"
+path = "src/lib.rs"
+
+[features]
+# `live-brain` (OFF by default) wires the LIVE OpenAI-compatible HTTP transport
+# ([`brain::LiveOpenAICompatCaller`]): a real `reqwest::blocking` POST to the
+# chat-completions endpoint, the BYO key in the `Authorization: Bearer` header.
+# OFF by default so the std-only green build (the recorded-transport tests) needs
+# no HTTP/TLS stack; the live impl still compiles under this feature, its live
+# call is an `#[ignore]`d test. The brain itself + the recorded transport + the
+# cap/budget/receipt teeth are std-only and always built.
+default = []
+live-brain = ["dep:reqwest"]
+
+[dependencies]
+# Serde-derive on the spec / run report / receipt / credential wire types. `std`
+# for the String/Vec/BTreeMap fields.
+serde = { workspace = true, features = ["std"] }
+# The brain's chat-completions request/response JSON + tool-call marshalling.
+serde_json = { workspace = true }
+# Domain-separated digests: the receipt body hash, the credential caveat-id /
+# binding chain, the witnessed-run code_root / output_digest.
+blake3 = "1"
+# The receipt attestation + the credential caveat-chain signatures.
+ed25519-dalek = { version = "2.1", features = ["std", "rand_core"] }
+# The `dga1_`/`dgd1_` credential wire form (base64url).
+base64 = { workspace = true }
+# OS randomness for key/nonce generation (the credential root key, mint nonces).
+getrandom = { workspace = true }
+# Lowercase-hex digests (the code_root / public-key renderings).
+hex = "0.4"
+# The canonical credential token byte schema — pinned to the same version the
+# breadstuffs dregg-auth credential core uses so the wire form is byte-identical.
+postcard = { version = "1", features = ["use-std"] }
+# The credential wire-error enum.
+thiserror = { workspace = true }
+# The LIVE OpenAI-compatible transport (gated by `live-brain`). `blocking` keeps
+# the brain a synchronous call; `json` does the body (de)serialization;
+# `rustls-tls` is the self-contained TLS provider.
+reqwest = { version = "0.12", optional = true, default-features = false, features = [
+  "blocking",
+  "json",
+  "rustls-tls",
+] }
