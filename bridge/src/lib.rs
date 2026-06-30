@@ -34,12 +34,27 @@ pub mod authorize;
 pub mod convert;
 pub mod delta;
 pub mod ethereum;
+/// The **live off-chain inbound relayer** for the EVM bridge: a real Ethereum
+/// JSON-RPC client (`eth_getBlockByNumber("finalized")` / `eth_getLogs` /
+/// `eth_getTransactionReceipt` / `eth_getProof`) that watches the bridge contract
+/// for finalized `Deposit` logs, runs the off-chain verify (finality + the BR-2-B
+/// escrow-to-contract binding + receipt inclusion), and produces the committed-mint
+/// input. The Ethereum-direction twin of [`solana_relayer`]; the in-circuit witness
+/// of EVM finality is the circuit swarm's VK-epoch (`dregg_circuit::bridge_action_air`).
+pub mod ethereum_relayer;
 pub mod midnight;
 pub mod midnight_gateway;
 pub mod midnight_inclusion;
 pub mod midnight_observer;
 pub mod midnight_verified;
 pub mod mina;
+/// The **live off-chain Mina observer** for the settlement loop: a real Mina
+/// GraphQL client (`bestChain` for the finality depth + `account(publicKey)` for
+/// the zkApp's settled `provenRoot`) that confirms an outbound dregg→Mina
+/// settlement landed on a depth-finalized canonical block (and matches the settled
+/// dregg root) instead of trusting a relayer ack. The Mina-direction twin of
+/// [`midnight_observer`]; finalized-only, the verify, the injected transport.
+pub mod mina_observer;
 pub mod present;
 /// Mirror a Solana/pump.fun SPL token (`$DREGG`) into dregg's value layer as a
 /// conserved, `Payable` asset. See `docs/deos/TOKEN-MIRROR-BRIDGE.md`.
@@ -103,12 +118,21 @@ pub use action_binding::{
 pub use authorize::{AuthError, authorize_with_trace};
 pub use convert::{grant_to_facts, macaroon_to_factset};
 pub use delta::attenuation_to_delta;
+pub use ethereum_relayer::{
+    BlockTag, DEPOSIT_EVENT_SIGNATURE, ETH_DEPOSIT_NULLIFIER_DOMAIN, EthBridgeConfig, EthJsonRpc,
+    EthLog, EthProof, EthReceipt, EthRelayer, EthRelayerError, EthRpc, EthStorageSlot,
+    ObservedDeposit, deposit_event_topic0, encode_amount_word, eth_deposit_nullifier,
+};
 pub use midnight_gateway::{
     AcceptedEnvelope, BridgeGateway, ClaimFraud, ClaimVerdict, GatewayError, Verdict, Watchtower,
     claim_hash,
 };
 pub use midnight_verified::{
     VerifiedBridgeError, VerifiedDreggToMidnight, commit_midnight_recipient,
+};
+pub use mina_observer::{
+    MinaBlock, MinaGraphQlRpc, MinaObserver, MinaObserverConfig, MinaRpc, MinaZkappAccount,
+    ObserveError, ObservedMinaSettlement, decode_root_from_fields, encode_root_to_fields,
 };
 pub use present::{
     BridgeCommittedThresholdProof, BridgePredicateProof, BridgePredicateProofInner,

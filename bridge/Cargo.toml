@@ -68,6 +68,14 @@ solana-stake-interface = { version = "4.3.0", default-features = false }
 # by the `SOLANA_LOCAL=1`/`SOLANA_DEVNET=1` e2e harness pubkey decode.
 base64 = { version = "0.22", default-features = false, features = ["std"] }
 bs58 = "0.5"
+# Keccak-256 (the pre-NIST keccak Ethereum uses for event-signature topics and
+# the Solidity ABI) for the live EVM inbound relayer (`ethereum_relayer`): it
+# computes the canonical `Deposit(...)` event `topic0` so a forged-topic log is
+# refused without trusting a pinned constant. Pure-Rust RustCrypto, already in the
+# workspace lock (pulled transitively) — adds NO new transitive crate. The Mina
+# observer (`mina_observer`) needs no new dep: Mina GraphQL is a JSON POST over the
+# same injected `JsonRpcTransport`/`StdHttpTransport` seam the Solana relayer ships.
+sha3 = "0.10"
 
 [dev-dependencies]
 criterion = { workspace = true }
