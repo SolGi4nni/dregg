@@ -1,0 +1,11 @@
+# ast-grep project config for breadstuffs.
+#
+# Today this carries exactly ONE rule: the FAITHFUL-COMMITMENT gate
+# (.ast-grep/rules/faithful-commitment-felt.yml), which tripwires a lossy
+# 256->31-bit felt fold landing in a state-commitment position. See
+# docs/FAITHFUL-COMMITMENT-LAW.md and scripts/check-no-degraded-felt.sh.
+#
+# Run the gate:  bash scripts/check-no-degraded-felt.sh
+# Run all rules: sg scan
+ruleDirs:
+  - .ast-grep/rules

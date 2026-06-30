@@ -354,7 +354,10 @@ pub fn produce(
     for i in 0..8 {
         // r3..r10 ↔ fields[0..7]: the 32-byte record field packed into the field limb the
         // v1 circuit state block carries (`fold_bytes32_to_bb`, the same Horner packing).
-        pre_limbs[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]);
+        // FAITHFUL-COMMITMENT-LAW residual (producer twin of cell::commitment compute_rotated_pre_limbs):
+        // fields[0..7] still fold 32B→1 felt (~31-bit); the 8-felt grind is TODO. Allowlisted; a
+        // NET-NEW degrading fold in this commitment producer fails the gate.
+        pre_limbs[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]); // ast-grep-ignore: degraded-felt-commitment
     }
     // r11..r17 (limbs 12..=18) + r23 (limb 24): THE FAITHFUL 8-FELT AUTHORITY DIGEST (H1) — the
     // ~124-bit blake3-rooted commitment folding ALL authority-bearing cell state that no other

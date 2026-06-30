@@ -78,8 +78,13 @@ cargo nextest list -p <crate>                 # list tests without running (vali
 
 ## Searching: `sg` (ast-grep) for STRUCTURE, grep for text
 
-`ast-grep` 0.40.5 is installed (run it as `sg` or `ast-grep`; no repo ruleset — it's
-ad-hoc CLI). Reach for it whenever you're searching by **code shape**, not a literal
+`ast-grep` 0.40.5 is installed (run it as `sg` or `ast-grep`). The repo carries a
+ruleset (`sgconfig.yml` → `.ast-grep/rules/`): today just the **faithful-commitment
+gate** — `fold_bytes32_to_bb` (a lossy 256→31-bit fold) is a CI error in the
+state-commitment producers (`scripts/check-no-degraded-felt.sh`,
+`docs/FAITHFUL-COMMITMENT-LAW.md`); committed 32-byte components must be 8-felt
+(`bytes32_to_8_limbs`). Beyond that, reach for `sg` whenever you're searching by
+**code shape**, not a literal
 string — it matches the Rust AST, so it never false-positives on comments, doc
 examples, or strings, and it's `$metavariable`-aware. This is the right tool for the
 work we do constantly: finding the real call-sites of a symbol (cutover / grep-zero),

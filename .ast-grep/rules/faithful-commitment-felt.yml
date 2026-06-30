@@ -1,0 +1,47 @@
+# THE FAITHFUL-COMMITMENT GATE (ast-grep).
+#
+# Law (docs/FAITHFUL-COMMITMENT-LAW.md): every 32-byte component that flows into
+# the deployed STATE COMMITMENT must bind its SOURCE at the system's own
+# soundness strength (~124-bit, the 8-felt `bytes32_to_8_limbs` encoding), NEVER
+# a lossy 256->31-bit projection.
+#
+# `fold_bytes32_to_bb(x)` (circuit/src/effect_vm/helpers.rs) is a Horner fold of
+# 32 bytes into ONE BabyBear: a ~31-bit (1/p collision) tag. It is a fine
+# CONSISTENCY tag (e.g. the D5 PI cross-bindings, where the real binding is the
+# note-spend proof + the committed set), but in a commitment / `pre_limbs`
+# position it is the bug that cost weeks to grind back to faithful 8-felt.
+#
+# A bare `BabyBear` limb carries no evidence of faithful-vs-degraded, so a lossy
+# fold can slide into the commitment silently. This rule makes it a PR-time
+# error in the commitment-bearing producers. The faithful counterpart is
+# `bytes32_to_8_limbs` / `hash_many_8` / the 8-felt limb groups.
+#
+# Allowlisting an intentional residual: put the human reason on the line ABOVE
+# and suppress with a trailing  // ast-grep-ignore: degraded-felt-commitment
+# (the text after the colon is parsed by ast-grep as a rule-id list, so the
+# REASON must live on its own comment line, not after the colon).
+id: degraded-felt-commitment
+language: rust
+severity: error
+# Scope: ONLY the deployed state-commitment producers. Non-commitment folds
+# (executor/SDK per-effect param projectors, D5 cross-binding reconstruction,
+# tests) are out of scope by design -- the fold is sound THERE.
+files:
+  - "cell/src/commitment.rs"
+  - "turn/src/rotation_witness.rs"
+  - "circuit/src/effect_vm/trace_rotated.rs"
+rule:
+  any:
+    - pattern: fold_bytes32_to_bb($_)
+    - pattern: $$$::fold_bytes32_to_bb($_)
+message: >-
+  Degraded felt in a state-commitment position: `fold_bytes32_to_bb` folds 32
+  bytes -> ONE BabyBear (~31-bit). A committed component must bind its source at
+  ~124-bit. Use `bytes32_to_8_limbs` (8-felt). If this is a deliberate,
+  proof-backed residual, document the reason on the line above and suppress with
+  a trailing `// ast-grep-ignore: degraded-felt-commitment`. See
+  docs/FAITHFUL-COMMITMENT-LAW.md.
+note: |
+  This is the ast-grep flavor of the never-again gate. The type-wall capstone
+  (a `Faithful8` newtype the compiler enforces) comes after the
+  faithful-commitment campaign lands cap/heap/fields_root at 8-felt.

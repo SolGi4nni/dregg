@@ -952,7 +952,10 @@ pub fn compute_rotated_pre_limbs(
     pre[3] = bal_hi; // r2 ↔ balance_hi
     for i in 0..8 {
         // r3..r10 ↔ fields[0..7] (the same Horner packing the v1 state block carries).
-        pre[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]);
+        // FAITHFUL-COMMITMENT-LAW residual: fields[0..7] still fold 32B→1 felt (~31-bit). The
+        // faithful 8-felt grind for these limbs is TODO (parallel to cap/heap/fields_root). The
+        // trailing directive allowlists this KNOWN residual; a NET-NEW fold here fails the gate.
+        pre[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]); // ast-grep-ignore: degraded-felt-commitment
     }
     // r11..r22 (limbs 12..=23): app-register headroom.
     // r23 (limb 24) + r11..r17 (limbs 12..=18): THE FAITHFUL 8-FELT AUTHORITY DIGEST (H1) — the

@@ -176,6 +176,18 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash scripts/no-unchecked-auth.sh
 
+  no-degraded-felt:
+    name: Faithful-commitment gate (no degraded felt)
+    runs-on: ubuntu-latest
+    # ast-grep tripwire: a lossy 256->31-bit `fold_bytes32_to_bb` fold must not
+    # reach a state-commitment position. See docs/FAITHFUL-COMMITMENT-LAW.md.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ast-grep (sg)
+        run: npm install -g @ast-grep/cli@0.44.0
+      - name: Faithful-commitment gate
+        run: bash scripts/check-no-degraded-felt.sh
+
   metatheory-no-sorry:
     name: Metatheory zero-sorry guard
     runs-on: ubuntu-latest
