@@ -206,7 +206,7 @@ theorem closedWitness_of_readouts
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
-    {Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State}
+    {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
@@ -236,7 +236,7 @@ theorem lightclient_unfoolable_circuit_sound_of_readouts
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
-    {Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State}
+    {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
     (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest

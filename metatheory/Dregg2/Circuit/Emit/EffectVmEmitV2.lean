@@ -1021,10 +1021,10 @@ older `attenuateVmDescriptor2` / `revokeCapabilityVmDescriptor2` (not on the V3 
 phase-B expressibility theorems. -/
 def heldReadOp : MapOp :=
   { guard   := .var EffectVmEmitAttenuateA.selA.ATTENUATE
-  , root    := .var (sbCol state.CAP_ROOT)
+  , root    := fun _ => .var (sbCol state.CAP_ROOT)
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol HELD_MASK)
-  , newRoot := .var (sbCol state.CAP_ROOT)
+  , newRoot := fun _ => .var (sbCol state.CAP_ROOT)
   , op      := .read }
 
 /-- The attenuated WRITE: the post `cap_root` is the genuine sorted insert-or-update of
@@ -1032,10 +1032,10 @@ def heldReadOp : MapOp :=
 rotated-limb rebase + witness-heap threading, not a bare guard re-point. -/
 def keepWriteOp : MapOp :=
   { guard   := .var EffectVmEmitAttenuateA.selA.ATTENUATE
-  , root    := .var (sbCol state.CAP_ROOT)
+  , root    := fun _ => .var (sbCol state.CAP_ROOT)
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol KEEP_MASK)
-  , newRoot := .var (saCol state.CAP_ROOT)
+  , newRoot := fun _ => .var (saCol state.CAP_ROOT)
   , op      := .write }
 
 /-- The non-amplification lookup: `(keep, held)` must be a subset-table row. (On NoOp pad rows
@@ -1129,10 +1129,10 @@ FORGE NOTE — like attenuate, this V1-STATE write (col 65/87) needs the rotated
 threading, not a bare guard re-point. Left at the faithfulness name pending that rebase. -/
 def removeWriteOp : MapOp :=
   { guard   := .var EffectVmEmitAttenuateA.selA.ATTENUATE
-  , root    := .var (sbCol state.CAP_ROOT)
+  , root    := fun _ => .var (sbCol state.CAP_ROOT)
   , key     := .var (prmCol CAP_KEY)
   , value   := .const 0
-  , newRoot := .var (saCol state.CAP_ROOT)
+  , newRoot := fun _ => .var (saCol state.CAP_ROOT)
   , op      := .write }
 
 /-- **`revokeCapabilityVmDescriptor2`** — the graduated revoke descriptor PLUS the cap-crown circuit

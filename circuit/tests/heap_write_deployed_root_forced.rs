@@ -124,12 +124,19 @@ fn deployed_heapwrite_forces_sorted_merkle_splice() {
     let m: &MapOpSpec = splice
         .expect("PHASE-E: heapWriteVmDescriptor2R24 must carry a `.write` map_op (the splice)");
 
-    // The splice op opens the committed heap root (col 65) at the in-row-recomputed address (col 102)
-    // for the written value (col 72) and FORCES the new heap root (col 87) to the genuine sorted update.
+    // The splice op opens the committed heap root (8-felt group, lane 0 = col 65) at the in-row-
+    // recomputed address (col 102) for the written value (col 72) and FORCES the new heap root
+    // (8-felt group, lane 0 = col 87) to the genuine sorted update. Phase H-HEAP-8: `root`/`new_root`
+    // are 8-lane digest groups whose lane 0 is the old scalar heap-root limb.
     assert_eq!(
-        m.root,
+        m.root.len(),
+        8,
+        "splice root must be an 8-felt heap-root group"
+    );
+    assert_eq!(
+        m.root[0],
         LeanExpr::Var(HEAP_ROOT_BEFORE),
-        "splice root must be HEAP_ROOT_BEFORE(65)"
+        "splice root lane 0 must be HEAP_ROOT_BEFORE(65)"
     );
     assert_eq!(
         m.key,
@@ -142,9 +149,14 @@ fn deployed_heapwrite_forces_sorted_merkle_splice() {
         "splice value must be VALUE(72)"
     );
     assert_eq!(
-        m.new_root,
+        m.new_root.len(),
+        8,
+        "splice new_root must be an 8-felt heap-root group"
+    );
+    assert_eq!(
+        m.new_root[0],
         LeanExpr::Var(HEAP_ROOT_AFTER),
-        "splice new_root must be HEAP_ROOT_AFTER(87) — the published heap_root register"
+        "splice new_root lane 0 must be HEAP_ROOT_AFTER(87) — the published heap_root register"
     );
 
     eprintln!(

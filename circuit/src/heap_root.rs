@@ -418,11 +418,392 @@ pub fn compute_heap_root_entries(entries: &[((BabyBear, BabyBear), BabyBear)]) -
     )
 }
 
+// ============================================================================
+// FAITHFUL 8-FELT HEAP ROOT (Phase H-HEAP-8) — the SECOND faithful root.
+//
+// The lossy 1-felt `heap_node` / `HeapLeaf::digest` above project the sorted-
+// Merkle heap to a single BabyBear (~2^31), well below the deployed FRI/STARK
+// ~124-bit soundness floor: two GENUINELY-different heaps can collide on the
+// 1-felt root while topping different 8-felt roots (the heap GENTIAN tooth
+// `circuit/tests/heap_root_gentian_weld.rs` exhibits a concrete pair). The
+// native 8-felt heap tree closes that hole, EXACTLY mirroring the cap tree's
+// `cap_node8` / `CAP_DIGEST_W` weld: every node absorbs full 8-felt children
+// through the arity-16 `node8` chip and emits a full 8-felt digest, so the
+// per-node collision floor is the full ~124-bit width. Reuses the SAME
+// `descriptor_ir2::chip_absorb_all_lanes` compression the cap tree commits.
+// ============================================================================
+
+/// The number of felts in a native heap-tree digest (Phase H-HEAP-8: the heap
+/// tree is 8-felt, faithful to the FRI ~124-bit soundness floor, no longer the
+/// lossy 1-felt `heap_node`). A leaf / node / root is `[BabyBear; HEAP_DIGEST_W]`.
+/// The twin of [`crate::cap_root::CAP_DIGEST_W`].
+pub const HEAP_DIGEST_W: usize = 8;
+
+/// The all-zero 8-felt digest — the PADDING / empty-leaf marker (the 8-felt
+/// twin of the `BabyBear::ZERO` the 1-felt tree padded with).
+/// `EMPTY_SUBTREE_ROOTS_8[0]` is this. Twin of [`crate::cap_root::CAP_ZERO8`].
+pub const HEAP_ZERO8: [BabyBear; HEAP_DIGEST_W] = [BabyBear::ZERO; HEAP_DIGEST_W];
+
+/// **`heap_node8`** — the native 8-felt heap-tree internal node: the arity-16
+/// `node8` chip compression `perm(L8 ‖ R8)[0..8]`
+/// (`descriptor_ir2::chip_absorb_all_lanes` at `CHIP_NODE8_ARITY = 16`).
+/// Replaces the lossy 1-felt `heap_node` for the canonical heap tree; EQUALITY-
+/// binds all 8 output lanes to both 8-felt children, so the per-node collision
+/// floor is full 8-felt width (~124-bit), matching the deployed FRI/STARK
+/// soundness. The IDENTICAL compression [`crate::cap_root::cap_node8`] commits —
+/// cap/heap/fields all share this ONE node8 lane.
+///
+/// PUBLIC so the heap-open trace scaffold fills its per-level `cur8/sib8/node8`
+/// columns from the SAME compression the heap tree commits.
+pub fn heap_node8(
+    l: [BabyBear; HEAP_DIGEST_W],
+    r: [BabyBear; HEAP_DIGEST_W],
+) -> [BabyBear; HEAP_DIGEST_W] {
+    let mut ins = [BabyBear::ZERO; 16];
+    ins[..HEAP_DIGEST_W].copy_from_slice(&l);
+    ins[HEAP_DIGEST_W..].copy_from_slice(&r);
+    crate::descriptor_ir2::chip_absorb_all_lanes(crate::descriptor_ir2::CHIP_NODE8_ARITY, &ins)
+}
+
+impl HeapLeaf {
+    /// The native 8-felt leaf digest: the SINGLE arity-2 chip absorb of
+    /// `[addr, value]`, squeezing ALL 8 output lanes (Phase H-HEAP-8), byte-
+    /// identical to the IR-v2 Poseidon2 chip's `BUS_P2` leaf absorb
+    /// (`descriptor_ir2` `chip_absorb_tuple([addr, value], out0, lanes 1..7)`).
+    /// Lane 0 equals the lossy [`HeapLeaf::digest`] (`hash_many[addr, value]` is
+    /// the same permutation's out0); lanes 1..7 are the faithful completion the
+    /// 1-felt chain dropped. Twin of [`crate::cap_root::CapLeaf::digest`].
+    pub fn digest8(&self) -> [BabyBear; HEAP_DIGEST_W] {
+        crate::descriptor_ir2::chip_absorb_all_lanes(2, &[self.addr, self.value])
+    }
+}
+
+/// The precomputed 8-felt **empty-subtree roots** at every level `0..=DEPTH`.
+/// `EMPTY_SUBTREE_ROOTS_8[0]` is the ZERO8 padding-leaf digest;
+/// `EMPTY_SUBTREE_ROOTS_8[k] = heap_node8(empty8[k-1], empty8[k-1])`. Twin of
+/// [`crate::cap_root`]'s `EMPTY_SUBTREE_ROOTS` at 8-felt width.
+static EMPTY_SUBTREE_ROOTS_8: LazyLock<[[BabyBear; HEAP_DIGEST_W]; HEAP_TREE_DEPTH + 1]> =
+    LazyLock::new(|| {
+        let mut roots = [HEAP_ZERO8; HEAP_TREE_DEPTH + 1];
+        for level in 1..=HEAP_TREE_DEPTH {
+            roots[level] = heap_node8(roots[level - 1], roots[level - 1]);
+        }
+        roots
+    });
+
+/// The 8-felt empty-subtree root at `level`. Twin of [`heap_empty_subtree_root`].
+pub fn heap_empty_subtree_root_8(level: usize) -> [BabyBear; HEAP_DIGEST_W] {
+    EMPTY_SUBTREE_ROOTS_8[level]
+}
+
+/// **`compute_canonical_heap_root_8`** — the faithful 8-felt heap root over a
+/// set of `(addr, value)` leaves at the canonical depth. THE producer the cell
+/// recomputes (`compute_canonical_heap_root_8` in `dregg-cell`) and the rotated
+/// commitment absorbs at limb 28 (lane 0) ‖ limbs 58..64 (lanes 1..7). The
+/// 8-felt twin of [`compute_heap_root`] and of
+/// [`crate::cap_root::compute_capability_root`]: same sorted+sentinel+padded
+/// discipline, but every node folds through [`heap_node8`] and every leaf is
+/// [`HeapLeaf::digest8`], so the whole commit is faithful to the ~124-bit floor.
+///
+/// The sparse fold (only the non-empty prefix per level, all-padding siblings
+/// read from [`heap_empty_subtree_root_8`]) is byte-identical to the dense
+/// build — the SAME contiguous-prefix argument the 1-felt [`CanonicalHeapTree::new`]
+/// rests on, at 8-felt width.
+pub fn compute_canonical_heap_root_8(leaves: Vec<HeapLeaf>) -> [BabyBear; HEAP_DIGEST_W] {
+    let mut leaves = leaves;
+    leaves.push(sentinel_leaf(SENTINEL_MIN));
+    leaves.push(sentinel_leaf(SENTINEL_MAX));
+    leaves.sort_by_key(|l| l.addr.as_u32());
+    leaves.dedup_by_key(|l| l.addr.as_u32());
+
+    let depth = HEAP_TREE_DEPTH;
+    let capacity = 1usize << depth;
+    assert!(
+        leaves.len() <= capacity,
+        "heap ({} entries incl. sentinels) exceeds tree capacity 2^{depth}",
+        leaves.len()
+    );
+
+    // Sparse 8-felt fold: only the non-empty prefix per level; a child outside
+    // the stored prefix is the 8-felt empty-subtree root for the child's level.
+    let mut cur: Vec<[BabyBear; HEAP_DIGEST_W]> = leaves.iter().map(HeapLeaf::digest8).collect();
+    for level in 0..depth {
+        let prev_len = cur.len();
+        let next_len = prev_len.div_ceil(2);
+        let mut next_level = Vec::with_capacity(next_len);
+        for i in 0..next_len {
+            let l = cur[2 * i];
+            let r = cur
+                .get(2 * i + 1)
+                .copied()
+                .unwrap_or_else(|| heap_empty_subtree_root_8(level));
+            next_level.push(heap_node8(l, r));
+        }
+        cur = next_level;
+    }
+    debug_assert_eq!(cur.len(), 1);
+    cur[0]
+}
+
+/// Compute the faithful 8-felt heap root over raw `((coll, key), value)`
+/// entries: addresses each via [`heap_addr`] then folds the sorted 8-felt tree.
+/// The 8-felt twin of [`compute_heap_root_entries`].
+pub fn compute_canonical_heap_root_8_entries(
+    entries: &[((BabyBear, BabyBear), BabyBear)],
+) -> [BabyBear; HEAP_DIGEST_W] {
+    compute_canonical_heap_root_8(
+        entries
+            .iter()
+            .map(|((coll, key), value)| HeapLeaf {
+                addr: heap_addr(*coll, *key),
+                value: *value,
+            })
+            .collect(),
+    )
+}
+
+/// The faithful 8-felt root of the EMPTY heap (only the two sentinels). The
+/// 8-felt twin of [`empty_heap_root`]; the value the rotated commit absorbs for
+/// a cell with no heap entries.
+pub fn empty_heap_root_8() -> [BabyBear; HEAP_DIGEST_W] {
+    compute_canonical_heap_root_8(Vec::new())
+}
+
+/// **`recompose_membership_8`** — fold a held leaf's 8-felt digest up the
+/// `(sibling, direction)` path through [`heap_node8`], mixing `(cur, sib)` by
+/// the direction bit (`dir = 0` ⇒ `cur` LEFT: `heap_node8(cur, sib)`; `dir = 1`
+/// ⇒ `cur` RIGHT: `heap_node8(sib, cur)`). The producer-side twin of the
+/// deployed in-circuit `node8` heap recompose (the MapOps chain, unified onto
+/// `BUS_P2`) and of Lean `recomposeUp8`. Used by the 8-felt update/insert
+/// witnesses and the circuit trace scaffold.
+pub fn recompose_membership_8(
+    leaf: [BabyBear; HEAP_DIGEST_W],
+    siblings: &[[BabyBear; HEAP_DIGEST_W]],
+    directions: &[u8],
+) -> [BabyBear; HEAP_DIGEST_W] {
+    let mut cur = leaf;
+    for (sib, &dir) in siblings.iter().zip(directions.iter()) {
+        cur = if dir == 0 {
+            heap_node8(cur, *sib)
+        } else {
+            heap_node8(*sib, cur)
+        };
+    }
+    cur
+}
+
 /// The canonical heap root of the EMPTY heap (only the two sentinels). This
 /// is the value a fresh cell's `heap_root` register seeds with. Deterministic
 /// and cell-independent.
 pub fn empty_heap_root() -> BabyBear {
     compute_heap_root(Vec::new())
+}
+
+// ============================================================================
+// FAITHFUL 8-FELT WITNESSES (Phase H-HEAP-8, step 2) — the 8-felt twin of the
+// 1-felt `CanonicalHeapTree` + `HeapUpdateWitness` / `HeapInsertWitness`. The
+// stored-levels sparse tree at 8-felt width feeds the in-circuit MapOps node8
+// chains (`descriptor_ir2`, unified onto `BUS_P2`); every leaf is
+// [`HeapLeaf::digest8`] and every node folds through [`heap_node8`], so the
+// witnessed opening is faithful to the ~124-bit floor. Mirrors
+// [`crate::cap_root::CanonicalCapTree`]'s 8-felt path.
+// ============================================================================
+
+/// The canonical heap tree at 8-felt width: the stored-levels sparse twin of
+/// [`CanonicalHeapTree`], but each node is an 8-felt [`heap_node8`] digest and
+/// each leaf is [`HeapLeaf::digest8`]. `root8()` equals
+/// [`compute_canonical_heap_root_8`] over the same leaves.
+#[derive(Clone, Debug)]
+pub struct CanonicalHeapTree8 {
+    /// All levels, bottom-up, stored SPARSELY as the non-empty PREFIX of each
+    /// level (see [`CanonicalHeapTree`] for the contiguous-prefix argument),
+    /// at 8-felt width. A node at index `>= levels[k].len()` is the all-padding
+    /// [`heap_empty_subtree_root_8`]`(k)`.
+    levels: Vec<Vec<[BabyBear; HEAP_DIGEST_W]>>,
+    /// The leaves in sorted-by-`addr` order, including sentinels (pre-padding).
+    sorted_leaves: Vec<HeapLeaf>,
+    /// Tree depth.
+    depth: usize,
+}
+
+impl CanonicalHeapTree8 {
+    /// Build the canonical 8-felt heap tree from a cell's heap entries. Same
+    /// sorted+sentinel+dedup+sparse-fold discipline as [`CanonicalHeapTree::new`],
+    /// at 8-felt width.
+    pub fn new(mut leaves: Vec<HeapLeaf>, depth: usize) -> Self {
+        leaves.push(sentinel_leaf(SENTINEL_MIN));
+        leaves.push(sentinel_leaf(SENTINEL_MAX));
+        leaves.sort_by_key(|l| l.addr.as_u32());
+        leaves.dedup_by_key(|l| l.addr.as_u32());
+
+        let capacity = 1usize << depth;
+        assert!(
+            leaves.len() <= capacity,
+            "heap ({} entries incl. sentinels) exceeds tree capacity 2^{depth}",
+            leaves.len()
+        );
+
+        let leaf_digests: Vec<[BabyBear; HEAP_DIGEST_W]> =
+            leaves.iter().map(HeapLeaf::digest8).collect();
+        let mut levels: Vec<Vec<[BabyBear; HEAP_DIGEST_W]>> = Vec::with_capacity(depth + 1);
+        levels.push(leaf_digests);
+        for level in 0..depth {
+            let prev = levels.last().unwrap();
+            let prev_len = prev.len();
+            let next_len = prev_len.div_ceil(2);
+            let mut next_level = Vec::with_capacity(next_len);
+            for i in 0..next_len {
+                let l = prev[2 * i];
+                let r = prev
+                    .get(2 * i + 1)
+                    .copied()
+                    .unwrap_or_else(|| heap_empty_subtree_root_8(level));
+                next_level.push(heap_node8(l, r));
+            }
+            levels.push(next_level);
+        }
+
+        Self {
+            levels,
+            sorted_leaves: leaves,
+            depth,
+        }
+    }
+
+    /// The 8-felt value at `(level, idx)`: the stored prefix value if in-prefix,
+    /// else the all-padding [`heap_empty_subtree_root_8`]`(level)`.
+    fn node8(&self, level: usize, idx: usize) -> [BabyBear; HEAP_DIGEST_W] {
+        self.levels[level]
+            .get(idx)
+            .copied()
+            .unwrap_or_else(|| heap_empty_subtree_root_8(level))
+    }
+
+    /// The 8-felt Merkle root.
+    pub fn root8(&self) -> [BabyBear; HEAP_DIGEST_W] {
+        self.node8(self.depth, 0)
+    }
+
+    /// The sorted leaves (including sentinels).
+    pub fn sorted_leaves(&self) -> &[HeapLeaf] {
+        &self.sorted_leaves
+    }
+
+    /// The padded-level position of the leaf whose `addr == key`, or `None`.
+    pub fn position_of(&self, key: BabyBear) -> Option<usize> {
+        self.sorted_leaves.iter().position(|l| l.addr == key)
+    }
+
+    /// The 8-felt membership path `(siblings8, directions)` for the leaf at
+    /// `position`. Same direction convention as [`CanonicalHeapTree::prove_membership`].
+    pub fn prove_membership(
+        &self,
+        position: usize,
+    ) -> Option<(Vec<[BabyBear; HEAP_DIGEST_W]>, Vec<u8>)> {
+        let capacity = 1usize << self.depth;
+        if position >= capacity {
+            return None;
+        }
+        let mut siblings = Vec::with_capacity(self.depth);
+        let mut directions = Vec::with_capacity(self.depth);
+        let mut idx = position;
+        for level in 0..self.depth {
+            let sibling_idx = idx ^ 1;
+            siblings.push(self.node8(level, sibling_idx));
+            directions.push((idx & 1) as u8);
+            idx >>= 1;
+        }
+        Some((siblings, directions))
+    }
+
+    /// Build an 8-felt [`HeapUpdateWitness8`] for an in-place value write at an
+    /// EXISTING address. The 8-felt twin of [`CanonicalHeapTree::update_witness`]:
+    /// `new_root8` is recomposed over the SAME sibling path via [`heap_node8`].
+    pub fn update_witness(&self, new_leaf: HeapLeaf) -> Option<HeapUpdateWitness8> {
+        let pos = self.position_of(new_leaf.addr)?;
+        let old_leaf = self.sorted_leaves[pos];
+        let (siblings, directions) = self.prove_membership(pos)?;
+        let new_root = recompose_membership_8(new_leaf.digest8(), &siblings, &directions);
+        Some(HeapUpdateWitness8 {
+            old_leaf,
+            new_leaf,
+            siblings,
+            directions,
+            old_root: self.root8(),
+            new_root,
+        })
+    }
+
+    /// Build an 8-felt sorted INSERT witness for a FRESH address. The 8-felt
+    /// twin of [`CanonicalHeapTree::insert_witness`].
+    pub fn insert_witness(&self, new_leaf: HeapLeaf) -> Option<HeapInsertWitness8> {
+        let key = new_leaf.addr;
+        if key == SENTINEL_MIN || key.as_u32() >= SENTINEL_MAX.as_u32() {
+            return None;
+        }
+        if self.position_of(key).is_some() {
+            return None;
+        }
+        let pos = self.sorted_leaves.iter().position(|l| l.addr > key)?;
+        let new_real: Vec<HeapLeaf> = self.sorted_leaves[..pos]
+            .iter()
+            .chain(std::iter::once(&new_leaf))
+            .chain(&self.sorted_leaves[pos..])
+            .filter(|l| l.addr != SENTINEL_MIN && l.addr != SENTINEL_MAX)
+            .copied()
+            .collect();
+        let new_tree = CanonicalHeapTree8::new(new_real, self.depth);
+        let new_pos = new_tree.position_of(key)?;
+        let (siblings, directions) = new_tree.prove_membership(new_pos)?;
+        Some(HeapInsertWitness8 {
+            new_leaf,
+            siblings,
+            directions,
+            old_root: self.root8(),
+            new_root: new_tree.root8(),
+        })
+    }
+}
+
+/// The 8-felt twin of [`HeapUpdateWitness`]: 8-felt siblings and roots. The
+/// old leaf opens against `old_root` (8-felt); the new leaf recomposes to
+/// `new_root` over the SAME sibling path.
+#[derive(Clone, Debug)]
+pub struct HeapUpdateWitness8 {
+    /// The OLD (pre-write) leaf.
+    pub old_leaf: HeapLeaf,
+    /// The NEW (post-write) leaf — same `addr`, new value.
+    pub new_leaf: HeapLeaf,
+    /// 8-felt sibling digests bottom-up.
+    pub siblings: Vec<[BabyBear; HEAP_DIGEST_W]>,
+    /// Direction bits (0 = current is left child).
+    pub directions: Vec<u8>,
+    /// The authenticated old 8-felt root.
+    pub old_root: [BabyBear; HEAP_DIGEST_W],
+    /// The recomposed new 8-felt root.
+    pub new_root: [BabyBear; HEAP_DIGEST_W],
+}
+
+/// The 8-felt twin of [`HeapInsertWitness`].
+#[derive(Clone, Debug)]
+pub struct HeapInsertWitness8 {
+    /// The inserted leaf.
+    pub new_leaf: HeapLeaf,
+    /// 8-felt sibling digests bottom-up.
+    pub siblings: Vec<[BabyBear; HEAP_DIGEST_W]>,
+    /// Direction bits.
+    pub directions: Vec<u8>,
+    /// The authenticated pre-insert 8-felt root.
+    pub old_root: [BabyBear; HEAP_DIGEST_W],
+    /// The recomposed post-insert 8-felt root.
+    pub new_root: [BabyBear; HEAP_DIGEST_W],
+}
+
+/// Compute the 8-felt canonical heap tree over a cell's entries — the
+/// stored-levels object the circuit trace scaffold witnesses against. Twin of
+/// [`compute_canonical_heap_root_8`] but retains the levels for openings.
+pub fn canonical_heap_tree_8(leaves: Vec<HeapLeaf>) -> CanonicalHeapTree8 {
+    CanonicalHeapTree8::new(leaves, HEAP_TREE_DEPTH)
 }
 
 #[cfg(test)]
@@ -449,8 +830,8 @@ mod tests {
         // not make the two map families alias on empty).
         assert_ne!(
             a,
-            crate::cap_root::empty_capability_root(),
-            "empty heap root must not alias the empty capability root"
+            crate::cap_root::empty_capability_root()[0],
+            "empty heap root must not alias the empty capability root (lane 0)"
         );
     }
 

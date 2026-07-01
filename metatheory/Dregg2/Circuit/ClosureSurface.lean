@@ -244,7 +244,7 @@ cap-table edge removal is cap-tree-FORCED (`revoke_descriptorRefines`); `StateDe
 committed endpoints. The `.log` advance is inside `RevokeCapsTreeEncodes.logAdv` — the named residual the
 kernel-only surface cannot bind. NO surface seam. -/
 theorem revoke_descriptorRefines_closed
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}

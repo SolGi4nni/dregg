@@ -53,6 +53,7 @@ import Dregg2.Crypto.CommitmentBinding
 import Dregg2.Exec.Kernel
 import Dregg2.Exec.FacetAuthority
 import Dregg2.Circuit.Emit.EffectVmEmitCapReshape
+import Dregg2.Circuit.CapMerkleGeneric
 
 namespace Dregg2.Circuit.DeployedCapTree
 
@@ -209,27 +210,32 @@ the REAL rate-4 leaf digest and the REAL capacity-tagged `hash_fact` binary fold
 def MembersAt (root : ℤ) (leaf : CapLeaf) : Prop :=
   ∃ path : List Step, recomposeUp S (capLeafDigest S leaf) path = root
 
+/-- `Step` → the width-agnostic `CapMerkleGeneric.StepG ℤ` (structural identity: same `(sib, dir)`).
+The bridge that lets the 1-felt tree DELEGATE its membership soundness to the generic spine. -/
+def Step.toG (s : Step) : CapMerkleGeneric.StepG ℤ := ⟨s.sib, s.dir⟩
+
+/-- **The 1-felt recompose IS the generic recompose at `D := ℤ`, `node := nodeOf S`.** Definitional
+modulo the `Step ↔ StepG ℤ` repack; proved by a one-line structural induction. This is what makes the
+1-felt anti-ghost a RE-INSTANTIATION of `CapMerkleGeneric.recomposeG_inj_of_path`, not a re-proof. -/
+theorem recomposeUp_eq_recomposeG (cur : ℤ) (path : List Step) :
+    recomposeUp S cur path
+      = CapMerkleGeneric.recomposeG (nodeOf S) cur (path.map Step.toG) := by
+  induction path generalizing cur with
+  | nil => rfl
+  | cons s rest ih =>
+    simp only [recomposeUp, List.map_cons, CapMerkleGeneric.recomposeG, Step.toG, ih]
+
 /-- **`recomposeUp` is injective in its STARTING digest under the node CR** — equal recomposed roots
-from the SAME path force the same starting leaf digest (peel each level by `nodeOf_injective`). The
-anti-ghost spine: a prover cannot keep the published root while swapping the opened leaf along a fixed
-path. -/
+from the SAME path force the same starting leaf digest. The anti-ghost spine: a prover cannot keep the
+published root while swapping the opened leaf along a fixed path. NOW DELEGATED to the width-agnostic
+`CapMerkleGeneric.recomposeG_inj_of_path` (Option A) — it calls ONLY `nodeOf_injective`, NO spine
+re-proof; the SAME generic theorem the native-8-felt `recomposeUp8` instantiates below. -/
 theorem recomposeUp_inj_of_path (path : List Step) :
     ∀ {a b : ℤ}, recomposeUp S a path = recomposeUp S b path → a = b := by
-  induction path with
-  | nil => intro a b h; simpa [recomposeUp] using h
-  | cons s rest ih =>
-    intro a b h
-    simp only [recomposeUp] at h
-    have hstep := ih h
-    cases hd : s.dir with
-    | false =>
-      rw [hd] at hstep
-      simp only [Bool.false_eq_true, if_false] at hstep
-      exact (nodeOf_injective S hstep).1
-    | true =>
-      rw [hd] at hstep
-      simp only [if_true] at hstep
-      exact (nodeOf_injective S hstep).2
+  intro a b h
+  rw [recomposeUp_eq_recomposeG, recomposeUp_eq_recomposeG] at h
+  exact CapMerkleGeneric.recomposeG_inj_of_path (nodeOf S)
+    (fun hh => nodeOf_injective S hh) (path.map Step.toG) h
 
 /-! ## §6 — the FAITHFUL commitment relation + the authority bridge against THIS tree.
 
@@ -598,6 +604,252 @@ theorem deployedFaithfulEff_canonical {State : Type} (S : CapHashScheme State)
 
 end CapHashScheme
 
+/-! ## §5b — the NATIVE 8-FELT cap tree (Phase H-CAP-8): the `node8` arity-16 chip compression.
+
+The deployed `cap_root.rs` cap tree is now 8-FELT (`CAP_DIGEST_W = 8`): a leaf/node/root is a
+length-8 vector. `CapLeaf::digest = chip_absorb_all_lanes(7, leafFields)` (8 squeezed lanes) and
+`cap_node8 = chip_absorb_all_lanes(16, L8 ‖ R8)` (the arity-16 `node8` compression). The per-node
+collision floor is the FULL 8-felt width (~124-bit), matching the deployed FRI/STARK soundness — vs
+the lossy 1-felt `nodeOf` (kept above for the out-of-scope DSL AIR).
+
+THE MIGRATION IS A RE-INSTANTIATION: the membership anti-ghost rides the SAME
+`CapMerkleGeneric.recomposeG_inj_of_path` the 1-felt tree now delegates to — there is NO spine
+re-proof. The ONLY new obligation is `nodeOf8_injective` (the arity-16 chip's collision-resistance),
+discharged from the named `Compress8CR` floor exactly as `nodeOf_injective` rides `Compress1CR`. -/
+
+/-- The 8-felt cap-tree digest carrier (`cap_root.rs::CAP_DIGEST_W = 8`): a leaf / node / root is a
+length-8 felt vector (`[BabyBear; 8]`), modeled as `Fin 8 → ℤ`. -/
+abbrev Digest8 := Fin 8 → ℤ
+
+/-- **`Compress8CR f`** — the 8-output chip absorb `f : List ℤ → Digest8`
+(`descriptor_ir2::chip_absorb_all_lanes`, all 8 squeezed lanes) is collision-resistant: equal 8-felt
+output vectors force equal input lists. THE NEW NAMED CRYPTO FLOOR for the native-8-felt cap tree —
+the 8-lane reading of the SAME single-permutation-call primitive #4 the 1-felt `Compress1CR` carries,
+now at the full ~124-bit width. NOT an axiom: an explicit carrier (`Reference8` exhibits one;
+`badChip8_not_CR` falsifies a colliding one, so it is not `True`). -/
+def Compress8CR (f : List ℤ → Digest8) : Prop :=
+  ∀ a b : List ℤ, f a = f b → a = b
+
+/-- **`Cap8Scheme`** — the native-8-felt cap-tree's SINGLE Poseidon2 carrier: the 8-output chip absorb
+`chipAbsorb8 : List ℤ → Digest8`. BOTH the leaf (`capLeafDigest8`, arity 7) and the node
+(`nodeOf8`, arity 16) ride it; the input lists are length-disjoint (7 vs 16), so the chip's per-row
+`(arity, padded inputs)` seeding separates the two domains for free. -/
+structure Cap8Scheme where
+  /-- The single 8-output chip-absorb compression (`cap_root.rs::cap_node8`/`CapLeaf::digest`). -/
+  chipAbsorb8 : List ℤ → Digest8
+  /-- CRYPTO CARRIER: the arity-16 chip's per-row collision-resistance (primitive #4 at 8-felt width). -/
+  chip8CR : Compress8CR chipAbsorb8
+
+namespace Cap8Scheme
+
+variable (S8 : Cap8Scheme)
+
+/-- Pack two 8-felt children into the arity-16 `node8` input block `L8 ‖ R8`
+(`cap_root.rs::cap_node8`: `ins[..8] = l; ins[8..] = r`). -/
+def pack8 (l r : Digest8) : List ℤ := List.ofFn l ++ List.ofFn r
+
+/-- `pack8` is injective in `(l, r)`: the two length-8 halves split uniquely (equal lengths) and
+`List.ofFn` is injective. The structural twin of `packNode_inj`, at vector width 8. -/
+theorem pack8_inj {l₁ r₁ l₂ r₂ : Digest8} (h : pack8 l₁ r₁ = pack8 l₂ r₂) :
+    l₁ = l₂ ∧ r₁ = r₂ := by
+  unfold pack8 at h
+  have hlen : (List.ofFn l₁).length = (List.ofFn l₂).length := by simp
+  obtain ⟨hl, hr⟩ := List.append_inj h hlen
+  exact ⟨List.ofFn_inj.mp hl, List.ofFn_inj.mp hr⟩
+
+/-- **`capLeafDigest8 S8 l`** — the 8-felt deployed leaf digest, the SINGLE 8-output chip absorb over
+the 7 leaf fields. BYTE-IDENTICAL to `cap_root.rs::CapLeaf::digest`. -/
+def capLeafDigest8 (l : CapLeaf) : Digest8 := S8.chipAbsorb8 (leafFields l)
+
+/-- **`nodeOf8 S8 l r`** — the native 8-felt internal node, the arity-16 chip absorb over
+`pack8 l r = L8 ‖ R8`. BYTE-IDENTICAL to `cap_root.rs::cap_node8`. The SAME `chipAbsorb8` carrier as
+the leaf — one cap hash everywhere. -/
+def nodeOf8 (l r : Digest8) : Digest8 := S8.chipAbsorb8 (pack8 l r)
+
+/-- **Leaf injectivity at 8-felt width** — distinct 7-tuples yield distinct 8-felt digests, by the
+8-output chip CR composed with `leafFields` injectivity. (`capLeafDigest8_injective`.) -/
+theorem capLeafDigest8_injective {l₁ l₂ : CapLeaf}
+    (h : capLeafDigest8 S8 l₁ = capLeafDigest8 S8 l₂) : l₁ = l₂ :=
+  leafFields_inj (S8.chip8CR _ _ h)
+
+/-- **THE ONE NEW OBLIGATION — node injectivity at 8-felt width.** Equal `node8` images ⇒ equal 8-felt
+children. PROVED by the arity-16 chip's collision-resistance (`Compress8CR`) composed with `pack8`
+injectivity — the per-level peel the native-8-felt membership recompose's anti-ghost needs. This is the
+SOLE width-specific lemma the `node8` migration adds; the recompose spine is reused, not re-proved. -/
+theorem nodeOf8_injective {l₁ r₁ l₂ r₂ : Digest8}
+    (h : nodeOf8 S8 l₁ r₁ = nodeOf8 S8 l₂ r₂) : l₁ = l₂ ∧ r₁ = r₂ := by
+  unfold nodeOf8 at h
+  exact pack8_inj (S8.chip8CR _ _ h)
+
+/-- **`recomposeUp8 S8 cur path`** — the native-8-felt membership recompose, DEFINED as the generic
+`CapMerkleGeneric.recomposeG` at `D := Digest8`, `node := nodeOf8 S8`. No bespoke recursion. -/
+def recomposeUp8 (cur : Digest8) (path : List (CapMerkleGeneric.StepG Digest8)) : Digest8 :=
+  CapMerkleGeneric.recomposeG (nodeOf8 S8) cur path
+
+/-- **The native-8-felt anti-ghost spine — a PURE RE-INSTANTIATION.** `recomposeUp8` is injective in
+its starting digest along a fixed path, by `CapMerkleGeneric.recomposeG_inj_of_path` fed the ONE new
+obligation `nodeOf8_injective`. NO spine re-proof: the SAME generic theorem the 1-felt tree delegates
+to. This is the payoff of Option A — the ~3,300-line migration collapses to `nodeOf8_injective` + this. -/
+theorem recomposeUp8_inj_of_path (path : List (CapMerkleGeneric.StepG Digest8)) :
+    ∀ {a b : Digest8}, recomposeUp8 S8 a path = recomposeUp8 S8 b path → a = b :=
+  CapMerkleGeneric.recomposeG_inj_of_path (nodeOf8 S8)
+    (fun hh => nodeOf8_injective S8 hh) path
+
+/-! ### §5b.M — the NATIVE 8-FELT membership predicate + the effect-general authority bridge.
+
+The 8-felt twin of `CapHashScheme.MembersAt` / `deployedCapOpen_implies_authorizedEffB`. The membership
+predicate `MembersAt8` opens against the FULL 8-felt root (so a colliding 1-felt-lane-0 leaf no longer
+opens — the GENTIAN tooth bites at ~124-bit), and the authority bridge is a PURE RE-INSTANTIATION: the
+backward read (`backed`) into `authorizedFacetEffB` is leaf-based and width-agnostic, so the body is the
+1-felt proof verbatim with `MembersAt → MembersAt8`, `root : ℤ → Digest8`, `S → S8`. -/
+
+open CapHashScheme
+  (confersLeaf canonicalLeaf denyAllLeaf canonicalLeafAt facetOfLeaf maskOfLimbs canonMask tierTag
+   tierOfTag tierOfTag_canonical)
+
+/-- **`MembersAt8 S8 root leaf`** — the native-8-felt deployed-tree membership: a sibling/direction
+path recomposes the FULL 8-felt `root` from the 8-felt leaf digest. The HONEST 8-felt replacement for
+the lossy 1-felt `CapHashScheme.MembersAt` — opens against ~124-bit of root, not lane-0. -/
+def MembersAt8 (root : Digest8) (leaf : CapLeaf) : Prop :=
+  ∃ path : List (CapMerkleGeneric.StepG Digest8),
+    recomposeUp8 S8 (capLeafDigest8 S8 leaf) path = root
+
+/-- **`DeployedFaithfulEff8`** — the 8-felt effect-general faithfulness: every member leaf at an
+`(actor ⇒ src)` edge conferring `effectBit` is backed by a real held `FacetCap` permitting `effectBit`.
+The 8-felt twin of `CapHashScheme.DeployedFaithfulEff` (membership over `MembersAt8`, root 8-felt). -/
+structure DeployedFaithfulEff8 (vkOfTag : ℤ → Nat) (provided : AuthProvided) (effectBit : EffectMask)
+    (caps : FacetCaps) (root : Digest8) (leafAt : Label → Label → CapLeaf) : Prop where
+  /-- FAITHFULNESS: an `effectBit`-conferring 8-felt member opening witnesses a REAL held `FacetCap`. -/
+  backed : ∀ (actor src : Label),
+    MembersAt8 S8 root (leafAt actor src) →
+    confersLeaf vkOfTag provided effectBit (leafAt actor src) →
+    ∃ c : FacetCap, c ∈ caps actor ∧ c.target = src
+      ∧ isEffectPermitted c.facet effectBit = true
+      ∧ c.tier.isSatisfiedBy provided = true
+
+/-- **`DeployedFaithful8`** — the 8-felt TRANSFER-facet faithfulness (the `EFFECT_TRANSFER` instance of
+`DeployedFaithfulEff8`). Membership over `MembersAt8`, root 8-felt. -/
+structure DeployedFaithful8 (vkOfTag : ℤ → Nat) (provided : AuthProvided)
+    (caps : FacetCaps) (root : Digest8) (leafAt : Label → Label → CapLeaf) : Prop where
+  /-- FAITHFULNESS: a transfer-conferring 8-felt member opening witnesses a REAL held `FacetCap`. -/
+  backed : ∀ (actor src : Label),
+    MembersAt8 S8 root (leafAt actor src) →
+    CapHashScheme.confersTransferLeaf vkOfTag provided (leafAt actor src) →
+    ∃ c : FacetCap, c ∈ caps actor ∧ c.target = src
+      ∧ isEffectPermitted c.facet EFFECT_TRANSFER = true
+      ∧ c.tier.isSatisfiedBy provided = true
+
+/-- **`deployedCapOpen8_implies_authorizedB` — THE 8-FELT TRANSFER AUTHORITY BRIDGE.** The 8-felt twin
+of `CapHashScheme.deployedCapOpen_implies_authorizedB`. -/
+theorem deployedCapOpen8_implies_authorizedB
+    (vkOfTag : ℤ → Nat) (provided : AuthProvided)
+    (caps : FacetCaps) (root : Digest8) (leafAt : Label → Label → CapLeaf)
+    (hfaith : DeployedFaithful8 S8 vkOfTag provided caps root leafAt)
+    (actor src dst : Label) (amt : ℤ)
+    (hopen : MembersAt8 S8 root (leafAt actor src))
+    (hconf : CapHashScheme.confersTransferLeaf vkOfTag provided (leafAt actor src)) :
+    authorizedFacetB caps provided { actor := actor, src := src, dst := dst, amt := amt } = true := by
+  obtain ⟨c, hmem, htgt, hfacet, htier⟩ := hfaith.backed actor src hopen hconf
+  exact authorizedFacetB_holds_transfer_cap caps provided
+    { actor := actor, src := src, dst := dst, amt := amt } c hmem htgt
+    (by simpa [turnEffectBit] using hfacet) htier
+
+/-- **`deployedCapOpen8_implies_authorizedEffB` — THE 8-FELT EFFECT-GENERAL AUTHORITY BRIDGE.** Given
+the 8-felt commitment relation AND an 8-felt opening whose leaf confers `effectBit` on BOTH axes, the
+GENERAL `authorizedFacetEffB … effectBit` PASSES. A RE-INSTANTIATION of the 1-felt bridge — the
+backward read is identical; only the membership width changes. -/
+theorem deployedCapOpen8_implies_authorizedEffB
+    (vkOfTag : ℤ → Nat) (provided : AuthProvided) (effectBit : EffectMask)
+    (caps : FacetCaps) (root : Digest8) (leafAt : Label → Label → CapLeaf)
+    (hfaith : DeployedFaithfulEff8 S8 vkOfTag provided effectBit caps root leafAt)
+    (actor src dst : Label) (amt : ℤ)
+    (hopen : MembersAt8 S8 root (leafAt actor src))
+    (hconf : confersLeaf vkOfTag provided effectBit (leafAt actor src)) :
+    authorizedFacetEffB caps provided effectBit
+      { actor := actor, src := src, dst := dst, amt := amt } = true := by
+  obtain ⟨c, hmem, htgt, hfacet, htier⟩ := hfaith.backed actor src hopen hconf
+  exact authorizedFacetEffB_holds_cap caps provided effectBit
+    { actor := actor, src := src, dst := dst, amt := amt } c hmem htgt hfacet htier
+
+/-- **`deployedFaithfulEff_canonical8` — THE 8-FELT DISCHARGE (`backed` from the CONSTRUCTION).** For
+the CANONICAL leaf function `canonicalLeafAt caps`, `DeployedFaithfulEff8` holds for ANY 8-felt root and
+ANY single effect bit `1 <<< n` (`n < 32`) with NO carried faithfulness hypothesis — the membership
+witness is ignored (the conferring leaf existence is structural in the c-list encoding). Verbatim the
+1-felt `deployedFaithfulEff_canonical` proof (which already discards `_hopen`). -/
+theorem deployedFaithfulEff_canonical8
+    (vkOfTag : ℤ → Nat) (provided : AuthProvided) (n : Nat) (hn : n < 32)
+    (caps : FacetCaps) (root : Digest8)
+    (hipc : ∀ (actor src : Label) (c : FacetCap),
+      c ∈ caps actor → c.target = src → ∀ vk, c.tier ≠ .custom vk) :
+    DeployedFaithfulEff8 S8 vkOfTag provided (1 <<< n) caps root (canonicalLeafAt caps) := by
+  refine ⟨?_⟩
+  intro actor src _hopen hconf
+  obtain ⟨hfacetConf, htierConf⟩ := hconf
+  unfold canonicalLeafAt at hfacetConf htierConf
+  cases hfind : (caps actor).find? (fun c => decide (c.target = src)) with
+  | none =>
+      exfalso
+      rw [hfind] at hfacetConf
+      simp only [denyAllLeaf, facetOfLeaf, maskOfLimbs] at hfacetConf
+      rw [show ((0 : ℤ) + 0 * 65536).toNat = 0 by decide] at hfacetConf
+      simp only [isEffectPermitted] at hfacetConf
+      exact Bool.noConfusion hfacetConf
+  | some c =>
+      rw [hfind] at hfacetConf htierConf
+      have hmem : c ∈ caps actor := List.mem_of_find?_eq_some hfind
+      have htgt : c.target = src := by
+        have := List.find?_some hfind
+        simpa using of_decide_eq_true this
+      have hcapFacet : isEffectPermitted c.facet (1 <<< n) = true := by
+        cases hf : c.facet with
+        | none => simp [isEffectPermitted]
+        | some m =>
+            have hrecomp : maskOfLimbs (canonicalLeaf c).mask_lo (canonicalLeaf c).mask_hi
+                = canonMask c.facet := by
+              simp only [canonicalLeaf, maskOfLimbs]
+              have h := Int.emod_add_ediv' (canonMask c.facet) 65536
+              linarith [h]
+            have hfacetEq : facetOfLeaf (canonicalLeaf c) = some (canonMask c.facet).toNat := by
+              simp only [facetOfLeaf, hrecomp]
+            rw [hfacetEq, hf] at hfacetConf
+            simp only [canonMask] at hfacetConf
+            rw [Int.toNat_natCast] at hfacetConf
+            exact hfacetConf
+      have htierEq : tierOfTag vkOfTag (canonicalLeaf c).auth_tag = c.tier :=
+        tierOfTag_canonical vkOfTag c (hipc actor src c hmem htgt)
+      rw [htierEq] at htierConf
+      exact ⟨c, hmem, htgt, hcapFacet, htierConf⟩
+
+end Cap8Scheme
+
+/-! ### §5b non-vacuity: the `Compress8CR` floor is REAL (a CR witness fires; a colliding one fails). -/
+
+namespace Reference8
+
+/-- A toy CR 8-output absorb: every lane carries the injective `Encodable` encoding of the input list.
+Injective because `f a = f b` evaluated at lane `0` gives `encode a = encode b`. -/
+def refChipAbsorb8 (xs : List ℤ) : Digest8 := fun _ => (Encodable.encode xs : ℕ)
+
+theorem refChip8CR : Compress8CR refChipAbsorb8 := by
+  intro a b h
+  have h0 := congrFun h 0
+  unfold refChipAbsorb8 at h0
+  exact Encodable.encode_injective (by exact_mod_cast h0)
+
+/-- The reference 8-felt scheme — `nodeOf8`/`recomposeUp8_inj_of_path` FIRE on it. -/
+def refScheme8 : Cap8Scheme := ⟨refChipAbsorb8, refChip8CR⟩
+
+/-- A COLLIDING 8-output absorb (constant zero vector) FALSIFIES `Compress8CR` — the carrier is not
+`True`: a real collision (`[0] ≠ [1]`, same image) is exhibited. -/
+def badChipAbsorb8 (_ : List ℤ) : Digest8 := fun _ => 0
+
+theorem badChip8_not_CR : ¬ Compress8CR badChipAbsorb8 := by
+  intro hCR
+  have : ([0] : List ℤ) = [1] := hCR [0] [1] rfl
+  simp at this
+
+end Reference8
+
 /-! ## §7 — NON-VACUITY: the deployed-tree bridge FIRES on a concrete edge, and the gate is REAL.
 
 Mirrors `CapRootBridge.bridge_fires`/`empty_caps_unauthorized`, re-seated on the deployed tree. We
@@ -674,7 +926,18 @@ theorem empty_caps_unauthorized :
 
 #assert_axioms CapHashScheme.capLeafDigest_injective
 #assert_axioms CapHashScheme.nodeOf_injective
+#assert_axioms CapHashScheme.recomposeUp_eq_recomposeG
 #assert_axioms CapHashScheme.recomposeUp_inj_of_path
+-- Native-8-felt (Phase H-CAP-8): the node8 obligation + the re-instantiated recompose spine.
+#assert_axioms Cap8Scheme.pack8_inj
+#assert_axioms Cap8Scheme.capLeafDigest8_injective
+#assert_axioms Cap8Scheme.nodeOf8_injective
+#assert_axioms Cap8Scheme.recomposeUp8_inj_of_path
+#assert_axioms Cap8Scheme.deployedCapOpen8_implies_authorizedB
+#assert_axioms Cap8Scheme.deployedCapOpen8_implies_authorizedEffB
+#assert_axioms Cap8Scheme.deployedFaithfulEff_canonical8
+#assert_axioms Reference8.refChip8CR
+#assert_axioms Reference8.badChip8_not_CR
 #assert_axioms CapHashScheme.deployedCapOpen_implies_authorizedB
 #assert_axioms CapHashScheme.deployedCapOpen_implies_authorizedEffB
 #assert_axioms CapHashScheme.tierOfTag_tierByte

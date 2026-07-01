@@ -44,6 +44,7 @@ documentation of the equations the realization satisfies.)
 -/
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.DeployedCapTree
+import Dregg2.Circuit.CapMerkleGeneric
 
 namespace Dregg2.Circuit.DeployedCapOpen
 
@@ -51,13 +52,17 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
-  (Table TraceFamily TableId Lookup chipLookupTuple ChipTableSound chip_lookup_sound CHIP_RATE)
+  (Table TraceFamily TableId Lookup chipLookupTuple ChipTableSound chip_lookup_sound CHIP_RATE
+   chipLookupTupleN ChipTableSoundN chip_lookup_sound_N)
 open Dregg2.Circuit.DeployedCapTree
-  (CapLeaf FACT_MARK leafFields packNode CapHashScheme)
+  (CapLeaf FACT_MARK leafFields packNode CapHashScheme Digest8 Cap8Scheme)
+open Dregg2.Circuit.DeployedCapTree.Cap8Scheme
+  (capLeafDigest8 nodeOf8 recomposeUp8 pack8 MembersAt8 DeployedFaithful8 DeployedFaithfulEff8
+   deployedCapOpen8_implies_authorizedB deployedCapOpen8_implies_authorizedEffB
+   deployedFaithfulEff_canonical8)
+open Dregg2.Circuit.CapMerkleGeneric (StepG recomposeG)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
-  (Step capLeafDigest nodeOf recomposeUp MembersAt DeployedFaithful confersTransferLeaf confersLeaf
-   maskOfLimbs facetOfLeaf tierOfTag deployedCapOpen_implies_authorizedB
-   DeployedFaithfulEff deployedCapOpen_implies_authorizedEffB)
+  (confersTransferLeaf confersLeaf maskOfLimbs facetOfLeaf tierOfTag capLeafDigest nodeOf)
 open Dregg2.Circuit.Emit.EffectVmEmitCapReshape (rightsMaskOf)
 open Dregg2.Authority (Cap Auth Caps Label)
 open Dregg2.Exec.FacetAuthority
@@ -102,20 +107,27 @@ re-committed to the chip absorb, the digest the chip soundness yields IS the dep
 /-- The deployed cap-tree depth (`cap_root.rs::CAP_TREE_DEPTH = 16`). -/
 def DEPTH : Nat := 16
 
-/-- The column layout for a cap-membership row. All indices abstract `Nat`; the Rust AIR pins them. -/
+/-- The number of felts in a native cap-tree digest (`cap_root.rs::CAP_DIGEST_W = 8`). A leaf-digest /
+node / root is an 8-COLUMN GROUP (Phase H-CAP-8), faithful to the FRI ~124-bit floor. -/
+def CAP_W : Nat := 8
+
+/-- The column layout for a cap-membership row. All indices abstract `Nat`; the Rust AIR pins them.
+Phase H-CAP-8: `leafDigest`, `sib`, `node`, `capRoot` are 8-COLUMN GROUPS (`Fin 8 → Nat`) carrying
+the native 8-felt digest; the 7 spare permutation lanes per absorb are PROMOTED into the bound 8-felt
+fold (no `lanes` existential — the whole `node8` block is committed). -/
 structure CapOpenCols where
-  /-- The 7 leaf-field columns, in `CapLeaf` order. -/
+  /-- The 7 leaf-field columns, in `CapLeaf` order (scalar leaf inputs, unchanged at 1-felt). -/
   leaf       : Fin 7 → Nat
-  /-- The leaf-digest column (the chip absorb output). -/
-  leafDigest : Nat
-  /-- The sibling-digest column at each level. -/
-  sib        : Nat → Nat
+  /-- The 8-felt leaf-digest column GROUP (the arity-7 chip absorb's 8 squeezed lanes). -/
+  leafDigest : Fin 8 → Nat
+  /-- The 8-felt sibling-digest column GROUP at each level. -/
+  sib        : Nat → Fin 8 → Nat
   /-- The direction-bit column at each level (0 ⇒ cur is LEFT child). -/
   dir        : Nat → Nat
-  /-- The node-output column at each level. -/
-  node       : Nat → Nat
-  /-- The committed `cap_root` column. -/
-  capRoot    : Nat
+  /-- The 8-felt node-output column GROUP at each level (the arity-16 `node8` compression's 8 lanes). -/
+  node       : Nat → Fin 8 → Nat
+  /-- The committed 8-felt `cap_root` column GROUP. -/
+  capRoot    : Fin 8 → Nat
   /-- The turn's source-cell-id column. -/
   src        : Nat
   /-- **(residual (a)) The turn's ACTUAL effect-kind bit column** — the `EFFECT_<kind>` the turn
@@ -132,13 +144,6 @@ structure CapOpenCols where
   (`mask_lo = 0xFFFF`, all 16 facets) decomposes with bit `n` set, so it PERMITS the effect — the
   over-strict equality gate it replaces would reject it. -/
   bit        : Nat → Nat
-  /-- **(Phase B-GATE) The 7 exposed permutation-lane columns for the absorb at site `k`** (`k = 0`
-  is the leaf absorb; `k = lvl + 1` is node level `lvl`). The chip's 17-wide bus tuple carries
-  `out0 :: out1..out7`; `out0` is the bound digest (`leafDigest`/`node lvl`, UNCHANGED), and these
-  7 columns carry lanes 1..7 (the genuine permutation lanes, filled by the Rust producer). The
-  soundness lemmas force out0 ONLY — the lanes ride along (matched existentially) — so the cap-open
-  meaning is unchanged; the commitment stays 1-felt. -/
-  lanes      : Nat → List Nat
 
 /-! ## §2 — the leaf-field accessors (decode the 7 leaf columns to a `CapLeaf`). -/
 
@@ -162,34 +167,47 @@ theorem leafInputs_eval (c : CapOpenCols) (env : VmRowEnv) :
   simp only [leafInputs, List.map_map, leafFields]
   rfl
 
-/-! ## §3 — the chip-lookup tuples (leaf absorb + per-level node absorb). -/
+/-! ## §3 — the chip-lookup tuples (leaf absorb + per-level `node8` absorb), now 8-felt wide. -/
 
-/-- The leaf-digest chip lookup tuple: absorb the 7 leaf-field columns, output = `leafDigest`
-(out0) + the 7 exposed lanes 1..7 at `c.lanes 0` (Phase B-GATE, 17-wide). -/
+/-- **`capPermOut S8`** — the WIDE permutation output the cap chip realizes: the 8 squeezed lanes of
+`S8.chipAbsorb8`, read as a `List ℤ` (`cap_root.rs::chip_absorb_all_lanes`). `capPermOut S8 (leafFields
+l) = List.ofFn (capLeafDigest8 S8 l)` and `capPermOut S8 (pack8 l r) = List.ofFn (nodeOf8 S8 l r)` — by
+`rfl` (both are `List.ofFn ∘ chipAbsorb8` of their input blocks). The `permOut` the wide lever binds. -/
+def capPermOut (S8 : Cap8Scheme) : List ℤ → List ℤ := fun xs => List.ofFn (S8.chipAbsorb8 xs)
+
+/-- Read an 8-felt column GROUP `g : Fin 8 → Nat` as the ordered list of its 8 column indices. -/
+def digestCols (g : Fin 8 → Nat) : List Nat := (List.finRange 8).map g
+
+/-- The 8-felt leaf-digest chip lookup tuple: absorb the 7 leaf-field columns, output = the 8 bound
+leaf-digest columns (the whole `node8` leaf block, NOT just out0). -/
 def leafLookup (c : CapOpenCols) : Lookup :=
-  { table := .poseidon2, tuple := chipLookupTuple (leafInputs c) c.leafDigest (c.lanes 0) }
+  { table := .poseidon2, tuple := chipLookupTupleN (leafInputs c) (digestCols c.leafDigest) }
 
-/-- The `cur` digest entering level `lvl`: the leaf digest at level 0, else the previous node. -/
-def curCol (c : CapOpenCols) : Nat → Nat
+/-- The 8-felt `cur` digest GROUP entering level `lvl`: the leaf digest at level 0, else the previous
+node group. -/
+def curCol (c : CapOpenCols) : Nat → (Fin 8 → Nat)
   | 0       => c.leafDigest
   | (l + 1) => c.node l
 
-/-- The `hash_fact` LEFT input at level `lvl`: `(1-dir)·cur + dir·sib`. -/
-def leftExpr (c : CapOpenCols) (lvl : Nat) : EmittedExpr :=
-  .add (.mul (.add (.const 1) (.mul (.const (-1)) (.var (c.dir lvl)))) (.var (curCol c lvl)))
-       (.mul (.var (c.dir lvl)) (.var (c.sib lvl)))
+/-- The `node8` LEFT input lane `i` at level `lvl`: `(1-dir)·cur_i + dir·sib_i`. -/
+def leftExpr (c : CapOpenCols) (lvl : Nat) (i : Fin 8) : EmittedExpr :=
+  .add (.mul (.add (.const 1) (.mul (.const (-1)) (.var (c.dir lvl)))) (.var (curCol c lvl i)))
+       (.mul (.var (c.dir lvl)) (.var (c.sib lvl i)))
 
-/-- The `hash_fact` RIGHT input at level `lvl`: `(1-dir)·sib + dir·cur`. -/
-def rightExpr (c : CapOpenCols) (lvl : Nat) : EmittedExpr :=
-  .add (.mul (.add (.const 1) (.mul (.const (-1)) (.var (c.dir lvl)))) (.var (c.sib lvl)))
-       (.mul (.var (c.dir lvl)) (.var (curCol c lvl)))
+/-- The `node8` RIGHT input lane `i` at level `lvl`: `(1-dir)·sib_i + dir·cur_i`. -/
+def rightExpr (c : CapOpenCols) (lvl : Nat) (i : Fin 8) : EmittedExpr :=
+  .add (.mul (.add (.const 1) (.mul (.const (-1)) (.var (c.dir lvl)))) (.var (c.sib lvl i)))
+       (.mul (.var (c.dir lvl)) (.var (curCol c lvl i)))
 
-/-- The node chip lookup tuple at level `lvl`: absorb `[FACT_MARK, left, right]`, output =
-`node lvl` (out0) + the 7 exposed lanes 1..7 at `c.lanes (lvl+1)` (Phase B-GATE, 17-wide). -/
+/-- The arity-16 `node8` input block at level `lvl`: `leftExpr lanes 0..7 ‖ rightExpr lanes 0..7`,
+mirroring `cap_root.rs::cap_node8`'s `pack8 left8 right8` (`ins[..8] = L8; ins[8..] = R8`). -/
+def nodeInputs (c : CapOpenCols) (lvl : Nat) : List EmittedExpr :=
+  (List.finRange 8).map (leftExpr c lvl) ++ (List.finRange 8).map (rightExpr c lvl)
+
+/-- The 8-felt node chip lookup tuple at level `lvl`: absorb the arity-16 `node8` block, output = the
+8 bound node columns (the whole `node8` compression, faithful to ~124-bit). -/
 def nodeLookup (c : CapOpenCols) (lvl : Nat) : Lookup :=
-  { table := .poseidon2
-  , tuple := chipLookupTuple [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl)
-      (c.lanes (lvl + 1)) }
+  { table := .poseidon2, tuple := chipLookupTupleN (nodeInputs c lvl) (digestCols (c.node lvl)) }
 
 /-! ## §4 — the gate equations (booleanity, root pin, leaf↔effect binding). -/
 
@@ -197,9 +215,11 @@ def nodeLookup (c : CapOpenCols) (lvl : Nat) : Lookup :=
 def dirBoolGate (c : CapOpenCols) (lvl : Nat) : EmittedExpr :=
   .mul (.var (c.dir lvl)) (.add (.var (c.dir lvl)) (.const (-1)))
 
-/-- The root pin: the TOP node output equals the committed `cap_root` column. -/
-def rootPinGate (c : CapOpenCols) : EmittedExpr :=
-  .add (.var (c.node (DEPTH - 1))) (.mul (.const (-1)) (.var c.capRoot))
+/-- The root pin at lane `i`: the TOP node output lane equals the committed `cap_root` lane. The 8-felt
+root pin is the CONJUNCTION over all 8 lanes (`rootPinned` in `Satisfied` quantifies `∀ i`) — the
+GENTIAN tooth: a colliding cap tree (same lane-0, different `node8` fold top) fails ≥1 lane pin. -/
+def rootPinGate (c : CapOpenCols) (i : Fin 8) : EmittedExpr :=
+  .add (.var (c.node (DEPTH - 1) i)) (.mul (.const (-1)) (.var (c.capRoot i)))
 
 /-- The target binding: `leaf.target - src = 0`. -/
 def targetBindGate (c : CapOpenCols) : EmittedExpr :=
@@ -362,8 +382,8 @@ structure Satisfied (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenC
   nodeHashed : ∀ lvl < DEPTH, (nodeLookup c lvl).holdsAt tf env
   /-- Each level's direction column is boolean. -/
   dirBool    : ∀ lvl < DEPTH, (dirBoolGate c lvl).eval env.loc = 0
-  /-- The top node output equals the committed cap_root. -/
-  rootPinned : (rootPinGate c).eval env.loc = 0
+  /-- Every lane of the top node output equals the committed cap_root lane (the 8-felt root pin). -/
+  rootPinned : ∀ i : Fin 8, (rootPinGate c i).eval env.loc = 0
   /-- The leaf's target equals the turn's src. -/
   targetBound : (targetBindGate c).eval env.loc = 0
   /-- The leaf's `mask_lo` is `EFFECT_TRANSFER` (the facet permits TRANSFER). -/
@@ -383,30 +403,61 @@ structure Satisfied (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenC
   the genuine `(EFFECT_TRANSFER &&& mask_lo) ≠ 0` submask, NOT the over-strict equality. -/
   facetEffBound : (facetEffGate c).eval env.loc = 0
 
+/-- **`MembershipCore sponge tf c env`** — the four fields the 8-felt Merkle fold consumes: the leaf
+absorb, the per-level `node8` absorbs, direction-booleanity, and the (8-lane) root pin. Both `Satisfied`
+and `SatisfiedEff` carry these; the digest-soundness lemmas + `capOpen_membership8` consume ONLY this. -/
+structure MembershipCore (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
+    (env : VmRowEnv) : Prop where
+  leafHashed : (leafLookup c).holdsAt tf env
+  nodeHashed : ∀ lvl < DEPTH, (nodeLookup c lvl).holdsAt tf env
+  dirBool    : ∀ lvl < DEPTH, (dirBoolGate c lvl).eval env.loc = 0
+  rootPinned : ∀ i : Fin 8, (rootPinGate c i).eval env.loc = 0
+
+/-- A `Satisfied` row provides the membership core. -/
+def Satisfied.toCore {sponge tf c env} (h : Satisfied sponge tf c env) :
+    MembershipCore sponge tf c env :=
+  ⟨h.leafHashed, h.nodeHashed, h.dirBool, h.rootPinned⟩
+
 /-! ## §6 — soundness: the leaf-digest column carries the genuine `capLeafDigest`.
 
 The chip enforces `leafDigest = sponge (leafFields)` with `sponge := S.chipAbsorb` — and the deployed
 `capLeafDigest S = S.chipAbsorb ∘ leafFields`, so the two coincide (the realization is `chipAbsorb_
 realizes`, discharged in place). -/
 
-/-- Under a sound chip table (the chip's hash IS the deployed `S.chipAbsorb`), the leaf-digest column
-carries the deployed `capLeafDigest S (leafOf c env)`. The `SchemeRealizedByChip` bridge is DISCHARGED
-internally by `chipAbsorb_realizes` — no longer a hypothesis. -/
-theorem leafDigest_sound {State : Type} (S : CapHashScheme State)
+/-- Read an 8-felt column GROUP `g : Fin 8 → Nat` as the `Digest8` its columns carry under `env`. -/
+def groupVal (env : VmRowEnv) (g : Fin 8 → Nat) : Digest8 := fun i => env.loc (g i)
+
+/-- The 8 digest columns read under `env` ARE `List.ofFn (groupVal env g)` — the bridge between the
+wide lever's `digestCols.map a` conclusion and the `Digest8` carrier the cap scheme folds. -/
+theorem digestCols_map (g : Fin 8 → Nat) (env : VmRowEnv) :
+    (digestCols g).map env.loc = List.ofFn (groupVal env g) := by
+  unfold digestCols groupVal
+  rw [List.map_map, List.ofFn_eq_map]
+  rfl
+
+/-- **`leafDigest_sound8`** — under a SOUND WIDE chip table (the chip's 8-felt squeeze IS the deployed
+`capPermOut S8`), the 8 leaf-digest columns carry the genuine native-8-felt `capLeafDigest8 S8 (leafOf
+c env)`. The whole 8-felt block is bound (the wide lever forces every lane), not just out0. -/
+theorem leafDigest_sound8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hsat : Satisfied S.chipAbsorb tf c env) :
-    env.loc c.leafDigest = capLeafDigest S (leafOf c env) := by
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hcore : MembershipCore sponge tf c env) :
+    groupVal env c.leafDigest = capLeafDigest8 S8 (leafOf c env) := by
   have hlen : (leafInputs c).length ≤ CHIP_RATE := by
     simp [leafInputs, List.length_map, List.length_finRange, CHIP_RATE]
-  have hmem : (chipLookupTuple (leafInputs c) c.leafDigest (c.lanes 0)).map (·.eval env.loc)
+  have hmem : (chipLookupTupleN (leafInputs c) (digestCols c.leafDigest)).map (·.eval env.loc)
       ∈ tf .poseidon2 := by
-    have := hsat.leafHashed
+    have := hcore.leafHashed
     unfold Lookup.holdsAt leafLookup at this
     exact this
-  have h := chip_lookup_sound S.chipAbsorb (tf .poseidon2) hChip env.loc (leafInputs c) c.leafDigest
-    (c.lanes 0) hlen hmem
-  rw [h, leafInputs_eval, (chipAbsorb_realizes S).leafRealized]
+  have h := chip_lookup_sound_N (capPermOut S8) (tf .poseidon2) hChip env.loc (leafInputs c)
+    (digestCols c.leafDigest) hlen hmem
+  rw [digestCols_map, leafInputs_eval] at h
+  -- `capPermOut S8 (leafFields ·) = List.ofFn (capLeafDigest8 S8 ·)` by `rfl`.
+  have hreal : capPermOut S8 (leafFields (leafOf c env))
+      = List.ofFn (capLeafDigest8 S8 (leafOf c env)) := rfl
+  rw [hreal] at h
+  exact List.ofFn_inj.mp h
 
 /-- The direction BOOL value at a level. -/
 def dirBoolVal (c : CapOpenCols) (env : VmRowEnv) (lvl : Nat) : Bool :=
@@ -422,85 +473,108 @@ theorem dir_zero_or_one (c : CapOpenCols) (env : VmRowEnv) (lvl : Nat)
   · exact Or.inl h0
   · right; linarith
 
-/-- Under a sound chip table (the chip's hash IS the deployed `S.chipAbsorb`), level `lvl`'s node
-column carries the genuine deployed `nodeOf S` of the mixed `(cur, sib)` pair — exactly one
-`recomposeUp` step. The `SchemeRealizedByChip` bridge is DISCHARGED by `chipAbsorb_realizes`. -/
-theorem node_sound {State : Type} (S : CapHashScheme State)
-    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hsat : Satisfied S.chipAbsorb tf c env) (lvl : Nat) (hlvl : lvl < DEPTH) :
-    env.loc (c.node lvl)
+/-- The arity-16 `node8` input block at level `lvl` evaluates to `pack8 left8 right8`, where `left8`/
+`right8` are the per-lane dir-mixed `cur8`/`sib8` 8-felt vectors. The dir-case split: `false` ⇒ `(cur,
+sib)`, `true` ⇒ `(sib, cur)` — exactly `cap_root.rs::cap_node8`'s child order. -/
+theorem nodeInputs_eval (c : CapOpenCols) (env : VmRowEnv) (lvl : Nat)
+    (hd : env.loc (c.dir lvl) = 0 ∨ env.loc (c.dir lvl) = 1) :
+    (nodeInputs c lvl).map (·.eval env.loc)
       = (if dirBoolVal c env lvl
-          then nodeOf S (env.loc (c.sib lvl)) (env.loc (curCol c lvl))
-          else nodeOf S (env.loc (curCol c lvl)) (env.loc (c.sib lvl))) := by
-  have hlen : ([EmittedExpr.const FACT_MARK, leftExpr c lvl, rightExpr c lvl]).length ≤ CHIP_RATE := by
-    show 3 ≤ CHIP_RATE
-    rw [show CHIP_RATE = 11 from rfl]; omega
-  have hmem : (chipLookupTuple [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl)
-      (c.lanes (lvl + 1))).map (·.eval env.loc) ∈ tf .poseidon2 := by
-    have := hsat.nodeHashed lvl hlvl
+          then pack8 (groupVal env (c.sib lvl)) (groupVal env (curCol c lvl))
+          else pack8 (groupVal env (curCol c lvl)) (groupVal env (c.sib lvl))) := by
+  -- generic: the 16-list eval IS `pack8 mixL mixR` whenever the lane evals match `mixL`/`mixR`.
+  have key : ∀ (mixL mixR : Digest8),
+      (∀ i, (leftExpr c lvl i).eval env.loc = mixL i) →
+      (∀ i, (rightExpr c lvl i).eval env.loc = mixR i) →
+      (nodeInputs c lvl).map (·.eval env.loc) = pack8 mixL mixR := by
+    intro mixL mixR hL hR
+    unfold nodeInputs pack8
+    rw [List.map_append, List.ofFn_eq_map, List.ofFn_eq_map]
+    refine congrArg₂ (· ++ ·) ?_ ?_
+    · rw [List.map_map]; exact List.map_congr_left (fun i _ => hL i)
+    · rw [List.map_map]; exact List.map_congr_left (fun i _ => hR i)
+  rcases hd with hd0 | hd1
+  · have hbool : dirBoolVal c env lvl = false := by simp only [dirBoolVal, hd0]; decide
+    rw [hbool]; simp only [Bool.false_eq_true, if_false]
+    exact key (groupVal env (curCol c lvl)) (groupVal env (c.sib lvl))
+      (fun i => by simp only [leftExpr, EmittedExpr.eval, groupVal]; rw [hd0]; ring)
+      (fun i => by simp only [rightExpr, EmittedExpr.eval, groupVal]; rw [hd0]; ring)
+  · have hbool : dirBoolVal c env lvl = true := by simp only [dirBoolVal, hd1]; decide
+    rw [hbool]; simp only [if_true]
+    exact key (groupVal env (c.sib lvl)) (groupVal env (curCol c lvl))
+      (fun i => by simp only [leftExpr, EmittedExpr.eval, groupVal]; rw [hd1]; ring)
+      (fun i => by simp only [rightExpr, EmittedExpr.eval, groupVal]; rw [hd1]; ring)
+
+/-- **`node_sound8`** — under a SOUND WIDE chip table, level `lvl`'s 8 node columns carry the genuine
+native-8-felt `nodeOf8 S8` of the dir-mixed `(cur8, sib8)` pair — exactly one `recomposeUp8` step at
+full ~124-bit width. The whole `node8` block is bound (all 8 lanes), not lane-0. -/
+theorem node_sound8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hcore : MembershipCore sponge tf c env) (lvl : Nat) (hlvl : lvl < DEPTH) :
+    groupVal env (c.node lvl)
+      = (if dirBoolVal c env lvl
+          then nodeOf8 S8 (groupVal env (c.sib lvl)) (groupVal env (curCol c lvl))
+          else nodeOf8 S8 (groupVal env (curCol c lvl)) (groupVal env (c.sib lvl))) := by
+  have hlen : (nodeInputs c lvl).length ≤ CHIP_RATE := by
+    simp [nodeInputs, List.length_append, List.length_map, List.length_finRange, CHIP_RATE]
+  have hmem : (chipLookupTupleN (nodeInputs c lvl) (digestCols (c.node lvl))).map (·.eval env.loc)
+      ∈ tf .poseidon2 := by
+    have := hcore.nodeHashed lvl hlvl
     unfold Lookup.holdsAt nodeLookup at this
     exact this
-  have h := chip_lookup_sound S.chipAbsorb (tf .poseidon2) hChip env.loc
-    [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl) (c.lanes (lvl + 1)) hlen hmem
-  rw [h]
-  -- The absorbed list evaluates to `[FACT_MARK, leftVal, rightVal] = packNode leftVal rightVal`;
-  -- the realization turns `S.chipAbsorb (packNode ·, ·)` into the deployed `nodeOf S`.
-  simp only [List.map_cons, List.map_nil, EmittedExpr.eval, leftExpr, rightExpr]
-  rcases dir_zero_or_one c env lvl (hsat.dirBool lvl hlvl) with hd0 | hd1
-  · have hbool : dirBoolVal c env lvl = false := by
-      simp only [dirBoolVal, hd0]; decide
-    rw [hbool, hd0]
-    simp only [Bool.false_eq_true, if_false]
-    rw [show ((1 : ℤ) + -1 * 0) * env.loc (curCol c lvl) + 0 * env.loc (c.sib lvl)
-          = env.loc (curCol c lvl) by ring,
-        show ((1 : ℤ) + -1 * 0) * env.loc (c.sib lvl) + 0 * env.loc (curCol c lvl)
-          = env.loc (c.sib lvl) by ring]
-    exact (chipAbsorb_realizes S).nodeRealized _ _
-  · have hbool : dirBoolVal c env lvl = true := by
-      simp only [dirBoolVal, hd1]; decide
-    rw [hbool, hd1]
-    simp only [if_true]
-    rw [show ((1 : ℤ) + -1 * 1) * env.loc (curCol c lvl) + 1 * env.loc (c.sib lvl)
-          = env.loc (c.sib lvl) by ring,
-        show ((1 : ℤ) + -1 * 1) * env.loc (c.sib lvl) + 1 * env.loc (curCol c lvl)
-          = env.loc (curCol c lvl) by ring]
-    exact (chipAbsorb_realizes S).nodeRealized _ _
+  have h := chip_lookup_sound_N (capPermOut S8) (tf .poseidon2) hChip env.loc (nodeInputs c lvl)
+    (digestCols (c.node lvl)) hlen hmem
+  rw [digestCols_map, nodeInputs_eval c env lvl (dir_zero_or_one c env lvl (hcore.dirBool lvl hlvl))] at h
+  -- `capPermOut S8 (pack8 l r) = List.ofFn (nodeOf8 S8 l r)` by `rfl`; peel the `if` either way.
+  cases hb : dirBoolVal c env lvl
+  · simp only [hb, Bool.false_eq_true, if_false] at h ⊢
+    have hreal : capPermOut S8 (pack8 (groupVal env (curCol c lvl)) (groupVal env (c.sib lvl)))
+        = List.ofFn (nodeOf8 S8 (groupVal env (curCol c lvl)) (groupVal env (c.sib lvl))) := rfl
+    rw [hreal] at h
+    exact List.ofFn_inj.mp h
+  · simp only [hb, if_true] at h ⊢
+    have hreal : capPermOut S8 (pack8 (groupVal env (c.sib lvl)) (groupVal env (curCol c lvl)))
+        = List.ofFn (nodeOf8 S8 (groupVal env (c.sib lvl)) (groupVal env (curCol c lvl))) := rfl
+    rw [hreal] at h
+    exact List.ofFn_inj.mp h
 
 /-! ## §7 — assembling the recompose: the node columns realize a `recomposeUp` path. -/
 
-/-- `recomposeUp` distributes over a path append. -/
-theorem recomposeUp_append {State : Type} (S : CapHashScheme State) (cur : ℤ) (p q : List Step) :
-    recomposeUp S cur (p ++ q) = recomposeUp S (recomposeUp S cur p) q := by
+/-- `recomposeUp8` distributes over a path append (over the generic `recomposeG` spine). -/
+theorem recomposeUp8_append (S8 : Cap8Scheme) (cur : Digest8) (p q : List (StepG Digest8)) :
+    recomposeUp8 S8 cur (p ++ q) = recomposeUp8 S8 (recomposeUp8 S8 cur p) q := by
+  show recomposeG (nodeOf8 S8) cur (p ++ q)
+     = recomposeG (nodeOf8 S8) (recomposeG (nodeOf8 S8) cur p) q
   induction p generalizing cur with
-  | nil => simp [recomposeUp]
-  | cons s rest ih => simp only [List.cons_append, recomposeUp]; rw [ih]
+  | nil => rfl
+  | cons s rest ih => simp only [List.cons_append, recomposeG]; rw [ih]
 
-/-- The membership path read off the row's columns: `(sib, dir)` for levels `[0, n)`. -/
-def pathOf (c : CapOpenCols) (env : VmRowEnv) (n : Nat) : List Step :=
-  (List.range n).map (fun lvl => { sib := env.loc (c.sib lvl), dir := dirBoolVal c env lvl })
+/-- The 8-felt membership path read off the row's columns: `(sib8, dir)` for levels `[0, n)`. -/
+def pathOf8 (c : CapOpenCols) (env : VmRowEnv) (n : Nat) : List (StepG Digest8) :=
+  (List.range n).map (fun lvl => { sib := groupVal env (c.sib lvl), dir := dirBoolVal c env lvl })
 
-/-- Folding `recomposeUp` over the first `n` levels reproduces `curCol c n`, under chip soundness
-(the chip↔scheme bridge DISCHARGED by `chipAbsorb_realizes`). -/
-theorem recompose_reaches_cur {State : Type} (S : CapHashScheme State)
+/-- Folding `recomposeUp8` over the first `n` levels reproduces `curCol c n` (as a `Digest8`), under
+the WIDE chip soundness — the native 8-felt fold. -/
+theorem recompose_reaches_cur8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hsat : Satisfied S.chipAbsorb tf c env) :
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hcore : MembershipCore sponge tf c env) :
     ∀ n, n ≤ DEPTH →
-      recomposeUp S (env.loc c.leafDigest) (pathOf c env n) = env.loc (curCol c n) := by
+      recomposeUp8 S8 (groupVal env c.leafDigest) (pathOf8 c env n) = groupVal env (curCol c n) := by
   intro n
   induction n with
-  | zero => intro _; simp [pathOf, recomposeUp, curCol]
+  | zero => intro _; simp [pathOf8, recomposeUp8, recomposeG, curCol]
   | succ k ih =>
     intro hk
     have hkd : k < DEPTH := Nat.lt_of_succ_le hk
     have hkle : k ≤ DEPTH := Nat.le_of_lt hkd
-    have hpath : pathOf c env (k + 1)
-        = pathOf c env k ++ [{ sib := env.loc (c.sib k), dir := dirBoolVal c env k }] := by
-      simp [pathOf, List.range_succ, List.map_append]
-    rw [hpath, recomposeUp_append, ih hkle]
-    simp only [recomposeUp]
-    have hns := node_sound S tf c env hChip hsat k hkd
+    have hpath : pathOf8 c env (k + 1)
+        = pathOf8 c env k ++ [{ sib := groupVal env (c.sib k), dir := dirBoolVal c env k }] := by
+      simp [pathOf8, List.range_succ, List.map_append]
+    rw [hpath, recomposeUp8_append, ih hkle]
+    simp only [recomposeUp8, recomposeG]
+    have hns := node_sound8 S8 sponge tf c env hChip hcore k hkd
     have hcur : curCol c (k + 1) = c.node k := rfl
     rw [hcur]
     cases hb : dirBoolVal c env k
@@ -509,24 +583,27 @@ theorem recompose_reaches_cur {State : Type} (S : CapHashScheme State)
     · simp only [hb, if_true] at hns ⊢
       rw [hns]
 
-/-- **`capOpen_membership` — the in-circuit fold IS a `MembersAt` opening.** Under a sound chip table
-(the chip's hash IS `S.chipAbsorb`, so the `SchemeRealizedByChip` bridge is DISCHARGED by
-`chipAbsorb_realizes`), a `Satisfied` row witnesses `MembersAt S cap_root leaf`. -/
-theorem capOpen_membership {State : Type} (S : CapHashScheme State)
+/-- **`capOpen_membership8` — the in-circuit 8-felt fold IS a `MembersAt8` opening.** Under a SOUND
+WIDE chip table (the chip's 8-felt squeeze IS `capPermOut S8`), a `Satisfied` row witnesses `MembersAt8
+S8 cap_root leaf` against the FULL 8-felt root — the GENTIAN-tooth-real membership leg. -/
+theorem capOpen_membership8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hsat : Satisfied S.chipAbsorb tf c env) :
-    MembersAt S (env.loc c.capRoot) (leafOf c env) := by
-  refine ⟨pathOf c env DEPTH, ?_⟩
-  have hfold := recompose_reaches_cur S tf c env hChip hsat DEPTH (le_refl _)
-  have hleaf := leafDigest_sound S tf c env hChip hsat
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hcore : MembershipCore sponge tf c env) :
+    MembersAt8 S8 (groupVal env c.capRoot) (leafOf c env) := by
+  refine ⟨pathOf8 c env DEPTH, ?_⟩
+  have hfold := recompose_reaches_cur8 S8 sponge tf c env hChip hcore DEPTH (le_refl _)
+  have hleaf := leafDigest_sound8 S8 sponge tf c env hChip hcore
   rw [hleaf] at hfold
   have hcurTop : curCol c DEPTH = c.node (DEPTH - 1) := rfl
   rw [hcurTop] at hfold
-  have hpin := hsat.rootPinned
-  unfold rootPinGate at hpin
-  simp only [EmittedExpr.eval] at hpin
-  have hroot : env.loc (c.node (DEPTH - 1)) = env.loc c.capRoot := by linarith
+  have hroot : groupVal env (c.node (DEPTH - 1)) = groupVal env c.capRoot := by
+    funext i
+    have hpin := hcore.rootPinned i
+    unfold rootPinGate at hpin
+    simp only [EmittedExpr.eval] at hpin
+    simp only [groupVal]
+    linarith
   rw [hfold, hroot]
 
 /-! ## §8 — the leaf↔effect binding (target = src, write-mask). -/
@@ -715,16 +792,16 @@ theorem capOpen_confers_via_effGate (sponge : List ℤ → ℤ) (tf : TraceFamil
 at a write-mask leaf whose target is the turn's `src`. THE authority leg's circuit foundation. The
 `SchemeRealizedByChip` chip↔scheme bridge is DISCHARGED (the chip's hash IS `S.chipAbsorb`, by
 `chipAbsorb_realizes`) — no longer a carried hypothesis. -/
-theorem capOpen_sound {State : Type} (S : CapHashScheme State)
+theorem capOpen_sound (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (vkOfTag : ℤ → Nat)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hsat : Satisfied S.chipAbsorb tf c env) :
-    MembersAt S (env.loc c.capRoot) (leafOf c env)
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hsat : Satisfied sponge tf c env) :
+    MembersAt8 S8 (groupVal env c.capRoot) (leafOf c env)
     ∧ (leafOf c env).target = env.loc c.src
     ∧ confersTransferLeaf vkOfTag .signature (leafOf c env) :=
-  ⟨capOpen_membership S tf c env hChip hsat,
-   capOpen_target S.chipAbsorb tf c env hsat,
-   capOpen_confers S.chipAbsorb tf c env vkOfTag hsat⟩
+  ⟨capOpen_membership8 S8 sponge tf c env hChip hsat.toCore,
+   capOpen_target sponge tf c env hsat,
+   capOpen_confers sponge tf c env vkOfTag hsat⟩
 
 /-! ## §10 — CHAINING to the kernel `authorizedB` (the end-to-end authority leg). -/
 
@@ -732,25 +809,25 @@ theorem capOpen_sound {State : Type} (S : CapHashScheme State)
 `Satisfied` row whose opened leaf IS the faithfulness contract's `(actor ⇒ src)` edge leaf yields the
 kernel's `authorizedB = true`. The `SchemeRealizedByChip` bridge is DISCHARGED (`chipAbsorb_realizes`)
 — the chip genuinely realizes the cap hash. -/
-theorem capOpen_authorizes {State : Type} (S : CapHashScheme State)
+theorem capOpen_authorizes (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (vkOfTag : ℤ → Nat)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hsat : Satisfied S.chipAbsorb tf c env)
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hsat : Satisfied sponge tf c env)
     (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
-    (hfaith : DeployedFaithful S vkOfTag .signature caps (env.loc c.capRoot) leafAt)
+    (hfaith : DeployedFaithful8 S8 vkOfTag .signature caps (groupVal env c.capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hsrc : env.loc c.src = (src : ℤ))
     (hedge : leafOf c env = leafAt actor src) :
     authorizedFacetB caps .signature
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) := by
-  have hmem : MembersAt S (env.loc c.capRoot) (leafAt actor src) := by
-    rw [← hedge]; exact capOpen_membership S tf c env hChip hsat
+  have hmem : MembersAt8 S8 (groupVal env c.capRoot) (leafAt actor src) := by
+    rw [← hedge]; exact capOpen_membership8 S8 sponge tf c env hChip hsat.toCore
   have hconf : confersTransferLeaf vkOfTag .signature (leafAt actor src) := by
-    rw [← hedge]; exact capOpen_confers S.chipAbsorb tf c env vkOfTag hsat
+    rw [← hedge]; exact capOpen_confers sponge tf c env vkOfTag hsat
   have htgt : (leafAt actor src).target = (src : ℤ) := by
-    rw [← hedge, capOpen_target S.chipAbsorb tf c env hsat, hsrc]
-  exact ⟨deployedCapOpen_implies_authorizedB S vkOfTag .signature caps (env.loc c.capRoot) leafAt hfaith
+    rw [← hedge, capOpen_target sponge tf c env hsat, hsrc]
+  exact ⟨deployedCapOpen8_implies_authorizedB S8 vkOfTag .signature caps (groupVal env c.capRoot) leafAt hfaith
     actor src dst amt hmem hconf, htgt⟩
 
 /-- **`capOpen_authorizes_tierGeneral` (F6) — THE END-TO-END AUTHORITY LEG, GENERAL TIER.** The
@@ -762,13 +839,13 @@ constant the `authTagGate` pins. This discharges the §10 tier residual end-to-e
 leaf commits ANY tier (None/Signature/Proof/Either/Impossible/Custom) authorizes exactly when the
 off-circuit auth satisfies that committed tier. (`capOpen_authorizes` is the `.signature` instance,
 recovered when `auth_tag = 1` and `provided = .signature`.) -/
-theorem capOpen_authorizes_tierGeneral {State : Type} (S : CapHashScheme State)
+theorem capOpen_authorizes_tierGeneral (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (vkOfTag : ℤ → Nat)
     (provided : AuthProvided)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hsat : Satisfied S.chipAbsorb tf c env)
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hsat : Satisfied sponge tf c env)
     (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
-    (hfaith : DeployedFaithful S vkOfTag provided caps (env.loc c.capRoot) leafAt)
+    (hfaith : DeployedFaithful8 S8 vkOfTag provided caps (groupVal env c.capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hsrc : env.loc c.src = (src : ℤ))
     (hedge : leafOf c env = leafAt actor src)
@@ -777,15 +854,15 @@ theorem capOpen_authorizes_tierGeneral {State : Type} (S : CapHashScheme State)
     authorizedFacetB caps provided
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) := by
-  have hmem : MembersAt S (env.loc c.capRoot) (leafAt actor src) := by
-    rw [← hedge]; exact capOpen_membership S tf c env hChip hsat
+  have hmem : MembersAt8 S8 (groupVal env c.capRoot) (leafAt actor src) := by
+    rw [← hedge]; exact capOpen_membership8 S8 sponge tf c env hChip hsat.toCore
   -- the facet leg is read off the COMMITTED (decoded) mask; the tier leg is the committed `auth_tag`.
   have hfacet : isEffectPermitted (facetOfLeaf (leafAt actor src)) EFFECT_TRANSFER = true := by
-    rw [← hedge]; exact (capOpen_confers S.chipAbsorb tf c env vkOfTag hsat).1
+    rw [← hedge]; exact (capOpen_confers sponge tf c env vkOfTag hsat).1
   have hconf : confersTransferLeaf vkOfTag provided (leafAt actor src) := ⟨hfacet, htier⟩
   have htgt : (leafAt actor src).target = (src : ℤ) := by
-    rw [← hedge, capOpen_target S.chipAbsorb tf c env hsat, hsrc]
-  exact ⟨deployedCapOpen_implies_authorizedB S vkOfTag provided caps (env.loc c.capRoot) leafAt hfaith
+    rw [← hedge, capOpen_target sponge tf c env hsat, hsrc]
+  exact ⟨deployedCapOpen8_implies_authorizedB S8 vkOfTag provided caps (groupVal env c.capRoot) leafAt hfaith
     actor src dst amt hmem hconf, htgt⟩
 
 /-! ## §A — THE CHIP-RATE GAP IS CLOSED (`SchemeRealizedByChip` DISCHARGED, not carried).
@@ -831,104 +908,15 @@ The membership leg (`MembersAt`) and the target leg (`leaf.target = src`) are SH
 read no effect-bit column. We factor them as a membership CORE (`MembershipCore`) that both `Satisfied` and
 `SatisfiedEff` provide, so `capOpen_membership`/`capOpen_target` are restated over the core and reused. -/
 
-/-- **`MembershipCore sponge tf c env`** — the four fields the Merkle fold + target binding consume:
-the leaf-digest absorb, the per-level node absorbs, the direction-booleanity, and the root pin. Both
-`Satisfied` and `SatisfiedEff` carry these. -/
-structure MembershipCore (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) : Prop where
-  leafHashed : (leafLookup c).holdsAt tf env
-  nodeHashed : ∀ lvl < DEPTH, (nodeLookup c lvl).holdsAt tf env
-  dirBool    : ∀ lvl < DEPTH, (dirBoolGate c lvl).eval env.loc = 0
-  rootPinned : (rootPinGate c).eval env.loc = 0
-
-/-- A `Satisfied` row provides the membership core. -/
-def Satisfied.toCore {sponge tf c env} (h : Satisfied sponge tf c env) :
-    MembershipCore sponge tf c env :=
-  ⟨h.leafHashed, h.nodeHashed, h.dirBool, h.rootPinned⟩
-
-/-- **`membershipCore_opens` — the core IS a `MembersAt` opening** (the fold lemmas re-keyed over the
-core, byte-identical to `capOpen_membership` but consuming only the four shared fields). -/
-theorem membershipCore_opens {State : Type} (S : CapHashScheme State)
+/-- **`membershipCore_opens` — the core IS a `MembersAt8` opening** (the 8-felt fold over the four
+shared fields). NOW an alias for `capOpen_membership8` (`MembershipCore` is defined in §5 and the
+8-felt sound lemmas already consume it directly — no duplicated fold). -/
+theorem membershipCore_opens (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hcore : MembershipCore S.chipAbsorb tf c env) :
-    MembersAt S (env.loc c.capRoot) (leafOf c env) := by
-  -- re-derive `leafDigest_sound`/`node_sound`/`recompose_reaches_cur` from the core fields by
-  -- packaging a `Satisfied` whose membership fields ARE the core; the non-membership fields are
-  -- never evaluated by the fold (it consumes only leafHashed/nodeHashed/dirBool/rootPinned), so we
-  -- prove the fold lemmas directly over the core rather than via `Satisfied`.
-  refine ⟨pathOf c env DEPTH, ?_⟩
-  -- leaf-digest soundness from the core's `leafHashed`.
-  have hleaf : env.loc c.leafDigest = capLeafDigest S (leafOf c env) := by
-    have hlen : (leafInputs c).length ≤ CHIP_RATE := by
-      simp [leafInputs, List.length_map, List.length_finRange, CHIP_RATE]
-    have hmem : (chipLookupTuple (leafInputs c) c.leafDigest (c.lanes 0)).map (·.eval env.loc)
-        ∈ tf .poseidon2 := by
-      have := hcore.leafHashed; unfold Lookup.holdsAt leafLookup at this; exact this
-    have h := chip_lookup_sound S.chipAbsorb (tf .poseidon2) hChip env.loc (leafInputs c) c.leafDigest
-      (c.lanes 0) hlen hmem
-    rw [h, leafInputs_eval, (chipAbsorb_realizes S).leafRealized]
-  -- the per-level node soundness from the core's `nodeHashed`/`dirBool`.
-  have hnode : ∀ lvl, lvl < DEPTH →
-      env.loc (c.node lvl)
-        = (if dirBoolVal c env lvl
-            then nodeOf S (env.loc (c.sib lvl)) (env.loc (curCol c lvl))
-            else nodeOf S (env.loc (curCol c lvl)) (env.loc (c.sib lvl))) := by
-    intro lvl hlvl
-    have hlen : ([EmittedExpr.const FACT_MARK, leftExpr c lvl, rightExpr c lvl]).length ≤ CHIP_RATE := by
-      show 3 ≤ CHIP_RATE; rw [show CHIP_RATE = 11 from rfl]; omega
-    have hmem : (chipLookupTuple [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl)
-        (c.lanes (lvl + 1))).map (·.eval env.loc) ∈ tf .poseidon2 := by
-      have := hcore.nodeHashed lvl hlvl; unfold Lookup.holdsAt nodeLookup at this; exact this
-    have h := chip_lookup_sound S.chipAbsorb (tf .poseidon2) hChip env.loc
-      [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl) (c.lanes (lvl + 1)) hlen hmem
-    rw [h]
-    simp only [List.map_cons, List.map_nil, EmittedExpr.eval, leftExpr, rightExpr]
-    rcases dir_zero_or_one c env lvl (hcore.dirBool lvl hlvl) with hd0 | hd1
-    · have hbool : dirBoolVal c env lvl = false := by simp only [dirBoolVal, hd0]; decide
-      rw [hbool, hd0]; simp only [Bool.false_eq_true, if_false]
-      rw [show ((1 : ℤ) + -1 * 0) * env.loc (curCol c lvl) + 0 * env.loc (c.sib lvl)
-            = env.loc (curCol c lvl) by ring,
-          show ((1 : ℤ) + -1 * 0) * env.loc (c.sib lvl) + 0 * env.loc (curCol c lvl)
-            = env.loc (c.sib lvl) by ring]
-      exact (chipAbsorb_realizes S).nodeRealized _ _
-    · have hbool : dirBoolVal c env lvl = true := by simp only [dirBoolVal, hd1]; decide
-      rw [hbool, hd1]; simp only [if_true]
-      rw [show ((1 : ℤ) + -1 * 1) * env.loc (curCol c lvl) + 1 * env.loc (c.sib lvl)
-            = env.loc (c.sib lvl) by ring,
-          show ((1 : ℤ) + -1 * 1) * env.loc (c.sib lvl) + 1 * env.loc (curCol c lvl)
-            = env.loc (curCol c lvl) by ring]
-      exact (chipAbsorb_realizes S).nodeRealized _ _
-  -- fold to the top.
-  have hreach : ∀ n, n ≤ DEPTH →
-      recomposeUp S (env.loc c.leafDigest) (pathOf c env n) = env.loc (curCol c n) := by
-    intro n
-    induction n with
-    | zero => intro _; simp [pathOf, recomposeUp, curCol]
-    | succ k ih =>
-      intro hk
-      have hkd : k < DEPTH := Nat.lt_of_succ_le hk
-      have hkle : k ≤ DEPTH := Nat.le_of_lt hkd
-      have hpath : pathOf c env (k + 1)
-          = pathOf c env k ++ [{ sib := env.loc (c.sib k), dir := dirBoolVal c env k }] := by
-        simp [pathOf, List.range_succ, List.map_append]
-      rw [hpath, recomposeUp_append, ih hkle]
-      simp only [recomposeUp]
-      have hns := hnode k hkd
-      have hcur : curCol c (k + 1) = c.node k := rfl
-      rw [hcur]
-      cases hb : dirBoolVal c env k
-      · simp only [hb, Bool.false_eq_true, if_false] at hns ⊢; rw [hns]
-      · simp only [hb, if_true] at hns ⊢; rw [hns]
-  have hfold := hreach DEPTH (le_refl _)
-  rw [hleaf] at hfold
-  have hcurTop : curCol c DEPTH = c.node (DEPTH - 1) := rfl
-  rw [hcurTop] at hfold
-  have hpin := hcore.rootPinned
-  unfold rootPinGate at hpin
-  simp only [EmittedExpr.eval] at hpin
-  have hroot : env.loc (c.node (DEPTH - 1)) = env.loc c.capRoot := by linarith
-  rw [hfold, hroot]
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hcore : MembershipCore sponge tf c env) :
+    MembersAt8 S8 (groupVal env c.capRoot) (leafOf c env) :=
+  capOpen_membership8 S8 sponge tf c env hChip hcore
 
 /-- **`effBitGateFor c (eff : ℤ)`** — the GENERAL effect-bit pin: `effBit = eff`. `effBitGate` is the
 `eff := EFFECT_TRANSFER` instance (`effBitGate_eq_for`). Each fan-out effect's cap-open descriptor pins its
@@ -964,12 +952,12 @@ structure SatisfiedEff (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOp
   facetEffBound : (selectedBitGate c n).eval env.loc = 0
 
 /-- A `SatisfiedEff` row witnesses `MembersAt S cap_root leaf` (the shared Merkle fold over the core). -/
-theorem capOpenEff_membership {State : Type} (S : CapHashScheme State)
+theorem capOpenEff_membership (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (n : Nat)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hsat : SatisfiedEff S.chipAbsorb tf c env n) :
-    MembersAt S (env.loc c.capRoot) (leafOf c env) :=
-  membershipCore_opens S tf c env hChip hsat.core
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hsat : SatisfiedEff sponge tf c env n) :
+    MembersAt8 S8 (groupVal env c.capRoot) (leafOf c env) :=
+  membershipCore_opens S8 sponge tf c env hChip hsat.core
 
 /-- A `SatisfiedEff` row binds `leaf.target = src` (shared target gate). -/
 theorem capOpenEff_target (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
@@ -1003,13 +991,13 @@ theorem capOpenEff_confers (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : C
 row whose opened leaf IS the faithfulness contract's `(actor ⇒ src)` edge discharges the kernel's GENERAL
 `authorizedFacetEffB … (1 <<< n)` for the turn — over the effect-kind `1 <<< n` (NOT transfer), under any
 `provided` satisfying the committed tier. THE bridge each fan-out effect's cap-open descriptor consumes. -/
-theorem capOpenEff_authorizes {State : Type} (S : CapHashScheme State)
+theorem capOpenEff_authorizes (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (n : Nat) (hn : n < MASK_BITS)
     (vkOfTag : ℤ → Nat) (provided : AuthProvided)
-    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
-    (hsat : SatisfiedEff S.chipAbsorb tf c env n)
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hsat : SatisfiedEff sponge tf c env n)
     (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
-    (hfaith : DeployedFaithfulEff S vkOfTag provided (1 <<< n) caps (env.loc c.capRoot) leafAt)
+    (hfaith : DeployedFaithfulEff8 S8 vkOfTag provided (1 <<< n) caps (groupVal env c.capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hsrc : env.loc c.src = (src : ℤ))
     (hedge : leafOf c env = leafAt actor src)
@@ -1017,15 +1005,15 @@ theorem capOpenEff_authorizes {State : Type} (S : CapHashScheme State)
     authorizedFacetEffB caps provided (1 <<< n)
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) := by
-  have hmem : MembersAt S (env.loc c.capRoot) (leafAt actor src) := by
-    rw [← hedge]; exact capOpenEff_membership S tf c env n hChip hsat
+  have hmem : MembersAt8 S8 (groupVal env c.capRoot) (leafAt actor src) := by
+    rw [← hedge]; exact capOpenEff_membership S8 sponge tf c env n hChip hsat
   have hconf : confersLeaf vkOfTag provided (1 <<< n) (leafAt actor src) := by
     rw [← hedge]
-    exact capOpenEff_confers S.chipAbsorb tf c env n hn vkOfTag provided hsat (hedge ▸ htier)
+    exact capOpenEff_confers sponge tf c env n hn vkOfTag provided hsat (hedge ▸ htier)
   have htgt : (leafAt actor src).target = (src : ℤ) := by
-    rw [← hedge, capOpenEff_target S.chipAbsorb tf c env n hsat, hsrc]
-  exact ⟨deployedCapOpen_implies_authorizedEffB S vkOfTag provided (1 <<< n) caps
-    (env.loc c.capRoot) leafAt hfaith actor src dst amt hmem hconf, htgt⟩
+    rw [← hedge, capOpenEff_target sponge tf c env n hsat, hsrc]
+  exact ⟨deployedCapOpen8_implies_authorizedEffB S8 vkOfTag provided (1 <<< n) caps
+    (groupVal env c.capRoot) leafAt hfaith actor src dst amt hmem hconf, htgt⟩
 
 /-- **`satisfiedEff_rejects_wrong_facet` (fan-out NEGATIVE — the wrong-facet tooth bites, witness FALSE,
 GENUINE SUBMASK).** A `SatisfiedEff … n` row requires the SELECTED bit `n` set; a leaf whose mask bit `n`
@@ -1065,10 +1053,10 @@ theorem targetBindGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
 /-! ## §12 — Axiom hygiene. -/
 
 #assert_axioms chipAbsorb_realizes
-#assert_axioms leafDigest_sound
-#assert_axioms node_sound
-#assert_axioms recompose_reaches_cur
-#assert_axioms capOpen_membership
+#assert_axioms leafDigest_sound8
+#assert_axioms node_sound8
+#assert_axioms recompose_reaches_cur8
+#assert_axioms capOpen_membership8
 #assert_axioms capOpen_confers
 #assert_axioms capOpen_confers_decoded
 #assert_axioms facetEffGate_permits

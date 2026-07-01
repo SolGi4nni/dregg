@@ -53,10 +53,11 @@ namespace Dregg2.Circuit.CircuitCompletenessAuthorityConstruct
 open Dregg2.Exec
 open Dregg2.Exec.FacetAuthority
 open Dregg2.Authority (Label)
-open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme FACT_MARK packNode leafFields)
+open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme Cap8Scheme Digest8 FACT_MARK packNode leafFields)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
   (DeployedFaithfulEff capLeafDigest MembersAt recomposeUp tierOfTag confersLeaf
    maskOfLimbs facetOfLeaf vkOfTier tierOfTag_tierByte)
+open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (capLeafDigest8 MembersAt8 DeployedFaithfulEff8 recomposeUp8)
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap)
 
 set_option autoImplicit false
@@ -91,18 +92,18 @@ def authLeafAt (actor0 : Label) (c : FacetCap) (effectBit : EffectMask) :
 /-- **`authConstructedRoot S c effectBit`** — the CONSTRUCTED cap-tree root for the authorizing edge:
 the leaf digest of the on-edge leaf itself (the depth-0 opening). The honest prover's full depth-16
 recompose collapses to this leaf digest under the empty path; `MembersAt` holds with `path := []`. -/
-def authConstructedRoot {State : Type} (S : CapHashScheme State)
-    (actor0 : Label) (c : FacetCap) (effectBit : EffectMask) (src0 : Label) : ℤ :=
-  capLeafDigest S (authLeafAt actor0 c effectBit actor0 src0)
+def authConstructedRoot (S8 : Cap8Scheme)
+    (actor0 : Label) (c : FacetCap) (effectBit : EffectMask) (src0 : Label) : Digest8 :=
+  capLeafDigest8 S8 (authLeafAt actor0 c effectBit actor0 src0)
 
 /-! ## §2 — the membership opening + the conferral are CONSTRUCTED. -/
 
 /-- **`authLeaf_membersAt` — the membership opening is CONSTRUCTED (empty path).** The on-edge leaf's
 digest IS the constructed root, so the depth-0 opening (`path := []`) witnesses `MembersAt`. (The honest
 prover's real depth-16 path recomposes to the same root; we exhibit the minimal opening.) -/
-theorem authLeaf_membersAt {State : Type} (S : CapHashScheme State)
+theorem authLeaf_membersAt (S8 : Cap8Scheme)
     (actor0 : Label) (c : FacetCap) (effectBit : EffectMask) :
-    MembersAt S (authConstructedRoot S actor0 c effectBit c.target)
+    MembersAt8 S8 (authConstructedRoot S8 actor0 c effectBit c.target)
       (authLeafAt actor0 c effectBit actor0 c.target) :=
   ⟨[], rfl⟩
 
@@ -156,14 +157,14 @@ the authorizing hypothesis HANDS us, and the faithfulness is BUILT around it.
 It is keyed on the witnessing cap `c` for `caps actor0` (the `AuthorizedByCap` data); off-edge
 conferral is impossible so backedness is vacuous, and on the authorizing edge `c` itself is the
 witness. -/
-theorem authConstructed_faithful {State : Type} (S : CapHashScheme State)
+theorem authConstructed_faithful (S8 : Cap8Scheme)
     (caps : FacetCaps) (provided : AuthProvided) (effectBit : EffectMask)
     (actor0 : Label) (c : FacetCap)
     (hmem : c ∈ caps actor0)
     (hfacet : isEffectPermitted c.facet effectBit = true)
     (htier : c.tier.isSatisfiedBy provided = true) :
-    DeployedFaithfulEff S (vkOfTier c.tier) provided effectBit caps
-      (authConstructedRoot S actor0 c effectBit c.target)
+    DeployedFaithfulEff8 S8 (vkOfTier c.tier) provided effectBit caps
+      (authConstructedRoot S8 actor0 c effectBit c.target)
       (authLeafAt actor0 c effectBit) := by
   refine ⟨?_⟩
   intro actor src _hopen hconf
@@ -190,15 +191,15 @@ trace's committed `cap_root`/`src` columns to the constructed root/edge. We pack
 faithfulness, and FORCE the deployed gate — the rung the laundering pretended to discharge. -/
 
 open Dregg2.Circuit.RotatedKernelRefinementFacet (EffAuthoritySource effAuthoritySource_authorizes)
-open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 VmTrace Satisfied2 ChipTableSound envAt)
+open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 VmTrace Satisfied2 ChipTableSound ChipTableSoundN envAt)
 open Dregg2.Circuit.Emit.CapOpenEmit
   (effCapOpenV3 capOpenCols
    EFF_TRANSFER EFF_GRANT_CAPABILITY EFF_REVOKE_CAPABILITY EFF_INTRODUCE EFF_DELEGATION_OPS
    introduceV3 grantCapV3 revokeDelegationV3 refreshDelegationV3 revokeCapabilityBaseV3)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (attenuateV3)
-open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf)
+open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf groupVal capPermOut)
 
-/-- **`CapOpenTraceFloor S provided effectBit base name n actor0 c` — the IRREDUCIBLE trace realizability
+/-- **`CapOpenTraceFloor S8 hash provided effectBit base name n actor0 c` — the IRREDUCIBLE trace realizability
 (NAMED, the StarkComplete dual).** The honest prover's in-circuit cap-tree opening, REDUCED to ONLY what
 genuinely needs the prover: a concrete `VmTrace` `t`, the cap-open `Satisfied2` of the live fan-out
 descriptor `effCapOpenV3 base name n` over `S.chipAbsorb`, the chip-table soundness, the row index, and
@@ -207,7 +208,7 @@ the row-identification pinning the trace's committed `cap_root` column to the CO
 leaf (`authLeafAt`). The faithfulness/leaf/edge/tier-DECODE are NOT here — they are constructed in
 §1-§3. This is the realizability the prover supplies, the dual of the soundness
 `StarkSound`/`ChipTableSound` extraction. DATA-bearing (`Type 1`). -/
-structure CapOpenTraceFloor {State : Type} (S : CapHashScheme State) (effectBit : EffectMask)
+structure CapOpenTraceFloor (S8 : Cap8Scheme) (hash : List ℤ → ℤ) (effectBit : EffectMask)
     (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (actor0 : Label) (c : FacetCap) : Type 1 where
   /-- the cap-open trace + its memory boundary (the prover's BUILT depth-16 cap-tree opening). -/
@@ -216,9 +217,9 @@ structure CapOpenTraceFloor {State : Type} (S : CapHashScheme State) (effectBit 
   maddrs : List ℤ
   t : VmTrace
   /-- the chip table is sound (the chip's hash IS the deployed cap-hash `S.chipAbsorb`). -/
-  hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
+  hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2)
   /-- the prover's BUILT cap-open `Satisfied2` of the live fan-out descriptor. -/
-  hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t
+  hsat : Satisfied2 hash (effCapOpenV3 base name n) minit mfin maddrs t
   /-- the cap-open row index. -/
   i : Nat
   hi : i < t.rows.length
@@ -231,8 +232,8 @@ structure CapOpenTraceFloor {State : Type} (S : CapHashScheme State) (effectBit 
   /-- the opened leaf IS the CONSTRUCTED on-edge leaf. -/
   hedge : leafOf (capOpenCols base.traceWidth) (envAt t i) = authLeafAt actor0 c effectBit actor0 c.target
   /-- the trace's committed `cap_root` column IS the CONSTRUCTED root. -/
-  hroot : (envAt t i).loc (capOpenCols base.traceWidth).capRoot
-    = authConstructedRoot S actor0 c effectBit c.target
+  hroot : groupVal (envAt t i) (capOpenCols base.traceWidth).capRoot
+    = authConstructedRoot S8 actor0 c effectBit c.target
 
 /-- **`authConstructs_source` — ASSEMBLE the soundness carrier from `AuthorizedByCap` + the trace
 floor (the DE-LAUNDERING).** From the authorizing cap `c ∈ caps actor0` (the `AuthorizedByCap` witness
@@ -240,7 +241,7 @@ data) and the slimmed trace floor (which carries ONLY the realizable trace + row
 a full `EffAuthoritySource` — with `hfaith`/`leafAt`/`hedge`/`htier` CONSTRUCTED in §1-§3, NOT assumed.
 The turn is `⟨actor0, c.target, dst, amt⟩`. Everything the kernel transition determines is built; only the
 trace is carried. -/
-def authConstructs_source {State : Type} (S : CapHashScheme State)
+def authConstructs_source (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided) (effectBit : EffectMask)
     (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hbit : effectBit = 1 <<< n) (hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS)
@@ -250,14 +251,13 @@ def authConstructs_source {State : Type} (S : CapHashScheme State)
     (htier : c.tier.isSatisfiedBy provided = true)
     (dst : Label) (amt : ℤ)
     (pre : RecChainedState)
-    (floor : CapOpenTraceFloor S effectBit base name n actor0 c) :
-    EffAuthoritySource S.chipAbsorb caps provided pre
+    (floor : CapOpenTraceFloor S8 hash effectBit base name n actor0 c) :
+    EffAuthoritySource hash caps provided pre
       { actor := actor0, src := c.target, dst := dst, amt := amt } base name n := by
   subst hbit
   exact
     { hn := hn
-      State := State
-      S := S
+      S8 := S8
       vkOfTag := vkOfTier c.tier
       minit := floor.minit
       mfin := floor.mfin
@@ -272,7 +272,7 @@ def authConstructs_source {State : Type} (S : CapHashScheme State)
       hfaith := by
         -- the CONSTRUCTED faithfulness, at the trace's committed root (= the constructed root).
         rw [floor.hroot]
-        exact authConstructed_faithful S caps provided _ actor0 c hmem hfacet htier
+        exact authConstructed_faithful S8 caps provided _ actor0 c hmem hfacet htier
       hsrc := floor.hsrc
       hedge := floor.hedge
       htier := by
@@ -290,7 +290,7 @@ and the slimmed trace floor, the deployed two-axis `authorizedFacetEffB caps pro
 PASSES — FORCED by the source `authConstructs_source` ASSEMBLES (everything but the trace CONSTRUCTED).
 This is the genuine completeness content the prior `authorityComplete_generic` LAUNDERED: it no longer
 ASSUMES `DeployedFaithfulEff`/the membership — it BUILDS them from the cap. -/
-theorem authComplete_constructed {State : Type} (S : CapHashScheme State)
+theorem authComplete_constructed (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided)
     (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS)
@@ -299,11 +299,11 @@ theorem authComplete_constructed {State : Type} (S : CapHashScheme State)
     (hfacet : isEffectPermitted c.facet (1 <<< n) = true)
     (htier : c.tier.isSatisfiedBy provided = true)
     (dst : Label) (amt : ℤ) (pre : RecChainedState)
-    (floor : CapOpenTraceFloor S (1 <<< n) base name n actor0 c) :
+    (floor : CapOpenTraceFloor S8 hash (1 <<< n) base name n actor0 c) :
     authorizedFacetEffB caps provided (1 <<< n)
       { actor := actor0, src := c.target, dst := dst, amt := amt } = true :=
-  effAuthoritySource_authorizes S.chipAbsorb caps provided pre _ base name n
-    (authConstructs_source S caps provided (1 <<< n) base name n rfl hn actor0 c hmem hfacet htier
+  effAuthoritySource_authorizes hash caps provided pre _ base name n
+    (authConstructs_source S8 hash caps provided (1 <<< n) base name n rfl hn actor0 c hmem hfacet htier
       dst amt pre floor)
 
 /-- **`authComplete_constructed_from_hypothesis` — the rung taking the `AuthorizedByCap` PROP directly.**
@@ -311,7 +311,7 @@ The completeness statement de-laundered into the natural form: GIVEN `Authorized
 (1 <<< n) tr` (the existential authority hypothesis) AND the realizable trace floor for the witnessing
 cap, the gate passes — with the faithful membership CONSTRUCTED, not assumed. The `AuthorizedByCap`
 existential is destructured to recover the witnessing cap, then `authComplete_constructed` fires. -/
-theorem authComplete_constructed_from_hypothesis {State : Type} (S : CapHashScheme State)
+theorem authComplete_constructed_from_hypothesis (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided)
     (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS)
@@ -319,13 +319,13 @@ theorem authComplete_constructed_from_hypothesis {State : Type} (S : CapHashSche
     (h : AuthorizedByCap caps provided (1 <<< n) tr)
     (pre : RecChainedState)
     (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
-      CapOpenTraceFloor S (1 <<< n) base name n tr.actor c) :
+      CapOpenTraceFloor S8 hash (1 <<< n) base name n tr.actor c) :
     authorizedFacetEffB caps provided (1 <<< n) tr = true := by
   obtain ⟨c, hmem, htgt, hfacet, htier⟩ := h
   have hturn : tr = { actor := tr.actor, src := c.target, dst := tr.dst, amt := tr.amt } := by
     rw [htgt]
   rw [hturn]
-  exact authComplete_constructed S caps provided base name n hn tr.actor c hmem
+  exact authComplete_constructed S8 hash caps provided base name n hn tr.actor c hmem
     hfacet htier tr.dst tr.amt pre (floor c hmem htgt)
 
 /-! ## §5 — the PER-EFFECT cap-authority completeness rungs, RIDING THE SLIM FLOOR (de-laundered).
@@ -344,102 +344,102 @@ parametrized by the witnessing cap (the realizable trace for THAT cap's opening)
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
 /-- **`attenuate_authorityComplete`** — slim cap-authority rung over the LIVE `attenuateCapOpenEffV3`
 (base `attenuateV3`, `EFF_TRANSFER`). The fat `CapOpenWitness` is gone; only `CapOpenTraceFloor` survives. -/
-theorem attenuate_authorityComplete {State : Type} (S : CapHashScheme State)
+theorem attenuate_authorityComplete (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
     (h : AuthorizedByCap caps provided (1 <<< EFF_TRANSFER) tr)
     (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
-      CapOpenTraceFloor S (1 <<< EFF_TRANSFER) attenuateV3
+      CapOpenTraceFloor S8 hash (1 <<< EFF_TRANSFER) attenuateV3
         "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER tr.actor c) :
     authorizedFacetEffB caps provided (1 <<< EFF_TRANSFER) tr = true :=
-  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_TRANSFER (by decide) tr h pre floor
+  authComplete_constructed_from_hypothesis S8 hash caps provided _ _ EFF_TRANSFER (by decide) tr h pre floor
 
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
 /-- **`introduce_authorityComplete`** — slim rung over the LIVE `introduceCapOpenV3` (`EFF_INTRODUCE`). -/
-theorem introduce_authorityComplete {State : Type} (S : CapHashScheme State)
+theorem introduce_authorityComplete (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
     (h : AuthorizedByCap caps provided (1 <<< EFF_INTRODUCE) tr)
     (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
-      CapOpenTraceFloor S (1 <<< EFF_INTRODUCE) introduceV3
+      CapOpenTraceFloor S8 hash (1 <<< EFF_INTRODUCE) introduceV3
         "dregg-effectvm-introduce-v1-rot24-v3-capopen" EFF_INTRODUCE tr.actor c) :
     authorizedFacetEffB caps provided (1 <<< EFF_INTRODUCE) tr = true :=
-  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_INTRODUCE (by decide) tr h pre floor
+  authComplete_constructed_from_hypothesis S8 hash caps provided _ _ EFF_INTRODUCE (by decide) tr h pre floor
 
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
 /-- **`grantCap_authorityComplete`** — slim rung over the LIVE `grantCapCapOpenV3` (`EFF_GRANT_CAPABILITY`). -/
-theorem grantCap_authorityComplete {State : Type} (S : CapHashScheme State)
+theorem grantCap_authorityComplete (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
     (h : AuthorizedByCap caps provided (1 <<< EFF_GRANT_CAPABILITY) tr)
     (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
-      CapOpenTraceFloor S (1 <<< EFF_GRANT_CAPABILITY) grantCapV3
+      CapOpenTraceFloor S8 hash (1 <<< EFF_GRANT_CAPABILITY) grantCapV3
         "dregg-effectvm-grantCap-v1-rot24-v3-capopen" EFF_GRANT_CAPABILITY tr.actor c) :
     authorizedFacetEffB caps provided (1 <<< EFF_GRANT_CAPABILITY) tr = true :=
-  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_GRANT_CAPABILITY (by decide) tr h pre
+  authComplete_constructed_from_hypothesis S8 hash caps provided _ _ EFF_GRANT_CAPABILITY (by decide) tr h pre
     floor
 
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
 /-- **`delegate_authorityComplete`** — slim rung over the LIVE `delegateCapOpenV3` (base `grantCapV3`,
 `EFF_DELEGATION_OPS`). -/
-theorem delegate_authorityComplete {State : Type} (S : CapHashScheme State)
+theorem delegate_authorityComplete (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
     (h : AuthorizedByCap caps provided (1 <<< EFF_DELEGATION_OPS) tr)
     (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
-      CapOpenTraceFloor S (1 <<< EFF_DELEGATION_OPS) grantCapV3
+      CapOpenTraceFloor S8 hash (1 <<< EFF_DELEGATION_OPS) grantCapV3
         "dregg-effectvm-delegateAtten-v1-rot24-v3-capopen" EFF_DELEGATION_OPS tr.actor c) :
     authorizedFacetEffB caps provided (1 <<< EFF_DELEGATION_OPS) tr = true :=
-  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_DELEGATION_OPS (by decide) tr h pre
+  authComplete_constructed_from_hypothesis S8 hash caps provided _ _ EFF_DELEGATION_OPS (by decide) tr h pre
     floor
 
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
 /-- **`revokeDelegation_authorityComplete`** — slim rung over the LIVE `revokeCapOpenV3` (base
 `revokeDelegationV3`, `EFF_DELEGATION_OPS`; revoke / revokeDelegation share this base). -/
-theorem revokeDelegation_authorityComplete {State : Type} (S : CapHashScheme State)
+theorem revokeDelegation_authorityComplete (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
     (h : AuthorizedByCap caps provided (1 <<< EFF_DELEGATION_OPS) tr)
     (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
-      CapOpenTraceFloor S (1 <<< EFF_DELEGATION_OPS) revokeDelegationV3
+      CapOpenTraceFloor S8 hash (1 <<< EFF_DELEGATION_OPS) revokeDelegationV3
         "dregg-effectvm-revoke-v1-rot24-v3-capopen" EFF_DELEGATION_OPS tr.actor c) :
     authorizedFacetEffB caps provided (1 <<< EFF_DELEGATION_OPS) tr = true :=
-  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_DELEGATION_OPS (by decide) tr h pre
+  authComplete_constructed_from_hypothesis S8 hash caps provided _ _ EFF_DELEGATION_OPS (by decide) tr h pre
     floor
 
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
 /-- **`refreshDelegation_authorityComplete`** — slim rung over the LIVE `refreshDelegationCapOpenV3`
 (`EFF_DELEGATION_OPS`). -/
-theorem refreshDelegation_authorityComplete {State : Type} (S : CapHashScheme State)
+theorem refreshDelegation_authorityComplete (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
     (h : AuthorizedByCap caps provided (1 <<< EFF_DELEGATION_OPS) tr)
     (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
-      CapOpenTraceFloor S (1 <<< EFF_DELEGATION_OPS) refreshDelegationV3
+      CapOpenTraceFloor S8 hash (1 <<< EFF_DELEGATION_OPS) refreshDelegationV3
         "dregg-effectvm-refresh-v1-rot24-v3-capopen" EFF_DELEGATION_OPS tr.actor c) :
     authorizedFacetEffB caps provided (1 <<< EFF_DELEGATION_OPS) tr = true :=
-  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_DELEGATION_OPS (by decide) tr h pre
+  authComplete_constructed_from_hypothesis S8 hash caps provided _ _ EFF_DELEGATION_OPS (by decide) tr h pre
     floor
 
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
 /-- **`revokeCapability_authorityComplete`** — slim rung over the LIVE `revokeCapabilityCapOpenV3` (base
 `revokeCapabilityBaseV3`, `EFF_REVOKE_CAPABILITY`). -/
-theorem revokeCapability_authorityComplete {State : Type} (S : CapHashScheme State)
+theorem revokeCapability_authorityComplete (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
     (h : AuthorizedByCap caps provided (1 <<< EFF_REVOKE_CAPABILITY) tr)
     (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
-      CapOpenTraceFloor S (1 <<< EFF_REVOKE_CAPABILITY) revokeCapabilityBaseV3
+      CapOpenTraceFloor S8 hash (1 <<< EFF_REVOKE_CAPABILITY) revokeCapabilityBaseV3
         "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY tr.actor c) :
     authorizedFacetEffB caps provided (1 <<< EFF_REVOKE_CAPABILITY) tr = true :=
-  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_REVOKE_CAPABILITY (by decide) tr h pre
+  authComplete_constructed_from_hypothesis S8 hash caps provided _ _ EFF_REVOKE_CAPABILITY (by decide) tr h pre
     floor
 
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
 /-- **`exercise_authorityComplete`** — the exercise HOLD-GATE rung (over the LIVE `attenuateCapOpenEffV3`
 at `EFF_TRANSFER`, the descriptor the deployed exercise hold-cap routes through). Same slim floor as
 `attenuate_authorityComplete`. -/
-theorem exercise_authorityComplete {State : Type} (S : CapHashScheme State)
+theorem exercise_authorityComplete (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
     (h : AuthorizedByCap caps provided (1 <<< EFF_TRANSFER) tr)
     (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
-      CapOpenTraceFloor S (1 <<< EFF_TRANSFER) attenuateV3
+      CapOpenTraceFloor S8 hash (1 <<< EFF_TRANSFER) attenuateV3
         "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER tr.actor c) :
     authorizedFacetEffB caps provided (1 <<< EFF_TRANSFER) tr = true :=
-  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_TRANSFER (by decide) tr h pre floor
+  authComplete_constructed_from_hypothesis S8 hash caps provided _ _ EFF_TRANSFER (by decide) tr h pre floor
 
 /-! ## §6 — Axiom hygiene. -/
 

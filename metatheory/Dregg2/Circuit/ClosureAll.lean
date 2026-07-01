@@ -208,7 +208,7 @@ theorem cellSeal_closedLog_sat
 
 /-- revoke (tag 2) — re-exported. -/
 theorem revoke_closedLog
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (pre post : RecChainedState) (holder tt : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
@@ -225,7 +225,7 @@ introduce (10, =DelegateSpec) / revokeDelegation (14, =RevokeSpec). -/
 
 /-- delegate (tag 1). -/
 theorem delegate_closedLog
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (pre post : RecChainedState) (del rec tt : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
@@ -244,7 +244,7 @@ theorem delegate_closedLog
 
 /-- introduce (tag 10) — refines `DelegateSpec` (same arm body). -/
 theorem introduce_closedLog
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (pre post : RecChainedState) (intro rec tt : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
@@ -263,7 +263,7 @@ theorem introduce_closedLog
 
 /-- attenuate (tag 12) — cap-family exact rung. -/
 theorem attenuate_closedLog
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (pre post : RecChainedState) (actor : CellId) (idx : Nat) (keep : List Auth)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
@@ -282,7 +282,7 @@ theorem attenuate_closedLog
 
 /-- delegateAtten (tag 11). -/
 theorem delegateAtten_closedLog
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (pre post : RecChainedState) (del rec tt : CellId) (keep : List Auth)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
@@ -303,7 +303,7 @@ theorem delegateAtten_closedLog
 decode PLUS the epoch step: parent epoch bumped + child snapshot staled). The `logNeeds` now yields the
 `RevokeDelegationFullEncodes` (the §3.EPOCH decode bundling the cap-remove + the NAMED epoch residual). -/
 theorem revokeDelegation_closedLog
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (pre post : RecChainedState) (holder tt : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
@@ -322,7 +322,7 @@ theorem revokeDelegation_closedLog
 
 /-- refreshDelegation (tag 55). -/
 theorem refreshDelegation_closedLog
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (pre post : RecChainedState) (actor child : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
@@ -989,9 +989,10 @@ which pins the post cap-root via the LIVE write op — guarantee A circuit-force
 
 /-- delegate (tag 1), CLASS A — forced from `delegateWriteCapOpenV3` (`= Rfix 1`). -/
 theorem delegate_closedLog_sat
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
       Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3 minit mfin maddrs t)
     (pre post : RecChainedState) (del rec tt : CellId)
@@ -1011,14 +1012,15 @@ theorem delegate_closedLog_sat
       show fullActionStep pre (.delegate del rec tt) post
       simp only [fullActionStep]
       exact (Dregg2.Circuit.RotatedKernelRefinementCapFamily.delegate_descriptorRefines_capOpenSat
-        Scap pre post del rec tt hash minit mfin maddrs t hsat henc anc).1)
+        Scap pre post del rec tt _ _ hash minit mfin maddrs t hChip hsat henc anc).1)
 
 /-- introduce (tag 10), CLASS A — forced from `introduceWriteCapOpenV3` (`= Rfix 10`); routes to
 `DelegateSpec`. -/
 theorem introduce_closedLog_sat
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
       Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3 minit mfin maddrs t)
     (pre post : RecChainedState) (intro rec tt : CellId)
@@ -1038,16 +1040,17 @@ theorem introduce_closedLog_sat
       show fullActionStep pre (.introduceA intro rec tt) post
       simp only [fullActionStep]
       exact (Dregg2.Circuit.RotatedKernelRefinementCapFamily.introduce_descriptorRefines_capOpenSat
-        Scap pre post intro rec tt hash minit mfin maddrs t hsat henc anc).1)
+        Scap pre post intro rec tt _ _ hash minit mfin maddrs t hChip hsat henc anc).1)
 
 /-- delegateAtten (tag 11), CLASS A — forced from `delegateAttenWriteCapOpenV3` (`= Rfix 11`); the
 insert + `granted ⊑ held` non-amp are FORCED. -/
 theorem delegateAtten_closedLog_sat
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
     (hsub : t.tf (.custom Dregg2.Circuit.Emit.EffectVmEmitV2.SUBMASK_TID)
       = Dregg2.Circuit.Emit.EffectVmEmitV2.subsetTable Dregg2.Circuit.Emit.EffectVmEmitV2.MASK_BITS)
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
       Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3 minit mfin maddrs t)
     (pre post : RecChainedState) (del rec tt : CellId) (keep : List Auth)
@@ -1067,14 +1070,15 @@ theorem delegateAtten_closedLog_sat
       show fullActionStep pre (.delegateAttenA del rec tt keep) post
       simp only [fullActionStep]
       exact (Dregg2.Circuit.RotatedKernelRefinementCapFamily.delegateAtten_descriptorRefines_capOpenSat
-        Scap pre post del rec tt keep hash minit mfin maddrs t hsub hsat henc anc).1)
+        Scap pre post del rec tt keep _ _ hash minit mfin maddrs t hsub hChip hsat henc anc).1)
 
 /-- revokeDelegation (tag 14), CLASS A — forced from `revokeDelegationWriteCapOpenV3` (`= Rfix 14`);
 routes to `RevokeSpec`, the cap-tree REMOVE FORCED. -/
 theorem revokeDelegation_closedLog_sat
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
       Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3 minit mfin maddrs t)
     (pre post : RecChainedState) (holder tt : CellId)
@@ -1096,7 +1100,7 @@ theorem revokeDelegation_closedLog_sat
       -- §EPOCH: the deployed descriptor FORCES the cap-tree REMOVE; the epoch step rides the NAMED
       -- `RevokeDelegationFullEncodes` residual → the FAITHFUL `RevokeDelegationFullSpec`.
       exact (Dregg2.Circuit.RotatedKernelRefinementCapFamily.revokeDelegation_descriptorRefines_capOpenSat_full
-        Scap pre post holder tt hash minit mfin maddrs t hsat henc anc).1)
+        Scap pre post holder tt _ _ hash minit mfin maddrs t hChip hsat henc anc).1)
 
 /-- revoke (tag 2), CLASS A — forced from `revokeDelegationWriteCapOpenV3` (`= Rfix 2`, the SAME
 write-bearing descriptor tag 14 rides). `.revoke holder tt` lowers to the SHARED `RevokeSpec`/`removeEdgeCaps`
@@ -1104,9 +1108,10 @@ kernel step (`execFullA_revoke_iff_spec`), so the cap-tree REMOVE FORCED by `rev
 wrapper strips to it via `capOpen_satisfied2_strips_to_base`) discharges THIS arm exactly as it discharges
 tag 14's. Editing `revokeDelegationWriteV3`'s `removeWriteOpRot` turns this — and the tag-2 apex — RED. -/
 theorem revoke_closedLog_capOpenSat
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
       Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3 minit mfin maddrs t)
     (pre post : RecChainedState) (holder tt : CellId)
@@ -1126,7 +1131,7 @@ theorem revoke_closedLog_capOpenSat
       show fullActionStep pre (.revoke holder tt) post
       simp only [fullActionStep]
       exact (Dregg2.Circuit.RotatedKernelRefinementCapFamily.revokeDelegation_descriptorRefines_capOpenSat
-        Scap pre post holder tt hash minit mfin maddrs t hsat henc anc).1)
+        Scap pre post holder tt _ _ hash minit mfin maddrs t hChip hsat henc anc).1)
 
 /-- refreshDelegation (tag 55), CLASS A — forced from `refreshDelegationWriteCapOpenV3` (`= Rfix 55`);
 the DELEGATIONS-tree UPDATE-write is FORCED in-circuit (the `delegRoot_runtime_column_pending` supplied
@@ -1134,9 +1139,10 @@ digest is GONE). The cap-open wrapper strips to `refreshDelegationWriteV3` and a
 `refreshDelegation_descriptorRefines_sat`, forcing `RefreshDelegationSpec` AND the deleg-root write.
 Editing the deleg-write descriptor turns this — and the apex — RED. -/
 theorem refreshDelegation_closedLog_sat
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
       Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor child : CellId)
@@ -1159,7 +1165,7 @@ theorem refreshDelegation_closedLog_sat
       simp only [fullActionStep]
       -- the deleg-write-forced decode forces the STRENGTHENED `RefreshDelegationFullSpec`.
       exact (Dregg2.Circuit.RotatedKernelRefinementCapFamily.refreshDelegation_descriptorRefines_capOpenSat
-        Scap pre post actor child hash minit mfin maddrs t hsat henc anc).1)
+        Scap pre post actor child _ _ hash minit mfin maddrs t hChip hsat henc anc).1)
 
 /-- attenuate (tag 12), CLASS A — forced from the DEPLOYED `attenuateCapOpenEffV3` (`= Rfix 12`, base
 `attenuateV3` — the MOVING write face, no `gCapPass` freeze). The cap-tree UPDATE-AT-KEY (the in-place
@@ -1169,11 +1175,12 @@ slot-narrow recompute of `cap_root`) is FORCED from `attenuateV3`'s `keepWriteOp
 table the non-amp leg reads. The `logNeeds` yields the `AttenuateCapsTreeEncodes` decode + the realizable
 `AttenuateWriteAnchor` trace seam. Editing `attenuateV3`'s write op turns this — and the apex — RED. -/
 theorem attenuate_closedLog_sat
-    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
-    (hsub : t.tf (.custom Dregg2.Circuit.Emit.EffectVmEmitV2.SUBMASK_TID)
+    (_hsub : t.tf (.custom Dregg2.Circuit.Emit.EffectVmEmitV2.SUBMASK_TID)
       = Dregg2.Circuit.Emit.EffectVmEmitV2.subsetTable Dregg2.Circuit.Emit.EffectVmEmitV2.MASK_BITS)
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
       Dregg2.Circuit.Emit.CapOpenEmit.attenuateCapOpenEffV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor : CellId) (idx : Nat) (keep : List Auth)
@@ -1193,7 +1200,7 @@ theorem attenuate_closedLog_sat
       show fullActionStep pre (.attenuateA actor idx keep) post
       simp only [fullActionStep]
       exact (Dregg2.Circuit.RotatedKernelRefinementCapFamily.attenuate_descriptorRefines_capOpenSat
-        Scap pre post actor idx keep hash minit mfin maddrs t hsub hsat henc anc).1)
+        Scap pre post actor idx keep _ _ hash minit mfin maddrs t hChip hsat henc anc).1)
 
 /-- setPermissions (tag 8), CLASS A — forced from `setPermsV3`. -/
 theorem setPermissions_closedLog_sat
