@@ -90,7 +90,8 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::effect_vm::trace_rotated::{
     AFTER_BASE, B_FIELDS_ROOT, B_LIFECYCLE, B_RECORD_DIGEST, BEFORE_BASE, ROT_PI_COUNT, ROT_WIDTH,
     RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
-    generate_rotated_refusal_trace_with_fields_tree, rotated_descriptor_name_for_effect,
+    generate_rotated_refusal_trace_with_fields_tree, generate_rotated_refusal_write_wide,
+    rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{CellState, Effect, bytes32_to_8_limbs};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -498,5 +499,109 @@ fn lifecycle_payload_forge_rejected_by_hash_gate_anchor_disabled() {
          lifecycle-payload hash gate — forge REJECTED anchor-disabled). The felt-domain lifecycle_felt \
          makes limb 29 recomputable from (disc, reason_hash, block_height); the gate welds it \
          (EffectVmEmitRotationV3.cellSealV3_payload_rejects_forged_lightclient → the apex)."
+    );
+}
+
+/// Resolve a WIDE-registry descriptor JSON by registry KEY (col 0) from the committed staged TSV.
+fn wide_json(name: &str) -> &'static str {
+    dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|l| {
+            let mut it = l.splitn(3, '\t');
+            if it.next() == Some(name) {
+                let _ = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("{name} not in WIDE_REGISTRY_STAGED_TSV"))
+}
+
+/// **THE DEPLOYED FIELDS-WRITE (OPTION I): the wide `refusalVmDescriptor2R24` PROVES + light-client
+/// VERIFIES the faithful 8-felt fields-write.** The deployed after-spine `effFieldsWriteV3
+/// refusalFieldsWriteV3 …` (`= CircuitSoundnessAssembled.Rfix 39`, `v3RegistryHeap` tail pos 55) a light
+/// client checks: the wide producer lays the Class-A refusal base (the 8-felt fields-root GROUP + record
+/// pin + audit param) WIDENED by the fields-open READ appendix (OLD audit leaf against the BEFORE root8) +
+/// the AFTER-spine appendix (UPDATED audit leaf against the AFTER root8, SHARED path) + the 8-felt wide
+/// carriers. A satisfying trace FORCES `fieldsWritesTo8` over the FULL ~124-bit BEFORE/AFTER fields-root
+/// blocks (`FieldsOpenEmit.effFieldsWriteV3_forces_write8`) — the THIRD faithful 8-felt Merkle root,
+/// deployed. The deployed twin of `wide_heap_write_proves_and_verifies`.
+#[test]
+fn wide_fields_write_proves_and_verifies() {
+    let balance: i64 = 50_000;
+    let before_cell = producer_cell(balance, 0);
+    let cell_id = before_cell.id();
+    let kernel_effect = dregg_turn::Effect::Refusal {
+        cell: cell_id,
+        offered_action_commitment: [11u8; 32],
+        refusal_reason: dregg_turn::action::RefusalReason::Declined,
+        proof_witness_index: 0,
+    };
+    let vm_effect = Effect::Refusal {
+        target: h8(cell_id.as_bytes()),
+        reason_hash: bytes32_to_8_limbs(&[0u8; 32]),
+    };
+    let st = CellState::new(balance as u64, 0);
+    let effects = vec![vm_effect];
+
+    let mut honest_after = producer_cell(balance, 0);
+    rw::apply_effect_to_cell(&mut honest_after, &cell_id, &kernel_effect, 100);
+
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(honest_after.clone()).unwrap();
+    let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
+    let before_w = rw::produce(
+        &before_cell,
+        &Ledger::new(),
+        &nullifier_root,
+        &commitments_root,
+        &receipt_log,
+    );
+    let after_w = rw::produce(
+        &honest_after,
+        &ledger,
+        &nullifier_root,
+        &commitments_root,
+        &receipt_log,
+    );
+    let caveat = empty_caveat_manifest();
+    let before_leaves = dregg_cell::state::fields_root_leaves(&before_cell.state.fields_map);
+    let audit_value = refusal_audit_value(&honest_after);
+
+    let (trace, dpis, map_heaps) = generate_rotated_refusal_write_wide(
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &caveat,
+        &before_leaves,
+        audit_value,
+    )
+    .expect("wide refusal fields-write generation");
+
+    let name = "refusalVmDescriptor2R24";
+    let desc = parse_vm_descriptor2(wide_json(name)).unwrap();
+    assert_eq!(
+        desc.trace_width, 1669,
+        "refusal fields-write wide width 1669 (OPTION I after-spine)"
+    );
+    assert_eq!(
+        desc.public_input_count, 70,
+        "refusal fields-write wide 70 PIs (54 base + 16 wide)"
+    );
+    assert_eq!(trace[0].len(), 1669);
+    assert_eq!(dpis.len(), 70);
+
+    let mb = MemBoundaryWitness::default();
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mb, &map_heaps)
+        .unwrap_or_else(|e| panic!("refusal fields-write WIDE proof must prove: {e}"));
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .unwrap_or_else(|e| panic!("refusal fields-write WIDE proof must verify: {e}"));
+    eprintln!(
+        "WIDE refusal fields-write: PROVED + VERIFIED at 1669 (genuine sorted-Merkle audit-slot write \
+         over the faithful 8-felt fields root + 8-felt commit, 70 PIs) — the THIRD faithful root deployed."
     );
 }

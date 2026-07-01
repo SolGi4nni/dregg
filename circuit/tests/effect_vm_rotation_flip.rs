@@ -1613,16 +1613,23 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     );
 
     let mut fr_changed = producer_cell(100_000, 0);
-    fr_changed.state.fields_root = [9u8; 32]; // a DIFFERENT overflow-map root (a refusal audit / dyn write)
+    // A DIFFERENT overflow-map entry (a refusal audit / dyn write): the committed limb 36 is now the
+    // OPENABLE sorted-Poseidon2 `fields_root` derived from `fields_map` (`compute_canonical_fields_root_8`,
+    // the 8-felt weld), NOT the opaque scalar `state.fields_root`. Mutating the map MOVES the openable root.
+    fr_changed
+        .state
+        .fields_map
+        .insert(0x00F1_E1D5u64, [9u8; 32]);
     let pre_fr = compute_rotated_pre_limbs(&fr_changed, &ctx);
     assert_ne!(
         pre[36], pre_fr[36],
-        "index 36 (fields_root) MUST move on a fields_root change (the fields-root sub-limb is committed)"
+        "index 36 (fields_root) MUST move on a fields-map change (the openable 8-felt fields-root's lane-0 \
+         sub-limb is committed)"
     );
     assert_eq!(
         pre[36],
-        dregg_turn::rotation_witness::fields_root_felt(&plain.state.fields_root),
-        "the committed fields-root limb IS the deployed fields_root digest"
+        dregg_cell::state::compute_canonical_fields_root_8(&plain.state.fields_map)[0],
+        "the committed fields-root limb IS lane 0 of the deployed openable 8-felt fields_root"
     );
     let published_fr = compute_canonical_state_commitment_v9_felt(&fr_changed, &ctx);
     assert_ne!(

@@ -193,11 +193,11 @@ fn breadstuff_gated_turn_carries_verifying_consumed_cap_witness() {
     // capability root, recomputed independently from the pre-state c-list
     // via the canonical cell-side scheme (the same value the circuit's
     // cap_root column seeds from).
-    let expected_root_felt = dregg_cell::compute_canonical_capability_root_felt(&pre_caps);
+    let expected_root_8 = dregg_cell::compute_canonical_capability_root_8(&pre_caps);
     assert_eq!(
         w.cap_root,
-        expected_root_felt.as_u32(),
-        "witness root must equal the REAL pre-state capability root"
+        expected_root_8.map(|f| f.as_u32()),
+        "witness root must equal the REAL pre-state 8-felt capability root"
     );
     assert_eq!(
         w.cap_root_bytes32(),
@@ -283,8 +283,8 @@ fn bearer_gated_turn_records_delegator_consumed_cap_witness() {
     assert!(w.verify(), "membership path must verify");
     assert_eq!(
         w.cap_root,
-        dregg_cell::compute_canonical_capability_root_felt(&pre_delegator_caps).as_u32(),
-        "witness root must equal the delegator's REAL pre-state capability root"
+        dregg_cell::compute_canonical_capability_root_8(&pre_delegator_caps).map(|f| f.as_u32()),
+        "witness root must equal the delegator's REAL pre-state 8-felt capability root"
     );
 }
 
@@ -356,7 +356,7 @@ fn receipt_hash_v3_is_deterministic_and_binds_consumed_witness() {
     );
 
     let mut t = base.clone();
-    t.consumed_capabilities[0].cap_root ^= 1;
+    t.consumed_capabilities[0].cap_root[0] ^= 1;
     assert_ne!(
         t.receipt_hash(),
         h1,
@@ -364,7 +364,7 @@ fn receipt_hash_v3_is_deterministic_and_binds_consumed_witness() {
     );
 
     let mut t = base.clone();
-    t.consumed_capabilities[0].siblings[0] ^= 1;
+    t.consumed_capabilities[0].siblings[0][0] ^= 1;
     assert_ne!(
         t.receipt_hash(),
         h1,

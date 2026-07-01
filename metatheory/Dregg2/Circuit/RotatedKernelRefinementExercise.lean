@@ -88,7 +88,7 @@ open Dregg2.Circuit.ActionDispatch
 open Dregg2.Circuit.Spec.HeapWrite
   (HeapWriteSpec heapWriteHeapsMap execFullA_heapWriteA_iff_spec)
 open Dregg2.Circuit.Spec.CellStateField (SetFieldGuard setFieldCellMap)
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv prmCol satisfiedVm)
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv prmCol satisfiedVm EFFECT_VM_WIDTH)
 open Dregg2.Circuit.Emit.EffectVmEmitHeapRoot
   (heapRootHolds heapRootAdvance_forced heapRoot_binds_write heapAdvanceOf leafOf addrOf
    HEAP_ROOT_AFTER HEAP_ROOT_BEFORE HEAP_ADDR heapWriteVmDescriptor heapWriteVmDescriptor_hashSites
@@ -100,7 +100,9 @@ open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 envAt EffectVmDescriptor2 
    writesTo_functional MapOp VmConstraint2)
 open Dregg2.Circuit.Emit.EffectVmEmitV2
   (graduateV1 graduateV1_sound graduateV1_satisfiedVm_of_rowConstraints graduable)
-open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotateV3 rotateV3_satisfiedVm_v1 graduable_rotateV3)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotateV3 rotateV3_satisfiedVm_v1 graduable_rotateV3
+   beforeHeapRootGroup afterHeapRootGroup heapRootGroupCol beforeHeapRootCol afterHeapRootCol
+   beforeHeapRootCols afterHeapRootCols)
 open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
 
 set_option autoImplicit false
@@ -368,11 +370,28 @@ descriptor IS a heap-write row. The deployed `Ir2Air::MapOps` AIR checks the pro
 `update_witness` (`heap_root.rs` `CanonicalHeapTree::update_witness`). -/
 def heapSpliceWriteOp : MapOp :=
   { guard   := .const 1
-  , root    := .var HEAP_ROOT_BEFORE
+  , root    := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeHeapRootGroup
   , key     := .var HEAP_ADDR
   , value   := .var (prmCol VALUE)
-  , newRoot := .var HEAP_ROOT_AFTER
+  , newRoot := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.afterHeapRootGroup
   , op      := .write }
+
+/-- Lane 0 (rotated limb 28) of the committed BEFORE heap-root group — the felt the repointed splice
+`.root` reads (`MapOp.holdsAt .write` reads lane 0 only). The FAITHFUL 8-felt root's scalar projection
+lives on the ROTATED limb, NOT the v1-state `HEAP_ROOT_BEFORE` (col 65). -/
+def HEAP_ROOT_BEFORE_ROT : Nat := heapRootGroupCol EFFECT_VM_WIDTH 0
+
+/-- Lane 0 (rotated limb 28 of the after block) of the committed AFTER heap-root group — the felt the
+repointed splice `.newRoot` writes. -/
+def HEAP_ROOT_AFTER_ROT : Nat := heapRootGroupCol (EFFECT_VM_WIDTH + 119) 0
+
+/-- `heapSpliceWriteOp.root` at lane 0 evaluates to the BEFORE rotated heap-root limb. -/
+theorem heapSpliceWriteOp_root0 (env : VmRowEnv) :
+    (heapSpliceWriteOp.root 0).eval env.loc = env.loc HEAP_ROOT_BEFORE_ROT := rfl
+
+/-- `heapSpliceWriteOp.newRoot` at lane 0 evaluates to the AFTER rotated heap-root limb. -/
+theorem heapSpliceWriteOp_newRoot0 (env : VmRowEnv) :
+    (heapSpliceWriteOp.newRoot 0).eval env.loc = env.loc HEAP_ROOT_AFTER_ROT := rfl
 
 /-- **`heapWriteV3`** — the LIVE rotated+graduated heapWrite descriptor WITH the genuine sorted-Merkle
 SPLICE `MapOp`. Its underlying SPLICE base (`heapWriteSpliceVmDescriptor`) carries the address+leaf
@@ -436,11 +455,11 @@ theorem heapWrite_splice_forced (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash heapWriteV3 minit mfin maddrs t)
     (row : Nat) (hrow : row < t.rows.length) :
-    writesTo hash ((envAt t row).loc HEAP_ROOT_BEFORE) ((envAt t row).loc HEAP_ADDR)
-      ((envAt t row).loc (prmCol VALUE)) ((envAt t row).loc HEAP_ROOT_AFTER) := by
+    writesTo hash ((envAt t row).loc HEAP_ROOT_BEFORE_ROT) ((envAt t row).loc HEAP_ADDR)
+      ((envAt t row).loc (prmCol VALUE)) ((envAt t row).loc HEAP_ROOT_AFTER_ROT) := by
   have hc := hsat.rowConstraints row hrow (.mapOp heapSpliceWriteOp) heapWriteV3_mapOp_mem
   -- `c.holdsAt` for a `.mapOp` IS `m.holdsAt hash env` = (guard = 1 → writesTo …). The constant-1
-  -- guard fires definitionally; the `.write` arm is exactly `writesTo`.
+  -- guard fires definitionally; the `.write` arm is exactly `writesTo` over the ROTATED lane-0 limbs.
   have hfire : (heapSpliceWriteOp.guard.eval (envAt t row).loc) = 1 := rfl
   exact hc hfire
 
@@ -454,8 +473,8 @@ structure HeapWriteTraceReadout (hash : List ℤ → ℤ)
   row : Nat
   hrow : row < t.rows.length
   /-- the carried `newRoot` IS the new-root register column of the active row (the prover cannot carry a
-  `newRoot` other than the column the descriptor's splice `MapOp` forces). -/
-  newRootIsAfter : newRoot = (envAt t row).loc HEAP_ROOT_AFTER
+  `newRoot` other than the ROTATED lane-0 limb the descriptor's splice `MapOp` forces). -/
+  newRootIsAfter : newRoot = (envAt t row).loc HEAP_ROOT_AFTER_ROT
   cellMapMove : post.kernel.cell
     = setFieldCellMap pre.kernel.cell target Dregg2.Substrate.HeapKernel.heapRootField newRoot
   heapsSplice : post.kernel.heaps = heapWriteHeapsMap pre.kernel.heaps target addr v
@@ -509,7 +528,7 @@ theorem heapWrite_newRoot_splice_forced (hash : List ℤ → ℤ)
     (hsat : Satisfied2 hash heapWriteV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor target : CellId) (addr v newRoot : Int)
     (rd : HeapWriteTraceReadout hash t pre post actor target addr v newRoot) :
-    writesTo hash ((envAt t rd.row).loc HEAP_ROOT_BEFORE)
+    writesTo hash ((envAt t rd.row).loc HEAP_ROOT_BEFORE_ROT)
       (addrOf hash ((envAt t rd.row).loc (prmCol COLL))
         ((envAt t rd.row).loc (prmCol KEY)))
       ((envAt t rd.row).loc (prmCol VALUE)) newRoot := by
@@ -538,10 +557,10 @@ theorem heapWrite_sat_rejects_wrong_splice_root (hash : List ℤ → ℤ) (hCR :
     {minit₂ : ℤ → ℤ} {mfin₂ : ℤ → ℤ × Nat} {maddrs₂ : List ℤ} {t₂ : VmTrace}
     (hsat₂ : Satisfied2 hash heapWriteV3 minit₂ mfin₂ maddrs₂ t₂)
     (row₁ row₂ : Nat) (hrow₁ : row₁ < t₁.rows.length) (hrow₂ : row₂ < t₂.rows.length)
-    (hroot : (envAt t₁ row₁).loc HEAP_ROOT_BEFORE = (envAt t₂ row₂).loc HEAP_ROOT_BEFORE)
+    (hroot : (envAt t₁ row₁).loc HEAP_ROOT_BEFORE_ROT = (envAt t₂ row₂).loc HEAP_ROOT_BEFORE_ROT)
     (hkey : (envAt t₁ row₁).loc HEAP_ADDR = (envAt t₂ row₂).loc HEAP_ADDR)
     (hval : (envAt t₁ row₁).loc (prmCol VALUE) = (envAt t₂ row₂).loc (prmCol VALUE)) :
-    (envAt t₁ row₁).loc HEAP_ROOT_AFTER = (envAt t₂ row₂).loc HEAP_ROOT_AFTER := by
+    (envAt t₁ row₁).loc HEAP_ROOT_AFTER_ROT = (envAt t₂ row₂).loc HEAP_ROOT_AFTER_ROT := by
   have hs₁ := heapWrite_splice_forced hash hsat₁ row₁ hrow₁
   have hs₂ := heapWrite_splice_forced hash hsat₂ row₂ hrow₂
   rw [hroot, hkey, hval] at hs₁

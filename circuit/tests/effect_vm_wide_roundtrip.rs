@@ -33,8 +33,8 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    GRAD_ROT_WIDTH, RotatedBlockWitness, SET_FIELD_DYN_HOST_WIDTH, WIDE_BEFORE_CBASE,
-    WIDE_COMMIT_CARRIER, empty_caveat_manifest, generate_rotated_create_cell_wide,
+    RotatedBlockWitness, SET_FIELD_DYN_HOST_WIDTH, WIDE_BEFORE_CBASE, WIDE_COMMIT_CARRIER,
+    WIDE_WIDTH, empty_caveat_manifest, generate_rotated_create_cell_wide,
     generate_rotated_create_from_factory_wide, generate_rotated_note_create_wide,
     generate_rotated_note_spend_wide, generate_rotated_set_field_dyn_wide,
     generate_rotated_spawn_wide, generate_rotated_transfer_shape_wide,
@@ -113,8 +113,8 @@ fn assert_roundtrip(
 ) {
     assert_eq!(
         trace[0].len(),
-        GRAD_ROT_WIDTH + 208,
-        "{name}: wide width 816"
+        WIDE_WIDTH,
+        "{name}: wide width matches WIDE_WIDTH"
     );
     assert_eq!(
         desc.trace_width,
@@ -215,11 +215,13 @@ fn assert_executor_anchor(
 /// primitive the cell-side flip uses. This proves the executor's anchoring primitive reproduces the
 /// circuit's published wide commit for the grow-gate shape. The plain `wire_commit_8` still DIVERGES.
 fn assert_executor_anchor_grow_gate(name: &str, trace: &[Vec<BabyBear>]) {
-    use dregg_circuit::effect_vm::trace_rotated::BEFORE_BASE;
-    // The 37 BEFORE pre-iroot limbs + iroot the kernel-trusted before-state supplies (the row's own
+    use dregg_circuit::effect_vm::trace_rotated::{B_IROOT, BEFORE_BASE, NUM_PRE_LIMBS};
+    // The NUM_PRE_LIMBS BEFORE pre-iroot limbs + iroot the kernel-trusted before-state supplies (the row's own
     // BEFORE block, with the grown-set root override already applied by the grow-gate generator).
-    let before_limbs: Vec<BabyBear> = (0..37).map(|j| trace[0][BEFORE_BASE + j]).collect();
-    let before_iroot = trace[0][BEFORE_BASE + 37];
+    let before_limbs: Vec<BabyBear> = (0..NUM_PRE_LIMBS)
+        .map(|j| trace[0][BEFORE_BASE + j])
+        .collect();
+    let before_iroot = trace[0][BEFORE_BASE + B_IROOT];
     let anchored = dregg_circuit::poseidon2::wire_commit_8_chip(&before_limbs, before_iroot);
     let circuit_carrier12 = before_commit_8(trace);
     assert_eq!(
@@ -316,8 +318,8 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
     let desc = wide_desc(name);
     assert_eq!(
         desc.trace_width,
-        SET_FIELD_DYN_HOST_WIDTH + 208,
-        "setFieldDyn wide width 789"
+        SET_FIELD_DYN_HOST_WIDTH + 480,
+        "setFieldDyn wide width 1435"
     );
     assert_eq!(
         desc.public_input_count, 63,

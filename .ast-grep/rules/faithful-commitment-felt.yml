@@ -45,3 +45,40 @@ note: |
   This is the ast-grep flavor of the never-again gate. The type-wall capstone
   (a `Faithful8` newtype the compiler enforces) comes after the
   faithful-commitment campaign lands cap/heap/fields_root at 8-felt.
+---
+# THE 2nd DEGRADED-FELT SHAPE: the [var X; 8] REPLICATE.
+#
+# A genuine 8-felt commitment digest carries EIGHT DISTINCT lanes (the node8
+# `root8` / `bytes32_to_8_limbs` image). Splatting ONE scalar across all 8 lanes
+# (`[root; 8]`) is the degenerate that is STILL 31-bit — the lane-0 projection
+# wearing an 8-wide coat. This is the shape the accumulator (nullifier@26 ·
+# commitments@27 · cells@0) campaign refuted: the producers now fill
+# `root8[lane]` lane-for-lane, never `[scalar; 8]`.
+#
+# Zero-initializers (`[ZERO; 8]`, `[0; 8]`, `[0u32; 8]`) are legitimate scratch
+# buffers, NOT commitments, and are excluded. A deliberate residual (e.g. a
+# genuinely-not-yet-welded family) is suppressed with a trailing
+#   // ast-grep-ignore: replicated-felt-commitment
+id: replicated-felt-commitment
+language: rust
+severity: error
+files:
+  - "cell/src/commitment.rs"
+  - "turn/src/rotation_witness.rs"
+  - "circuit/src/effect_vm/trace_rotated.rs"
+rule:
+  pattern: "[$X; 8]"
+  kind: array_expression
+  not:
+    any:
+      - pattern: "[0; 8]"
+      - pattern: "[0u32; 8]"
+      - pattern: "[$_::ZERO; 8]"
+      - pattern: "[$_::ONE; 8]"
+message: >-
+  Replicated felt in a state-commitment position: `[X; 8]` splats ONE scalar
+  across all 8 lanes — a degenerate 8-felt that is STILL ~31-bit (the lane-0
+  projection). A genuine 8-felt digest carries 8 DISTINCT lanes (node8 `root8`).
+  Fill `root8[lane]` lane-for-lane. If this is a deliberate, proof-backed
+  residual, document the reason on the line above and suppress with a trailing
+  `// ast-grep-ignore: replicated-felt-commitment`. See docs/FAITHFUL-COMMITMENT-LAW.md.

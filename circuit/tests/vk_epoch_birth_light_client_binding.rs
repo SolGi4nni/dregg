@@ -70,7 +70,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
 use dregg_turn::rotation_witness as rw;
 
 /// The rotated `cells_root` accounts-accumulator limb (limb 0 of every rotated block).
@@ -204,7 +204,7 @@ fn assert_birth_forced_on_wire(effect: Effect, name: &str, key_col: usize, label
 
     // ANTI-VACUITY: the grow-gate GENUINELY moved limb 0 (the AFTER accounts root differs from the
     // BEFORE root — the set actually grew; the close is not over a frozen column).
-    let before_root = CanonicalHeapTree::new(before_accounts.clone(), HEAP_TREE_DEPTH).root();
+    let before_root = CanonicalHeapTree8::new(before_accounts.clone(), HEAP_TREE_DEPTH).root8()[0];
     assert_eq!(
         trace[0][BEFORE_BASE + B_CELLS_ROOT],
         before_root,
