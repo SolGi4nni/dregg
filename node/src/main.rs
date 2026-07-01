@@ -1061,6 +1061,33 @@ async fn run_node(
         }
     }
 
+    // ── MARSHAL-ONLY STARTUP TRIPWIRE ─────────────────────────────────────────
+    // A binary linked WITHOUT the verified Lean executor archive (libdregg_lean.a)
+    // runs the UN-verified Rust executor: `dregg_lean_ffi::lean_available()` is false.
+    // Such a build must NEVER deploy silently as if it were the verified node — a
+    // stale or gitignored Lean seed degrades the whole executor to marshal-only with
+    // no other visible signal. Surface it LOUDLY here, unconditionally, before any
+    // role logic, so a marshal-only artifact cannot masquerade as verified. The
+    // verified-consensus hard-check below then decides whether a verified-role
+    // (full BFT) node may actually proceed. (See docs/BUILD-LEAN-LINKED-NODE.md.)
+    if !dregg_lean_ffi::lean_available() {
+        error!(
+            "MARSHAL-ONLY BUILD DETECTED: `dregg_lean_ffi::lean_available()` is false — this \
+             binary was linked WITHOUT the verified Lean executor archive (libdregg_lean.a) and \
+             is running the UN-VERIFIED Rust executor. This is a DEGRADED build and must not be \
+             deployed as a verified node. Rebuild against a closure-complete, HEAD-matching Lean \
+             archive: `./scripts/bootstrap.sh` (and set DREGG_REQUIRE_LEAN=1 in CI/distribution \
+             builds so a marshal-only degrade fails the build instead of shipping silently). A \
+             stale or gitignored seed silently degrades to marshal-only — see \
+             docs/BUILD-LEAN-LINKED-NODE.md."
+        );
+    } else {
+        info!(
+            "verified-executor archive linked: `dregg_lean_ffi::lean_available()` is true — this \
+             node runs the PROVED Lean executor over the C ABI"
+        );
+    }
+
     // ── VERIFIED-CONSENSUS STARTUP HARD-CHECK (red-team parity #6/#7) ──────────
     // A node in FULL (multi-party BFT) federation mode is a verified-consensus role:
     // it finalizes over `BlocklaceFinality.tauOrder`, the order the Lean-exported

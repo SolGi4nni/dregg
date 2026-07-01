@@ -1320,6 +1320,34 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_decide_refines_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_direct_present)");
 
+    // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
+    // A distribution / CI / validator build sets `DREGG_REQUIRE_LEAN=1` to REFUSE a silent
+    // degrade to the marshal-only shell (`lean_available()==false`, the UN-verified Rust
+    // executor). Historically every marshal-only degrade below emitted only a `cargo:warning=…`,
+    // which is trivially lost in a release/CI log — so a build whose Lean seed was stale or
+    // gitignored could ship as if verified. When this env var is set, each such degrade becomes a
+    // hard build FAILURE (panic) naming the exact cause. Unset (the default) preserves the
+    // historical warn-and-degrade behavior for dev boxes and wasm/zkvm/no-lean-link targets.
+    println!("cargo:rerun-if-env-changed=DREGG_REQUIRE_LEAN");
+    let require_lean = matches!(
+        std::env::var("DREGG_REQUIRE_LEAN").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("on") | Ok("ON")
+    );
+    let degrade_guard = |reason: &str| {
+        if require_lean {
+            panic!(
+                "dregg-lean-ffi: DREGG_REQUIRE_LEAN=1 but this build would degrade to \
+                 MARSHAL-ONLY (lean_available()==false): {reason}. A marshal-only binary runs the \
+                 UN-verified Rust executor and must NEVER ship as a verified node. Fix the cause \
+                 (usually: install elan+lake and the mathlib pin, and (re)seed a HEAD-matching \
+                 dregg-lean-ffi/libdregg_lean.a via ./scripts/bootstrap.sh — the seed must match \
+                 the current Lean HEAD or the closure link fails; see \
+                 docs/BUILD-LEAN-LINKED-NODE.md), or unset DREGG_REQUIRE_LEAN to allow the \
+                 (degraded) marshal-only build."
+            );
+        }
+    };
+
     // ── PLATFORM GATE (polarity inversion, docs/FEATURE-HYGIENE.md §Lean): the link is
     // UNCONDITIONAL on native; the ONE opt-out is the `no-lean-link` platform feature, set
     // only by builds whose target cannot link libdregg_lean.a (wasm32, the SP1 zkvm guest,
@@ -1354,6 +1382,11 @@ fn main() {
     let gate_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     let windows_msvc = gate_os == "windows" && gate_env != "gnu";
     if no_lean_link || gate_arch == "wasm32" || gate_os == "zkvm" || windows_msvc {
+        degrade_guard(&format!(
+            "target {gate_arch}/{gate_os} (env {gate_env}) cannot link libdregg_lean.a \
+             (no-lean-link feature / wasm32 / zkvm / windows-msvc) — a verified node must be \
+             built for a native archive-linkable target"
+        ));
         return;
     }
 
@@ -1441,6 +1474,10 @@ fn main() {
              verifies the link). Afterwards plain `cargo build` copies the seed into OUT_DIR and \
              keeps its Dregg2 slice fresh automatically."
         );
+        degrade_guard(
+            "libdregg_lean.a absent — no seed and no prior per-OUT_DIR working archive (run \
+             ./scripts/bootstrap.sh to lake-build + seed the Lean archive)",
+        );
         return;
     }
 
@@ -1454,6 +1491,10 @@ fn main() {
              sysroot (no DREGG_LEAN_SYSROOT and `lake env` failed) — building marshal-only. \
              Install elan + the project toolchain (`./scripts/bootstrap.sh` checks everything \
              and teaches the fix), or set DREGG_LEAN_SYSROOT to the toolchain root."
+        );
+        degrade_guard(
+            "the Lean sysroot could not be resolved (no DREGG_LEAN_SYSROOT and `lake env` failed) \
+             — install elan + the pinned toolchain so the archive can be linked",
         );
         return;
     };
