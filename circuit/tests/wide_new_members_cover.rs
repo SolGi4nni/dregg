@@ -72,7 +72,7 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
 fn new_wide_members_carry_16_commit_pis() {
     for (name, want_w, want_pi) in [
         ("transferCapOpenTBVmDescriptor2R24", 1528usize, 65usize),
-        ("heapWriteVmDescriptor2R24", 1183, 20),
+        ("heapWriteVmDescriptor2R24", 1655, 20),
         ("supplyMintVmDescriptor2R24", 1197, 62),
     ] {
         let d = parse_vm_descriptor2(wide_json(name)).unwrap();
@@ -241,9 +241,12 @@ fn wide_heap_write_proves_and_verifies() {
     .expect("wide heap-write generation");
 
     let desc = parse_vm_descriptor2(wide_json(name)).unwrap();
-    assert_eq!(desc.trace_width, 1183, "heapWrite wide width 1183");
+    assert_eq!(
+        desc.trace_width, 1655,
+        "heapWrite wide width 1655 (OPTION I after-spine)"
+    );
     assert_eq!(desc.public_input_count, 20, "heapWrite wide 20 PIs");
-    assert_eq!(trace[0].len(), 1183);
+    assert_eq!(trace[0].len(), 1655);
     assert_eq!(dpis.len(), 20);
 
     let mb = MemBoundaryWitness::default();

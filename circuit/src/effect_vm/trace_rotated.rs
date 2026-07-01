@@ -2462,6 +2462,103 @@ pub fn fill_cap_open(row: &mut [BabyBear], base: usize, w: &CapOpenWitness) {
     }
 }
 
+/// **`fill_heap_open_read`** — lay the heap-open READ membership appendix at `base` (the Lean
+/// `effHeapOpenV3`'s `capOpenCols base` layout, SHARED byte-for-byte with cap's [`fill_cap_open`] but
+/// with the arity-2 heap leaf `(addr, value)` + `heap_node8`/`digest8` instead of the 7-field
+/// `CapLeaf`). The 7-field leaf slot carries `(addr, value, 0, 0, 0, 0, 0)` — the heap leaf carries NO
+/// authority, so the `src`/`effBit`/mask-bit columns (`base + 295..`) are UNUSED (`heapOpenConstraints`
+/// reads only leaf/leafDigest/sib/dir/node/rootPin). The `capRoot` group (`base + 287..294`) is the
+/// committed BEFORE heap `root8` (the top `node8` fold reaches it, and the after-spine's
+/// `beforeRootWeldsH` pins it to the rotated BEFORE heap limb).
+fn fill_heap_open_read(
+    row: &mut [BabyBear],
+    base: usize,
+    leaf: crate::heap_root::HeapLeaf,
+    siblings: &[[BabyBear; crate::heap_root::HEAP_DIGEST_W]],
+    directions: &[u8],
+    heap_root8: [BabyBear; crate::heap_root::HEAP_DIGEST_W],
+) {
+    use crate::heap_root::heap_node8;
+    // arity-2 heap leaf: addr @ base+0, value @ base+1; leaf cols 2..6 unused (zero).
+    row[base] = leaf.addr;
+    row[base + 1] = leaf.value;
+    // 8-felt leaf digest at base + 7..14.
+    let leaf_digest = leaf.digest8();
+    for (j, &d) in leaf_digest.iter().enumerate() {
+        row[base + 7 + j] = d;
+    }
+    // per-level `(sib8, dir, node8)` blocks (stride 17), SHARED layout with `fill_cap_open`.
+    let mut cur = leaf_digest;
+    for lvl in 0..CAP_OPEN_DEPTH {
+        let sib = siblings[lvl];
+        let dir = directions[lvl];
+        let (l, r) = if dir == 0 { (cur, sib) } else { (sib, cur) };
+        let node = heap_node8(l, r);
+        let blk = base + 15 + 17 * lvl;
+        for (j, &s) in sib.iter().enumerate() {
+            row[blk + j] = s;
+        }
+        row[blk + 8] = BabyBear::new(dir as u32);
+        for (j, &n) in node.iter().enumerate() {
+            row[blk + 9 + j] = n;
+        }
+        cur = node;
+    }
+    debug_assert_eq!(
+        cur, heap_root8,
+        "heap-open read fill: top node8 fold must equal the BEFORE heap root8"
+    );
+    // 8-felt capRoot group at base + 287..294 (the committed BEFORE heap root8).
+    let root_base = base + 15 + 17 * CAP_OPEN_DEPTH;
+    for (j, &r) in heap_root8.iter().enumerate() {
+        row[root_base + j] = r;
+    }
+    // src/effBit/mask columns (root_base + 8..) UNUSED by the heap read appendix — left zero.
+}
+
+/// **`fill_heap_after_spine`** — lay the heap AFTER-spine appendix at `base_as`
+/// (= `AFTER_SPINE_BASE base_ro = base_ro + CAP_OPEN_SPAN`, the Lean `afterSpineColsH`): the
+/// IN-PLACE-UPDATED leaf `(addr, new_value)` folded over the SHARED sibling path (`siblings`/
+/// `directions` — the read's sib/dir columns, which `afterSpineColsH` reuses defeq) to the committed
+/// AFTER heap `root8`. The after-spine carries ONLY after-leaf(2) + after-leafDigest(8) +
+/// after-node(`DEPTH·8`) = 143 cols; its `capRoot` is the rotated AFTER heap limb (already laid on the
+/// row), NOT in the appendix. The after-node fold's top reaches `after_root8`, so the after rootPins
+/// hold against that rotated limb.
+fn fill_heap_after_spine(
+    row: &mut [BabyBear],
+    base_as: usize,
+    addr: BabyBear,
+    new_value: BabyBear,
+    siblings: &[[BabyBear; crate::heap_root::HEAP_DIGEST_W]],
+    directions: &[u8],
+) {
+    use crate::heap_root::{HEAP_DIGEST_W, HeapLeaf, heap_node8};
+    row[base_as] = addr;
+    row[base_as + 1] = new_value;
+    let leaf_digest = HeapLeaf {
+        addr,
+        value: new_value,
+    }
+    .digest8();
+    for (j, &d) in leaf_digest.iter().enumerate() {
+        row[base_as + 7 + j] = d;
+    }
+    // after-node blocks (8 felts each, NO sib/dir — those are SHARED with the read) at
+    // `base_as + 15 + 8·lvl`.
+    let mut cur = leaf_digest;
+    for lvl in 0..CAP_OPEN_DEPTH {
+        let sib = siblings[lvl];
+        let dir = directions[lvl];
+        let (l, r) = if dir == 0 { (cur, sib) } else { (sib, cur) };
+        let node = heap_node8(l, r);
+        let blk = base_as + 15 + HEAP_DIGEST_W * lvl;
+        for (j, &n) in node.iter().enumerate() {
+            row[blk + j] = n;
+        }
+        cur = node;
+    }
+}
+
 /// Recompute one rotated block's chained `wireCommitR` digests + `state_commit` from the limbs
 /// ALREADY present in the row (cols `base..base+NUM_PRE_LIMBS` + the iroot at `base+B_IROOT`).
 /// Byte-identical to [`fill_block`]'s chain, but reads the limbs in place rather than from a
@@ -3048,13 +3145,17 @@ pub fn generate_rotated_transfer_shape_with_fee_wide(
     Ok((trace, dpis))
 }
 
-/// The host (pre-wide-append) width of the `heapWriteVmDescriptor2R24` descriptor: the LIVE narrow
-/// `heapWriteV3` (`graduateV1 (rotateV3 heapWriteSpliceVmDescriptor)` ++ the 8-felt splice `MapOp`) is
-/// **815** wide under the native 8-felt heap root (the `heapRootGroupCol` completion limbs 58..64 + the
-/// 8-felt map-op group serialization added chip sites over the old 1-felt splice). The wide carriers
-/// (the wide `heapWriteVmDescriptor2R24` member, width 1183 / PI 20) land at THIS host width: `815 + 368
-/// = 1183`.
-pub const HEAP_WRITE_HOST_WIDTH: usize = 815;
+/// The host (pre-wide-append) width of the `heapWriteVmDescriptor2R24` descriptor. OPTION I: the
+/// DEPLOYED host is the after-spine membership-forcing `effHeapWriteV3 heapWriteV3` (Lean
+/// `HeapOpenEmit.effHeapWriteV3`), EXACTLY as cap deploys `effCapOpenWriteV3` — the Class-A splice base
+/// (`heapWriteV3`, **815** wide) WIDENED by the heap-open READ appendix (`CAP_OPEN_SPAN = 329`) + the
+/// AFTER-spine appendix (`AFTER_SPINE_SPAN = 143`): `815 + 329 + 143 = 1287`. A satisfying trace FORCES
+/// the faithful 8-felt heap-write over the full ~124-bit BEFORE/AFTER root blocks
+/// (`effHeapWriteV3_forces_write8`) — never the lane-0 squeeze the map_op-only host would leave. The
+/// wide carriers land at THIS host width: `1287 + 368 = 1655`.
+pub const HEAP_WRITE_HOST_WIDTH: usize = 1287;
+/// The heap-open READ appendix base column (the splice base `heapWriteV3`'s trace width).
+pub const HEAP_WRITE_READ_BASE: usize = 815;
 
 /// **THE WIDE HEAP-WRITE trace generator (`heapWriteVmDescriptor2R24` wide member, 1183-wide / 20-PI).**
 ///
@@ -3133,15 +3234,35 @@ pub fn generate_rotated_heap_write_wide(
             addr.as_u32()
         ));
     }
-    let after_root8: [BabyBear; HEAP_DIGEST_W] = before_tree
+    let update = before_tree
         .update_witness(HeapLeaf { addr, value })
         .ok_or_else(|| {
             format!(
                 "heap-write wide: 8-felt update witness for addr {} failed",
                 addr.as_u32()
             )
-        })?
-        .new_root;
+        })?;
+    let after_root8: [BabyBear; HEAP_DIGEST_W] = update.new_root;
+    // The 8-felt membership path (siblings + directions) the DEPLOYED after-spine descriptor
+    // (`effHeapWriteV3`, OPTION I) opens: `update_witness` recomposes the AFTER root over the SAME
+    // sibling path, so the before-open (OLD leaf) and after-open (UPDATED leaf) share `(siblings,
+    // directions)` — exactly the keystone `heapOpen_writesTo8`'s `hsib`/`hdir`.
+    let heap_siblings: Vec<[BabyBear; HEAP_DIGEST_W]> = update.siblings.clone();
+    let heap_directions: Vec<u8> = update.directions.clone();
+    if heap_siblings.len() != HEAP_TREE_DEPTH || heap_directions.len() != HEAP_TREE_DEPTH {
+        return Err(format!(
+            "heap-write wide: membership path length {}/{} != depth {HEAP_TREE_DEPTH}",
+            heap_siblings.len(),
+            heap_directions.len()
+        ));
+    }
+    // The OLD value at the addressed key (the read-leaf value the before-open authenticates).
+    let old_value = before_tree
+        .sorted_leaves()
+        .iter()
+        .find(|l| l.addr == addr)
+        .map(|l| l.value)
+        .ok_or_else(|| "heap-write wide: BEFORE leaf vanished".to_string())?;
 
     // Write the FAITHFUL 8-felt heap root into the HEAP GROUP of both rotated blocks — lane 0 the
     // scalar heap-root limb (`B_HEAP_ROOT = 28`), lanes 1..7 the completion limbs 58..64 (the Lean
@@ -3170,6 +3291,15 @@ pub fn generate_rotated_heap_write_wide(
     // (the addr lookup is chip-faithful over the same coll/key), so the lookup gate holds.
     let heap_addr_col = AUX_BASE + 12; // 102 (HEAP_ADDR — out0 of the addr chip lookup)
     let leaf_digest_col = AUX_BASE + 13; // 103 (out0 of the leaf-digest chip lookup)
+    // OPTION I: the deployed host is the after-spine membership descriptor — the heap-open READ appendix
+    // sits at `HEAP_WRITE_READ_BASE` (815, the splice base's width) and the AFTER-spine appendix at
+    // `815 + CAP_OPEN_SPAN(329) = 1144`. Fill both on EVERY row (the membership gates are per-row).
+    let read_base = HEAP_WRITE_READ_BASE; // 815
+    let after_spine_base = read_base + CAP_OPEN_SPAN; // 1144
+    let read_leaf = HeapLeaf {
+        addr,
+        value: old_value,
+    };
     for row in trace.iter_mut() {
         // FAITHFUL 8-felt before/after heap-root groups (never the lane-0 scalar squeeze).
         for lane in 0..HEAP_DIGEST_W {
@@ -3183,6 +3313,26 @@ pub fn generate_rotated_heap_write_wide(
         row[leaf_digest_col] = leaf_digest;
         recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
+        // Grow the row to the deployed host width and lay the membership appendix (the READ open of the
+        // OLD leaf against the BEFORE root8, and the after-spine open of the UPDATED leaf against the
+        // AFTER root8, over the SHARED sibling path).
+        row.resize(HEAP_WRITE_HOST_WIDTH, BabyBear::ZERO);
+        fill_heap_open_read(
+            row,
+            read_base,
+            read_leaf,
+            &heap_siblings,
+            &heap_directions,
+            before_root8,
+        );
+        fill_heap_after_spine(
+            row,
+            after_spine_base,
+            addr,
+            value,
+            &heap_siblings,
+            &heap_directions,
+        );
     }
 
     // The 4 heapWrite base PIs. pi 0 = the rotated OLD state-commit (UNBOUND in the wide descriptor —
@@ -3198,7 +3348,7 @@ pub fn generate_rotated_heap_write_wide(
         gen_pis[V1_PI_COUNT + 3],
     ];
     let dpis = append_wide_carriers(&mut trace, base_pis, HEAP_WRITE_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), HEAP_WRITE_HOST_WIDTH + 368); // 1183
+    debug_assert_eq!(trace[0].len(), HEAP_WRITE_HOST_WIDTH + 368); // 1655 (OPTION I after-spine host)
     debug_assert_eq!(dpis.len(), 20); // 4 base (2 retired) + 16 wide
     Ok((trace, dpis, vec![heap_leaves.to_vec()]))
 }

@@ -1197,9 +1197,10 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 /// live `V3_STAGED_REGISTRY_TSV` member). ADDITIVE: the live 1-felt `V3_STAGED_REGISTRY_TSV` / FP / VK
 /// are UNTOUCHED — this is the parallel wide path beside them. The transfer row (row 0) is
 /// byte-identical to `WIDE_TRANSFER_STAGED_TSV`. The wide carriers land PAST each member's host width
-/// (801/815/829 and the faithful 8-felt cap-open family 1158/1160/1301), re-absorbing the SAME rotated
-/// limbs the 1-felt block lays into a genuine 8-felt (~124-bit) commitment (wide widths
-/// 1169/1183/1197/1526/1528/1669, each carrying the 16 wide commit PIs = the 8-felt before/after anchors).
+/// (801/829, the heapWrite after-spine host 1287, and the faithful 8-felt cap-open family
+/// 1158/1160/1301), re-absorbing the SAME rotated limbs the 1-felt block lays into a genuine 8-felt
+/// (~124-bit) commitment (wide widths 1169/1197/1526/1528/1655/1669, each carrying the 16 wide commit
+/// PIs = the 8-felt before/after anchors).
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
@@ -2509,14 +2510,15 @@ mod tests {
             );
             let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key} wide parses: {e}"));
             // the wide member is `host + 368` (the v10 pre_limbs re-lay grew the carrier blocks) and
-            // `host.piCount + 16`. The host widths in play are 801 (custom/setFieldDyn → 1169), 815
-            // (heapWrite splice → 1183), 829 (the rotated cohort → 1197), and the faithful 8-felt
-            // cap-open family: 1158 (non-write cap-open → 1526), 1160 (the turn-identity-pinned
+            // `host.piCount + 16`. The host widths in play are 801 (custom/setFieldDyn → 1169), 829
+            // (the rotated cohort → 1197), 1287 (the heapWrite after-spine membership host, OPTION I —
+            // the splice base 815 + read appendix 329 + after-spine 143 → 1655), and the faithful
+            // 8-felt cap-open family: 1158 (non-write cap-open → 1526), 1160 (the turn-identity-pinned
             // transferCapOpenTB → 1528) and 1301 (the cap-WRITE members with the after-spine recompute,
             // attenuate + the delegation writes → 1669): every wide width is `host + 368`.
             assert!(
-                matches!(d.trace_width, 1169 | 1183 | 1197 | 1526 | 1528 | 1669),
-                "{key}: wide width {} is a known wide geometry (1169 / 1183 / 1197 / 1526 / 1528 / 1669)",
+                matches!(d.trace_width, 1169 | 1197 | 1526 | 1528 | 1655 | 1669),
+                "{key}: wide width {} is a known wide geometry (1169 / 1197 / 1526 / 1528 / 1655 / 1669)",
                 d.trace_width
             );
             // Every wide member carries the 16 wide-commit PIs (the 8-felt ~124-bit before/after
