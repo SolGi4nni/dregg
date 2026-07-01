@@ -45,7 +45,7 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 use dregg_turn::umem::{UKey, UVal, UmemKind, UmemOp, disciplined, fold, receipt_op};
 use dregg_turn::{
@@ -462,16 +462,16 @@ fn umem_real_turn_stale_prev_refuses() {
 // boundary cells with their declared values (no new bus/column/AIR).
 
 /// The deployed-shape column layout for the cross-cell read MapOp (arbitrary but stable):
-/// col 0 = the peer's published field-plane root (pinned to PI 0), col 1 = the read field
-/// address, col 2 = the read field value.
+/// cols [0..8) = the peer's published field-plane 8-felt root (each lane pinned to PI lane i),
+/// col 8 = the read field address, col 9 = the read field value.
 const XC_ROOT: usize = 0;
-const XC_ADDR: usize = 1;
-const XC_VALUE: usize = 2;
+const XC_ADDR: usize = HEAP_DIGEST_W;
+const XC_VALUE: usize = HEAP_DIGEST_W + 1;
 
 /// Build a peer cell, publish its field-plane heap (`(slot, field_value)` leaves over its
 /// non-zero fields), and return `(peer_cell, peer_field_heap, root)`. The root is the in-circuit
 /// commitment to the peer's field state the cross-cell read opens against.
-fn peer_field_heap(peer: &Cell) -> (Vec<HeapLeaf>, BabyBear) {
+fn peer_field_heap(peer: &Cell) -> (Vec<HeapLeaf>, [BabyBear; HEAP_DIGEST_W]) {
     let mut leaves: Vec<HeapLeaf> = Vec::new();
     for (slot, f) in peer.state.fields.iter().enumerate() {
         // a field cell exists in the published map iff its first felt-limb is non-zero (a
@@ -484,36 +484,43 @@ fn peer_field_heap(peer: &Cell) -> (Vec<HeapLeaf>, BabyBear) {
             });
         }
     }
-    let tree = CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH);
-    (leaves, tree.root())
+    let tree = CanonicalHeapTree8::new(leaves.clone(), HEAP_TREE_DEPTH);
+    (leaves, tree.root8())
 }
 
 /// The descriptor for the cross-cell read: one `MapOp::Read` opening the read field against the
 /// peer root, with the root column PINNED to PI 0 (the published commitment). Width 4.
 fn xcell_read_desc() -> EffectVmDescriptor2 {
-    EffectVmDescriptor2 {
-        name: "xcell-read".to_string(),
-        trace_width: 4,
-        public_input_count: 1,
-        tables: vec![],
-        constraints: vec![
-            // The peer-root column EQUALS the published commitment (the anti-forge anchor:
-            // the opened root is not prover-chosen, it is the PI-bound committed value).
+    // Each of the 8 root lanes is pinned to its published-commitment PI lane (the anti-forge
+    // anchor: the opened 8-felt root is not prover-chosen, it is the PI-bound committed value).
+    let mut constraints: Vec<VmConstraint2> = (0..HEAP_DIGEST_W)
+        .map(|lane| {
             VmConstraint2::Base(VmConstraint::PiBinding {
                 row: VmRow::First,
-                col: XC_ROOT,
-                pi_index: 0,
-            }),
-            // The read: open `(addr, value)` against the committed peer root (root unchanged).
-            VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Const(1),
-                root: LeanExpr::Var(XC_ROOT),
-                key: LeanExpr::Var(XC_ADDR),
-                value: LeanExpr::Var(XC_VALUE),
-                new_root: LeanExpr::Var(XC_ROOT),
-                op: MapKind::Read,
-            }),
-        ],
+                col: XC_ROOT + lane,
+                pi_index: lane,
+            })
+        })
+        .collect();
+    // The read: open `(addr, value)` against the committed peer root (root unchanged).
+    constraints.push(VmConstraint2::MapOp(MapOpSpec {
+        guard: LeanExpr::Const(1),
+        root: (XC_ROOT..XC_ROOT + HEAP_DIGEST_W)
+            .map(LeanExpr::Var)
+            .collect(),
+        key: LeanExpr::Var(XC_ADDR),
+        value: LeanExpr::Var(XC_VALUE),
+        new_root: (XC_ROOT..XC_ROOT + HEAP_DIGEST_W)
+            .map(LeanExpr::Var)
+            .collect(),
+        op: MapKind::Read,
+    }));
+    EffectVmDescriptor2 {
+        name: "xcell-read".to_string(),
+        trace_width: HEAP_DIGEST_W + 2,
+        public_input_count: HEAP_DIGEST_W,
+        tables: vec![],
+        constraints,
         hash_sites: vec![],
         ranges: vec![],
     }
@@ -521,7 +528,7 @@ fn xcell_read_desc() -> EffectVmDescriptor2 {
 
 /// Execute a turn that mutates cell A but only READS cell B, and return cell B's published
 /// field heap + root + a chosen (read-addr, read-value) the turn observed.
-fn cross_cell_read_setup() -> (Vec<HeapLeaf>, BabyBear, BabyBear, BabyBear) {
+fn cross_cell_read_setup() -> (Vec<HeapLeaf>, [BabyBear; HEAP_DIGEST_W], BabyBear, BabyBear) {
     // cell A: the actor the turn mutates. cell B: the peer the turn READS, never mutates.
     let mut agent = make_open_cell(21, 1000);
     agent.state.fields[0] = [9u8; 32];
@@ -590,22 +597,22 @@ fn cross_cell_read_setup() -> (Vec<HeapLeaf>, BabyBear, BabyBear, BabyBear) {
 fn cross_cell_read_proves_committed_peer_state() {
     let (heap, root, read_addr, read_value) = cross_cell_read_setup();
     let desc = xcell_read_desc();
-    let mut row = vec![BabyBear::ZERO; 4];
-    row[XC_ROOT] = root;
+    let mut row = vec![BabyBear::ZERO; HEAP_DIGEST_W + 2];
+    row[XC_ROOT..XC_ROOT + HEAP_DIGEST_W].copy_from_slice(&root);
     row[XC_ADDR] = read_addr;
     row[XC_VALUE] = read_value;
     let trace = vec![row; 4];
 
-    // the published commitment is the public input; the root column is PI-bound to it.
+    // the published commitment is the public input; each root lane is PI-bound to it.
     let proof = prove_vm_descriptor2(
         &desc,
         &trace,
-        &[root],
+        &root,
         &MemBoundaryWitness::default(),
         std::slice::from_ref(&heap),
     )
     .expect("an honest cross-cell read of committed peer state must prove");
-    verify_vm_descriptor2(&desc, &proof, &[root])
+    verify_vm_descriptor2(&desc, &proof, &root)
         .expect("the cross-cell read verifies against the published commitment");
 }
 
@@ -613,10 +620,11 @@ fn cross_cell_read_proves_committed_peer_state() {
 fn cross_cell_read_forged_peer_root_refuses() {
     let (heap, root, read_addr, read_value) = cross_cell_read_setup();
     let desc = xcell_read_desc();
-    let forged_root = root + BabyBear::ONE;
+    let mut forged_root = root;
+    forged_root[0] += BabyBear::ONE; // a root not matching any published peer heap
     assert_ne!(forged_root, root);
-    let mut row = vec![BabyBear::ZERO; 4];
-    row[XC_ROOT] = forged_root; // a root not matching any published peer heap
+    let mut row = vec![BabyBear::ZERO; HEAP_DIGEST_W + 2];
+    row[XC_ROOT..XC_ROOT + HEAP_DIGEST_W].copy_from_slice(&forged_root);
     row[XC_ADDR] = read_addr;
     row[XC_VALUE] = read_value;
     let trace = vec![row; 4];
@@ -626,7 +634,7 @@ fn cross_cell_read_forged_peer_root_refuses() {
     let r = prove_vm_descriptor2(
         &desc,
         &trace,
-        &[forged_root],
+        &forged_root,
         &MemBoundaryWitness::default(),
         &[heap],
     );
@@ -640,8 +648,8 @@ fn cross_cell_read_forged_peer_root_refuses() {
 fn cross_cell_read_forged_field_value_refuses() {
     let (heap, root, read_addr, _read_value) = cross_cell_read_setup();
     let desc = xcell_read_desc();
-    let mut row = vec![BabyBear::ZERO; 4];
-    row[XC_ROOT] = root;
+    let mut row = vec![BabyBear::ZERO; HEAP_DIGEST_W + 2];
+    row[XC_ROOT..XC_ROOT + HEAP_DIGEST_W].copy_from_slice(&root);
     row[XC_ADDR] = read_addr;
     row[XC_VALUE] = BabyBear::new(778); // NOT the committed 777
     let trace = vec![row; 4];
@@ -649,7 +657,7 @@ fn cross_cell_read_forged_field_value_refuses() {
     let r = prove_vm_descriptor2(
         &desc,
         &trace,
-        &[root],
+        &root,
         &MemBoundaryWitness::default(),
         &[heap],
     );
@@ -665,8 +673,8 @@ fn cross_cell_read_pi_mismatch_refuses() {
     // commitment C while opening against a different root C' is refused by the PiBinding leg.
     let (heap, root, read_addr, read_value) = cross_cell_read_setup();
     let desc = xcell_read_desc();
-    let mut row = vec![BabyBear::ZERO; 4];
-    row[XC_ROOT] = root;
+    let mut row = vec![BabyBear::ZERO; HEAP_DIGEST_W + 2];
+    row[XC_ROOT..XC_ROOT + HEAP_DIGEST_W].copy_from_slice(&root);
     row[XC_ADDR] = read_addr;
     row[XC_VALUE] = read_value;
     let trace = vec![row; 4];
@@ -675,12 +683,13 @@ fn cross_cell_read_pi_mismatch_refuses() {
     // unsatisfiable, so NO proof exists. (The PI is not part of the pre-flight trace replay, so
     // the refusal surfaces as the in-circuit constraint failing rather than an Err — caught
     // here: either way, a satisfying proof is impossible.)
-    let wrong_pi = root + BabyBear::ONE;
+    let mut wrong_pi = root;
+    wrong_pi[0] += BabyBear::ONE;
     let outcome = std::panic::catch_unwind(|| {
         prove_vm_descriptor2(
             &desc,
             &trace,
-            &[wrong_pi],
+            &wrong_pi,
             &MemBoundaryWitness::default(),
             std::slice::from_ref(&heap),
         )

@@ -162,7 +162,7 @@ fn ir2_umem_vs_map_size_probe() {
         EffectVmDescriptor2, MapKind, MapOpSpec, MemKind, NULLIFIER_DOMAIN, UMemBoundaryWitness,
         UMemOpSpec, VmConstraint2, prove_vm_descriptor2_umem,
     };
-    use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+    use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
     use dregg_circuit::lean_descriptor_air::LeanExpr;
 
     let heap = vec![
@@ -175,10 +175,11 @@ fn ir2_umem_vs_map_size_probe() {
             value: BabyBear::new(88),
         },
     ];
-    let tree = CanonicalHeapTree::new(heap.clone(), HEAP_TREE_DEPTH);
-    let root = tree.root();
+    let tree = CanonicalHeapTree8::new(heap.clone(), HEAP_TREE_DEPTH);
+    let root = tree.root8();
 
     // ---- (a) the map-write shape: one in-place sorted write. ----
+    // Column layout (width 19): root8 [0..8), key 8, value 9, new_root8 [10..18), guard 18.
     let w = tree
         .update_witness(HeapLeaf {
             addr: BabyBear::new(100),
@@ -187,32 +188,35 @@ fn ir2_umem_vs_map_size_probe() {
         .expect("key present");
     let map_desc = EffectVmDescriptor2 {
         name: "probe-map-write".to_string(),
-        trace_width: 6,
+        trace_width: 19,
         public_input_count: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-            guard: LeanExpr::Var(5),
-            root: LeanExpr::Var(0),
-            key: LeanExpr::Var(1),
-            value: LeanExpr::Var(2),
-            new_root: LeanExpr::Var(3),
+            guard: LeanExpr::Var(18),
+            root: (0..HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
+            key: LeanExpr::Var(8),
+            value: LeanExpr::Var(9),
+            new_root: (10..10 + HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
             op: MapKind::Write,
         })],
         hash_sites: vec![],
         ranges: vec![],
     };
-    let mut map_rows = vec![
-        vec![
-            root,
-            BabyBear::new(100),
-            BabyBear::new(99),
-            w.new_root,
-            BabyBear::ZERO,
-            BabyBear::ZERO,
-        ];
-        4
+    let map_row = |guard: BabyBear| {
+        let mut r = vec![BabyBear::ZERO; 19];
+        r[0..HEAP_DIGEST_W].copy_from_slice(&root);
+        r[8] = BabyBear::new(100);
+        r[9] = BabyBear::new(99);
+        r[10..10 + HEAP_DIGEST_W].copy_from_slice(&w.new_root);
+        r[18] = guard;
+        r
+    };
+    let map_rows = vec![
+        map_row(BabyBear::ONE),
+        map_row(BabyBear::ZERO),
+        map_row(BabyBear::ZERO),
+        map_row(BabyBear::ZERO),
     ];
-    map_rows[0][5] = BabyBear::ONE;
     let t0 = Instant::now();
     let map_proof = prove_vm_descriptor2(
         &map_desc,
@@ -288,24 +292,37 @@ fn ir2_umem_vs_map_size_probe() {
     let um_bytes = breakdown("umem-write+read", &um_proof);
 
     // ---- (c) the `absent` non-membership shape (the boundary gap leg). ----
+    // Column layout (width 18): root8 [0..8), key 8, new_root8 [9..17) (== root8), guard 17.
     let absent_desc = EffectVmDescriptor2 {
         name: "probe-absent".to_string(),
-        trace_width: 4,
+        trace_width: 18,
         public_input_count: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-            guard: LeanExpr::Var(3),
-            root: LeanExpr::Var(0),
-            key: LeanExpr::Var(1),
+            guard: LeanExpr::Var(17),
+            root: (0..HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
+            key: LeanExpr::Var(8),
             value: LeanExpr::Const(0),
-            new_root: LeanExpr::Var(2),
+            new_root: (9..9 + HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
             op: MapKind::Absent,
         })],
         hash_sites: vec![],
         ranges: vec![],
     };
-    let mut ab_rows = vec![vec![root, BabyBear::new(150), root, BabyBear::ZERO]; 4];
-    ab_rows[0][3] = BabyBear::ONE;
+    let ab_row = |guard: BabyBear| {
+        let mut r = vec![BabyBear::ZERO; 18];
+        r[0..HEAP_DIGEST_W].copy_from_slice(&root);
+        r[8] = BabyBear::new(150);
+        r[9..9 + HEAP_DIGEST_W].copy_from_slice(&root);
+        r[17] = guard;
+        r
+    };
+    let ab_rows = vec![
+        ab_row(BabyBear::ONE),
+        ab_row(BabyBear::ZERO),
+        ab_row(BabyBear::ZERO),
+        ab_row(BabyBear::ZERO),
+    ];
     let t2 = Instant::now();
     let ab_proof = prove_vm_descriptor2(
         &absent_desc,
@@ -577,7 +594,7 @@ fn ir2_mapop_interior_to_umem_chip_drop() {
         EffectVmDescriptor2, MapKind, MapOpSpec, MemBoundaryWitness as MBW, MemKind,
         UMemBoundaryWitness, UMemOpSpec, VmConstraint2, prove_vm_descriptor2_umem,
     };
-    use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+    use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
     use dregg_circuit::lean_descriptor_air::LeanExpr;
 
     // A 2-entry sorted c-list (the deployed bookkeeping shape: read membership, write update).
@@ -591,8 +608,8 @@ fn ir2_mapop_interior_to_umem_chip_drop() {
             value: BabyBear::new(88),
         },
     ];
-    let tree = CanonicalHeapTree::new(heap.clone(), HEAP_TREE_DEPTH);
-    let root = tree.root();
+    let tree = CanonicalHeapTree8::new(heap.clone(), HEAP_TREE_DEPTH);
+    let root = tree.root8();
     let upd = tree
         .update_witness(HeapLeaf {
             addr: BabyBear::new(100),
@@ -601,45 +618,49 @@ fn ir2_mapop_interior_to_umem_chip_drop() {
         .expect("key present");
 
     // ==== (a) map_op interior: a READ (membership) + WRITE (update) — chip-bearing ====
-    // cols: [root, key, value_read, new_root, value_write, guard]
+    // cols (width 20): root8 [0..8), key 8, value_read 9, new_root8 [10..18), value_write 18, guard 19.
     let map_desc = EffectVmDescriptor2 {
         name: "clist-mapop-interior".to_string(),
-        trace_width: 6,
+        trace_width: 20,
         public_input_count: 0,
         tables: vec![],
         constraints: vec![
             VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(2),
-                new_root: LeanExpr::Var(0), // read: root unchanged
+                guard: LeanExpr::Var(19),
+                root: (0..HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (0..HEAP_DIGEST_W).map(LeanExpr::Var).collect(), // read: root unchanged
                 op: MapKind::Read,
             }),
             VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(4),
-                new_root: LeanExpr::Var(3),
+                guard: LeanExpr::Var(19),
+                root: (0..HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(18),
+                new_root: (10..10 + HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
                 op: MapKind::Write,
             }),
         ],
         hash_sites: vec![],
         ranges: vec![],
     };
-    let mut map_rows = vec![
-        vec![
-            root,
-            BabyBear::new(100),
-            BabyBear::new(77), // read returns current value
-            upd.new_root,
-            BabyBear::new(99), // write installs new value
-            BabyBear::ZERO,
-        ];
-        4
+    let map_row = |guard: BabyBear| {
+        let mut r = vec![BabyBear::ZERO; 20];
+        r[0..HEAP_DIGEST_W].copy_from_slice(&root);
+        r[8] = BabyBear::new(100);
+        r[9] = BabyBear::new(77); // read returns current value
+        r[10..10 + HEAP_DIGEST_W].copy_from_slice(&upd.new_root);
+        r[18] = BabyBear::new(99); // write installs new value
+        r[19] = guard;
+        r
+    };
+    let map_rows = vec![
+        map_row(BabyBear::ONE),
+        map_row(BabyBear::ZERO),
+        map_row(BabyBear::ZERO),
+        map_row(BabyBear::ZERO),
     ];
-    map_rows[0][5] = BabyBear::ONE;
     let t0 = Instant::now();
     let map_proof = prove_vm_descriptor2(
         &map_desc,
@@ -686,12 +707,13 @@ fn ir2_mapop_interior_to_umem_chip_drop() {
         hash_sites: vec![],
         ranges: vec![],
     };
+    // The umem descriptor references only cols 1,2,4,5; cols 0/3 are unconstrained carry data.
     let mut um_rows = vec![
         vec![
-            root,
+            root[0],
             BabyBear::new(100),
             BabyBear::new(77),
-            upd.new_root,
+            upd.new_root[0],
             BabyBear::new(99),
             BabyBear::ZERO,
         ];

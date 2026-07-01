@@ -805,7 +805,22 @@ use dregg_circuit::descriptor_ir2::{
     MemOpSpec, TID_P2, TID_RANGE as REAL_TID_RANGE, TableDef2, TableSem,
 };
 use dregg_circuit::field::BabyBear as Bb;
-use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
+
+/// Build a width-18 map-op base row: root8 [0..8), key 8, value 9, new_root8 [10..18).
+fn map_bus_row(
+    root: &[Bb; HEAP_DIGEST_W],
+    key: Bb,
+    value: Bb,
+    new_root: &[Bb; HEAP_DIGEST_W],
+) -> Vec<Bb> {
+    let mut r = vec![Bb::new(0); 18];
+    r[0..HEAP_DIGEST_W].copy_from_slice(root);
+    r[8] = key;
+    r[9] = value;
+    r[10..10 + HEAP_DIGEST_W].copy_from_slice(new_root);
+    r
+}
 
 fn bb(v: i128) -> Bb {
     Bb::new(v as u32)
@@ -951,15 +966,15 @@ fn real_map_desc(op: RealMapKind) -> EffectVmDescriptor2 {
     };
     EffectVmDescriptor2 {
         name: "ir2-bus-map".to_string(),
-        trace_width: 4,
+        trace_width: 18,
         public_input_count: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
             guard: LeanExpr::Const(1),
-            root: LeanExpr::Var(0),
-            key: LeanExpr::Var(1),
+            root: (0..HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
+            key: LeanExpr::Var(8),
             value,
-            new_root: LeanExpr::Var(3),
+            new_root: (10..10 + HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
             op,
         })],
         hash_sites: vec![],
@@ -2844,13 +2859,13 @@ fn bus_corpus() -> Vec<BusCase> {
                 value: bb(88),
             },
         ];
-        let tree = CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH);
-        let root = tree.root();
-        // accept: [root, key, genuine value, root].
+        let tree = CanonicalHeapTree8::new(leaves.clone(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
+        // accept: [root8, key, genuine value, root8].
         cases.push(BusCase {
             label: "map-read:genuine",
             desc: d.clone(),
-            base: vec![vec![root, key, val, root]],
+            base: vec![map_bus_row(&root, key, val, &root)],
             mem_boundary: MemBoundaryWitness::default(),
             heaps: vec![leaves.clone()],
             lean_verdict: true,
@@ -2859,7 +2874,7 @@ fn bus_corpus() -> Vec<BusCase> {
         cases.push(BusCase {
             label: "map-read:forged-value",
             desc: d,
-            base: vec![vec![root, key, val + bb(1), root]],
+            base: vec![map_bus_row(&root, key, val + bb(1), &root)],
             mem_boundary: MemBoundaryWitness::default(),
             heaps: vec![leaves],
             lean_verdict: false,
@@ -2882,8 +2897,8 @@ fn bus_corpus() -> Vec<BusCase> {
                 value: bb(88),
             },
         ];
-        let tree = CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH);
-        let root = tree.root();
+        let tree = CanonicalHeapTree8::new(leaves.clone(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
         let w = tree
             .update_witness(HeapLeaf {
                 addr: key,
@@ -2891,11 +2906,13 @@ fn bus_corpus() -> Vec<BusCase> {
             })
             .expect("present key has an update witness");
         let new_root = w.new_root;
-        // accept: [root, key, new_val, genuine new_root].
+        let mut forged_new_root = new_root;
+        forged_new_root[0] += bb(1);
+        // accept: [root8, key, new_val, genuine new_root8].
         cases.push(BusCase {
             label: "map-write:genuine",
             desc: d.clone(),
-            base: vec![vec![root, key, new_val, new_root]],
+            base: vec![map_bus_row(&root, key, new_val, &new_root)],
             mem_boundary: MemBoundaryWitness::default(),
             heaps: vec![leaves.clone()],
             lean_verdict: true,
@@ -2904,7 +2921,7 @@ fn bus_corpus() -> Vec<BusCase> {
         cases.push(BusCase {
             label: "map-write:forged-new-root",
             desc: d,
-            base: vec![vec![root, key, new_val, new_root + bb(1)]],
+            base: vec![map_bus_row(&root, key, new_val, &forged_new_root)],
             mem_boundary: MemBoundaryWitness::default(),
             heaps: vec![leaves],
             lean_verdict: false,
@@ -2926,13 +2943,13 @@ fn bus_corpus() -> Vec<BusCase> {
                 value: bb(88),
             },
         ];
-        let tree = CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH);
-        let root = tree.root();
-        // accept: [root, absent_key, 0, root].
+        let tree = CanonicalHeapTree8::new(leaves.clone(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
+        // accept: [root8, absent_key, 0, root8].
         cases.push(BusCase {
             label: "map-absent:genuine-gap",
             desc: d.clone(),
-            base: vec![vec![root, absent_key, bb(0), root]],
+            base: vec![map_bus_row(&root, absent_key, bb(0), &root)],
             mem_boundary: MemBoundaryWitness::default(),
             heaps: vec![leaves.clone()],
             lean_verdict: true,
@@ -2941,7 +2958,7 @@ fn bus_corpus() -> Vec<BusCase> {
         cases.push(BusCase {
             label: "map-absent:present-key",
             desc: d,
-            base: vec![vec![root, present_key, bb(0), root]],
+            base: vec![map_bus_row(&root, present_key, bb(0), &root)],
             mem_boundary: MemBoundaryWitness::default(),
             heaps: vec![leaves],
             lean_verdict: false,

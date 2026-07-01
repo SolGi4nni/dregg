@@ -5319,7 +5319,7 @@ mod tests {
         };
         EffectVmDescriptor2 {
             name: "ir2-test".to_string(),
-            trace_width: 23,
+            trace_width: 31,
             public_input_count: 0,
             tables: vec![TableDef2 {
                 id: TID_RANGE,
@@ -5346,10 +5346,12 @@ mod tests {
                 }),
                 VmConstraint2::MapOp(MapOpSpec {
                     guard: LeanExpr::Var(13),
-                    root: LeanExpr::Var(9),
+                    // Phase H-HEAP-8: the 8-felt heap-root group rides cols 23..31 (read preserves it,
+                    // so new_root references the SAME lanes). Cols 9/12 are inert carry columns.
+                    root: (23..23 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                     key: LeanExpr::Var(10),
                     value: LeanExpr::Var(11),
-                    new_root: LeanExpr::Var(12),
+                    new_root: (23..23 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                     op: MapKind::Read,
                 }),
                 VmConstraint2::Lookup(LookupSpec {
