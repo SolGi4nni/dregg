@@ -508,14 +508,16 @@ impl MapKind {
 pub struct MapOpSpec {
     /// Selector guard (active iff it evaluates to 1).
     pub guard: LeanExpr,
-    /// The pre-root expression.
-    pub root: LeanExpr,
+    /// The pre-root expression, as an 8-felt digest group (Phase H-HEAP-8): lane 0 ‖ lanes 1..7
+    /// of the native 8-felt heap root (`heapRootGroupCol`). Exactly `CHIP_OUT_LANES` entries.
+    pub root: Vec<LeanExpr>,
     /// The map key expression.
     pub key: LeanExpr,
     /// The read/written value expression.
     pub value: LeanExpr,
-    /// The post-root expression.
-    pub new_root: LeanExpr,
+    /// The post-root expression, as an 8-felt digest group (Phase H-HEAP-8). Exactly
+    /// `CHIP_OUT_LANES` entries.
+    pub new_root: Vec<LeanExpr>,
     /// Reconciliation kind.
     pub op: MapKind,
 }
@@ -968,7 +970,16 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
             let guard = parse_expr(c)?;
             c.expect(b',')?;
             c.expect_key("root")?;
-            let root = parse_expr(c)?;
+            // Phase H-HEAP-8: the pre-/post-root are 8-felt digest groups, emitted as a JSON array
+            // of `CHIP_OUT_LANES` lane expressions (the `heapRootGroupCol` lanes), parsed like the
+            // `LookupSpec.tuple`.
+            let root = parse_array(c, parse_expr)?;
+            if root.len() != CHIP_OUT_LANES {
+                return Err(format!(
+                    "map_op root group has {} lanes, expected {CHIP_OUT_LANES}",
+                    root.len()
+                ));
+            }
             c.expect(b',')?;
             c.expect_key("key")?;
             let key = parse_expr(c)?;
@@ -977,7 +988,13 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
             let value = parse_expr(c)?;
             c.expect(b',')?;
             c.expect_key("new_root")?;
-            let new_root = parse_expr(c)?;
+            let new_root = parse_array(c, parse_expr)?;
+            if new_root.len() != CHIP_OUT_LANES {
+                return Err(format!(
+                    "map_op new_root group has {} lanes, expected {CHIP_OUT_LANES}",
+                    new_root.len()
+                ));
+            }
             VmConstraint2::MapOp(MapOpSpec {
                 guard,
                 root,
@@ -1317,8 +1334,11 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
                          (the non-membership read has no value; the wire pins the canonical 0)"
                     ));
                 }
-                for e in [&m.guard, &m.root, &m.key, &m.value, &m.new_root] {
+                for e in [&m.guard, &m.key, &m.value] {
                     chk(e, "map_op field", ci)?;
+                }
+                for e in m.root.iter().chain(m.new_root.iter()) {
+                    chk(e, "map_op root group", ci)?;
                 }
             }
             VmConstraint2::UMemOp(m) => {
@@ -1749,24 +1769,74 @@ const MA_WIDTH: usize = MA_HI_LEAF1 + (CHIP_OUT_LANES - 1); // 183
 //    sibling-sharing chains' intermediate digests (the final links ARE root / new_root),
 //    NEVER an in-row aux block (the EPOCH's row-width cure, applied to its own boundary
 //    table — previously 39 + 34·352 = 12,007 cols, the measured §2b disease). --
-const MAP_ROOT: usize = 0;
-const MAP_KEY: usize = 1;
-const MAP_VALUE: usize = 2;
-const MAP_OP: usize = 3;
-const MAP_NEW_ROOT: usize = 4;
-const MAP_IS_REAL: usize = 5;
-const MAP_OLD_VALUE: usize = 6;
-const MAP_SIB0: usize = 7;
-const MAP_DIR0: usize = MAP_SIB0 + HEAP_TREE_DEPTH; // 23
-const MAP_OLD_LEAF: usize = MAP_DIR0 + HEAP_TREE_DEPTH; // 39
-const MAP_NEW_LEAF: usize = MAP_OLD_LEAF + 1; // 40
-const MAP_OLD_CHAIN0: usize = MAP_NEW_LEAF + 1; // 41 (levels 0..14; level 15 = MAP_ROOT)
-const MAP_NEW_CHAIN0: usize = MAP_OLD_CHAIN0 + (HEAP_TREE_DEPTH - 1); // 56
-// Phase B-GATE: the old/new leaf absorbs ride the 17-wide chip bus. Lane0 stays at
-// MAP_OLD_LEAF/MAP_NEW_LEAF (the chained digest); lanes 1..7 are appended at the tail.
-const MAP_OLD_LEAF1: usize = MAP_NEW_CHAIN0 + (HEAP_TREE_DEPTH - 1); // 71 (lanes 1..7 old leaf)
-const MAP_NEW_LEAF1: usize = MAP_OLD_LEAF1 + (CHIP_OUT_LANES - 1); // 78 (lanes 1..7 new leaf)
-const MAP_WIDTH: usize = MAP_NEW_LEAF1 + (CHIP_OUT_LANES - 1); // 85
+// Phase H-HEAP-8 (native 8-felt Merkle weld): every digest lane — root, new_root, each
+// sibling, each leaf, and each intermediate chain node — is an 8-felt GROUP (`CHIP_OUT_LANES`
+// contiguous columns), never a lossy 1-felt fold. The internal-node compression is the
+// arity-16 `node8` chip absorb `perm(L8 ‖ R8)[0..8]` (`heap_node8`), so the per-node collision
+// floor is the full ~124-bit FRI/STARK width the deployed commitment already targets. Layout:
+// [root8][key][value][op][new_root8][is_real][old_value][sib8 × DEPTH][dir × DEPTH]
+// [old_leaf8][new_leaf8][old_chain8 × (DEPTH-1)][new_chain8 × (DEPTH-1)]. The final chain link
+// IS root8 / new_root8 (level DEPTH-1's output), so only DEPTH-1 intermediate groups are stored.
+const MAP_ROOT: usize = 0; // 8-felt group [0..8)
+const MAP_KEY: usize = MAP_ROOT + CHIP_OUT_LANES; // 8
+const MAP_VALUE: usize = MAP_KEY + 1; // 9
+const MAP_OP: usize = MAP_VALUE + 1; // 10
+const MAP_NEW_ROOT: usize = MAP_OP + 1; // 11 (8-felt group [11..19))
+const MAP_IS_REAL: usize = MAP_NEW_ROOT + CHIP_OUT_LANES; // 19
+const MAP_OLD_VALUE: usize = MAP_IS_REAL + 1; // 20
+const MAP_SIB0: usize = MAP_OLD_VALUE + 1; // 21 (DEPTH groups of 8: sib g at MAP_SIB0 + 8·g)
+const MAP_DIR0: usize = MAP_SIB0 + CHIP_OUT_LANES * HEAP_TREE_DEPTH; // 149 (DEPTH single dir bits)
+const MAP_OLD_LEAF: usize = MAP_DIR0 + HEAP_TREE_DEPTH; // 165 (8-felt group [165..173))
+const MAP_NEW_LEAF: usize = MAP_OLD_LEAF + CHIP_OUT_LANES; // 173 (8-felt group [173..181))
+const MAP_OLD_CHAIN0: usize = MAP_NEW_LEAF + CHIP_OUT_LANES; // 181 (levels 0..14; level 15 = MAP_ROOT)
+const MAP_NEW_CHAIN0: usize = MAP_OLD_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 301
+const MAP_WIDTH: usize = MAP_NEW_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 421
+
+/// The 8-felt column group starting at `base` (a digest lane group: root, leaf, sibling, or
+/// chain node). Returns the `CHIP_OUT_LANES` contiguous column indices.
+#[inline]
+fn map_group8(base: usize) -> [usize; CHIP_OUT_LANES] {
+    core::array::from_fn(|i| base + i)
+}
+
+/// The width of the map-log permutation-check tuple: the 8-felt pre-root and 8-felt post-root
+/// groups bracketing `[key, value, op]` — Phase H-HEAP-8 widened it `5 → 19`.
+const MAP_LOG_WIDTH: usize = 2 * CHIP_OUT_LANES + 3;
+
+/// One gathered map-op log entry with native 8-felt pre-/post-root groups (Phase H-HEAP-8).
+struct MapLogEntry {
+    /// The 8-felt pre-root group.
+    root: [BabyBear; CHIP_OUT_LANES],
+    /// The map key.
+    key: BabyBear,
+    /// The read/written value (canonical `0` for `absent`).
+    value: BabyBear,
+    /// The 8-felt post-root group.
+    new_root: [BabyBear; CHIP_OUT_LANES],
+    /// Reconciliation kind.
+    op: MapKind,
+}
+
+/// The 19-felt map-log RECEIVE tuple read off the `MapOps` table columns:
+/// `[root8 (8), key, value, op, new_root8 (8)]`. The main effect AIR SENDs the byte-identical
+/// tuple built from the descriptor's `MapOpSpec` root/new_root 8-felt groups (see the send site).
+fn map_log_tuple<AB>(local: &[AB::Var]) -> Vec<AB::Expr>
+where
+    AB: AirBuilder,
+    AB::F: PrimeField32,
+{
+    let mut t: Vec<AB::Expr> = Vec::with_capacity(MAP_LOG_WIDTH);
+    for c in map_group8(MAP_ROOT) {
+        t.push(local[c].into());
+    }
+    t.push(local[MAP_KEY].into());
+    t.push(local[MAP_VALUE].into());
+    t.push(local[MAP_OP].into());
+    for c in map_group8(MAP_NEW_ROOT) {
+        t.push(local[c].into());
+    }
+    t
+}
 
 /// The DECLARED leaf-input column list for a `MapOp` absorb, parametric in the value
 /// column (`MAP_VALUE` for the new leaf, `MAP_OLD_VALUE` for the committed old leaf).
@@ -2192,13 +2262,18 @@ where
                 let map_log = PermutationCheckBus::new(BUS_MAP_LOG);
                 for k in &desc.constraints {
                     if let VmConstraint2::MapOp(m) = k {
-                        let fields = [
-                            m.root.eval_expr::<AB>(&local),
-                            m.key.eval_expr::<AB>(&local),
-                            m.value.eval_expr::<AB>(&local),
-                            AB::Expr::from_u64(m.op.code() as u64),
-                            m.new_root.eval_expr::<AB>(&local),
-                        ];
+                        // The 19-felt log tuple: `[root8 (8), key, value, op, new_root8 (8)]`,
+                        // byte-identical to the `MapOps`/`MapAbsent` table RECEIVE (`map_log_tuple`).
+                        let mut fields: Vec<AB::Expr> = Vec::with_capacity(MAP_LOG_WIDTH);
+                        for r in &m.root {
+                            fields.push(r.eval_expr::<AB>(&local));
+                        }
+                        fields.push(m.key.eval_expr::<AB>(&local));
+                        fields.push(m.value.eval_expr::<AB>(&local));
+                        fields.push(AB::Expr::from_u64(m.op.code() as u64));
+                        for r in &m.new_root {
+                            fields.push(r.eval_expr::<AB>(&local));
+                        }
                         map_log.send(builder, fields, m.guard.eval_expr::<AB>(&local));
                     }
                 }
@@ -2667,67 +2742,79 @@ where
                 let new_leaf_cols = map_leaf_input_cols(MAP_VALUE);
                 p2.lookup_key(
                     builder,
-                    chip_absorb_tuple(&old_leaf_cols, MAP_OLD_LEAF, MAP_OLD_LEAF1),
+                    chip_absorb_tuple(&old_leaf_cols, MAP_OLD_LEAF, MAP_OLD_LEAF + 1),
                     is_real.clone() * not_insert.clone(),
                 );
                 p2.lookup_key(
                     builder,
-                    chip_absorb_tuple(&new_leaf_cols, MAP_NEW_LEAF, MAP_NEW_LEAF1),
+                    chip_absorb_tuple(&new_leaf_cols, MAP_NEW_LEAF, MAP_NEW_LEAF + 1),
                     is_real.clone(),
                 );
 
-                // The sibling-sharing chains ride the fact bus. Write/read share one path;
-                // insert uses the SAME columns for a membership opening of the NEW leaf
-                // against the NEW root (no old leaf exists at a fresh key). The old-path
-                // lookups are gated by `not_insert`; the new-path lookup is always active.
-                let fact_bus = LookupBus::new(BUS_FACT);
-                let mut cur_old: AB::Expr = local[MAP_OLD_LEAF].into();
-                let mut cur_new: AB::Expr = local[MAP_NEW_LEAF].into();
+                // The sibling-sharing chains ride the 8-felt `node8` compression on BUS_P2 (Phase
+                // H-HEAP-8): each level absorbs `perm(L8 ‖ R8)[0..8]` at arity 16, `(cur8, sib8)`
+                // ordered by the direction bit (dir = 0 ⇒ cur LEFT: node8(cur, sib); dir = 1 ⇒ cur
+                // RIGHT: node8(sib, cur)) — the in-circuit twin of `heap_node8` / `recompose_up8`.
+                // Write/read share one path; insert opens the NEW leaf against the NEW root (no old
+                // leaf at a fresh key). The old-path absorbs are gated by `not_insert`; the new path
+                // is always active. The final link IS root8 / new_root8 (level DEPTH-1's output).
+                let node8_tuple = |cur8: &[usize; CHIP_OUT_LANES],
+                                   sib8: &[usize; CHIP_OUT_LANES],
+                                   dir: &AB::Expr,
+                                   out8: &[usize; CHIP_OUT_LANES]|
+                 -> Vec<AB::Expr> {
+                    let mut t: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
+                    t.push(AB::Expr::from_u64(CHIP_NODE8_ARITY as u64));
+                    // in0..7 = L8, in8..15 = R8: L = (1−dir)·cur + dir·sib, R = (1−dir)·sib + dir·cur.
+                    for i in 0..CHIP_OUT_LANES {
+                        let c: AB::Expr = local[cur8[i]].into();
+                        let s: AB::Expr = local[sib8[i]].into();
+                        t.push((AB::Expr::ONE - dir.clone()) * c.clone() + dir.clone() * s.clone());
+                    }
+                    for i in 0..CHIP_OUT_LANES {
+                        let c: AB::Expr = local[cur8[i]].into();
+                        let s: AB::Expr = local[sib8[i]].into();
+                        t.push((AB::Expr::ONE - dir.clone()) * s + dir.clone() * c);
+                    }
+                    for i in 0..CHIP_OUT_LANES {
+                        t.push(local[out8[i]].into());
+                    }
+                    t
+                };
+                let mut cur_old = map_group8(MAP_OLD_LEAF);
+                let mut cur_new = map_group8(MAP_NEW_LEAF);
                 for lvl in 0..HEAP_TREE_DEPTH {
-                    let sib: AB::Expr = local[MAP_SIB0 + lvl].into();
+                    let sib8 = map_group8(MAP_SIB0 + CHIP_OUT_LANES * lvl);
                     let dir: AB::Expr = local[MAP_DIR0 + lvl].into();
-                    let mix = |cur: AB::Expr| -> (AB::Expr, AB::Expr) {
-                        let left =
-                            (AB::Expr::ONE - dir.clone()) * cur.clone() + dir.clone() * sib.clone();
-                        let right = (AB::Expr::ONE - dir.clone()) * sib.clone() + dir.clone() * cur;
-                        (left, right)
-                    };
                     let last = lvl + 1 == HEAP_TREE_DEPTH;
-                    let out_old: AB::Expr = if last {
-                        local[MAP_ROOT].into()
+                    let out_old = if last {
+                        map_group8(MAP_ROOT)
                     } else {
-                        local[MAP_OLD_CHAIN0 + lvl].into()
+                        map_group8(MAP_OLD_CHAIN0 + CHIP_OUT_LANES * lvl)
                     };
-                    let (lo, ro) = mix(cur_old.clone());
-                    fact_bus.lookup_key(
+                    p2.lookup_key(
                         builder,
-                        [lo, ro, out_old.clone()],
+                        node8_tuple(&cur_old, &sib8, &dir, &out_old),
                         is_real.clone() * not_insert.clone(),
                     );
                     cur_old = out_old;
-                    let out_new: AB::Expr = if last {
-                        local[MAP_NEW_ROOT].into()
+                    let out_new = if last {
+                        map_group8(MAP_NEW_ROOT)
                     } else {
-                        local[MAP_NEW_CHAIN0 + lvl].into()
+                        map_group8(MAP_NEW_CHAIN0 + CHIP_OUT_LANES * lvl)
                     };
-                    let (ln, rn) = mix(cur_new.clone());
-                    fact_bus.lookup_key(builder, [ln, rn, out_new.clone()], is_real.clone());
+                    p2.lookup_key(
+                        builder,
+                        node8_tuple(&cur_new, &sib8, &dir, &out_new),
+                        is_real.clone(),
+                    );
                     cur_new = out_new;
                 }
 
-                // The table carries EXACTLY the gathered log (mapTableFaithful).
+                // The table carries EXACTLY the gathered log (mapTableFaithful): the 8-felt root and
+                // new_root groups bracket the key/value/op — a 19-felt log tuple.
                 let map_log = PermutationCheckBus::new(BUS_MAP_LOG);
-                map_log.receive(
-                    builder,
-                    [
-                        local[MAP_ROOT].into(),
-                        local[MAP_KEY].into(),
-                        local[MAP_VALUE].into(),
-                        local[MAP_OP].into(),
-                        local[MAP_NEW_ROOT].into(),
-                    ],
-                    is_real,
-                );
+                map_log.receive(builder, map_log_tuple::<AB>(&local), is_real);
             }
 
             // ----------------------------------------------------------------
@@ -4024,7 +4111,20 @@ fn build_traces(
     } // if presence.umem
 
     // ---- the map-ops log + the opening witnesses. ----
-    let mut map_log: Vec<([BabyBear; 5], MapKind)> = Vec::new();
+    // Phase H-HEAP-8: each entry carries the native 8-felt pre-/post-root groups (the descriptor
+    // evaluates `MapOpSpec.root`/`.new_root` as `CHIP_OUT_LANES` lane expressions over the
+    // committed heap-root columns), plus the scalar key/value.
+    let eval_group8 =
+        |exprs: &[LeanExpr], base_row: &[BabyBear]| -> Result<[BabyBear; CHIP_OUT_LANES], String> {
+            if exprs.len() != CHIP_OUT_LANES {
+                return Err(format!(
+                    "map_op root group has {} lanes, expected {CHIP_OUT_LANES}",
+                    exprs.len()
+                ));
+            }
+            Ok(core::array::from_fn(|i| eval_c(&exprs[i], base_row)))
+        };
+    let mut map_log: Vec<MapLogEntry> = Vec::new();
     for (ri, base_row) in base_trace.iter().enumerate() {
         for k in &desc.constraints {
             if let VmConstraint2::MapOp(m) = k {
@@ -4037,16 +4137,13 @@ fn build_traces(
                         "row {ri}: map_op guard evaluates to {g:?}, not 0/1"
                     ));
                 }
-                map_log.push((
-                    [
-                        eval_c(&m.root, base_row),
-                        eval_c(&m.key, base_row),
-                        eval_c(&m.value, base_row),
-                        BabyBear::new(m.op.code()),
-                        eval_c(&m.new_root, base_row),
-                    ],
-                    m.op,
-                ));
+                map_log.push(MapLogEntry {
+                    root: eval_group8(&m.root, base_row)?,
+                    key: eval_c(&m.key, base_row),
+                    value: eval_c(&m.value, base_row),
+                    new_root: eval_group8(&m.new_root, base_row)?,
+                    op: m.op,
+                });
             }
         }
     }
