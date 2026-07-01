@@ -1480,6 +1480,23 @@ theorem commitmentsRootGroupCol_lane0 (bb : Nat) :
 theorem cellsRootGroupCol_lane0 (bb : Nat) :
     cellsRootGroupCol bb 0 = bb + 0 := by simp [cellsRootGroupCol]
 
+/-- The BEFORE/AFTER-block 8-felt accumulator-root digests read off the row env (lane 0 = the scalar limb;
+lanes 1..7 the dedicated completion limbs 67..87). The `Digest8` twins of `beforeFieldsRootCols`, one per
+accumulator family — the `AccumulatorOpenEmit` after-spine keystone forces `heapWritesTo8` over exactly
+these committed groups (the assurance-case reads the consumer trio quantifies over). -/
+def beforeNullifierRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (nullifierRootGroupCol EFFECT_VM_WIDTH i)
+def afterNullifierRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (nullifierRootGroupCol (EFFECT_VM_WIDTH + 119) i)
+def beforeCommitmentsRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (commitmentsRootGroupCol EFFECT_VM_WIDTH i)
+def afterCommitmentsRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (commitmentsRootGroupCol (EFFECT_VM_WIDTH + 119) i)
+def beforeCellsRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (cellsRootGroupCol EFFECT_VM_WIDTH i)
+def afterCellsRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (cellsRootGroupCol (EFFECT_VM_WIDTH + 119) i)
+
 /-- **`fieldsWritesTo8 S8 oldRoot k v newRoot`** — the native-`node8` fields-tree UPDATE-AT-KEY over the
 FULL 8-felt root: some sibling/direction `path` recomposes `oldRoot` from the fields leaf `(k, oldVal)`,
 and recomposes `newRoot` from the in-place-updated leaf `(k, v)` along the SAME path. The faithful 8-felt
