@@ -64,9 +64,17 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Domain-separated token/turn-hash seeds for the rotated full-turn witness builder.
 blake3 = "1"
+# The blocklace gossip/sync substrate — the `federation_gossip` bench measures the
+# real per-turn (= per-block) cross-node legs: Ed25519 block sign/verify, the
+# strand-integrity `Blocklace::insert`, and quorum finality. Light deps (blake3 +
+# ed25519-dalek), already in the workspace lock — adding this edge churns nothing.
+dregg-blocklace = { path = "../blocklace" }
 
 [dev-dependencies]
 criterion = { workspace = true }
+# Ed25519 signing keys for the federation_gossip bench (blocklace block signing).
+# Already in the workspace lock via blocklace/federation; a zero-churn edge.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 
 # ---------------------------------------------------------------------------
 # Criterion benches. Each is a real, compiling benchmark over the PUBLIC API of
@@ -180,6 +188,22 @@ harness = false
 # (witnessed delivery), the enqueue+drain unit, and the publish/sub fan-out.
 [[bench]]
 name = "data_plane"
+harness = false
+
+# WIDE SCALING: the horizontal-scaling story — the nullifier set + ledger
+# commitment cost vs the population N (1k → 1M). Shows the O(log N) membership /
+# incremental-value-touch hot paths vs the O(N) full-rebuild legs (nullifier
+# `root`/`prove_non_membership`, ledger structural insert). The degradation point.
+[[bench]]
+name = "wide_scaling"
+harness = false
+
+# FEDERATION GOSSIP: the cross-node per-turn (= per-block) blocklace legs —
+# Ed25519 block sign/verify, the strand-integrity `Blocklace::insert` vs lace
+# depth M, and quorum finality vs Q. The measured primitives the N-node
+# federation model multiplies by topology (the bridge itself is modeled).
+[[bench]]
+name = "federation_gossip"
 harness = false
 
 [[bin]]

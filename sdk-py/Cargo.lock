@@ -925,6 +925,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "solana-stake-interface",
  "solana-vote-interface",
  "subtle",
 ]
@@ -3658,6 +3659,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8250a4495aad49ad20556a607da53bdcb20de78da10b65afbf918b7f1de647"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "solana-stake-interface"
+version = "4.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "252b4291eb25a5a356149ed4d4a940d5f655186210fa84b5d0d8d55c3dd42a81"
+dependencies = [
+ "num-traits",
+ "solana-clock",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-system-interface",
 ]
 
 [[package]]

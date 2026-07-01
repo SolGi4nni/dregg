@@ -12,7 +12,13 @@
     header_down -Access-Control-Allow-Headers
 }
 
-devnet.dregg.fg-goose.online, dregg.fg-goose.online {
+# The domains this node serves (TLS + reverse proxy). Centralized as a Caddy
+# env placeholder so pointing at production / a new domain is a config edit, not
+# a Caddyfile patch: set DREGG_SITE_DOMAINS in caddy's environment (e.g. the
+# systemd unit's Environment=, or `export DREGG_SITE_DOMAINS="dregg.works"`
+# before `caddy run`). Comma-separated; the default preserves the current devnet
+# routing. Keep deploy-site.sh's DREGG_SITE_DOMAIN in sync with the primary one.
+{$DREGG_SITE_DOMAINS:devnet.dregg.fg-goose.online, dregg.fg-goose.online} {
     # HTTP API
     handle /api/* {
         reverse_proxy localhost:8420 {
