@@ -87,6 +87,28 @@ jobs:
           CARGO_PROFILE_TEST_DEBUG: "0"
         run: cargo test -p deos-zed --no-default-features --features firmament
 
+  # The LIVE agent-brain transport lane. The default build is 100% the recorded
+  # `RecordedOpenAICaller`; the REAL `reqwest`-over-TCP transport
+  # (`LiveOpenAICompatCaller`) is exercised only under `--features live-brain`, so it
+  # never ran in the `cargo test --workspace` gate above (the audit's F4/G3). This
+  # lane runs the hermetic mock-server tests (`dregg-agent/src/brain.rs`
+  # `mock_server_tests`) — a real localhost OpenAI-compatible server over real TCP:
+  # the configured base URL is honored, the API key rides ONLY the Authorization
+  # header (never the body), and a dead endpoint fail-closes. Hermetic (no external
+  # network), so it runs on every push. dregg-agent is std+reqwest — no gpui/system
+  # deps needed.
+  live-brain:
+    name: Live brain (hermetic HTTP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (dregg-agent, live-brain)
+        run: cargo test -p dregg-agent --features live-brain
+
   clippy:
     name: Clippy (advisory)
     runs-on: ubuntu-latest
