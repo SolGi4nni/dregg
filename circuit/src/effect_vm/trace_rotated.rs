@@ -1050,7 +1050,7 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
     before_nullifiers: &[crate::heap_root::HeapLeaf],
 ) -> RotatedTraceWithHeaps {
     use super::columns::{PARAM_BASE, param};
-    use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+    use crate::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
 
     if !matches!(effects.first(), Some(Effect::NoteSpend { .. })) {
         return Err("nullifier-tree wiring is only for a NoteSpend lead effect".into());
@@ -1068,7 +1068,11 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
     // the inserted nullifier leaf). The spent nullifier MUST be absent from BEFORE — the freshness
     // precondition the `.absent` op enforces; a double-spend has no bracketing witness and the
     // prover REFUSES it.
-    let before_tree = CanonicalHeapTree::new(before_nullifiers.to_vec(), HEAP_TREE_DEPTH);
+    // The BEFORE tree at NATIVE 8-FELT width (`CanonicalHeapTree8`) — the openable accumulator's
+    // FAITHFUL ~124-bit `root8`, NOT the lossy 1-felt scalar. The spent nullifier MUST be absent from
+    // BEFORE (the `.absent` freshness precondition); a double-spend has no bracketing witness and the
+    // prover REFUSES it.
+    let before_tree = CanonicalHeapTree8::new(before_nullifiers.to_vec(), HEAP_TREE_DEPTH);
     if before_tree.position_of(nf_key).is_some() {
         return Err(
             "double-spend: the nullifier is already in the BEFORE nullifier tree — the in-circuit \
@@ -1076,22 +1080,35 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
                 .into(),
         );
     }
-    let before_root = before_tree.root();
+    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
     let mut after_leaves = before_nullifiers.to_vec();
     after_leaves.push(HeapLeaf {
         addr: nf_key,
         value: nf_value,
     });
-    // The after-tree is built only to read its root; move `after_leaves` in (no clone — it is
-    // not read again after this point).
-    let after_root = CanonicalHeapTree::new(after_leaves, HEAP_TREE_DEPTH).root();
+    // The after-tree is built only to read its root8; move `after_leaves` in (no clone).
+    let after_root8: [BabyBear; HEAP_DIGEST_W] =
+        CanonicalHeapTree8::new(after_leaves, HEAP_TREE_DEPTH).root8();
 
-    // Override limb 26 of BOTH blocks on EVERY row with the openable accumulator roots, then
-    // recompute the dependent chained commitments so the published `STATE_COMMIT` binds the grown
-    // set. (The bare limb-26 `hash_bytes` witness is replaced by the real tree roots.)
+    // Mirror of `EffectVmEmitRotationV3.nullifierRootGroupCol`: lane 0 = limb `B_NULLIFIER_ROOT` (26);
+    // the seven DEDICATED completion limbs 67..73 for lanes 1..7.
+    let nullifier_group_col = |block_base: usize, lane: usize| -> usize {
+        block_base
+            + match lane {
+                0 => B_NULLIFIER_ROOT,
+                _ => 66 + lane, // lanes 1..7 → limbs 67..73
+            }
+    };
+
+    // Write the FAITHFUL 8-felt before/after nullifier-root GROUP into BOTH rotated blocks (lane 0 the
+    // scalar limb 26, lanes 1..7 the dedicated completion limbs 67..73 — the map-op `.absent`/`.insert`
+    // root/newRoot groups the deployed AIR binds all eight lanes of), NEVER the lane-0 squeeze. Then
+    // recompute the dependent chained commitments so the published `STATE_COMMIT` binds the grown set.
     for row in trace.iter_mut() {
-        row[BEFORE_BASE + B_NULLIFIER_ROOT] = before_root;
-        row[AFTER_BASE + B_NULLIFIER_ROOT] = after_root;
+        for lane in 0..HEAP_DIGEST_W {
+            row[nullifier_group_col(BEFORE_BASE, lane)] = before_root8[lane];
+            row[nullifier_group_col(AFTER_BASE, lane)] = after_root8[lane];
+        }
         recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
     }
@@ -1135,7 +1152,7 @@ pub fn generate_rotated_create_cell_trace_with_accounts_tree(
     before_accounts: &[crate::heap_root::HeapLeaf],
 ) -> RotatedTraceWithHeaps {
     use super::columns::PARAM_BASE;
-    use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+    use crate::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
 
     let key_col = new_cell_key_param_col(effects.first()).ok_or_else(|| {
         "accounts-tree wiring is only for a CreateCell / CreateCellFromFactory / SpawnWithDelegation \
@@ -1153,7 +1170,7 @@ pub fn generate_rotated_create_cell_trace_with_accounts_tree(
     // The BEFORE accounts tree and the AFTER tree (= BEFORE + the inserted new-cell key). The
     // new-cell key MUST be absent from BEFORE — the no-collision precondition the `.absent` op
     // enforces; a re-creation of an existing cell has no bracketing witness and the prover REFUSES.
-    let before_tree = CanonicalHeapTree::new(before_accounts.to_vec(), HEAP_TREE_DEPTH);
+    let before_tree = CanonicalHeapTree8::new(before_accounts.to_vec(), HEAP_TREE_DEPTH);
     if before_tree.position_of(cell_key).is_some() {
         return Err(
             "account-id collision: the new-cell key is already in the BEFORE accounts tree — the \
@@ -1161,21 +1178,34 @@ pub fn generate_rotated_create_cell_trace_with_accounts_tree(
                 .into(),
         );
     }
-    let before_root = before_tree.root();
+    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
     let mut after_leaves = before_accounts.to_vec();
     after_leaves.push(HeapLeaf {
         addr: cell_key,
         value: cell_key, // the born-empty cell rides its own key as its leaf value.
     });
-    // The after-tree is built only to read its root; move `after_leaves` in (no clone).
-    let after_root = CanonicalHeapTree::new(after_leaves, HEAP_TREE_DEPTH).root();
+    // The after-tree is built only to read its root8; move `after_leaves` in (no clone).
+    let after_root8: [BabyBear; HEAP_DIGEST_W] =
+        CanonicalHeapTree8::new(after_leaves, HEAP_TREE_DEPTH).root8();
 
-    // Override limb 0 of BOTH blocks on EVERY row with the openable accumulator roots, then
-    // recompute the dependent chained commitments so the published `STATE_COMMIT` binds the grown
-    // set.
+    // Mirror of `EffectVmEmitRotationV3.cellsRootGroupCol`: lane 0 = limb 0 (accounts root); the seven
+    // DEDICATED completion limbs 81..87 for lanes 1..7.
+    let cells_group_col = |block_base: usize, lane: usize| -> usize {
+        block_base
+            + match lane {
+                0 => B_CELLS_ROOT,
+                _ => 80 + lane, // lanes 1..7 → limbs 81..87
+            }
+    };
+
+    // Write the FAITHFUL 8-felt before/after cells-root GROUP into BOTH rotated blocks (lane 0 the
+    // scalar limb 0, lanes 1..7 the dedicated completion limbs 81..87), NEVER the lane-0 squeeze. Then
+    // recompute the dependent chained commitments so `STATE_COMMIT` binds the grown set.
     for row in trace.iter_mut() {
-        row[BEFORE_BASE + B_CELLS_ROOT] = before_root;
-        row[AFTER_BASE + B_CELLS_ROOT] = after_root;
+        for lane in 0..HEAP_DIGEST_W {
+            row[cells_group_col(BEFORE_BASE, lane)] = before_root8[lane];
+            row[cells_group_col(AFTER_BASE, lane)] = after_root8[lane];
+        }
         recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
     }
@@ -1211,7 +1241,7 @@ pub fn generate_rotated_note_create_trace_with_commitments_tree(
     before_commitments: &[crate::heap_root::HeapLeaf],
 ) -> RotatedTraceWithHeaps {
     use super::columns::{PARAM_BASE, param};
-    use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+    use crate::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
 
     if !matches!(effects.first(), Some(Effect::NoteCreate { .. })) {
         return Err("commitments-tree wiring is only for a NoteCreate lead effect".into());
@@ -1227,22 +1257,35 @@ pub fn generate_rotated_note_create_trace_with_commitments_tree(
 
     // The BEFORE commitments tree and the AFTER tree (= BEFORE + the inserted commitment). NoteCreate
     // is append-only — no `.absent` freshness precondition.
-    let before_tree = CanonicalHeapTree::new(before_commitments.to_vec(), HEAP_TREE_DEPTH);
-    let before_root = before_tree.root();
+    let before_tree = CanonicalHeapTree8::new(before_commitments.to_vec(), HEAP_TREE_DEPTH);
+    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
     let mut after_leaves = before_commitments.to_vec();
     after_leaves.push(HeapLeaf {
         addr: cm_key,
         value: cm_value,
     });
-    // The after-tree is built only to read its root; move `after_leaves` in (no clone).
-    let after_root = CanonicalHeapTree::new(after_leaves, HEAP_TREE_DEPTH).root();
+    // The after-tree is built only to read its root8; move `after_leaves` in (no clone).
+    let after_root8: [BabyBear; HEAP_DIGEST_W] =
+        CanonicalHeapTree8::new(after_leaves, HEAP_TREE_DEPTH).root8();
 
-    // Override limb 27 of BOTH blocks on EVERY row with the openable accumulator roots, then
-    // recompute the dependent chained commitments so the published `STATE_COMMIT` binds the grown
-    // set.
+    // Mirror of `EffectVmEmitRotationV3.commitmentsRootGroupCol`: lane 0 = limb `B_COMMITMENTS_ROOT`
+    // (27); the seven DEDICATED completion limbs 74..80 for lanes 1..7.
+    let commitments_group_col = |block_base: usize, lane: usize| -> usize {
+        block_base
+            + match lane {
+                0 => B_COMMITMENTS_ROOT,
+                _ => 73 + lane, // lanes 1..7 → limbs 74..80
+            }
+    };
+
+    // Write the FAITHFUL 8-felt before/after commitments-root GROUP into BOTH rotated blocks (lane 0
+    // the scalar limb 27, lanes 1..7 the dedicated completion limbs 74..80), NEVER the lane-0 squeeze.
+    // Then recompute the dependent chained commitments so `STATE_COMMIT` binds the grown set.
     for row in trace.iter_mut() {
-        row[BEFORE_BASE + B_COMMITMENTS_ROOT] = before_root;
-        row[AFTER_BASE + B_COMMITMENTS_ROOT] = after_root;
+        for lane in 0..HEAP_DIGEST_W {
+            row[commitments_group_col(BEFORE_BASE, lane)] = before_root8[lane];
+            row[commitments_group_col(AFTER_BASE, lane)] = after_root8[lane];
+        }
         recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
     }
