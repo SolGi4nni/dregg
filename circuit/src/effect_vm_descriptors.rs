@@ -339,7 +339,7 @@ pub const DREGG_EFFECTVM_INTRODUCE_IR2_FP: &str =
 pub const DREGG_EFFECTVM_ATTENUATE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-attenuate-ir2.json");
 pub const DREGG_EFFECTVM_ATTENUATE_IR2_FP: &str =
-    "e409682ad971306a3f495de95e93e1ef586cd843f5a01b19364a63be4f6a175f";
+    "52d6d6f1c76ce3f8814cbb0f3c41e325cfb645bfc45ed1ef763b40131ba5f6fe";
 // GRADUATED (cap-crown): RevokeCapability (sel 24). The v2 leg of the cap-REMOVAL effect — a
 // held-membership map-read authenticated against the before cap_root + a ZERO-value remove-write
 // (the slot's rights deleted), NO submask (revoke deletes a slot, it does not narrow rights). Lean
@@ -348,7 +348,7 @@ pub const DREGG_EFFECTVM_ATTENUATE_IR2_FP: &str =
 pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-revoke-cap-ir2.json");
 pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_FP: &str =
-    "63cf646bc300a982fe4827cc1f1d47b531bc401baa4ceb85c13a9ac4276d89f8";
+    "ddd66b7acb3003e5e26eaf38743c67462824c6a8cd975796c08a805fa54d4d53";
 // GRADUATED (Custom recursive-proof binding, sel 8): the runtime passthrough face graduated onto
 // IR-v2 PLUS the `proof_bind` op (`customProofBind`) that ties the row's `custom_proof_commitment`
 // to a VERIFYING external sub-proof of the recursion engine — the accumulator constraint the
@@ -821,7 +821,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "2854d327e6979f5d90973ededc03af94d0b3fd4dc2bafc045c0e57fdcf7c150d";
+    "4dfdd19e4505de1cdb217edb8c710eb40dc1a824d37c429dd713769060714d40";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1203,7 +1203,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "5bf1911306caafde0d357ba0f1951bef8e08669d5990f6d22b89b1dae8216583";
+    "c4fddd1a8a9e0fff7d52233205d04f8efc1c4277df0103c804a15cac16fd0d41";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1229,7 +1229,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "ec63398203dc84a3cc2f0f8446dd18889b11f55a4d5df5ebe7348283567f9c6c";
+    "8c270453d5b5caf443a6428f7da2a5385cb36f3b678ddbf938f980a916bd9ab2";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,

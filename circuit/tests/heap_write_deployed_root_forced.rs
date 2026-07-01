@@ -36,9 +36,15 @@ const VALUE: usize = 72; // hp.VALUE
 const HEAP_ROOT_BEFORE: usize = 65;
 const HEAP_ROOT_AFTER: usize = 87;
 const HEAP_ADDR: usize = 102;
+// Phase H-HEAP-8: the deployed splice `MapOp` reads/writes the FAITHFUL 8-felt heap-root GROUP on the
+// ROTATED limbs (lane 0 = rotated `heap_root` limb 28, completions 58..64), NOT the v1-state cols 65/87.
+// Lane 0: before = EFFECT_VM_WIDTH(188)+B_HEAP_ROOT(28) = 216; after = 188+91+28 = 307. Mirrors the cap
+// weld's rotated cap-root limb 213/264. (Lean `EffectVmEmitRotationV3.heapRootGroupCol`.)
+const HEAP_ROOT_BEFORE_ROT: usize = 216;
+const HEAP_ROOT_AFTER_ROT: usize = 307;
 
 const P2_CHIP_TABLE: usize = 1; // table id of `poseidon2_chip` in the staged registry
-const CHIP_DIGEST_IDX: usize = 12; // the digest column position in the 17-wide chip tuple
+const CHIP_DIGEST_IDX: usize = 17; // out0 position in the 25-wide chip tuple (arity + 16 inputs + out0 + 7 lanes)
 
 /// Resolve a rotated descriptor JSON by registry key from the committed staged TSV.
 fn rotated_descriptor_json(name: &str) -> &'static str {
@@ -135,8 +141,8 @@ fn deployed_heapwrite_forces_sorted_merkle_splice() {
     );
     assert_eq!(
         m.root[0],
-        LeanExpr::Var(HEAP_ROOT_BEFORE),
-        "splice root lane 0 must be HEAP_ROOT_BEFORE(65)"
+        LeanExpr::Var(HEAP_ROOT_BEFORE_ROT),
+        "splice root lane 0 must be the ROTATED before heap-root limb 28 (col 216)"
     );
     assert_eq!(
         m.key,
@@ -155,8 +161,9 @@ fn deployed_heapwrite_forces_sorted_merkle_splice() {
     );
     assert_eq!(
         m.new_root[0],
-        LeanExpr::Var(HEAP_ROOT_AFTER),
-        "splice new_root lane 0 must be HEAP_ROOT_AFTER(87) — the published heap_root register"
+        LeanExpr::Var(HEAP_ROOT_AFTER_ROT),
+        "splice new_root lane 0 must be the ROTATED after heap-root limb 28 (col 307) — the published \
+         faithful heap_root"
     );
 
     eprintln!(
