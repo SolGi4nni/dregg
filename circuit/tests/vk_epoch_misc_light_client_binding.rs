@@ -577,18 +577,18 @@ fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
         desc.public_input_count, 47,
         "setFieldDyn descriptor DECLARES the fields-root weld pin (47 PIs)"
     );
-    // The DISTINCT geometry the generator now produces from scratch: 801-wide V1Face (v10 pre_limbs
-    // re-lay), NOT the 408-wide ungraduated rotated trace (the structural reason the standard
-    // generator cannot satisfy it). 801 = 408 ungraduated + 7·56 + 1 reserved — four fewer chip sites
-    // (7·4 = 28 narrower) than the 829-wide standard graduated host.
+    // The DISTINCT geometry the generator now produces from scratch: 955-wide V1Face (v11 pre_limbs
+    // re-lay — the accum8 B_SPAN grow to 88 limbs), NOT the ungraduated rotated trace (the structural
+    // reason the standard generator cannot satisfy it) — four fewer chip sites than the standard
+    // graduated host of the same v11 geometry.
     assert_eq!(
-        desc.trace_width, 801,
-        "setFieldDyn is a DISTINCT 801-wide V1Face geometry (four fewer chip sites than the standard \
-         829-wide host), NOT the 408-wide ungraduated rotated trace"
+        desc.trace_width, 955,
+        "setFieldDyn is a DISTINCT V1Face geometry (four fewer chip sites than the standard \
+         graduated host of the same v11 geometry), NOT the ungraduated rotated trace"
     );
     assert_ne!(
         desc.trace_width, ROT_WIDTH,
-        "setFieldDyn's width (801) != the ungraduated rotated width (ROT_WIDTH)"
+        "setFieldDyn's width (955) != the ungraduated rotated width (ROT_WIDTH)"
     );
 
     // The dynamic SetField (field_idx > 7) routes to the dyn descriptor by name.
