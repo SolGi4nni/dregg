@@ -2104,13 +2104,22 @@ mod tests {
             vk_digest_felt(&cell.verification_key),
             "vk_digest rides limb 34 (= params[0] of a setVK row; None → 0)"
         );
-        // limbs 35,36 are the WAVE-3 mode / fields_root sub-limbs (the LAST two pre-iroot limbs).
+        // limbs 35,36 are the WAVE-3 mode / fields_root sub-limbs.
         assert_eq!(pre[35], mode_felt(&cell.mode), "mode rides limb 35");
-        assert_eq!(
-            pre[36],
-            fields_root_felt(&cell.state.fields_root),
-            "fields_root rides limb 36 (WAVE-3 flag-day; the openable sorted-Poseidon2 root felt)"
-        );
+        // The FAITHFUL 8-felt fields root (Phase H-FIELDS-8): lane 0 at limb 36, completion lanes 1..7 at
+        // the NON-contiguous limbs 65,66,19,20,21,22,23 (`EffectVmEmitRotationV3.fieldsRootGroupCol`).
+        let fields8 = crate::state::compute_canonical_fields_root_8(&cell.state.fields_map);
+        assert_eq!(pre[36], fields8[0], "fields_root lane 0 rides limb 36");
+        let fields_lanes = [65usize, 66, 19, 20, 21, 22, 23];
+        for i in 0..7 {
+            assert_eq!(
+                pre[fields_lanes[i]],
+                fields8[1 + i],
+                "fields_root completion lane {} rides limb {}",
+                i + 1,
+                fields_lanes[i]
+            );
+        }
         // The FAITHFUL 8-felt cap root: lane 0 at limb 25, completion lanes 1..7 at limbs 51..57
         // (`EffectVmEmitRotationV3.capRootGroupCol`). Lane 0 == the historical scalar cap-root felt.
         let cap8 = compute_canonical_capability_root_8(&cell.capabilities);
