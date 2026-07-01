@@ -843,10 +843,11 @@ fn cross_cell_read_whole_image_smuggled_start_root_refuses() {
     }]);
     assert_ne!(
         smuggled_start,
-        dregg_circuit::heap_root::empty_heap_root(),
+        dregg_circuit::heap_root::empty_heap_root_8(),
         "the smuggled start must be a genuinely non-empty root"
     );
-    let smuggled_pis = vec![smuggled_start, published];
+    let mut smuggled_pis = smuggled_start.to_vec();
+    smuggled_pis.extend_from_slice(&published);
     let refused = verify_whole_image_fold(&proof, &smuggled_pis);
     assert!(
         refused.is_err(),
@@ -990,7 +991,8 @@ fn whole_image_fold_bound_smuggled_start_root_refuses() {
         addr: BabyBear::new(99),
         value: BabyBear::new(42),
     }]);
-    let smuggled_pis = vec![smuggled_start, published];
+    let mut smuggled_pis = smuggled_start.to_vec();
+    smuggled_pis.extend_from_slice(&published);
     let refused = verify_whole_image_fold_bound(&proof, &smuggled_pis, FIELD_DOMAIN);
     assert!(
         refused.is_err(),
@@ -1140,7 +1142,8 @@ fn whole_image_fold_bound_mem_smuggled_start_root_refuses() {
         addr: BabyBear::new(99),
         value: BabyBear::new(42),
     }]);
-    let smuggled_pis = vec![smuggled_start, published];
+    let mut smuggled_pis = smuggled_start.to_vec();
+    smuggled_pis.extend_from_slice(&published);
     let refused = verify_whole_image_fold_bound_mem(&proof, &smuggled_pis);
     assert!(
         refused.is_err(),
