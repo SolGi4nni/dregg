@@ -318,8 +318,8 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
     let desc = wide_desc(name);
     assert_eq!(
         desc.trace_width,
-        SET_FIELD_DYN_HOST_WIDTH + 208,
-        "setFieldDyn wide width 789"
+        SET_FIELD_DYN_HOST_WIDTH + 480,
+        "setFieldDyn wide width 1435"
     );
     assert_eq!(
         desc.public_input_count, 63,

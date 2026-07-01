@@ -1445,7 +1445,7 @@ pub fn generate_rotated_refusal_trace_with_fields_tree(
 /// `829 + 329 + 143 = 1301`. A satisfying trace FORCES the faithful 8-felt fields-write over the full
 /// ~124-bit BEFORE/AFTER root blocks (`effFieldsWriteV3_forces_write8`) — never the lane-0 squeeze the
 /// map_op-only host would leave. The wide carrier lands at THIS host width: `1301 + 480 = 1669`.
-pub const REFUSAL_WRITE_HOST_WIDTH: usize = 1301;
+pub const REFUSAL_WRITE_HOST_WIDTH: usize = 1455; // v11: wide 1935 − 480
 /// The fields-open READ appendix base column (the Class-A base `refusalFieldsWriteV3`'s trace width).
 pub const REFUSAL_WRITE_READ_BASE: usize = 829;
 
@@ -1552,7 +1552,7 @@ pub fn generate_rotated_refusal_write_wide(
     // The generic widener at the deployed host width (retires the two 1-felt commit pins, appends the 16
     // wide commit PIs — the 8-felt ~124-bit before/after anchors). `base_pis` is the 54-PI refusal vector.
     let dpis = append_wide_carriers(&mut trace, base_pis, REFUSAL_WRITE_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), REFUSAL_WRITE_HOST_WIDTH + 480); // 1669
+    debug_assert_eq!(trace[0].len(), REFUSAL_WRITE_HOST_WIDTH + 480); // 1935
     Ok((trace, dpis, map_heaps))
 }
 
@@ -3332,7 +3332,7 @@ pub fn generate_rotated_transfer_shape_with_fee_wide(
 /// the faithful 8-felt heap-write over the full ~124-bit BEFORE/AFTER root blocks
 /// (`effHeapWriteV3_forces_write8`) — never the lane-0 squeeze the map_op-only host would leave. The
 /// wide carriers land at THIS host width: `1287 + 480 = 1655`.
-pub const HEAP_WRITE_HOST_WIDTH: usize = 1287;
+pub const HEAP_WRITE_HOST_WIDTH: usize = 1441; // v11: wide 1921 − 480
 /// The heap-open READ appendix base column (the splice base `heapWriteV3`'s trace width).
 pub const HEAP_WRITE_READ_BASE: usize = 815;
 
@@ -3527,7 +3527,7 @@ pub fn generate_rotated_heap_write_wide(
         gen_pis[V1_PI_COUNT + 3],
     ];
     let dpis = append_wide_carriers(&mut trace, base_pis, HEAP_WRITE_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), HEAP_WRITE_HOST_WIDTH + 480); // 1655 (OPTION I after-spine host)
+    debug_assert_eq!(trace[0].len(), HEAP_WRITE_HOST_WIDTH + 480); // 1921 (OPTION I after-spine host)
     debug_assert_eq!(dpis.len(), 20); // 4 base (2 retired) + 16 wide
     Ok((trace, dpis, vec![heap_leaves.to_vec()]))
 }
@@ -3777,7 +3777,7 @@ pub fn generate_rotated_refusal_wide(
 /// `ROT_WIDTH + 7·36 = 328 + 252 = 580`… +1 reserved = **581** (the committed
 /// `setFieldDynVmDescriptor2R24.trace_width`, distinct from `GRAD_ROT_WIDTH = 608`). The wide
 /// carriers (the `setFieldDynVmDescriptor2R24Wide` member) land at THIS host width.
-pub const SET_FIELD_DYN_HOST_WIDTH: usize = 581;
+pub const SET_FIELD_DYN_HOST_WIDTH: usize = 955; // v11: wide 1435 − 480
 
 /// The slot-index param column the dynamic setField indexes the 8-cell overflow memory by
 /// (`prmCol SLOT = prmCol VALUE = param1`, col 69 — both addr AND value of the Blum write, the
@@ -3927,7 +3927,7 @@ pub fn generate_rotated_set_field_dyn_wide(
         prev_value,
     )?;
     let dpis = append_wide_carriers(&mut trace, base_pis, SET_FIELD_DYN_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), SET_FIELD_DYN_HOST_WIDTH + 480); // 789
+    debug_assert_eq!(trace[0].len(), SET_FIELD_DYN_HOST_WIDTH + 480); // 1435
     Ok((trace, dpis, mem_boundary))
 }
 
@@ -3942,7 +3942,7 @@ pub fn generate_rotated_set_field_dyn_wide(
 /// V1Face host as setFieldDyn (the carriers ride the identical 8-felt blocks);
 /// the trace SHAPE differs (a Custom row, no Blum-memory boundary), but the wide
 /// geometry is `append_wide_carriers` at 581.
-pub const CUSTOM_HOST_WIDTH: usize = 581;
+pub const CUSTOM_HOST_WIDTH: usize = 955; // v11: wide 1435 − 480
 
 /// **THE WIDE custom trace generator (`customVmDescriptor2R24`, 789-wide / 70 PI).**
 ///
@@ -4018,7 +4018,7 @@ pub fn generate_rotated_custom_wide(
     }
     debug_assert_eq!(base_pis.len(), ROT_PI_COUNT + 8); // 46 base + 8 custom-binding = 54
     let dpis = append_wide_carriers(&mut trace, base_pis, CUSTOM_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), CUSTOM_HOST_WIDTH + 480); // 789
+    debug_assert_eq!(trace[0].len(), CUSTOM_HOST_WIDTH + 480); // 1435
     debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 8 + 16); // 46 base + 8 custom + 16 wide = 70
     Ok((trace, dpis))
 }
