@@ -3612,7 +3612,11 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       const cc = await loadState();
       if (cc.locked) return { id: message.id, error: "Cipherclerk is locked" };
       const delegatorKeyHex = Array.from(cc.publicKey).map(b => b.toString(16).padStart(2, "0")).join("");
-      const result = w.create_bearer_cap(delegatorKeyHex, message.targetCellHex as string, message.action as string, (message.expiry as number) || 0);
+      // The WASM expiry parameter is a u64 (Unix seconds; 0 = no expiry) and
+      // crosses the wasm-bindgen boundary as a BigInt — a plain JS number throws
+      // "Cannot convert N to a BigInt". Coerce here (the popup can only send a
+      // JSON number over runtime messaging, so the fix belongs at the call site).
+      const result = w.create_bearer_cap(delegatorKeyHex, message.targetCellHex as string, message.action as string, BigInt((message.expiry as number) || 0));
       resetLockTimer();
       return { id: message.id, result };
     }

@@ -672,7 +672,9 @@ export interface DreggWasm {
   ): { auth_bytes: Uint8Array; recipient_pk: string; introducer_federation: string };
 
   // Bearer capabilities
-  create_bearer_cap(delegatorKeyHex: string, targetCellHex: string, action: string, expiry: number): { bearerTokenHex: string; targetCell: string; action: string };
+  // `expiry` is a u64 (Unix seconds; 0 = no expiry) and crosses the wasm-bindgen
+  // boundary as a bigint. The mint returns snake_case fields (bearer_token_hex).
+  create_bearer_cap(delegatorKeyHex: string, targetCellHex: string, action: string, expiry: bigint): { bearer_token_hex: string; delegator_pubkey_hex: string; binding_hex: string };
   verify_bearer_cap(tokenHex: string, delegatorKeyHex: string, targetCellHex: string, action: string, expiry: number, currentTime: number): { valid: boolean; expired: boolean };
 
   // Factory operations

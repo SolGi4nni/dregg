@@ -926,17 +926,20 @@ grantCapBtn.addEventListener("click", async () => {
     : 0;
   grantCapBtn.disabled = true;
   grantCapBtn.textContent = "Granting...";
-  const result = await sendMessage<{ bearerTokenHex?: string; targetCell?: string; action?: string; error?: string }>(
+  const result = await sendMessage<{ bearerTokenHex?: string; bearer_token_hex?: string; targetCell?: string; action?: string; error?: string }>(
     "dregg:createBearerCap",
     { targetCellHex, action, expiry },
   );
   grantCapBtn.disabled = false;
   grantCapBtn.textContent = "Grant attenuated capability";
-  if (!result || result.error || !result.bearerTokenHex) {
+  // The WASM returns the bearer token as snake_case `bearer_token_hex`; read it
+  // liberally (accept the camelCase alias too) so a naming drift is not a break.
+  const bearerTokenHex = result?.bearerTokenHex ?? result?.bearer_token_hex;
+  if (!result || result.error || !bearerTokenHex) {
     showGrantError(result?.error || "Could not create the grant (wallet locked?).");
     return;
   }
-  grantResultToken.textContent = `dregg-cap:${result.bearerTokenHex}`;
+  grantResultToken.textContent = `dregg-cap:${bearerTokenHex}`;
   const scope = expiry > 0
     ? `action "${action}" · expires ${new Date(expiry * 1000).toLocaleString()}`
     : `action "${action}" · no expiry`;
