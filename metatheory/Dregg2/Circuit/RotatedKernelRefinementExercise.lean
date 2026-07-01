@@ -368,10 +368,10 @@ descriptor IS a heap-write row. The deployed `Ir2Air::MapOps` AIR checks the pro
 `update_witness` (`heap_root.rs` `CanonicalHeapTree::update_witness`). -/
 def heapSpliceWriteOp : MapOp :=
   { guard   := .const 1
-  , root    := .var HEAP_ROOT_BEFORE
+  , root    := fun _ => .var HEAP_ROOT_BEFORE
   , key     := .var HEAP_ADDR
   , value   := .var (prmCol VALUE)
-  , newRoot := .var HEAP_ROOT_AFTER
+  , newRoot := fun _ => .var HEAP_ROOT_AFTER
   , op      := .write }
 
 /-- **`heapWriteV3`** — the LIVE rotated+graduated heapWrite descriptor WITH the genuine sorted-Merkle

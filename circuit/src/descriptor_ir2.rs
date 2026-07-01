@@ -5242,7 +5242,7 @@ mod tests {
 
     /// The Lean `#guard`-pinned demo-v2 golden (DescriptorIR2 §10): every v2 constraint
     /// kind + the five tables, byte-for-byte.
-    const DEMO_V2: &str = "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":17,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":{\"t\":\"var\",\"v\":0},\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}";
+    const DEMO_V2: &str = "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":17,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0}],\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":[{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}";
 
     /// The byte-pinned Lean golden parses, with every v2 element decoded.
     #[test]
@@ -5384,8 +5384,8 @@ mod tests {
         let lanes = perm_lanes(hash2_state_c(a, b));
         let digest = lanes[0];
         debug_assert_eq!(digest, hash_many(&[a, b]));
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
         let mut row = vec![
             a,
             b,
@@ -5396,17 +5396,19 @@ mod tests {
             BabyBear::new(9),             // mem prev_value
             BabyBear::ZERO,               // mem prev_serial (init)
             BabyBear::ZERO,               // mem guard (row 0 active only — set per row)
-            root,                         // map root
-            BabyBear::new(100),           // map key
-            BabyBear::new(77),            // map value
-            root,                         // map new_root (read preserves)
-            BabyBear::ZERO,               // map guard (set per row)
-            BabyBear::new(0b0101),        // keep ⊑ held
-            BabyBear::new(0b0111),        // held
+            root[0],               // col 9: inert carry (Phase H-HEAP-8 moved the root group)
+            BabyBear::new(100),    // map key
+            BabyBear::new(77),     // map value
+            root[0],               // col 12: inert carry
+            BabyBear::ZERO,        // map guard (set per row)
+            BabyBear::new(0b0101), // keep ⊑ held
+            BabyBear::new(0b0111), // held
         ];
         // cols 16..22: the 7 exposed lanes 1..7 of the hash site (Phase B-GATE).
         row.extend_from_slice(&lanes[1..]);
-        debug_assert_eq!(row.len(), 23);
+        // cols 23..31: the 8-felt heap-root group the map read opens against.
+        row.extend_from_slice(&root);
+        debug_assert_eq!(row.len(), 31);
         row
     }
 
@@ -5555,26 +5557,33 @@ mod tests {
     /// registry TSV row `heapWriteVmDescriptor2R24`): the `.write` MapOp on the heap root opens the
     /// committed root (col 65) at the recomputed address (col 102) for the written value (col 72) and
     /// FORCES the new root (col 87). This is the SAME op the deployed descriptor carries.
-    const HW_ROOT_BEFORE: usize = 65;
-    const HW_ROOT_AFTER: usize = 87;
+    // Phase H-HEAP-8: the pre-/post-root are 8-felt digest GROUPS. The isolated splice descriptor
+    // rides them on contiguous fresh columns (before-group 110..118, after-group 118..126) so they
+    // do not collide with HW_VALUE(72)/HW_ADDR(102).
+    const HW_ROOT_BEFORE: usize = 110;
+    const HW_ROOT_AFTER: usize = 118;
     const HW_ADDR: usize = 102;
     const HW_VALUE: usize = 72;
 
     /// A minimal descriptor carrying EXACTLY the deployed heap-write splice `.write` MapOp (deployed
     /// columns), gated always-on — the row constraint the deployed `heapWriteVmDescriptor2R24` relies
-    /// on, in isolation. Width 110 holds all referenced columns (max 102).
+    /// on, in isolation. Width 126 holds all referenced columns (the 8-felt root groups end at 126).
     fn hw_splice_desc() -> EffectVmDescriptor2 {
         EffectVmDescriptor2 {
             name: "hw-splice-deployed".to_string(),
-            trace_width: 110,
+            trace_width: 126,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
                 guard: LeanExpr::Const(1),
-                root: LeanExpr::Var(HW_ROOT_BEFORE),
+                root: (HW_ROOT_BEFORE..HW_ROOT_BEFORE + CHIP_OUT_LANES)
+                    .map(LeanExpr::Var)
+                    .collect(),
                 key: LeanExpr::Var(HW_ADDR),
                 value: LeanExpr::Var(HW_VALUE),
-                new_root: LeanExpr::Var(HW_ROOT_AFTER),
+                new_root: (HW_ROOT_AFTER..HW_ROOT_AFTER + CHIP_OUT_LANES)
+                    .map(LeanExpr::Var)
+                    .collect(),
                 op: MapKind::Write,
             })],
             hash_sites: vec![],
@@ -5600,20 +5609,20 @@ mod tests {
     /// key (100), col 72 = the new value (42), col 87 = the GENUINE sorted-Merkle splice root (the
     /// update of addr 100 to value 42). 4 rows; the op fires on every row (constant-1 guard) so the
     /// trace carries the same genuine write each row.
-    fn hw_splice_trace(new_root: BabyBear) -> Vec<Vec<BabyBear>> {
-        let pre = CanonicalHeapTree::new(hw_pre_heap(), HEAP_TREE_DEPTH);
-        let root = pre.root();
-        let mut row = vec![BabyBear::ZERO; 110];
-        row[HW_ROOT_BEFORE] = root;
+    fn hw_splice_trace(new_root: [BabyBear; CHIP_OUT_LANES]) -> Vec<Vec<BabyBear>> {
+        let pre = CanonicalHeapTree8::new(hw_pre_heap(), HEAP_TREE_DEPTH);
+        let root = pre.root8();
+        let mut row = vec![BabyBear::ZERO; 126];
+        row[HW_ROOT_BEFORE..HW_ROOT_BEFORE + CHIP_OUT_LANES].copy_from_slice(&root);
         row[HW_ADDR] = BabyBear::new(100);
         row[HW_VALUE] = BabyBear::new(42);
-        row[HW_ROOT_AFTER] = new_root;
+        row[HW_ROOT_AFTER..HW_ROOT_AFTER + CHIP_OUT_LANES].copy_from_slice(&new_root);
         vec![row; 4]
     }
 
     /// THE GENUINE splice root: the update of addr 100 → value 42 over the pre-heap.
-    fn hw_genuine_new_root() -> BabyBear {
-        let pre = CanonicalHeapTree::new(hw_pre_heap(), HEAP_TREE_DEPTH);
+    fn hw_genuine_new_root() -> [BabyBear; CHIP_OUT_LANES] {
+        let pre = CanonicalHeapTree8::new(hw_pre_heap(), HEAP_TREE_DEPTH);
         pre.update_witness(HeapLeaf {
             addr: BabyBear::new(100),
             value: BabyBear::new(42),
@@ -5651,7 +5660,8 @@ mod tests {
     #[test]
     fn deployed_heap_splice_rejects_content_mismatch() {
         let desc = hw_splice_desc();
-        let forged = hw_genuine_new_root() + BabyBear::ONE; // NOT the genuine sorted-tree update
+        let mut forged = hw_genuine_new_root(); // NOT the genuine sorted-tree update
+        forged[0] += BabyBear::ONE;
         assert_ne!(forged, hw_genuine_new_root());
         let trace = hw_splice_trace(forged);
 
@@ -6121,42 +6131,46 @@ mod tests {
     /// genuine sorted write, chained so a later read against the NEW root sees it.
     #[test]
     fn ir2_map_write_update_proves() {
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
         let w = tree
             .update_witness(HeapLeaf {
                 addr: BabyBear::new(100),
                 value: BabyBear::new(99),
             })
             .expect("key 100 present");
+        // cols (width 19): root8 [0..8), key 8, value 9, new_root8 [10..18), guard 18.
         let desc = EffectVmDescriptor2 {
             name: "ir2-map-write".to_string(),
-            trace_width: 6,
+            trace_width: 19,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(2),
-                new_root: LeanExpr::Var(3),
+                guard: LeanExpr::Var(18),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (10..10 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                 op: MapKind::Write,
             })],
             hash_sites: vec![],
             ranges: vec![],
         };
-        let mut rows = vec![
-            vec![
-                root,
-                BabyBear::new(100),
-                BabyBear::new(99),
-                w.new_root,
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-            ];
-            4
+        let mk = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 19];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[8] = BabyBear::new(100);
+            r[9] = BabyBear::new(99);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&w.new_root);
+            r[18] = guard;
+            r
+        };
+        let rows = vec![
+            mk(BabyBear::ONE),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
         ];
-        rows[0][5] = BabyBear::ONE;
         let proof = prove_vm_descriptor2(
             &desc,
             &rows,
@@ -6177,42 +6191,46 @@ mod tests {
     /// and a later read against the NEW root sees the inserted value.
     #[test]
     fn ir2_map_insert_fresh_proves() {
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
         let w = tree
             .insert_witness(HeapLeaf {
                 addr: BabyBear::new(150),
                 value: BabyBear::new(55),
             })
             .expect("key 150 fresh");
+        // cols (width 19): root8 [0..8), key 8, value 9, new_root8 [10..18), guard 18.
         let desc = EffectVmDescriptor2 {
             name: "ir2-map-insert".to_string(),
-            trace_width: 6,
+            trace_width: 19,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(2),
-                new_root: LeanExpr::Var(3),
+                guard: LeanExpr::Var(18),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (10..10 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                 op: MapKind::Insert,
             })],
             hash_sites: vec![],
             ranges: vec![],
         };
-        let mut rows = vec![
-            vec![
-                root,
-                BabyBear::new(150),
-                BabyBear::new(55),
-                w.new_root,
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-            ];
-            4
+        let mk = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 19];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[8] = BabyBear::new(150);
+            r[9] = BabyBear::new(55);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&w.new_root);
+            r[18] = guard;
+            r
+        };
+        let rows = vec![
+            mk(BabyBear::ONE),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
         ];
-        rows[0][5] = BabyBear::ONE;
         let proof = prove_vm_descriptor2(
             &desc,
             &rows,
@@ -6231,32 +6249,35 @@ mod tests {
         // A chained read against the post-insert root must open to the inserted value.
         let read_desc = EffectVmDescriptor2 {
             name: "ir2-map-insert-readback".to_string(),
-            trace_width: 6,
+            trace_width: 19,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(2),
-                new_root: LeanExpr::Var(3),
+                guard: LeanExpr::Var(18),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(), // read preserves the root
                 op: MapKind::Read,
             })],
             hash_sites: vec![],
             ranges: vec![],
         };
-        let mut read_rows = vec![
-            vec![
-                w.new_root,
-                BabyBear::new(150),
-                BabyBear::new(55),
-                w.new_root,
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-            ];
-            4
+        let mk_read = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 19];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&w.new_root);
+            r[8] = BabyBear::new(150);
+            r[9] = BabyBear::new(55);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&w.new_root);
+            r[18] = guard;
+            r
+        };
+        let read_rows = vec![
+            mk_read(BabyBear::ONE),
+            mk_read(BabyBear::ZERO),
+            mk_read(BabyBear::ZERO),
+            mk_read(BabyBear::ZERO),
         ];
-        read_rows[0][5] = BabyBear::ONE;
         let read_heap: Vec<HeapLeaf> = {
             let mut leaves = test_heap();
             leaves.push(HeapLeaf {
@@ -6279,36 +6300,40 @@ mod tests {
     /// tree has no authenticated gap for it, and the insert-witness builder fails.
     #[test]
     fn ir2_map_insert_present_refuses() {
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
+        // cols (width 19): root8 [0..8), key 8, value 9, new_root8 [10..18), guard 18.
         let desc = EffectVmDescriptor2 {
             name: "ir2-map-insert-present".to_string(),
-            trace_width: 6,
+            trace_width: 19,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(2),
-                new_root: LeanExpr::Var(3),
+                guard: LeanExpr::Var(18),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (10..10 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                 op: MapKind::Insert,
             })],
             hash_sites: vec![],
             ranges: vec![],
         };
-        let mut rows = vec![
-            vec![
-                root,
-                BabyBear::new(100), // key 100 is already present in test_heap
-                BabyBear::new(99),
-                root,
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-            ];
-            4
+        let mk = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 19];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[8] = BabyBear::new(100); // key 100 is already present in test_heap
+            r[9] = BabyBear::new(99);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&root);
+            r[18] = guard;
+            r
+        };
+        let rows = vec![
+            mk(BabyBear::ONE),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
         ];
-        rows[0][5] = BabyBear::ONE;
         assert!(
             prove_vm_descriptor2(
                 &desc,
@@ -7028,19 +7053,19 @@ mod tests {
 
     // ---- the `absent` (bracketed sorted-gap) realization ----
 
-    /// Base layout: col 0 = root, 1 = key, 2 = new_root, 3 = guard.
+    /// Base layout (width 18): root8 [0..8), key 8, new_root8 [9..17) (== root8), guard 17.
     fn absent_desc() -> EffectVmDescriptor2 {
         EffectVmDescriptor2 {
             name: "ir2-absent-test".to_string(),
-            trace_width: 4,
+            trace_width: 18,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(3),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
+                guard: LeanExpr::Var(17),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
                 value: LeanExpr::Const(0),
-                new_root: LeanExpr::Var(2),
+                new_root: (9..9 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                 op: MapKind::Absent,
             })],
             hash_sites: vec![],
@@ -7049,11 +7074,22 @@ mod tests {
     }
 
     fn absent_trace(key: u32) -> Vec<Vec<BabyBear>> {
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
-        let mut rows = vec![vec![root, BabyBear::new(key), root, BabyBear::ZERO]; 4];
-        rows[0][3] = BabyBear::ONE;
-        rows
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
+        let mk = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 18];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[8] = BabyBear::new(key);
+            r[9..9 + CHIP_OUT_LANES].copy_from_slice(&root);
+            r[17] = guard;
+            r
+        };
+        vec![
+            mk(BabyBear::ONE),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+        ]
     }
 
     /// THE NON-MEMBERSHIP GATE: an honest `absent` op (key 150, bracketed by the committed
