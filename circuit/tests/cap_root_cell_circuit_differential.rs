@@ -71,7 +71,7 @@ fn tcell() -> Cell {
 #[test]
 fn a2_empty_clist_cell_equals_circuit_seed() {
     let cell = tcell();
-    let cell_root = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
+    let cell_root = dregg_cell::compute_canonical_capability_root_8(&cell.capabilities);
 
     // Circuit side: the empty-c-list sorted-tree root, and the seed CellState::new uses.
     let circuit_empty = cap_root::empty_capability_root();
@@ -79,15 +79,15 @@ fn a2_empty_clist_cell_equals_circuit_seed() {
 
     assert_eq!(
         cell_root, circuit_empty,
-        "A2: cell empty-c-list root != circuit empty_capability_root() — the openable root is a dark mirror"
+        "A2: cell empty-c-list 8-felt root != circuit empty_capability_root() — the openable root is a dark mirror"
     );
     assert_eq!(
-        cell_root, seeded,
-        "A2: cell empty root != the value CellState::new seeds into the circuit cap_root column"
+        cell_root[0], seeded,
+        "A2: cell empty root lane-0 != the value CellState::new seeds into the legacy circuit cap_root column"
     );
     assert_ne!(
         cell_root,
-        BabyBear::ZERO,
+        [BabyBear::ZERO; 8],
         "A2: the empty root must NOT be ZERO (the pre-Phase-A disjoint seed bug)"
     );
 }
@@ -121,7 +121,7 @@ fn a2_populated_clist_cell_equals_circuit() {
         .grant_full(t3, AuthRequired::Either, Some(bread), None)
         .unwrap();
 
-    let cell_root = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
+    let cell_root = dregg_cell::compute_canonical_capability_root_8(&cell.capabilities);
 
     // INDEPENDENT circuit-side reconstruction of the SAME c-list.
     let leaves = vec![
@@ -151,14 +151,14 @@ fn a2_custom_vk_hash_binds_cell_equals_circuit() {
         .capabilities
         .grant(t, AuthRequired::Custom { vk_hash: vk_a })
         .unwrap();
-    let cell_root_a = dregg_cell::compute_canonical_capability_root_felt(&cell_a.capabilities);
+    let cell_root_a = dregg_cell::compute_canonical_capability_root_8(&cell_a.capabilities);
 
     let mut cell_b = tcell();
     let sb = cell_b
         .capabilities
         .grant(t, AuthRequired::Custom { vk_hash: vk_b })
         .unwrap();
-    let cell_root_b = dregg_cell::compute_canonical_capability_root_felt(&cell_b.capabilities);
+    let cell_root_b = dregg_cell::compute_canonical_capability_root_8(&cell_b.capabilities);
 
     // Circuit-side reconstruction.
     let circ_a = cap_root::compute_capability_root(vec![ref_leaf(
@@ -303,7 +303,7 @@ fn a2_revoke_cell_equals_circuit_tombstone() {
         "the OTHER caps survive the revoke"
     );
 
-    let cell_root = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
+    let cell_root = dregg_cell::compute_canonical_capability_root_8(&cell.capabilities);
 
     // (1) INDEPENDENT circuit tombstone tree: remaining live leaves + s2 tombstone.
     let circuit_tombstone_root = cap_root::compute_capability_root_with_tombstones(
@@ -352,7 +352,7 @@ fn a2_revoke_preserves_survivor_membership() {
     let leaf3 = ref_leaf(s3, &t3, &AuthRequired::Either, None, None, None);
 
     assert!(cell.capabilities.revoke(s2));
-    let cell_root = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
+    let cell_root = dregg_cell::compute_canonical_capability_root_8(&cell.capabilities);
 
     // The post-revoke tombstone tree (survivors + s2 ghost).
     let tomb_tree = cap_root::CanonicalCapTree::new_with_tombstones(
@@ -393,6 +393,7 @@ fn a2_with_capability_root_round_trips_into_commitment() {
     let mut cell = tcell();
     let t = CellId::derive_raw(&[4u8; 32], &[4u8; 32]);
     cell.capabilities.grant(t, AuthRequired::Signature).unwrap();
+    // The legacy v1 CellState carries the LANE-0 cap-root felt (the scalar column).
     let real_root = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
 
     let seeded = dregg_circuit::CellState::with_capability_root(100_000, 0, real_root);

@@ -262,7 +262,7 @@ theorem lightclient_unfoolable_grounded_live
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
-    {Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State}
+    {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)

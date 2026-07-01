@@ -28,9 +28,9 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::columns::sel;
 use dregg_circuit::effect_vm::trace_rotated::{
-    CAP_OPEN_BASE, CAP_OPEN_WIDTH, CapOpenWitness, FACET_MASK_HI, RotatedBlockWitness,
-    SIGNATURE_AUTH_TAG, WRITE_MASK_LO, empty_caveat_manifest, generate_rotated_effect_vm_trace,
-    patch_attenuate_base_for_cap_open, widen_to_cap_open,
+    CAP_OPEN_AFTER_SPINE_SPAN, CAP_OPEN_BASE, CAP_OPEN_WIDTH, CapOpenWitness, FACET_MASK_HI,
+    RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO, empty_caveat_manifest,
+    generate_rotated_effect_vm_trace, patch_attenuate_base_for_cap_open, widen_to_cap_open,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
@@ -175,7 +175,15 @@ fn cap_open_witness() -> CapOpenWitness {
 #[test]
 fn cap_open_witness_and_appendix_are_genuine() {
     let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_KEY)).expect("cap-open descriptor parses");
-    assert_eq!(desc.trace_width, CAP_OPEN_WIDTH, "cap-open width");
+    // attenuate is a cap-WRITE descriptor (`effCapOpenWriteV3`): the 329 read appendix PLUS the 143
+    // after-spine recompute that forces the faithful 8-felt cap-write (`*_forces_write8`). This
+    // structural test exercises the READ appendix at `[CAP_OPEN_BASE, +329)`; the after-spine sits past
+    // it (the full cap-write trace fill is the SDK-covered handoff `cap_open_attenuate_self_verifies`).
+    assert_eq!(
+        desc.trace_width,
+        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN,
+        "cap-open WRITE width = read appendix (CAP_OPEN_WIDTH) + after-spine"
+    );
     assert_eq!(
         desc.public_input_count, 46,
         "cap-open carries the rotated 46 PIs"
@@ -211,16 +219,21 @@ fn cap_open_witness_and_appendix_are_genuine() {
     );
 
     widen_to_cap_open(&mut trace, &w).expect("widen to cap-open");
-    assert_eq!(trace[0].len(), CAP_OPEN_WIDTH, "370-col cap-open trace");
+    assert_eq!(trace[0].len(), CAP_OPEN_WIDTH, "cap-open trace width");
     assert_eq!(trace[0][CAP_OPEN_BASE + 3], BabyBear::new(WRITE_MASK_LO));
-    assert_eq!(trace[0][CAP_OPEN_BASE + 56], w.cap_root);
-    assert_eq!(trace[0][CAP_OPEN_BASE + 57], w.src);
-    // The top node column equals the recomposed root (the rootPin gate's witness).
-    assert_eq!(
-        trace[0][CAP_OPEN_BASE + 10 + 3 * 15],
-        w.cap_root,
-        "node[15] (top fold) == cap_root"
-    );
+    // Phase H-CAP-8 native 8-felt layout: cap_root group at +287..294, src at +295.
+    for j in 0..8 {
+        assert_eq!(trace[0][CAP_OPEN_BASE + 287 + j], w.cap_root[j]);
+    }
+    assert_eq!(trace[0][CAP_OPEN_BASE + 295], w.src);
+    // The top node8 group (level 15, at +15+17*15+9 = +279..286) equals the recomposed root group.
+    for j in 0..8 {
+        assert_eq!(
+            trace[0][CAP_OPEN_BASE + 15 + 17 * 15 + 9 + j],
+            w.cap_root[j],
+            "node8[15] (top fold) lane {j} == cap_root"
+        );
+    }
 }
 
 /// END-TO-END self-verify through `prove_vm_descriptor2`.
@@ -270,10 +283,10 @@ fn cap_open_attenuate_self_verifies() {
     {
         let mut t = trace.clone();
         for row in t.iter_mut() {
-            // tamper sibling at level 0 (col base + 8) but keep the chip node columns as-is:
-            // the chip lookup for level 0 now evaluates a tuple whose hash != the node column,
-            // so the auto-gathered chip table no longer matches → the LogUp lookup fails.
-            row[CAP_OPEN_BASE + 8] += BabyBear::ONE;
+            // tamper sibling lane 0 at level 0 (8-felt sib group at base + 15..22) but keep the chip
+            // node columns as-is: the chip lookup for level 0 now evaluates a tuple whose hash != the
+            // node column, so the auto-gathered chip table no longer matches → the LogUp lookup fails.
+            row[CAP_OPEN_BASE + 15] += BabyBear::ONE;
         }
         let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prove_vm_descriptor2(&desc, &t, &pis, &mem_boundary, &map_heaps)
