@@ -75,11 +75,12 @@ namespace Dregg2.Circuit.Emit.CapOpenTurnPins
 open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv VmConstraint)
 open Dregg2.Circuit.DescriptorIR2
-  (VmConstraint2 EffectVmDescriptor2 ChipTableSound Satisfied2 VmTrace envAt)
-open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf MASK_BITS)
+  (VmConstraint2 EffectVmDescriptor2 ChipTableSound ChipTableSoundN Satisfied2 VmTrace envAt)
+open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf MASK_BITS capPermOut groupVal)
 open Dregg2.Circuit.Emit.CapOpenEmit (capOpenCols CAP_OPEN_SPAN effCapOpenV3 effCapOpenV3_authorizes)
-open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme)
+open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme Cap8Scheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme (DeployedFaithfulEff tierOfTag)
+open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (DeployedFaithfulEff8)
 open Dregg2.Authority (Label)
 open Dregg2.Exec.FacetAuthority (AuthProvided FacetCaps authorizedFacetEffB)
 
@@ -280,17 +281,17 @@ true` (the weld fires, anchoring `capOpenCols.src = src`) AND `isLast = false` (
 bite). So a SINGLE active row carries both — the published-src binding and the depth-16 open constrain
 the same `src` column. No cross-row residual: the `≥2-row` fact `hlen` gives the `hiNotLast` the
 membership keystone needs on row `0`. The `hedge`/`htier`/`hfaith` cap-tree-leaf residuals remain. -/
-theorem effCapOpenV3TB_authorizes {State : Type} (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    (hn : n < MASK_BITS) (S : CapHashScheme State) (vkOfTag : ℤ → Nat) (provided : AuthProvided)
+theorem effCapOpenV3TB_authorizes (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hn : n < MASK_BITS) (S8 : Cap8Scheme) (hash : List ℤ → ℤ) (vkOfTag : ℤ → Nat) (provided : AuthProvided)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
-    (hsat : Satisfied2 S.chipAbsorb (effCapOpenV3TB base name n) minit mfin maddrs t)
+    (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
+    (hsat : Satisfied2 hash (effCapOpenV3TB base name n) minit mfin maddrs t)
     -- the FIRST row carries BOTH the membership gates (non-last) AND the turn-identity pin (first);
     -- `hlen` is the genuine ≥2-row shape of a real cap-open trace (depth-16 open + its wrap row).
     (hlen : 2 ≤ t.rows.length)
     (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
-    (hfaith : DeployedFaithfulEff S vkOfTag provided (1 <<< n) caps
-      ((envAt t 0).loc (capOpenCols base.traceWidth).capRoot) leafAt)
+    (hfaith : DeployedFaithfulEff8 S8 vkOfTag provided (1 <<< n) caps
+      (groupVal (envAt t 0) (capOpenCols base.traceWidth).capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hanchor : TurnIdentityAnchored base name n t 0 src actor dst)
     (hedge : leafOf (capOpenCols base.traceWidth) (envAt t 0) = leafAt actor src)
@@ -298,15 +299,15 @@ theorem effCapOpenV3TB_authorizes {State : Type} (base : EffectVmDescriptor2) (n
     authorizedFacetEffB caps provided (1 <<< n)
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) := by
-  have hbase := effCapOpenV3TB_to_base base name n S.chipAbsorb minit mfin maddrs t hsat
+  have hbase := effCapOpenV3TB_to_base base name n hash minit mfin maddrs t hsat
   have hi : 0 < t.rows.length := by omega
   have hiNotLast : (0 : Nat) + 1 ≠ t.rows.length := by omega
   -- the published-src binding on the FIRST row (the `.piBinding .first` weld + the anchor) — the SAME
   -- active row the membership opens, so no cross-row transport is needed.
   have hsrc : (envAt t 0).loc (capOpenCols base.traceWidth).src = (src : ℤ) :=
-    effCapOpenV3TB_hsrc base name n S.chipAbsorb minit mfin maddrs t hsat 0 hi rfl src actor dst hanchor
+    effCapOpenV3TB_hsrc base name n hash minit mfin maddrs t hsat 0 hi rfl src actor dst hanchor
   -- the membership on the FIRST (active) row FORCES authority for the PUBLISHED `src`.
-  exact effCapOpenV3_authorizes base name n hn S vkOfTag provided minit mfin maddrs t hChip hbase
+  exact effCapOpenV3_authorizes base name n hn S8 hash vkOfTag provided minit mfin maddrs t hChip hbase
     0 hi hiNotLast caps leafAt hfaith actor src dst amt hsrc hedge htier
 
 /-! ## §6 — the NEGATIVE tooth: a mismatched turn-identity PI ⟹ the pin is UNSATISFIABLE.

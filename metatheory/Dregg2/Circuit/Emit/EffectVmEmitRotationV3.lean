@@ -91,6 +91,10 @@ import Dregg2.Circuit.Emit.EffectVmEmitSpawn
 import Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive
 import Dregg2.Circuit.Emit.EffectVmEmitCellUnseal
 import Dregg2.Circuit.Emit.EffectVmEmitEmitEvent
+-- v10 faithful-8-felt cap-root: the native `node8` arity-16 tree (Digest8 root) the cap-write
+-- column GROUP commits. ACYCLIC: DeployedCapTree's emit chain bottoms out at EffectVmEmitCapRoot →
+-- EffectVmEmit, never reaching this Rotation layer.
+import Dregg2.Circuit.DeployedCapTree
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 
@@ -105,6 +109,10 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Crypto
 open Dregg2.Substrate.Heap (refSponge)
+-- v10 faithful-8-felt cap-root: the native `node8` tree carrier + recompose spine.
+open Dregg2.Circuit.DeployedCapTree (Digest8 Cap8Scheme CapLeaf)
+open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (recomposeUp8 capLeafDigest8 recomposeUp8_inj_of_path)
+open Dregg2.Circuit.CapMerkleGeneric (StepG)
 
 set_option linter.unusedVariables false
 set_option autoImplicit false
@@ -1160,6 +1168,58 @@ def beforeCapRootCol (w : Nat) : Nat := w + B_CAP_ROOT
 /-- The rotated AFTER-block `cap_root` limb column (limb 25 of the after block at `base = w + 91`). The
 deployed cap accumulator's POST root — the write-gate's `newRoot`, witness-carried (no v1-state continuity). -/
 def afterCapRootCol (w : Nat) : Nat := w + 91 + B_CAP_ROOT
+
+/-! ### v10 — the FAITHFUL 8-felt cap-root column GROUP + the native-`node8` write relation `writesTo8`.
+
+The scalar `writesTo` on the lane-0 cap-root limb (`beforeCapRootCol`/`afterCapRootCol`, limb 25) is only
+the ~31-bit lane-0 PROJECTION of the deployed 8-felt cap root. v10 commits the FULL 8-felt root: limb 25
+(lane 0) ‖ the seven completion limbs 51..57 (lanes 1..7) — both blocks — absorbed into the wide state
+commit. The GROUP readers below pin those eight columns to a `Digest8`; `writesTo8` is the native
+arity-16 `node8` UPDATE-AT-KEY over the FULL 8-felt root (`recomposeUp8`, ~124-bit), NEVER a lane-0
+squeeze (the soundness downgrade the GENTIAN tooth closes). The anti-forge tooth is the recompose
+injectivity (`recomposeUp8_inj_of_path`): a forged high-felt post-root forces a different post-leaf. -/
+
+/-- The cap-root 8-felt column at lane `i` in the block based at `blockBase` (limb `B_CAP_ROOT` = 25 for
+lane 0; the seven completion limbs 51..57 for lanes 1..7). `blockBase = w` (BEFORE) / `w + 91` (AFTER). -/
+def capRootGroupCol (blockBase : Nat) (i : Fin 8) : Nat :=
+  blockBase + (if i = 0 then B_CAP_ROOT else 50 + (i : Nat))
+
+/-- The BEFORE-block 8-felt cap-root digest read off the row env (lane 0 = `beforeCapRootCol`). -/
+def beforeCapRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (capRootGroupCol EFFECT_VM_WIDTH i)
+
+/-- The AFTER-block 8-felt cap-root digest read off the row env (lane 0 = `afterCapRootCol`). -/
+def afterCapRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (capRootGroupCol (EFFECT_VM_WIDTH + 91) i)
+
+/-- Lane 0 of the BEFORE group IS the existing scalar cap-root limb (the projection the scalar `writesTo`
+forces) — so the 8-felt relation REFINES the lane-0 write rather than replacing it. -/
+theorem beforeCapRootCols_lane0 (env : VmRowEnv) :
+    beforeCapRootCols env 0 = env.loc (beforeCapRootCol EFFECT_VM_WIDTH) := by
+  simp [beforeCapRootCols, capRootGroupCol, beforeCapRootCol]
+
+/-- Lane 0 of the AFTER group IS the existing scalar post cap-root limb. -/
+theorem afterCapRootCols_lane0 (env : VmRowEnv) :
+    afterCapRootCols env 0 = env.loc (afterCapRootCol EFFECT_VM_WIDTH) := by
+  simp [afterCapRootCols, capRootGroupCol, afterCapRootCol]
+
+/-- **`writesTo8 S8 oldRoot k v newRoot`** — the native-`node8` cap-tree UPDATE-AT-KEY over the FULL
+8-felt root: some sibling/direction `path` recomposes `oldRoot` from a leaf keyed `k`, and recomposes
+`newRoot` from the in-place-narrowed leaf (same key `k`, rights felt `v`) along the SAME path. The
+faithful 8-felt twin of the scalar `writesTo` (which is the lane-0 projection); the `(k,v) ↔ CapLeaf`
+other-field encoding is the named faithful-encoding residual the cap-family consumers carry. -/
+def writesTo8 (S8 : Cap8Scheme) (oldRoot : Digest8) (k v : ℤ) (newRoot : Digest8) : Prop :=
+  ∃ (oldLeaf newLeaf : CapLeaf) (path : List (StepG Digest8)),
+    oldLeaf.slot_hash = k ∧ newLeaf.slot_hash = k ∧ newLeaf.mask_lo = v ∧
+    recomposeUp8 S8 (capLeafDigest8 S8 oldLeaf) path = oldRoot ∧
+    recomposeUp8 S8 (capLeafDigest8 S8 newLeaf) path = newRoot
+
+/-- **The 8-felt anti-forge tooth.** Along a FIXED sibling path the post-root pins the post-leaf digest
+(`recomposeUp8` injective at the full ~124-bit width). A forged `newRoot` cannot be reached with the
+genuine post-leaf along the genuine path — the GENTIAN close at full width, NOT lane-0. -/
+theorem writesTo8_forces_postleaf (S8 : Cap8Scheme) (path : List (StepG Digest8))
+    {a b : Digest8} (h : recomposeUp8 S8 a path = recomposeUp8 S8 b path) : a = b :=
+  recomposeUp8_inj_of_path S8 path h
 
 /-- The held-capability MEMBERSHIP read on the ROTATED before-block cap-root limb (limb 25). The before
 `cap_root` (rotated limb) opens at `param[CAP_KEY]` to `param[HELD_MASK]` (root unchanged — a read). The

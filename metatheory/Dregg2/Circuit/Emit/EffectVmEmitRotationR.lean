@@ -243,7 +243,7 @@ permutation `permW (acc ++ c)` exposing 8 output lanes (`acc : List ℤ`, length
 intermediate carrier is 8 felts — there is NO 31-bit intermediate (the anti-laundering crux; a
 1-felt-chain-with-wide-final-squeeze is the forbidden laundered version). The Rust twin is
 `poseidon2::wire_commit_8` over `single_perm_compress`; the in-circuit faithfulness floor is the
-wide chip lever `chip_lookup_sound_N` (the `permW`-parametric wide squeeze, CHIP_RATE = 11 ≥ the
+wide chip lever `chip_lookup_sound_N` (the `permW`-parametric wide squeeze, CHIP_RATE = 16 ≥ the
 11 inputs of a carrier‖3-limb step).
 
 The wide floor `Poseidon2WideCR permW` is the EXACT analogue of `Poseidon2SpongeCR`: the wide

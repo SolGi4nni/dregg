@@ -144,7 +144,7 @@ fn assert_cell_planes_agree(cell: &Cell) {
     assert_eq!(b.heap_root, cell.state.heap_root, "derived heap_root");
     assert_eq!(
         b.cap_root,
-        dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities),
+        dregg_cell::compute_canonical_capability_root_8(&cell.capabilities),
         "derived cap_root (the EffectVM cap_root column)"
     );
 }

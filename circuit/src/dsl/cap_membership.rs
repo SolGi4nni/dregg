@@ -267,7 +267,7 @@ pub fn verify_cap_membership_p3(
 mod tests {
     use super::*;
     use crate::cap_root::{
-        CanonicalCapTree, CapLeaf, encode_breadstuff, encode_expiry, fold_bytes32, slot_hash,
+        CapLeaf, cap_node, encode_breadstuff, encode_expiry, fold_bytes32, slot_hash,
         split_effect_mask,
     };
 
@@ -286,31 +286,42 @@ mod tests {
         }
     }
 
-    /// Build a real canonical tree + an honest membership witness for one leaf.
-    fn real_tree_witness() -> (CanonicalCapTree, CapLeaf, Vec<BabyBear>, Vec<u8>) {
+    /// Build an honest 1-felt membership witness self-consistent with the DSL AIR's
+    /// own `cap_node` fold (the standalone 1-felt demonstration scheme — distinct
+    /// from the deployed faithful 8-felt `cap_node8` cap tree). The leaf digest is
+    /// the lane-0 projection of a genuine `CapLeaf`'s 8-felt digest; the siblings are
+    /// deterministic felts; the returned root is the `cap_node`-folded path top.
+    fn real_tree_witness() -> (BabyBear, CapLeaf, Vec<BabyBear>, Vec<u8>) {
         let target = leaf(1, 9, 1, 0x0000_00FF);
-        let leaves = vec![leaf(0, 1, 1, 0x1), target, leaf(2, 3, 2, 0xFFFF_FFFF)];
-        let tree = CanonicalCapTree::new(leaves, CAP_TREE_DEPTH);
-        let pos = tree.position_of(target.slot_hash).expect("leaf present");
-        let (siblings, directions) = tree.prove_membership(pos).expect("path");
-        (tree, target, siblings, directions)
+        let leaf_digest = target.digest()[0];
+        let mut siblings = Vec::with_capacity(CAP_TREE_DEPTH);
+        let mut directions = Vec::with_capacity(CAP_TREE_DEPTH);
+        let mut cur = leaf_digest;
+        for level in 0..CAP_TREE_DEPTH {
+            let sib = BabyBear::new(0x1357 + level as u32);
+            let dir = (level % 2) as u8;
+            cur = if dir == 0 {
+                cap_node(cur, sib)
+            } else {
+                cap_node(sib, cur)
+            };
+            siblings.push(sib);
+            directions.push(dir);
+        }
+        (cur, target, siblings, directions)
     }
 
-    /// CONTROL: an honest membership witness over the REAL canonical tree
-    /// proves + verifies through the audited p3 verifier, and the published
-    /// root equals the tree's root.
+    /// CONTROL: an honest membership witness proves + verifies through the audited
+    /// p3 verifier, and the published root equals the `cap_node`-folded path top.
     #[test]
     fn honest_cap_membership_round_trips_through_p3() {
-        let (tree, target, siblings, directions) = real_tree_witness();
-        let (proof, pis) = prove_cap_membership_p3(target.digest(), &siblings, &directions)
+        let (root, target, siblings, directions) = real_tree_witness();
+        let leaf_digest = target.digest()[0];
+        let (proof, pis) = prove_cap_membership_p3(leaf_digest, &siblings, &directions)
             .expect("honest cap membership must prove+verify through audited p3");
-        assert_eq!(pis[pi::LEAF_DIGEST], target.digest());
-        assert_eq!(
-            pis[pi::CAP_ROOT],
-            tree.root(),
-            "published root IS the canonical root"
-        );
-        verify_cap_membership_p3(&proof, target.digest(), tree.root())
+        assert_eq!(pis[pi::LEAF_DIGEST], leaf_digest);
+        assert_eq!(pis[pi::CAP_ROOT], root, "published root IS the folded root");
+        verify_cap_membership_p3(&proof, leaf_digest, root)
             .expect("audited p3 verify accepts the honest membership");
     }
 
@@ -318,12 +329,13 @@ mod tests {
     /// is REJECTED — the last-row boundary pins the genuine path top.
     #[test]
     fn forged_root_is_rejected() {
-        let (tree, target, siblings, directions) = real_tree_witness();
+        let (root, target, siblings, directions) = real_tree_witness();
+        let leaf_digest = target.digest()[0];
         let (proof, _) =
-            prove_cap_membership_p3(target.digest(), &siblings, &directions).expect("honest");
-        let forged_root = tree.root() + BabyBear::new(1);
+            prove_cap_membership_p3(leaf_digest, &siblings, &directions).expect("honest");
+        let forged_root = root + BabyBear::new(1);
         assert!(
-            verify_cap_membership_p3(&proof, target.digest(), forged_root).is_err(),
+            verify_cap_membership_p3(&proof, leaf_digest, forged_root).is_err(),
             "SOUNDNESS: a forged cap_root MUST be rejected by the audited p3 verifier"
         );
     }
@@ -332,17 +344,18 @@ mod tests {
     /// digest is REJECTED — the row-0 boundary pins the genuine leaf.
     #[test]
     fn forged_leaf_is_rejected() {
-        let (tree, target, siblings, directions) = real_tree_witness();
+        let (root, target, siblings, directions) = real_tree_witness();
+        let leaf_digest = target.digest()[0];
         let (proof, _) =
-            prove_cap_membership_p3(target.digest(), &siblings, &directions).expect("honest");
+            prove_cap_membership_p3(leaf_digest, &siblings, &directions).expect("honest");
         // An "inflated mask" tamper: same leaf but EFFECT_ALL rights.
         let mut inflated = target;
         let (lo, hi) = split_effect_mask(0xFFFF_FFFF);
         inflated.mask_lo = lo;
         inflated.mask_hi = hi;
-        assert_ne!(inflated.digest(), target.digest());
+        assert_ne!(inflated.digest()[0], leaf_digest);
         assert!(
-            verify_cap_membership_p3(&proof, inflated.digest(), tree.root()).is_err(),
+            verify_cap_membership_p3(&proof, inflated.digest()[0], root).is_err(),
             "SOUNDNESS: an inflated-mask leaf digest MUST be rejected"
         );
     }
@@ -351,17 +364,18 @@ mod tests {
     /// NOT the canonical root, so the proof cannot verify against it.
     #[test]
     fn tampered_path_does_not_reach_canonical_root() {
-        let (tree, target, mut siblings, directions) = real_tree_witness();
+        let (root, target, mut siblings, directions) = real_tree_witness();
+        let leaf_digest = target.digest()[0];
         siblings[3] = siblings[3] + BabyBear::new(1);
-        let (proof, pis) = prove_cap_membership_p3(target.digest(), &siblings, &directions)
+        let (proof, pis) = prove_cap_membership_p3(leaf_digest, &siblings, &directions)
             .expect("the tampered path still proves membership in SOME tree");
         assert_ne!(
             pis[pi::CAP_ROOT],
-            tree.root(),
+            root,
             "tampered path tops a different root"
         );
         assert!(
-            verify_cap_membership_p3(&proof, target.digest(), tree.root()).is_err(),
+            verify_cap_membership_p3(&proof, leaf_digest, root).is_err(),
             "SOUNDNESS: a path that does not reach the canonical root MUST be rejected"
         );
     }
@@ -371,13 +385,13 @@ mod tests {
     #[test]
     fn malformed_witness_is_refused() {
         let (_, target, siblings, mut directions) = real_tree_witness();
+        let leaf_digest = target.digest()[0];
         // Wrong length.
         assert!(
-            generate_cap_membership_trace(target.digest(), &siblings[..4], &directions[..4])
-                .is_err()
+            generate_cap_membership_trace(leaf_digest, &siblings[..4], &directions[..4]).is_err()
         );
         // Non-binary direction bit.
         directions[0] = 2;
-        assert!(generate_cap_membership_trace(target.digest(), &siblings, &directions).is_err());
+        assert!(generate_cap_membership_trace(leaf_digest, &siblings, &directions).is_err());
     }
 }

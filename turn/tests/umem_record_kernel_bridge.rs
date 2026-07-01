@@ -88,7 +88,7 @@ fn record_kernel_boundary_agrees_over_all_planes() {
     );
     assert_eq!(
         boundary.cap_root,
-        dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities),
+        dregg_cell::compute_canonical_capability_root_8(&cell.capabilities),
         "derived cap_root == canonical capability root felt (the EffectVM cap_root column)"
     );
 }
@@ -105,7 +105,7 @@ fn record_kernel_boundary_agrees_for_empty_cell() {
     assert_eq!(boundary.heap_root, cell.state.heap_root);
     assert_eq!(
         boundary.cap_root,
-        dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities)
+        dregg_cell::compute_canonical_capability_root_8(&cell.capabilities)
     );
 }
 
@@ -190,12 +190,12 @@ fn record_kernel_boundary_agrees_over_revoked_cell() {
     cell.capabilities.grant(t0, AuthRequired::None).unwrap();
     let slot1 = cell.capabilities.grant(t1, AuthRequired::None).unwrap();
     cell.capabilities.grant(t2, AuthRequired::None).unwrap();
-    let root_before_revoke = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
+    let root_before_revoke = dregg_cell::compute_canonical_capability_root_8(&cell.capabilities);
     assert!(
         cell.capabilities.revoke(slot1),
         "the slot was live and is revoked"
     );
-    let committed = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
+    let committed = dregg_cell::compute_canonical_capability_root_8(&cell.capabilities);
 
     // NON-VACUITY (the revoke MOVED cap_root): the ghost leaf changes the root.
     assert_ne!(

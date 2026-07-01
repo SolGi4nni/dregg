@@ -127,6 +127,34 @@ pub fn cap_node(l: BabyBear, r: BabyBear) -> BabyBear {
     cap_chip_absorb(&[BabyBear::new(CAP_FACT_MARK), l, r])
 }
 
+/// The number of felts in a native cap-tree digest (Phase H-CAP-8: the cap tree is
+/// 8-felt, faithful to the FRI ~124-bit soundness floor, no longer the lossy 1-felt
+/// `cap_node`). A leaf / node / root is `[BabyBear; CAP_DIGEST_W]`.
+pub const CAP_DIGEST_W: usize = 8;
+
+/// The all-zero 8-felt digest — the PADDING / empty-leaf marker (the 8-felt twin of the
+/// `BabyBear::ZERO` the 1-felt tree padded with). `EMPTY_SUBTREE_ROOTS[0]` and every
+/// tombstone-ghost digest is this.
+pub const CAP_ZERO8: [BabyBear; CAP_DIGEST_W] = [BabyBear::ZERO; CAP_DIGEST_W];
+
+/// **`cap_node8`** — the native 8-felt cap-tree internal node: the arity-16 `node8` chip
+/// compression `perm(L8 ‖ R8)[0..8]` (`descriptor_ir2::chip_absorb_all_lanes` at
+/// `CHIP_NODE8_ARITY = 16`). Replaces the lossy 1-felt `cap_node` for the canonical cap tree;
+/// EQUALITY-binds all 8 output lanes to both 8-felt children, so the per-node collision floor is
+/// full 8-felt width (~124-bit), matching the deployed FRI/STARK soundness.
+///
+/// PUBLIC so the cap-open trace scaffold (`effect_vm::trace_rotated`) fills its per-level
+/// `cur8/sib8/node8` columns from the SAME compression the cap-tree commits.
+pub fn cap_node8(
+    l: [BabyBear; CAP_DIGEST_W],
+    r: [BabyBear; CAP_DIGEST_W],
+) -> [BabyBear; CAP_DIGEST_W] {
+    let mut ins = [BabyBear::ZERO; 16];
+    ins[..CAP_DIGEST_W].copy_from_slice(&l);
+    ins[CAP_DIGEST_W..].copy_from_slice(&r);
+    crate::descriptor_ir2::chip_absorb_all_lanes(crate::descriptor_ir2::CHIP_NODE8_ARITY, &ins)
+}
+
 /// Tree depth for the canonical capability tree. A binary tree of depth 16
 /// holds `2^16 - 2 = 65534` capabilities (two positions reserved for the
 /// MIN/MAX sentinels). Chosen large enough that a c-list never re-rotates
@@ -136,25 +164,26 @@ pub const CAP_TREE_DEPTH: usize = 16;
 /// The precomputed **empty-subtree roots** for the canonical capability tree at
 /// every level `0..=CAP_TREE_DEPTH`. `EMPTY_SUBTREE_ROOTS[0]` is the empty-leaf
 /// digest (`BabyBear::ZERO`, the padding marker [`CanonicalCapTree::new`] uses);
-/// `EMPTY_SUBTREE_ROOTS[k]` is `cap_node(empty[k-1], empty[k-1])` — the root a
+/// `EMPTY_SUBTREE_ROOTS[k]` is `cap_node8(empty[k-1], empty[k-1])` — the root a
 /// node whose entire subtree is padding folds to.
 ///
 /// These are the values the DENSE build placed at any node covering only
 /// padding positions. The sparse fold reads them in place of folding 65k zeros,
 /// and a membership path whose sibling subtree is all-padding reports the same
 /// constant the dense build would — so roots and witnesses stay byte-identical.
-static EMPTY_SUBTREE_ROOTS: LazyLock<[BabyBear; CAP_TREE_DEPTH + 1]> = LazyLock::new(|| {
-    let mut roots = [BabyBear::ZERO; CAP_TREE_DEPTH + 1];
-    for level in 1..=CAP_TREE_DEPTH {
-        roots[level] = cap_node(roots[level - 1], roots[level - 1]);
-    }
-    roots
-});
+static EMPTY_SUBTREE_ROOTS: LazyLock<[[BabyBear; CAP_DIGEST_W]; CAP_TREE_DEPTH + 1]> =
+    LazyLock::new(|| {
+        let mut roots = [CAP_ZERO8; CAP_TREE_DEPTH + 1];
+        for level in 1..=CAP_TREE_DEPTH {
+            roots[level] = cap_node8(roots[level - 1], roots[level - 1]);
+        }
+        roots
+    });
 
 /// The empty-subtree root at `level` (`0` = the ZERO leaf digest, `depth` = the
 /// root of an all-padding tree). Used both by the sparse fold and by
 /// `prove_membership` to report all-padding siblings.
-fn cap_empty_subtree_root(level: usize) -> BabyBear {
+fn cap_empty_subtree_root(level: usize) -> [BabyBear; CAP_DIGEST_W] {
     EMPTY_SUBTREE_ROOTS[level]
 }
 
@@ -194,20 +223,24 @@ impl CapLeaf {
     /// The 7-field Poseidon2 leaf digest, in canonical field order. This is the
     /// value the sorted Merkle tree stores at the leaf position; the leaf is
     /// *placed* by its `slot_hash` ordering.
-    pub fn digest(&self) -> BabyBear {
-        // The SINGLE rate-8 chip absorb of the 7 fields (arity 7), byte-identical to
-        // the IR-v2 Poseidon2 chip's BUS_P2 leaf absorb and the Lean `capLeafDigest`
-        // (= `sponge ∘ leafFields`). Replaces the deployed rate-4 two-permute
-        // `hash_many` — one in-circuit hash, so the chip realizes the cap-leaf as one row.
-        cap_chip_absorb(&[
-            self.slot_hash,
-            self.target,
-            self.auth_tag,
-            self.mask_lo,
-            self.mask_hi,
-            self.expiry,
-            self.breadstuff,
-        ])
+    pub fn digest(&self) -> [BabyBear; CAP_DIGEST_W] {
+        // The SINGLE rate-8 chip absorb of the 7 fields (arity 7), squeezing ALL 8 output
+        // lanes (Phase H-CAP-8: native 8-felt leaf digest), byte-identical to the IR-v2
+        // Poseidon2 chip's BUS_P2 leaf absorb and the Lean `capLeafDigest8` (= the 8 lanes
+        // of `sponge ∘ leafFields`). One in-circuit hash, so the chip realizes the cap-leaf
+        // as one row; the 8-felt squeeze is faithful to the FRI ~124-bit floor.
+        crate::descriptor_ir2::chip_absorb_all_lanes(
+            7,
+            &[
+                self.slot_hash,
+                self.target,
+                self.auth_tag,
+                self.mask_lo,
+                self.mask_hi,
+                self.expiry,
+                self.breadstuff,
+            ],
+        )
     }
 }
 
@@ -287,7 +320,7 @@ pub struct CanonicalCapTree {
     /// contiguous prefix — this prefix is all the dense build ever computed to a
     /// non-empty value. `node(level, idx)` reconstructs any position byte-
     /// identically to the old dense `levels[level][idx]`.
-    levels: Vec<Vec<BabyBear>>,
+    levels: Vec<Vec<[BabyBear; CAP_DIGEST_W]>>,
     /// The leaves in sorted-by-`slot_hash` order, including sentinels (before
     /// padding). Retained for Phase-B membership / non-membership witnessing.
     sorted_leaves: Vec<CapLeaf>,
@@ -357,7 +390,7 @@ impl CanonicalCapTree {
             leaves.iter().map(|l| l.slot_hash.as_u32()).collect();
         // (leaf, digest) pairs: live leaves carry their real digest; ghosts
         // carry ZERO. `sorted_leaves` stores the leaf, `levels[0]` the digest.
-        let mut keyed: Vec<(CapLeaf, BabyBear)> =
+        let mut keyed: Vec<(CapLeaf, [BabyBear; CAP_DIGEST_W])> =
             leaves.into_iter().map(|l| (l, l.digest())).collect();
         let mut seen_tomb: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for &k in tombstone_keys {
@@ -366,7 +399,7 @@ impl CanonicalCapTree {
                 continue;
             }
             // Ghost: keyed at `k`, all other fields zero, stored digest ZERO.
-            keyed.push((sentinel_leaf(k), BabyBear::ZERO));
+            keyed.push((sentinel_leaf(k), CAP_ZERO8));
         }
         // Re-sort by key so the ghost positions interleave with the live leaves
         // exactly where their `slot_hash` orders (positions do not shift).
@@ -387,7 +420,7 @@ impl CanonicalCapTree {
         // ZERO padding leaf the dense build `resize`d in. We never materialize
         // those zeros — the sparse fold folds only this prefix against the
         // precomputed empty-subtree roots.
-        let leaf_digests: Vec<BabyBear> = keyed.iter().map(|(_, d)| *d).collect();
+        let leaf_digests: Vec<[BabyBear; CAP_DIGEST_W]> = keyed.iter().map(|(_, d)| *d).collect();
         debug_assert!(leaf_digests.len() <= capacity);
 
         // Fold ONLY the non-empty prefix at each level. A parent at index `i`
@@ -398,7 +431,7 @@ impl CanonicalCapTree {
         // children form a `0..prev_len` prefix, so the non-empty parents form a
         // `0..ceil(prev_len/2)` prefix. This is O(n·depth) node hashes for `n`
         // real leaves, not the dense `2^depth - 1`.
-        let mut levels: Vec<Vec<BabyBear>> = Vec::with_capacity(depth + 1);
+        let mut levels: Vec<Vec<[BabyBear; CAP_DIGEST_W]>> = Vec::with_capacity(depth + 1);
         levels.push(leaf_digests);
         for level in 0..depth {
             let prev = levels.last().unwrap();
@@ -413,7 +446,7 @@ impl CanonicalCapTree {
                     .get(2 * i + 1)
                     .copied()
                     .unwrap_or_else(|| cap_empty_subtree_root(level));
-                next_level.push(cap_node(l, r));
+                next_level.push(cap_node8(l, r));
             }
             levels.push(next_level);
         }
@@ -428,7 +461,7 @@ impl CanonicalCapTree {
     /// The value at `(level, idx)`, reconstructing the dense node byte-
     /// identically: the stored prefix value if `idx` is within it, else the
     /// precomputed empty-subtree root for `level` (an all-padding node).
-    fn node(&self, level: usize, idx: usize) -> BabyBear {
+    fn node(&self, level: usize, idx: usize) -> [BabyBear; CAP_DIGEST_W] {
         self.levels[level]
             .get(idx)
             .copied()
@@ -438,7 +471,7 @@ impl CanonicalCapTree {
     /// The Merkle root. `levels[depth]` always holds exactly the single root
     /// node (the prefix length at the top is `ceil(n / 2^depth) == 1` for any
     /// `2 <= n <= 2^depth`, since the two sentinels are always present).
-    pub fn root(&self) -> BabyBear {
+    pub fn root(&self) -> [BabyBear; CAP_DIGEST_W] {
         self.node(self.depth, 0)
     }
 
@@ -461,7 +494,7 @@ impl CanonicalCapTree {
                 l.slot_hash != SENTINEL_MIN
                     && l.slot_hash != SENTINEL_MAX
                     // A ghost (tombstone) position carries a ZERO leaf digest.
-                    && self.node(0, *i) != BabyBear::ZERO
+                    && self.node(0, *i) != CAP_ZERO8
             })
             .count()
     }
@@ -476,7 +509,7 @@ impl CanonicalCapTree {
     /// at index `>= levels[k].len()` is the all-padding [`cap_empty_subtree_root`]`(k)`.
     /// `levels[0]` is the real (unpadded) leaf-digest prefix; `levels[depth]` is
     /// `[root]`. Exposed for Phase-B membership witnessing.
-    pub fn levels(&self) -> &[Vec<BabyBear>] {
+    pub fn levels(&self) -> &[Vec<[BabyBear; CAP_DIGEST_W]>] {
         &self.levels
     }
 
@@ -492,7 +525,10 @@ impl CanonicalCapTree {
     /// position: `(siblings, directions)` where `directions[i] == 0` if the
     /// current node is the LEFT child at level `i` (sibling on the right), `1`
     /// otherwise. Mirrors [`crate::dsl::revocation::DslRevocationTree::prove_membership`].
-    pub fn prove_membership(&self, position: usize) -> Option<(Vec<BabyBear>, Vec<u8>)> {
+    pub fn prove_membership(
+        &self,
+        position: usize,
+    ) -> Option<(Vec<[BabyBear; CAP_DIGEST_W]>, Vec<u8>)> {
         let capacity = 1usize << self.depth;
         if position >= capacity {
             return None;
@@ -528,13 +564,13 @@ pub struct CapAttenuationWitness {
     /// narrowed auth_tag/mask/expiry.
     pub granted: CapLeaf,
     /// Sibling digests along the path from the leaf to the root (bottom-up).
-    pub siblings: Vec<BabyBear>,
+    pub siblings: Vec<[BabyBear; CAP_DIGEST_W]>,
     /// Direction bits along the path (0 = current is left child, 1 = right).
     pub directions: Vec<u8>,
     /// The authenticated old root (= the held leaf's path top).
-    pub old_root: BabyBear,
+    pub old_root: [BabyBear; CAP_DIGEST_W],
     /// The recomputed new root (= the granted leaf's path top, same siblings).
-    pub new_root: BabyBear,
+    pub new_root: [BabyBear; CAP_DIGEST_W],
 }
 
 impl CanonicalCapTree {
@@ -554,9 +590,9 @@ impl CanonicalCapTree {
         for level in 0..self.depth {
             let sib = siblings[level];
             cur = if directions[level] == 0 {
-                cap_node(cur, sib)
+                cap_node8(cur, sib)
             } else {
-                cap_node(sib, cur)
+                cap_node8(sib, cur)
             };
         }
         Some(CapAttenuationWitness {
@@ -593,13 +629,13 @@ impl CanonicalCapTree {
         // Recompute the new root over the SAME siblings with the ZERO padding
         // leaf swapped in at the revoked position (the slot is deleted; the
         // position becomes an empty/padding leaf, digest `BabyBear::ZERO`).
-        let mut cur = BabyBear::ZERO;
+        let mut cur = CAP_ZERO8;
         for level in 0..self.depth {
             let sib = siblings[level];
             cur = if directions[level] == 0 {
-                cap_node(cur, sib)
+                cap_node8(cur, sib)
             } else {
-                cap_node(sib, cur)
+                cap_node8(sib, cur)
             };
         }
         Some(CapAttenuationWitness {
@@ -644,7 +680,7 @@ impl CanonicalCapTree {
 /// Compute the canonical capability root over a set of leaves at the canonical
 /// depth ([`CAP_TREE_DEPTH`]). This is THE function `dregg-cell` calls; the
 /// circuit seeds its `cap_root` column from this same value.
-pub fn compute_capability_root(leaves: Vec<CapLeaf>) -> BabyBear {
+pub fn compute_capability_root(leaves: Vec<CapLeaf>) -> [BabyBear; CAP_DIGEST_W] {
     CanonicalCapTree::new(leaves, CAP_TREE_DEPTH).root()
 }
 
@@ -658,7 +694,7 @@ pub fn compute_capability_root(leaves: Vec<CapLeaf>) -> BabyBear {
 pub fn compute_capability_root_with_tombstones(
     leaves: Vec<CapLeaf>,
     tombstone_keys: &[BabyBear],
-) -> BabyBear {
+) -> [BabyBear; CAP_DIGEST_W] {
     CanonicalCapTree::new_with_tombstones(leaves, tombstone_keys, CAP_TREE_DEPTH).root()
 }
 
@@ -666,7 +702,7 @@ pub fn compute_capability_root_with_tombstones(
 /// This is the value `CellState::new` seeds `cap_root` with, and the value a
 /// fresh cell's `compute_canonical_capability_root` returns. Deterministic and
 /// cell-independent.
-pub fn empty_capability_root() -> BabyBear {
+pub fn empty_capability_root() -> [BabyBear; CAP_DIGEST_W] {
     compute_capability_root(Vec::new())
 }
 
@@ -701,11 +737,11 @@ pub struct CapMembershipWitness {
     /// The opened (genuine, held) leaf — its 7 fields ride the chip absorb.
     pub leaf: CapLeaf,
     /// Sibling digests along the path from the leaf to the root (bottom-up).
-    pub siblings: Vec<BabyBear>,
+    pub siblings: Vec<[BabyBear; CAP_DIGEST_W]>,
     /// Direction bits (0 = current is LEFT child at this level, 1 = right).
     pub directions: Vec<u8>,
     /// The committed cap-tree root the path recomposes to.
-    pub root: BabyBear,
+    pub root: [BabyBear; CAP_DIGEST_W],
 }
 
 /// **`recompose_membership`** — fold the held leaf's digest up the `(sibling,
@@ -716,10 +752,10 @@ pub struct CapMembershipWitness {
 /// the `descriptor_ir2.rs` Merkle-chain AIR computes (lines ~2109-2135), applied to
 /// the 7-field cap leaf rather than the 2-field heap leaf.
 pub fn recompose_membership(
-    leaf_digest: BabyBear,
-    siblings: &[BabyBear],
+    leaf_digest: [BabyBear; CAP_DIGEST_W],
+    siblings: &[[BabyBear; CAP_DIGEST_W]],
     directions: &[u8],
-) -> BabyBear {
+) -> [BabyBear; CAP_DIGEST_W] {
     assert_eq!(
         siblings.len(),
         directions.len(),
@@ -729,9 +765,9 @@ pub fn recompose_membership(
     for level in 0..siblings.len() {
         let sib = siblings[level];
         cur = if directions[level] == 0 {
-            cap_node(cur, sib)
+            cap_node8(cur, sib)
         } else {
-            cap_node(sib, cur)
+            cap_node8(sib, cur)
         };
     }
     cur
@@ -815,8 +851,7 @@ mod tests {
         let b = empty_capability_root();
         assert_eq!(a, b, "empty root is deterministic");
         assert_ne!(
-            a,
-            BabyBear::ZERO,
+            a, CAP_ZERO8,
             "empty root is NOT the ZERO default (the disjoint-seed bug)"
         );
     }
@@ -928,12 +963,12 @@ mod tests {
         // Recompute the in-place tombstone root by hand: fold BabyBear::ZERO up the
         // witnessed path. This is EXACTLY what the witness returns (and what the
         // in-circuit zero-fold gate enforces).
-        let mut cur = BabyBear::ZERO;
+        let mut cur = CAP_ZERO8;
         for level in 0..CAP_TREE_DEPTH {
             cur = if w.directions[level] == 0 {
-                cap_node(cur, w.siblings[level])
+                cap_node8(cur, w.siblings[level])
             } else {
-                cap_node(w.siblings[level], cur)
+                cap_node8(w.siblings[level], cur)
             };
         }
         assert_eq!(
@@ -946,9 +981,9 @@ mod tests {
         let mut hcur = revoked.digest();
         for level in 0..CAP_TREE_DEPTH {
             hcur = if w.directions[level] == 0 {
-                cap_node(hcur, w.siblings[level])
+                cap_node8(hcur, w.siblings[level])
             } else {
-                cap_node(w.siblings[level], hcur)
+                cap_node8(w.siblings[level], hcur)
             };
         }
         assert_eq!(
@@ -1174,7 +1209,7 @@ mod tests {
         leaves: Vec<CapLeaf>,
         tombstone_keys: &[BabyBear],
         depth: usize,
-    ) -> (Vec<CapLeaf>, Vec<Vec<BabyBear>>) {
+    ) -> (Vec<CapLeaf>, Vec<Vec<[BabyBear; CAP_DIGEST_W]>>) {
         let mut leaves = leaves;
         leaves.push(sentinel_leaf(SENTINEL_MIN));
         leaves.push(sentinel_leaf(SENTINEL_MAX));
@@ -1182,7 +1217,7 @@ mod tests {
         leaves.dedup_by_key(|l| l.slot_hash.as_u32());
         let live_keys: std::collections::HashSet<u32> =
             leaves.iter().map(|l| l.slot_hash.as_u32()).collect();
-        let mut keyed: Vec<(CapLeaf, BabyBear)> =
+        let mut keyed: Vec<(CapLeaf, [BabyBear; CAP_DIGEST_W])> =
             leaves.into_iter().map(|l| (l, l.digest())).collect();
         let mut seen_tomb: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for &k in tombstone_keys {
@@ -1190,20 +1225,21 @@ mod tests {
             if live_keys.contains(&ku) || !seen_tomb.insert(ku) {
                 continue;
             }
-            keyed.push((sentinel_leaf(k), BabyBear::ZERO));
+            keyed.push((sentinel_leaf(k), CAP_ZERO8));
         }
         keyed.sort_by_key(|(l, _)| l.slot_hash.as_u32());
         let capacity = 1usize << depth;
         assert!(keyed.len() <= capacity);
         let sorted_leaves: Vec<CapLeaf> = keyed.iter().map(|(l, _)| *l).collect();
-        let mut leaf_digests: Vec<BabyBear> = keyed.iter().map(|(_, d)| *d).collect();
-        leaf_digests.resize(capacity, BabyBear::ZERO);
+        let mut leaf_digests: Vec<[BabyBear; CAP_DIGEST_W]> =
+            keyed.iter().map(|(_, d)| *d).collect();
+        leaf_digests.resize(capacity, CAP_ZERO8);
         let mut levels = vec![leaf_digests];
         for _ in 0..depth {
             let prev = levels.last().unwrap();
             let mut next = Vec::with_capacity(prev.len() / 2);
             for chunk in prev.chunks(2) {
-                next.push(cap_node(chunk[0], chunk[1]));
+                next.push(cap_node8(chunk[0], chunk[1]));
             }
             levels.push(next);
         }

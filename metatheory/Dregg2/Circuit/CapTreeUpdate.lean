@@ -5,9 +5,9 @@
 ## What this file builds (generic, LAW#1-clean — no Rust constraints; over the gadget's interface)
 
 `SortedTreeNonMembership.lean` (the PHASE-D keystone) gives the in-circuit sorted-Merkle moves over the
-COMMITTED KEY SET `keysOf S root` (the leaf `slot_hash` keys the depth-16 binary-Merkle fold commits):
+COMMITTED KEY SET `keysOf S8 root` (the leaf `slot_hash` keys the depth-16 binary-Merkle fold commits):
 
-  * `nonMembership_sound` — a valid gap open ⟹ `k ∉ keysOf S root` (a key is ABSENT);
+  * `nonMembership_sound` — a valid gap open ⟹ `k ∉ keysOf S8 root` (a key is ABSENT);
   * `update_sound` — old root binds `spine` + `k` fresh + new root binds `sortedInsert k spine` ⟹
     `keysOf newRoot = insert k (keysOf oldRoot)` (the INSERT update).
 
@@ -29,7 +29,7 @@ UNCONDITIONALLY, mirroring the gadget's `sortedInsert` lemmas; the root-binding 
 
 ## What this does NOT do (the honest seam — named, carried by the consumers)
 
-These operations move the sorted-tree KEY SET `keysOf S root`. The kernel cap-family specs pin a `Caps`
+These operations move the sorted-tree KEY SET `keysOf S8 root`. The kernel cap-family specs pin a `Caps`
 FUNCTION (`Label → List Cap`) move (`attenuateSlotF`/`grant`/`removeEdgeCaps`/`refreshDelegationsMap`).
 The lift from the committed key-set move to the resulting `Caps`-function equality is the FAITHFUL
 cap-tree↔kernel-caps encoding residual — exactly what `RotatedKernelRefinementAttenuate.capsMove`
@@ -47,7 +47,7 @@ import Dregg2.Circuit.SortedTreeNonMembership
 
 namespace Dregg2.Circuit.CapTreeUpdate
 
-open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme)
+open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme Cap8Scheme Digest8)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme (MembersAt)
 open Dregg2.Circuit.SortedTreeNonMembership
   (keyOf SpineCommits keysOf keysOf_eq_spine sortedInsert mem_sortedInsert sortedInsert_sorted
@@ -69,13 +69,13 @@ tooth); this operation forces only the SET move. -/
 fresh, new root binds `sortedInsert k spine` ⟹ `keysOf newRoot = insert k (keysOf oldRoot)` (the
 committed key set grows by exactly the fresh key, in sorted order). The cap-family insert (delegate /
 introduce / grantCap / spawn-handoff): a new authority edge lands at a fresh slot. -/
-theorem capInsert_sound {State : Type} (S : CapHashScheme State) (oldRoot newRoot k : ℤ)
+theorem capInsert_sound (S8 : Cap8Scheme) (oldRoot newRoot : Digest8) (k : ℤ)
     (spine : List ℤ)
-    (hold : SpineCommits S oldRoot spine)
-    (hfresh : k ∉ keysOf S oldRoot)
-    (hnew : SpineCommits S newRoot (sortedInsert k spine)) :
-    ∀ y, y ∈ keysOf S newRoot ↔ (y = k ∨ y ∈ keysOf S oldRoot) :=
-  update_sound S oldRoot newRoot k spine hold hfresh hnew
+    (hold : SpineCommits S8 oldRoot spine)
+    (hfresh : k ∉ keysOf S8 oldRoot)
+    (hnew : SpineCommits S8 newRoot (sortedInsert k spine)) :
+    ∀ y, y ∈ keysOf S8 newRoot ↔ (y = k ∨ y ∈ keysOf S8 oldRoot) :=
+  update_sound S8 oldRoot newRoot k spine hold hfresh hnew
 
 /-! ## §2 — UPDATE-AT-KEY / NARROW (attenuate / delegateAtten / refresh): preserve the key set, move
 the leaf value.
@@ -83,34 +83,34 @@ the leaf value.
 The update-at-key operation membership-opens an EXISTING key `k` (the present-key witness) and rebinds
 the root at the SAME key spine (the leaf VALUE recomputed with the narrowed rights). The committed KEY
 SET is therefore UNCHANGED — the operation edits a leaf in place, it does not add or remove a key. The
-present-key membership is the input (`k ∈ keysOf S oldRoot`); the new root binding `SpineCommits S
+present-key membership is the input (`k ∈ keysOf S8 oldRoot`); the new root binding `SpineCommits S
 newRoot spine` (the SAME spine) is the recompute output. -/
 
 /-- **`capUpdateAt_sound` — THE UPDATE-AT-KEY OPERATION (FORCED key-set PRESERVATION).** Old root binds
-`spine`, the updated key `k` is PRESENT (`k ∈ keysOf S oldRoot` — the membership-open witness), and the
+`spine`, the updated key `k` is PRESENT (`k ∈ keysOf S8 oldRoot` — the membership-open witness), and the
 NEW root binds the SAME `spine` (the leaf recomputed in place with the narrowed rights). Then the
 committed key set is UNCHANGED (`keysOf newRoot = keysOf oldRoot`). The cap-family narrow (attenuate /
 delegateAtten / refresh): the key stays; the leaf value (rights) moves. The leaf-VALUE move itself is
 the named faithful-encoding residual the consumers carry — this lemma forces the SET preservation. -/
-theorem capUpdateAt_sound {State : Type} (S : CapHashScheme State) (oldRoot newRoot k : ℤ)
+theorem capUpdateAt_sound (S8 : Cap8Scheme) (oldRoot newRoot : Digest8) (k : ℤ)
     (spine : List ℤ)
-    (hold : SpineCommits S oldRoot spine)
-    (hpresent : k ∈ keysOf S oldRoot)
-    (hnew : SpineCommits S newRoot spine) :
-    ∀ y, y ∈ keysOf S newRoot ↔ y ∈ keysOf S oldRoot := by
+    (hold : SpineCommits S8 oldRoot spine)
+    (hpresent : k ∈ keysOf S8 oldRoot)
+    (hnew : SpineCommits S8 newRoot spine) :
+    ∀ y, y ∈ keysOf S8 newRoot ↔ y ∈ keysOf S8 oldRoot := by
   intro y
-  rw [keysOf_eq_spine S newRoot spine hnew, keysOf_eq_spine S oldRoot spine hold]
+  rw [keysOf_eq_spine S8 newRoot spine hnew, keysOf_eq_spine S8 oldRoot spine hold]
 
 /-- **`capUpdateAt_present` — the updated key is STILL present after the in-place narrow.** The key set
 is preserved (`capUpdateAt_sound`), so the narrowed key remains committed (the rights moved, the slot
 did not vanish). -/
-theorem capUpdateAt_present {State : Type} (S : CapHashScheme State) (oldRoot newRoot k : ℤ)
+theorem capUpdateAt_present (S8 : Cap8Scheme) (oldRoot newRoot : Digest8) (k : ℤ)
     (spine : List ℤ)
-    (hold : SpineCommits S oldRoot spine)
-    (hpresent : k ∈ keysOf S oldRoot)
-    (hnew : SpineCommits S newRoot spine) :
-    k ∈ keysOf S newRoot :=
-  (capUpdateAt_sound S oldRoot newRoot k spine hold hpresent hnew k).mpr hpresent
+    (hold : SpineCommits S8 oldRoot spine)
+    (hpresent : k ∈ keysOf S8 oldRoot)
+    (hnew : SpineCommits S8 newRoot spine) :
+    k ∈ keysOf S8 newRoot :=
+  (capUpdateAt_sound S8 oldRoot newRoot k spine hold hpresent hnew k).mpr hpresent
 
 /-! ## §3 — REMOVE (revoke / revokeDelegation / revokeCapability): shrink the key set by exactly the key.
 
@@ -175,29 +175,29 @@ root binds `sortedRemove k spine` (the spine with `k` deleted — the realizing 
 sibling path). Then the committed key set loses EXACTLY `k` (`keysOf newRoot = keysOf oldRoot \ {k}`).
 The cap-family remove (revoke / revokeDelegation / revokeCapability): an authority edge is torn down.
 Non-amplification is vacuous (authority only shrinks). -/
-theorem capRemove_sound {State : Type} (S : CapHashScheme State) (oldRoot newRoot k : ℤ)
+theorem capRemove_sound (S8 : Cap8Scheme) (oldRoot newRoot : Digest8) (k : ℤ)
     (spine : List ℤ)
-    (hold : SpineCommits S oldRoot spine)
-    (hnew : SpineCommits S newRoot (sortedRemove k spine)) :
-    ∀ y, y ∈ keysOf S newRoot ↔ (y ∈ keysOf S oldRoot ∧ y ≠ k) := by
+    (hold : SpineCommits S8 oldRoot spine)
+    (hnew : SpineCommits S8 newRoot (sortedRemove k spine)) :
+    ∀ y, y ∈ keysOf S8 newRoot ↔ (y ∈ keysOf S8 oldRoot ∧ y ≠ k) := by
   intro y
-  rw [keysOf_eq_spine S newRoot _ hnew, keysOf_eq_spine S oldRoot spine hold, mem_sortedRemove]
+  rw [keysOf_eq_spine S8 newRoot _ hnew, keysOf_eq_spine S8 oldRoot spine hold, mem_sortedRemove]
 
 /-- **`capRemove_drops_key`** — corollary: after the remove, the deleted key is ABSENT
-(`k ∉ keysOf S newRoot`). The edge is genuinely gone. -/
-theorem capRemove_drops_key {State : Type} (S : CapHashScheme State) (oldRoot newRoot k : ℤ)
+(`k ∉ keysOf S8 newRoot`). The edge is genuinely gone. -/
+theorem capRemove_drops_key (S8 : Cap8Scheme) (oldRoot newRoot : Digest8) (k : ℤ)
     (spine : List ℤ)
-    (hold : SpineCommits S oldRoot spine)
-    (hnew : SpineCommits S newRoot (sortedRemove k spine)) :
-    k ∉ keysOf S newRoot := by
+    (hold : SpineCommits S8 oldRoot spine)
+    (hnew : SpineCommits S8 newRoot (sortedRemove k spine)) :
+    k ∉ keysOf S8 newRoot := by
   intro hmem
-  exact ((capRemove_sound S oldRoot newRoot k spine hold hnew k).mp hmem).2 rfl
+  exact ((capRemove_sound S8 oldRoot newRoot k spine hold hnew k).mp hmem).2 rfl
 
 /-- **`capRemove_preserves_sorted`** — the new spine the remove commits to is itself sorted (so the
 tree stays a sorted-Merkle tree the next open/insert/remove can ride). -/
-theorem capRemove_preserves_sorted {State : Type} (S : CapHashScheme State) (oldRoot k : ℤ)
+theorem capRemove_preserves_sorted (S8 : Cap8Scheme) (oldRoot : Digest8) (k : ℤ)
     (spine : List ℤ)
-    (hold : SpineCommits S oldRoot spine) :
+    (hold : SpineCommits S8 oldRoot spine) :
     Sorted (sortedRemove k spine) :=
   sortedRemove_sorted k spine hold.sorted
 

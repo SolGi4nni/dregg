@@ -7,7 +7,7 @@ defaultTargets = ["Dregg2", "Metatheory", "Polis"]
 # require if building on a machine without the local checkout.
 [[require]]
 name = "mathlib"
-path = "../../../src/mathlib4"
+path = "/Users/ember/src/mathlib4"
 
 [[lean_lib]]
 name = "Dregg2"

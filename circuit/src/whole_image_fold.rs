@@ -92,42 +92,47 @@ use crate::descriptor_ir2::{
     UMemBoundaryWitness, UMemOpSpec, VmConstraint2, WindowExpr, WindowGateSpec,
 };
 use crate::field::BabyBear;
-use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf, empty_heap_root};
+use crate::heap_root::{
+    CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf, empty_heap_root_8,
+};
 use crate::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
 // ---------------------------------------------------------------------------
 // Column layout (width 5). One row per fold link; the chain rides these columns.
 // ---------------------------------------------------------------------------
 
-/// Pre-root column: the binary-Merkle root the row's insert opens against (the
-/// running fold so far; `root[0]` = the empty root, pinned to PI 0).
-pub const WIF_ROOT: usize = 0;
+/// Pre-root column GROUP: the native 8-felt heap root the row's insert opens against
+/// (the running fold so far; `root[0]` = the empty 8-felt root, pinned to PI group 0).
+/// Phase H-HEAP-8 widened this `1 → 8`.
+pub const WIF_ROOT: usize = 0; // 8-felt group [0..8)
 /// Inserted boundary-cell key (the leaf sort key `addr`).
-pub const WIF_KEY: usize = 1;
+pub const WIF_KEY: usize = WIF_ROOT + HEAP_DIGEST_W; // 8
 /// Inserted boundary-cell value (the leaf payload).
-pub const WIF_VALUE: usize = 2;
-/// Post-root column: the root after this row's sorted insert (the next link's pre-root).
-pub const WIF_NEW_ROOT: usize = 3;
+pub const WIF_VALUE: usize = WIF_KEY + 1; // 9
+/// Post-root column GROUP: the 8-felt root after this row's sorted insert (the next link's
+/// pre-root).
+pub const WIF_NEW_ROOT: usize = WIF_VALUE + 1; // 10 (8-felt group [10..18))
 /// Insert guard: 1 on a real fold link, 0 on a padding row.
-pub const WIF_GUARD: usize = 4;
+pub const WIF_GUARD: usize = WIF_NEW_ROOT + HEAP_DIGEST_W; // 18
 
 /// The fold-chip trace width.
-pub const WIF_WIDTH: usize = 5;
+pub const WIF_WIDTH: usize = WIF_GUARD + 1; // 19
 
-/// PI 0: the empty-heap root (the fold's start — a constant the verifier knows).
+/// PI group 0: the empty-heap 8-felt root (the fold's start — a constant the verifier knows).
+/// Lanes at PI indices `WIF_PI_EMPTY_ROOT .. +8`.
 pub const WIF_PI_EMPTY_ROOT: usize = 0;
-/// PI 1: the published peer root the fold is pinned to (the cross-cell read's
-/// authenticated commitment).
-pub const WIF_PI_PUBLISHED_ROOT: usize = 1;
+/// PI group 1: the published peer 8-felt root the fold is pinned to (the cross-cell read's
+/// authenticated commitment). Lanes at PI indices `WIF_PI_PUBLISHED_ROOT .. +8`.
+pub const WIF_PI_PUBLISHED_ROOT: usize = HEAP_DIGEST_W; // 8
 
 // ---------------------------------------------------------------------------
 // The descriptor (the AIR shape).
 // ---------------------------------------------------------------------------
 
-/// `(1 − guard)·(new_root − root)` — the padding-preserve body. On an insert row
-/// (`guard = 1`) it is vacuous; on a padding row (`guard = 0`) it forces the root to
-/// be carried unchanged, so the chain delivers the final fold to the last trace row.
-fn padding_preserve_body() -> LeanExpr {
+/// `(1 − guard)·(new_root[lane] − root[lane])` — the padding-preserve body for one 8-felt lane.
+/// On an insert row (`guard = 1`) it is vacuous; on a padding row (`guard = 0`) it forces that
+/// root lane to be carried unchanged, so the chain delivers the final fold to the last trace row.
+fn padding_preserve_body(lane: usize) -> LeanExpr {
     let one_minus_guard = LeanExpr::Add(
         Box::new(LeanExpr::Const(1)),
         Box::new(LeanExpr::Mul(
@@ -136,69 +141,75 @@ fn padding_preserve_body() -> LeanExpr {
         )),
     );
     let new_minus_root = LeanExpr::Add(
-        Box::new(LeanExpr::Var(WIF_NEW_ROOT)),
+        Box::new(LeanExpr::Var(WIF_NEW_ROOT + lane)),
         Box::new(LeanExpr::Mul(
             Box::new(LeanExpr::Const(-1)),
-            Box::new(LeanExpr::Var(WIF_ROOT)),
+            Box::new(LeanExpr::Var(WIF_ROOT + lane)),
         )),
     );
     LeanExpr::Mul(Box::new(one_minus_guard), Box::new(new_minus_root))
 }
 
-/// `new_root[local] − root[next]` — the cross-row chain link (asserted on every
-/// transition): the post-root of one row is the pre-root of the next.
-fn chain_link_body() -> WindowExpr {
+/// `new_root[lane][local] − root[lane][next]` — the cross-row chain link (per 8-felt lane,
+/// asserted on every transition): the post-root of one row is the pre-root of the next.
+fn chain_link_body(lane: usize) -> WindowExpr {
     WindowExpr::Add(
-        Box::new(WindowExpr::Loc(WIF_NEW_ROOT)),
+        Box::new(WindowExpr::Loc(WIF_NEW_ROOT + lane)),
         Box::new(WindowExpr::Mul(
             Box::new(WindowExpr::Const(-1)),
-            Box::new(WindowExpr::Nxt(WIF_ROOT)),
+            Box::new(WindowExpr::Nxt(WIF_ROOT + lane)),
         )),
     )
 }
 
-/// The whole-image fold-chip descriptor: a sorted-insert chain pinned at both ends.
+/// The whole-image fold-chip descriptor: a sorted-insert chain pinned at both ends, native
+/// 8-felt heap roots (Phase H-HEAP-8).
 pub fn whole_image_fold_descriptor() -> EffectVmDescriptor2 {
+    let mut constraints: Vec<VmConstraint2> = Vec::new();
+    // The fold STARTS from the empty 8-felt root (PI group 0) and ENDS at the published peer
+    // 8-felt root (PI group 1): pin every lane, First and Last.
+    for lane in 0..HEAP_DIGEST_W {
+        constraints.push(VmConstraint2::Base(VmConstraint::PiBinding {
+            row: VmRow::First,
+            col: WIF_ROOT + lane,
+            pi_index: WIF_PI_EMPTY_ROOT + lane,
+        }));
+        constraints.push(VmConstraint2::Base(VmConstraint::PiBinding {
+            row: VmRow::Last,
+            col: WIF_ROOT + lane,
+            pi_index: WIF_PI_PUBLISHED_ROOT + lane,
+        }));
+        // Padding rows preserve each root lane (carry the final fold forward).
+        constraints.push(VmConstraint2::Base(VmConstraint::Gate(
+            padding_preserve_body(lane),
+        )));
+        // The cross-row chain link, per lane: new_root[i] == root[i+1].
+        constraints.push(VmConstraint2::WindowGate(WindowGateSpec {
+            body: chain_link_body(lane),
+            on_transition: true,
+        }));
+    }
+    // Each real link is a genuine sorted insert of (key, value) — the deployed, sound native
+    // 8-felt `node8` heap reconciliation (fresh key; the post-root8 is forced to the
+    // authenticated insert result).
+    constraints.push(VmConstraint2::MapOp(MapOpSpec {
+        guard: LeanExpr::Var(WIF_GUARD),
+        root: (0..HEAP_DIGEST_W)
+            .map(|i| LeanExpr::Var(WIF_ROOT + i))
+            .collect(),
+        key: LeanExpr::Var(WIF_KEY),
+        value: LeanExpr::Var(WIF_VALUE),
+        new_root: (0..HEAP_DIGEST_W)
+            .map(|i| LeanExpr::Var(WIF_NEW_ROOT + i))
+            .collect(),
+        op: MapKind::Insert,
+    }));
     EffectVmDescriptor2 {
         name: "dregg-whole-image-fold-v1".to_string(),
         trace_width: WIF_WIDTH,
-        public_input_count: 2,
+        public_input_count: 2 * HEAP_DIGEST_W,
         tables: vec![],
-        constraints: vec![
-            // The fold STARTS from the empty root (PI 0): no cell is smuggled in
-            // behind the first link's pre-root.
-            VmConstraint2::Base(VmConstraint::PiBinding {
-                row: VmRow::First,
-                col: WIF_ROOT,
-                pi_index: WIF_PI_EMPTY_ROOT,
-            }),
-            // The fold ENDS at the published peer root (PI 1): the last row's pre-root
-            // is the chain's delivered fold (padding-preserved), pinned to the
-            // published commitment — `hpin` realized.
-            VmConstraint2::Base(VmConstraint::PiBinding {
-                row: VmRow::Last,
-                col: WIF_ROOT,
-                pi_index: WIF_PI_PUBLISHED_ROOT,
-            }),
-            // Padding rows preserve the root (carry the final fold forward).
-            VmConstraint2::Base(VmConstraint::Gate(padding_preserve_body())),
-            // The cross-row chain link: new_root[i] == root[i+1].
-            VmConstraint2::WindowGate(WindowGateSpec {
-                body: chain_link_body(),
-                on_transition: true,
-            }),
-            // Each real link is a genuine sorted insert of (key, value) — the deployed,
-            // sound binary-Merkle reconciliation (fresh key; the post-root is forced to
-            // the authenticated insert result).
-            VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(WIF_GUARD),
-                root: LeanExpr::Var(WIF_ROOT),
-                key: LeanExpr::Var(WIF_KEY),
-                value: LeanExpr::Var(WIF_VALUE),
-                new_root: LeanExpr::Var(WIF_NEW_ROOT),
-                op: MapKind::Insert,
-            }),
-        ],
+        constraints,
         hash_sites: vec![],
         ranges: vec![],
     }
@@ -232,7 +243,7 @@ pub struct WholeImageFoldWitness {
 /// enforces.
 pub fn build_whole_image_fold(
     leaves: &[HeapLeaf],
-    published_root: BabyBear,
+    published_root: [BabyBear; HEAP_DIGEST_W],
 ) -> Result<WholeImageFoldWitness, String> {
     // Sort by the canonical leaf addr (the tree is order-independent in the input; we
     // fold in sorted order so the intermediate roots are the canonical prefixes).
@@ -253,39 +264,42 @@ pub fn build_whole_image_fold(
     // minimum, keeping the chain self-contained.
     let height = (n + 1).next_power_of_two().max(8);
 
-    let empty_root = empty_heap_root();
+    let empty_root = empty_heap_root_8();
     let mut rows: Vec<Vec<BabyBear>> = Vec::with_capacity(height);
 
-    // The running fold: the canonical root over the first `i` sorted cells.
+    // The running fold: the canonical 8-felt root over the first `i` sorted cells.
     let mut cur_root = empty_root;
     for (i, leaf) in sorted.iter().enumerate() {
-        // The post-insert root is the canonical fold over the first `i+1` cells.
-        let next_root = CanonicalHeapTree::new(sorted[..=i].to_vec(), HEAP_TREE_DEPTH).root();
+        // The post-insert root is the canonical 8-felt fold over the first `i+1` cells.
+        let next_root = CanonicalHeapTree8::new(sorted[..=i].to_vec(), HEAP_TREE_DEPTH).root8();
         let mut row = vec![BabyBear::ZERO; WIF_WIDTH];
-        row[WIF_ROOT] = cur_root;
+        row[WIF_ROOT..WIF_ROOT + HEAP_DIGEST_W].copy_from_slice(&cur_root);
         row[WIF_KEY] = leaf.addr;
         row[WIF_VALUE] = leaf.value;
-        row[WIF_NEW_ROOT] = next_root;
+        row[WIF_NEW_ROOT..WIF_NEW_ROOT + HEAP_DIGEST_W].copy_from_slice(&next_root);
         row[WIF_GUARD] = BabyBear::ONE;
         rows.push(row);
         cur_root = next_root;
     }
 
-    // The final fold (== the canonical root over all declared cells). Padding rows carry
+    // The final fold (== the canonical 8-felt root over all declared cells). Padding rows carry
     // it unchanged so the LAST row's pre-root is the delivered fold, pinned to the
-    // published-root PI.
+    // published-root PI group.
     let final_root = cur_root;
     while rows.len() < height {
         let mut row = vec![BabyBear::ZERO; WIF_WIDTH];
-        row[WIF_ROOT] = final_root;
-        row[WIF_NEW_ROOT] = final_root;
+        row[WIF_ROOT..WIF_ROOT + HEAP_DIGEST_W].copy_from_slice(&final_root);
+        row[WIF_NEW_ROOT..WIF_NEW_ROOT + HEAP_DIGEST_W].copy_from_slice(&final_root);
         // guard 0, key/value 0 — a non-insert padding row (root-preserving).
         rows.push(row);
     }
 
+    let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(2 * HEAP_DIGEST_W);
+    public_inputs.extend_from_slice(&empty_root);
+    public_inputs.extend_from_slice(&published_root);
     Ok(WholeImageFoldWitness {
         trace: rows,
-        public_inputs: vec![empty_root, published_root],
+        public_inputs,
         map_heaps: vec![Vec::new()], // the empty heap; the chain builds the rest.
     })
 }
@@ -316,17 +330,18 @@ pub fn prove_whole_image_fold(
 /// no-extra-cells (`committed ⊆ declared`) tooth bites only when the fold provably starts
 /// from nothing, so the verifier MUST pin PI 0 to the constant it knows.
 fn assert_empty_root_pin(public_inputs: &[BabyBear]) -> Result<(), String> {
-    let pi0 = *public_inputs.get(WIF_PI_EMPTY_ROOT).ok_or_else(|| {
-        format!(
-            "whole-image fold: missing PI {WIF_PI_EMPTY_ROOT} (empty-root pin); \
+    if public_inputs.len() < WIF_PI_EMPTY_ROOT + HEAP_DIGEST_W {
+        return Err(format!(
+            "whole-image fold: missing PI group {WIF_PI_EMPTY_ROOT}.. (empty-root8 pin); \
              got {} public inputs",
             public_inputs.len()
-        )
-    })?;
-    if pi0 != empty_heap_root() {
+        ));
+    }
+    let pi0 = &public_inputs[WIF_PI_EMPTY_ROOT..WIF_PI_EMPTY_ROOT + HEAP_DIGEST_W];
+    if pi0 != empty_heap_root_8().as_slice() {
         return Err(format!(
-            "whole-image fold: PI {WIF_PI_EMPTY_ROOT} is not the canonical empty-heap root \
-             — the fold must START from the empty root (no smuggled cells); refusing"
+            "whole-image fold: PI group {WIF_PI_EMPTY_ROOT}.. is not the canonical empty-heap \
+             8-felt root — the fold must START from the empty root (no smuggled cells); refusing"
         ));
     }
     Ok(())
@@ -348,8 +363,8 @@ pub fn verify_whole_image_fold(
 /// The canonical binary-Merkle fold of a declared boundary view, at the deployed depth —
 /// the `mapRoot hash d boundaryHeap` the chip pins to. Exposed so callers (and the
 /// honest test path) can compute the genuine published root.
-pub fn whole_boundary_fold(leaves: &[HeapLeaf]) -> BabyBear {
-    CanonicalHeapTree::new(leaves.to_vec(), HEAP_TREE_DEPTH).root()
+pub fn whole_boundary_fold(leaves: &[HeapLeaf]) -> [BabyBear; HEAP_DIGEST_W] {
+    CanonicalHeapTree8::new(leaves.to_vec(), HEAP_TREE_DEPTH).root8()
 }
 
 // ===========================================================================
