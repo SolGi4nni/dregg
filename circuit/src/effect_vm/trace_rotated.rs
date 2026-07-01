@@ -1401,7 +1401,7 @@ pub fn generate_rotated_refusal_trace_with_fields_tree(
 /// READ appendix (`CAP_OPEN_SPAN = 329`) + the AFTER-spine appendix (`AFTER_SPINE_SPAN = 143`):
 /// `829 + 329 + 143 = 1301`. A satisfying trace FORCES the faithful 8-felt fields-write over the full
 /// ~124-bit BEFORE/AFTER root blocks (`effFieldsWriteV3_forces_write8`) — never the lane-0 squeeze the
-/// map_op-only host would leave. The wide carrier lands at THIS host width: `1301 + 368 = 1669`.
+/// map_op-only host would leave. The wide carrier lands at THIS host width: `1301 + 480 = 1669`.
 pub const REFUSAL_WRITE_HOST_WIDTH: usize = 1301;
 /// The fields-open READ appendix base column (the Class-A base `refusalFieldsWriteV3`'s trace width).
 pub const REFUSAL_WRITE_READ_BASE: usize = 829;
@@ -1509,7 +1509,7 @@ pub fn generate_rotated_refusal_write_wide(
     // The generic widener at the deployed host width (retires the two 1-felt commit pins, appends the 16
     // wide commit PIs — the 8-felt ~124-bit before/after anchors). `base_pis` is the 54-PI refusal vector.
     let dpis = append_wide_carriers(&mut trace, base_pis, REFUSAL_WRITE_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), REFUSAL_WRITE_HOST_WIDTH + 368); // 1669
+    debug_assert_eq!(trace[0].len(), REFUSAL_WRITE_HOST_WIDTH + 480); // 1669
     Ok((trace, dpis, map_heaps))
 }
 
@@ -2886,7 +2886,7 @@ pub fn widen_to_cap_open(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Res
 /// member is `wideAppend (capOpenHost) 187 238` (width 1026), carriers PAST the 210-col cap-open
 /// appendix. The cap-open host constraints / membership columns are CARRIED UNCHANGED; the wide
 /// carriers re-absorb the SAME `BEFORE_BASE`/`AFTER_BASE` limbs. Returns the appended `dpis`. The
-/// trace is resized in place to `CAP_OPEN_WIDTH + 368 = 1026`.
+/// trace is resized in place to `CAP_OPEN_WIDTH + 480 = 1026`.
 pub fn append_wide_carriers_cap_open(
     trace: &mut [Vec<BabyBear>],
     base_pis: Vec<BabyBear>,
@@ -3025,12 +3025,12 @@ pub fn transfer_caveat_manifest() -> RotatedCaveatManifest {
 pub const WIDE_WIDTH: usize = GRAD_ROT_WIDTH + 480; // v11: + 2 × 30 × 8
 /// The base column of the BEFORE 13×8 wide carrier block (`wideBeforeCBase = h.traceWidth = 608`).
 pub const WIDE_BEFORE_CBASE: usize = GRAD_ROT_WIDTH; // 608
-/// The base column of the AFTER 13×8 wide carrier block (`wideAfterCBase = h.traceWidth + 184`).
+/// The base column of the AFTER 13×8 wide carrier block (`wideAfterCBase = h.traceWidth + 240`).
 pub const WIDE_AFTER_CBASE: usize = GRAD_ROT_WIDTH + 240; // v11: + 30 × 8
 /// The number of 8-felt carriers per wide commitment chain (head + 11 body + final).
 pub const WIDE_NUM_CARRIERS: usize = 30;
 /// The in-block carrier index of the final 8-felt commitment carrier (carrier 12).
-pub const WIDE_COMMIT_CARRIER: usize = WIDE_NUM_CARRIERS - 1; // 12
+pub const WIDE_COMMIT_CARRIER: usize = WIDE_NUM_CARRIERS - 1; // 29
 /// The committed wide public-input count (`h.piCount + 16` = 38 + 16).
 pub const WIDE_PI_COUNT: usize = ROT_PI_COUNT + 16; // 54
 
@@ -3089,7 +3089,7 @@ fn fill_wide_block(row: &mut [BabyBear], cbase: usize, limb_base: usize) {
     row[cbase + 8 * carrier..cbase + 8 * carrier + 8].copy_from_slice(&d);
     debug_assert_eq!(
         carrier, WIDE_COMMIT_CARRIER,
-        "wide chain must end on carrier 12"
+        "wide chain must end on carrier 29"
     );
 }
 
@@ -3129,8 +3129,8 @@ pub fn generate_rotated_transfer_wide(
 /// **THE GENERIC WIDE WIDENER (parametric in the host width / carrier base).** Given a fully-laid
 /// rotated base trace (its `BEFORE_BASE`/`AFTER_BASE` limb blocks final, including any grow-gate root
 /// override + `recompute_block_commit`) and its base PI vector, this:
-///   * resizes each row to `host_width + 368` and fills the two 13×8 BEFORE/AFTER wide carrier blocks
-///     at `cbB = host_width` / `cbA = host_width + 184` (the `wideBeforeCBase`/`wideAfterCBase` Lean
+///   * resizes each row to `host_width + 480` and fills the two 13×8 BEFORE/AFTER wide carrier blocks
+///     at `cbB = host_width` / `cbA = host_width + 240` (the `wideBeforeCBase`/`wideAfterCBase` Lean
 ///     layout), chip-faithfully via [`fill_wide_block`] — reading the SAME `BEFORE_BASE`/`AFTER_BASE`
 ///     limbs the 1-felt block lays (so the 8-felt commit binds the same 37 limbs + iroot);
 ///   * APPENDS the 16 wide commit PIs PAST the base PIs: BEFORE commit (carrier 12, first row) then
@@ -3146,8 +3146,8 @@ pub fn append_wide_carriers(
     host_width: usize,
 ) -> Vec<BabyBear> {
     let cb_before = host_width;
-    let cb_after = host_width + 184;
-    let wide_width = host_width + 368;
+    let cb_after = host_width + 240;
+    let wide_width = host_width + 480;
     for row in trace.iter_mut() {
         row.resize(wide_width, BabyBear::ZERO);
         fill_wide_block(row, cb_before, BEFORE_BASE);
@@ -3288,7 +3288,7 @@ pub fn generate_rotated_transfer_shape_with_fee_wide(
 /// AFTER-spine appendix (`AFTER_SPINE_SPAN = 143`): `815 + 329 + 143 = 1287`. A satisfying trace FORCES
 /// the faithful 8-felt heap-write over the full ~124-bit BEFORE/AFTER root blocks
 /// (`effHeapWriteV3_forces_write8`) — never the lane-0 squeeze the map_op-only host would leave. The
-/// wide carriers land at THIS host width: `1287 + 368 = 1655`.
+/// wide carriers land at THIS host width: `1287 + 480 = 1655`.
 pub const HEAP_WRITE_HOST_WIDTH: usize = 1287;
 /// The heap-open READ appendix base column (the splice base `heapWriteV3`'s trace width).
 pub const HEAP_WRITE_READ_BASE: usize = 815;
@@ -3484,7 +3484,7 @@ pub fn generate_rotated_heap_write_wide(
         gen_pis[V1_PI_COUNT + 3],
     ];
     let dpis = append_wide_carriers(&mut trace, base_pis, HEAP_WRITE_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), HEAP_WRITE_HOST_WIDTH + 368); // 1655 (OPTION I after-spine host)
+    debug_assert_eq!(trace[0].len(), HEAP_WRITE_HOST_WIDTH + 480); // 1655 (OPTION I after-spine host)
     debug_assert_eq!(dpis.len(), 20); // 4 base (2 retired) + 16 wide
     Ok((trace, dpis, vec![heap_leaves.to_vec()]))
 }
@@ -3532,7 +3532,7 @@ pub fn generate_rotated_transfer_cap_open_tb_wide(
     let tb_pis = cap_open_tb_dpis(&base_pis, src, actor, dst);
     debug_assert_eq!(tb_pis.len(), CAP_OPEN_TB_PI_BASE + 3); // 49
     let dpis = append_wide_carriers(&mut trace, tb_pis, CAP_OPEN_TB_WIDTH);
-    debug_assert_eq!(trace[0].len(), CAP_OPEN_TB_WIDTH + 368); // 1029
+    debug_assert_eq!(trace[0].len(), CAP_OPEN_TB_WIDTH + 480); // 1029
     debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_BASE + 3 + 16); // 65
     Ok((trace, dpis))
 }
@@ -3884,13 +3884,13 @@ pub fn generate_rotated_set_field_dyn_wide(
         prev_value,
     )?;
     let dpis = append_wide_carriers(&mut trace, base_pis, SET_FIELD_DYN_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), SET_FIELD_DYN_HOST_WIDTH + 368); // 789
+    debug_assert_eq!(trace[0].len(), SET_FIELD_DYN_HOST_WIDTH + 480); // 789
     Ok((trace, dpis, mem_boundary))
 }
 
 // ============================================================================
 // custom — the user-defined program effect bound to an EXTERNAL sub-proof (the
-// `customVmDescriptor2R24` 789-wide member = host 581 + 368 carriers).
+// `customVmDescriptor2R24` 789-wide member = host 581 + 480 carriers).
 // ============================================================================
 
 /// The host width of the wide `customVmDescriptor2R24` member: the deployed
@@ -3975,7 +3975,7 @@ pub fn generate_rotated_custom_wide(
     }
     debug_assert_eq!(base_pis.len(), ROT_PI_COUNT + 8); // 46 base + 8 custom-binding = 54
     let dpis = append_wide_carriers(&mut trace, base_pis, CUSTOM_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), CUSTOM_HOST_WIDTH + 368); // 789
+    debug_assert_eq!(trace[0].len(), CUSTOM_HOST_WIDTH + 480); // 789
     debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 8 + 16); // 46 base + 8 custom + 16 wide = 70
     Ok((trace, dpis))
 }
