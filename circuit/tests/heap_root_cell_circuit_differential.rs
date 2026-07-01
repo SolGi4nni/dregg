@@ -190,8 +190,8 @@ fn update_witness_agrees_with_rebuild() {
 fn family_separation_and_order_independence() {
     assert_ne!(
         empty_heap_root(),
-        dregg_circuit::cap_root::empty_capability_root(),
-        "heap and cap empty roots must differ"
+        dregg_circuit::cap_root::empty_capability_root()[0],
+        "heap and cap empty roots must differ (lane 0)"
     );
     let mut shuffled = entries_demo();
     shuffled.reverse();

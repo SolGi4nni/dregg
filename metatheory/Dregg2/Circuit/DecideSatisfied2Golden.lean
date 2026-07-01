@@ -80,10 +80,10 @@ def mapDecOf
     (members : List (ℤ × ℤ × ℤ)) (absents : List (ℤ × ℤ)) (writes : List (ℤ × ℤ × ℤ × ℤ)) :
     VmRowEnv → MapOp → Bool := fun env m =>
   if m.guard.eval env.loc == 1 then
-    let r := m.root.eval env.loc
+    let r := (m.root 0).eval env.loc
     let k := m.key.eval env.loc
     let v := m.value.eval env.loc
-    let nr := m.newRoot.eval env.loc
+    let nr := (m.newRoot 0).eval env.loc
     match m.op with
     | .read           => members.contains (r, k, v) && nr == r
     | .absent         => absents.contains (r, k) && nr == r
@@ -247,7 +247,7 @@ def memMfin : ℤ → ℤ × Nat := fun a => if a == 5 then (9, 2) else (0, 0)
 
 /-! ### map-op WRITE (cell-seal shape). -/
 
-def mwCs : List VmConstraint2 := [.mapOp ⟨ec 1, ev 0, ev 1, ev 2, ev 3, .write⟩]
+def mwCs : List VmConstraint2 := [.mapOp ⟨ec 1, fun _ => ev 0, ev 1, ev 2, fun _ => ev 3, .write⟩]
 -- row [root,key,value,new_root] = [100,7,42,200]; mapLog row = [root,key,value,op,new_root].
 def mwRow : List ℤ := [100, 7, 42, 200]
 def mwTable : Table := [[100, 7, 42, 1, 200]]
@@ -267,7 +267,7 @@ def mwTable : Table := [[100, 7, 42, 1, 200]]
 
 /-! ### map-op READ (membership, root preserved). -/
 
-def mrCs : List VmConstraint2 := [.mapOp ⟨ec 1, ev 0, ev 1, ev 2, ev 3, .read⟩]
+def mrCs : List VmConstraint2 := [.mapOp ⟨ec 1, fun _ => ev 0, ev 1, ev 2, fun _ => ev 3, .read⟩]
 def mrRow : List ℤ := [100, 7, 42, 100]  -- new_root == root
 def mrTable : Table := [[100, 7, 42, 0, 100]]
 
@@ -282,7 +282,7 @@ def mrTable : Table := [[100, 7, 42, 0, 100]]
 
 /-! ### map-op ABSENT (non-membership, root preserved). -/
 
-def maCs : List VmConstraint2 := [.mapOp ⟨ec 1, ev 0, ev 1, ec 0, ev 3, .absent⟩]
+def maCs : List VmConstraint2 := [.mapOp ⟨ec 1, fun _ => ev 0, ev 1, ec 0, fun _ => ev 3, .absent⟩]
 def maRow : List ℤ := [100, 9, 0, 100]  -- key 9 absent under root 100
 def maTable : Table := [[100, 9, 0, 2, 100]]
 

@@ -128,15 +128,15 @@ the decidable `decOpensTo` / `decWritesTo`. NO existential — the witness IS th
 def mapDecMerkle (hash : List ℤ → ℤ) (wit : WitnessSupply) (env : VmRowEnv) (m : MapOp) : Bool :=
   if m.guard.eval env.loc = 1 then
     match m.op with
-    | .read   => decOpensTo hash (wit env m) (m.root.eval env.loc) (m.key.eval env.loc)
+    | .read   => decOpensTo hash (wit env m) ((m.root 0).eval env.loc) (m.key.eval env.loc)
                    (some (m.value.eval env.loc))
-                 && decide (m.newRoot.eval env.loc = m.root.eval env.loc)
-    | .absent => decOpensTo hash (wit env m) (m.root.eval env.loc) (m.key.eval env.loc) none
-                 && decide (m.newRoot.eval env.loc = m.root.eval env.loc)
-    | .write  => decWritesTo hash (wit env m) (m.root.eval env.loc) (m.key.eval env.loc)
-                   (m.value.eval env.loc) (m.newRoot.eval env.loc)
-    | .insert => decWritesTo hash (wit env m) (m.root.eval env.loc) (m.key.eval env.loc)
-                   (m.value.eval env.loc) (m.newRoot.eval env.loc)
+                 && decide ((m.newRoot 0).eval env.loc = (m.root 0).eval env.loc)
+    | .absent => decOpensTo hash (wit env m) ((m.root 0).eval env.loc) (m.key.eval env.loc) none
+                 && decide ((m.newRoot 0).eval env.loc = (m.root 0).eval env.loc)
+    | .write  => decWritesTo hash (wit env m) ((m.root 0).eval env.loc) (m.key.eval env.loc)
+                   (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
+    | .insert => decWritesTo hash (wit env m) ((m.root 0).eval env.loc) (m.key.eval env.loc)
+                   (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
   else true
 
 /-! ## §4 — soundness of the concrete decider (`mapDecMerkle = true → holdsAt`), UNCONDITIONAL.
@@ -189,7 +189,7 @@ the published openings, carried because the prover published them.) -/
 def WitnessOpens (hash : List ℤ → ℤ) (wit : WitnessSupply) : Prop :=
   ∀ (env : VmRowEnv) (m : MapOp), m.guard.eval env.loc = 1 →
     Heap.SortedKeys (wit env m) ∧ (wit env m).length = 2 ^ HEAP_TREE_DEPTH
-      ∧ mapRoot hash HEAP_TREE_DEPTH (wit env m) = m.root.eval env.loc
+      ∧ mapRoot hash HEAP_TREE_DEPTH (wit env m) = (m.root 0).eval env.loc
 
 theorem mapDecMerkle_complete (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     (wit : WitnessSupply) (hwit : WitnessOpens hash wit) (env : VmRowEnv) (m : MapOp) :

@@ -56,7 +56,11 @@ impl CellState {
     /// tied the circuit to nothing. For a cell that already holds capabilities,
     /// the prover seeds the real root via [`CellState::with_capability_root`].
     pub fn new(balance: u64, nonce: u32) -> Self {
-        Self::with_capability_root(balance, nonce, crate::cap_root::empty_capability_root())
+        // The deployed `cap_root` column is the 1-felt LANE-0 of the native 8-felt
+        // cap-tree root (Phase H-CAP-8). The full 8 felts ride the rotated cap-open
+        // appendix's root-pins (limb 25 ‖ headroom 51..57); this carried column seeds
+        // lane 0. The VK epoch: lane-0's VALUE moves (node8 lane-0 ≠ old 1-felt cap_node).
+        Self::with_capability_root(balance, nonce, crate::cap_root::empty_capability_root()[0])
     }
 
     /// Create a new cell state seeding `capability_root` from a caller-supplied
@@ -265,7 +269,9 @@ mod tests {
         let balance = 1_000u64;
         let nonce = 7u32;
         let fields = [BabyBear::new(3); 8];
-        let cap_root = crate::cap_root::empty_capability_root();
+        // The legacy v1 1-felt commitment takes a single cap-root felt; use the
+        // lane-0 projection of the faithful 8-felt empty root.
+        let cap_root = crate::cap_root::empty_capability_root()[0];
 
         // Same carried state, two DIFFERENT authority residues.
         let rd_a = BabyBear::new(11);
@@ -295,7 +301,9 @@ mod tests {
         let balance = 500u64;
         let nonce = 2u32;
         let fields = [BabyBear::new(9); 8];
-        let cap_root = crate::cap_root::empty_capability_root();
+        // The legacy v1 1-felt commitment takes a single cap-root felt; use the
+        // lane-0 projection of the faithful 8-felt empty root.
+        let cap_root = crate::cap_root::empty_capability_root()[0];
 
         let with_empty = CellState::compute_commitment(
             balance,

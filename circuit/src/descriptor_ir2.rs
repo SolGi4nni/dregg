@@ -217,7 +217,7 @@ use crate::field::{BABYBEAR_P, BabyBear};
 // `HEAP_TREE_DEPTH` indexes the map-absent AIR column layout (verify-needed); the tree
 // type / leaf / sentinels are prover-only (the witness map openings live in `build_traces`).
 use crate::heap_root::HEAP_TREE_DEPTH;
-use crate::heap_root::{CanonicalHeapTree, HeapLeaf, SENTINEL_MAX, SENTINEL_MIN};
+use crate::heap_root::{CanonicalHeapTree8, HeapLeaf, SENTINEL_MAX, SENTINEL_MIN, heap_node8};
 use crate::lean_descriptor_air::{
     EFFECTVM_STATE_AFTER_BASE, EFFECTVM_STATE_BEFORE_BASE, JsonCursor, LeanExpr, VmConstraint,
     VmHashSite, VmRow, const_to_expr, parse_expr, parse_hash_site, parse_range,
@@ -272,8 +272,11 @@ pub const DOMAIN_BOUND: u32 = 16;
 /// SEED up to `WIDTH − capacity` lanes regardless of the multi-block sponge rate. Phase
 /// B-GATE-INPUT widened it `8 → 11` so a single permutation can absorb an 8-felt carrier + 3 new
 /// limbs (the wide Merkle–Damgård step of the faithful 8-felt commitment, Phase B-ROTATION).
-/// The deployed commitment is STILL 1-felt after this phase; the wide arity is additive + unused.
-pub const CHIP_RATE: usize = 11;
+/// Phase H3 (native-8-felt Merkle root weld) widened it `11 → 16` = full `WIDTH`: the `node8`
+/// arity-16 row compresses two 8-felt child digests `L8 ‖ R8` in ONE permutation (no capacity —
+/// fixed-length compression domain-separated by the arity tag), reading lanes `0..8` for the
+/// 8-felt node digest. Every per-node Merkle step (cap/heap/fields) routes through this lane.
+pub const CHIP_RATE: usize = 16;
 /// The Poseidon2 sponge rate in base-field elements (`babyBearD4W16.rate = rate_ext · d = 8`).
 /// This is the REAL multi-block-sponge absorb width of the permutation — a cryptographic
 /// parameter pinned in `circuit/src/poseidon2.rs` and the chip `params` JSON. It is NOT the
@@ -290,6 +293,13 @@ pub const CHIP_WIDE_ARITY: usize = 11;
 /// deployed chain folds `[d, limb, limb, limb]` (1 carrier + 3 limbs); the wide step folds
 /// `[d0..d7, limb, limb, limb]` (8 carrier + 3 limbs).
 pub const WIDE_K: usize = CHIP_WIDE_ARITY - 8;
+/// The `node8` Merkle-compression arity (Phase H3): two 8-felt child digests `L8 ‖ R8` seed
+/// ALL 16 lanes of ONE permutation; lanes `0..8` are read as the node's 8-felt digest. This is
+/// the COLLISION-FLOOR fix — a node whose children are 1-felt collides at ~2^15.5 regardless of
+/// root width, so EVERY node must absorb full 8-felt children and emit a full 8-felt digest.
+/// `= WIDTH = 16`: no capacity lane is reserved (fixed-length compression is domain-separated by
+/// the arity tag itself — only a genuine 16-seed row answers an `arity == 16` lookup).
+pub const CHIP_NODE8_ARITY: usize = 16;
 
 /// The effect-mask width of the submask custom table (`EffectVmEmitV2.MASK_BITS`).
 pub const SUBMASK_BITS: usize = 30;
@@ -498,14 +508,16 @@ impl MapKind {
 pub struct MapOpSpec {
     /// Selector guard (active iff it evaluates to 1).
     pub guard: LeanExpr,
-    /// The pre-root expression.
-    pub root: LeanExpr,
+    /// The pre-root expression, as an 8-felt digest group (Phase H-HEAP-8): lane 0 ‖ lanes 1..7
+    /// of the native 8-felt heap root (`heapRootGroupCol`). Exactly `CHIP_OUT_LANES` entries.
+    pub root: Vec<LeanExpr>,
     /// The map key expression.
     pub key: LeanExpr,
     /// The read/written value expression.
     pub value: LeanExpr,
-    /// The post-root expression.
-    pub new_root: LeanExpr,
+    /// The post-root expression, as an 8-felt digest group (Phase H-HEAP-8). Exactly
+    /// `CHIP_OUT_LANES` entries.
+    pub new_root: Vec<LeanExpr>,
     /// Reconciliation kind.
     pub op: MapKind,
 }
@@ -958,7 +970,16 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
             let guard = parse_expr(c)?;
             c.expect(b',')?;
             c.expect_key("root")?;
-            let root = parse_expr(c)?;
+            // Phase H-HEAP-8: the pre-/post-root are 8-felt digest groups, emitted as a JSON array
+            // of `CHIP_OUT_LANES` lane expressions (the `heapRootGroupCol` lanes), parsed like the
+            // `LookupSpec.tuple`.
+            let root = parse_array(c, parse_expr)?;
+            if root.len() != CHIP_OUT_LANES {
+                return Err(format!(
+                    "map_op root group has {} lanes, expected {CHIP_OUT_LANES}",
+                    root.len()
+                ));
+            }
             c.expect(b',')?;
             c.expect_key("key")?;
             let key = parse_expr(c)?;
@@ -967,7 +988,13 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
             let value = parse_expr(c)?;
             c.expect(b',')?;
             c.expect_key("new_root")?;
-            let new_root = parse_expr(c)?;
+            let new_root = parse_array(c, parse_expr)?;
+            if new_root.len() != CHIP_OUT_LANES {
+                return Err(format!(
+                    "map_op new_root group has {} lanes, expected {CHIP_OUT_LANES}",
+                    new_root.len()
+                ));
+            }
             VmConstraint2::MapOp(MapOpSpec {
                 guard,
                 root,
@@ -1307,8 +1334,11 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
                          (the non-membership read has no value; the wire pins the canonical 0)"
                     ));
                 }
-                for e in [&m.guard, &m.root, &m.key, &m.value, &m.new_root] {
+                for e in [&m.guard, &m.key, &m.value] {
                     chk(e, "map_op field", ci)?;
+                }
+                for e in m.root.iter().chain(m.new_root.iter()) {
+                    chk(e, "map_op root group", ci)?;
                 }
             }
             VmConstraint2::UMemOp(m) => {
@@ -1701,62 +1731,147 @@ const UBC_WIDTH: usize = UBC_ADDR_MULT + 1; // 9
 //    `nullifier_fresh_binds_root`: the gap machinery survives exactly here — once per touched
 //    address per proof, never per access. Committed ONLY when a descriptor declares an
 //    `absent` op (presence-elided like every other table). --
-const MA_ROOT: usize = 0;
-const MA_KEY: usize = 1;
-const MA_NEW_ROOT: usize = 2;
-const MA_IS_REAL: usize = 3;
-const MA_LO_ADDR: usize = 4;
-const MA_LO_VALUE: usize = 5;
-const MA_HI_ADDR: usize = 6;
-const MA_HI_VALUE: usize = 7;
-const MA_LO_LEAF: usize = 8;
-const MA_HI_LEAF: usize = 9;
-const MA_LO_SIB0: usize = 10;
-const MA_LO_DIR0: usize = MA_LO_SIB0 + HEAP_TREE_DEPTH; // 26
-const MA_LO_CHAIN0: usize = MA_LO_DIR0 + HEAP_TREE_DEPTH; // 42
-const MA_HI_SIB0: usize = MA_LO_CHAIN0 + (HEAP_TREE_DEPTH - 1); // 57
-const MA_HI_DIR0: usize = MA_HI_SIB0 + HEAP_TREE_DEPTH; // 73
-const MA_HI_CHAIN0: usize = MA_HI_DIR0 + HEAP_TREE_DEPTH; // 89
+// Phase H-HEAP-8: every digest lane (root, new_root, the two bracket leaves, each sibling, each
+// chain node) is an 8-felt GROUP; the two bracket paths fold through the arity-16 `node8`
+// compression on BUS_P2 (`heap_node8`), never the lossy 1-felt fact hash. The integer
+// decomposition / comparator blocks stay scalar (they compare addresses, not digests).
+const MA_ROOT: usize = 0; // 8-felt group [0..8)
+const MA_KEY: usize = MA_ROOT + CHIP_OUT_LANES; // 8
+const MA_NEW_ROOT: usize = MA_KEY + 1; // 9 (8-felt group [9..17))
+const MA_IS_REAL: usize = MA_NEW_ROOT + CHIP_OUT_LANES; // 17
+const MA_LO_ADDR: usize = MA_IS_REAL + 1; // 18
+const MA_LO_VALUE: usize = MA_LO_ADDR + 1; // 19
+const MA_HI_ADDR: usize = MA_LO_VALUE + 1; // 20
+const MA_HI_VALUE: usize = MA_HI_ADDR + 1; // 21
+const MA_LO_LEAF: usize = MA_HI_VALUE + 1; // 22 (8-felt group [22..30))
+const MA_HI_LEAF: usize = MA_LO_LEAF + CHIP_OUT_LANES; // 30 (8-felt group [30..38))
+const MA_LO_SIB0: usize = MA_HI_LEAF + CHIP_OUT_LANES; // 38 (DEPTH groups of 8)
+const MA_LO_DIR0: usize = MA_LO_SIB0 + CHIP_OUT_LANES * HEAP_TREE_DEPTH; // 166 (DEPTH dir bits)
+const MA_LO_CHAIN0: usize = MA_LO_DIR0 + HEAP_TREE_DEPTH; // 182 (DEPTH-1 groups of 8)
+const MA_HI_SIB0: usize = MA_LO_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 302
+const MA_HI_DIR0: usize = MA_HI_SIB0 + CHIP_OUT_LANES * HEAP_TREE_DEPTH; // 430
+const MA_HI_CHAIN0: usize = MA_HI_DIR0 + HEAP_TREE_DEPTH; // 446
 // Canonical decompositions (hi4 · 2^27 + lo27, unique) of lo_addr / key / hi_addr:
 // each block = [hi4, lo27 limbs (10), is15, inv15] = 13 columns.
 const MA_DECOMP_COLS: usize = 1 + decomp_cols(KEY_LO_BITS) + 2; // 13
-const MA_A_DEC0: usize = MA_HI_CHAIN0 + (HEAP_TREE_DEPTH - 1); // 104 (lo_addr)
-const MA_K_DEC0: usize = MA_A_DEC0 + MA_DECOMP_COLS; // 117 (key)
-const MA_B_DEC0: usize = MA_K_DEC0 + MA_DECOMP_COLS; // 130 (hi_addr)
+const MA_A_DEC0: usize = MA_HI_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // (lo_addr)
+const MA_K_DEC0: usize = MA_A_DEC0 + MA_DECOMP_COLS; // (key)
+const MA_B_DEC0: usize = MA_K_DEC0 + MA_DECOMP_COLS; // (hi_addr)
 // Lexicographic strict-lt comparator blocks: [s, dhi, dlo, dlo limbs (10)] = 13 columns.
 const MA_CMP_COLS: usize = 3 + decomp_cols(KEY_LO_BITS); // 13
-const MA_CMP_LO0: usize = MA_B_DEC0 + MA_DECOMP_COLS; // 143 (lo_addr < key)
-const MA_CMP_HI0: usize = MA_CMP_LO0 + MA_CMP_COLS; // 156 (key < hi_addr)
-// Phase B-GATE: the two leaf absorbs now ride the 17-wide chip bus, so each carries 7
-// extra output lanes (out1..out7) appended at the tail (the digest itself stays at
-// MA_LO_LEAF/MA_HI_LEAF = lane0). Appending avoids re-deriving the decomposition offsets.
-const MA_LO_LEAF1: usize = MA_CMP_HI0 + MA_CMP_COLS; // 169 (lanes 1..7 of the lo leaf)
-const MA_HI_LEAF1: usize = MA_LO_LEAF1 + (CHIP_OUT_LANES - 1); // 176 (lanes 1..7 of the hi leaf)
-const MA_WIDTH: usize = MA_HI_LEAF1 + (CHIP_OUT_LANES - 1); // 183
+const MA_CMP_LO0: usize = MA_B_DEC0 + MA_DECOMP_COLS; // (lo_addr < key)
+const MA_CMP_HI0: usize = MA_CMP_LO0 + MA_CMP_COLS; // (key < hi_addr)
+const MA_WIDTH: usize = MA_CMP_HI0 + MA_CMP_COLS;
 
 // -- Map-ops table layout (one row per reconciliation, log order). Every permutation of
 //    the opening rides the chip bus: the row carries the two leaf digests and the two
 //    sibling-sharing chains' intermediate digests (the final links ARE root / new_root),
 //    NEVER an in-row aux block (the EPOCH's row-width cure, applied to its own boundary
 //    table — previously 39 + 34·352 = 12,007 cols, the measured §2b disease). --
-const MAP_ROOT: usize = 0;
-const MAP_KEY: usize = 1;
-const MAP_VALUE: usize = 2;
-const MAP_OP: usize = 3;
-const MAP_NEW_ROOT: usize = 4;
-const MAP_IS_REAL: usize = 5;
-const MAP_OLD_VALUE: usize = 6;
-const MAP_SIB0: usize = 7;
-const MAP_DIR0: usize = MAP_SIB0 + HEAP_TREE_DEPTH; // 23
-const MAP_OLD_LEAF: usize = MAP_DIR0 + HEAP_TREE_DEPTH; // 39
-const MAP_NEW_LEAF: usize = MAP_OLD_LEAF + 1; // 40
-const MAP_OLD_CHAIN0: usize = MAP_NEW_LEAF + 1; // 41 (levels 0..14; level 15 = MAP_ROOT)
-const MAP_NEW_CHAIN0: usize = MAP_OLD_CHAIN0 + (HEAP_TREE_DEPTH - 1); // 56
-// Phase B-GATE: the old/new leaf absorbs ride the 17-wide chip bus. Lane0 stays at
-// MAP_OLD_LEAF/MAP_NEW_LEAF (the chained digest); lanes 1..7 are appended at the tail.
-const MAP_OLD_LEAF1: usize = MAP_NEW_CHAIN0 + (HEAP_TREE_DEPTH - 1); // 71 (lanes 1..7 old leaf)
-const MAP_NEW_LEAF1: usize = MAP_OLD_LEAF1 + (CHIP_OUT_LANES - 1); // 78 (lanes 1..7 new leaf)
-const MAP_WIDTH: usize = MAP_NEW_LEAF1 + (CHIP_OUT_LANES - 1); // 85
+// Phase H-HEAP-8 (native 8-felt Merkle weld): every digest lane — root, new_root, each
+// sibling, each leaf, and each intermediate chain node — is an 8-felt GROUP (`CHIP_OUT_LANES`
+// contiguous columns), never a lossy 1-felt fold. The internal-node compression is the
+// arity-16 `node8` chip absorb `perm(L8 ‖ R8)[0..8]` (`heap_node8`), so the per-node collision
+// floor is the full ~124-bit FRI/STARK width the deployed commitment already targets. Layout:
+// [root8][key][value][op][new_root8][is_real][old_value][sib8 × DEPTH][dir × DEPTH]
+// [old_leaf8][new_leaf8][old_chain8 × (DEPTH-1)][new_chain8 × (DEPTH-1)]. The final chain link
+// IS root8 / new_root8 (level DEPTH-1's output), so only DEPTH-1 intermediate groups are stored.
+const MAP_ROOT: usize = 0; // 8-felt group [0..8)
+const MAP_KEY: usize = MAP_ROOT + CHIP_OUT_LANES; // 8
+const MAP_VALUE: usize = MAP_KEY + 1; // 9
+const MAP_OP: usize = MAP_VALUE + 1; // 10
+const MAP_NEW_ROOT: usize = MAP_OP + 1; // 11 (8-felt group [11..19))
+const MAP_IS_REAL: usize = MAP_NEW_ROOT + CHIP_OUT_LANES; // 19
+const MAP_OLD_VALUE: usize = MAP_IS_REAL + 1; // 20
+const MAP_SIB0: usize = MAP_OLD_VALUE + 1; // 21 (DEPTH groups of 8: sib g at MAP_SIB0 + 8·g)
+const MAP_DIR0: usize = MAP_SIB0 + CHIP_OUT_LANES * HEAP_TREE_DEPTH; // 149 (DEPTH single dir bits)
+const MAP_OLD_LEAF: usize = MAP_DIR0 + HEAP_TREE_DEPTH; // 165 (8-felt group [165..173))
+const MAP_NEW_LEAF: usize = MAP_OLD_LEAF + CHIP_OUT_LANES; // 173 (8-felt group [173..181))
+const MAP_OLD_CHAIN0: usize = MAP_NEW_LEAF + CHIP_OUT_LANES; // 181 (levels 0..14; level 15 = MAP_ROOT)
+const MAP_NEW_CHAIN0: usize = MAP_OLD_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 301
+const MAP_WIDTH: usize = MAP_NEW_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 421
+
+/// The 8-felt column group starting at `base` (a digest lane group: root, leaf, sibling, or
+/// chain node). Returns the `CHIP_OUT_LANES` contiguous column indices.
+#[inline]
+fn map_group8(base: usize) -> [usize; CHIP_OUT_LANES] {
+    core::array::from_fn(|i| base + i)
+}
+
+/// The width of the map-log permutation-check tuple: the 8-felt pre-root and 8-felt post-root
+/// groups bracketing `[key, value, op]` — Phase H-HEAP-8 widened it `5 → 19`.
+const MAP_LOG_WIDTH: usize = 2 * CHIP_OUT_LANES + 3;
+
+/// One gathered map-op log entry with native 8-felt pre-/post-root groups (Phase H-HEAP-8).
+struct MapLogEntry {
+    /// The 8-felt pre-root group.
+    root: [BabyBear; CHIP_OUT_LANES],
+    /// The map key.
+    key: BabyBear,
+    /// The read/written value (canonical `0` for `absent`).
+    value: BabyBear,
+    /// The 8-felt post-root group.
+    new_root: [BabyBear; CHIP_OUT_LANES],
+    /// Reconciliation kind.
+    op: MapKind,
+}
+
+/// The arity-16 `node8` chip-lookup tuple `[16, L8 (8), R8 (8), out8 (8)]` (Phase H-HEAP-8): the
+/// in-circuit `perm(L8 ‖ R8)[0..8]` heap-node compression, with `(cur8, sib8)` ordered by the
+/// direction bit — `dir = 0` ⇒ cur LEFT (`node8(cur, sib)`), `dir = 1` ⇒ cur RIGHT
+/// (`node8(sib, cur)`), matching `heap_node8` / `recompose_membership_8` / Lean `recomposeUp8`.
+fn node8_lookup_tuple<AB>(
+    local: &[AB::Var],
+    cur8: &[usize; CHIP_OUT_LANES],
+    sib8: &[usize; CHIP_OUT_LANES],
+    dir: &AB::Expr,
+    out8: &[usize; CHIP_OUT_LANES],
+) -> Vec<AB::Expr>
+where
+    AB: AirBuilder,
+    AB::F: PrimeField32,
+{
+    let mut t: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
+    t.push(AB::Expr::from_u64(CHIP_NODE8_ARITY as u64));
+    // in0..7 = L8 = (1−dir)·cur + dir·sib.
+    for i in 0..CHIP_OUT_LANES {
+        let c: AB::Expr = local[cur8[i]].into();
+        let s: AB::Expr = local[sib8[i]].into();
+        t.push((AB::Expr::ONE - dir.clone()) * c + dir.clone() * s);
+    }
+    // in8..15 = R8 = (1−dir)·sib + dir·cur.
+    for i in 0..CHIP_OUT_LANES {
+        let c: AB::Expr = local[cur8[i]].into();
+        let s: AB::Expr = local[sib8[i]].into();
+        t.push((AB::Expr::ONE - dir.clone()) * s + dir.clone() * c);
+    }
+    // out0..7 = the node8 digest.
+    for i in 0..CHIP_OUT_LANES {
+        t.push(local[out8[i]].into());
+    }
+    t
+}
+
+/// The 19-felt map-log RECEIVE tuple read off the `MapOps` table columns:
+/// `[root8 (8), key, value, op, new_root8 (8)]`. The main effect AIR SENDs the byte-identical
+/// tuple built from the descriptor's `MapOpSpec` root/new_root 8-felt groups (see the send site).
+fn map_log_tuple<AB>(local: &[AB::Var]) -> Vec<AB::Expr>
+where
+    AB: AirBuilder,
+    AB::F: PrimeField32,
+{
+    let mut t: Vec<AB::Expr> = Vec::with_capacity(MAP_LOG_WIDTH);
+    for c in map_group8(MAP_ROOT) {
+        t.push(local[c].into());
+    }
+    t.push(local[MAP_KEY].into());
+    t.push(local[MAP_VALUE].into());
+    t.push(local[MAP_OP].into());
+    for c in map_group8(MAP_NEW_ROOT) {
+        t.push(local[c].into());
+    }
+    t
+}
 
 /// The DECLARED leaf-input column list for a `MapOp` absorb, parametric in the value
 /// column (`MAP_VALUE` for the new leaf, `MAP_OLD_VALUE` for the committed old leaf).
@@ -1828,8 +1943,13 @@ const CHIP_S6: usize = CHIP_S5 + 1; // 15
 /// absorb (8-felt carrier ‖ 3 limbs). Lifts the narrow `in7..in10 = 0` pins (the wide row
 /// genuinely seeds state lanes 7..10) and, with `big`, drives lanes 4/5/6 from the inputs.
 const CHIP_WIDE: usize = CHIP_S6 + 1;
-const CHIP_AUX0: usize = CHIP_WIDE + 1;
-const CHIP_WIDTH: usize = CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS; // 368
+/// `node8 = [arity == 16]` (Phase H3): high EXACTLY on the full-width `node8` compression row
+/// (`L8 ‖ R8` → 8-felt digest). Like `wide` it drives lanes 4..6 from the inputs (`seed456`) and
+/// lifts the narrow `in7..` zero-pins; additionally it lifts the `in11..in15 = 0` pins so the
+/// second 8-felt child genuinely seeds lanes 11..15.
+const CHIP_NODE8: usize = CHIP_WIDE + 1;
+const CHIP_AUX0: usize = CHIP_NODE8 + 1;
+const CHIP_WIDTH: usize = CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS;
 
 /// The five-table interpreter AIR. One Rust type covering every instance of the batch
 /// (the batch prover is monomorphic in the AIR type), entirely descriptor-driven.
@@ -2177,13 +2297,18 @@ where
                 let map_log = PermutationCheckBus::new(BUS_MAP_LOG);
                 for k in &desc.constraints {
                     if let VmConstraint2::MapOp(m) = k {
-                        let fields = [
-                            m.root.eval_expr::<AB>(&local),
-                            m.key.eval_expr::<AB>(&local),
-                            m.value.eval_expr::<AB>(&local),
-                            AB::Expr::from_u64(m.op.code() as u64),
-                            m.new_root.eval_expr::<AB>(&local),
-                        ];
+                        // The 19-felt log tuple: `[root8 (8), key, value, op, new_root8 (8)]`,
+                        // byte-identical to the `MapOps`/`MapAbsent` table RECEIVE (`map_log_tuple`).
+                        let mut fields: Vec<AB::Expr> = Vec::with_capacity(MAP_LOG_WIDTH);
+                        for r in &m.root {
+                            fields.push(r.eval_expr::<AB>(&local));
+                        }
+                        fields.push(m.key.eval_expr::<AB>(&local));
+                        fields.push(m.value.eval_expr::<AB>(&local));
+                        fields.push(AB::Expr::from_u64(m.op.code() as u64));
+                        for r in &m.new_root {
+                            fields.push(r.eval_expr::<AB>(&local));
+                        }
                         map_log.send(builder, fields, m.guard.eval_expr::<AB>(&local));
                     }
                 }
@@ -2213,21 +2338,25 @@ where
                 let is_fact: AB::Expr = local[CHIP_IS_FACT].into();
                 let big: AB::Expr = local[CHIP_BIG].into();
                 let wide: AB::Expr = local[CHIP_WIDE].into();
+                let node8: AB::Expr = local[CHIP_NODE8].into();
                 let two = AB::Expr::from_u64(2);
                 let three = AB::Expr::from_u64(3);
                 let four = AB::Expr::from_u64(4);
                 let seven = AB::Expr::from_u64(7);
                 let eleven = AB::Expr::from_u64(CHIP_WIDE_ARITY as u64);
+                let sixteen = AB::Expr::from_u64(CHIP_NODE8_ARITY as u64);
                 builder.assert_zero(is_fact.clone() * (is_fact.clone() - AB::Expr::ONE));
                 // arity ∈ {0 (pad/fact), 2, 3 (cap node [FACT_MARK,l,r]), 4, 7 (cap leaf), 11
-                // (Phase B-GATE-INPUT wide MD step: 8-felt carrier + 3 limbs)}.
+                // (Phase B-GATE-INPUT wide MD step: 8-felt carrier + 3 limbs), 16 (Phase H3 node8:
+                // L8 ‖ R8 full-width Merkle compression)}. Degree 7 (= the S-box budget).
                 builder.assert_zero(
                     arity.clone()
                         * (arity.clone() - two.clone())
                         * (arity.clone() - three.clone())
                         * (arity.clone() - four.clone())
                         * (arity.clone() - seven.clone())
-                        * (arity.clone() - eleven.clone()),
+                        * (arity.clone() - eleven.clone())
+                        * (arity.clone() - sixteen.clone()),
                 );
                 // A fact row carries arity 0 (so the genuine fact state's zero tag is
                 // expressible — no hybrid absorb/fact state is).
@@ -2238,81 +2367,110 @@ where
                 // `wide` selector drives lanes 4..6 (and 7..10) from inputs instead.
                 builder.assert_zero(big.clone() * (big.clone() - AB::Expr::ONE));
                 builder.assert_zero(big.clone() * (arity.clone() - seven.clone()));
-                // p7 ≠ 0 ⇔ arity ∈ {0,2,3,4,11} (= 0 exactly at arity 7); p7·(1−big) forces big
-                // HIGH on the arity-7 branch. (`(a−11)` adjoined so p7 also vanishes the wide row
-                // — big is LOW there. Degree 6 — a SIDE constraint, not S-boxed.)
+                // p7 ≠ 0 ⇔ arity ∈ {0,2,3,4,11,16} (= 0 exactly at arity 7); p7·(1−big) forces big
+                // HIGH on the arity-7 branch. (`(a−11)`/`(a−16)` adjoined so p7 also vanishes the
+                // wide + node8 rows — big is LOW there. Degree 7 — a SIDE constraint, not S-boxed.)
                 let p7 = arity.clone()
                     * (arity.clone() - two.clone())
                     * (arity.clone() - three.clone())
                     * (arity.clone() - four.clone())
-                    * (arity.clone() - eleven.clone());
+                    * (arity.clone() - eleven.clone())
+                    * (arity.clone() - sixteen.clone());
                 builder.assert_zero(p7 * (AB::Expr::ONE - big.clone()));
                 // `wide = [arity == 11]`: boolean, high EXACTLY on the wide arity. Lifts the narrow
                 // input-zeroing pins (in7..in10) and selects the input-seeded lanes 4..6.
                 builder.assert_zero(wide.clone() * (wide.clone() - AB::Expr::ONE));
                 builder.assert_zero(wide.clone() * (arity.clone() - eleven.clone()));
-                // p11 ≠ 0 ⇔ arity ∈ {0,2,3,4,7} (= 0 exactly at arity 11); p11·(1−wide) forces
-                // wide HIGH on the arity-11 branch. (Degree 6 — a SIDE constraint, not S-boxed.)
+                // p11 ≠ 0 ⇔ arity ∈ {0,2,3,4,7,16} (= 0 exactly at arity 11); p11·(1−wide) forces
+                // wide HIGH on the arity-11 branch. (Degree 7 — a SIDE constraint, not S-boxed.)
                 let p11 = arity.clone()
                     * (arity.clone() - two.clone())
                     * (arity.clone() - three.clone())
                     * (arity.clone() - four.clone())
-                    * (arity.clone() - seven.clone());
+                    * (arity.clone() - seven.clone())
+                    * (arity.clone() - sixteen.clone());
                 builder.assert_zero(p11 * (AB::Expr::ONE - wide.clone()));
-                // `seed456 = big + wide` (∈ {0,1}: big and wide are never both high, the membership
-                // gate forbids arity ∈ {7}∩{11}). When high, lanes 4/5/6 carry genuine in4/in5/in6
-                // (the rate-8 leaf AND the wide step); when low, lane 4 = arity tag / fact markers.
-                let seed456 = big.clone() + wide.clone();
+                // `node8 = [arity == 16]` (Phase H3): boolean, high EXACTLY on the full-width L8‖R8
+                // compression row. Lifts the narrow input-zeroing pins (in7..in15) and selects the
+                // input-seeded lanes 4..6.
+                builder.assert_zero(node8.clone() * (node8.clone() - AB::Expr::ONE));
+                builder.assert_zero(node8.clone() * (arity.clone() - sixteen.clone()));
+                // p16 ≠ 0 ⇔ arity ∈ {0,2,3,4,7,11} (= 0 exactly at arity 16); p16·(1−node8) forces
+                // node8 HIGH on the arity-16 branch. (Degree 7 — a SIDE constraint, not S-boxed.)
+                let p16 = arity.clone()
+                    * (arity.clone() - two.clone())
+                    * (arity.clone() - three.clone())
+                    * (arity.clone() - four.clone())
+                    * (arity.clone() - seven.clone())
+                    * (arity.clone() - eleven.clone());
+                builder.assert_zero(p16 * (AB::Expr::ONE - node8.clone()));
+                // `seed456 = big + wide + node8` (∈ {0,1}: at most one flag is high — the membership
+                // gate forces distinct arity values 7/11/16). When high, lanes 4/5/6 carry genuine
+                // in4/in5/in6 (rate-8 leaf, wide step, OR node8); when low, lane 4 = arity tag.
+                let seed456 = big.clone() + wide.clone() + node8.clone();
                 // Inputs beyond the arity are ZERO (the padTo discipline — a junk-padded row is
                 // not a genuine chipRow). The input lanes a row genuinely uses are exactly
                 // `i < arity`; the gates below vanish each lane on the arity classes that do
                 // NOT reach it. (None routed through the S-box.)
                 //
-                // in0/in1: used by every absorb arity {2,3,4,7,11} AND fact rows; pinned only on
-                // the bare pad row (arity 0, non-fact). q01 = (a−2)(a−3)(a−4)(a−7)(a−11) is 0 on
-                // arity∈{2,3,4,7,11} and −1848 on the pad/fact row (arity 0, FIVE negative factors
-                // ⇒ negative). Adding 1848·is_fact cancels it on fact rows (frees their in0/in1).
+                // in0/in1: used by every absorb arity {2,3,4,7,11,16} AND fact rows; pinned only on
+                // the bare pad row (arity 0, non-fact). q01 = (a−2)(a−3)(a−4)(a−7)(a−11)(a−16) is 0
+                // on arity∈{2,3,4,7,11,16} and +29568 on the pad/fact row (arity 0, SIX negative
+                // factors ⇒ positive). Subtracting 29568·is_fact cancels it on fact rows.
                 let q01 = (arity.clone() - two.clone())
                     * (arity.clone() - three.clone())
                     * (arity.clone() - four.clone())
                     * (arity.clone() - seven.clone())
-                    * (arity.clone() - eleven.clone());
-                // q01 on the pad row (arity 0): (−2)(−3)(−4)(−7)(−11) = −1848.
-                let q01_pad_abs = AB::Expr::from_u64(1848);
+                    * (arity.clone() - eleven.clone())
+                    * (arity.clone() - sixteen.clone());
+                // q01 on the pad row (arity 0): (−2)(−3)(−4)(−7)(−11)(−16) = +29568.
+                let q01_pad = AB::Expr::from_u64(1848 * CHIP_NODE8_ARITY as u64);
                 for i in 0..2 {
                     let inp: AB::Expr = local[CHIP_IN0 + i].into();
-                    builder
-                        .assert_zero(inp * (q01.clone() + q01_pad_abs.clone() * is_fact.clone()));
+                    builder.assert_zero(inp * (q01.clone() - q01_pad.clone() * is_fact.clone()));
                 }
-                // in2: genuine for arity ∈ {3,4,7,11}; pinned on {0,2} and fact.
+                // in2: genuine for arity ∈ {3,4,7,11,16}; pinned on {0,2} and fact.
                 builder.assert_zero(
                     local[CHIP_IN0 + 2].into()
                         * (arity.clone() - three.clone())
                         * (arity.clone() - four.clone())
                         * (arity.clone() - seven.clone())
-                        * (arity.clone() - eleven.clone()),
+                        * (arity.clone() - eleven.clone())
+                        * (arity.clone() - sixteen.clone()),
                 );
-                // in3: genuine only for arity ∈ {4,7,11}; pinned on {0,2,3} and fact.
+                // in3: genuine only for arity ∈ {4,7,11,16}; pinned on {0,2,3} and fact.
                 builder.assert_zero(
                     local[CHIP_IN0 + 3].into()
                         * (arity.clone() - four.clone())
                         * (arity.clone() - seven.clone())
-                        * (arity.clone() - eleven.clone()),
+                        * (arity.clone() - eleven.clone())
+                        * (arity.clone() - sixteen.clone()),
                 );
-                // in4/in5/in6: genuine only for arity ∈ {7 (rate-8 leaf), 11 (wide)}; pinned else.
+                // in4/in5/in6: genuine for arity ∈ {7 (rate-8 leaf), 11 (wide), 16 (node8)}; pinned
+                // else.
                 for i in 4..7 {
                     builder.assert_zero(
                         local[CHIP_IN0 + i].into()
                             * (arity.clone() - seven.clone())
-                            * (arity.clone() - eleven.clone()),
+                            * (arity.clone() - eleven.clone())
+                            * (arity.clone() - sixteen.clone()),
                     );
                 }
-                // in7..in10: genuine ONLY for the wide arity 11; pinned on EVERY narrow arity
-                // (incl. 7 — the largest narrow arity uses lanes 0..6). The old `state[7]=0` pin
-                // is now the in7 case here, LIFTED for arity 11 which genuinely seeds in7..in10.
+                // in7..in10: genuine for the wide arity 11 AND node8 arity 16 (the second 8-felt
+                // child's first 4 lanes ride here); pinned on every narrow arity ≤ 7.
                 for i in 7..CHIP_WIDE_ARITY {
-                    builder
-                        .assert_zero(local[CHIP_IN0 + i].into() * (arity.clone() - eleven.clone()));
+                    builder.assert_zero(
+                        local[CHIP_IN0 + i].into()
+                            * (arity.clone() - eleven.clone())
+                            * (arity.clone() - sixteen.clone()),
+                    );
+                }
+                // in11..in15: genuine ONLY for node8 arity 16 (the tail of the second 8-felt child);
+                // pinned on EVERY other arity (incl. the wide arity 11, which uses lanes 0..10).
+                for i in CHIP_WIDE_ARITY..CHIP_NODE8_ARITY {
+                    builder.assert_zero(
+                        local[CHIP_IN0 + i].into() * (arity.clone() - sixteen.clone()),
+                    );
                 }
                 // The three AMBIGUOUS seed-source columns S4/S5/S6, pinned by SIDE constraints
                 // (off the S-box path). When `seed456 = 0` (rate-4 / fact): S4 = arity tag,
@@ -2349,9 +2507,11 @@ where
                 st[4] = local[CHIP_S4].into();
                 st[5] = local[CHIP_S5].into();
                 st[6] = local[CHIP_S6].into();
-                // Lanes 7..10: the wide carrier/limb tail. On narrow arities these input columns
-                // are pinned 0 above, so seeding them directly preserves the narrow state shape.
-                for i in 7..CHIP_WIDE_ARITY {
+                // Lanes 7..15: the wide carrier/limb tail (7..10) AND the node8 second-child tail
+                // (11..15). On every arity that does not reach a lane it is pinned 0 above, so
+                // seeding them directly preserves the narrow/wide state shapes. arity 16 seeds all
+                // 16 lanes = WIDTH (full-width compression, no capacity).
+                for i in 7..CHIP_NODE8_ARITY {
                     st[i] = local[CHIP_IN0 + i].into();
                 }
                 let aux: Vec<AB::Var> =
@@ -2617,67 +2777,56 @@ where
                 let new_leaf_cols = map_leaf_input_cols(MAP_VALUE);
                 p2.lookup_key(
                     builder,
-                    chip_absorb_tuple(&old_leaf_cols, MAP_OLD_LEAF, MAP_OLD_LEAF1),
+                    chip_absorb_tuple(&old_leaf_cols, MAP_OLD_LEAF, MAP_OLD_LEAF + 1),
                     is_real.clone() * not_insert.clone(),
                 );
                 p2.lookup_key(
                     builder,
-                    chip_absorb_tuple(&new_leaf_cols, MAP_NEW_LEAF, MAP_NEW_LEAF1),
+                    chip_absorb_tuple(&new_leaf_cols, MAP_NEW_LEAF, MAP_NEW_LEAF + 1),
                     is_real.clone(),
                 );
 
-                // The sibling-sharing chains ride the fact bus. Write/read share one path;
-                // insert uses the SAME columns for a membership opening of the NEW leaf
-                // against the NEW root (no old leaf exists at a fresh key). The old-path
-                // lookups are gated by `not_insert`; the new-path lookup is always active.
-                let fact_bus = LookupBus::new(BUS_FACT);
-                let mut cur_old: AB::Expr = local[MAP_OLD_LEAF].into();
-                let mut cur_new: AB::Expr = local[MAP_NEW_LEAF].into();
+                // The sibling-sharing chains ride the 8-felt `node8` compression on BUS_P2 (Phase
+                // H-HEAP-8): each level absorbs `perm(L8 ‖ R8)[0..8]` at arity 16, `(cur8, sib8)`
+                // ordered by the direction bit (dir = 0 ⇒ cur LEFT: node8(cur, sib); dir = 1 ⇒ cur
+                // RIGHT: node8(sib, cur)) — the in-circuit twin of `heap_node8` / `recompose_up8`.
+                // Write/read share one path; insert opens the NEW leaf against the NEW root (no old
+                // leaf at a fresh key). The old-path absorbs are gated by `not_insert`; the new path
+                // is always active. The final link IS root8 / new_root8 (level DEPTH-1's output).
+                let mut cur_old = map_group8(MAP_OLD_LEAF);
+                let mut cur_new = map_group8(MAP_NEW_LEAF);
                 for lvl in 0..HEAP_TREE_DEPTH {
-                    let sib: AB::Expr = local[MAP_SIB0 + lvl].into();
+                    let sib8 = map_group8(MAP_SIB0 + CHIP_OUT_LANES * lvl);
                     let dir: AB::Expr = local[MAP_DIR0 + lvl].into();
-                    let mix = |cur: AB::Expr| -> (AB::Expr, AB::Expr) {
-                        let left =
-                            (AB::Expr::ONE - dir.clone()) * cur.clone() + dir.clone() * sib.clone();
-                        let right = (AB::Expr::ONE - dir.clone()) * sib.clone() + dir.clone() * cur;
-                        (left, right)
-                    };
                     let last = lvl + 1 == HEAP_TREE_DEPTH;
-                    let out_old: AB::Expr = if last {
-                        local[MAP_ROOT].into()
+                    let out_old = if last {
+                        map_group8(MAP_ROOT)
                     } else {
-                        local[MAP_OLD_CHAIN0 + lvl].into()
+                        map_group8(MAP_OLD_CHAIN0 + CHIP_OUT_LANES * lvl)
                     };
-                    let (lo, ro) = mix(cur_old.clone());
-                    fact_bus.lookup_key(
+                    p2.lookup_key(
                         builder,
-                        [lo, ro, out_old.clone()],
+                        node8_lookup_tuple::<AB>(&local, &cur_old, &sib8, &dir, &out_old),
                         is_real.clone() * not_insert.clone(),
                     );
                     cur_old = out_old;
-                    let out_new: AB::Expr = if last {
-                        local[MAP_NEW_ROOT].into()
+                    let out_new = if last {
+                        map_group8(MAP_NEW_ROOT)
                     } else {
-                        local[MAP_NEW_CHAIN0 + lvl].into()
+                        map_group8(MAP_NEW_CHAIN0 + CHIP_OUT_LANES * lvl)
                     };
-                    let (ln, rn) = mix(cur_new.clone());
-                    fact_bus.lookup_key(builder, [ln, rn, out_new.clone()], is_real.clone());
+                    p2.lookup_key(
+                        builder,
+                        node8_lookup_tuple::<AB>(&local, &cur_new, &sib8, &dir, &out_new),
+                        is_real.clone(),
+                    );
                     cur_new = out_new;
                 }
 
-                // The table carries EXACTLY the gathered log (mapTableFaithful).
+                // The table carries EXACTLY the gathered log (mapTableFaithful): the 8-felt root and
+                // new_root groups bracket the key/value/op — a 19-felt log tuple.
                 let map_log = PermutationCheckBus::new(BUS_MAP_LOG);
-                map_log.receive(
-                    builder,
-                    [
-                        local[MAP_ROOT].into(),
-                        local[MAP_KEY].into(),
-                        local[MAP_VALUE].into(),
-                        local[MAP_OP].into(),
-                        local[MAP_NEW_ROOT].into(),
-                    ],
-                    is_real,
-                );
+                map_log.receive(builder, map_log_tuple::<AB>(&local), is_real);
             }
 
             // ----------------------------------------------------------------
@@ -2690,10 +2839,13 @@ where
                         builder.assert_zero(dir.clone() * (dir - AB::Expr::ONE));
                     }
                 }
-                // A non-membership read preserves the root.
-                builder.assert_zero(
-                    is_real.clone() * (local[MA_NEW_ROOT].into() - local[MA_ROOT].into()),
-                );
+                // A non-membership read preserves the (8-felt) root, lane by lane.
+                for i in 0..CHIP_OUT_LANES {
+                    builder.assert_zero(
+                        is_real.clone()
+                            * (local[MA_NEW_ROOT + i].into() - local[MA_ROOT + i].into()),
+                    );
+                }
 
                 // ADJACENCY: the two opened leaves sit at consecutive positions
                 // (position = Σ dirᵢ·2ⁱ): hi_pos − lo_pos = 1. With the sentinel
@@ -2751,72 +2903,73 @@ where
                     false,
                 );
 
-                // Both bracketing leaves are GENUINE members under the SAME root: leaf
-                // digests ride the chip bus (arity-2 absorbs), node hashes ride the fact
-                // bus, both final links ARE the root column — the map-ops chain shape, twice.
+                // Both bracketing leaves are GENUINE members under the SAME 8-felt root: the leaf
+                // digests ride the chip bus (arity-2 absorbs, all 8 lanes), the node hashes ride
+                // the arity-16 `node8` compression on BUS_P2, both final links ARE the root8 group
+                // (Phase H-HEAP-8) — the MapOps chain shape, twice.
                 let p2 = LookupBus::new(BUS_P2);
-                // Phase B-GATE: 17-wide tuple; `leaf_col` is out0, `lane1_base..+6` the lanes 1..7.
-                let leaf_tuple =
-                    |addr_col: usize, val_col: usize, leaf_col: usize, lane1_base: usize| {
-                        let mut t: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
-                        t.push(AB::Expr::from_u64(2));
-                        t.push(local[addr_col].into());
-                        t.push(local[val_col].into());
-                        for _ in 2..CHIP_RATE {
-                            t.push(AB::Expr::ZERO);
-                        }
-                        t.push(local[leaf_col].into());
-                        for i in 0..CHIP_OUT_LANES - 1 {
-                            t.push(local[lane1_base + i].into());
-                        }
-                        t
-                    };
+                // The 25-wide arity-2 leaf-absorb tuple: `[2, addr, value, 0×6, out0..out7]` with
+                // the 8-felt digest at the contiguous leaf group (out0 = leaf_col, lanes 1..7 next).
+                let leaf_tuple = |addr_col: usize, val_col: usize, leaf_col: usize| {
+                    let mut t: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
+                    t.push(AB::Expr::from_u64(2));
+                    t.push(local[addr_col].into());
+                    t.push(local[val_col].into());
+                    for _ in 2..CHIP_RATE {
+                        t.push(AB::Expr::ZERO);
+                    }
+                    for i in 0..CHIP_OUT_LANES {
+                        t.push(local[leaf_col + i].into());
+                    }
+                    t
+                };
                 p2.lookup_key(
                     builder,
-                    leaf_tuple(MA_LO_ADDR, MA_LO_VALUE, MA_LO_LEAF, MA_LO_LEAF1),
+                    leaf_tuple(MA_LO_ADDR, MA_LO_VALUE, MA_LO_LEAF),
                     is_real.clone(),
                 );
                 p2.lookup_key(
                     builder,
-                    leaf_tuple(MA_HI_ADDR, MA_HI_VALUE, MA_HI_LEAF, MA_HI_LEAF1),
+                    leaf_tuple(MA_HI_ADDR, MA_HI_VALUE, MA_HI_LEAF),
                     is_real.clone(),
                 );
-                let fact_bus = LookupBus::new(BUS_FACT);
-                for (leaf_col, sib0, dir0, chain0) in [
+                for (leaf_base, sib0, dir0, chain0) in [
                     (MA_LO_LEAF, MA_LO_SIB0, MA_LO_DIR0, MA_LO_CHAIN0),
                     (MA_HI_LEAF, MA_HI_SIB0, MA_HI_DIR0, MA_HI_CHAIN0),
                 ] {
-                    let mut cur: AB::Expr = local[leaf_col].into();
+                    let mut cur8 = map_group8(leaf_base);
                     for lvl in 0..HEAP_TREE_DEPTH {
-                        let sib: AB::Expr = local[sib0 + lvl].into();
+                        let sib8 = map_group8(sib0 + CHIP_OUT_LANES * lvl);
                         let dir: AB::Expr = local[dir0 + lvl].into();
-                        let left =
-                            (AB::Expr::ONE - dir.clone()) * cur.clone() + dir.clone() * sib.clone();
-                        let right = (AB::Expr::ONE - dir.clone()) * sib + dir * cur;
-                        let out: AB::Expr = if lvl + 1 == HEAP_TREE_DEPTH {
-                            local[MA_ROOT].into()
+                        let out8 = if lvl + 1 == HEAP_TREE_DEPTH {
+                            map_group8(MA_ROOT)
                         } else {
-                            local[chain0 + lvl].into()
+                            map_group8(chain0 + CHIP_OUT_LANES * lvl)
                         };
-                        fact_bus.lookup_key(builder, [left, right, out.clone()], is_real.clone());
-                        cur = out;
+                        p2.lookup_key(
+                            builder,
+                            node8_lookup_tuple::<AB>(&local, &cur8, &sib8, &dir, &out8),
+                            is_real.clone(),
+                        );
+                        cur8 = out8;
                     }
                 }
 
-                // The table carries EXACTLY the gathered absent sub-log (op code 2, the
-                // canonical value 0 — the map-log multiset partitions by op).
+                // The table carries EXACTLY the gathered absent sub-log (op code 2, the canonical
+                // value 0 — the map-log multiset partitions by op). 19-felt: `[root8, key, 0, op,
+                // new_root8]`, byte-identical to the main effect AIR's send.
                 let map_log = PermutationCheckBus::new(BUS_MAP_LOG);
-                map_log.receive(
-                    builder,
-                    [
-                        local[MA_ROOT].into(),
-                        local[MA_KEY].into(),
-                        AB::Expr::ZERO,
-                        AB::Expr::from_u64(MapKind::Absent.code() as u64),
-                        local[MA_NEW_ROOT].into(),
-                    ],
-                    is_real,
-                );
+                let mut ma_log: Vec<AB::Expr> = Vec::with_capacity(MAP_LOG_WIDTH);
+                for c in map_group8(MA_ROOT) {
+                    ma_log.push(local[c].into());
+                }
+                ma_log.push(local[MA_KEY].into());
+                ma_log.push(AB::Expr::ZERO);
+                ma_log.push(AB::Expr::from_u64(MapKind::Absent.code() as u64));
+                for c in map_group8(MA_NEW_ROOT) {
+                    ma_log.push(local[c].into());
+                }
+                map_log.receive(builder, ma_log, is_real);
             }
 
             // ----------------------------------------------------------------
@@ -3159,7 +3312,8 @@ pub(crate) fn chip_absorb_lanes(
     debug_assert!(arity <= CHIP_RATE && inputs.len() >= arity.min(CHIP_RATE));
     let big = arity == 7;
     let wide = arity == CHIP_WIDE_ARITY;
-    let seed456 = big || wide;
+    let node8 = arity == CHIP_NODE8_ARITY;
+    let seed456 = big || wide || node8;
     let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
     for i in 0..4 {
         st[i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO);
@@ -3171,14 +3325,13 @@ pub(crate) fn chip_absorb_lanes(
     } else {
         st[4] = BabyBear::new(arity as u32);
     }
-    // The wide carrier/limb tail (lanes 7..10): seeded from the genuine (zero-padded) inputs on
-    // EVERY arity — BYTE-IDENTICAL to the chip-row gather (`for i in 7..CHIP_WIDE_ARITY { st[i] =
-    // in_i }`, no `wide` guard). The narrow live arities (≤ 7) zero-pad in7..in10, so this is a
-    // no-op for them; the wide commitment's arity-9 final (`prev8 ‖ iroot`, 9 real inputs) genuinely
-    // seeds in7/in8, which the prior `if wide` guard DROPPED — making its lanes 1..7 disagree with
-    // the chip table (and the carrier pi_binding fail). Matching the gather closes that.
-    let _ = wide;
-    for i in 7..CHIP_WIDE_ARITY {
+    // The wide carrier/limb tail (lanes 7..10) AND the node8 second-child tail (lanes 11..15):
+    // seeded from the genuine (zero-padded) inputs on EVERY arity — BYTE-IDENTICAL to the chip-row
+    // gather (`for i in 7..CHIP_NODE8_ARITY { st[i] = in_i }`, no flag guard). Narrow live arities
+    // (≤ 7) zero-pad in7.., so this is a no-op for them; the wide commitment's arity-9 final
+    // (`prev8 ‖ iroot`, 9 real inputs) seeds in7/in8; node8's 16 real inputs seed all 16 lanes.
+    let _ = (wide, node8);
+    for i in 7..CHIP_NODE8_ARITY {
         st[i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO);
     }
     let lanes = perm_lanes(st);
@@ -3201,7 +3354,8 @@ pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CH
     debug_assert!(arity <= CHIP_RATE);
     let big = arity == 7;
     let wide = arity == CHIP_WIDE_ARITY;
-    let seed456 = big || wide;
+    let node8 = arity == CHIP_NODE8_ARITY;
+    let seed456 = big || wide || node8;
     let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
     for i in 0..4 {
         st[i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO);
@@ -3213,10 +3367,10 @@ pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CH
     } else {
         st[4] = BabyBear::new(arity as u32);
     }
-    // The wide carrier/limb tail (lanes 7..10): seeded from the genuine (zero-padded) inputs on
-    // EVERY arity — byte-identical to the chip-row gather (`for i in 7..CHIP_WIDE_ARITY`), so an
-    // arity-9 absorb (`prev8 ‖ iroot` with 9 real inputs) seeds in7/in8 faithfully.
-    for i in 7..CHIP_WIDE_ARITY {
+    // The wide carrier/limb tail (lanes 7..10) AND the node8 second-child tail (lanes 11..15):
+    // seeded from the genuine (zero-padded) inputs on EVERY arity — byte-identical to the chip-row
+    // gather (`for i in 7..CHIP_NODE8_ARITY`). node8 (arity 16) seeds all 16 lanes = WIDTH.
+    for i in 7..CHIP_NODE8_ARITY {
         st[i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO);
     }
     perm_lanes(st)
@@ -3973,7 +4127,20 @@ fn build_traces(
     } // if presence.umem
 
     // ---- the map-ops log + the opening witnesses. ----
-    let mut map_log: Vec<([BabyBear; 5], MapKind)> = Vec::new();
+    // Phase H-HEAP-8: each entry carries the native 8-felt pre-/post-root groups (the descriptor
+    // evaluates `MapOpSpec.root`/`.new_root` as `CHIP_OUT_LANES` lane expressions over the
+    // committed heap-root columns), plus the scalar key/value.
+    let eval_group8 =
+        |exprs: &[LeanExpr], base_row: &[BabyBear]| -> Result<[BabyBear; CHIP_OUT_LANES], String> {
+            if exprs.len() != CHIP_OUT_LANES {
+                return Err(format!(
+                    "map_op root group has {} lanes, expected {CHIP_OUT_LANES}",
+                    exprs.len()
+                ));
+            }
+            Ok(core::array::from_fn(|i| eval_c(&exprs[i], base_row)))
+        };
+    let mut map_log: Vec<MapLogEntry> = Vec::new();
     for (ri, base_row) in base_trace.iter().enumerate() {
         for k in &desc.constraints {
             if let VmConstraint2::MapOp(m) = k {
@@ -3986,40 +4153,69 @@ fn build_traces(
                         "row {ri}: map_op guard evaluates to {g:?}, not 0/1"
                     ));
                 }
-                map_log.push((
-                    [
-                        eval_c(&m.root, base_row),
-                        eval_c(&m.key, base_row),
-                        eval_c(&m.value, base_row),
-                        BabyBear::new(m.op.code()),
-                        eval_c(&m.new_root, base_row),
-                    ],
-                    m.op,
-                ));
+                map_log.push(MapLogEntry {
+                    root: eval_group8(&m.root, base_row)?,
+                    key: eval_c(&m.key, base_row),
+                    value: eval_c(&m.value, base_row),
+                    new_root: eval_group8(&m.new_root, base_row)?,
+                    op: m.op,
+                });
             }
         }
     }
     let mut map_ops: Option<Vec<Vec<BabyBear>>> = None;
     let mut map_absent: Option<Vec<Vec<BabyBear>>> = None;
     if presence.map_ops || presence.map_absent {
-        let mut trees: Vec<CanonicalHeapTree> = map_heaps
+        // Phase H-HEAP-8: the witness heaps are the NATIVE 8-felt canonical trees; the opening
+        // witnesses (`HeapUpdateWitness8` / `HeapInsertWitness8`) and the recompose chains fold
+        // through `heap_node8`, so every trace digest lane is faithful to the ~124-bit floor.
+        let mut trees: Vec<CanonicalHeapTree8> = map_heaps
             .iter()
-            .map(|leaves| CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH))
+            .map(|leaves| CanonicalHeapTree8::new(leaves.clone(), HEAP_TREE_DEPTH))
             .collect();
+        // The arity-2 leaf-absorb histogram key `[2, addr, value, 0×14, out0..out7]` (25 wide).
+        let leaf8_hist_tuple =
+            |a: BabyBear, b: BabyBear, lanes: &[BabyBear; CHIP_OUT_LANES]| -> Vec<u32> {
+                let mut t = vec![2u32, a.as_u32(), b.as_u32()];
+                t.extend(std::iter::repeat_n(0u32, CHIP_RATE - 2));
+                t.extend(lanes.iter().map(|d| d.as_u32()));
+                t
+            };
+        // The arity-16 `node8` histogram key `[16, L8 (8), R8 (8), out8 (8)]` (25 wide).
+        let node8_hist_tuple = |l8: &[BabyBear; CHIP_OUT_LANES],
+                                r8: &[BabyBear; CHIP_OUT_LANES],
+                                out8: &[BabyBear; CHIP_OUT_LANES]|
+         -> Vec<u32> {
+            let mut t = vec![CHIP_NODE8_ARITY as u32];
+            t.extend(l8.iter().map(|d| d.as_u32()));
+            t.extend(r8.iter().map(|d| d.as_u32()));
+            t.extend(out8.iter().map(|d| d.as_u32()));
+            t
+        };
         let mut map_rows: Vec<Vec<BabyBear>> = Vec::new();
         let mut ma_rows: Vec<Vec<BabyBear>> = Vec::new();
-        for (i, (tuple, kind)) in map_log.iter().enumerate() {
-            let [root, key, value, _opc, new_root] = *tuple;
+        for (i, entry) in map_log.iter().enumerate() {
+            let MapLogEntry {
+                root,
+                key,
+                value,
+                new_root,
+                op: kind,
+            } = entry;
+            let (root, key, value, new_root, kind) = (*root, *key, *value, *new_root, *kind);
             let tree = trees
                 .iter()
-                .find(|t| t.root() == root)
+                .find(|t| t.root8() == root)
                 .cloned()
                 .ok_or_else(|| {
-                    format!("map op {i}: no witness heap with root {}", root.as_u32())
+                    format!(
+                        "map op {i}: no witness heap with root8 lane0 {}",
+                        root[0].as_u32()
+                    )
                 })?;
 
             // -- `absent`: the bracketed sorted-gap non-membership opening, its own table. --
-            if *kind == MapKind::Absent {
+            if kind == MapKind::Absent {
                 if check && new_root != root {
                     return Err(format!("map op {i}: absent must preserve the root"));
                 }
@@ -4056,111 +4252,110 @@ fn build_traces(
                     .ok_or_else(|| format!("map op {i}: upper bracket path failed"))?;
 
                 let mut cols: Vec<BabyBear> = Vec::with_capacity(MA_WIDTH);
-                cols.push(root);
-                cols.push(key);
-                cols.push(new_root);
-                cols.push(BabyBear::ONE);
+                cols.extend_from_slice(&root); // MA_ROOT (8)
+                cols.push(key); // MA_KEY
+                cols.extend_from_slice(&new_root); // MA_NEW_ROOT (8)
+                cols.push(BabyBear::ONE); // MA_IS_REAL
                 cols.push(lo.addr);
                 cols.push(lo.value);
                 cols.push(hi.addr);
                 cols.push(hi.value);
-                // The two leaf digests (chip absorbs) + the two fact chains to the root.
-                // Phase B-GATE: the absorb rides the 17-wide chip bus, so we keep all 8 lanes —
-                // lane0 is the digest (the fact-chain seed), lanes 1..7 are carried to match the
-                // chip row (appended at the tail of the row below).
-                let leaf_lanes = |a: BabyBear, b: BabyBear| perm_lanes(hash2_state_c(a, b));
-                // The 17-wide histogram key: `[2, a, b, 0×6, lane0..lane7]`.
-                let absorb2_tuple = |a: BabyBear, b: BabyBear, lanes: &[BabyBear]| -> Vec<u32> {
-                    let mut t = vec![2u32, a.as_u32(), b.as_u32()];
-                    t.extend(std::iter::repeat_n(0u32, CHIP_RATE - 2));
-                    t.extend(lanes.iter().map(|d| d.as_u32()));
-                    t
-                };
-                let lo_lanes = leaf_lanes(lo.addr, lo.value);
-                let hi_lanes = leaf_lanes(hi.addr, hi.value);
-                let lo_leaf = lo_lanes[0];
-                let hi_leaf = hi_lanes[0];
+                // The two 8-felt bracket-leaf digests (arity-2 chip absorbs, all 8 lanes) + the two
+                // `node8` chains to the shared 8-felt root (Phase H-HEAP-8).
+                let lo_leaf8 = HeapLeaf {
+                    addr: lo.addr,
+                    value: lo.value,
+                }
+                .digest8();
+                let hi_leaf8 = HeapLeaf {
+                    addr: hi.addr,
+                    value: hi.value,
+                }
+                .digest8();
                 *chip_hist
-                    .entry(absorb2_tuple(lo.addr, lo.value, &lo_lanes))
+                    .entry(leaf8_hist_tuple(lo.addr, lo.value, &lo_leaf8))
                     .or_insert(0) += 1;
                 *chip_hist
-                    .entry(absorb2_tuple(hi.addr, hi.value, &hi_lanes))
+                    .entry(leaf8_hist_tuple(hi.addr, hi.value, &hi_leaf8))
                     .or_insert(0) += 1;
-                cols.push(lo_leaf);
-                cols.push(hi_leaf);
+                cols.extend_from_slice(&lo_leaf8); // MA_LO_LEAF (8)
+                cols.extend_from_slice(&hi_leaf8); // MA_HI_LEAF (8)
                 let mut chains: Vec<Vec<BabyBear>> = Vec::with_capacity(2);
-                for (leaf, sibs, dirs) in
-                    [(lo_leaf, &lo_sibs, &lo_dirs), (hi_leaf, &hi_sibs, &hi_dirs)]
-                {
-                    let mut chain: Vec<BabyBear> = Vec::with_capacity(HEAP_TREE_DEPTH - 1);
-                    let mut cur = leaf;
+                for (leaf8, sibs, dirs) in [
+                    (lo_leaf8, &lo_sibs, &lo_dirs),
+                    (hi_leaf8, &hi_sibs, &hi_dirs),
+                ] {
+                    let mut chain: Vec<BabyBear> =
+                        Vec::with_capacity(CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1));
+                    let mut cur8 = leaf8;
                     for lvl in 0..HEAP_TREE_DEPTH {
-                        let sib = sibs[lvl];
-                        let (l, r) = if dirs[lvl] != 0 {
-                            (sib, cur)
+                        let sib8 = sibs[lvl];
+                        let (l8, r8) = if dirs[lvl] != 0 {
+                            (sib8, cur8)
                         } else {
-                            (cur, sib)
+                            (cur8, sib8)
                         };
-                        let d = perm_aux(fact_state_c(l, r)).1;
-                        *fact_hist
-                            .entry((l.as_u32(), r.as_u32(), d.as_u32()))
+                        let d8 = heap_node8(l8, r8);
+                        *chip_hist
+                            .entry(node8_hist_tuple(&l8, &r8, &d8))
                             .or_insert(0) += 1;
                         if lvl + 1 < HEAP_TREE_DEPTH {
-                            chain.push(d);
+                            chain.extend_from_slice(&d8);
                         }
-                        cur = d;
+                        cur8 = d8;
                     }
-                    debug_assert_eq!(cur, root, "bracket path must authenticate against the root");
+                    debug_assert_eq!(
+                        cur8, root,
+                        "bracket path must authenticate against the root8"
+                    );
                     chains.push(chain);
                 }
                 for sibs in [&lo_sibs, &hi_sibs] {
                     debug_assert_eq!(sibs.len(), HEAP_TREE_DEPTH);
                 }
-                cols.extend_from_slice(&lo_sibs);
-                cols.extend(lo_dirs.iter().map(|&d| BabyBear::new(d as u32)));
-                cols.extend_from_slice(&chains[0]);
-                cols.extend_from_slice(&hi_sibs);
-                cols.extend(hi_dirs.iter().map(|&d| BabyBear::new(d as u32)));
-                cols.extend_from_slice(&chains[1]);
+                cols.extend(lo_sibs.iter().flatten().copied()); // MA_LO_SIB0 (8×DEPTH)
+                cols.extend(lo_dirs.iter().map(|&d| BabyBear::new(d as u32))); // MA_LO_DIR0
+                cols.extend_from_slice(&chains[0]); // MA_LO_CHAIN0 (8×(DEPTH-1))
+                cols.extend(hi_sibs.iter().flatten().copied()); // MA_HI_SIB0
+                cols.extend(hi_dirs.iter().map(|&d| BabyBear::new(d as u32))); // MA_HI_DIR0
+                cols.extend_from_slice(&chains[1]); // MA_HI_CHAIN0
                 // Canonical decompositions of (lo_addr, key, hi_addr) + the two gap comparators.
+                debug_assert_eq!(cols.len(), MA_A_DEC0);
                 fill_canon(lo.addr.as_u32(), true, &mut cols, &mut byte_hist);
                 fill_canon(key_u, true, &mut cols, &mut byte_hist);
                 fill_canon(hi.addr.as_u32(), true, &mut cols, &mut byte_hist);
                 fill_lex_lt(lo.addr.as_u32(), key_u, true, &mut cols, &mut byte_hist)?;
                 fill_lex_lt(key_u, hi.addr.as_u32(), true, &mut cols, &mut byte_hist)?;
-                // Phase B-GATE: the appended leaf-lane columns (MA_LO_LEAF1.., MA_HI_LEAF1..).
-                debug_assert_eq!(cols.len(), MA_LO_LEAF1);
-                cols.extend_from_slice(&lo_lanes[1..]);
-                cols.extend_from_slice(&hi_lanes[1..]);
                 debug_assert_eq!(cols.len(), MA_WIDTH);
                 ma_rows.push(cols);
                 continue;
             }
 
-            let (old_value, sibs, dirs) = match kind {
-                MapKind::Read => {
-                    let pos = tree.position_of(key).ok_or_else(|| {
-                        format!("map op {i}: read key {} not in heap", key.as_u32())
-                    })?;
-                    let leaf = tree.sorted_leaves()[pos];
-                    if check && leaf.value != value {
-                        return Err(format!(
-                            "map op {i}: read at key {} opens to {}, row claims {}",
-                            key.as_u32(),
-                            leaf.value.as_u32(),
-                            value.as_u32()
-                        ));
+            let (old_value, sibs, dirs): (BabyBear, Vec<[BabyBear; CHIP_OUT_LANES]>, Vec<u8>) =
+                match kind {
+                    MapKind::Read => {
+                        let pos = tree.position_of(key).ok_or_else(|| {
+                            format!("map op {i}: read key {} not in heap", key.as_u32())
+                        })?;
+                        let leaf = tree.sorted_leaves()[pos];
+                        if check && leaf.value != value {
+                            return Err(format!(
+                                "map op {i}: read at key {} opens to {}, row claims {}",
+                                key.as_u32(),
+                                leaf.value.as_u32(),
+                                value.as_u32()
+                            ));
+                        }
+                        if check && new_root != root {
+                            return Err(format!("map op {i}: read must preserve the root"));
+                        }
+                        let (sibs, dirs) = tree
+                            .prove_membership(pos)
+                            .ok_or_else(|| format!("map op {i}: membership path failed"))?;
+                        (value, sibs, dirs)
                     }
-                    if check && new_root != root {
-                        return Err(format!("map op {i}: read must preserve the root"));
-                    }
-                    let (sibs, dirs) = tree
-                        .prove_membership(pos)
-                        .ok_or_else(|| format!("map op {i}: membership path failed"))?;
-                    (value, sibs, dirs)
-                }
-                MapKind::Write => {
-                    let w = tree
+                    MapKind::Write => {
+                        let w = tree
                         .update_witness(HeapLeaf { addr: key, value })
                         .ok_or_else(|| {
                             format!(
@@ -4169,152 +4364,129 @@ fn build_traces(
                                 key.as_u32()
                             )
                         })?;
-                    if check && w.new_root != new_root {
-                        return Err(format!(
-                            "map op {i}: claimed new_root {} != genuine sorted write {}",
-                            new_root.as_u32(),
-                            w.new_root.as_u32()
-                        ));
+                        if check && w.new_root != new_root {
+                            return Err(format!(
+                                "map op {i}: claimed new_root lane0 {} != genuine sorted write {}",
+                                new_root[0].as_u32(),
+                                w.new_root[0].as_u32()
+                            ));
+                        }
+                        // Advance the working set: the post-write heap is reachable for later ops.
+                        let new_leaves: Vec<HeapLeaf> = tree
+                            .sorted_leaves()
+                            .iter()
+                            .map(|l| {
+                                if l.addr == key {
+                                    HeapLeaf { addr: key, value }
+                                } else {
+                                    *l
+                                }
+                            })
+                            .collect();
+                        trees.push(CanonicalHeapTree8::new(new_leaves, HEAP_TREE_DEPTH));
+                        (w.old_leaf.value, w.siblings, w.directions)
                     }
-                    // Advance the working set: the post-write heap is reachable for later ops.
-                    let new_leaves: Vec<HeapLeaf> = tree
-                        .sorted_leaves()
-                        .iter()
-                        .map(|l| {
-                            if l.addr == key {
-                                HeapLeaf { addr: key, value }
-                            } else {
-                                *l
-                            }
-                        })
-                        .collect();
-                    trees.push(CanonicalHeapTree::new(new_leaves, HEAP_TREE_DEPTH));
-                    (w.old_leaf.value, w.siblings, w.directions)
-                }
-                MapKind::Insert => {
-                    let w = tree
-                        .insert_witness(HeapLeaf { addr: key, value })
-                        .ok_or_else(|| {
-                            format!(
-                                "map op {i}: insert key {} already present or collides with \
+                    MapKind::Insert => {
+                        let w = tree
+                            .insert_witness(HeapLeaf { addr: key, value })
+                            .ok_or_else(|| {
+                                format!(
+                                    "map op {i}: insert key {} already present or collides with \
                              sentinels",
-                                key.as_u32()
-                            )
-                        })?;
-                    if check && w.new_root != new_root {
-                        return Err(format!(
-                            "map op {i}: claimed new_root {} != genuine sorted insert {}",
-                            new_root.as_u32(),
-                            w.new_root.as_u32()
-                        ));
+                                    key.as_u32()
+                                )
+                            })?;
+                        if check && w.new_root != new_root {
+                            return Err(format!(
+                                "map op {i}: claimed new_root lane0 {} != genuine sorted insert {}",
+                                new_root[0].as_u32(),
+                                w.new_root[0].as_u32()
+                            ));
+                        }
+                        // Advance the working set: the post-insert heap is reachable for later ops.
+                        let mut new_leaves: Vec<HeapLeaf> = tree
+                            .sorted_leaves()
+                            .iter()
+                            .filter(|l| l.addr != SENTINEL_MIN && l.addr != SENTINEL_MAX)
+                            .copied()
+                            .collect();
+                        new_leaves.push(HeapLeaf { addr: key, value });
+                        trees.push(CanonicalHeapTree8::new(new_leaves, HEAP_TREE_DEPTH));
+                        (BabyBear::ZERO, w.siblings, w.directions)
                     }
-                    // Advance the working set: the post-insert heap is reachable for later ops.
-                    let mut new_leaves: Vec<HeapLeaf> = tree
-                        .sorted_leaves()
-                        .iter()
-                        .filter(|l| l.addr != SENTINEL_MIN && l.addr != SENTINEL_MAX)
-                        .copied()
-                        .collect();
-                    new_leaves.push(HeapLeaf { addr: key, value });
-                    trees.push(CanonicalHeapTree::new(new_leaves, HEAP_TREE_DEPTH));
-                    (BabyBear::ZERO, w.siblings, w.directions)
-                }
-                MapKind::Absent => unreachable!("absent handled above"),
-            };
+                    MapKind::Absent => unreachable!("absent handled above"),
+                };
             let mut cols = vec![BabyBear::ZERO; MAP_WIDTH];
-            cols[MAP_ROOT] = root;
+            cols[MAP_ROOT..MAP_ROOT + CHIP_OUT_LANES].copy_from_slice(&root);
             cols[MAP_KEY] = key;
             cols[MAP_VALUE] = value;
             cols[MAP_OP] = BabyBear::new(kind.code());
-            cols[MAP_NEW_ROOT] = new_root;
+            cols[MAP_NEW_ROOT..MAP_NEW_ROOT + CHIP_OUT_LANES].copy_from_slice(&new_root);
             cols[MAP_IS_REAL] = BabyBear::ONE;
             cols[MAP_OLD_VALUE] = old_value;
             for lvl in 0..HEAP_TREE_DEPTH {
-                cols[MAP_SIB0 + lvl] = sibs[lvl];
+                cols[MAP_SIB0 + CHIP_OUT_LANES * lvl..MAP_SIB0 + CHIP_OUT_LANES * (lvl + 1)]
+                    .copy_from_slice(&sibs[lvl]);
                 cols[MAP_DIR0 + lvl] = BabyBear::new(dirs[lvl] as u32);
             }
-            // The opening's permutations ride the chip table: the leaf hashes are absorb
-            // tuples on the chip bus (arity = the declared leaf-input count, today 2 — the
-            // `[key, value]` `Heap` leaf), the chains' node hashes are fact tuples on the fact
-            // bus. The row carries digests only, never aux. The absorb tuple is built from the
-            // SAME declared leaf-input values the AIR's `chip_absorb_tuple` reads off the
-            // declared columns (`map_leaf_input_cols`), so prover/verifier agree on the arity.
-            // Phase B-GATE: keep all 8 lanes of each leaf absorb (lane0 = the chained digest /
-            // fact-chain seed, lanes 1..7 carried to match the 17-wide chip row).
-            let leaf_lanes = |a: BabyBear, b: BabyBear| perm_lanes(hash2_state_c(a, b));
-            let absorb2_tuple = |a: BabyBear, b: BabyBear, lanes: &[BabyBear]| -> Vec<u32> {
-                // The declared inputs are `[key, value]`; the histogram key mirrors the AIR's
-                // `arity :: inputs ++ pad ++ out0..out7` tuple at the declared arity.
-                let inputs = [a.as_u32(), b.as_u32()];
-                let mut t = vec![inputs.len() as u32];
-                t.extend_from_slice(&inputs);
-                t.extend(std::iter::repeat_n(0u32, CHIP_RATE - inputs.len()));
-                t.extend(lanes.iter().map(|d| d.as_u32()));
-                t
-            };
-            let is_insert = *kind == MapKind::Insert;
-            let new_lanes = leaf_lanes(key, value);
-            let new_leaf = new_lanes[0];
+            // The opening's permutations ride the chip table: the leaf hashes are arity-2 absorb
+            // tuples (all 8 lanes) on BUS_P2, and every internal node is the arity-16 `node8`
+            // compression `heap_node8(L8, R8)` — also on BUS_P2 (Phase H-HEAP-8). The row carries
+            // 8-felt digests only, never aux. The chain folds through the SAME `heap_node8` the
+            // canonical tree commits, so prover/verifier agree by construction.
+            let is_insert = kind == MapKind::Insert;
+            // The new-leaf digest opens against `new_root`; the old-leaf digest against `root`.
+            let new_leaf8 = HeapLeaf { addr: key, value }.digest8();
             *chip_hist
-                .entry(absorb2_tuple(key, value, &new_lanes))
+                .entry(leaf8_hist_tuple(key, value, &new_leaf8))
                 .or_insert(0) += 1;
-            cols[MAP_NEW_LEAF] = new_leaf;
-            cols[MAP_NEW_LEAF1..MAP_NEW_LEAF1 + CHIP_OUT_LANES - 1]
-                .copy_from_slice(&new_lanes[1..CHIP_OUT_LANES]);
+            cols[MAP_NEW_LEAF..MAP_NEW_LEAF + CHIP_OUT_LANES].copy_from_slice(&new_leaf8);
+            // Fold a leaf's 8-felt digest up the shared (sib, dir) path through `heap_node8`,
+            // storing the DEPTH-1 intermediate node groups (the final link IS the root group).
+            // `chip_hist` is threaded as an argument (not captured) so the leaf-absorb
+            // registrations below can also touch it.
+            let fold_chain = |leaf8: [BabyBear; CHIP_OUT_LANES],
+                              chain0: usize,
+                              cols: &mut [BabyBear],
+                              hist: &mut BTreeMap<Vec<u32>, u64>|
+             -> [BabyBear; CHIP_OUT_LANES] {
+                let mut cur8 = leaf8;
+                for lvl in 0..HEAP_TREE_DEPTH {
+                    let sib8 = sibs[lvl];
+                    let (l8, r8) = if dirs[lvl] != 0 {
+                        (sib8, cur8)
+                    } else {
+                        (cur8, sib8)
+                    };
+                    let d8 = heap_node8(l8, r8);
+                    *hist.entry(node8_hist_tuple(&l8, &r8, &d8)).or_insert(0) += 1;
+                    if lvl + 1 < HEAP_TREE_DEPTH {
+                        cols[chain0 + CHIP_OUT_LANES * lvl..chain0 + CHIP_OUT_LANES * (lvl + 1)]
+                            .copy_from_slice(&d8);
+                    }
+                    cur8 = d8;
+                }
+                cur8
+            };
             if is_insert {
                 // Insert rows have no committed old leaf; the AIR's old-path legs are gated
                 // away by `op - 3`. Leave old-leaf / old-chain columns at zero.
                 cols[MAP_OLD_VALUE] = BabyBear::ZERO;
             } else {
-                let old_lanes = leaf_lanes(key, old_value);
-                let old_leaf = old_lanes[0];
+                let old_leaf8 = HeapLeaf {
+                    addr: key,
+                    value: old_value,
+                }
+                .digest8();
                 *chip_hist
-                    .entry(absorb2_tuple(key, old_value, &old_lanes))
+                    .entry(leaf8_hist_tuple(key, old_value, &old_leaf8))
                     .or_insert(0) += 1;
-                cols[MAP_OLD_LEAF] = old_leaf;
-                cols[MAP_OLD_LEAF1..MAP_OLD_LEAF1 + CHIP_OUT_LANES - 1]
-                    .copy_from_slice(&old_lanes[1..CHIP_OUT_LANES]);
-                let mut cur_old = old_leaf;
-                for lvl in 0..HEAP_TREE_DEPTH {
-                    let sib = sibs[lvl];
-                    let mix = |cur: BabyBear| -> (BabyBear, BabyBear) {
-                        if dirs[lvl] != 0 {
-                            (sib, cur)
-                        } else {
-                            (cur, sib)
-                        }
-                    };
-                    let (lo, ro) = mix(cur_old);
-                    let d_old = perm_aux(fact_state_c(lo, ro)).1;
-                    *fact_hist
-                        .entry((lo.as_u32(), ro.as_u32(), d_old.as_u32()))
-                        .or_insert(0) += 1;
-                    if lvl + 1 < HEAP_TREE_DEPTH {
-                        cols[MAP_OLD_CHAIN0 + lvl] = d_old;
-                    }
-                    cur_old = d_old;
-                }
+                cols[MAP_OLD_LEAF..MAP_OLD_LEAF + CHIP_OUT_LANES].copy_from_slice(&old_leaf8);
+                let end = fold_chain(old_leaf8, MAP_OLD_CHAIN0, &mut cols, &mut chip_hist);
+                debug_assert_eq!(end, root, "old path must authenticate against root8");
             }
-            let mut cur_new = new_leaf;
-            for lvl in 0..HEAP_TREE_DEPTH {
-                let sib = sibs[lvl];
-                let mix = |cur: BabyBear| -> (BabyBear, BabyBear) {
-                    if dirs[lvl] != 0 {
-                        (sib, cur)
-                    } else {
-                        (cur, sib)
-                    }
-                };
-                let (ln, rn) = mix(cur_new);
-                let d_new = perm_aux(fact_state_c(ln, rn)).1;
-                *fact_hist
-                    .entry((ln.as_u32(), rn.as_u32(), d_new.as_u32()))
-                    .or_insert(0) += 1;
-                if lvl + 1 < HEAP_TREE_DEPTH {
-                    cols[MAP_NEW_CHAIN0 + lvl] = d_new;
-                }
-                cur_new = d_new;
-            }
+            let end = fold_chain(new_leaf8, MAP_NEW_CHAIN0, &mut cols, &mut chip_hist);
+            debug_assert_eq!(end, new_root, "new path must recompose to new_root8");
             map_rows.push(cols);
         }
         // Pad rows: all-zero for map-ops (is_real = 0 gates every lookup and the log receive);
@@ -4339,10 +4511,6 @@ fn build_traces(
                 for _ in 0..2 {
                     fill_lex_lt(0, 0, false, &mut cols, &mut byte_hist)?;
                 }
-                // Phase B-GATE: the appended leaf-lane columns (is_real = 0 gates the lookup,
-                // so the lanes are unconstrained on a pad row — plain zeros).
-                debug_assert_eq!(cols.len(), MA_LO_LEAF1);
-                cols.resize(MA_WIDTH, BabyBear::ZERO);
                 debug_assert_eq!(cols.len(), MA_WIDTH);
                 ma_rows.push(cols);
             }
@@ -4356,14 +4524,15 @@ fn build_traces(
     let chip: Option<Vec<Vec<BabyBear>>> = if presence.chip {
         let mut chip_rows: Vec<Vec<BabyBear>> = Vec::new();
         for (tuple, mult) in &chip_hist {
-            // tuple = [arity, in0..in10, out0..out7] (CHIP_TUPLE_LEN = 20 wide).
+            // tuple = [arity, in0..in15, out0..out7] (CHIP_TUPLE_LEN = 25 wide).
             let arity_u = tuple[CHIP_ARITY];
             let big_row = arity_u == 7;
             let wide_row = arity_u as usize == CHIP_WIDE_ARITY;
-            // `seed456`: lanes 4/5/6 carry genuine in4/in5/in6 (the rate-8 leaf AND the wide step).
-            let seed456 = big_row || wide_row;
+            let node8_row = arity_u as usize == CHIP_NODE8_ARITY;
+            // `seed456`: lanes 4/5/6 carry genuine in4/in5/in6 (rate-8 leaf, wide step, OR node8).
+            let seed456 = big_row || wide_row || node8_row;
             let mut row = vec![BabyBear::ZERO; CHIP_AUX0];
-            // Copy only the [arity, in0..in10] prefix from the tuple; the out0..out7 lanes are
+            // Copy only the [arity, in0..in15] prefix from the tuple; the out0..out7 lanes are
             // DERIVED below from the genuine permutation (never trusted from the consumer's
             // tuple), so the AIR's `out[i] == lane[i]` equality constraints hold by construction.
             for j in 0..=CHIP_RATE {
@@ -4377,6 +4546,11 @@ fn build_traces(
                 BabyBear::ZERO
             };
             row[CHIP_WIDE] = if wide_row {
+                BabyBear::ONE
+            } else {
+                BabyBear::ZERO
+            };
+            row[CHIP_NODE8] = if node8_row {
                 BabyBear::ONE
             } else {
                 BabyBear::ZERO
@@ -4397,9 +4571,11 @@ fn build_traces(
             st[4] = row[CHIP_S4];
             st[5] = row[CHIP_S5];
             st[6] = row[CHIP_S6];
-            // Wide carrier/limb tail (lanes 7..10): genuine inputs on the wide row, pinned 0 on
-            // every narrow arity (the tuple's in7..in10 are zero there), matching the AIR seeding.
-            st[7..CHIP_WIDE_ARITY].copy_from_slice(&row[CHIP_IN0 + 7..CHIP_IN0 + CHIP_WIDE_ARITY]);
+            // Carrier/limb tail (lanes 7..15): genuine inputs on the wide (7..10) + node8 (7..15)
+            // rows, pinned 0 on every narrow arity (the tuple's in7.. are zero there), matching the
+            // AIR seeding. node8 (arity 16) seeds all 16 lanes = WIDTH.
+            st[7..CHIP_NODE8_ARITY]
+                .copy_from_slice(&row[CHIP_IN0 + 7..CHIP_IN0 + CHIP_NODE8_ARITY]);
             // Fill the 8 exposed output lanes from the genuine final permutation state.
             let lanes = perm_lanes(st);
             row[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&lanes[..CHIP_OUT_LANES]);
@@ -5064,7 +5240,7 @@ mod tests {
 
     /// The Lean `#guard`-pinned demo-v2 golden (DescriptorIR2 §10): every v2 constraint
     /// kind + the five tables, byte-for-byte.
-    const DEMO_V2: &str = "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":17,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":{\"t\":\"var\",\"v\":0},\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}";
+    const DEMO_V2: &str = "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":17,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0}],\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":[{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}";
 
     /// The byte-pinned Lean golden parses, with every v2 element decoded.
     #[test]
@@ -5141,7 +5317,7 @@ mod tests {
         };
         EffectVmDescriptor2 {
             name: "ir2-test".to_string(),
-            trace_width: 23,
+            trace_width: 31,
             public_input_count: 0,
             tables: vec![TableDef2 {
                 id: TID_RANGE,
@@ -5168,10 +5344,12 @@ mod tests {
                 }),
                 VmConstraint2::MapOp(MapOpSpec {
                     guard: LeanExpr::Var(13),
-                    root: LeanExpr::Var(9),
+                    // Phase H-HEAP-8: the 8-felt heap-root group rides cols 23..31 (read preserves it,
+                    // so new_root references the SAME lanes). Cols 9/12 are inert carry columns.
+                    root: (23..23 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                     key: LeanExpr::Var(10),
                     value: LeanExpr::Var(11),
-                    new_root: LeanExpr::Var(12),
+                    new_root: (23..23 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                     op: MapKind::Read,
                 }),
                 VmConstraint2::Lookup(LookupSpec {
@@ -5204,8 +5382,8 @@ mod tests {
         let lanes = perm_lanes(hash2_state_c(a, b));
         let digest = lanes[0];
         debug_assert_eq!(digest, hash_many(&[a, b]));
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
         let mut row = vec![
             a,
             b,
@@ -5216,17 +5394,19 @@ mod tests {
             BabyBear::new(9),             // mem prev_value
             BabyBear::ZERO,               // mem prev_serial (init)
             BabyBear::ZERO,               // mem guard (row 0 active only — set per row)
-            root,                         // map root
-            BabyBear::new(100),           // map key
-            BabyBear::new(77),            // map value
-            root,                         // map new_root (read preserves)
-            BabyBear::ZERO,               // map guard (set per row)
-            BabyBear::new(0b0101),        // keep ⊑ held
-            BabyBear::new(0b0111),        // held
+            root[0],               // col 9: inert carry (Phase H-HEAP-8 moved the root group)
+            BabyBear::new(100),    // map key
+            BabyBear::new(77),     // map value
+            root[0],               // col 12: inert carry
+            BabyBear::ZERO,        // map guard (set per row)
+            BabyBear::new(0b0101), // keep ⊑ held
+            BabyBear::new(0b0111), // held
         ];
         // cols 16..22: the 7 exposed lanes 1..7 of the hash site (Phase B-GATE).
         row.extend_from_slice(&lanes[1..]);
-        debug_assert_eq!(row.len(), 23);
+        // cols 23..31: the 8-felt heap-root group the map read opens against.
+        row.extend_from_slice(&root);
+        debug_assert_eq!(row.len(), 31);
         row
     }
 
@@ -5375,26 +5555,33 @@ mod tests {
     /// registry TSV row `heapWriteVmDescriptor2R24`): the `.write` MapOp on the heap root opens the
     /// committed root (col 65) at the recomputed address (col 102) for the written value (col 72) and
     /// FORCES the new root (col 87). This is the SAME op the deployed descriptor carries.
-    const HW_ROOT_BEFORE: usize = 65;
-    const HW_ROOT_AFTER: usize = 87;
+    // Phase H-HEAP-8: the pre-/post-root are 8-felt digest GROUPS. The isolated splice descriptor
+    // rides them on contiguous fresh columns (before-group 110..118, after-group 118..126) so they
+    // do not collide with HW_VALUE(72)/HW_ADDR(102).
+    const HW_ROOT_BEFORE: usize = 110;
+    const HW_ROOT_AFTER: usize = 118;
     const HW_ADDR: usize = 102;
     const HW_VALUE: usize = 72;
 
     /// A minimal descriptor carrying EXACTLY the deployed heap-write splice `.write` MapOp (deployed
     /// columns), gated always-on — the row constraint the deployed `heapWriteVmDescriptor2R24` relies
-    /// on, in isolation. Width 110 holds all referenced columns (max 102).
+    /// on, in isolation. Width 126 holds all referenced columns (the 8-felt root groups end at 126).
     fn hw_splice_desc() -> EffectVmDescriptor2 {
         EffectVmDescriptor2 {
             name: "hw-splice-deployed".to_string(),
-            trace_width: 110,
+            trace_width: 126,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
                 guard: LeanExpr::Const(1),
-                root: LeanExpr::Var(HW_ROOT_BEFORE),
+                root: (HW_ROOT_BEFORE..HW_ROOT_BEFORE + CHIP_OUT_LANES)
+                    .map(LeanExpr::Var)
+                    .collect(),
                 key: LeanExpr::Var(HW_ADDR),
                 value: LeanExpr::Var(HW_VALUE),
-                new_root: LeanExpr::Var(HW_ROOT_AFTER),
+                new_root: (HW_ROOT_AFTER..HW_ROOT_AFTER + CHIP_OUT_LANES)
+                    .map(LeanExpr::Var)
+                    .collect(),
                 op: MapKind::Write,
             })],
             hash_sites: vec![],
@@ -5420,20 +5607,20 @@ mod tests {
     /// key (100), col 72 = the new value (42), col 87 = the GENUINE sorted-Merkle splice root (the
     /// update of addr 100 to value 42). 4 rows; the op fires on every row (constant-1 guard) so the
     /// trace carries the same genuine write each row.
-    fn hw_splice_trace(new_root: BabyBear) -> Vec<Vec<BabyBear>> {
-        let pre = CanonicalHeapTree::new(hw_pre_heap(), HEAP_TREE_DEPTH);
-        let root = pre.root();
-        let mut row = vec![BabyBear::ZERO; 110];
-        row[HW_ROOT_BEFORE] = root;
+    fn hw_splice_trace(new_root: [BabyBear; CHIP_OUT_LANES]) -> Vec<Vec<BabyBear>> {
+        let pre = CanonicalHeapTree8::new(hw_pre_heap(), HEAP_TREE_DEPTH);
+        let root = pre.root8();
+        let mut row = vec![BabyBear::ZERO; 126];
+        row[HW_ROOT_BEFORE..HW_ROOT_BEFORE + CHIP_OUT_LANES].copy_from_slice(&root);
         row[HW_ADDR] = BabyBear::new(100);
         row[HW_VALUE] = BabyBear::new(42);
-        row[HW_ROOT_AFTER] = new_root;
+        row[HW_ROOT_AFTER..HW_ROOT_AFTER + CHIP_OUT_LANES].copy_from_slice(&new_root);
         vec![row; 4]
     }
 
     /// THE GENUINE splice root: the update of addr 100 → value 42 over the pre-heap.
-    fn hw_genuine_new_root() -> BabyBear {
-        let pre = CanonicalHeapTree::new(hw_pre_heap(), HEAP_TREE_DEPTH);
+    fn hw_genuine_new_root() -> [BabyBear; CHIP_OUT_LANES] {
+        let pre = CanonicalHeapTree8::new(hw_pre_heap(), HEAP_TREE_DEPTH);
         pre.update_witness(HeapLeaf {
             addr: BabyBear::new(100),
             value: BabyBear::new(42),
@@ -5471,7 +5658,8 @@ mod tests {
     #[test]
     fn deployed_heap_splice_rejects_content_mismatch() {
         let desc = hw_splice_desc();
-        let forged = hw_genuine_new_root() + BabyBear::ONE; // NOT the genuine sorted-tree update
+        let mut forged = hw_genuine_new_root(); // NOT the genuine sorted-tree update
+        forged[0] += BabyBear::ONE;
         assert_ne!(forged, hw_genuine_new_root());
         let trace = hw_splice_trace(forged);
 
@@ -5583,12 +5771,16 @@ mod tests {
     }
 
     /// A descriptor with a SINGLE wide (arity-11) chip lookup binding ALL 8 output lanes to
-    /// columns. trace_width = 1 (arity tag) + 11 (inputs) + 8 (outputs) = 20; the lookup tuple is
-    /// `[11, var1..var11, var12..var19]`. (No other tables — a minimal wide-absorb subject.)
+    /// columns. trace_width = 1 (arity tag) + 11 (inputs) + 8 (outputs) = 20; the lookup tuple's
+    /// INPUT block is padded to CHIP_RATE (the in11..in15 slots are `Const 0` — the chip pins them
+    /// 0 off arity 16, so they cost no column). The tuple is `[11, var1..var11, 0×5, var12..var19]`.
     fn wide_test_desc() -> EffectVmDescriptor2 {
         let mut tuple = vec![LeanExpr::Const(CHIP_WIDE_ARITY as i64)];
         for i in 0..CHIP_WIDE_ARITY {
             tuple.push(LeanExpr::Var(1 + i)); // in0..in10 at cols 1..11
+        }
+        for _ in CHIP_WIDE_ARITY..CHIP_RATE {
+            tuple.push(LeanExpr::Const(0)); // in11..in15: padded to CHIP_RATE, no column
         }
         for i in 0..CHIP_OUT_LANES {
             tuple.push(LeanExpr::Var(1 + CHIP_WIDE_ARITY + i)); // out0..out7 at cols 12..19
@@ -5659,6 +5851,111 @@ mod tests {
                 res.is_err(),
                 "wide absorb with a forged carrier lane (in8) was accepted — the wide carrier is NOT load-bearing"
             ),
+        }
+    }
+
+    /// A descriptor with a SINGLE node8 (arity-16) chip lookup binding ALL 8 output lanes to
+    /// columns. trace_width = 1 (arity tag) + 16 (L8‖R8 inputs) + 8 (outputs) = 25; the lookup
+    /// tuple is `[16, var1..var16, var17..var24]`. The full-width Merkle-compression subject.
+    fn node8_test_desc() -> EffectVmDescriptor2 {
+        let mut tuple = vec![LeanExpr::Const(CHIP_NODE8_ARITY as i64)];
+        for i in 0..CHIP_NODE8_ARITY {
+            tuple.push(LeanExpr::Var(1 + i)); // in0..in15 at cols 1..17
+        }
+        for i in 0..CHIP_OUT_LANES {
+            tuple.push(LeanExpr::Var(1 + CHIP_NODE8_ARITY + i)); // out0..out7 at cols 17..25
+        }
+        EffectVmDescriptor2 {
+            name: "ir2-node8-test".to_string(),
+            trace_width: 1 + CHIP_NODE8_ARITY + CHIP_OUT_LANES,
+            public_input_count: 0,
+            tables: vec![],
+            constraints: vec![VmConstraint2::Lookup(LookupSpec {
+                table: TID_P2,
+                tuple,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        }
+    }
+
+    /// An honest node8 trace: 16 distinct inputs (two 8-felt children), all 8 lanes filled from the
+    /// genuine full-width permutation (`chip_absorb_all_lanes` at arity 16).
+    fn node8_test_trace() -> Vec<Vec<BabyBear>> {
+        let ins: [BabyBear; CHIP_NODE8_ARITY] =
+            core::array::from_fn(|i| BabyBear::new(200 + i as u32));
+        let lanes = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins);
+        let mut row = vec![BabyBear::ZERO]; // col 0 unused (arity is the const tuple[0])
+        row.extend_from_slice(&ins);
+        row.extend_from_slice(&lanes);
+        debug_assert_eq!(row.len(), 1 + CHIP_NODE8_ARITY + CHIP_OUT_LANES);
+        vec![row; 4]
+    }
+
+    /// **Phase H3 node8 — the full-width L8‖R8 compression is ADMITTED, SATISFIABLE, and binds all
+    /// 16 input lanes.** The honest arity-16 absorb proves (the node8 arity is admitted by the
+    /// membership gate); forging input felt 12 (a lane in the second 8-felt child, BEYOND the wide
+    /// cap of 11 that no other arity can seed) makes the lookup unsatisfiable — proving the node8
+    /// row genuinely seeds `state[0..16]` from both children. This is the chip-primitive tooth.
+    #[test]
+    fn ir2_node8_full_width_compression_binds_both_children() {
+        let desc = node8_test_desc();
+        let rows = node8_test_trace();
+        if let Err(e) = prove_vm_descriptor2(&desc, &rows, &[], &MemBoundaryWitness::default(), &[])
+        {
+            panic!(
+                "honest arity-16 node8 compression must prove — the node8 arity is unusable: {e}"
+            );
+        }
+        // Forge input felt 12 (col 13 = in12, in the SECOND child, past the wide cap of 11). The
+        // lanes were computed from the genuine in12; the perturbed in12 matches no chip row.
+        let mut bad = node8_test_trace();
+        for r in &mut bad {
+            r[1 + 12] += BabyBear::ONE; // in12 at col 13
+        }
+        let r = std::panic::catch_unwind(|| {
+            prove_vm_descriptor2_inner(
+                &desc,
+                &bad,
+                &[],
+                &MemBoundaryWitness::default(),
+                &[],
+                &UMemBoundaryWitness::default(),
+                false,
+                &ir2_config(),
+            )
+        });
+        match r {
+            Err(_) => {}
+            Ok(res) => assert!(
+                res.is_err(),
+                "node8 with a forged second-child lane (in12) was accepted — the node8 child is NOT load-bearing"
+            ),
+        }
+    }
+
+    /// **Phase H3 node8 — both 8-felt children are load-bearing.** Perturbing ANY of the 16 input
+    /// felts (across both children, including the tail lanes 11..15 that only node8 can seed)
+    /// changes the digest AND every lane — the COLLISION FLOOR is now per-node at full 8-felt width.
+    #[test]
+    fn ir2_node8_both_children_load_bearing() {
+        let base: [BabyBear; CHIP_NODE8_ARITY] =
+            core::array::from_fn(|i| BabyBear::new(13 + i as u32));
+        let lanes_base = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &base);
+        for j in 0..CHIP_NODE8_ARITY {
+            let mut alt = base;
+            alt[j] += BabyBear::ONE;
+            let lanes_alt = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &alt);
+            assert_ne!(
+                lanes_base[0], lanes_alt[0],
+                "node8 digest unchanged after perturbing child felt {j} — that input lane is dead"
+            );
+            for i in 0..CHIP_OUT_LANES {
+                assert_ne!(
+                    lanes_base[i], lanes_alt[i],
+                    "node8 lane {i} unchanged after perturbing child felt {j} — avalanche fails"
+                );
+            }
         }
     }
 
@@ -5832,42 +6129,46 @@ mod tests {
     /// genuine sorted write, chained so a later read against the NEW root sees it.
     #[test]
     fn ir2_map_write_update_proves() {
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
         let w = tree
             .update_witness(HeapLeaf {
                 addr: BabyBear::new(100),
                 value: BabyBear::new(99),
             })
             .expect("key 100 present");
+        // cols (width 19): root8 [0..8), key 8, value 9, new_root8 [10..18), guard 18.
         let desc = EffectVmDescriptor2 {
             name: "ir2-map-write".to_string(),
-            trace_width: 6,
+            trace_width: 19,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(2),
-                new_root: LeanExpr::Var(3),
+                guard: LeanExpr::Var(18),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (10..10 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                 op: MapKind::Write,
             })],
             hash_sites: vec![],
             ranges: vec![],
         };
-        let mut rows = vec![
-            vec![
-                root,
-                BabyBear::new(100),
-                BabyBear::new(99),
-                w.new_root,
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-            ];
-            4
+        let mk = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 19];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[8] = BabyBear::new(100);
+            r[9] = BabyBear::new(99);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&w.new_root);
+            r[18] = guard;
+            r
+        };
+        let rows = vec![
+            mk(BabyBear::ONE),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
         ];
-        rows[0][5] = BabyBear::ONE;
         let proof = prove_vm_descriptor2(
             &desc,
             &rows,
@@ -5888,42 +6189,46 @@ mod tests {
     /// and a later read against the NEW root sees the inserted value.
     #[test]
     fn ir2_map_insert_fresh_proves() {
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
         let w = tree
             .insert_witness(HeapLeaf {
                 addr: BabyBear::new(150),
                 value: BabyBear::new(55),
             })
             .expect("key 150 fresh");
+        // cols (width 19): root8 [0..8), key 8, value 9, new_root8 [10..18), guard 18.
         let desc = EffectVmDescriptor2 {
             name: "ir2-map-insert".to_string(),
-            trace_width: 6,
+            trace_width: 19,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(2),
-                new_root: LeanExpr::Var(3),
+                guard: LeanExpr::Var(18),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (10..10 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                 op: MapKind::Insert,
             })],
             hash_sites: vec![],
             ranges: vec![],
         };
-        let mut rows = vec![
-            vec![
-                root,
-                BabyBear::new(150),
-                BabyBear::new(55),
-                w.new_root,
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-            ];
-            4
+        let mk = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 19];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[8] = BabyBear::new(150);
+            r[9] = BabyBear::new(55);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&w.new_root);
+            r[18] = guard;
+            r
+        };
+        let rows = vec![
+            mk(BabyBear::ONE),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
         ];
-        rows[0][5] = BabyBear::ONE;
         let proof = prove_vm_descriptor2(
             &desc,
             &rows,
@@ -5942,32 +6247,35 @@ mod tests {
         // A chained read against the post-insert root must open to the inserted value.
         let read_desc = EffectVmDescriptor2 {
             name: "ir2-map-insert-readback".to_string(),
-            trace_width: 6,
+            trace_width: 19,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(2),
-                new_root: LeanExpr::Var(3),
+                guard: LeanExpr::Var(18),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(), // read preserves the root
                 op: MapKind::Read,
             })],
             hash_sites: vec![],
             ranges: vec![],
         };
-        let mut read_rows = vec![
-            vec![
-                w.new_root,
-                BabyBear::new(150),
-                BabyBear::new(55),
-                w.new_root,
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-            ];
-            4
+        let mk_read = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 19];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&w.new_root);
+            r[8] = BabyBear::new(150);
+            r[9] = BabyBear::new(55);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&w.new_root);
+            r[18] = guard;
+            r
+        };
+        let read_rows = vec![
+            mk_read(BabyBear::ONE),
+            mk_read(BabyBear::ZERO),
+            mk_read(BabyBear::ZERO),
+            mk_read(BabyBear::ZERO),
         ];
-        read_rows[0][5] = BabyBear::ONE;
         let read_heap: Vec<HeapLeaf> = {
             let mut leaves = test_heap();
             leaves.push(HeapLeaf {
@@ -5990,36 +6298,40 @@ mod tests {
     /// tree has no authenticated gap for it, and the insert-witness builder fails.
     #[test]
     fn ir2_map_insert_present_refuses() {
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
+        // cols (width 19): root8 [0..8), key 8, value 9, new_root8 [10..18), guard 18.
         let desc = EffectVmDescriptor2 {
             name: "ir2-map-insert-present".to_string(),
-            trace_width: 6,
+            trace_width: 19,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(5),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
-                value: LeanExpr::Var(2),
-                new_root: LeanExpr::Var(3),
+                guard: LeanExpr::Var(18),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (10..10 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                 op: MapKind::Insert,
             })],
             hash_sites: vec![],
             ranges: vec![],
         };
-        let mut rows = vec![
-            vec![
-                root,
-                BabyBear::new(100), // key 100 is already present in test_heap
-                BabyBear::new(99),
-                root,
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-            ];
-            4
+        let mk = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 19];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[8] = BabyBear::new(100); // key 100 is already present in test_heap
+            r[9] = BabyBear::new(99);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&root);
+            r[18] = guard;
+            r
+        };
+        let rows = vec![
+            mk(BabyBear::ONE),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
         ];
-        rows[0][5] = BabyBear::ONE;
         assert!(
             prove_vm_descriptor2(
                 &desc,
@@ -6739,19 +7051,19 @@ mod tests {
 
     // ---- the `absent` (bracketed sorted-gap) realization ----
 
-    /// Base layout: col 0 = root, 1 = key, 2 = new_root, 3 = guard.
+    /// Base layout (width 18): root8 [0..8), key 8, new_root8 [9..17) (== root8), guard 17.
     fn absent_desc() -> EffectVmDescriptor2 {
         EffectVmDescriptor2 {
             name: "ir2-absent-test".to_string(),
-            trace_width: 4,
+            trace_width: 18,
             public_input_count: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-                guard: LeanExpr::Var(3),
-                root: LeanExpr::Var(0),
-                key: LeanExpr::Var(1),
+                guard: LeanExpr::Var(17),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
                 value: LeanExpr::Const(0),
-                new_root: LeanExpr::Var(2),
+                new_root: (9..9 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
                 op: MapKind::Absent,
             })],
             hash_sites: vec![],
@@ -6760,11 +7072,22 @@ mod tests {
     }
 
     fn absent_trace(key: u32) -> Vec<Vec<BabyBear>> {
-        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
-        let root = tree.root();
-        let mut rows = vec![vec![root, BabyBear::new(key), root, BabyBear::ZERO]; 4];
-        rows[0][3] = BabyBear::ONE;
-        rows
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
+        let mk = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 18];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[8] = BabyBear::new(key);
+            r[9..9 + CHIP_OUT_LANES].copy_from_slice(&root);
+            r[17] = guard;
+            r
+        };
+        vec![
+            mk(BabyBear::ONE),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+        ]
     }
 
     /// THE NON-MEMBERSHIP GATE: an honest `absent` op (key 150, bracketed by the committed
@@ -6975,7 +7298,7 @@ mod tests {
     #[test]
     fn deployed_notespend_wide_bracket_double_spend_rejected() {
         use crate::effect_vm::trace_rotated::{
-            ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
+            NUM_PRE_LIMBS, ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
             generate_rotated_note_spend_trace_with_nullifier_tree,
         };
         use crate::effect_vm::{CellState, Effect};
@@ -7043,8 +7366,8 @@ mod tests {
         // The witness-INDEPENDENT block witnesses (the verify path threads trusted commits; for a
         // self-contained descriptor-level prove/verify the placeholder pre-limbs suffice — the
         // generator overrides the nullifier-root limbs from the real accumulator).
-        let zero_w = RotatedBlockWitness::new(vec![BabyBear::ZERO; 37], BabyBear::ZERO)
-            .expect("37 pre-iroot limbs");
+        let zero_w = RotatedBlockWitness::new(vec![BabyBear::ZERO; NUM_PRE_LIMBS], BabyBear::ZERO)
+            .expect("NUM_PRE_LIMBS pre-iroot limbs");
         let caveat = empty_caveat_manifest();
 
         let (trace, dpis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(

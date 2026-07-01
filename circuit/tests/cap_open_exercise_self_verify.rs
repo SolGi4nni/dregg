@@ -212,13 +212,22 @@ fn cap_open_exercise_witness_and_appendix_are_genuine() {
         CAP_OPEN_WIDTH,
         "cap-open trace widened to CAP_OPEN_WIDTH"
     );
-    assert_eq!(trace[0][CAP_OPEN_BASE + 56], w.cap_root, "cap_root column");
-    assert_eq!(trace[0][CAP_OPEN_BASE + 57], w.src, "src column");
-    assert_eq!(
-        trace[0][CAP_OPEN_BASE + 10 + 3 * 15],
-        w.cap_root,
-        "node[15] (top fold) == cap_root"
-    );
+    // Phase H-CAP-8 native 8-felt layout: cap_root group at +287..294, src at +295.
+    for j in 0..8 {
+        assert_eq!(
+            trace[0][CAP_OPEN_BASE + 287 + j],
+            w.cap_root[j],
+            "cap_root group lane {j}"
+        );
+    }
+    assert_eq!(trace[0][CAP_OPEN_BASE + 295], w.src, "src column");
+    for j in 0..8 {
+        assert_eq!(
+            trace[0][CAP_OPEN_BASE + 15 + 17 * 15 + 9 + j],
+            w.cap_root[j],
+            "node8[15] (top fold) lane {j} == cap_root"
+        );
+    }
 }
 
 /// **THE AUTHORITY FORGE — rejected at WITNESS BUILD (green, NO `catch_unwind`).** The exercise
@@ -274,7 +283,7 @@ fn cap_open_exercise_authority_forge_rejected_at_witness() {
             w.cap_root,
             "the genuine held cap recomposes its committed root"
         );
-        w.siblings[0] += BabyBear::ONE; // forge the level-0 sibling (a cap not in the c-list)
+        w.siblings[0][0] += BabyBear::ONE; // forge the level-0 sibling lane (a cap not in the c-list)
         assert_ne!(
             w.recomposes(),
             w.cap_root,
