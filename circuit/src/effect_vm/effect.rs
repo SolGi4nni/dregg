@@ -33,7 +33,8 @@ pub struct AttenuateWitness {
     /// The GRANTED (post-attenuation, narrowed) leaf.
     pub granted: crate::cap_root::CapLeaf,
     /// Sibling digests along the leaf→root path (bottom-up, len `CAP_TREE_DEPTH`).
-    pub siblings: Vec<BabyBear>,
+    /// Native 8-felt (Phase H-CAP-8): each sibling is a full `cap_node8` digest.
+    pub siblings: Vec<[BabyBear; crate::cap_root::CAP_DIGEST_W]>,
     /// Direction bits along the path (0 = current is left child, 1 = right).
     pub directions: Vec<u8>,
     /// The held tier ordinal (None=0…Custom=5) — the lattice ordinal distinct
@@ -63,7 +64,8 @@ pub struct RevokeWitness {
     /// the old `cap_root` by [`Self::siblings`] / [`Self::directions`].
     pub held: crate::cap_root::CapLeaf,
     /// Sibling digests along the leaf→root path (bottom-up, len `CAP_TREE_DEPTH`).
-    pub siblings: Vec<BabyBear>,
+    /// Native 8-felt (Phase H-CAP-8): each sibling is a full `cap_node8` digest.
+    pub siblings: Vec<[BabyBear; crate::cap_root::CAP_DIGEST_W]>,
     /// Direction bits along the path (0 = current is left child, 1 = right).
     pub directions: Vec<u8>,
 }

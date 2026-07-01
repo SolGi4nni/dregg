@@ -1090,9 +1090,12 @@ impl TurnExecutor {
             leaf_mask_hi: leaf.mask_hi.as_u32(),
             leaf_expiry: leaf.expiry.as_u32(),
             leaf_breadstuff: leaf.breadstuff.as_u32(),
-            siblings: siblings.into_iter().map(|s| s.as_u32()).collect(),
+            siblings: siblings
+                .into_iter()
+                .map(|s| s.map(|f| f.as_u32()))
+                .collect(),
             directions,
-            cap_root: tree.root().as_u32(),
+            cap_root: tree.root().map(|f| f.as_u32()),
         });
     }
 

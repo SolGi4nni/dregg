@@ -71,9 +71,9 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
 #[test]
 fn new_wide_members_carry_16_commit_pis() {
     for (name, want_w, want_pi) in [
-        ("transferCapOpenTBVmDescriptor2R24", 1029usize, 65usize),
-        ("heapWriteVmDescriptor2R24", 803, 20),
-        ("supplyMintVmDescriptor2R24", 817, 62),
+        ("transferCapOpenTBVmDescriptor2R24", 1528usize, 65usize),
+        ("heapWriteVmDescriptor2R24", 1655, 20),
+        ("supplyMintVmDescriptor2R24", 1197, 62),
     ] {
         let d = parse_vm_descriptor2(wide_json(name)).unwrap();
         assert_eq!(d.trace_width, want_w, "{name} wide width");
@@ -156,9 +156,9 @@ fn wide_supply_mint_proves_and_verifies() {
         desc.name,
         parse_vm_descriptor2(wide_json(name)).unwrap().name
     );
-    assert_eq!(desc.trace_width, 817, "supplyMint wide width 817");
+    assert_eq!(desc.trace_width, 1197, "supplyMint wide width 1197");
     assert_eq!(desc.public_input_count, 62, "supplyMint wide 62 PIs");
-    assert_eq!(trace[0].len(), 817);
+    assert_eq!(trace[0].len(), 1197);
     assert_eq!(dpis.len(), 62);
 
     let mb = MemBoundaryWitness::default();
@@ -166,12 +166,13 @@ fn wide_supply_mint_proves_and_verifies() {
         .unwrap_or_else(|e| panic!("supplyMint WIDE proof must prove: {e}"));
     verify_vm_descriptor2(&desc, &proof, &dpis)
         .unwrap_or_else(|e| panic!("supplyMint WIDE proof must verify: {e}"));
-    eprintln!("WIDE supplyMint: PROVED + VERIFIED at width 817 (faithful 8-felt commit, 62 PIs).");
+    eprintln!("WIDE supplyMint: PROVED + VERIFIED at width 1197 (faithful 8-felt commit, 62 PIs).");
 }
 
 /// heapWrite (the Class-A heap-root recompute) PROVES + light-client VERIFIES at the wide geometry
-/// (803 / 20 PIs) through its dedicated per-family wide producer — the genuine sorted-Merkle splice
-/// forces the AFTER heap root and the 8-felt anchors bind. Mirrors `wide_supply_mint_proves_and_verifies`.
+/// (1183 / 20 PIs) through its dedicated per-family wide producer — the genuine sorted-Merkle splice
+/// over the FAITHFUL 8-felt heap root forces the AFTER heap-root group and the 8-felt anchors bind.
+/// Mirrors `wide_supply_mint_proves_and_verifies`.
 #[test]
 fn wide_heap_write_proves_and_verifies() {
     let name = "heapWriteVmDescriptor2R24";
@@ -240,9 +241,12 @@ fn wide_heap_write_proves_and_verifies() {
     .expect("wide heap-write generation");
 
     let desc = parse_vm_descriptor2(wide_json(name)).unwrap();
-    assert_eq!(desc.trace_width, 803, "heapWrite wide width 803");
+    assert_eq!(
+        desc.trace_width, 1655,
+        "heapWrite wide width 1655 (OPTION I after-spine)"
+    );
     assert_eq!(desc.public_input_count, 20, "heapWrite wide 20 PIs");
-    assert_eq!(trace[0].len(), 803);
+    assert_eq!(trace[0].len(), 1655);
     assert_eq!(dpis.len(), 20);
 
     let mb = MemBoundaryWitness::default();
@@ -251,7 +255,7 @@ fn wide_heap_write_proves_and_verifies() {
     verify_vm_descriptor2(&desc, &proof, &dpis)
         .unwrap_or_else(|e| panic!("heapWrite WIDE proof must verify: {e}"));
     eprintln!(
-        "WIDE heapWrite: PROVED + VERIFIED at width 803 (genuine sorted-Merkle splice + faithful 8-felt commit, 20 PIs)."
+        "WIDE heapWrite: PROVED + VERIFIED at width 1183 (genuine sorted-Merkle splice over the faithful 8-felt heap root + 8-felt commit, 20 PIs)."
     );
 }
 

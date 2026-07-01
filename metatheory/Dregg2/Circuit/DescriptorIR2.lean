@@ -123,9 +123,11 @@ permutation) seeds. This is DISTINCT from the Poseidon2 sponge rate ([`CHIP_SPON
 one permutation can SEED up to `width − capacity` lanes regardless of the multi-block sponge
 rate. Phase B-GATE-INPUT widened it `8 → 11` so a single permutation can absorb an 8-felt
 commitment carrier + 3 new limbs (the wide Merkle–Damgård step of the faithful 8-felt
-commitment, Phase B-ROTATION). The deployed commitment is STILL 1-felt after this phase; the
-wide arity is additive + unused. (`11 < width 16`, so the seed is well within the permutation.) -/
-def CHIP_RATE : Nat := 11
+commitment, Phase B-ROTATION). Phase H3 (native-8-felt Merkle root weld) widened it `11 → 16` =
+full `width`: the `node8` arity-16 row compresses two 8-felt child digests `L8 ‖ R8` in ONE
+permutation (no capacity — fixed-length compression domain-separated by the arity tag), reading
+lanes `0..8` for the node's 8-felt digest. (`16 = width`, the full-width seed.) -/
+def CHIP_RATE : Nat := 16
 
 /-- The Poseidon2 SPONGE RATE in base field elements (`babyBearD4W16.rate = rate_ext · d = 8`) —
 the REAL multi-block-sponge absorb width, a cryptographic parameter pinned in
@@ -265,12 +267,25 @@ def MapOpKind.code : MapOpKind → ℤ
 emitting main row. `guard` gates the contribution. -/
 structure MapOp where
   guard   : EmittedExpr
-  root    : EmittedExpr
+  /-- The pre-root as an 8-felt digest group (Phase H-HEAP-8): lane 0 is the scalar heap-root
+  limb (`B_HEAP_ROOT` = 28), lanes 1..7 the group lanes (`heapRootGroupCol`). The per-row
+  denotation (`holdsAt`) reads lane 0 only (the scalar `writesTo`/`opensTo`); the full 8-felt
+  faithfulness is trace-forced by the heap after-spine keystone (`HeapOpenEmit`). Matches the
+  Rust `MapOpSpec.root : Vec<LeanExpr>` (length `CHIP_OUT_LANES` = 8). -/
+  root    : Fin 8 → EmittedExpr
   key     : EmittedExpr
   value   : EmittedExpr
-  newRoot : EmittedExpr
+  /-- The post-root as an 8-felt digest group (lane 0 scalar ‖ lanes 1..7 group). See `root`. -/
+  newRoot : Fin 8 → EmittedExpr
   op      : MapOpKind
-  deriving Repr
+
+/-- Manual `Repr` (the `root`/`newRoot` 8-felt groups are functions `Fin 8 → EmittedExpr`, reprd
+via their lane list) so `VmConstraint2 deriving Repr` still elaborates. -/
+instance : Repr MapOp where
+  reprPrec m _ :=
+    "{ guard := " ++ repr m.guard ++ ", root := " ++ repr (List.ofFn m.root) ++
+    ", key := " ++ repr m.key ++ ", value := " ++ repr m.value ++
+    ", newRoot := " ++ repr (List.ofFn m.newRoot) ++ ", op := " ++ repr m.op ++ " }"
 
 /-! ### The accumulator / recursive-proof-binding op (`docs/EPOCH-DESIGN.md` — the Custom leg).
 
@@ -496,15 +511,15 @@ new_root)` columns are a genuine opening per the op kind. -/
 def MapOp.holdsAt (hash : List ℤ → ℤ) (env : VmRowEnv) (m : MapOp) : Prop :=
   m.guard.eval env.loc = 1 →
     match m.op with
-    | .read   => opensTo hash (m.root.eval env.loc) (m.key.eval env.loc)
+    | .read   => opensTo hash ((m.root 0).eval env.loc) (m.key.eval env.loc)
                    (some (m.value.eval env.loc))
-                 ∧ m.newRoot.eval env.loc = m.root.eval env.loc
-    | .absent => opensTo hash (m.root.eval env.loc) (m.key.eval env.loc) none
-                 ∧ m.newRoot.eval env.loc = m.root.eval env.loc
-    | .write  => writesTo hash (m.root.eval env.loc) (m.key.eval env.loc)
-                   (m.value.eval env.loc) (m.newRoot.eval env.loc)
-    | .insert => writesTo hash (m.root.eval env.loc) (m.key.eval env.loc)
-                   (m.value.eval env.loc) (m.newRoot.eval env.loc)
+                 ∧ (m.newRoot 0).eval env.loc = (m.root 0).eval env.loc
+    | .absent => opensTo hash ((m.root 0).eval env.loc) (m.key.eval env.loc) none
+                 ∧ (m.newRoot 0).eval env.loc = (m.root 0).eval env.loc
+    | .write  => writesTo hash ((m.root 0).eval env.loc) (m.key.eval env.loc)
+                   (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
+    | .insert => writesTo hash ((m.root 0).eval env.loc) (m.key.eval env.loc)
+                   (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
 
 /-! ## §5 — Memory-op semantics: the read/write multiset, WELDED to the proved Blum theorem.
 
@@ -549,7 +564,7 @@ def memLog (d : EffectVmDescriptor2) (t : VmTrace) : List MemTraceOp :=
 
 /-- The map-ops table row of a `MapOp` on a row: `[root, key, value, op, new_root]`. -/
 def MapOp.rowAt (a : Assignment) (m : MapOp) : List ℤ :=
-  [m.root.eval a, m.key.eval a, m.value.eval a, m.op.code, m.newRoot.eval a]
+  [(m.root 0).eval a, m.key.eval a, m.value.eval a, m.op.code, (m.newRoot 0).eval a]
 
 /-- The gathered map-ops log (the rows the map-ops table must carry), in trace order. -/
 def mapLog (d : EffectVmDescriptor2) (t : VmTrace) : Table :=
@@ -1441,8 +1456,9 @@ def MemOp.toJson (m : MemOp) : String :=
 /-- Render one map op (the `(root, key, value, op) → new_root` opening). -/
 def MapOp.toJson (m : MapOp) : String :=
   "{\"t\":\"map_op\",\"op\":\"" ++ m.op.tag ++ "\",\"guard\":" ++ m.guard.toJson ++
-  ",\"root\":" ++ m.root.toJson ++ ",\"key\":" ++ m.key.toJson ++
-  ",\"value\":" ++ m.value.toJson ++ ",\"new_root\":" ++ m.newRoot.toJson ++ "}"
+  ",\"root\":" ++ jsonArray EmittedExpr.toJson (List.ofFn m.root) ++ ",\"key\":" ++ m.key.toJson ++
+  ",\"value\":" ++ m.value.toJson ++
+  ",\"new_root\":" ++ jsonArray EmittedExpr.toJson (List.ofFn m.newRoot) ++ "}"
 
 /-- Render one universal-memory op (the domain-tagged `Option`-valued instrumented row). -/
 def UMemOp.toJson (m : UMemOp) : String :=
@@ -1495,23 +1511,23 @@ def demoV2 : EffectVmDescriptor2 :=
       [ .base (.transition 0 0)
       , .lookup ⟨.range, [.var 0]⟩
       , .memOp ⟨.const 1, .var 0, .var 1, .var 1, .const 0, .read⟩
-      , .mapOp ⟨.const 1, .var 0, .var 1, .const 0, .var 1, .write⟩ ]
+      , .mapOp ⟨.const 1, fun _ => .var 0, .var 1, .const 0, fun _ => .var 1, .write⟩ ]
   , hashSites := [], ranges := [] }
 
 -- THE WIRE GOLDEN: the canonical v2 JSON, byte-pinned (versioned `"ir":2`; every v2 constraint
 -- kind exercised; the chip params are the REAL babyBearD4W16 pins). The Rust v2 decoder's
 -- grammar is THIS string's grammar; v1 strings (no `"ir"` key) parse as version 1 unchanged.
 #guard emitVmJson2 demoV2 ==
-  "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":20,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":{\"t\":\"var\",\"v\":0},\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":25,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0}],\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":[{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}"
 
--- The chip's INPUT-LANE COUNT is 11 (Phase B-GATE-INPUT widened it 8 → 11 for the wide MD step);
--- the sponge rate stays the REAL babyBearD4W16 base rate (8). The chip row is 20 wide:
--- `1 (arity) + 11 (inputs) + 8 (output lanes)`.
-#guard CHIP_RATE == 11
+-- The chip's INPUT-LANE COUNT is 16 (Phase H3 widened it 11 → 16 = full width for the node8 L8‖R8
+-- Merkle compression); the sponge rate stays the REAL babyBearD4W16 base rate (8). The chip row is
+-- 25 wide: `1 (arity) + 16 (inputs) + 8 (output lanes)`.
+#guard CHIP_RATE == 16
 #guard CHIP_SPONGE_RATE == 8
 #guard CHIP_OUT_LANES == 8
 #guard poseidon2ChipTableDef.arity == CHIP_RATE + 1 + CHIP_OUT_LANES
-#guard poseidon2ChipTableDef.arity == 20
+#guard poseidon2ChipTableDef.arity == 25
 #guard (chipRow (fun _ => 0) [1, 2] [0, 0, 0, 0, 0, 0, 0]).length == CHIP_RATE + 1 + CHIP_OUT_LANES
 -- The five table ids are distinct on the wire.
 #guard ([TableId.main, .poseidon2, .range, .memory, .mapOps].map TableId.wireId).dedup.length == 5

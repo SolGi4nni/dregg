@@ -106,7 +106,7 @@ open Dregg2.Circuit.RotatedKernelRefinementBirth
 open Dregg2.Circuit.RotatedKernelRefinementSpawnHandoff
   (spawnHandoffEncodes spawn_handoff_forces_insert spawn_handoff_key_present)
 open Dregg2.Circuit.SortedTreeNonMembership (keysOf SpineCommits sortedInsert)
-open Dregg2.Circuit.DeployedCapTree (CapHashScheme)
+open Dregg2.Circuit.DeployedCapTree (CapHashScheme Cap8Scheme Digest8)
 open Dregg2.Circuit.Spec.NoteNullifier (NoteSpendSpec noteSpendGuard noteSpendReceipt)
 open Dregg2.Circuit.Spec.NoteCommitment (NoteCreateASpec noteCreateReceipt)
 open Dregg2.Circuit.Spec.AccountGrowth
@@ -511,14 +511,14 @@ key `childKey`, the old root's sorted spine, the OLD-root spine binding (`hold`)
 NEW-root binding the GROWN spine `sortedInsert childKey spine` (`hnew`). From these `capInsert_sound`
 forces the exact cap-key-set growth. The realizable construction dual of the soundness committed
 cap-tree readout. Data-bearing (`Type`). -/
-structure SpawnHandoffInsertProver {State : Type} (S : CapHashScheme State) : Type where
-  oldRoot : ℤ
-  newRoot : ℤ
+structure SpawnHandoffInsertProver (S8 : Cap8Scheme) : Type where
+  oldRoot : Digest8
+  newRoot : Digest8
   childKey : ℤ
   spine : List ℤ
-  hold : SpineCommits S oldRoot spine
-  hfresh : childKey ∉ keysOf S oldRoot
-  hnew : SpineCommits S newRoot (sortedInsert childKey spine)
+  hold : SpineCommits S8 oldRoot spine
+  hfresh : childKey ∉ keysOf S8 oldRoot
+  hnew : SpineCommits S8 newRoot (sortedInsert childKey spine)
 
 /-- **`spawn_spawnHandoffEncodes_construct` — CONSTRUCT the spawn-handoff decode from the spec.** From
 `SpawnSpec pre actor child target post`, the realizable accounts SET-ROOT floor
@@ -527,13 +527,13 @@ structure SpawnHandoffInsertProver {State : Type} (S : CapHashScheme State) : Ty
 insert gate from the accounts floor; guard / born-empty residuals / cap-handoff `Caps`-moves / receipt
 / frame from the spec) PLUS the cap-tree INSERT data from the handoff floor. The dual of
 `spawn_descriptorRefines_handoff`. -/
-def spawn_spawnHandoffEncodes_construct {State : Type} (S : CapHashScheme State)
+def spawn_spawnHandoffEncodes_construct (S8 : Cap8Scheme)
     (compressN : List ℤ → ℤ)
     (pre post : RecChainedState) (actor child target : CellId)
     (hspec : SpawnFullSpec pre actor child target post)
     (accProver : AccountsInsertRootProver compressN pre.kernel post.kernel child)
-    (handoff : SpawnHandoffInsertProver S) :
-    spawnHandoffEncodes S compressN pre post actor child target where
+    (handoff : SpawnHandoffInsertProver S8) :
+    spawnHandoffEncodes S8 compressN pre post actor child target where
   birth :=
     { preRoot := accProver.preRoot
       postRoot := accProver.postRoot
@@ -580,14 +580,14 @@ grow by EXACTLY the conferred key `childKey` (`spawn_handoff_forces_insert` / `c
 (by the floor's `hfresh`) absent pre — the genuine cap-tree set move, via the SAME insert lemma the
 soundness rung uses. The cap-handoff leg of the non-vacuity tooth (the real wave-prompt set-insert /
 non-membership move). -/
-theorem spawn_descriptorComplete_handoff_genuine {State : Type} (S : CapHashScheme State)
+theorem spawn_descriptorComplete_handoff_genuine (S8 : Cap8Scheme)
     (compressN : List ℤ → ℤ)
     (pre post : RecChainedState) (actor child target : CellId)
-    (henc : spawnHandoffEncodes S compressN pre post actor child target) :
-    (∀ y, y ∈ keysOf S henc.newRoot ↔ (y = henc.childKey ∨ y ∈ keysOf S henc.oldRoot)) ∧
-    henc.childKey ∈ keysOf S henc.newRoot ∧ henc.childKey ∉ keysOf S henc.oldRoot :=
-  ⟨spawn_handoff_forces_insert S compressN pre post actor child target henc,
-   spawn_handoff_key_present S compressN pre post actor child target henc,
+    (henc : spawnHandoffEncodes S8 compressN pre post actor child target) :
+    (∀ y, y ∈ keysOf S8 henc.newRoot ↔ (y = henc.childKey ∨ y ∈ keysOf S8 henc.oldRoot)) ∧
+    henc.childKey ∈ keysOf S8 henc.newRoot ∧ henc.childKey ∉ keysOf S8 henc.oldRoot :=
+  ⟨spawn_handoff_forces_insert S8 compressN pre post actor child target henc,
+   spawn_handoff_key_present S8 compressN pre post actor child target henc,
    henc.hfresh⟩
 
 /-- **`spawn_descriptorComplete` — the spawn completeness rung (dual of
@@ -596,7 +596,7 @@ theorem spawn_descriptorComplete_handoff_genuine {State : Type} (S : CapHashSche
 floor), a circuit witness of the live `d` whose published commitment decodes to `(pre, post)`. The
 accounts insert AND the cap-handoff insert are spec/floor-determined (read off by the genuine teeth);
 the commitment is CONSTRUCTED (`stateDecode_construct`). -/
-theorem spawn_descriptorComplete {State : Type} (S : CommitSurface) (CapS : CapHashScheme State)
+theorem spawn_descriptorComplete (S : CommitSurface) (CapS : Cap8Scheme)
     (compressN : List ℤ → ℤ) (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (buildWitness : ∀ (pre post : RecChainedState) (actor child target : CellId) (turn : BoundaryTurn),
       SpawnFullSpec pre actor child target post →

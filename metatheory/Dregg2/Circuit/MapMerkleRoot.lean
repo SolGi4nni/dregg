@@ -38,11 +38,14 @@ commitment tower carries. NEW file; imports read-only.
 -/
 import Dregg2.Substrate.Heap
 import Dregg2.Circuit.Poseidon2Binding
+import Dregg2.Circuit.DeployedHeapTree
 
 namespace Dregg2.Circuit.MapMerkleRoot
 
 open Dregg2.Substrate
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.DeployedCapTree (Digest8)
+open Dregg2.Circuit.DeployedHeapTree (Heap8Scheme)
 
 set_option autoImplicit false
 
@@ -230,6 +233,175 @@ theorem writesToMerkle_functional (hash : List ℤ → ℤ) (hCR : Poseidon2Spon
   have hm : m₁ = m₂ := mapRoot_injective hash hCR d hl₁ hl₂ (hr₁.trans hr₂.symm)
   rw [he₁, he₂, hm]
 
+/-! ## §5b — THE FAITHFUL 8-felt map denotation (Phase H-HEAP-8): the perfect-tree fold + opening over
+`node8` (`Digest8`), the exact twin of §2–§5 but at the deployed ~124-bit width. The historical §2–§5
+folded a SINGLE felt per node (`mapNode hash : ℤ → ℤ → ℤ`, ~2^31, below the FRI/STARK ~124-bit floor); the
+GENTIAN tooth exhibits a colliding-lane-0 heap pair. This section commits the FULL 8-felt root: nodes ride
+`Heap8Scheme.heapNodeOf8` (arity-16 `node8` chip), leaves `heapLeafDigest8`, and the anti-ghost re-proves
+against `heapNodeOf8_injective` / `heapLeafDigest8_injective` (`DeployedHeapTree`), NOT the 1-felt sponge.
+`MapOp.holdsAt`'s deployed denotation moves onto `opensToMerkle8` / `writesToMerkle8`. -/
+
+section Faithful8
+open Dregg2.Circuit.DeployedHeapTree.Heap8Scheme (heapLeafDigest8 heapNodeOf8 heapLeafDigest8_injective
+  heapNodeOf8_injective)
+
+variable (S8 : Heap8Scheme)
+
+/-- The all-zero `Digest8` (off-the-end default for `headD`; never semantically load-bearing on a
+length-`2^d` vector). -/
+def zeroDigest8 : Digest8 := fun _ => 0
+
+/-- **`foldLevel8 S8 xs`** — one 8-felt Merkle level: pair adjacent `Digest8`s by `heapNodeOf8`. The
+`node8` twin of `foldLevel`. -/
+def foldLevel8 : List Digest8 → List Digest8
+  | [] => []
+  | [x] => [x]
+  | l :: r :: rest => heapNodeOf8 S8 l r :: foldLevel8 rest
+
+/-- **`perfectRoot8 S8 d xs`** — fold `d` 8-felt levels and take the head: the perfect binary-tree
+`node8` root of the `2^d` leaf digests. At `d = 0` the root is the single leaf. -/
+def perfectRoot8 : Nat → List Digest8 → Digest8
+  | 0,     xs => xs.headD (zeroDigest8)
+  | d + 1, xs => perfectRoot8 d (foldLevel8 S8 xs)
+
+/-- One 8-felt fold level HALVES an even-length list (the `node8` twin of `foldLevel_length_half`). -/
+theorem foldLevel8_length_half :
+    ∀ (n : Nat) (xs : List Digest8), xs.length = 2 * n → (foldLevel8 S8 xs).length = n := by
+  intro n
+  induction n with
+  | zero =>
+    intro xs hn
+    have : xs = [] := List.length_eq_zero_iff.mp (by omega)
+    subst this; simp [foldLevel8]
+  | succ m ih =>
+    intro xs hn
+    match xs, hn with
+    | l :: r :: rest, hn =>
+      simp only [List.length_cons] at hn
+      have hrest : rest.length = 2 * m := by omega
+      simp only [foldLevel8, List.length_cons, ih rest hrest]
+
+/-- `foldLevel8` is injective on lists of equal length `2*n` under the `node8` injectivity (the `node8`
+twin of `foldLevel_injective`; peels each pair by `heapNodeOf8_injective`). -/
+theorem foldLevel8_injective :
+    ∀ (n : Nat) {xs ys : List Digest8}, xs.length = 2 * n → ys.length = 2 * n →
+      foldLevel8 S8 xs = foldLevel8 S8 ys → xs = ys := by
+  intro n
+  induction n with
+  | zero =>
+    intro xs ys hx hy _
+    have hxe : xs = [] := List.length_eq_zero_iff.mp (by omega)
+    have hye : ys = [] := List.length_eq_zero_iff.mp (by omega)
+    rw [hxe, hye]
+  | succ m ih =>
+    intro xs ys hx hy hfold
+    match xs, hx, ys, hy with
+    | l :: r :: rest, hx, l' :: r' :: rest', hy =>
+      simp only [foldLevel8, List.cons.injEq] at hfold
+      obtain ⟨hnode, hrest⟩ := hfold
+      obtain ⟨hl, hr⟩ := heapNodeOf8_injective S8 hnode
+      simp only [List.length_cons] at hx hy
+      have hxlen : rest.length = 2 * m := by omega
+      have hylen : rest'.length = 2 * m := by omega
+      have := ih hxlen hylen hrest
+      rw [hl, hr, this]
+
+/-- **`perfectRoot8_injective` — the 8-felt binary-Merkle root BINDS the whole leaf-digest vector.**
+Two length-`2^d` `Digest8` lists with EQUAL `node8` roots are EQUAL, under `heapNodeOf8_injective` — the
+`node8` twin of `perfectRoot_injective`, at ~124-bit width. -/
+theorem perfectRoot8_injective :
+    ∀ (d : Nat) {xs ys : List Digest8}, xs.length = 2 ^ d → ys.length = 2 ^ d →
+      perfectRoot8 S8 d xs = perfectRoot8 S8 d ys → xs = ys := by
+  intro d
+  induction d with
+  | zero =>
+    intro xs ys hx hy hroot
+    rw [pow_zero] at hx hy
+    match xs, ys, hx, hy with
+    | [x], [y], _, _ =>
+      simp only [perfectRoot8, List.headD_cons] at hroot
+      rw [hroot]
+  | succ d ih =>
+    intro xs ys hx hy hroot
+    simp only [perfectRoot8] at hroot
+    have hfl_x : (foldLevel8 S8 xs).length = 2 ^ d := foldLevel8_length_half S8 (2 ^ d) xs (by omega)
+    have hfl_y : (foldLevel8 S8 ys).length = 2 ^ d := foldLevel8_length_half S8 (2 ^ d) ys (by omega)
+    have hfold := ih hfl_x hfl_y hroot
+    exact foldLevel8_injective S8 (2 ^ d) (by omega) (by omega) hfold
+
+/-- The `heapLeafDigest8` map is INJECTIVE on heaps (the `node8` twin of `Heap.map_leaf_injective`):
+distinct sorted entry lists yield distinct 8-felt leaf-digest lists, by `heapLeafDigest8_injective`. -/
+theorem map_leaf8_injective :
+    ∀ (l₁ l₂ : Heap.FeltHeap), l₁.map (heapLeafDigest8 S8) = l₂.map (heapLeafDigest8 S8) → l₁ = l₂ := by
+  intro l₁
+  induction l₁ with
+  | nil => intro l₂ h; cases l₂ with
+    | nil => rfl
+    | cons hd t => simp at h
+  | cons hd₁ t₁ ih =>
+    intro l₂ h
+    cases l₂ with
+    | nil => simp at h
+    | cons hd₂ t₂ =>
+      simp only [List.map_cons, List.cons.injEq] at h
+      obtain ⟨hleaf, htail⟩ := h
+      rw [heapLeafDigest8_injective S8 hleaf, ih t₂ htail]
+
+/-- **`mapRoot8 S8 d h`** — the depth-`d` 8-felt binary-Merkle root of the sorted heap `h` (the `node8`
+twin of `mapRoot`). BYTE-IDENTICAL to `heap_root.rs`'s `CanonicalHeapTree8::root`. -/
+def mapRoot8 (d : Nat) (h : Heap.FeltHeap) : Digest8 :=
+  perfectRoot8 S8 d (h.map (heapLeafDigest8 S8))
+
+/-- **`mapRoot8_injective` — the 8-felt root BINDS the whole heap.** Two depth-`d` `2^d`-leaf heaps
+publishing the same 8-felt root are EQUAL, re-proved against `perfectRoot8_injective` / `heapNodeOf8`,
+NOT the 1-felt sponge. -/
+theorem mapRoot8_injective (d : Nat) {h₁ h₂ : Heap.FeltHeap}
+    (hlen₁ : h₁.length = 2 ^ d) (hlen₂ : h₂.length = 2 ^ d)
+    (h : mapRoot8 S8 d h₁ = mapRoot8 S8 d h₂) : h₁ = h₂ := by
+  have hmap : (h₁.map (heapLeafDigest8 S8)) = (h₂.map (heapLeafDigest8 S8)) :=
+    perfectRoot8_injective S8 d (by rw [List.length_map, hlen₁])
+      (by rw [List.length_map, hlen₂]) h
+  exact map_leaf8_injective S8 h₁ h₂ hmap
+
+/-- **`opensToMerkle8 S8 d r k o`** — some depth-`d` `2^d`-leaf sorted heap behind the 8-felt binary root
+`r` reads `o` at `k`. The faithful `node8` replacement of `opensToMerkle`. -/
+def opensToMerkle8 (d : Nat) (r : Digest8) (k : ℤ) (o : Option ℤ) : Prop :=
+  ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ h.length = 2 ^ d ∧ mapRoot8 S8 d h = r ∧ Heap.get h k = o
+
+/-- **`writesToMerkle8 S8 d r k v r'`** — some depth-`d` `2^d`-leaf sorted heap behind 8-felt root `r`
+produces root `r'` under the sorted insert-or-update of `(k, v)` (post-heap still `2^d`-leaf). -/
+def writesToMerkle8 (d : Nat) (r : Digest8) (k v : ℤ) (r' : Digest8) : Prop :=
+  ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ h.length = 2 ^ d
+    ∧ (Heap.set h k v).length = 2 ^ d
+    ∧ mapRoot8 S8 d h = r ∧ r' = mapRoot8 S8 d (Heap.set h k v)
+
+/-- **8-felt openings are FUNCTIONAL (the anti-ghost over the `node8` tree).** Under the arity-16 chip
+CR, the 8-felt root + key determine the read. Re-proved against `mapRoot8_injective`. -/
+theorem opensToMerkle8_functional (d : Nat) {r : Digest8} {k : ℤ} {o₁ o₂ : Option ℤ}
+    (h₁ : opensToMerkle8 S8 d r k o₁) (h₂ : opensToMerkle8 S8 d r k o₂) : o₁ = o₂ := by
+  obtain ⟨m₁, _, hl₁, hr₁, hg₁⟩ := h₁
+  obtain ⟨m₂, _, hl₂, hr₂, hg₂⟩ := h₂
+  have hm : m₁ = m₂ := mapRoot8_injective S8 d hl₁ hl₂ (hr₁.trans hr₂.symm)
+  rw [← hg₁, ← hg₂, hm]
+
+/-- Membership and non-membership at the same 8-felt root/key EXCLUDE each other (the `node8` nullifier /
+non-membership tooth). -/
+theorem opensToMerkle8_some_excludes_none (d : Nat) {r : Digest8} {k v : ℤ}
+    (h₁ : opensToMerkle8 S8 d r k (some v)) (h₂ : opensToMerkle8 S8 d r k none) : False := by
+  have := opensToMerkle8_functional S8 d h₁ h₂
+  simp at this
+
+/-- **8-felt writes are FUNCTIONAL.** Under the arity-16 chip CR, 8-felt root + key + value determine the
+new root: the map-op row's `new_root` GROUP cannot be forged. Re-proved against `mapRoot8_injective`. -/
+theorem writesToMerkle8_functional (d : Nat) {r : Digest8} {k v : ℤ} {r₁ r₂ : Digest8}
+    (h₁ : writesToMerkle8 S8 d r k v r₁) (h₂ : writesToMerkle8 S8 d r k v r₂) : r₁ = r₂ := by
+  obtain ⟨m₁, _, hl₁, _, hr₁, he₁⟩ := h₁
+  obtain ⟨m₂, _, hl₂, _, hr₂, he₂⟩ := h₂
+  have hm : m₁ = m₂ := mapRoot8_injective S8 d hl₁ hl₂ (hr₁.trans hr₂.symm)
+  rw [he₁, he₂, hm]
+
+end Faithful8
+
 /-! ## §6 — Axiom hygiene. -/
 
 #assert_axioms mapNode_injective
@@ -240,5 +412,13 @@ theorem writesToMerkle_functional (hash : List ℤ → ℤ) (hCR : Poseidon2Spon
 #assert_axioms opensToMerkle_functional
 #assert_axioms opensToMerkle_some_excludes_none
 #assert_axioms writesToMerkle_functional
+-- §5b — the faithful 8-felt (`node8`) denotation, axiom-clean (crypto enters only as the named
+-- `Heap8Scheme.chip8CR` arity-16 chip CR, via `DeployedHeapTree`).
+#assert_axioms foldLevel8_injective
+#assert_axioms perfectRoot8_injective
+#assert_axioms mapRoot8_injective
+#assert_axioms opensToMerkle8_functional
+#assert_axioms opensToMerkle8_some_excludes_none
+#assert_axioms writesToMerkle8_functional
 
 end Dregg2.Circuit.MapMerkleRoot

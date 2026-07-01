@@ -2059,23 +2059,41 @@ pub const CAP_OPEN_BASE: usize = GRAD_ROT_WIDTH; // 608
 /// `1 << n` (`n < 32`, up to `EFFECT_ATTENUATE_CAPABILITY = 1 << 23`) is selectable AND a broad cap
 /// (`mask_hi = 0xFFFF`) decomposes fully. The Lean twin is `DeployedCapOpen.MASK16_BITS`.
 pub const CAP_OPEN_MASK_BITS: usize = 32;
-/// The cap-MEMBERSHIP columns `fill_cap_open` writes (the genuine non-lane witness): 7 leaf + 1
-/// leafDigest + 16×(sib,dir,node) + capRoot + src + effBit + 32 mask-bit columns = 91. The trailing
-/// 32 mask-bit columns carry the boolean decomposition of the FULL effect mask the genuine SUBMASK
-/// facet gate (`maskBitBoolGate`/`maskReconGate`/`selectedBitGate`) reads — NOT the over-strict
-/// equality `mask_lo == effBit` (and NO `mask_hi == 0` pin, so a broad `EFFECT_ALL` cap is admitted).
-pub const CAP_OPEN_MEMBERSHIP_COLS: usize = 7 + 1 + 3 * CAP_OPEN_DEPTH + 3 + CAP_OPEN_MASK_BITS; // 91
-/// The number of poseidon2-chip lookup SITES the cap-membership appendix adds atop the graduated
-/// rotated layout: 1 leaf absorb (arity 7) + 16 node absorbs (arity 3) = 17. Phase B-GATE appends a
-/// 7-lane block per site, so the cap-open appendix's chip-lane columns number `7 × 17 = 119`.
+/// The number of felts in a native cap-tree digest (Phase H-CAP-8): a leaf-digest / sibling / node /
+/// cap-root group is 8-felt wide, byte-identical to `cap_root::CAP_DIGEST_W` (the arity-16 `node8`
+/// chip compression `cap_node8` + the 8-lane `CapLeaf::digest`), faithful to the FRI ~124-bit floor.
+pub const CAP_OPEN_DIGEST_W: usize = crate::cap_root::CAP_DIGEST_W; // 8
+/// The cap-MEMBERSHIP columns `fill_cap_open` writes — Phase H-CAP-8 NATIVE 8-FELT: 7 leaf (scalar) +
+/// 8 leafDigest + `DEPTH·(8 sib + 1 dir + 8 node) = DEPTH·17` + 8 capRoot + src + effBit + 32 mask-bit
+/// columns = `7 + 8 + 16·17 + 8 + 2 + 32 = 329`. The 7 spare permutation lanes per absorb are PROMOTED
+/// into the bound 8-felt fold (the whole `node8` group is committed), so there is NO separate
+/// chip-lane tail — the membership span IS the full appendix. The trailing 32 mask-bit columns carry
+/// the boolean decomposition of the FULL effect mask the genuine SUBMASK facet gate
+/// (`maskBitBoolGate`/`maskReconGate`/`selectedBitGate`) reads. Mirrors the Lean
+/// `CapOpenEmit.CAP_OPEN_SPAN = 7 + 8 + DEPTH·17 + 8 + 2 + MASK_BITS = 329`.
+pub const CAP_OPEN_MEMBERSHIP_COLS: usize = 7
+    + CAP_OPEN_DIGEST_W
+    + CAP_OPEN_DEPTH * (2 * CAP_OPEN_DIGEST_W + 1)
+    + CAP_OPEN_DIGEST_W
+    + 2
+    + CAP_OPEN_MASK_BITS; // 329
+/// The number of poseidon2-chip lookup SITES the cap-membership appendix carries: 1 leaf absorb
+/// (arity 7, 8-lane) + 16 node absorbs (arity-16 `node8`) = 17. Phase H-CAP-8 promotes the lane
+/// outputs INTO the committed 8-felt digest groups, so a site no longer adds a separate lane block.
 pub const CAP_OPEN_LANE_SITES: usize = 1 + CAP_OPEN_DEPTH; // 17
-/// The FULL cap-open appendix span: the 91 cap-membership columns PLUS the 7×17 = 119 appended
-/// chip-lane columns Phase B-GATE graduates = 210. The 91 membership columns are written by
-/// `fill_cap_open` at `CAP_OPEN_BASE + 0..91`; the 119 cap-lane columns (`CAP_OPEN_BASE + 91..210`)
-/// are filled automatically by the prove wrapper's `descriptor_ir2::fill_chip_lanes`.
-pub const CAP_OPEN_SPAN: usize = CAP_OPEN_MEMBERSHIP_COLS + 7 * CAP_OPEN_LANE_SITES; // 210
-/// The cap-open trace width (`GRAD_ROT_WIDTH + 210 = 818` = the committed
-/// `attenuateCapOpenEffVmDescriptor2R24.trace_width`).
+/// The FULL cap-open appendix span (Phase H-CAP-8): the native 8-felt membership columns ARE the whole
+/// appendix — `CAP_OPEN_SPAN = CAP_OPEN_MEMBERSHIP_COLS = 329`. No separate chip-lane tail (the `node8`
+/// groups are committed in place). Written by `fill_cap_open` at `CAP_OPEN_BASE + 0..329`. Mirrors the
+/// Lean `CapOpenEmit.CAP_OPEN_SPAN = 329`.
+pub const CAP_OPEN_SPAN: usize = CAP_OPEN_MEMBERSHIP_COLS; // 329
+/// The AFTER-SPINE recompute appendix span the cap-WRITE descriptors (`effCapOpenWriteV3`: attenuate +
+/// the delegation-mutating writes) carry PAST the 329-col read appendix — `15 + 8·DEPTH = 143`
+/// (after-leaf + after-leaf-digest + `DEPTH·8` after-node), forcing the faithful 8-felt cap-WRITE
+/// (Lean `CapOpenEmit.AFTER_SPINE_SPAN`, the `*_forces_write8` weld). A WRITE cap-open descriptor's
+/// `trace_width` is `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN`; a READ-only one is `CAP_OPEN_WIDTH`.
+pub const CAP_OPEN_AFTER_SPINE_SPAN: usize = 15 + 8 * CAP_OPEN_DEPTH; // 143
+/// The cap-open trace width (`GRAD_ROT_WIDTH + 329 = 937` = the committed
+/// `attenuateCapOpenEffVmDescriptor2R24.trace_width` under the native 8-felt cap tree).
 pub const CAP_OPEN_WIDTH: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN;
 
 /// The turn-identity `actor` column of the TB (turn-bound) cap-open weld
@@ -2120,12 +2138,13 @@ pub const SIGNATURE_AUTH_TAG: u32 = 1;
 pub struct CapOpenWitness {
     /// The 7 cap-leaf fields (`slot_hash, target, auth_tag, mask_lo, mask_hi, expiry, breadstuff`).
     pub leaf: [BabyBear; 7],
-    /// The 16 sibling digests of the membership path.
-    pub siblings: [BabyBear; CAP_OPEN_DEPTH],
+    /// The 16 NATIVE 8-FELT sibling digests of the membership path (Phase H-CAP-8: each level's
+    /// sibling subtree root is the full 8-felt `cap_node8` image, not the lossy 1-felt scalar).
+    pub siblings: [[BabyBear; CAP_OPEN_DIGEST_W]; CAP_OPEN_DEPTH],
     /// The 16 direction bits (0 ⇒ cur is the LEFT child at that level).
     pub directions: [u8; CAP_OPEN_DEPTH],
-    /// The recomposed committed cap-tree root (must equal node[15]).
-    pub cap_root: BabyBear,
+    /// The recomposed committed 8-felt cap-tree root (must equal the top `node8` group, lane-for-lane).
+    pub cap_root: [BabyBear; CAP_OPEN_DIGEST_W],
     /// The turn's source-cell id (must equal `leaf[1]`, the leaf target).
     pub src: BabyBear,
     /// **(residual (a))** The turn's ACTUAL effect-kind bit (`EFFECT_<kind> = 1 << n`), written to
@@ -2140,27 +2159,37 @@ pub struct CapOpenWitness {
 /// to `cap_root::CapLeaf::digest` and the Lean `capLeafDigest = sponge ∘ leafFields`. ONE chip
 /// row (no length tag; lanes 0..6 = the genuine fields), so the IR-v2 chip realizes it as one
 /// lookup — the unification that discharges `SchemeRealizedByChip`.
-pub fn cap_leaf_digest(leaf: &[BabyBear; 7]) -> BabyBear {
-    crate::cap_root::cap_chip_absorb(leaf)
+pub fn cap_leaf_digest(leaf: &[BabyBear; 7]) -> [BabyBear; CAP_OPEN_DIGEST_W] {
+    // The SINGLE rate-8 chip absorb of the 7 leaf fields (arity 7), squeezing ALL 8 output lanes —
+    // byte-identical to `cap_root::CapLeaf::digest` and the Lean `capLeafDigest8 = chipAbsorb8 ∘
+    // leafFields`. Native 8-felt, faithful to the FRI ~124-bit floor.
+    crate::descriptor_ir2::chip_absorb_all_lanes(7, leaf)
 }
 
-/// One node hash: the arity-3 rate-8 chip absorb of `[FACT_MARK, left, right]` (Lean
-/// `nodeOf = sponge [FACT_MARK, l, r]`), byte-identical to `cap_root::cap_node`. ONE chip row
-/// (FACT_MARK rides rate lane 0, length tag 3 in lane 4) — NOT the capacity-tagged `hash_fact`.
-pub fn cap_node(left: BabyBear, right: BabyBear) -> BabyBear {
-    crate::cap_root::cap_chip_absorb(&[BabyBear::new(FACT_MARK), left, right])
+/// One node hash: the NATIVE 8-FELT arity-16 `node8` chip compression `perm(L8 ‖ R8)[0..8]` (Lean
+/// `nodeOf8 = chipAbsorb8 (pack8 l r)`), byte-identical to `cap_root::cap_node8`. EQUALITY-binds all 8
+/// output lanes to both 8-felt children, so the per-node collision floor is full 8-felt width.
+pub fn cap_node(
+    left: [BabyBear; CAP_OPEN_DIGEST_W],
+    right: [BabyBear; CAP_OPEN_DIGEST_W],
+) -> [BabyBear; CAP_OPEN_DIGEST_W] {
+    crate::cap_root::cap_node8(left, right)
 }
 
-/// Mix `(cur, sib)` by the direction bit into `(left, right)` (Lean `leftExpr`/`rightExpr`):
-/// `dir = 0 ⇒ (cur, sib)` (cur is LEFT), `dir = 1 ⇒ (sib, cur)`.
-fn cap_mix(cur: BabyBear, sib: BabyBear, dir: u8) -> (BabyBear, BabyBear) {
+/// Mix `(cur, sib)` 8-felt groups by the direction bit into `(left, right)` (Lean
+/// `leftExpr`/`rightExpr`): `dir = 0 ⇒ (cur, sib)` (cur is LEFT), `dir = 1 ⇒ (sib, cur)`.
+fn cap_mix(
+    cur: [BabyBear; CAP_OPEN_DIGEST_W],
+    sib: [BabyBear; CAP_OPEN_DIGEST_W],
+    dir: u8,
+) -> ([BabyBear; CAP_OPEN_DIGEST_W], [BabyBear; CAP_OPEN_DIGEST_W]) {
     if dir == 0 { (cur, sib) } else { (sib, cur) }
 }
 
 impl CapOpenWitness {
-    /// Recompute the root from the leaf digest over the `(sib, dir)` path using ABSORB-node
-    /// `hash_many` compression. The self-check the fold's soundness rests on.
-    pub fn recomposes(&self) -> BabyBear {
+    /// Recompute the 8-felt root from the leaf digest over the `(sib, dir)` path using the native
+    /// arity-16 `node8` compression. The self-check the fold's soundness rests on.
+    pub fn recomposes(&self) -> [BabyBear; CAP_OPEN_DIGEST_W] {
         let mut cur = cap_leaf_digest(&self.leaf);
         for lvl in 0..CAP_OPEN_DEPTH {
             let (l, r) = cap_mix(cur, self.siblings[lvl], self.directions[lvl]);
@@ -2221,13 +2250,13 @@ impl CapOpenWitness {
         // current node. For a sparse tree with a single non-padding leaf, every sibling subtree
         // is a uniform-padding subtree whose root is a known per-level constant.
         let zero_leaf = cap_leaf_digest(&[BabyBear::ZERO; 7]);
-        // per-level padding subtree roots: pad[0] = zero leaf digest; pad[k+1] = node(pad,pad).
-        let mut pad = [BabyBear::ZERO; CAP_OPEN_DEPTH + 1];
+        // per-level 8-felt padding subtree roots: pad[0] = zero leaf digest; pad[k+1] = node8(pad,pad).
+        let mut pad = [[BabyBear::ZERO; CAP_OPEN_DIGEST_W]; CAP_OPEN_DEPTH + 1];
         pad[0] = zero_leaf;
         for k in 0..CAP_OPEN_DEPTH {
             pad[k + 1] = cap_node(pad[k], pad[k]);
         }
-        let mut siblings = [BabyBear::ZERO; CAP_OPEN_DEPTH];
+        let mut siblings = [[BabyBear::ZERO; CAP_OPEN_DIGEST_W]; CAP_OPEN_DEPTH];
         let mut directions = [0u8; CAP_OPEN_DEPTH];
         let mut idx = position;
         let mut cur = cap_leaf_digest(&chosen);
@@ -2274,7 +2303,7 @@ impl CapOpenWitness {
     ///     consumed cap does not actually confer the transfer authority the open asserts.
     pub fn from_membership(
         leaf: &crate::cap_root::CapLeaf,
-        siblings: &[BabyBear],
+        siblings: &[[BabyBear; CAP_OPEN_DIGEST_W]],
         directions: &[u8],
     ) -> Result<Self, String> {
         // residual (a): the LIVE transfer/attenuate cap-open now routes the effect-GENERAL
@@ -2296,7 +2325,7 @@ impl CapOpenWitness {
     /// `from_membership` is the `eff_bit := EFFECT_TRANSFER` instance.
     pub fn from_membership_for(
         leaf: &crate::cap_root::CapLeaf,
-        siblings: &[BabyBear],
+        siblings: &[[BabyBear; CAP_OPEN_DIGEST_W]],
         directions: &[u8],
         eff_bit: u32,
     ) -> Result<Self, String> {
@@ -2331,7 +2360,7 @@ impl CapOpenWitness {
                 leaf[4].as_u32()
             ));
         }
-        let mut sib_arr = [BabyBear::ZERO; CAP_OPEN_DEPTH];
+        let mut sib_arr = [[BabyBear::ZERO; CAP_OPEN_DIGEST_W]; CAP_OPEN_DEPTH];
         let mut dir_arr = [0u8; CAP_OPEN_DEPTH];
         sib_arr.copy_from_slice(siblings);
         dir_arr.copy_from_slice(directions);
@@ -2361,48 +2390,67 @@ impl CapOpenWitness {
     }
 }
 
-/// Fill the 91 cap-MEMBERSHIP columns at `base` for ONE row from `w` (Lean `CapOpenCols` layout):
-///   * leaf field `i` at `base + i` (i = 0..6);
-///   * `leafDigest = hash_many(&leaf)` at `base + 7`;
-///   * level `lvl`: `sib` at `base + 8 + 3·lvl`, `dir` at `base + 9 + 3·lvl`,
-///     `node = hash_many(&[FACT_MARK, left, right])` at `base + 10 + 3·lvl`;
-///   * `capRoot` at `base + 56`, `src` at `base + 57`, `effBit` at `base + 58`.
+/// Fill the 329 cap-MEMBERSHIP columns at `base` for ONE row from `w` — Phase H-CAP-8 NATIVE 8-FELT
+/// `CapOpenCols` layout (Lean `CapOpenEmit.capOpenCols`):
+///   * leaf field `i` (scalar) at `base + i` (i = 0..6);
+///   * `leafDigest` (8 felts, `CapLeaf::digest`) at `base + 7 + j` (j = 0..7);
+///   * level `lvl` 17-col block at `base + 15 + 17·lvl`: `sib` (8) at `+0..7`, `dir` at `+8`,
+///     `node = cap_node8(left, right)` (8) at `+9..16`;
+///   * `capRoot` (8) at `base + 15 + 17·DEPTH + j` (= `base + 287 + j`, j = 0..7);
+///   * `src` at `base + 295`, `effBit` at `base + 296`;
+///   * the 32 mask-bit columns at `base + 297 + i` (i = 0..31).
 ///
 /// The `effBit` column (residual (a)) carries the turn's ACTUAL effect-kind bit, pinned by the
-/// descriptor's `effBitGate` to `EFFECT_TRANSFER (= WRITE_MASK_LO)` for this transfer cap-open;
-/// the `facetEffGate` then binds `leaf.mask_lo == effBit` (the leaf's facet is bound to the
-/// committed effect column, NOT a literal constant). The top node (`lvl = 15`) MUST equal
-/// `w.cap_root` (asserted). Every digest is a genuine `hash_many`-absorb, so the auto-gathered
-/// chip table carries a matching row for each of the 1 + 16 chip lookups.
+/// descriptor's `effBitGateFor` to `EFFECT_TRANSFER (= WRITE_MASK_LO)` for the transfer cap-open;
+/// the `facetEffGate` then binds the leaf facet to the committed effect column, NOT a literal
+/// constant. The top `node8` GROUP (`lvl = 15`) MUST equal `w.cap_root` lane-for-lane (asserted).
+/// Every digest is a genuine `chip_absorb_all_lanes` absorb (arity-7 leaf, arity-16 `node8`), so the
+/// auto-gathered chip table carries a matching row for each of the 1 + 16 chip lookups.
 pub fn fill_cap_open(row: &mut [BabyBear], base: usize, w: &CapOpenWitness) {
+    // 7 scalar leaf fields at base + 0..6.
     for (i, &f) in w.leaf.iter().enumerate() {
         row[base + i] = f;
     }
+    // 8-felt leaf digest at base + 7..14.
     let leaf_digest = cap_leaf_digest(&w.leaf);
-    row[base + 7] = leaf_digest;
+    for (j, &d) in leaf_digest.iter().enumerate() {
+        row[base + 7 + j] = d;
+    }
     let mut cur = leaf_digest;
     for lvl in 0..CAP_OPEN_DEPTH {
         let sib = w.siblings[lvl];
         let dir = w.directions[lvl];
         let (l, r) = cap_mix(cur, sib, dir);
         let node = cap_node(l, r);
-        row[base + 8 + 3 * lvl] = sib;
-        row[base + 9 + 3 * lvl] = BabyBear::new(dir as u32);
-        row[base + 10 + 3 * lvl] = node;
+        let blk = base + 15 + 17 * lvl;
+        // 8-felt sibling group at blk + 0..7.
+        for (j, &s) in sib.iter().enumerate() {
+            row[blk + j] = s;
+        }
+        // direction bit at blk + 8.
+        row[blk + 8] = BabyBear::new(dir as u32);
+        // 8-felt node group at blk + 9..16.
+        for (j, &n) in node.iter().enumerate() {
+            row[blk + 9 + j] = n;
+        }
         cur = node;
     }
     debug_assert_eq!(
         cur, w.cap_root,
-        "cap-open fill: top node must equal cap_root"
+        "cap-open fill: top node8 group must equal cap_root"
     );
-    row[base + 56] = w.cap_root;
-    row[base + 57] = w.src;
-    // residual (a): the committed effect-bit column. Carries the turn's ACTUAL effect-kind bit
-    // (`w.eff_bit` — EFFECT_TRANSFER for transfer/attenuate, each fan-out leg its own `1<<n`); the
-    // `effBitGateFor` pins it.
-    row[base + 58] = BabyBear::new(w.eff_bit);
+    // 8-felt cap_root group at base + 287..294.
+    let root_base = base + 15 + 17 * CAP_OPEN_DEPTH;
+    for (j, &r) in w.cap_root.iter().enumerate() {
+        row[root_base + j] = r;
+    }
+    row[root_base + 8] = w.src; // base + 295
+    // residual (a): the committed effect-bit column at base + 296. Carries the turn's ACTUAL
+    // effect-kind bit (`w.eff_bit` — EFFECT_TRANSFER for transfer/attenuate, each fan-out leg its own
+    // `1<<n`); the `effBitGateFor` pins it.
+    row[root_base + 9] = BabyBear::new(w.eff_bit);
     // residual (a) — GENUINE MEMBERSHIP: the 32-bit decomposition of the FULL effect mask
-    // `maskOfLimbs(mask_lo, mask_hi) = mask_lo + mask_hi·65536` (leaf fields 3 + 4) at `base + 59 + i`.
+    // `maskOfLimbs(mask_lo, mask_hi) = mask_lo + mask_hi·65536` (leaf fields 3 + 4) at `base + 297 + i`.
     // The `maskBitBoolGate` booleans each bit, `maskReconGate` binds `full_mask = Σ bitᵢ·2ⁱ`, and
     // `selectedBitGate n` gates bit `n` (where `eff_bit = 1<<n`) set — the genuine `(eff_bit &
     // full_mask) == eff_bit` SUBMASK, NOT the over-strict equality `mask_lo == eff_bit`. A BROAD honest
@@ -2410,7 +2458,104 @@ pub fn fill_cap_open(row: &mut [BabyBear], base: usize, w: &CapOpenWitness) {
     // the effect — and no `mask_hi == 0` pin rejects it.
     let full_mask: u64 = w.leaf[3].as_u32() as u64 + (w.leaf[4].as_u32() as u64) * 65536;
     for i in 0..CAP_OPEN_MASK_BITS {
-        row[base + 59 + i] = BabyBear::new(((full_mask >> i) & 1) as u32);
+        row[root_base + 10 + i] = BabyBear::new(((full_mask >> i) & 1) as u32);
+    }
+}
+
+/// **`fill_heap_open_read`** — lay the heap-open READ membership appendix at `base` (the Lean
+/// `effHeapOpenV3`'s `capOpenCols base` layout, SHARED byte-for-byte with cap's [`fill_cap_open`] but
+/// with the arity-2 heap leaf `(addr, value)` + `heap_node8`/`digest8` instead of the 7-field
+/// `CapLeaf`). The 7-field leaf slot carries `(addr, value, 0, 0, 0, 0, 0)` — the heap leaf carries NO
+/// authority, so the `src`/`effBit`/mask-bit columns (`base + 295..`) are UNUSED (`heapOpenConstraints`
+/// reads only leaf/leafDigest/sib/dir/node/rootPin). The `capRoot` group (`base + 287..294`) is the
+/// committed BEFORE heap `root8` (the top `node8` fold reaches it, and the after-spine's
+/// `beforeRootWeldsH` pins it to the rotated BEFORE heap limb).
+fn fill_heap_open_read(
+    row: &mut [BabyBear],
+    base: usize,
+    leaf: crate::heap_root::HeapLeaf,
+    siblings: &[[BabyBear; crate::heap_root::HEAP_DIGEST_W]],
+    directions: &[u8],
+    heap_root8: [BabyBear; crate::heap_root::HEAP_DIGEST_W],
+) {
+    use crate::heap_root::heap_node8;
+    // arity-2 heap leaf: addr @ base+0, value @ base+1; leaf cols 2..6 unused (zero).
+    row[base] = leaf.addr;
+    row[base + 1] = leaf.value;
+    // 8-felt leaf digest at base + 7..14.
+    let leaf_digest = leaf.digest8();
+    for (j, &d) in leaf_digest.iter().enumerate() {
+        row[base + 7 + j] = d;
+    }
+    // per-level `(sib8, dir, node8)` blocks (stride 17), SHARED layout with `fill_cap_open`.
+    let mut cur = leaf_digest;
+    for lvl in 0..CAP_OPEN_DEPTH {
+        let sib = siblings[lvl];
+        let dir = directions[lvl];
+        let (l, r) = if dir == 0 { (cur, sib) } else { (sib, cur) };
+        let node = heap_node8(l, r);
+        let blk = base + 15 + 17 * lvl;
+        for (j, &s) in sib.iter().enumerate() {
+            row[blk + j] = s;
+        }
+        row[blk + 8] = BabyBear::new(dir as u32);
+        for (j, &n) in node.iter().enumerate() {
+            row[blk + 9 + j] = n;
+        }
+        cur = node;
+    }
+    debug_assert_eq!(
+        cur, heap_root8,
+        "heap-open read fill: top node8 fold must equal the BEFORE heap root8"
+    );
+    // 8-felt capRoot group at base + 287..294 (the committed BEFORE heap root8).
+    let root_base = base + 15 + 17 * CAP_OPEN_DEPTH;
+    for (j, &r) in heap_root8.iter().enumerate() {
+        row[root_base + j] = r;
+    }
+    // src/effBit/mask columns (root_base + 8..) UNUSED by the heap read appendix — left zero.
+}
+
+/// **`fill_heap_after_spine`** — lay the heap AFTER-spine appendix at `base_as`
+/// (= `AFTER_SPINE_BASE base_ro = base_ro + CAP_OPEN_SPAN`, the Lean `afterSpineColsH`): the
+/// IN-PLACE-UPDATED leaf `(addr, new_value)` folded over the SHARED sibling path (`siblings`/
+/// `directions` — the read's sib/dir columns, which `afterSpineColsH` reuses defeq) to the committed
+/// AFTER heap `root8`. The after-spine carries ONLY after-leaf(2) + after-leafDigest(8) +
+/// after-node(`DEPTH·8`) = 143 cols; its `capRoot` is the rotated AFTER heap limb (already laid on the
+/// row), NOT in the appendix. The after-node fold's top reaches `after_root8`, so the after rootPins
+/// hold against that rotated limb.
+fn fill_heap_after_spine(
+    row: &mut [BabyBear],
+    base_as: usize,
+    addr: BabyBear,
+    new_value: BabyBear,
+    siblings: &[[BabyBear; crate::heap_root::HEAP_DIGEST_W]],
+    directions: &[u8],
+) {
+    use crate::heap_root::{HEAP_DIGEST_W, HeapLeaf, heap_node8};
+    row[base_as] = addr;
+    row[base_as + 1] = new_value;
+    let leaf_digest = HeapLeaf {
+        addr,
+        value: new_value,
+    }
+    .digest8();
+    for (j, &d) in leaf_digest.iter().enumerate() {
+        row[base_as + 7 + j] = d;
+    }
+    // after-node blocks (8 felts each, NO sib/dir — those are SHARED with the read) at
+    // `base_as + 15 + 8·lvl`.
+    let mut cur = leaf_digest;
+    for lvl in 0..CAP_OPEN_DEPTH {
+        let sib = siblings[lvl];
+        let dir = directions[lvl];
+        let (l, r) = if dir == 0 { (cur, sib) } else { (sib, cur) };
+        let node = heap_node8(l, r);
+        let blk = base_as + 15 + HEAP_DIGEST_W * lvl;
+        for (j, &n) in node.iter().enumerate() {
+            row[blk + j] = n;
+        }
+        cur = node;
     }
 }
 
@@ -3000,25 +3145,31 @@ pub fn generate_rotated_transfer_shape_with_fee_wide(
     Ok((trace, dpis))
 }
 
-/// The host (pre-wide-append) width of the `heapWriteVmDescriptor2R24` 1-felt descriptor: the
-/// `heapWriteSpliceVmDescriptor` carries FEWER chip sites than the standard economic rotated host
-/// (no balance-hash economic sites — it is a Class-A heap-root recompute), so its graduated width is
-/// **595** (distinct from `GRAD_ROT_WIDTH = 609`). The wide carriers (the wide `heapWriteVmDescriptor2R24`
-/// member, width 803 / PI 20) land at THIS host width: `595 + 368 = 803`.
-pub const HEAP_WRITE_HOST_WIDTH: usize = 595;
+/// The host (pre-wide-append) width of the `heapWriteVmDescriptor2R24` descriptor. OPTION I: the
+/// DEPLOYED host is the after-spine membership-forcing `effHeapWriteV3 heapWriteV3` (Lean
+/// `HeapOpenEmit.effHeapWriteV3`), EXACTLY as cap deploys `effCapOpenWriteV3` — the Class-A splice base
+/// (`heapWriteV3`, **815** wide) WIDENED by the heap-open READ appendix (`CAP_OPEN_SPAN = 329`) + the
+/// AFTER-spine appendix (`AFTER_SPINE_SPAN = 143`): `815 + 329 + 143 = 1287`. A satisfying trace FORCES
+/// the faithful 8-felt heap-write over the full ~124-bit BEFORE/AFTER root blocks
+/// (`effHeapWriteV3_forces_write8`) — never the lane-0 squeeze the map_op-only host would leave. The
+/// wide carriers land at THIS host width: `1287 + 368 = 1655`.
+pub const HEAP_WRITE_HOST_WIDTH: usize = 1287;
+/// The heap-open READ appendix base column (the splice base `heapWriteV3`'s trace width).
+pub const HEAP_WRITE_READ_BASE: usize = 815;
 
-/// **THE WIDE HEAP-WRITE trace generator (`heapWriteVmDescriptor2R24` wide member, 803-wide / 20-PI).**
+/// **THE WIDE HEAP-WRITE trace generator (`heapWriteVmDescriptor2R24` wide member, 1183-wide / 20-PI).**
 ///
 /// heapWrite is the Class-A heap-root-recompute member (Lean `RotatedKernelRefinementExercise.heapWriteV3`
-/// = `graduateV1 (rotateV3 heapWriteSpliceVmDescriptor)` ++ the `.write` splice `MapOp`). It rides the
-/// SAME rotated block as every cohort member, plus a genuine sorted-Merkle SPLICE on the heap root: the
-/// in-row `HEAP_ADDR` recompute (`col 102 = chip-absorb(coll, key)`) keys a `.write` `MapOp` that opens
-/// the committed BEFORE heap root (`col 65`, the per-cell `cap_root` register the heap-root rides) at
-/// that address for the written value (`col 72`) and FORCES the AFTER heap root (`col 87`) to the genuine
-/// `Heap.set` recompute. There is NO live `Effect::HeapWrite` selector (the descriptor is reached by the
-/// exercise-inner heap-write path, NOT the effect→descriptor resolvers), so this is the per-family wide
-/// PRODUCER for it — exactly mirroring the supplyMint wide producer (live base + the generic
-/// [`append_wide_carriers`] at the member's host width), preserving the 8-felt before/after anchors.
+/// = `graduateV1 (rotateV3 heapWriteSpliceVmDescriptor)` ++ the 8-felt `.write` splice `MapOp`). It rides
+/// the SAME rotated block as every cohort member, plus a genuine sorted-Merkle SPLICE on the FAITHFUL
+/// 8-felt heap root: the in-row `HEAP_ADDR` recompute (`col 102 = chip-absorb(coll, key)`) keys a `.write`
+/// `MapOp` that opens the committed BEFORE heap-root GROUP (cols `216 ‖ 246..252` — lane 0 = limb 28,
+/// lanes 1..7 = completion limbs 58..64) at that address for the written value (`col 72`) and FORCES the
+/// AFTER heap-root GROUP (cols `307 ‖ 337..343`) to the genuine 8-felt `CanonicalHeapTree8` update. There
+/// is NO live `Effect::HeapWrite` selector (the descriptor is reached by the exercise-inner heap-write
+/// path, NOT the effect→descriptor resolvers), so this is the per-family wide PRODUCER for it — exactly
+/// mirroring the supplyMint wide producer (live base + the generic [`append_wide_carriers`] at the
+/// member's host width), preserving the 8-felt before/after anchors.
 ///
 /// SOUNDNESS: `heap_leaves` MUST be the cell's GENUINE BEFORE heap and MUST contain a leaf at the
 /// addressed key (the in-row-recomputed `addr = chip-absorb(coll, key)`); the write is an UPDATE of a
@@ -3040,7 +3191,7 @@ pub fn generate_rotated_heap_write_wide(
 ) -> RotatedTraceWithHeaps {
     use super::columns::{AUX_BASE, PARAM_BASE};
     use crate::descriptor_ir2::chip_absorb_all_lanes;
-    use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+    use crate::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
 
     // The live rotated base (cols 0..ROT_WIDTH) — the SAME machinery every cohort member rides; the
     // heapWrite descriptor carries NO economic gates, so the lead effect's economic v1 columns are
@@ -3069,11 +3220,13 @@ pub fn generate_rotated_heap_write_wide(
     leaf_in[1] = value;
     let leaf_digest = chip_absorb_all_lanes(2, &leaf_in)[0];
 
-    // The BEFORE heap (the deployed openable sorted tree). The addressed key MUST be present — the
-    // splice `.write` is an UPDATE of a present key (`update_witness`); a missing key fails closed (no
-    // fabricated post-root).
-    let before_tree = CanonicalHeapTree::new(heap_leaves.to_vec(), HEAP_TREE_DEPTH);
-    let before_root = before_tree.root();
+    // The BEFORE heap (the deployed openable sorted tree) at NATIVE 8-FELT width. The addressed key MUST
+    // be present — the splice `.write` is an UPDATE of a present key (8-felt `update_witness`); a missing
+    // key fails closed (no fabricated post-root). We thread the faithful 8-felt roots (before = `root8`,
+    // after = the update witness's recomposed `new_root`), NOT the lossy 1-felt scalar the GENTIAN tooth
+    // refutes.
+    let before_tree = CanonicalHeapTree8::new(heap_leaves.to_vec(), HEAP_TREE_DEPTH);
+    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
     if !before_tree.sorted_leaves().iter().any(|l| l.addr == addr) {
         return Err(format!(
             "heap-write wide: recomputed addr {} is NOT in the BEFORE heap — the splice `.write` opens a \
@@ -3081,25 +3234,56 @@ pub fn generate_rotated_heap_write_wide(
             addr.as_u32()
         ));
     }
-    let after_root = before_tree
+    let update = before_tree
         .update_witness(HeapLeaf { addr, value })
         .ok_or_else(|| {
             format!(
-                "heap-write wide: update witness for addr {} failed",
+                "heap-write wide: 8-felt update witness for addr {} failed",
                 addr.as_u32()
             )
-        })?
-        .new_root;
+        })?;
+    let after_root8: [BabyBear; HEAP_DIGEST_W] = update.new_root;
+    // The 8-felt membership path (siblings + directions) the DEPLOYED after-spine descriptor
+    // (`effHeapWriteV3`, OPTION I) opens: `update_witness` recomposes the AFTER root over the SAME
+    // sibling path, so the before-open (OLD leaf) and after-open (UPDATED leaf) share `(siblings,
+    // directions)` — exactly the keystone `heapOpen_writesTo8`'s `hsib`/`hdir`.
+    let heap_siblings: Vec<[BabyBear; HEAP_DIGEST_W]> = update.siblings.clone();
+    let heap_directions: Vec<u8> = update.directions.clone();
+    if heap_siblings.len() != HEAP_TREE_DEPTH || heap_directions.len() != HEAP_TREE_DEPTH {
+        return Err(format!(
+            "heap-write wide: membership path length {}/{} != depth {HEAP_TREE_DEPTH}",
+            heap_siblings.len(),
+            heap_directions.len()
+        ));
+    }
+    // The OLD value at the addressed key (the read-leaf value the before-open authenticates).
+    let old_value = before_tree
+        .sorted_leaves()
+        .iter()
+        .find(|l| l.addr == addr)
+        .map(|l| l.value)
+        .ok_or_else(|| "heap-write wide: BEFORE leaf vanished".to_string())?;
 
-    // Override the heap-root registers (`col 65` BEFORE / `col 87` AFTER — the per-cell `cap_root` the
-    // heap-root rides) AND their rotated-block limbs (the welds `65 == limb` / `87 == limb` are KEPT),
-    // lay the splice key/value params, then recompute the rotated commitments so the published rotated
-    // commit binds the written heap root.
-    let heap_root_before_col = STATE_BEFORE_BASE + state::CAP_ROOT; // 65
-    let heap_root_after_col = STATE_AFTER_BASE + state::CAP_ROOT; // 87
+    // Write the FAITHFUL 8-felt heap root into the HEAP GROUP of both rotated blocks — lane 0 the
+    // scalar heap-root limb (`B_HEAP_ROOT = 28`), lanes 1..7 the completion limbs 58..64 (the Lean
+    // `heapRootGroupCol`: `BEFORE_BASE + 28` / `BEFORE_BASE + 58..64` = cols 216 + 246..252; `AFTER_BASE
+    // + 28` / `+ 58..64` = cols 307 + 337..343 — EXACTLY the map-op `.write` root/newRoot groups). This
+    // REPLACES the old (wrong) scalar override of the cap limb (`BEFORE_BASE + B_CAP_ROOT`, col 213) —
+    // the heap root has its OWN group and never rides the cap register. The v1-state `cap_root` cols
+    // (65/87) and the cap rotated limbs (213/304) are LEFT UNTOUCHED (the base gen lays a consistent cap
+    // block; the `213 == 65` weld holds).
+    let heap_group_col = |block_base: usize, lane: usize| -> usize {
+        // Mirror of `EffectVmEmitRotationV3.heapRootGroupCol`: lane 0 = limb 28, lanes 1..7 = 57+lane.
+        block_base
+            + if lane == 0 {
+                B_HEAP_ROOT
+            } else {
+                50 + lane + 7
+            }
+    };
     let coll_col = PARAM_BASE + 2; // 70 (HEAP_ADDR recompute input: collection)
     let key_col = PARAM_BASE + 3; // 71 (HEAP_ADDR recompute input: key)
-    let value_col = PARAM_BASE + 4; // 72 (HEAP_VALUE)
+    let value_col = PARAM_BASE + 4; // 72 (HEAP_VALUE — the map-op `.write` value column)
     // The HEAP_ADDR column (102) is the splice `MapOp`'s KEY. It is ALSO the output of the in-row
     // arity-2 chip lookup `col 102 = chip-absorb(coll, key)`, which `fill_chip_lanes` lands at prove
     // time — but the map-op pre-flight replay reads col 102 from the RAW trace (BEFORE lane-fill), so
@@ -3107,13 +3291,21 @@ pub fn generate_rotated_heap_write_wide(
     // (the addr lookup is chip-faithful over the same coll/key), so the lookup gate holds.
     let heap_addr_col = AUX_BASE + 12; // 102 (HEAP_ADDR — out0 of the addr chip lookup)
     let leaf_digest_col = AUX_BASE + 13; // 103 (out0 of the leaf-digest chip lookup)
-    let before_root_limb = BEFORE_BASE + B_CAP_ROOT;
-    let after_root_limb = AFTER_BASE + B_CAP_ROOT;
+    // OPTION I: the deployed host is the after-spine membership descriptor — the heap-open READ appendix
+    // sits at `HEAP_WRITE_READ_BASE` (815, the splice base's width) and the AFTER-spine appendix at
+    // `815 + CAP_OPEN_SPAN(329) = 1144`. Fill both on EVERY row (the membership gates are per-row).
+    let read_base = HEAP_WRITE_READ_BASE; // 815
+    let after_spine_base = read_base + CAP_OPEN_SPAN; // 1144
+    let read_leaf = HeapLeaf {
+        addr,
+        value: old_value,
+    };
     for row in trace.iter_mut() {
-        row[heap_root_before_col] = before_root;
-        row[before_root_limb] = before_root;
-        row[heap_root_after_col] = after_root;
-        row[after_root_limb] = after_root;
+        // FAITHFUL 8-felt before/after heap-root groups (never the lane-0 scalar squeeze).
+        for lane in 0..HEAP_DIGEST_W {
+            row[heap_group_col(BEFORE_BASE, lane)] = before_root8[lane];
+            row[heap_group_col(AFTER_BASE, lane)] = after_root8[lane];
+        }
         row[coll_col] = coll;
         row[key_col] = key;
         row[value_col] = value;
@@ -3121,20 +3313,42 @@ pub fn generate_rotated_heap_write_wide(
         row[leaf_digest_col] = leaf_digest;
         recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
+        // Grow the row to the deployed host width and lay the membership appendix (the READ open of the
+        // OLD leaf against the BEFORE root8, and the after-spine open of the UPDATED leaf against the
+        // AFTER root8, over the SHARED sibling path).
+        row.resize(HEAP_WRITE_HOST_WIDTH, BabyBear::ZERO);
+        fill_heap_open_read(
+            row,
+            read_base,
+            read_leaf,
+            &heap_siblings,
+            &heap_directions,
+            before_root8,
+        );
+        fill_heap_after_spine(
+            row,
+            after_spine_base,
+            addr,
+            value,
+            &heap_siblings,
+            &heap_directions,
+        );
     }
 
-    // The 4 heapWrite base PIs: the two rotated state-commit pins (pi 0/1) are RETIRED by the wide
-    // member (the 8-felt commit is the sole binding — they are unbound, zeroed for Fiat–Shamir
-    // agreement); the committed-height pin (pi 2 ← `col 270`) and the caveat-commit pin (pi 3 ←
-    // `col 328`) survive — both unaffected by the heap-root override, so read from the live base PIs.
+    // The 4 heapWrite base PIs. pi 0 = the rotated OLD state-commit (UNBOUND in the wide descriptor —
+    // the 8-felt before-commit is the faithful binding — but read the genuine value for Fiat–Shamir
+    // agreement); pi 1 = the rotated NEW state-commit (`AFTER_BASE + B_STATE_COMMIT` = col 347, BOUND on
+    // the last row); pi 2 = committed height; pi 3 = caveat commit. Read all from the rebuilt trace so
+    // the last-row pins hold after the heap-root override + `recompute_block_commit`.
+    let last_row_idx = trace.len() - 1;
     let base_pis = vec![
-        BabyBear::ZERO,
-        BabyBear::ZERO,
+        trace[0][BEFORE_BASE + B_STATE_COMMIT],
+        trace[last_row_idx][AFTER_BASE + B_STATE_COMMIT],
         gen_pis[V1_PI_COUNT + 2],
         gen_pis[V1_PI_COUNT + 3],
     ];
     let dpis = append_wide_carriers(&mut trace, base_pis, HEAP_WRITE_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), HEAP_WRITE_HOST_WIDTH + 368); // 803
+    debug_assert_eq!(trace[0].len(), HEAP_WRITE_HOST_WIDTH + 368); // 1655 (OPTION I after-spine host)
     debug_assert_eq!(dpis.len(), 20); // 4 base (2 retired) + 16 wide
     Ok((trace, dpis, vec![heap_leaves.to_vec()]))
 }

@@ -91,6 +91,14 @@ import Dregg2.Circuit.Emit.EffectVmEmitSpawn
 import Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive
 import Dregg2.Circuit.Emit.EffectVmEmitCellUnseal
 import Dregg2.Circuit.Emit.EffectVmEmitEmitEvent
+-- v10 faithful-8-felt cap-root: the native `node8` arity-16 tree (Digest8 root) the cap-write
+-- column GROUP commits. ACYCLIC: DeployedCapTree's emit chain bottoms out at EffectVmEmitCapRoot →
+-- EffectVmEmit, never reaching this Rotation layer.
+import Dregg2.Circuit.DeployedCapTree
+-- v10 faithful-8-felt HEAP-root: the native `node8` heap-tree carrier + recompose spine (the SECOND
+-- faithful root, the exact twin of `DeployedCapTree`'s `Cap8Scheme`). ACYCLIC: `DeployedHeapTree`
+-- imports only `DeployedCapTree` + `CapMerkleGeneric`, already in this layer's closure.
+import Dregg2.Circuit.DeployedHeapTree
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 
@@ -105,6 +113,12 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Crypto
 open Dregg2.Substrate.Heap (refSponge)
+-- v10 faithful-8-felt cap-root: the native `node8` tree carrier + recompose spine.
+open Dregg2.Circuit.DeployedCapTree (Digest8 Cap8Scheme CapLeaf)
+open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (recomposeUp8 capLeafDigest8 recomposeUp8_inj_of_path)
+open Dregg2.Circuit.CapMerkleGeneric (StepG)
+-- v10 faithful-8-felt HEAP-root: the native `node8` heap-tree carrier + recompose spine.
+open Dregg2.Circuit.DeployedHeapTree (Heap8Scheme)
 
 set_option linter.unusedVariables false
 set_option autoImplicit false
@@ -1129,10 +1143,10 @@ opens against the new tree; the paired authority membership-open (the cap-open a
 the delegator's held cap. Guarded by the cap-graph-row selector. -/
 def insertWriteOp : MapOp :=
   { guard   := .var EffectVmEmitAttenuateA.selA.ATTENUATE
-  , root    := .var (sbCol state.CAP_ROOT)
+  , root    := fun _ => .var (sbCol state.CAP_ROOT)
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol KEEP_MASK)
-  , newRoot := .var (saCol state.CAP_ROOT)
+  , newRoot := fun _ => .var (saCol state.CAP_ROOT)
   , op      := .insert }
 
 /-! ### The ROTATED-LIMB cap-write ops (the v1-state continuity-collision close — note-spend-shaped).
@@ -1161,6 +1175,150 @@ def beforeCapRootCol (w : Nat) : Nat := w + B_CAP_ROOT
 deployed cap accumulator's POST root — the write-gate's `newRoot`, witness-carried (no v1-state continuity). -/
 def afterCapRootCol (w : Nat) : Nat := w + 91 + B_CAP_ROOT
 
+/-! ### v10 — the FAITHFUL 8-felt cap-root column GROUP + the native-`node8` write relation `writesTo8`.
+
+The scalar `writesTo` on the lane-0 cap-root limb (`beforeCapRootCol`/`afterCapRootCol`, limb 25) is only
+the ~31-bit lane-0 PROJECTION of the deployed 8-felt cap root. v10 commits the FULL 8-felt root: limb 25
+(lane 0) ‖ the seven completion limbs 51..57 (lanes 1..7) — both blocks — absorbed into the wide state
+commit. The GROUP readers below pin those eight columns to a `Digest8`; `writesTo8` is the native
+arity-16 `node8` UPDATE-AT-KEY over the FULL 8-felt root (`recomposeUp8`, ~124-bit), NEVER a lane-0
+squeeze (the soundness downgrade the GENTIAN tooth closes). The anti-forge tooth is the recompose
+injectivity (`recomposeUp8_inj_of_path`): a forged high-felt post-root forces a different post-leaf. -/
+
+/-- The cap-root 8-felt column at lane `i` in the block based at `blockBase` (limb `B_CAP_ROOT` = 25 for
+lane 0; the seven completion limbs 51..57 for lanes 1..7). `blockBase = w` (BEFORE) / `w + 91` (AFTER). -/
+def capRootGroupCol (blockBase : Nat) (i : Fin 8) : Nat :=
+  blockBase + (if i = 0 then B_CAP_ROOT else 50 + (i : Nat))
+
+/-- The BEFORE-block 8-felt cap-root digest read off the row env (lane 0 = `beforeCapRootCol`). -/
+def beforeCapRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (capRootGroupCol EFFECT_VM_WIDTH i)
+
+/-- The AFTER-block 8-felt cap-root digest read off the row env (lane 0 = `afterCapRootCol`). -/
+def afterCapRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (capRootGroupCol (EFFECT_VM_WIDTH + 91) i)
+
+/-- Lane 0 of the BEFORE group IS the existing scalar cap-root limb (the projection the scalar `writesTo`
+forces) — so the 8-felt relation REFINES the lane-0 write rather than replacing it. -/
+theorem beforeCapRootCols_lane0 (env : VmRowEnv) :
+    beforeCapRootCols env 0 = env.loc (beforeCapRootCol EFFECT_VM_WIDTH) := by
+  simp [beforeCapRootCols, capRootGroupCol, beforeCapRootCol]
+
+/-- Lane 0 of the AFTER group IS the existing scalar post cap-root limb. -/
+theorem afterCapRootCols_lane0 (env : VmRowEnv) :
+    afterCapRootCols env 0 = env.loc (afterCapRootCol EFFECT_VM_WIDTH) := by
+  simp [afterCapRootCols, capRootGroupCol, afterCapRootCol]
+
+/-- **`writesTo8 S8 oldRoot k v newRoot`** — the native-`node8` cap-tree UPDATE-AT-KEY over the FULL
+8-felt root: some sibling/direction `path` recomposes `oldRoot` from a leaf keyed `k`, and recomposes
+`newRoot` from the in-place-narrowed leaf (same key `k`, rights felt `v`) along the SAME path. The
+faithful 8-felt twin of the scalar `writesTo` (which is the lane-0 projection); the `(k,v) ↔ CapLeaf`
+other-field encoding is the named faithful-encoding residual the cap-family consumers carry. -/
+def writesTo8 (S8 : Cap8Scheme) (oldRoot : Digest8) (k v : ℤ) (newRoot : Digest8) : Prop :=
+  ∃ (oldLeaf newLeaf : CapLeaf) (path : List (StepG Digest8)),
+    oldLeaf.slot_hash = k ∧ newLeaf.slot_hash = k ∧ newLeaf.mask_lo = v ∧
+    recomposeUp8 S8 (capLeafDigest8 S8 oldLeaf) path = oldRoot ∧
+    recomposeUp8 S8 (capLeafDigest8 S8 newLeaf) path = newRoot
+
+/-- **The 8-felt anti-forge tooth.** Along a FIXED sibling path the post-root pins the post-leaf digest
+(`recomposeUp8` injective at the full ~124-bit width). A forged `newRoot` cannot be reached with the
+genuine post-leaf along the genuine path — the GENTIAN close at full width, NOT lane-0. -/
+theorem writesTo8_forces_postleaf (S8 : Cap8Scheme) (path : List (StepG Digest8))
+    {a b : Digest8} (h : recomposeUp8 S8 a path = recomposeUp8 S8 b path) : a = b :=
+  recomposeUp8_inj_of_path S8 path h
+
+/-! ### v10 — the FAITHFUL 8-felt HEAP-root column GROUP + the native-`node8` heap-write relation
+`heapWritesTo8` (the SECOND faithful root, the exact twin of the cap-root group above).
+
+The scalar heap `writesTo` on the lane-0 heap-root limb (limb `B_HEAP_ROOT = 28`) is only the ~31-bit
+lane-0 PROJECTION of the deployed 8-felt heap root. v10 commits the FULL 8-felt root: limb 28 (lane 0) ‖
+the seven completion limbs 58..64 (lanes 1..7) — both blocks — absorbed into the wide state commit. The
+GROUP readers below pin those eight columns to a `Digest8`; `heapWritesTo8` is the native arity-16 `node8`
+UPDATE-AT-KEY over the FULL 8-felt heap root (`Heap8Scheme.recomposeUp8`, ~124-bit), NEVER a lane-0 squeeze
+(the soundness downgrade the heap GENTIAN tooth closes). The anti-forge tooth is the recompose injectivity
+(`recomposeUp8_inj_of_path`): a forged high-felt post-root forces a different post-leaf. -/
+
+/-- The heap-root limb in the rotated block (the fourth faithful-root limb, after `cap_root`=25,
+`nullifier_root`=26, `commitments_root`=27). Lane 0 of the 8-felt heap-root group. -/
+def B_HEAP_ROOT : Nat := 28
+
+/-- The BEFORE-block scalar heap-root column (lane 0 = limb `B_HEAP_ROOT` = 28). -/
+def beforeHeapRootCol (w : Nat) : Nat := w + B_HEAP_ROOT
+
+/-- The AFTER-block scalar heap-root column. -/
+def afterHeapRootCol (w : Nat) : Nat := w + 91 + B_HEAP_ROOT
+
+/-- The heap-root 8-felt column at lane `i` in the block based at `blockBase` (limb `B_HEAP_ROOT` = 28 for
+lane 0; the seven completion limbs 58..64 for lanes 1..7 — the cap completions 51..57 shifted by 7). The
+cap/heap/fields groups SHARE the ONE `node8` lane by design; heap's completions sit ABOVE cap's. -/
+def heapRootGroupCol (blockBase : Nat) (i : Fin 8) : Nat :=
+  blockBase + (if i = 0 then B_HEAP_ROOT else 50 + (i : Nat) + 7)
+
+/-- The BEFORE-block 8-felt heap-root digest read off the row env (lane 0 = `beforeHeapRootCol`). -/
+def beforeHeapRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (heapRootGroupCol EFFECT_VM_WIDTH i)
+
+/-- The AFTER-block 8-felt heap-root digest read off the row env (lane 0 = `afterHeapRootCol`). -/
+def afterHeapRootCols (env : VmRowEnv) : Digest8 :=
+  fun i => env.loc (heapRootGroupCol (EFFECT_VM_WIDTH + 91) i)
+
+/-! ### `MapOp.root`/`newRoot` 8-felt groups (Phase H-HEAP-8 / the cap-analog emit widening).
+
+`MapOp.root`/`newRoot` are now `Fin 8 → EmittedExpr` (matching the deployed Rust `MapOpSpec` `[8]`).
+For the 8-felt-WELDED families (cap · heap) the group IS the real `…RootGroupCol` lanes (lane 0 the
+scalar limb, lanes 1..7 the completion limbs) — the deployed `map_ops` chip recomposes the faithful
+~124-bit root and the after-spine keystone (`CapOpenEmit` / `HeapOpenEmit`) trace-forces it. For a
+family NOT yet 8-felt-welded (`nullifier` · `commitments` · `cells` · `fields`, until its own
+campaign) the group is the scalar limb CARRIED across all 8 lanes (`scalarRootGroup`) — the root is
+still a single ~31-bit felt, denotation is lane 0, and no keystone forces the extra lanes. -/
+
+/-- The BEFORE-block cap-root 8-felt column group (lane 0 = `beforeCapRootCol`, lanes 1..7 the cap
+completion limbs 51..57). -/
+def beforeCapRootGroup : Fin 8 → EmittedExpr := fun i => .var (capRootGroupCol EFFECT_VM_WIDTH i)
+
+/-- The AFTER-block cap-root 8-felt column group (lane 0 = `afterCapRootCol`). -/
+def afterCapRootGroup : Fin 8 → EmittedExpr := fun i => .var (capRootGroupCol (EFFECT_VM_WIDTH + 91) i)
+
+/-- The BEFORE-block heap-root 8-felt column group (lane 0 = `beforeHeapRootCol`, lanes 1..7 the heap
+completion limbs 58..64). -/
+def beforeHeapRootGroup : Fin 8 → EmittedExpr := fun i => .var (heapRootGroupCol EFFECT_VM_WIDTH i)
+
+/-- The AFTER-block heap-root 8-felt column group (lane 0 = `afterHeapRootCol`). -/
+def afterHeapRootGroup : Fin 8 → EmittedExpr := fun i => .var (heapRootGroupCol (EFFECT_VM_WIDTH + 91) i)
+
+/-- A not-yet-8-felt-welded root as a `MapOp` group: the scalar limb `col` carried across all 8
+lanes (denotation is lane 0; no after-spine keystone forces lanes 1..7 — the root stays ~31-bit
+until that family's own weld). -/
+def scalarRootGroup (col : Nat) : Fin 8 → EmittedExpr := fun _ => .var col
+
+/-- Lane 0 of the BEFORE heap group IS the existing scalar heap-root limb (the projection the scalar
+`writesTo` forces) — the 8-felt relation REFINES the lane-0 write rather than replacing it. -/
+theorem beforeHeapRootCols_lane0 (env : VmRowEnv) :
+    beforeHeapRootCols env 0 = env.loc (beforeHeapRootCol EFFECT_VM_WIDTH) := by
+  simp [beforeHeapRootCols, heapRootGroupCol, beforeHeapRootCol]
+
+/-- Lane 0 of the AFTER heap group IS the existing scalar post heap-root limb. -/
+theorem afterHeapRootCols_lane0 (env : VmRowEnv) :
+    afterHeapRootCols env 0 = env.loc (afterHeapRootCol EFFECT_VM_WIDTH) := by
+  simp [afterHeapRootCols, heapRootGroupCol, afterHeapRootCol]
+
+/-- **`heapWritesTo8 S8 oldRoot k v newRoot`** — the native-`node8` heap-tree UPDATE-AT-KEY over the FULL
+8-felt root: some sibling/direction `path` recomposes `oldRoot` from the heap leaf `(k, oldVal)`, and
+recomposes `newRoot` from the in-place-updated leaf `(k, v)` along the SAME path. The faithful 8-felt twin
+of the scalar heap `writesTo` (which is the lane-0 projection). Heap leaves are `(addr, value)`, so the
+key IS the address and the written value is the leaf's second field — no `CapLeaf` re-encoding residual. -/
+def heapWritesTo8 (S8 : Heap8Scheme) (oldRoot : Digest8) (k v : ℤ) (newRoot : Digest8) : Prop :=
+  ∃ (oldVal : ℤ) (path : List (StepG Digest8)),
+    Heap8Scheme.recomposeUp8 S8 (Heap8Scheme.heapLeafDigest8 S8 (k, oldVal)) path = oldRoot ∧
+    Heap8Scheme.recomposeUp8 S8 (Heap8Scheme.heapLeafDigest8 S8 (k, v)) path = newRoot
+
+/-- **The 8-felt heap anti-forge tooth.** Along a FIXED sibling path the post-root pins the post-leaf digest
+(`Heap8Scheme.recomposeUp8` injective at the full ~124-bit width). A forged `newRoot` cannot be reached with
+the genuine post-leaf along the genuine path — the heap GENTIAN close at full width, NOT lane-0. -/
+theorem heapWritesTo8_forces_postleaf (S8 : Heap8Scheme) (path : List (StepG Digest8))
+    {a b : Digest8} (h : Heap8Scheme.recomposeUp8 S8 a path = Heap8Scheme.recomposeUp8 S8 b path) : a = b :=
+  Heap8Scheme.recomposeUp8_inj_of_path S8 path h
+
 /-- The held-capability MEMBERSHIP read on the ROTATED before-block cap-root limb (limb 25). The before
 `cap_root` (rotated limb) opens at `param[CAP_KEY]` to `param[HELD_MASK]` (root unchanged — a read). The
 membership-read authenticates against the SAME root the write-gate opens against. **Guarded by the per-effect
@@ -1169,10 +1327,10 @@ runtime selector column `s`** — the column the trace generator sets to `1` on 
 selector that fires on the cap-write row, else the map_op never fires and the AFTER cap-root rides unbound. -/
 def heldReadOpRot (s : Nat) : MapOp :=
   { guard   := .var s
-  , root    := .var (beforeCapRootCol EFFECT_VM_WIDTH)
+  , root    := beforeCapRootGroup
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol HELD_MASK)
-  , newRoot := .var (beforeCapRootCol EFFECT_VM_WIDTH)
+  , newRoot := beforeCapRootGroup
   , op      := .read }
 
 /-- The held/anchor MEMBERSHIP read for the INSERT cap-write wrappers, on the ROTATED before-block cap-root
@@ -1187,10 +1345,10 @@ per-effect runtime selector column `s`** (the column the trace sets to `1` on TH
 never fires, leaving the AFTER cap-root unbound. -/
 def anchorReadOpRot (s : Nat) : MapOp :=
   { guard   := .var s
-  , root    := .var (beforeCapRootCol EFFECT_VM_WIDTH)
+  , root    := beforeCapRootGroup
   , key     := .var (prmCol ANCHOR_KEY)
   , value   := .var (prmCol ANCHOR_MASK)
-  , newRoot := .var (beforeCapRootCol EFFECT_VM_WIDTH)
+  , newRoot := beforeCapRootGroup
   , op      := .read }
 
 /-- The delegate/grant/introduce INSERT on the ROTATED limbs: the AFTER rotated cap-root (limb 25 of the
@@ -1202,10 +1360,10 @@ cap-write row — `sel.GRANT_CAP`/`sel.INTRODUCE`); the forge close re-points it
 `selA.ATTENUATE = 2`, so the AFTER cap-root (`afterCapRootCol`) is GENUINELY bound. -/
 def insertWriteOpRot (s : Nat) : MapOp :=
   { guard   := .var s
-  , root    := .var (beforeCapRootCol EFFECT_VM_WIDTH)
+  , root    := beforeCapRootGroup
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol KEEP_MASK)
-  , newRoot := .var (afterCapRootCol EFFECT_VM_WIDTH)
+  , newRoot := afterCapRootGroup
   , op      := .insert }
 
 /-- The revokeDelegation REMOVE on the ROTATED limbs: the AFTER rotated cap-root is the genuine sorted
@@ -1216,10 +1374,10 @@ revokeDelegation row); the forge close re-points it off the never-firing `selA.A
 AFTER cap-root is GENUINELY bound to the sorted REMOVE. -/
 def removeWriteOpRot (s : Nat) : MapOp :=
   { guard   := .var s
-  , root    := .var (beforeCapRootCol EFFECT_VM_WIDTH)
+  , root    := beforeCapRootGroup
   , key     := .var (prmCol CAP_KEY)
   , value   := .const 0
-  , newRoot := .var (afterCapRootCol EFFECT_VM_WIDTH)
+  , newRoot := afterCapRootGroup
   , op      := .write }
 
 /-- The attenuate IN-PLACE UPDATE-AT-KEY on the ROTATED limbs: the AFTER rotated cap-root (limb 25 of the
@@ -1234,10 +1392,10 @@ never-firing `selA.ATTENUATE = 2` (the SET_FIELD column), so the AFTER cap-root 
 GENUINELY bound — the var2-guarded V1-state `keepWriteOp` (col 65/87) silent-forge is closed. -/
 def keepWriteOpRot (s : Nat) : MapOp :=
   { guard   := .var s
-  , root    := .var (beforeCapRootCol EFFECT_VM_WIDTH)
+  , root    := beforeCapRootGroup
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol KEEP_MASK)
-  , newRoot := .var (afterCapRootCol EFFECT_VM_WIDTH)
+  , newRoot := afterCapRootGroup
   , op      := .write }
 
 /-! ### The SILENT-FORGE close for attenuate / revokeCapability (the cap-WRITE wrapper rebase, applied).
@@ -1414,10 +1572,10 @@ read). Refresh is an UPDATE-AT-KEY, so the child key is PRESENT; this read authe
 with the update-write at the SAME key (read+update consistent, the proven revoke-shaped template). -/
 def delegReadOpRot (s : Nat) : MapOp :=
   { guard   := .var s
-  , root    := .var (beforeDelegRootCol EFFECT_VM_WIDTH)
+  , root    := scalarRootGroup (beforeDelegRootCol EFFECT_VM_WIDTH)
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol HELD_MASK)
-  , newRoot := .var (beforeDelegRootCol EFFECT_VM_WIDTH)
+  , newRoot := scalarRootGroup (beforeDelegRootCol EFFECT_VM_WIDTH)
   , op      := .read }
 
 /-- The refreshDelegation UPDATE-AT-KEY on the ROTATED DELEG-root limbs: the AFTER rotated DELEG-root IS
@@ -1427,10 +1585,10 @@ an overwrite), `writesTo` FUNCTIONAL under CR — a forged after-root is UNSAT. 
 accumulator folds into the committed rotated state-commit, no v1-state continuity collision. -/
 def delegUpdateWriteOpRot (s : Nat) : MapOp :=
   { guard   := .var s
-  , root    := .var (beforeDelegRootCol EFFECT_VM_WIDTH)
+  , root    := scalarRootGroup (beforeDelegRootCol EFFECT_VM_WIDTH)
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol KEEP_MASK)
-  , newRoot := .var (afterDelegRootCol EFFECT_VM_WIDTH)
+  , newRoot := scalarRootGroup (afterDelegRootCol EFFECT_VM_WIDTH)
   , op      := .write }
 
 /-- The rotated REFRESH-DELEGATION on the MOVING genuine face (no `gCapPass` freeze — the rotated limb is
@@ -1609,10 +1767,10 @@ so the gate's key IS the same nullifier the apex reads. -/
 NON-MEMBER of the BEFORE nullifier tree (limb 26); the root is unchanged by an absent read. -/
 def nullifierFreshOp : MapOp :=
   { guard   := .var EffectVmEmitNoteSpend.SEL_NOTE_SPEND
-  , root    := .var (beforeNullifierRootCol EFFECT_VM_WIDTH)
+  , root    := scalarRootGroup (beforeNullifierRootCol EFFECT_VM_WIDTH)
   , key     := .var NULLIFIER_PARAM_COL
   , value   := .const 0
-  , newRoot := .var (beforeNullifierRootCol EFFECT_VM_WIDTH)
+  , newRoot := scalarRootGroup (beforeNullifierRootCol EFFECT_VM_WIDTH)
   , op      := .absent }
 
 /-- The SET-INSERT (the deployed `gNoteGrow` face): the AFTER nullifier root (limb 26 of the
@@ -1620,10 +1778,10 @@ after block) IS the genuine sorted write of `param0` into the BEFORE root. The n
 (`param::NOTE_VALUE_LO`) rides as the leaf value so a spent nullifier carries its note datum. -/
 def nullifierInsertOp : MapOp :=
   { guard   := .var EffectVmEmitNoteSpend.SEL_NOTE_SPEND
-  , root    := .var (beforeNullifierRootCol EFFECT_VM_WIDTH)
+  , root    := scalarRootGroup (beforeNullifierRootCol EFFECT_VM_WIDTH)
   , key     := .var NULLIFIER_PARAM_COL
   , value   := .var (prmCol EffectVmEmitNoteSpend.param.NOTE_VALUE_LO)
-  , newRoot := .var (afterNullifierRootCol EFFECT_VM_WIDTH)
+  , newRoot := scalarRootGroup (afterNullifierRootCol EFFECT_VM_WIDTH)
   , op      := .insert }
 
 /-- **`noteSpendV3`** — the rotated note-spend WITH the nullifier PI weld AND the KERNEL-SET
@@ -1812,10 +1970,10 @@ write of the note commitment (`param0`) into the BEFORE root, with the note valu
 leaf value. Guarded by the noteCreate selector. -/
 def commitmentsInsertOp : MapOp :=
   { guard   := .var EffectVmEmitNoteCreate.SEL_NOTE_CREATE
-  , root    := .var (beforeCommitmentsRootCol EFFECT_VM_WIDTH)
+  , root    := scalarRootGroup (beforeCommitmentsRootCol EFFECT_VM_WIDTH)
   , key     := .var COMMITMENT_KEY_PARAM_COL
   , value   := .var (prmCol EffectVmEmitNoteCreate.param.NOTE_VALUE_LO)
-  , newRoot := .var (afterCommitmentsRootCol EFFECT_VM_WIDTH)
+  , newRoot := scalarRootGroup (afterCommitmentsRootCol EFFECT_VM_WIDTH)
   , op      := .insert }
 
 /-- **`noteCreateV3`** — the rotated noteCreate WITH the commitment PI weld AND the KERNEL-SET
@@ -1925,10 +2083,10 @@ runtime selector column `sel`. `keyCol` is `param0` for createCell/spawn (the ne
 for factory (the derived child VK). -/
 def cellsFreshOp (sel keyCol : Nat) : MapOp :=
   { guard   := .var sel
-  , root    := .var (beforeCellsRootCol EFFECT_VM_WIDTH)
+  , root    := scalarRootGroup (beforeCellsRootCol EFFECT_VM_WIDTH)
   , key     := .var keyCol
   , value   := .const 0
-  , newRoot := .var (beforeCellsRootCol EFFECT_VM_WIDTH)
+  , newRoot := scalarRootGroup (beforeCellsRootCol EFFECT_VM_WIDTH)
   , op      := .absent }
 
 /-- The SET-INSERT: the AFTER cells root (limb 0 of the after block) IS the genuine sorted write of
@@ -1936,10 +2094,10 @@ the new-cell key (`keyCol`) into the BEFORE root. The key rides as its own leaf 
 cell). -/
 def cellsInsertOp (sel keyCol : Nat) : MapOp :=
   { guard   := .var sel
-  , root    := .var (beforeCellsRootCol EFFECT_VM_WIDTH)
+  , root    := scalarRootGroup (beforeCellsRootCol EFFECT_VM_WIDTH)
   , key     := .var keyCol
   , value   := .var keyCol
-  , newRoot := .var (afterCellsRootCol EFFECT_VM_WIDTH)
+  , newRoot := scalarRootGroup (afterCellsRootCol EFFECT_VM_WIDTH)
   , op      := .insert }
 
 /-- The factory's new-cell key column (`param1`, the derived child VK — `CHILD_VK_DERIVED`); factory's
@@ -3814,10 +3972,10 @@ since the audit slot is a RESERVED, present key — an update, not a fresh inser
 into the BEFORE `fields_root`. -/
 def refusalFieldsWriteOp : MapOp :=
   { guard   := .var EffectVmEmitRefusal.SEL_REFUSAL
-  , root    := .var (beforeFieldsRootCol EFFECT_VM_WIDTH)
+  , root    := scalarRootGroup (beforeFieldsRootCol EFFECT_VM_WIDTH)
   , key     := .const refusalAuditKeyFelt
   , value   := .var REFUSAL_AUDIT_FELT_COL
-  , newRoot := .var (afterFieldsRootCol EFFECT_VM_WIDTH)
+  , newRoot := scalarRootGroup (afterFieldsRootCol EFFECT_VM_WIDTH)
   , op      := .write }
 
 /-- **`refusalFieldsWriteV3`** — the LIVE rotated refusal WITH the record-digest pin (belt) AND the

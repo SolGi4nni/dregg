@@ -88,6 +88,7 @@ import Dregg2.Circuit.CircuitSoundness
 import Dregg2.Circuit.RotatedKernelRefinementFacet
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 import Dregg2.Circuit.RotatedKernelRefinementExercise
+import Dregg2.Circuit.Emit.HeapOpenEmit
 
 namespace Dregg2.Circuit.CircuitSoundnessAssembled
 
@@ -134,7 +135,15 @@ transfer fallback). -/
 def v3RegistryHeap : List (String × EffectVmDescriptor2) :=
   Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen
     ++ [("heapWriteVmDescriptor2R24",
-         Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3),
+         -- OPTION I: the DEPLOYED heap-write descriptor is the after-spine membership
+         -- `effHeapWriteV3 heapWriteV3 …` (EXACTLY as cap deploys `effCapOpenWriteV3`), so `Rfix 56`
+         -- quantifies over the descriptor a light client actually verifies — whose `Satisfied2` FORCES
+         -- the faithful 8-felt heap-write (`RotatedKernelRefinementCapFamily.heapWrite_forces_write8_sat`
+         -- via `HeapOpenEmit.effHeapWriteV3_forces_write8`), NOT the lane-0 squeeze the map_op-only host
+         -- would leave.
+         Dregg2.Circuit.Emit.HeapOpenEmit.effHeapWriteV3
+           Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3
+           "dregg-effectvm-heapWrite-v1-rot24-v3-write-heapopen"),
         -- The WRITE-FORCING cap-open wrappers (positions 46..49): the fan-out cap-open authority
         -- appendix over the MOVING write base (`grantCapWriteV3`/`introduceWriteV3`/`delegateAttenV3`/
         -- `revokeDelegationWriteV3`), so the DEPLOYED descriptor FORCES the cap-tree write (guarantee A),
@@ -193,7 +202,9 @@ theorem v3RegistryHeap_length : v3RegistryHeap.length = 55 := by
 /-- The heapWrite member lands at tail position 45 — `Rfix 56` resolves THERE. -/
 theorem v3RegistryHeap_heapWrite :
     (v3RegistryHeap[45]?.map (·.2))
-      = some Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3 := rfl
+      = some (Dregg2.Circuit.Emit.HeapOpenEmit.effHeapWriteV3
+          Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3
+          "dregg-effectvm-heapWrite-v1-rot24-v3-write-heapopen") := rfl
 
 /-- **`actionTagToPos` — the `actionTag ↦ v3Registry-position` table.** The inverse of the registry's
 declaration order (which is NOT `actionTag` order). Effects with no own rotated descriptor map to the
@@ -294,16 +305,19 @@ transfer descriptor `v3OfFrozen transferVmDescriptor = transferV3`. So `Rfix 0` 
 descriptor — the rung at the transfer tag discharges its refinement about the right descriptor. -/
 theorem Rfix_transfer : Rfix 0 = Dregg2.Circuit.RotatedKernelRefinement.transferV3 := rfl
 
-/-- **`Rfix_heapWrite` — GAP-2: heapWrite (tag 56) ranges over its OWN LIVE descriptor.** `actionTagToPos
-56 = 45` and `v3RegistryHeap`'s position-45 entry is the genuine Class-A `heapWriteV3` (the heap-root
-recompute, `RotatedKernelRefinementExercise.heapWrite_descriptorRefines_sat`). So `Rfix 56` is no longer
-the transfer fallback: `vkOfRegistry Rfix` / the apex's `StarkSound hash Rfix` now quantify over the
-deployed heapWrite descriptor, and the heapWrite rung discharges its refinement about the RIGHT one.
-What this forces is the ACCUMULATOR recompute of the `heap_root` register (anti-ghosted by the bound
-write); the genuine sorted-Merkle `heaps`-SPLICE binding (`heapsSplice ↔ Heap.root(Heap.set …)` via a
-`MapOp`) is the named Phase-E residual — see `RotatedKernelRefinementExercise` module header §heapWrite. -/
+/-- **`Rfix_heapWrite` — GAP-2 + OPTION I: heapWrite (tag 56) ranges over its OWN DEPLOYED descriptor.**
+`actionTagToPos 56 = 45` and `v3RegistryHeap`'s position-45 entry is now the DEPLOYED after-spine
+membership descriptor `effHeapWriteV3 heapWriteV3 …` (EXACTLY as cap deploys `effCapOpenWriteV3`). So
+`vkOfRegistry Rfix` / the apex's `StarkSound hash Rfix` quantify over the descriptor a light client
+actually verifies, and the heapWrite rung
+(`RotatedKernelRefinementCapFamily.heapWrite_forces_write8_sat`) discharges its refinement about the
+RIGHT one: a satisfying `Satisfied2 (Rfix 56)` FORCES the faithful 8-felt `heapWritesTo8` over the FULL
+committed BEFORE/AFTER heap-root blocks (`HeapOpenEmit.effHeapWriteV3_forces_write8`) — NEVER the lane-0
+squeeze the map_op-only host would leave. The second faithful 8-felt Merkle root, deployed. -/
 theorem Rfix_heapWrite :
-    Rfix 56 = Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3 := rfl
+    Rfix 56 = Dregg2.Circuit.Emit.HeapOpenEmit.effHeapWriteV3
+        Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3
+        "dregg-effectvm-heapWrite-v1-rot24-v3-write-heapopen" := rfl
 
 /-- **`Rfix_setProgram` — SetProgram (tag 13) ranges over its OWN LIVE descriptor.** `actionTagToPos
 13 = 51` and `v3RegistryHeap`'s position-51 entry is the genuine Class-A `setProgramV3` (the program

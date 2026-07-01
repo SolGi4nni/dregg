@@ -7,7 +7,7 @@ registry (57 members):
 
   `<live key>\t<member.name>\t<emitVmJson2 (wide member)>`
 
-Each wide member is the proven `wideAppend host bb (bb+51)` of the corresponding live descriptor — the
+Each wide member is the proven `wideAppend host bb (bb+91)` of the corresponding live descriptor — the
 two 13×8 BEFORE/AFTER carriers + the 16 wide commit PIs (the 8-felt ~124-bit before/after anchors)
 appended past the host, NO narrowing. The emit order is the live order:
 
@@ -31,6 +31,7 @@ SCRATCH executable: `lake env lean --run EmitWideRegistryProbe.lean`.
 import Dregg2.Circuit.Emit.CapOpenEmit
 import Dregg2.Circuit.Emit.CapOpenTurnPins
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
+import Dregg2.Circuit.Emit.HeapOpenEmit
 import Dregg2.Circuit.RotatedKernelRefinementExercise
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
@@ -50,13 +51,22 @@ def main : IO Unit := do
   let tbHost := Dregg2.Circuit.Emit.CapOpenTurnPins.effCapOpenV3TB
     Dregg2.Circuit.Emit.CapOpenEmit.transferV3
     "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff-tb" Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER
-  let tbWide := wideAppend tbHost tbBB (tbBB + 51)
+  let tbWide := wideAppend tbHost tbBB (tbBB + 91)
   IO.println s!"transferCapOpenTBVmDescriptor2R24\t{tbWide.name}\t{emitVmJson2 tbWide}"
-  -- position 46: `heapWrite` (the Class-A sorted-Merkle splice descriptor) made 8-felt-wide. The host
-  -- is `graduateV1 (rotateV3 heapWriteSpliceVmDescriptor)` + the splice `MapOp`; `rotateV3` lays the
-  -- BEFORE limbs at the splice FACE width, so `bb = heapWriteSpliceVmDescriptor.traceWidth`.
+  -- position 46: `heapWrite` (the after-spine membership-forcing heap-write descriptor, OPTION I) made
+  -- 8-felt-wide — EXACTLY as cap deploys `effCapOpenWriteV3`. The host is `effHeapWriteV3 heapWriteV3
+  -- …-write-heapopen`: the Class-A splice base (`heapWriteV3` = graduated+rotated splice + the splice
+  -- `MapOp`) WIDENED by the heap-open READ appendix + the AFTER-spine membership appendix, so the
+  -- DEPLOYED descriptor's `Satisfied2` FORCES the faithful 8-felt heap-write over the full ~124-bit
+  -- BEFORE/AFTER root blocks (`HeapOpenEmit.effHeapWriteV3_forces_write8`) — never the lane-0 squeeze the
+  -- map_op-only path would leave. `rotateV3` lays the BEFORE limbs at the splice FACE width, so `bb =
+  -- heapWriteSpliceVmDescriptor.traceWidth (= EFFECT_VM_WIDTH)`, aligning the after-spine's committed
+  -- heap-root blocks (`heapRootGroupCol (EFFECT_VM_WIDTH + 91)`) with the wide AFTER rotated carrier.
   let hwBB := Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.heapWriteSpliceVmDescriptor.traceWidth
-  let hwWide := wideAppend Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3 hwBB (hwBB + 51)
+  let hwHost := Dregg2.Circuit.Emit.HeapOpenEmit.effHeapWriteV3
+    Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3
+    "dregg-effectvm-heapWrite-v1-rot24-v3-write-heapopen"
+  let hwWide := wideAppend hwHost hwBB (hwBB + 91)
   IO.println s!"heapWriteVmDescriptor2R24\t{hwWide.name}\t{emitVmJson2 hwWide}"
   -- positions 47..55: the WRITE-bearing cap-open tail (`v3RegistryCapOpenWriteWide`, §10) made
   -- 8-felt-wide, in its own order, EXCEPT `grantCapWriteCapOpen` — which is NOT a member of the live
@@ -69,5 +79,5 @@ def main : IO Unit := do
   -- withSelectorGate sel.MINT (v3OfFrozen mintTickFace)`; the BEFORE limbs are laid at the mint FACE
   -- width, so `bb = mintTickFace.traceWidth` (the SAME base as the cohort `mint` member, position 2).
   let smBB := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintTickFace.traceWidth
-  let smWide := wideAppend Dregg2.Circuit.Emit.EffectVmEmitRotationV3.supplyMintV3 smBB (smBB + 51)
+  let smWide := wideAppend Dregg2.Circuit.Emit.EffectVmEmitRotationV3.supplyMintV3 smBB (smBB + 91)
   IO.println s!"supplyMintVmDescriptor2R24\t{smWide.name}\t{emitVmJson2 smWide}"

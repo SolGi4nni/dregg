@@ -121,7 +121,7 @@ fn differential_limb_order_matches_lean() {
     let balance = 1_234_567u64;
     let nonce = 42u32;
     let fields = sample_fields();
-    let cap_root = cap_root::empty_capability_root();
+    let cap_root = cap_root::empty_capability_root()[0];
     let record_digest = BabyBear::new(0xABCD);
 
     let deployed = CellState::compute_commitment(balance, nonce, &fields, cap_root, record_digest);
@@ -143,7 +143,7 @@ fn differential_record_digest_at_position_12() {
     let balance = 500u64;
     let nonce = 1u32;
     let fields = sample_fields();
-    let cap_root = cap_root::empty_capability_root();
+    let cap_root = cap_root::empty_capability_root()[0];
     let record_digest = BabyBear::new(9_999);
 
     let limbs = lean_effect_vm_limbs(balance, nonce, &fields, cap_root, record_digest);
@@ -175,7 +175,7 @@ fn differential_record_digest_binds() {
     let balance = 1_000u64;
     let nonce = 7u32;
     let fields = sample_fields();
-    let cap_root = cap_root::empty_capability_root();
+    let cap_root = cap_root::empty_capability_root()[0];
 
     let c_a = CellState::compute_commitment(balance, nonce, &fields, cap_root, BabyBear::new(11));
     let c_b = CellState::compute_commitment(balance, nonce, &fields, cap_root, BabyBear::new(22));
@@ -193,7 +193,7 @@ fn differential_residue_free_noop() {
     let balance = 777u64;
     let nonce = 3u32;
     let fields = sample_fields();
-    let cap_root = cap_root::empty_capability_root();
+    let cap_root = cap_root::empty_capability_root()[0];
 
     assert_eq!(
         cap_root::empty_record_digest(),
@@ -245,7 +245,7 @@ fn differential_real_cell_authority_residue_flows() {
     let balance = 100_000u64;
     let nonce = 0u32;
     let fields = [BabyBear::ZERO; 8];
-    let cap_root = cap_root::empty_capability_root();
+    let cap_root = cap_root::empty_capability_root()[0];
 
     let commit_plain =
         CellState::compute_commitment(balance, nonce, &fields, cap_root, plain_digest);

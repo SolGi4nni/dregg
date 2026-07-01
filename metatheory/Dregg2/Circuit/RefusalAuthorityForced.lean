@@ -22,16 +22,16 @@ and FORCE the post-root in-circuit as the single-leaf insertion of the public au
 ## What this file forces (over the PROVEN gadget interface — no new chip seam)
 
 We reuse the keystone gadget `SortedTreeNonMembership` exactly as `CapTreeUpdate` does. The openable
-`fields_root` is a `CapHashScheme`-committed sorted tree; `SpineCommits S root spine` is the
+`fields_root` is a `CapHashScheme`-committed sorted tree; `SpineCommits S8 root spine` is the
 realizable spine↔root binding (a HYPOTHESIS the chip discharges, never an axiom), and `MembersAt S
 root leaf` is the depth-16 binary-Merkle recompose (the proven `DeployedCapOpen` chip soundness).
 
 The refusal audit is a leaf at the audit key carrying the PUBLIC audit as its value. A verifying
 refusal proof supplies:
-  * the pre-`fields_root` binding (`SpineCommits S preRoot spine`),
-  * the audit-key non-membership in the pre-root (`auditKey ∉ keysOf S preRoot` — a fresh insert; the
+  * the pre-`fields_root` binding (`SpineCommits S8 preRoot spine`),
+  * the audit-key non-membership in the pre-root (`auditKey ∉ keysOf S8 preRoot` — a fresh insert; the
     refusal-re-fires overwrite is the `capUpdateAt` shape, also covered),
-  * the post-`fields_root` binding at the INSERTED spine (`SpineCommits S postRoot (sortedInsert
+  * the post-`fields_root` binding at the INSERTED spine (`SpineCommits S8 postRoot (sortedInsert
     auditKey spine)`) — THE in-circuit insertion-gate output, the SAME recompute the membership open
     realizes, NOT a free post-root column.
 
@@ -40,7 +40,7 @@ We then prove:
   * `refusal_authority_forced_in_circuit` — the post-root's committed key set is EXACTLY the pre-set
     plus the audit key (the audit record genuinely lands), and the audit key is PRESENT after; and
   * `forged_refusal_post_root_absurd` (THE TOOTH) — a "forged" refusal whose post-root does NOT commit
-    the audit key (claims `auditKey ∉ keysOf S postRoot`) is CONTRADICTORY given the insertion-gate
+    the audit key (claims `auditKey ∉ keysOf S8 postRoot`) is CONTRADICTORY given the insertion-gate
     binding — UNSAT via the proof ALONE, no executor, no trusted post-cell. Honest refusal
     (the insertion holds) proves the key lands.
 
@@ -64,7 +64,7 @@ import Dregg2.Circuit.CapTreeUpdate
 
 namespace Dregg2.Circuit.RefusalAuthorityForced
 
-open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme)
+open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme Cap8Scheme Digest8)
 open Dregg2.Circuit.SortedTreeNonMembership
   (keyOf SpineCommits keysOf keysOf_eq_spine sortedInsert mem_sortedInsert update_sound)
 open Dregg2.Circuit.CapTreeUpdate (capInsert_sound capUpdateAt_sound capUpdateAt_present)
@@ -80,40 +80,40 @@ was empty); and the post-`fields_root` commits `sortedInsert auditKey spine` (th
 insertion-gate recompute). Then the post-root's committed key set is EXACTLY the pre-set plus the
 audit key — the refusal audit GENUINELY landed, derived in-circuit from `(preRoot + auditKey)`, with
 NO trusted post-cell. A thin specialization of the proven `capInsert_sound`. -/
-theorem refusal_authority_forced_in_circuit {State : Type} (S : CapHashScheme State)
-    (preRoot postRoot auditKey : ℤ) (spine : List ℤ)
-    (hpre : SpineCommits S preRoot spine)
-    (hfresh : auditKey ∉ keysOf S preRoot)
-    (hpost : SpineCommits S postRoot (sortedInsert auditKey spine)) :
-    ∀ y, y ∈ keysOf S postRoot ↔ (y = auditKey ∨ y ∈ keysOf S preRoot) :=
-  capInsert_sound S preRoot postRoot auditKey spine hpre hfresh hpost
+theorem refusal_authority_forced_in_circuit (S8 : Cap8Scheme)
+    (preRoot postRoot : Digest8) (auditKey : ℤ) (spine : List ℤ)
+    (hpre : SpineCommits S8 preRoot spine)
+    (hfresh : auditKey ∉ keysOf S8 preRoot)
+    (hpost : SpineCommits S8 postRoot (sortedInsert auditKey spine)) :
+    ∀ y, y ∈ keysOf S8 postRoot ↔ (y = auditKey ∨ y ∈ keysOf S8 preRoot) :=
+  capInsert_sound S8 preRoot postRoot auditKey spine hpre hfresh hpost
 
 /-- **`refusal_audit_present_after`** — corollary: after a verifying refusal the audit key is PRESENT
 in the post-`fields_root` (the audit record is genuinely committed, derived in-circuit). -/
-theorem refusal_audit_present_after {State : Type} (S : CapHashScheme State)
-    (preRoot postRoot auditKey : ℤ) (spine : List ℤ)
-    (hpre : SpineCommits S preRoot spine)
-    (hfresh : auditKey ∉ keysOf S preRoot)
-    (hpost : SpineCommits S postRoot (sortedInsert auditKey spine)) :
-    auditKey ∈ keysOf S postRoot :=
-  (refusal_authority_forced_in_circuit S preRoot postRoot auditKey spine hpre hfresh hpost
+theorem refusal_audit_present_after (S8 : Cap8Scheme)
+    (preRoot postRoot : Digest8) (auditKey : ℤ) (spine : List ℤ)
+    (hpre : SpineCommits S8 preRoot spine)
+    (hfresh : auditKey ∉ keysOf S8 preRoot)
+    (hpost : SpineCommits S8 postRoot (sortedInsert auditKey spine)) :
+    auditKey ∈ keysOf S8 postRoot :=
+  (refusal_authority_forced_in_circuit S8 preRoot postRoot auditKey spine hpre hfresh hpost
     auditKey).mpr (Or.inl rfl)
 
 /-! ## §2 — THE TOOTH: a forged refusal whose post-root does NOT commit the audit is UNSAT. -/
 
 /-- **`forged_refusal_post_root_absurd` — THE RAZOR (UNSAT via the proof ALONE).** A "forged" refusal
 that publishes the genuine insertion-gate binding (the post-root commits `sortedInsert auditKey
-spine`) yet claims the audit key is ABSENT from the post-root (`auditKey ∉ keysOf S postRoot`) is
-CONTRADICTORY: the insertion gate FORCES `auditKey ∈ keysOf S postRoot`. So no satisfying assignment
+spine`) yet claims the audit key is ABSENT from the post-root (`auditKey ∉ keysOf S8 postRoot`) is
+CONTRADICTORY: the insertion gate FORCES `auditKey ∈ keysOf S8 postRoot`. So no satisfying assignment
 publishes a post-`fields_root` that lacks the audit — there is NOTHING for a trusted post-cell to
 anchor; the proof binds it. (NO executor, NO trusted post-cell.) -/
-theorem forged_refusal_post_root_absurd {State : Type} (S : CapHashScheme State)
-    (preRoot postRoot auditKey : ℤ) (spine : List ℤ)
-    (hpre : SpineCommits S preRoot spine)
-    (hfresh : auditKey ∉ keysOf S preRoot)
-    (hpost : SpineCommits S postRoot (sortedInsert auditKey spine))
-    (hforged : auditKey ∉ keysOf S postRoot) : False :=
-  hforged (refusal_audit_present_after S preRoot postRoot auditKey spine hpre hfresh hpost)
+theorem forged_refusal_post_root_absurd (S8 : Cap8Scheme)
+    (preRoot postRoot : Digest8) (auditKey : ℤ) (spine : List ℤ)
+    (hpre : SpineCommits S8 preRoot spine)
+    (hfresh : auditKey ∉ keysOf S8 preRoot)
+    (hpost : SpineCommits S8 postRoot (sortedInsert auditKey spine))
+    (hforged : auditKey ∉ keysOf S8 postRoot) : False :=
+  hforged (refusal_audit_present_after S8 preRoot postRoot auditKey spine hpre hfresh hpost)
 
 /-! ## §3 — the OVERWRITE (refusal re-fires): the audit slot is updated in place; the key set is
 preserved and the audit key stays present. The `capUpdateAt` shape. -/
@@ -123,14 +123,14 @@ present) updates the audit slot's VALUE in place: the post-root commits the SAME
 value moved, the key set did not). The committed key set is unchanged and the audit key stays
 present. The leaf-VALUE move (old audit → new audit) is the named faithful-encoding residual the
 membership open carries; this forces the SET preservation. -/
-theorem refusal_overwrite_preserves_keys {State : Type} (S : CapHashScheme State)
-    (preRoot postRoot auditKey : ℤ) (spine : List ℤ)
-    (hpre : SpineCommits S preRoot spine)
-    (hpresent : auditKey ∈ keysOf S preRoot)
-    (hpost : SpineCommits S postRoot spine) :
-    (∀ y, y ∈ keysOf S postRoot ↔ y ∈ keysOf S preRoot) ∧ auditKey ∈ keysOf S postRoot :=
-  ⟨capUpdateAt_sound S preRoot postRoot auditKey spine hpre hpresent hpost,
-   capUpdateAt_present S preRoot postRoot auditKey spine hpre hpresent hpost⟩
+theorem refusal_overwrite_preserves_keys (S8 : Cap8Scheme)
+    (preRoot postRoot : Digest8) (auditKey : ℤ) (spine : List ℤ)
+    (hpre : SpineCommits S8 preRoot spine)
+    (hpresent : auditKey ∈ keysOf S8 preRoot)
+    (hpost : SpineCommits S8 postRoot spine) :
+    (∀ y, y ∈ keysOf S8 postRoot ↔ y ∈ keysOf S8 preRoot) ∧ auditKey ∈ keysOf S8 postRoot :=
+  ⟨capUpdateAt_sound S8 preRoot postRoot auditKey spine hpre hpresent hpost,
+   capUpdateAt_present S8 preRoot postRoot auditKey spine hpre hpresent hpost⟩
 
 /-! ## §4 — non-vacuity: the forcing is LOAD-BEARING (the audit key MOVES into the committed set).
 

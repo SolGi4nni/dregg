@@ -78,16 +78,17 @@ open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FacetAuthority
 open Dregg2.Circuit.Spec.BalanceMovement
 open Dregg2.Circuit.RotatedKernelRefinement
-open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme)
+open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme Cap8Scheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
   (MembersAt confersTransferLeaf DeployedFaithful DeployedFaithfulEff tierOfTag)
-open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf)
+open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (DeployedFaithfulEff8 MembersAt8 deployedFaithfulEff_canonical8)
+open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf capPermOut groupVal)
 open Dregg2.Circuit.Emit.CapOpenEmit
   (transferCapOpenEffV3 capOpenCols transferCapOpenEffV3_authorizes EFF_TRANSFER
    effCapOpenV3 effCapOpenV3_authorizes)
 open Dregg2.Exec.FacetAuthority (authorizedFacetEffB)
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2)
-open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 ChipTableSound TraceFamily envAt)
+open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 ChipTableSound ChipTableSoundN TraceFamily envAt)
 open Dregg2.Circuit.CircuitSoundness
 
 set_option autoImplicit false
@@ -237,10 +238,8 @@ DATA-bearing (`Type`, like `rotatedEncodes`): it exhibits the cap-open trace + r
 so the authority derivation reads them directly rather than burying them existentially. -/
 structure TransferAuthoritySource (hash : List ℤ → ℤ) (fcaps : FacetCaps)
     (pre : RecChainedState) (tr : Turn) : Type 1 where
-  /-- the deployed cap-hash scheme the cap-tree commits under (its existential state type). -/
-  State : Type
   /-- the deployed cap-hash scheme carrier. -/
-  S : CapHashScheme State
+  S8 : Cap8Scheme
   /-- the `Custom`-tier vk decode (inert for transfers — tag ≠ 5; the named felt residual). -/
   vkOfTag : ℤ → Nat
   /-- the cap-open trace + its memory boundary (the prover's cap-tree opening witness). -/
@@ -249,11 +248,11 @@ structure TransferAuthoritySource (hash : List ℤ → ℤ) (fcaps : FacetCaps)
   maddrs : List ℤ
   t : VmTrace
   /-- the chip table is sound (the chip's hash IS the deployed cap-hash `S.chipAbsorb`). -/
-  hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
+  hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2)
   /-- the LIVE transfer cap-open descriptor's appendix is satisfied (the depth-16 Merkle open + the
   genuine `EFF_TRANSFER` submask facet gate + the decoded tier). This is the descriptor the live
   `transferCapOpenVmDescriptor2R24` route proves through (the genuine submask facet + decoded tier). -/
-  hsat : Satisfied2 S.chipAbsorb transferCapOpenEffV3 minit mfin maddrs t
+  hsat : Satisfied2 hash transferCapOpenEffV3 minit mfin maddrs t
   /-- the cap-open row index. -/
   i : Nat
   hi : i < t.rows.length
@@ -265,8 +264,8 @@ structure TransferAuthoritySource (hash : List ℤ → ℤ) (fcaps : FacetCaps)
   leafAt : Dregg2.Authority.Label → Dregg2.Authority.Label → CapLeaf
   /-- the decoded `fcaps` are deployed-faithfully realized by `leafAt` at the cap-open's root, over the
   turn's ACTUAL effect bit (`1 <<< EFF_TRANSFER`), the effect-general faithfulness. -/
-  hfaith : DeployedFaithfulEff S vkOfTag .signature (1 <<< EFF_TRANSFER) fcaps
-    ((envAt t i).loc (capOpenCols Dregg2.Circuit.RotatedKernelRefinement.transferV3.traceWidth).capRoot) leafAt
+  hfaith : DeployedFaithfulEff8 S8 vkOfTag .signature (1 <<< EFF_TRANSFER) fcaps
+    (groupVal (envAt t i) (capOpenCols Dregg2.Circuit.RotatedKernelRefinement.transferV3.traceWidth).capRoot) leafAt
   /-- the cap-open row's `src` column IS the turn's `src`. -/
   hsrc : (envAt t i).loc (capOpenCols Dregg2.Circuit.RotatedKernelRefinement.transferV3.traceWidth).src = (tr.src : ℤ)
   /-- the opened leaf IS the faithful `(actor ⇒ src)` edge leaf. -/
@@ -289,7 +288,7 @@ theorem authoritySource_authorizes (hash : List ℤ → ℤ) (fcaps : FacetCaps)
   -- the goal converts to the literal definitionally (`show`).
   show authorizedFacetB fcaps .signature
       { actor := tr.actor, src := tr.src, dst := tr.dst, amt := tr.amt } = true
-  exact (transferCapOpenEffV3_authorizes src0.S src0.vkOfTag .signature src0.minit src0.mfin src0.maddrs
+  exact (transferCapOpenEffV3_authorizes src0.S8 hash src0.vkOfTag .signature src0.minit src0.mfin src0.maddrs
     src0.t src0.hChip src0.hsat src0.i src0.hi src0.hiNotLast fcaps src0.leafAt src0.hfaith
     tr.actor tr.src tr.dst tr.amt src0.hsrc src0.hedge src0.htier).1
 
@@ -308,15 +307,14 @@ committed leaf. The authority conclusion (`authorizedFacetB fcaps provided`) is 
 in-circuit open + the committed tier — NOT pinned to Signature. -/
 structure TransferAuthoritySourceG (hash : List ℤ → ℤ) (fcaps : FacetCaps) (provided : AuthProvided)
     (pre : RecChainedState) (tr : Turn) : Type 1 where
-  State : Type
-  S : CapHashScheme State
+  S8 : Cap8Scheme
   vkOfTag : ℤ → Nat
   minit : ℤ → ℤ
   mfin : ℤ → ℤ × Nat
   maddrs : List ℤ
   t : VmTrace
-  hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
-  hsat : Satisfied2 S.chipAbsorb transferCapOpenEffV3 minit mfin maddrs t
+  hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2)
+  hsat : Satisfied2 hash transferCapOpenEffV3 minit mfin maddrs t
   i : Nat
   hi : i < t.rows.length
   /-- the cap-open row is an ACTIVE (transition) row, not the wrap/pad last row: the deployed cap-open
@@ -324,8 +322,8 @@ structure TransferAuthoritySourceG (hash : List ℤ → ℤ) (fcaps : FacetCaps)
   only off the last row. Any real ≥2-row trace carries this. -/
   hiNotLast : i + 1 ≠ t.rows.length
   leafAt : Dregg2.Authority.Label → Dregg2.Authority.Label → CapLeaf
-  hfaith : DeployedFaithfulEff S vkOfTag provided (1 <<< EFF_TRANSFER) fcaps
-    ((envAt t i).loc (capOpenCols Dregg2.Circuit.RotatedKernelRefinement.transferV3.traceWidth).capRoot) leafAt
+  hfaith : DeployedFaithfulEff8 S8 vkOfTag provided (1 <<< EFF_TRANSFER) fcaps
+    (groupVal (envAt t i) (capOpenCols Dregg2.Circuit.RotatedKernelRefinement.transferV3.traceWidth).capRoot) leafAt
   hsrc : (envAt t i).loc (capOpenCols Dregg2.Circuit.RotatedKernelRefinement.transferV3.traceWidth).src = (tr.src : ℤ)
   hedge : leafOf (capOpenCols Dregg2.Circuit.RotatedKernelRefinement.transferV3.traceWidth) (envAt t i) = leafAt tr.actor tr.src
   /-- the off-circuit auth satisfies the tier DECODED off the committed leaf (NOT a Signature pin). -/
@@ -343,7 +341,7 @@ theorem authoritySourceG_authorizes (hash : List ℤ → ℤ) (fcaps : FacetCaps
   show authorizedFacetB fcaps provided
       { actor := tr.actor, src := tr.src, dst := tr.dst, amt := tr.amt } = true
   exact (transferCapOpenEffV3_authorizes
-    src0.S src0.vkOfTag provided src0.minit src0.mfin src0.maddrs src0.t src0.hChip src0.hsat
+    src0.S8 hash src0.vkOfTag provided src0.minit src0.mfin src0.maddrs src0.t src0.hChip src0.hsat
     src0.i src0.hi src0.hiNotLast fcaps src0.leafAt src0.hfaith tr.actor tr.src tr.dst tr.amt src0.hsrc
     src0.hedge src0.htier).1
 
@@ -371,10 +369,8 @@ structure EffAuthoritySource (hash : List ℤ → ℤ) (caps : FacetCaps) (provi
     : Type 1 where
   /-- the effect bit `n` is a valid mask bit (`< MASK_BITS = 32`); the submask-gate side condition. -/
   hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS
-  /-- the deployed cap-hash scheme the cap-tree commits under (its existential state type). -/
-  State : Type
   /-- the deployed cap-hash scheme carrier. -/
-  S : CapHashScheme State
+  S8 : Cap8Scheme
   /-- the `Custom`-tier vk decode (the named felt residual). -/
   vkOfTag : ℤ → Nat
   /-- the cap-open trace + its memory boundary (the prover's cap-tree opening witness). -/
@@ -383,10 +379,10 @@ structure EffAuthoritySource (hash : List ℤ → ℤ) (caps : FacetCaps) (provi
   maddrs : List ℤ
   t : VmTrace
   /-- the chip table is sound (the chip's hash IS the deployed cap-hash `S.chipAbsorb`). -/
-  hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
+  hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2)
   /-- the LIVE fan-out cap-open descriptor's appendix is satisfied (the depth-16 Merkle open + the
   genuine submask facet gate at bit `n` + the decoded tier). -/
-  hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t
+  hsat : Satisfied2 hash (effCapOpenV3 base name n) minit mfin maddrs t
   /-- the cap-open row index. -/
   i : Nat
   hi : i < t.rows.length
@@ -398,8 +394,8 @@ structure EffAuthoritySource (hash : List ℤ → ℤ) (caps : FacetCaps) (provi
   leafAt : Dregg2.Authority.Label → Dregg2.Authority.Label → CapLeaf
   /-- the decoded `caps` are deployed-faithfully realized by `leafAt` at the cap-open's root, over the
   turn's ACTUAL effect bit `1 <<< n`. -/
-  hfaith : DeployedFaithfulEff S vkOfTag provided (1 <<< n) caps
-    ((envAt t i).loc (capOpenCols base.traceWidth).capRoot) leafAt
+  hfaith : DeployedFaithfulEff8 S8 vkOfTag provided (1 <<< n) caps
+    (groupVal (envAt t i) (capOpenCols base.traceWidth).capRoot) leafAt
   /-- the cap-open row's `src` column IS the turn's `src`. -/
   hsrc : (envAt t i).loc (capOpenCols base.traceWidth).src = (tr.src : ℤ)
   /-- the opened leaf IS the faithful `(actor ⇒ src)` edge leaf. -/
@@ -418,8 +414,8 @@ theorem effAuthoritySource_authorizes (hash : List ℤ → ℤ) (caps : FacetCap
     authorizedFacetEffB caps provided (1 <<< n) tr = true := by
   show authorizedFacetEffB caps provided (1 <<< n)
       { actor := tr.actor, src := tr.src, dst := tr.dst, amt := tr.amt } = true
-  exact (effCapOpenV3_authorizes (State := src0.State) base name n src0.hn
-    src0.S src0.vkOfTag provided src0.minit src0.mfin src0.maddrs src0.t src0.hChip src0.hsat
+  exact (effCapOpenV3_authorizes base name n src0.hn
+    src0.S8 hash src0.vkOfTag provided src0.minit src0.mfin src0.maddrs src0.t src0.hChip src0.hsat
     src0.i src0.hi src0.hiNotLast caps src0.leafAt src0.hfaith tr.actor tr.src tr.dst tr.amt src0.hsrc
     src0.hedge src0.htier).1
 
@@ -435,8 +431,7 @@ def transferAuthoritySourceG_to_eff (hash : List ℤ → ℤ) (fcaps : FacetCaps
       Dregg2.Circuit.RotatedKernelRefinement.transferV3
       "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER where
   hn := by decide
-  State := src0.State
-  S := src0.S
+  S8 := src0.S8
   vkOfTag := src0.vkOfTag
   minit := src0.minit
   mfin := src0.mfin
@@ -447,7 +442,7 @@ def transferAuthoritySourceG_to_eff (hash : List ℤ → ℤ) (fcaps : FacetCaps
   -- strip the appended `selectorGate` tooth (constraint-subset monotonicity) to land the parametric
   -- `EffAuthoritySource.hsat` over the bare `effCapOpenV3 transferV3 …` the parametric source names.
   hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSelectorGate_satisfied2
-    src0.S.chipAbsorb Dregg2.Circuit.Emit.EffectVmEmit.sel.TRANSFER _
+    hash Dregg2.Circuit.Emit.EffectVmEmit.sel.TRANSFER _
     src0.minit src0.mfin src0.maddrs src0.t src0.hsat
   i := src0.i
   hi := src0.hi
@@ -490,10 +485,10 @@ more. -/
 def effAuthoritySource_ofCanonical (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
     (pre : RecChainedState) (tr : Turn) (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS) (hn32 : n < 32)
-    {State : Type} (S : CapHashScheme State) (vkOfTag : ℤ → Nat)
+    (S8 : Cap8Scheme) (vkOfTag : ℤ → Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
-    (hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t)
+    (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
+    (hsat : Satisfied2 hash (effCapOpenV3 base name n) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hiNotLast : i + 1 ≠ t.rows.length)
     (hsrc : (envAt t i).loc (capOpenCols base.traceWidth).src = (tr.src : ℤ))
     (hedge : leafOf (capOpenCols base.traceWidth) (envAt t i) = canonicalLeafAt caps tr.actor tr.src)
@@ -505,8 +500,7 @@ def effAuthoritySource_ofCanonical (hash : List ℤ → ℤ) (caps : FacetCaps) 
       provided = true) :
     EffAuthoritySource hash caps provided pre tr base name n where
   hn := hn
-  State := State
-  S := S
+  S8 := S8
   vkOfTag := vkOfTag
   minit := minit
   mfin := mfin
@@ -519,8 +513,8 @@ def effAuthoritySource_ofCanonical (hash : List ℤ → ℤ) (caps : FacetCaps) 
   hiNotLast := hiNotLast
   leafAt := canonicalLeafAt caps
   -- THE DISCHARGE: faithfulness is CONSTRUCTED from the canonical leaf set, not carried.
-  hfaith := deployedFaithfulEff_canonical S vkOfTag provided n hn32 caps
-    ((envAt t i).loc (capOpenCols base.traceWidth).capRoot) hipc
+  hfaith := deployedFaithfulEff_canonical8 S8 vkOfTag provided n hn32 caps
+    (groupVal (envAt t i) (capOpenCols base.traceWidth).capRoot) hipc
   hsrc := hsrc
   hedge := hedge
   htier := htier
@@ -536,10 +530,10 @@ theorem effAuthoritySource_ofCanonical_authorizes (hash : List ℤ → ℤ) (cap
     (provided : AuthProvided) (pre : RecChainedState) (tr : Turn)
     (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS) (hn32 : n < 32)
-    {State : Type} (S : CapHashScheme State) (vkOfTag : ℤ → Nat)
+    (S8 : Cap8Scheme) (vkOfTag : ℤ → Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
-    (hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t)
+    (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
+    (hsat : Satisfied2 hash (effCapOpenV3 base name n) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hiNotLast : i + 1 ≠ t.rows.length)
     (hsrc : (envAt t i).loc (capOpenCols base.traceWidth).src = (tr.src : ℤ))
     (hedge : leafOf (capOpenCols base.traceWidth) (envAt t i) = canonicalLeafAt caps tr.actor tr.src)
@@ -549,7 +543,7 @@ theorem effAuthoritySource_ofCanonical_authorizes (hash : List ℤ → ℤ) (cap
       provided = true) :
     authorizedFacetEffB caps provided (1 <<< n) tr = true :=
   effAuthoritySource_authorizes hash caps provided pre tr base name n
-    (effAuthoritySource_ofCanonical hash caps provided pre tr base name n hn hn32 S vkOfTag
+    (effAuthoritySource_ofCanonical hash caps provided pre tr base name n hn hn32 S8 vkOfTag
       minit mfin maddrs t hChip hsat i hi hiNotLast hsrc hedge hipc htier)
 
 /-! ## §7.E — THE SLIM CANONICAL SOURCES: the live soundness authority floor with `hfaith`/`leafAt` GONE.
@@ -583,10 +577,8 @@ structure EffAuthoritySourceCanon (hash : List ℤ → ℤ) (caps : FacetCaps) (
   hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS
   /-- the effect bit `n` is `< 32` (the `deployedFaithfulEff_canonical` single-bit side condition). -/
   hn32 : n < 32
-  /-- the deployed cap-hash scheme the cap-tree commits under (its existential state type). -/
-  State : Type
   /-- the deployed cap-hash scheme carrier. -/
-  S : CapHashScheme State
+  S8 : Cap8Scheme
   /-- the `Custom`-tier vk decode (the named felt residual). -/
   vkOfTag : ℤ → Nat
   /-- the cap-open trace + its memory boundary (the prover's cap-tree opening witness). -/
@@ -595,10 +587,10 @@ structure EffAuthoritySourceCanon (hash : List ℤ → ℤ) (caps : FacetCaps) (
   maddrs : List ℤ
   t : VmTrace
   /-- the chip table is sound (the chip's hash IS the deployed cap-hash `S.chipAbsorb`). -/
-  hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
+  hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2)
   /-- the LIVE fan-out cap-open descriptor's appendix is satisfied (the depth-16 Merkle open + the
   genuine submask facet gate at bit `n` + the decoded tier). -/
-  hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t
+  hsat : Satisfied2 hash (effCapOpenV3 base name n) minit mfin maddrs t
   /-- the cap-open row index. -/
   i : Nat
   hi : i < t.rows.length
@@ -628,7 +620,7 @@ theorem effAuthoritySourceCanon_authorizes (hash : List ℤ → ℤ) (caps : Fac
     (src0 : EffAuthoritySourceCanon hash caps provided pre tr base name n) :
     authorizedFacetEffB caps provided (1 <<< n) tr = true :=
   effAuthoritySource_ofCanonical_authorizes hash caps provided pre tr base name n
-    src0.hn src0.hn32 src0.S src0.vkOfTag src0.minit src0.mfin src0.maddrs src0.t
+    src0.hn src0.hn32 src0.S8 src0.vkOfTag src0.minit src0.mfin src0.maddrs src0.t
     src0.hChip src0.hsat src0.i src0.hi src0.hiNotLast src0.hsrc src0.hedge src0.hipc src0.htier
 
 /-- **`TransferAuthoritySourceCanon hash fcaps provided pre tr` — the SLIM canonical transfer source.**
