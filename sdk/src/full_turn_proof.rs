@@ -6890,16 +6890,11 @@ mod tests {
 
         let cap_w = CapOpenWitness {
             leaf: chosen,
-            siblings: {
-                let mut s = [BabyBear::ZERO; 16];
-                s.copy_from_slice(&built.siblings);
-                s
-            },
-            directions: {
-                let mut d = [0u8; 16];
-                d.copy_from_slice(&built.directions);
-                d
-            },
+            // The builder already carries the genuine native 8-felt sibling path
+            // (`[[BabyBear; CAP_OPEN_DIGEST_W]; CAP_OPEN_DEPTH]`, Phase H-CAP-8) — thread it
+            // through lane-for-lane rather than flattening into the stale 1-felt `[BabyBear; 16]`.
+            siblings: built.siblings,
+            directions: built.directions,
             cap_root: built.cap_root,
             src: chosen[1],
             eff_bit: EFFECT_DELEGATION_OPS,
@@ -7294,23 +7289,34 @@ mod tests {
         // It MUST be defined by EXACTLY ONE map_op `new_root` — the sole, on-the-wire-verifiable definition
         // (the genuine sorted cap-tree REMOVE). And the v1-state col 87 must NOT be a map_op new_root (it is
         // FROZEN pass-through, so its continuity weld holds trivially).
+        // Phase H-CAP-8: the AFTER cap-root is a NATIVE 8-felt digest GROUP, not a 1-felt scalar.
+        // Its map_op `new_root` is the 8-lane group `[lane0=332 (AFTER cap-root limb, was scalar
+        // var 264) ‖ lanes 1..7 = 358..=364]`. Match the FULL group lane-for-lane (never a lane-0
+        // squeeze) so the "exactly one map_op advances the AFTER cap-root" tooth still bites.
+        let after_cap_root_group: Vec<LeanExpr> = std::iter::once(332usize)
+            .chain(358..=364)
+            .map(LeanExpr::Var)
+            .collect();
         let map_op_264_count = desc
             .constraints
             .iter()
-            .filter(|c| matches!(c, VmConstraint2::MapOp(m) if matches!(m.new_root, LeanExpr::Var(264))))
+            .filter(|c| matches!(c, VmConstraint2::MapOp(m) if m.new_root == after_cap_root_group))
             .count();
         assert_eq!(
             map_op_264_count, 1,
-            "the AFTER cap-root (rotated limb, var 264) MUST be defined by EXACTLY ONE map_op `new_root` — \
-             the on-the-wire-verifiable sorted cap-tree REMOVE (descriptor: {})",
+            "the AFTER cap-root (rotated limb 8-felt group, lane0=var 332) MUST be defined by EXACTLY \
+             ONE map_op `new_root` — the on-the-wire-verifiable sorted cap-tree REMOVE (descriptor: {})",
             desc.name
         );
+        // The v1-state cap-root column (var 87) is FROZEN pass-through: no map_op `new_root` lane may
+        // write it.
         let map_op_87_count = desc
             .constraints
             .iter()
-            .filter(
-                |c| matches!(c, VmConstraint2::MapOp(m) if matches!(m.new_root, LeanExpr::Var(87))),
-            )
+            .filter(|c| {
+                matches!(c, VmConstraint2::MapOp(m)
+                if m.new_root.iter().any(|e| matches!(e, LeanExpr::Var(87))))
+            })
             .count();
         assert_eq!(
             map_op_87_count, 0,
@@ -9116,17 +9122,21 @@ mod tests {
 
         // The INSERT map_op advances the rotated cap-root limb (BEFORE var 213 → AFTER var 264) — the same
         // on-the-wire-verifiable sorted-tree write `delegate` proves. EXACTLY ONE op defines var 264.
+        // Phase H-CAP-8: the AFTER cap-root is a native 8-felt group `[lane0=332 (was scalar var 264)
+        // ‖ lanes 1..7 = 358..=364]`. Match the FULL group (no lane-0 squeeze) so the INSERT tooth bites.
+        let after_cap_root_group: Vec<LeanExpr> = std::iter::once(332usize)
+            .chain(358..=364)
+            .map(LeanExpr::Var)
+            .collect();
         let insert_264 = desc
             .constraints
             .iter()
-            .filter(
-                |c| matches!(c, VmConstraint2::MapOp(m) if matches!(m.new_root, LeanExpr::Var(264))),
-            )
+            .filter(|c| matches!(c, VmConstraint2::MapOp(m) if m.new_root == after_cap_root_group))
             .count();
         assert_eq!(
             insert_264, 1,
-            "the delegateAtten AFTER cap-root (rotated limb var 264) MUST be defined by EXACTLY ONE map_op \
-             new_root — the genuine sorted INSERT (descriptor: {})",
+            "the delegateAtten AFTER cap-root (rotated limb 8-felt group, lane0=var 332) MUST be defined \
+             by EXACTLY ONE map_op new_root — the genuine sorted INSERT (descriptor: {})",
             desc.name
         );
 

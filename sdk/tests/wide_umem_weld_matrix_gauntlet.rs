@@ -435,11 +435,9 @@ fn matrix_make_sovereign_welded_wire_verifies() {
 #[test]
 fn matrix_forbidden_plain_cap_is_wire_rejected() {
     let before_balance: u64 = 100_000;
-    let initial = CellState::with_capability_root(
-        before_balance,
-        0,
-        dregg_circuit::cap_root::empty_capability_root(),
-    );
+    // Empty c-list cell: `CellState::new` seeds the canonical empty 8-felt cap-tree root into the
+    // deployed cap-root column (the lib owns the lane-0 seeding — no truncation here).
+    let initial = CellState::new(before_balance, 0);
     let effects = vec![VmEffect::GrantCapability {
         cap_entry: [BabyBear::ZERO; 8],
         phase_b: None,
