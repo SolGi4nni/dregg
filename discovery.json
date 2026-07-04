@@ -1,0 +1,12 @@
+{
+  "gateway": {
+    "url": "https://dregg.commonquant.com",
+    "ws": "wss://dregg.commonquant.com/ws",
+    "api": "https://dregg.commonquant.com/api",
+    "gossip": "dregg.commonquant.com:9420"
+  },
+  "federation": [],
+  "intent_service": null,
+  "updated_at": "2026-07-04T18:45:42Z",
+  "commit": "db466dcd92b1da3b1cda28e3f71b9112bdbd1c32"
+}
