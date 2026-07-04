@@ -285,9 +285,11 @@ def revFrame : KernelFrameExceptCaps revPre revPost :=
     frLifecycle := rfl, frDeathCert := rfl, frDelegate := rfl, frDelegations := rfl,
     frDelegationEpoch := rfl, frDelegationEpochAt := rfl, frHeaps := rfl }
 
-/-- **`RevokeCapabilityTraceReadout` is INHABITED.** (`holder = target = 0`.) -/
-def revokeCapability_readout :
-    RevokeCapabilityTraceReadout (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
+/-- **`RevokeCapabilityTraceReadout` is INHABITED** (for EVERY `Cap8Scheme` — the decode seam
+`capsMoveDecodes` is an implication discharged `fun _ => rfl`, scheme-independent).
+(`holder = target = 0`.) -/
+def revokeCapability_readout (S8 : Dregg2.Circuit.DeployedCapTree.Cap8Scheme) :
+    RevokeCapabilityTraceReadout S8 (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
       (readoutTrace revRow0) revPre revPost 0 0 where
   row := 0
   hrow := by rw [readoutTrace_rows_len]; omega
@@ -296,10 +298,10 @@ def revokeCapability_readout :
   logAdv := rfl
   frame := revFrame
 
-theorem revokeCapability_readout_inhabited :
-    Nonempty (RevokeCapabilityTraceReadout (fun ins => (permOutZ ins).headD 0) (fun _ => 0)
+theorem revokeCapability_readout_inhabited (S8 : Dregg2.Circuit.DeployedCapTree.Cap8Scheme) :
+    Nonempty (RevokeCapabilityTraceReadout S8 (fun ins => (permOutZ ins).headD 0) (fun _ => 0)
       (fun _ => (0, 0)) [] (readoutTrace revRow0) revPre revPost 0 0) :=
-  ⟨revokeCapability_readout⟩
+  ⟨revokeCapability_readout S8⟩
 
 #assert_axioms revokeCapability_readout
 

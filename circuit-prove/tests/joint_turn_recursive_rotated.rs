@@ -23,9 +23,13 @@
 //! host-side rejection (`recursive_rejects_disagreeing_turn_ids`) stays runnable in CI.
 //!
 //! Run the slow ones with:
-//!   cargo test -p dregg-circuit --features recursion --test joint_turn_recursive_rotated -- --ignored --nocapture
-
-#![cfg(feature = "prover")]
+//!   cargo test -p dregg-circuit-prove --test joint_turn_recursive_rotated -- --ignored --nocapture
+//!
+//! NOTE: this file previously carried `#![cfg(feature = "prover")]`, the SAME vestigial
+//! gate `ivc_turn_chain_rotated.rs` documented and removed — `dregg-circuit-prove`
+//! defines no `prover` feature, so the gate compiled the ENTIRE file out (0 tests) and
+//! every joint-fold soundness tooth here was silently dead. The recursion machinery is
+//! unconditional in `dregg-circuit-prove`, so the gate is removed: the teeth run.
 
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
@@ -229,7 +233,7 @@ fn ungated_joint_prover_with_forged_cell_commit_cannot_produce_a_root() {
         proof,
         descriptor,
         mut public_inputs,
-        custom_witness,
+        carrier_witness,
     } = rotated;
     let pi_wide_new = public_inputs.len() - 8; // head lane of the AFTER 8-felt wide commit
     let lie = public_inputs[pi_wide_new] + BabyBear::ONE;
@@ -238,7 +242,7 @@ fn ungated_joint_prover_with_forged_cell_commit_cannot_produce_a_root() {
         proof,
         descriptor,
         public_inputs,
-        custom_witness,
+        carrier_witness,
     };
     let forged = FinalizedTurn::new(DescriptorParticipant::rotated(forged_leg));
     let cells = [forged, honest];

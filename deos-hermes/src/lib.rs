@@ -98,6 +98,7 @@ pub mod live_js;
 pub mod mandate;
 pub mod mcp_server;
 pub mod mock_peer;
+pub mod resident;
 #[cfg(feature = "js-agent")]
 pub mod run_js;
 #[cfg(feature = "screenshot")]
@@ -116,10 +117,10 @@ pub use brain::{
 };
 pub use bridge::{HermesGateway, ToolMarket};
 #[cfg(unix)]
-pub use egress::{EgressGrant, EgressPolicy};
+pub use egress::{EgressGrant, EgressNetGrant, EgressPolicy, provider_host_port};
 pub use grant_registry::{GrantRegistry, MandateKey};
 #[cfg(unix)]
-pub use host::{DreggHost, HostedAgentReport};
+pub use host::{DreggHost, HostedAgentReport, HostedToolVerdict};
 pub use mcp_server::{ConfinedToolResult, DREGG_TOOL_NAMES, McpServer, McpToolHost};
 
 // Re-export the grounding SDK types a HOST needs to construct a confined gateway
@@ -134,6 +135,7 @@ pub use dregg_sdk::{AgentCipherclerk, AgentRuntime, HeldToken, ToolGrant};
 pub use live_js::{LiveAuthoringHands, LiveComposeHands, LiveJsHands, script_of_call};
 pub use mandate::{Mandate, MandateRow};
 pub use mock_peer::{MockHermesPeer, ScriptedCall};
+pub use resident::{AnthropicCaller, ResidentBrain, resident_brain_from_env};
 #[cfg(feature = "js-agent")]
 pub use run_js::{
     RunJsAuthorOutcome, RunJsAuthoringTool, RunJsComposeOutcome, RunJsComposeTool, RunJsError,

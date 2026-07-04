@@ -10,7 +10,7 @@
 //! the firmament handle is the REAL [`dregg_firmament::Capability`] (its
 //! `attenuate` rides that same gate), the delegation neighborhood is the REAL
 //! [`OcapGraph`] (`graph.rs`), the cap-crown root is the REAL openable
-//! sorted-Poseidon2 root [`dregg_cell::compute_canonical_capability_root_felt`]
+//! sorted-Poseidon2 root [`dregg_cell::compute_canonical_capability_root_8`]
 //! (`cell/src/commitment.rs`, the `#103` `capability_root`), and the mint path is
 //! the REAL [`Powerbox::grant`] (`powerbox.rs`) — a genuine `GrantCapability`
 //! turn through the verified executor.
@@ -35,8 +35,8 @@
 //! gpui-free + `cargo test`-able exactly as `presentable.rs`/`reflect.rs` are.
 
 use dregg_cell::{
-    cap_ref_to_leaf, compute_canonical_capability_root_felt, felt_to_bytes32, is_attenuation,
-    AuthRequired, CapabilityRef, CellId,
+    capability_ref_leaf_commitment, compute_canonical_capability_root_8, digest8_to_bytes32,
+    is_attenuation, AuthRequired, CapabilityRef, CellId,
 };
 use dregg_firmament::{Capability, Rights, Target};
 
@@ -317,9 +317,9 @@ fn cap_ocap_neighborhood(world: &World, held: &HeldCapability) -> GraphView {
 }
 
 /// The cap-crown [`MerkleTreeView`]: the REAL openable `capability_root` over the
-/// holder's whole c-list (the #103 sorted-Poseidon2 root,
-/// [`compute_canonical_capability_root_felt`]), with THIS cap's genuine leaf
-/// digest ([`cap_ref_to_leaf`]) marked as the highlighted leaf.
+/// holder's whole c-list (the #103 sorted-Poseidon2 root, the FAITHFUL cap8
+/// [`compute_canonical_capability_root_8`]), with THIS cap's genuine leaf
+/// digest ([`capability_ref_leaf_commitment`]) marked as the highlighted leaf.
 ///
 /// MEMBERSHIP-PATH NOTE: the cell crate exposes the canonical ROOT and the leaf
 /// ENCODING, but the leaf→root sibling/direction PATH lives in
@@ -332,16 +332,16 @@ fn cap_crown_view(world: &World, held: &HeldCapability) -> Option<MerkleTreeView
     let cell = world.ledger().get(&held.holder)?;
     let caps = &cell.capabilities;
 
-    // The genuine sorted-Poseidon2 root over the live c-list (with tombstones).
-    let root_felt = compute_canonical_capability_root_felt(caps);
-    let root = felt_to_bytes32(root_felt);
+    // The genuine sorted-Poseidon2 root over the live c-list (with tombstones) —
+    // the FAITHFUL 8-felt cap8 root (all 8 lanes encoded, no lane-0 truncation).
+    let root = digest8_to_bytes32(compute_canonical_capability_root_8(caps).limbs());
 
     // The genuine leaf digest of every held cap (the sorted-tree leaves), and the
     // highlighted leaf for THIS cap.
     let mut leaves: Vec<String> = Vec::new();
     let mut this_leaf: Option<String> = None;
     for c in caps.iter() {
-        let leaf_digest = felt_to_bytes32(cap_ref_to_leaf(c).digest());
+        let leaf_digest = capability_ref_leaf_commitment(c);
         let leaf_hex = reflect::short_hex(&leaf_digest);
         if c.slot == held.cap.slot && c.target == held.cap.target {
             this_leaf = Some(leaf_hex.clone());
@@ -783,8 +783,9 @@ mod tests {
                 // The root is the genuine sorted-Poseidon2 capability_root — non-zero
                 // (the sentinels hash into a real value), matching the cell crate.
                 let cell = w.ledger().get(&holder).unwrap();
-                let expect_root =
-                    felt_to_bytes32(compute_canonical_capability_root_felt(&cell.capabilities));
+                let expect_root = digest8_to_bytes32(
+                    compute_canonical_capability_root_8(&cell.capabilities).limbs(),
+                );
                 assert_eq!(m.root, expect_root, "the real openable capability_root");
                 assert_ne!(m.root, [0u8; 32], "the cap-crown root is non-zero");
                 // The held cap's genuine leaf digest is among the leaves and marked.

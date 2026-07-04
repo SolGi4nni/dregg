@@ -35,12 +35,16 @@
 //! `p − 2^DUE_BITS ≥ 2^DUE_BITS`, i.e. `2^{DUE_BITS+1} ≤ p`, i.e. `DUE_BITS ≤ 29`. `28` is taken
 //! (a ~268M-block honest window) for comfortable margin (`p − 2^28 ≈ 1.74e9 ≫ 2^28`).
 //!
-//! ## STAGED — built BESIDE the deployed, NOT flipped, NOT yet in a committed VK
+//! ## STAGED — descriptor EMITTED (Lean) + producer EXPORTED; the registry row rides the big-bang
 //!
-//! These constraints are NOT emitted into a committed welded descriptor / VK and NOT routed onto any
-//! live path. They are the constraint polynomials a staged `settleDischargeSatVmDescriptor` would
-//! carry; emitting that descriptor, committing its VK, and flipping the live path through it is the
-//! remaining gated VK epoch (the later descriptor pass owns the emit/registry/drift).
+//! The welded descriptor IS now emitted from Lean (`Dregg2.Deos.DischargeSatDescriptor.
+//! dischargeSatVmDescriptor2R24`, v12 offsets through the canonical constants; exercise fixture
+//! `circuit/tests/fixtures/discharge-sat-v3-staged.json`) and the producer aux-fill is EXPORTED
+//! below ([`fill_discharge_aux`]); `gentian_discharge_vault_prove.rs` proves real STARKs against it
+//! (honest settle proves+verifies; early / cursor-not-advanced / wrong-amount REFUSED). What still
+//! rides the ONE big-bang descriptor regen: the `rotation-v3-staged-registry.tsv` row + the
+//! drift-gate FP pin, the declared-tag-18 routing tie, the PI/manifest-param binding of
+//! `PERIOD_COL`/`AMOUNT_COL`/`CLOCK_COL`, and the welded VK commit + live admission.
 
 use super::carrier_floor_weld::caveat_tag_col;
 use super::columns::rotation::caveat as cav;
@@ -314,6 +318,91 @@ pub fn discharge_gates(cur_slot: usize, tot_slot: usize, due_slot: usize) -> Vec
     g
 }
 
+// ---------------------------------------------------------------------------
+// THE EXPORTED PRODUCER AUX-FILL (the graduation of the in-test `make_row` witness logic).
+// ---------------------------------------------------------------------------
+
+/// **THE PRODUCTION DISCHARGE AUX-FILL (one row).** Fill every auxiliary column the discharge
+/// gadget's gates read, from the row's OWN bound columns — the producer arm the rotated trace
+/// generator (and the gentian-style prove exercise) calls after the settle-carrier trace is
+/// generated:
+///
+///  * the floor decode witness (`bit`/`inv`/`or` + `FLOOR_DISCHARGE_COL`), read from the four
+///    caveat-commit-bound type-tag columns already on the row;
+///  * the schedule scalars (`PERIOD_COL`/`AMOUNT_COL`/`CLOCK_COL`);
+///  * the due-ness range witness: `DUE_DIFF = clock − before[due]` (field), its `DUE_BITS`
+///    decomposition, and the committed `before[due]` decomposition.
+///
+/// The row is grown to `width` first. Does NOT touch the capacity selector (`DISCHARGE_SEL_COL`),
+/// the field columns, or the PI vector — the trace generator owns those. TOTAL: a non-witnessable
+/// row (e.g. an EARLY discharge, whose difference wraps past `2^DUE_BITS`) still fills, producing a
+/// REFUSING witness (the range-assembly gate cannot vanish) — fail-closed by construction.
+pub fn fill_discharge_aux_row(
+    row: &mut Vec<crate::field::BabyBear>,
+    width: usize,
+    due_slot: usize,
+    period: u32,
+    amount: u32,
+    clock: u32,
+) {
+    use crate::field::BabyBear;
+    if row.len() < width {
+        row.resize(width, BabyBear::ZERO);
+    }
+    // The floor decode witness over the bound type-tag columns.
+    let mut running = 0u32;
+    for k in 0..cav::MAX_CAVEATS {
+        let tag = row[caveat_tag_col(k)].as_u32();
+        let is_disc = tag == SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION;
+        let b = u32::from(is_disc);
+        row[bit_col(k)] = BabyBear::new(b);
+        row[inv_col(k)] = if is_disc {
+            BabyBear::ZERO
+        } else {
+            (BabyBear::new(tag) - BabyBear::new(SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION))
+                .inverse()
+                .expect("nonzero tag−18 invertible")
+        };
+        running |= b;
+        if k == 0 {
+            row[or_col(0)] = BabyBear::new(running);
+        } else if k < cav::MAX_CAVEATS - 1 {
+            row[or_col(k)] = BabyBear::new(running);
+        } else {
+            row[FLOOR_DISCHARGE_COL] = BabyBear::new(running);
+        }
+    }
+    // The schedule scalars.
+    row[PERIOD_COL] = BabyBear::new(period);
+    row[AMOUNT_COL] = BabyBear::new(amount);
+    row[CLOCK_COL] = BabyBear::new(clock);
+    // The due-ness range witness (read `before[due]` from the row's own rotated field column).
+    let due = row[before_field_col(due_slot)];
+    let diff = BabyBear::new(clock) - due;
+    row[DUE_DIFF_COL] = diff;
+    for i in 0..DUE_BITS {
+        row[diff_bit_col(i)] = BabyBear::new((diff.as_u32() >> i) & 1);
+        row[due_bit_col(i)] = BabyBear::new((due.as_u32() >> i) & 1);
+    }
+}
+
+/// **THE PRODUCTION DISCHARGE AUX-FILL (whole trace).** [`fill_discharge_aux_row`] on every row —
+/// the decode gates are EVERY-ROW (the satisfaction gates are selector-gated, inert on padding),
+/// so the aux columns are filled uniformly. The rotated settle-carrier trace + this fill is a
+/// complete witness for the staged `dischargeSatVmDescriptor2R24` + `discharge_floor_gates` weld.
+pub fn fill_discharge_aux(
+    trace: &mut [Vec<crate::field::BabyBear>],
+    width: usize,
+    due_slot: usize,
+    period: u32,
+    amount: u32,
+    clock: u32,
+) {
+    for row in trace.iter_mut() {
+        fill_discharge_aux_row(row, width, due_slot, period, amount, clock);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,6 +454,9 @@ mod tests {
         }
     }
 
+    /// Build a row by setting the generator-owned columns (tags, selector, field columns), then
+    /// running the EXPORTED production aux-fill [`fill_discharge_aux_row`] — the tests exercise the
+    /// same producer arm the prove exercise / rotated trace generator calls.
     #[allow(clippy::too_many_arguments)]
     fn make_row(
         tags: [u32; cav::MAX_CAVEATS],
@@ -384,28 +476,9 @@ mod tests {
             .max(CLOCK_COL + 1);
         let mut row = vec![BabyBear::ZERO; width];
 
-        // caveat tag columns + the floor decode witness (mirror carrier_floor).
-        let mut running = 0u32;
         for k in 0..cav::MAX_CAVEATS {
             row[caveat_tag_col(k)] = BabyBear::new(tags[k]);
-            let is_disc = tags[k] == SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION;
-            let b = u32::from(is_disc);
-            row[bit_col(k)] = BabyBear::new(b);
-            if !is_disc {
-                let d =
-                    BabyBear::new(tags[k]) - BabyBear::new(SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION);
-                row[inv_col(k)] = d.inverse().expect("nonzero tag−18 invertible");
-            }
-            running |= b;
-            if k == 0 {
-                row[or_col(0)] = BabyBear::new(running);
-            } else if k < cav::MAX_CAVEATS - 1 {
-                row[or_col(k)] = BabyBear::new(running);
-            } else {
-                row[FLOOR_DISCHARGE_COL] = BabyBear::new(running);
-            }
         }
-
         row[DISCHARGE_SEL_COL] = BabyBear::new(sel);
         row[before_field_col(CUR)] = BabyBear::new(before_cur);
         row[before_field_col(TOT)] = BabyBear::new(before_tot);
@@ -413,22 +486,9 @@ mod tests {
         row[after_field_col(CUR)] = BabyBear::new(after_cur);
         row[after_field_col(TOT)] = BabyBear::new(after_tot);
         row[after_field_col(DUE)] = BabyBear::new(after_due);
-        row[PERIOD_COL] = BabyBear::new(period);
-        row[AMOUNT_COL] = BabyBear::new(amount);
-        row[CLOCK_COL] = BabyBear::new(clock);
 
-        // due-ness witness: DUE_DIFF = clock − before_due (field), bit-decomposed low DUE_BITS.
-        let diff = BabyBear::new(clock) - BabyBear::new(before_due);
-        row[DUE_DIFF_COL] = diff;
-        fill_bits(&mut row, diff.as_u32(), &diff_bit_col);
-        fill_bits(&mut row, BabyBear::new(before_due).as_u32(), &due_bit_col);
+        fill_discharge_aux_row(&mut row, width, DUE, period, amount, clock);
         row
-    }
-
-    fn fill_bits(row: &mut [BabyBear], value: u32, bit: &dyn Fn(usize) -> usize) {
-        for i in 0..DUE_BITS {
-            row[bit(i)] = BabyBear::new((value >> i) & 1);
-        }
     }
 
     fn all_zero_settle(gates: &[VmConstraint2], row: &[BabyBear]) -> bool {

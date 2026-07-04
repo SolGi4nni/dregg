@@ -210,7 +210,7 @@ fn welded_umem_forged_post_commit_refused() {
         proof,
         descriptor,
         mut public_inputs,
-        custom_witness,
+        carrier_witness,
     } = rotated;
     let pi_wide_new = public_inputs.len() - 8; // head lane of the AFTER 8-felt wide commit
     public_inputs[pi_wide_new] = n1 + BabyBear::ONE;
@@ -218,7 +218,7 @@ fn welded_umem_forged_post_commit_refused() {
         proof,
         descriptor,
         public_inputs,
-        custom_witness,
+        carrier_witness,
     };
     let t1_forged = FinalizedTurn::new(DescriptorParticipant::rotated(forged_leg));
     let turns = [t0, t1_forged];

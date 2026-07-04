@@ -687,9 +687,11 @@ pub fn prove_custom_binding_node_segmented(
 // `prove_descriptor_leaf_dual_expose`) cannot be minted until the bridge-mint descriptor EMITS the
 // tuple at fixed PI slots (`BRIDGE_TUPLE_PI_LO..`). That descriptor-emit rides the big-bang VK regen.
 // The FOLD MECHANISM (`prove_bridge_binding_node` / `_segmented`) + the sub-proof leaf
-// (`prove_bridge_leaf_tuple_claim`) + this caller are READY: once the leg publishes the tuple, the
-// production bridge-mint minter attaches a `bridge_witness` (the twin of `custom_witness`) and the
-// chain prover takes the bridge-binding branch with zero new mechanism.
+// (`prove_bridge_leaf_tuple_claim`) + this caller are READY, and the witness SOCKET now exists
+// (`CarrierWitness::Bridge` on `RotatedParticipantLeg::carrier_witness`, its fold arm explicitly
+// FAIL-CLOSED in `prove_chain_core_rotated`): once the leg publishes the tuple, the production
+// bridge-mint minter attaches the bridge witness and the bridge wave fills its arm — zero new
+// mechanism.
 
 /// Width of the bridge-action full-fidelity tuple claim (26 felts:
 /// 8 nullifier ++ 8 recipient ++ 8 dest_federation ++ 2 amount).

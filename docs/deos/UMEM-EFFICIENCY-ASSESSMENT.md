@@ -210,8 +210,10 @@ regresses size by +0.8%.
 - Circuit AIR: `circuit/src/descriptor_ir2.rs` — `Ir2Air::UMemory/UMemBoundary` (:1809), the
   additive boundary note (:90-128), `BUS_UMEM_*` (:282).
 - Executor bridge: `turn/src/umem.rs` — `project_executor_state` (:513), `fold` (:1062),
-  `emit_trace`/Blum trace. Deployed default `umem_witness_enabled: false`
-  (`turn/src/executor/mod.rs:815`) — per-map is still live; the flip is gated.
+  `emit_trace`/Blum trace. **Deployed default `umem_witness_enabled: true`** — the umem VK
+  epoch FIRED (G4, `da0c47dd6`/`443661298`): the welded form is the deployed default and the
+  executor drops the bare wide member whenever a welded twin exists (fail-closed). This
+  paragraph previously described the pre-flip state; kept corrected for the record.
 - Lean: `metatheory/Dregg2/Crypto/UniversalMemory.lean` — `universal_memory_sound` (:210),
   `_single` (:236).
 - Per-turn baseline: `.docs-history-noclaude/PROOF-ECONOMICS.md:20` (451.7 KiB `effect-vm`).

@@ -37,11 +37,17 @@
 //!  (`d = 0`) is UNSAT; combined with the operand range check (`d, m ∈ [0, 2^30)`, which fails closed on
 //!  a field-wrapped NEGATIVE delta) this gives genuine `d, m ∈ [1, 2^30)` strict positivity.
 //!
-//! ## STAGED — built BESIDE the deployed, NOT flipped, NOT yet in a committed VK
+//! ## STAGED — descriptor EMITTED (Lean) + producer EXPORTED; the registry row rides the big-bang
 //!
-//! These constraints are NOT emitted into a committed welded descriptor / VK and NOT routed onto any
-//! live path; the later descriptor pass owns the emit/registry/drift. Until then a pure light client
-//! does not yet witness vault satisfaction in production.
+//! The welded descriptor IS now emitted from Lean (`Dregg2.Deos.VaultSatDescriptor.
+//! vaultSatVmDescriptor2R24`, v12 offsets through the canonical constants; exercise fixture
+//! `circuit/tests/fixtures/vault-sat-v3-staged.json`) and the producer aux-fill is EXPORTED below
+//! ([`fill_vault_aux`]); `gentian_discharge_vault_prove.rs` proves real STARKs against it (honest
+//! fair-mint deposit proves+verifies; zero-mint inflation / over-mint dilution / no-deposit
+//! REFUSED). What still rides the ONE big-bang descriptor regen: the
+//! `rotation-v3-staged-registry.tsv` row + the drift-gate FP pin, the declared-tag-19 routing tie,
+//! and the welded VK commit + live admission. Until the flip a pure light client does not yet
+//! witness vault satisfaction in production.
 
 use super::carrier_floor_weld::caveat_tag_col;
 use super::columns::rotation::caveat as cav;
@@ -408,6 +414,204 @@ pub fn vault_gates(asset_slot: usize, share_slot: usize) -> Vec<VmConstraint2> {
     g
 }
 
+// ---------------------------------------------------------------------------
+// THE EXPORTED PRODUCER AUX-FILL (the graduation of the in-test `make_row` witness logic).
+// ---------------------------------------------------------------------------
+
+const MASK15: u64 = (1 << LIMB_BITS) - 1;
+
+struct ProductW {
+    z0: u64,
+    z1: u64,
+    z2: u64,
+    z3: u64,
+    ca: u64,
+    cb: u64,
+    cc: u64,
+    t1: u64,
+}
+
+/// The reference schoolbook-with-carries: identical arithmetic to [`product_gates`].
+fn mul_witness(x: u64, y: u64) -> ProductW {
+    let (x0, x1) = (x & MASK15, x >> LIMB_BITS);
+    let (y0, y1) = (y & MASK15, y >> LIMB_BITS);
+    let p00 = x0 * y0;
+    let z0 = p00 & MASK15;
+    let ca = p00 >> LIMB_BITS;
+    let tb = x1 * y0 + ca;
+    let t1 = tb & MASK15;
+    let cb = tb >> LIMB_BITS;
+    let tc = x0 * y1 + t1;
+    let z1 = tc & MASK15;
+    let cc = tc >> LIMB_BITS;
+    let td = x1 * y1 + cb + cc;
+    let z2 = td & MASK15;
+    let z3 = td >> LIMB_BITS;
+    debug_assert_eq!(
+        z0 + (z1 << LIMB_BITS) + (z2 << (2 * LIMB_BITS)) + (z3 << (3 * LIMB_BITS)),
+        x * y,
+        "schoolbook reconstruction must equal the integer product"
+    );
+    ProductW {
+        z0,
+        z1,
+        z2,
+        z3,
+        ca,
+        cb,
+        cc,
+        t1,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_product(
+    row: &mut [crate::field::BabyBear],
+    p: &ProductW,
+    z0: usize,
+    z1: usize,
+    z2: usize,
+    z3: usize,
+    ca: usize,
+    cb: usize,
+    cc: usize,
+    t1: usize,
+) {
+    use crate::field::BabyBear;
+    row[z0] = BabyBear::new(p.z0 as u32);
+    row[z1] = BabyBear::new(p.z1 as u32);
+    row[z2] = BabyBear::new(p.z2 as u32);
+    row[z3] = BabyBear::new(p.z3 as u32);
+    row[ca] = BabyBear::new(p.ca as u32);
+    row[cb] = BabyBear::new(p.cb as u32);
+    row[cc] = BabyBear::new(p.cc as u32);
+    row[t1] = BabyBear::new(p.t1 as u32);
+}
+
+/// **THE PRODUCTION VAULT AUX-FILL (one row).** Fill every auxiliary column the vault gadget's
+/// gates read, from the row's OWN bound columns — the producer arm the rotated trace generator
+/// (and the gentian-style prove exercise) calls after the settle-carrier trace is generated:
+///
+///  * the floor decode witness (`bit`/`inv`/`or` + `FLOOR_VAULT_COL`), read from the four
+///    caveat-commit-bound type-tag columns already on the row;
+///  * the operand limbs (`Ta`/`Sa`/`m`/`d`), read from the rotated BEFORE/AFTER field columns;
+///  * the is-nonzero inverse witnesses (`D_INV`/`M_INV`, zero when the delta is zero — the
+///    inflation / no-deposit refusal witnesses);
+///  * both schoolbook products (`P = Ta·m`, `Q = Sa·d`) with their carries, the borrow comparison
+///    (`Q − P`), and every range-check bit block (list order, per `range_specs`).
+///
+/// The row is grown to `width` first. Does NOT touch the capacity selector (`VAULT_SEL_COL`), the
+/// field columns, or the PI vector — the trace generator owns those. TOTAL: a non-witnessable row
+/// (zero-mint, no-deposit, dilution, or a wrapped negative delta) still fills, producing a REFUSING
+/// witness (an is-nonzero / no-final-borrow / limb-range gate cannot vanish) — fail-closed.
+pub fn fill_vault_aux_row(
+    row: &mut Vec<crate::field::BabyBear>,
+    width: usize,
+    asset_slot: usize,
+    share_slot: usize,
+) {
+    use crate::field::BabyBear;
+    if row.len() < width {
+        row.resize(width, BabyBear::ZERO);
+    }
+    // The floor decode witness over the bound type-tag columns (tag 19).
+    let mut running = 0u32;
+    for j in 0..cav::MAX_CAVEATS {
+        let tag = row[caveat_tag_col(j)].as_u32();
+        let is_vault = tag == SLOT_CAVEAT_TAG_VAULT_DEPOSIT;
+        let b = u32::from(is_vault);
+        row[bit_col(j)] = BabyBear::new(b);
+        row[inv_col(j)] = if is_vault {
+            BabyBear::ZERO
+        } else {
+            (BabyBear::new(tag) - BabyBear::new(SLOT_CAVEAT_TAG_VAULT_DEPOSIT))
+                .inverse()
+                .expect("nonzero tag−19 invertible")
+        };
+        running |= b;
+        if j == 0 {
+            row[or_col(0)] = BabyBear::new(running);
+        } else if j < cav::MAX_CAVEATS - 1 {
+            row[or_col(j)] = BabyBear::new(running);
+        } else {
+            row[FLOOR_VAULT_COL] = BabyBear::new(running);
+        }
+    }
+
+    // Operands read from the row's own rotated field columns.
+    let ba = row[before_field_col(asset_slot)];
+    let aa = row[after_field_col(asset_slot)];
+    let bs = row[before_field_col(share_slot)];
+    let ash = row[after_field_col(share_slot)];
+    let ta = ba.as_u32() as u64;
+    let sa = bs.as_u32() as u64;
+    let d = (aa - ba).as_u32() as u64;
+    let m = (ash - bs).as_u32() as u64;
+
+    // Operand limbs.
+    let put = |row: &mut [BabyBear], lo: usize, hi: usize, v: u64| {
+        row[lo] = BabyBear::new((v & MASK15) as u32);
+        row[hi] = BabyBear::new((v >> LIMB_BITS) as u32);
+    };
+    put(row, TA0, TA1, ta);
+    put(row, SA0, SA1, sa);
+    put(row, M0, M1, m);
+    put(row, D0, D1, d);
+
+    // is-nonzero inverses (0 when the delta is 0 — the inflation / no-deposit refusal witnesses).
+    row[D_INV] = (aa - ba).inverse().unwrap_or(BabyBear::ZERO);
+    row[M_INV] = (ash - bs).inverse().unwrap_or(BabyBear::ZERO);
+
+    // Products P = Ta·m, Q = Sa·d (the EXACT schoolbook-with-carries the gates check).
+    let p = mul_witness(ta, m);
+    let q = mul_witness(sa, d);
+    fill_product(row, &p, P0, P1, P2, P3, PCA, PCB, PCC, PT1);
+    fill_product(row, &q, Q0, Q1, Q2, Q3, QCA, QCB, QCC, QT1);
+
+    // Borrow compare Q − P.
+    let plimb = [p.z0, p.z1, p.z2, p.z3];
+    let qlimb = [q.z0, q.z1, q.z2, q.z3];
+    let mut borrow: i64 = 0;
+    let wcol = [W0, W1, W2, W3];
+    let bbcol = [BB0, BB1, BB2, BB3];
+    for i in 0..4 {
+        let r = qlimb[i] as i64 - plimb[i] as i64 - borrow;
+        let (w, bo) = if r < 0 {
+            ((r + (1 << LIMB_BITS)) as u64, 1)
+        } else {
+            (r as u64, 0)
+        };
+        row[wcol[i]] = BabyBear::new(w as u32);
+        row[bbcol[i]] = BabyBear::new(bo);
+        borrow = bo as i64;
+    }
+
+    // Range-check bit blocks (list order, low bits of each column's canonical value).
+    let mut base = BIT_BASE;
+    for (col, nbits) in range_specs() {
+        let value = row[col].as_u32();
+        for i in 0..nbits {
+            row[base + i] = BabyBear::new((value >> i) & 1);
+        }
+        base += nbits;
+    }
+}
+
+/// **THE PRODUCTION VAULT AUX-FILL (whole trace).** [`fill_vault_aux_row`] on every row — the
+/// decode gates are EVERY-ROW (the satisfaction gates are selector-gated, inert on padding), so
+/// the aux columns are filled uniformly. The rotated settle-carrier trace + this fill is a complete
+/// witness for the staged `vaultSatVmDescriptor2R24` + `vault_floor_gates` weld.
+pub fn fill_vault_aux(
+    trace: &mut [Vec<crate::field::BabyBear>],
+    width: usize,
+    asset_slot: usize,
+    share_slot: usize,
+) {
+    for row in trace.iter_mut() {
+        fill_vault_aux_row(row, width, asset_slot, share_slot);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,7 +620,6 @@ mod tests {
 
     const ASSET: usize = 0;
     const SHARE: usize = 1;
-    const MASK15: u64 = (1 << LIMB_BITS) - 1;
 
     fn violation(
         c: &VmConstraint2,
@@ -457,8 +660,9 @@ mod tests {
         }
     }
 
-    /// The full producer: fills the decode witness, field columns, operand limbs, both products'
-    /// limbs+carries, the borrow comparison, the is-nonzero inverses, and every range-check bit block.
+    /// Build a row by setting the generator-owned columns (tags, selector, field columns), then
+    /// running the EXPORTED production aux-fill [`fill_vault_aux_row`] — the tests exercise the
+    /// same producer arm the prove exercise / rotated trace generator calls.
     fn make_row(
         tags: [u32; cav::MAX_CAVEATS],
         sel: u32,
@@ -473,158 +677,17 @@ mod tests {
             .max(caveat_tag_col(cav::MAX_CAVEATS - 1) + 1);
         let mut row = vec![BabyBear::ZERO; width];
 
-        // decode witness (tag 19).
-        let mut running = 0u32;
         for j in 0..cav::MAX_CAVEATS {
             row[caveat_tag_col(j)] = BabyBear::new(tags[j]);
-            let is_vault = tags[j] == SLOT_CAVEAT_TAG_VAULT_DEPOSIT;
-            let b = u32::from(is_vault);
-            row[bit_col(j)] = BabyBear::new(b);
-            if !is_vault {
-                let diff = BabyBear::new(tags[j]) - BabyBear::new(SLOT_CAVEAT_TAG_VAULT_DEPOSIT);
-                row[inv_col(j)] = diff.inverse().expect("nonzero tag−19 invertible");
-            }
-            running |= b;
-            if j == 0 {
-                row[or_col(0)] = BabyBear::new(running);
-            } else if j < cav::MAX_CAVEATS - 1 {
-                row[or_col(j)] = BabyBear::new(running);
-            } else {
-                row[FLOOR_VAULT_COL] = BabyBear::new(running);
-            }
         }
-
         row[VAULT_SEL_COL] = BabyBear::new(sel);
         row[before_field_col(ASSET)] = BabyBear::new(before_assets);
         row[after_field_col(ASSET)] = BabyBear::new(after_assets);
         row[before_field_col(SHARE)] = BabyBear::new(before_shares);
         row[after_field_col(SHARE)] = BabyBear::new(after_shares);
 
-        // deltas (integer when the deposit is genuine; the forged teeth use d/m = 0).
-        let ta = before_assets as u64;
-        let sa = before_shares as u64;
-        let d = (after_assets as u64).saturating_sub(before_assets as u64);
-        let m = (after_shares as u64).saturating_sub(before_shares as u64);
-
-        // operand limbs.
-        let put = |row: &mut [BabyBear], lo: usize, hi: usize, v: u64| {
-            row[lo] = BabyBear::new((v & MASK15) as u32);
-            row[hi] = BabyBear::new((v >> LIMB_BITS) as u32);
-        };
-        put(&mut row, TA0, TA1, ta);
-        put(&mut row, SA0, SA1, sa);
-        put(&mut row, M0, M1, m);
-        put(&mut row, D0, D1, d);
-
-        // is-nonzero inverses (0 when the delta is 0 — the inflation / no-deposit teeth).
-        row[D_INV] = (BabyBear::new(after_assets) - BabyBear::new(before_assets))
-            .inverse()
-            .unwrap_or(BabyBear::ZERO);
-        row[M_INV] = (BabyBear::new(after_shares) - BabyBear::new(before_shares))
-            .inverse()
-            .unwrap_or(BabyBear::ZERO);
-
-        // products P = Ta·m, Q = Sa·d (the EXACT schoolbook-with-carries the gates check).
-        let p = mul_witness(ta, m);
-        let q = mul_witness(sa, d);
-        fill_product(&mut row, &p, P0, P1, P2, P3, PCA, PCB, PCC, PT1);
-        fill_product(&mut row, &q, Q0, Q1, Q2, Q3, QCA, QCB, QCC, QT1);
-
-        // borrow compare Q − P.
-        let plimb = [p.z0, p.z1, p.z2, p.z3];
-        let qlimb = [q.z0, q.z1, q.z2, q.z3];
-        let mut borrow: i64 = 0;
-        let wcol = [W0, W1, W2, W3];
-        let bbcol = [BB0, BB1, BB2, BB3];
-        for i in 0..4 {
-            let r = qlimb[i] as i64 - plimb[i] as i64 - borrow;
-            let (w, bo) = if r < 0 {
-                ((r + (1 << LIMB_BITS)) as u64, 1)
-            } else {
-                (r as u64, 0)
-            };
-            row[wcol[i]] = BabyBear::new(w as u32);
-            row[bbcol[i]] = BabyBear::new(bo);
-            borrow = bo as i64;
-        }
-
-        // range-check bit blocks (list order, low bits of each column's canonical value).
-        let mut base = BIT_BASE;
-        for (col, nbits) in range_specs() {
-            let value = row[col].as_u32();
-            for i in 0..nbits {
-                row[base + i] = BabyBear::new((value >> i) & 1);
-            }
-            base += nbits;
-        }
+        fill_vault_aux_row(&mut row, width, ASSET, SHARE);
         row
-    }
-
-    struct ProductW {
-        z0: u64,
-        z1: u64,
-        z2: u64,
-        z3: u64,
-        ca: u64,
-        cb: u64,
-        cc: u64,
-        t1: u64,
-    }
-
-    /// The reference schoolbook-with-carries: identical arithmetic to `product_gates`.
-    fn mul_witness(x: u64, y: u64) -> ProductW {
-        let (x0, x1) = (x & MASK15, x >> LIMB_BITS);
-        let (y0, y1) = (y & MASK15, y >> LIMB_BITS);
-        let p00 = x0 * y0;
-        let z0 = p00 & MASK15;
-        let ca = p00 >> LIMB_BITS;
-        let tb = x1 * y0 + ca;
-        let t1 = tb & MASK15;
-        let cb = tb >> LIMB_BITS;
-        let tc = x0 * y1 + t1;
-        let z1 = tc & MASK15;
-        let cc = tc >> LIMB_BITS;
-        let td = x1 * y1 + cb + cc;
-        let z2 = td & MASK15;
-        let z3 = td >> LIMB_BITS;
-        debug_assert_eq!(
-            z0 + (z1 << LIMB_BITS) + (z2 << (2 * LIMB_BITS)) + (z3 << (3 * LIMB_BITS)),
-            x * y,
-            "schoolbook reconstruction must equal the integer product"
-        );
-        ProductW {
-            z0,
-            z1,
-            z2,
-            z3,
-            ca,
-            cb,
-            cc,
-            t1,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn fill_product(
-        row: &mut [BabyBear],
-        p: &ProductW,
-        z0: usize,
-        z1: usize,
-        z2: usize,
-        z3: usize,
-        ca: usize,
-        cb: usize,
-        cc: usize,
-        t1: usize,
-    ) {
-        row[z0] = BabyBear::new(p.z0 as u32);
-        row[z1] = BabyBear::new(p.z1 as u32);
-        row[z2] = BabyBear::new(p.z2 as u32);
-        row[z3] = BabyBear::new(p.z3 as u32);
-        row[ca] = BabyBear::new(p.ca as u32);
-        row[cb] = BabyBear::new(p.cb as u32);
-        row[cc] = BabyBear::new(p.cc as u32);
-        row[t1] = BabyBear::new(p.t1 as u32);
     }
 
     fn all_zero_settle(gates: &[VmConstraint2], row: &[BabyBear]) -> bool {

@@ -46,7 +46,7 @@ fn fields_leaves(key: u64) -> Vec<HeapLeaf> {
 /// A single-entry field map whose lone overflow entry is keyed by `key`. Everything else is fixed, so
 /// two keys produce two GENUINELY-different field-map states (a value bound at key A vs key B).
 fn fields_root_8(key: u64) -> [BabyBear; 8] {
-    compute_canonical_heap_root_8(fields_leaves(key))
+    compute_canonical_heap_root_8(fields_leaves(key)).limbs()
 }
 
 // ── The pinned colliding pair (found by `search_fields_lane0_collision` below). ───────────────────

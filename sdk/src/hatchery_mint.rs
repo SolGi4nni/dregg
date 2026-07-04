@@ -188,6 +188,17 @@ impl HpresProof {
     pub fn is_attested(&self) -> bool {
         matches!(self, HpresProof::Attested { .. })
     }
+
+    /// The attested content hash the v12 rotated CARRIER MATERIAL publishes on the AFTER
+    /// commitment's `contract_hash8` octet (limbs 96..103) at a hatchery-mint proof site —
+    /// `Some` iff a machine-checked forever-crown (`Attested`) is bound, `None` (→ zero octet)
+    /// while the crown is merely `Pending`.
+    pub fn contract_hash(&self) -> Option<[u8; 32]> {
+        match self {
+            HpresProof::Attested { contract_hash } => Some(*contract_hash),
+            HpresProof::Pending => None,
+        }
+    }
 }
 
 /// A minted cell-KIND: a verified constructor for cells that all carry — and
@@ -281,6 +292,19 @@ impl MintedKind {
     pub fn attest_hpres(mut self, contract_hash: [u8; 32]) -> Self {
         self.hpres = HpresProof::Attested { contract_hash };
         self
+    }
+
+    /// The v12 rotated CARRIER MATERIAL a hatchery-mint proof site threads into the AFTER
+    /// commitment (STEP-2.5): the `contract_hash8` octet (limbs 96..103) carries this kind's
+    /// Hatchery `Attested` content hash, so the honest mint's `state_commit` is NON-ZERO on that
+    /// octet — the SAT foundation the STEP-3 `contract_hash8` PI pin publishes. A `Pending` crown
+    /// yields the `Default` (zero octet). `child_vk` stays `None` (the factory child-VK octet is a
+    /// separate carrier, filled at the factory proof site).
+    pub fn carrier_material(&self) -> dregg_cell::commitment::RotationCarrierMaterial {
+        dregg_cell::commitment::RotationCarrierMaterial {
+            child_vk: None,
+            contract_hash: self.hpres.contract_hash(),
+        }
     }
 
     /// Enforce the kind's invariant on a single transition — the GENUINE check.
@@ -610,6 +634,34 @@ mod tests {
                 contract_hash: [0xCC; 32]
             }
         );
+    }
+
+    /// STEP-2.5: the hatchery-mint CARRIER MATERIAL — an attested kind threads its forever-crown
+    /// content hash into the rotated `contract_hash8` octet (NON-ZERO), a `Pending` kind threads the
+    /// `Default` (zero octet). The value published is exactly `HpresProof::Attested{contract_hash}`.
+    #[test]
+    fn attested_kind_carries_the_contract_hash_material() {
+        let pending = balance_kind();
+        assert_eq!(pending.hpres, HpresProof::Pending);
+        let pending_mat = pending.carrier_material();
+        assert_eq!(
+            pending_mat.contract_hash, None,
+            "a Pending crown → zero octet"
+        );
+        assert_eq!(pending_mat.child_vk, None);
+
+        let attested = balance_kind().attest_hpres([0xC7; 32]);
+        let mat = attested.carrier_material();
+        assert_eq!(
+            mat.contract_hash,
+            Some([0xC7; 32]),
+            "the attested contract hash rides the carrier material (non-zero octet 96..103)"
+        );
+        assert_eq!(
+            mat.child_vk, None,
+            "the hatchery carrier does not fill the factory child-VK octet"
+        );
+        assert_eq!(attested.hpres.contract_hash(), Some([0xC7; 32]));
     }
 
     /// The Lean rung: the abstraction-mint invariant is PROVEN, not just

@@ -172,8 +172,22 @@ fn record_pin_fixture(
 
     let mut ledger = Ledger::new();
     let _ = ledger.insert_cell(before.clone());
-    let before_w = rw::produce(&before, &ledger, &[0u8; 32], &[0u8; 32], &[]);
-    let after_w = rw::produce(&after, &ledger, &[0u8; 32], &[0u8; 32], &[]);
+    let before_w = rw::produce(
+        &before,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &[],
+        &Default::default(),
+    );
+    let after_w = rw::produce(
+        &after,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &[],
+        &Default::default(),
+    );
     let initial = CellState::with_capability_root_and_record_digest(
         100_000u64,
         before.state.nonce() as u32,
@@ -467,8 +481,22 @@ fn matrix_forbidden_plain_cap_is_wire_rejected() {
 
     let mut ledger = Ledger::new();
     let _ = ledger.insert_cell(after.clone());
-    let before_w = rw::produce(&before, &ledger, &[0u8; 32], &[0u8; 32], &[]);
-    let after_w = rw::produce(&after, &ledger, &[0u8; 32], &[0u8; 32], &[]);
+    let before_w = rw::produce(
+        &before,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &[],
+        &Default::default(),
+    );
+    let after_w = rw::produce(
+        &after,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &[],
+        &Default::default(),
+    );
     let proj_pre = project_record_kernel_state(&before);
     let proj_post = project_record_kernel_state(&after);
     let ops = ops_from_diff(&proj_pre, &proj_post);

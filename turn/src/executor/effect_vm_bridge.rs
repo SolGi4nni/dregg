@@ -52,8 +52,14 @@ pub fn convert_turn_effects_to_vm(
             dregg_circuit::effect_vm::fold_bytes32_to_bb(h)
         }
 
+        // v13 FIELDS-OCTET: the SetField value param is lane 0 of the FAITHFUL
+        // `field_limbs8` split (the u64-lane lo32), the SAME lane the rotated
+        // producer writes to the field's welded limb `4 + slot`. So the setField
+        // write gate `gFieldWriteP1 slot` (fields[slot]_after == param VALUE) binds
+        // the genuine faithful lane 0, and the value8 completion weld forces lanes
+        // 1..7 into the state commitment. REPLACES the ~31-bit `fold_bytes32_to_bb`.
         fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
-            dregg_circuit::effect_vm::fold_bytes32_to_bb(value)
+            dregg_circuit::effect_vm::field_limbs8(value)[0]
         }
 
         // 32-byte widening (effect-vm-hash-widen lane, 2026-05-28): the full
@@ -133,6 +139,14 @@ pub fn convert_turn_effects_to_vm(
                     owner_pubkey,
                     ..
                 } => {
+                    // `child_vk_derived` is a MISNOMER: it carries `hash_to_bb(owner_pubkey)` — the
+                    // owner-pubkey-folded NEW-CELL KEY column the accounts grow-gate + PI[38] pin
+                    // reference (the factory's `param1 = CHILD_VK_DERIVED` new-cell key), a SINGLE
+                    // ~31-bit felt. It is NOT the faithful child VK: the REAL installed child VK is
+                    // the executor's `effective_vk` (`apply.rs`), which now flows FAITHFULLY (all 8
+                    // felts) via the v12 child-vk CARRIER OCTET (limbs 88..=95) captured on the
+                    // rotated block — not through this 1-felt owner-pubkey projection. This column
+                    // stays as the accounts-set new-cell key; the faithful VK binding is the octet.
                     vm_effects.push(VmEffect::CreateCellFromFactory {
                         factory_vk: hash_to_bb(factory_vk),
                         child_vk_derived: hash_to_bb(owner_pubkey),
@@ -283,23 +297,44 @@ pub fn convert_turn_effects_to_vm(
                     // Stage 3: real AIR coverage. Balance credit by the
                     // proof's value field. mint_hash binds the proof's
                     // public-input shape (nullifier, root, dest fed,
-                    // asset_type) so the prover commits to which bridge
-                    // mint event was processed.
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(&portable_proof.nullifier);
-                    // AttestedRoot is structured; serialize it for hashing.
-                    let root_bytes =
-                        postcard::to_allocvec(&portable_proof.source_root).unwrap_or_default();
-                    hasher.update(&root_bytes);
-                    hasher.update(&portable_proof.destination_federation);
-                    hasher.update(&portable_proof.asset_type.to_le_bytes());
-                    let mint_hash_bytes = hasher.finalize();
+                    // asset_type, full value) so the prover commits to which
+                    // bridge mint event was processed.
+                    //
+                    // FELT-DOMAIN RE-ALIGN (the STEP-1 executor re-align; the
+                    // 687601953 membership-compress precedent): mint_hash is
+                    // now `note_spend_mint_hash_felt` over EXACTLY the six
+                    // compressed felts `apply_bridge_mint`'s verify_stark
+                    // closure binds the note-spend STARK to
+                    // (`bridge_mint_hash_felt`, the ONE canonical function) —
+                    // a Poseidon2 `hash_fact` chain the AIR + the recursion
+                    // note-spend leaf CAN recompute, replacing the byte-domain
+                    // `hash_to_bb(blake3(nullifier ‖ postcard(source_root) ‖
+                    // dest ‖ asset))` fold no circuit could. EVERY bridge-mint
+                    // mint_hash VALUE changes (effects_hash moves) — rides the
+                    // VK-affecting descriptor regen. The attestation wrapper's
+                    // non-STARK fields (merkle_root/height/signatures) are
+                    // pinned by `verify_portable_note`'s trusted-set equality
+                    // check, NOT by the mint identity — the identity binds
+                    // exactly what the STARK enforces. `note_tree_root` is
+                    // `Some` on any turn that passed `apply_bridge_mint`
+                    // (MissingNoteTreeRoot rejects otherwise); the zero
+                    // fallback keeps the projection total.
+                    let mint_hash = dregg_circuit::dsl::note_spending::bridge_mint_hash_felt(
+                        &portable_proof.nullifier,
+                        &portable_proof
+                            .source_root
+                            .note_tree_root
+                            .unwrap_or([0u8; 32]),
+                        &portable_proof.destination_federation,
+                        portable_proof.value,
+                        portable_proof.asset_type,
+                    );
                     let value_lo = dregg_circuit::field::BabyBear::new(
                         (portable_proof.value & ((1u64 << 30) - 1)) as u32,
                     );
                     vm_effects.push(VmEffect::BridgeMint {
                         value_lo,
-                        mint_hash: hash_to_bb(mint_hash_bytes.as_bytes()),
+                        mint_hash,
                         // 30-bit-trunc fix (CAVEAT-LAYER-COVERAGE.md
                         // §6.5): carry the full u64 in the VmEffect so
                         // the AIR's effects-hash + PI limbs bind to

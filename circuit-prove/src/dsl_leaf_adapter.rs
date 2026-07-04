@@ -61,24 +61,25 @@
 //!   [`tests::routing_descriptor_fully_maps`] pins the full lowering on the real descriptor, and the
 //!   honest-folds / forged-UNSAT teeth live in `custom_leaf_adapter`'s `*_dfa_routing_*` tests.
 //!
-//! ## The named big-bang piece — the deployed-descriptor PI exposure for the Dfa leg
+//! ## The rc-EMIT LANDED — the deployed-descriptor PI exposure for the Dfa leg (LIVE)
 //!
 //! The fold-bind needs a DEPLOYED leg leaf that RE-EXPOSES the Dfa predicate's published commitment at
-//! a fixed PI slot range, so [`prove_dsl_binding_node_segmented`] can `connect` it to this sub-proof
+//! a known PI slot range, so [`prove_dsl_binding_node_segmented`] can `connect` it to this sub-proof
 //! leaf's genuine in-circuit commitment (exactly as the custom path connects the effect-vm leg's PI
-//! slots 46..49 — `customPiExposure` / `customVmDescriptor2R24`). But the Dfa predicate is a
-//! PRECONDITION CAVEAT, not an effect: the deployed turn descriptor today EMITS NO PI for it.
+//! slots 46..49 — `customPiExposure` / `customVmDescriptor2R24`). The Dfa predicate is a PRECONDITION
+//! CAVEAT, not an effect — and the named big-bang emit LANDED: every deployed cohort member is wrapped
+//! through Lean `withDfaRcPins`, publishing the caveat-region 4-felt DFA route-commitment carrier
+//! (`trace_rotated::C_DFA_RC_OFF`, filled from `RotatedCaveatManifest::dfa_rc` =
+//! `dfa_route_commitment(DfaProofWire.public_inputs)` on a Dfa-gated turn, the ZERO sentinel
+//! otherwise) as member PIs — transfer at 46..49; post-exposure members vary, so the fold arm DERIVES
+//! the slots from the committed descriptor (`crate::ivc_turn_chain::dsl_rc_claim_pi_lo`).
 //!
-//! ⚑ **THE BIG-BANG PIECE (VK-affecting descriptor-emit):** the deployed turn / precondition
-//! descriptor must EMIT the Dfa caveat's PI-commitment (the `compress`/`custom_proof_pi_commitment`
-//! over the `DfaProofWire::public_inputs`, i.e. the route-commitment binding) at fixed PI slots — a
-//! `Witnessed{Dfa}` PI exposure, the twin of the custom `customPiExposure`. That emit rides the VK
-//! regen. Until it lands, the DUAL-EXPOSE Dfa leg leaf
-//! ([`crate::ivc_turn_chain::prove_descriptor_leaf_dual_expose`], segment ++ commitment) cannot be
-//! minted. The FOLD MECHANISM is READY: the sub-proof leaf ([`prove_dsl_leaf_with_commitment`]) and the
-//! binding node ([`prove_dsl_binding_node_segmented`]) reuse the custom path term-for-term, so once the
-//! leg publishes the commitment the chain prover takes the DSL-binding branch with zero new mechanism —
-//! precisely the bridge-tuple situation named in `joint_turn_recursive.rs`.
+//! THE DEPLOYED WIRE IS LIVE: `prove_chain_core_rotated`'s `CarrierWitness::Dsl` arm mints the
+//! DUAL-EXPOSE Dfa leg leaf ([`crate::ivc_turn_chain::prove_descriptor_leaf_dual_expose_at`] at the
+//! derived rc slots), re-proves the predicate through [`prove_dsl_leaf_with_commitment`], and folds
+//! both under [`prove_dsl_binding_node_segmented`] — refusing pin-less descriptors AND the zero rc
+//! sentinel (fail-closed both poles). The deployed-path tooth is
+//! `tests/dsl_binding_deployed_tooth.rs`; the Lean flip is `Dregg2.Circuit.DslBindingFromFold`.
 
 use std::collections::HashMap;
 

@@ -67,10 +67,13 @@
 //! 1. **Backing-existence (the foreign note-spend).** The `BridgeActionAir` is a
 //!    BINDING-ONLY AIR — it does NOT re-prove the underlying spend (Merkle
 //!    membership + spending-key knowledge); that is `note_spending`'s job, today
-//!    verified by the bespoke `circuit/src/stark.rs`. Re-proving the foreign-spend
-//!    STARK as a recursion-foldable leaf SHARES THIS SAME RECURSION PRIMITIVE with
-//!    G2 (re-prove a foreign STARK as a foldable leaf) and is the named follow-up.
-//!    This adapter closes the ACTION-binding half; the SPEND half is G2's recursion.
+//!    verified by the bespoke `circuit/src/stark.rs`. This adapter closes only the
+//!    ACTION-binding half — the tuple its leaf binds is still PROVER-CHOSEN, so a
+//!    fold of this leaf ALONE is not a sound backing (WELD-STATE §3 bridge row).
+//!    The SPEND half is now BUILT: [`crate::note_spend_leaf_adapter`] re-proves the
+//!    REAL note-spend STARK (`dregg-note-spending-dsl-v3`, the circuit
+//!    `apply_bridge_mint` verifies) as a foldable leaf exposing
+//!    `(…PIs…, mint_hash)` with the mint identity recomputed in-circuit.
 //! 2. **Effect-VM member wiring.** This leaf carries the bound tuple as descriptor
 //!    PIs (bound in-circuit — a tampered PI is UNSAT). Connecting it into the
 //!    bridge-mint effect-vm member means equating these PIs to the substrate

@@ -52,11 +52,17 @@ The verified path:
    `scripts/check-descriptor-drift.sh` which re-runs the emitters and diffs
    (`circuit/src/effect_vm_descriptors.rs:10-26`).
 2. **The registry** (`effect_vm_descriptors`) keys every verified-by-construction
-   descriptor JSON by per-effect selector index. Coverage at HEAD: 26 unique
-   descriptors registered; 25 of the 29 live EffectVM selectors carry one (NOOP,
-   SET_FIELD, CUSTOM, CELL_UNSEAL have no emit module yet); the `attenuateA`
-   cap-root-move object is shared by attenuate/delegate
-   (`circuit/src/effect_vm_descriptors.rs:30-44`).
+   descriptor JSON by per-effect selector index
+   (`circuit/src/effect_vm_descriptors.rs:30-44` documents the v1 layer, where the
+   `attenuateA` cap-root-move object was shared by attenuate/delegate). The
+   DEPLOYED rotated path is the **59-descriptor v3 registry**
+   (`circuit/descriptors/rotation-v3-staged-registry.tsv` + its wide and
+   umem-welded twins; the Lean mirror is `v3RegistryHeap`,
+   `metatheory/Dregg2/Circuit/CircuitSoundnessAssembled.lean:139`, length pinned
+   `:254`), where the cap-writing effects no longer share one object — each rides
+   a shape-matched keystone (`effCapInsertV3` / `effCapRemoveV3` /
+   `effCapOpenWriteV3`) and the six committed Merkle roots are faithful 8-felt —
+   see [`faithful-commitment.md`](faithful-commitment.md).
 
 ## Descriptor IR v2 — the multi-table batch STARK (the "emit")
 
@@ -80,7 +86,11 @@ instances (`circuit/src/descriptor_ir2.rs:10-43`):
   is Lean `Dregg2.Crypto.MemoryChecking.memcheck_sound`;
 - **map-ops** — one row per boundary reconciliation, each verifying a real
   sorted-Poseidon2-Merkle opening (depth 16, byte-identical to
-  `heap_root::CanonicalHeapTree`).
+  `heap_root::CanonicalHeapTree` for the scalar chains; the deployed after-spine /
+  insert descriptors carry the faithful **8-felt** roots via the arity-16 node8
+  chip lanes and `CanonicalHeapTree8` witnesses — `circuit/src/heap_root.rs:617`,
+  `circuit/src/descriptor_ir2.rs:1823`; see
+  [`faithful-commitment.md`](faithful-commitment.md)).
 
 **The law: Rust authors NO constraints** — every enforced relation is the
 realization of a declared descriptor element; which wires are constrained is

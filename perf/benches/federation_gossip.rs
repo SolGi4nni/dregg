@@ -133,7 +133,11 @@ fn bench_gossip(c: &mut Criterion) {
                 |mut ft| {
                     let mut level = None;
                     for acker in 0..q as u8 {
-                        level = Some(ft.record_ack(bid, [acker; 32]));
+                        // The finality tracker keys by its own `finality::BlockId`
+                        // newtype over the lace's raw `[u8; 32]` block id.
+                        level = Some(
+                            ft.record_ack(dregg_blocklace::finality::BlockId(bid), [acker; 32]),
+                        );
                     }
                     black_box(level)
                 },

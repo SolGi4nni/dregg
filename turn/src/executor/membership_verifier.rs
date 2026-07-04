@@ -20,10 +20,13 @@
 //!
 //! The verifier receives `commitment` (the 32-byte authorized-set Merkle root,
 //! as projected from the cell's slot field) and `input = Sender(pk)` (the
-//! 32-byte sender public key). It maps both into BabyBear via the canonical
-//! Poseidon2 compression used elsewhere in the bridge / SDK layer
-//! (`hash_many(encode_hash(bytes))`), then verifies the membership STARK whose
-//! public inputs are `[leaf, root]`.
+//! 32-byte sender public key). The sender is mapped to its leaf felt via THE
+//! canonical chip-native membership compress
+//! (`dregg_commit::typed::compress_member`: lane 0 of the deployed chip's
+//! arity-16 `node8` absorb over `canonical_32_to_felts_8(pk) ‖ 0⁸` — the SAME
+//! function the in-AIR gate `withMembershipPubkeyCompress` forces, see
+//! `metatheory/Dregg2/Circuit/Emit/CarrierOctetGates.lean`), then the
+//! membership STARK whose public inputs are `[leaf, root]` is verified.
 //!
 //! A prover constructs the matching proof with [`prove_sender_membership`].
 
@@ -47,7 +50,6 @@ use dregg_circuit::dsl::membership::{
 use dregg_circuit::membership_adjacency_air::{
     ADJ_PUBLIC_INPUT_COUNT, AdjStep, adj_pi, prove_adjacency, verify_adjacency,
 };
-use dregg_circuit::poseidon2;
 use dregg_circuit::predicate_air::{
     PredicateProof, PredicateType, verify_in_range, verify_predicate,
 };
@@ -58,15 +60,24 @@ use dregg_circuit::temporal_predicate_dsl::{
 
 const KIND_NAME: &str = "MerkleMembership";
 
-/// Compress a 32-byte value to a single BabyBear via Poseidon2 of its 8 limbs.
+/// Compress a 32-byte value to its membership leaf felt — THE canonical
+/// chip-native compress (`dregg_commit::typed::compress_member`): lane 0 of the
+/// deployed chip's arity-16 `node8` absorb over
+/// `canonical_32_to_felts_8(bytes) ‖ 0⁸`.
 ///
-/// This is the same compression the bridge-mint path uses (`apply.rs::compress`)
-/// and the SDK's `bytes_to_babybear`. A sender public key (the Merkle leaf
-/// pre-image) is mapped to a field element this way, so prover and verifier
-/// agree on the leaf the membership circuit commits to.
+/// This is the SAME function the in-AIR membership keystone forces
+/// (`CarrierOctetGates.lean::withMembershipPubkeyCompress` /
+/// `pubkeyCompress1Spec`), so executor, membership-STARK leaf domain, and the
+/// Lean gate agree on the leaf the membership circuit commits to (the fail-open
+/// law's third edge). NOTE: this REPLACED the pre-big-bang
+/// `hash_many(encode_hash(bytes))` two-permutation sponge, which no deployed
+/// chip arity computes — every membership root value changed; the big-bang
+/// re-genesis re-derives deployed roots. The bridge note-spend domain
+/// (`apply.rs::verify_stark`'s local `compress`, `bridge::present`'s
+/// `bytes_to_babybear`) is a SEPARATE domain, re-aligned in the bridge lane
+/// (the re-proved note-spend STARK), not here.
 fn compress(bytes: &[u8; 32]) -> BabyBear {
-    let limbs = BabyBear::encode_hash(bytes);
-    poseidon2::hash_many(&limbs)
+    dregg_commit::typed::compress_member(bytes)
 }
 
 /// Read an authorized-set root felt from a 32-byte slot value.
@@ -486,6 +497,23 @@ impl WitnessedPredicateVerifier for DslCircuitDfaVerifier {
                 reason: format!("DSL-circuit transition STARK rejected: {e:?}"),
             })
     }
+}
+
+/// Decode a [`WitnessedPredicateKind::Dfa`] proof blob's PUBLIC INPUTS (the `DfaProofWire`
+/// prefix) WITHOUT verifying the STARK — the dsl rc-EMIT thread. The executor's rotated-leg
+/// verifier ([`super::TurnExecutor::turn_dfa_route_commitment`]) folds these through
+/// `dregg_circuit::effect_vm::trace_rotated::dfa_route_commitment` to anchor the published
+/// rc carrier; the STARK itself is verified by [`DslCircuitDfaVerifier`] on the authorize
+/// path as before (this helper only re-reads the SAME wire bytes, so the anchored rc is the
+/// commitment of the inputs the verified proof bound).
+pub fn dfa_wire_public_inputs(proof_bytes: &[u8]) -> Result<Vec<BabyBear>, String> {
+    let wire: DfaProofWire = postcard::from_bytes(proof_bytes)
+        .map_err(|e| format!("Dfa proof wire did not decode (expected DfaProofWire): {e}"))?;
+    Ok(wire
+        .public_inputs
+        .iter()
+        .map(|v| BabyBear::new(*v))
+        .collect())
 }
 
 /// Produce a serialized [`WitnessedPredicateKind::Dfa`] proof for the program
@@ -1494,6 +1522,92 @@ mod tests {
     /// The production registry under test.
     fn reg() -> WitnessedPredicateRegistry {
         registry_with_real_verifiers()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // THE CHIP-NATIVE COMPRESS PARITY (big-bang membership re-alignment).
+    // executor compress == chip lane 0 == the Lean gate's `pubkeyCompress1Spec`
+    // (`CarrierOctetGates.lean::withMembershipPubkeyCompress`): lane 0 of the
+    // arity-16 `node8` absorb over `canonical_32_to_felts_8(pk) ‖ 0⁸`.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// PARITY: the executor's membership compress IS the chip-native compress —
+    /// `chip_absorb_all_lanes(CHIP_NODE8_ARITY, pubkey8 ‖ 0⁸)[0]` over the
+    /// canonical 30-bit limbs — for edge and pseudo-random pubkeys. This is the
+    /// exact function the in-AIR gate forces on the sender-leaf tooth, so the
+    /// third edge (teeth == committed authority) can bind (fail-open law).
+    #[test]
+    fn compress_parity_with_chip_native_node8_lane0() {
+        use dregg_circuit::descriptor_ir2::{CHIP_NODE8_ARITY, chip_absorb_all_lanes};
+        use dregg_commit::typed::canonical_32_to_felts_8;
+
+        let mut cases: Vec<[u8; 32]> = vec![[0u8; 32], [0xFFu8; 32], [0x11u8; 32], {
+            // High bytes exercise the 30-bit (`& 0x3F`) limb truncation.
+            let mut b = [0u8; 32];
+            for (i, x) in b.iter_mut().enumerate() {
+                *x = 0xC0 | (i as u8);
+            }
+            b
+        }];
+        // Deterministic pseudo-random pubkeys (LCG).
+        let mut seed = 0x9E37_79B9u32;
+        for _ in 0..16 {
+            let mut pk = [0u8; 32];
+            for b in pk.iter_mut() {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                *b = (seed >> 24) as u8;
+            }
+            cases.push(pk);
+        }
+
+        for pk in &cases {
+            let limbs = canonical_32_to_felts_8(pk);
+            let mut ins = [BabyBear::ZERO; 16];
+            ins[..8].copy_from_slice(&limbs);
+            let chip_lane0 = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins)[0];
+            assert_eq!(
+                compress(pk),
+                chip_lane0,
+                "executor membership compress must equal chip-native node8 lane 0 \
+                 (the Lean gate's pubkeyCompress1Spec) for pk {pk:02x?}"
+            );
+        }
+    }
+
+    /// The migration genuinely LEFT the old domain: the chip-native compress
+    /// disagrees with the retired `hash_many(encode_hash(pk))` two-permutation
+    /// sponge (which no deployed chip arity computes). Guards against a silent
+    /// regression back to the unrealizable form.
+    #[test]
+    fn compress_left_the_old_two_permutation_sponge_domain() {
+        for pk in [[0x11u8; 32], [0xABu8; 32], [0u8; 32]] {
+            let old = dregg_circuit::poseidon2::hash_many(&BabyBear::encode_hash(&pk));
+            assert_ne!(
+                compress(&pk),
+                old,
+                "chip-native compress must differ from the retired sponge for pk {pk:02x?}"
+            );
+        }
+    }
+
+    /// The single-member root/proof pair still roundtrips at the NEW (chip-native)
+    /// roots: prove + verify through the production verifier, and a non-member is
+    /// still rejected.
+    #[test]
+    fn single_member_roundtrip_holds_at_chip_native_roots() {
+        let member = [0x42u8; 32];
+        let root = single_member_authorized_root(&member);
+        let proof = single_member_membership_proof(&member);
+        let v = MerkleMembershipStarkVerifier;
+        v.verify(&root, &PredicateInput::Sender(&member), &proof)
+            .expect("single-member proof must verify against the chip-native-domain root");
+
+        let intruder = [0x43u8; 32];
+        assert!(
+            v.verify(&root, &PredicateInput::Sender(&intruder), &proof)
+                .is_err(),
+            "a non-member must still be rejected at the new roots"
+        );
     }
 
     /// END-TO-END HAPPY PATH: prove adjacency for a genuinely consecutive pair,

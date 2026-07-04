@@ -213,7 +213,9 @@ use p3_recursion::{
     build_and_prove_next_layer_with_expose,
 };
 
-use crate::joint_turn_aggregation::{DescriptorParticipant, verify_descriptor_participant};
+use crate::joint_turn_aggregation::{
+    CarrierWitness, DescriptorParticipant, verify_descriptor_participant,
+};
 use crate::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, RecursionCompatibleProof, create_recursion_backend,
     recursion_vk_fingerprint, verify_recursive_batch_proof_with_config,
@@ -1531,10 +1533,7 @@ pub fn prove_descriptor_leaf_dual_expose_at(
     claim_pi_lo: usize,
     claim_len: usize,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
-    use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
-    use dregg_circuit::effect_vm_descriptors::{
-        WIDE_UMEM_MULTIDOMAIN_WELD_SUFFIX, WIDE_UMEM_WELD_SUFFIX,
-    };
+    use dregg_circuit::effect_vm::trace_rotated::{V1_PI_COUNT, WIDE_PI_COUNT};
 
     let commit_hi = claim_pi_lo + claim_len;
     if descriptor_pis.len() < commit_hi {
@@ -1546,10 +1545,19 @@ pub fn prove_descriptor_leaf_dual_expose_at(
     }
 
     // FAITHFUL-FLOOR anchor sourcing — identical to `prove_descriptor_leaf_rotated_with_segment`.
+    //
+    // H0 DEPLOYED-WIDE FLIP (the divergence fix): the wide branch is selected STRUCTURALLY
+    // (`n >= WIDE_PI_COUNT`), the exact mirror of the plain segment leaf and of the host
+    // [`leg_is_wide_anchored`]. This function previously kept the SUPERSEDED weld-suffix name
+    // check, which cannot see the BARE wide cohort (its name equals its narrow twin's) — so the
+    // deployed custom-wide dual leaf was misclassified NARROW and its segment anchors broadcast
+    // the RETIRED-to-zero single-felt rotated commit PIs, making every honest custom-bearing
+    // chain UNSAT at the aggregation combine (`connect(0, genuine-anchor)` — the
+    // `WitnessConflict{existing: 0, ..}` both custom-binding honest poles hit). Fail-closed, not
+    // unsound — but a broken deployed wire. The structural check restores byte-identity with the
+    // host root segment.
     let n = descriptor_pis.len();
-    let wide = n >= 2 * SEG_ANCHOR_WIDTH
-        && (desc.name.ends_with(WIDE_UMEM_WELD_SUFFIX)
-            || desc.name.ends_with(WIDE_UMEM_MULTIDOMAIN_WELD_SUFFIX));
+    let wide = n >= WIDE_PI_COUNT;
     let old_first = n.saturating_sub(2 * SEG_ANCHOR_WIDTH);
     let new_first = n.saturating_sub(SEG_ANCHOR_WIDTH);
 
@@ -2813,6 +2821,184 @@ pub fn verify_wide_turn_chain_recursive(
     Ok(())
 }
 
+// ============================================================================
+// THE CARRIER CLAIM PI SLOTS (v12 STEP-3 geometry — the deployed-leg teeth the carrier fold
+// arms dual-expose).
+// ============================================================================
+
+/// The factory leg's `child_vk8` claim PI base — `factoryV3Carriers` TAIL-appends the
+/// child-VK octet pins (AFTER-block limbs `B_CHILD_VK_OCTET..+8`) after the narrow factory
+/// PI count 47 (Lean `EffectVmEmitRotationV3.withAfterOctetPins`, commit `556970558`:
+/// PI 47..54). REGEN-RIDER: the committed `WIDE_REGISTRY_STAGED_TSV` row still carries the
+/// pre-pin shape; the fold arm admits a leg only when its descriptor actually carries these
+/// pins ([`carrier_claim_pins_admitted`]), so until the big-bang descriptor regen lands the
+/// arm stays fail-closed on deployed legs.
+pub const FACTORY_CHILD_VK_PI_LO: usize = 47;
+/// The hatchery leg's `contract_hash8` claim PI base — the SECOND octet cohort on the same
+/// `factoryV3Carriers` descriptor (AFTER-block limbs `B_CONTRACT_HASH_OCTET..+8`, PI 55..62;
+/// the hatchery carrier rides factory's `CreateCellFromFactory` leg). Same regen-rider note.
+pub const HATCHERY_CONTRACT_HASH_PI_LO: usize = 55;
+/// The sovereign leg's `KEY_COMMIT` teeth claim PI base — **NATIVE**: the committed wide
+/// registry row (`CarrierComposed.makeSovereignV3DeployedWide`, the v12 big-bang regen) pins
+/// the 4 teeth columns (113..=116) at PI 58..61 (record-pin8 54 + the 4 dsl rc, THEN the
+/// teeth, ahead of the 16 wide anchors 62..77) and welds them in-AIR to the committed
+/// `B_PUBKEY8` octet via the KEY_COMMIT chip gate (Lean keystone
+/// `makeSovereignV3DeployedWide_publishes_key_commit`). The fold arm admits only a leg whose
+/// descriptor genuinely pins these slots, so a mismatched convention fails closed.
+pub const SOVEREIGN_KEY_COMMIT_PI_LO: usize = 58;
+/// The membership leg's `(sender_leaf, authorized_root)` claim PI base — **NATIVE**: the
+/// committed wide transfer row (`CarrierComposed.transferV3MembershipWide`, the v12 big-bang
+/// regen) pins the two teeth columns (past the carriers, 1771..1772) at PI 50..51 (the bare
+/// rotated 46 + the 4 dsl rc, THEN the teeth, ahead of the anchors 52..67 — Lean keystone
+/// `transferV3MembershipWide_publishes_teeth`). PI-EXPOSURE leg only (the FOLD edge binds;
+/// the in-AIR welds stay the named `MembershipAuthRootEdge` seams). Same fail-closed
+/// admission discipline.
+pub const MEMBERSHIP_CLAIM_PI_LO: usize = 50;
+/// The bridge leg's felt mint-hash claim PI — **NATIVE**: the committed mint row
+/// (`mintV3BridgeHash`, the STEP-3/4 regen) pins the mint row's `param0` (`prmCol 0` — since
+/// the STEP-1 executor re-align, the FELT-domain `note_spend_mint_hash_felt` over the six
+/// compressed felts `apply_bridge_mint` enforces the note-spend STARK against) at PI 46 on
+/// the FIRST row (Lean keystone `withMintHashPin_publishes`; rc rides 47..50, wide anchors
+/// 51..66). ONE lane binds the whole spend tuple: the identity is the leaf's in-AIR
+/// `hash_fact` chain over its own PI-pinned `(nullifier, root, value_lo, asset, dest_fed,
+/// value_hi)`. Same fail-closed admission discipline.
+pub const BRIDGE_MINT_HASH_PI: usize = 46;
+/// The bridge claim length (the single felt mint identity lane).
+pub const BRIDGE_MINT_HASH_CLAIM_LEN: usize = 1;
+
+/// The DECO/Stripe leg's felt payment-identity claim PI — the deployed `stripeMint`/`decoMint`
+/// row (the 8th carrier) pins the mint row's `param0` (`prmCol 0` — the FELT-domain
+/// `deco_payment_hash_felt` over the PaymentFacts, `dsl::deco_payment`) at a TAIL PI on the
+/// FIRST row, the twin of the bridge `withMintHashPin` (both mint-family rows share the rotated
+/// base, so the identity rides the SAME `param0`/PI-46 slot convention as bridge). ONE lane
+/// binds the whole payment tuple: the identity is the DECO leaf's in-AIR `hash_fact` chain over
+/// its own PI-pinned `(amountCents, currency, recipient, paymentIntentId)`. Same fail-closed
+/// admission discipline. ⚑ The deployed `stripeMint` descriptor EMIT (`withPaymentHashPin` +
+/// the `generate_rotated_stripe_mint_wide` producer + the TSV regen) rides the coordinated
+/// big-bang descriptor regen (`DECO-CARRIER-PLAN.md` §2 finale) — until it lands, `stripeMint`
+/// legs are `Effect::Mint` rows that carry NO payment-hash pin, so this arm's admission
+/// REFUSES them (fail-closed), never silently degrading to a fabricated fold.
+pub const DECO_PAYMENT_HASH_PI: usize = 46;
+/// The DECO claim length (the single felt payment-identity lane).
+pub const DECO_PAYMENT_HASH_CLAIM_LEN: usize = 1;
+
+/// **The DSL/Dfa rc claim PI base — DERIVED PER MEMBER from the committed registry row.**
+///
+/// The dsl rc-EMIT (`withDfaRcPins`, cohort-wide) pins the 4-felt DFA route-commitment
+/// carrier at FIXED trace COLUMNS (`CAVEAT_BASE + C_DFA_RC_OFF + k`, row LAST) but at
+/// PER-MEMBER PI indices: the wrap appended the rc as the LAST 4 member PIs at emit time
+/// (transfer 46..49), and the post-exposure v12 members appended their carrier teeth AFTER it
+/// (membership teeth at 50..51 on the wide transfer; sovereign KEY_COMMIT at 58..61 past its
+/// record-pin8, rc at 54..57) — so unlike factory/hatchery/sovereign/membership there is no
+/// single `*_PI_LO` constant. The sound derivation reads the leg's OWN committed descriptor:
+/// find the `PiBinding` that publishes rc lane 0 (column `CAVEAT_BASE + C_DFA_RC_OFF`, row
+/// LAST) and take its `pi_index`; [`carrier_claim_pins_admitted`] then enforces that all
+/// [`DFA_RC_LEN`](dregg_circuit::effect_vm::trace_rotated::DFA_RC_LEN) slots are contiguous
+/// pins of exactly the rc columns. A descriptor with NO rc pin (the pre-rc corpus) is refused
+/// — the fail-closed law.
+pub fn dsl_rc_claim_pi_lo(
+    desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+) -> Result<usize, String> {
+    use dregg_circuit::descriptor_ir2::VmConstraint2;
+    use dregg_circuit::effect_vm::trace_rotated::{C_DFA_RC_OFF, CAVEAT_BASE};
+    use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
+
+    let rc_col0 = CAVEAT_BASE + C_DFA_RC_OFF;
+    desc.constraints
+        .iter()
+        .find_map(|c| match c {
+            VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index })
+                if *row == VmRow::Last && *col == rc_col0 =>
+            {
+                Some(*pi_index)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| {
+            format!(
+                "dsl: leg descriptor carries NO rc pin (no last-row PiBinding at the DFA \
+                 route-commitment carrier column {rc_col0}) — the pre-rc corpus, or a member \
+                 outside the `withDfaRcPins` cohort; refusing to fold (fail-closed)"
+            )
+        })
+}
+
+/// **THE CARRIER-CLAIM ADMISSION GATE (the fold arms' fail-closed half).** A carrier fold
+/// arm may dual-expose the leg's claim slice `[claim_pi_lo .. claim_pi_lo+claim_len)` ONLY
+/// when:
+///
+///   1. the leg is WIDE (`n >= WIDE_PI_COUNT` — the deployed-default 8-felt-anchored leaf),
+///   2. the claim slice sits strictly AHEAD of the 16 wide anchor PIs (`claim_hi +
+///      2*SEG_ANCHOR_WIDTH <= n`) — otherwise the "claim" lanes would alias the rotated
+///      commit anchors (exactly the pre-regen deployed shape, which must REFUSE), and
+///   3. the leg's descriptor CARRIES a `PiBinding` for every claim slot — the slot is
+///      genuinely a published trace tooth, not an unconstrained public value. When
+///      `expected_cols = Some((col_base, row))` (factory/hatchery, whose STEP-3 pin columns
+///      are committed in Lean), the pin must bind exactly `col_base + k` at `row` — the
+///      AFTER-block committed carrier octet — so the fold arm folds ONLY the real third-edge
+///      shape.
+///
+/// A leg failing any tooth is REFUSED (the carrier witness never silently degrades to the
+/// plain segment leaf): pre-regen deployed legs land here, which is the fail-closed law.
+fn carrier_claim_pins_admitted(
+    desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+    leg_pis: &[BabyBear],
+    claim_pi_lo: usize,
+    claim_len: usize,
+    carrier: &'static str,
+    expected_cols: Option<(usize, dregg_circuit::lean_descriptor_air::VmRow)>,
+) -> Result<(), String> {
+    use dregg_circuit::descriptor_ir2::VmConstraint2;
+    use dregg_circuit::effect_vm::trace_rotated::WIDE_PI_COUNT;
+    use dregg_circuit::lean_descriptor_air::VmConstraint;
+
+    let n = leg_pis.len();
+    let claim_hi = claim_pi_lo + claim_len;
+    if n < WIDE_PI_COUNT {
+        return Err(format!(
+            "carrier '{carrier}': leg is not a WIDE (8-felt-anchored) leaf ({n} PIs < \
+             {WIDE_PI_COUNT}) — the carrier fold arms bind wide legs only"
+        ));
+    }
+    if claim_hi + 2 * SEG_ANCHOR_WIDTH > n {
+        return Err(format!(
+            "carrier '{carrier}': the claim slice [{claim_pi_lo}..{claim_hi}) overlaps the \
+             16 wide anchor PIs of the {n}-PI leg — the leg does not publish the carrier \
+             claim slots (the STEP-3 octet-pin descriptor rides the big-bang regen); \
+             refusing to fold (fail-closed)"
+        ));
+    }
+    for k in 0..claim_len {
+        let pi = claim_pi_lo + k;
+        let found = desc.constraints.iter().find_map(|c| match c {
+            VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index })
+                if *pi_index == pi =>
+            {
+                Some((*row, *col))
+            }
+            _ => None,
+        });
+        let (row, col) = found.ok_or_else(|| {
+            format!(
+                "carrier '{carrier}': leg descriptor carries NO PiBinding for claim PI {pi} \
+                 — the slot is not a published trace tooth (the pinned descriptor rides the \
+                 big-bang regen); refusing to fold (fail-closed)"
+            )
+        })?;
+        if let Some((col_base, want_row)) = expected_cols {
+            if col != col_base + k || row != want_row {
+                return Err(format!(
+                    "carrier '{carrier}': claim PI {pi} is pinned to column {col} (row \
+                     {row:?}), not the committed carrier octet column {} (row {want_row:?}) \
+                     — refusing to fold a claim that is not the third-edge octet",
+                    col_base + k
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The rotated fold core: like [`prove_chain_core`] but mints rotated native-batch leaves and
 /// runs the whole tree at [`ir2_leaf_wrap_config`].
 fn prove_chain_core_rotated(
@@ -2872,19 +3058,32 @@ fn prove_chain_core_rotated(
     // One rotated descriptor leaf per finalized turn, EACH carrying its ordered segment
     // (first_old/last_new bound to the descriptor's real roots, count=1, acc=H(old,new)).
     //
-    // CUSTOM-BINDING DEPLOYED WIRE: a turn whose leg carries a `custom_witness` bundle (a
-    // `Custom`-effect turn, `customVmDescriptor2R24`) does NOT get the plain segment leaf. Instead
-    // it gets a DUAL-EXPOSE leaf (segment ++ claimed `custom_proof_commitment` PI 46..49) folded
-    // against the RE-PROVEN custom sub-proof leaf through `prove_custom_binding_node_segmented` —
-    // the binding `connect`s the leg's claimed commitment to the sub-proof's genuine in-circuit
-    // commitment IN the recursion tree (so a forged claim with no backing sub-proof is UNSAT) and
-    // re-exposes the SAME segment, so the node folds into `aggregate_tree` like any segment leaf.
-    // This makes the custom binding REAL for a pure light client (the premise of
-    // `CustomBindingFromFold.custom_binding_from_fold` is now TRUE on the deployed path).
+    // THE CARRIER WITNESS SOCKET (Step-2 of the uniform carrier build): the per-turn fold branch
+    // is picked by matching the leg's `carrier_witness`.
+    //
+    // CUSTOM-BINDING DEPLOYED WIRE (the ONE deployed carrier arm): a turn whose leg carries a
+    // `CarrierWitness::Custom` bundle (a `Custom`-effect turn, `customVmDescriptor2R24`) does NOT
+    // get the plain segment leaf. Instead it gets a DUAL-EXPOSE leaf (segment ++ claimed
+    // `custom_proof_commitment` PI 46..49) folded against the RE-PROVEN custom sub-proof leaf
+    // through `prove_custom_binding_node_segmented` — the binding `connect`s the leg's claimed
+    // commitment to the sub-proof's genuine in-circuit commitment IN the recursion tree (so a
+    // forged claim with no backing sub-proof is UNSAT) and re-exposes the SAME segment, so the
+    // node folds into `aggregate_tree` like any segment leaf. This makes the custom binding REAL
+    // for a pure light client (the premise of `CustomBindingFromFold.custom_binding_from_fold` is
+    // now TRUE on the deployed path).
+    //
+    // THE CARRIER ARMS: ALL SEVEN are FOLD-WIRED — custom + the four v12 carriers (factory /
+    // hatchery / sovereign / membership) + dsl + bridge. Each mints a dual-expose leaf at its
+    // claim PI slots (gated by `carrier_claim_pins_admitted`, which REFUSES a leg whose
+    // descriptor does not carry the STEP-3 claim pins — the big-bang regen tie) and binds the
+    // re-proven carrier leaf under its segment-preserving binding node. A turn that WANTS the
+    // re-exec rung carries `carrier_witness: None` (the sanctioned path, identical to today's
+    // non-carrier turns). There is deliberately NO wildcard arm, so a new variant is a compile
+    // error here (the wave must decide its fold branch).
     for (i, t) in turns.iter().enumerate() {
         let leg = &t.participant.rotated;
-        let wrapped = match &leg.custom_witness {
-            Some(bundle) => {
+        let wrapped = match &leg.carrier_witness {
+            Some(CarrierWitness::Custom(bundle)) => {
                 let dual = prove_descriptor_leaf_dual_expose(
                     &leg.descriptor,
                     &leg.proof,
@@ -2911,6 +3110,347 @@ fn prove_chain_core_rotated(
                 .map_err(|e| TurnChainError::TurnProofInvalid {
                     index: i,
                     reason: format!("segmented custom-binding node failed: {e:?}"),
+                })?
+            }
+            // THE BRIDGE FOLD ARM (the 7th carrier) — the named residual CLOSED by the
+            // felt-domain mint_hash thread: (STEP 1) the executor re-aligned `mint_hash` to
+            // the FELT-domain `note_spend_mint_hash_felt` (the `687601953` precedent — over
+            // the six compressed felts `apply_bridge_mint` enforces the REAL note-spend STARK
+            // against); (STEP 2/3/4) the deployed `mintVmDescriptor2R24` (`mintV3BridgeHash`)
+            // pins the mint row's `param0` at PI 46, producer-filled. The arm mirrors the
+            // factory shape: (1) ADMIT the leg's claim slot (fail-closed on a pin-less or
+            // wrong-column descriptor — the regen tie; the expected pin is the FIRST-row
+            // `prmCol 0`, never a free column), (2) mint the DUAL-EXPOSE leaf (segment ++ the
+            // published mint identity), (3) re-prove the REAL foreign note-spend STARK as the
+            // G2 backing leaf (`prove_note_spend_leaf_with_claim` — spending-key knowledge +
+            // Merkle membership + full-width commitment, with the mint identity recomputed
+            // IN-AIR at lane 6; the binding-only `bridge_action_air` was REFUSED as backing),
+            // (4) fold under the mint-hash binding node — the in-circuit `connect` makes a
+            // published mint identity no verifying note-spend backs UNSAT.
+            Some(CarrierWitness::Bridge(bundle)) => {
+                use dregg_circuit::effect_vm::columns::{PARAM_BASE, param};
+                use dregg_circuit::lean_descriptor_air::VmRow;
+                carrier_claim_pins_admitted(
+                    &leg.descriptor,
+                    &leg.public_inputs,
+                    BRIDGE_MINT_HASH_PI,
+                    BRIDGE_MINT_HASH_CLAIM_LEN,
+                    "bridge",
+                    Some((PARAM_BASE + param::MINT_HASH, VmRow::First)),
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let dual = prove_descriptor_leaf_dual_expose_at(
+                    &leg.descriptor,
+                    &leg.proof,
+                    &leg.public_inputs,
+                    &config,
+                    BRIDGE_MINT_HASH_PI,
+                    BRIDGE_MINT_HASH_CLAIM_LEN,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let backing = crate::note_spend_leaf_adapter::prove_note_spend_leaf_with_claim(
+                    &bundle.note_spend,
+                    &bundle.public_inputs,
+                    &config,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("bridge note-spend backing leaf mint failed: {reason}"),
+                })?;
+                crate::note_spend_leaf_adapter::prove_note_spend_mint_binding_node_segmented(
+                    &dual, &backing, &config,
+                )
+                .map_err(|e| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("segmented bridge mint-hash binding node failed: {e:?}"),
+                })?
+            }
+            // THE DECO/Stripe money-in FOLD ARM (the 8th carrier) — the fiat twin of the
+            // bridge arm (`DECO-CARRIER-PLAN.md` Option B, the bridge-style commitment fold):
+            // (1) ADMIT the leg's payment-hash claim slot (fail-closed on a pin-less or
+            // wrong-column descriptor — the expected pin is the FIRST-row `prmCol 0`, the
+            // deployed `stripeMint` twin of `withMintHashPin`; until the descriptor regen
+            // lands a Stripe `Effect::Mint` leg has no such pin and is REFUSED), (2) mint the
+            // DUAL-EXPOSE leaf (segment ++ the published payment identity), (3) re-prove the
+            // DECO commitment leaf (`prove_deco_leaf_with_claim` — a Poseidon2-only AIR
+            // recomputing the felt identity IN-AIR from PI-pinned PaymentFacts; ed25519/HMAC/
+            // SHA-256 stay OFF-AIR as named §8 carriers, mirroring bridge's ed25519), (4) fold
+            // under the payment-hash binding node — the in-circuit `connect` makes a published
+            // payment identity no verifying DECO commitment backs UNSAT.
+            Some(CarrierWitness::Deco(bundle)) => {
+                use dregg_circuit::effect_vm::columns::{PARAM_BASE, param};
+                use dregg_circuit::lean_descriptor_air::VmRow;
+                carrier_claim_pins_admitted(
+                    &leg.descriptor,
+                    &leg.public_inputs,
+                    DECO_PAYMENT_HASH_PI,
+                    DECO_PAYMENT_HASH_CLAIM_LEN,
+                    "deco",
+                    Some((PARAM_BASE + param::MINT_HASH, VmRow::First)),
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let dual = prove_descriptor_leaf_dual_expose_at(
+                    &leg.descriptor,
+                    &leg.proof,
+                    &leg.public_inputs,
+                    &config,
+                    DECO_PAYMENT_HASH_PI,
+                    DECO_PAYMENT_HASH_CLAIM_LEN,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let backing = crate::deco_leaf_adapter::prove_deco_leaf_with_claim(
+                    &bundle.witness,
+                    &bundle.public_inputs,
+                    &config,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("deco payment backing leaf mint failed: {reason}"),
+                })?;
+                crate::deco_leaf_adapter::prove_deco_payment_binding_node_segmented(
+                    &dual, &backing, &config,
+                )
+                .map_err(|e| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("segmented deco payment-binding node failed: {e:?}"),
+                })?
+            }
+            // THE DSL/Dfa FOLD ARM (the 6th carrier) — mirrors the Custom arm term-for-term
+            // (the dsl adapter REUSES custom's leaf + binding-node machinery; the claim shape
+            // is the SAME 4-felt PI-commitment). Differences, both fail-closed:
+            //
+            //   * the rc claim slots are DERIVED per member from the leg's committed
+            //     descriptor ([`dsl_rc_claim_pi_lo`] — the `withDfaRcPins` pins ride at fixed
+            //     COLUMNS but per-member PI indices), then admitted through
+            //     `carrier_claim_pins_admitted` with the rc columns as the expected pins;
+            //   * the ZERO SENTINEL is REFUSED: a turn without a Dfa caveat publishes rc = 0
+            //     (`RotatedCaveatManifest::dfa_rc` default) — folding a witness against it
+            //     would bind a vacuous claim no predicate gated. Such a turn takes the
+            //     re-exec rung (`carrier_witness: None`), never a fabricated fold.
+            Some(CarrierWitness::Dsl(bundle)) => {
+                use dregg_circuit::effect_vm::trace_rotated::{
+                    C_DFA_RC_OFF, CAVEAT_BASE, DFA_RC_LEN,
+                };
+                use dregg_circuit::lean_descriptor_air::VmRow;
+                let rc_lo = dsl_rc_claim_pi_lo(&leg.descriptor)
+                    .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                carrier_claim_pins_admitted(
+                    &leg.descriptor,
+                    &leg.public_inputs,
+                    rc_lo,
+                    DFA_RC_LEN,
+                    "dsl",
+                    Some((CAVEAT_BASE + C_DFA_RC_OFF, VmRow::Last)),
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                if leg.public_inputs[rc_lo..rc_lo + DFA_RC_LEN]
+                    .iter()
+                    .all(|f| *f == BabyBear::ZERO)
+                {
+                    return Err(TurnChainError::TurnProofInvalid {
+                        index: i,
+                        reason: format!(
+                            "dsl: the leg's published route-commitment at PI {rc_lo}..{} is the \
+                             ZERO sentinel (no Dfa caveat gated this turn) — refusing to fold a \
+                             vacuous claim; detach the witness (carrier_witness: None) to take \
+                             the re-exec rung",
+                            rc_lo + DFA_RC_LEN
+                        ),
+                    });
+                }
+                let dual = prove_descriptor_leaf_dual_expose_at(
+                    &leg.descriptor,
+                    &leg.proof,
+                    &leg.public_inputs,
+                    &config,
+                    rc_lo,
+                    DFA_RC_LEN,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let dsl_leaf = crate::dsl_leaf_adapter::prove_dsl_leaf_with_commitment(
+                    &bundle.program,
+                    &bundle.witness_values,
+                    bundle.num_rows,
+                    &bundle.public_inputs,
+                    &config,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("dsl sub-proof leaf mint failed: {reason}"),
+                })?;
+                crate::dsl_leaf_adapter::prove_dsl_binding_node_segmented(&dual, &dsl_leaf, &config)
+                    .map_err(|e| TurnChainError::TurnProofInvalid {
+                        index: i,
+                        reason: format!("segmented dsl-binding node failed: {e:?}"),
+                    })?
+            }
+            // THE FOUR v12 CARRIER FOLD ARMS (factory · hatchery · sovereign · membership) —
+            // each mirrors the Custom arm: (1) ADMIT the leg's claim slots through
+            // `carrier_claim_pins_admitted` (fail-closed until the STEP-3 pinned descriptor is
+            // the leg's descriptor — the big-bang regen tie), (2) mint the DUAL-EXPOSE leaf
+            // (segment ++ the leg's claimed carrier teeth) at the carrier's claim PI slots,
+            // (3) re-prove the carrier's backing tuple as its adapter leaf, (4) fold both
+            // under the segment-preserving binding node — the in-circuit `connect` makes a
+            // forged claim (no backing leaf binds it) UNSAT, and the node re-exposes the
+            // chain segment so it folds into `aggregate_tree` like any per-turn leaf.
+            Some(CarrierWitness::Factory(bundle)) => {
+                use dregg_circuit::effect_vm::trace_rotated::{AFTER_BASE, B_CHILD_VK_OCTET};
+                use dregg_circuit::lean_descriptor_air::VmRow;
+                carrier_claim_pins_admitted(
+                    &leg.descriptor,
+                    &leg.public_inputs,
+                    FACTORY_CHILD_VK_PI_LO,
+                    crate::factory_leaf_adapter::FACTORY_CHILD_VK_CLAIM_LEN,
+                    "factory",
+                    Some((AFTER_BASE + B_CHILD_VK_OCTET, VmRow::Last)),
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let dual = prove_descriptor_leaf_dual_expose_at(
+                    &leg.descriptor,
+                    &leg.proof,
+                    &leg.public_inputs,
+                    &config,
+                    FACTORY_CHILD_VK_PI_LO,
+                    crate::factory_leaf_adapter::FACTORY_CHILD_VK_CLAIM_LEN,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let backing = crate::factory_leaf_adapter::prove_factory_leaf_with_child_vk_claim(
+                    &bundle.backing,
+                    &bundle.public_inputs,
+                    &config,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("factory backing leaf mint failed: {reason}"),
+                })?;
+                crate::factory_leaf_adapter::prove_factory_binding_node_segmented(
+                    &dual, &backing, &config,
+                )
+                .map_err(|e| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("segmented factory-binding node failed: {e:?}"),
+                })?
+            }
+            Some(CarrierWitness::Hatchery(bundle)) => {
+                use dregg_circuit::effect_vm::trace_rotated::{AFTER_BASE, B_CONTRACT_HASH_OCTET};
+                use dregg_circuit::lean_descriptor_air::VmRow;
+                carrier_claim_pins_admitted(
+                    &leg.descriptor,
+                    &leg.public_inputs,
+                    HATCHERY_CONTRACT_HASH_PI_LO,
+                    crate::hatchery_leaf_adapter::HATCHERY_CONTRACT_CLAIM_LEN,
+                    "hatchery",
+                    Some((AFTER_BASE + B_CONTRACT_HASH_OCTET, VmRow::Last)),
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let dual = prove_descriptor_leaf_dual_expose_at(
+                    &leg.descriptor,
+                    &leg.proof,
+                    &leg.public_inputs,
+                    &config,
+                    HATCHERY_CONTRACT_HASH_PI_LO,
+                    crate::hatchery_leaf_adapter::HATCHERY_CONTRACT_CLAIM_LEN,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let attestation =
+                    crate::hatchery_leaf_adapter::prove_hatchery_leaf_with_contract_claim(
+                        &bundle.attestation,
+                        &bundle.public_inputs,
+                        &config,
+                    )
+                    .map_err(|reason| TurnChainError::TurnProofInvalid {
+                        index: i,
+                        reason: format!("hatchery attestation leaf mint failed: {reason}"),
+                    })?;
+                crate::hatchery_leaf_adapter::prove_hatchery_binding_node_segmented(
+                    &dual,
+                    &attestation,
+                    &config,
+                )
+                .map_err(|e| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("segmented hatchery-binding node failed: {e:?}"),
+                })?
+            }
+            Some(CarrierWitness::Sovereign(bundle)) => {
+                carrier_claim_pins_admitted(
+                    &leg.descriptor,
+                    &leg.public_inputs,
+                    SOVEREIGN_KEY_COMMIT_PI_LO,
+                    crate::sovereign_leaf_adapter::SOVEREIGN_KEY_CLAIM_LEN,
+                    "sovereign",
+                    // The teeth columns are pinned by the regen (the KEY_COMMIT teeth cols;
+                    // `CarrierComposed` keeps them parametric until the emit), so the
+                    // admission requires a genuine PiBinding at every claim slot without
+                    // fixing the column base.
+                    None,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let dual = prove_descriptor_leaf_dual_expose_at(
+                    &leg.descriptor,
+                    &leg.proof,
+                    &leg.public_inputs,
+                    &config,
+                    SOVEREIGN_KEY_COMMIT_PI_LO,
+                    crate::sovereign_leaf_adapter::SOVEREIGN_KEY_CLAIM_LEN,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let authority = crate::sovereign_leaf_adapter::prove_sovereign_leaf_with_key_claim(
+                    &bundle.authority,
+                    &bundle.public_inputs,
+                    &config,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("sovereign authority leaf mint failed: {reason}"),
+                })?;
+                crate::joint_turn_recursive::prove_sovereign_binding_node_segmented(
+                    &dual, &authority, &config,
+                )
+                .map_err(|e| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("segmented sovereign-binding node failed: {e:?}"),
+                })?
+            }
+            Some(CarrierWitness::Membership(bundle)) => {
+                carrier_claim_pins_admitted(
+                    &leg.descriptor,
+                    &leg.public_inputs,
+                    MEMBERSHIP_CLAIM_PI_LO,
+                    crate::membership_leaf_adapter::MEMBERSHIP_CLAIM_LEN,
+                    "membership",
+                    // The (sender_leaf, authorized_root) tooth columns are parametric until
+                    // the regen pins them (`MembershipAuthRootEdge` builds the edge over a
+                    // parametric base) — same column-free admission as sovereign.
+                    None,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let dual = prove_descriptor_leaf_dual_expose_at(
+                    &leg.descriptor,
+                    &leg.proof,
+                    &leg.public_inputs,
+                    &config,
+                    MEMBERSHIP_CLAIM_PI_LO,
+                    crate::membership_leaf_adapter::MEMBERSHIP_CLAIM_LEN,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                let membership = crate::membership_leaf_adapter::prove_membership_leaf_with_claim(
+                    &bundle.membership,
+                    &bundle.public_inputs,
+                    &config,
+                )
+                .map_err(|reason| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("membership leaf mint failed: {reason}"),
+                })?;
+                crate::membership_leaf_adapter::prove_membership_binding_node_segmented(
+                    &dual,
+                    &membership,
+                    &config,
+                )
+                .map_err(|e| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("segmented membership-binding node failed: {e:?}"),
                 })?
             }
             None => prove_descriptor_leaf_rotated_with_segment(
@@ -2947,6 +3487,12 @@ fn prove_chain_core_rotated(
         num_turns: turns.len(),
     })
 }
+
+// (The `unfilled_carrier_arm` fail-closed refusal helper is RETIRED: every `CarrierWitness`
+// variant is fold-wired — custom/factory/hatchery/sovereign/membership/dsl/bridge. The
+// fail-closed discipline lives on in `carrier_claim_pins_admitted` (a leg whose descriptor
+// does not genuinely pin the claim slots is refused) and in the no-wildcard match (a NEW
+// variant is a compile error until its wave decides its fold branch).)
 
 /// Host-side continuity check ONLY (the `ChainBreak` tooth), extracted so the rotated fold no
 /// longer needs the full binding-trace generation just to validate ordering. Returns `Ok(())`

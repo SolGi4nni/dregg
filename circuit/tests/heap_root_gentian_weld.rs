@@ -27,7 +27,7 @@ use dregg_circuit::heap_root::{HeapLeaf, compute_canonical_heap_root_8, heap_add
 /// cell's state maps). Everything else is fixed, so two salts produce two GENUINELY-different heap
 /// states (a value stored at address A vs address B).
 fn heap_root_8(key_salt: u32) -> [BabyBear; 8] {
-    compute_canonical_heap_root_8(vec![one_entry(key_salt)])
+    compute_canonical_heap_root_8(vec![one_entry(key_salt)]).limbs()
 }
 
 fn one_entry(key_salt: u32) -> HeapLeaf {

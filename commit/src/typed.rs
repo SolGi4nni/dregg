@@ -577,6 +577,40 @@ pub fn canonical_32_to_felts_8(canonical: &[u8; 32]) -> [BabyBear; 8] {
     out
 }
 
+/// **THE canonical chip-native membership compress** — a 32-byte member value
+/// (a sender public key, an adjacency-set neighbor, a nullifier) → the single
+/// BabyBear leaf felt every membership-domain Merkle tree commits to.
+///
+/// Defined as **lane 0 of the deployed chip's arity-16 `node8` absorb over
+/// `canonical_32_to_felts_8(pk) ‖ 0⁸`** — i.e. exactly
+/// `chip_absorb_all_lanes(CHIP_NODE8_ARITY, pubkey8 ‖ 0⁸)[0]`, the single
+/// full-width Poseidon2 permutation row every cap/heap/fields node already
+/// rides. This is the SAME function the in-AIR membership keystone forces
+/// (`metatheory/Dregg2/Circuit/Emit/CarrierOctetGates.lean`
+/// `withMembershipPubkeyCompress` / `pubkeyCompress1Spec`: the published
+/// sender-leaf tooth == `A(pubkey8 ‖ 0⁸)[0]` under the chip soundness), so the
+/// executor, the membership-STARK leaf domain, and the Lean gate all compute
+/// ONE compress — the fail-open law's third edge can bind.
+///
+/// ## Why not the old `hash_many(encode_hash(pk))`
+///
+/// The previous executor compress (`membership_verifier.rs::compress`,
+/// pre-big-bang) was a rate-4 TWO-permutation sponge over full 32-bit LE limbs:
+/// (i) `encode_hash` is mod-p lossy and a DIFFERENT limb decomposition from the
+/// canonical 30-bit `canonical_32_to_felts_8` the committed pubkey octet
+/// carries, and (ii) NO deployed chip arity computes a two-permutation chain
+/// (non-{7,11,16} arities drop inputs 4..7; the intermediate capacity lanes are
+/// unexposed), so the in-AIR gate could never realize it. Migrating to this
+/// chip-native form CHANGES every membership root value; the big-bang
+/// re-genesis re-derives all deployed roots.
+pub fn compress_member(pk: &[u8; 32]) -> BabyBear {
+    use dregg_circuit::descriptor_ir2::{CHIP_NODE8_ARITY, chip_absorb_all_lanes};
+    let limbs = canonical_32_to_felts_8(pk);
+    let mut ins = [BabyBear::ZERO; 16];
+    ins[..8].copy_from_slice(&limbs);
+    chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins)[0]
+}
+
 /// Compress a 32-byte canonical commitment into 4 BabyBear felts via Poseidon2.
 ///
 /// Used to derive the 4-felt Poseidon2 form of a commitment whose canonical

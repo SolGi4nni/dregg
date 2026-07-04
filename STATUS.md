@@ -44,7 +44,7 @@ cargo run -p dregg-cell --example predicate_language
 
 Constructs real `CellProgram::Predicate(vec![StateConstraint::…])` programs and runs
 them through `CellProgram::evaluate(new, old, ctx)` — the same call the executor makes
-before committing — against accepting and rejecting transitions. Includes akapug's
+before committing — against accepting and rejecting transitions. Includes the
 "drop messages whose audience field isn't self" case via `FieldEquals` and `AnyOf`.
 Source: [`cell/examples/predicate_language.rs`](cell/examples/predicate_language.rs).
 

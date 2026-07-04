@@ -224,6 +224,8 @@ fn make_welded_cap_open_attenuate() -> (
         siblings: open.siblings.to_vec(),
         directions: open.directions.to_vec(),
         clist_leaves,
+        cap_leaves: Vec::new(),
+        cap_tombstones: Vec::new(),
     };
 
     // The producer's circuit pre-state — derived from the before-cell EXACTLY as the executor
@@ -258,6 +260,7 @@ fn make_welded_cap_open_attenuate() -> (
         &[0u8; 32],
         &[0u8; 32],
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -265,6 +268,7 @@ fn make_welded_cap_open_attenuate() -> (
         &[0u8; 32],
         &[0u8; 32],
         &receipt_log,
+        &Default::default(),
     );
 
     let proj_pre = project_record_kernel_state(&before_cell);

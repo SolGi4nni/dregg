@@ -49,6 +49,44 @@ pub fn lean_producer_env_enabled() -> bool {
     )
 }
 
+/// The EFFECTIVE lean-producer setting for a freshly constructed node state: the
+/// operator's env intent (`lean_producer_env_enabled`) AND the build-time fact that
+/// the verified Lean executor archive is actually linked
+/// (`dregg_lean_ffi::lean_available`).
+///
+/// A marshal-only binary (no `libdregg_lean.a`) cannot run the verified producer no
+/// matter what the env says — and `lean_producer_enabled` is the field every
+/// reporting surface reads (`/status` `state_producer`/`lean_producer`, doctor,
+/// MCP). Leaving it `true` on a marshal-only build makes those surfaces present an
+/// UN-verified node as verified — the exact "serve as if verified" failure the
+/// marshal-only startup tripwire in `main.rs` exists to prevent, surviving on the
+/// API surface after the tripwire was bypassed with
+/// `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`.
+pub fn lean_producer_effective(env_enabled: bool, lean_linked: bool) -> bool {
+    env_enabled && lean_linked
+}
+
+#[cfg(test)]
+mod lean_producer_effective_tests {
+    use super::lean_producer_effective;
+
+    /// A marshal-only build must never report the lean producer, regardless of
+    /// env intent — `/status` would otherwise present an un-verified node as
+    /// verified.
+    #[test]
+    fn marshal_only_build_never_reports_lean_producer() {
+        assert!(!lean_producer_effective(true, false));
+        assert!(!lean_producer_effective(false, false));
+    }
+
+    /// A lean-linked build honors the operator's env opt-out.
+    #[test]
+    fn linked_build_respects_env_intent() {
+        assert!(lean_producer_effective(true, true));
+        assert!(!lean_producer_effective(false, true));
+    }
+}
+
 /// MCP per-tool capability enforcement opt-in (`DREGG_MCP_CAP_ENFORCE=1`).
 ///
 /// When enabled, the MCP `tools/call` surface REQUIRES every call to present an
@@ -222,7 +260,9 @@ pub struct NodeStateInner {
     /// post-state root is compared against the Lean-produced root; a divergence is logged loudly as
     /// a real soundness finding). Default `true` — THE SWAP: the verified Lean executor produces the
     /// committed state by default for the swap-safe COVERED set. Opt OUT via `DREGG_LEAN_PRODUCER=0`
-    /// (read at state construction) or by clearing this field. A turn touching a characterized
+    /// (read at state construction) or by clearing this field. On a marshal-only binary (no linked
+    /// `libdregg_lean.a`) this is FORCED `false` at construction (`lean_producer_effective`) so
+    /// `/status` and every other reporting surface never present an un-verified node as verified. A turn touching a characterized
     /// root-gap effect (root provably diverges) or an unmappable effect falls back to the Rust
     /// producer for that turn, with a logged reason — never a silent commit of divergent state.
     pub lean_producer_enabled: bool,
@@ -840,7 +880,10 @@ impl NodeState {
                 checkpoint_interval: dregg_federation::DEFAULT_CHECKPOINT_INTERVAL,
                 prove_transitions: false,
                 full_turn_proving_enabled: false,
-                lean_producer_enabled: lean_producer_env_enabled(),
+                lean_producer_enabled: lean_producer_effective(
+                    lean_producer_env_enabled(),
+                    dregg_lean_ffi::lean_available(),
+                ),
                 fee_well: None,
                 issuer_wells: Vec::new(),
                 mcp_cap_enforce: mcp_cap_enforce_env_enabled(),
@@ -1000,7 +1043,10 @@ impl NodeState {
                 checkpoint_interval: dregg_federation::DEFAULT_CHECKPOINT_INTERVAL,
                 prove_transitions: false,
                 full_turn_proving_enabled: false,
-                lean_producer_enabled: lean_producer_env_enabled(),
+                lean_producer_enabled: lean_producer_effective(
+                    lean_producer_env_enabled(),
+                    dregg_lean_ffi::lean_available(),
+                ),
                 fee_well: None,
                 issuer_wells: Vec::new(),
                 mcp_cap_enforce: mcp_cap_enforce_env_enabled(),

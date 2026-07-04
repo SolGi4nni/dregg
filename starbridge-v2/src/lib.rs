@@ -260,6 +260,16 @@ pub mod branch_stitch_session;
 #[cfg(feature = "agent-js")]
 pub mod agent_attach;
 
+// THE HIRELING — a real confined agent (deos-hermes brain + gate) that LIVES in the
+// desktop World: `hire_resident` mints it a real cell under an attenuated mandate,
+// each ADMITTED tool-call mirrors a real verified turn onto the resident's cell
+// (`World::turn` + `commit_turn`, the `agent_attach` shape), and each gate REFUSAL is
+// surfaced (not fabricated). The named seam the Agent Room drives (Hire/Fire buttons
+// weld later — see the module doc). gpui-free + mozjs-free; needs deos-hermes (from
+// `dev-surfaces`) + the World (`embedded-executor`).
+#[cfg(all(feature = "dev-surfaces", feature = "embedded-executor"))]
+pub mod resident_agent;
+
 // DISTRIBUTED MULTIPLAYER CARDS — two principals on DIFFERENT instances co-drive ONE
 // shared card across a membrane boundary. Welds deos-js's `coauthored_card` (the LOCAL
 // fork/drive/stitch) to the `shared_fork` membrane's serialize→carry→rehydrate pattern
@@ -316,6 +326,10 @@ pub use session::{
 
 #[cfg(feature = "embedded-executor")]
 pub mod agent;
+// THE LETTER OFFICE (docs: the Postmark resonance): mail between agents as cells on
+// the live World — a letter IS a cell carrying its markdown in the heap; sending drops
+// it in an outbox cell; delivery is a receipted turn moving it to an inbox cell. gpui-free
+// + `cargo test`-able; the desktop `mail_room` maps it onto an NT window.
 #[cfg(feature = "embedded-executor")]
 pub mod buffer;
 #[cfg(feature = "embedded-executor")]
@@ -336,6 +350,8 @@ pub mod edit;
 pub mod graph;
 #[cfg(feature = "embedded-executor")]
 pub mod landing;
+#[cfg(feature = "embedded-executor")]
+pub mod letter_office;
 #[cfg(feature = "embedded-executor")]
 pub mod narration;
 #[cfg(feature = "embedded-executor")]
@@ -402,12 +418,31 @@ pub mod persistence;
 #[path = "persistence_wasm.rs"]
 pub mod persistence;
 
+// THE DURABLE-IMAGE WELD for the windowed desktop (docs/deos/WORLD-PERSISTENCE-PLAN.md):
+// make "your world is one durable image" LITERALLY true for `--desktop` by booting the
+// desktop's World from the durable redb image (open-recovering + seed-on-first-run) beside
+// the layout sidecar, with a :memory:/ephemeral escape hatch for bakes/tests/CI. Builds NO
+// persistence — it is the boot policy over `persistence` + `World::open_recovering`,
+// mirroring `session::open_session_world`. Native-only (durable open pulls redb),
+// gpui-free + `cargo test`-able.
+#[cfg(all(feature = "embedded-executor", not(target_arch = "wasm32")))]
+pub mod durable_desktop;
+
 // THE LIVE INSPECT→ACT LOOP — the Smalltalk inspect→act→inspect keystone: an
 // inspected object shows the messages it understands (its cap-gated affordances)
 // inline, fires one as a real verified turn, and re-inspects the post-state.
 // gpui-free, `cargo test`-able (reuses `reflect` + `affordance` + `world`).
 #[cfg(feature = "embedded-executor")]
 pub mod inspect_act;
+// THE DESKTOP IN A LINK — the share-URL tape codec (`deos1!ts=…!act=…`): a
+// desktop shared as its pinned instant + message tape + root claim, replayed
+// against a FRESH world by the recipient (read-only re-derivation, never a
+// trusted screenshot). The codec half is pure std+hex (gpui-free, compiles
+// everywhere the crate does — the wasm cockpit can adopt the same format);
+// the `replay_onto`/`replay_fresh` half is embedded-executor-gated and fires
+// the REAL `inspect_act` send path. Served by the serve-ie6 `/shared` route;
+// the static viewer page lives at `site/deos-viewer/`.
+pub mod share_link;
 // THE SERVICE EXPLORER — a Postman-like surface for INVOKING cell methods: it
 // discovers a cell's published interface (derive-from-program, or a registered
 // descriptor), lets you pick a method + fill args, and invokes it as a real

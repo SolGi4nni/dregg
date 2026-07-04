@@ -335,12 +335,26 @@ pub fn reflect_nullifiers(r: &TurnReceipt) -> Vec<Inspectable> {
                 Field::count("index", i as u64),
                 Field::id("holder", *wit.holder.as_bytes()),
                 Field::count("slot", wit.slot as u64),
-                Field::count("cap_root", wit.cap_root as u64),
+                Field::hash("cap_root", digest8_bytes32(&wit.cap_root)),
                 Field::hash("in_receipt", r.receipt_hash()),
                 Field::boolean("spent", true),
             ],
         })
         .collect()
+}
+
+/// The canonical 32-byte encoding of a native-`node8` 8-felt digest carried as
+/// `[u32; 8]` (the cap8 `ConsumedCapWitness::cap_root` / sibling shape): each
+/// lane's 4 little-endian bytes in lane order. Byte-identical to
+/// `dregg_cell::digest8_to_bytes32` (the lanes are already canonical BabyBear
+/// values stored as `u32`), duplicated here only because `dregg-circuit` is not
+/// a direct dep — injective on the FULL 8-felt digest, no lane-0 truncation.
+pub fn digest8_bytes32(d: &[u32; 8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (i, lane) in d.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&lane.to_le_bytes());
+    }
+    out
 }
 
 /// First 6 bytes of a 32-byte id, hex, as `abcdef…wxyz`.

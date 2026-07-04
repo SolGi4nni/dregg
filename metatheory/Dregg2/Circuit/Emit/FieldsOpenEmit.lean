@@ -322,7 +322,7 @@ def afterSpineColsF (w : Nat) : CapOpenCols :=
   , dir        := (capOpenCols w).dir
   , node       := fun lvl i => AFTER_SPINE_BASE w + 15 + 8 * lvl + i.val
   , capRoot    := fun i => Dregg2.Circuit.Emit.EffectVmEmitRotationV3.fieldsRootGroupCol
-                             (EFFECT_VM_WIDTH + 119) i
+                             (EFFECT_VM_WIDTH + 227) i
   , src        := AFTER_SPINE_BASE w + 15 + 8 * DEPTH
   , effBit     := AFTER_SPINE_BASE w + 16 + 8 * DEPTH
   , bit        := fun i => AFTER_SPINE_BASE w + 17 + 8 * DEPTH + i }

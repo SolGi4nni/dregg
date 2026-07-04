@@ -221,19 +221,34 @@ The capability root absorbed here is the OPENABLE sorted-Poseidon2 Merkle root c
 circuit-side roots agree byte-identically. Revoked slots fold ZERO tombstone leaves
 (`cell/src/commitment.rs:579`).
 
-### The rotated v9 commitment (cell ≡ circuit)
+### The rotated v9 commitment (cell ≡ circuit) — v11 geometry, faithful 8-felt components
 
-`compute_canonical_state_commitment_v9_felt` (`cell/src/commitment.rs:1044`) is the
+`compute_canonical_state_commitment_v9_felt` (`cell/src/commitment.rs:1187`) is the
 cell-side reconstruction of the EffectVM rotated trace's row-0 `STATE_COMMIT` carrier — a
-Poseidon2 `wireCommitR` over 37 pre-iroot limbs (`V9_NUM_PRE_LIMBS`,
-`cell/src/commitment.rs:670`) built by `compute_rotated_pre_limbs`
-(`cell/src/commitment.rs:900`). Because the rotated limbs carry only a subset of authority
-state, register **r23** holds `compute_authority_digest_felt` (`cell/src/commitment.rs:770`),
-which folds ALL authority residue not on a named limb (permissions, VK, delegate,
-delegation, program, mode, token_id, visibility/commitments/proved/side-table roots,
-`fields[8..16]`) — closing the authority-drop hole. A faithful 8-felt (~124-bit) twin
-`compute_canonical_state_commitment_v9_felt8` is staged but not yet the live default
-(`cell/src/commitment.rs:1076`).
+Poseidon2 `wireCommitR` over **88** pre-iroot limbs (`V9_NUM_PRE_LIMBS`,
+`cell/src/commitment.rs:702`; the v11 geometry — 37 at v9, 67 at v10) built by
+`compute_rotated_pre_limbs` (`cell/src/commitment.rs:968`). The Merkle-root and
+authority components ride the pre-limbs **faithful 8-felt (~124-bit)**, each lane-0 at
+its historical position plus seven completion limbs: cap_root 25 ‖ 51..57
+(`compute_canonical_capability_root_8`, `cell/src/commitment.rs:585`), heap_root
+28 ‖ 58..64, fields_root 36 ‖ 65,66,19..23, the authority digest 24 ‖ 12..18
+(`compute_authority_digest_8` — folds ALL authority residue not on a named limb:
+permissions, VK, delegate, delegation, program, mode, token_id,
+visibility/commitments/proved/side-table roots, `fields[8..16]`), perms 33 ‖ 37..43,
+vk 34 ‖ 44..50 (`cell/src/commitment.rs:968-1069`). See
+[`faithful-commitment.md`](faithful-commitment.md) for the full campaign grounding.
+
+Two honest residuals in this producer: `fields[0..7]` still fold 32B → 1 felt
+(~31-bit, `// ast-grep-ignore`-allowlisted, `cell/src/commitment.rs:990`), and the
+v11 accumulator completion limbs 67..87 are zero-filled here ("until
+producer-welded", `cell/src/commitment.rs:702`) — their genuine node8 fill lives on
+the circuit trace-producer path. The faithful 8-felt whole-image digest
+`compute_canonical_state_commitment_v9_felt8` (`cell/src/commitment.rs:1219`)
+IS the live deployed binding (the flag-day fired — `9e5a83935`): producer,
+executor verifier, and light client all bind the 8-felt commit; the 1-felt
+`_v9_felt` survives with test/bench callers only. The one remaining 1-felt LC
+surface is the `transferCapOpenTB` V3-registry fallback (see
+`docs/reference/faithful-commitment.md`, residual 3).
 
 ## `Note` — the evidence substance
 

@@ -80,6 +80,7 @@ fn setup(balance: u64) -> (Cell, CellId, V9RotationContext, [u8; 32]) {
         nullifier_root: [0u8; 32],
         commitments_root: [0u8; 32],
         iroot: rw::iroot(&[]),
+        material: Default::default(),
     };
     let old_commitment = compute_canonical_state_commitment_v9_8(&cell, &ctx);
     (cell, cell_id, ctx, old_commitment)
@@ -162,6 +163,7 @@ fn welded_transfer_commits_through_executor() {
         &ctx.nullifier_root,
         &ctx.commitments_root,
         &[],
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -169,6 +171,7 @@ fn welded_transfer_commits_through_executor() {
         &ctx.nullifier_root,
         &ctx.commitments_root,
         &[],
+        &Default::default(),
     );
 
     let caveat = transfer_caveat_manifest();
@@ -317,6 +320,7 @@ fn setup_bare(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
         nullifier_root: [0u8; 32],
         commitments_root: [0u8; 32],
         iroot: rw::iroot(&[]),
+        material: Default::default(),
     };
     let commitment = compute_canonical_state_commitment_v9_8(&cell, &ctx);
 

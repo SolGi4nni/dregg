@@ -29,7 +29,9 @@
 //!
 //! Encoding convention (shared prover/verifier, see
 //! `dregg_turn::executor::membership_verifier`):
-//!   * leaf  = `compress(pk)` = `Poseidon2::hash_many(BabyBear::encode_hash(pk))`
+//!   * leaf  = `compress(pk)` = `dregg_commit::typed::compress_member(pk)` — THE
+//!            canonical chip-native compress (lane 0 of the arity-16 `node8`
+//!            absorb over `canonical_32_to_felts_8(pk) ‖ 0⁸`)
 //!   * root  = `root_felt_from_slot(slot)` = the felt in the slot's low 4 LE bytes
 //!   * tree  = single member at position 0 of a depth-2 zero-sibling-padded tree;
 //!            `single_member_authorized_root` and `single_member_membership_proof`

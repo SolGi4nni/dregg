@@ -22,6 +22,10 @@
 #                        (the browser twin of the pg-dregg cap-gated RLS cookbook).
 #   /light-client/     — verify a whole finalized history in ONE recursive proof, in-tab,
 #                        re-witnessing nothing. wasm: reuses /cards/pkg/dregg_wasm.js.
+#   /transclusion/     — Xanadu made honest: transclude a span (a verified dregg://
+#                        finalized read), amend the source (live follows, snapshot pins),
+#                        forge (REFUSED), receipt-pinned backlinks. wasm: reuses
+#                        /cards/pkg/dregg_wasm.js (bindings_transclusion).
 #   /atlas/            — the interactive atlas (the whole protocol + UI surfaces).
 #
 # Usage:
@@ -69,10 +73,23 @@ cp -R "$ROOT/site/light-client" "$DIST/light-client"
 # under /dregg-works/ on the main site; the same dir is what deploys to the dregg.works
 # apex (where verify-badge.js sits at the root as /verify-badge.js).
 cp -R "$ROOT/site/dregg-works" "$DIST/dregg-works"
+# transclusion — Xanadu made honest: the parallel-source demo page (drives the wasm
+# transclusion bindings from /cards/pkg/, built in step 3) + the embeddable
+# transclude.js that carries a verified dregg:// quote to ANY web page (it ships
+# beside verify-badge.js inside the dregg-works copy above).
+cp -R "$ROOT/site/transclusion" "$DIST/transclusion"
+# deos-viewer — THE DESKTOP IN A LINK landing: reads a #deos1!... share fragment
+# (pinned instant + message tape + root claim), previews it client-side, and hands
+# it to the reader's own --serve-ie6 viewer server as /shared?d=... for the real
+# fail-closed decode + deterministic replay + root verdict. Static HTML+JS only.
+cp -R "$ROOT/site/deos-viewer" "$DIST/deos-viewer"
 test -f "$DIST/explorer/index.html"
 test -f "$DIST/light-client/index.html"
 test -f "$DIST/dregg-works/index.html"
 test -f "$DIST/dregg-works/verify-badge.js"
+test -f "$DIST/dregg-works/transclude.js"
+test -f "$DIST/transclusion/index.html"
+test -f "$DIST/deos-viewer/index.html"
 
 # ── 1. THE deos COCKPIT: the WebImage launcher (gpui-free skin), node-less ───────
 echo "=== 1/6 build the WebImage cockpit wasm (starbridge-v2/web, default) ==="
@@ -125,7 +142,9 @@ fi
 # heavy native prover and committed as a data artifact (CI does NOT re-fold it):
 #   cargo run --release -p dregg-lightclient --bin produce_history_envelope --features prover -- 3 7 \
 #     > site/light-client/history.json
-# Regenerate it only if the WholeChainProofBytes wire format version bumps.
+# Regenerate it whenever the circuit/VK or the WholeChainProofBytes wire format moves
+# (e.g. the v12 geometry epoch turned the scalar roots into 8-felt sequences) — the
+# FRESHNESS TOOTH below refuses to assemble a dist whose baked demo the tab would refuse.
 test -s "$ROOT/site/light-client/history.json"
 mkdir -p "$DIST/cards"
 for card in index counter inspector tally kvstore doccollab; do
@@ -134,6 +153,64 @@ for card in index counter inspector tally kvstore doccollab; do
 done
 cp -R "$ROOT/wasm/pkg" "$DIST/cards/pkg"
 test -s "$DIST/cards/pkg/dregg_wasm_bg.wasm"
+
+# FRESHNESS TOOTH (green-or-bust): the committed history.json must ATTEST under the
+# just-built wasm engine. A circuit/VK epoch that obsoletes the baked artifact fails
+# the assembly loudly (regenerate with the produce_history_envelope command above)
+# instead of shipping a demo the visitor's tab will refuse.
+node --input-type=module -e "
+import { readFileSync } from 'node:fs';
+const m = await import('$DIST/cards/pkg/dregg_wasm.js');
+await m.default({ module_or_path: readFileSync('$DIST/cards/pkg/dregg_wasm_bg.wasm') });
+const baked = JSON.parse(readFileSync('$ROOT/site/light-client/history.json', 'utf8'));
+let v;
+try { v = m.verify_devnet_history(JSON.stringify(baked.envelope), baked.anchor_hex); }
+catch (e) { v = { attested: false, named_floor: String(e?.message ?? e) }; }
+if (!v.attested) {
+  console.error('ERROR: site/light-client/history.json does NOT attest under the just-built engine — the circuit/VK moved since the artifact was folded. Regenerate it (see the comment above this tooth). Refusal: ' + v.named_floor);
+  process.exit(1);
+}
+console.log('light-client freshness tooth: the baked aggregate attests (' + v.num_turns + ' turns)');
+"
+
+# TRANSCLUSION TOOTH (green-or-bust): /transclusion/ drives these exact entry points
+# from the SAME /cards/pkg engine. Run the demo's spine headless and assert BOTH
+# polarities: a verified include SHOWS the committed bytes, a LIVE read FOLLOWS an
+# amend, and a byte-tamper forge is REFUSED with the named ContentHashMismatch. A
+# wasm surface that stops refusing (or stops verifying) fails the assembly loudly
+# instead of shipping a demo whose teaching claims went stale.
+node --input-type=module -e "
+import { readFileSync } from 'node:fs';
+const m = await import('$DIST/cards/pkg/dregg_wasm.js');
+await m.default({ module_or_path: readFileSync('$DIST/cards/pkg/dregg_wasm_bg.wasm') });
+const h = m.transclusion_create();
+const body = '<h1>the charter</h1>';
+m.transclusion_publish(h, 'constitution', body, 'dregg://constitution');
+m.transclusion_publish(h, 'essay', '<p>an essay</p>', 'dregg://essay');
+const q = m.transclusion_include_into(h, 'essay', 'constitution');
+if (!q.verifies || q.text !== body || !q.finalized) {
+  console.error('ERROR: transclusion include did not verify the committed bytes: ' + JSON.stringify(q));
+  process.exit(1);
+}
+const bl = m.transclusion_backlinks(h, 'constitution');
+if (bl.count !== 1 || bl.observers[0].observer_name !== 'essay') {
+  console.error('ERROR: the include did not record a receipt-pinned backlink: ' + JSON.stringify(bl));
+  process.exit(1);
+}
+const amended = '<h1>the charter, amended</h1>';
+m.transclusion_amend(h, 'constitution', amended);
+const live = m.transclusion_read_live(h, 'constitution');
+if (live.text !== amended || !live.verifies) {
+  console.error('ERROR: the live read did not follow the amend: ' + JSON.stringify(live));
+  process.exit(1);
+}
+const forge = m.transclusion_forge_attempt(h, 'constitution', '<h1>PWNED</h1>');
+if (!forge.refused || forge.reason !== 'ContentHashMismatch') {
+  console.error('ERROR: the forge was NOT refused with ContentHashMismatch: ' + JSON.stringify(forge));
+  process.exit(1);
+}
+console.log('transclusion tooth: include verifies + backlink pinned + live follows + the forge is refused (' + forge.reason + ')');
+"
 
 # ── 4. THE ATLAS (relative paths, works at any subpath) ──────────────────────────
 if [ "$ATLAS" = "1" ] && [ -d "$ROOT/dregg-atlas/site" ]; then
@@ -157,5 +234,6 @@ echo "  /deos/         -> $(du -sh "$DIST/deos" | cut -f1) (the WebImage cockpit
 echo "  /cards/        -> $(du -sh "$DIST/cards" | cut -f1) (the deos-js card gallery)"
 echo "  /explorer/     -> $(du -sh "$DIST/explorer" | cut -f1) (caps as rows)"
 echo "  /light-client/ -> $(du -sh "$DIST/light-client" | cut -f1) (verify a whole history)"
+echo "  /transclusion/ -> $(du -sh "$DIST/transclusion" | cut -f1) (xanadu made honest)"
 [ -d "$DIST/atlas" ] && echo "  /atlas/        -> $(du -sh "$DIST/atlas" | cut -f1) (the atlas)"
 echo "  total: $(find "$DIST" -type f | wc -l | tr -d ' ') files"

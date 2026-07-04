@@ -112,6 +112,7 @@ fn ir2_validate_transfer_proves_verifies_and_refuses_ghost() {
             let fdpis: Vec<BabyBear> = forged[..desc.public_input_count].to_vec();
             let r = std::panic::catch_unwind(|| {
                 prove_vm_descriptor2(&desc, &base_trace, &fdpis, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &fdpis))
             });
             let refused = match r {
                 Err(_) => true,          // debug prover panicked on the unsatisfiable binding
@@ -133,6 +134,7 @@ fn ir2_validate_transfer_proves_verifies_and_refuses_ghost() {
                 t[last][STATE_AFTER_BASE + state::STATE_COMMIT] + BabyBear::new(1);
             let r = std::panic::catch_unwind(|| {
                 prove_vm_descriptor2(&desc, &t, &dpis, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &dpis))
             });
             let refused = match r {
                 Err(_) => true,

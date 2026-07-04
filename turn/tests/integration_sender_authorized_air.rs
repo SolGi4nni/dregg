@@ -23,14 +23,17 @@ use dregg_cell::program::{
 use dregg_cell::state::CellState;
 use dregg_circuit::BabyBear;
 use dregg_circuit::dsl::membership::create_test_witness;
-use dregg_circuit::poseidon2;
 use dregg_turn::executor::membership_verifier::{
     MerkleMembershipStarkVerifier, authorized_set_root_bytes, authorized_set_root_felt,
     prove_sender_membership, registry_with_real_sender_membership,
 };
 
+/// THE canonical chip-native membership compress — the executor's leaf domain
+/// (`dregg_commit::typed::compress_member`, the same function the in-AIR gate
+/// `withMembershipPubkeyCompress` forces). Replaced the pre-big-bang
+/// `hash_many(encode_hash(pk))` two-permutation sponge.
 fn compress(bytes: &[u8; 32]) -> BabyBear {
-    poseidon2::hash_many(&BabyBear::encode_hash(bytes))
+    dregg_commit::typed::compress_member(bytes)
 }
 
 /// Build a (siblings, positions) Merkle witness for a given sender pk leaf at

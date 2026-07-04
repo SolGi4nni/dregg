@@ -278,18 +278,24 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                     });
                 }
                 Effect::BridgeMint { portable_proof } => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(&portable_proof.nullifier);
-                    let root_bytes =
-                        postcard::to_allocvec(&portable_proof.source_root).unwrap_or_default();
-                    h.update(&root_bytes);
-                    h.update(&portable_proof.destination_federation);
-                    h.update(&portable_proof.asset_type.to_le_bytes());
+                    // FELT-DOMAIN mint_hash (STEP-1 re-align): the ONE
+                    // canonical `bridge_mint_hash_felt`, matching the
+                    // executor + SDK projectors byte-for-byte.
+                    let mint_hash = dregg_circuit::dsl::note_spending::bridge_mint_hash_felt(
+                        &portable_proof.nullifier,
+                        &portable_proof
+                            .source_root
+                            .note_tree_root
+                            .unwrap_or([0u8; 32]),
+                        &portable_proof.destination_federation,
+                        portable_proof.value,
+                        portable_proof.asset_type,
+                    );
                     let value_lo =
                         BabyBear::new((portable_proof.value & ((1u64 << 30) - 1)) as u32);
                     out.push(VmEffect::BridgeMint {
                         value_lo,
-                        mint_hash: hash_to_bb(h.finalize().as_bytes()),
+                        mint_hash,
                         value_full: portable_proof.value,
                     });
                 }

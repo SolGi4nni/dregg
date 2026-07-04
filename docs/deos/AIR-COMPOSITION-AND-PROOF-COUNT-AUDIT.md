@@ -3,7 +3,8 @@
 Date: 2026-06-28. Scope: read-only soundness/architecture audit of AIR composition,
 the per-turn proof-verification surface, and the staged gentian/satisfaction welds.
 Evidence is cited to file:line at HEAD. **No code was changed by this audit**; every
-finding below names a fix but does NOT apply it (concurrent gentian-deep / screenshot /
+finding below names a fix but does NOT apply it (concurrent gentian-deep / screenshot
+lanes share the working tree).
 
 Method: read the composition machinery (`circuit-prove/src/{lean_lookup_air,
 joint_turn_recursive,custom_proof_bind}.rs`), the EffectVM AIR + column layout

@@ -110,6 +110,8 @@ fn attenuate_fixture() -> (
         siblings: open.siblings.to_vec(),
         directions: open.directions.to_vec(),
         clist_leaves,
+        cap_leaves: Vec::new(),
+        cap_tombstones: Vec::new(),
     };
 
     let before_balance: u64 = 100_000;
@@ -138,8 +140,22 @@ fn attenuate_fixture() -> (
     let mut ledger = dregg_cell::Ledger::new();
     ledger.insert_cell(after_cell.clone()).unwrap();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
-    let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+    let before_w = rw::produce(
+        &before_cell,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &receipt_log,
+        &Default::default(),
+    );
+    let after_w = rw::produce(
+        &after_cell,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &receipt_log,
+        &Default::default(),
+    );
     let rot = RotationTurnWitness::for_effects(before_w, after_w, &effects);
 
     let proj_pre = project_record_kernel_state(&before_cell);

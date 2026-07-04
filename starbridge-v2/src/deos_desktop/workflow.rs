@@ -31,7 +31,7 @@
 
 use gpui::{
     div, px, AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, StatefulInteractiveElement, Styled,
+    ParentElement, Styled,
 };
 
 use dregg_deploy::refine::{
@@ -226,12 +226,12 @@ impl DeosDesktop {
         let effect = self.workflow_effect(subject, kind);
         let wf = self.workflow_state_mut(subject);
         wf.steps.push(WorkflowStep { kind, effect });
-        self.status = format!(
+        self.say(format!(
             "Workflow {} — added intent “{}” ({} steps).",
             id_short(&subject),
             kind.label(),
             self.workflow_state(subject).steps.len()
-        );
+        ));
     }
 
     /// Drop the last intent step from the subject cell's workflow.
@@ -241,11 +241,11 @@ impl DeosDesktop {
         if wf.baseline_len > wf.steps.len() {
             wf.baseline_len = wf.steps.len();
         }
-        self.status = format!(
+        self.say(format!(
             "Workflow {} — removed last intent ({} steps).",
             id_short(&subject),
             self.workflow_state(subject).steps.len()
-        );
+        ));
     }
 
     /// Mark the current workflow length as the refinement baseline — the running
@@ -253,10 +253,10 @@ impl DeosDesktop {
     pub(super) fn workflow_pin_baseline(&mut self, subject: CellId) {
         let len = self.workflow_state(subject).steps.len();
         self.workflow_state_mut(subject).baseline_len = len;
-        self.status = format!(
+        self.say(format!(
             "Workflow {} — pinned baseline at {len} step(s); new intents must REFINE it.",
             id_short(&subject)
-        );
+        ));
     }
 
     /// Read-only access to a cell's workflow state (default-empty if untouched).
@@ -312,6 +312,7 @@ impl DeosDesktop {
     pub(super) fn render_workflow_body(
         &self,
         subject: CellId,
+        scroll: &gpui::ScrollHandle,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let wf = self.workflow_state(subject);
@@ -324,9 +325,6 @@ impl DeosDesktop {
                 "wfbody-{}",
                 super::chrome::id_hex(&subject)
             )))
-            .flex_1()
-            .min_h(px(0.0))
-            .overflow_y_scroll()
             .bg(gpui::rgb(NT_PANEL))
             .p_2()
             .flex()
@@ -412,7 +410,9 @@ impl DeosDesktop {
                 ),
         );
 
-        col.into_any_element()
+        // The composed body scrolls behind a REAL NT scrollbar (the persistent
+        // handle keeps the operator's place while intents are added/popped).
+        super::chrome::nt_scroll_face(scroll, col).into_any_element()
     }
 
     /// An intent-palette button: clicking it appends that intent to the workflow.

@@ -443,6 +443,73 @@ fn broken_order_rejected() {
     }
 }
 
+/// **THE MISMATCHED-CARRIER FAIL-CLOSED TOOTH (Step-2 witness socket, post-bridge-fill).**
+/// Every `CarrierWitness` variant is now fold-wired (custom/factory/hatchery/sovereign/
+/// membership/dsl/bridge), so the fail-closed discipline lives in the claim-pin ADMISSION:
+/// attaching a carrier witness to a leg whose descriptor does NOT genuinely pin that
+/// carrier's claim slots must make the chain prover REFUSE (no artifact at all), never
+/// silently fold a claim over an unpinned/wrong-column slot (laundered vacuity). Here: a
+/// BRIDGE witness on a plain TRANSFER leg — the transfer descriptor's PI 46 is an rc pin
+/// (LAST row, caveat-region column), not the bridge mint-hash pin (FIRST row, `prmCol 0`),
+/// so the admission refuses. `None` remains the sanctioned re-exec rung.
+///
+/// CHEAP enough to run in CI: it mints 2 chain legs, but the refusal fires in
+/// `prove_chain_core_rotated`'s per-leaf match on turn 0 BEFORE any leaf-wrap recursion proving.
+#[test]
+fn mismatched_carrier_witness_is_refused_fail_closed() {
+    use dregg_circuit::note_spending_air::{NoteSpendingWitness, test_spending_key};
+    use dregg_circuit::poseidon2::hash_many;
+    use dregg_circuit_prove::joint_turn_aggregation::{BridgeWitnessBundle, CarrierWitness};
+
+    let (mut turns, _g, _f) = make_chain(1000, 0, 7, 2);
+
+    // Attach an HONEST bridge witness to turn 0's TRANSFER leg. The chain is otherwise fully
+    // honest — the ONLY reason to refuse is the claim-pin admission (the leg's descriptor
+    // does not pin the bridge mint-hash claim slot). The witness rides a REAL depth-2 Merkle
+    // path (the deployed DSL circuit's minimum — `generate_note_spending_trace` asserts
+    // depth ≥ 2, and the bundle projection derives its claim PIs through that generator),
+    // mirroring `note_spend_binding_node_tooth.rs::make_witness`.
+    let depth = 2;
+    let mut siblings = Vec::with_capacity(depth);
+    let mut positions = Vec::with_capacity(depth);
+    for i in 0..depth {
+        siblings.push([
+            hash_many(&[BabyBear::new((i * 3 + 1) as u32), BabyBear::new(0x7B)]),
+            hash_many(&[BabyBear::new((i * 3 + 2) as u32), BabyBear::new(0x7B)]),
+            hash_many(&[BabyBear::new((i * 3 + 3) as u32), BabyBear::new(0x7B)]),
+        ]);
+        positions.push((i % 4) as u8);
+    }
+    let note_spend = NoteSpendingWitness::from_note_limbs(
+        &[7u8; 32],
+        42,
+        3,
+        &[8u8; 32],
+        &[9u8; 32],
+        test_spending_key(0x77),
+        siblings,
+        positions,
+    );
+    turns[0].participant.rotated.carrier_witness = Some(CarrierWitness::Bridge(
+        BridgeWitnessBundle::from_note_spend_witness(&note_spend),
+    ));
+
+    match prove_turn_chain_recursive(&turns) {
+        Err(TurnChainError::TurnProofInvalid { index, reason }) => {
+            assert_eq!(index, 0, "the refusal names the witnessed turn");
+            assert!(
+                reason.contains("'bridge'"),
+                "the refusal names the carrier; got: {reason}"
+            );
+        }
+        Ok(_) => panic!(
+            "a carrier witness on a pin-less leg must NEVER fold to a verifying root \
+             (fail-closed law)"
+        ),
+        Err(other) => panic!("expected the admission TurnProofInvalid, got {other:?}"),
+    }
+}
+
 /// **THE LEAF TOOTH (host-gate-skipping prover, forged post-commit).** The claim is
 /// that per-turn execution soundness does NOT rest on the prover having run the
 /// host-side descriptor admission. So: run the UNGATED prover on a chain whose second
@@ -482,7 +549,7 @@ fn ungated_prover_with_forged_post_commit_cannot_produce_a_root() {
         proof,
         descriptor,
         mut public_inputs,
-        custom_witness,
+        carrier_witness,
     } = rotated;
     let pi_wide_new = public_inputs.len() - 8; // head lane of the AFTER 8-felt wide commit
     let lie = n1 + BabyBear::ONE;
@@ -491,7 +558,7 @@ fn ungated_prover_with_forged_post_commit_cannot_produce_a_root() {
         proof,
         descriptor,
         public_inputs,
-        custom_witness,
+        carrier_witness,
     };
     let t1_forged = FinalizedTurn::new(DescriptorParticipant::rotated(forged_leg));
     let turns = [t0, t1_forged];

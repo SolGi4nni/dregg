@@ -204,7 +204,7 @@ fn ir2_umem_vs_map_size_probe() {
     };
     let map_row = |guard: BabyBear| {
         let mut r = vec![BabyBear::ZERO; 19];
-        r[0..HEAP_DIGEST_W].copy_from_slice(&root);
+        r[0..HEAP_DIGEST_W].copy_from_slice(&root[..]);
         r[8] = BabyBear::new(100);
         r[9] = BabyBear::new(99);
         r[10..10 + HEAP_DIGEST_W].copy_from_slice(&w.new_root);
@@ -311,9 +311,9 @@ fn ir2_umem_vs_map_size_probe() {
     };
     let ab_row = |guard: BabyBear| {
         let mut r = vec![BabyBear::ZERO; 18];
-        r[0..HEAP_DIGEST_W].copy_from_slice(&root);
+        r[0..HEAP_DIGEST_W].copy_from_slice(&root[..]);
         r[8] = BabyBear::new(150);
-        r[9..9 + HEAP_DIGEST_W].copy_from_slice(&root);
+        r[9..9 + HEAP_DIGEST_W].copy_from_slice(&root[..]);
         r[17] = guard;
         r
     };
@@ -647,7 +647,7 @@ fn ir2_mapop_interior_to_umem_chip_drop() {
     };
     let map_row = |guard: BabyBear| {
         let mut r = vec![BabyBear::ZERO; 20];
-        r[0..HEAP_DIGEST_W].copy_from_slice(&root);
+        r[0..HEAP_DIGEST_W].copy_from_slice(&root[..]);
         r[8] = BabyBear::new(100);
         r[9] = BabyBear::new(77); // read returns current value
         r[10..10 + HEAP_DIGEST_W].copy_from_slice(&upd.new_root);

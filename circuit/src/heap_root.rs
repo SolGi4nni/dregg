@@ -40,6 +40,7 @@
 //! leaf-update + bracketed sorted-insert, mirroring the revocation circuit)
 //! are the Phase-E lane.
 
+use crate::faithful8::Faithful8;
 use crate::field::BabyBear;
 use crate::poseidon2::{hash_fact, hash_many};
 use std::sync::LazyLock;
@@ -509,7 +510,11 @@ pub fn heap_empty_subtree_root_8(level: usize) -> [BabyBear; HEAP_DIGEST_W] {
 /// read from [`heap_empty_subtree_root_8`]) is byte-identical to the dense
 /// build — the SAME contiguous-prefix argument the 1-felt [`CanonicalHeapTree::new`]
 /// rests on, at 8-felt width.
-pub fn compute_canonical_heap_root_8(leaves: Vec<HeapLeaf>) -> [BabyBear; HEAP_DIGEST_W] {
+///
+/// Returns [`Faithful8`] — a genuine `node8` tree root, one of the named
+/// faithful constructors of the commitment TYPE WALL
+/// (`docs/FAITHFUL-COMMITMENT-LAW.md`).
+pub fn compute_canonical_heap_root_8(leaves: Vec<HeapLeaf>) -> Faithful8 {
     let mut leaves = leaves;
     leaves.push(sentinel_leaf(SENTINEL_MIN));
     leaves.push(sentinel_leaf(SENTINEL_MAX));
@@ -542,7 +547,7 @@ pub fn compute_canonical_heap_root_8(leaves: Vec<HeapLeaf>) -> [BabyBear; HEAP_D
         cur = next_level;
     }
     debug_assert_eq!(cur.len(), 1);
-    cur[0]
+    Faithful8::from_root8(cur[0])
 }
 
 /// Compute the faithful 8-felt heap root over raw `((coll, key), value)`
@@ -550,7 +555,7 @@ pub fn compute_canonical_heap_root_8(leaves: Vec<HeapLeaf>) -> [BabyBear; HEAP_D
 /// The 8-felt twin of [`compute_heap_root_entries`].
 pub fn compute_canonical_heap_root_8_entries(
     entries: &[((BabyBear, BabyBear), BabyBear)],
-) -> [BabyBear; HEAP_DIGEST_W] {
+) -> Faithful8 {
     compute_canonical_heap_root_8(
         entries
             .iter()
@@ -565,7 +570,7 @@ pub fn compute_canonical_heap_root_8_entries(
 /// The faithful 8-felt root of the EMPTY heap (only the two sentinels). The
 /// 8-felt twin of [`empty_heap_root`]; the value the rotated commit absorbs for
 /// a cell with no heap entries.
-pub fn empty_heap_root_8() -> [BabyBear; HEAP_DIGEST_W] {
+pub fn empty_heap_root_8() -> Faithful8 {
     compute_canonical_heap_root_8(Vec::new())
 }
 
@@ -679,9 +684,11 @@ impl CanonicalHeapTree8 {
             .unwrap_or_else(|| heap_empty_subtree_root_8(level))
     }
 
-    /// The 8-felt Merkle root.
-    pub fn root8(&self) -> [BabyBear; HEAP_DIGEST_W] {
-        self.node8(self.depth, 0)
+    /// The 8-felt Merkle root. Returns [`Faithful8`] — a genuine `node8` tree
+    /// root, one of the named faithful constructors of the commitment TYPE
+    /// WALL (`docs/FAITHFUL-COMMITMENT-LAW.md`).
+    pub fn root8(&self) -> Faithful8 {
+        Faithful8::from_root8(self.node8(self.depth, 0))
     }
 
     /// The sorted leaves (including sentinels).
@@ -729,7 +736,7 @@ impl CanonicalHeapTree8 {
             new_leaf,
             siblings,
             directions,
-            old_root: self.root8(),
+            old_root: self.root8().limbs(),
             new_root,
         })
     }
@@ -759,8 +766,8 @@ impl CanonicalHeapTree8 {
             new_leaf,
             siblings,
             directions,
-            old_root: self.root8(),
-            new_root: new_tree.root8(),
+            old_root: self.root8().limbs(),
+            new_root: new_tree.root8().limbs(),
         })
     }
 }

@@ -117,6 +117,7 @@ fn rotated_umem_welded_transfer_proves_and_bites() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -124,6 +125,7 @@ fn rotated_umem_welded_transfer_proves_and_bites() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     // The SAME transition's universal-memory touch: the Balance write (heap domain 1).
@@ -175,7 +177,14 @@ fn rotated_umem_welded_non_cohort_refuses() {
     let before_cell = producer_cell(before_balance);
     let mut ledger = Ledger::new();
     ledger.insert_cell(before_cell.clone()).unwrap();
-    let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &[]);
+    let before_w = rw::produce(
+        &before_cell,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &[],
+        &Default::default(),
+    );
     let proj = project_record_kernel_state(&before_cell);
     let op = UmemOp {
         kind: UmemKind::Write,

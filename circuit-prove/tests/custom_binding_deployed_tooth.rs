@@ -188,6 +188,7 @@ fn mint_custom_leg(
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     ));
     let after_w = bridge(&rw::produce(
         &after_cell,
@@ -195,6 +196,7 @@ fn mint_custom_leg(
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     ));
 
     let (desc, trace, dpis, map_heaps, mb) = generate_rotated_effect_vm_descriptor_and_trace_wide(
@@ -203,6 +205,7 @@ fn mint_custom_leg(
         &before_w,
         &after_w,
         &empty_caveat_manifest(),
+        None,
         None,
         None,
         None,
@@ -236,7 +239,7 @@ fn mint_custom_leg(
         proof,
         descriptor: desc,
         public_inputs: dpis,
-        custom_witness: None,
+        carrier_witness: None,
     };
     match bundle {
         Some(b) => leg.with_custom_witness(b),

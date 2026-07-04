@@ -325,6 +325,7 @@ impl Toolkit {
 
 /// What an injected compute run reports back: the workload's returned values and
 /// the enforcement grade it ran under. The HOST produces this (a sandbox engine
+/// — e.g. the cloud's owned wasmi sandbox tier); this crate binds the witness
 /// around it and never depends on the engine itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunReport {
@@ -590,6 +591,7 @@ mod tests {
 
     /// A mock compute runner: reports `values` ran under `WasmSandbox`. The
     /// injected-engine seam, std-only — proving the budget·cap·receipt·witness
+    /// braid needs no real sandbox (the cloud wires an owned sandbox behind this seam).
     fn runner(
         values: &'static [&'static str],
     ) -> impl Fn(&str, &str) -> Result<RunReport, String> + Send + Sync {

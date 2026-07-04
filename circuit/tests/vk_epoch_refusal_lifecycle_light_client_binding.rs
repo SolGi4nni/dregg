@@ -209,8 +209,9 @@ fn refusal_light_client_forge_rejected_by_fields_write_gate() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated refusal descriptor parses");
     assert_eq!(
-        desc.public_input_count, 54,
-        "refusal pins all 8 authority limbs (54 PIs — the H1 record-pin8)"
+        desc.public_input_count, 58,
+        "refusal PIs = 50 rotated base (46 + 4 dsl rc) + 8 authority limbs (the H1 record-pin8) = 58 \
+         (committed refusalVmDescriptor2R24)"
     );
 
     let st = CellState::new(balance as u64, 0);
@@ -231,6 +232,7 @@ fn refusal_light_client_forge_rejected_by_fields_write_gate() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &honest_after,
@@ -238,6 +240,7 @@ fn refusal_light_client_forge_rejected_by_fields_write_gate() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     assert_ne!(
@@ -372,8 +375,9 @@ fn lifecycle_payload_forge_rejected_by_hash_gate_anchor_disabled() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated cellSeal descriptor parses");
     assert_eq!(
-        desc.public_input_count, 47,
-        "cellSeal carries the appended record pin (47 PIs)"
+        desc.public_input_count, 51,
+        "cellSeal PIs = 50 rotated base (46 + 4 dsl rc) + 1 appended record pin = 51 \
+         (committed cellSealVmDescriptor2R24)"
     );
 
     let st = CellState::new(balance as u64, 0);
@@ -394,6 +398,7 @@ fn lifecycle_payload_forge_rejected_by_hash_gate_anchor_disabled() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &honest_after,
@@ -401,6 +406,7 @@ fn lifecycle_payload_forge_rejected_by_hash_gate_anchor_disabled() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     assert_ne!(
@@ -559,6 +565,7 @@ fn wide_fields_write_proves_and_verifies() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &honest_after,
@@ -566,6 +573,7 @@ fn wide_fields_write_proves_and_verifies() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let caveat = empty_caveat_manifest();
     let before_leaves = dregg_cell::state::fields_root_leaves(&before_cell.state.fields_map);
@@ -584,19 +592,20 @@ fn wide_fields_write_proves_and_verifies() {
 
     let name = "refusalVmDescriptor2R24";
     let desc = parse_vm_descriptor2(wide_json(name)).unwrap();
-    // v11 geometry (the Lean-authoritative deployed bare wide, drift-clean): the graduated base grew
-    // +154 (v10 host 1301 → v11 host 1455), so the after-spine wide is 1455 + 480 = 1935 (was 1669 in
-    // v10). The producer's READ appendix base tracks GRAD_ROT_WIDTH via `REFUSAL_WRITE_READ_BASE`.
+    // v13 geometry (the Lean-authoritative deployed bare wide, drift-clean): the OPTION I after-spine
+    // wide tracks the grown GRAD_ROT_WIDTH graduated base. The producer's READ appendix base tracks
+    // GRAD_ROT_WIDTH via `REFUSAL_WRITE_READ_BASE`; committed refusalVmDescriptor2R24 (wide) = 2965.
     assert_eq!(
-        desc.trace_width, 1935,
-        "refusal fields-write wide width 1935 (OPTION I after-spine, v11 graduated base)"
+        desc.trace_width, 2965,
+        "refusal fields-write wide width 2965 (OPTION I after-spine, v13 graduated base — committed \
+         wide refusalVmDescriptor2R24 trace_width)"
     );
     assert_eq!(
-        desc.public_input_count, 70,
-        "refusal fields-write wide 70 PIs (54 base + 16 wide)"
+        desc.public_input_count, 74,
+        "refusal fields-write wide 74 PIs (58 narrow base = 50 + 8 authority limbs, + 16 wide)"
     );
-    assert_eq!(trace[0].len(), 1935);
-    assert_eq!(dpis.len(), 70);
+    assert_eq!(trace[0].len(), 2965);
+    assert_eq!(dpis.len(), 74);
 
     let mb = MemBoundaryWitness::default();
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mb, &map_heaps)

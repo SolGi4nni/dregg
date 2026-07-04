@@ -821,7 +821,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "f3c25203de26437e0623c86863a6053fcbd4d24b5d4b96bbf9795743d59e0a6b";
+    "df5f0a760582bbd05c7289a851740933b0915b0f97eb4fe1c08bfb87ddd11117";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1204,7 +1204,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "53392eef4fadf2fe770d5a54653a2a1b49fa2b41913428d96437b97cc6f15299";
+    "2058fce4b055a94fca841eb530f6b5bb416e9bcee088bfd7d21c49583fdffe43";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1230,7 +1230,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "3f8165575861460761b01ca683a0ff60c3c76f122fe05fff395ce17b8e7a1868";
+    "e281c24063056d441f00d403dd0184638a141d9cf446734d99f052db3e94e68f";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1958,9 +1958,9 @@ mod tests {
         use crate::effect_vm::columns::rotation::caveat as cav;
         use crate::lean_descriptor_air::{LeanExpr, VmConstraint};
 
-        // The DEPLOYED rotated geometry (the v10 pre_limbs re-lay: NUM_PRE_LIMBS = 67 — the bare
+        // The DEPLOYED rotated geometry (the v12 pre_limbs re-lay: NUM_PRE_LIMBS = 112 — the bare
         // R=24 registers + cells/cap/nullifier/commitments/heap/lifecycle/epoch/height/disc roots +
-        // the +30 faithful-8-felt completion limbs 37..66). Source-of-truth = the canonical
+        // the 8-felt completion limbs 37..87 + the v12 carrier-material octets 88..111). Source-of-truth = the canonical
         // `trace_rotated` constants (which STEP-1 grew), NOT re-hardcoded literals; mirrors the Lean
         // `EffectVmEmitRotationV3` §1 constants and the caveat region inside it.
         use crate::effect_vm::trace_rotated::{
@@ -1968,10 +1968,13 @@ mod tests {
         };
         const V1_WIDTH: usize = EFFECT_VM_WIDTH;
         // chain carriers occupy `[B_CHAIN_BASE, B_SPAN)` (the head digest + one per 3-wide group).
-        const B_NUM_CHAIN: usize = B_SPAN - B_CHAIN_BASE; // 22 (v10: 67 limbs)
-        const C_SPAN: usize = 39;
+        const B_NUM_CHAIN: usize = B_SPAN - B_CHAIN_BASE; // 37 (v12: 112 limbs)
+        // The caveat region grew 39 → 43 with the dsl rc-EMIT: the 4-felt `Witnessed{Dfa}`
+        // route-commitment carrier rides in-region offsets 39..=42 on EVERY rotated member's
+        // layout (`trace_rotated::C_SPAN`); only the PI pins (`withDfaRcPins`) are per-member.
+        const C_SPAN: usize = crate::effect_vm::trace_rotated::C_SPAN; // 43 (v12 + rc)
         const C_COMMIT: usize = cav::MANIFEST_SIZE + cav::NUM_CHAIN; // 29 + 9 = 38
-        const APPENDIX_SPAN: usize = 2 * B_SPAN + C_SPAN; // 221 (v10)
+        const APPENDIX_SPAN: usize = 2 * B_SPAN + C_SPAN; // 345 (v12 + rc)
 
         let mut n = 0usize;
         for line in V3_STAGED_REGISTRY_TSV.lines() {
@@ -2235,6 +2238,41 @@ mod tests {
                     _ => None,
                 })
                 .collect();
+            // THE UNIFORM DSL rc-EMIT (`withDfaRcPins`): every rotated COHORT member (+ the
+            // fee-in-proof transfer) publishes the 4-felt `Witnessed{Dfa}` route-commitment
+            // carrier (caveat-region offsets 39..=42) as its LAST 4 member PIs. Strip + assert
+            // the quad here so the per-effect branches below keep their pre-rc expectations;
+            // fail-closed on membership (a cohort member MISSING the rc pins, or a tail member
+            // GROWING them, both fail).
+            let rc_col = V1_WIDTH + 2 * B_SPAN + crate::effect_vm::trace_rotated::C_DFA_RC_OFF;
+            let (rc_pins, nullifier_pins): (Vec<(usize, usize)>, Vec<(usize, usize)>) =
+                nullifier_pins
+                    .into_iter()
+                    .partition(|(col, _)| (rc_col..rc_col + 4).contains(col));
+            let has_rc = !rc_pins.is_empty();
+            // NOT rc-wrapped: heapWrite (v3RegistryHeap tail, no v1 prefix), the dedicated
+            // supply-mint (tail `withSelectorGate sel::MINT mintV3` over the BARE body), and the
+            // STAGED escrow-satisfaction weld (no live routing). Everything else here is the
+            // rc-wrapped cohort (+ transferFee).
+            let rc_exempt = is_heap_write
+                || key == "supplyMintVmDescriptor2R24"
+                || key == "settleEscrowSatVmDescriptor2R24";
+            assert_eq!(
+                has_rc, !rc_exempt,
+                "{key}: dsl rc pins present iff the member is the rc-wrapped cohort"
+            );
+            if has_rc {
+                let rc_expected: Vec<(usize, usize)> = (0..4)
+                    .map(|k| (rc_col + k, d.public_input_count - 4 + k))
+                    .collect();
+                assert_eq!(
+                    rc_pins, rc_expected,
+                    "{key}: the 4 rc pins publish the rc carrier (region offsets 39..=42) as the \
+                     LAST 4 member PIs"
+                );
+            }
+            // The member's PRE-rc PI count — what every per-effect branch below pins.
+            let base_pi_count = d.public_input_count - if has_rc { 4 } else { 0 };
             // THE RECORD-FORCING PIN (the deployment-soundness close, `EffectVmEmitRotationV3
             // .rotateV3WithRecordPin`): cellSeal/cellUnseal/cellDestroy AND receiptArchive force the
             // AFTER block's lifecycle limb (col `after_base + B_LIFECYCLE`) — the deployed apply moves
@@ -2272,7 +2310,7 @@ mod tests {
             );
             if key == "noteSpendVmDescriptor2R24" {
                 assert_eq!(
-                    d.public_input_count, 47,
+                    base_pi_count, 47,
                     "noteSpend: rotated 46-PI + the appended nullifier slot"
                 );
                 assert_eq!(
@@ -2286,7 +2324,7 @@ mod tests {
                 // `commitmentsInsertOp` map-op forces the commitment set-insert on limb 27
                 // (`EffectVmEmitRotationV3.noteCreateV3`).
                 assert_eq!(
-                    d.public_input_count, 47,
+                    base_pi_count, 47,
                     "noteCreate: rotated 46-PI + the appended commitment slot"
                 );
                 assert_eq!(
@@ -2294,18 +2332,37 @@ mod tests {
                     vec![(PARAM_BASE + param::NULLIFIER, pi_base + 4)],
                     "noteCreate: the fifth pin welds the published commitment (param0) to PI[46]"
                 );
+            } else if key == "factoryVmDescriptor2R24" {
+                // STEP-3 factory carriers (`factoryV3Carriers = withAfterOctetPins (withAfterOctetPins
+                // factoryV3 B_CHILD_VK_OCTET) B_CONTRACT_HASH_OCTET`): the new-cell-key grow-gate pin
+                // (param1 CHILD_VK_DERIVED → PI[46]) PLUS the 16 committed carrier-octet pins — the
+                // AFTER-block child_vk8 octet (limbs 88..=95 → PI[47..54]) then the contract_hash8
+                // octet (limbs 96..=103 → PI[55..62]), last-row, the v12 big-bang exposure the
+                // factory/hatchery fold tooths bind.
+                use crate::effect_vm::trace_rotated::{B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET};
+                assert_eq!(
+                    base_pi_count, 63,
+                    "factory: rotated 46-PI + the new-cell-key slot + the 16 carrier-octet pins"
+                );
+                let mut expected = vec![(PARAM_BASE + param::CHILD_VK_DERIVED, pi_base + 4)];
+                for i in 0..8 {
+                    expected.push((after_base + B_CHILD_VK_OCTET + i, pi_base + 5 + i));
+                }
+                for i in 0..8 {
+                    expected.push((after_base + B_CONTRACT_HASH_OCTET + i, pi_base + 13 + i));
+                }
+                assert_eq!(
+                    nullifier_pins, expected,
+                    "factory: the grow-gate key pin (PI[46]) + the child_vk8 (PI[47..54]) + \
+                     contract_hash8 (PI[55..62]) committed-octet pins"
+                );
             } else if new_cell_key_pin_member {
                 assert_eq!(
-                    d.public_input_count, 47,
+                    base_pi_count, 47,
                     "{key}: rotated 46-PI + the appended new-cell-key slot"
                 );
-                // createCell/spawn key on param0 (the new-cell id); factory keys on param1
-                // (CHILD_VK_DERIVED — param0 carries the factory VK).
-                let key_col = if key == "factoryVmDescriptor2R24" {
-                    PARAM_BASE + param::CHILD_VK_DERIVED
-                } else {
-                    PARAM_BASE
-                };
+                // createCell/spawn key on param0 (the new-cell id).
+                let key_col = PARAM_BASE;
                 assert_eq!(
                     nullifier_pins,
                     vec![(key_col, pi_base + 4)],
@@ -2318,7 +2375,7 @@ mod tests {
                 // the 7 headroom limbs (AFTER offsets 12..18) → PI[47..53], so a 31-bit-colliding
                 // wide-open authority forged into ANY limb is UNSAT (the GENTIAN close for movers).
                 assert_eq!(
-                    d.public_input_count, 54,
+                    base_pi_count, 54,
                     "{key}: rotated 46-PI + the 8 authority record-pins (47..53)"
                 );
                 let mut expected = vec![(after_base + B_AUTHORITY_DIGEST, pi_base + 4)];
@@ -2331,7 +2388,7 @@ mod tests {
                 );
             } else if lifecycle_record_pin_member {
                 assert_eq!(
-                    d.public_input_count, 47,
+                    base_pi_count, 47,
                     "{key}: rotated 46-PI + the appended record-forcing slot"
                 );
                 assert_eq!(
@@ -2346,7 +2403,7 @@ mod tests {
                 // INSIDE the proven transition (the bal-lo gate forces `after = before − amount − fee`).
                 use crate::effect_vm::columns::{STATE_AFTER_BASE, state};
                 assert_eq!(
-                    d.public_input_count, 47,
+                    base_pi_count, 47,
                     "transferFee: rotated 46-PI + the appended fee slot"
                 );
                 assert_eq!(
@@ -2357,17 +2414,18 @@ mod tests {
             } else if key == "setFieldDynVmDescriptor2R24" {
                 // THE DYNAMIC setField fields-root weld (WAVE 3): the fifth pin welds the AFTER
                 // block's committed `fields_root` sub-limb to PI[46] (col `afterFieldsRootCol
-                // setFieldDynV1Face.traceWidth` = 303 in the v10 pre_limbs geometry, the declared
+                // setFieldDynV1Face.traceWidth` = 363 in the v12 pre_limbs geometry — the AFTER block
+                // moved +32 with the B_SPAN 119→151 grow, over v11's 331 — the declared
                 // post-`fields_root` param), so a forged post-`fields_root` is UNSAT in-circuit
                 // (Lean `setFieldDynForcedV3`).
                 assert_eq!(
-                    d.public_input_count, 47,
+                    base_pi_count, 47,
                     "setFieldDyn: rotated 46-PI + the appended fields-root weld slot"
                 );
                 assert_eq!(
                     nullifier_pins,
-                    vec![(303, pi_base + 4)],
-                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (303) to PI[46]"
+                    vec![(363, pi_base + 4)],
+                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (363, v12) to PI[46]"
                 );
             } else if key == "settleEscrowSatVmDescriptor2R24" {
                 // THE WELDED SEALED-ESCROW SATISFACTION descriptor (VK-EPOCH §6 BLOCKER 1, STAGED):
@@ -2380,7 +2438,7 @@ mod tests {
                 // Refinement proven in `metatheory/Dregg2/Deos/SettleEscrowSatDescriptor.lean`.
                 use crate::effect_vm::columns::PARAM_BASE;
                 assert_eq!(
-                    d.public_input_count, 47,
+                    base_pi_count, 47,
                     "settleEscrowSat: rotated 46-PI + the appended selector slot"
                 );
                 assert_eq!(
@@ -2408,7 +2466,7 @@ mod tests {
                 // (PARAM_BASE+0..3) → PI[50..53], all on the FIRST row (the binding is fold-enforced,
                 // like memOp/umemOp, NOT a row poly). So custom carries 54 PIs (46 + 8 anchors).
                 assert_eq!(
-                    d.public_input_count, 54,
+                    base_pi_count, 54,
                     "custom: rotated 46-PI + the 8 custom fold-binding anchors (46..53)"
                 );
                 let mut expected: Vec<(usize, usize)> = Vec::new();
@@ -2425,7 +2483,7 @@ mod tests {
                 );
             } else {
                 assert_eq!(
-                    d.public_input_count, 46,
+                    base_pi_count, 46,
                     "{key}: non-record-pin cohort carries the rotated 46-PI"
                 );
                 assert!(
@@ -2470,20 +2528,19 @@ mod tests {
         );
     }
 
-    /// **THE WIDE REGISTRY drift + coverage pin (STAGED-ADDITIVE slice 2).** The 45-member faithful
+    /// **THE WIDE REGISTRY drift + coverage pin (STAGED-ADDITIVE slice 2).** The 57-member faithful
     /// 8-felt wide registry TSV is fingerprint-stable (the Lean `EmitWideRegistryProbe.lean` is the
     /// byte source), parses member-for-member, and is name-stable against the live 1-felt registry
-    /// (the flip is a name-stable repoint). The transfer member (row 0) is byte-identical to the
-    /// single-line `WIDE_TRANSFER_STAGED_TSV`. ADDITIVE: pins the wide path WITHOUT touching the live
-    /// `V3_STAGED_REGISTRY_*`.
+    /// (the flip is a name-stable repoint). The transfer member (row 0) is the v12 TEETH-EXPOSING
+    /// advance (+2 claim PIs / +2 teeth columns) of the single-line `WIDE_TRANSFER_STAGED_TSV`.
+    /// ADDITIVE: pins the wide path WITHOUT touching the live `V3_STAGED_REGISTRY_*`.
     #[test]
     fn wide_registry_parses_and_is_name_stable() {
         use crate::descriptor_ir2::parse_vm_descriptor2;
 
-        // Every wide member parses; the wide geometry is `host + 208` carrier columns + 16 PIs. The
+        // Every wide member parses; the wide geometry is `host + 608` carrier columns + 16 PIs. The
         // keys are NAME-STABLE against the live 1-felt registry, member-for-member (the flip repoint
-        // does not rename). The transfer member (row 0) JSON is byte-identical to the single-line
-        // `WIDE_TRANSFER_STAGED_TSV`.
+        // does not rename).
         let live_keys: Vec<&str> = V3_STAGED_REGISTRY_TSV
             .lines()
             .filter(|l| !l.is_empty())
@@ -2509,16 +2566,22 @@ mod tests {
                 "wide registry key {i} name-stable with the live registry"
             );
             let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key} wide parses: {e}"));
-            // the wide member is `host + 368` (the v10 pre_limbs re-lay grew the carrier blocks) and
-            // `host.piCount + 16`. The host widths in play are 801 (custom/setFieldDyn → 1169), 829
-            // (the rotated cohort → 1197), 1287 (the heapWrite after-spine membership host, OPTION I —
-            // the splice base 815 + read appendix 329 + after-spine 143 → 1655), and the faithful
-            // 8-felt cap-open family: 1158 (non-write cap-open → 1526), 1160 (the turn-identity-pinned
-            // transferCapOpenTB → 1528) and 1301 (the cap-WRITE members with the after-spine recompute,
-            // attenuate + the delegation writes → 1669): every wide width is `host + 368`.
+            // the wide member is `host + 608` (the v12 pre_limbs re-lay grew the carrier blocks) and
+            // `host.piCount + 16`. The v12 big-bang host widths in play: 1135 (custom/setFieldDyn →
+            // 1743), 1163 (the rotated cohort → 1771), the cap-open family + the §J′ insert hosts
+            // (→ 2100), the turn-identity-pinned transferCapOpenTB (→ 2102), heapWrite's after-spine
+            // membership host (→ 2229), the refusal fields-write weld + the cap-WRITE after-spine
+            // members (→ 2243) — every wide width is `host + 608` — PLUS the two v12 teeth-exposing
+            // advances: the membership-teeth transfer (1771 + 2 teeth columns past the carriers →
+            // 1773, `CarrierComposed.transferV3MembershipWide`) and the KEY_COMMIT-gated sovereign
+            // (1771 + the 32-column chip-digest appendix → 1803,
+            // `CarrierComposed.makeSovereignV3DeployedWide`).
             assert!(
-                matches!(d.trace_width, 1169 | 1197 | 1526 | 1528 | 1655 | 1669),
-                "{key}: wide width {} is a known wide geometry (1169 / 1197 / 1526 / 1528 / 1655 / 1669)",
+                matches!(
+                    d.trace_width,
+                    1743 | 1771 | 1773 | 1803 | 2100 | 2102 | 2229 | 2243
+                ),
+                "{key}: wide width {} is a known wide geometry (1743 / 1771 / 1773 / 1803 / 2100 / 2102 / 2229 / 2243)",
                 d.trace_width
             );
             // Every wide member carries the 16 wide-commit PIs (the 8-felt ~124-bit before/after
@@ -2533,8 +2596,12 @@ mod tests {
                 d.public_input_count
             );
             if i == 0 {
-                assert_eq!(
-                    json,
+                // v12 big-bang: row 0 is the TEETH-EXPOSING advance of the plain wide transfer
+                // (`CarrierComposed.transferV3MembershipWide` — the 2 `(sender_leaf,
+                // authorized_root)` claim PIs at 50..51 ahead of the anchors, teeth columns past
+                // the carriers). The single-line `WIDE_TRANSFER_STAGED_TSV` stays the PLAIN wide
+                // transfer, so byte-identity is retired for the exact +2/+2 advance relation.
+                let plain = parse_vm_descriptor2(
                     WIDE_TRANSFER_STAGED_TSV
                         .lines()
                         .next()
@@ -2542,7 +2609,17 @@ mod tests {
                         .splitn(3, '\t')
                         .nth(2)
                         .unwrap(),
-                    "wide registry row 0 (transfer) == the single-line WIDE_TRANSFER_STAGED_TSV"
+                )
+                .expect("plain wide transfer parses");
+                assert_eq!(
+                    d.public_input_count,
+                    plain.public_input_count + 2,
+                    "wide registry row 0 (transfer) = the plain wide transfer + 2 membership claim PIs"
+                );
+                assert_eq!(
+                    d.trace_width,
+                    plain.trace_width + 2,
+                    "wide registry row 0 (transfer) = the plain wide transfer + 2 teeth columns"
                 );
             }
         }

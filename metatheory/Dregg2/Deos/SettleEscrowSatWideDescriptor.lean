@@ -13,13 +13,13 @@ into the wide commit a PURE light client binds. This is BLOCKER 1, sub-gap (1), 
 `SettleEscrowSatDescriptor.lean` built the welded descriptor over the V3 cohort
 (`graduateV1 (rotateV3 settle-base)`); its four selector-gated satisfaction gates read the rotated
 BEFORE/AFTER state-block FIELD columns `beforeFieldCol k = EFFECT_VM_WIDTH + 4 + k` and
-`afterFieldCol k = EFFECT_VM_WIDTH + 51 + 4 + k`. In the V3 form the rotated state block is committed
+`afterFieldCol k = EFFECT_VM_WIDTH + B_SPAN + 4 + k`. In the V3 form the rotated state block is committed
 to a single felt (the ~31-bit waist), so a pure light client binding the wide commit did NOT bind
 those columns — the satisfaction was witnessed only at the cap-membership posture (a verifier holding
 the committed-state opening).
 
 This module GRADUATES the welded descriptor to the WIDE form, EXACTLY as the deployed cohort members
-are graduated (`EmitWideRegistryProbe.lean`: `wideAppend host bb (bb+51)` — the two 13×8 BEFORE/AFTER
+are graduated (`EmitWideRegistryProbe.lean`: `wideAppend host bb (bb+B_SPAN)` — the two 13×8 BEFORE/AFTER
 carriers + the 16 wide commit PIs, the 8-felt before/after anchors, appended past the host), THEN
 re-appends the four satisfaction gates + the selector PI pin (the additive fifth-pin shape). The
 construction's payoff is proven here:
@@ -75,7 +75,7 @@ namespace Dregg2.Deos.SettleEscrowSatWideDescriptor
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (graduateV1)
-open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotateV3)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotateV3 B_SPAN)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationWide (wideAppend)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Deos.SealedEscrow (stEmpty stDeposited stConsumed)
@@ -99,16 +99,16 @@ def ESCROW_SEL_PI_WIDE : Nat := 62
 /-! ## §2 — THE WIDE WELDED DESCRIPTOR (the graduation, emit-faithful). -/
 
 /-- **`settleEscrowSatVmDescriptor2R24Wide`** — the welded sealed-escrow satisfaction descriptor made
-8-felt-WIDE. `wideAppend (graduateV1 (rotateV3 settle-base)) bb (bb+51)` — the EXACT graduation
+8-felt-WIDE. `wideAppend (graduateV1 (rotateV3 settle-base)) bb (bb+B_SPAN)` — the EXACT graduation
 `EmitWideRegistryProbe.lean` applies to every cohort member (the two 13×8 BEFORE/AFTER carriers + the
 16 wide commit PIs) — PLUS the four selector-gated satisfaction gates over the rotated field columns
 PLUS the selector PI pin. `bb = (settleEscrowV1Base legA legB).traceWidth = EFFECT_VM_WIDTH`, so the
-BEFORE block limbs are based at `bb` and the AFTER block limbs at `bb+51` — EXACTLY the bases
+BEFORE block limbs are based at `bb` and the AFTER block limbs at `bb+B_SPAN` — EXACTLY the bases
 `beforeFieldCol`/`afterFieldCol` read. `piCount = 63` (rotated 46 + 16 wide anchors + the selector
 slot). -/
 def settleEscrowSatVmDescriptor2R24Wide (legA legB : Nat) : EffectVmDescriptor2 :=
   let bb := (settleEscrowV1Base legA legB).traceWidth
-  let base := wideAppend (graduateV1 (rotateV3 (settleEscrowV1Base legA legB))) bb (bb + 51)
+  let base := wideAppend (graduateV1 (rotateV3 (settleEscrowV1Base legA legB))) bb (bb + B_SPAN)
   { base with
     name        := "dregg-effectvm-settle-escrow-sat-v1-rot24-v3-wide-staged"
     piCount     := base.piCount + 1
@@ -208,11 +208,11 @@ theorem phantom_settle_unsat_wide (hash : List ℤ → ℤ) (legA legB : Nat)
 commit.
 
 The wide BEFORE block (limb base `bb = (settleEscrowV1Base _ _).traceWidth = EFFECT_VM_WIDTH`) and
-AFTER block (base `bb+51`) each carry 37 pre-iroot limbs `{base, …, base+36}` that
+AFTER block (base `bb+B_SPAN`) each carry 37 pre-iroot limbs `{base, …, base+36}` that
 `EffectVmEmitRotationWide.rotV3WideSpecs` consumes into the chained carriers, with carrier 12 = the
 published 8-felt state commit (`rotV3WidePin`); the deployed `rotV3Wide_binds_published` proves equal
 published commits force equal limbs (under `Poseidon2WideCR`). The satisfaction gates read
-`beforeFieldCol k = bb + 4 + k` and `afterFieldCol k = bb + 51 + 4 + k` — both with offset `4 + k` ≤
+`beforeFieldCol k = bb + 4 + k` and `afterFieldCol k = bb + B_SPAN + 4 + k` — both with offset `4 + k` ≤
 36 for the 8 field slots (`k ≤ 7`), so they lie INSIDE the absorbed limb window. Hence the field
 columns the satisfaction gate touches ARE bound into the wide commit a pure light client binds — the
 V3 sub-gap (1) is closed. -/
@@ -235,9 +235,9 @@ theorem beforeFieldCol_absorbed (k : Nat) (hk : k ≤ 7) :
 
 /-- **THE AFTER-BLOCK ABSORPTION KEYSTONE.** For every field slot `k ≤ 7`, the AFTER
 satisfaction-gate column `afterFieldCol k` is one of the 37 pre-iroot AFTER limbs
-`{bb+51, …, bb+51+36}` the wide AFTER carriers absorb into the published 8-felt commit. -/
+`{bb+B_SPAN, …, bb+B_SPAN+36}` the wide AFTER carriers absorb into the published 8-felt commit. -/
 theorem afterFieldCol_absorbed (k : Nat) (hk : k ≤ 7) :
-    afterFieldCol k ∈ (List.range 37).map ((EFFECT_VM_WIDTH + 51) + ·) := by
+    afterFieldCol k ∈ (List.range 37).map ((EFFECT_VM_WIDTH + B_SPAN) + ·) := by
   rw [List.mem_map]
   refine ⟨4 + k, ?_, ?_⟩
   · rw [List.mem_range]; omega
@@ -256,8 +256,8 @@ section Witnesses
 -- The legs (slots 0, 1) land inside the absorbed 37-limb windows.
 #guard (List.range 37).map (EFFECT_VM_WIDTH + ·) |>.contains (beforeFieldCol 0)
 #guard (List.range 37).map (EFFECT_VM_WIDTH + ·) |>.contains (beforeFieldCol 1)
-#guard (List.range 37).map ((EFFECT_VM_WIDTH + 51) + ·) |>.contains (afterFieldCol 0)
-#guard (List.range 37).map ((EFFECT_VM_WIDTH + 51) + ·) |>.contains (afterFieldCol 1)
+#guard (List.range 37).map ((EFFECT_VM_WIDTH + B_SPAN) + ·) |>.contains (afterFieldCol 0)
+#guard (List.range 37).map ((EFFECT_VM_WIDTH + B_SPAN) + ·) |>.contains (afterFieldCol 1)
 
 end Witnesses
 

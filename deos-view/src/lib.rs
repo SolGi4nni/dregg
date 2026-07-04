@@ -22,16 +22,42 @@
 //!   node-for-node mirroring the gpui vocabulary, into a browser-loadable `.html`. This
 //!   is the web-projection of the reflective cockpit: the SAME card paints in a browser,
 //!   not just the native window. See the `web_render_card` example for the bake.
+//!
+//! ONE PARITY EXCEPTION (honest boundary): "renderer-INDEPENDENT" is exact for the
+//! view-tree DATA and holds for every node's *content*; the single INTERACTIVITY gap
+//! is `input` — a real editable `<input>` on web, but display-only on native (a
+//! read-only label; deos-view has no native text-entry widget yet), so a native
+//! `input` reflects only agent-seeded draft state and an unseeded submit fires
+//! `arg = 0`. See the `render` module's NATIVE/WEB PARITY note (audit finding #17).
 
 // The view-tree MODEL is renderer-independent (gpui-free serializable DATA): it is
 // always compiled, under BOTH the `native` and `web` renderers.
+pub mod console;
 pub mod fmt;
 pub mod tree;
+pub use console::{
+    console_bind_values, console_card, console_slot_seeds, demo_console, ConsoleModel,
+    HermesStatus, HermesView, LedgerView, MandateEdge, ReceiptRow, SpendLine, VatState, VatView,
+    WitnessStance,
+};
 pub use fmt::BindFmt;
 pub use tree::{
     disclose, parse_view_tree, pill_display, resolve_mounts, Crumb, Disclosure, HaloHandle,
     MapMountSource, MenuItem, MountSource, PillCase, RawItem, RawNode, RawPillCase, RawProps,
-    ViewNode, MAX_MOUNT_DEPTH,
+    ViewNode, MAX_MOUNT_DEPTH, MAX_MOUNT_NODES,
+};
+
+// ── THE CAP-SCOPE (feature `cap`): the REAL, cap-scoped console read surface — a `Catalog`
+//    source trait bound to our cells + the dregg-auth caveat-chain subject gate (a resource
+//    is shown iff its owner-cap subject == the viewer). PURE (gpui-free + deos-js-free): only
+//    serde + the sibling `dregg-auth` credential core, so it rides the DEFAULT build AND
+//    compiles standalone (`cargo test --no-default-features --features cap --lib` — no gpui,
+//    no SpiderMonkey), and never bloats the tiny `web` bake. ──
+#[cfg(feature = "cap")]
+pub mod catalog;
+#[cfg(feature = "cap")]
+pub use catalog::{
+    demo_catalog, subject_credential, CapScope, CapTurn, Catalog, SnapshotCatalog, SUBJECT_ATTR,
 };
 
 // ── The NATIVE renderer: `ViewNode` → real gpui-component pixels (the heavy stack

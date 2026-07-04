@@ -5405,7 +5405,7 @@ mod tests {
         // cols 16..22: the 7 exposed lanes 1..7 of the hash site (Phase B-GATE).
         row.extend_from_slice(&lanes[1..]);
         // cols 23..31: the 8-felt heap-root group the map read opens against.
-        row.extend_from_slice(&root);
+        row.extend_from_slice(&root[..]);
         debug_assert_eq!(row.len(), 31);
         row
     }
@@ -5611,7 +5611,7 @@ mod tests {
         let pre = CanonicalHeapTree8::new(hw_pre_heap(), HEAP_TREE_DEPTH);
         let root = pre.root8();
         let mut row = vec![BabyBear::ZERO; 126];
-        row[HW_ROOT_BEFORE..HW_ROOT_BEFORE + CHIP_OUT_LANES].copy_from_slice(&root);
+        row[HW_ROOT_BEFORE..HW_ROOT_BEFORE + CHIP_OUT_LANES].copy_from_slice(&root[..]);
         row[HW_ADDR] = BabyBear::new(100);
         row[HW_VALUE] = BabyBear::new(42);
         row[HW_ROOT_AFTER..HW_ROOT_AFTER + CHIP_OUT_LANES].copy_from_slice(&new_root);
@@ -6156,7 +6156,7 @@ mod tests {
         };
         let mk = |guard: BabyBear| {
             let mut r = vec![BabyBear::ZERO; 19];
-            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root[..]);
             r[8] = BabyBear::new(100);
             r[9] = BabyBear::new(99);
             r[10..10 + CHIP_OUT_LANES].copy_from_slice(&w.new_root);
@@ -6216,7 +6216,7 @@ mod tests {
         };
         let mk = |guard: BabyBear| {
             let mut r = vec![BabyBear::ZERO; 19];
-            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root[..]);
             r[8] = BabyBear::new(150);
             r[9] = BabyBear::new(55);
             r[10..10 + CHIP_OUT_LANES].copy_from_slice(&w.new_root);
@@ -6319,10 +6319,10 @@ mod tests {
         };
         let mk = |guard: BabyBear| {
             let mut r = vec![BabyBear::ZERO; 19];
-            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root[..]);
             r[8] = BabyBear::new(100); // key 100 is already present in test_heap
             r[9] = BabyBear::new(99);
-            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&root);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&root[..]);
             r[18] = guard;
             r
         };
@@ -7076,9 +7076,9 @@ mod tests {
         let root = tree.root8();
         let mk = |guard: BabyBear| {
             let mut r = vec![BabyBear::ZERO; 18];
-            r[0..CHIP_OUT_LANES].copy_from_slice(&root);
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root[..]);
             r[8] = BabyBear::new(key);
-            r[9..9 + CHIP_OUT_LANES].copy_from_slice(&root);
+            r[9..9 + CHIP_OUT_LANES].copy_from_slice(&root[..]);
             r[17] = guard;
             r
         };

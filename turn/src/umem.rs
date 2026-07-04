@@ -648,7 +648,8 @@ pub fn derive_record_kernel_boundary(proj: &UProjection, cell: CellId) -> Record
         cap_root: dregg_circuit::cap_root::compute_capability_root_with_tombstones(
             cap_leaves,
             &tombstone_keys,
-        ),
+        )
+        .limbs(),
     }
 }
 
@@ -744,7 +745,7 @@ pub fn record_kernel_boundary_agrees(
         dregg_cell::commitment::compute_canonical_capability_root_8(&cell.capabilities);
     if derived.cap_root != committed_cap {
         return Err(BoundaryDisagreement::CapRoot {
-            committed: committed_cap,
+            committed: committed_cap.limbs(),
             derived: derived.cap_root,
         });
     }

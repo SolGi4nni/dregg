@@ -90,6 +90,10 @@ import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 import Dregg2.Circuit.RotatedKernelRefinementExercise
 import Dregg2.Circuit.Emit.HeapOpenEmit
 import Dregg2.Circuit.Emit.FieldsOpenEmit
+import Dregg2.Circuit.Emit.AccumulatorInsertEmit
+import Dregg2.Circuit.Emit.EffectVmEmitNoteSpend
+import Dregg2.Circuit.Emit.EffectVmEmitNoteCreate
+import Dregg2.Circuit.Emit.CarrierComposed
 
 namespace Dregg2.Circuit.CircuitSoundnessAssembled
 
@@ -120,8 +124,9 @@ point at the `v3Registry` entry their effect family rides (introduce for delegat
 revoke, …), so `vkOfRegistry Rfix` ranges over exactly the deployed descriptor set; `heapWrite` (tag 56)
 NOW has its OWN LIVE Class-A descriptor `heapWriteV3` (the heap-root recompute), at `v3RegistryHeap` tail
 position 45 — `Rfix 56 = heapWriteV3` (GAP-2 close). Off-range tags fall back to transfer, so `Rfix` is
-total. The key correspondence — `Rfix 0 = transferV3` — is preserved by `rfl` (position `0`), so
-`closedLogExtract_transfer` lands at its genuine descriptor. -/
+total. The key correspondence — `Rfix 0 = transferV3Membership` (the v12 big-bang teeth-exposing
+transfer, tail position 60; peels to `transferV3`) — holds by `rfl`, so
+`closedLogExtract_transfer` lands at its genuine descriptor via the peel. -/
 
 /-- The transfer descriptor (the fallback for off-range tags; tag `0`). -/
 def transferDescr : EffectVmDescriptor2 :=
@@ -209,9 +214,70 @@ def v3RegistryHeap : List (String × EffectVmDescriptor2) :=
         ("refusalFieldsWriteVmDescriptor2R24",
          Dregg2.Circuit.Emit.FieldsOpenEmit.effFieldsWriteV3
            Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalFieldsWriteV3
-           "dregg-effectvm-refusal-v1-rot24-v3-write-fieldsopen")]
+           "dregg-effectvm-refusal-v1-rot24-v3-write-fieldsopen"),
+        -- The THREE DEDICATED ACCUMULATOR INSERT descriptors (positions 56/57/58, §J′): the
+        -- insert-shaped `effAccumInsertV3` over the genuine sorted FRESH-KEY insert (the accumulators
+        -- are NOT update-at-key — no shared before/after path, a genuine obstruction the update-shaped
+        -- `effAccumWriteV3` could not fit). The DEPLOYED descriptor's `Satisfied2` TRACE-FORCES the
+        -- spliced-leaf membership in the REBUILT AFTER tree over the FULL committed 8-felt BEFORE/AFTER
+        -- accumulator-root groups (`AccumulatorInsertEmit.effAccumInsertV3_forces_write8`, consumed by
+        -- `RotatedKernelRefinementCapFamily.{nullifier,commitments,cells}Insert_forces_write8_sat`),
+        -- NEVER the lane-0 squeeze. `actionTagToPos {27,28,17}` re-key HERE so `Rfix {27,28,17}`
+        -- quantify over the insert hosts a light client actually verifies; the bare `noteSpendV3` /
+        -- `noteCreateV3` / `createCellV3` [positions 3/4/22] stay for the live prover route + bare slot.
+        -- Positions 0..55 are UNCHANGED, so every prior `Rfix_*` rfl-correspondence is preserved.
+        ("noteSpendInsertVmDescriptor2R24",
+         Dregg2.Circuit.Emit.AccumulatorInsertEmit.effAccumInsertV3
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.nullifierRootGroupCol
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NULLIFIER_PARAM_COL
+           (Dregg2.Circuit.Emit.EffectVmEmit.prmCol
+             Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.param.NOTE_VALUE_LO)
+           (some Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.SEL_NOTE_SPEND)
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.noteSpendV3
+           "dregg-effectvm-noteSpend-v1-rot24-v3-insert-heapopen"),
+        ("noteCreateInsertVmDescriptor2R24",
+         Dregg2.Circuit.Emit.AccumulatorInsertEmit.effAccumInsertV3
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.commitmentsRootGroupCol
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.COMMITMENT_KEY_PARAM_COL
+           (Dregg2.Circuit.Emit.EffectVmEmit.prmCol
+             Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.param.NOTE_VALUE_LO)
+           none
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.noteCreateV3
+           "dregg-effectvm-noteCreate-v1-rot24-v3-insert-heapopen"),
+        ("createCellInsertVmDescriptor2R24",
+         Dregg2.Circuit.Emit.AccumulatorInsertEmit.effAccumInsertV3
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellsRootGroupCol
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
+           none
+           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.createCellV3
+           "dregg-effectvm-createCell-v1-rot24-v3-insert-heapopen"),
+        -- The DEPLOYED SOVEREIGN member (position 59, the v12 big-bang): the record-pin base + the
+        -- cohort rc wrap + the 4 KEY_COMMIT teeth PI pins (58..61, the annotated
+        -- `SOVEREIGN_KEY_COMMIT_PI_LO`) + the in-AIR KEY_COMMIT chip-compress gate — the THIRD EDGE:
+        -- a satisfying `Satisfied2` FORCES each published teeth PI == `canonical_32_to_felts_4` of
+        -- the COMMITTED `B_PUBKEY8` octet (`CarrierComposed.makeSovereignV3Deployed_publishes_key_
+        -- commit`), so the fold-bound owner-key claim is welded to the committed authority, not a
+        -- free column. `actionTagToPos 38` re-keys HERE so `Rfix 38` quantifies over the descriptor
+        -- a light client actually verifies; the cohort's `makeSovereignVmDescriptor2R24` [pos 21]
+        -- stays for the bare slot. The full peel (`satisfied2_of_makeSovereignV3Deployed`: gate →
+        -- teeth pins → rc) lifts every base-level rung. Positions 0..58 are UNCHANGED, so every
+        -- prior `Rfix_*` rfl-correspondence is preserved.
+        ("makeSovereignDeployedVmDescriptor2R24",
+         Dregg2.Circuit.Emit.CarrierComposed.makeSovereignV3Deployed),
+        -- The DEPLOYED MEMBERSHIP-TEETH TRANSFER member (position 60, the v12 big-bang): the cohort
+        -- transfer + rc + the two `(sender_leaf, authorized_root)` teeth PI pins (50..51, the
+        -- annotated `MEMBERSHIP_CLAIM_PI_LO`). HONEST SCOPE (CarrierComposed §5, the fail-open law
+        -- named): the PI EXPOSURE leg only — the FOLD edge (the chain prover's Membership arm)
+        -- binds the published tuple to a re-proven `dsl::membership` STARK; the in-AIR sender/root
+        -- welds stay the named `MembershipAuthRootEdge` seams. `actionTagToPos 0` re-keys HERE so
+        -- `Rfix 0` quantifies over the teeth-exposing transfer a light client actually verifies;
+        -- the peel (`satisfied2_of_transferV3Membership`) lifts the transfer rung. Positions 0..59
+        -- are UNCHANGED, so every prior `Rfix_*` rfl-correspondence is preserved.
+        ("transferMembershipVmDescriptor2R24",
+         Dregg2.Circuit.Emit.CarrierComposed.transferV3Membership)]
 
-theorem v3RegistryHeap_length : v3RegistryHeap.length = 56 := by
+theorem v3RegistryHeap_length : v3RegistryHeap.length = 61 := by
   simp [v3RegistryHeap, Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen_length]
 
 /-- The heapWrite member lands at tail position 45 — `Rfix 56` resolves THERE. -/
@@ -226,7 +292,11 @@ declaration order (which is NOT `actionTag` order). Effects with no own rotated 
 `v3Registry` entry their family rides; `heapWrite` (tag 56) and off-range tags map past the registry
 (→ the transfer fallback in `Rfix`). -/
 def actionTagToPos : EffectIdx → Nat
-  | 0  => 0    -- transfer        → transferVmDescriptor2R24
+  | 0  => 60   -- transfer        → transferMembershipVmDescriptor2R24 (the v12 big-bang DEPLOYED
+               --                   membership-teeth transfer, `v3RegistryHeap` tail pos 60: the rc
+               --                   cohort transfer + the 2 `(sender_leaf, authorized_root)` teeth
+               --                   PI pins at 50..51 (`MEMBERSHIP_CLAIM_PI_LO`). The bare cohort
+               --                   transfer [pos 0] stays for the live prover route + the fallback.)
   | 1  => 46   -- delegate        → delegateWriteCapOpenVmDescriptor2R24 (FAN-OUT WRITE: the cap-open
                --                   authority appendix over the MOVING `grantCapWriteV3` base, so the
                --                   DEPLOYED descriptor FORCES the cap-tree insert write — guarantee A —
@@ -266,7 +336,10 @@ def actionTagToPos : EffectIdx → Nat
                --                   membership in-circuit — the LAST named cap-open residual CLOSED. The
                --                   authority-only `exerciseVmDescriptor2R24` [pos 10] stays for the live
                --                   prover route + the bare slot.)
-  | 17 => 22   -- createCell      → createCellVmDescriptor2R24
+  | 17 => 58   -- createCell      → createCellInsertVmDescriptor2R24 (§J′: the DEPLOYED cells-accumulator
+               --                   INSERT host `effAccumInsertV3 cellsRootGroupCol …`, `v3RegistryHeap`
+               --                   tail pos 58; `Rfix 17` FORCES the faithful 8-felt cells-insert over the
+               --                   genuine sorted fresh-key insert. The bare `createCellV3` [pos 22] stays.)
   | 18 => 23   -- factory         → factoryVmDescriptor2R24
   | 19 => 52   -- spawn           → spawnWriteCapOpenVmDescriptor2R24 (FAN-OUT WRITE: the spawn actor
                --                   face on the cap-WRITE rotation `spawnWriteV3` + the cells grow-gate
@@ -279,9 +352,20 @@ def actionTagToPos : EffectIdx → Nat
                --                   revoke(Delegation) EFF_DELEGATION_OPS fan-out at pos 39. The Lean
                --                   tag is the wire `sel::REVOKE_CAPABILITY` selector value 24 — the
                --                   tag `cap_open_route_for_run` routes a `RevokeCapability` run to.)
-  | 27 => 3    -- noteSpend       → noteSpendVmDescriptor2R24
-  | 28 => 4    -- noteCreate      → noteCreateVmDescriptor2R24
-  | 38 => 21   -- makeSovereign   → makeSovereignVmDescriptor2R24
+  | 27 => 56   -- noteSpend       → noteSpendInsertVmDescriptor2R24 (§J′: the DEPLOYED nullifier-accumulator
+               --                   INSERT host `effAccumInsertV3 nullifierRootGroupCol …`, `v3RegistryHeap`
+               --                   tail pos 56; `Rfix 27` FORCES the faithful 8-felt nullifier-insert over
+               --                   the genuine sorted fresh-key insert. The bare `noteSpendV3` [pos 3] stays.)
+  | 28 => 57   -- noteCreate      → noteCreateInsertVmDescriptor2R24 (§J′: the DEPLOYED commitments-accumulator
+               --                   INSERT host `effAccumInsertV3 commitmentsRootGroupCol …`, `v3RegistryHeap`
+               --                   tail pos 57; `Rfix 28` FORCES the faithful 8-felt commitments-insert. The
+               --                   bare `noteCreateV3` [pos 4] stays for the live prover route.)
+  | 38 => 59   -- makeSovereign   → makeSovereignDeployedVmDescriptor2R24 (the v12 big-bang DEPLOYED
+               --                   sovereign, `v3RegistryHeap` tail pos 59: rc + the 4 KEY_COMMIT
+               --                   teeth PI pins at 58..61 (`SOVEREIGN_KEY_COMMIT_PI_LO`) + the
+               --                   in-AIR KEY_COMMIT chip-compress gate welding the published teeth
+               --                   to the committed `B_PUBKEY8` octet. The cohort member [pos 21]
+               --                   stays for the bare slot.)
   | 39 => 55   -- refusal          → refusalFieldsWriteVmDescriptor2R24 (OPTION I: the DEPLOYED after-spine
                --                   fields-write `effFieldsWriteV3 refusalFieldsWriteV3 …`, `v3RegistryHeap`
                --                   tail pos 55; `Rfix 39` FORCES the faithful 8-felt fields-write over the
@@ -307,7 +391,7 @@ def actionTagToPos : EffectIdx → Nat
 LIST POSITION `e` — declaration order ≠ tag order). The lookup goes through `actionTagToPos`; tags with
 no own descriptor (heapWrite, off-range) fall back to the transfer descriptor, so `Rfix` is total. This
 lands each per-effect rung (stated at `actionTag`) at its GENUINE descriptor — in particular
-`Rfix 0 = transferV3` by `rfl`. -/
+`Rfix 0 = transferV3Membership` (the v12 teeth-exposing transfer) by `rfl`. -/
 def Rfix : Registry := fun e =>
   match v3RegistryHeap[actionTagToPos e]? with
   | some (_, d) => d
@@ -318,11 +402,30 @@ def Rfix : Registry := fun e =>
 (`match` is total). -/
 theorem Rfix_total (e : EffectIdx) : ∃ d : EffectVmDescriptor2, Rfix e = d := ⟨Rfix e, rfl⟩
 
-/-- **`Rfix_transfer` — the key correspondence: the transfer tag lands at the transfer descriptor.**
-`actionTag (.balanceA …) = 0` and `actionTagToPos 0 = 0`, and `v3Registry`'s position-`0` entry is the
-transfer descriptor `v3OfFrozen transferVmDescriptor = transferV3`. So `Rfix 0` IS the genuine transfer
-descriptor — the rung at the transfer tag discharges its refinement about the right descriptor. -/
-theorem Rfix_transfer : Rfix 0 = Dregg2.Circuit.RotatedKernelRefinement.transferV3 := rfl
+/-- **`Rfix_transfer` — the key correspondence: the transfer tag lands at the DEPLOYED
+membership-teeth transfer.** `actionTag (.balanceA …) = 0` and `actionTagToPos 0 = 60`, and
+`v3RegistryHeap`'s position-60 entry is `CarrierComposed.transferV3Membership` — the transfer
+descriptor `v3OfFrozen transferVmDescriptor = transferV3` wrapped through the uniform DSL rc-EMIT
+(`withDfaRcPins`, 4 additive pins) THEN the two membership teeth PI pins (`withMembershipTeethPins`,
+the `(sender_leaf, authorized_root)` claim slots 50..51 — `MEMBERSHIP_CLAIM_PI_LO`, the v12
+big-bang exposure). Both wraps only APPEND `.piBinding` pins
+(`CarrierComposed.satisfied2_of_transferV3Membership` peels the chain), so `Rfix 0` IS the genuine
+transfer descriptor UP TO the additive pins — the rung at the transfer tag discharges its
+refinement about the right descriptor via the peel. -/
+theorem Rfix_transfer :
+    Rfix 0 = Dregg2.Circuit.Emit.CarrierComposed.transferV3Membership := rfl
+
+/-- **`Rfix_makeSovereign` — the v12 big-bang: makeSovereign (tag 38) ranges over its OWN DEPLOYED
+key-commit descriptor.** `actionTagToPos 38 = 59` and `v3RegistryHeap`'s position-59 entry is
+`CarrierComposed.makeSovereignV3Deployed` — the record-pin base + rc + the 4 KEY_COMMIT teeth PI
+pins (58..61, `SOVEREIGN_KEY_COMMIT_PI_LO`) + the in-AIR KEY_COMMIT chip-compress gate. So the
+apex's `StarkSound hash Rfix` quantifies over the descriptor a light client actually verifies —
+whose `Satisfied2` FORCES each published teeth PI == `canonical_32_to_felts_4` of the COMMITTED
+BEFORE `B_PUBKEY8` octet (`CarrierComposed.makeSovereignV3Deployed_publishes_key_commit`): the
+fold-bound owner-key claim is welded in-AIR to the committed authority, never a free column. The
+cohort's bare member [pos 21] stays for the live prover route + the bare slot. -/
+theorem Rfix_makeSovereign :
+    Rfix 38 = Dregg2.Circuit.Emit.CarrierComposed.makeSovereignV3Deployed := rfl
 
 /-- **`Rfix_heapWrite` — GAP-2 + OPTION I: heapWrite (tag 56) ranges over its OWN DEPLOYED descriptor.**
 `actionTagToPos 56 = 45` and `v3RegistryHeap`'s position-45 entry is now the DEPLOYED after-spine
@@ -352,6 +455,55 @@ theorem Rfix_refusal :
     Rfix 39 = Dregg2.Circuit.Emit.FieldsOpenEmit.effFieldsWriteV3
         Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalFieldsWriteV3
         "dregg-effectvm-refusal-v1-rot24-v3-write-fieldsopen" := rfl
+
+/-- **`Rfix_noteSpendInsert` — §J′: noteSpend (tag 27) ranges over its OWN DEPLOYED nullifier-accumulator
+INSERT descriptor.** `actionTagToPos 27 = 56` and `v3RegistryHeap`'s position-56 entry is the DEPLOYED
+insert-shaped `effAccumInsertV3 nullifierRootGroupCol NULLIFIER_PARAM_COL (prmCol NOTE_VALUE_LO)
+noteSpendV3 …` (the insert twin of how heap deploys `effHeapWriteV3`). So the apex's `StarkSound hash
+Rfix` quantifies over the descriptor a light client verifies, and the nullifier-insert rung
+(`RotatedKernelRefinementCapFamily.nullifierInsert_forces_write8_sat`) discharges its refinement about
+the RIGHT one: a satisfying `Satisfied2 (Rfix 27)` FORCES the faithful 8-felt INSERT `accumInserts8`
+over the FULL committed BEFORE/AFTER nullifier-root groups (`AccumulatorInsertEmit.effAccumInsertV3_
+forces_write8`) — NEVER the lane-0 squeeze, and over the GENUINE sorted fresh-key insert (NOT the
+non-fitting update-at-key shape). The FOURTH faithful 8-felt Merkle root, deployed. -/
+theorem Rfix_noteSpendInsert :
+    Rfix 27 = Dregg2.Circuit.Emit.AccumulatorInsertEmit.effAccumInsertV3
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.nullifierRootGroupCol
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NULLIFIER_PARAM_COL
+        (Dregg2.Circuit.Emit.EffectVmEmit.prmCol
+          Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.param.NOTE_VALUE_LO)
+        (some Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.SEL_NOTE_SPEND)
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.noteSpendV3
+        "dregg-effectvm-noteSpend-v1-rot24-v3-insert-heapopen" := rfl
+
+/-- **`Rfix_noteCreateInsert` — §J′: noteCreate (tag 28) ranges over its OWN DEPLOYED commitments-
+accumulator INSERT descriptor.** `actionTagToPos 28 = 57`; a satisfying `Satisfied2 (Rfix 28)` FORCES
+the faithful 8-felt INSERT over the committed BEFORE/AFTER commitments-root groups
+(`RotatedKernelRefinementCapFamily.commitmentsInsert_forces_write8_sat`) — the FIFTH faithful root. -/
+theorem Rfix_noteCreateInsert :
+    Rfix 28 = Dregg2.Circuit.Emit.AccumulatorInsertEmit.effAccumInsertV3
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.commitmentsRootGroupCol
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.COMMITMENT_KEY_PARAM_COL
+        (Dregg2.Circuit.Emit.EffectVmEmit.prmCol
+          Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.param.NOTE_VALUE_LO)
+        none
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.noteCreateV3
+        "dregg-effectvm-noteCreate-v1-rot24-v3-insert-heapopen" := rfl
+
+/-- **`Rfix_createCellInsert` — §J′: createCell (tag 17) ranges over its OWN DEPLOYED cells-accumulator
+INSERT descriptor.** `actionTagToPos 17 = 58`; a satisfying `Satisfied2 (Rfix 17)` FORCES the faithful
+8-felt INSERT over the committed BEFORE/AFTER cells-root groups
+(`RotatedKernelRefinementCapFamily.cellsInsert_forces_write8_sat`) — the SIXTH faithful root. With this
+all six named roots (cap · heap · fields · nullifier · commitments · cells) are deployed faithful: the
+three update-at-key writes force `heapWritesTo8`, the three accumulators force `accumInserts8`. -/
+theorem Rfix_createCellInsert :
+    Rfix 17 = Dregg2.Circuit.Emit.AccumulatorInsertEmit.effAccumInsertV3
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellsRootGroupCol
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
+        none
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.createCellV3
+        "dregg-effectvm-createCell-v1-rot24-v3-insert-heapopen" := rfl
 
 /-- **`Rfix_setProgram` — SetProgram (tag 13) ranges over its OWN LIVE descriptor.** `actionTagToPos
 13 = 51` and `v3RegistryHeap`'s position-51 entry is the genuine Class-A `setProgramV3` (the program
@@ -653,7 +805,11 @@ theorem revokeCapabilityArm_nonvacuous (fcaps : FacetCaps) (provided : AuthProvi
 
 #assert_axioms Rfix_total
 #assert_axioms Rfix_transfer
+#assert_axioms Rfix_makeSovereign
 #assert_axioms Rfix_heapWrite
+#assert_axioms Rfix_noteSpendInsert
+#assert_axioms Rfix_noteCreateInsert
+#assert_axioms Rfix_createCellInsert
 #assert_axioms v3RegistryHeap_length
 #assert_axioms v3RegistryHeap_heapWrite
 #assert_axioms Rfix_capOpen

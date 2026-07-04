@@ -28,8 +28,8 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::columns::sel;
 use dregg_circuit::effect_vm::trace_rotated::{
-    CAP_OPEN_AFTER_SPINE_SPAN, CAP_OPEN_BASE, CAP_OPEN_WIDTH, CapOpenWitness, FACET_MASK_HI,
-    RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO, empty_caveat_manifest,
+    CAP_OPEN_AFTER_SPINE_SPAN, CAP_OPEN_BASE, CAP_OPEN_WIDTH, CapOpenWitness, DFA_RC_LEN,
+    FACET_MASK_HI, RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO, empty_caveat_manifest,
     generate_rotated_effect_vm_trace, patch_attenuate_base_for_cap_open, widen_to_cap_open,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
@@ -112,6 +112,7 @@ fn build_attenuate_base() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -119,6 +120,7 @@ fn build_attenuate_base() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let caveat = empty_caveat_manifest();
@@ -131,9 +133,13 @@ fn build_attenuate_base() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     )
     .expect("rotated AttenuateCapability base trace must generate");
     // Wire the attenuate phase-B bindings the bare generator does not carry (nonce passthrough +
-    // cap-root advance binding); returns the corrected 46-PI vector.
-    let dpis =
+    // cap-root advance binding). The patch is shape-preserving; the cap-open faces were never
+    // rc-wrapped in the Lean emit (the committed `attenuateCapOpenEffVmDescriptor2R24` carries the
+    // UNWRAPPED 46-PI base), so lift the dsl rc tail off — exactly as the SDK cap-open leg builder
+    // does.
+    let mut dpis =
         patch_attenuate_base_for_cap_open(&mut trace, &pis).expect("attenuate base phase-B wiring");
+    dpis.truncate(dpis.len() - DFA_RC_LEN);
     (trace, dpis)
 }
 

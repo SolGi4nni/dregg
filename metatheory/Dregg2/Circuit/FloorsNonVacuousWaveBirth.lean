@@ -203,9 +203,10 @@ def spawnPost : RecChainedState :=
       delegationEpochAt := spawnEpochAtMap spawnPre.kernel 9 1 },
     log := createReceipt 9 1 :: spawnPre.log }
 
-/-- **`SpawnTraceReadout` is INHABITED.** -/
-def spawn_readout :
-    SpawnTraceReadout (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
+/-- **`SpawnTraceReadout` is INHABITED** (for EVERY `Cap8Scheme` — the cap-handoff decode seam
+`capsMoveDecodes` is an implication discharged `fun _ => rfl`, scheme-independent). -/
+def spawn_readout (S8 : Dregg2.Circuit.DeployedCapTree.Cap8Scheme) :
+    SpawnTraceReadout S8 (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
       (readoutTrace spawnRow0) spawnPre spawnPost 9 1 0 where
   row := 0
   hrow := by rw [readoutTrace_rows_len]; omega
@@ -232,10 +233,10 @@ def spawn_readout :
   epochStampResidual := rfl
   frHeaps := rfl
 
-theorem spawn_readout_inhabited :
-    Nonempty (SpawnTraceReadout (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
+theorem spawn_readout_inhabited (S8 : Dregg2.Circuit.DeployedCapTree.Cap8Scheme) :
+    Nonempty (SpawnTraceReadout S8 (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
       (readoutTrace spawnRow0) spawnPre spawnPost 9 1 0) :=
-  ⟨spawn_readout⟩
+  ⟨spawn_readout S8⟩
 
 #assert_axioms spawn_readout
 

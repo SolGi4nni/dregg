@@ -165,6 +165,7 @@ fn setfield_lead_with_foreign_transfer_tail_is_unsat() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -172,6 +173,7 @@ fn setfield_lead_with_foreign_transfer_tail_is_unsat() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let caveat = empty_caveat_manifest();
 
@@ -262,6 +264,7 @@ fn mint_lead_with_foreign_transfer_tail_is_unsat() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -269,6 +272,7 @@ fn mint_lead_with_foreign_transfer_tail_is_unsat() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let caveat = empty_caveat_manifest();
 
@@ -344,6 +348,7 @@ fn honest_homogeneous_setfield_still_proves_and_verifies() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -351,6 +356,7 @@ fn honest_homogeneous_setfield_still_proves_and_verifies() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let caveat = empty_caveat_manifest();
 

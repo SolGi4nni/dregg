@@ -169,8 +169,8 @@
     const ok = view.attested;
     return `<span class="bigverdict ${ok ? 'ok' : 'no'}">${ok ? '✓ whole history attested' : '✕ refused'}</span>` +
       `<span class="k">turns folded</span> <span class="v">${view.num_turns}</span>\n` +
-      `<span class="k">genesis root</span> <span class="v">${view.genesis_root}</span>\n` +
-      `<span class="k">final root</span> <span class="v">${view.final_root}</span>\n` +
+      `<span class="k">genesis root</span> <span class="v">[${[].concat(view.genesis_root).join(', ')}]</span>\n` +
+      `<span class="k">final root</span> <span class="v">[${[].concat(view.final_root).join(', ')}]</span>\n` +
       `<span class="k">chain digest</span> <span class="v">[${(view.chain_digest || []).join(', ')}]</span>\n` +
       `<span class="k">engine</span> <span class="v">${esc(view.engine)}</span>\n` +
       `<span class="floor">${esc(view.named_floor)}</span>`;
@@ -185,8 +185,8 @@
       const e = baked.envelope;
       $('#meta').innerHTML =
         `<span class="k">baked aggregate</span> <span class="v">real ${e.num_turns}-turn whole-history proof</span>\n` +
-        `<span class="k">genesis root</span> <span class="v">${e.genesis_root}</span>  ` +
-        `<span class="k">final root</span> <span class="v">${e.final_root}</span>\n` +
+        `<span class="k">genesis root</span> <span class="v">[${[].concat(e.genesis_root).join(', ')}]</span>  ` +
+        `<span class="k">final root</span> <span class="v">[${[].concat(e.final_root).join(', ')}]</span>\n` +
         `<span class="k">chain digest</span> <span class="v">[${e.chain_digest.join(', ')}]</span>\n` +
         `<span class="k">config anchor</span> <span class="v">${esc(correctAnchor)}</span>\n` +
         `<span class="k">proof bytes</span> <span class="v">${e.proof_bytes_b64.length} base64 chars (the wire envelope)</span>`;

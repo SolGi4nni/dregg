@@ -186,13 +186,17 @@ async function boot(){
   buildFold(3);
   setTrust("live","light client · loading wasm…");
   try{
-    M = await import("./pkg/dregg_wasm.js");
+    // The pre-folded wire envelope + config anchor (the producer's heavy step,
+    // done once, off the verifier); the tab runs the light-client verify only.
+    var loaded = await Promise.all([
+      import("./pkg/dregg_wasm.js"),
+      fetch("./history.json",{cache:"no-store"}).then(function(r){ if(!r.ok) throw new Error("history.json "+r.status); return r.json(); })
+    ]);
+    M = loaded[0]; var baked = loaded[1];
     await M.default();
-    setTrust("live","light client · folding history…");
+    setTrust("live","light client · verifying the pre-folded history…");
     await new Promise(function(r){ setTimeout(r, reduceMotion?0:700); });
-    var env=M.produce_external_history_envelope(3,7n);
-    var anchor=M.genesis_vk_anchor(3,7n);
-    var verdict=M.verify_devnet_history(env,anchor);
+    var verdict=M.verify_devnet_history(JSON.stringify(baked.envelope),baked.anchor_hex);
     if(verdict&&verdict.attested){ buildFold(verdict.num_turns||3); setTimeout(function(){ bannerVerified(verdict); }, reduceMotion?0:300); }
     else bannerRefused(verdict,null);
   }catch(e){

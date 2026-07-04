@@ -59,15 +59,24 @@
       eng.detail.innerHTML = '<div class="engine-prog"><i></i></div>';
       setTrust("live", "light client · loading wasm…");
 
-      enginePromise = import("./pkg/dregg_wasm.js").then(function (m) {
-        return m.default().then(function () {
-          eng.state.textContent = "Folding a finalized history…";
-          eng.sub.textContent = "recursive proof over the whole committed chain";
-          return new Promise(function (res) { setTimeout(res, reduceMotion ? 0 : 420); }).then(function () {
-            var env = m.produce_external_history_envelope(3, 7n);
-            var anchor = m.genesis_vk_anchor(3, 7n);
-            return m.verify_devnet_history(env, anchor);
-          });
+      // The aggregate is PRE-FOLDED off the verifier (the producer's heavy step,
+      // done once — ./history.json ships the wire envelope + the config VK
+      // anchor). The tab does the light-client step only: the real recursion
+      // verify. (Folding IN the tab is out of reach post-v12 — the fold's
+      // working set exceeds wasm32's 4 GiB — and was never the story anyway:
+      // the light client verifies, re-executing nothing.)
+      enginePromise = Promise.all([
+        import("./pkg/dregg_wasm.js").then(function (m) { return m.default().then(function () { return m; }); }),
+        fetch("./history.json", { cache: "no-store" }).then(function (r) {
+          if (!r.ok) throw new Error("history.json " + r.status);
+          return r.json();
+        })
+      ]).then(function (loaded) {
+        var m = loaded[0], baked = loaded[1];
+        eng.state.textContent = "Verifying a pre-folded history…";
+        eng.sub.textContent = "one recursive proof over the whole committed chain — checked here";
+        return new Promise(function (res) { setTimeout(res, reduceMotion ? 0 : 420); }).then(function () {
+          return m.verify_devnet_history(JSON.stringify(baked.envelope), baked.anchor_hex);
         });
       }).then(function (v) {
         verdict = v;

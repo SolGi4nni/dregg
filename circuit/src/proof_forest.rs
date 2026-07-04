@@ -40,4 +40,16 @@ pub const CUTOVER_READY_SELECTORS: &[usize] = &[
     // client witnesses what a re-executing validator does. The production minters populate the
     // witness bundle from the turn's bound sub-proof.
     crate::effect_vm::columns::sel::CUSTOM,
+    // CREATE_CELL_FROM_FACTORY (the v12 carrier epoch): the committed `factoryVmDescriptor2R24`
+    // row is the STEP-3 `factoryV3Carriers` (child_vk8 PI 47..54 + contract_hash8 PI 55..62 +
+    // the dsl rc tail), the producer emits the full 67-PI vector, and the recursion tower's
+    // Factory/Hatchery fold arms (`ivc_turn_chain::prove_chain_core_rotated`) bind the octet
+    // claims in-circuit (`{factory,hatchery}_binding_deployed_tooth.rs`, both poles). Admitting
+    // the selector here lets the deployed joint/chain host gate accept the rotated factory leg
+    // it re-verifies in-circuit anyway.
+    crate::effect_vm::columns::sel::CREATE_CELL_FROM_FACTORY,
+    // MAKE_SOVEREIGN (the v12 carrier epoch): the committed `makeSovereignVmDescriptor2R24` row
+    // is live (record-pin8 + rc); the Sovereign fold arm binds the KEY_COMMIT claim pins
+    // (`sovereign_binding_deployed_tooth.rs`). Same host-admission rationale as factory.
+    crate::effect_vm::columns::sel::MAKE_SOVEREIGN,
 ];

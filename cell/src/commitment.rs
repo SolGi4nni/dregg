@@ -582,9 +582,7 @@ pub fn compute_canonical_capability_root_felt(
 /// faithful root — NEVER a lane-0 squeeze, the soundness downgrade the GENTIAN tooth
 /// closes. Cell and circuit fold through the SAME implementation, so they agree
 /// lane-for-lane (the A2 / GENTIAN differentials guard it).
-pub fn compute_canonical_capability_root_8(
-    caps: &CapabilitySet,
-) -> [dregg_circuit::field::BabyBear; 8] {
+pub fn compute_canonical_capability_root_8(caps: &CapabilitySet) -> dregg_circuit::Faithful8 {
     use dregg_circuit::cap_root;
     let leaves: Vec<cap_root::CapLeaf> = caps.iter().map(cap_ref_to_leaf).collect();
     // TOMBSTONE deletion (cap crown, the cell↔circuit revoke reconciliation):
@@ -699,7 +697,7 @@ pub const V9_NUM_REGISTERS: usize = 24;
 /// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc ·
 /// perms_digest · vk_digest · mode · fields_root). Lean `preLimbsAt_length = 37` at R = 24, after
 /// the WAVE-3 mode/fields-root flag-day widening (35→37).
-pub const V9_NUM_PRE_LIMBS: usize = 1 + V9_NUM_REGISTERS + 4 + 3 + 5 + 51; // 88 (v11: +21 accumulator-8-felt completion limbs 67..87, zero-filled until producer-welded)
+pub const V9_NUM_PRE_LIMBS: usize = 1 + V9_NUM_REGISTERS + 4 + 3 + 5 + 75 + 57; // 169 (v13: +56 fields[0..7] completion lanes 112..=167 + 1 pad limb 168 — the faithful fields-octet grow)
 
 /// The turn-level context the rotated commitment absorbs that is NOT cell-local: the
 /// boundary `cells_root` (the sorted-Poseidon2 root over present cells), the cell's committed
@@ -719,6 +717,27 @@ pub struct V9RotationContext {
     pub commitments_root: [u8; 32],
     /// The receipt-index MMR root, absorbed LAST.
     pub iroot: dregg_circuit::field::BabyBear,
+    /// The v12 per-effect CARRIER MATERIAL for the child-vk / contract-hash octets (limbs 88..103).
+    /// `None`/`None` (the `Default`) on a generic turn — only a `CreateCellFromFactory` turn carries
+    /// `child_vk` (the executor's captured `effective_vk`) and a hatchery mint carries
+    /// `contract_hash`. The pubkey octet (104..111) is cell-derived and needs no material.
+    pub material: RotationCarrierMaterial,
+}
+
+/// The v12 per-effect CARRIER MATERIAL that fills the child-vk (88..95) and contract-hash (96..103)
+/// rotated carrier octets. Both are `Option`s so a generic turn defaults to ZERO-filled octets; the
+/// executor captures the REAL material at its source (`apply.rs`'s `effective_vk` for factory turns,
+/// `HpresProof::Attested{contract_hash}` for hatchery mints) and threads it in so the honest turn's
+/// `state_commit` carries it — the SAT foundation the STEP-3 `CarrierOctetGates` welds ride.
+///
+/// The pubkey octet (104..111) is DERIVED from the cell (`cell.public_key()`), so it needs no
+/// material threading — every producer fills it unconditionally.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RotationCarrierMaterial {
+    /// The REAL installed child VK on a `CreateCellFromFactory` turn (the executor's `effective_vk`).
+    pub child_vk: Option<[u8; 32]>,
+    /// The `HpresProof::Attested` content hash on a hatchery mint.
+    pub contract_hash: Option<[u8; 32]>,
 }
 
 /// The canonical scalar limb of a cell's lifecycle: the discriminant folded with its payload
@@ -823,10 +842,8 @@ pub fn compute_authority_digest_felt(cell: &Cell) -> dregg_circuit::field::BabyB
 /// the 8 AFTER limbs to its genuine value, so a 31-bit-colliding wide-open authority cannot be
 /// smuggled into an unwelded limb. Byte-identical across the three producers (cell-side here,
 /// `dregg_turn::rotation_witness::produce`, and the circuit trace).
-pub fn compute_authority_digest_8(cell: &Cell) -> [dregg_circuit::field::BabyBear; 8] {
-    dregg_circuit::effect_vm::bytes32_to_8_limbs(
-        blake3::hash(&authority_residue_bytes(cell)).as_bytes(),
-    )
+pub fn compute_authority_digest_8(cell: &Cell) -> dregg_circuit::Faithful8 {
+    dregg_circuit::Faithful8::from_bytes32(blake3::hash(&authority_residue_bytes(cell)).as_bytes())
 }
 
 /// The domain-separated byte serialization of the authority residue (the authority-bearing cell
@@ -969,7 +986,7 @@ pub fn compute_rotated_pre_limbs(
     cell: &Cell,
     ctx: &V9RotationContext,
 ) -> Vec<dregg_circuit::field::BabyBear> {
-    use dregg_circuit::effect_vm::{fold_bytes32_to_bb, split_u64};
+    use dregg_circuit::effect_vm::split_u64;
     use dregg_circuit::field::BabyBear;
     use dregg_circuit::poseidon2::hash_bytes;
 
@@ -982,12 +999,29 @@ pub fn compute_rotated_pre_limbs(
     pre[1] = bal_lo; // r0 ↔ balance_lo
     pre[2] = BabyBear::new((cell.state.nonce() & 0x7FFF_FFFF) as u32); // r1 ↔ nonce
     pre[3] = bal_hi; // r2 ↔ balance_hi
+    // r3..r10 ↔ fields[0..7] lane 0 (limbs 4..=11) ‖ the 56 fields COMPLETION lanes 112..=167
+    // (fields[i] lanes 1..7 → `112 + 7·i .. +6`). THE v13 FAITHFUL FIELDS OCTET: each field's
+    // 32 bytes ride a full `field_limbs8` 8-lane split (lane 0 = the u64-lane lo32, the faithful
+    // ~124-bit binding), REPLACING the eight ~31-bit `fold_bytes32_to_bb` Horner folds that rode
+    // one `from_lossy_31bit_DANGER` octet. This CLOSES the last degraded-felt residual: the whole
+    // state commitment is now faithful. The setField value8 weld FORCES the written slot's 8 lanes
+    // to the declared params; the completion freezes pin every non-written field's 7 lanes on a
+    // value turn (the fields GENTIAN law). Byte-identical to the `rotation_witness` producer fill.
     for i in 0..8 {
-        // r3..r10 ↔ fields[0..7] (the same Horner packing the v1 state block carries).
-        // FAITHFUL-COMMITMENT-LAW residual: fields[0..7] still fold 32B→1 felt (~31-bit). The
-        // faithful 8-felt grind for these limbs is TODO (parallel to cap/heap/fields_root). The
-        // trailing directive allowlists this KNOWN residual; a NET-NEW fold here fails the gate.
-        pre[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]); // ast-grep-ignore: degraded-felt-commitment
+        let base = 112 + 7 * i;
+        dregg_circuit::Faithful8::from_field_limbs8(&cell.state.fields[i]).write_lanes(
+            &mut pre,
+            [
+                4 + i,
+                base,
+                base + 1,
+                base + 2,
+                base + 3,
+                base + 4,
+                base + 5,
+                base + 6,
+            ],
+        );
     }
     // r11..r22 (limbs 12..=23): app-register headroom.
     // r23 (limb 24) + r11..r17 (limbs 12..=18): THE FAITHFUL 8-FELT AUTHORITY DIGEST (H1) — the
@@ -998,11 +1032,7 @@ pub fn compute_rotated_pre_limbs(
     // existing absorption chain (no vector growth, `rotV3SitesAt` unchanged) and are WELDED by the
     // record-pin / continuity freezes so a 31-bit-colliding authority cannot survive (GENTIAN law).
     // r18..r22 (limbs 19..=23): remaining app-register headroom — zero for a kernel turn.
-    let auth8 = compute_authority_digest_8(cell);
-    pre[24] = auth8[0];
-    for i in 0..7 {
-        pre[12 + i] = auth8[1 + i];
-    }
+    compute_authority_digest_8(cell).write_lanes(&mut pre, [24, 12, 13, 14, 15, 16, 17, 18]);
     // limb 25: cap_root lane-0 (welded) ‖ extras 51..=57: the SEVEN cap-root completion felts
     // (lanes 1..7). THE FAITHFUL 8-FELT CAP ROOT — the native `node8` arity-16 sorted-Poseidon2
     // root the circuit's 8-felt `cap_root` column GROUP carries (`EffectVmEmitRotationV3.
@@ -1010,11 +1040,8 @@ pub fn compute_rotated_pre_limbs(
     // gate FORCES the AFTER group to the `writesTo8` native update (`*_forces_write8`), so a
     // ~31-bit collision at lane-0 differing in any completion felt is UNSAT (the GENTIAN law,
     // ledgerless). Byte-identical to `rotation_witness`'s producer fill.
-    let cap8 = compute_canonical_capability_root_8(&cell.capabilities);
-    pre[25] = cap8[0];
-    for i in 0..7 {
-        pre[51 + i] = cap8[1 + i];
-    }
+    compute_canonical_capability_root_8(&cell.capabilities)
+        .write_lanes(&mut pre, [25, 51, 52, 53, 54, 55, 56, 57]);
     // limb 26: nullifier_root (the noteSpend shielded-set root).
     pre[26] = hash_bytes(&ctx.nullifier_root);
     // limb 27: commitments_root (the noteCreate shielded-set root — the flag-day new limb).
@@ -1026,11 +1053,8 @@ pub fn compute_rotated_pre_limbs(
     // native update, so a ~31-bit collision at lane-0 differing in any completion felt is UNSAT (the
     // heap GENTIAN law). This REPLACES the lossy 1-felt `hash_bytes(&cell.state.heap_root)`.
     // Byte-identical to `rotation_witness::compute_rotated_pre_limbs`.
-    let heap8 = crate::state::compute_canonical_heap_root_8(&cell.state.heap_map);
-    pre[28] = heap8[0];
-    for i in 0..7 {
-        pre[58 + i] = heap8[1 + i];
-    }
+    crate::state::compute_canonical_heap_root_8(&cell.state.heap_map)
+        .write_lanes(&mut pre, [28, 58, 59, 60, 61, 62, 63, 64]);
     // limbs 29,30,31: lifecycle (opaque felt), epoch, committed_height.
     pre[29] = v9_lifecycle_felt(&cell.lifecycle);
     pre[30] = BabyBear::new((cell.state.delegation_epoch() & 0x7FFF_FFFF) as u32);
@@ -1041,18 +1065,12 @@ pub fn compute_rotated_pre_limbs(
     // limbs 33,34: perms_digest, vk_digest (the WAVE-2 flag-day committed authority sub-limbs — the
     // declared-param felts the setPerms / setVK welds force). limb-0 stays here (historical); the
     // v10 weld lands the SEVEN completion felts at the new extras 37..=43 (perms) / 44..=50 (vk).
-    let perms8 = perms_digest_8(&cell.permissions);
-    let vk8 = vk_digest_8(&cell.verification_key);
-    pre[33] = perms8[0];
-    pre[34] = vk8[0];
     // v10 perms/vk faithful 8-felt completion: extras 37..=43 = perms8[1..8], 44..=50 = vk8[1..8].
     // The 8-wide permsVKWeldGate forces EACH to its declared param, so a ~31-bit collision at limb-0
     // that differs in any completion felt is UNSAT (GENTIAN law). Byte-identical to
     // `rotation_witness`'s producer fill.
-    for i in 0..7 {
-        pre[37 + i] = perms8[1 + i];
-        pre[44 + i] = vk8[1 + i];
-    }
+    perms_digest_8(&cell.permissions).write_lanes(&mut pre, [33, 37, 38, 39, 40, 41, 42, 43]);
+    vk_digest_8(&cell.verification_key).write_lanes(&mut pre, [34, 44, 45, 46, 47, 48, 49, 50]);
     // limbs 35,36: mode, fields_root (the WAVE-3 flag-day committed authority sub-limbs — the
     // makeSovereign mode CONSTANT-force limb and the setFieldDyn / refusal fields-root weld limb, the
     // NEW LAST pre-iroot limbs). Byte-identical to `rotation_witness::{mode_felt,fields_root_felt}`.
@@ -1065,12 +1083,30 @@ pub fn compute_rotated_pre_limbs(
     // in any completion felt is UNSAT (the fields GENTIAN law). This REPLACES the lossy 1-felt
     // `fields_root_felt(&cell.state.fields_root)`. Byte-identical to
     // `rotation_witness::compute_rotated_pre_limbs`.
-    let fields8 = crate::state::compute_canonical_fields_root_8(&cell.state.fields_map);
-    pre[36] = fields8[0];
-    let fields_lanes = [65usize, 66, 19, 20, 21, 22, 23];
-    for i in 0..7 {
-        pre[fields_lanes[i]] = fields8[1 + i];
+    crate::state::compute_canonical_fields_root_8(&cell.state.fields_map)
+        .write_lanes(&mut pre, [36, 65, 66, 19, 20, 21, 22, 23]);
+
+    // v12 CARRIER-MATERIAL octets (limbs 88..=111) — the SAT foundation for the four octet carriers.
+    // Byte-identical to the producer twin `dregg_turn::rotation_witness::produce`; the trace generator
+    // (`fill_block`) carries them by copy. Absent material → ZERO (the vector is ZERO-initialised).
+    use dregg_circuit::effect_vm::trace_rotated::{
+        B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET,
+    };
+    // 88..=95: child_vk8 iff the block's effect is `CreateCellFromFactory` (material carries the
+    // REAL installed child VK), else ZERO.
+    if let Some(child_vk) = ctx.material.child_vk {
+        dregg_circuit::Faithful8::from_bytes32(&child_vk).write_octet(&mut pre, B_CHILD_VK_OCTET);
     }
+    // 96..=103: contract_hash8 iff the block's effect is the hatchery mint, else ZERO.
+    if let Some(contract_hash) = ctx.material.contract_hash {
+        dregg_circuit::Faithful8::from_bytes32(&contract_hash)
+            .write_octet(&mut pre, B_CONTRACT_HASH_OCTET);
+    }
+    // 104..=111: pubkey8 UNCONDITIONALLY — the operated cell's owner key in the 30-bit canonical form
+    // (`canonical_to_babybear_pi`, byte-identical to `dregg_commit::typed::canonical_32_to_felts_8`),
+    // the EXACT match to the executor's KEY_COMMIT teeth.
+    let pk8 = canonical_to_babybear_pi(cell.public_key()).map(BabyBear::new);
+    dregg_circuit::Faithful8::from_canonical_key(pk8).write_octet(&mut pre, B_PUBKEY_OCTET);
     pre
 }
 
@@ -1120,12 +1156,9 @@ pub fn perms_digest_felt(
 /// `[1..8]` are the seven completion felts the v10 weld lands at extras 37..=43, each forced by the
 /// 8-wide `permsVKWeldGate` to the declared param (`effects_hash`-bound, NO new verifier PI). A
 /// ~31-bit collision at `[0]` differing in `[1..8]` is now caught — the GENTIAN law.
-pub fn perms_digest_8(
-    perms: &crate::permissions::Permissions,
-) -> [dregg_circuit::field::BabyBear; 8] {
+pub fn perms_digest_8(perms: &crate::permissions::Permissions) -> dregg_circuit::Faithful8 {
     let bytes = postcard::to_allocvec(perms).unwrap_or_default();
-    let h = blake3::hash(&bytes);
-    dregg_circuit::effect_vm::bytes32_to_8_limbs(h.as_bytes())
+    dregg_circuit::Faithful8::from_bytes32(blake3::hash(&bytes).as_bytes())
 }
 
 /// The committed VERIFICATION-KEY-DIGEST sub-limb (`B_VK = 34`, WAVE-2 flag-day). BYTE-IDENTICAL to the
@@ -1142,16 +1175,14 @@ pub fn vk_digest_felt(vk: &Option<crate::cell::VerificationKey>) -> dregg_circui
 /// (revoke) mapping to the all-zero 8-felt (the deployed `vk_hash == [0; 8]` convention). `[0]` is
 /// the historical limb-34 digest; `[1..8]` are the seven completion felts the v10 weld lands at
 /// extras 44..=50, each forced by the 8-wide `permsVKWeldGate`. CANONICAL.
-pub fn vk_digest_8(
-    vk: &Option<crate::cell::VerificationKey>,
-) -> [dregg_circuit::field::BabyBear; 8] {
+pub fn vk_digest_8(vk: &Option<crate::cell::VerificationKey>) -> dregg_circuit::Faithful8 {
     match vk {
         Some(v) => {
             let bytes = postcard::to_allocvec(v).unwrap_or_default();
-            let h = blake3::hash(&bytes);
-            dregg_circuit::effect_vm::bytes32_to_8_limbs(h.as_bytes())
+            dregg_circuit::Faithful8::from_bytes32(blake3::hash(&bytes).as_bytes())
         }
-        None => [dregg_circuit::field::BabyBear::ZERO; 8],
+        // The deployed `vk_hash == [0; 8]` revoke convention — the ZERO sentinel.
+        None => dregg_circuit::Faithful8::ZERO,
     }
 }
 
@@ -1210,16 +1241,18 @@ pub fn compute_canonical_state_commitment_v9(cell: &Cell, ctx: &V9RotationContex
 /// `EffectVmEmitRotationR.wireCommitR8` and the producer twin
 /// `dregg_turn::rotation_witness::wire_commit_8`.
 ///
-/// ADDITIVE / NOT-YET-WIRED: this is the staged faithful commitment. The live default
-/// ([`compute_canonical_state_commitment_v9_felt`]) is the 1-felt chain until the rotated trace +
-/// PI + executor flag-day cuts the proof-bound `STATE_COMMIT` over to all 8 felts (the trace-
-/// geometry cascade `B_STATE_COMMIT` 1→8 + the chip sites arity-4→arity-11). The collision-
-/// distinguishing / intermediate-carrier teeth on the chain primitive live in `dregg-circuit`
-/// (`poseidon2::wire_commit_8_*`).
+/// THE LIVE DEPLOYED COMMITMENT (the flag-day FIRED — `9e5a83935`, 2026-06-19): this 8-felt
+/// (~124-bit) chain IS the published whole-image state binding end-to-end — producer
+/// (`cipherclerk` publishes `felt8_to_bytes32` of the wide commit-8), executor verifier (WIDE
+/// registry only; the 1-felt waist is GONE), and the SDK light client. The shipped strategy
+/// kept `B_STATE_COMMIT` 1-wide in-trace and instead exposed 16 wide carrier PIs beside it.
+/// The 1-felt [`compute_canonical_state_commitment_v9_felt`] survives with test/bench callers
+/// only. The collision-distinguishing / intermediate-carrier teeth on the chain primitive live
+/// in `dregg-circuit` (`poseidon2::wire_commit_8_*`).
 pub fn compute_canonical_state_commitment_v9_felt8(
     cell: &Cell,
     ctx: &V9RotationContext,
-) -> [dregg_circuit::field::BabyBear; 8] {
+) -> dregg_circuit::Faithful8 {
     let pre = compute_rotated_pre_limbs(cell, ctx);
     // The deployed wide carrier the circuit PUBLISHES is the CHIP chain
     // (`fill_wide_block` → `chip_absorb_all_lanes`); the plain `wire_commit_8` DIVERGES from it (no
@@ -1227,8 +1260,8 @@ pub fn compute_canonical_state_commitment_v9_felt8(
     // otherwise an honest wide proof's BEFORE carrier would not equal the stored 8-felt commit.
     // `wire_commit_8_chip` is verify-level in `dregg-circuit` (the chip absorb is part of the
     // verify floor), so this faithful commit is unconditional — the divergent plain-chain floor is
-    // retired.
-    dregg_circuit::poseidon2::wire_commit_8_chip(&pre, ctx.iroot)
+    // retired. `Faithful8::from_wire_commit_chip` IS that chain (the wall's wire-commit constructor).
+    dregg_circuit::Faithful8::from_wire_commit_chip(&pre, ctx.iroot)
 }
 
 /// The 32-byte encoding of the faithful 8-felt commitment: the 8 felts packed as 8×4 LE bytes
@@ -2062,6 +2095,7 @@ mod tests {
             nullifier_root: [0u8; 32],
             commitments_root: [0u8; 32],
             iroot: BabyBear::new(iroot),
+            material: Default::default(),
         }
     }
 
@@ -2074,8 +2108,8 @@ mod tests {
         assert_eq!(pre.len(), V9_NUM_PRE_LIMBS);
         assert_eq!(
             pre.len(),
-            67,
-            "37 base/WAVE-2/3 + 30 v10 faithful-8-felt completion limbs (37..66)"
+            169,
+            "37 base/WAVE-2/3 + 51 faithful-8-felt completion limbs (37..87, v10+v11) + 24 v12 carrier-material octets (88..111) + 56 v13 fields[0..7] completion lanes (112..167) + 1 pad (168)"
         );
         // cells_root rides limb 0; the welded r0 (balance_lo) is non-zero for a funded cell.
         assert_eq!(pre[0], BabyBear::new(11));

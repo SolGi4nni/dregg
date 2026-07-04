@@ -378,11 +378,6 @@ carries its closure shape. Pure-Lean ranks are VK-risk-free and can soak before 
   programmatic diverge after the widget exists needs a `branch_resync` (mirror of `doc_resync`) — closure = add it if a flow
   edits the branch out-of-band while its editor is open.
 
-  (workspace member). Slice 3 = `gate_effect_set`/`gate_auth` over the PROVEN `is_facet_attenuation`/`is_attenuation`;
-  Slice 1 = `witness_receipt` → real chained `dregg_turn::TurnReceipt` (v3 hash binds the chain link); Slice 1's payoff =
-  kind → `EffectSummary`) so the attested queries see real facts, not just the receipt-hash MMR. (c) ACTUAL adoption is in
-  `cap-bundle` parser → `CapBundle` — an ember/David seam, out-of-tree. (d) Slice 2 (`Target::HostPd` confinement) stays in
-  `sel4/dregg-firmament`, not re-exported.
 
 ## umem Stage A LANDED: the per-cell heap is a first-class umem (additive); live producer is the named seam (2026-06-25)
 - WHAT: `UMEM-PRIMITIVE.md §2/§7` Stage A — the per-cell heap (`CellState.heap_map`) projected as a

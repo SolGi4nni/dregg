@@ -24,7 +24,7 @@ use crate::note_spending_air::{
     MIN_MERKLE_DEPTH, NOTE_SPENDING_WIDTH, NoteSpendingWitness, col, commitment_chain, limb_col,
     merkle_col, pi,
 };
-use crate::poseidon2::hash_fact;
+use crate::poseidon2::{hash_fact, hash_many};
 use crate::stark::{self, StarkProof};
 
 use crate::dsl::circuit::{
@@ -838,6 +838,85 @@ pub fn verify_note_spend_dsl_full(
         value_hi,
     ];
     stark::verify(&circuit, proof, &public_inputs)
+}
+
+// ============================================================================
+// The FELT-DOMAIN bridge-mint identity (the AIR-recomputable mint_hash)
+// ============================================================================
+
+/// **THE FELT-DOMAIN MINT IDENTITY** — the in-circuit-recomputable bridge-mint
+/// `mint_hash`:
+///
+/// `hash_fact(hash_fact(nullifier, [merkle_root, destination_federation,
+/// asset_type]), [value_lo, value_hi])`
+///
+/// over the SAME six compressed felts [`verify_note_spend_dsl_full`] binds the
+/// note-spend STARK to (the executor's `apply_bridge_mint` PI vector). This is
+/// the ONE canonical definition; the executor/SDK projectors
+/// (`effect_vm_bridge.rs`, `cipherclerk::convert_effects_to_vm`) derive the
+/// AIR-facing `VmEffect::BridgeMint.mint_hash` from it, and the recursion
+/// note-spend leaf (`circuit-prove::note_spend_leaf_adapter`) recomputes it
+/// IN-AIR from its PI-pinned row-0 columns — so the deployed row's published
+/// mint_hash PI and the leaf's exposed lane 6 meet in ONE felt domain.
+///
+/// Binds the full bridge-mint identity: which nullifier, from which source
+/// note-tree root, to which federation, which asset, and the full u64 amount
+/// via both limbs.
+pub fn note_spend_mint_hash_felt(
+    nullifier: BabyBear,
+    merkle_root: BabyBear,
+    value_lo: BabyBear,
+    asset_type: BabyBear,
+    destination_federation: BabyBear,
+    value_hi: BabyBear,
+) -> BabyBear {
+    let m1 = hash_fact(
+        nullifier,
+        &[merkle_root, destination_federation, asset_type],
+    );
+    hash_fact(m1, &[value_lo, value_hi])
+}
+
+/// [`note_spend_mint_hash_felt`] from the RAW byte-domain bridge material — the
+/// executor/SDK entry point (the projectors hold `PortableNoteProof` bytes, not
+/// felts). Performs EXACTLY the compressions `apply_bridge_mint`'s
+/// `verify_stark` closure performs before calling
+/// [`verify_note_spend_dsl_full`]:
+///
+///   * `nullifier` / `note_tree_root` / `destination_federation`: 32-byte
+///     values compressed via `BabyBear::encode_hash` → Poseidon2 `hash_many`
+///     (the `bridge::present::bytes_to_babybear` convention);
+///   * `value`: split into the low-30 / high-34 limbs (the two-limb full-u64
+///     binding, CAVEAT-LAYER-COVERAGE.md §6.5);
+///   * `asset_type`: low-30 bits as a canonical felt (small enumerated tag).
+///
+/// So the identity this returns is over the SAME felts the executor enforces
+/// the note-spend STARK against — the byte↔felt tie is the verify call itself,
+/// not a laundered re-hash. `note_tree_root` is the attested root the STARK is
+/// verified against (`AttestedRoot::note_tree_root`); the attestation wrapper's
+/// remaining fields are pinned executor-side by the trusted-set equality check
+/// and do NOT ride the mint identity (the STARK never binds them).
+pub fn bridge_mint_hash_felt(
+    nullifier: &[u8; 32],
+    note_tree_root: &[u8; 32],
+    destination_federation: &[u8; 32],
+    value: u64,
+    asset_type: u64,
+) -> BabyBear {
+    fn compress(bytes: &[u8; 32]) -> BabyBear {
+        hash_many(&BabyBear::encode_hash(bytes))
+    }
+    let value_lo = BabyBear::new((value & ((1u64 << 30) - 1)) as u32);
+    let value_hi = BabyBear::new((value >> 30) as u32);
+    let asset_bb = BabyBear::new((asset_type & ((1u64 << 30) - 1)) as u32);
+    note_spend_mint_hash_felt(
+        compress(nullifier),
+        compress(note_tree_root),
+        value_lo,
+        asset_bb,
+        compress(destination_federation),
+        value_hi,
+    )
 }
 
 // ============================================================================

@@ -162,14 +162,14 @@
 <pre><code>&lt;!-- in your published page, before &lt;/body&gt; --&gt;
 &lt;script src="https://dregg.works/verify-badge.js"
         data-cell="&lt;your 64-hex cell id&gt;"
-        data-node="https://&lt;a-node&gt;"
         data-name="mysite"&gt;&lt;/script&gt;</code></pre>
     </div>
     <p class="section__intro" style="margin-top:var(--s4);font-size:0.92rem">
       Then commit <code>blake3</code> of the whole file — badge tag and all — to your cell. The page becomes
       self-certifying: the bytes that include the badge are exactly the bytes the badge re-hashes and the
-      bytes the commitment pins. The check closes on itself. See the snippet's header for the meta-tag and
-      <code>window.__DREGG__</code> alternatives.
+      bytes the commitment pins. The check closes on itself. By default the commitment is fetched from the
+      public devnet node; add <code>data-node="https://&lt;a-node&gt;"</code> to point the check at any node
+      you prefer. See the snippet's header for the meta-tag and <code>window.__DREGG__</code> alternatives.
     </p>
   </section>
 

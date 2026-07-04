@@ -84,38 +84,56 @@ pub const NUM_REGISTERS: usize = 24;
 
 /// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
 /// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc ·
-/// perms_digest · vk_digest · **mode** · **fields_root**). Lean `preLimbsAt_length = 37` at R = 24,
-/// after the WAVE-3 mode/fields-root flag-day widening (NUM_PRE_LIMBS 35→37 — the committed mode byte +
-/// fields_root digest sub-limbs, the NEW LAST pre-iroot limbs).
-pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 5 + 51; // 88 (v11: +21 dedicated accumulator-8-felt completion limbs 67..87 over v10's 67)
+/// perms_digest · vk_digest · mode · fields_root · v12 carrier-material octets 88..=111 · the v13
+/// fields[0..7] COMPLETION lanes 112..=167 + one zero PAD limb at 168). Lean
+/// `EffectVmEmitRotationV3.preLimbsAt_length = 169`. The v13 fields-octet grow (`112→169`) appends
+/// the 56 fields[0..7] completion lanes so each field's 32 bytes ride a faithful `field_limbs8`
+/// 8-lane split (lane 0 at limb `4 + i`, lanes 1..7 at `112 + 7·i .. +6`), closing the LAST
+/// degraded-felt residual; the pad limb 168 keeps the body `[4..168]` = 165 = fifty-five 3-wide
+/// groups (no arity-2 leftover).
+pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 5 + 75 + 57; // 169 (v13: +56 fields completion lanes 112..=167 + 1 pad limb 168)
 
-/// A rotated block: 37 limbs + iroot + state_commit + 12 chain carriers = 51 columns. The 37-limb
-/// body chains as a 4-wide head (limbs 0..3) + ELEVEN 3-wide groups (limbs 4..36, exactly 33 = 11×3,
-/// NO arity-2 leftover — the WAVE-2 vk singleton is absorbed into the eleventh group) + the iroot
-/// alone, so the chain-carrier count stays 12 over the 35-limb shape (B_SPAN 49→51 — two more limbs,
-/// no new carrier).
-pub const B_SPAN: usize = 119;
-/// The widened-caveat region: 29 manifest + 9 chain + 1 commit = 39 columns.
-pub const C_SPAN: usize = 39;
-/// The appendix: two blocks + the caveat region.
-pub const APPENDIX: usize = 2 * B_SPAN + C_SPAN; // 141
+/// A rotated block: 169 pre-iroot limbs + iroot + state_commit + 56 chain carriers = 227 columns.
+/// The 169-limb body chains as a 4-wide head (limbs 0..3) + FIFTY-FIVE 3-wide groups (limbs
+/// 4..168, exactly 165 = 55×3, NO arity-2 leftover — the v13 pad limb 168 restores the clean
+/// grouping) + the iroot absorbed ALONE last, so the chain-carrier count is 56 (1 head + 55 groups).
+pub const B_SPAN: usize = 227;
+/// The widened-caveat region: 29 manifest + 9 chain + 1 commit + the 4-felt DFA route-commitment
+/// carrier = 43 columns. Lean `EffectVmEmitRotationV3.C_SPAN`.
+pub const C_SPAN: usize = 43;
+/// In-region offset of the chained caveat commitment (the `caveatCommit` fold over the 29 manifest
+/// felts — UNTOUCHED by the rc carrier appended past it). Lean `C_COMMIT`.
+pub const C_CAVEAT_COMMIT: usize = 38;
+/// In-region base of the 4-felt DFA ROUTE-COMMITMENT carrier (offsets 39..=42 — the dsl rc-EMIT).
+/// Carries [`dfa_route_commitment`] of the turn's `Witnessed{Dfa}` proof-wire public inputs on a
+/// Dfa-gated turn, ZERO otherwise (the absent sentinel). Filled uniformly on every row by
+/// [`fill_caveat`] from [`RotatedCaveatManifest::dfa_rc`]; published as each cohort member's LAST 4
+/// member PIs by the Lean `withDfaRcPins` wrap. Lean `EffectVmEmitRotationV3.C_RC_OFF`.
+pub const C_DFA_RC_OFF: usize = 39;
+/// Width of the DFA route-commitment carrier (4 felts — the same shape as the custom carrier's
+/// `custom_proof_commitment`).
+pub const DFA_RC_LEN: usize = 4;
+/// The appendix: two blocks + the caveat region (v13: 2·227 + 43 = 497).
+pub const APPENDIX: usize = 2 * B_SPAN + C_SPAN; // 497
 /// The UN-GRADUATED rotated trace width (the rotated main columns BEFORE Phase B-GATE appends the
-/// per-chip-lookup 7-lane blocks). `187 + 141 = 328`.
-pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 328
+/// per-chip-lookup 7-lane blocks). `188 + 497 = 685`.
+pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 685
 
 /// The number of poseidon2-chip lookup SITES the graduated rotated descriptor
 /// (`*VmDescriptor2R24`, e.g. `attenuateVmDescriptor2R24`) carries — the per-site lane blocks
 /// Phase B-GATE appends at the END of the rotated layout (each chip tuple is now 17-wide:
-/// `1 arity + 8 inputs + out0 + 7 output-lanes`, the 7 lanes witnessed in appended columns). The
-/// committed graduated width is `ROT_WIDTH + 7 * N_ROT_SITES = 464 + 518 = 982`, matching the TSV
-/// `attenuateVmDescriptor2R24.trace_width`. Graduation APPENDS (positions < ROT_WIDTH unchanged).
-pub const N_ROT_SITES: usize = 74;
+/// `1 arity + 8 inputs + out0 + 7 output-lanes`, the 7 lanes witnessed in appended columns). v13: the
+/// fields-octet grow (NUM_PRE_LIMBS 112→169) lifts each block's carrier count 37→56, so the two blocks
+/// contribute 2·56 = 112 sites + the 16 caveat-region sites = 128. The committed graduated width is
+/// `ROT_WIDTH + 7 * N_ROT_SITES = 685 + 896 = 1581`, matching the regen'd `*VmDescriptor2R24`
+/// trace_width. Graduation APPENDS (positions < ROT_WIDTH unchanged).
+pub const N_ROT_SITES: usize = 128;
 
 /// The GRADUATED rotated trace width: the un-graduated rotated columns PLUS the 7×`N_ROT_SITES`
-/// appended chip-lane columns (`328 + 280 = 608` = the committed `attenuateVmDescriptor2R24`
+/// appended chip-lane columns (`685 + 896 = 1581` = the committed `transferVmDescriptor2R24`
 /// trace_width). The honest rotated lane columns (`ROT_WIDTH .. GRAD_ROT_WIDTH`) are filled
 /// automatically by the prove wrapper's `descriptor_ir2::fill_chip_lanes`.
-pub const GRAD_ROT_WIDTH: usize = ROT_WIDTH + 7 * N_ROT_SITES; // 982 (v11: +154 over v10's 828)
+pub const GRAD_ROT_WIDTH: usize = ROT_WIDTH + 7 * N_ROT_SITES; // 1581 (v13: fields-octet grow)
 
 /// In-block offset of the AUTHORITY-DIGEST limb (r23, limb 24) — the single felt
 /// folding ALL authority-bearing cell state no other rotated limb carries
@@ -162,12 +180,26 @@ pub const B_MODE: usize = 35;
 /// In-block offset of the committed `fields_root` digest limb (limb 36 — the WAVE-3 flag-day overflow
 /// map root, the setFieldDyn / refusal weld limb). Lean `EffectVmEmitRotationV3.B_FIELDS_ROOT`.
 pub const B_FIELDS_ROOT: usize = 36;
-/// In-block offset of the iroot carrier (absorbed last, limb 88 in the v11 accumulator-8-felt geometry).
-pub const B_IROOT: usize = 88;
-/// In-block offset of the `state_commit` carrier (the chain's final digest, carrier index B_SPAN-1-29).
-pub const B_STATE_COMMIT: usize = 89;
-/// In-block base of the chained-absorption intermediate carriers (v11: 29 sites at 90..=118).
-pub const B_CHAIN_BASE: usize = 90;
+/// In-block base of the v12 CHILD-VK carrier octet (limbs 88..=95). Carries
+/// `bytes32_to_8_limbs(child_vk)` on a `CreateCellFromFactory` block (the REAL installed child VK
+/// captured at the executor's `effective_vk` site), ZERO on every other block. The SAT-foundation
+/// fill; the STEP-3 `CarrierOctetGates` weld binds it to the factory's installed VK.
+pub const B_CHILD_VK_OCTET: usize = 88;
+/// In-block base of the v12 CONTRACT-HASH carrier octet (limbs 96..=103). Carries
+/// `bytes32_to_8_limbs(contract_hash)` on a hatchery-mint block (the `HpresProof::Attested`
+/// content hash), ZERO otherwise.
+pub const B_CONTRACT_HASH_OCTET: usize = 96;
+/// In-block base of the v12 PUBKEY carrier octet (limbs 104..=111). Carries
+/// `canonical_32_to_felts_8(cell.public_key())` UNCONDITIONALLY (every turn — the operated cell's
+/// owner key, the 30-bit canonical form that matches the executor's KEY_COMMIT teeth). This is the
+/// only octet non-zero on a generic turn, so it moves every turn's `state_commit`.
+pub const B_PUBKEY_OCTET: usize = 104;
+/// In-block offset of the iroot carrier (absorbed last, limb 169 in the v13 fields-octet geometry).
+pub const B_IROOT: usize = 169;
+/// In-block offset of the `state_commit` carrier (the chain's final digest, `= hash(carrier226, iroot)`).
+pub const B_STATE_COMMIT: usize = 170;
+/// In-block base of the chained-absorption intermediate carriers (v13: 56 sites at 171..=226).
+pub const B_CHAIN_BASE: usize = 171;
 
 /// Absolute base column of the BEFORE rotated block.
 pub const BEFORE_BASE: usize = V1_WIDTH; // 186
@@ -265,9 +297,19 @@ pub struct RotatedCaveatEntry {
 
 /// The fixed-size caveat manifest the rotated region carries: 1 count + 4 entries × 7 felts
 /// = 29 felts. Lean `EffectVmEmitRotationCaveat.RotCaveatManifest`.
+///
+/// `dfa_rc` is the 4-felt DFA ROUTE-COMMITMENT carrier (the dsl rc-EMIT): on a turn gated by a
+/// `Witnessed{Dfa}` predicate it carries [`dfa_route_commitment`] of the verified `DfaProofWire`'s
+/// public inputs; on every other turn it is ZERO (the absent sentinel — the default). It rides the
+/// caveat region at [`C_DFA_RC_OFF`] (past the `caveatCommit` fold, which stays over the 29
+/// manifest felts) and each cohort descriptor publishes it as its LAST 4 member PIs (`withDfaRcPins`),
+/// so the per-turn fold can `connect` the re-proven DSL leaf's in-circuit PI-commitment to the
+/// deployed leg.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RotatedCaveatManifest {
     pub entries: [RotatedCaveatEntry; cav::MAX_CAVEATS],
+    /// The DFA route-commitment carrier (ZERO = no Dfa caveat on this turn).
+    pub dfa_rc: [BabyBear; DFA_RC_LEN],
 }
 
 impl RotatedCaveatManifest {
@@ -328,6 +370,27 @@ pub fn slot_caveats_to_rotated_manifest(
         };
     }
     Ok(manifest)
+}
+
+/// The domain tag of the DFA route-commitment derivation. **This IS
+/// `dregg_circuit_prove::custom_proof_bind::CUSTOM_PROOF_PI_DOMAIN`** — the dsl rc anchor reuses
+/// the custom proof-bind mechanism term-for-term (a `Witnessed{Dfa}` predicate transition is,
+/// byte for byte, the same `CellProgram` STARK object a custom effect re-proves; see
+/// `circuit-prove/src/dsl_leaf_adapter.rs`). Duplicated here (with a cross-pin test in
+/// `sdk/tests`) because `dregg-circuit` cannot depend on `dregg-circuit-prove`; the fold lane's
+/// `custom_proof_pi_commitment` and this function MUST stay byte-identical.
+pub const DFA_ROUTE_COMMIT_DOMAIN: &str = "dregg-custom-proof-bind-pi-v1";
+
+/// The canonical 4-felt DFA ROUTE-COMMITMENT of a `Witnessed{Dfa}` proof wire's public inputs —
+/// the value the producer lands in the caveat-region rc carrier ([`C_DFA_RC_OFF`]) and the
+/// deployed descriptor publishes at its LAST 4 member PIs. Byte-identical to
+/// `dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment` (the first 4 felts of the
+/// canonical `WideHash::from_poseidon2` squeeze under the custom proof-bind domain), so the fold's
+/// re-proven DSL leaf exposes EXACTLY this value in-circuit and the binding node's `connect` bites.
+pub fn dfa_route_commitment(public_inputs: &[BabyBear]) -> [BabyBear; DFA_RC_LEN] {
+    let felts =
+        crate::binding::WideHash::from_poseidon2(DFA_ROUTE_COMMIT_DOMAIN, public_inputs).to_felts();
+    [felts[0], felts[1], felts[2], felts[3]]
 }
 
 // ============================================================================
@@ -428,7 +491,7 @@ pub fn generate_rotated_effect_vm_trace(
     dpis.push(r0[BEFORE_BASE + B_STATE_COMMIT]); // PI 42 (V1_PI_COUNT): rotated OLD commit (col 218)
     dpis.push(last[AFTER_BASE + B_STATE_COMMIT]); // PI 43: rotated NEW commit (col 261)
     dpis.push(last[AFTER_BASE + B_COMMITTED_HEIGHT]); // PI 44: committed height (col 259)
-    dpis.push(last[CAVEAT_BASE + C_SPAN - 1]); // PI 45: caveat commit (col 310)
+    dpis.push(last[CAVEAT_BASE + C_CAVEAT_COMMIT]); // PI 45: caveat commit
     debug_assert_eq!(dpis.len(), ROT_PI_COUNT);
 
     // THE C4 LAST-FLIP-GATE (note-spend nullifier weld): a NoteSpend turn rotates against the
@@ -519,6 +582,64 @@ pub fn generate_rotated_effect_vm_trace(
         debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
     }
 
+    // THE FACTORY CARRIER-OCTET PINS (STEP 3 — the direct child_vk8 / contract_hash8 PI exposure).
+    // The deployed `factoryVmDescriptor2R24` is `withAfterOctetPins (withAfterOctetPins factoryV3
+    // B_CHILD_VK_OCTET) B_CONTRACT_HASH_OCTET` (Lean `factoryV3Carriers`, piCount 47 → 63): 16 TAIL
+    // pins publishing the committed AFTER-block carrier octets — child_vk8 (limbs 88..=95,
+    // PI 47..54: the executor's REAL installed child VK, which the hatchery-INVARIANT carrier also
+    // rides) then contract_hash8 (limbs 96..=103, PI 55..62: the hatchery-mint
+    // `HpresProof::Attested` content hash, ZERO on a plain factory turn). The octet columns are the
+    // STEP-2/2.5 committed fills (carrier material absorbed into `state_commit`), so the pins read
+    // the LAST row's AFTER block — exactly the columns the Lean pins bind, and a forged octet
+    // mismatches the committed commitment. They ride AFTER the grow-gate pin (PI 46) and BEFORE
+    // the dsl rc tail (PI 63..66) — per-effect extras first, rc last-pre-wide.
+    if matches!(effects.first(), Some(Effect::CreateCellFromFactory { .. })) {
+        for k in 0..8 {
+            dpis.push(last[AFTER_BASE + B_CHILD_VK_OCTET + k]); // PI 47..54: child_vk8
+        }
+        for k in 0..8 {
+            dpis.push(last[AFTER_BASE + B_CONTRACT_HASH_OCTET + k]); // PI 55..62: contract_hash8
+        }
+        debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT + 16);
+    }
+
+    // THE BRIDGE-MINT FELT MINT-HASH PIN (STEP 2/3 — the bridge carrier's deployed-leg exposure).
+    // The deployed `mintVmDescriptor2R24` (Lean `mintV3BridgeHash`) carries a FIFTH appended PI
+    // pin welding the mint row's `mint_hash` (`param::MINT_HASH = param0`, col `PARAM_BASE + 0`)
+    // to rotated PI slot 46 on the FIRST row — the bridge twin of the noteSpend nullifier weld.
+    // Since the STEP-1 executor re-align, `mint_hash` is the FELT-DOMAIN
+    // `note_spend_mint_hash_felt` (`dsl::note_spending::bridge_mint_hash_felt` over the six
+    // compressed felts `apply_bridge_mint` enforces the note-spend STARK against), so the
+    // published PI is the value the recursion note-spend leaf recomputes IN-AIR at its claim
+    // lane 6 — the fold's `connect` anchor. Rides BEFORE the dsl rc tail (rc 47..50) —
+    // per-effect extras first, rc last-pre-wide. The supply-mint member (`sel::MINT`,
+    // `supplyMintVmDescriptor2R24`) keeps the 46-PI shape (no pin).
+    if matches!(effects.first(), Some(Effect::BridgeMint { .. })) {
+        use super::columns::{PARAM_BASE, param};
+
+        // SINGLE-MINT INVARIANT (the noteSpend single-spend discipline, same reasoning): the
+        // pin is a FIRST-row pin against ONE PI slot, and the fold's binding node connects ONE
+        // exposed mint identity to ONE re-proven note-spend leaf. A second BridgeMint on a
+        // non-first row would be UNPINNED — its mint identity would escape the fold's backing
+        // check (fail-open). So the rotated bridge-mint leg accepts exactly ONE mint row; a
+        // multi-BridgeMint turn fails closed here and falls back to the v1 leg.
+        let mint_count = effects
+            .iter()
+            .filter(|e| matches!(e, Effect::BridgeMint { .. }))
+            .count();
+        if mint_count != 1 {
+            return Err(format!(
+                "rotated bridge-mint leg supports exactly one mint row (the single-identity \
+                 fold-backing shape), got {mint_count}; a multi-BridgeMint turn must use the v1 \
+                 leg. Rotating it would leave the non-first mint's identity unpinned and ESCAPE \
+                 the note-spend fold backing."
+            ));
+        }
+
+        dpis.push(r0[PARAM_BASE + param::MINT_HASH]); // PI 46: the felt-domain bridge-mint identity
+        debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
+    }
+
     // THE COMMITMENTS-SET GROW-GATE PIN (noteCreate — the deployment-real commitment set-insert
     // close, the `commitments_root` flag-day). The live `noteCreateVmDescriptor2R24` carries a FIFTH
     // pin welding the published note commitment (`param0`, col `PARAM_BASE + 0` — the
@@ -531,6 +652,18 @@ pub fn generate_rotated_effect_vm_trace(
         use super::columns::{PARAM_BASE, param};
         dpis.push(r0[PARAM_BASE + param::NULLIFIER]); // PI 38: the published note commitment (param0)
         debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
+    }
+
+    // THE DSL rc-EMIT TAIL (the `Witnessed{Dfa}` route-commitment exposure). EVERY deployed cohort
+    // member is wrapped OUTERMOST through Lean `withDfaRcPins`, publishing the caveat-region DFA
+    // route-commitment carrier (cols `CAVEAT_BASE + C_DFA_RC_OFF ..+4`, filled by `fill_caveat`
+    // from `caveat.dfa_rc`) as its LAST 4 member PIs — AFTER every per-effect extra pin above and
+    // BEFORE the 16 wide commit PIs the wide twin appends. A Dfa-gated turn lands
+    // `dfa_route_commitment(DfaProofWire.public_inputs)` here (the fold's `connect` anchor); a turn
+    // WITHOUT a Dfa caveat publishes the ZERO sentinel and proves identically (the pins are plain
+    // PI bindings over the uniformly-filled carrier).
+    for k in 0..DFA_RC_LEN {
+        dpis.push(last[CAVEAT_BASE + C_DFA_RC_OFF + k]);
     }
 
     Ok((trace, dpis))
@@ -687,6 +820,12 @@ pub fn generate_rotated_effect_vm_trace_with_fee(
     // (the rotated OLD_COMMIT / height / caveat pins are unaffected by the fee; ride the base vector.)
     dpis.push(fee_felt); // PI ROT_PI_COUNT: the published fee (col 89, last-row pinned).
     debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
+    // The dsl rc TAIL rides AFTER the fee pin (`withDfaRcPins transferFeeV3`: rc at PI 47..50).
+    // The fee surgery never touches the caveat region, so the base generator's rc values are
+    // still the trace's carrier values — re-read them from the post-fee last row all the same.
+    for k in 0..DFA_RC_LEN {
+        dpis.push(last[CAVEAT_BASE + C_DFA_RC_OFF + k]);
+    }
 
     Ok((trace, dpis))
 }
@@ -1080,15 +1219,14 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
                 .into(),
         );
     }
-    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
+    let before_root8 = before_tree.root8();
     let mut after_leaves = before_nullifiers.to_vec();
     after_leaves.push(HeapLeaf {
         addr: nf_key,
         value: nf_value,
     });
     // The after-tree is built only to read its root8; move `after_leaves` in (no clone).
-    let after_root8: [BabyBear; HEAP_DIGEST_W] =
-        CanonicalHeapTree8::new(after_leaves, HEAP_TREE_DEPTH).root8();
+    let after_root8 = CanonicalHeapTree8::new(after_leaves, HEAP_TREE_DEPTH).root8();
 
     // Mirror of `EffectVmEmitRotationV3.nullifierRootGroupCol`: lane 0 = limb `B_NULLIFIER_ROOT` (26);
     // the seven DEDICATED completion limbs 67..73 for lanes 1..7.
@@ -1178,15 +1316,14 @@ pub fn generate_rotated_create_cell_trace_with_accounts_tree(
                 .into(),
         );
     }
-    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
+    let before_root8 = before_tree.root8();
     let mut after_leaves = before_accounts.to_vec();
     after_leaves.push(HeapLeaf {
         addr: cell_key,
         value: cell_key, // the born-empty cell rides its own key as its leaf value.
     });
     // The after-tree is built only to read its root8; move `after_leaves` in (no clone).
-    let after_root8: [BabyBear; HEAP_DIGEST_W] =
-        CanonicalHeapTree8::new(after_leaves, HEAP_TREE_DEPTH).root8();
+    let after_root8 = CanonicalHeapTree8::new(after_leaves, HEAP_TREE_DEPTH).root8();
 
     // Mirror of `EffectVmEmitRotationV3.cellsRootGroupCol`: lane 0 = limb 0 (accounts root); the seven
     // DEDICATED completion limbs 81..87 for lanes 1..7.
@@ -1258,15 +1395,14 @@ pub fn generate_rotated_note_create_trace_with_commitments_tree(
     // The BEFORE commitments tree and the AFTER tree (= BEFORE + the inserted commitment). NoteCreate
     // is append-only — no `.absent` freshness precondition.
     let before_tree = CanonicalHeapTree8::new(before_commitments.to_vec(), HEAP_TREE_DEPTH);
-    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
+    let before_root8 = before_tree.root8();
     let mut after_leaves = before_commitments.to_vec();
     after_leaves.push(HeapLeaf {
         addr: cm_key,
         value: cm_value,
     });
     // The after-tree is built only to read its root8; move `after_leaves` in (no clone).
-    let after_root8: [BabyBear; HEAP_DIGEST_W] =
-        CanonicalHeapTree8::new(after_leaves, HEAP_TREE_DEPTH).root8();
+    let after_root8 = CanonicalHeapTree8::new(after_leaves, HEAP_TREE_DEPTH).root8();
 
     // Mirror of `EffectVmEmitRotationV3.commitmentsRootGroupCol`: lane 0 = limb `B_COMMITMENTS_ROOT`
     // (27); the seven DEDICATED completion limbs 74..80 for lanes 1..7.
@@ -1380,7 +1516,7 @@ pub fn generate_rotated_refusal_trace_with_fields_tree(
                 .into(),
         );
     }
-    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
+    let before_root8 = before_tree.root8();
     let after_root8: [BabyBear; HEAP_DIGEST_W] = before_tree
         .update_witness(HeapLeaf {
             addr: audit_key,
@@ -1444,12 +1580,11 @@ pub fn generate_rotated_refusal_trace_with_fields_tree(
 /// READ appendix (`CAP_OPEN_SPAN = 329`) + the AFTER-spine appendix (`AFTER_SPINE_SPAN = 143`):
 /// `829 + 329 + 143 = 1301`. A satisfying trace FORCES the faithful 8-felt fields-write over the full
 /// ~124-bit BEFORE/AFTER root blocks (`effFieldsWriteV3_forces_write8`) — never the lane-0 squeeze the
-/// map_op-only host would leave. The wide carrier lands at THIS host width: `1301 + 480 = 1669`.
-pub const REFUSAL_WRITE_HOST_WIDTH: usize = 1455; // v11: wide 1935 − 480
+/// map_op-only host would leave. The wide carrier lands at THIS host width: `1301 + 608 = 1669`.
+pub const REFUSAL_WRITE_HOST_WIDTH: usize = 2053; // v13: wide 2965 − 912 carriers
 /// The fields-open READ appendix base column (the Class-A base `refusalFieldsWriteV3`'s trace width =
-/// the graduated rotated base `GRAD_ROT_WIDTH`). v11 grew the graduated base by +154 (828→982, the
-/// deployed Lean base is 983), so the READ appendix sits at 983 — `REFUSAL_WRITE_HOST_WIDTH −
-/// CAP_OPEN_SPAN(329) − AFTER_SPINE_SPAN(143) = 1455 − 472 = 983`. (The v10 value 829 laid the
+/// the graduated rotated base `GRAD_ROT_WIDTH`). v12 grew the graduated base by +176 (983→1159), so the READ appendix sits at 1159 — `REFUSAL_WRITE_HOST_WIDTH −
+/// CAP_OPEN_SPAN(329) − AFTER_SPINE_SPAN(143) = 1631 − 472 = 1159`. (The v10 value 829 laid the
 /// membership 154 columns too low, so the deployed after-spine constraints — which reference the
 /// v11 base — read zero-padding and rejected.)
 pub const REFUSAL_WRITE_READ_BASE: usize =
@@ -1503,7 +1638,7 @@ pub fn generate_rotated_refusal_write_wide(
     );
     let before_leaves = &map_heaps[0];
     let before_tree = CanonicalHeapTree8::new(before_leaves.clone(), HEAP_TREE_DEPTH);
-    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
+    let before_root8 = before_tree.root8();
     let old_value = before_tree
         .sorted_leaves()
         .iter()
@@ -1543,7 +1678,7 @@ pub fn generate_rotated_refusal_write_wide(
             read_leaf,
             &fields_siblings,
             &fields_directions,
-            before_root8,
+            before_root8.limbs(),
         );
         fill_heap_after_spine(
             row,
@@ -1558,7 +1693,10 @@ pub fn generate_rotated_refusal_write_wide(
     // The generic widener at the deployed host width (retires the two 1-felt commit pins, appends the 16
     // wide commit PIs — the 8-felt ~124-bit before/after anchors). `base_pis` is the 54-PI refusal vector.
     let dpis = append_wide_carriers(&mut trace, base_pis, REFUSAL_WRITE_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), REFUSAL_WRITE_HOST_WIDTH + 480); // 1935
+    debug_assert_eq!(
+        trace[0].len(),
+        REFUSAL_WRITE_HOST_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
+    ); // 2965
     Ok((trace, dpis, map_heaps))
 }
 
@@ -1979,6 +2117,14 @@ fn new_cell_key_param_col(lead: Option<&Effect>) -> Option<usize> {
 /// r11..r23) come from the per-turn producer witness `w` (turn-invariant). Then the genuine
 /// chained `wireCommitR` digests are computed on this row's own limbs.
 ///
+/// The v12 CARRIER-MATERIAL octets (`B_CHILD_VK_OCTET` 88..=95 · `B_CONTRACT_HASH_OCTET` 96..=103 ·
+/// `B_PUBKEY_OCTET` 104..=111) ride the `pre_limbs` COPY above — the trace is the third producer of
+/// them, and it fills them byte-identically to the two flat-record twins
+/// (`rotation_witness::produce` / `commitment::compute_rotated_pre_limbs`) BY COPY: the octets are
+/// filled in `pre_limbs` at their source, so this generator carries them into the block and the
+/// chained `state_commit` absorbs them (they are `< NUM_PRE_LIMBS`). The 3-way agreement is the
+/// `effect_vm_rotation_flip` differential.
+///
 /// The chained-absorption logic is byte-identical to `descriptor_ir2::rotation_probe_trace_r`,
 /// the producer's `wire_commit`, and the Lean `wireCommitR`.
 fn fill_block(row: &mut [BabyBear], base: usize, state_base: usize, w: &RotatedBlockWitness) {
@@ -2058,6 +2204,12 @@ fn fill_caveat(row: &mut [BabyBear], base: usize, m: &RotatedCaveatManifest) {
         chain += 1;
     }
     row[commit_col] = d;
+    // The DFA route-commitment carrier (the dsl rc-EMIT): 4 felts PAST the caveat commit,
+    // uniformly on every row (the descriptor's rc pins read the last row; a uniform fill keeps
+    // any-row reads coherent). ZERO when the turn carries no Dfa caveat (the Default manifest).
+    for k in 0..DFA_RC_LEN {
+        row[base + C_DFA_RC_OFF + k] = m.dfa_rc[k];
+    }
 }
 
 /// Resolve the rotated registry descriptor NAME for one effect's v1 selector — the
@@ -2744,6 +2896,48 @@ fn fill_heap_after_spine(
     }
 }
 
+/// **`fill_cap_after_spine`** — the ARITY-7 cap-tree AFTER-spine appendix, the exact twin of
+/// [`fill_heap_after_spine`] but over the native-8-felt cap tree (`cap_leaf_digest` = arity-7 leaf
+/// absorb, `cap_node` = arity-16 `node8`). Lays, at `base_as` (= `AFTER_SPINE_BASE w = CAP_OPEN_WIDTH`,
+/// the Lean `afterSpineCols`): the in-place-narrowed AFTER `CapLeaf` (7 scalar fields) at `+0..6`, its
+/// 8-felt `cap_leaf_digest` at `+7..14`, then `DEPTH` 8-felt `cap_node` groups at `+15+8·lvl` folded
+/// over the SHARED sibling path (`siblings`/`directions` — reused from the cap-open READ appendix, the
+/// Lean `afterSpineCols.dir = capOpenCols.dir` defeq). NO sib/dir cols (shared with the read) and NO
+/// `capRoot` col in the appendix (the after `capRoot` is the committed AFTER-block cap-root GROUP the
+/// rootPin binds to). Returns the recomposed AFTER `cap_root8` (the top `node8`), which the caller MUST
+/// lay into the AFTER-block cap-root group so `afterSpineCols.rootPin` holds against it. This is the
+/// producer half of `CapOpenEmit.effCapOpenWriteV3_forces_write8` (the arity-7 `writesTo8`, UPDATE-at-key:
+/// same `slot_hash`, `mask_lo := KEEP_MASK`) — the cap-write forced WITHOUT the arity-2 map-op.
+fn fill_cap_after_spine(
+    row: &mut [BabyBear],
+    base_as: usize,
+    after_leaf: &[BabyBear; 7],
+    siblings: &[[BabyBear; CAP_OPEN_DIGEST_W]],
+    directions: &[u8],
+) -> [BabyBear; CAP_OPEN_DIGEST_W] {
+    // 7 scalar after-leaf fields at base_as + 0..6.
+    for (i, &f) in after_leaf.iter().enumerate() {
+        row[base_as + i] = f;
+    }
+    // 8-felt after-leaf digest at base_as + 7..14.
+    let leaf_digest = cap_leaf_digest(after_leaf);
+    for (j, &d) in leaf_digest.iter().enumerate() {
+        row[base_as + 7 + j] = d;
+    }
+    // after-node blocks (8 felts each, NO sib/dir — SHARED with the read) at base_as + 15 + 8·lvl.
+    let mut cur = leaf_digest;
+    for lvl in 0..CAP_OPEN_DEPTH {
+        let (l, r) = cap_mix(cur, siblings[lvl], directions[lvl]);
+        let node = cap_node(l, r);
+        let blk = base_as + 15 + CAP_OPEN_DIGEST_W * lvl;
+        for (j, &n) in node.iter().enumerate() {
+            row[blk + j] = n;
+        }
+        cur = node;
+    }
+    cur
+}
+
 /// Recompute one rotated block's chained `wireCommitR` digests + `state_commit` from the limbs
 /// ALREADY present in the row (cols `base..base+NUM_PRE_LIMBS` + the iroot at `base+B_IROOT`).
 /// Byte-identical to [`fill_block`]'s chain, but reads the limbs in place rather than from a
@@ -2818,7 +3012,14 @@ fn recompute_v1_state_commit(
 /// internally genuine: the v1 BEFORE + AFTER STATE_COMMIT chains (the descriptor's poseidon
 /// lookups), the before-state-commit cross-row continuity carrier, and the rotated BEFORE +
 /// AFTER blocks' welded nonce limb + chained `wireCommitR` state_commit. Then the four rotated
-/// PI carriers are re-read from the rebuilt trace. Returns the corrected 38-PI vector. Widen
+/// PI carriers are re-read from the rebuilt trace.
+///
+/// Returns the corrected PI vector at the INPUT's length — the patch is phase-B WIRING only and
+/// never reshapes the PI vector: any tail PIs past the rotated `ROT_PI_COUNT` (the dsl rc on the
+/// rc-wrapped PLAIN cohort members — e.g. the committed `grantCapVmDescriptor2R24` at 50) ride
+/// through unchanged. The ROUTE owns the tail shape: the cap-open faces were never rc-wrapped in
+/// the Lean emit (every committed `*CapOpen*` member carries the UNWRAPPED 46/47/49 base), so the
+/// cap-open leg builder strips the rc BEFORE patching; the plain wide dispatcher keeps it. Widen
 /// the patched 327-wide trace to the cap-open shape with [`widen_to_cap_open`].
 pub fn patch_attenuate_base_for_cap_open(
     trace: &mut [Vec<BabyBear>],
@@ -2887,14 +3088,14 @@ pub fn patch_attenuate_base_for_cap_open(
     // pin constraints bind: 218 / 261 / 259 / 310).
     let r0 = &trace[0];
     let last = &trace[trace.len() - 1];
-    let mut dpis: Vec<BabyBear> = pis[..ROT_PI_COUNT].to_vec();
+    let mut dpis: Vec<BabyBear> = pis.to_vec();
     // The four rotated commit pins sit at the v1 prefix count `V1_PI_COUNT..+4` (the same slots
     // `rotPins` / `generate_rotated_effect_vm_trace` append them to). Indexing off `V1_PI_COUNT`
     // keeps these aligned when the v1 prefix grows (e.g. Phase C pushed it 34→42).
     dpis[V1_PI_COUNT] = r0[BEFORE_BASE + B_STATE_COMMIT]; // rotated OLD commit
     dpis[V1_PI_COUNT + 1] = last[AFTER_BASE + B_STATE_COMMIT]; // rotated NEW commit
     dpis[V1_PI_COUNT + 2] = last[AFTER_BASE + B_COMMITTED_HEIGHT]; // committed height
-    dpis[V1_PI_COUNT + 3] = last[CAVEAT_BASE + C_SPAN - 1]; // caveat commit
+    dpis[V1_PI_COUNT + 3] = last[CAVEAT_BASE + C_CAVEAT_COMMIT]; // caveat commit
     Ok(dpis)
 }
 
@@ -2935,7 +3136,7 @@ pub fn widen_to_cap_open(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Res
 /// member is `wideAppend (capOpenHost) 187 238` (width 1026), carriers PAST the 210-col cap-open
 /// appendix. The cap-open host constraints / membership columns are CARRIED UNCHANGED; the wide
 /// carriers re-absorb the SAME `BEFORE_BASE`/`AFTER_BASE` limbs. Returns the appended `dpis`. The
-/// trace is resized in place to `CAP_OPEN_WIDTH + 480 = 1026`.
+/// trace is resized in place to `CAP_OPEN_WIDTH + 608 = 1026`.
 pub fn append_wide_carriers_cap_open(
     trace: &mut [Vec<BabyBear>],
     base_pis: Vec<BabyBear>,
@@ -2950,6 +3151,231 @@ pub fn append_wide_carriers_cap_open(
             trace[0].len()
         ));
     }
+    Ok(append_wide_carriers(trace, base_pis, CAP_OPEN_WIDTH))
+}
+
+/// The cap-root 8-felt GROUP column at lane `lane` for the rotated block based at `block_base` (the
+/// exact mirror of the Lean `EffectVmEmitRotationV3.capRootGroupCol`: lane 0 = the scalar cap-root limb
+/// `B_CAP_ROOT = 25`; lanes 1..7 = the dedicated 8-felt completion limbs `50 + lane` = 51..57). With the
+/// v11 rotated block span (`B_SPAN = 119`), the descriptor block bases (`EFFECT_VM_WIDTH` BEFORE /
+/// `EFFECT_VM_WIDTH + 119` AFTER) coincide EXACTLY with the trace bases (`BEFORE_BASE = V1_WIDTH = 188` /
+/// `AFTER_BASE = V1_WIDTH + B_SPAN = 307`), so this single mapping serves both descriptor and trace — no
+/// column offset. (The `beforeCapRootCols`/`afterCapRootCols` group readers pin these lanes.)
+fn cap_root_group_col(block_base: usize, lane: usize) -> usize {
+    block_base + if lane == 0 { B_CAP_ROOT } else { 50 + lane }
+}
+
+/// **THE ATTENUATE cap-WRITE AFTER-SPINE producer (`attenuateCapOpenEffVmDescriptor2R24` wide member).**
+/// The cap twin of [`generate_rotated_refusal_write_wide`]: given a `CAP_OPEN_WIDTH`-wide cap-open trace
+/// (a rotated attenuate base already passed through [`widen_to_cap_open`], whose READ appendix opened the
+/// held `CapLeaf` against the BEFORE cap-root8), this FORCES the faithful 8-felt in-place UPDATE-AT-KEY
+/// (`effCapOpenWriteV3_forces_write8`) WITHOUT the arity-2 map-op:
+///   * lays the AFTER-spine appendix at `CAP_OPEN_WIDTH` ([`fill_cap_after_spine`]) — the held leaf with
+///     `mask_lo := keep_mask` folded over the SHARED sibling path (`cap_open.siblings`/`directions`) to the
+///     recomposed AFTER `cap_root8`;
+///   * writes the BEFORE `cap_root8` (`cap_open.cap_root`) into the BEFORE-block cap-root GROUP and the
+///     recomposed AFTER `cap_root8` into the AFTER-block cap-root GROUP (lane 0 + the 7 completion limbs),
+///     so the READ appendix's `beforeRootWelds` and the after-spine's `rootPin` both hold;
+///   * fills the submask-lookup param columns (`CAP_KEY @ 71`, `HELD_MASK @ 72`, `KEEP_MASK @ 73`) so the
+///     `granted ⊑ held` non-amplification tooth is well-defined WITHOUT the map-op;
+///   * recomputes the two rotated block commits (the overridden 8-felt groups now bind), then appends the
+///     generic wide carriers at `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN`.
+///
+/// Returns the wide `dpis` (the 16 wide commit PIs re-absorb the SAME overridden cap-root groups, so the
+/// published ~124-bit anchor binds the genuine faithful write — never the lane-0 squeeze). NO map heaps.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_rotated_cap_attenuate_after_spine_wide(
+    trace: &mut Vec<Vec<BabyBear>>,
+    base_pis: Vec<BabyBear>,
+    cap_open: &CapOpenWitness,
+    cap_key: BabyBear,
+    held_value: BabyBear,
+    keep_mask: BabyBear,
+) -> Result<Vec<BabyBear>, String> {
+    use super::columns::PARAM_BASE;
+    if trace.is_empty() {
+        return Err("attenuate after-spine: empty trace".into());
+    }
+    if trace[0].len() != CAP_OPEN_WIDTH {
+        return Err(format!(
+            "attenuate after-spine: trace width {} != CAP_OPEN_WIDTH {CAP_OPEN_WIDTH} \
+             (widen_to_cap_open first)",
+            trace[0].len()
+        ));
+    }
+    // The AFTER leaf: the held `CapLeaf` with `mask_lo` (field 3) rebound to the narrowed KEEP_MASK —
+    // the exact `writesTo8` UPDATE-AT-KEY the deployed after-spine forces (same slot_hash/target/…).
+    let mut after_leaf = cap_open.leaf;
+    after_leaf[3] = keep_mask;
+    let before_root8 = cap_open.cap_root;
+
+    // The submask-lookup param columns (Lean `EffectVmEmitV2.{CAP_KEY=3, HELD_MASK=4, KEEP_MASK=5}`); the
+    // `submaskLookup` reads `[prmCol KEEP_MASK, prmCol HELD_MASK]` = cols 73/72.
+    let cap_key_col = PARAM_BASE + 3; // 71
+    let held_mask_col = PARAM_BASE + 4; // 72
+    let keep_mask_col = PARAM_BASE + 5; // 73
+
+    let after_spine_base = CAP_OPEN_WIDTH;
+    let host_width = CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN;
+    for row in trace.iter_mut() {
+        row.resize(host_width, BabyBear::ZERO);
+        let after_root8 = fill_cap_after_spine(
+            row,
+            after_spine_base,
+            &after_leaf,
+            &cap_open.siblings,
+            &cap_open.directions,
+        );
+        // Override the BEFORE/AFTER rotated-block cap-root 8-felt GROUPS with the genuine roots so the
+        // READ `beforeRootWelds` (BEFORE group == membership root8) and the after-spine `rootPin` (AFTER
+        // group == recomposed narrowed root8) hold, and the wide carriers re-absorb the full 8-felt write.
+        for lane in 0..CAP_OPEN_DIGEST_W {
+            row[cap_root_group_col(BEFORE_BASE, lane)] = before_root8[lane];
+            row[cap_root_group_col(AFTER_BASE, lane)] = after_root8[lane];
+        }
+        row[cap_key_col] = cap_key;
+        row[held_mask_col] = held_value;
+        row[keep_mask_col] = keep_mask;
+        recompute_block_commit(row, BEFORE_BASE);
+        recompute_block_commit(row, AFTER_BASE);
+    }
+    Ok(append_wide_carriers(trace, base_pis, host_width))
+}
+
+/// **The CAP-TREE INSERT/REMOVE after-spine OVERRIDE** — the shared column work of the INSERT-shaped
+/// (`effCapInsertV3`: delegate / introduce / delegateAtten) and REMOVE-shaped (`effCapRemoveV3`:
+/// revokeDelegation) keystone deploys. The cap-open READ appendix was already laid by
+/// [`widen_to_cap_open`] from the SHAPE-matched witness (INSERT: the spliced leaf's membership in the
+/// REBUILT AFTER tree, `cap_root.rs::CanonicalCapTree::insert_witness`; REMOVE: the removed leaf's
+/// membership in BEFORE, whose zero-fold is `remove_witness`). This helper:
+///   * overrides the BEFORE/AFTER rotated-block cap-root 8-felt GROUPS with the genuine
+///     `CanonicalCapTree` roots — so the keystone's root welds (INSERT: read `capRoot` == AFTER group;
+///     REMOVE: read `capRoot` == BEFORE group) hold, and the wide carriers re-absorb the full 8-felt
+///     write (never the lane-0 squeeze);
+///   * fills the cap-write param columns (`CAP_KEY @ 71`, `HELD_MASK @ 72`, `KEEP_MASK @ 73`,
+///     `ANCHOR_KEY @ 74`, `ANCHOR_MASK @ 75`) so the surviving base legs (delegateAtten's
+///     `granted ⊑ held` submask lookup over cols 73/72) are well-defined — NO map-op, NO map heap
+///     (the arity-2 scalar pair is DROPPED from the Lean bases);
+///   * recomputes the two rotated block commits (the overridden 8-felt groups now bind).
+///
+/// The trace stays at `CAP_OPEN_WIDTH` (the keystone wraps add NO columns beyond the cap-open
+/// appendix); the caller appends the wide carriers ([`append_wide_carriers_cap_open`]) for the wide leg.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_rotated_cap_write_after_spine(
+    trace: &mut [Vec<BabyBear>],
+    dpis: &mut [BabyBear],
+    before_root8: [BabyBear; CAP_OPEN_DIGEST_W],
+    after_root8: [BabyBear; CAP_OPEN_DIGEST_W],
+    cap_key: BabyBear,
+    held_mask: BabyBear,
+    keep_mask: BabyBear,
+    anchor_key: BabyBear,
+    anchor_mask: BabyBear,
+) -> Result<(), String> {
+    use super::columns::PARAM_BASE;
+    if trace.is_empty() {
+        return Err("cap insert/remove after-spine: empty trace".into());
+    }
+    if trace[0].len() != CAP_OPEN_WIDTH {
+        return Err(format!(
+            "cap insert/remove after-spine: trace width {} != CAP_OPEN_WIDTH {CAP_OPEN_WIDTH} \
+             (widen_to_cap_open first)",
+            trace[0].len()
+        ));
+    }
+    let cap_key_col = PARAM_BASE + 3; // 71 (the fresh inserted key / the removed key)
+    let held_mask_col = PARAM_BASE + 4; // 72 (the held/read value — submask RHS)
+    let keep_mask_col = PARAM_BASE + 5; // 73 (the conferred/narrowed value — submask LHS)
+    let anchor_key_col = PARAM_BASE + 6; // 74 (the held-authority anchor key)
+    let anchor_value_col = PARAM_BASE + 7; // 75 (the anchor's committed value)
+    for row in trace.iter_mut() {
+        for lane in 0..CAP_OPEN_DIGEST_W {
+            row[cap_root_group_col(BEFORE_BASE, lane)] = before_root8[lane];
+            row[cap_root_group_col(AFTER_BASE, lane)] = after_root8[lane];
+        }
+        row[cap_key_col] = cap_key;
+        row[held_mask_col] = held_mask;
+        row[keep_mask_col] = keep_mask;
+        row[anchor_key_col] = anchor_key;
+        row[anchor_value_col] = anchor_mask;
+        recompute_block_commit(row, BEFORE_BASE);
+        recompute_block_commit(row, AFTER_BASE);
+    }
+    // Re-derive the OLD/NEW rotated commit PIs (the cap-root group override moved the rotated
+    // commit) — exactly as `generate_rotated_cap_write_base` re-derives them. The WIDE member
+    // retires these 1-felt pins (`dropLegacyCommitPins1`), but the NARROW keystone leg still
+    // binds them.
+    if dpis.len() > V1_PI_COUNT + 1 {
+        dpis[V1_PI_COUNT] = trace[0][BEFORE_BASE + B_STATE_COMMIT]; // rotated OLD commit
+        dpis[V1_PI_COUNT + 1] = trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT]; // rotated NEW commit
+    }
+    Ok(())
+}
+
+/// **THE CAP-TREE INSERT AFTER-SPINE producer (`delegate`/`introduce`/`delegateAttenWriteCapOpen…R24`
+/// wide members).** The insert twin of [`generate_rotated_cap_attenuate_after_spine_wide`]: given a
+/// `CAP_OPEN_WIDTH`-wide cap-open trace whose READ appendix opened the SPLICED (conferred) `CapLeaf`
+/// against the REBUILT AFTER cap-root8 (the `CanonicalCapTree::insert_witness` after-membership path —
+/// [`widen_to_cap_open`] with the spliced witness), this forces the faithful 8-felt fresh-key INSERT
+/// (`CapInsertEmit.effCapInsertV3_forces_write8`) WITHOUT any arity-2 map-op: the BEFORE group carries
+/// the genuine pre-insert root (witness-carried, folding into the committed rotated state-commit), the
+/// AFTER group the rebuilt post-insert root the read's rootPin + the keystone's AFTER welds bind. Then
+/// appends the generic wide carriers at the descriptor's host width (`CAP_OPEN_WIDTH`). NO map heaps. -/
+#[allow(clippy::too_many_arguments)]
+pub fn generate_rotated_cap_insert_after_spine_wide(
+    trace: &mut Vec<Vec<BabyBear>>,
+    base_pis: Vec<BabyBear>,
+    before_root8: [BabyBear; CAP_OPEN_DIGEST_W],
+    after_root8: [BabyBear; CAP_OPEN_DIGEST_W],
+    inserted_key: BabyBear,
+    inserted_value: BabyBear,
+    held_mask: BabyBear,
+    anchor_key: BabyBear,
+    anchor_mask: BabyBear,
+) -> Result<Vec<BabyBear>, String> {
+    let mut base_pis = base_pis;
+    apply_rotated_cap_write_after_spine(
+        trace,
+        &mut base_pis,
+        before_root8,
+        after_root8,
+        inserted_key,
+        held_mask,
+        inserted_value,
+        anchor_key,
+        anchor_mask,
+    )?;
+    Ok(append_wide_carriers(trace, base_pis, CAP_OPEN_WIDTH))
+}
+
+/// **THE CAP-TREE REMOVE AFTER-SPINE producer (`revokeDelegationWriteCapOpenVmDescriptor2R24` wide
+/// member).** The remove mirror: given a `CAP_OPEN_WIDTH`-wide cap-open trace whose READ appendix
+/// opened the REMOVED `CapLeaf` against the BEFORE cap-root8 (exactly the consumed-cap membership
+/// witness the revoke route already carries), this forces the faithful 8-felt tombstone REMOVE
+/// (`CapRemoveEmit.effCapRemoveV3_forces_write8`): the BEFORE group carries the membership-opened
+/// pre-remove root the keystone's BEFORE welds bind; the AFTER group the deployed tombstone zero-fold
+/// (`CanonicalCapTree::remove_witness` `new_root`). Then appends the wide carriers at the host width.
+/// NO map heaps. The base's §14.EPOCH bump gate rides the base trace's genuine epoch limbs. -/
+pub fn generate_rotated_cap_remove_after_spine_wide(
+    trace: &mut Vec<Vec<BabyBear>>,
+    base_pis: Vec<BabyBear>,
+    before_root8: [BabyBear; CAP_OPEN_DIGEST_W],
+    after_root8: [BabyBear; CAP_OPEN_DIGEST_W],
+    removed_key: BabyBear,
+    held_value: BabyBear,
+) -> Result<Vec<BabyBear>, String> {
+    let mut base_pis = base_pis;
+    apply_rotated_cap_write_after_spine(
+        trace,
+        &mut base_pis,
+        before_root8,
+        after_root8,
+        removed_key,
+        held_value,
+        BabyBear::ZERO, // the tombstone writes no conferred value
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+    )?;
     Ok(append_wide_carriers(trace, base_pis, CAP_OPEN_WIDTH))
 }
 
@@ -3069,19 +3495,24 @@ pub fn transfer_caveat_manifest() -> RotatedCaveatManifest {
 //     carrier-12 (cols 808..815) on the LAST row.
 // ============================================================================
 
-/// The committed wide trace width (`wideAppend` adds 208 = 2 × 13 × 8 carrier columns to the
-/// 608-wide rotated base): `transferVmDescriptor2R24Wide.trace_width`.
-pub const WIDE_WIDTH: usize = GRAD_ROT_WIDTH + 480; // v11: + 2 × 30 × 8
-/// The base column of the BEFORE 13×8 wide carrier block (`wideBeforeCBase = h.traceWidth = 608`).
-pub const WIDE_BEFORE_CBASE: usize = GRAD_ROT_WIDTH; // 608
-/// The base column of the AFTER 13×8 wide carrier block (`wideAfterCBase = h.traceWidth + 240`).
-pub const WIDE_AFTER_CBASE: usize = GRAD_ROT_WIDTH + 240; // v11: + 30 × 8
-/// The number of 8-felt carriers per wide commitment chain (head + 11 body + final).
-pub const WIDE_NUM_CARRIERS: usize = 30;
-/// The in-block carrier index of the final 8-felt commitment carrier (carrier 12).
-pub const WIDE_COMMIT_CARRIER: usize = WIDE_NUM_CARRIERS - 1; // 29
-/// The committed wide public-input count (`h.piCount + 16` = 38 + 16).
-pub const WIDE_PI_COUNT: usize = ROT_PI_COUNT + 16; // 54
+/// The number of 8-felt carriers per wide commitment chain (head + 55 arity-11 body groups + the
+/// final iroot carrier). v13: the fields-octet grow (NUM_PRE_LIMBS 112→169) lifts the body from 36 to
+/// 55 groups, so the wide chain runs 38→57 carriers (`1 + (169-4)/3 + 1 = 57`).
+pub const WIDE_NUM_CARRIERS: usize = 57;
+/// The committed wide trace width (`wideAppend` adds `2 × WIDE_NUM_CARRIERS × 8` carrier columns to the
+/// graduated rotated base): `transferVmDescriptor2R24Wide.trace_width` (v13: 1581 + 912 = 2493).
+pub const WIDE_WIDTH: usize = GRAD_ROT_WIDTH + 2 * WIDE_NUM_CARRIERS * 8;
+/// The base column of the BEFORE wide carrier block (`wideBeforeCBase = h.traceWidth = GRAD_ROT_WIDTH`).
+pub const WIDE_BEFORE_CBASE: usize = GRAD_ROT_WIDTH;
+/// The base column of the AFTER wide carrier block (`wideAfterCBase = h.traceWidth + WIDE_NUM_CARRIERS × 8`).
+pub const WIDE_AFTER_CBASE: usize = GRAD_ROT_WIDTH + WIDE_NUM_CARRIERS * 8;
+/// The in-block carrier index of the final 8-felt commitment carrier (v13: carrier 56).
+pub const WIDE_COMMIT_CARRIER: usize = WIDE_NUM_CARRIERS - 1; // 56
+/// The committed wide public-input count for the bare transfer-shape member
+/// (`h.piCount + 16`, where `h.piCount = ROT_PI_COUNT + DFA_RC_LEN` — the wide host is the
+/// `withDfaRcPins`-wrapped member, so the 4 dsl rc PIs ride BETWEEN the base 46 and the 16 wide
+/// commit PIs).
+pub const WIDE_PI_COUNT: usize = ROT_PI_COUNT + DFA_RC_LEN + 16; // 66
 
 /// Fill one block's 13-carrier × 8-felt wide commitment chain at `cbase`, reading the limbs from
 /// the rotated block at `limb_base` (`BEFORE_BASE` / `AFTER_BASE`). Each carrier's 8 output lanes
@@ -3138,7 +3569,7 @@ fn fill_wide_block(row: &mut [BabyBear], cbase: usize, limb_base: usize) {
     row[cbase + 8 * carrier..cbase + 8 * carrier + 8].copy_from_slice(&d);
     debug_assert_eq!(
         carrier, WIDE_COMMIT_CARRIER,
-        "wide chain must end on carrier 29"
+        "wide chain must end on carrier 56"
     );
 }
 
@@ -3159,11 +3590,12 @@ pub fn generate_rotated_transfer_wide(
     // The live 608-wide rotated trace + 38-PI vector (UNTOUCHED machinery).
     let (mut trace, base_pis) =
         generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
-    if base_pis.len() != ROT_PI_COUNT {
+    if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
         return Err(format!(
-            "wide transfer generator: base PI vector {} != {ROT_PI_COUNT} (transfer carries the \
-             bare 38-PI rotated vector — a record/grow-gate pin would mis-shape the wide append)",
-            base_pis.len()
+            "wide transfer generator: base PI vector {} != {} (transfer carries the bare rotated \
+             vector + the 4 dsl rc PIs — a record/grow-gate pin would mis-shape the wide append)",
+            base_pis.len(),
+            ROT_PI_COUNT + DFA_RC_LEN
         ));
     }
 
@@ -3178,8 +3610,8 @@ pub fn generate_rotated_transfer_wide(
 /// **THE GENERIC WIDE WIDENER (parametric in the host width / carrier base).** Given a fully-laid
 /// rotated base trace (its `BEFORE_BASE`/`AFTER_BASE` limb blocks final, including any grow-gate root
 /// override + `recompute_block_commit`) and its base PI vector, this:
-///   * resizes each row to `host_width + 480` and fills the two 13×8 BEFORE/AFTER wide carrier blocks
-///     at `cbB = host_width` / `cbA = host_width + 240` (the `wideBeforeCBase`/`wideAfterCBase` Lean
+///   * resizes each row to `host_width + 608` and fills the two 13×8 BEFORE/AFTER wide carrier blocks
+///     at `cbB = host_width` / `cbA = host_width + 304` (the `wideBeforeCBase`/`wideAfterCBase` Lean
 ///     layout), chip-faithfully via [`fill_wide_block`] — reading the SAME `BEFORE_BASE`/`AFTER_BASE`
 ///     limbs the 1-felt block lays (so the 8-felt commit binds the same 37 limbs + iroot);
 ///   * APPENDS the 16 wide commit PIs PAST the base PIs: BEFORE commit (carrier 12, first row) then
@@ -3195,8 +3627,8 @@ pub fn append_wide_carriers(
     host_width: usize,
 ) -> Vec<BabyBear> {
     let cb_before = host_width;
-    let cb_after = host_width + 240;
-    let wide_width = host_width + 480;
+    let cb_after = host_width + WIDE_NUM_CARRIERS * 8;
+    let wide_width = host_width + 2 * WIDE_NUM_CARRIERS * 8;
     for row in trace.iter_mut() {
         row.resize(wide_width, BabyBear::ZERO);
         fill_wide_block(row, cb_before, BEFORE_BASE);
@@ -3246,11 +3678,12 @@ pub fn generate_rotated_transfer_shape_wide(
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     let (mut trace, base_pis) =
         generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
-    if base_pis.len() != ROT_PI_COUNT {
+    if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
         return Err(format!(
-            "transfer-shape wide generator: base PI vector {} != {ROT_PI_COUNT} (this wrapper is for \
-             the bare-38-PI transfer-shape cohort — a grow-gate/record member carries an extra PI)",
-            base_pis.len()
+            "transfer-shape wide generator: base PI vector {} != {} (this wrapper is for the bare \
+             transfer-shape cohort + the 4 dsl rc PIs — a grow-gate/record member carries an extra PI)",
+            base_pis.len(),
+            ROT_PI_COUNT + DFA_RC_LEN
         ));
     }
     let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
@@ -3277,19 +3710,104 @@ pub fn generate_rotated_record_pin_wide(
     // record-digest movers (setPerms/setVK/makeSovereign/refusal pin all 8 faithful authority limbs,
     // `ROT_PI_COUNT + 8`, `withRecordPin8Headroom2`). Both are valid; the wide descriptor
     // (`wideAppend setPermsV3 …`) declares the matching `base_len + 16`.
-    if base_len != ROT_PI_COUNT + 1 && base_len != ROT_PI_COUNT + 8 {
+    if base_len != ROT_PI_COUNT + 1 + DFA_RC_LEN && base_len != ROT_PI_COUNT + 8 + DFA_RC_LEN {
         return Err(format!(
-            "record-pin wide generator: base PI vector {} is neither {} (single record/lifecycle pin) \
-             nor {} (the H1 8-felt authority record-pin8)",
+            "record-pin wide generator: base PI vector {} is neither {} (single record/lifecycle pin \
+             + the 4 dsl rc PIs) nor {} (the H1 8-felt authority record-pin8 + rc)",
             base_len,
-            ROT_PI_COUNT + 1,
-            ROT_PI_COUNT + 8
+            ROT_PI_COUNT + 1 + DFA_RC_LEN,
+            ROT_PI_COUNT + 8 + DFA_RC_LEN
         ));
     }
     let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
     debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
     debug_assert_eq!(dpis.len(), base_len + 16); // base record-pins + 16 wide commit carriers
     Ok((trace, dpis))
+}
+
+/// The sovereign KEY_COMMIT chip appendix span: 4 quads × 8 digest lanes (Lean
+/// `CarrierOctetGates.KEY_COMMIT_SPAN` — the committed `makeSovereignV3DeployedWide` widens the
+/// wide record-pin host by exactly these 32 columns, `1771 + 32 = 1803`).
+pub const SOVEREIGN_KEY_COMMIT_SPAN: usize = 32;
+
+/// **THE SOVEREIGN KEY_COMMIT PRODUCER RIDER** — lift a wide `MakeSovereign` record-pin trace/PI
+/// pair (from [`generate_rotated_record_pin_wide`], 74 PIs / `WIDE_WIDTH` columns) to the
+/// committed DEPLOYED keyed member (`CarrierComposed.makeSovereignV3DeployedWide`, 78 PIs /
+/// `WIDE_WIDTH + 32` columns):
+///
+///   * the 4 KEY_COMMIT teeth columns (`columns.rs` `aux_off::WITNESS_KEY_COMMIT_0..3`, absolute
+///     cols 113..=116 — dead-zero from `EffectVmContext::default` in the base trace) are filled
+///     with the executor's compress of the committed BEFORE-block pubkey octet, on EVERY row
+///     (the deployed edge holds them constant; the pin reads row 0);
+///   * the 32-column chip-compress digest appendix (`dg_base = WIDE_WIDTH`, 4 quads × 8 lanes)
+///     gets its lane-0 producer columns (`row[dg_base + 8·q] = kc[q]`; the prove wrapper's
+///     `fill_chip_lanes` fills lanes 1..7 from the genuine permutation);
+///   * the 4 teeth claim PIs are SPLICED ahead of the 16 wide anchors (`insert_at =
+///     dpis.len() − 16` = the committed `SOVEREIGN_KEY_COMMIT_PI_LO` 58, post-rc-wrap).
+///
+/// The teeth values are DERIVED FROM THE COMMITTED TRACE, never caller-supplied: `kc[q] =
+/// chip_absorb_all_lanes(4, octet[quadIdx q])[0]` over the BEFORE-block `pubkey8` octet (limbs
+/// `B_IROOT − 8 ..`, filled UNCONDITIONALLY from the operated cell's owner key in the 30-bit
+/// canonical form). This IS `TurnExecutor::pubkey_to_witness_key_commit` /
+/// `dregg_commit::typed::canonical_32_to_felts_4` of the owner key (the Lean executor-compress
+/// verdict: `hash_4_to_1(x) == chip_absorb_all_lanes(4, x)[0]`, interleave quads
+/// `[0,1,2,3]·[4,5,6,7]·[0,4,2,6]·[1,5,3,7]`), so the fill satisfies the in-AIR chip gate AND
+/// matches the executor's check — a producer that committed a forged octet gets teeth the
+/// executor refuses (the third edge stays fail-closed).
+pub fn append_sovereign_key_commit_rider(
+    trace: &mut [Vec<BabyBear>],
+    dpis: &mut Vec<BabyBear>,
+) -> Result<(), String> {
+    use super::columns::{AUX_BASE, aux_off};
+    use crate::descriptor_ir2::chip_absorb_all_lanes;
+
+    let dg_base = trace
+        .first()
+        .map(Vec::len)
+        .ok_or_else(|| "sovereign key-commit rider: empty trace".to_string())?;
+    if dg_base != WIDE_WIDTH {
+        return Err(format!(
+            "sovereign key-commit rider: trace width {dg_base} != the wide record-pin host \
+             {WIDE_WIDTH} (the appendix lands past the wide carriers)"
+        ));
+    }
+    if dpis.len() < 16 {
+        return Err(format!(
+            "sovereign key-commit rider: PI vector {} carries no 16-PI wide anchor tail",
+            dpis.len()
+        ));
+    }
+    // The executor-compress interleave quads (Lean `CarrierOctetGates.quadIdx` — the byte twin of
+    // `canonical_32_to_felts_4`'s four `hash_4_to_1` folds).
+    const QUAD_IDX: [[usize; 4]; 4] = [[0, 1, 2, 3], [4, 5, 6, 7], [0, 4, 2, 6], [1, 5, 3, 7]];
+    // The committed BEFORE-block pubkey octet at the FIXED limb `B_PUBKEY_OCTET` (104). (v13: this is
+    // NO LONGER `B_IROOT − 8` — B_IROOT moved 112→169 with the fields-octet grow, so `B_IROOT − 8`=161
+    // now reads past the pubkey; the octet limb is geometry-invariant at 104.)
+    let b_pubkey8 = B_PUBKEY_OCTET;
+    let octet: [BabyBear; 8] = std::array::from_fn(|i| trace[0][BEFORE_BASE + b_pubkey8 + i]);
+    let kc: [BabyBear; 4] = std::array::from_fn(|q| {
+        let inputs: [BabyBear; 4] = std::array::from_fn(|j| octet[QUAD_IDX[q][j]]);
+        chip_absorb_all_lanes(4, &inputs)[0]
+    });
+
+    let kc_col = AUX_BASE + aux_off::WITNESS_KEY_COMMIT_0;
+    for row in trace.iter_mut() {
+        row.resize(dg_base + SOVEREIGN_KEY_COMMIT_SPAN, BabyBear::ZERO);
+        for (k, v) in kc.iter().enumerate() {
+            row[kc_col + k] = *v; // the KEY_COMMIT teeth (constant per row, row-0-pinned)
+            row[dg_base + 8 * k] = *v; // quad k's digest lane 0 (the genuine producer column)
+        }
+    }
+
+    // Splice the 4 teeth claim PIs ahead of the 16 wide anchors (the committed
+    // `SOVEREIGN_KEY_COMMIT_PI_LO` = 58 on the 74-PI wide record-pin vector).
+    let insert_at = dpis.len() - 16;
+    let mut spliced = Vec::with_capacity(dpis.len() + kc.len());
+    spliced.extend_from_slice(&dpis[..insert_at]);
+    spliced.extend_from_slice(&kc);
+    spliced.extend_from_slice(&dpis[insert_at..]);
+    *dpis = spliced;
+    Ok(())
 }
 
 /// **THE WIDE FEE-IN-PROOF trace generator (`transferFeeVmDescriptor2R24Wide`, 816-wide / 55-PI).**
@@ -3316,17 +3834,50 @@ pub fn generate_rotated_transfer_shape_with_fee_wide(
         caveat,
         fee,
     )?;
-    if base_pis.len() != ROT_PI_COUNT + 1 {
+    if base_pis.len() != ROT_PI_COUNT + 1 + DFA_RC_LEN {
         return Err(format!(
-            "wide fee generator: base PI vector {} != {} (the fee descriptor carries the 39-PI \
-             rotated vector — the published fee rides PI 38)",
+            "wide fee generator: base PI vector {} != {} (the fee descriptor carries the rotated \
+             vector + the published fee at PI 46 + the 4 dsl rc PIs at 47..50)",
             base_pis.len(),
-            ROT_PI_COUNT + 1
+            ROT_PI_COUNT + 1 + DFA_RC_LEN
         ));
     }
     let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
     debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
-    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 39 base + 16 wide = 55
+    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 46 base + fee + 4 rc + 16 wide = 67
+    Ok((trace, dpis))
+}
+
+/// **THE WIDE BRIDGE-MINT trace generator (`mintVmDescriptor2R24` wide, 67-PI).** The bridge-mint
+/// member carries the FELT mint-hash pin at PI `ROT_PI_COUNT` (46) — the STEP-2/3 bridge-carrier
+/// exposure (Lean `mintV3BridgeHash`; base 46 + mint_hash + 4 dsl rc = 51) — so it can no longer
+/// ride the bare transfer shape. This appends the 16 wide commit PIs at `GRAD_ROT_WIDTH`:
+/// `51 + 16 = 67` (= `WIDE_PI_COUNT + 1`). The published PI 46 is the projector-derived
+/// `note_spend_mint_hash_felt` (see the base generator's bridge-mint arm); the verifier's
+/// reconstruction recomputes it from the turn's OWN `PortableNoteProof` via
+/// `convert_turn_effects_to_vm`, so the anchor is executor-derived, never prover-supplied.
+/// Returns `(trace, dpis)`.
+pub fn generate_rotated_bridge_mint_wide(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    let (mut trace, base_pis) =
+        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
+    if base_pis.len() != ROT_PI_COUNT + 1 + DFA_RC_LEN {
+        return Err(format!(
+            "bridge-mint wide generator: base PI vector {} != {} (the bridge-mint descriptor \
+             carries the rotated vector + the felt mint-hash pin at PI 46 + the 4 dsl rc PIs at \
+             47..50)",
+            base_pis.len(),
+            ROT_PI_COUNT + 1 + DFA_RC_LEN
+        ));
+    }
+    let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
+    debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
+    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 46 base + mint_hash + 4 rc + 16 wide = 67
     Ok((trace, dpis))
 }
 
@@ -3337,14 +3888,14 @@ pub fn generate_rotated_transfer_shape_with_fee_wide(
 /// AFTER-spine appendix (`AFTER_SPINE_SPAN = 143`): `815 + 329 + 143 = 1287`. A satisfying trace FORCES
 /// the faithful 8-felt heap-write over the full ~124-bit BEFORE/AFTER root blocks
 /// (`effHeapWriteV3_forces_write8`) — never the lane-0 squeeze the map_op-only host would leave. The
-/// wide carriers land at THIS host width: `1287 + 480 = 1655`.
-pub const HEAP_WRITE_HOST_WIDTH: usize = 1441; // v11: wide 1921 − 480
+/// wide carriers land at THIS host width: `1287 + 608 = 1655`.
+pub const HEAP_WRITE_HOST_WIDTH: usize = 2039; // v13: wide 2951 − 912 carriers
 // NB: the READ appendix base is `HEAP_WRITE_HOST_WIDTH − CAP_OPEN_SPAN − AFTER_SPINE_SPAN`
-// (the graduated Class-A heap base, v11 = 969); see [`HEAP_WRITE_READ_BASE`] below.
+// (the graduated Class-A heap base, v12 = 1145); see [`HEAP_WRITE_READ_BASE`] below.
 /// The heap-open READ appendix base column (the splice base `heapWriteV3`'s trace width = the
 /// graduated Class-A heap base). v11 grew the base by +154 (deployed Lean base is 969), so the READ
-/// appendix sits at `HEAP_WRITE_HOST_WIDTH − CAP_OPEN_SPAN(329) − AFTER_SPINE_SPAN(143) = 1441 − 472
-/// = 969`. (The v10 value 815 laid the membership 154 columns too low against the deployed after-spine
+/// appendix sits at `HEAP_WRITE_HOST_WIDTH − CAP_OPEN_SPAN(329) − AFTER_SPINE_SPAN(143) = 1617 − 472
+/// = 1145`. (The v10 value 815 laid the membership 154 columns too low against the deployed after-spine
 /// constraints.)
 pub const HEAP_WRITE_READ_BASE: usize =
     HEAP_WRITE_HOST_WIDTH - CAP_OPEN_SPAN - CAP_OPEN_AFTER_SPINE_SPAN;
@@ -3418,7 +3969,7 @@ pub fn generate_rotated_heap_write_wide(
     // after = the update witness's recomposed `new_root`), NOT the lossy 1-felt scalar the GENTIAN tooth
     // refutes.
     let before_tree = CanonicalHeapTree8::new(heap_leaves.to_vec(), HEAP_TREE_DEPTH);
-    let before_root8: [BabyBear; HEAP_DIGEST_W] = before_tree.root8();
+    let before_root8 = before_tree.root8();
     if !before_tree.sorted_leaves().iter().any(|l| l.addr == addr) {
         return Err(format!(
             "heap-write wide: recomputed addr {} is NOT in the BEFORE heap — the splice `.write` opens a \
@@ -3515,7 +4066,7 @@ pub fn generate_rotated_heap_write_wide(
             read_leaf,
             &heap_siblings,
             &heap_directions,
-            before_root8,
+            before_root8.limbs(),
         );
         fill_heap_after_spine(
             row,
@@ -3540,7 +4091,10 @@ pub fn generate_rotated_heap_write_wide(
         gen_pis[V1_PI_COUNT + 3],
     ];
     let dpis = append_wide_carriers(&mut trace, base_pis, HEAP_WRITE_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), HEAP_WRITE_HOST_WIDTH + 480); // 1921 (OPTION I after-spine host)
+    debug_assert_eq!(
+        trace[0].len(),
+        HEAP_WRITE_HOST_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
+    ); // 2951 (OPTION I after-spine host)
     debug_assert_eq!(dpis.len(), 20); // 4 base (2 retired) + 16 wide
     Ok((trace, dpis, vec![heap_leaves.to_vec()]))
 }
@@ -3576,11 +4130,13 @@ pub fn generate_rotated_transfer_cap_open_tb_wide(
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     let (mut trace, base_pis) =
         generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
-    if base_pis.len() != ROT_PI_COUNT {
+    if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
         return Err(format!(
-            "cap-open-TB wide generator: base PI vector {} != {ROT_PI_COUNT} (the cap-open-TB rides the \
-             bare-46-PI rotated transfer base)",
-            base_pis.len()
+            "cap-open-TB wide generator: base PI vector {} != {} (the base generator emits the \
+             rotated 46 + the 4 dsl rc PIs; the TB descriptor is UNWRAPPED, so `cap_open_tb_dpis` \
+             strips the rc tail and appends the 3 turn-identity PIs at 46..48)",
+            base_pis.len(),
+            ROT_PI_COUNT + DFA_RC_LEN
         ));
     }
     widen_to_cap_open_tb(&mut trace, cap_open, actor, dst)
@@ -3588,16 +4144,102 @@ pub fn generate_rotated_transfer_cap_open_tb_wide(
     let tb_pis = cap_open_tb_dpis(&base_pis, src, actor, dst);
     debug_assert_eq!(tb_pis.len(), CAP_OPEN_TB_PI_BASE + 3); // 49
     let dpis = append_wide_carriers(&mut trace, tb_pis, CAP_OPEN_TB_WIDTH);
-    debug_assert_eq!(trace[0].len(), CAP_OPEN_TB_WIDTH + 480); // 1029
+    debug_assert_eq!(
+        trace[0].len(),
+        CAP_OPEN_TB_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
+    ); // 2824
     debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_BASE + 3 + 16); // 65
     Ok((trace, dpis))
 }
 
-/// **THE WIDE NOTESPEND trace generator (grow-gate cohort).** Wraps the deployment-real nullifier-
-/// tree generator ([`generate_rotated_note_spend_trace_with_nullifier_tree`], which overrides limb 26
-/// with the openable accumulator roots + recomputes the block commits), then appends the wide
-/// carriers at `GRAD_ROT_WIDTH = 608`. The grow-gate member carries the extra PI[38] (the nullifier
-/// pin) before the 16 wide PIs (wide member width 816 / PI 55). Returns `(trace, dpis, map_heaps)`.
+/// The §J′ INSERT-shaped accumulator host geometry (the DEPLOYED `effAccumInsertV3 … baseV3 …`): the
+/// `effHeapOpenV3` heap-open READ appendix sits at the base descriptor's width (`GRAD_ROT_WIDTH`, where
+/// `graduateV1` ends), spanning `CAP_OPEN_SPAN` columns, so the insert host is `GRAD_ROT_WIDTH +
+/// CAP_OPEN_SPAN` wide (the wide member is `+480` on top). Matches the Lean `effAccumInsertV3 =
+/// effHeapOpenV3 base ++ accumInsertConstraints` (the weld/bind gates add no columns).
+pub const ACCUM_INSERT_READ_BASE: usize = GRAD_ROT_WIDTH;
+pub const ACCUM_INSERT_HOST_WIDTH: usize = GRAD_ROT_WIDTH + CAP_OPEN_SPAN;
+
+/// **`lay_accum_insert_read_appendix`** — lay the §J′ `effAccumInsertV3` heap-open READ appendix on every
+/// row of a grow-gate wide trace. Opens the spliced `(key, value)` leaf against the AFTER accumulator
+/// root over the `CanonicalHeapTree8::insert_witness` after-membership path (`siblings`/`directions`/
+/// `new_root` — the spliced leaf's membership in the REBUILT tree), so a `Satisfied2` of the deployed
+/// insert descriptor TRACE-FORCES `MembersAt8 afterRoot (key, value)`. The read's `capRoot` group lands
+/// `= new_root`, which the descriptor's `afterGroupWeldsI` gates weld to the AFTER accumulator block the
+/// tree generator already laid; the read leaf's `(addr, value)` IS `(key, value)`, satisfying the KEY /
+/// VALUE bind gates. `before_leaves` is the BEFORE accumulator leaf-set (the SAME set threaded into the
+/// tree generator, so `new_root` matches the AFTER block). The key MUST be FRESH (else `insert_witness`
+/// refuses — fail closed, no fabricated post-root). Grows each row to [`ACCUM_INSERT_HOST_WIDTH`].
+fn lay_accum_insert_read_appendix(
+    trace: &mut [Vec<BabyBear>],
+    before_leaves: &[crate::heap_root::HeapLeaf],
+    key_col: usize,
+    value_col: usize,
+    gated: bool,
+) -> Result<(), String> {
+    use crate::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
+    // The spliced leaf's `(key, value)` are read from the descriptor's KEY / VALUE param columns on the
+    // active spend row (row 0). The read appendix's `(addr, value)` IS `(key, value)`, so the KEY/VALUE
+    // bind gates hold on the active row. Two regimes:
+    //   * `gated = false` (noteCreate / createCell): the bind gates are UNCONDITIONAL `eqGate`s, so the
+    //     key/value param columns are held CONSTANT across ALL rows (mirroring
+    //     `generate_rotated_heap_write_wide`). Those families' base economics do not force the value
+    //     column to `0` off-row, so a constant write is consistent.
+    //   * `gated = true` (noteSpend): the bind gates are SELECTOR-GATED (`sel::NOTE_SPEND · (leaf −
+    //     col)`), VACUOUS on padding (`sel = 0`). The base noteSpend economics force `NOTE_VALUE_LO = 0`
+    //     on non-spend rows, so we must LEAVE the base key/value columns untouched (0 on padding); the
+    //     active row already carries the real key/value from the tree generator, satisfying the ACTIVE
+    //     bind. The UNCONDITIONAL after-root membership weld is laid on every row regardless (below).
+    // (Param columns are OFF the commitment chain, so this does not disturb the block commits the tree
+    // generator already recomputed.)
+    let key = trace[0][key_col];
+    let value = trace[0][value_col];
+    let before_tree = CanonicalHeapTree8::new(before_leaves.to_vec(), HEAP_TREE_DEPTH);
+    let w = before_tree
+        .insert_witness(HeapLeaf { addr: key, value })
+        .ok_or_else(|| {
+            format!(
+                "accum insert wide: 8-felt insert_witness for the fresh key {} failed (key already \
+                 present in the BEFORE accumulator, or a sentinel) — the sorted insert refuses (fail \
+                 closed, no fabricated post-root)",
+                key.as_u32()
+            )
+        })?;
+    if w.siblings.len() != HEAP_TREE_DEPTH || w.directions.len() != HEAP_TREE_DEPTH {
+        return Err(format!(
+            "accum insert wide: after-membership path length {}/{} != depth {HEAP_TREE_DEPTH}",
+            w.siblings.len(),
+            w.directions.len()
+        ));
+    }
+    let read_leaf = HeapLeaf { addr: key, value };
+    for row in trace.iter_mut() {
+        // Ungated families pin the key/value columns constant on every row; the selector-gated
+        // noteSpend leaves them as the base generator laid them (real on the active row, 0 on padding),
+        // so the gated bind is satisfied on the active row and vacuous (never violated) on padding.
+        if !gated {
+            row[key_col] = key;
+            row[value_col] = value;
+        }
+        row.resize(ACCUM_INSERT_HOST_WIDTH, BabyBear::ZERO);
+        fill_heap_open_read(
+            row,
+            ACCUM_INSERT_READ_BASE,
+            read_leaf,
+            &w.siblings,
+            &w.directions,
+            w.new_root,
+        );
+    }
+    Ok(())
+}
+
+/// **THE WIDE NOTESPEND trace generator (grow-gate cohort, §J′ INSERT-shaped deploy).** Wraps the
+/// deployment-real nullifier-tree generator ([`generate_rotated_note_spend_trace_with_nullifier_tree`],
+/// which overrides limb 26 with the openable accumulator roots + recomputes the block commits), lays the
+/// `effAccumInsertV3` heap-open READ appendix (the spliced nullifier leaf opening against the AFTER
+/// nullifier root over the `insert_witness` after-membership path — the deployed insert host), then
+/// appends the wide carriers at [`ACCUM_INSERT_HOST_WIDTH`]. Returns `(trace, dpis, map_heaps)`.
 pub fn generate_rotated_note_spend_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -3606,6 +4248,7 @@ pub fn generate_rotated_note_spend_wide(
     caveat: &RotatedCaveatManifest,
     before_nullifiers: &[crate::heap_root::HeapLeaf],
 ) -> RotatedTraceWithHeaps {
+    use super::columns::{PARAM_BASE, param};
     let (mut trace, base_pis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(
         initial_state,
         effects,
@@ -3614,7 +4257,16 @@ pub fn generate_rotated_note_spend_wide(
         caveat,
         before_nullifiers,
     )?;
-    let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
+    // §J′: the nullifier key rides param slot 0 (`NULLIFIER_PARAM_COL = prmCol 0`), value slot 1
+    // (`prmCol NOTE_VALUE_LO`) — the SAME columns the tree generator reads. Lay the insert read appendix.
+    lay_accum_insert_read_appendix(
+        &mut trace,
+        before_nullifiers,
+        PARAM_BASE + param::NULLIFIER,
+        PARAM_BASE + param::NOTE_VALUE_LO,
+        true, // selector-gated: base noteSpend forces NOTE_VALUE_LO=0 off-row; gate the value bind
+    )?;
+    let dpis = append_wide_carriers(&mut trace, base_pis, ACCUM_INSERT_HOST_WIDTH);
     Ok((trace, dpis, map_heaps))
 }
 
@@ -3629,6 +4281,7 @@ pub fn generate_rotated_note_create_wide(
     caveat: &RotatedCaveatManifest,
     before_commitments: &[crate::heap_root::HeapLeaf],
 ) -> RotatedTraceWithHeaps {
+    use super::columns::{PARAM_BASE, param};
     let (mut trace, base_pis, map_heaps) =
         generate_rotated_note_create_trace_with_commitments_tree(
             initial_state,
@@ -3638,14 +4291,23 @@ pub fn generate_rotated_note_create_wide(
             caveat,
             before_commitments,
         )?;
-    let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
+    // §J′: the commitment key rides param slot 0 (`COMMITMENT_KEY_PARAM_COL = prmCol 0`), value slot 1.
+    lay_accum_insert_read_appendix(
+        &mut trace,
+        before_commitments,
+        PARAM_BASE + param::NULLIFIER,
+        PARAM_BASE + param::NOTE_VALUE_LO,
+        false, // unconditional bind: noteCreate economics do not force the value column to 0 off-row
+    )?;
+    let dpis = append_wide_carriers(&mut trace, base_pis, ACCUM_INSERT_HOST_WIDTH);
     Ok((trace, dpis, map_heaps))
 }
 
-/// **THE WIDE CREATECELL/FACTORY/SPAWN trace generator (grow-gate cohort).** Wraps the accounts-tree
-/// generator ([`generate_rotated_create_cell_trace_with_accounts_tree`], limb-0 override + recompute),
-/// then appends the wide carriers at `GRAD_ROT_WIDTH = 608` (wide member width 816 / PI 55).
-pub fn generate_rotated_create_cell_wide(
+/// **THE BARE accounts-grow wide trace (NO §J′ insert appendix).** factory / spawn ride THIS: their wide
+/// descriptors (`factoryVmDescriptor2R24` / `spawnVmDescriptor2R24`) stay BARE — only createCell (tag 17)
+/// is deployed as the §J′ `effAccumInsertV3` insert host. The shared accounts-tree generator (limb-0
+/// override + recompute) + wide carriers at `GRAD_ROT_WIDTH`. Returns `(trace, dpis, map_heaps)`.
+fn generate_rotated_accounts_grow_wide_bare(
     initial_state: &CellState,
     effects: &[Effect],
     before_w: &RotatedBlockWitness,
@@ -3662,6 +4324,42 @@ pub fn generate_rotated_create_cell_wide(
         before_accounts,
     )?;
     let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
+    Ok((trace, dpis, map_heaps))
+}
+
+/// **THE WIDE CREATECELL trace generator (grow-gate cohort, §J′ INSERT-shaped deploy).** Wraps the
+/// accounts-tree generator ([`generate_rotated_create_cell_trace_with_accounts_tree`], limb-0 override +
+/// recompute), lays the `effAccumInsertV3` accounts-insert READ appendix (the born cell id opening
+/// against the AFTER cells root over the `insert_witness` after-membership path — the deployed insert
+/// host), then appends the wide carriers at [`ACCUM_INSERT_HOST_WIDTH`]. factory / spawn route through
+/// [`generate_rotated_accounts_grow_wide_bare`] instead (their descriptors stay bare).
+pub fn generate_rotated_create_cell_wide(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    before_accounts: &[crate::heap_root::HeapLeaf],
+) -> RotatedTraceWithHeaps {
+    use super::columns::{PARAM_BASE, param};
+    let (mut trace, base_pis, map_heaps) = generate_rotated_create_cell_trace_with_accounts_tree(
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        caveat,
+        before_accounts,
+    )?;
+    // §J′: the new-cell key rides param slot 0 (`NEW_CELL_KEY_PARAM_COL = prmCol 0`), and IS its own leaf
+    // value (a born-empty cell — the descriptor's valueCol = keyCol). Lay the accounts insert appendix.
+    lay_accum_insert_read_appendix(
+        &mut trace,
+        before_accounts,
+        PARAM_BASE + param::NULLIFIER,
+        PARAM_BASE + param::NULLIFIER,
+        false, // unconditional bind: createCell births an empty cell (valueCol = keyCol), consistent off-row
+    )?;
+    let dpis = append_wide_carriers(&mut trace, base_pis, ACCUM_INSERT_HOST_WIDTH);
     Ok((trace, dpis, map_heaps))
 }
 
@@ -3691,7 +4389,7 @@ pub fn generate_rotated_create_from_factory_wide(
                 .into(),
         );
     }
-    generate_rotated_create_cell_wide(
+    generate_rotated_accounts_grow_wide_bare(
         initial_state,
         effects,
         before_w,
@@ -3732,7 +4430,7 @@ pub fn generate_rotated_spawn_wide(
                 .into(),
         );
     }
-    generate_rotated_create_cell_wide(
+    generate_rotated_accounts_grow_wide_bare(
         initial_state,
         effects,
         before_w,
@@ -3790,7 +4488,7 @@ pub fn generate_rotated_refusal_wide(
 /// `ROT_WIDTH + 7·36 = 328 + 252 = 580`… +1 reserved = **581** (the committed
 /// `setFieldDynVmDescriptor2R24.trace_width`, distinct from `GRAD_ROT_WIDTH = 608`). The wide
 /// carriers (the `setFieldDynVmDescriptor2R24Wide` member) land at THIS host width.
-pub const SET_FIELD_DYN_HOST_WIDTH: usize = 955; // v11: wide 1435 − 480
+pub const SET_FIELD_DYN_HOST_WIDTH: usize = GRAD_ROT_WIDTH - 28; // v13: 1581 − 4·7 sites = 1553 (wide 2465 − 912 carriers)
 
 /// The slot-index param column the dynamic setField indexes the 8-cell overflow memory by
 /// (`prmCol SLOT = prmCol VALUE = param1`, col 69 — both addr AND value of the Blum write, the
@@ -3866,9 +4564,9 @@ pub fn generate_rotated_set_field_dyn_base(
     };
     let (mut trace, base_pis) =
         generate_rotated_effect_vm_trace(initial_state, &[lead], before_w, after_w, caveat)?;
-    if base_pis.len() != ROT_PI_COUNT {
+    if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
         return Err(format!(
-            "setFieldDyn base generator: expected the bare {ROT_PI_COUNT}-PI rotated vector, got {} \
+            "setFieldDyn base generator: expected the rotated vector + the 4 dsl rc PIs, got {} \
              (SetField carries no record-pin offset)",
             base_pis.len()
         ));
@@ -3900,12 +4598,14 @@ pub fn generate_rotated_set_field_dyn_base(
     dpis[V1_PI_COUNT + 1] = trace[last_idx][AFTER_BASE + B_STATE_COMMIT]; // PI 43: NEW commit
 
     // THE FIFTH PIN (col 263 = AFTER_BASE + B_RECORD_DIGEST → PI[46]): SetField has no
-    // `record_pin_offset`, so push the AFTER record-digest limb here (the descriptor pins it last row).
-    dpis.push(trace[last_idx][AFTER_BASE + B_RECORD_DIGEST]); // PI 46
+    // `record_pin_offset`, so INSERT the AFTER record-digest limb at PI 46 (the descriptor pins the
+    // per-effect extra FIRST, the dsl rc tail LAST: fifth@46, rc@47..50 — the base generator already
+    // appended the 4 rc PIs at 46..49, so the insert shifts them to 47..50).
+    dpis.insert(ROT_PI_COUNT, trace[last_idx][AFTER_BASE + B_RECORD_DIGEST]); // PI 46
     debug_assert_eq!(
         dpis.len(),
-        ROT_PI_COUNT + 1,
-        "setFieldDyn carries the rotated 46-PI + PI[46]"
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "setFieldDyn carries the rotated 46-PI + PI[46] + the 4 dsl rc PIs (47..50)"
     );
 
     // THE BLUM BOUNDARY: ONE declared address (the slot, init value = prev_value, init serial 0). The
@@ -3940,13 +4640,16 @@ pub fn generate_rotated_set_field_dyn_wide(
         prev_value,
     )?;
     let dpis = append_wide_carriers(&mut trace, base_pis, SET_FIELD_DYN_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), SET_FIELD_DYN_HOST_WIDTH + 480); // 1435
+    debug_assert_eq!(
+        trace[0].len(),
+        SET_FIELD_DYN_HOST_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
+    ); // 2465
     Ok((trace, dpis, mem_boundary))
 }
 
 // ============================================================================
 // custom — the user-defined program effect bound to an EXTERNAL sub-proof (the
-// `customVmDescriptor2R24` 789-wide member = host 581 + 480 carriers).
+// `customVmDescriptor2R24` 789-wide member = host 581 + 608 carriers).
 // ============================================================================
 
 /// The host width of the wide `customVmDescriptor2R24` member: the deployed
@@ -3955,7 +4658,7 @@ pub fn generate_rotated_set_field_dyn_wide(
 /// V1Face host as setFieldDyn (the carriers ride the identical 8-felt blocks);
 /// the trace SHAPE differs (a Custom row, no Blum-memory boundary), but the wide
 /// geometry is `append_wide_carriers` at 581.
-pub const CUSTOM_HOST_WIDTH: usize = 955; // v11: wide 1435 − 480
+pub const CUSTOM_HOST_WIDTH: usize = GRAD_ROT_WIDTH - 28; // v13: 1581 − 4·7 sites = 1553 (wide 2465 − 912 carriers)
 
 /// **THE WIDE custom trace generator (`customVmDescriptor2R24`, 789-wide / 70 PI).**
 ///
@@ -4004,11 +4707,12 @@ pub fn generate_rotated_custom_wide(
     }
     let (mut trace, base_pis) =
         generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
-    if base_pis.len() != ROT_PI_COUNT {
+    if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
         return Err(format!(
-            "custom wide generator: base PI vector {} != {ROT_PI_COUNT} (a Custom lead carries the \
-             bare 46-PI rotated vector — no record-pin / grow-gate offset)",
-            base_pis.len()
+            "custom wide generator: base PI vector {} != {} (a Custom lead carries the bare 46-PI \
+             rotated vector + the 4 dsl rc PIs — no record-pin / grow-gate offset)",
+            base_pis.len(),
+            ROT_PI_COUNT + DFA_RC_LEN
         ));
     }
     // VK epoch: PUBLISH the `proof_bind` op's bound columns as the descriptor's own public inputs
@@ -4022,17 +4726,25 @@ pub fn generate_rotated_custom_wide(
     {
         use super::columns::{PARAM_BASE, param};
         let r0 = &trace[0];
+        // The dsl rc tail rides LAST on the wrapped member (`withDfaRcPins customV3`: exposure at
+        // 46..53, rc at 54..57) — the base generator appended rc at 46..49, so lift it off, lay
+        // the 8 exposure PIs, then re-append it.
+        let rc_tail: Vec<BabyBear> = base_pis.split_off(base_pis.len() - DFA_RC_LEN);
         for k in 0..4 {
             base_pis.push(r0[PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + k]); // PI 46..49
         }
         for k in 0..4 {
             base_pis.push(r0[PARAM_BASE + param::CUSTOM_VK_HASH_BASE + k]); // PI 50..53
         }
+        base_pis.extend_from_slice(&rc_tail); // PI 54..57: the dsl rc tail
     }
-    debug_assert_eq!(base_pis.len(), ROT_PI_COUNT + 8); // 46 base + 8 custom-binding = 54
+    debug_assert_eq!(base_pis.len(), ROT_PI_COUNT + 8 + DFA_RC_LEN); // 46 base + 8 custom + 4 rc = 58
     let dpis = append_wide_carriers(&mut trace, base_pis, CUSTOM_HOST_WIDTH);
-    debug_assert_eq!(trace[0].len(), CUSTOM_HOST_WIDTH + 480); // 1435
-    debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 8 + 16); // 46 base + 8 custom + 16 wide = 70
+    debug_assert_eq!(
+        trace[0].len(),
+        CUSTOM_HOST_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
+    );
+    debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 8 + DFA_RC_LEN + 16); // 58 + 16 wide = 74
     Ok((trace, dpis))
 }
 
@@ -4092,8 +4804,32 @@ fn cap_write_wide_plan(effect: &Effect) -> Option<(Option<CapTreeWriteOp>, bool)
 /// the refusal `fields_root` write witness (`Some` REQUIRED for a `Refusal` lead — the honest refusal
 /// is UNSAT without it); `cap_write` the cap-tree write witness (`Some` REQUIRED for a cap-WRITE lead
 /// whose base carries an in-circuit cap-tree `map_op` write — attenuate / revokeCapability — the
-/// honest cap-write is UNSAT without it). Fails closed (`Err`) on an empty / heterogeneous /
-/// non-cohort slice.
+/// honest cap-write is UNSAT without it); `membership_teeth` the producer-honest
+/// `(sender_leaf, authorized_root)` pair for the committed transfer row's membership-teeth tail
+/// (`None` = the ZERO no-caveat sentinel — see the registry-tail block below). Fails closed
+/// (`Err`) on an empty / heterogeneous / non-cohort slice.
+///
+/// ## The post-regen registry TAIL (v12 exposure regen — hoisted here from the leg-mint recipe)
+///
+/// The committed wide registry row a member proves against may demand MORE PIs (and trace columns)
+/// than the per-family wide producer emits. This dispatcher derives that tail FROM THE DESCRIPTOR
+/// (`public_input_count − emitted`, `trace_width − row width` — never a hardcoded count; members
+/// differ) and fills it producer-honest, so EVERY route through the shared spine (the live SDK wide
+/// prover, the IVC leg mints, the leg-mint recipe) emits the committed shape:
+///
+///   * the committed transfer row (`CarrierComposed.transferV3MembershipWide`, 68): the
+///     membership-teeth pair `(sender_leaf, authorized_root)` — 2 constant teeth columns past the
+///     carriers (row-0-pinned) + 2 claim PIs spliced ahead of the 16 wide anchors. The values come
+///     from `membership_teeth` (the caller's BEFORE-cell derivation — `compress_member` over the
+///     owner key + the `SenderAuthorized { PublicRoot }` slot felt); `None` fills the ZERO pair,
+///     exactly the no-caveat sentinel the fold's membership arm refuses to bind.
+///   * the committed makeSovereign row (`CarrierComposed.makeSovereignV3DeployedWide`, 78): the 4
+///     KEY_COMMIT teeth + the 32-column chip appendix, filled IN the record-pin arm
+///     ([`append_sovereign_key_commit_rider`] — derived from the committed pubkey octet, so the
+///     generic pairing check below sees a zero tail).
+///
+/// A member whose committed row demands a tail this dispatcher has no producer fill for FAILS
+/// CLOSED (mint it through its dedicated carrier minter) — never a guessed value.
 ///
 /// THE SEPARATELY-ROUTED WIDE MEMBERS (NOT effect-dispatched here): `heapWriteVmDescriptor2R24` (no live
 /// `Effect::HeapWrite` selector — reached by the exercise-inner heap-write path) and
@@ -4115,6 +4851,7 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
     before_nullifiers: Option<&[BabyBear]>,
     refusal_fields: Option<(&[crate::heap_root::HeapLeaf], BabyBear)>,
     cap_write: Option<&CapWriteWideWitness>,
+    membership_teeth: Option<(BabyBear, BabyBear)>,
 ) -> Result<
     (
         crate::descriptor_ir2::EffectVmDescriptor2,
@@ -4205,9 +4942,18 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
             | Effect::ReceiptArchive { .. }
             | Effect::MakeSovereign
     ) {
-        let (t, d) =
+        let (mut t, mut d) =
             generate_rotated_record_pin_wide(initial_state, effects, before, after, caveat)
                 .map_err(|e| format!("wide record-pin generation: {e}"))?;
+        // The committed makeSovereign row is the DEPLOYED KEYED member
+        // (`CarrierComposed.makeSovereignV3DeployedWide`, 78 PIs / +32 chip-appendix columns):
+        // fill the 4 KEY_COMMIT teeth + the digest appendix from the committed pubkey octet and
+        // splice the teeth claim PIs ahead of the 16 wide anchors. The other record-pin members
+        // commit the bare wide record-pin shape (no rider).
+        if matches!(lead, Effect::MakeSovereign) {
+            append_sovereign_key_commit_rider(&mut t, &mut d)
+                .map_err(|e| format!("wide record-pin generation: {e}"))?;
+        }
         (t, d, vec![])
     } else if matches!(lead, Effect::CreateCell { .. }) {
         generate_rotated_create_cell_wide(initial_state, effects, before, after, caveat, &[])
@@ -4225,6 +4971,12 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
     } else if matches!(lead, Effect::SpawnWithDelegation { .. }) {
         generate_rotated_spawn_wide(initial_state, effects, before, after, caveat, &[])
             .map_err(|e| format!("wide spawn generation: {e}"))?
+    } else if matches!(lead, Effect::BridgeMint { .. }) {
+        // The felt mint-hash pin member (51 base PIs) — no longer the bare transfer shape.
+        let (t, d) =
+            generate_rotated_bridge_mint_wide(initial_state, effects, before, after, caveat)
+                .map_err(|e| format!("wide bridge-mint generation: {e}"))?;
+        (t, d, vec![])
     } else if matches!(lead, Effect::SetField { field_idx, .. } if *field_idx >= 8) {
         // setFieldDyn carries the DISTINCT 581-wide V1Face geometry + a mem-boundary witness
         // (NOT map_heaps); the dedicated block below overrides these placeholders.
@@ -4275,6 +5027,17 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
         };
         let d = append_wide_carriers(&mut t, d, GRAD_ROT_WIDTH);
         (t, d, heaps)
+    } else if matches!(lead, Effect::Mint { .. }) {
+        // supplyMint (`sel::MINT` → `supplyMintVmDescriptor2R24`): the committed row is UNWRAPPED
+        // (62 = 46 base + 16 anchors — the Lean `supplyMintV3` was never rc-wrapped, exactly like
+        // the cap-open family), so lift the 4 dsl rc PIs off the transfer-shape emission (they sit
+        // between the base 46 and the 16 wide anchors). The rc COLUMNS stay in the trace (zero /
+        // unpinned on this member).
+        let (t, mut d) =
+            generate_rotated_transfer_shape_wide(initial_state, effects, before, after, caveat)
+                .map_err(|e| format!("wide supply-mint generation: {e}"))?;
+        d.drain(ROT_PI_COUNT..ROT_PI_COUNT + DFA_RC_LEN);
+        (t, d, vec![])
     } else {
         let (t, d) =
             generate_rotated_transfer_shape_wide(initial_state, effects, before, after, caveat)
@@ -4306,6 +5069,76 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
     } else {
         MemBoundaryWitness::default()
     };
+
+    // THE POST-REGEN REGISTRY TAIL (hoisted from `rotation_witness::mint_rotated_participant_leg`
+    // so EVERY route through this spine emits the committed shape): the committed row may carry
+    // claim PIs (+ matching teeth columns) PAST what the per-family producer emits — derived from
+    // the descriptor, never hardcoded (members differ: the teeth transfer row, the KEY_COMMIT
+    // sovereign — filled in its arm above — the factory octet pins all carry different totals).
+    // The claim PIs sit AHEAD of the 16 wide anchors (`carrier_pin_twin::insert_tail_claim_pins`
+    // geometry), the teeth columns at the wide end.
+    let emitted_pis = dpis.len();
+    let row_width = trace
+        .first()
+        .map(Vec::len)
+        .ok_or_else(|| "wide rotated prover: empty wide trace".to_string())?;
+    let pi_tail = desc
+        .public_input_count
+        .checked_sub(emitted_pis)
+        .ok_or_else(|| {
+            format!(
+                "wide rotated prover: descriptor '{}' PI count {} < the wide producer's {}",
+                desc.name, desc.public_input_count, emitted_pis
+            )
+        })?;
+    let col_tail = desc.trace_width.checked_sub(row_width).ok_or_else(|| {
+        format!(
+            "wide rotated prover: descriptor '{}' trace width {} < the wide producer's {}",
+            desc.name, desc.trace_width, row_width
+        )
+    })?;
+    if pi_tail != col_tail {
+        return Err(format!(
+            "wide rotated prover: descriptor '{}' tail mismatch — {pi_tail} claim PI(s) vs \
+             {col_tail} teeth column(s) past the wide producer's shape (the exposure regen pairs \
+             them 1:1)",
+            desc.name
+        ));
+    }
+    if pi_tail > 0 {
+        match lead {
+            // The committed transfer row (`CarrierComposed.transferV3MembershipWide`): the
+            // membership-teeth pair `(sender_leaf, authorized_root)` — 2 constant teeth columns
+            // past the carriers (row-0-pinned) + 2 claim PIs ahead of the 16 anchors. `None`
+            // fills the ZERO pair (the no-caveat sentinel the fold's membership arm refuses to
+            // bind — a bundle claim never equals the zero pair for a real member).
+            Effect::Transfer { .. } if pi_tail == 2 => {
+                let (sender_leaf, authorized_root) =
+                    membership_teeth.unwrap_or((BabyBear::ZERO, BabyBear::ZERO));
+                for row in trace.iter_mut() {
+                    row.push(sender_leaf);
+                    row.push(authorized_root);
+                }
+                let insert_at = emitted_pis - 16; // ahead of the 16 wide anchor PIs
+                let mut spliced = Vec::with_capacity(emitted_pis + 2);
+                spliced.extend_from_slice(&dpis[..insert_at]);
+                spliced.push(sender_leaf);
+                spliced.push(authorized_root);
+                spliced.extend_from_slice(&dpis[insert_at..]);
+                dpis = spliced;
+            }
+            other => {
+                return Err(format!(
+                    "wide rotated prover: committed descriptor '{}' demands {pi_tail} tail PI(s) \
+                     past the wide producer's {emitted_pis} for lead {other:?} — this dispatcher \
+                     has no producer fill for that member's tail (mint it through its dedicated \
+                     carrier minter); refusing to guess",
+                    desc.name
+                ));
+            }
+        }
+    }
+    debug_assert_eq!(dpis.len(), desc.public_input_count);
 
     Ok((desc, trace, dpis, map_heaps, mem_boundary))
 }

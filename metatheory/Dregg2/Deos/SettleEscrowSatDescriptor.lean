@@ -32,7 +32,7 @@ stay frozen) — so the welded gates and the base are mutually satisfiable for a
   descriptor makes the selector a real, pinned column it can hang on.)
 
 * **The four welded gates** `sel · (col − const) == 0` read the rotated field columns
-  `beforeFieldCol k = EFFECT_VM_WIDTH + 4 + k` and `afterFieldCol k = EFFECT_VM_WIDTH + 51 + 4 + k`
+  `beforeFieldCol k = EFFECT_VM_WIDTH + 4 + k` and `afterFieldCol k = EFFECT_VM_WIDTH + B_SPAN + 4 + k`
   (the `r3..r10 ↔ fields[0..8]` weld — the Rust `satisfaction_weld::{before,after}_field_col`),
   which the chained `wireCommitR` → rotated state-commit absorbs into the wide commit. The Lean
   satisfaction SOUNDNESS (equal committed state ⟹ same verdict) is the imported
@@ -85,8 +85,12 @@ base). The Rust twin is `satisfaction_weld::before_field_col`. -/
 def beforeFieldCol (k : Nat) : Nat := EFFECT_VM_WIDTH + 4 + k
 
 /-- The rotated AFTER-block field column for slot `k` (the after block based at
-`EFFECT_VM_WIDTH + 51`). The Rust twin is `satisfaction_weld::after_field_col`. -/
-def afterFieldCol (k : Nat) : Nat := EFFECT_VM_WIDTH + 51 + 4 + k
+`EFFECT_VM_WIDTH + B_SPAN`, the rotated block span — 227 at v13). Derived from the canonical
+`EffectVmEmitRotationV3.B_SPAN`, NOT a frozen literal, so it tracks the rotated block geometry (the
+prior hard-coded `51` was the pre-v11 `B_SPAN` and drifted the AFTER-leg gates off the producer's
+columns). The Rust twin is `satisfaction_weld::after_field_col` (`AFTER_BASE = V1_WIDTH + B_SPAN`). -/
+def afterFieldCol (k : Nat) : Nat :=
+  EFFECT_VM_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN + 4 + k
 
 /-! ## §2 — the four selector-gated satisfaction gates (the in-AIR `SETTLE_ESCROW` arm). -/
 

@@ -118,6 +118,7 @@ pub mod constraint_prover;
 #[allow(deprecated)]
 pub mod cross_state_derivation;
 pub mod dsl;
+pub mod faithful8;
 pub mod field;
 pub mod ivc;
 
@@ -317,6 +318,9 @@ mod soundness_tests;
 
 // Proof tier types — prevents scaffold/test proofs from satisfying production verifiers.
 pub use proof_tier::{CryptographicProof, ProofTier, VerifiedProof};
+
+// The faithful-commitment TYPE WALL (docs/FAITHFUL-COMMITMENT-LAW.md).
+pub use faithful8::Faithful8;
 
 // Re-export primary types.
 pub use binding::{

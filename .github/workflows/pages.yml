@@ -58,10 +58,13 @@ jobs:
         # fetch it at the pinned Cargo rev. The fork is public; the sequence is verified.
         run: |
           set -euo pipefail
+          # Keep this rev == the root Cargo.toml's p3-* git pin (the pushed fork tip);
+          # the sibling path-patch shadows that pin, so a stale clone here builds a
+          # DIFFERENT circuit than a fresh `cargo` resolve would.
           if [ ! -d ../plonky3-recursion/.git ]; then
             git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-            git -C ../plonky3-recursion fetch --depth 1 origin 0b4da97a430cf47710a5b03ef998f6a8674761ad
-            git -C ../plonky3-recursion checkout 0b4da97a430cf47710a5b03ef998f6a8674761ad
+            git -C ../plonky3-recursion fetch --depth 1 origin be52a51b87c39e41ade632320697df983751471f
+            git -C ../plonky3-recursion checkout be52a51b87c39e41ade632320697df983751471f
           fi
 
       - name: Build the layered deos site (sober landing + all wasm client-side, node-less)

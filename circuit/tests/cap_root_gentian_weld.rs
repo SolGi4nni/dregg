@@ -30,7 +30,7 @@ use dregg_circuit::field::BabyBear;
 /// capability authorizes). Everything else is fixed, so two salts produce two GENUINELY-different
 /// authority states (a cap over cell A vs a cap over cell B).
 fn cap_tree_root_8(target_salt: u32) -> [BabyBear; 8] {
-    compute_capability_root(vec![one_cap(target_salt)])
+    compute_capability_root(vec![one_cap(target_salt)]).limbs()
 }
 
 fn one_cap(target_salt: u32) -> CapLeaf {

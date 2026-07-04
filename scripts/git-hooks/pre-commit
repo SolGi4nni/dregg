@@ -16,9 +16,14 @@
 # Installed by scripts/install-hooks.sh (symlinked into .git/hooks, leaving git-lfs's hooks intact).
 set -uo pipefail
 
-command -v rustfmt >/dev/null 2>&1 || exit 0   # no rustfmt on PATH → don't block the commit
-
 repo_root="$(git rev-parse --show-toplevel)"
+
+# --- secret-scan backstop: BLOCK the commit if a real secret is staged (see docs/PUBLISHING-SAFETY.md) ---
+if [ -x "$repo_root/scripts/git-hooks/secret-scan.sh" ]; then
+  "$repo_root/scripts/git-hooks/secret-scan.sh" staged || exit 1
+fi
+
+command -v rustfmt >/dev/null 2>&1 || exit 0   # no rustfmt on PATH → don't block the commit
 
 # Workspace default edition (root [workspace.package] edition), used for crates that inherit it
 # via `edition.workspace = true`. Falls back to 2024 if the table can't be read.

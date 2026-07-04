@@ -156,6 +156,7 @@ the gpui_web run-loop paint reentrancy).
   tests ≠ proofs — "if we don't have lean code reasoning about these things, then it isn't
   proven at all."
 - The live competitive anchor is **David's `~/pug` fleet** (buildr / builders-dev / buildr-
+  private-beta), not post-urbit screenshots. The lunar-town-council verdict —
   "proof-over-assertion as the enforced spine; convert advisories into deterministic gates that
   each read a live artifact" — is *the dregg thesis verbatim*. deos-hermes = the half-built
   herdr→dregg adapter (Fork B). (The PG store is for *deos*, not builders-dev, which is TS/CF.)

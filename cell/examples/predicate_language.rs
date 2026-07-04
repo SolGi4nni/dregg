@@ -28,7 +28,7 @@ fn main() {
     println!("\nall predicate examples evaluated as expected.");
 }
 
-/// akapug's case: "drop messages where the audience field doesn't match self."
+/// The case: "drop messages where the audience field doesn't match self."
 ///
 /// Model state slot 0 as the message's declared audience. The cell program
 /// requires that slot to equal this cell's own id, so a write addressed to
@@ -53,7 +53,7 @@ fn audience_routing_exact() {
     println!("[audience exact]   accept own-id, reject other-id");
 }
 
-/// "audience is one of N allowed recipients" — akapug's `AnyOf`-over-identities idea.
+/// "audience is one of N allowed recipients" — the `AnyOf`-over-identities idea.
 ///
 /// `AnyOf` is a single-level disjunction over `SimpleStateConstraint`s: the
 /// transition passes if any branch holds.

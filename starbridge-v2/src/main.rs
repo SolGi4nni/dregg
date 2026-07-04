@@ -975,20 +975,39 @@ fn run_desktop_window() {
     use gpui::{px, size, App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
     use gpui_platform::application;
     use starbridge_v2::deos_desktop::{DeosDesktop, DesktopLayout};
+    use starbridge_v2::durable_desktop::{boot_desktop_world, DurableBoot};
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    // The live verified image — the SAME `World` the cockpit + the woven bake run.
-    let (world, anchors) = world::demo_world();
+    // WHERE THE WORLD LIVES — a DURABLE redb image beside the layout sidecar by
+    // DEFAULT, so "your world is one durable image" is LITERALLY true for the windowed
+    // desktop: the World (cells, balances, receipts, every verified turn) survives a
+    // close + reopen, not just the layout sidecar. Overridable via
+    // `--world-image=<path>` / `--fresh-world` / the `DEOS_WORLD_IMAGE` env, with a
+    // `--world-image=:memory:` (aka `ephemeral`) escape hatch that keeps the OLD
+    // `demo_world()` behavior so bakes / tests / CI stay hermetic + deterministic. The
+    // heavy lifting — open-recovering, seed-on-first-run, the never-strand /
+    // never-silently-wipe fallbacks — lives in `durable_desktop`; this only parses the
+    // spec and reports the outcome.
+    let args: Vec<String> = std::env::args().collect();
+    let spec = resolve_world_image_spec(&args);
+    let DurableBoot {
+        world,
+        anchors,
+        origin,
+    } = boot_desktop_world(spec);
     let [_treasury, _service, user] = anchors;
 
     // STARTUP PROOF (the no-blank-screen receipt): the desktop opens onto the live
-    // image; report its real shape so a blank window reads as a render/display issue,
-    // not an empty UI. A never-greeted layout opens onto the calm WELCOME front door.
+    // image; report its real shape AND whether it is durable (and from where) so a
+    // blank window reads as a render/display issue (not an empty UI), and a
+    // non-persisting session reads LOUDLY as such. A never-greeted layout opens onto
+    // the calm WELCOME front door.
     let layout_path = DesktopLayout::default_path();
     {
         let fresh = !DesktopLayout::load(&layout_path).prefs.welcomed;
         println!("== Starbridge v2 · opening the woven DESKTOP — root: DeosDesktop ==");
+        println!("  world: {}", origin.summary());
         println!(
             "  live image: {} cells · height {} · {} receipts",
             world.cell_count(),
@@ -1020,10 +1039,14 @@ fn run_desktop_window() {
                 eprintln!("warning: failed to register embedded UI fonts: {e}");
             }
         }
-        // The real widget kit + the deos dark theme (follow OS appearance, default
-        // Dark) — same boot pair as `run_window`.
+        // The real widget kit — but the NT desktop is a LIGHT room by design: its
+        // hand-rolled chrome is panel-grey with dark text, so the kit's theme must
+        // be LIGHT regardless of the OS appearance. (Following the OS here painted
+        // the GitHub-dark kit palette into the doc editor's Input and the Spotter's
+        // query field under OS dark mode — the scout-found theme inversion.) The
+        // cockpit windows keep following the OS via `apply_deos_theme`.
         gpui_component::init(cx);
-        apply_deos_theme(None, false, cx);
+        gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
 
         let bounds = Bounds::centered(None, size(px(1600.), px(1000.)), cx);
         let layout_path = layout_path.clone();
@@ -1050,6 +1073,76 @@ fn run_desktop_window() {
         .expect("failed to open window");
         cx.activate(true);
     });
+}
+
+/// Resolve WHERE the windowed desktop's World lives from the CLI + the environment
+/// (the durable-image weld's front knob). Precedence:
+///
+///   1. `--world-image=<v>` / `--world-image <v>` (explicit),
+///   2. else the `DEOS_WORLD_IMAGE` env knob,
+///   3. else the DEFAULT durable image beside the layout sidecar.
+///
+/// A value of `:memory:` (or `ephemeral`) is the ESCAPE HATCH — the old in-RAM
+/// `demo_world()` (bakes / tests / CI stay hermetic + deterministic). `--fresh-world`
+/// (orthogonal) discards the current durable image and starts over (it is
+/// quarantined aside, never deleted); it is meaningless for — and ignored on — the
+/// ephemeral hatch.
+#[cfg(all(feature = "embedded-executor", feature = "gpui-ui"))]
+fn resolve_world_image_spec(args: &[String]) -> starbridge_v2::durable_desktop::WorldImageSpec {
+    use starbridge_v2::durable_desktop::WorldImageSpec;
+    let fresh = args.iter().any(|a| a == "--fresh-world");
+    let raw = world_image_arg(args)
+        .or_else(|| std::env::var("DEOS_WORLD_IMAGE").ok())
+        .filter(|s| !s.is_empty());
+    match raw.as_deref() {
+        Some(":memory:") | Some("ephemeral") => WorldImageSpec::Ephemeral,
+        Some(p) => WorldImageSpec::Durable {
+            path: std::path::PathBuf::from(p),
+            fresh,
+        },
+        None if args.iter().any(|a| a == "--durable-world") => WorldImageSpec::Durable {
+            path: default_world_image_path(),
+            fresh,
+        },
+        // OPT-IN, not default: the durable overlay's change-set drops CreateCell
+        // (CORE-AUDIT.md finding 1), and the desktop's App Shelf / Exchange / Letter
+        // actuations all create cells — a durable-by-default desktop would refuse or
+        // silently truncate on reopen. `--desktop` stays EPHEMERAL until the operator
+        // asks (`--durable-world` or an explicit --world-image path), which becomes
+        // safe once the executor exposes its real journal write-set.
+        None => WorldImageSpec::Ephemeral,
+    }
+}
+
+/// Parse the `--world-image <path>` (or `=<path>`) argument. Returns `None` when
+/// absent. Mirrors [`render_woven_arg`]'s parse idiom.
+#[cfg(all(feature = "embedded-executor", feature = "gpui-ui"))]
+fn world_image_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--world-image" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--world-image=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// The DEFAULT durable World image path — beside the layout sidecar
+/// (`DesktopLayout::default_path()`'s directory), named `deos-world.redb`. So the
+/// World and its window arrangement live in the same place, and "your world is one
+/// durable image" needs no flags.
+#[cfg(all(feature = "embedded-executor", feature = "gpui-ui"))]
+fn default_world_image_path() -> std::path::PathBuf {
+    use starbridge_v2::deos_desktop::DesktopLayout;
+    let layout = DesktopLayout::default_path();
+    layout
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("deos-world.redb")
 }
 
 /// Install the deos theme on the gpui-component kit, the SINGLE call every init
@@ -1625,6 +1718,197 @@ fn render_woven_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
             board.crawled_cells,
             board.mounted_window
         );
+    }
+
+    // ── 4e. THE AGENT ROOM — the resident as first-class inhabitant. The Spotter
+    //     reaches it like every surface; it lands mold-ready; its default resident is
+    //     the busiest NON-OPERATOR cell (the demo genesis really acts), read off the
+    //     executor's receipts — never self-report.
+    desk.update(&mut cx, |d, _cx| d.bake_open_spotter("agent room"));
+    let room_top = desk
+        .update(&mut cx, |d, _cx| d.bake_spotter_top_label())
+        .unwrap_or_default();
+    anyhow::ensure!(
+        room_top.to_lowercase().contains("agent room"),
+        "the Spotter must reach the AGENT ROOM (top: {room_top:?})"
+    );
+    desk.update(&mut cx, |d, _cx| d.bake_spotter_dispatch_top());
+    cx.run_until_parked();
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_selected_window_label()) == Some("Agent Room"),
+        "the Agent Room jump lands its window mold-ready (one gesture everywhere)"
+    );
+    let resident = desk.update(&mut cx, |d, _cx| d.bake_agent_room_resident());
+    anyhow::ensure!(
+        resident != user,
+        "the room's default resident is the busiest NON-operator cell (genesis acts)"
+    );
+
+    // ── 4f. GOSSAMER — drag-transclude quotes a cell into the document, and a cyan
+    //     thread SNAPS between the quoting document window and the quoted surface:
+    //     Xanadu's parallel visible connection, over a real receipted quote.
+    desk.update(&mut cx, |d, cx| {
+        d.bake_open_doc(user);
+        d.bake_transclude(resident, user);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let threads_now = desk.update(&mut cx, |d, _cx| d.bake_thread_count());
+    anyhow::ensure!(
+        threads_now >= 1 && desk.update(&mut cx, |d, _cx| d.bake_thread_between(resident, user)),
+        "a transclusion must snap a GOSSAMER thread between quoted cell and quoting \
+         document (got {threads_now} thread(s))"
+    );
+
+    // ── 4g. THE PULSE SPEAKS — a REFUSED moment arrives as an amber toast card
+    //     (here pushed via the bake feed; live, pump_dynamics feeds it from the
+    //     dynamics stream), and the keyboard spine's Escape ladder is real.
+    desk.update(&mut cx, |d, cx| {
+        d.bake_push_toast(
+            true,
+            "3cc02624 — unauthorized effect: Transfer beyond mandate",
+        );
+        d.bake_push_toast(false, "resident 87a55eb5 committed turn #6 · 41cu");
+        cx.notify();
+    });
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_toast_count()) == 2,
+        "the toast rack carries the pulse's announcements"
+    );
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_key("k", true)),
+        "⌘K summons the Spotter from anywhere (the keyboard spine)"
+    );
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_key("escape", false)),
+        "Escape dismisses the Spotter (the trap the scouts found is fixed)"
+    );
+    cx.run_until_parked();
+
+    // ── 4h. THE APP SHELF — the registry's apps as first-class citizens: launch one
+    //     and its cell + receipt land on the LIVE World (a real verified turn), its
+    //     icon wearing the app's own face. Gated on `app-registry`.
+    #[cfg(feature = "app-registry")]
+    {
+        desk.update(&mut cx, |d, _cx| d.bake_open_app_shelf());
+        cx.run_until_parked();
+        let apps = desk.update(&mut cx, |d, _cx| d.bake_app_count());
+        anyhow::ensure!(
+            apps >= 10,
+            "the shelf lists the registry's roster (got {apps} apps)"
+        );
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_launch_app("bounty-board")),
+            "launching bounty-board lands its cell + receipt on the LIVE World"
+        );
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_installed_app_count()) == 1,
+            "the launch is recorded on the shelf's installed set"
+        );
+        cx.run_until_parked();
+    }
+
+    // ── 4h′. THE EXCHANGE FLOOR — the $DREGG agent economy on the glass: opening
+    //     the floor installs its substrate (compute-exchange + execution-lease, real
+    //     launch receipts); POSTING an offer, TAKING it under a metered lease, and
+    //     SETTLING Σδ=0 are each REAL verified turns whose receipts grow the LIVE
+    //     World's log; the over-budget cheat is refused by the executor itself.
+    #[cfg(feature = "app-registry")]
+    {
+        let r0 = desk.update(&mut cx, |d, _cx| d.bake_world_receipt_count());
+        desk.update(&mut cx, |d, _cx| d.bake_open_exchange());
+        cx.run_until_parked();
+        let r_open = desk.update(&mut cx, |d, _cx| d.bake_world_receipt_count());
+        anyhow::ensure!(
+            r_open > r0,
+            "opening the Exchange Floor launches its substrate apps — real receipts \
+             ({r0} → {r_open})"
+        );
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_post_offer()),
+            "posting an offer commits a real verified 'post' turn on a fresh offer cell"
+        );
+        let r_post = desk.update(&mut cx, |d, _cx| d.bake_world_receipt_count());
+        anyhow::ensure!(r_post > r_open, "the post receipt landed on the LIVE World");
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_exchange_cheat_refused()),
+            "the over-budget take is REFUSED by the executor (the BUDGET gate bites)"
+        );
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_world_receipt_count()) == r_post,
+            "the refused cheat committed NOTHING (anti-ghost)"
+        );
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_take_lease()),
+            "taking the lease commits the bid + the metered checkpoint"
+        );
+        let r_take = desk.update(&mut cx, |d, _cx| d.bake_world_receipt_count());
+        anyhow::ensure!(r_take > r_post, "the take's receipts landed");
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_settle_offer()),
+            "settlement commits (the executor-enforced Σδ=0 split)"
+        );
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_exchange_settlement_delta()) == Some(0),
+            "the settled offer shows Σδ = 0 read off the LIVE ledger"
+        );
+        cx.run_until_parked();
+    }
+
+    // ── 4i. THE REWIND RAIL — scrub the whole desktop to an early height (the
+    //     root-verified past: a smaller census, REPLAYED chrome), then snap LIVE.
+    desk.update(&mut cx, |d, cx| {
+        d.bake_rewind_to(1);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let past_census = desk.update(&mut cx, |d, _cx| d.bake_rewind_census_len());
+    let live_census = desk.update(&mut cx, |d, _cx| {
+        d.bake_rewind_live();
+        d.bake_rewind_census_len()
+    });
+    anyhow::ensure!(
+        past_census != live_census,
+        "the scrubbed past differs from live (census {past_census} vs {live_census}) — \
+         the rail replays root-verified history, not a decoration"
+    );
+    cx.run_until_parked();
+
+    // ── 4j. THE HIRELING LIVES — hire a real confined resident (hermetic on-box
+    //     brain by default), step one perceive-decide-act beat: its cap-gated turns
+    //     land on the LIVE World (the pulse announces them) and at least one
+    //     over-reach is REFUSED in-band. Then the room reads the executor's account.
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_hire_resident()),
+        "hiring the resident attaches a real agent to the live World"
+    );
+    cx.run_until_parked();
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_step_resident()),
+        "one resident beat drives real cap-gated turns"
+    );
+    cx.run_until_parked();
+    anyhow::ensure!(
+        desk.update(&mut cx, |d, _cx| d.bake_resident_action_count()) >= 1,
+        "the resident's receipts landed on the LIVE World (never self-report)"
+    );
+
+    // ── 4k. THE EXCHANGE FLOOR — the agent economy: post an offer (a fresh cell
+    //     carrying compute-exchange's job program), take the lease — every verb a
+    //     real verified turn, settlement conserving Σδ = 0.
+    #[cfg(feature = "app-registry")]
+    {
+        desk.update(&mut cx, |d, _cx| d.bake_open_exchange());
+        cx.run_until_parked();
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_post_offer()),
+            "posting an offer lands a fresh offer cell + receipt on the LIVE World"
+        );
+        anyhow::ensure!(
+            desk.update(&mut cx, |d, _cx| d.bake_take_lease()),
+            "taking the lease is a real verified turn"
+        );
+        cx.run_until_parked();
     }
 
     // Leave the woven room in frame, every surface present at once: TILE the open
@@ -2341,6 +2625,63 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
             board_before.as_raw() != board_after.as_raw(),
             "the agent's COMPOSED board must reach the SHIPPED desktop — a new surface the \
              agent authored from scratch must appear on the glass (before == after)"
+        );
+
+        // 4e‴. THE PULSE→SIGNALS WELD — the shipped pane's binds finally track the LIVE
+        //      World. A FOREIGN turn (a real verified `SetField` committed on the live
+        //      ledger — not one of the pane's own affordances) moves the receipts census;
+        //      the desktop's pulse mirrors it into the World-Status pane as ONE receipted
+        //      tracking turn (`set_receipts`, `ApplyOp::SetSlotFromArg`); EXACTLY the
+        //      receipts bind re-reads + repaints, wearing the one-beat dirty glow. The
+        //      before/after frames differ — liveness reached pixels.
+        desk_h.update(&mut cx, |desk, cx| {
+            // Raise the World-Status pane above the board window so the repainted bind
+            // reaches unoccluded pixels in both captures.
+            desk.bake_place_viewnode_window(360.0, 110.0, 520.0, 360.0);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+        cx.run_until_parked();
+        let weld_before = cx.capture_screenshot(window.into())?;
+        weld_before.save(format!("{out}.pulse-weld-before.png"))?;
+
+        let weld = desk_h
+            .update(&mut cx, |desk, cx| {
+                desk.bake_foreign_turn_repaints_viewnode_binds(cx)
+            })
+            .map_err(|e| anyhow::anyhow!("the Pulse→Signals weld loop failed: {e}"))?;
+        anyhow::ensure!(
+            weld.receipts_before != weld.receipts_after
+                && weld.receipts_after == weld.live_receipts,
+            "TRACK THE WORLD: the pane's committed receipts reading must move to the live \
+             census (shown {} -> {}, live {})",
+            weld.receipts_before,
+            weld.receipts_after,
+            weld.live_receipts
+        );
+        anyhow::ensure!(
+            weld.dirty_is_exactly_receipts_bind,
+            "FINE-GRAINED: one foreign turn must dirty + glow EXACTLY the receipts bind — \
+             not the whole card (dirty {:?}, glowing {:?})",
+            weld.dirty,
+            weld.glowing
+        );
+        anyhow::ensure!(
+            weld.weld_receipts_committed == 1,
+            "RECEIPTED: the census mirror must be exactly ONE verified tracking turn on \
+             the pane's audit tape (got {})",
+            weld.weld_receipts_committed
+        );
+
+        cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+        cx.run_until_parked();
+        let weld_after = cx.capture_screenshot(window.into())?;
+        weld_after.save(format!("{out}.pulse-weld-after.png"))?;
+        anyhow::ensure!(
+            weld_before.as_raw() != weld_after.as_raw(),
+            "THE PULSE→SIGNALS WELD must reach pixels — the repainted receipts bind (and \
+             its dirty glow) must change the shipped desktop frame (before == after)"
         );
     }
 
@@ -3083,6 +3424,9 @@ fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
     println!(
         "IE6 cockpit server: http://127.0.0.1:{port}/   (the live verified cockpit, for timetravelers)"
     );
+    println!(
+        "shared-desktop replay: http://127.0.0.1:{port}/shared?d=<deos1 fragment>   (read-only deterministic replay; see site/deos-viewer/)"
+    );
 
     fn qget(q: &str, key: &str) -> Option<String> {
         q.split('&').find_map(|kv| {
@@ -3156,6 +3500,49 @@ fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
                     }
                 });
                 redirect(&mut stream, "/");
+            }
+            // THE DESKTOP IN A LINK (read-only). `/shared?d=<deos1 fragment>`
+            // decodes a share tape (`starbridge_v2::share_link`), boots a FRESH
+            // deterministic world at the tape's pinned instant, re-executes the
+            // tape through the real verified executor, and serves the verdict
+            // page (root match / mismatch / unclaimed — the headline is the
+            // EQUALITY, not the picture). Stateless per request and read-only
+            // by construction: a stranger's link re-derives its OWN world; it
+            // never reaches the live window above, and the page carries no
+            // /nav or /tab links — no live turns from strangers.
+            "/shared" => {
+                let html = match qget(query, "d").map(|d| pct_decode(&d)) {
+                    None => shared_help_page(),
+                    Some(frag) => match starbridge_v2::share_link::decode_fragment(&frag) {
+                        Ok(tape) => {
+                            let (_world, _anchors, outcome) =
+                                starbridge_v2::share_link::replay_fresh(&tape);
+                            shared_verdict_page(&frag, &tape, &outcome)
+                        }
+                        Err(e) => shared_refusal_page(&e),
+                    },
+                };
+                respond(&mut stream, "text/html", html.as_bytes());
+            }
+            // The replayed FRAME itself — the same decode→fresh-boot→replay,
+            // then a throwaway headless cockpit window over the replayed world
+            // (opened, captured, REMOVED — per-request lifecycle; the live
+            // window is untouched). Deterministic: the same `d=` re-derives the
+            // same world every time, so this is a pure function of the link.
+            "/shared/frame.png" => {
+                let result = qget(query, "d")
+                    .map(|d| pct_decode(&d))
+                    .ok_or_else(|| anyhow::anyhow!("missing `d=<fragment>`"))
+                    .and_then(|frag| Ok(starbridge_v2::share_link::decode_fragment(&frag)?))
+                    .and_then(|tape| render_shared_tape_frame(&mut cx, &tape));
+                match result {
+                    Ok(png) => respond(&mut stream, "image/png", &png),
+                    Err(e) => respond(
+                        &mut stream,
+                        "text/plain",
+                        format!("shared replay refused: {e:#}").as_bytes(),
+                    ),
+                }
             }
             _ => {
                 // render-reconcile: select_tab_named sets the visible tab, but the
@@ -3245,6 +3632,207 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+// ═══ THE DESKTOP IN A LINK — the serve-ie6 `/shared` replay routes ═══════════
+//
+// The share-URL codec + replay semantics live in `starbridge_v2::share_link`
+// (pure, round-trip-tested); these helpers are the serve-ie6 glue: the query
+// unwrap, the throwaway-window frame render, and the verdict page. Read-only
+// throughout — a shared link re-derives a FRESH world, never drives the live one.
+
+/// Undo percent-encoding in a query value (`%21` → `!`, …) — a hand-pasted
+/// share link sometimes arrives pre-encoded by a chat client or a shell. A
+/// malformed `%`-sequence passes through UNCHANGED: this layer never guesses;
+/// the codec's fail-closed `decode_fragment` refuses the mangled link instead.
+#[cfg(feature = "render-capture")]
+fn pct_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex2 = [bytes[i + 1], bytes[i + 2]];
+            if let Some(b) = std::str::from_utf8(&hex2)
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+            {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Render ONE frame of a REPLAYED share tape: fresh deterministic boot at the
+/// tape's pinned instant, tape re-executed through the real executor
+/// ([`starbridge_v2::share_link::replay_fresh`]), then a THROWAWAY headless
+/// cockpit window over the replayed world — opened, Root-wrapped (the
+/// kit-input weld, see `render_cockpit_headless`), captured, and REMOVED. The
+/// per-request lifecycle keeps the long-lived server app window-clean; the
+/// live serve-ie6 window is never touched. Deterministic: the same tape
+/// renders the same world state every time (that is the whole point).
+#[cfg(feature = "render-capture")]
+fn render_shared_tape_frame(
+    cx: &mut gpui::HeadlessAppContext,
+    tape: &starbridge_v2::share_link::ShareTape,
+) -> anyhow::Result<Vec<u8>> {
+    use gpui::{px, size, AppContext};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    // The live serve-ie6 geometry (the page displays both at width 1000).
+    const W: f32 = 1280.0;
+    const H: f32 = 832.0;
+
+    let (world, anchors, _outcome) = starbridge_v2::share_link::replay_fresh(tape);
+    let shared = Rc::new(RefCell::new(world));
+    let tab = tape.tab.clone();
+    let window = cx.open_window(size(px(W), px(H)), |window, cx| {
+        let view = cx.new(|cx| {
+            let focus = cx.focus_handle();
+            let mut c = cockpit::Cockpit::with_node(shared.clone(), anchors, focus, None, None);
+            if let Some(t) = &tab {
+                if !c.select_tab_named(t) {
+                    eprintln!("shared replay: no tab named `{t}` — keeping the default surface");
+                }
+            }
+            c
+        });
+        view.update(cx, |c, cx| c.focus_on_open(window, cx));
+        cx.new(|cx| gpui_component::Root::new(gpui::AnyView::from(view), window, cx))
+    })?;
+    let wh = window.into();
+    cx.run_until_parked();
+    cx.update_window(wh, |_, w, _| w.refresh())?;
+    cx.run_until_parked();
+    let capture = cx.capture_screenshot(wh);
+    // Tear the throwaway window down BEFORE surfacing any capture error, so a
+    // failed render never leaks a window into the long-lived server app.
+    let _ = cx.update_window(wh, |_, w, _| w.remove_window());
+    cx.run_until_parked();
+
+    let img = capture?;
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)?;
+    Ok(png)
+}
+
+/// The shared-desktop page chrome (HTML 4.01, the same floor as [`ie6_page`] —
+/// one server, one look). READ-ONLY: no `/nav`, no `/tab` — a shared desktop
+/// is something you LOOK AT and re-derive; the live one at `/` is yours.
+#[cfg(feature = "render-capture")]
+fn shared_wrap(inner: &str) -> String {
+    format!(
+        "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n\
+<html><head><title>dregg - shared desktop (deterministic replay)</title></head>\n\
+<body bgcolor=\"#0a0e14\" text=\"#c9d1d9\" link=\"#58a6ff\" vlink=\"#bc8cff\">\n\
+<font face=\"monospace\" size=\"2\">\n\
+<b><font color=\"#58a6ff\">dregg</font></b> - THE DESKTOP IN A LINK: a shared desktop, reconstructed by REPLAY. \
+The link carries a pinned instant + a message tape; this server booted a FRESH world at that instant and re-executed \
+the tape through the verified executor. Nothing on this page was taken on trust from the sharer.\n\
+{inner}\n\
+<p><a href=\"/\">back to the LIVE cockpit</a> (yours to drive - this page is read-only, and a shared link never touches it)</p>\n\
+</font></body></html>"
+    )
+}
+
+/// `/shared` with no `d=`: the how-to page (the grammar + a try-it link).
+#[cfg(feature = "render-capture")]
+fn shared_help_page() -> String {
+    shared_wrap(
+        "<p>No tape in the URL. Pass one as <tt>/shared?d=&lt;fragment&gt;</tt> - the fragment grammar is \
+<tt>deos1!ts=&lt;unix&gt;[!tab=&lt;surface&gt;][!root=&lt;64hex&gt;][!act=&lt;cellhex&gt;:&lt;verb&gt;]*</tt> \
+(see <tt>starbridge_v2::share_link</tt>).</p>\n\
+<p>Try the seeded demo image at a pinned instant: <a href=\"/shared?d=deos1!ts=1751500800\">\
+/shared?d=deos1!ts=1751500800</a> - visit it twice and the SAME canonical root re-derives (determinism is the point; \
+bake that root back into the link as <tt>!root=...</tt> to make the claim checkable). The static landing page at \
+<tt>site/deos-viewer/</tt> turns a <tt>#deos1!...</tt> URL fragment into this route.</p>",
+    )
+}
+
+/// `/shared` with a link the codec refused: the refusal, first-class.
+#[cfg(feature = "render-capture")]
+fn shared_refusal_page(e: &starbridge_v2::share_link::ShareLinkError) -> String {
+    shared_wrap(&format!(
+        "<p><b><font color=\"#f85149\" size=\"3\">LINK REFUSED</font></b> - {}</p>\n\
+<p>Decoding is fail-closed: a malformed or over-cap link is refused outright, never guessed at.</p>",
+        html_escape(&e.to_string())
+    ))
+}
+
+/// The `/shared` verdict page: the convergence verdict as the HEADLINE (root
+/// match / mismatch / unclaimed), the tape facts, every in-band skip, and the
+/// replayed frame. The claim-vs-derived equality is the content; the picture
+/// is the illustration.
+#[cfg(feature = "render-capture")]
+fn shared_verdict_page(
+    frag: &str,
+    tape: &starbridge_v2::share_link::ShareTape,
+    outcome: &starbridge_v2::share_link::ReplayOutcome,
+) -> String {
+    use starbridge_v2::share_link::RootVerdict;
+
+    let verdict = match &outcome.verdict {
+        RootVerdict::Match(root) => format!(
+            "<p><b><font color=\"#3fb950\" size=\"3\">ROOT MATCH</font></b> - the re-derived canonical ledger root \
+equals the link's claim:<br><tt>{}</tt><br>You did not trust a screenshot - you re-derived this desktop.</p>",
+            hex::encode(root)
+        ),
+        RootVerdict::Mismatch { claimed, derived } => format!(
+            "<p><b><font color=\"#f85149\" size=\"3\">ROOT MISMATCH</font></b> - the replay DIVERGED from the \
+link's claim (surfaced, never smoothed over):<br>claimed: <tt>{}</tt><br>derived: <tt>{}</tt><br>\
+The code moved since the link was minted, the tape was edited, or an act refused (listed below if so).</p>",
+            hex::encode(claimed),
+            hex::encode(derived)
+        ),
+        RootVerdict::Unclaimed(derived) => format!(
+            "<p><b><font color=\"#8b949e\" size=\"3\">NO ROOT CLAIM</font></b> - this link carries no <tt>root=</tt>; \
+the replay derived <tt>{}</tt>. A sharer can bake it in as <tt>!root=...</tt> to make the link checkable.</p>",
+            hex::encode(derived)
+        ),
+    };
+
+    let surface = tape
+        .tab
+        .as_deref()
+        .map(|t| format!(" · surface <b>{}</b>", html_escape(t)))
+        .unwrap_or_default();
+    let facts = format!(
+        "<p>pinned instant <tt>ts={}</tt> · {} act(s) on the tape · {} committed as real verified turns{surface}</p>",
+        tape.timestamp,
+        tape.acts.len(),
+        outcome.committed,
+    );
+
+    let skips = if outcome.skipped.is_empty() {
+        String::new()
+    } else {
+        let rows: String = outcome
+            .skipped
+            .iter()
+            .map(|(i, why)| format!("<br>&nbsp;&nbsp;act #{i}: {}", html_escape(why)))
+            .collect();
+        format!(
+            "<p><font color=\"#f85149\"><b>{} act(s) did NOT commit</b> - the reconstruction is NOT the sharer's \
+desktop (the skips are surfaced, not swallowed):{rows}</font></p>",
+            outcome.skipped.len()
+        )
+    };
+
+    shared_wrap(&format!(
+        "{verdict}\n{facts}\n{skips}\n\
+<p><img src=\"/shared/frame.png?d={d}\" width=\"1000\" border=\"1\" alt=\"the replayed desktop\"></p>\n\
+<p><font color=\"#8b949e\" size=\"1\">The frame above is itself a pure function of the link: its route re-runs the \
+same fresh-boot + replay, renders the cockpit over the replayed world, and tears the window down. Refresh it as \
+often as you like - the same link, the same desktop.</font></p>",
+        d = html_escape(frag)
+    ))
 }
 
 /// THE UI-EXPLORATION CRAWL — BFS-walk the cockpit's navigation state-space by

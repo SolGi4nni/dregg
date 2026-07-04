@@ -67,6 +67,68 @@ pub enum WinKindTag {
     /// The rendered renderer entity lives in `viewnode_panes` (gated on `card-pane`),
     /// so this variant is a marker like `WorldExplorer`.
     ViewNodePane,
+    /// **The AGENT ROOM** — the desktop face of an agent-as-inhabitant: a tabbed
+    /// inspector over one resident cell's provable activity (the held mandate ·
+    /// the receipted actions · the authorization boundary), built purely from the
+    /// live World by [`crate::agent::AgentActivity`]. Anchored on the room's own
+    /// sentinel cell; per-window state lives in `agent_rooms`, so this variant is
+    /// a marker like `WorldExplorer`.
+    AgentRoom,
+    /// **THE APP SHELF** — the roster of pre-built starbridge-apps (the registry) as a
+    /// desktop window: name · what-it-does · manifest facts per app, LAUNCH (a real
+    /// `launch_on_world` — the app's cell + receipt land on the LIVE World) and the
+    /// wired live fires. The shelf's state (`AppShelfState`: the registry + the
+    /// installed set) lives on the desktop (gated on `app-registry`), so this variant
+    /// is a marker like `WorldExplorer`. Anchored on a sentinel cell (the user).
+    AppShelf,
+    /// **THE EXCHANGE FLOOR** — the $DREGG agent-economy window: compute OFFERS as
+    /// live cells (each carrying the compute-exchange job program) posted / taken /
+    /// settled by real verified turns, the execution-lease rail metering every take,
+    /// and Σδ = 0 read off the LIVE ledger at settlement. The floor's state
+    /// (`ExchangeFloorState`: the order book) lives on the desktop (gated on
+    /// `app-registry`), so this variant is a marker like `AppShelf`. Anchored on a
+    /// sentinel cell (the user).
+    ExchangeFloor,
+    /// **THE MATRIX ROOM** — membrane-over-Matrix in the shipped desktop: rooms as
+    /// live cells on the desktop's OWN World, every send a receipted turn decoded
+    /// back off the receipt chain, and the REAL executor envelope legs (mint ·
+    /// fail-closed rehydrate · receipted drive · settlement-gated stitch) riding
+    /// the `deos_matrix` wire shape over the recorded/mock sync (the live
+    /// homeserver a named env-gated seam). Its state lives in the desktop's
+    /// `matrix_rooms` / `matrix_stack` (gated on `dev-surfaces`), so this variant
+    /// is a marker like `AgentRoom`. Anchored on its own sentinel cell.
+    MatrixRoom,
+    /// **THE PROVENANCE WALKER** — walk the World's receipt chain hash-by-hash,
+    /// every link RECOMPUTED as you walk (the state-root handoff between
+    /// consecutive receipts + each agent's blocklace back-edge, both re-derived,
+    /// never trusted — see `super::provenance_walker`). Per-window state (the walk
+    /// cursor + the go-to landing) lives in `provenance_walkers`, so this variant
+    /// is a marker like `WorldExplorer`. Anchored on its own sentinel cell.
+    ProvenanceWalker,
+    /// **THE ATTACH WIZARD** — the warm "send your AI to live here" onboarding: a
+    /// five-breath walk (name · brain · mandate · review · hire) over the hireling
+    /// rail that lands a real confined resident in the Agent Room, already stepping
+    /// (see `super::attach_wizard`). Per-window state (the walk position + the
+    /// choices) lives in `attach_wizards`, so this variant is a marker like
+    /// `AgentRoom`. Anchored on its own sentinel cell; the render is gated on
+    /// `dev-surfaces` (the hireling rail), falling back to the inspector otherwise.
+    AttachWizard,
+    /// **MY DREGG COMPUTERS** — the desktop face of *have a Dregg Computer*: the
+    /// vats (private verified Worlds, each a content-addressed cell on a DreggNet
+    /// ServerFleet) this account can reach, with CONNECT attaching one over the
+    /// proven HTTP+SSE wire path and reflecting its remote cells + receipt stream
+    /// live (see [`super::dregg_computers`]). Per-window state lives in
+    /// `dregg_computers`; the attachment itself lives on the desktop (`vat_link`)
+    /// so your computer stays attached with the window closed. Anchored on its
+    /// own sentinel cell.
+    DreggComputers,
+    /// **THE MAIL ROOM** — the desktop face of the [`crate::letter_office`]: mail
+    /// between agents as cells on the live World (inbox · outbox · mail-ledger). A
+    /// letter IS a cell carrying its markdown in the heap; sending drops it in an outbox
+    /// cell, delivery is a receipted turn moving it to an inbox cell. Per-window state
+    /// (the compose recipient + the shown face) lives in `mail_rooms`, so this variant
+    /// is a marker like `AgentRoom`. Anchored on its own sentinel cell.
+    MailRoom,
 }
 
 /// A persisted document's text, keyed by the cell's hex id — the CONTENT
@@ -117,6 +179,27 @@ pub struct DesktopPrefs {
     /// exactly once and the room is thereafter the bare, breathing desktop.
     #[serde(default)]
     pub welcomed: bool,
+    /// Whether the GOSSAMER transclusion threads paint between windows (the cyan
+    /// elbow connectors from a quoting document to each quoted surface — see
+    /// `super::threads`). Defaults to `true` (fresh AND legacy layouts show the
+    /// docuverse's geometry out of the box); the View-menu toggle flips + persists it.
+    #[serde(default = "default_show_threads")]
+    pub show_threads: bool,
+    /// **The Spotter's RECENT-JUMPS trail** — the replay strings of the last 8
+    /// dispatches, newest first (a jump's label, or a command's canonical verb line
+    /// — see `super::spotter::replay_string`). The empty-query palette greets you
+    /// with these, RE-RESOLVED against the live desktop on show (a closed window's
+    /// jump quietly drops; a recalled command re-resolves its cell prefixes), so
+    /// persisting plain strings is safe: nothing stale can dispatch. Persisted like
+    /// every other preference; `#[serde(default)]` keeps legacy layouts loading.
+    #[serde(default)]
+    pub recent_jumps: Vec<String>,
+}
+
+/// The serde default for [`DesktopPrefs::show_threads`] — `true`, so a legacy layout
+/// (serialized before the field existed) deserializes with the threads visible.
+fn default_show_threads() -> bool {
+    true
 }
 
 impl Default for DesktopPrefs {
@@ -127,6 +210,8 @@ impl Default for DesktopPrefs {
             word_granularity: false,
             grid_rows: 6,
             welcomed: false,
+            show_threads: true,
+            recent_jumps: Vec::new(),
         }
     }
 }
@@ -151,10 +236,15 @@ impl DesktopLayout {
             .unwrap_or_default()
     }
 
-    /// **Persist the layout** to `path` (atomic-ish: write then rename). Called on
-    /// every drag-end / window move / resize — this is the act that makes the
-    /// arrangement durable. Errors are swallowed (a read-only FS still gives a live
-    /// desktop; only persistence is lost).
+    /// **Persist the layout** to `path` (atomic-ish: write then rename), on the
+    /// calling thread. The COLD-path write: preferences flips, the welcome
+    /// dismissal, a window close, and the bake hooks (which reopen + assert
+    /// immediately, so they need the write durable before they return). The HOT
+    /// interaction paths — window drag/resize, icon drag-end, per-keystroke doc
+    /// mirrors — go through [`LayoutSaver`] instead: this serialization covers
+    /// EVERY document's full prose, and paying it synchronously on the UI thread
+    /// per gesture is the jank the perf scout flagged. Errors are swallowed (a
+    /// read-only FS still gives a live desktop; only persistence is lost).
     pub fn save(&self, path: &PathBuf) {
         if let Ok(json) = serde_json::to_vec_pretty(self) {
             let tmp = path.with_extension("json.tmp");
@@ -223,6 +313,86 @@ impl DesktopLayout {
                 text: text.to_string(),
             });
         }
+    }
+}
+
+/// **The coalescing background layout writer** — the HOT-path half of
+/// persistence. One writer thread owns the file; the UI thread's `save` is a
+/// clone + channel send (microseconds, no serialization, no IO). The writer
+/// drains the channel to the NEWEST snapshot before each write, so a burst of
+/// drag-move gestures costs ONE serialize+rename instead of one per event, and
+/// last-sent always wins (a single writer means no stale write can land after a
+/// newer one). The honest tradeoff: a snapshot sent microseconds before process
+/// exit may not reach disk — which is why the cold paths (prefs, welcome, close,
+/// bake hooks) still call [`DesktopLayout::save`] synchronously.
+pub struct LayoutSaver {
+    tx: std::sync::mpsc::Sender<DesktopLayout>,
+}
+
+impl LayoutSaver {
+    /// Spawn the writer thread for `path`. The thread parks on an empty channel
+    /// and exits when every sender is dropped (recv errors out).
+    pub fn spawn(path: PathBuf) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<DesktopLayout>();
+        std::thread::Builder::new()
+            .name("deos-layout-saver".into())
+            .spawn(move || {
+                while let Ok(mut latest) = rx.recv() {
+                    // Coalesce the burst: only the newest snapshot hits the disk.
+                    while let Ok(newer) = rx.try_recv() {
+                        latest = newer;
+                    }
+                    latest.save(&path);
+                }
+            })
+            .ok();
+        LayoutSaver { tx }
+    }
+
+    /// Queue `layout` for persistence — a clone + send; never blocks on IO. If
+    /// the writer thread is gone (spawn failed / shutdown) this silently drops,
+    /// mirroring `DesktopLayout::save`'s swallow-errors contract.
+    pub fn save(&self, layout: &DesktopLayout) {
+        let _ = self.tx.send(layout.clone());
+    }
+}
+
+#[cfg(test)]
+mod saver_tests {
+    use super::*;
+
+    /// A burst of queued snapshots coalesces and the LAST one is what the file
+    /// holds (poll-load until the writer catches up — the channel guarantees
+    /// order, the single writer guarantees no stale overwrite).
+    #[test]
+    fn saver_coalesces_and_last_write_wins() {
+        let path = std::env::temp_dir().join(format!(
+            "deos-layout-saver-test-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let saver = LayoutSaver::spawn(path.clone());
+
+        for rows in 1..=9u32 {
+            let mut l = DesktopLayout::default();
+            l.prefs.grid_rows = rows;
+            saver.save(&l);
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let loaded = DesktopLayout::load(&path);
+            if loaded.prefs.grid_rows == 9 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "writer never landed the newest snapshot (got rows={})",
+                loaded.prefs.grid_rows
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = std::fs::remove_file(&path);
     }
 }
 

@@ -491,6 +491,13 @@ pub mod param {
     pub const NULLIFIER: usize = 0;
     pub const NOTE_VALUE_LO: usize = 1;
     pub const NOTE_VALUE_HI: usize = 2;
+    /// BridgeMint/Mint rows: the mint identity at `param0`. For BridgeMint this
+    /// is the FELT-DOMAIN `note_spend_mint_hash_felt` (the Poseidon2 identity
+    /// over the six felts the executor's note-spend STARK verify binds —
+    /// `dsl::note_spending::bridge_mint_hash_felt`), published at rotated
+    /// PI 46 by the mint-hash pin (Lean `mintV3BridgeHash`). Supply-mint rows
+    /// carry the (target, slot) byte-domain fold here (no pin).
+    pub const MINT_HASH: usize = 0;
     pub const NOTE_COMMITMENT: usize = 0;
     // CreateCellFromFactory params.
     pub const FACTORY_VK_HASH: usize = 0;

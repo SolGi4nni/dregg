@@ -930,27 +930,36 @@ turns the rung — and the apex resting on it — RED. The `logNeeds` now yields
 `logAdv` field is the derived advance), so the receipt-prepend rides `logAdvance_forced` exactly as before.
 These are the rungs the genuine fanout (`ClosureFanoutGenuine`) consumes for guarantee A at the apex. -/
 
-/-- revoke (tag 2), CLASS A — forced from `revokeCapabilityV3`. -/
+/-- revoke (tag 2), CLASS A — forced from the REMOVE-shaped keystone wrap
+(`effCapRemoveV3 revokeCapabilityV3` — the arity-2 map-op pair was shape-UNSAT against the deployed
+arity-7 `CanonicalCapTree` and is DROPPED). -/
 theorem revoke_closedLog_sat
-    (hash : List ℤ → ℤ)
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
+    (hash : List ℤ → ℤ) (name : String) (n : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN
+      (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
-      Dregg2.Circuit.Emit.EffectVmEmitRotationV3.revokeCapabilityV3 minit mfin maddrs t)
+      (Dregg2.Circuit.Emit.CapOpenEmit.effCapRemoveV3
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.revokeCapabilityV3 name n) minit mfin maddrs t)
     (pre post : RecChainedState) (holder target : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
     (hpub : pubLogPost = LH (Dregg2.Exec.TurnExecutorFull.authReceipt holder :: pre.log))
     (logNeeds : post.log = Dregg2.Exec.TurnExecutorFull.authReceipt holder :: pre.log →
-      Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeCapabilityTraceReadout
-        hash minit mfin maddrs t pre post holder target) :
+      Σ' (rd : Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeCapabilityTraceReadout
+            Scap hash minit mfin maddrs t pre post holder target),
+        Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeCapabilityWriteAnchor
+          Scap hash minit mfin maddrs t pre post holder target rd) :
     kstepAll 2 pre post :=
   closedLog_of_encode (.revoke holder target)
     (Dregg2.Exec.TurnExecutorFull.authReceipt holder) hdec hpub rfl
     (fun hadv => by
+      obtain ⟨rd, anc⟩ := logNeeds hadv
       show fullActionStep pre (.revoke holder target) post
       simp only [fullActionStep]
       exact Dregg2.Circuit.RotatedKernelRefinementCapFamily.revokeCapability_descriptorRefines_sat
-        hash hsat pre post holder target (logNeeds hadv))
+        Scap hash name n hChip hsat pre post holder target rd anc)
 
 /-- revokeCapability (tag 2 via `.revoke`), CLASS A — LIGHT-CLIENT routed from the WRITE-bearing
 `revokeCapabilityWriteCapOpenV3` (`= Rfix` for the revokeCapability SDK route). The SINGLE descriptor the
@@ -958,10 +967,13 @@ light client verifies carries BOTH the cap-membership authority crown AND the ca
 `Satisfied2` strips through `capOpen_satisfied2_strips_to_base` to `revokeCapabilityV3`, whose
 `revokeCapability_descriptorRefines_capOpenSat` forces `RevokeSpec` AND the cap-tree REMOVE in-circuit. This
 closes the ROUTE-FORGE: the authority-only `revokeCapabilityCapOpenV3` (write:None) left the post-cap-root
-host-trusted; THIS binds it. Editing `revokeCapabilityV3`'s `removeWriteOpRot` turns this RED. -/
+host-trusted; THIS binds it. Editing the deployed BEFORE welds turns this RED. -/
 theorem revokeCapability_closedLog_capOpenSat
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN
+      (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
       Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3 minit mfin maddrs t)
     (pre post : RecChainedState) (holder target : CellId)
@@ -969,16 +981,19 @@ theorem revokeCapability_closedLog_capOpenSat
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
     (hpub : pubLogPost = LH (Dregg2.Exec.TurnExecutorFull.authReceipt holder :: pre.log))
     (logNeeds : post.log = Dregg2.Exec.TurnExecutorFull.authReceipt holder :: pre.log →
-      Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeCapabilityTraceReadout
-        hash minit mfin maddrs t pre post holder target) :
+      Σ' (rd : Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeCapabilityTraceReadout
+            Scap hash minit mfin maddrs t pre post holder target),
+        Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeCapabilityWriteAnchor
+          Scap hash minit mfin maddrs t pre post holder target rd) :
     kstepAll 2 pre post :=
   closedLog_of_encode (.revoke holder target)
     (Dregg2.Exec.TurnExecutorFull.authReceipt holder) hdec hpub rfl
     (fun hadv => by
+      obtain ⟨rd, anc⟩ := logNeeds hadv
       show fullActionStep pre (.revoke holder target) post
       simp only [fullActionStep]
       exact Dregg2.Circuit.RotatedKernelRefinementCapFamily.revokeCapability_descriptorRefines_capOpenSat
-        hash hsat pre post holder target (logNeeds hadv))
+        Scap hash _ _ hChip hsat pre post holder target rd anc)
 
 /-! ### cap family CLASS A — delegate (1) / introduce (10) / delegateAtten (11) / revokeDelegation (14),
 forced from the WRITE-FORCING cap-open WRAPPER (`Rfix tag` re-pointed to `…WriteCapOpenV3`). The wrapper's
@@ -1327,12 +1342,16 @@ theorem createCellFromFactory_closedLog_sat
       exact Dregg2.Circuit.RotatedKernelRefinementBirth.createCellFromFactory_descriptorRefines_sat
         hash hsat pre post actor newCell vk (logNeeds hadv))
 
-/-- spawn (tag 19), CLASS A — forced from `spawnWriteCapOpenV3` (`= Rfix 19`). The cap handoff is now
-FORCED: the wrapper's `Satisfied2` strips to the base `spawnWriteV3`, whose cap-tree INSERT pins the
-parent→child cap edge (the readout's `capsMoveDecodes` seam) AND the accounts insert. -/
+/-- spawn (tag 19), CLASS A — forced from `spawnWriteCapOpenV3` (`= Rfix 19`, the INSERT-shaped keystone
+wrap `effCapInsertV3 spawnWriteV3` under the spawn selector tooth). The cap handoff is now FORCED: the
+keystone welds pin the spliced conferred edge (`capInserts8`, via the readout's `capsMoveDecodes` seam +
+the realizable `SpawnWriteAnchor` carriers) AND the accounts insert (the surviving cells grow-gate). -/
 theorem spawn_closedLog_sat
+    (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSoundN
+      (Dregg2.Circuit.DeployedCapOpen.capPermOut Scap) (t.tf .poseidon2))
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
       Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor child target : CellId)
@@ -1342,17 +1361,20 @@ theorem spawn_closedLog_sat
       = LH (Dregg2.Circuit.Spec.AccountGrowth.createReceipt actor child :: pre.log))
     (logNeeds : post.log
         = Dregg2.Circuit.Spec.AccountGrowth.createReceipt actor child :: pre.log →
-      Dregg2.Circuit.RotatedKernelRefinementBirth.SpawnTraceReadout
-        hash minit mfin maddrs t pre post actor child target) :
+      Σ' (rd : Dregg2.Circuit.RotatedKernelRefinementBirth.SpawnTraceReadout
+            Scap hash minit mfin maddrs t pre post actor child target),
+        Dregg2.Circuit.RotatedKernelRefinementBirth.SpawnWriteAnchor
+          Scap hash minit mfin maddrs t pre post actor child target rd) :
     kstepAll 19 pre post :=
   closedLog_of_encode (.spawnA actor child target)
     (Dregg2.Circuit.Spec.AccountGrowth.createReceipt actor child) hdec hpub rfl
     (fun hadv => by
+      obtain ⟨rd, anc⟩ := logNeeds hadv
       show fullActionStep pre (.spawnA actor child target) post
       simp only [fullActionStep]
       -- the Class-A readout now forces the STRENGTHENED `SpawnFullSpec` (born child FRESH).
       exact Dregg2.Circuit.RotatedKernelRefinementBirth.spawnWrite_descriptorRefines_capOpenSat
-        hash hsat pre post actor child target (logNeeds hadv))
+        Scap hash _ _ hChip hsat pre post actor child target rd anc)
 
 /-- noteSpend (tag 27), CLASS A — forced from `noteSpendV3`. -/
 theorem noteSpend_closedLog_sat
@@ -1613,7 +1635,8 @@ theorem lightclient_unfoolable_closed
 /-! ### §C.1 — `ClosedLogExtract` is NON-VACUOUS: the transfer slot is dischargeable from the §B rung.
 
 `ClosedLogExtract` is not a free assertion: each slot is exactly what its §B `*_closedLog` rung produces
-from the witnessed encode. We demonstrate on the transfer slot (`Rfix 0 = transferV3` definitionally):
+from the witnessed encode. We demonstrate on the transfer slot (`Rfix 0 = transferV3Membership`
+definitionally — the v12 teeth-exposing transfer, peeling to `transferV3`):
 given the per-effect circuit extraction `Satisfied2 transferV3 → (RotTableSide ∧ rotatedEncodes-minus-log
 ∧ published-receipt)` — the genuine `WitnessDecodes`-class residual the ledger-root commitment cannot
 certify, the CIRCUIT supplied by `StarkSound` — `transfer_closedLog` discharges `ClosedLogExtract … 0`.
@@ -1649,9 +1672,14 @@ theorem closedLogExtract_transfer
     ClosedLogExtract
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
-  -- `Rfix 0` is `transferV3` definitionally (registry position 0).
+  -- v12 big-bang: `Rfix 0` is `transferV3Membership` definitionally (the teeth-exposing transfer —
+  -- rc + the two membership teeth PI pins at 50..51, `v3RegistryHeap` tail pos 60; both wraps
+  -- append only `.piBinding` pins). FULL PEEL (`satisfied2_of_transferV3Membership`: teeth → rc)
+  -- down to the base `transferV3` so the base-level `transfer_closedLog` rung lifts to the
+  -- DEPLOYED teeth-pinned descriptor the apex quantifies over.
   have hsat' : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
-      Dregg2.Circuit.RotatedKernelRefinement.transferV3 minit mfin maddrs t := hsat
+      Dregg2.Circuit.RotatedKernelRefinement.transferV3 minit mfin maddrs t :=
+    Dregg2.Circuit.Emit.CarrierComposed.satisfied2_of_transferV3Membership hash hsat
   obtain ⟨tr, a, permOut, hside, hpub, logNeeds⟩ := extract minit mfin maddrs t pubLogPost pre post hsat'
   exact transfer_closedLog hash hside hsat' pre post tr a pc pubLogPre pubLogPost hdecLog
     hpub.down logNeeds

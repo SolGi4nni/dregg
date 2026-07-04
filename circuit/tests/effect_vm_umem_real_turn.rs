@@ -485,7 +485,7 @@ fn peer_field_heap(peer: &Cell) -> (Vec<HeapLeaf>, [BabyBear; HEAP_DIGEST_W]) {
         }
     }
     let tree = CanonicalHeapTree8::new(leaves.clone(), HEAP_TREE_DEPTH);
-    (leaves, tree.root8())
+    (leaves, tree.root8().limbs())
 }
 
 /// The descriptor for the cross-cell read: one `MapOp::Read` opening the read field against the
@@ -685,6 +685,8 @@ fn cross_cell_read_pi_mismatch_refuses() {
     // here: either way, a satisfying proof is impossible.)
     let mut wrong_pi = root;
     wrong_pi[0] += BabyBear::ONE;
+    // The PI mismatch is a boundary PiBinding caught at VERIFY (the light-client op), not
+    // necessarily at prove — exercise both legs.
     let outcome = std::panic::catch_unwind(|| {
         prove_vm_descriptor2(
             &desc,
@@ -693,6 +695,7 @@ fn cross_cell_read_pi_mismatch_refuses() {
             &MemBoundaryWitness::default(),
             std::slice::from_ref(&heap),
         )
+        .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &wrong_pi))
     });
     let refused = match outcome {
         Err(_) => true,      // in-circuit PiBinding constraint failed (no satisfying proof)
@@ -775,7 +778,12 @@ fn cross_cell_read_whole_image_extra_cell_refuses() {
         build_whole_image_fold(&declared, peer_published_root).expect("declared view folds");
     // The pin is a boundary constraint (not a pre-flight replay), so the refusal can surface as an
     // Err or an in-circuit panic — either way no satisfying proof exists.
-    let outcome = std::panic::catch_unwind(|| prove_whole_image_fold(&witness));
+    // The `PiBinding{Last}` published-root pin is caught at VERIFY (the light-client op), not
+    // necessarily at prove — exercise both legs.
+    let outcome = std::panic::catch_unwind(|| {
+        prove_whole_image_fold(&witness)
+            .and_then(|proof| verify_whole_image_fold(&proof, &witness.public_inputs))
+    });
     let refused = match outcome {
         Err(_) => true,
         Ok(r) => r.is_err(),
@@ -854,7 +862,7 @@ fn cross_cell_read_whole_image_smuggled_start_root_refuses() {
         "a non-empty (smuggled-cells) start root in PI 0 must be refused"
     );
     assert!(
-        refused.unwrap_err().contains("empty-heap root"),
+        refused.unwrap_err().contains("empty-heap"),
         "the refusal must be the empty-root pin, not an incidental STARK mismatch"
     );
 }
@@ -999,7 +1007,7 @@ fn whole_image_fold_bound_smuggled_start_root_refuses() {
         "a non-empty (smuggled-cells) start root in PI 0 must be refused (bound wrapper)"
     );
     assert!(
-        refused.unwrap_err().contains("empty-heap root"),
+        refused.unwrap_err().contains("empty-heap"),
         "the refusal must be the empty-root pin, not an incidental STARK mismatch"
     );
 }
@@ -1150,7 +1158,7 @@ fn whole_image_fold_bound_mem_smuggled_start_root_refuses() {
         "a non-empty (smuggled-cells) start root in PI 0 must be refused (flat bound wrapper)"
     );
     assert!(
-        refused.unwrap_err().contains("empty-heap root"),
+        refused.unwrap_err().contains("empty-heap"),
         "the refusal must be the empty-root pin, not an incidental STARK mismatch"
     );
 }

@@ -8,7 +8,7 @@
    "name": "mathlib",
    "manifestFile": "lake-manifest.json",
    "inherited": false,
-   "dir": "/Users/ember/src/mathlib4",
+   "dir": "../../../src/mathlib4",
    "configFile": "lakefile.lean"
   },
   {

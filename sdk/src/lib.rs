@@ -103,6 +103,10 @@
 // receipt event streams, the PIR discovery client, and the wire codec) lives in
 // the `dregg-sdk-net` crate, which depends on this one.
 pub mod beacon_cell;
+// The v12 carrier-witness ATTACH SITES: per-carrier turn-build retention projections
+// (factory backing / hatchery attestation / sovereign authority / sender membership) +
+// the fail-closed leg attach through the fold lane's `from_retained_*` projections.
+pub mod carrier_witness_attach;
 pub mod cipherclerk;
 // The threshold-seal organ (DKG group-key hashed-ElGamal) and the
 // sealed-bid/sealed-ballot orchestration that welds it with the beacon. These

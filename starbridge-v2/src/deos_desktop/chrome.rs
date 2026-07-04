@@ -7,10 +7,15 @@
 //! new window-type or dialog composes them rather than re-deriving the chrome.
 
 use gpui::{
-    div, point, px, BoxShadow, FontWeight, Hsla, IntoElement, ParentElement, Pixels, Styled,
+    div, point, px, BoxShadow, Div, FontWeight, Hsla, IntoElement, ParentElement, Pixels,
+    ScrollHandle, Stateful, StatefulInteractiveElement, Styled,
 };
 
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+
 use dregg_types::CellId;
+
+use super::layout::WinKindTag;
 
 // ── The NT palette ──────────────────────────────────────────────────────────────
 // Deliberately sterile / technical: a 3D-beveled gray chrome over a teal void, the
@@ -92,6 +97,33 @@ pub fn id_short(cell: &CellId) -> String {
 /// `Pixels` → `f32` (the field is private; the `From` impl is the supported route).
 pub fn pxf(p: Pixels) -> f32 {
     f32::from(p)
+}
+
+/// A 3-letter window-kind tag — the dense, fixed-width kind glyph the taskbar stub
+/// wears, and the Spotter row-badge's chip (one shared vocabulary for "what kind of
+/// surface is this", wherever a surface is named in two dozen pixels). Lives in the
+/// chrome kit so gpui-free presentation halves (the Spotter's row builder) can badge
+/// without reaching into the desktop View.
+pub fn kind_short(tag: WinKindTag) -> &'static str {
+    match tag {
+        WinKindTag::Inspector => "INS",
+        WinKindTag::DocEditor => "DOC",
+        WinKindTag::Links => "LNK",
+        WinKindTag::Transcript => "LOG",
+        WinKindTag::Workflow => "WFL",
+        WinKindTag::AndroidCell => "AND",
+        WinKindTag::DocExplorer => "DGX",
+        WinKindTag::WorldExplorer => "WLD",
+        WinKindTag::AgentRoom => "AGT",
+        WinKindTag::AppShelf => "APP",
+        WinKindTag::ExchangeFloor => "EXC",
+        WinKindTag::ViewNodePane => "IR",
+        WinKindTag::MatrixRoom => "MTX",
+        WinKindTag::ProvenanceWalker => "PRV",
+        WinKindTag::AttachWizard => "ATW",
+        WinKindTag::MailRoom => "MBX",
+        WinKindTag::DreggComputers => "VAT",
+    }
 }
 
 // ── The bevel/face primitives (reusable NT widgets) ───────────────────────────────
@@ -201,6 +233,69 @@ pub fn bevel_window<E: Styled>(d: E) -> E {
         NT_SHADOW,
         2.0,
     )
+}
+
+// ── The NT scroll face (a REAL scrollbar on every dense surface) ──────────────────
+//
+// Every dense face used to scroll blind — a naked `.overflow_y_scroll()` with no
+// thumb, no position, no affordance that MORE exists below the fold. These two
+// helpers wire the widget kit's real `Scrollbar` element to a desktop-owned
+// [`gpui::ScrollHandle`] (see [`super::face_scroll`]), so density reads as DEPTH
+// instead of truncation, and the scroll position persists like window geometry.
+//
+// The sibling arrangement replicates the kit's own proven `Scrollable::render`
+// (gpui-component `scroll/scrollable.rs`): a relative wrapper holding the
+// tracked scroll area plus the `Scrollbar` element (which lays itself out
+// absolute over the wrapper and paints the thumb on the right edge). We do NOT
+// use the kit's one-shot `.overflow_y_scrollbar()` wrapper: it lifts only the
+// element's size refinement onto its outer div, so a face's `.flex_1()` would
+// land on the inner content and break the window's column layout.
+
+/// Wrap a window-body FACE (a `.id()`'d column, already carrying its bg/padding/
+/// children — but NOT `.flex_1()/.min_h()/.overflow_y_scroll()`, which move to
+/// this wrapper) into a scroll area with a real, always-visible NT scrollbar
+/// tracked by `handle`. The returned wrapper takes the face's old place as the
+/// window column's flexing body.
+pub fn nt_scroll_face(handle: &ScrollHandle, face: Stateful<Div>) -> Div {
+    div()
+        .flex_1()
+        .min_h(px(0.0))
+        .relative()
+        .child(face.size_full().overflow_y_scroll().track_scroll(handle))
+        .child(nt_scrollbar(handle))
+}
+
+/// The kit scrollbar in NT dress: vertical, and ALWAYS visible — chunky,
+/// permanent, honest (the NT idiom; no fade-on-idle ghosting). Mount it as the
+/// last child of a relative/absolute wrapper whose inner face is tracked by the
+/// same `handle` — [`nt_scroll_face`] does exactly that for the standard window
+/// body; overlay faces with their own geometry (the Spotter panel, the receipt
+/// console) compose it directly.
+pub fn nt_scrollbar(handle: &ScrollHandle) -> Scrollbar {
+    Scrollbar::vertical(handle).scrollbar_show(ScrollbarShow::Always)
+}
+
+/// Dress the widget kit's GLOBAL scrollbar theme in NT: always-visible bars
+/// (`gpui_component::init` syncs `scrollbar_show` off the OS auto-hide setting —
+/// exactly the ghosting NT never did), with the thumb in button-face gray riding
+/// a darker track. Called once from `DeosDesktop::new`, so every mount of the
+/// desktop — the live window AND the headless bakes — wears the same dress.
+///
+/// Scoped deliberately to the SCROLLBAR tokens (plus the token-table refresh
+/// they ride): the kit-wide NT skin (radius 0, the full `ThemeColor` sheet) is
+/// the theme site's concern, and this function composes under it — a fuller
+/// skin landing later simply overwrites the same three fields. The per-element
+/// [`nt_scrollbar`] still pins `ScrollbarShow::Always` locally, so desktop
+/// scrollbars stay permanent even if another surface later swaps the global.
+pub fn apply_nt_scrollbar_dress(cx: &mut gpui::App) {
+    let theme = gpui_component::Theme::global_mut(cx);
+    theme.scrollbar_show = ScrollbarShow::Always;
+    theme.colors.scrollbar = hsla_of(NT_FACE_DARK);
+    theme.colors.scrollbar_thumb = hsla_of(NT_FACE);
+    theme.colors.scrollbar_thumb_hover = hsla_of(NT_HILIGHT);
+    // The kit's paint path reads the derived token table for the thumb colors
+    // (`cx.theme().tokens.scrollbar_thumb*`) — regenerate it so the dress lands.
+    theme.tokens = gpui_component::ThemeTokens::from(&theme.colors);
 }
 
 /// A bold navy section heading inside a window/dialog body — the field-group divider,

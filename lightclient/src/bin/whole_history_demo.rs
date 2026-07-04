@@ -299,7 +299,7 @@ fn main() {
         proof,
         descriptor,
         mut public_inputs,
-        custom_witness,
+        carrier_witness,
     } = rotated;
     // H0 DEPLOYED-WIDE: forge the GENUINE 8-felt wide AFTER-commit (PI tail `[n-8 .. n)`), not the
     // RETIRED single-felt rotated NEW-commit (PI 43, now zero / unbound). The proof's bound wide
@@ -312,7 +312,7 @@ fn main() {
             proof,
             descriptor,
             public_inputs,
-            custom_witness,
+            carrier_witness,
         },
     )));
     assert_ne!(lie, real_final, "the forged final root must differ");

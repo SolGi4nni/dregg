@@ -154,8 +154,8 @@ def realRow : Assignment := fun v =>
   else if v = prmCol param.AMOUNT then 10       -- col 68
   else if v = prmCol param.DIRECTION then 1     -- col 69
   else if v = 189 then 100                       -- rotated BEFORE r0 (welded to bal_lo = 100)
-  else if v = 308 then 90                        -- rotated AFTER r0 (welded to after bal_lo = 90)
-  else if v = 309 then 1                         -- rotated AFTER r1 (welded to after nonce = 1)
+  else if v = 416 then 90                        -- rotated AFTER r0 (welded to after bal_lo = 90)
+  else if v = 417 then 1                         -- rotated AFTER r1 (welded to after nonce = 1)
   else 0                                          -- before-nonce 0, everything else 0
 
 /-- The public inputs forced by the boundary/rotated PI pins. The v1 first-row pins
@@ -268,8 +268,8 @@ theorem transferRowIntent_envReal : TransferRowIntent envReal := by
       have e5 : ¬ (76 + (3 + i) = 68) := by omega
       have e6 : ¬ (76 + (3 + i) = 69) := by omega
       have e7 : ¬ (76 + (3 + i) = 189) := by omega
-      have e8 : ¬ (76 + (3 + i) = 308) := by omega
-      have e9 : ¬ (76 + (3 + i) = 309) := by omega
+      have e8 : ¬ (76 + (3 + i) = 416) := by omega
+      have e9 : ¬ (76 + (3 + i) = 417) := by omega
       simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg e5, if_neg e6, if_neg e7,
         if_neg e8, if_neg e9]
     have hb : realRow (sbCol (state.FIELD_BASE + i)) = 0 := by
@@ -283,18 +283,18 @@ theorem transferRowIntent_envReal : TransferRowIntent envReal := by
       have e5 : ¬ (54 + (3 + i) = 68) := by omega
       have e6 : ¬ (54 + (3 + i) = 69) := by omega
       have e7 : ¬ (54 + (3 + i) = 189) := by omega
-      have e8 : ¬ (54 + (3 + i) = 308) := by omega
-      have e9 : ¬ (54 + (3 + i) = 309) := by omega
+      have e8 : ¬ (54 + (3 + i) = 416) := by omega
+      have e9 : ¬ (54 + (3 + i) = 417) := by omega
       simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg e5, if_neg e6, if_neg e7,
         if_neg e8, if_neg e9]
     rw [ha, hb]
 
 /-! ## §5 — `realRow` is `0` off the seven named columns (the bulk evaluator). -/
 
-/-- Off the nine named columns (`1, 54, 76, 78, 68, 69, 189, 308, 309`), `realRow` is `0`. -/
+/-- Off the nine named columns (`1, 54, 76, 78, 68, 69, 189, 416, 417`), `realRow` is `0`. -/
 theorem realRow_zero_of {v : Nat} (h1 : v ≠ 1) (h54 : v ≠ 54) (h76 : v ≠ 76)
-    (h78 : v ≠ 78) (h68 : v ≠ 68) (h69 : v ≠ 69) (h188 : v ≠ 189) (h239 : v ≠ 308)
-    (h240 : v ≠ 309) : realRow v = 0 := by
+    (h78 : v ≠ 78) (h68 : v ≠ 68) (h69 : v ≠ 69) (h188 : v ≠ 189) (h239 : v ≠ 416)
+    (h240 : v ≠ 417) : realRow v = 0 := by
   simp only [realRow, sel.TRANSFER, sbCol, saCol, prmCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
     PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, param.AMOUNT,
     param.DIRECTION]
@@ -404,7 +404,7 @@ theorem base_constraints_hold :
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hwb
       rcases hwb with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
         · rw [colEq_holds_iff _ _ _ _ _ rfl]; rfl
-    · -- after-block welds: base 307. r0(308)=after bal_lo(76)=90; r1(309)=after nonce(78)=1; the
+    · -- after-block welds: base 415. r0(416)=after bal_lo(76)=90; r1(417)=after nonce(78)=1; the
       -- rest `0 = 0`. All reduce by computation.
       unfold weldsAt at hwa
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hwa
@@ -419,17 +419,30 @@ theorem base_constraints_hold :
           rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
             (by decide) (by decide) (by decide) (by decide)]; rfl
   · -- the frozen-authority colEqs (6 dedicated + 7 H1 headroom limbs 12..18 + the 14 v10 perms/vk
-    -- completion limbs 37..50): before vs after, all read 0 columns (record-digest / lifecycle /
-    -- perms / vk / mode / fields-root / headroom / the perms+vk completion felts — none of which the
-    -- natural transfer touches), so `0 = 0`.
-    simp only [frozenAuthorityColEqs, authorityHeadroomFreezes, authorityHeadroomOffs,
-      permsVKCompletionFreezes, permsVKCompletionOffs,
-      List.map_cons, List.map_nil, List.cons_append, List.nil_append,
-      List.mem_cons, List.not_mem_nil, or_false] at hfrozen
-    rcases hfrozen with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
-      | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
-      · rw [colEq_holds_iff _ _ _ _ _ rfl]
-        simp only [envReal]
+    -- completion limbs 37..50) PLUS the 56 v13 fields[0..7] completion lanes (112..167): before vs
+    -- after, all read 0 columns (record-digest / lifecycle / perms / vk / mode / fields-root /
+    -- headroom / the perms+vk + fields completion felts — none of which the natural transfer
+    -- touches), so `0 = 0`.
+    rw [List.mem_append] at hfrozen
+    rcases hfrozen with hfroz | hfields
+    · simp only [frozenAuthorityColEqs, authorityHeadroomFreezes, authorityHeadroomOffs,
+        permsVKCompletionFreezes, permsVKCompletionOffs,
+        List.map_cons, List.map_nil, List.cons_append, List.nil_append,
+        List.mem_cons, List.not_mem_nil, or_false] at hfroz
+      rcases hfroz with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+        | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+        · rw [colEq_holds_iff _ _ _ _ _ rfl]
+          simp only [envReal]
+          rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide),
+            realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide)]
+    · -- the 56 v13 fields[0..7] completion freezes: `colEq (tw+off) (tw+227+off)`, both read 0.
+      simp only [fieldsCompletionFreezes, List.mem_map] at hfields
+      obtain ⟨off, hoff, rfl⟩ := hfields
+      rw [colEq_holds_iff _ _ _ _ _ rfl]
+      simp only [envReal]
+      fin_cases hoff <;>
         rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
           (by decide) (by decide) (by decide) (by decide),
           realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
@@ -534,14 +547,19 @@ theorem row1_constraints_hold (hash : List ℤ → ℤ) :
         rcases hpins with rfl | rfl | rfl | rfl <;>
           · refine fun _ => ?_
             rfl
-    · -- the frozen-authority colEqs (6 dedicated + 7 H1 headroom + 14 v10 perms/vk completion):
-      -- `.gate`, vacuous on the last row.
-      simp only [frozenAuthorityColEqs, authorityHeadroomFreezes, authorityHeadroomOffs,
-        permsVKCompletionFreezes, permsVKCompletionOffs,
-        List.map_cons, List.map_nil, List.cons_append, List.nil_append,
-        List.mem_cons, List.not_mem_nil, or_false] at hfrozen
-      rcases hfrozen with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
-        | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    · -- the frozen-authority colEqs (6 dedicated + 7 H1 headroom + 14 v10 perms/vk completion + the
+      -- 56 v13 fields completion): all `.gate` (`colEq`), vacuous on the last row.
+      rw [List.mem_append] at hfrozen
+      rcases hfrozen with hfroz | hfields
+      · simp only [frozenAuthorityColEqs, authorityHeadroomFreezes, authorityHeadroomOffs,
+          permsVKCompletionFreezes, permsVKCompletionOffs,
+          List.map_cons, List.map_nil, List.cons_append, List.nil_append,
+          List.mem_cons, List.not_mem_nil, or_false] at hfroz
+        rcases hfroz with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+          | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+          exact trivial
+      · simp only [fieldsCompletionFreezes, List.mem_map] at hfields
+        obtain ⟨off, _, rfl⟩ := hfields
         exact trivial
   · -- a chip lookup: hits the `lastRow` (zero-row) summand of the union table.
     exact lookup_holdsAt_tfOf2_right (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor))

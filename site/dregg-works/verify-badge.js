@@ -22,11 +22,12 @@
  *   convention — see portal/src/drive-actions.mjs). The host serves that exact
  *   file. The badge re-hashes that exact file. The loop closes on itself.
  *
- * HOW IT HOOKS (the serving host / publisher supplies two values):
+ * HOW IT HOOKS (the serving host / publisher supplies the cell; the node is
+ * defaulted but overridable):
  *   Cheapest: data-attributes on the script tag —
  *     <script src="/verify-badge.js"
  *             data-cell="<64-hex cell id>"
- *             data-node="https://<a-node>"        (the cell-lookup API base)
+ *             data-node="https://<a-node>"        (optional; the cell-lookup API base)
  *             data-name="mysite"></script>        (optional, for the label)
  *   Or meta tags:
  *     <meta name="dregg:cell" content="<64-hex cell id>">
@@ -35,11 +36,17 @@
  *   Or a global the host injects before this script:
  *     <script>window.__DREGG__ = { cell:"...", node:"https://...", name:"..." }</script>
  *
+ *   When no node is supplied, the badge falls back to DEFAULT_NODE below — the
+ *   public devnet node from the central endpoints config (sdk/src/endpoints.rs
+ *   `defaults::DEVNET`; this literal is that config's JS projection — if the
+ *   devnet domain moves, move both). Every hook above overrides it.
+ *
  *   Because the serving host for *.dregg.works is untrusted infrastructure that
  *   lives OUTSIDE this repo, the badge takes nothing on faith from it: the cell
  *   id is content-addressed (unforgeable), and the commitment is fetched from a
- *   node the visitor can point anywhere (data-node) and cross-check. The host
- *   merely ships bytes; it is never asked to be believed.
+ *   node the visitor can point anywhere (data-node) and cross-check — the default
+ *   only picks WHICH node answers when the visitor/publisher expresses no
+ *   preference. The host merely ships bytes; it is never asked to be believed.
  *
  * No build step, no dependencies, no external resources. The blake3 below is a
  * standalone implementation verified byte-for-byte against @noble/hashes across
@@ -128,6 +135,11 @@
   }
 
   /* ---------- config: where the cell id + node API come from ---------- */
+  // The default cell-lookup node: the public devnet API host from the central
+  // endpoints config (sdk/src/endpoints.rs `defaults::DEVNET`). Overridable via
+  // data-node / meta dregg:node / window.__DREGG__.node — the default only
+  // applies when none of those are set.
+  var DEFAULT_NODE = "https://devnet.dregg.fg-goose.online";
   function readConfig() {
     var cfg = (window.__DREGG__ && typeof window.__DREGG__ === "object") ? window.__DREGG__ : {};
     var self = document.currentScript || (function () {
@@ -139,7 +151,7 @@
     function data(n) { return self && self.dataset ? self.dataset[n] : null; }
     return {
       cell: (data("cell") || meta("cell") || cfg.cell || "").trim().toLowerCase().replace(/^0x/, ""),
-      node: (data("node") || meta("node") || cfg.node || "").trim().replace(/\/+$/, ""),
+      node: (data("node") || meta("node") || cfg.node || DEFAULT_NODE).trim().replace(/\/+$/, ""),
       name: (data("name") || meta("name") || cfg.name || "").trim(),
     };
   }
@@ -199,8 +211,9 @@
       set("bad", "verify unconfigured",
         '<h4>verify badge not configured</h4>' +
         '<div class="note">This page did not declare its on-chain cell. The publisher must add ' +
-        '<span class="row">data-cell / meta dregg:cell</span> (the 64-hex cell id) and ' +
-        '<span class="row">data-node / meta dregg:node</span> (a node API base) so visitors can verify the served bytes.</div>');
+        '<span class="row">data-cell / meta dregg:cell</span> (the 64-hex cell id) so visitors can verify ' +
+        'the served bytes. Optionally <span class="row">data-node / meta dregg:node</span> picks the node API ' +
+        'base (default: the public devnet node).</div>');
       return;
     }
 

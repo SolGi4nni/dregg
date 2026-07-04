@@ -613,9 +613,11 @@ impl ReflectedReceipt {
             .iter()
             .map(|w| match w.recompute_root() {
                 Some(root) => format!(
-                    "holder {} slot {} → cap-root {root}",
+                    "holder {} slot {} → cap-root {}",
                     short(w.holder.as_bytes()),
-                    w.slot
+                    w.slot,
+                    // The FAITHFUL 8-felt cap8 root, all 8 lanes encoded (short hex).
+                    short(&reflect::digest8_bytes32(&root))
                 ),
                 None => format!(
                     "holder {} slot {} → (malformed witness)",
@@ -631,7 +633,9 @@ impl ReflectedReceipt {
                 w.cap_root_bytes32(),
                 w.siblings
                     .iter()
-                    .map(|s| hex::encode(s.to_le_bytes()))
+                    // Each sibling is an 8-felt `Digest8`; encode ALL 8 lanes
+                    // (`digest8_bytes32`), never a lane-0 squeeze.
+                    .map(|s| hex::encode(reflect::digest8_bytes32(s)))
                     .collect(),
             ),
             None => ([0u8; 32], Vec::new()),
@@ -880,7 +884,7 @@ impl Gadget for ConsumedCapVerifier {
                     "cap[{i}] holder {} slot {} ✓ opens to cap_root {}",
                     short(w.holder.as_bytes()),
                     w.slot,
-                    w.cap_root
+                    short(&reflect::digest8_bytes32(&w.cap_root))
                 ));
             } else {
                 ok = false;
@@ -1350,9 +1354,10 @@ mod tests {
             leaf_mask_hi: 0,
             leaf_expiry: 0,
             leaf_breadstuff: 0,
-            siblings: (0..DEPTH as u32).map(|i| i + 1).collect(),
+            // Each sibling is an 8-felt `Digest8` (cap8): distinct per level.
+            siblings: (0..DEPTH as u32).map(|i| [i + 1; 8]).collect(),
             directions: (0..DEPTH).map(|i| (i % 2) as u8).collect(),
-            cap_root: 0, // placeholder — pinned below to the genuine recomputed root
+            cap_root: [0u32; 8], // placeholder — pinned below to the genuine recomputed root
         };
         // The REAL fold computes the genuine root for this leaf+path.
         let genuine = w.recompute_root().expect("a depth-16 witness recomputes");
@@ -1375,7 +1380,7 @@ mod tests {
 
         // TAMPER: corrupt a sibling → the recomputed root diverges → verify FAILS.
         let mut bad = w.clone();
-        bad.siblings[0] ^= 0xff;
+        bad.siblings[0][0] ^= 0xff; // one lane of one Digest8 sibling flips
         let badr = ConsumedCapVerifier {
             witnesses: vec![bad],
         }

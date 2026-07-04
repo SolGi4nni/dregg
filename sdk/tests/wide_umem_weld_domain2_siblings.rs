@@ -152,51 +152,52 @@ fn welded_member_json(key: &str) -> &'static str {
 /// `targetBindGate` holds). The crown `effBit` column is the DESCRIPTOR's constant (the route's
 /// `eff_bit`), not the mask — so a broad mask permits every fan-out crown facet.
 fn broad_cap_witness() -> CapMembershipWitness {
-    let chosen: [BabyBear; 7] = [
-        BabyBear::new(0xA11CE),
-        BabyBear::new(7_777),
-        BabyBear::new(SIGNATURE_AUTH_TAG),
-        BabyBear::new(0xFFFF),
-        BabyBear::new(0xFFFF),
-        BabyBear::new(0x00FF_FFFF),
-        BabyBear::new(42),
-    ];
-    let other: [BabyBear; 7] = [
-        BabyBear::new(0xBEEF),
-        BabyBear::new(123),
-        BabyBear::new(1),
-        BabyBear::new(0xFFFF),
-        BabyBear::new(0xFFFF),
-        BabyBear::new(9),
-        BabyBear::new(0),
-    ];
-    let open = CapOpenWitness::build(&[other, chosen], 1).expect("cap-open witness builds");
+    use dregg_circuit::cap_root::{CAP_TREE_DEPTH, CanonicalCapTree};
+    let chosen = CapLeaf {
+        slot_hash: BabyBear::new(0xA11CE),
+        target: BabyBear::new(7_777),
+        auth_tag: BabyBear::new(SIGNATURE_AUTH_TAG),
+        mask_lo: BabyBear::new(0xFFFF),
+        mask_hi: BabyBear::new(0xFFFF),
+        expiry: BabyBear::new(0x00FF_FFFF),
+        breadstuff: BabyBear::new(42),
+    };
+    let other = CapLeaf {
+        slot_hash: BabyBear::new(0xBEEF),
+        target: BabyBear::new(123),
+        auth_tag: BabyBear::new(1),
+        mask_lo: BabyBear::new(0xFFFF),
+        mask_hi: BabyBear::new(0xFFFF),
+        expiry: BabyBear::new(9),
+        breadstuff: BabyBear::new(0),
+    };
+    // The holder's BEFORE tree is a genuine CanonicalCapTree (the keystone INSERT wrappers rebuild
+    // it to splice the fresh conferred edge — `insert_witness`), so the membership path opens
+    // against ITS root and the FULL 7-field c-list is threaded (`cap_leaves`).
+    let tree = CanonicalCapTree::new(vec![chosen, other], CAP_TREE_DEPTH);
+    let mw = tree
+        .membership_witness(chosen.slot_hash)
+        .expect("the anchor is a member of the BEFORE tree");
     CapMembershipWitness {
-        leaf: CapLeaf {
-            slot_hash: chosen[0],
-            target: chosen[1],
-            auth_tag: chosen[2],
-            mask_lo: chosen[3],
-            mask_hi: chosen[4],
-            expiry: chosen[5],
-            breadstuff: chosen[6],
-        },
-        siblings: open.siblings.to_vec(),
-        directions: open.directions.to_vec(),
+        leaf: chosen,
+        siblings: mw.siblings,
+        directions: mw.directions,
         // NON-EMPTY c-list ⇒ the WRITE-bearing cap-open route (`…WriteCapOpenVmDescriptor2R24`), the
         // ONLY wire-accepted route for these write-bearing cap effects (the authority-only crown is
         // wire-FORBIDDEN — `is_forbidden_authority_only_cap_write_descriptor` — because it leaves the
         // post-cap-root host-trusted). The anchor leaf (`slot_hash`) must be PRESENT; a second filler
         // leaf makes the sorted c-list non-trivial. INSERT routes graft a fresh edge derived from the
         // effect (distinct + absent); REMOVE/UPDATE routes touch the anchor in place.
+        cap_leaves: vec![chosen, other],
+        cap_tombstones: Vec::new(),
         clist_leaves: vec![
             HeapLeaf {
-                addr: chosen[0],
+                addr: chosen.slot_hash,
                 value: BabyBear::new(0xFFFF),
             },
             HeapLeaf {
-                addr: other[0],
-                value: other[3],
+                addr: other.slot_hash,
+                value: other.mask_lo,
             },
         ],
     }
@@ -256,6 +257,7 @@ fn mint_wire_commit(
         &[0u8; 32],
         &[0u8; 32],
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -263,6 +265,7 @@ fn mint_wire_commit(
         &[0u8; 32],
         &[0u8; 32],
         &receipt_log,
+        &Default::default(),
     );
 
     let proj_pre = project_record_kernel_state(&before_cell);

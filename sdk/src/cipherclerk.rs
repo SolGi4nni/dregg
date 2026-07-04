@@ -1078,6 +1078,20 @@ pub struct AgentCipherclerk {
     /// (the rollback path — emits the bare wide leg the pre-flip fleet proved). Runtime-only, never
     /// serialized.
     umem_weld_staged_enabled: bool,
+    /// **v12 CARRIER-WITNESS RETENTION (the SDK attach sites).** Per-turn retained carrier
+    /// material, keyed by the turn's canonical identity hash
+    /// (`TurnExecutor::compute_turn_identity_pi` → `commitment_4bb_to_bytes`). The turn-build
+    /// paths fill this with the material they VALIDATED (factory backing on a
+    /// `CreateCellFromFactory` lead; sovereign authority on the owner-signed witness path;
+    /// sender-membership when the target cell declares `SenderAuthorized { PublicRoot }`); the
+    /// leg-mint caller drains it via [`Self::take_retained_carrier_material`] and attaches
+    /// through [`crate::carrier_witness_attach::RetainedCarrierMaterial::attach_to_leg`].
+    ///
+    /// Runtime-only, NEVER serialized — this is the custom wire's retention mirror: a turn
+    /// REHYDRATED from the on-wire artifact finds nothing here (`None`) and takes the re-exec
+    /// rung, FAIL-CLOSED rather than fabricated.
+    retained_carrier_material:
+        HashMap<[u8; 32], crate::carrier_witness_attach::RetainedCarrierMaterial>,
 }
 
 /// Internal carrier for a proven sovereign turn: the proof-carrying [`Turn`]
@@ -1180,14 +1194,16 @@ impl AgentCipherclerk {
             // projection the single-domain cohort weld refuses) fall through to the byte-identical BARE
             // leg, which the executor still admits for them.
             umem_weld_staged_enabled: true,
+            retained_carrier_material: HashMap::new(),
         }
     }
 
-    /// **THE DOMAIN-1 UMEM-WELD PRODUCER TOGGLE.** Arm (or disarm) the staged WIDE+UMEM welded mint on
-    /// the sovereign rotated producer. STAGED / VK-RISK-FREE: when armed, a single-cohort sovereign turn
-    /// whose descriptor key has a Lean-emitted welded twin mints the welded form (the universal-memory
-    /// leg BESIDE the 8-felt commit, accepted ADDITIVELY by the deployed executor); when disarmed (the
-    /// default) the byte-identical BARE wide leg runs. Used by the loud-probe + the gated VK epoch.
+    /// **THE DOMAIN-1 UMEM-WELD PRODUCER TOGGLE.** Arm (or disarm) the WIDE+UMEM welded mint on the
+    /// sovereign rotated producer. Since the umem VK epoch (G4 — `da0c47dd6`/`443661298`) the welded
+    /// form IS the deployed default (`umem_weld_staged_enabled: true` in both constructors; the
+    /// executor DROPS the bare wide member from the accept set when a welded twin exists). This setter
+    /// survives as a runtime ROLLBACK knob only: `false` re-mints the byte-identical bare wide leg
+    /// (admitted solely for the by-design bare carve-outs + multi-cohort chain legs).
     pub fn set_umem_weld_staged_enabled(&mut self, enabled: bool) {
         self.umem_weld_staged_enabled = enabled;
     }
@@ -1253,6 +1269,7 @@ impl AgentCipherclerk {
             // projection the single-domain cohort weld refuses) fall through to the byte-identical BARE
             // leg, which the executor still admits for them.
             umem_weld_staged_enabled: true,
+            retained_carrier_material: HashMap::new(),
         }
     }
 
@@ -2258,6 +2275,52 @@ impl AgentCipherclerk {
     /// Check whether IVC is currently enabled on this cipherclerk.
     pub fn ivc_enabled(&self) -> bool {
         self.ivc_builder.is_some()
+    }
+
+    // =========================================================================
+    // v12 carrier-witness retention (the SDK attach sites)
+    // =========================================================================
+
+    /// The canonical per-turn retention key: the turn's identity hash
+    /// (`TurnExecutor::compute_turn_identity_pi`'s `turn_hash`, byte-encoded). Witness-independent
+    /// (identity is computed over the effect forest, not the attached witnesses/proofs), so the
+    /// key is stable across the build's attach-after-identity steps.
+    fn turn_retention_key(turn: &Turn) -> [u8; 32] {
+        let (turn_hash, _effects_hash, _actor_nonce, _prev) =
+            dregg_turn::TurnExecutor::compute_turn_identity_pi(turn);
+        dregg_turn::TurnExecutor::commitment_4bb_to_bytes(turn_hash)
+    }
+
+    /// Record retained carrier material for a locally BUILT turn (the producer-side half of the
+    /// custom wire's retention mirror). The turn-build paths that can auto-retain do so
+    /// (`execute_sovereign_turn` → sovereign authority; `prove_sovereign_turn_rotated` → factory
+    /// backing / sender-membership); build flows holding material the cipherclerk does not
+    /// (e.g. the hatchery mint flow's [`crate::hatchery_mint::MintedKind`] — project it via
+    /// [`crate::carrier_witness_attach::retain_hatchery_attestation`]) record it here.
+    ///
+    /// Recording EMPTY material is a no-op (nothing to retain — the re-exec rung needs no entry).
+    pub fn record_retained_carrier_material(
+        &mut self,
+        turn: &Turn,
+        retained: crate::carrier_witness_attach::RetainedCarrierMaterial,
+    ) {
+        if retained.is_empty() {
+            return;
+        }
+        self.retained_carrier_material
+            .insert(Self::turn_retention_key(turn), retained);
+    }
+
+    /// Drain the retained carrier material for `turn` (the leg-mint caller's read). `None` for a
+    /// turn this cipherclerk did not build (or already drained) — the FAIL-CLOSED contract: a
+    /// wire-rehydrated turn retains nothing, so its leg keeps `carrier_witness: None` and the
+    /// chain proves via the re-exec rung, never a fabricated bundle.
+    pub fn take_retained_carrier_material(
+        &mut self,
+        turn: &Turn,
+    ) -> Option<crate::carrier_witness_attach::RetainedCarrierMaterial> {
+        self.retained_carrier_material
+            .remove(&Self::turn_retention_key(turn))
     }
 
     // =========================================================================
@@ -4983,6 +5046,15 @@ impl AgentCipherclerk {
             sequence,
         );
         let signature = self.signing_key.sign(&signing_message).to_bytes();
+        // v12 SOVEREIGN CARRIER RETENTION (the SDK attach site): the authority tuple this build
+        // just VALIDATED — `key_commit` from the cell's own `public_key` (gated above to equal
+        // the signing cipherclerk's key) + the freshly signed replay `sequence`. Retained
+        // OUTSIDE the wire turn (the custom wire's retention mirror); the leg-mint caller drains
+        // it via `take_retained_carrier_material` and attaches `CarrierWitness::Sovereign`
+        // through `RetainedCarrierMaterial::attach_to_leg`. Fail-closed: a non-sovereign cell
+        // retains nothing (`retain_sovereign_authority` → `None`).
+        let retained_sovereign =
+            crate::carrier_witness_attach::retain_sovereign_authority(&cell_state, sequence);
         let witness = SovereignCellWitness {
             cell_id: *cell_id,
             old_commitment,
@@ -4996,6 +5068,13 @@ impl AgentCipherclerk {
         };
         self.sovereign_witness_sequences.insert(*cell_id, sequence);
         turn.sovereign_witnesses.insert(*cell_id, witness);
+        self.record_retained_carrier_material(
+            &turn,
+            crate::carrier_witness_attach::RetainedCarrierMaterial {
+                sovereign: retained_sovereign,
+                ..Default::default()
+            },
+        );
 
         // Advance local sovereign state to the post-state so the NEXT turn's
         // pre-state commitment matches the ledger (which the executor updates
@@ -5422,12 +5501,33 @@ impl AgentCipherclerk {
         let mut ctx_ledger = dregg_cell::Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
 
+        // v12 CARRIER MATERIAL (STEP-2.5) — capture the REAL child VK so a factory turn's AFTER
+        // commitment publishes the installed child VK on octet 88..95 (non-zero), not the vacuous
+        // `Default` zero the generic path carries. The effective child VK the executor installs
+        // (`apply_create_cell_from_factory`'s `effective_vk`) is `params.program_vk` for the Fixed /
+        // FromSet / None strategies; a Derived VK is computed by the executor from the factory
+        // descriptor's `base_vk`, which the ledgerless SDK cannot recompute — such a turn carries the
+        // claimed `program_vk` here (the caller supplies the resolved child VK on the Derived path).
+        // The octet rides the AFTER block ONLY (the child is BORN by this turn); the BEFORE block keeps
+        // the zero octet, so before/after commitments differ by exactly the carried child VK. The
+        // `Default` (None) on every non-factory lead leaves octet 88 zero, as required.
+        let after_material = match effects.first() {
+            Some(Effect::CreateCellFromFactory { params, .. }) => {
+                dregg_cell::commitment::RotationCarrierMaterial {
+                    child_vk: params.program_vk,
+                    contract_hash: None,
+                }
+            }
+            _ => dregg_cell::commitment::RotationCarrierMaterial::default(),
+        };
+
         let before_w = rw::produce(
             &before_cell,
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
             &receipt_hashes,
+            &Default::default(),
         );
         let after_w = rw::produce(
             &after_cell,
@@ -5435,6 +5535,7 @@ impl AgentCipherclerk {
             &nullifier_root,
             &commitments_root,
             &receipt_hashes,
+            &after_material,
         );
 
         // THE REFUSAL `fields_root` WRITE-GATE CONTEXT (the light-client close's deployed prover wire).
@@ -5725,6 +5826,22 @@ impl AgentCipherclerk {
                 &caveat,
             )
             .map_err(|e| SdkError::InvalidWitness(format!("wide custom trace generation: {e}")))?
+        } else if matches!(
+            vm_effects.first(),
+            Some(dregg_circuit::effect_vm::Effect::BridgeMint { .. })
+        ) {
+            // The felt mint-hash pin member (51-PI base; PI 46 = the projector-derived
+            // `note_spend_mint_hash_felt`) — no longer the bare transfer shape.
+            dregg_circuit::effect_vm::trace_rotated::generate_rotated_bridge_mint_wide(
+                &initial_vm_state,
+                &vm_effects,
+                &before_bw,
+                &after_bw,
+                &caveat,
+            )
+            .map_err(|e| {
+                SdkError::InvalidWitness(format!("wide bridge-mint trace generation: {e}"))
+            })?
         } else {
             dregg_circuit::effect_vm::trace_rotated::generate_rotated_transfer_shape_wide(
                 &initial_vm_state,
@@ -5751,8 +5868,23 @@ impl AgentCipherclerk {
         // The BEFORE 8-felt carrier equals the CHIP-faithful 8-felt commitment of the pre-state
         // (the byte-twin of the circuit's `fill_wide_block`; the executor recomputes this SAME
         // primitive from the trusted before-cell to anchor the wide PIs). We keep that derivation
-        // as a producer-side cross-check.
-        {
+        // as a producer-side cross-check. SCOPE: the plain-carried-limb families only — a
+        // GROW-GATE lead (noteSpend/noteCreate/createCell/createFromFactory/spawn) REWRITES an
+        // accumulator limb group in the BEFORE block (the openable accounts/nullifier tree the
+        // gate opens against), so its published BEFORE commit legitimately differs from the
+        // plain `compute_rotated_pre_limbs` form and the executor anchors it through the
+        // grow-gate's own opening, not this recompute.
+        let lead_is_grow_gate = matches!(
+            vm_effects.first(),
+            Some(
+                dregg_circuit::effect_vm::Effect::NoteSpend { .. }
+                    | dregg_circuit::effect_vm::Effect::NoteCreate { .. }
+                    | dregg_circuit::effect_vm::Effect::CreateCell { .. }
+                    | dregg_circuit::effect_vm::Effect::CreateCellFromFactory { .. }
+                    | dregg_circuit::effect_vm::Effect::SpawnWithDelegation { .. }
+            )
+        );
+        if !lead_is_grow_gate {
             let pre = compute_rotated_pre_limbs(
                 &before_cell,
                 &V9RotationContext {
@@ -5760,6 +5892,7 @@ impl AgentCipherclerk {
                     nullifier_root,
                     commitments_root,
                     iroot: before_w.iroot,
+                    material: Default::default(),
                 },
             );
             debug_assert_eq!(
@@ -5908,6 +6041,31 @@ impl AgentCipherclerk {
         self.sovereign_cells.insert(*cell_id, after_cell);
         turn.execution_proof = Some(proof_bytes);
 
+        // v12 CARRIER RETENTION (the SDK attach site, the STEP-2.5 twin): retain the material
+        // this build VALIDATED so the leg-mint caller can attach the carrier witness through
+        // `RetainedCarrierMaterial::attach_to_leg`. A `CreateCellFromFactory` lead retains the
+        // creation-backing tuple (the SAME `params.program_vk` threaded onto the committed AFTER
+        // `child_vk8` octet above — claim == committed material by construction); a turn against
+        // a cell whose program declares `SenderAuthorized { PublicRoot }` retains the
+        // `(sender_leaf, authorized_root)` pair its caveat check pins. Everything else retains
+        // NOTHING (fail-closed → the re-exec rung).
+        self.record_retained_carrier_material(
+            &turn,
+            crate::carrier_witness_attach::RetainedCarrierMaterial {
+                factory: match effects.first() {
+                    Some(Effect::CreateCellFromFactory {
+                        factory_vk, params, ..
+                    }) => crate::carrier_witness_attach::retain_factory_backing(factory_vk, params),
+                    _ => None,
+                },
+                membership: crate::carrier_witness_attach::retain_sender_membership(
+                    &self.public_key.0,
+                    &before_cell,
+                ),
+                ..Default::default()
+            },
+        );
+
         Ok(ProvenSovereignTurn {
             turn,
             trace,
@@ -6023,6 +6181,7 @@ impl AgentCipherclerk {
             &nullifier_root,
             &commitments_root,
             &receipt_hashes,
+            &Default::default(),
         );
         let after_w = rw::produce(
             &full_after_cell,
@@ -6030,6 +6189,7 @@ impl AgentCipherclerk {
             &nullifier_root,
             &commitments_root,
             &receipt_hashes,
+            &Default::default(),
         );
 
         // The circuit pre-state, seeded from the turn's before-cell (the SAME seed the single-leg
@@ -6109,6 +6269,21 @@ impl AgentCipherclerk {
         // Build the proof-carrying turn (same identity as the single-leg path).
         let agent_cell = *cell_id;
         let nonce = self.receipt_chain.len() as u64;
+        // v12 CARRIER RETENTION (the heterogeneous-forest twin of the single-leg site below the
+        // wide mint): capture BEFORE `effects` moves into the action forest.
+        let retained = crate::carrier_witness_attach::RetainedCarrierMaterial {
+            factory: match effects.first() {
+                Some(Effect::CreateCellFromFactory {
+                    factory_vk, params, ..
+                }) => crate::carrier_witness_attach::retain_factory_backing(factory_vk, params),
+                _ => None,
+            },
+            membership: crate::carrier_witness_attach::retain_sender_membership(
+                &self.public_key.0,
+                before_cell,
+            ),
+            ..Default::default()
+        };
         let mut forest = dregg_turn::forest::CallForest::new();
         let action =
             crate::raw::unsigned_action_named(agent_cell, "sovereign_execute_proven", effects);
@@ -6135,6 +6310,7 @@ impl AgentCipherclerk {
 
         // Advance local sovereign state to the final after-cell.
         self.sovereign_cells.insert(*cell_id, final_after_cell);
+        self.record_retained_carrier_material(&turn, retained);
 
         Ok(ProvenSovereignTurn {
             turn,
@@ -6205,8 +6381,12 @@ impl AgentCipherclerk {
         // `protocol-tests/.../effect_vm_differential.rs` asserts this. The
         // full 32-byte value is now bound through the per-effect param column
         // and `PI[EFFECTS_HASH]` (`compute_effects_hash`).
+        // v13 FIELDS-OCTET: lane 0 of the FAITHFUL `field_limbs8` split (the
+        // u64-lane lo32) — byte-identical to the executor projector, the SAME
+        // welded lane the rotated producer writes to limb `4 + slot`. REPLACES the
+        // ~31-bit `fold_bytes32_to_bb`.
         fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
-            dregg_circuit::effect_vm::fold_bytes32_to_bb(value)
+            dregg_circuit::effect_vm::field_limbs8(value)[0]
         }
 
         fn hash_to_bb(h: &[u8; 32]) -> BabyBear {
@@ -6289,10 +6469,24 @@ impl AgentCipherclerk {
                 Effect::MakeSovereign { cell } if cell == cell_id => {
                     vm_effects.push(VmEffect::MakeSovereign);
                 }
-                Effect::CreateCellFromFactory { factory_vk, .. } => {
+                Effect::CreateCellFromFactory {
+                    factory_vk,
+                    owner_pubkey,
+                    ..
+                } => {
+                    // ANTI-DRIFT WELD (mirrors `executor/effect_vm_bridge.rs`'s factory arm
+                    // EXACTLY): `child_vk_derived` is a MISNOMER — it carries
+                    // `hash_to_bb(owner_pubkey)`, the owner-pubkey-folded NEW-CELL KEY the
+                    // accounts grow-gate inserts (the factory's `param1 = CHILD_VK_DERIVED`
+                    // column). The previous `BabyBear::ZERO` placeholder DIVERGED from the
+                    // executor's projection AND collided with the empty accounts tree's zero
+                    // addr (the in-circuit `.absent` no-collision op refused every honest
+                    // factory turn on this path). The REAL installed child VK flows faithfully
+                    // via the v12 `child_vk8` carrier octet (limbs 88..=95, STEP-2.5), not
+                    // through this 1-felt key column.
                     vm_effects.push(VmEffect::CreateCellFromFactory {
                         factory_vk: hash_to_bb(factory_vk),
-                        child_vk_derived: BabyBear::ZERO, // Derived at execution time
+                        child_vk_derived: hash_to_bb(owner_pubkey),
                     });
                 }
                 Effect::IncrementNonce { cell } if cell == cell_id => {
@@ -6505,20 +6699,28 @@ impl AgentCipherclerk {
                 }
 
                 // -- Bridge ops (CRITICAL: cross-chain value transfer) ----------
+                // MUST match the executor projector (`effect_vm_bridge.rs`)
+                // byte-for-byte (the differential invariant). FELT-DOMAIN
+                // mint_hash (STEP-1 re-align): `bridge_mint_hash_felt` — the
+                // Poseidon2 `hash_fact` identity over the SAME six compressed
+                // felts the executor's note-spend STARK verify binds, so the
+                // AIR + the recursion note-spend leaf can recompute it.
                 Effect::BridgeMint { portable_proof } => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(&portable_proof.nullifier);
-                    let root_bytes =
-                        postcard::to_allocvec(&portable_proof.source_root).unwrap_or_default();
-                    hasher.update(&root_bytes);
-                    hasher.update(&portable_proof.destination_federation);
-                    hasher.update(&portable_proof.asset_type.to_le_bytes());
-                    let mint_hash_bytes = hasher.finalize();
+                    let mint_hash = dregg_circuit::dsl::note_spending::bridge_mint_hash_felt(
+                        &portable_proof.nullifier,
+                        &portable_proof
+                            .source_root
+                            .note_tree_root
+                            .unwrap_or([0u8; 32]),
+                        &portable_proof.destination_federation,
+                        portable_proof.value,
+                        portable_proof.asset_type,
+                    );
                     let value_lo =
                         BabyBear::new((portable_proof.value & ((1u64 << 30) - 1)) as u32);
                     vm_effects.push(VmEffect::BridgeMint {
                         value_lo,
-                        mint_hash: hash_to_bb(mint_hash_bytes.as_bytes()),
+                        mint_hash,
                         value_full: portable_proof.value,
                     });
                 }

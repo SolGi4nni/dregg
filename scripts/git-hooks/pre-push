@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# Pre-push: (1) secret-scan the to-be-pushed commits and BLOCK if a real secret is found, then
+# (2) preserve git-lfs's pre-push behavior (this repo uses LFS; the default hook lived here).
+#
+# Today's incident was a routine `git push origin main` carrying a secret public. This hook is the
+# backstop on the push path. Installed by scripts/install-git-hooks.sh (symlinked into .git/hooks,
+# replacing the stock git-lfs pre-push — which we re-invoke below so LFS keeps working).
+set -u
+repo_root="$(git rev-parse --show-toplevel)"
+
+# git feeds the ref updates on stdin; we need them twice (scan + git-lfs), so buffer once.
+stdin_data="$(cat)"
+
+# (1) secret scan over each pushed range — blocks the push on a real secret.
+if [ -x "$repo_root/scripts/git-hooks/secret-scan.sh" ]; then
+  printf '%s\n' "$stdin_data" | "$repo_root/scripts/git-hooks/secret-scan.sh" push-stdin || exit 1
+fi
+
+# (2) preserve git-lfs's pre-push (byte-for-byte the stock hook's behavior).
+if command -v git-lfs >/dev/null 2>&1; then
+  printf '%s\n' "$stdin_data" | git lfs pre-push "$@"
+else
+  printf >&2 "\n%s\n\n" "This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'pre-push' file in the hooks directory."
+  exit 2
+fi

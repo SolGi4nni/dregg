@@ -1414,7 +1414,7 @@ mod tests {
             proof,
             descriptor,
             mut public_inputs,
-            custom_witness,
+            carrier_witness,
         } = rotated;
         let pi_wide_new = public_inputs.len() - 8; // first lane of the AFTER 8-felt wide commit
         let lie = public_inputs[pi_wide_new] + BabyBear::ONE;
@@ -1425,7 +1425,7 @@ mod tests {
                 proof,
                 descriptor,
                 public_inputs,
-                custom_witness,
+                carrier_witness,
             },
         )));
 

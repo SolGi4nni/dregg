@@ -112,17 +112,124 @@ pub struct RotatedParticipantLeg {
     pub descriptor: dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
     /// The 38-PI vector (`ROT_PI_COUNT`) the proof attests.
     pub public_inputs: Vec<BabyBear>,
-    /// **PROVER-SIDE-ONLY custom sub-proof re-provable witness** (the deployed custom-binding
-    /// thread). For a `Custom`-effect turn whose `customVmDescriptor2R24` leg publishes a claimed
-    /// `custom_proof_commitment` (IR2 PI 46..49), this carries the `CellProgram` + trace witness +
-    /// PIs needed to RE-PROVE the sub-proof as a recursion-foldable leaf
-    /// ([`crate::custom_leaf_adapter::prove_custom_leaf_with_commitment`]) so the chain prover can
-    /// fold it under [`crate::joint_turn_recursive::prove_custom_binding_node_segmented`], binding
-    /// the claimed commitment for a PURE LIGHT CLIENT. `None` for every non-custom turn. This is
+    /// **PROVER-SIDE-ONLY carrier sub-proof re-provable witness** (the generalized carrier
+    /// witness SOCKET — Step-2 of the uniform carrier build). For a turn whose deployed leg
+    /// publishes a claimed carrier authority tuple, this carries the prover-side inputs needed to
+    /// RE-PROVE that carrier's sub-proof as a recursion-foldable leaf so the chain prover
+    /// ([`crate::ivc_turn_chain::prove_chain_core_rotated`]) can fold it against the leg inside
+    /// the recursion tree a PURE LIGHT CLIENT verifies. Today ONLY the
+    /// [`CarrierWitness::Custom`] arm is deployed-wired; the six other carriers are STAGED
+    /// sockets whose fold arms are explicitly FAIL-CLOSED (the chain prover REFUSES a leg
+    /// carrying one until that carrier's wave lands its arm — it never silently proves).
+    ///
+    /// `None` for a turn with no carrier witness — the re-exec rung (a re-executing validator
+    /// checks the carrier claim off-AIR; the light-client fold does not witness it). This is
     /// prover-side witness data ONLY — it is NEVER serialized onto the on-wire artifact a light
     /// client verifies (the wire `dregg_turn::CustomProgramProof` keeps only finished bytes + PIs);
     /// the `Clone`/postcard round-trip below clones it directly (the proof is the heavy part).
-    pub custom_witness: Option<CustomWitnessBundle>,
+    pub carrier_witness: Option<CarrierWitness>,
+}
+
+/// **THE GENERALIZED CARRIER WITNESS SOCKET** — one enum, one variant per carrier of the
+/// universal-fold family, each holding the prover-side re-provable bundle its leaf adapter
+/// consumes. [`RotatedParticipantLeg::carrier_witness`] carries `Option<CarrierWitness>`;
+/// [`crate::ivc_turn_chain::prove_chain_core_rotated`] matches on it to pick the per-turn fold
+/// branch.
+///
+/// FAIL-CLOSED DISCIPLINE (the fail-open law's socket half):
+/// * `None` = the RE-EXEC RUNG: the turn folds as a plain segment leaf; the carrier claim is
+///   checked by a re-executing validator, never fabricated for the light client.
+/// * [`CarrierWitness::Custom`] = the ONE deployed arm (buff-in-production): the leg's claimed
+///   `custom_proof_commitment` is bound to the re-proven sub-proof inside the fold.
+/// * The six other variants are STAGED: the socket exists so each carrier wave lands its fold
+///   arm without another restructure, but until that arm lands the chain prover REFUSES a leg
+///   carrying the witness (see `prove_chain_core_rotated`'s unfilled-carrier arms). An unfilled
+///   carrier witness NEVER silently proves — either it's `None` (re-exec) or its wave's arm
+///   exists.
+#[derive(Clone)]
+pub enum CarrierWitness {
+    /// The deployed custom-binding thread (Fork X, buff-in-production) — see
+    /// [`CustomWitnessBundle`]. THE FIRST VARIANT: nothing regresses; the custom fold arm in
+    /// `prove_chain_core_rotated` consumes exactly this.
+    Custom(CustomWitnessBundle),
+    /// FOLD-WIRED (the 7th, LAST carrier): the bridge carrier's re-provable witness — the
+    /// REAL foreign note-spend witness (per the carrier-deployment spec: folding the
+    /// binding-only `bridge_action_air` alone is NOT the sound deployed path — a prover-chosen
+    /// tuple; the G2 backing is the re-proven note-spend STARK,
+    /// `note_spend_leaf_adapter::prove_note_spend_leaf_with_claim`). The fold arm admits a leg
+    /// only when its descriptor pins the felt mint-hash claim slot (`BRIDGE_MINT_HASH_PI` = 46,
+    /// the FIRST-row `prmCol 0` pin — the STEP-3/4 regen tie); otherwise it refuses
+    /// (fail-closed).
+    Bridge(BridgeWitnessBundle),
+    /// FOLD-WIRED (v12): the sovereign carrier's authority-tuple witness (P1 fills the
+    /// KEY_COMMIT teeth from `before_cell.public_key()`). The fold arm admits a leg only when
+    /// its descriptor pins the teeth claim slots (`SOVEREIGN_KEY_COMMIT_PI_LO` — the big-bang
+    /// regen tie); otherwise it refuses (fail-closed).
+    Sovereign(SovereignWitnessBundle),
+    /// FOLD-WIRED (v12): the factory carrier's creation-backing witness (`factory_vk`,
+    /// `child_vk`, derivation digest). The fold arm binds the leg's `child_vk8` octet claim
+    /// (PI 47..54, `factoryV3Carriers`) to the re-proven backing leaf; a leg whose descriptor
+    /// lacks the STEP-3 octet pins is refused (fail-closed, the big-bang regen tie).
+    Factory(FactoryWitnessBundle),
+    /// FOLD-WIRED (v12): the hatchery carrier's contract-attestation witness
+    /// (`contract_hash`, `invariant_digest`; the invariant half rides factory's leg). The
+    /// fold arm binds the leg's `contract_hash8` octet claim (PI 55..62, `factoryV3Carriers`)
+    /// to the re-proven attestation leaf; pin-less legs are refused (fail-closed).
+    Hatchery(HatcheryWitnessBundle),
+    /// FOLD-WIRED (v12): the membership carrier's sender-membership witness (`sender_leaf`,
+    /// `authorized_root`). The fold arm binds the leg's claim slots
+    /// (`MEMBERSHIP_CLAIM_PI_LO`) to the re-proven membership leaf; pin-less legs are refused
+    /// (fail-closed, the big-bang regen tie).
+    Membership(MembershipWitnessBundle),
+    /// FOLD-WIRED (the 6th carrier): the DSL/Dfa carrier's re-provable predicate program
+    /// witness (structurally the custom shape — the dsl adapter REUSES the custom leaf
+    /// machinery). The fold arm derives the rc claim slots per member from the leg's
+    /// committed descriptor (`ivc_turn_chain::dsl_rc_claim_pi_lo` — the `withDfaRcPins`
+    /// cohort-wide emit), REFUSES a pin-less descriptor AND the zero rc sentinel (a no-Dfa
+    /// turn never folds a vacuous claim), and binds the re-proven DSL transition leaf to the
+    /// published route-commitment.
+    Dsl(DslWitnessBundle),
+    /// FOLD-WIRED (the 8th carrier): the DECO/zkTLS + Stripe money-in carrier's re-provable
+    /// payment-commitment witness — the felt-domain `PaymentFacts` the DECO leaf recomputes
+    /// the identity from (per `docs/deos/DECO-CARRIER-PLAN.md` Option B: the in-AIR leaf
+    /// verifies only the Poseidon2 commitment binding `PaymentFacts → payment_hash`;
+    /// ed25519/HMAC/SHA-256 stay OFF-AIR, executor-checked, as named §8 carriers — exactly
+    /// what `Deco.lean::deco_binds_payment` proves and exactly bridge's ed25519 posture). The
+    /// fold arm admits a leg only when its deployed `stripeMint` descriptor pins the felt
+    /// payment-identity claim slot (`DECO_PAYMENT_HASH_PI`, FIRST-row `param0` — the big-bang
+    /// regen tie); otherwise it refuses (fail-closed).
+    Deco(DecoWitnessBundle),
+}
+
+impl CarrierWitness {
+    /// The carrier's stable lowercase name (error messages / logging).
+    pub fn carrier_name(&self) -> &'static str {
+        match self {
+            CarrierWitness::Custom(_) => "custom",
+            CarrierWitness::Bridge(_) => "bridge",
+            CarrierWitness::Sovereign(_) => "sovereign",
+            CarrierWitness::Factory(_) => "factory",
+            CarrierWitness::Hatchery(_) => "hatchery",
+            CarrierWitness::Membership(_) => "membership",
+            CarrierWitness::Dsl(_) => "dsl",
+            CarrierWitness::Deco(_) => "deco",
+        }
+    }
+
+    /// The custom bundle, iff this is the [`CarrierWitness::Custom`] variant (the migration
+    /// accessor for pre-socket call sites).
+    pub fn as_custom(&self) -> Option<&CustomWitnessBundle> {
+        match self {
+            CarrierWitness::Custom(b) => Some(b),
+            _ => None,
+        }
+    }
+}
+
+impl From<CustomWitnessBundle> for CarrierWitness {
+    fn from(bundle: CustomWitnessBundle) -> Self {
+        CarrierWitness::Custom(bundle)
+    }
 }
 
 /// The prover-side re-provable witness for a `Custom` turn's external sub-proof — exactly the four
@@ -144,6 +251,288 @@ pub struct CustomWitnessBundle {
     pub public_inputs: Vec<BabyBear>,
 }
 
+/// FOLD-WIRED (the 7th carrier) bridge-carrier bundle — the prover-side inputs
+/// [`crate::note_spend_leaf_adapter::prove_note_spend_leaf_with_claim`] consumes: the REAL
+/// foreign note-spend witness (spending key, 28-limb commitment preimage, Merkle path) — the
+/// G2 backing the carrier-deployment spec mandates. Folding the binding-only
+/// `bridge_action_air` was REFUSED as the backing (a prover-chosen tuple, no membership / no
+/// key knowledge — the vacuous connect the fail-open law forbids); this bundle re-proves the
+/// REAL spend STARK, whose leaf exposes the FELT-domain mint identity
+/// (`note_spend_mint_hash_felt`, in-AIR-recomputed at claim lane 6) the deployed leg's
+/// mint-hash PI (46, `mintV3BridgeHash`) connects to.
+#[derive(Clone)]
+pub struct BridgeWitnessBundle {
+    /// The REAL note-spend witness (the SAME `NoteSpendingWitness` the off-AIR
+    /// `verify_note_spend_dsl_full` path proves).
+    pub note_spend: dregg_circuit::note_spending_air::NoteSpendingWitness,
+    /// The 7-slot claim tuple `[nullifier, merkle_root, value_lo, asset_type,
+    /// destination_federation, value_hi, mint_hash]` (for an honest bundle,
+    /// [`crate::note_spend_leaf_adapter::note_spend_leaf_public_inputs`]).
+    pub public_inputs: Vec<BabyBear>,
+}
+
+impl BridgeWitnessBundle {
+    /// Project the honest bundle from the typed note-spend witness (PIs derived from the
+    /// witness itself — including the in-AIR-recomputable felt mint identity at lane 6 — so
+    /// claim == execution by construction).
+    pub fn from_note_spend_witness(
+        note_spend: &dregg_circuit::note_spending_air::NoteSpendingWitness,
+    ) -> Self {
+        Self {
+            public_inputs: crate::note_spend_leaf_adapter::note_spend_leaf_public_inputs(
+                note_spend,
+            ),
+            note_spend: note_spend.clone(),
+        }
+    }
+
+    /// **THE PRODUCTION PROJECTION (fail-closed off-wire)** — the bridge twin of
+    /// [`SovereignWitnessBundle::from_retained_authority`]. The turn-build path RETAINS the
+    /// note-spend witness (the same material the source-federation spend proof was minted
+    /// from); a wire-rehydrated turn retains nothing (`None`) — the re-exec rung,
+    /// FAIL-CLOSED rather than fabricated.
+    pub fn from_retained_bridge(
+        retained: Option<&dregg_circuit::note_spending_air::NoteSpendingWitness>,
+    ) -> Option<Self> {
+        retained.map(Self::from_note_spend_witness)
+    }
+}
+
+/// FOLD-WIRED (the 8th carrier) DECO-carrier bundle — the prover-side inputs
+/// [`crate::deco_leaf_adapter::prove_deco_leaf_with_claim`] consumes: the felt-domain
+/// `PaymentFacts` (`amountCents, currency, recipient, paymentIntentId`) + the transcript-
+/// commitment opening `salt`. The DECO commitment leaf recomputes the felt payment identity
+/// (`deco_payment_hash_felt`) IN-AIR from these and exposes it at claim lane
+/// [`crate::deco_leaf_adapter::DECO_LEAF_PAYMENT_HASH_PI`]; the deployed `stripeMint` leg's
+/// `payment_hash` PI (`DECO_PAYMENT_HASH_PI`) connects to it. The heavy TLS crypto
+/// (ed25519/HMAC/SHA-256/parse) stays OFF-AIR, executor-checked — the named §8 carriers
+/// (`DECO-CARRIER-PLAN.md` §5). The executor projects a `StripePaymentAttestation` onto the
+/// felt witness via `dregg_circuit::dsl::deco_payment::stripe_payment_hash_felt`'s encoders.
+#[derive(Clone)]
+pub struct DecoWitnessBundle {
+    /// The felt-domain payment witness the DECO commitment leaf proves over.
+    pub witness: crate::deco_leaf_adapter::DecoLeafWitness,
+    /// The `DECO_CLAIM_LEN`-slot claim tuple (for an honest bundle,
+    /// [`crate::deco_leaf_adapter::deco_leaf_public_inputs`]).
+    pub public_inputs: Vec<BabyBear>,
+}
+
+impl DecoWitnessBundle {
+    /// Project the honest bundle from the typed felt payment witness (PIs derived from the
+    /// witness itself — including the in-AIR-recomputable felt payment identity — so
+    /// claim == execution by construction).
+    pub fn from_leaf_witness(witness: &crate::deco_leaf_adapter::DecoLeafWitness) -> Self {
+        Self {
+            public_inputs: crate::deco_leaf_adapter::deco_leaf_public_inputs(witness),
+            witness: *witness,
+        }
+    }
+
+    /// **THE PRODUCTION PROJECTION (fail-closed off-wire)** — the DECO twin of
+    /// [`BridgeWitnessBundle::from_retained_bridge`]. The turn-build path RETAINS the felt
+    /// payment witness (projected from the `VerifiedPayment` the Stripe webhook verify
+    /// produced, `stripe_mirror.rs`); a wire-rehydrated turn retains nothing (`None`) — the
+    /// re-exec rung, FAIL-CLOSED rather than fabricated.
+    pub fn from_retained_deco(
+        retained: Option<&crate::deco_leaf_adapter::DecoLeafWitness>,
+    ) -> Option<Self> {
+        retained.map(Self::from_leaf_witness)
+    }
+}
+
+/// STAGED sovereign-carrier bundle — the prover-side inputs
+/// [`crate::sovereign_leaf_adapter::prove_sovereign_leaf_with_key_claim`] consumes (the 21-slot
+/// authority tuple `(key_commit, sequence, old, new)`; P1 fills `key_commit` from
+/// `before_cell.public_key()`). Fold arm FAIL-CLOSED until the sovereign wave lands it.
+#[derive(Clone)]
+pub struct SovereignWitnessBundle {
+    /// The typed sovereign authority-tuple witness.
+    pub authority: crate::sovereign_leaf_adapter::SovereignAuthorityWitness,
+    /// The 21-slot bound tuple PIs (for an honest bundle, `authority.public_inputs()`).
+    pub public_inputs: Vec<BabyBear>,
+}
+
+impl SovereignWitnessBundle {
+    /// Project the honest bundle from the typed authority witness (PIs derived, claim ==
+    /// execution by construction).
+    pub fn from_authority_witness(
+        authority: &crate::sovereign_leaf_adapter::SovereignAuthorityWitness,
+    ) -> Self {
+        Self {
+            public_inputs: authority.public_inputs(),
+            authority: authority.clone(),
+        }
+    }
+
+    /// **THE PRODUCTION PROJECTION (fail-closed off-wire)** — the sovereign twin of
+    /// [`CustomWitnessBundle::from_bound_custom_proof`]. The turn-build path RETAINS the
+    /// authority tuple (`key_commit` from `before_cell.public_key()`, sequence, old/new
+    /// anchors); a wire-rehydrated turn retains nothing (`None`) — the re-exec rung,
+    /// FAIL-CLOSED rather than fabricated.
+    pub fn from_retained_authority(
+        retained: Option<&crate::sovereign_leaf_adapter::SovereignAuthorityWitness>,
+    ) -> Option<Self> {
+        retained.map(Self::from_authority_witness)
+    }
+}
+
+/// STAGED factory-carrier bundle — the prover-side inputs
+/// [`crate::factory_leaf_adapter::prove_factory_leaf_with_child_vk_claim`] consumes (the 24-slot
+/// backing tuple `(factory_vk, child_vk, derivation_digest)`). ⚑ Anti-vacuity: the factory third
+/// edge must gate against the FAITHFUL 8-felt committed child_vk, never the 31-bit col-69 fold.
+/// Fold arm FAIL-CLOSED until the factory wave lands it.
+#[derive(Clone)]
+pub struct FactoryWitnessBundle {
+    /// The typed factory creation-backing witness.
+    pub backing: crate::factory_leaf_adapter::FactoryBackingWitness,
+    /// The 24-slot bound tuple PIs (for an honest bundle, `backing.public_inputs()`).
+    pub public_inputs: Vec<BabyBear>,
+}
+
+impl FactoryWitnessBundle {
+    /// Project the honest bundle from the typed backing witness (PIs derived, claim ==
+    /// execution by construction).
+    pub fn from_backing_witness(
+        backing: &crate::factory_leaf_adapter::FactoryBackingWitness,
+    ) -> Self {
+        Self {
+            public_inputs: backing.public_inputs(),
+            backing: backing.clone(),
+        }
+    }
+
+    /// **THE PRODUCTION PROJECTION (fail-closed off-wire)** — the factory twin of
+    /// [`CustomWitnessBundle::from_bound_custom_proof`]. The turn-build path RETAINS the
+    /// validated creation-backing witness (the `(factory_vk, child_vk, derivation_digest)`
+    /// tuple `FactoryRegistry::validate_and_record` binds); a turn REHYDRATED from the
+    /// on-wire artifact retains nothing (`None`) — such a turn takes the re-exec rung,
+    /// FAIL-CLOSED rather than fabricated (the fold never invents a backing tuple the
+    /// executor did not validate).
+    pub fn from_retained_backing(
+        retained: Option<&crate::factory_leaf_adapter::FactoryBackingWitness>,
+    ) -> Option<Self> {
+        retained.map(Self::from_backing_witness)
+    }
+}
+
+/// STAGED hatchery-carrier bundle — the prover-side inputs
+/// [`crate::hatchery_leaf_adapter::prove_hatchery_leaf_with_contract_claim`] consumes (the
+/// 16-slot attestation tuple `(contract_hash, invariant_digest)`; the invariant half rides
+/// factory's CreateCellFromFactory leg). Fold arm FAIL-CLOSED until the hatchery wave lands it.
+#[derive(Clone)]
+pub struct HatcheryWitnessBundle {
+    /// The typed hatchery contract-attestation witness.
+    pub attestation: crate::hatchery_leaf_adapter::HatcheryAttestationWitness,
+    /// The 16-slot bound tuple PIs (for an honest bundle, `attestation.public_inputs()`).
+    pub public_inputs: Vec<BabyBear>,
+}
+
+impl HatcheryWitnessBundle {
+    /// Project the honest bundle from the typed attestation witness (PIs derived, claim ==
+    /// execution by construction).
+    pub fn from_attestation_witness(
+        attestation: &crate::hatchery_leaf_adapter::HatcheryAttestationWitness,
+    ) -> Self {
+        Self {
+            public_inputs: attestation.public_inputs(),
+            attestation: attestation.clone(),
+        }
+    }
+
+    /// **THE PRODUCTION PROJECTION (fail-closed off-wire)** — the hatchery twin of
+    /// [`CustomWitnessBundle::from_bound_custom_proof`]. The hatchery-mint path RETAINS the
+    /// `HpresProof::Attested` contract attestation (`contract_hash` + the invariant digest
+    /// riding factory's leg); a wire-rehydrated turn retains nothing (`None`) — the re-exec
+    /// rung, FAIL-CLOSED rather than fabricated.
+    pub fn from_retained_attestation(
+        retained: Option<&crate::hatchery_leaf_adapter::HatcheryAttestationWitness>,
+    ) -> Option<Self> {
+        retained.map(Self::from_attestation_witness)
+    }
+}
+
+/// STAGED membership-carrier bundle — the prover-side inputs
+/// [`crate::membership_leaf_adapter::prove_membership_leaf_with_claim`] consumes (the 2-slot
+/// `(sender_leaf, authorized_root)` tuple; the Merkle path stays off-AIR, a named seam). Fold
+/// arm FAIL-CLOSED until the membership wave lands it.
+#[derive(Clone)]
+pub struct MembershipWitnessBundle {
+    /// The typed sender-membership witness.
+    pub membership: crate::membership_leaf_adapter::SenderMembershipWitness,
+    /// The 2-slot bound tuple PIs (for an honest bundle, `membership.public_inputs()`).
+    pub public_inputs: Vec<BabyBear>,
+}
+
+impl MembershipWitnessBundle {
+    /// Project the honest bundle from the typed membership witness (PIs derived, claim ==
+    /// execution by construction).
+    pub fn from_membership_witness(
+        membership: &crate::membership_leaf_adapter::SenderMembershipWitness,
+    ) -> Self {
+        Self {
+            public_inputs: membership.public_inputs(),
+            membership: *membership,
+        }
+    }
+
+    /// **THE PRODUCTION PROJECTION (fail-closed off-wire)** — the membership twin of
+    /// [`CustomWitnessBundle::from_bound_custom_proof`]. The turn-build path RETAINS the
+    /// `(sender_leaf, authorized_root)` tuple its caveat check verified; a wire-rehydrated
+    /// turn retains nothing (`None`) — the re-exec rung, FAIL-CLOSED rather than fabricated.
+    pub fn from_retained_membership(
+        retained: Option<&crate::membership_leaf_adapter::SenderMembershipWitness>,
+    ) -> Option<Self> {
+        retained.map(Self::from_membership_witness)
+    }
+}
+
+/// FOLD-WIRED DSL/Dfa-carrier bundle — structurally the CUSTOM shape (the dsl adapter
+/// [`crate::dsl_leaf_adapter::prove_dsl_leaf_with_commitment`] REUSES
+/// `prove_custom_leaf_with_commitment`): the re-provable predicate-transition `CellProgram` +
+/// trace witness + PIs. For an honest bundle
+/// `custom_proof_pi_commitment(public_inputs)` equals the leg's published route-commitment
+/// (the `dfa_route_commitment` rc PIs) — the fold's `connect` requires it.
+#[derive(Clone, Debug)]
+pub struct DslWitnessBundle {
+    /// The Dfa predicate-transition `CellProgram` the sub-proof attests.
+    pub program: dregg_circuit::dsl::circuit::CellProgram,
+    /// The named trace-column witness the program proves over.
+    pub witness_values: std::collections::HashMap<String, Vec<BabyBear>>,
+    /// The number of trace rows.
+    pub num_rows: usize,
+    /// The DSL program's public inputs (the in-circuit PI-commitment preimage).
+    pub public_inputs: Vec<BabyBear>,
+}
+
+impl DslWitnessBundle {
+    /// Project the re-provable DSL bundle from a retained [`crate::custom_proof_bind::BoundCustomProof`]
+    /// (the dsl twin of [`CustomWitnessBundle::from_bound_custom_proof`]). Returns `None` when the
+    /// bound proof was reconstructed from the on-wire artifact (no retained witness) — the
+    /// re-exec-only rung, FAIL-CLOSED rather than fabricated.
+    pub fn from_bound_custom_proof(
+        bound: &crate::custom_proof_bind::BoundCustomProof,
+    ) -> Option<Self> {
+        Some(Self {
+            program: bound.program.clone(),
+            witness_values: bound.witness_values.clone()?,
+            num_rows: bound.num_rows?,
+            public_inputs: bound.public_inputs.clone(),
+        })
+    }
+
+    /// **THE PRODUCTION PROJECTION (fail-closed off-wire)** — the dsl twin of
+    /// `SovereignWitnessBundle::from_retained_authority`. The turn-build path RETAINS the
+    /// Dfa predicate-transition material (program + trace witness + the `DfaProofWire`
+    /// public inputs) at the site that PROVED the wire
+    /// (`dregg_turn::executor::membership_verifier::prove_dfa_transition` holds exactly
+    /// this); a wire-rehydrated turn retains nothing — the `DfaProofWire` carries only
+    /// `(public_inputs, stark)` bytes, never the trace witness — so it projects `None`:
+    /// the re-exec rung, FAIL-CLOSED rather than fabricated.
+    pub fn from_retained_dsl(retained: Option<&DslWitnessBundle>) -> Option<Self> {
+        retained.cloned()
+    }
+}
+
 impl Clone for RotatedParticipantLeg {
     /// `Ir2BatchProof` (the p3 `BatchProof`) is `Serialize`/`Deserialize` but NOT
     /// `Clone`, so the leg cannot `#[derive(Clone)]`. Round-trip the proof through
@@ -159,18 +548,37 @@ impl Clone for RotatedParticipantLeg {
             proof,
             descriptor: self.descriptor.clone(),
             public_inputs: self.public_inputs.clone(),
-            custom_witness: self.custom_witness.clone(),
+            carrier_witness: self.carrier_witness.clone(),
         }
     }
 }
 
 impl RotatedParticipantLeg {
     /// Attach the prover-side custom sub-proof witness (the deployed custom-binding thread).
-    /// Builder-style; returns `self` with [`RotatedParticipantLeg::custom_witness`] set. The chain
-    /// prover reads it to mint the custom sub-proof leaf + segmented binding node for this turn.
+    /// Builder-style; returns `self` with [`RotatedParticipantLeg::carrier_witness`] set to the
+    /// [`CarrierWitness::Custom`] variant. The chain prover reads it to mint the custom
+    /// sub-proof leaf + segmented binding node for this turn.
     pub fn with_custom_witness(mut self, bundle: CustomWitnessBundle) -> Self {
-        self.custom_witness = Some(bundle);
+        self.carrier_witness = Some(CarrierWitness::Custom(bundle));
         self
+    }
+
+    /// Attach a carrier witness of any variant (builder-style). ALL SEVEN carriers are
+    /// deployed-wired (custom / factory / hatchery / sovereign / membership / dsl / bridge);
+    /// a leg whose descriptor does not pin the carrier's claim slots is REFUSED by the fold
+    /// arm's admission (fail-closed).
+    pub fn with_carrier_witness(mut self, witness: CarrierWitness) -> Self {
+        self.carrier_witness = Some(witness);
+        self
+    }
+
+    /// The custom witness bundle, iff [`Self::carrier_witness`] carries the
+    /// [`CarrierWitness::Custom`] variant — the migration accessor for pre-socket call sites
+    /// (`leg.custom_witness` the field became `leg.custom_witness()` the projection).
+    pub fn custom_witness(&self) -> Option<&CustomWitnessBundle> {
+        self.carrier_witness
+            .as_ref()
+            .and_then(CarrierWitness::as_custom)
     }
 }
 
@@ -273,6 +681,10 @@ impl RotatedParticipantLeg {
                 None,
                 None,
                 None,
+                // Pure-circuit core: no BEFORE cell in hand — the committed transfer row's
+                // membership-teeth tail fills the ZERO pair (the no-caveat sentinel). The
+                // `dregg_turn` recipe wrapper threads the cell-derived pair.
+                None,
             )
             .map_err(|e| {
                 format!("mint_rotated_participant_leg: wide producer dispatch failed: {e}")
@@ -306,7 +718,7 @@ impl RotatedParticipantLeg {
             proof,
             descriptor: wide_desc,
             public_inputs: dpis,
-            custom_witness: None,
+            carrier_witness: None,
         })
     }
 
@@ -447,7 +859,7 @@ impl RotatedParticipantLeg {
             proof,
             descriptor: welded,
             public_inputs: dpis,
-            custom_witness: None,
+            carrier_witness: None,
         })
     }
     /// **THE WIDE WELDED ROTATED+UMEM LEG (STAGED, VK-RISK-FREE) — the IVC half of the genuine flip
@@ -519,6 +931,8 @@ impl RotatedParticipantLeg {
                 before_nullifiers,
                 refusal_fields,
                 cap_write,
+                // No BEFORE cell on this pure-circuit route — zero-pair membership-teeth sentinel.
+                None,
             )
             .map_err(|e| format!("mint_welded_wide: wide producer dispatch failed: {e}"))?;
 
@@ -574,7 +988,7 @@ impl RotatedParticipantLeg {
             proof,
             descriptor: welded,
             public_inputs: dpis,
-            custom_witness: None,
+            carrier_witness: None,
         })
     }
 
@@ -650,6 +1064,8 @@ impl RotatedParticipantLeg {
                 before_nullifiers,
                 None,
                 None,
+                // No BEFORE cell on this pure-circuit route — zero-pair membership-teeth sentinel.
+                None,
             )
             .map_err(|e| {
                 format!("mint_welded_wide_multidomain: wide producer dispatch failed: {e}")
@@ -715,7 +1131,7 @@ impl RotatedParticipantLeg {
             proof,
             descriptor: welded,
             public_inputs: dpis,
-            custom_witness: None,
+            carrier_witness: None,
         })
     }
 
@@ -776,6 +1192,8 @@ impl RotatedParticipantLeg {
                 None,
                 None,
                 None,
+                // Custom lead — the committed custom row carries no membership-teeth tail.
+                None,
             )
             .map_err(|e| format!("mint_custom_wide: wide custom dispatch failed: {e}"))?;
 
@@ -810,7 +1228,7 @@ impl RotatedParticipantLeg {
             proof,
             descriptor: desc,
             public_inputs: dpis,
-            custom_witness: Some(bundle),
+            carrier_witness: Some(CarrierWitness::Custom(bundle)),
         })
     }
 

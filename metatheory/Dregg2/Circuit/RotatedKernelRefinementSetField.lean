@@ -67,7 +67,7 @@ def setFieldV3 (slot : Fin 8) : EffectVmDescriptor2 :=
   EffectVmEmitRotationV3.setFieldV3 slot
 
 theorem setFieldV3_eq (slot : Fin 8) :
-    setFieldV3 slot = v3OfFrozen (EffectVmEmitRotationV3.setFieldTickFace slot) := rfl
+    setFieldV3 slot = v3OfFrozenSetField slot (EffectVmEmitRotationV3.setFieldTickFace slot) := rfl
 
 /-- `setFieldTickFace slot` is graduable (it shares the per-effect descriptor's sites + ranges) — the
 decidable side condition `rotV3Frozen_sound_v1` requires. -/
@@ -96,7 +96,7 @@ theorem rotated_row_gates (slot : Fin 8) (hash : List ℤ → ℤ)
     ∀ c ∈ setFieldRowGates slot, c.holdsVm (envAt t i) false false := by
   have hv1 : satisfiedVm hash (EffectVmEmitRotationV3.setFieldTickFace slot)
       (envAt t i) (i == 0) (i + 1 == t.rows.length) :=
-    rotV3Frozen_sound_v1 permOut hash (EffectVmEmitRotationV3.setFieldTickFace slot) minit mfin maddrs t
+    rotV3FrozenSetField_sound_v1 slot permOut hash (EffectVmEmitRotationV3.setFieldTickFace slot) minit mfin maddrs t
       (setField_graduable slot) (hside.toFaithful hsat) i hi
   have hlastf : (i + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact hnotlast

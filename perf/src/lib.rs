@@ -166,12 +166,15 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
 
+    // Generic (non-factory / non-hatchery) turn: the Default carrier material —
+    // zero-filled child-vk / contract-hash octets, the documented generic-turn value.
     let before_w = rw::produce(
         &before_cell,
         &ctx_ledger,
         &nullifier_root,
         &commitments_root,
         &receipt_hashes,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -179,6 +182,7 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
         &nullifier_root,
         &commitments_root,
         &receipt_hashes,
+        &Default::default(),
     );
 
     let rotation = RotationTurnWitness::for_effects(before_w, after_w, &vm_effects);
@@ -456,6 +460,9 @@ pub fn v9_context() -> dregg_cell::commitment::V9RotationContext {
         nullifier_root: [0u8; 32],
         commitments_root: [0u8; 32],
         iroot: BabyBear::new(0),
+        // Generic turn: no factory child-vk / hatchery contract-hash material
+        // (the Default zero-fills the v12 carrier octets, limbs 88..103).
+        material: Default::default(),
     }
 }
 
@@ -472,7 +479,7 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MapKind, MapOpSpec, MemBoundaryWitness, MemKind, UMemBoundaryWitness,
     UMemOpSpec, VmConstraint2,
 };
-use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 
 /// One IR-v2 multi-table cohort: a parsed descriptor, the base trace, the public
@@ -514,8 +521,9 @@ pub fn cohort_transfer() -> Cohort {
     }
 }
 
-/// A 2-leaf heap + its root, shared by the memory-op cohorts.
-fn probe_heap() -> (Vec<HeapLeaf>, BabyBear) {
+/// A 2-leaf heap + its FAITHFUL 8-felt `node8` root (Phase H-HEAP-8), shared by
+/// the memory-op cohorts.
+fn probe_heap() -> (Vec<HeapLeaf>, [BabyBear; HEAP_DIGEST_W]) {
     let heap = vec![
         HeapLeaf {
             addr: BabyBear::new(100),
@@ -526,49 +534,52 @@ fn probe_heap() -> (Vec<HeapLeaf>, BabyBear) {
             value: BabyBear::new(88),
         },
     ];
-    let root = CanonicalHeapTree::new(heap.clone(), HEAP_TREE_DEPTH).root();
-    (heap, root)
+    let root8 = CanonicalHeapTree8::new(heap.clone(), HEAP_TREE_DEPTH)
+        .root8()
+        .limbs();
+    (heap, root8)
 }
 
 /// The MAP-WRITE cohort: one in-place sorted-Poseidon2 write riding the chip bus
 /// (the boundary map-op shape — it pays the chip table).
 pub fn cohort_map_write() -> Cohort {
-    let (heap, root) = probe_heap();
-    let tree = CanonicalHeapTree::new(heap.clone(), HEAP_TREE_DEPTH);
+    let (heap, root8) = probe_heap();
+    let tree = CanonicalHeapTree8::new(heap.clone(), HEAP_TREE_DEPTH);
     let w = tree
         .update_witness(HeapLeaf {
             addr: BabyBear::new(100),
             value: BabyBear::new(99),
         })
         .expect("key present");
+    // Column layout (width 19, the Phase H-HEAP-8 8-lane root groups —
+    // `effect_vm_ir2_size_measure.rs`'s probe shape): root8 [0..8), key 8,
+    // value 9, new_root8 [10..18), guard 18.
     let desc = EffectVmDescriptor2 {
         name: "bench-map-write".to_string(),
-        trace_width: 6,
+        trace_width: 19,
         public_input_count: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-            guard: LeanExpr::Var(5),
-            root: LeanExpr::Var(0),
-            key: LeanExpr::Var(1),
-            value: LeanExpr::Var(2),
-            new_root: LeanExpr::Var(3),
+            guard: LeanExpr::Var(18),
+            root: (0..HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
+            key: LeanExpr::Var(8),
+            value: LeanExpr::Var(9),
+            new_root: (10..10 + HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
             op: MapKind::Write,
         })],
         hash_sites: vec![],
         ranges: vec![],
     };
-    let mut rows = vec![
-        vec![
-            root,
-            BabyBear::new(100),
-            BabyBear::new(99),
-            w.new_root,
-            BabyBear::ZERO,
-            BabyBear::ZERO,
-        ];
-        4
-    ];
-    rows[0][5] = BabyBear::ONE;
+    let map_row = {
+        let mut r = vec![BabyBear::ZERO; 19];
+        r[0..HEAP_DIGEST_W].copy_from_slice(&root8);
+        r[8] = BabyBear::new(100);
+        r[9] = BabyBear::new(99);
+        r[10..10 + HEAP_DIGEST_W].copy_from_slice(&w.new_root);
+        r
+    };
+    let mut rows = vec![map_row; 4];
+    rows[0][18] = BabyBear::ONE;
     Cohort {
         name: "map_write_chip",
         desc,
@@ -644,25 +655,35 @@ pub fn cohort_umem() -> Cohort {
 /// The ABSENT (non-membership) cohort: the boundary-gap leg — a sorted-Poseidon2
 /// non-membership proof against the heap (it pays the chip).
 pub fn cohort_absent() -> Cohort {
-    let (heap, root) = probe_heap();
+    let (heap, root8) = probe_heap();
+    // Column layout (width 19, 8-lane root groups): root8 [0..8), key 8,
+    // (value: non-membership reads no value — Const 0), new_root8 [10..18)
+    // (== root8: an absent proof leaves the root unchanged), guard 18.
     let desc = EffectVmDescriptor2 {
         name: "bench-absent".to_string(),
-        trace_width: 4,
+        trace_width: 19,
         public_input_count: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
-            guard: LeanExpr::Var(3),
-            root: LeanExpr::Var(0),
-            key: LeanExpr::Var(1),
+            guard: LeanExpr::Var(18),
+            root: (0..HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
+            key: LeanExpr::Var(8),
             value: LeanExpr::Const(0),
-            new_root: LeanExpr::Var(2),
+            new_root: (10..10 + HEAP_DIGEST_W).map(LeanExpr::Var).collect(),
             op: MapKind::Absent,
         })],
         hash_sites: vec![],
         ranges: vec![],
     };
-    let mut rows = vec![vec![root, BabyBear::new(150), root, BabyBear::ZERO]; 4];
-    rows[0][3] = BabyBear::ONE;
+    let absent_row = {
+        let mut r = vec![BabyBear::ZERO; 19];
+        r[0..HEAP_DIGEST_W].copy_from_slice(&root8);
+        r[8] = BabyBear::new(150);
+        r[10..10 + HEAP_DIGEST_W].copy_from_slice(&root8);
+        r
+    };
+    let mut rows = vec![absent_row; 4];
+    rows[0][18] = BabyBear::ONE;
     Cohort {
         name: "absent_chip",
         desc,

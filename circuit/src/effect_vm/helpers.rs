@@ -44,6 +44,95 @@ pub fn bytes32_to_8_limbs(b: &[u8; 32]) -> [BabyBear; 8] {
     out
 }
 
+/// **THE SHARED FIELDS-OCTET PROJECTION (v13)** — decompose a 32-byte flat-record
+/// field value (`fields[0..7]`) into 8 BabyBear lanes, **u64-lane first**.
+///
+/// This is the faithful 8-felt replacement for the `fold_bytes32_to_bb` Horner
+/// fold at the welded rotated limbs `4 + i` (r3..r10): lane 0 rides the existing
+/// welded limb; lanes 1..7 ride the appended fields completion pre-limbs. Every
+/// producer of a fields[0..7] felt (the v1 `SetField` param projection, the two
+/// flat-record pre-limb twins `cell::commitment::compute_rotated_pre_limbs` /
+/// `dregg_turn::rotation_witness::produce`, the rotated trace `fill_block` v1
+/// source, and the slot-caveat manifest params) MUST project through THIS
+/// function so all projectors agree byte-for-byte.
+///
+/// ## Lane layout — WHY NOT plain [`bytes32_to_8_limbs`] (THE ENCODING AUDIT)
+///
+/// The kernel's numeric field encoding is `field_from_u64`
+/// (`cell/src/program/eval.rs:2741`): the u64 value packs **big-endian into
+/// bytes `[24..32]`**, bytes `[0..24]` zero. The kernel spec reads it back via
+/// `field_to_u64` (BE bytes `24..32`) — every capacity gate
+/// (`StateConstraint::{SettleEscrow, DischargeObligation, Vault}` in `eval.rs`)
+/// evaluates over that u64 lane.
+///
+/// The staged capacity welds (`satisfaction_weld` escrow `Deposited=1/Consumed=2`
+/// equalities, `discharge_weld` cursor/total additive advances + the
+/// `DUE_BITS=28` due-ness range check, `vault_weld` 15-bit operand
+/// decompositions) all read the ONE welded field limb and require it to carry
+/// the **raw numeric value**. Under plain `bytes32_to_8_limbs` (LE 4-byte
+/// chunks, byte 0 first):
+///
+///  * lane 0 = LE bytes `[0..4]` — **identically 0** for every
+///    `field_from_u64` value (the value lives in bytes 24..32): the escrow
+///    equality gates go UNSAT for honest settles, the discharge/vault
+///    arithmetic reads 0 — broken;
+///  * lane 7 = LE bytes `[28..32]` = **byte-swapped** lo32 (e.g. status 1 →
+///    `0x0100_0000`) — equality constants could be re-derived, but the
+///    additive/range welds cannot (byte-swap is not add-compatible) — broken.
+///
+/// NO plain-LE lane carries the numeric value, so the fields octet takes a
+/// fields-specific grouping of the same 32 bytes:
+///
+/// ```text
+///   lane 0 = u32::from_be_bytes(b[28..32])   // lo32 of the kernel u64 lane
+///   lane 1 = u32::from_be_bytes(b[24..28])   // hi32 of the kernel u64 lane
+///   lane k = u32::from_le_bytes(b[4(k-2)..4(k-2)+4])  for k = 2..7  // bytes 0..24
+/// ```
+///
+/// Each lane reduced mod `p` (same as `bytes32_to_8_limbs`; deterministic,
+/// total, identical on all projectors). All 32 bytes are bound across the 8
+/// lanes — the same ~124-bit faithful bar as every other committed octet.
+///
+/// ## Consequences (the derivation, pinned)
+///
+///  * `field_limbs8(field_from_u64(v))[0] == v` for `v < 2^31` (and `== lo32(v)
+///    mod p` generally); lanes 2..7 are 0. **The escrow/discharge/vault weld
+///    constants survive verbatim** — the valve outcome of the v13 encoding
+///    audit: `sel·(before[leg] − 1)`, `after = before + period`, the 28-bit
+///    range checks and 15-bit decompositions all operate on the genuine value.
+///    (Honest numeric domain: values `< 2^31`; the staged welds already assume
+///    small numeric fields — DUE_BITS=28, 30-bit vault operands — so this is
+///    not a new restriction.)
+///  * For EXACT spec parity (`field_to_u64` reads the full u64 lane) the staged
+///    capacity descriptors should ALSO pin lane 1 == 0 on their gated slots
+///    when they regen — a named rider on their own big-bang rows (they are
+///    STAGED, not in a committed VK; adding the hi-lane pin is not a deployed
+///    gate change).
+///  * `fold_bytes32_to_bb(x) ≠ field_limbs8(x)[0]` in general — every consumer
+///    of the welded limbs 4+i re-derives at genesis (the re-genesis rider, the
+///    bridge-mint_hash pattern).
+///  * LANE-ORDER HAZARD: this order differs from [`bytes32_to_8_limbs`] (used
+///    for hashes / EmitEvent / Custom / cap entries) AND from the historical
+///    `fe_to_bb` LE-bytes-0..4 truncation (`turn::executor` manifest params).
+///    Do not mix: flat-record fields[0..7] lanes are `field_limbs8`; 32-byte
+///    hash identities remain `bytes32_to_8_limbs`.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
+#[inline]
+pub fn field_limbs8(b: &[u8; 32]) -> [BabyBear; 8] {
+    let mut out = [BabyBear::ZERO; 8];
+    let lo = u32::from_be_bytes([b[28], b[29], b[30], b[31]]);
+    let hi = u32::from_be_bytes([b[24], b[25], b[26], b[27]]);
+    out[0] = BabyBear::new(lo % crate::field::BABYBEAR_P);
+    out[1] = BabyBear::new(hi % crate::field::BABYBEAR_P);
+    for k in 2..8 {
+        let off = (k - 2) * 4;
+        let v = u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
+        out[k] = BabyBear::new(v % crate::field::BABYBEAR_P);
+    }
+    out
+}
+
 /// Collision-resistant fold of a full 32-byte value into a single BabyBear.
 ///
 /// CLOSED (effect-vm-hash-truncation lane, 2026-05-28): the previous
@@ -438,4 +527,94 @@ pub fn compute_effects_hash_4(effects: &[Effect]) -> [BabyBear; 4] {
         hash_4_to_1(&[h, BabyBear::new(2), BabyBear::ZERO, BabyBear::ZERO]),
         hash_4_to_1(&[h, BabyBear::new(3), BabyBear::ZERO, BabyBear::ZERO]),
     ]
+}
+
+#[cfg(test)]
+mod field_limbs8_tests {
+    use super::*;
+
+    /// `field_from_u64` twin (BE bytes 24..32) — the kernel numeric encoding
+    /// (`cell/src/program/eval.rs:2741`), reproduced here so the derivation is
+    /// pinned inside the circuit crate without a dep cycle.
+    fn field_from_u64(v: u64) -> [u8; 32] {
+        let mut f = [0u8; 32];
+        f[24..32].copy_from_slice(&v.to_be_bytes());
+        f
+    }
+
+    /// THE VALVE FACT: lane 0 of a kernel-numeric field IS the raw value
+    /// (v < 2^31) — the escrow/discharge/vault weld constants survive verbatim.
+    #[test]
+    fn lane0_is_the_raw_value_for_kernel_numeric_fields() {
+        for v in [0u64, 1, 2, 1000, 1_000_000, (1 << 31) - 1] {
+            let lanes = field_limbs8(&field_from_u64(v));
+            assert_eq!(lanes[0], BabyBear::new(v as u32), "lane0 == v for v={v}");
+            assert_eq!(lanes[1], BabyBear::ZERO, "hi32 zero for v={v} < 2^32");
+            for k in 2..8 {
+                assert_eq!(lanes[k], BabyBear::ZERO, "bytes 0..24 zero for v={v}");
+            }
+        }
+        // hi32 rides lane 1 (the staged capacity descriptors' named hi-pin slot).
+        let v = (7u64 << 32) | 42;
+        let lanes = field_limbs8(&field_from_u64(v));
+        assert_eq!(lanes[0], BabyBear::new(42));
+        assert_eq!(lanes[1], BabyBear::new(7));
+    }
+
+    /// The escrow weld constants (`Deposited = 1` / `Consumed = 2`) match the
+    /// lane-0 projection of the spec-conforming BE status mirror.
+    #[test]
+    fn escrow_weld_constants_survive_lane0() {
+        assert_eq!(field_limbs8(&field_from_u64(1))[0], BabyBear::new(1));
+        assert_eq!(field_limbs8(&field_from_u64(2))[0], BabyBear::new(2));
+        // Non-vacuous: Empty (0) is distinct from Deposited (1).
+        assert_ne!(
+            field_limbs8(&field_from_u64(0))[0],
+            field_limbs8(&field_from_u64(1))[0]
+        );
+    }
+
+    /// The refuted route, pinned: plain `bytes32_to_8_limbs` has NO lane
+    /// carrying the numeric value (lane 0 is identically zero; lane 7 is
+    /// byte-swapped) — the reason the fields octet takes its own grouping.
+    #[test]
+    fn plain_le_lanes_do_not_carry_the_numeric_value() {
+        let one = field_from_u64(1);
+        let plain = bytes32_to_8_limbs(&one);
+        assert_eq!(plain[0], BabyBear::ZERO, "plain lane0 == 0 for BE numerics");
+        assert_eq!(
+            plain[7],
+            BabyBear::new(0x0100_0000),
+            "plain lane7 is the byte-swapped lo32"
+        );
+        // And the deployed Horner fold is NOT the raw value either.
+        assert_ne!(fold_bytes32_to_bb(&one), BabyBear::new(1));
+    }
+
+    /// Faithfulness: all 32 bytes are bound — flipping any single byte moves
+    /// exactly one lane (each byte belongs to exactly one 4-byte lane chunk).
+    #[test]
+    fn every_byte_moves_a_lane() {
+        let base = [0u8; 32];
+        let lanes0 = field_limbs8(&base);
+        for i in 0..32 {
+            let mut b = base;
+            b[i] = 0x5A;
+            let lanes = field_limbs8(&b);
+            let moved = (0..8).filter(|&k| lanes[k] != lanes0[k]).count();
+            assert_eq!(moved, 1, "byte {i} must move exactly one lane");
+        }
+    }
+
+    /// Lane additivity on the welded limb: `after = before + delta` holds on
+    /// lane 0 for the honest numeric domain (no lo32 carry) — the discharge
+    /// cursor/total additive gates and the vault delta decompositions work.
+    #[test]
+    fn lane0_addition_matches_u64_addition_in_the_honest_domain() {
+        for (before, delta) in [(1000u64, 100u64), (0, 1), (12345, 54321)] {
+            let b = field_limbs8(&field_from_u64(before))[0];
+            let a = field_limbs8(&field_from_u64(before + delta))[0];
+            assert_eq!(a, b + BabyBear::new(delta as u32));
+        }
+    }
 }

@@ -153,17 +153,20 @@ hypothesis. The closure layer *discharges* that family from genuine per-effect r
 
 - `Dregg2.Circuit.ClosureAll` holds one `<effect>_closedLog` rung per effect family
   (transfer tag 0 `transfer_closedLog`, `ClosureAll.lean:152`; cellSeal 52, revoke 2,
-  delegate 1, attenuate 12, mint 3, burn 4, noteSpend 27, … — 55 `_closedLog`
+  delegate 1, attenuate 12, mint 3, burn 4, noteSpend 27, … — 56 `_closedLog`
   theorems covering the effect set). Each is a one-liner over the generic combinator
   `closedLog_of_encode` (`:121`): it derives the `.log` advance through
   `logHashInjective` and bridges to `kstepAll` via the effect's landed
   `<effect>_descriptorRefines` rung. The dominant class is **CLASS A** — the
   effect's write is *forced from a deployed `Satisfied2` descriptor* (e.g.
   `cellSeal_closedLog_sat` forces the seal from the deployed `cellSealV3`,
-  `ClosureAll.lean:189`; the cap family from `delegateWriteCapOpenV3`,
-  `revokeCapabilityV3`, `attenuateCapOpenEffV3`, etc., `:983-1198`), not a modelled
-  gate. The earlier per-effect refinement classes (`VALUE_FORCED`,
-  whole-kernel-freeze) appear in `RotatedKernelRefinement*` (e.g.
+  `ClosureAll.lean:189`; the cap family from the shape-matched keystone wrappers
+  `delegateWriteCapOpenV3` (→ `effCapInsertV3`),
+  `revokeDelegationWriteCapOpenV3` (→ `effCapRemoveV3`),
+  `attenuateCapOpenEffV3` (→ `effCapOpenWriteV3`), etc., `:934-1349` — see
+  [`faithful-commitment.md`](faithful-commitment.md) for the cap-write family
+  close), not a modelled gate. The earlier per-effect refinement classes
+  (`VALUE_FORCED`, whole-kernel-freeze) appear in `RotatedKernelRefinement*` (e.g.
   `RotatedKernelRefinementMisc.lean:30,629`).
 
 - `Dregg2.Circuit.ClosureFinal` bundles them into **one** parametric floor.
@@ -187,11 +190,18 @@ hypothesis. The closure layer *discharges* that family from genuine per-effect r
 
 - `Dregg2.Circuit.CircuitSoundnessAssembled` instantiates the apex at the concrete
   `Rfix`/`kstepAll`/`hrefinesAll`: `kstepAll := dispatchArm`
-  (`CircuitSoundnessAssembled.lean:380`), `EffectDecodeBridge` *is*
-  `descriptorRefines … (kstepAll e)` (`:410`), and `hrefinesAll` (`:427`) assembles
+  (`CircuitSoundnessAssembled.lean:546`), `EffectDecodeBridge` *is*
+  `descriptorRefines … (kstepAll e)` (`:576`), and `hrefinesAll` (`:593`) assembles
   the per-effect bridge family into the apex's `∀`.
-  `lightclient_unfoolable_assembled` (`:440`) and
-  `lightclient_turn_unfoolable_forest_assembled` (`:463`) are the capstones.
+  `lightclient_unfoolable_assembled` (`:606`) and
+  `lightclient_turn_unfoolable_forest_assembled` (`:629`) are the capstones. The
+  registry the apex quantifies over is `v3RegistryHeap` (`:139`, 59 entries `:254`)
+  — the DEPLOYED after-spine/insert descriptors: the faithful 8-felt heap/fields
+  writes (`Rfix 56`/`Rfix 39`), the three accumulator sorted-INSERTs over
+  `effAccumInsertV3` (`Rfix 27/28/17`, `:227-253`), and the cap-write family's
+  keystone wrappers (`Rfix 1/2/10/11/14/19/55`, `:498-537`) — grounded in
+  [`faithful-commitment.md`](faithful-commitment.md). `#assert_axioms` pins at
+  `:752-775`.
 
 ### `Effect::Custom` — apex-covered IN LEAN under the named recursion carrier (VK-lift remains)
 
@@ -310,8 +320,9 @@ The whole apex chain is `#assert_axioms`-clean — its axiom footprint is
 the `CommitSurface`/`StateDecode` faithfulness lemmas (`CircuitSoundness.lean:1047-1064`);
 on `lightclient_unfoolable_one` and `lightclient_unfoolable_circuit_sound`
 (`ClosureFinal.lean:267-270`); on `lightclient_unfoolable_circuit_sound_turn` and the
-non-vacuity teeth (`ClosureForest.lean:280-283`); on `lightclient_unfoolable_assembled`
-and `hrefinesAll` (`CircuitSoundnessAssembled.lean:586-606`); on `settlement_soundness`
+non-vacuity teeth (`ClosureForest.lean:280-283`); on `lightclient_unfoolable_assembled`,
+`hrefinesAll`, and the `Rfix` registry pins (`CircuitSoundnessAssembled.lean:752-775`);
+on `settlement_soundness`
 (`SettlementSoundness.lean:244`,`:282`). The crypto facts (`StarkSound`,
 `Poseidon2SpongeCR`, the CR set, `logHashInjective`) are **typeclass/Prop hypotheses**,
 never axioms.

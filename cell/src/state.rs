@@ -396,7 +396,9 @@ pub fn compute_fields_root(map: &BTreeMap<u64, FieldElement>) -> [u8; 32] {
 /// implementation, so they agree lane-for-lane (the fields GENTIAN differential
 /// guards it). The 8-felt twin of [`compute_canonical_heap_root_8`] and
 /// [`crate::commitment::compute_canonical_capability_root_8`].
-pub fn compute_canonical_fields_root_8(map: &BTreeMap<u64, FieldElement>) -> [BabyBear; 8] {
+pub fn compute_canonical_fields_root_8(
+    map: &BTreeMap<u64, FieldElement>,
+) -> dregg_circuit::Faithful8 {
     compute_canonical_heap_root_8_circuit(fields_root_leaves(map))
 }
 
@@ -443,7 +445,9 @@ pub fn compute_heap_root(map: &BTreeMap<(u32, u32), FieldElement>) -> [u8; 32] {
 /// (`compute_rotated_pre_limbs`). The 8-felt twin of
 /// [`crate::commitment::compute_canonical_capability_root_8`]. Cell and circuit fold through the SAME
 /// implementation, so they agree lane-for-lane (the GENTIAN differential guards it).
-pub fn compute_canonical_heap_root_8(map: &BTreeMap<(u32, u32), FieldElement>) -> [BabyBear; 8] {
+pub fn compute_canonical_heap_root_8(
+    map: &BTreeMap<(u32, u32), FieldElement>,
+) -> dregg_circuit::Faithful8 {
     let leaves: Vec<HeapLeaf> = map
         .iter()
         .map(|((coll, key), value)| HeapLeaf {

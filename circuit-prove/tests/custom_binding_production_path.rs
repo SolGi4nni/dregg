@@ -212,7 +212,7 @@ fn plain_custom_turn(balance: i64, nonce: u64, bound: &BoundCustomProof) -> Fina
         bundle,
     )
     .expect("trailing custom-wide leg mints");
-    leg.custom_witness = None;
+    leg.carrier_witness = None;
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 

@@ -264,14 +264,16 @@ pub fn build_whole_image_fold(
     // minimum, keeping the chain self-contained.
     let height = (n + 1).next_power_of_two().max(8);
 
-    let empty_root = empty_heap_root_8();
+    let empty_root = empty_heap_root_8().limbs();
     let mut rows: Vec<Vec<BabyBear>> = Vec::with_capacity(height);
 
     // The running fold: the canonical 8-felt root over the first `i` sorted cells.
     let mut cur_root = empty_root;
     for (i, leaf) in sorted.iter().enumerate() {
         // The post-insert root is the canonical 8-felt fold over the first `i+1` cells.
-        let next_root = CanonicalHeapTree8::new(sorted[..=i].to_vec(), HEAP_TREE_DEPTH).root8();
+        let next_root = CanonicalHeapTree8::new(sorted[..=i].to_vec(), HEAP_TREE_DEPTH)
+            .root8()
+            .limbs();
         let mut row = vec![BabyBear::ZERO; WIF_WIDTH];
         row[WIF_ROOT..WIF_ROOT + HEAP_DIGEST_W].copy_from_slice(&cur_root);
         row[WIF_KEY] = leaf.addr;
@@ -364,7 +366,9 @@ pub fn verify_whole_image_fold(
 /// the `mapRoot hash d boundaryHeap` the chip pins to. Exposed so callers (and the
 /// honest test path) can compute the genuine published root.
 pub fn whole_boundary_fold(leaves: &[HeapLeaf]) -> [BabyBear; HEAP_DIGEST_W] {
-    CanonicalHeapTree8::new(leaves.to_vec(), HEAP_TREE_DEPTH).root8()
+    CanonicalHeapTree8::new(leaves.to_vec(), HEAP_TREE_DEPTH)
+        .root8()
+        .limbs()
 }
 
 // ===========================================================================
@@ -639,7 +643,7 @@ mod tests {
         assert_eq!(published, empty_heap_root_8());
         let w = build_whole_image_fold(&[], published).expect("empty folds");
         let mut expected = empty_heap_root_8().to_vec();
-        expected.extend_from_slice(&empty_heap_root_8());
+        expected.extend_from_slice(&empty_heap_root_8()[..]);
         assert_eq!(w.public_inputs, expected);
     }
 }

@@ -33,8 +33,8 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    RotatedBlockWitness, SET_FIELD_DYN_HOST_WIDTH, WIDE_BEFORE_CBASE, WIDE_COMMIT_CARRIER,
-    WIDE_WIDTH, empty_caveat_manifest, generate_rotated_create_cell_wide,
+    DFA_RC_LEN, ROT_PI_COUNT, RotatedBlockWitness, WIDE_COMMIT_CARRIER, WIDE_NUM_CARRIERS,
+    empty_caveat_manifest, generate_rotated_create_cell_wide,
     generate_rotated_create_from_factory_wide, generate_rotated_note_create_wide,
     generate_rotated_note_spend_wide, generate_rotated_set_field_dyn_wide,
     generate_rotated_spawn_wide, generate_rotated_transfer_shape_wide,
@@ -93,16 +93,25 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
     RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("pre-iroot limbs")
 }
 
-/// The columns of the BEFORE 8-felt commit carrier (carrier 12) at the 816-wide host base
-/// (`WIDE_BEFORE_CBASE = 608`): the 8 felts the wide BEFORE PIs publish on the first row.
+/// The columns of the BEFORE 8-felt commit carrier (carrier `WIDE_COMMIT_CARRIER`): the 8 felts the
+/// wide BEFORE PIs publish on the first row. The carrier base is the HOST width (`= wide width −
+/// 2·8·WIDE_NUM_CARRIERS`, where `append_wide_carriers` lays `cb_before` — the v12 carrier-material
+/// widening grew `NUM_PRE_LIMBS` 88→112, so the per-block chain is 38 carriers = 304 cols, appendix
+/// 608, no longer 480), which is `WIDE_BEFORE_CBASE` for the bare cohort but WIDER for the §J′
+/// insert-shaped grow-gate hosts (the heap-open READ appendix). Derive it from the trace so both
+/// shapes read right.
 fn before_commit_8(trace: &[Vec<BabyBear>]) -> [BabyBear; 8] {
-    let base = WIDE_BEFORE_CBASE + 8 * WIDE_COMMIT_CARRIER; // 704
+    let host_width = trace[0].len() - 2 * 8 * WIDE_NUM_CARRIERS;
+    let base = host_width + 8 * WIDE_COMMIT_CARRIER;
     core::array::from_fn(|j| trace[0][base + j])
 }
 
-/// The wide member's wide-PI offset (where the 16 wide PIs START): the base PI count.
-/// transfer-shape = 46 (bare 46-PI vector); the grow-gate families carry an extra PI[46] so the
-/// wide PIs start at 39.
+/// The wide member's wide-PI offset (where the 16 wide PIs START): the base PI count. Every deployed
+/// member is `withDfaRcPins`-wrapped (the 4 dsl rc PIs ride LAST-pre-wide, after every per-effect
+/// extra pin), so: transfer-shape = `ROT_PI_COUNT + DFA_RC_LEN` = 50; the grow-gate families carry
+/// the extra grow pin PI[46] (= 51); factory additionally carries the 16 STEP-3 carrier-octet pins
+/// (child_vk8 PI 47..54 + contract_hash8 PI 55..62) between the grow pin and the rc tail (= 67).
+/// Matches the committed descriptor `pi_binding` order in `rotation-wide-registry-staged.tsv`.
 fn assert_roundtrip(
     name: &str,
     desc: &EffectVmDescriptor2,
@@ -111,11 +120,10 @@ fn assert_roundtrip(
     map_heaps: &[Vec<HeapLeaf>],
     wide_pi_base: usize,
 ) {
-    assert_eq!(
-        trace[0].len(),
-        WIDE_WIDTH,
-        "{name}: wide width matches WIDE_WIDTH"
-    );
+    // The descriptor (from the Lean-verified wide-registry TSV) is the authoritative width pin; the
+    // insert-shaped grow-gate members (§J′ `effAccumInsertV3` hosts) are legitimately WIDER than the bare
+    // cohort `WIDE_WIDTH` (they carry the heap-open READ appendix), exactly as heapWrite's after-spine
+    // host is. So we pin the trace against the DESCRIPTOR width, not the bare-cohort constant.
     assert_eq!(
         desc.trace_width,
         trace[0].len(),
@@ -124,7 +132,8 @@ fn assert_roundtrip(
     assert_eq!(
         dpis.len(),
         wide_pi_base + 16,
-        "{name}: base {wide_pi_base} PIs + 16 wide PIs"
+        "{name}: base {wide_pi_base} PIs (incl. the {DFA_RC_LEN} dsl rc PIs riding last-pre-wide \
+         after every per-effect extra pin — the rc-emit wrap) + 16 wide PIs"
     );
     assert_eq!(
         desc.public_input_count,
@@ -173,6 +182,7 @@ fn assert_executor_anchor(
         nullifier_root,
         commitments_root,
         iroot: before_w.iroot,
+        material: Default::default(),
     };
     // The cell's OWN pre_limbs (computed from its RecordKernelState + turn ctx, NOT the producer's
     // — the independent path the executor takes), through the CHIP-FAITHFUL wide chain.
@@ -275,6 +285,7 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -282,6 +293,7 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let (trace, dpis) = generate_rotated_transfer_shape_wide(
@@ -292,7 +304,9 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
         &empty_caveat_manifest(),
     )
     .expect("wide burn producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &[], 46);
+    // wide-PI base = ROT_PI_COUNT (46) + DFA_RC_LEN (4 dsl rc, last-pre-wide) = 50; total 66
+    // = the committed burnVmDescriptor2R24 public_input_count (wide pins at PI 50..65).
+    assert_roundtrip(name, &desc, &trace, &dpis, &[], ROT_PI_COUNT + DFA_RC_LEN);
     assert_executor_anchor(
         name,
         &before_cell,
@@ -306,24 +320,29 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
 /// **setFieldDyn wide roundtrip — the DYNAMIC overflow-field write PROVES (the residual CLOSED).**
 ///
 /// The dynamic `SetField` (`field_idx >= 8`) routes to `setFieldDynVmDescriptor2R24`, a DISTINCT
-/// 581-wide V1Face geometry (wide member 789 / PI 63) the standard generator cannot produce (it panics
-/// on `field_idx >= 8` and lays the 608-wide host). `generate_rotated_set_field_dyn_wide` builds it
-/// from scratch: the Blum write+read pair (`addr = value = col 69`, `prev_value = col 70`,
-/// `prev_serial = col 74`, `readback = col 75`) over a `MemBoundaryWitness`, the fields-root weld
-/// (col 275 == col 68), and the fifth pin (col 263 → PI[46]). This PROVES + light-client VERIFIES —
-/// no `catch_unwind`. The forge pole (a tampered readback) is exercised in `vk_epoch_misc`.
+/// V1Face geometry (host [`SET_FIELD_DYN_HOST_WIDTH`], wide member `+ 2·8·WIDE_NUM_CARRIERS`) the
+/// standard generator cannot produce (it panics on `field_idx >= 8` and lays the `GRAD_ROT_WIDTH`
+/// host). `generate_rotated_set_field_dyn_wide` builds it from scratch: the Blum write+read pair
+/// (`addr = value = col 69`, `prev_value = col 70`, `prev_serial = col 74`, `readback = col 75`)
+/// over a `MemBoundaryWitness`, the fields-root weld (col 275 == col 68), and the fifth pin
+/// (→ PI[46]). This PROVES + light-client VERIFIES — no `catch_unwind`. The forge pole (a tampered
+/// readback) is exercised in `vk_epoch_misc`.
 #[test]
 fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
     let name = "setFieldDynVmDescriptor2R24";
     let desc = wide_desc(name);
     assert_eq!(
         desc.trace_width,
-        SET_FIELD_DYN_HOST_WIDTH + 480,
-        "setFieldDyn wide width 1435"
+        1553 + 2 * 8 * WIDE_NUM_CARRIERS,
+        "setFieldDyn wide width = the committed narrow V1Face host (1553 = GRAD_ROT_WIDTH 1581 − four \
+         chip sites × 7 = 28) + the 2·8·WIDE_NUM_CARRIERS wide-carrier appendix = 2465 \
+         (committed wide setFieldDynVmDescriptor2R24 trace_width)"
     );
     assert_eq!(
-        desc.public_input_count, 63,
-        "setFieldDyn wide carries 47 base + 16 wide PIs"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN + 16,
+        "setFieldDyn wide carries {ROT_PI_COUNT} rotated + 1 fifth-pin + {DFA_RC_LEN} dsl rc base \
+         PIs + 16 wide PIs"
     );
 
     let balance: i64 = 50_000;
@@ -342,6 +361,7 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -349,6 +369,7 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     // slot 3 (the overflow-memory address 0..7), previous value 0 at that address.
@@ -374,19 +395,25 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
         "setFieldDyn wide PI count matches descriptor"
     );
 
-    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &[])
-        .unwrap_or_else(|e| panic!("setFieldDyn wide proof must prove (789): {e}"));
+    let proof =
+        prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &[]).unwrap_or_else(|e| {
+            panic!(
+                "setFieldDyn wide proof must prove ({}): {e}",
+                desc.trace_width
+            )
+        });
     verify_vm_descriptor2(&desc, &proof, &dpis)
         .unwrap_or_else(|e| panic!("setFieldDyn wide proof must verify: {e}"));
     eprintln!(
-        "WIDE setFieldDyn: the DYNAMIC overflow-field write PROVED + VERIFIED at width 789 (the Blum \
-         write→read transport over the 581-wide V1Face geometry — the missing-generator residual is \
-         CLOSED)."
+        "WIDE setFieldDyn: the DYNAMIC overflow-field write PROVED + VERIFIED at width {} (the Blum \
+         write→read transport over the 1553-wide V1Face host geometry — the \
+         missing-generator residual is CLOSED).",
+        desc.trace_width
     );
 }
 
-/// **NOTESPEND grow-gate wide roundtrip.** The nullifier accumulator (limb 26) grow-gate; wide member
-/// 816 / PI 63 (the extra nullifier PI[46] before the 16 wide PIs). PROVES + VERIFIES + anchors.
+/// **NOTESPEND grow-gate wide roundtrip.** The nullifier accumulator (limb 26) grow-gate; the extra
+/// nullifier PI[46] + the 4 dsl rc PIs before the 16 wide PIs. PROVES + VERIFIES + anchors.
 #[test]
 fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
     let name = "noteSpendVmDescriptor2R24";
@@ -413,6 +440,7 @@ fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -420,6 +448,7 @@ fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let before_nullifiers = vec![
@@ -441,12 +470,24 @@ fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
         &before_nullifiers,
     )
     .expect("wide noteSpend producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 47);
+    // wide-PI base = ROT_PI_COUNT (46) + 1 (nullifier pin PI[46]) + DFA_RC_LEN (4 dsl rc, PI 47..50)
+    // = 51; total 67 — the wide twin of the LIVE noteSpendVmDescriptor2R24 (51 PIs, rc-wrapped).
+    // NOTE: the committed wide row currently says 63 (EmitWideRegistryProbe.lean builds the §J′
+    // insert host from the UNWRAPPED noteSpendV3, dropping the withDfaRcPins tail the live member
+    // carries) — a wide-registry emit gap, not a fixture number to copy.
+    assert_roundtrip(
+        name,
+        &desc,
+        &trace,
+        &dpis,
+        &map_heaps,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+    );
     assert_executor_anchor_grow_gate(name, &trace);
 }
 
-/// **NOTECREATE grow-gate wide roundtrip.** The commitments accumulator (limb 27) grow-gate; wide
-/// member 816 / PI 63. PROVES + VERIFIES + executor-anchors.
+/// **NOTECREATE grow-gate wide roundtrip.** The commitments accumulator (limb 27) grow-gate; the
+/// extra commitment PI[46] + the 4 dsl rc PIs before the 16 wide PIs. PROVES + VERIFIES + anchors.
 #[test]
 fn wide_note_create_grow_gate_proves_verifies_and_executor_anchors() {
     let name = "noteCreateVmDescriptor2R24";
@@ -474,6 +515,7 @@ fn wide_note_create_grow_gate_proves_verifies_and_executor_anchors() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -481,6 +523,7 @@ fn wide_note_create_grow_gate_proves_verifies_and_executor_anchors() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let before_commitments = vec![
@@ -502,12 +545,23 @@ fn wide_note_create_grow_gate_proves_verifies_and_executor_anchors() {
         &before_commitments,
     )
     .expect("wide noteCreate producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 47);
+    // wide-PI base = ROT_PI_COUNT (46) + 1 (commitment pin PI[46]) + DFA_RC_LEN (4 dsl rc) = 51;
+    // total 67 — the wide twin of the LIVE noteCreateVmDescriptor2R24 (51 PIs, rc-wrapped). The
+    // committed wide row currently says 63 (the unwrapped-base wide-registry emit gap; see the
+    // noteSpend note above).
+    assert_roundtrip(
+        name,
+        &desc,
+        &trace,
+        &dpis,
+        &map_heaps,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+    );
     assert_executor_anchor_grow_gate(name, &trace);
 }
 
-/// **CREATECELL grow-gate wide roundtrip.** The accounts accumulator (limb 0) grow-gate; wide member
-/// 816 / PI 63. PROVES + VERIFIES + executor-anchors.
+/// **CREATECELL grow-gate wide roundtrip.** The accounts accumulator (limb 0) grow-gate; the extra
+/// new-cell-key PI[46] + the 4 dsl rc PIs before the 16 wide PIs. PROVES + VERIFIES + anchors.
 #[test]
 fn wide_create_cell_grow_gate_proves_verifies_and_executor_anchors() {
     let name = "createCellVmDescriptor2R24";
@@ -533,6 +587,7 @@ fn wide_create_cell_grow_gate_proves_verifies_and_executor_anchors() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -540,6 +595,7 @@ fn wide_create_cell_grow_gate_proves_verifies_and_executor_anchors() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let before_accounts = vec![
@@ -561,7 +617,18 @@ fn wide_create_cell_grow_gate_proves_verifies_and_executor_anchors() {
         &before_accounts,
     )
     .expect("wide createCell producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 47);
+    // wide-PI base = ROT_PI_COUNT (46) + 1 (new-cell-key pin PI[46]) + DFA_RC_LEN (4 dsl rc) = 51;
+    // total 67 — the wide twin of the LIVE createCellVmDescriptor2R24 (51 PIs, rc-wrapped). The
+    // committed wide row currently says 63 (the unwrapped-base wide-registry emit gap; see the
+    // noteSpend note above).
+    assert_roundtrip(
+        name,
+        &desc,
+        &trace,
+        &dpis,
+        &map_heaps,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+    );
     assert_executor_anchor_grow_gate(name, &trace);
 }
 
@@ -590,6 +657,7 @@ fn birth_witnesses() -> (
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -597,6 +665,7 @@ fn birth_witnesses() -> (
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let before_accounts = vec![
         HeapLeaf {
@@ -634,7 +703,17 @@ fn wide_factory_grow_gate_proves_verifies_and_executor_anchors() {
         &before_accounts,
     )
     .expect("wide factory producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 47);
+    // wide-PI base = ROT_PI_COUNT (46) + 1 (grow pin PI[46]) + 16 (STEP-3 carrier-octet pins:
+    // child_vk8 PI 47..54 + contract_hash8 PI 55..62) + DFA_RC_LEN (4 dsl rc, PI 63..66) = 67;
+    // total 83 = the committed factoryVmDescriptor2R24 public_input_count (wide pins at PI 67..82).
+    assert_roundtrip(
+        name,
+        &desc,
+        &trace,
+        &dpis,
+        &map_heaps,
+        ROT_PI_COUNT + 1 + 16 + DFA_RC_LEN,
+    );
     assert_executor_anchor_grow_gate(name, &trace);
 }
 
@@ -661,7 +740,16 @@ fn wide_spawn_grow_gate_proves_verifies_and_executor_anchors() {
         &before_accounts,
     )
     .expect("wide spawn (accounts birth leg) producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 47);
+    // wide-PI base = ROT_PI_COUNT (46) + 1 (grow pin PI[46]) + DFA_RC_LEN (4 dsl rc, PI 47..50)
+    // = 51; total 67 = the committed spawnVmDescriptor2R24 public_input_count (wide pins at 51..66).
+    assert_roundtrip(
+        name,
+        &desc,
+        &trace,
+        &dpis,
+        &map_heaps,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+    );
     assert_executor_anchor_grow_gate(name, &trace);
 }
 

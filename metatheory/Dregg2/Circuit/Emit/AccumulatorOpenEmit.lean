@@ -68,11 +68,11 @@ set_option autoImplicit false
 The before-membership read appendix is REUSED verbatim from `HeapOpenEmit` (`effHeapOpenV3` /
 `effHeapOpenV3_core`): the generic arity-2 `(key, value)` node8 membership. The after-spine below welds the
 read's `capRoot` group to the committed BEFORE accumulator group (`groupCol EFFECT_VM_WIDTH`), the after
-`capRoot` group to the AFTER accumulator group (`groupCol (EFFECT_VM_WIDTH + 119)`), pins the key to the
+`capRoot` group to the AFTER accumulator group (`groupCol (EFFECT_VM_WIDTH + 227)`), pins the key to the
 accumulator's published KEY column and the after-leaf value to the accumulator's VALUE column. -/
 
 /-- The after-spine accumulator column layout. `sib`/`dir` SHARED with the read; `capRoot` IS the committed
-AFTER accumulator-root block (`groupCol (EFFECT_VM_WIDTH + 119)`), the accumulator twin of `afterSpineColsH`
+AFTER accumulator-root block (`groupCol (EFFECT_VM_WIDTH + 227)`), the accumulator twin of `afterSpineColsH`
 with the group col left abstract. -/
 def afterSpineColsA (groupCol : Nat → Fin 8 → Nat) (w : Nat) : CapOpenCols :=
   { leaf       := fun i => AFTER_SPINE_BASE w + i.val
@@ -80,7 +80,7 @@ def afterSpineColsA (groupCol : Nat → Fin 8 → Nat) (w : Nat) : CapOpenCols :
   , sib        := (capOpenCols w).sib
   , dir        := (capOpenCols w).dir
   , node       := fun lvl i => AFTER_SPINE_BASE w + 15 + 8 * lvl + i.val
-  , capRoot    := fun i => groupCol (EFFECT_VM_WIDTH + 119) i
+  , capRoot    := fun i => groupCol (EFFECT_VM_WIDTH + 227) i
   , src        := AFTER_SPINE_BASE w + 15 + 8 * DEPTH
   , effBit     := AFTER_SPINE_BASE w + 16 + 8 * DEPTH
   , bit        := fun i => AFTER_SPINE_BASE w + 17 + 8 * DEPTH + i }
@@ -91,7 +91,7 @@ theorem afterSpineColsA_dir (groupCol : Nat → Fin 8 → Nat) (w : Nat) :
 /-- The after `capRoot` group IS the committed AFTER accumulator-root block (as a `Digest8` read). -/
 theorem afterSpineA_capRoot_after (groupCol : Nat → Fin 8 → Nat) (w : Nat) (env : VmRowEnv) :
     groupVal env (afterSpineColsA groupCol w).capRoot
-      = (fun i => env.loc (groupCol (EFFECT_VM_WIDTH + 119) i)) := rfl
+      = (fun i => env.loc (groupCol (EFFECT_VM_WIDTH + 227) i)) := rfl
 
 /-- The 2 narrowed-leaf weld gates: after leaf 0 (key) = the read's key; after leaf 1 (value) = the
 accumulator's published VALUE column (`valueCol`). -/
@@ -275,7 +275,7 @@ theorem accumOpen_writesTo8 (S8 : Heap8Scheme)
 /-- **`effAccumWriteV3_forces_write8` — THE STEP-A DELIVERABLE (assurance layer, per accumulator family).**
 A `Satisfied2` of the after-spine accumulator-write descriptor TRACE-FORCES the faithful 8-felt write over
 the FULL committed BEFORE/AFTER accumulator-root groups (`groupCol EFFECT_VM_WIDTH` / `groupCol
-(EFFECT_VM_WIDTH + 119)`, the whole ~124-bit root): the read leaf `(key, oldVal)` is
+(EFFECT_VM_WIDTH + 227)`, the whole ~124-bit root): the read leaf `(key, oldVal)` is
 membership-authenticated against the before group, the updated leaf `(key, valueCol)` against the after
 group, along the SHARED path — keyed at the accumulator's published `keyCol`, written to `valueCol`. Forced
 from `Satisfied2` via the shared §11 keystone — NEVER from `henc`'s `SpineCommits`. -/
@@ -291,7 +291,7 @@ theorem effAccumWriteV3_forces_write8 (S8 : Heap8Scheme)
         (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k))
         ((envAt t i).loc keyCol)
         ((envAt t i).loc valueCol)
-        (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 119) k)) := by
+        (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 227) k)) := by
   set e := envAt t i with he
   -- the BEFORE membership core (the reused heap-open read) + its dirBool.
   have hbeforeSat := effAccumWriteV3_strips_to_accumOpen groupCol keyCol valueCol

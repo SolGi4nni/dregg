@@ -44,12 +44,12 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::columns::{PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
 use dregg_circuit::effect_vm::trace_rotated::{
-    AFTER_BASE, B_COMMITTED_HEIGHT, B_IROOT, B_STATE_COMMIT, BEFORE_BASE, C_SPAN, CAVEAT_BASE,
-    GRAD_ROT_WIDTH, ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
+    AFTER_BASE, B_COMMITTED_HEIGHT, B_IROOT, B_STATE_COMMIT, BEFORE_BASE, C_CAVEAT_COMMIT,
+    CAVEAT_BASE, GRAD_ROT_WIDTH, ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
     generate_rotated_effect_vm_trace, generate_rotated_refusal_trace_with_fields_tree,
     rotated_descriptor_name_for_effect, transfer_caveat_manifest,
 };
-use dregg_circuit::effect_vm::{CellState, Effect, fold_bytes32_to_bb};
+use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
 use dregg_turn::rotation_witness as rw;
@@ -148,7 +148,10 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         desc.trace_width, GRAD_ROT_WIDTH,
         "graduated rotated width 608"
     );
-    assert_eq!(desc.public_input_count, 46, "42 v1 PIs + 4 appended");
+    assert_eq!(
+        desc.public_input_count, 50,
+        "42 v1 PIs + 4 appended + 4 dsl rc"
+    );
 
     // -- a real transfer: the validated v1 reference witness (transfer-out). --
     let before_balance: i64 = 100_000;
@@ -175,6 +178,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -182,6 +186,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     // -- (G1) THE LIVE GENERATOR drives the rotated trace + PIs (NOT hand-built). --
@@ -195,7 +200,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     )
     .expect("live rotated generator must produce a 315-col trace + 46 PIs");
     assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
-    assert_eq!(dpis.len(), 46);
+    assert_eq!(dpis.len(), 50);
 
     // -- (2) THE cell≡circuit ROTATED DIFFERENTIAL: producer limbs == the generated trace's
     //    welded state-block felts (r0↔balance_lo, …, cap_root↔cap_root), on the first row. --
@@ -281,6 +286,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         nullifier_root,
         commitments_root,
         iroot: before_w.iroot,
+        material: Default::default(),
     };
     let cell_v9 = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx);
     assert_eq!(
@@ -313,7 +319,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     );
     assert_eq!(
         dpis[45],
-        last[CAVEAT_BASE + C_SPAN - 1],
+        last[CAVEAT_BASE + C_CAVEAT_COMMIT],
         "PI 45 = caveat commit"
     );
 
@@ -336,6 +342,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
         }));
         match r {
             Err(_) => true,
@@ -419,7 +426,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         desc.trace_width, GRAD_ROT_WIDTH,
         "graduated rotated width 608"
     );
-    assert_eq!(desc.public_input_count, 46);
+    assert_eq!(desc.public_input_count, 50);
 
     // A real burn turn: a 30-unit balance debit (no destination credit).
     let before_balance: i64 = 80_000;
@@ -441,6 +448,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -448,6 +456,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     // The burn carries no in-circuit caveat operand → the EMPTY manifest (cohort default).
@@ -468,6 +477,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         nullifier_root,
         commitments_root,
         iroot: before_w.iroot,
+        material: Default::default(),
     };
     let cell_v9 = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx);
     assert_eq!(
@@ -510,7 +520,8 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
 fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     use dregg_circuit::effect_vm::columns::{PARAM_BASE, param};
 
-    // The note-spend cohort member's rotated descriptor — 47 PIs (46 prefix + the nullifier pin).
+    // The note-spend cohort member's rotated descriptor — 51 PIs (46 prefix + the nullifier
+    // fifth pin at PI 46 + the withDfaRcPins dsl rc tail at PI 47..50).
     let spend = Effect::NoteSpend {
         nullifier: BabyBear::new(0xBEEF),
         value: 500,
@@ -535,8 +546,9 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         "graduated rotated width 608"
     );
     assert_eq!(
-        desc.public_input_count, 47,
-        "the rotated note-spend carries 46 prefix PIs + the appended nullifier slot"
+        desc.public_input_count, 51,
+        "noteSpendVmDescriptor2R24 (registry): 46 rotated + the nullifier fifth pin at PI 46 + \
+         the withDfaRcPins rc tail at PI 47..50 = 51"
     );
 
     // A real note-spend turn: the EffectVM credits balance by `value` (the shielding convention),
@@ -560,6 +572,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -567,6 +580,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let caveat = empty_caveat_manifest();
@@ -577,14 +591,15 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         &bridge(&after_w),
         &caveat,
     )
-    .expect("live rotated generator must produce a note-spend trace + 47 PIs");
+    .expect("live rotated generator must produce a note-spend trace + 51 PIs");
     assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
-    // THE FIFTH PI: 47 elements, and PI[46] == the row-0 spend's folded nullifier (param0).
+    // THE FIFTH PI: 51 elements, and PI[46] == the row-0 spend's folded nullifier (param0).
     assert_eq!(
         dpis.len(),
-        47,
-        "note-spend rotated PI is 47 (the nullifier slot appended)"
+        51,
+        "note-spend rotated PI is 51 = ROT_PI_COUNT 46 + the nullifier fifth pin at PI 46 + \
+         DFA_RC_LEN 4 rc pins at PI 47..50 (matches the registry descriptor)"
     );
     let r0 = &trace[0];
     assert_eq!(
@@ -671,6 +686,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
             dregg_circuit::effect_vm::trace_rotated::recompute_after_blocks_for_test(&mut t);
             p[43] = t[t.len() - 1][AB + BSC];
             prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &p))
         }));
         let rejected = match r {
             Err(_) => true,
@@ -712,6 +728,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
         }));
         match r {
             Err(_) => true,
@@ -755,7 +772,8 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     use dregg_circuit::effect_vm::trace_rotated::generate_rotated_create_cell_trace_with_accounts_tree;
     use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
 
-    // The createCell cohort member's rotated descriptor — 47 PIs (46 prefix + the new-cell-key pin).
+    // The createCell cohort member's rotated descriptor — 51 PIs (46 prefix + the new-cell-key
+    // fifth pin at PI 46 + the withDfaRcPins dsl rc tail at PI 47..50).
     let new_cell_id = BabyBear::new(0xCE11);
     let create = Effect::CreateCell {
         create_hash: [new_cell_id; 8],
@@ -769,8 +787,9 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
         "graduated rotated width 608"
     );
     assert_eq!(
-        desc.public_input_count, 47,
-        "rotated createCell carries 46 prefix PIs + the appended new-cell-key slot"
+        desc.public_input_count, 51,
+        "createCellVmDescriptor2R24 (registry): 46 rotated + the new-cell-key fifth pin at PI 46 \
+         + the withDfaRcPins rc tail at PI 47..50 = 51"
     );
 
     let before_balance: i64 = 40_000;
@@ -792,6 +811,7 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -799,6 +819,7 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let caveat = empty_caveat_manifest();
@@ -826,11 +847,12 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     .expect("accounts-tree wiring must produce a deployment-real createCell trace");
     assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
-    // THE FIFTH PI: 47 elements, and PI[46] == the row-0 new-cell key (param0 for createCell).
+    // THE FIFTH PI: 51 elements, and PI[46] == the row-0 new-cell key (param0 for createCell).
     assert_eq!(
         dpis.len(),
-        47,
-        "createCell rotated PI is 47 (the new-cell-key slot appended)"
+        51,
+        "createCell rotated PI is 51 = ROT_PI_COUNT 46 + the new-cell-key fifth pin at PI 46 + \
+         DFA_RC_LEN 4 rc pins at PI 47..50 (matches the registry descriptor)"
     );
     assert_eq!(
         dpis[46], trace[0][PARAM_BASE],
@@ -851,6 +873,7 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>, mh: &Vec<Vec<HeapLeaf>>| -> bool {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prove_vm_descriptor2(&desc, t, p, &mem_boundary, mh)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
         }));
         match r {
             Err(_) => true,
@@ -907,6 +930,147 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     }
 }
 
+/// STEP-2.5 CARRIER-MATERIAL VERIFICATION — the factory `child_vk8` (octet 88..=95) and the hatchery
+/// `contract_hash8` (octet 96..=103) rotated carrier octets carry the REAL threaded material NON-ZERO
+/// in the deployed commitment, and the THREE producers of the rotated pre-limbs agree octet-for-octet:
+///   1. `dregg_turn::rotation_witness::produce` (the turn-side flat producer the SDK commit sites
+///      thread — `cipherclerk::prove_sovereign_turn_rotated` for a factory turn / a hatchery mint),
+///   2. `dregg_cell::commitment::compute_rotated_pre_limbs` (the cell-side flat producer, the SDK's
+///      `before_commit_8` debug cross-check twin),
+///   3. the `fill_block` trace generator (which copies the block witness's `pre_limbs` — octets < 112
+///      — into the AFTER block, then chains `state_commit` over them).
+/// Before STEP-2.5 every producer passed `Default` material → the octets published ZERO (VACUOUS,
+/// the whole point of this step); this asserts the honest turn now publishes the executor-installed
+/// child VK / the `HpresProof::Attested` contract hash, and that all three producers still agree.
+#[test]
+fn rotated_carrier_octets_carry_real_child_vk_and_contract_hash_three_way() {
+    use dregg_cell::commitment::{RotationCarrierMaterial, compute_rotated_pre_limbs};
+    use dregg_circuit::effect_vm::bytes32_to_8_limbs;
+    use dregg_circuit::effect_vm::trace_rotated::{
+        B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, generate_rotated_create_from_factory_wide,
+    };
+    use dregg_circuit::heap_root::HeapLeaf;
+
+    let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[7u8; 32]];
+
+    let before_cell = producer_cell(40_000, 0);
+    let after_cell = producer_cell(40_000, 1);
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let st = CellState::new(40_000, 0);
+    // The factory grow-gate births the derived child key (`param1 = CHILD_VK_DERIVED`) into the
+    // accounts set; a non-zero key that is NOT already present (the `.absent` no-collision op).
+    let factory_effect = Effect::CreateCellFromFactory {
+        factory_vk: BabyBear::new(0xFAC),
+        child_vk_derived: BabyBear::new(0xCE11),
+    };
+    let before_accounts = vec![
+        HeapLeaf {
+            addr: BabyBear::new(0xAA01),
+            value: BabyBear::new(0xAA01),
+        },
+        HeapLeaf {
+            addr: BabyBear::new(0xAA02),
+            value: BabyBear::new(0xAA02),
+        },
+    ];
+
+    // A closure asserting one octet is threaded byte-identically by all three producers, and is the
+    // real (non-zero) material — with the BEFORE block staying ZERO (the carrier is born by the turn).
+    let check_octet = |material: RotationCarrierMaterial, base: usize, expect8: [BabyBear; 8]| {
+        assert!(
+            expect8.iter().any(|f| *f != BabyBear::ZERO),
+            "the threaded carrier material is NON-ZERO (non-vacuous)"
+        );
+        // producer #1 — the turn-side flat producer: material on the AFTER block only.
+        let before_w = rw::produce(
+            &before_cell,
+            &ledger,
+            &nullifier_root,
+            &commitments_root,
+            &receipt_log,
+            &Default::default(),
+        );
+        let after_w = rw::produce(
+            &after_cell,
+            &ledger,
+            &nullifier_root,
+            &commitments_root,
+            &receipt_log,
+            &material,
+        );
+        assert_eq!(
+            &after_w.pre_limbs[base..base + 8],
+            &expect8[..],
+            "producer #1 (rotation_witness::produce) AFTER octet == the threaded material"
+        );
+        assert!(
+            before_w.pre_limbs[base..base + 8]
+                .iter()
+                .all(|f| *f == BabyBear::ZERO),
+            "the BEFORE block keeps the ZERO octet (Default material — the child/attestation is born \
+             by this turn)"
+        );
+        // producer #2 — the cell-side flat producer (the SDK's debug cross-check twin), SAME material.
+        let after_pre = compute_rotated_pre_limbs(
+            &after_cell,
+            &V9RotationContext {
+                cells_root: after_w.pre_limbs[0],
+                nullifier_root,
+                commitments_root,
+                iroot: after_w.iroot,
+                material,
+            },
+        );
+        assert_eq!(
+            &after_pre[base..base + 8],
+            &expect8[..],
+            "producer #2 (compute_rotated_pre_limbs) agrees octet-for-octet"
+        );
+        // producer #3 — the fill_block trace generator (via the deployed factory wide wrapper; the
+        // octet is a copied witness limb, so the copy-agreement is generator-independent).
+        let (trace, _dpis, _mh) = generate_rotated_create_from_factory_wide(
+            &st,
+            &[factory_effect.clone()],
+            &bridge(&before_w),
+            &bridge(&after_w),
+            &empty_caveat_manifest(),
+            &before_accounts,
+        )
+        .expect("factory wide trace generates over the carrier-material after-witness");
+        let trace_after: Vec<BabyBear> = (0..8).map(|i| trace[0][AFTER_BASE + base + i]).collect();
+        assert_eq!(
+            trace_after, expect8,
+            "producer #3 (fill_block trace) carries the SAME octet — the 3-way agreement holds"
+        );
+    };
+
+    // FACTORY: octet 88..=95 = the executor-installed effective child VK (`params.program_vk` on the
+    // SDK path). Non-zero, threaded, three-way-agreeing.
+    let child_vk = [0x9Au8; 32];
+    check_octet(
+        RotationCarrierMaterial {
+            child_vk: Some(child_vk),
+            contract_hash: None,
+        },
+        B_CHILD_VK_OCTET,
+        bytes32_to_8_limbs(&child_vk),
+    );
+
+    // HATCHERY: octet 96..=103 = the `HpresProof::Attested{contract_hash}` forever-crown hash.
+    let contract_hash = [0xC7u8; 32];
+    check_octet(
+        RotationCarrierMaterial {
+            child_vk: None,
+            contract_hash: Some(contract_hash),
+        },
+        B_CONTRACT_HASH_OCTET,
+        bytes32_to_8_limbs(&contract_hash),
+    );
+}
+
 /// THE C7 LAST-FLIP-GATE (end-to-end, in-circuit): a real ROTATED `SetField` turn AND a real
 /// ROTATED `BridgeMint` turn each prove + verify through their rotated descriptors
 /// (`setFieldVmDescriptor2-{slot}R24` / `mintVmDescriptor2R24`), and the NONCE-TICK SOUNDNESS
@@ -933,6 +1097,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
      -> bool {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prove_vm_descriptor2(desc, t, p, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(desc, &proof, p))
         }));
         match r {
             Err(_) => true,
@@ -956,7 +1121,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             "graduated rotated width 608"
         );
         assert_eq!(
-            desc.public_input_count, 46,
+            desc.public_input_count, 50,
             "setField is a 46-PI cohort member"
         );
 
@@ -981,6 +1146,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             &nullifier_root,
             &commitments_root,
             &receipt_log,
+            &Default::default(),
         );
         let after_w = rw::produce(
             &after_cell,
@@ -988,6 +1154,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             &nullifier_root,
             &commitments_root,
             &receipt_log,
+            &Default::default(),
         );
 
         let caveat = empty_caveat_manifest();
@@ -1073,8 +1240,9 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             "graduated rotated width 608"
         );
         assert_eq!(
-            desc.public_input_count, 46,
-            "bridgeMint is a 46-PI cohort member"
+            desc.public_input_count, 51,
+            "mintVmDescriptor2R24 (registry): 46 rotated + the felt mint-hash fifth pin at PI 46 \
+             (mintV3BridgeHash) + the withDfaRcPins rc tail at PI 47..50 = 51"
         );
 
         // A real bridge-mint turn: credit bal_lo by `value` (100 → 130), the nonce ticks 5 → 6.
@@ -1097,6 +1265,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             &nullifier_root,
             &commitments_root,
             &receipt_log,
+            &Default::default(),
         );
         let after_w = rw::produce(
             &after_cell,
@@ -1104,6 +1273,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             &nullifier_root,
             &commitments_root,
             &receipt_log,
+            &Default::default(),
         );
 
         let caveat = empty_caveat_manifest();
@@ -1183,6 +1353,7 @@ fn rotated_supply_mint_self_verifies_under_dedicated_selector() {
         // violated trace, so catch the unwind — either path means refusal.
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prove_vm_descriptor2(desc, t, p, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(desc, &proof, p))
         }));
         match r {
             Err(_) => true,
@@ -1213,7 +1384,10 @@ fn rotated_supply_mint_self_verifies_under_dedicated_selector() {
     assert_eq!(desc.trace_width, GRAD_ROT_WIDTH, "graduated rotated width");
     assert_eq!(
         desc.public_input_count, 46,
-        "supply-mint is a 46-PI cohort member (same shape as the bridge member)"
+        "supplyMintVmDescriptor2R24 (registry) is UNWRAPPED — the Lean `supplyMintV3` is emitted \
+         BARE (outside the `v3Registry.map withDfaRcPins`, EmitRotationV3.lean), so it carries \
+         the bare 46-PI rotated vector: no mint-hash fifth pin, no dsl rc tail (exactly like the \
+         cap-open family; the wide dispatcher drains the rc PIs for this member likewise)"
     );
 
     // A real supply-mint turn: credit bal_lo 100 → 130, the nonce ticks 5 → 6.
@@ -1236,6 +1410,7 @@ fn rotated_supply_mint_self_verifies_under_dedicated_selector() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -1243,17 +1418,28 @@ fn rotated_supply_mint_self_verifies_under_dedicated_selector() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let caveat = empty_caveat_manifest();
-    let (trace, dpis) = generate_rotated_effect_vm_trace(
+    let (trace, mut dpis) = generate_rotated_effect_vm_trace(
         &st,
         &effects,
         &bridge(&before_w),
         &bridge(&after_w),
         &caveat,
     )
-    .expect("live rotated generator must produce a supply-mint trace + 46 PIs");
+    .expect("live rotated generator must produce a supply-mint trace");
+    // The base generator appends the dsl rc tail cohort-uniformly, but the deployed supplyMint
+    // member is UNWRAPPED (46 PIs) — lift the 4 rc PIs off the emission, exactly the deployed
+    // wide dispatcher's supply-mint arm (`generate_rotated_effect_vm_descriptor_and_trace_wide`,
+    // `d.drain(ROT_PI_COUNT..ROT_PI_COUNT + DFA_RC_LEN)`). The rc COLUMNS stay in the trace
+    // (zero sentinel / unpinned on this member).
+    {
+        use dregg_circuit::effect_vm::trace_rotated::{DFA_RC_LEN, ROT_PI_COUNT};
+        dpis.drain(ROT_PI_COUNT..ROT_PI_COUNT + DFA_RC_LEN);
+        assert_eq!(dpis.len(), desc.public_input_count, "46 bare rotated PIs");
+    }
 
     // The active row fires sel::MINT (14), not BRIDGE_MINT (40).
     assert_eq!(
@@ -1375,6 +1561,7 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
         nullifier_root,
         commitments_root,
         iroot,
+        material: Default::default(),
     };
 
     // -- (a) THE INDEPENDENT RE-FOLD == the deployed PUBLISHED commitment. --
@@ -1687,7 +1874,9 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     // The non-zero field carried by the cell (and, to keep the v1-welded state block consistent
     // with the cell, by the circuit `CellState` the generator opens over).
     let field0_bytes = [0x07u8; 32];
-    let field0_felt = fold_bytes32_to_bb(&field0_bytes);
+    // v13: the producer folds each flat field via the FAITHFUL field_limbs8 8-lane split; lane 0
+    // (the u64-lane lo32) is the welded limb `4 + i` the v1 state block carries.
+    let field0_felt = dregg_circuit::effect_vm::field_limbs8(&field0_bytes)[0];
     assert_ne!(
         field0_felt,
         BabyBear::ZERO,
@@ -1723,6 +1912,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -1730,6 +1920,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let caveat = transfer_caveat_manifest();
@@ -1770,6 +1961,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
         nullifier_root,
         commitments_root,
         iroot: before_w.iroot,
+        material: Default::default(),
     };
     let cell_v9_before = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx_before);
     assert_eq!(
@@ -1795,6 +1987,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
         nullifier_root,
         commitments_root,
         iroot: after_w.iroot,
+        material: Default::default(),
     };
     let cell_v9_after = compute_canonical_state_commitment_v9_felt(&after_cell, &v9_ctx_after);
     assert_eq!(
@@ -1856,8 +2049,9 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
         "graduated rotated width 608"
     );
     assert_eq!(
-        desc.public_input_count, 47,
-        "cellSeal carries the appended record-forcing pin (47 PIs)"
+        desc.public_input_count, 51,
+        "cellSealVmDescriptor2R24 (registry): 46 rotated + the record-forcing (lifecycle) fifth \
+         pin at PI 46 + the withDfaRcPins rc tail at PI 47..50 = 51"
     );
 
     // A real cellSeal turn: lifecycle Live -> Sealed, economic block frozen, nonce ticks.
@@ -1880,6 +2074,7 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -1887,6 +2082,7 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     // The lifecycle limb genuinely MOVED Live -> Sealed (the forgery the pin forbids would freeze it).
@@ -1903,15 +2099,16 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
         &bridge(&after_w),
         &caveat,
     )
-    .expect("live rotated generator must produce a cellSeal trace + 47 PIs");
+    .expect("live rotated generator must produce a cellSeal trace + 51 PIs");
     assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
-    // THE FIFTH PI: 47 elements, and PI[46] == the LAST row's AFTER lifecycle limb (the
+    // THE FIFTH PI: 51 elements, and PI[46] == the LAST row's AFTER lifecycle limb (the
     // correctly-written sealed post the verifier recomputes), the column the pin binds.
     assert_eq!(
         dpis.len(),
-        47,
-        "cellSeal rotated PI is 47 (the record-forcing slot appended)"
+        51,
+        "cellSeal rotated PI is 51 = ROT_PI_COUNT 46 + the record-forcing fifth pin at PI 46 + \
+         DFA_RC_LEN 4 rc pins at PI 47..50 (matches the registry descriptor)"
     );
     let last = &trace[trace.len() - 1];
     assert_eq!(
@@ -1943,6 +2140,7 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
         }));
         match r {
             Err(_) => true,
@@ -2009,7 +2207,7 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
         "graduated rotated width 608"
     );
     assert_eq!(
-        desc.public_input_count, 46,
+        desc.public_input_count, 50,
         "value descriptor keeps the 46-PI shape"
     );
 
@@ -2036,6 +2234,7 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -2043,6 +2242,7 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let caveat = transfer_caveat_manifest();
@@ -2092,6 +2292,7 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
         }));
         match r {
             Err(_) => true,
@@ -2185,9 +2386,11 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
             "graduated rotated width 608"
         );
         // H1: a record-digest mover (refusal, pin offset `B_RECORD_DIGEST`) pins ALL 8 faithful
-        // authority limbs → 54 PIs (46 + 8); a lifecycle mover (archive, `B_LIFECYCLE`) keeps the
-        // single record-forcing pin → 47 PIs.
-        let expect_pis = if pin_limb == B_RECORD_DIGEST { 54 } else { 47 };
+        // authority limbs (record-pin8 at PI 46..53) + the withDfaRcPins rc tail at PI 54..57
+        // → 58 PIs; a lifecycle mover (archive, `B_LIFECYCLE`) keeps the single record-forcing
+        // pin at PI 46 + the rc tail at PI 47..50 → 51 PIs. (Registry: refusal 58, receiptArchive
+        // 51.)
+        let expect_pis = if pin_limb == B_RECORD_DIGEST { 58 } else { 51 };
         assert_eq!(
             desc.public_input_count, expect_pis,
             "{name} carries the appended record-forcing pin(s) ({expect_pis} PIs)"
@@ -2244,6 +2447,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
             &nullifier_root,
             &commitments_root,
             &receipt_log,
+            &Default::default(),
         );
         let after_w = rw::produce(
             &after_cell,
@@ -2251,6 +2455,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
             &nullifier_root,
             &commitments_root,
             &receipt_log,
+            &Default::default(),
         );
 
         // The pinned limb genuinely MOVED pre→post (the forgery the pin forbids would freeze it):
@@ -2298,14 +2503,15 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
                 &caveat,
             )
             .unwrap_or_else(|e| {
-                panic!("live rotated generator must produce a {name} trace + 47 PIs: {e}")
+                panic!("live rotated generator must produce a {name} trace + 51 PIs: {e}")
             })
         };
         assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
-        // THE RECORD-FORCING PI(s): a record-digest mover (refusal) pins all 8 authority limbs (54
-        // PIs, PI[46..53]); a lifecycle mover (archive) keeps the single pin (47, PI[46]). PI[46] is
-        // the LAST row's AFTER record-digest / lifecycle limb in both cases.
+        // THE RECORD-FORCING PI(s): a record-digest mover (refusal) pins all 8 authority limbs
+        // (PI[46..53], + rc at 54..57 = 58); a lifecycle mover (archive) keeps the single pin
+        // (PI[46], + rc at 47..50 = 51). PI[46] is the LAST row's AFTER record-digest / lifecycle
+        // limb in both cases.
         assert_eq!(
             dpis.len(),
             expect_pis,
@@ -2341,6 +2547,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
             }));
             match r {
                 Err(_) => true,
@@ -2470,6 +2677,7 @@ fn note_create_pins_commitments_and_refuses_tamper() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -2477,6 +2685,7 @@ fn note_create_pins_commitments_and_refuses_tamper() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
 
     let caveat = empty_caveat_manifest();
@@ -2530,6 +2739,7 @@ fn note_create_pins_commitments_and_refuses_tamper() {
             recompute_after_blocks_for_test(&mut t);
             p[43] = t[t.len() - 1][AFTER_BASE + B_STATE_COMMIT];
             prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &p))
         }));
         let rejected = matches!(r, Err(_)) || matches!(r, Ok(res) if res.is_err());
         assert!(
@@ -2576,7 +2786,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         "fee'd transfer keeps the graduated rotated width 608"
     );
     assert_eq!(
-        desc.public_input_count, 47,
+        desc.public_input_count, 51,
         "fee'd transfer: 38 rotated PIs + the appended fee PI (slot 38)"
     );
 
@@ -2604,6 +2814,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -2611,6 +2822,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let caveat = transfer_caveat_manifest();
 
@@ -2623,7 +2835,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         fee,
     )
     .expect("fee'd rotated generator produces a 315-col trace + 47 PIs");
-    assert_eq!(dpis.len(), 47, "47 PIs (46 rotated + the fee)");
+    assert_eq!(dpis.len(), 51, "51 PIs (46 rotated + the fee + 4 dsl rc)");
     assert_eq!(
         dpis[46],
         BabyBear::new(fee as u32),
@@ -2660,6 +2872,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
         }));
         match r {
             Err(_) => true,
@@ -2724,7 +2937,8 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
 }
 
 /// **THE FAITHFUL 8-FELT WIDE TRANSFER ROUNDTRIP (STAGED-ADDITIVE slice).** The first REAL
-/// Plonky3 prove+verify at the wide geometry (`transferVmDescriptor2R24Wide`, width 816 / PI 54):
+/// Plonky3 prove+verify at the wide geometry (`transferVmDescriptor2R24Wide`, width `WIDE_WIDTH`
+/// / PI `WIDE_PI_COUNT` = 46 + 4 rc + 16):
 /// the parallel wide producer (`generate_rotated_transfer_wide`) fills the two 13×8 wide
 /// commitment carriers (BEFORE + AFTER) re-absorbing the SAME rotated limbs the 1-felt block lays,
 /// and the 8-felt commit binds. The collision tooth: two transfer states differing ONLY in a HIGH
@@ -2736,8 +2950,8 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
 #[test]
 fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
     use dregg_circuit::effect_vm::trace_rotated::{
-        WIDE_AFTER_CBASE, WIDE_BEFORE_CBASE, WIDE_COMMIT_CARRIER, WIDE_PI_COUNT, WIDE_WIDTH,
-        generate_rotated_transfer_wide,
+        DFA_RC_LEN, ROT_PI_COUNT, WIDE_AFTER_CBASE, WIDE_BEFORE_CBASE, WIDE_COMMIT_CARRIER,
+        WIDE_PI_COUNT, WIDE_WIDTH, generate_rotated_transfer_wide,
     };
     use dregg_circuit::effect_vm_descriptors::WIDE_TRANSFER_STAGED_TSV;
 
@@ -2757,10 +2971,14 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         it.next().expect("wide json column")
     };
     let desc = parse_vm_descriptor2(json).expect("wide transfer descriptor parses");
-    assert_eq!(desc.trace_width, WIDE_WIDTH, "wide transfer width 816");
+    assert_eq!(
+        desc.trace_width, WIDE_WIDTH,
+        "wide transfer width WIDE_WIDTH"
+    );
     assert_eq!(
         desc.public_input_count, WIDE_PI_COUNT,
-        "wide transfer 62 PIs (46 + 16)"
+        "wide transfer 66 PIs = ROT_PI_COUNT 46 + DFA_RC_LEN 4 rc (PI 46..49) + 16 wide commit \
+         anchors (PI 50..65)"
     );
 
     // -- a real transfer with a NON-ZERO high field (fields[15]) so the authority residue (r23) is
@@ -2792,6 +3010,7 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
@@ -2799,6 +3018,7 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let caveat = transfer_caveat_manifest();
 
@@ -2809,26 +3029,29 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         &bridge(&after_w),
         &caveat,
     )
-    .expect("wide transfer generator produces an 816-col trace + 62 PIs");
-    assert_eq!(trace[0].len(), WIDE_WIDTH, "816-col wide trace");
-    assert_eq!(dpis.len(), WIDE_PI_COUNT, "62 PIs");
+    .expect("wide transfer generator produces a WIDE_WIDTH-col trace + WIDE_PI_COUNT PIs");
+    assert_eq!(trace[0].len(), WIDE_WIDTH, "WIDE_WIDTH-col wide trace");
+    assert_eq!(dpis.len(), WIDE_PI_COUNT, "66 PIs (46 + 4 rc + 16)");
 
-    // The 16 wide commit PIs are the BEFORE first-row + AFTER last-row 8-felt carrier-12 columns.
-    let before_commit_base = WIDE_BEFORE_CBASE + 8 * WIDE_COMMIT_CARRIER; // 704
-    let after_commit_base = WIDE_AFTER_CBASE + 8 * WIDE_COMMIT_CARRIER; // 808
+    // The 16 wide commit PIs are the BEFORE first-row + AFTER last-row 8-felt commit-carrier
+    // columns. They ride AFTER the dsl rc tail (rc at PI 46..49), so the anchors start at
+    // PI 50 (= ROT_PI_COUNT + DFA_RC_LEN): BEFORE at PI 50..57, AFTER at PI 58..65.
+    let wide_anchor_base = ROT_PI_COUNT + DFA_RC_LEN; // 50
+    let before_commit_base = WIDE_BEFORE_CBASE + 8 * WIDE_COMMIT_CARRIER;
+    let after_commit_base = WIDE_AFTER_CBASE + 8 * WIDE_COMMIT_CARRIER;
     let last = &trace[trace.len() - 1];
     for j in 0..8 {
         assert_eq!(
-            dpis[46 + j],
+            dpis[wide_anchor_base + j],
             trace[0][before_commit_base + j],
             "PI {} = BEFORE commit felt {j}",
-            46 + j
+            wide_anchor_base + j
         );
         assert_eq!(
-            dpis[54 + j],
+            dpis[wide_anchor_base + 8 + j],
             last[after_commit_base + j],
             "PI {} = AFTER commit felt {j}",
-            54 + j
+            wide_anchor_base + 8 + j
         );
     }
 
@@ -2837,12 +3060,12 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
 
     // -- (1) THE REAL WIDE ROUNDTRIP: prove + verify at width 816. --
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
-        .expect("WIDE transfer must prove end-to-end (816 / 54-PI)");
+        .expect("WIDE transfer must prove end-to-end (WIDE_WIDTH / 66-PI)");
     verify_vm_descriptor2(&desc, &proof, &dpis)
         .expect("WIDE transfer proof must verify independently");
     eprintln!(
-        "WIDE TRANSFER (R=24, width 816, 62 PIs, FAITHFUL 8-felt commit): PROVED + VERIFIED — \
-         the first real Plonky3 roundtrip at the wide geometry."
+        "WIDE TRANSFER (R=24, width {WIDE_WIDTH}, {WIDE_PI_COUNT} PIs, FAITHFUL 8-felt commit): \
+         PROVED + VERIFIED — the first real Plonky3 roundtrip at the wide geometry."
     );
 
     // -- (2) THE LIVE COLLISION TOOTH (high-position, NO executor): a transfer state B differing
@@ -2862,6 +3085,7 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let after_w_b = rw::produce(
         &after_cell_b,
@@ -2869,6 +3093,7 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
+        &Default::default(),
     );
     let (_trace_b, dpis_b) = generate_rotated_transfer_wide(
         &st,
@@ -2877,12 +3102,13 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         &bridge(&after_w_b),
         &caveat,
     )
-    .expect("wide transfer generator (state B) produces an 816-col trace + 62 PIs");
+    .expect("wide transfer generator (state B) produces a WIDE_WIDTH-col trace + 66 PIs");
 
     // (2a) THE COMMITS DIFFER in ≥ 1 of the 8 felts — the high-position flip MOVED the commit
     //      (a 1-felt commit could have collided; the 8-felt commit binds the authority residue).
-    let commit_a: Vec<BabyBear> = (0..8).map(|j| dpis[46 + j]).collect();
-    let commit_b: Vec<BabyBear> = (0..8).map(|j| dpis_b[38 + j]).collect();
+    //      Both states read the SAME anchor slots (the BEFORE commit at PI 50..57).
+    let commit_a: Vec<BabyBear> = (0..8).map(|j| dpis[wide_anchor_base + j]).collect();
+    let commit_b: Vec<BabyBear> = (0..8).map(|j| dpis_b[wide_anchor_base + j]).collect();
     assert_ne!(
         commit_a, commit_b,
         "the high-position (fields[15]) flip MUST move the 8-felt BEFORE commit — the authority \

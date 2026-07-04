@@ -398,8 +398,10 @@ impl PeerNode {
     /// peers before connecting.
     pub fn build_client_config_with_allowlist(
         verifier: &AllowlistVerifier,
+        cert_der: &[u8],
+        key_der: &[u8],
     ) -> Result<ClientConfig, PeerError> {
-        verifier.build_client_config()
+        verifier.build_client_config(cert_der, key_der)
     }
 
     /// Build a client config for the gossip layer that presents a fresh ephemeral
@@ -726,7 +728,21 @@ impl AllowlistVerifier {
     }
 
     /// Build a `ClientConfig` that verifies peers against this allowlist.
-    pub fn build_client_config(&self) -> Result<ClientConfig, PeerError> {
+    ///
+    /// The caller MUST present a client certificate: the server side
+    /// ([`MutualTlsClientVerifier`]) sets `client_auth_mandatory() == true`, so a
+    /// config that omits the client cert would fail the handshake and silently
+    /// lose the pinning path. `cert_der`/`key_der` are the caller's DER-encoded
+    /// certificate and PKCS#8 private key (obtained exactly as the non-allowlist
+    /// [`PeerNode::build_client_config_with_cert`] does).
+    pub fn build_client_config(
+        &self,
+        cert_der: &[u8],
+        key_der: &[u8],
+    ) -> Result<ClientConfig, PeerError> {
+        let cert = CertificateDer::from(cert_der.to_vec());
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der.to_vec()));
+
         let mut client_crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
@@ -734,7 +750,8 @@ impl AllowlistVerifier {
         .map_err(|e| PeerError::Tls(e.to_string()))?
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(self.clone()))
-        .with_no_client_auth();
+        .with_client_auth_cert(vec![cert], key)
+        .map_err(|e| PeerError::Tls(e.to_string()))?;
 
         client_crypto.alpn_protocols = vec![DREGG_ALPN.to_vec()];
 
@@ -978,6 +995,99 @@ mod tests {
         verifier.deny_node(&node_id);
         let result = verifier.verify_server_cert(&cert, &[], &server_name, &[], UnixTime::now());
         assert!(result.is_err());
+    }
+
+    /// Generate a fresh self-signed cert/key pair the way `PeerNode::new` does,
+    /// returning DER bytes suitable for the allowlist client-config builder.
+    fn gen_client_cert() -> (Vec<u8>, Vec<u8>) {
+        let cert_params = rcgen::CertificateParams::new(vec!["dregg.local".to_string()]).unwrap();
+        let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let cert = cert_params.self_signed(&key_pair).unwrap();
+        (cert.der().to_vec(), key_pair.serialize_der())
+    }
+
+    /// Regression for DREGG-NET-ALLOWLIST-MTLS-NO-CLIENT-CERT: the allowlist (production pinning) client
+    /// config used `.with_no_client_auth()` while the server mandates client
+    /// auth (`client_auth_mandatory() == true`) — so the pinning path presented
+    /// NO client cert and the mTLS handshake could never complete.
+    ///
+    /// An allowlisted server must complete a real QUIC/mTLS handshake, which is
+    /// only possible if the allowlist client config presents a client cert.
+    #[tokio::test]
+    async fn allowlist_client_presents_cert_and_completes_mtls() {
+        // A real server node — its `MutualTlsClientVerifier` mandates a client cert.
+        let server = PeerNode::new(PeerNodeConfig::default()).await.unwrap();
+        let server_addr = server.local_addr();
+        let server_id = server.node_id();
+
+        // The dialing client's own cert/key, threaded into the allowlist builder.
+        let (cert_der, key_der) = gen_client_cert();
+
+        // Pin the server in the allowlist and build the production pinning config.
+        let verifier = AllowlistVerifier::new([server_id]);
+        let client_config =
+            PeerNode::build_client_config_with_allowlist(&verifier, &cert_der, &key_der).unwrap();
+
+        let mut client_ep = Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client_ep.set_default_client_config(client_config);
+
+        // Drive the server's side of the handshake.
+        let accept = tokio::spawn(async move { server.accept().await });
+
+        let conn = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client_ep.connect(server_addr, "dregg.local").unwrap(),
+        )
+        .await;
+
+        assert!(
+            matches!(conn, Ok(Ok(_))),
+            "allowlisted client must present a client cert and complete the mTLS \
+             handshake against a server that mandates client auth; got {conn:?}"
+        );
+
+        let accepted = tokio::time::timeout(std::time::Duration::from_secs(5), accept)
+            .await
+            .expect("server accept timed out")
+            .expect("server accept task panicked");
+        assert!(
+            accepted.is_ok(),
+            "server must accept the allowlisted client (client presented a cert)"
+        );
+    }
+
+    /// The other half of the allowlist spec: a server whose node_id is NOT in
+    /// the allowlist must be rejected by the client's server-cert verifier, so
+    /// the connection fails.
+    #[tokio::test]
+    async fn allowlist_client_rejects_unpinned_server() {
+        let server = PeerNode::new(PeerNodeConfig::default()).await.unwrap();
+        let server_addr = server.local_addr();
+
+        let (cert_der, key_der) = gen_client_cert();
+
+        // Empty allowlist — the server's cert (node_id) is NOT pinned.
+        let verifier = AllowlistVerifier::empty();
+        let client_config =
+            PeerNode::build_client_config_with_allowlist(&verifier, &cert_der, &key_der).unwrap();
+
+        let mut client_ep = Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client_ep.set_default_client_config(client_config);
+
+        let accept = tokio::spawn(async move { server.accept().await });
+
+        let conn = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client_ep.connect(server_addr, "dregg.local").unwrap(),
+        )
+        .await;
+
+        assert!(
+            matches!(conn, Ok(Err(_))),
+            "a non-allowlisted server must be rejected by the client's server-cert \
+             verifier; got {conn:?}"
+        );
+        accept.abort();
     }
 
     #[test]

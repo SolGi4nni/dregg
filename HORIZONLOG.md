@@ -8,6 +8,33 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-02, Fable — DreggNet-native redesign: 3 substrate work-items)
+- DreggNet is being rebuilt into a dregg APPLICATION (spec `~/dev/DreggNet/docs/DREGGNET-NATIVE-REDESIGN.md`).
+  One project, no repo border — most of it is deleting DreggNet shadow and calling existing dregg libs. Three pieces
+  are genuine SUBSTRATE additions in the dregg core (cell/, metatheory/, circuit/); logged here because they're real
+  forward work (do them when the redesign reaches them; only merge-hygiene care re: files a live session is editing):
+  - P1: a FUSED "budget-escrow + meter" lease capacity. The lease cell is today both obligor AND payer; escrow_sealed
+    (hold/release) + obligation_standing (recurring draw) exist separately, no single capacity holds a prepaid budget
+    in escrow and draws the per-period obligation from it with a conservation proof. A PrepaidLease/BudgetEscrow
+    house-capacity welding them (Lean rung, house-capacity 5-part shape) is the clean form.
+  - P2: a umem WORKLOAD RUNTIME — weld DreggNet's owned wasmi engine to the EXEC_COLL heap image so a checkpoint
+    reflects real computation, not a provider digest (execution-lease `lib.rs:45-58` honest gap). NB: this is the
+    WITNESSED-checkpoint half; customer durable-workflow execution stays on duroxide (that layer is the product, keep).
+  - P3: promote SettleEscrow/DischargeObligation/VaultDeposit welds (tags 17/18/19) from STAGED (off-AIR public inputs,
+    VK unchanged) INTO the recursive AIR (VK bump) — re-executor-checked vs folded-proof-witnessed. Overlaps the live
+    circuit/VK session; sequence around it. Design notes: `docs/deos/{SETTLE-ESCROW,DISCHARGE-OBLIGATION,VAULT-DEPOSIT}-WELD-DESIGN.md`.
+
+## NOW-STATE addition (2026-07-02, Fable — PR #23 coordination note for the VK lane)
+- ALIF'S PR #23 (dregg, `feat/stripe-kernel-attested`) RIDES THE BIG-BANG REGEN — named here so the
+  descriptor-regen driver batches it: the mintV3 bridge-tuple PI widening (46→72, `bridgeTuplePiExposure`,
+  `EffectVmEmitRotationV3.lean`) is Lean-widened but registry-UNREGENERATED. Its only merge conflicts vs
+  main are the 4 Lean-EMITTED artifacts (3 staged registry TSVs + `effect_vm_descriptors.rs`) — resolve by
+  REGENERATION after merging the Lean sides (never hand-merge), i.e. fold into the ONE shared universal-fold
+  descriptor regen. Same-landing follow-up: `proof_verify.rs` must reconstruct PI [46..72) from
+  `apply_bridge_mint` (Fiat-Shamir consistency; flagged in the PR body). The DECO/zkTLS Lean modules
+  (`Crypto/Deco.lean` + `Verify/Stripe*`) auto-merge clean + are assert_axioms-clean per the PR. e2e pole:
+  `circuit-prove/tests/bridge_mint_deployed_tooth.rs` (`--ignored`).
+
 ## NOW-STATE (late-2026-06-25 cluster — lanes that landed AFTER the entries below, recorded here for durability)
 - G1 BRIDGE FOREIGN-PROOF BINDING — residual NAMED + scoped (2026-06-29). Catalog `docs/UNDER-WIRED-circuit.md`
   G1: a pure light client sees a `BridgeMint` balance credit (in the deployed per-turn VK) but NOT the
@@ -463,12 +490,6 @@ carries its closure shape. Pure-Lean ranks are VK-risk-free and can soak before 
   exists; mirrors the `set_cell_program` runtime-vs-genesis tension). (b) the live branch editor re-seeds only on creation; a
   programmatic diverge after the widget exists needs a `branch_resync` (mirror of `doc_resync`) — closure = add it if a flow
   edits the branch out-of-band while its editor is open.
-
-  (workspace member). Slice 3 = `gate_effect_set`/`gate_auth` over the PROVEN `is_facet_attenuation`/`is_attenuation`;
-  Slice 1 = `witness_receipt` → real chained `dregg_turn::TurnReceipt` (v3 hash binds the chain link); Slice 1's payoff =
-  kind → `EffectSummary`) so the attested queries see real facts, not just the receipt-hash MMR. (c) ACTUAL adoption is in
-  `cap-bundle` parser → `CapBundle` — an ember/David seam, out-of-tree. (d) Slice 2 (`Target::HostPd` confinement) stays in
-  `sel4/dregg-firmament`, not re-exported.
 
 ## umem Stage A LANDED: the per-cell heap is a first-class umem (additive); live producer is the named seam (2026-06-25)
 - WHAT: `UMEM-PRIMITIVE.md §2/§7` Stage A — the per-cell heap (`CellState.heap_map`) projected as a

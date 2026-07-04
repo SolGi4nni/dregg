@@ -383,7 +383,7 @@ def HEAP_ROOT_BEFORE_ROT : Nat := heapRootGroupCol EFFECT_VM_WIDTH 0
 
 /-- Lane 0 (rotated limb 28 of the after block) of the committed AFTER heap-root group — the felt the
 repointed splice `.newRoot` writes. -/
-def HEAP_ROOT_AFTER_ROT : Nat := heapRootGroupCol (EFFECT_VM_WIDTH + 119) 0
+def HEAP_ROOT_AFTER_ROT : Nat := heapRootGroupCol (EFFECT_VM_WIDTH + 227) 0
 
 /-- `heapSpliceWriteOp.root` at lane 0 evaluates to the BEFORE rotated heap-root limb. -/
 theorem heapSpliceWriteOp_root0 (env : VmRowEnv) :

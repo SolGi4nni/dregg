@@ -1182,12 +1182,28 @@ impl World {
                 // commit path; symbolic is a local/ephemeral fast path.)
                 if self.persist.is_some() && !self.witness_mode.is_symbolic() {
                     let height = self.height;
+                    // THE DURABLE OVERLAY'S CHANGE-SET MUST BE COMPLETE (CORE-AUDIT.md
+                    // finding 1). `touched` is a SYNTACTIC over-approximation of the
+                    // input turn that misses cells an effect resolves at runtime (a
+                    // burn's issuer well, a create's newborn, a factory birth, the
+                    // metered agent) — recording the correct root over an incomplete
+                    // overlay makes recovery refuse a valid image (or silently truncate
+                    // a committed turn). The executor's journal write-set is EXACT and
+                    // complete; union it with `touched` (belt-and-suspenders — a
+                    // false-positive unchanged cell in the overlay reconstructs
+                    // identically; only a MISSING cell is the bug).
+                    let mut write_set = touched.clone();
+                    for id in self.engine.executor().last_write_set() {
+                        if !write_set.contains(&id) {
+                            write_set.push(id);
+                        }
+                    }
                     // Split the borrows: take `persist` out, write through the
                     // disjoint `engine` borrow, then put it back (or drop it on a
                     // durable failure — the loud degrade-to-ephemeral path).
                     let mut p = self.persist.take().expect("checked is_some");
                     let result =
-                        p.dual_write(height, self.engine.ledger(), &touched, &receipt, &turn);
+                        p.dual_write(height, self.engine.ledger(), &write_set, &receipt, &turn);
                     match result {
                         Ok(()) => self.persist = Some(p),
                         Err(e) => {
@@ -1230,11 +1246,13 @@ impl World {
                         }
                     }
                 }
-                // Surface the effect kinds (caps granted, cells born, fields set).
-                for tree in &turn.call_forest.roots {
-                    collect_effect_events(&tree.action, &mut events);
-                    for child in &tree.children {
-                        collect_effect_events(&child.action, &mut events);
+                // Surface the effect kinds (caps granted, cells born, fields set)
+                // across the WHOLE forest depth-first — a nested (depth >= 2)
+                // SetField/Grant/etc. is a real change, and truncating at depth 1
+                // left a bind reading that slot frozen (CORE-AUDIT.md finding 6).
+                for root in &turn.call_forest.roots {
+                    for node in root.iter_dfs() {
+                        collect_effect_events(&node.action, &mut events);
                     }
                 }
 
@@ -1558,14 +1576,20 @@ fn push_unique(ids: &mut Vec<CellId>, id: CellId) {
 }
 
 /// All cell ids a turn's effects touch (for pre/post balance diffing).
+///
+/// Walks the WHOLE forest depth-first (`CallTree::iter_dfs`), not just roots +
+/// direct children — a nested (depth >= 2) sub-action's target/effects are real
+/// mutations, and truncating at depth 1 dropped them from the dynamics diff (a
+/// bind reading such a slot painted a permanently stale value). Note: this is a
+/// SYNTACTIC over-approximation by effect kind (see `collect_touched`), so it is
+/// still incomplete for the effect VARIANTS it does not enumerate — the sound
+/// source is the executor's journal write-set (see CORE-AUDIT.md finding 1).
 pub(crate) fn touched_cells(turn: &Turn) -> Vec<CellId> {
     let mut ids = Vec::new();
-    for tree in &turn.call_forest.roots {
-        push_unique(&mut ids, tree.action.target);
-        collect_touched(&tree.action, &mut ids);
-        for child in &tree.children {
-            push_unique(&mut ids, child.action.target);
-            collect_touched(&child.action, &mut ids);
+    for root in &turn.call_forest.roots {
+        for node in root.iter_dfs() {
+            push_unique(&mut ids, node.action.target);
+            collect_touched(&node.action, &mut ids);
         }
     }
     ids
@@ -1966,6 +1990,20 @@ pub fn demo_world() -> (World, [CellId; 3]) {
     (w, anchors)
 }
 
+/// [`demo_world`] with the wall-clock PINNED to `timestamp` — the DETERMINISTIC
+/// demo boot. Two calls with the same `timestamp` produce receipt-identical
+/// images (the timestamp is folded into every `TurnReceipt`, see
+/// [`World::with_costs_and_timestamp`]), so their canonical ledger roots are
+/// equal byte-for-byte. This is the hinge the DESKTOP-IN-A-LINK share URL
+/// ([`crate::share_link`]) replays through: the link carries the instant, the
+/// recipient re-derives the SAME world — never a screenshot taken on trust.
+pub fn demo_world_at(timestamp: i64) -> (World, [CellId; 3]) {
+    let (mut w, anchors, mut seed) = demo_genesis_at(timestamp);
+    // Run every seed turn now (the eager, deterministic-replay path).
+    while seed.next(&mut w).is_some() {}
+    (w, anchors)
+}
+
 /// The INSTANT half of [`demo_world`]: install the three anchor cells (treasury,
 /// service, user) and the issuer well via the GENESIS PATH (which bypasses the
 /// executor — no turns run), and return a [`DemoSeed`] that will commit the five
@@ -1973,7 +2011,35 @@ pub fn demo_world() -> (World, [CellId; 3]) {
 /// the cockpit can open its window on this image immediately and seed the turns
 /// afterward (cells appear live as each commits). Returns `(world, anchors, seed)`.
 pub fn demo_genesis() -> (World, [CellId; 3], DemoSeed) {
-    let mut w = World::new();
+    demo_genesis_at(now_unix())
+}
+
+/// [`demo_genesis`] with the wall-clock PINNED to `timestamp` (the deterministic
+/// half [`demo_world_at`] builds on). [`demo_genesis`] pins `now_unix()` through
+/// here — one construction path, the instant merely explicit.
+pub fn demo_genesis_at(timestamp: i64) -> (World, [CellId; 3], DemoSeed) {
+    let mut w = World::with_costs_and_timestamp(ComputronCosts::zero(), timestamp);
+    let (anchors, seed) = seed_demo_genesis_onto(&mut w);
+    (w, anchors, seed)
+}
+
+/// The GENESIS INSTALLS of [`demo_genesis_at`], factored to run ONTO an EXISTING
+/// `world` (rather than constructing a fresh ephemeral one) — the seam the DURABLE
+/// desktop weld (`crate::durable_desktop`) seeds through.
+///
+/// [`demo_genesis_at`] builds its own throwaway ephemeral `World`; but the durable
+/// windowed desktop must seed a world it ALREADY OPENED against a redb image (so
+/// the genesis installs — and the [`DemoSeed`] turns driven afterward — DUAL-WRITE
+/// to the attached store and thus PERSIST). Because [`World::genesis_cell`] /
+/// [`World::genesis_install`] mirror each cell via `record_genesis` when a store is
+/// attached, running the identical install sequence here on a durable `world` makes
+/// the warm demo world durable — the newcomer still gets the same image, but now it
+/// survives a close+reopen. The install ORDER (treasury → user → service → well) is
+/// byte-identical to [`demo_genesis_at`], so recovery reinstalls deterministically
+/// and the anchor ids match. On an EPHEMERAL `world` this is exactly the old
+/// behavior (no store ⟹ no mirror). Returns the `[treasury, service, user]` anchors
+/// + the [`DemoSeed`] plan (drive it with [`DemoSeed::next`] to commit the 5 turns).
+pub fn seed_demo_genesis_onto(w: &mut World) -> ([CellId; 3], DemoSeed) {
     let treasury = w.genesis_cell(0x11, 1_000_000);
     let user = w.genesis_cell(0x33, 5_000);
     // The service is born already holding a capability reaching the user (so it
@@ -1990,7 +2056,7 @@ pub fn demo_genesis() -> (World, [CellId; 3], DemoSeed) {
         user_cap_slot,
         step: 0,
     };
-    (w, [treasury, service, user], seed)
+    ([treasury, service, user], seed)
 }
 
 /// The seed-turn plan for the demo image: the five real executor turns that give

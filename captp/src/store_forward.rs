@@ -751,12 +751,21 @@ impl BlocklaceEnvelope {
     /// Returns `None` if the payload doesn't start with the magic bytes or
     /// cannot be deserialized.
     pub fn from_payload(payload: &[u8]) -> Option<Self> {
+        // The serialized struct begins with the `magic` field, which postcard
+        // encodes as 4 raw bytes (fixed-size arrays carry no length prefix), so
+        // a well-formed envelope's first four bytes equal `MAGIC`. Reject
+        // anything whose prefix is absent or wrong BEFORE attempting a decode.
         if payload.len() < 4 || payload[..4] != Self::MAGIC {
-            // Quick check: raw postcard doesn't have the magic as a prefix,
-            // but the serialized struct does (it's the first field).
-            // Try deserializing anyway.
+            return None;
         }
-        postcard::from_bytes(payload).ok()
+        let envelope: Self = postcard::from_bytes(payload).ok()?;
+        // Fail closed: the decoded magic field must also match. (Redundant with
+        // the prefix check under postcard's layout, but keeps the invariant
+        // explicit and independent of the wire encoding.)
+        if envelope.magic != Self::MAGIC {
+            return None;
+        }
+        Some(envelope)
     }
 
     /// Check if this envelope is addressed to us.
@@ -1287,6 +1296,41 @@ mod tests {
         // Decrypt
         let decrypted = envelope.decrypt(&bob_secret).unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn from_payload_rejects_wrong_magic() {
+        // Regression for DREGG-CAPTP-WRONG-MAGIC-ACCEPTED: a wrong-magic payload that still
+        // postcard-decodes was being ACCEPTED because the magic check was a
+        // comment-only no-op.
+        let (bob_secret, bob_public) = test_x25519_keypair();
+        let (alice_secret, _) = test_x25519_keypair();
+
+        // A valid envelope round-trips to Some.
+        let mut payload_bytes =
+            queue_via_blocklace(fed_bob(), b"integrity", &bob_public, &alice_secret, 7);
+        assert!(
+            BlocklaceEnvelope::from_payload(&payload_bytes).is_some(),
+            "a valid envelope must decode"
+        );
+
+        // Flip a byte inside the 4-byte magic prefix. The remaining bytes are
+        // untouched, so postcard still decodes the struct — the ONLY thing
+        // rejecting it is the magic check. Must now be None.
+        payload_bytes[0] ^= 0xFF;
+        assert!(
+            BlocklaceEnvelope::from_payload(&payload_bytes).is_none(),
+            "a payload with a corrupted magic prefix must be rejected"
+        );
+
+        // A scan over the corrupted payload must SKIP it (no decrypt attempt,
+        // no surfaced error) rather than treating it as a valid envelope.
+        let results =
+            scan_and_decrypt_blocklace(&[payload_bytes], &fed_bob(), &bob_secret).unwrap();
+        assert!(
+            results.is_empty(),
+            "a wrong-magic payload must be skipped by the scan, not decrypted"
+        );
     }
 
     #[test]

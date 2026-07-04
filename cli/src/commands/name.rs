@@ -261,7 +261,14 @@ async fn submit_effects(
     Ok(data)
 }
 
-fn render_turn(ctx: &Context, data: &serde_json::Value, action: &str) {
+/// Render a submitted turn's outcome and return whether the node accepted it.
+///
+/// Callers must propagate a `false` as an `Err` — swallowing it made
+/// `dregg demo` print its success banner after every mutating step was
+/// rejected (and left the standalone `dregg name …` commands exiting 0 on
+/// rejection).
+#[must_use]
+fn render_turn(ctx: &Context, data: &serde_json::Value, action: &str) -> bool {
     let accepted = data["accepted"].as_bool().unwrap_or(false);
     let turn_hash = data["turn_hash"].as_str().unwrap_or("?");
     let proof_status = data["proof_status"].as_str().unwrap_or("unknown");
@@ -279,6 +286,12 @@ fn render_turn(ctx: &Context, data: &serde_json::Value, action: &str) {
         other => other,
     };
     ctx.kv("Proof", proof_line);
+    accepted
+}
+
+/// Turn a rejected submission into a hard error naming the failed action.
+fn rejected(action: &str) -> Box<dyn std::error::Error> {
+    format!("{action} was rejected by the node (see the error above)").into()
 }
 
 // ─── Commands ────────────────────────────────────────────────────────────────
@@ -325,12 +338,12 @@ async fn register(
         ctx.json_stdout(&data);
         return Ok(());
     }
-    render_turn(ctx, &data, "Registration");
-    if data["accepted"].as_bool().unwrap_or(false) {
-        ctx.info(&format!(
-            "  Resolve it:  dregg name resolve {name} --cell {target}"
-        ));
+    if !render_turn(ctx, &data, "Registration") {
+        return Err(rejected("Registration"));
     }
+    ctx.info(&format!(
+        "  Resolve it:  dregg name resolve {name} --cell {target}"
+    ));
     Ok(())
 }
 
@@ -445,7 +458,9 @@ async fn set_target(
     }
     ctx.header(&format!("Set target for '{name}'"));
     ctx.kv("Target URI", target_uri);
-    render_turn(ctx, &data, "Set-target");
+    if !render_turn(ctx, &data, "Set-target") {
+        return Err(rejected("Set-target"));
+    }
     Ok(())
 }
 
@@ -472,7 +487,9 @@ async fn renew(
     }
     ctx.header(&format!("Renew '{name}'"));
     ctx.kv("New expiry", &expiry.to_string());
-    render_turn(ctx, &data, "Renewal");
+    if !render_turn(ctx, &data, "Renewal") {
+        return Err(rejected("Renewal"));
+    }
     Ok(())
 }
 
@@ -502,7 +519,9 @@ async fn transfer(
         "New owner",
         &crate::output::abbrev_hex(&owner_hash_hex(new_owner), 8, 4),
     );
-    render_turn(ctx, &data, "Transfer");
+    if !render_turn(ctx, &data, "Transfer") {
+        return Err(rejected("Transfer"));
+    }
     Ok(())
 }
 
@@ -527,6 +546,8 @@ async fn revoke(
         return Ok(());
     }
     ctx.header(&format!("Revoke '{name}'"));
-    render_turn(ctx, &data, "Revocation");
+    if !render_turn(ctx, &data, "Revocation") {
+        return Err(rejected("Revocation"));
+    }
     Ok(())
 }

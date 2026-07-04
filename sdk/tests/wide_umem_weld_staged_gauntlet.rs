@@ -129,8 +129,22 @@ fn transfer_fixture(
     let mut ledger = Ledger::new();
     ledger.insert_cell(after_cell.clone()).unwrap();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
-    let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+    let before_w = rw::produce(
+        &before_cell,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &receipt_log,
+        &Default::default(),
+    );
+    let after_w = rw::produce(
+        &after_cell,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &receipt_log,
+        &Default::default(),
+    );
 
     record_kernel_boundary_agrees(&before_cell)
         .unwrap_or_else(|e| panic!("PRE projection must agree with per-map roots: {e}"));
@@ -346,7 +360,14 @@ fn wide_umem_welded_non_cohort_refuses() {
     let before_cell = producer_cell(before_balance);
     let mut ledger = Ledger::new();
     ledger.insert_cell(before_cell.clone()).unwrap();
-    let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &[]);
+    let before_w = rw::produce(
+        &before_cell,
+        &ledger,
+        &[0u8; 32],
+        &[0u8; 32],
+        &[],
+        &Default::default(),
+    );
     let proj = project_record_kernel_state(&before_cell);
     let op = UmemOp {
         kind: UmemKind::Write,

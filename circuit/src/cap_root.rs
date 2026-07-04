@@ -65,6 +65,7 @@
 //! NO in-circuit membership-open / submask / non-amplification gates yet —
 //! those are Phase B.
 
+use crate::faithful8::Faithful8;
 use crate::field::BabyBear;
 use crate::poseidon2::{Poseidon2State, hash_many};
 use std::sync::LazyLock;
@@ -677,11 +678,180 @@ impl CanonicalCapTree {
     }
 }
 
+/// A **sorted-tree INSERT witness** for a FRESH capability edge — the cap-tree
+/// twin of [`crate::heap_root::CanonicalHeapTree8::insert_witness`], over the
+/// arity-7 [`CapLeaf`] / 8-felt [`cap_node8`] canonical tree. Carries:
+///   * the NON-MEMBERSHIP bracket of the fresh key in the BEFORE tree — the
+///     `pred`/`succ` neighbor leaves (`pred.slot_hash < key < succ.slot_hash`,
+///     adjacent in the sorted BEFORE tree; the sentinels guarantee both exist) —
+///     the Rust realization of the Lean `SortedTreeNonMembership.GapOpen`
+///     carrier `CapInsertEmit.effCapInsertV3_forces_write8` consumes;
+///   * the spliced leaf's MEMBERSHIP path in the REBUILT AFTER tree
+///     (`siblings`/`directions`/`new_root`) — the trace-forced part (b) of the
+///     honest insert (the cap-open appendix the deployed `effCapInsertV3`
+///     welds to the committed AFTER cap-root group);
+///   * the BEFORE/AFTER 8-felt roots.
+///
+/// The AFTER tree is the full sorted REBUILD over `[live BEFORE leaves] +
+/// [new_leaf]` with the BEFORE tombstones preserved — byte-identical to what
+/// `dregg-cell` commits after the grant (`compute_capability_root_with_tombstones`).
+#[derive(Clone, Debug)]
+pub struct CapInsertWitness {
+    /// The inserted (spliced) 7-field leaf.
+    pub new_leaf: CapLeaf,
+    /// The PREDECESSOR bracket leaf (greatest BEFORE key `< new_leaf.slot_hash`).
+    pub pred: CapLeaf,
+    /// The SUCCESSOR bracket leaf (least BEFORE key `> new_leaf.slot_hash`).
+    pub succ: CapLeaf,
+    /// The spliced leaf's membership path in the AFTER tree (8-felt siblings, bottom-up).
+    pub siblings: Vec<[BabyBear; CAP_DIGEST_W]>,
+    /// Direction bits for the AFTER path (0 = current is LEFT child).
+    pub directions: Vec<u8>,
+    /// The authenticated BEFORE 8-felt cap-root.
+    pub old_root: [BabyBear; CAP_DIGEST_W],
+    /// The recomposed AFTER 8-felt cap-root (the rebuilt tree's root).
+    pub new_root: [BabyBear; CAP_DIGEST_W],
+}
+
+/// A **sorted-tree REMOVE witness** — the deployed TOMBSTONE remove (the revoked
+/// slot's position collapses to the ZERO/padding digest; positions do NOT shift,
+/// matching [`CanonicalCapTree::new_with_tombstones`] / the cell-side
+/// `compute_capability_root_with_tombstones` byte-for-byte). Carries:
+///   * the removed leaf's MEMBERSHIP path in the BEFORE tree — the trace-forced
+///     part (a) of the honest remove (the cap-open appendix the deployed
+///     `effCapRemoveV3` welds to the committed BEFORE cap-root group);
+///   * the AFTER 8-felt root — the ZERO leaf folded up the SAME sibling path
+///     (the removed key's non-membership in AFTER rides the same bracket
+///     neighbors, now adjacent).
+#[derive(Clone, Debug)]
+pub struct CapRemoveWitness {
+    /// The removed (genuine, committed) 7-field leaf.
+    pub removed: CapLeaf,
+    /// The removed leaf's membership path in the BEFORE tree (8-felt siblings, bottom-up).
+    pub siblings: Vec<[BabyBear; CAP_DIGEST_W]>,
+    /// Direction bits (0 = current is LEFT child).
+    pub directions: Vec<u8>,
+    /// The authenticated BEFORE 8-felt cap-root.
+    pub old_root: [BabyBear; CAP_DIGEST_W],
+    /// The recomposed AFTER 8-felt cap-root (the ZERO-fold tombstone top).
+    pub new_root: [BabyBear; CAP_DIGEST_W],
+}
+
+impl CanonicalCapTree {
+    /// The LIVE (non-sentinel, non-tombstone) leaves + the tombstoned keys of
+    /// THIS tree — the `(live, tombstones)` pair `new_with_tombstones` rebuilds
+    /// byte-identically from. A ghost position is recognized by its ZERO stored
+    /// digest (exactly as [`Self::num_caps`] filters).
+    fn live_and_tombstones(&self) -> (Vec<CapLeaf>, Vec<BabyBear>) {
+        let mut live = Vec::new();
+        let mut tombs = Vec::new();
+        for (i, l) in self.sorted_leaves.iter().enumerate() {
+            if l.slot_hash == SENTINEL_MIN || l.slot_hash == SENTINEL_MAX {
+                continue;
+            }
+            if self.node(0, i) == CAP_ZERO8 {
+                tombs.push(l.slot_hash);
+            } else {
+                live.push(*l);
+            }
+        }
+        (live, tombs)
+    }
+
+    /// Build a [`CapInsertWitness`] splicing `new_leaf` (a FRESH key) into this
+    /// tree. Fails closed (`None`) when the key is a sentinel / sentinel-range
+    /// collision or ALREADY PRESENT (live or tombstoned — the sorted insert
+    /// refuses an occupied position; re-granting a tombstoned slot is the
+    /// resurrect path, not a fresh splice). The AFTER tree is the full sorted
+    /// rebuild (`new_with_tombstones` over live + new, tombstones preserved),
+    /// so `new_root` matches the cell-side post-grant root byte-for-byte and
+    /// `siblings`/`directions` open the spliced leaf against it.
+    pub fn insert_witness(&self, new_leaf: CapLeaf) -> Option<CapInsertWitness> {
+        let key = new_leaf.slot_hash;
+        if key.as_u32() <= SENTINEL_MIN.as_u32() || key.as_u32() >= SENTINEL_MAX.as_u32() {
+            return None;
+        }
+        if self.position_of(key).is_some() {
+            return None; // present (live or ghost) — no fresh splice (fail closed).
+        }
+        // The non-membership bracket: the sentinels guarantee a strict predecessor
+        // and successor exist in the sorted BEFORE leaves.
+        let succ_pos = self
+            .sorted_leaves
+            .iter()
+            .position(|l| l.slot_hash.as_u32() > key.as_u32())?;
+        if succ_pos == 0 {
+            return None; // unreachable (MIN sentinel sorts first) — defensive.
+        }
+        let pred = self.sorted_leaves[succ_pos - 1];
+        let succ = self.sorted_leaves[succ_pos];
+        debug_assert!(pred.slot_hash.as_u32() < key.as_u32());
+        debug_assert!(key.as_u32() < succ.slot_hash.as_u32());
+        // The AFTER tree: the full sorted rebuild with the fresh leaf spliced in
+        // (tombstones preserved — cell-side byte-identity).
+        let (mut live, tombs) = self.live_and_tombstones();
+        live.push(new_leaf);
+        let after = CanonicalCapTree::new_with_tombstones(live, &tombs, self.depth);
+        let pos = after.position_of(key)?;
+        let (siblings, directions) = after.prove_membership(pos)?;
+        debug_assert_eq!(
+            recompose_membership(new_leaf.digest(), &siblings, &directions),
+            after.root(),
+            "cap insert witness: the spliced leaf's AFTER path must recompose the rebuilt root"
+        );
+        Some(CapInsertWitness {
+            new_leaf,
+            pred,
+            succ,
+            siblings,
+            directions,
+            old_root: self.root(),
+            new_root: after.root(),
+        })
+    }
+
+    /// Build a [`CapRemoveWitness`] tombstoning the leaf at `key`. Fails closed
+    /// (`None`) when no LIVE leaf with that key is present (a fabricated removed
+    /// leaf has no authenticated position; a sentinel/ghost cannot be removed).
+    /// The AFTER root is the ZERO/padding leaf folded up the SAME sibling path —
+    /// the deployed tombstone semantics ([`Self::revocation_witness`] /
+    /// `new_with_tombstones`), byte-identical to the cell-side post-revoke root.
+    pub fn remove_witness(&self, key: BabyBear) -> Option<CapRemoveWitness> {
+        if key == SENTINEL_MIN || key == SENTINEL_MAX {
+            return None;
+        }
+        let pos = self.position_of(key)?;
+        if self.node(0, pos) == CAP_ZERO8 {
+            return None; // already a ghost — nothing live to remove (fail closed).
+        }
+        let removed = self.sorted_leaves[pos];
+        let (siblings, directions) = self.prove_membership(pos)?;
+        debug_assert_eq!(
+            recompose_membership(removed.digest(), &siblings, &directions),
+            self.root(),
+            "cap remove witness: the removed leaf's BEFORE path must recompose this root"
+        );
+        // The tombstone zero-fold: the AFTER root over the SAME path.
+        let new_root = recompose_membership(CAP_ZERO8, &siblings, &directions);
+        Some(CapRemoveWitness {
+            removed,
+            siblings,
+            directions,
+            old_root: self.root(),
+            new_root,
+        })
+    }
+}
+
 /// Compute the canonical capability root over a set of leaves at the canonical
 /// depth ([`CAP_TREE_DEPTH`]). This is THE function `dregg-cell` calls; the
 /// circuit seeds its `cap_root` column from this same value.
-pub fn compute_capability_root(leaves: Vec<CapLeaf>) -> [BabyBear; CAP_DIGEST_W] {
-    CanonicalCapTree::new(leaves, CAP_TREE_DEPTH).root()
+///
+/// Returns [`Faithful8`] — a genuine `node8` tree root, one of the named
+/// faithful constructors of the commitment TYPE WALL
+/// (`docs/FAITHFUL-COMMITMENT-LAW.md`).
+pub fn compute_capability_root(leaves: Vec<CapLeaf>) -> Faithful8 {
+    Faithful8::from_root8(CanonicalCapTree::new(leaves, CAP_TREE_DEPTH).root())
 }
 
 /// Compute the canonical capability root over a set of LIVE leaves plus a set
@@ -694,15 +864,17 @@ pub fn compute_capability_root(leaves: Vec<CapLeaf>) -> [BabyBear; CAP_DIGEST_W]
 pub fn compute_capability_root_with_tombstones(
     leaves: Vec<CapLeaf>,
     tombstone_keys: &[BabyBear],
-) -> [BabyBear; CAP_DIGEST_W] {
-    CanonicalCapTree::new_with_tombstones(leaves, tombstone_keys, CAP_TREE_DEPTH).root()
+) -> Faithful8 {
+    Faithful8::from_root8(
+        CanonicalCapTree::new_with_tombstones(leaves, tombstone_keys, CAP_TREE_DEPTH).root(),
+    )
 }
 
 /// The canonical capability root of the EMPTY c-list (only the two sentinels).
 /// This is the value `CellState::new` seeds `cap_root` with, and the value a
 /// fresh cell's `compute_canonical_capability_root` returns. Deterministic and
 /// cell-independent.
-pub fn empty_capability_root() -> [BabyBear; CAP_DIGEST_W] {
+pub fn empty_capability_root() -> Faithful8 {
     compute_capability_root(Vec::new())
 }
 
@@ -841,6 +1013,80 @@ mod tests {
             expiry: encode_expiry(None),
             breadstuff: encode_breadstuff(None),
         }
+    }
+
+    /// **INSERT witness (the keystone deploy):** the spliced leaf's AFTER path recomposes the
+    /// rebuilt root (byte-identical to the cell-side post-grant root), the non-membership bracket
+    /// genuinely brackets the fresh key, and a present / sentinel-colliding key is REFUSED.
+    #[test]
+    fn insert_witness_recomposes_rebuilt_root_and_brackets() {
+        let a = leaf(10, 1, 1, 0x0F);
+        let b = leaf(30, 2, 1, 0x0F);
+        let tree = CanonicalCapTree::new(vec![a, b], CAP_TREE_DEPTH);
+        let fresh = leaf(20, 3, 1, 0x03);
+        let w = tree.insert_witness(fresh).expect("fresh key splices");
+        // The AFTER path recomposes the FULL sorted rebuild (cell-side byte-identity).
+        assert_eq!(
+            recompose_membership(fresh.digest(), &w.siblings, &w.directions),
+            w.new_root,
+            "the spliced leaf's AFTER path recomposes the rebuilt root"
+        );
+        assert_eq!(
+            w.new_root,
+            compute_capability_root(vec![a, b, fresh]),
+            "the AFTER root IS the cell-side post-grant root"
+        );
+        assert_eq!(w.old_root, tree.root());
+        assert_ne!(
+            w.old_root, w.new_root,
+            "the insert genuinely moves the root"
+        );
+        // The non-membership bracket: pred < key < succ, both committed BEFORE members.
+        assert!(w.pred.slot_hash.as_u32() < fresh.slot_hash.as_u32());
+        assert!(fresh.slot_hash.as_u32() < w.succ.slot_hash.as_u32());
+        assert!(tree.position_of(w.pred.slot_hash).is_some());
+        assert!(tree.position_of(w.succ.slot_hash).is_some());
+        // FAIL CLOSED: a present key / a sentinel key refuses (no fabricated after-root).
+        assert!(tree.insert_witness(a).is_none(), "present key refused");
+        assert!(
+            tree.insert_witness(sentinel_leaf(SENTINEL_MIN)).is_none(),
+            "sentinel refused"
+        );
+    }
+
+    /// **REMOVE witness (the keystone deploy):** the tombstone zero-fold's AFTER root is
+    /// byte-identical to the cell-side post-revoke root (`new_with_tombstones`), and an
+    /// absent key is REFUSED.
+    #[test]
+    fn remove_witness_matches_tombstone_root() {
+        let a = leaf(10, 1, 1, 0x0F);
+        let b = leaf(30, 2, 1, 0x0F);
+        let tree = CanonicalCapTree::new(vec![a, b], CAP_TREE_DEPTH);
+        let w = tree
+            .remove_witness(a.slot_hash)
+            .expect("present key removes");
+        assert_eq!(w.removed, a);
+        assert_eq!(w.old_root, tree.root());
+        assert_eq!(
+            w.new_root,
+            compute_capability_root_with_tombstones(vec![b], &[a.slot_hash]),
+            "the tombstone zero-fold root IS the cell-side post-revoke root"
+        );
+        assert_ne!(
+            w.old_root, w.new_root,
+            "the remove genuinely moves the root"
+        );
+        // FAIL CLOSED: an absent key refuses.
+        assert!(
+            tree.remove_witness(slot_hash(99)).is_none(),
+            "absent key refused"
+        );
+        // A second remove of the SAME (now tombstoned) key refuses too.
+        let after = CanonicalCapTree::new_with_tombstones(vec![b], &[a.slot_hash], CAP_TREE_DEPTH);
+        assert!(
+            after.remove_witness(a.slot_hash).is_none(),
+            "a ghost (already-tombstoned) key refused"
+        );
     }
 
     /// The empty root is deterministic and non-zero (the sentinels hash into a
