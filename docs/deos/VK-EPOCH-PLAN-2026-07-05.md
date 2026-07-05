@@ -416,10 +416,29 @@ seven-carrier universal-fold bang.
 
 ## 9. GENTIAN FLAG-DAY — the bare-descriptor dodge CLOSED (soundness core landed 2026-07-05)
 
-> **STATUS: the SOUND CORE + the anti-launder forge + the DEPLOYED-ALIGNED column-parametric keystone
-> (§9.1b, `gentianDeployedBareRefuse` — the sound emit-weld TARGET, traceWidth widening baked in) are
-> LANDED + GREEN + crown-wired; the emit-map + regen + apex geometry-cascade re-verify is the remaining
-> multi-run grind (RESUME AT §9.3 STEP 1), then the ember-gated deploy.**
+> **STATUS: FLIPPED (2026-07-05 pt3). The emit-map + regen + apex geometry-cascade are DONE — the
+> deployed cohort VK bytes now CARRY the refuse.** `v3RegistryRefused` (new module
+> `Dregg2/Circuit/Emit/EffectVmEmitRotationV3Refused.lean`) welds `withDfaRcPins ∘
+> gentianDeployedBareRefuse` over `v3RegistryBare`; `v3RegistryCapOpenDep` (CapOpenEmit) = the welded
+> cohort ++ the identical cap-open tail; the apex `Rfix` re-keys over it (`v3RegistryHeap =
+> v3RegistryCapOpenDep ++ …`) and the 10 cohort-routed `closedLog` rungs peel the weld
+> (`satisfied2_of_v3RefusedMember`) back to their bare face. **`lake build Dregg2` GREEN (4257 jobs),
+> #assert_axioms-clean under the widened cohort** (lightclient_unfoolable + the 5 guarantees +
+> deployed_system_secure). The COMPLETENESS dual rides `RfixBare` (the un-welded cohort — the welded
+> member is DELIBERATELY unsat for a capacity-declaring cell, so its completeness is capacity-conditional;
+> `verifyBatch_kernel_bidirectional` now carries the honest flag-day asymmetry: sound=welded, complete=bare).
+> **REGEN done**: all 36 cohort rows moved `trace_width` 1581→1626 + carry the `-gentian-deployed-bare-refuse`
+> suffix + the three refuse floor gates (cols 1593/1609/1625); drift PASS; `V3_STAGED_REGISTRY_FP` re-pinned
+> (f6a676cc…). **ANTI-LAUNDER on the DEPLOYED BYTES**: `bare_floor_refuse_weld::deployed_cohort_bytes_carry_the_refuse`
+> parses the committed TSV and asserts all 36 cohort rows carry the weld — 8/8 forge tests + 37/37 floor-weld
+> tooths bite; `cargo check` circuit/circuit-prove/turn/cell/sdk GREEN.
+>
+> **REMAINING (NOT this pass):** (a) **G5 free-param binding** (`period`/`amount`/`clock` on the STAGED
+> discharge/vault SATISFACTION descriptors) — the caveat entry params are ZERO today (producer-free), so
+> the bind needs a manifest-schema + producer + slot-selected gate (`PERIOD_COL == Σ_k bit_k·param_period(k)`,
+> `AMOUNT_COL == Σ_k …`, `CLOCK_COL == pub(CURRENT_BLOCK_HEIGHT=PI 18)`) + a staged-fixture regen — a
+> genuine gadget deserving its own focused pass (NOT half-done here). (b) **STEP 5 deploy** (re-genesis +
+> LC VK redistribution) — ember's fire.
 > This section supersedes §2.1's "sound deployed-flip stays GENTIAN-blocked / OUT" for the SOUNDNESS
 > question: the terminal blocker §2.1 named (in-AIR `B_AUTHORITY_DIGEST`→selector) was already
 > discharged by PATH (b) in `CarrierBoundFloorGadget` (decode from the caveat-manifest columns, no
