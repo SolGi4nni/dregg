@@ -2335,17 +2335,90 @@ pub const SETTLE_ESCROW_SAT_DESCRIPTOR_NAME: &str = "settleEscrowSatVmDescriptor
 /// the proof and the selector binds. It keys on the EXISTING caveat declaration — NOT a new kernel
 /// effect/verb (the settle is still a `Transfer`; effect-dispatch is untouched).
 ///
-/// STAGED: this is NOT yet wired into the live prover (`rotated_descriptor_name_for_effect` is the
-/// deployed default and is unchanged). Routing a declared-escrow turn here on the live path requires
-/// the welded descriptor to be a WIDE member with a producer + committed VK first (the FLIP, §6
-/// BLOCKER 1). Until then this resolves the welded NAME for the staged verifier-enforcement and tests
-/// only. A non-escrow declaration delegates to [`rotated_descriptor_name_for_effect`] (deployed-identical).
+/// This is the declaration-keyed sibling of the deployed-default [`rotated_descriptor_name_for_effect`]
+/// (which routes by effect kind alone): a live prover holding the turn's caveat manifest calls this to
+/// name the satisfaction descriptor a declared-escrow cell MUST take — the LIVENESS complement of the
+/// flag-day bare-descriptor refuse (the refuse makes the declared turn UNSAT under the bare member,
+/// this names the member it takes instead). A non-escrow declaration delegates to
+/// [`rotated_descriptor_name_for_effect`] (deployed-identical). See
+/// [`rotated_descriptor_name_for_declared_capacity`] for the unified escrow/discharge/vault route.
 pub fn rotated_descriptor_name_for_declared_escrow(
     effect: &Effect,
     required_caveat_tags: &[u32],
 ) -> Option<&'static str> {
     if required_caveat_tags.contains(&super::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW) {
         Some(SETTLE_ESCROW_SAT_DESCRIPTOR_NAME)
+    } else {
+        rotated_descriptor_name_for_effect(effect)
+    }
+}
+
+/// The registry name of the welded discharge-obligation satisfaction descriptor
+/// (Lean `Dregg2.Deos.DischargeSatDescriptor.dischargeSatVmDescriptor2R24`, piCount 47). A member of
+/// `rotation-v3-staged-registry.tsv` carrying the cursor/total/due satisfaction gates + the G5
+/// free-param binds over the rotated field columns. Reached by the declaration-keyed route below (a
+/// discharge is performed AS a transfer; effect-dispatch is untouched).
+pub const DISCHARGE_SAT_DESCRIPTOR_NAME: &str = "dischargeSatVmDescriptor2R24";
+
+/// The registry name of the welded vault-deposit satisfaction descriptor
+/// (Lean `Dregg2.Deos.VaultSatDescriptor.vaultSatVmDescriptor2R24`, piCount 47). A member of
+/// `rotation-v3-staged-registry.tsv` carrying the no-dilution (`Ta·m ≤ Sa·d`) satisfaction gates over
+/// the rotated field columns. Reached by the declaration-keyed route below.
+pub const VAULT_SAT_DESCRIPTOR_NAME: &str = "vaultSatVmDescriptor2R24";
+
+/// The DECLARATION-keyed discharge routing arm (the discharge analog of
+/// [`rotated_descriptor_name_for_declared_escrow`]). A discharge executes AS a transfer, so it would
+/// otherwise route to the (now refuse-welded) bare `transferVmDescriptor2R24` — where the flag-day
+/// refuse makes a declared-discharge cell UNSAT. This arm routes it to the WELDED
+/// [`DISCHARGE_SAT_DESCRIPTOR_NAME`] instead, so the satisfaction gates ride the proof. Keys on the
+/// EXISTING caveat declaration (`SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION`), NOT a new kernel effect. A
+/// non-discharge declaration delegates to [`rotated_descriptor_name_for_effect`] (deployed-identical).
+pub fn rotated_descriptor_name_for_declared_discharge(
+    effect: &Effect,
+    required_caveat_tags: &[u32],
+) -> Option<&'static str> {
+    if required_caveat_tags.contains(&super::pi::SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION) {
+        Some(DISCHARGE_SAT_DESCRIPTOR_NAME)
+    } else {
+        rotated_descriptor_name_for_effect(effect)
+    }
+}
+
+/// The DECLARATION-keyed vault routing arm (the vault analog of
+/// [`rotated_descriptor_name_for_declared_escrow`]). A vault deposit executes AS a transfer; this arm
+/// routes a declared-vault cell to the WELDED [`VAULT_SAT_DESCRIPTOR_NAME`] (carrying the no-dilution
+/// satisfaction gates), off the refuse-welded bare descriptor. Keys on
+/// `SLOT_CAVEAT_TAG_VAULT_DEPOSIT`; a non-vault declaration delegates to
+/// [`rotated_descriptor_name_for_effect`].
+pub fn rotated_descriptor_name_for_declared_vault(
+    effect: &Effect,
+    required_caveat_tags: &[u32],
+) -> Option<&'static str> {
+    if required_caveat_tags.contains(&super::pi::SLOT_CAVEAT_TAG_VAULT_DEPOSIT) {
+        Some(VAULT_SAT_DESCRIPTOR_NAME)
+    } else {
+        rotated_descriptor_name_for_effect(effect)
+    }
+}
+
+/// The UNIFIED declaration-keyed capacity route: resolve the welded satisfaction descriptor for an
+/// effect whose acting cell carries ANY of the three deployed capacity tags (escrow 17 / discharge 18 /
+/// vault 19), else the deployed-default [`rotated_descriptor_name_for_effect`]. This is the single
+/// entry point a live prover with the caveat manifest in hand calls to route an honest declared-capacity
+/// turn onto its satisfaction descriptor (the liveness complement of the bare-descriptor refuse: the
+/// refuse makes the declared turn UNSAT under the bare member, this names the member it MUST take). At
+/// most one capacity tag is present per cohort turn (the manifest declares one capacity); escrow is
+/// checked first, then discharge, then vault.
+pub fn rotated_descriptor_name_for_declared_capacity(
+    effect: &Effect,
+    required_caveat_tags: &[u32],
+) -> Option<&'static str> {
+    if required_caveat_tags.contains(&super::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW) {
+        Some(SETTLE_ESCROW_SAT_DESCRIPTOR_NAME)
+    } else if required_caveat_tags.contains(&super::pi::SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION) {
+        Some(DISCHARGE_SAT_DESCRIPTOR_NAME)
+    } else if required_caveat_tags.contains(&super::pi::SLOT_CAVEAT_TAG_VAULT_DEPOSIT) {
+        Some(VAULT_SAT_DESCRIPTOR_NAME)
     } else {
         rotated_descriptor_name_for_effect(effect)
     }
@@ -5310,15 +5383,30 @@ mod tests {
                     // Like the cap-open members it is a separately-routed registry member, excluded
                     // from the resolver-cohort completeness audit (registry-present, resolver-unreached).
                     && s != &"heapWriteVmDescriptor2R24"
-                    // the WELDED SEALED-ESCROW SATISFACTION descriptor
-                    // (`settleEscrowSatVmDescriptor2R24`, VK-EPOCH §6 BLOCKER 1) is REGISTRY-PRESENT
-                    // but RESOLVER-UNREACHED: no live effect routes to it (the satisfaction weld is
-                    // STAGED, NOT flipped — `rotated_descriptor_name_for_effect` carries no escrow
-                    // arm). It is the descriptor a flippable escrow weld commits a VK for; until that
-                    // flip it is a separately-staged registry member, excluded from the resolver
-                    // cohort completeness audit (registry-present, resolver-unreached).
+                    // the THREE WELDED CAPACITY-SATISFACTION descriptors — escrow
+                    // (`settleEscrowSatVmDescriptor2R24`, tag 17), discharge
+                    // (`dischargeSatVmDescriptor2R24`, tag 18) and vault
+                    // (`vaultSatVmDescriptor2R24`, tag 19) — are DECLARATION-ROUTED, not effect-routed.
+                    // A declared-capacity turn executes AS a plain transfer, so the effect→descriptor
+                    // resolvers (`rotated_descriptor_name` / `rotated_descriptor_name_for_effect`) name
+                    // its BARE member; the flag-day refuse then makes it UNSAT there, and the
+                    // declaration-keyed `rotated_descriptor_name_for_declared_{escrow,discharge,vault}`
+                    // (unified: `…_for_declared_capacity`) names the satisfaction member it MUST take.
+                    // Like the fee-in-proof / cap-open members they are reached by a SEPARATE resolver
+                    // family (keyed on the caveat manifest, not the effect kind), so they are excluded
+                    // from the effect-resolver cohort audit and covered by the positive
+                    // declared-resolver assertions below.
                     && s != &"settleEscrowSatVmDescriptor2R24"
+                    && s != &"dischargeSatVmDescriptor2R24"
+                    && s != &"vaultSatVmDescriptor2R24"
             })
+            .collect();
+        // The FULL set of registry member names (no exclusions) — used to assert the declaration-routed
+        // capacity members are genuine committed rows, not phantom targets.
+        let registry_full: BTreeSet<&str> = V3_STAGED_REGISTRY_TSV
+            .lines()
+            .filter_map(|l| l.split('\t').next())
+            .filter(|s| !s.is_empty())
             .collect();
         assert_eq!(
             registry.len(),
@@ -5336,6 +5424,69 @@ mod tests {
             }),
             Some("transferFeeVmDescriptor2R24"),
             "the fee-path resolver routes a Transfer lead to the fee-in-proof descriptor"
+        );
+
+        // The DECLARATION-keyed resolver family reaches the three capacity-satisfaction members (the
+        // liveness route that complements the flag-day refuse). A settle/discharge/vault executes AS a
+        // zero-amount Transfer; the declared-capacity resolver names its satisfaction descriptor. This
+        // is the positive coverage for the members excluded from the effect-resolver audit above — the
+        // satisfaction cohort IS covered, by its own (manifest-keyed) resolver family.
+        let settle = Effect::Transfer {
+            amount: 0,
+            direction: 0,
+        };
+        for (tags, want) in [
+            (
+                super::super::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW,
+                SETTLE_ESCROW_SAT_DESCRIPTOR_NAME,
+            ),
+            (
+                super::super::pi::SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION,
+                DISCHARGE_SAT_DESCRIPTOR_NAME,
+            ),
+            (
+                super::super::pi::SLOT_CAVEAT_TAG_VAULT_DEPOSIT,
+                VAULT_SAT_DESCRIPTOR_NAME,
+            ),
+        ] {
+            assert!(
+                registry_full.contains(want),
+                "the declared-capacity target {want} is a committed registry member"
+            );
+            assert_eq!(
+                rotated_descriptor_name_for_declared_capacity(&settle, &[tags]),
+                Some(want),
+                "the declared-capacity resolver routes tag {tags} to its satisfaction descriptor {want}"
+            );
+        }
+        // A declared-capacity turn with NO capacity tag falls back to the deployed-default effect route
+        // (deployed-identical) — the declaration route never HIDES a bare member.
+        assert_eq!(
+            rotated_descriptor_name_for_declared_capacity(&settle, &[]),
+            rotated_descriptor_name_for_effect(&settle),
+            "no capacity tag ⟹ the declaration route is deployed-identical"
+        );
+        // Each single-tag resolver agrees with the unified capacity route on its own tag.
+        assert_eq!(
+            rotated_descriptor_name_for_declared_escrow(
+                &settle,
+                &[super::super::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW]
+            ),
+            Some(SETTLE_ESCROW_SAT_DESCRIPTOR_NAME)
+        );
+        assert_eq!(
+            rotated_descriptor_name_for_declared_discharge(
+                &settle,
+                &[super::super::pi::SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION]
+            ),
+            Some(DISCHARGE_SAT_DESCRIPTOR_NAME)
+        );
+        assert_eq!(
+            rotated_descriptor_name_for_declared_vault(
+                &settle,
+                &[super::super::pi::SLOT_CAVEAT_TAG_VAULT_DEPOSIT]
+            ),
+            Some(VAULT_SAT_DESCRIPTOR_NAME)
         );
 
         // Every name the resolvers produce: the 17 selector-mapped base effects, the cap-crown

@@ -219,11 +219,13 @@ pub use trace::{
 
 // ---- Re-export the LIVE rotated (R=24) trace generator (G1, staged-additive) ----
 pub use trace_rotated::{
-    ROT_PI_COUNT, ROT_WIDTH, RotatedBlockWitness, RotatedCaveatEntry, RotatedCaveatManifest,
-    SETTLE_ESCROW_SAT_DESCRIPTOR_NAME, empty_caveat_manifest, generate_rotated_effect_vm_trace,
-    rotated_descriptor_name, rotated_descriptor_name_for_declared_escrow,
-    rotated_descriptor_name_for_effect, rotated_set_field_descriptor_name,
-    transfer_caveat_manifest,
+    DISCHARGE_SAT_DESCRIPTOR_NAME, ROT_PI_COUNT, ROT_WIDTH, RotatedBlockWitness,
+    RotatedCaveatEntry, RotatedCaveatManifest, SETTLE_ESCROW_SAT_DESCRIPTOR_NAME,
+    VAULT_SAT_DESCRIPTOR_NAME, empty_caveat_manifest, generate_rotated_effect_vm_trace,
+    rotated_descriptor_name, rotated_descriptor_name_for_declared_capacity,
+    rotated_descriptor_name_for_declared_discharge, rotated_descriptor_name_for_declared_escrow,
+    rotated_descriptor_name_for_declared_vault, rotated_descriptor_name_for_effect,
+    rotated_set_field_descriptor_name, transfer_caveat_manifest,
 };
 
 // ---- Re-export the STAGED in-AIR capacity-gate satisfaction weld (PIECE 2 of the VK epoch) ----
