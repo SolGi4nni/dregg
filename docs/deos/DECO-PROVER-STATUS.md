@@ -90,16 +90,30 @@ So the notary attests **origin** (this came from a Stripe session); the STARK at
 **integrity** (these exact facts are what was committed and minted). The interim trusts
 the former; the latter is proven.
 
-### Assessment: `tlsn` integration vs the interim
+### Layer 2b — the tlsn / MPC-TLS INTERFACE + ADAPTER (in-tree; the trustless-shaped swap)
 
-A full `tlsn` (TLSNotary) MPC-TLS integration pulls a tokio async runtime, a TLS
-backend, and the two-party-computation prover/verifier stack — a large surface with its
-own version graph, and it needs a running notary service. It was scoped as the named
-remaining layer rather than force-fit here; the interim's ed25519 notary attestation is
-real crypto with an explicit, single-sentence trust boundary. Flipping origin to
-trustless = replacing `deco-prove/src/notary.rs` with an MPC-TLS `tlsn`-style capture,
-with **no change** to `deco-prove/src/prover.rs` or the bridge verifier — Layer 1 and
-the verifier are origin-agnostic.
+`deco-prove/src/tlsn_attest.rs`. TLSNotary is **git-only** (`v0.1.0-alpha.15`, a
+tokio/rustls + `mpz`-alpha 2PC surface that needs a running notary service — not on
+crates.io, not vendorable as an in-lane live run). So rather than force-fit the live
+stack, we built the **Layer-2 interface + adapter**: it models the exact object a
+*verified* `tlsn_core::presentation::PresentationOutput` takes and performs the DECO-side
+binding — server pinning (`api.stripe.com`), notary pinning, the presentation signature,
+**selective disclosure** of the payment facts out of an *authenticated* HTTP transcript
+(a redacted amount is refused), and the `succeeded` gate — then hands the extracted
+`StripePaymentFacts` to Layer 1 unchanged.
+
+It is exercised end-to-end by a **real tlsn-format fixture** (an authenticated
+`GET api.stripe.com/v1/payment_intents/{id}` transcript that redacts the
+`Authorization: Bearer sk_live_…` secret), which mints the conserved amount through the
+REAL `stripe_deco` verifier (`tests/roundtrip.rs::tlsn_presentation_binds_into_layer2_and_mints`).
+⚑ It is the interface+adapter over a fixture, **NOT** a live trustless MPC-TLS run — the
+notary+2PC session binding is the named remaining wiring. Full design + the exact
+remaining steps: `docs/deos/TLSN-INTEGRATION.md`.
+
+Flipping origin to trustless = replacing `deco-prove/src/notary.rs` (Layer 2a) with the
+`tlsn_attest` adapter fed by a real `presentation.verify()` output, with **no change** to
+`deco-prove/src/prover.rs` or the bridge verifier — Layer 1 and the verifier are
+origin-agnostic.
 
 ## Crates touched
 
