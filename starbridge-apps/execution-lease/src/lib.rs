@@ -383,7 +383,42 @@ pub fn open_lease(
     Ok(())
 }
 
+/// **Open ONLY the durable execution image** on a cell — the [`EXEC_COLL`] genesis
+/// checkpoint (the [`STEP_SLOT`]/[`STATE_DIGEST_SLOT`] scalars + their committed
+/// heap mirror) and the live [`LAPSED_SLOT`] latch — WITHOUT the rent
+/// [`open_obligation`] meter and WITHOUT the economic slots
+/// ([`RENT_SLOT`]/[`PERIOD_SLOT`]/[`PROVIDER_SLOT`]/[`PERIODS_PAID_SLOT`]).
+///
+/// This is the durable-image half of [`open_lease`] with the obligation meter
+/// SUBTRACTED, for a lease whose meter is the FUSED
+/// [`dregg_cell::prepaid_lease`] capacity (which carries its OWN sealed schedule +
+/// reserve in the disjoint `PREPAID_LEASE_COLL`, so there is no separate
+/// obligation cursor and no separately-sealed economics to keep in sync). After
+/// this the cell binds the genesis checkpoint and reads live (not lapsed);
+/// [`advance_checkpoint`] / [`mark_lapsed`] then drive it exactly as for an
+/// obligation lease. Infallible — there is no schedule to well-form-check here.
+pub fn open_durable_image(cell: &mut Cell, genesis_digest: FieldElement) {
+    let st = &mut cell.state;
+    st.set_field(STEP_SLOT as usize, field_from_u64(0));
+    st.set_field(STATE_DIGEST_SLOT as usize, genesis_digest);
+    st.set_field(LAPSED_SLOT as usize, field_from_u64(0));
+    st.set_heap(EXEC_COLL, KEY_STEP, encode_i64(0));
+    st.set_heap(EXEC_COLL, KEY_DIGEST, genesis_digest);
+}
+
+/// **Latch the lease LAPSED** (the provider reclaims the slot): set
+/// [`LAPSED_SLOT`]. Idempotent — once lapsed, stays lapsed (the
+/// `Monotonic(LAPSED_SLOT)` tooth). For a meter that audits its OWN schedule (the
+/// fused prepaid meter) and needs to mirror the lapse into the durable-image
+/// latch so [`is_lapsed`] / [`advance_checkpoint`] refuse further delivery, the
+/// same way [`lapse_if_behind`] does for an obligation lease.
+pub fn mark_lapsed(cell: &mut Cell) {
+    cell.state
+        .set_field(LAPSED_SLOT as usize, field_from_u64(1));
+}
+
 /// **Meter one rent period** on the lease cell: discharge the current period of
+/// the rent obligation (the recurring forge-detectors bite — one-shot per period,
 /// the rent obligation (the recurring forge-detectors bite — one-shot per period,
 /// on-schedule, exactly the sealed rent), and bump [`PERIODS_PAID_SLOT`]. Returns
 /// the rent amount that the PAYMENT (a separate conserving `Transfer`, see
@@ -1022,6 +1057,38 @@ mod tests {
             Effect::Transfer { from, to, amount }
                 if from == lease && to == cid(2) && amount == 100
         ));
+    }
+
+    #[test]
+    fn open_durable_image_seeds_the_image_without_meter_or_economics() {
+        // The durable-image half alone: genesis checkpoint + live latch, and NO
+        // obligation meter and NO economic slots (that half is the fused prepaid
+        // capacity's job on this cell).
+        let mut cell = lease_cell();
+        open_durable_image(&mut cell, field_from_u64(0xABCD));
+        assert_eq!(checkpoint_step(&cell), 0);
+        assert_eq!(heap_checkpoint_step(&cell), 0);
+        assert!(!is_lapsed(&cell));
+        // No obligation meter was sealed (unlike open_lease).
+        assert!(ObligationState::read(&cell).is_err());
+        // No economics were sealed — the RENT slot was never written to the rent
+        // (it stays at its zero default; open_lease would seal it to the rent).
+        assert_eq!(
+            cell.state
+                .get_field(RENT_SLOT as usize)
+                .map(field_to_u64)
+                .unwrap_or(0),
+            0
+        );
+        // The image advances + latches exactly as an obligation lease's does.
+        assert_eq!(advance_checkpoint(&mut cell, field_from_u64(2), &[]), Ok(1));
+        mark_lapsed(&mut cell);
+        assert!(is_lapsed(&cell));
+        assert_eq!(
+            advance_checkpoint(&mut cell, field_from_u64(3), &[]),
+            Err(LeaseError::Lapsed),
+            "a lapsed durable image refuses further delivery"
+        );
     }
 
     #[test]

@@ -13,6 +13,7 @@
 //! pure layer refuses it up front so the two agree.
 
 use dregg_cell::Cell;
+use dregg_cell::prepaid_lease;
 use starbridge_execution_lease::{
     self as lease, FieldElement, LeaseError, LeaseTerms, field_from_u64, field_to_u64,
 };
@@ -26,6 +27,9 @@ use crate::{
 pub enum VatError {
     /// The underlying lease could not be opened (ill-formed terms / meter error).
     Lease(LeaseError),
+    /// The underlying FUSED prepaid lease could not be opened (ill-formed prepaid
+    /// terms) — see [`open_vat_prepaid`].
+    PrepaidLease(prepaid_lease::LeaseError),
     /// The vat's lifecycle slots are missing or hold a forged/contradictory pair
     /// (e.g. `up` set on a terminal phase) — the cell is not a well-formed vat.
     MalformedState,
@@ -75,6 +79,47 @@ pub fn open_vat(
     witness: WitnessStance,
 ) -> Result<(), VatError> {
     lease::open_lease(cell, terms, genesis_digest)?;
+    let st = &mut cell.state;
+    // The lifecycle machine, at Created: phase Provisioned, up = 0.
+    st.set_field(
+        VAT_PHASE_SLOT as usize,
+        field_from_u64(VatState::Created.phase().rank()),
+    );
+    st.set_field(VAT_UP_SLOT as usize, field_from_u64(0));
+    st.set_field(MACHINE_SLOT as usize, field_from_u64(0));
+    st.set_field(ENDPOINT_SLOT as usize, field_from_u64(0));
+    // The renter's witness stance — WriteOnce, sealed at open.
+    st.set_field(WITNESS_SLOT as usize, field_from_u64(witness.as_u64()));
+    Ok(())
+}
+
+/// **Open a vat on the FUSED prepaid meter** — the drift-unrepresentable twin of
+/// [`open_vat`]. Instead of the obligation meter + separately-sealed economics,
+/// this composes:
+///
+///   * [`lease::open_durable_image`] — the [`EXEC_COLL`](lease::EXEC_COLL) genesis
+///     checkpoint + LAPSED latch (the durable image half, NO obligation cursor);
+///   * [`dregg_cell::prepaid_lease::open_lease`] — the fused meter+reserve
+///     (`PREPAID_LEASE_COLL`): the sealed rent schedule AND the prepaid budget,
+///     drawn one rent per period in ONE atomic write that also advances the meter
+///     cursor (so meter/pay drift is a type error, not a discipline);
+///   * the vat lifecycle phase slots, at [`VatState::Created`], exactly as
+///     [`open_vat`] seals them (disjoint from both the lease and prepaid slots).
+///
+/// The three heap collections (`EXEC_COLL`, `PREPAID_LEASE_COLL`, and the vat
+/// lifecycle fields) are disjoint, so they coexist in the one cell. After this the
+/// cell's commitment binds a provisioned Dregg Computer whose rent is metered by
+/// the fused prepaid capacity.
+pub fn open_vat_prepaid(
+    cell: &mut Cell,
+    prepaid_terms: &prepaid_lease::LeaseTerms,
+    genesis_digest: FieldElement,
+    witness: WitnessStance,
+) -> Result<(), VatError> {
+    // The durable-image half (no obligation meter, no economic slots).
+    lease::open_durable_image(cell, genesis_digest);
+    // The FUSED meter+reserve half — its own well-formed check bites here.
+    prepaid_lease::open_lease(cell, prepaid_terms).map_err(VatError::PrepaidLease)?;
     let st = &mut cell.state;
     // The lifecycle machine, at Created: phase Provisioned, up = 0.
     st.set_field(
@@ -172,6 +217,39 @@ mod tests {
         open_vat(&mut cell, &terms, genesis, WitnessStance::Symbolic)
             .expect("a well-formed vat opens");
         cell
+    }
+
+    #[test]
+    fn a_prepaid_vat_opens_at_created_and_walks_the_lifecycle() {
+        // The fused-meter twin of `fresh_vat`: open the durable image + the prepaid
+        // meter+reserve + the lifecycle, and prove the lifecycle machine is
+        // identical (it is disjoint from the meter).
+        let lease_id = CellId::from_bytes([0x01; 32]);
+        let provider = CellId::from_bytes([0x02; 32]);
+        let asset = CellId::from_bytes([0x03; 32]);
+        let mut cell = Cell::with_balance([0x01; 32], [0x03; 32], 0);
+        // rent 100 / 50 blocks / start 1000 / unbounded / budget = 3 periods.
+        let pterms =
+            prepaid_lease::LeaseTerms::new(lease_id, provider, asset, 100, 50, 1000, 0, 300);
+        open_vat_prepaid(&mut cell, &pterms, field_from_u64(0), WitnessStance::Full)
+            .expect("a well-formed prepaid vat opens");
+        assert_eq!(read_state(&cell).unwrap(), VatState::Created);
+        // The prepaid meter+reserve is sealed and holds the full budget.
+        let ls = prepaid_lease::LeaseState::read(&cell).expect("prepaid meter sealed");
+        assert_eq!(ls.remaining_budget, 300);
+        assert_eq!(ls.drawn_total, 0);
+        // The lifecycle walks exactly as the obligation vat's does.
+        assert_eq!(
+            apply_transition(&mut cell, VatTransition::BringUp, 0xB0, 0xE0).unwrap(),
+            VatState::Running
+        );
+        // Ill-formed prepaid terms are refused at open (non-vacuity).
+        let bad = prepaid_lease::LeaseTerms::new(lease_id, provider, asset, 0, 50, 1000, 0, 300);
+        let mut c2 = Cell::with_balance([0x01; 32], [0x03; 32], 0);
+        assert!(matches!(
+            open_vat_prepaid(&mut c2, &bad, field_from_u64(0), WitnessStance::Full),
+            Err(VatError::PrepaidLease(_))
+        ));
     }
 
     #[test]

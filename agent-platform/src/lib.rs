@@ -55,11 +55,15 @@ use dregg_agent::toolkit::Toolkit;
 use dregg_agent::tools::OperatorTools;
 use dregg_cell::{Cell, CellId};
 use hosted_durable::{LeaseCharge, SettleReceipt, Settlement};
-use hosted_lease::{FieldElement, HostedLease, LeaseTerms, WORKING_BASE, field_from_u64};
+use hosted_lease::{
+    FieldElement, HostedLease, LeaseTerms, PrepaidLeaseTerms, WORKING_BASE, field_from_u64,
+};
 // THE FOLD: the vat's verified lifecycle machine. A tenant's grain lifecycle is a
 // `VatState` sealed on the SAME lease cell (slots disjoint from the lease economics),
 // advanced only through the legality-checked `apply_transition` — no ad-hoc state.
-use starbridge_vat::lifecycle::{WitnessStance, apply_transition, open_vat, read_state};
+// THE FUSION: `open_vat_prepaid` opens the durable image + the FUSED prepaid
+// meter+reserve + the lifecycle in one pass (the meter/pay-drift-free rent path).
+use starbridge_vat::lifecycle::{WitnessStance, apply_transition, open_vat_prepaid, read_state};
 pub use starbridge_vat::{VatState, VatTransition};
 
 /// **The R1 renter finality anchor**, supplied whole at rent: the renter-chosen
@@ -82,13 +86,14 @@ pub struct RenterAnchor {
 /// cover this many rent periods. An operator-facing sizing knob, overflow-checked
 /// against attacker-facing `rent_per_period` at rent.
 ///
-/// Honest scope: this pool and [`HostedLease`]'s meter are still TWO separately
-/// enforced pieces coupled by app control flow (see the settle-before-meter note
-/// on [`AgentPlatform::bill_period`]). The proven FUSED capacity that makes that
-/// drift unrepresentable already exists — `dregg_cell::prepaid_lease` (escrow ⊗
-/// obligation in ONE atomic discharge, Lean rung `PrepaidLease.lean`) — but
-/// riding it is a `hosted-lease` seam (its cell + meter live inside
-/// [`HostedLease`]), named for the main loop.
+/// This same number seeds the grain's FUSED prepaid reserve
+/// ([`HostedLease::open_prepaid`], `budget := rent_per_period * FUNDED_PERIODS`):
+/// the reserve mirrors the real funded balance, and each bill draws one rent from
+/// the reserve in the SAME atomic write that advances the meter cursor
+/// ([`dregg_cell::prepaid_lease`], Lean rung `PrepaidLease.lean`). So meter/pay
+/// drift is unrepresentable — not app discipline — and the reserve bounds the
+/// bills: a draw past it is refused `InsufficientBudget` before any value moves
+/// (see [`AgentPlatform::bill_period`]).
 const FUNDED_PERIODS: i64 = 1024;
 
 /// Durable-image working keys (all `>= WORKING_BASE`): where the grain's lease
@@ -347,17 +352,31 @@ impl AgentPlatform {
         let session = Session::open(account, bundle.spec)
             .map_err(|e| AgentPlatformError::Session(e.to_string()))?;
 
-        // THE FOLD: rent = open_vat (opens the durable-execution lease AND seals the
-        // vat lifecycle at `Created` on the same cell) + a `BringUp` transition to
-        // `Running` (the launch). The lease is then wrapped read/meter-side by a
-        // `HostedLease` over the SAME already-opened cell (`from_cell`, never a second
-        // open of the WriteOnce economic slots). A hosted agent grain rents Symbolic
-        // (verify-later) — proofs are re-derived on collapse, not proof-as-you-go.
+        // THE FOLD + THE FUSION: rent = open_vat_prepaid (opens the durable image AND
+        // the FUSED prepaid meter+reserve AND seals the vat lifecycle at `Created` on
+        // the same cell) + a `BringUp` transition to `Running` (the launch). The
+        // prepaid reserve is seeded to `rent_per_period * FUNDED_PERIODS` (== the
+        // `funding` the lease cell balance holds), so the reserve MIRRORS the real
+        // balance: each bill draws one rent from the reserve in the SAME atomic write
+        // that advances the meter cursor (meter/pay drift unrepresentable). The lease
+        // is then wrapped read/meter-side by a `HostedLease` over the SAME cell
+        // (`from_cell_prepaid`, never a second open). A hosted agent grain rents
+        // Symbolic (verify-later) — proofs re-derived on collapse, not as-you-go.
+        let prepaid_terms = PrepaidLeaseTerms::new(
+            terms.lease,    // lessee — the obligor/payer (the lease cell)
+            terms.provider, // lessor — the beneficiary (the provider)
+            terms.asset,
+            terms.rent_per_period as i64,
+            terms.period,
+            terms.start,
+            terms.max_periods,
+            funding, // the prepaid reserve mirrors the funded balance
+        );
         let mut lease_cell =
             Cell::with_balance(bytes32(terms.lease), bytes32(terms.asset), funding);
-        open_vat(
+        open_vat_prepaid(
             &mut lease_cell,
-            &terms,
+            &prepaid_terms,
             field_from_u64(0),
             WitnessStance::Symbolic,
         )
@@ -372,7 +391,7 @@ impl AgentPlatform {
         .map_err(|e| AgentPlatformError::Lifecycle(format!("{e:?}")))?;
         let vat =
             read_state(&lease_cell).map_err(|e| AgentPlatformError::Lifecycle(format!("{e:?}")))?;
-        let lease = HostedLease::from_cell(lease_cell, terms.clone());
+        let lease = HostedLease::from_cell_prepaid(lease_cell, prepaid_terms);
 
         let mut tenants = self.tenants.lock().expect("platform poisoned");
         // Re-check under the write lock (TOCTOU with the read check above).
@@ -684,18 +703,22 @@ impl AgentPlatform {
         self.drive_serving(host, &goal, &mut brain)
     }
 
-    /// Bill one rent `period` for `host` at `clock`: meter it on the lease (the
-    /// obligation forge-detector bites an early/double/off-schedule charge) and
-    /// settle the rent through `settlement` — the in-process double in tests, or the
-    /// on-chain node rail in production.
+    /// Bill one rent `period` for `host` at `clock`: read-only GATE the bill on the
+    /// FUSED prepaid meter ([`HostedLease::check_bill`] — refusing off-schedule /
+    /// replay / over-draw / exhausted-reserve BEFORE any value moves), settle the
+    /// drawn rent through `settlement` (the conserving cross-cell `Transfer` — the
+    /// in-process double in tests, the on-chain node rail in production), then
+    /// [`discharge`](HostedLease::discharge) it (the ONE atomic write that draws the
+    /// rent from the reserve AND advances the meter cursor).
     ///
-    /// Honest shape: meter and settle here are TWO enforced pieces sequenced by
-    /// this method (the ordering note below is app-level discipline against
-    /// meter/pay drift). The proven FUSED capacity where that drift is
-    /// UNREPRESENTABLE — `dregg_cell::prepaid_lease` (escrow ⊗ obligation, one
-    /// atomic discharge, Lean rung) — is the named upgrade, gated on
-    /// `hosted-lease` adopting it (the meter and the cell live inside
-    /// [`HostedLease`], not here).
+    /// Settlement COMPLEMENTS the meter, it does not replace it: `discharge` is the
+    /// in-cell meter-plus-reserve-draw counter (moves NO value cross-cell), `settle`
+    /// is the one cross-cell payment. Each bill draws exactly `rent` and settles that
+    /// same `rent`, so `sum(settled) == drawn_total <= budget`. No double-pay (settle
+    /// is exactly-once by `(lease_id, period)`, discharge is one-shot by the cursor);
+    /// no unpaid draw (`check_bill`'s `InsufficientBudget` backstop refuses drawing
+    /// past the reserve BEFORE settle runs). The tenant guard is held across all
+    /// three, so the gate → settle → discharge sequence is atomic per grain.
     pub fn bill_period<S: Settlement>(
         &self,
         host: &str,
@@ -706,14 +729,13 @@ impl AgentPlatform {
         let arc = self.tenant_arc(host)?;
         let mut guard = arc.lock().expect("tenant poisoned");
         let tenant = &mut *guard;
-        // SETTLE BEFORE METER. The rent for a period is the sealed terms.rent_per_
-        // period (exactly what meter would discharge), so we can build the charge
-        // without advancing the meter. Settling first means a settlement FAILURE
-        // leaves the meter cursor un-advanced and the whole bill retryable — vs.
-        // meter-first, where a settle failure would strand the period
-        // discharged-but-unpaid (the meter's one-shot forbids re-discharge). The
-        // Settlement rail is exactly-once by (lease_id, period), so a retry replays
-        // the settle rather than double-paying.
+        // GATE (read-only): refuse off-schedule / replay / over-draw / over-reserve
+        // BEFORE any value moves. `rent` is the amount this period WILL draw.
+        let rent = tenant
+            .lease
+            .check_bill(period, clock)
+            .map_err(|e| AgentPlatformError::Lease(e.to_string()))?;
+        // SETTLE the drawn rent — the one conserving cross-cell payment.
         let terms = &tenant.terms;
         let charge = LeaseCharge::new(
             hex32(terms.lease),
@@ -721,15 +743,17 @@ impl AgentPlatform {
             hex32(terms.asset),
             host,
             period,
-            terms.rent_per_period as i64,
+            rent,
         );
         let receipt = settlement
             .settle(&charge)
             .map_err(|e| AgentPlatformError::Settle(e.to_string()))?;
-        // Advance the meter only after the rent has settled.
+        // DISCHARGE: the ONE atomic write — draw exactly `rent` from the reserve AND
+        // advance the meter cursor. The gate already proved this accepts, so the draw
+        // and the settled payment are the same `rent` (sum(settled) == drawn_total).
         tenant
             .lease
-            .meter(period, clock)
+            .discharge(period, clock)
             .map_err(|e| AgentPlatformError::Lease(e.to_string()))?;
         Ok(receipt)
     }
@@ -1159,6 +1183,100 @@ mod tests {
             platform.drive(&host, "too late", &mut brain2),
             Err(AgentPlatformError::Lapsed)
         ));
+    }
+
+    /// **THE FUSION, end to end over the platform.** Billing meters AND settles as
+    /// one gated sequence on the FUSED prepaid meter: each `bill_period` gates
+    /// (`check_bill`), settles the drawn rent, then discharges it in ONE atomic
+    /// write. After N bills the committed reserve is `budget − N·rent`, the drawn
+    /// total is `N·rent == discharged_count·rent`, and `sum(settled) == drawn_total`
+    /// (settle and draw are the same rent). A replay is `WrongPeriod` and an
+    /// off-schedule bill is `NotYetDue` — BOTH refused by the gate BEFORE settle, so
+    /// no value moves and `settled_total` does not budge (no double-pay, no drift).
+    #[test]
+    fn bill_period_fuses_meter_and_settlement_on_the_prepaid_reserve() {
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+        let host = platform
+            .rent(
+                "fused.agents.dregg",
+                "dga1_fused",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(), // rent 100 / 50 blocks / start 1000
+                None,
+            )
+            .expect("provision");
+        let ledger = TestConservingLedger::new();
+        // Fund the payer (the lease cell, cid(7)) — mirrors the reserve.
+        ledger.fund(&hex32(cid(9)), &hex32(cid(7)), 1_000_000);
+
+        // Three on-schedule bills: each draws + settles exactly the rent.
+        for k in 0..3i64 {
+            let receipt = platform
+                .bill_period(&host, k, 1000 + k * 50, &ledger)
+                .expect("gate → settle → discharge");
+            assert_eq!(receipt.amount, 100, "each bill settles exactly the rent");
+            // The committed reserve + drawn total after n bills (meter == draw).
+            let n = k + 1;
+            let (remaining, drawn, count) = read_prepaid(&platform, &host);
+            assert_eq!(
+                remaining,
+                100 * FUNDED_PERIODS - n * 100,
+                "reserve == budget − n·rent"
+            );
+            assert_eq!(drawn, n * 100, "drawn == n·rent");
+            assert_eq!(drawn, count * 100, "drawn == discharged_count·rent");
+            // sum(settled) tracks the drawn total exactly.
+            assert_eq!(
+                ledger.settled_total(&host),
+                drawn,
+                "sum(settled) == drawn_total"
+            );
+        }
+        let settled_after_three = ledger.settled_total(&host);
+        assert_eq!(settled_after_three, 300);
+
+        // Replay period 0: the gate refuses WrongPeriod BEFORE settle — no double-pay,
+        // and the reserve/drawn are untouched.
+        assert!(matches!(
+            platform.bill_period(&host, 0, 1000, &ledger),
+            Err(AgentPlatformError::Lease(_))
+        ));
+        assert_eq!(
+            ledger.settled_total(&host),
+            settled_after_three,
+            "a replayed period does not settle again"
+        );
+        let (remaining, drawn, _) = read_prepaid(&platform, &host);
+        assert_eq!(
+            drawn, 300,
+            "the meter did not advance on the refused replay"
+        );
+        assert_eq!(remaining, 100 * FUNDED_PERIODS - 300);
+
+        // Off-schedule (period 3 due at 1150) billed early at clock 1149: NotYetDue,
+        // refused by the gate BEFORE settle — no value moved.
+        assert!(matches!(
+            platform.bill_period(&host, 3, 1149, &ledger),
+            Err(AgentPlatformError::Lease(_))
+        ));
+        assert_eq!(
+            ledger.settled_total(&host),
+            settled_after_three,
+            "an off-schedule bill moves no value"
+        );
+    }
+
+    /// Read the grain's committed prepaid `(remaining_budget, drawn_total,
+    /// discharged_count)` off its lease cell (test helper).
+    fn read_prepaid(platform: &AgentPlatform, host: &str) -> (i64, i64, i64) {
+        let arc = platform.tenants.lock().unwrap().get(host).cloned().unwrap();
+        let t = arc.lock().unwrap();
+        let st = hosted_lease::PrepaidLeaseState::read(t.lease.cell())
+            .expect("the grain rides the prepaid meter");
+        (st.remaining_budget, st.drawn_total, st.discharged_count)
     }
 
     /// **THE FOLD, end to end.** A rented grain's lifecycle IS a vat: it launches to
