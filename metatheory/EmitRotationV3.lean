@@ -35,6 +35,14 @@ import Dregg2.Circuit.RotatedKernelRefinementExercise
 -- BESIDE the deployed cohort (no live routing); the descriptor a flippable escrow weld commits a VK
 -- for. Refinement proven kernel-clean in Dregg2.Deos.SettleEscrowSatDescriptor.
 import Dregg2.Deos.SettleEscrowSatDescriptor
+-- G5 tags 18/19: the staged in-AIR satisfaction descriptors for the discharge-obligation and
+-- vault-deposit capacities. dischargeSatVmDescriptor2R24 (legs cur/tot/due in field slots 0/1/2 +
+-- the DUE_BITS range check + selector PI pin) and vaultSatVmDescriptor2R24 (asset/share in slots
+-- 0/1 + the overflow-safe multi-limb no-dilution product + selector PI pin). Both piCount == 47,
+-- the tag-17 shape; emitted BESIDE the deployed cohort (staged, no live routing). Refinement
+-- proven kernel-clean in Dregg2.Deos.{Discharge,Vault}SatDescriptor.
+import Dregg2.Deos.DischargeSatDescriptor
+import Dregg2.Deos.VaultSatDescriptor
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotation
@@ -115,3 +123,16 @@ def main : IO Unit := do
   -- (no live routing, no VK committed); the descriptor a flippable escrow weld commits a VK for. Its
   -- in-proof refinement is `Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatV3_forces_settle_gate`.
   IO.println s!"v3rot\tsettleEscrowSatVmDescriptor2R24\t{(Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatVmDescriptor2R24 0 1).name}\t{emitVmJson2 (Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatVmDescriptor2R24 0 1)}"
+  -- THE WELDED DISCHARGE-OBLIGATION SATISFACTION descriptor (G5 tag 18): the staged
+  -- `dischargeSatVmDescriptor2R24` (legs cur/tot/due in field slots 0/1/2) — the two additive
+  -- satisfaction equalities + the DUE_BITS range check + the selector PI pin (PI 46). Emitted BESIDE
+  -- the deployed cohort (no live routing, no deployed-default flip — GENTIAN-blocked); the descriptor
+  -- a flippable discharge weld commits a VK for. In-proof refinement
+  -- `Dregg2.Deos.DischargeSatDescriptor.dischargeSatV3_forces`.
+  IO.println s!"v3rot\tdischargeSatVmDescriptor2R24\t{(Dregg2.Deos.DischargeSatDescriptor.dischargeSatVmDescriptor2R24 0 1 2).name}\t{emitVmJson2 (Dregg2.Deos.DischargeSatDescriptor.dischargeSatVmDescriptor2R24 0 1 2)}"
+  -- THE WELDED VAULT-DEPOSIT SATISFACTION descriptor (G5 tag 19): the staged
+  -- `vaultSatVmDescriptor2R24` (asset/share in field slots 0/1) — the overflow-safe multi-limb
+  -- no-dilution product gate + the selector PI pin (PI 46). Emitted BESIDE the deployed cohort (no
+  -- live routing, no deployed-default flip — GENTIAN-blocked); the descriptor a flippable vault weld
+  -- commits a VK for. In-proof refinement `Dregg2.Deos.VaultSatDescriptor.vaultSatV3_forces`.
+  IO.println s!"v3rot\tvaultSatVmDescriptor2R24\t{(Dregg2.Deos.VaultSatDescriptor.vaultSatVmDescriptor2R24 0 1).name}\t{emitVmJson2 (Dregg2.Deos.VaultSatDescriptor.vaultSatVmDescriptor2R24 0 1)}"

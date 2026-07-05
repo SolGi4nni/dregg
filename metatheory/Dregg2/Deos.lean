@@ -119,6 +119,16 @@ import Dregg2.Deos.CapacitySatisfaction
 -- the sealed-escrow gate (both legs Deposited before / Consumed after) IN-PROOF, with partial/phantom
 -- UNSAT teeth. STAGED beside the deployed cohort (no live routing, no VK committed). #assert_all_clean.
 import Dregg2.Deos.SettleEscrowSatDescriptor
+-- The WELDED discharge-obligation + vault-deposit satisfaction DESCRIPTORS (G5 tags 18/19), joining
+-- tag-17 as staged in-AIR satisfaction members: dischargeSatVmDescriptor2R24 (cur/tot/due in field
+-- slots 0/1/2 + the two additive equalities + the DUE_BITS range check + the selector PI pin) and
+-- vaultSatVmDescriptor2R24 (asset/share in slots 0/1 + the overflow-safe multi-limb no-dilution
+-- product gate + the selector PI pin). Both piCount == 47 (the tag-17 shape), #assert_all_clean.
+-- STAGED beside the deployed cohort (no live routing, no VK committed, no deployed-default flip —
+-- the sound flip stays GENTIAN-blocked). Emitted into rotation-v3-staged-registry.tsv via
+-- EmitRotationV3.lean beside settleEscrowSat.
+import Dregg2.Deos.DischargeSatDescriptor
+import Dregg2.Deos.VaultSatDescriptor
 -- The escrow capacity SELECTOR is bound to the cell's COMMITTED declaration (§6 item-2 soundness
 -- keystone for the flip): HALF A — under DeclCommitBinds the selector demand is un-dodgeable by a
 -- hollow declaration; HALF B — the descriptor's PI pin forces the demanded selector ON, which the
