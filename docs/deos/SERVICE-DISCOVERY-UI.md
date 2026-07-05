@@ -203,9 +203,10 @@ turns through the same `World`. The model
 (`starbridge-v2/src/service_directory.rs`) is already gpui-free and produces a
 flat `all_text()` projection, so the deos-view card binding is a pure
 view-layer mapping with no model change. (The deos-view card vocabulary itself
-— `list`/`section`/`menu`/`button`/`tile` → real turns — is the sibling
-full-view-mounting lane's `card_pane`/`card_surface`; this surface mounts onto
-it once that lane lands, see §5.)
+— `list`/`section`/`menu`/`button`/`tile` → real turns — is carried by the
+now-landed card-mounting lane: `starbridge-v2/src/card_pane.rs` mounts a
+`deos_view` view-tree as a live gpui surface, hosted as a dock pane via
+`starbridge-v2/src/dock/card_surface.rs`. See §5 and `docs/reference/deos-view.md`.)
 
 ---
 
@@ -232,9 +233,7 @@ the sibling of `service_explorer.rs`, registered in `lib.rs` under
 Seven tests cover: discover reads the real ledger; **announce commits a real
 turn and discover reads it back** (the loop closes over the ledger); non-service
 and absent-cell refusals are in-band; prefix/kind filtering; and the
-non-services widening. The model is verified clean (`cargo check`); the live
-test run is gated only by an unrelated in-flight sibling edit to `card_pane.rs`
-in the shared tree (the deos-view card lane, mid-build).
+non-services widening. The model is verified clean (`cargo check`).
 
 ---
 
@@ -317,13 +316,12 @@ to peers, ready to be fed by the assembled `discovery.json` (§1.4).
 
 ## 5. The cleanest next builds (named, ordered)
 
-1. **The cockpit panel + tab** — `panels_discovery.rs` rendering
-   `ServiceDirectory` as a `Tab::ServiceDirectory` (a list of rows, each with
-   "announce" + "open in 🛰 SERVICES"). Deferred this pass because adding a 32nd
-   cockpit surface couples to the `deos-js` layout-card surface-count tests
-   (recent commits churn "30→31") and to the cockpit's `Tab` registration in
-   `mod.rs`/`nav.rs`/`panels_workspace.rs` — a coordinated edit best done in a
-   quiet window, not racing the sibling card lane.
+1. **The cockpit panel + tab** — LANDED: `panels_service_directory.rs` renders
+   `ServiceDirectory` as `Tab::ServiceDirectory` (📇 DIRECTORY,
+   `starbridge-v2/src/cockpit/mod.rs` — the tab, label, and panel are registered),
+   a list of rows each with "announce" + "open in 🛰 SERVICES". The coordinated
+   `Tab` registration (`mod.rs`/`nav.rs`/`panels_workspace.rs`) + `deos-js`
+   surface-count edit was made in a quiet window as planned.
 2. **The deos-view card binding** — express the panel as a real deos-view card
    (mount on the sibling lane's `card_pane`/`card_surface`) so the surface is
    renderer-independent and the buttons fire `announce`/`invoke` turns.

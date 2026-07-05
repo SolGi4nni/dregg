@@ -9,6 +9,19 @@ assemble what we have close enough. The honest verdict is in §6; it is "pursue 
 *narrow* construction, because the pieces already realize the rest." Citations
 flagged-from-memory for spot-check are gathered in §7.*
 
+> **RESOLVED — the §6/§7 construction has since been PROVEN.** This teaching doc left the
+> Settlement Soundness theorem as "the one narrow thing to pursue" and §7 as "the one genuinely
+> open technical question" (does the finality gate bind the settlement-time revocation set?). Both
+> are now answered at HEAD. `settlement_soundness` is proven and `#assert_axioms`-clean as the
+> abstract keystone (`metatheory/Metatheory/SettlementSoundness.lean:153`) AND composed against the
+> real deployed circuit (`metatheory/Dregg2/Circuit/SettlementSoundness.lean`, `#assert_axioms
+> settlement_soundness` at :244) — accept ⟹ genuine transition whose authority was live at
+> settlement, exactly as §6.3 specified. The §7 finality-gate question is answered YES by
+> `finalized_commit_binds_revoked` (`Circuit/SettlementSoundness.lean:168`): equal finalized roots
+> force equal `revoked`, so the settlement tip's revocation set IS bound into the commitment; the
+> only residual is a named Rust circuit-emit conformance floor, not an open design decision. See
+> `docs/reference/lean-distributed.md`. §1–§5 below (the abstract mapping) stand unchanged.
+
 ---
 
 ## 0. THE ONE-SENTENCE ANSWER (so you can read the rest knowing where it lands)
@@ -392,6 +405,12 @@ Mina's "side past branches" (ember's reference) are this: a node may explore and
 is on the selected chain. dregg's `fork_at` / `simulate` / `World::fork` are the
 exact same affordance, with the verification tooth added.
 
+Since this doc was written, the operable branch-and-stitch primitive has been *lifted* out of
+`ForkMembraneHost::stitch_pair` into a transport-free `BranchStitchSession`
+(`starbridge_v2::branch_stitch_session`), with a runnable flagship (`starbridge-apps/branch-stitch-multiplayer`)
+that opens a session, forks, and stitches over `embedded-executor` only — the fork/branch semantics
+below realized as a driveable multiplayer app.
+
 ### 3.4 The consensus tip = a preferred (maximal) configuration; finality = common-knowledge selection
 
 The blocklace's finalized prefix (`finality.rs`, supermajority `⌊2n/3⌋+1`) is the
@@ -564,7 +583,9 @@ Two things must be true for §4.3 to be *correct* and not merely plausible:
 
 These are the two places to *prove*, not assume. They are the difference between a
 correct distributed-time-travel semantics and a close-enough one that occasionally
-settles a revoked authority.
+settles a revoked authority. *(Both are now PROVEN — see §6.2/§6.3: obligation 1 is
+`finalized_commit_binds_revoked`, obligation 2 is `settled_revocation_bounded`,
+`#assert_axioms`-clean in `Dregg2/Circuit/SettlementSoundness.lean`.)*
 
 ---
 
@@ -625,46 +646,51 @@ So the answer to "is there a construction to pursue or do we assemble what we ha
 mostly proved — but there *is* a narrow, principled construction worth pursuing, and it
 is not the easy 90%.
 
-### 6.2 Where the gap is
+### 6.2 Where the gap *was* (now closed)
 
-The gap is **not** in forking, branching, witness-serving, or monotone merge — those
-are done and faithful. The gap is the **revocation/settlement seam** (§4): the two
-residual obligations of §4.4.
+The gap was **never** in forking, branching, witness-serving, or monotone merge — those
+are done and faithful. The gap was the **revocation/settlement seam** (§4): the two
+obligations of §4.4, both now discharged.
 
 1. **Bind the settlement-time revocation set into the commitment** so a light client
    checks authority-was-honored-at-the-tip, not just authority-was-honored-at-branch.
+   — DONE: `finalized_commit_binds_revoked` (`Circuit/SettlementSoundness.lean:168`).
 2. **Put the propagation-delay bound inside the finality gate**, so two honest nodes
    cannot disagree about whether a since-revoked authority settled.
+   — DONE: `settled_revocation_bounded` at the settlement coordinate.
 
-This is exactly the one place §0 promised: the non-monotone heart, where "close
+This was exactly the one place §0 promised: the non-monotone heart, where "close
 enough" is subtly wrong. A system that evaluates branch authority at branch time and
 carries it forward into settlement is *close enough* in every monotone case and *wrong*
 precisely when a revocation lands between branch and settlement. That is not a corner
 case to wave at; it is the whole reason ember's intuition flagged "but not in all
 cases — revocation gets involved."
 
-### 6.3 Is *proving dregg a faithful instance* worth pursuing?
+### 6.3 Is *proving dregg a faithful instance* worth pursuing? — DONE.
 
-**Yes, but selectively.** The valuable proof is *not* re-proving the whole
+**Yes, and it has been proven.** The valuable proof was *not* re-proving the whole
 event-structure axiomatization — that would be elegant but low-marginal-value, because
-the parts that are already proved (`LaceMerge`, `CrashRecovery`, `Confluence`,
+the parts that were already proved (`LaceMerge`, `CrashRecovery`, `Confluence`,
 `BlocklaceFinality`, `Revocation`) already discharge the load-bearing facts (union is a
 join; replay is recovery; non-confluent forces consensus; finality agrees; revocation
-is topology-bounded). What is worth proving, *because it is the place correctness can be
-silently wrong*, is the **settlement-time-authority theorem**:
+is topology-bounded). What was worth proving, *because it is the place correctness can be
+silently wrong*, was the **settlement-time-authority theorem** — and it is now proven:
 
-> **(Settlement Soundness, the theorem to pursue.)** If a turn `T` settles on the
+> **(Settlement Soundness — PROVEN, `#assert_axioms`-clean.)** If a turn `T` settles on the
 > finalized tip at height `h`, then every capability `T` exercised is honored by the
 > tip's finalized revocation set at `h` — and the commitment at `h` binds that
 > revocation set, so a light client accepting the settled batch can verify it.
 
-This is a genuine extension of `AssuranceCase.lean::unfoolability_guarantee` (which
+This is a genuine extension of the light-client `unfoolability_guarantee` (which
 already gives "accept ⟹ genuine transition") to *"accept ⟹ genuine transition whose
-authority was live at settlement,"* composed from `Revocation.lean`'s bound +
-`FinalizedLightClient.lean`'s commitment + the cap-bridge. It is the
+authority was live at settlement,"* composed from `Revocation.lean`'s bound + the
+finalized commitment + the cap-bridge. It is the
 `holeFill_binds_in_circuit` discipline applied to the late-bound *negative* fact of
-revocation. **That** is the construction to pursue — narrow, named, and exactly the
-place the existing pieces don't yet meet.
+revocation. It landed exactly as scoped: the abstract keystone `settlement_soundness`
+(`metatheory/Metatheory/SettlementSoundness.lean:153`) and the deployed compose
+(`metatheory/Dregg2/Circuit/SettlementSoundness.lean`, `#assert_axioms` at :244), with
+`finalized_commit_binds_revoked` (`:168`) discharging the §7 bind question. See
+`docs/reference/lean-distributed.md`.
 
 ### 6.4 The recommendation (a path, not a wall)
 
@@ -681,10 +707,13 @@ place the existing pieces don't yet meet.
    evaluated against the *finalized* revocation set at the tip — never carried forward
    from branch time. This is the one behavioral rule that prevents the subtle bug.
 
-4. **Prove Settlement Soundness (§6.3)** and bind the settlement-time revocation set
-   into the finalized commitment (§4.4.1), with the propagation-delay bound inside the
-   finality gate (§4.4.2). This is the small, high-value Lean work — compose
-   `Revocation.lean` + `FinalizedLightClient.lean` + the cap-bridge, don't re-derive.
+4. **Settlement Soundness (§6.3) is PROVEN** — the settlement-time revocation set binds
+   into the finalized commitment (§4.4.1) via `finalized_commit_binds_revoked`, with the
+   propagation-delay bound carried at the settlement coordinate (§4.4.2,
+   `settled_revocation_bounded`). It landed exactly as this step scoped it: a *composition* of
+   `Revocation.lean`'s bound + the finalized commitment + the cap-bridge, `#assert_axioms`-clean
+   (`metatheory/Dregg2/Circuit/SettlementSoundness.lean`). The one remaining residual is a named
+   Rust circuit-emit conformance floor, not open design work.
 
 5. **Leave the comonad/HoTT/full event-structure-axiom formalizations as optional
    elegance** — illuminating to *name* (they confirm the shape), not load-bearing to
@@ -692,12 +721,11 @@ place the existing pieces don't yet meet.
    collapse makes 3–4 nearly trivial and the general case a *parametrized* bound, not a
    different theorem.
 
-The bottom line ember asked for: **we are constructing correctly everywhere *except*
-the revocation/settlement seam, where the correct semantics is "settlement-time
-authority evaluation with the revocation set bound into the commitment," and the one
-thing to actually pursue is the Settlement Soundness theorem that makes that
-evaluation light-client-checkable.** Everything else, we have — and it's coherent, not
-a pile.
+The bottom line ember asked for: **we are constructing correctly everywhere, and the one
+place it could have been silently wrong — the revocation/settlement seam — is now closed by
+the proven Settlement Soundness theorem: "settlement-time authority evaluation with the
+revocation set bound into the commitment," light-client-checkable and `#assert_axioms`-clean.**
+Everything else, we have — and it's coherent, not a pile.
 
 ---
 
@@ -738,12 +766,14 @@ duality (down-sets ↔ distributive lattices); CALM/Hellerstein and Ameloot–Ne
 (arXiv:2408.14999) for the right-skew. I am confident in the *substance* (what each result says and
 why it applies); the years/venues are the spot-check.
 
-**The one genuinely open *technical* question** (not a citation): whether dregg's finality gate
-already binds the settlement-time revocation set into the finalized commitment, or whether that bind
-must be *added*. If it's already bound, Settlement Soundness (§6.3) is a *composition* of existing
-theorems; if not, the bind is a small descriptor/commitment change that comes *first* (a floor under
-the proof). I did not verify the finality gate's commitment contents at HEAD — that is the next read,
-and it decides whether §6.4 step 4 is "compose" or "extend-then-compose."
+**The one formerly-open *technical* question — now ANSWERED** (not a citation): whether dregg's
+finality gate already binds the settlement-time revocation set into the finalized commitment, or
+whether that bind must be *added*. It is bound. `finalized_commit_binds_revoked`
+(`metatheory/Dregg2/Circuit/SettlementSoundness.lean:168`) proves equal finalized roots force equal
+`revoked` — the settlement tip's revocation set IS committed — so Settlement Soundness (§6.3) landed
+as a *composition* of existing theorems, `#assert_axioms`-clean, not an extend-then-compose. The only
+residual is a named Rust circuit-emit conformance floor (`Circuit/SettlementSoundness.lean:49-56`),
+not an open bind decision. Grounded what-is: `docs/reference/lean-distributed.md`.
 
 ---
 

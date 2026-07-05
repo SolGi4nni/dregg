@@ -93,6 +93,15 @@ Realizes [DISTRIBUTED-SERVO-FACETS.md](DISTRIBUTED-SERVO-FACETS.md) Facet 1:
 A runnable demo of both facets:
 `cd starbridge-web-surface && cargo run --example web_of_cells_demo`.
 
+### SINCE: the crate grew past the two-deliverable slice
+
+This note was written at the two-file slice (`delegate.rs` + `web_of_cells.rs`);
+`starbridge-web-surface/src/` has since grown the surrounding surfaces —
+`affordance.rs`, `game.rs`, `rehydrate.rs`, `receipt_stream.rs`,
+`transclusion.rs` / `transclusion_chain.rs` / `transclusion_version.rs`,
+`vision_predicate.rs`, `world.rs`. The cap-gate + `dregg://` web-of-cells core
+below is still the load-bearing spine; the newer modules build on it. ( ˘▾˘ )
+
 ## The LIBSERVO SEAM — exactly where the real engine plugs in
 
 `libservo` **BUILDS and LINKS on this host** through the SWGL (no-GPU) render

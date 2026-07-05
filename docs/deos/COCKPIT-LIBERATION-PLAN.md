@@ -20,14 +20,16 @@ bridging it to a `deos_view::ViewNode`, hosting it in a `CardPane`, firing real 
 through `World::commit_turn`, AND routing edit-from-within (`ModeCardSurface::edit_view`, a
 receipted `ViewPatch` with blame). What is NOT done: (1) the card path is a `card-pane`-gated
 *alternative* with the gpui tree still the default home — the thin-renderer claim is not yet
-the deployed default for any surface; (2) deos-view's vocabulary (8 nodes) covers the
-read-mostly surfaces but cannot yet express the rich-interactive ones (tab-strips, scrubbers,
-right-click menus, halo handles, spatial grids); (3) there is no progressive-disclosure
+the deployed default for any surface; (2) the rich-interactive nodes (tab-strips, scrubbers,
+right-click menus, halo handles, spatial grids) are now IN the deos-view *renderer*
+(`tree.rs`'s `Tabs`/`Slider`/`Menu`/`Halo`/`Grid`/`Gauge`/`Section`), so the remaining gap is
+the deos-js authoring *mirror* (`card_editor::ViewTree`) catching each up node-by-node as a
+surface needs to emit one; (3) there is no progressive-disclosure
 (simple-vs-adept) layer; (4) the apps-launcher is built but unmounted and not a card.
 **Recommended first move: flip the already-carded `Objects` surface to card-as-default
 (delete its gpui tree), proving the thin-renderer claim on one self-contained surface; in the
-same lane stand up `Proofs` as a brand-new read-only card to prove the greenfield path.** The
-deos-view vocabulary already covers both without any extension.
+same lane flip `Proofs` (its `proofs_card.rs` already exists) to prove the flip on a second
+read-only surface.** The deos-view vocabulary already covers both without any extension.
 
 ---
 
@@ -151,9 +153,14 @@ proves the richest read-case: RawFields → live `Bind` rows, Affordances → ca
 `props.tag` is already used as a styling escape hatch (e.g. `first-room`'s `tag:"genuine"` /
 `tag:"refusal"` rows render with distinct CSS).
 
-### What is MISSING to express the richer surfaces
+### The richer nodes (now IN the renderer; the mirror catches up)
 
-The gap is real and specific. The vocabulary cannot yet express:
+Update: the richness vocabulary below is now BUILT into the deos-view *renderer*
+(`deos-view/src/tree.rs`: `Section`, `Tabs`, `Gauge`, `Grid`, `Menu`, `Halo`, `Slider` — each
+with a native gpui walker and a web HTML walker). The gap is no longer "the renderer can't
+express these"; it is "the deos-js authoring *mirror* (`card_editor::ViewTree`) emits each one
+node-by-node as a surface needs it." The list documents each node's shape and which surfaces
+consume it:
 
 1. **Tab-strip / sub-tabs** — `Lanes` (4 lanes), `Devtools` (3 sub-tabs), `Moldable`
    (one sub-tab per Presentation). Needs a `tabs{selected_slot}` container whose visible
@@ -178,11 +185,13 @@ The gap is real and specific. The vocabulary cannot yet express:
 8. **Styled section** — a titled, bordered container with a header. Cheap to fake with
    `vstack(text(title), …)`; a `section{title}` node makes disclosure + theming uniform.
 
-These 8 additions are the deos-view extension backlog. They are renderer-independent by
-construction: each gets a native (gpui) and a web (HTML) walker, exactly as the existing 8
-nodes do. None requires a kernel/circuit change — a card is *data*, the affordances are the
-same turns. The first migrations (clean-five) need NONE of these; the extension is staged
-behind the surfaces that need it.
+These nodes each already ship BOTH a native (gpui) and a web (HTML) walker in `tree.rs`,
+exactly as the original 8 do — renderer-independent by construction. None required a
+kernel/circuit change — a card is *data*, the affordances are the same turns. What remains is
+the authoring-mirror side: a card *builds* a `card_editor::ViewTree`, so a surface that needs
+to EMIT (say) a `tabs` node needs the mirror to grow that constructor, not the renderer. The
+first migrations (clean-five) need NONE of these; the mirror extension is staged behind the
+surfaces that need it.
 
 ---
 
@@ -283,15 +292,16 @@ card-as-default and (b) extending coverage to new surfaces, easiest vocabulary-f
   today's vocabulary, and it proves the load-bearing claim — *the surface is defined by its
   card, gpui only paints* — on a real surface end-to-end. **Recommended FIRST.**
 
-**Rung B — stand up the remaining read-only surfaces as new cards (no vocabulary gap).**
+**Rung B — flip the remaining read-only surfaces (their cards already exist; no vocabulary gap).**
 - **`Proofs`** (`panels_web.rs:10`) — a verification-tier board, pure read-only badges +
-  receipt rows. A new `proofs_card.rs` (verdict rows = `text`/`bind`, a per-turn `verify`
-  button) is trivial in today's 8 nodes. **Recommended companion to Rung A** — proves the
-  greenfield card path (a surface with NO prior card) alongside the flip.
-- **`Organs`** (`panels_workspace.rs:2940`) — sectioned read-only organ cell-state. Needs
-  the `section{title}` sugar (or fake it with `text`+`vstack`). New `organs_card.rs`.
+  receipt rows. `deos-js/src/proofs_card.rs` already exists (verdict rows = `text`/`bind`, a
+  per-turn `verify` button) — trivial in the base vocabulary. **Recommended companion to Rung
+  A** — flip it alongside the Objects flip.
+- **`Organs`** (`panels_workspace.rs:2940`) — sectioned read-only organ cell-state.
+  `deos-js/src/organs_card.rs` exists; the `section{title}` node it wants is now in the
+  renderer (`tree.rs`'s `Section`).
 - **`Home`** (`panels_workspace.rs:1175`) — static prose + liveness pills. `LandingPortal`
-  is already gpui-free; the card is mostly `text` + `bind` pills. New `home_card.rs`.
+  is already gpui-free; `deos-js/src/home_card.rs` exists (mostly `text` + `bind` pills).
 
 **Rung C — the moderate-interaction surfaces (one new vocabulary node each).**
 - **`Swarm`**, **`Trust`**, **`Cipherclerk`** — rosters + lifecycle buttons; need `section`
@@ -377,12 +387,15 @@ buttons (no vocabulary gap), and it lights up the apps-in-desktop milestone dire
    only render; delete the gpui tree. Proves "starbridge-v2 is a thin renderer" on one
    self-contained surface, end-to-end (card defines it, gpui paints it, buttons fire real
    turns, edit-from-within reshapes it).
-2. **Stand up `Proofs` as a new card** (Rung B) + **the launcher card** (§7): prove the
-   greenfield card path and light the apps-in-desktop milestone — both fit today's vocabulary.
+2. **Flip `Proofs`** (Rung B; `proofs_card.rs` already exists) + **stand up the launcher card**
+   (§7, still greenfield — no `launcher_card.rs` yet): prove the second flip and light the
+   apps-in-desktop milestone — both fit today's vocabulary.
 3. **Add the disclosure filter** (§6): `props.adept` + a simple/adept render level, reusing
    `props.tag`. Delight by default, moldability for adepts, one card.
-4. **Extend the vocabulary** (§2) only as the surfaces that need it arrive: `section` →
-   `tabs`/`menu`/`halo` (the actuation primitives, highest leverage) → `slider` → `grid`.
+4. **Grow the authoring mirror** to emit the richer nodes (§2) as the surfaces that need them
+   arrive — the renderer already has `section`/`tabs`/`menu`/`halo`/`slider`/`grid`; the
+   `card_editor::ViewTree` constructors catch up: `section` → `tabs`/`menu`/`halo` (the
+   actuation primitives, highest leverage) → `slider` → `grid`.
 5. **Walk the ladder** (Rungs C, D): the moderate surfaces, then the rich ones, `WebShell`
    and `Docs` last.
 

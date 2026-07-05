@@ -1,13 +1,24 @@
 # Branch-and-stitch multiplayer as a real app — the distributed-Houyhnhnm flagship
 
+> **STATUS — BUILT (slice 0 executed).** This plan has been carried out. The transport-free
+> primitive is live at `starbridge-v2/src/branch_stitch_session.rs` (`BranchStitchSession`,
+> `Branch`, `StitchVerdict` — the exact §2.2 API), registered at `starbridge-v2/src/lib.rs`
+> (`pub mod branch_stitch_session;` under `embedded-executor`), and the demo crate exists at
+> `starbridge-apps/branch-stitch-multiplayer/` (`Cargo.toml` + `src/main.rs`, the Beat A/B/C
+> arc). Read §§2–4 below as the design rationale for what shipped, not as future work.
+> **One tail is still open:** the §2.4 refactor of `ForkMembraneHost::stitch_pair` into a thin
+> adapter over the session did NOT land — `stitch_pair` (`starbridge-v2/src/shared_fork.rs`)
+> still calls `stitch_projections` / `settle_umem_stitch` directly rather than delegating to
+> `BranchStitchSession::stitch`. That is the one genuinely-remaining slice.
+
 The distributed-Houyhnhnm synthesis — *distributed · reversible · capability-secure ·
 witnessed · branch-and-stitch* — already exists as a PROVEN theorem and a working
-production path. What is missing is the last adoption step: a reusable primitive a plain
+production path. What was missing was the last adoption step: a reusable primitive a plain
 demo can call, and an inspiring app that exhibits the whole thing end to end without
 dragging in the cockpit's chat/GPU transport stack.
 
-This is the design + build plan for that. Present-tense, first-principles, grounded to
-`file:line` at HEAD. It changes no code; it scopes the next wave.
+This is the design + build plan for that (now executed — see the STATUS banner).
+Present-tense, first-principles, grounded to `file:line` at HEAD.
 
 The one-breath claim the app makes real: **two agents fork one shared verified world,
 diverge on their own branches, and stitch back through a single gated door — compatible
@@ -194,9 +205,14 @@ deos-matrix `StitchOutcome`. The gate predicate, the conferred-cap gather, the
 * **One line in `lib.rs`:** `#[cfg(feature = "embedded-executor")] pub mod
   branch_stitch_session;` (a shared-manifest edit — main loop owns it, quiet window).
 
-### 2.4 `ForkMembraneHost::stitch_pair` becomes a thin adapter (slice 1, AFTER the session)
+### 2.4 `ForkMembraneHost::stitch_pair` becomes a thin adapter (slice 1 — STILL OPEN)
 
-Once the session exists and is green, `stitch_pair` (`shared_fork.rs:1072`) re-expresses as:
+**Status: not yet done.** The session (slice 0) landed, but `stitch_pair`
+(`shared_fork.rs:1072`) still carries its own body — it calls `stitch_projections` /
+`settle_umem_stitch` directly and does NOT delegate to `BranchStitchSession::stitch`. This
+adapter refactor remains the one open tail of the plan.
+
+Once done, `stitch_pair` (`shared_fork.rs:1072`) re-expresses as:
 look up the two `(World, MembraneFrustum)` registry entries → build a `BranchStitchSession`
 view over `source_fork`/`focus` → call `session.stitch(...)` → map `StitchVerdict` into the
 deos-matrix `StitchOutcome`/`ConflictObject` (the wire wrapping the chat lane needs). No
@@ -280,13 +296,14 @@ the SAME call AFTER drops gift. This is `revoke_before_tip_unsettleable` made op
 
 ---
 
-## 4. The first build slice (for the NEXT wave)
+## 4. The first build slice — **DONE**
 
-**Slice 0 — the smallest end-to-end proof: two branches, one stitch, the gate bites.**
-Scoped to be built WITHOUT touching `shared_fork.rs` (the cockpit sibling lane's file) —
-purely additive new files plus two main-loop-owned shared-manifest lines.
+**Slice 0 — the smallest end-to-end proof: two branches, one stitch, the gate bites — LANDED.**
+Built WITHOUT touching `shared_fork.rs` (the cockpit sibling lane's file), as planned —
+purely additive new files plus two main-loop-owned shared-manifest lines. The files below
+now exist:
 
-New files (disjoint, no clobber):
+New files (disjoint, no clobber) — **both shipped**:
 1. `starbridge-v2/src/branch_stitch_session.rs` — the §2.2 primitive. Composition only; it
    imports the existing public surface of `world`/`shared_fork`/`umem_membrane`. Does NOT
    edit those files.

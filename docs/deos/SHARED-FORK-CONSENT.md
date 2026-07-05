@@ -44,7 +44,7 @@ of MY authority is partitioned into three tiers:
 | tier | what the recipient may do | consent | grounded in |
 |------|---------------------------|---------|-------------|
 | **EMBEDDED** | exercise the cap LOCALLY, mutate the forked cell, any number of times | none — fully granted into the fork | `Effect::GrantCapability` + `CapabilityRef` (`cell/src/capability.rs`), attenuated by the real `is_attenuation` (`granted ⊆ held`) |
-| **STUDYREF** | INSPECT / open the cell's exposed slots — read only | exercise (mutate) needs an **upgrade request** | `ReadCap` (`cell/src/read_cap.rs`): read-lattice `FieldSet` + `ViewKey`, attenuates via `is_read_attenuation` |
+| **STUDYREF** | INSPECT / open the cell's exposed slots — read only | exercise (mutate) needs an **upgrade request** | `ReadCap` (`cell-crypto/src/read_cap.rs`, crate `dregg_cell_crypto`): read-lattice `FieldSet` + `ViewKey`, attenuates via `is_read_attenuation` |
 | **NETWORKBOUNDARY** | request to exercise; the exercise "elaborates elsewhere" (the network, or my real non-embedded cells) | every exercise opens a **consent request** to me, granted/denied live | the powerbox grant-ceremony (`starbridge-v2/src/powerbox.rs`) + a `ConditionalTurn` whose `ProofCondition` is my grant (`turn/src/conditional.rs`) |
 
 The tiers form a lattice of *autonomy*: EMBEDDED ⊐ STUDYREF ⊐ NETWORKBOUNDARY in
@@ -82,7 +82,7 @@ I hold a world (my live `World`, my c-list). To invite someone:
 
 5. **Attenuate the studyrefs to read-only.** For each STUDYREF target, a
    `ReadCap::new(target, slots, view_key)` narrowed by `is_read_attenuation`
-   (`read_cap.rs:332`). The guest can `open_slot` / `open` the exposed slots
+   (`cell-crypto/src/read_cap.rs`). The guest can `open_slot` / `open` the exposed slots
    (decrypt + commitment-check) but holds NO write cap to the target — exercising
    requires an upgrade request (step (b)).
 
@@ -212,7 +212,7 @@ the consent-touching work re-clears the boundary at the settlement tip.
 * **Cap attenuation lattice** — `is_attenuation` (`granted ⊆ held`,
   `capability.rs:603`), `is_narrower_or_equal` (`permissions.rs:52`), faceted +
   in-place attenuation, the tombstone revoke.
-* **Studyref machinery** — `ReadCap` (`read_cap.rs`): read-lattice `FieldSet`,
+* **Studyref machinery** — `ReadCap` (`cell-crypto/src/read_cap.rs`, crate `dregg_cell_crypto`): read-lattice `FieldSet`,
   `ViewKey`, `is_read_attenuation`, `open_slot` (decrypt + commitment-bind). A
   studyref IS an attenuated `ReadCap` with no write cap.
 * **Powerbox grant-ceremony** — `powerbox.rs`: `CapabilityRequest`,

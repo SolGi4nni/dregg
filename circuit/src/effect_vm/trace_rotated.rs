@@ -3881,6 +3881,53 @@ pub fn generate_rotated_bridge_mint_wide(
     Ok((trace, dpis))
 }
 
+/// **THE DECO/Stripe money-in DEPLOYED-LEG PRODUCER (`generate_rotated_stripe_mint_wide`).**
+///
+/// The 8th carrier's producer (`docs/deos/DECO-CARRIER-PLAN.md` §2, Step 1). A Stripe
+/// money-in mint is minted through the SAME committed, PI-46-pinned mint row the bridge
+/// carrier rides — `mintVmDescriptor2R24` (Lean `mintV3BridgeHash`) — because that row
+/// ALREADY publishes the FIRST-row `param0` (`param::MINT_HASH`) at PI 46
+/// ([`generate_rotated_bridge_mint_wide`], NON-VK). The ONLY difference from a bridge
+/// mint is the FELT the row publishes: for DECO it is the FELT-DOMAIN payment identity
+/// [`crate::dsl::deco_payment::deco_payment_hash_felt`] over the `PaymentFacts` (the
+/// executor writes the SAME felt to [`VerifiedPayment::payment_hash`]), NOT the
+/// note-spend identity. The DECO fold arm dispatches on `CarrierWitness::Deco` (not
+/// `Bridge`), so the DECO commitment leaf — NOT the note-spend leaf — recomputes this
+/// felt IN-AIR and the fold's `connect` binds them; a Stripe payment identity no
+/// verifying DECO commitment backs is UNSAT.
+///
+/// This shares the pinned mint descriptor with bridge by design: PI 46 is the ONE
+/// mint-identity lane a mint row publishes (`DECO_PAYMENT_HASH_PI == BRIDGE_MINT_HASH_PI
+/// == 46`), and the carrier is distinguished by the witness/leaf, not the deployed
+/// descriptor — so the Stripe path goes light-client-live with NO descriptor/VK change.
+/// `payment_hash` MUST be the felt-domain [`crate::dsl::deco_payment::deco_payment_hash_felt`]
+/// (the anti-vacuity law), never the executor's byte-domain BLAKE3 `payment_nullifier`.
+pub fn generate_rotated_stripe_mint_wide(
+    initial_state: &CellState,
+    value_full: u64,
+    payment_hash: BabyBear,
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    let value_lo_u = value_full & ((1u64 << 30) - 1);
+    // The pinned mint row: `param0` carries the felt payment identity (the DECO leaf's
+    // in-AIR-recomputed anchor), exactly as bridge's `param0` carries its note-spend
+    // identity. Both ride `mintVmDescriptor2R24` — the carrier is the witness, not the row.
+    let effects = vec![Effect::BridgeMint {
+        value_lo: BabyBear::new(value_lo_u as u32),
+        mint_hash: payment_hash,
+        value_full,
+    }];
+    let (trace, dpis) =
+        generate_rotated_bridge_mint_wide(initial_state, &effects, before_w, after_w, caveat)?;
+    debug_assert_eq!(
+        dpis[ROT_PI_COUNT], payment_hash,
+        "the deployed stripeMint leg publishes the felt payment identity at PI 46 (param0)"
+    );
+    Ok((trace, dpis))
+}
+
 /// The host (pre-wide-append) width of the `heapWriteVmDescriptor2R24` descriptor. OPTION I: the
 /// DEPLOYED host is the after-spine membership-forcing `effHeapWriteV3 heapWriteV3` (Lean
 /// `HeapOpenEmit.effHeapWriteV3`), EXACTLY as cap deploys `effCapOpenWriteV3` — the Class-A splice base

@@ -220,6 +220,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-platform"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-agent",
+ "dregg-auth",
+ "dregg-cell",
+ "grain-verify",
+ "hosted-durable",
+ "hosted-lease",
+ "http-serve",
+ "serde",
+ "serde_json",
+ "starbridge-vat",
+]
+
+[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3006,6 +3023,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
+dependencies = [
+ "crc-catalog",
+]
+
+[[package]]
+name = "crc-catalog"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3625,6 +3657,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "deos-js",
+ "dregg-auth",
  "dregg-cell",
  "dregg-types",
  "gpui",
@@ -3991,6 +4024,12 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
+
+[[package]]
+name = "downcast-rs"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 
 [[package]]
 name = "dpi"
@@ -4948,6 +4987,16 @@ dependencies = [
  "getrandom 0.3.4",
  "postcard",
  "proptest 1.11.0",
+]
+
+[[package]]
+name = "dregg-sandbox"
+version = "0.1.0"
+dependencies = [
+ "dregg-agent",
+ "thiserror 2.0.18",
+ "wasmi",
+ "wat",
 ]
 
 [[package]]
@@ -7101,6 +7150,63 @@ dependencies = [
 ]
 
 [[package]]
+name = "grain-commons"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-sdk",
+ "ed25519-dalek",
+ "sandstorm-bridge",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "grain-fork"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-turn",
+ "hosted-lease",
+ "starbridge-v2",
+]
+
+[[package]]
+name = "grain-turn"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-agent",
+ "dregg-cell",
+ "dregg-sdk",
+]
+
+[[package]]
+name = "grain-verify"
+version = "0.1.0"
+dependencies = [
+ "dregg-agent",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "grain-verify-wasm"
+version = "0.1.0"
+dependencies = [
+ "dregg-agent",
+ "getrandom 0.3.4",
+ "grain-verify",
+ "hex",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "grid"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7443,6 +7549,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hosted-durable"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dregg-cell",
+ "serde",
+]
+
+[[package]]
+name = "hosted-lease"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "starbridge-execution-lease",
+]
+
+[[package]]
 name = "html-escape"
 version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7528,6 +7651,13 @@ dependencies = [
  "http 1.4.2",
  "http-body 1.0.1",
  "pin-project-lite",
+]
+
+[[package]]
+name = "http-serve"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -9011,6 +9141,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "leb128fmt"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
+
+[[package]]
 name = "lebe"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9392,6 +9528,16 @@ dependencies = [
  "float_next_after",
  "lyon_path",
  "num-traits",
+]
+
+[[package]]
+name = "lzma-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "297e814c836ae64db86b36cf2a557ba54368d03f6afcd7d947c266692f71115e"
+dependencies = [
+ "byteorder",
+ "crc",
 ]
 
 [[package]]
@@ -10229,6 +10375,12 @@ dependencies = [
  "tar",
  "walkdir",
 ]
+
+[[package]]
+name = "multi-stash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
 
 [[package]]
 name = "naga"
@@ -12414,7 +12566,7 @@ checksum = "806ee80c2a03dbe1a9fb9534f8d19e4c0546b790cde8fd1fea9d6390644cb0be"
 dependencies = [
  "anyhow",
  "bitflags 1.3.2",
- "downcast-rs",
+ "downcast-rs 1.2.1",
  "filedescriptor",
  "lazy_static",
  "libc",
@@ -14180,6 +14332,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "sandstorm-bridge"
+version = "0.1.0"
+dependencies = [
+ "data-encoding",
+ "dregg-auth",
+ "ed25519-dalek",
+ "lzma-rs",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -16957,6 +17122,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-billing"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "starbridge-bounty-board"
 version = "0.1.0"
 dependencies = [
@@ -17009,6 +17186,32 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
+]
+
+[[package]]
+name = "starbridge-domains"
+version = "0.1.0"
+dependencies = [
+ "dregg-app-framework",
+ "dregg-auth",
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "starbridge-edge-mandate"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-agent",
+ "dregg-app-framework",
+ "dregg-auth",
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -17088,6 +17291,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-guard"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
+ "serde",
+ "serde_json",
+ "starbridge-tool-access-delegation",
+]
+
+[[package]]
 name = "starbridge-identity"
 version = "0.1.0"
 dependencies = [
@@ -17133,6 +17350,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
+]
+
+[[package]]
+name = "starbridge-org"
+version = "0.1.0"
+dependencies = [
+ "dregg-app-framework",
+ "dregg-auth",
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -17355,6 +17584,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-vat"
+version = "0.1.0"
+dependencies = [
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-types",
+ "starbridge-execution-lease",
+]
+
+[[package]]
 name = "starbridge-web"
 version = "0.1.0"
 dependencies = [
@@ -17446,6 +17685,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 dependencies = [
  "float-cmp",
+]
+
+[[package]]
+name = "string-interner"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0"
+dependencies = [
+ "hashbrown 0.15.5",
+ "serde",
 ]
 
 [[package]]
@@ -19972,6 +20221,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c31d56021e873866c968588ed85ccdf56db5c426e44afdb4618c39895104b920"
 
 [[package]]
+name = "wasm-encoder"
+version = "0.252.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8185ae345fa5687c054626ff9a50e7089797a343d9904d1dc9820eb4c4d3196f"
+dependencies = [
+ "leb128fmt",
+ "wasmparser 0.252.0",
+]
+
+[[package]]
 name = "wasm-streams"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20050,13 +20309,101 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasmi"
+version = "0.41.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0abb8fac2aa4da3c1a2cbed279af49cd55174eabc6b31a1696dbcfba34b2d9e1"
+dependencies = [
+ "arrayvec",
+ "multi-stash",
+ "smallvec",
+ "spin 0.9.8",
+ "wasmi_collections",
+ "wasmi_core",
+ "wasmi_ir",
+ "wasmparser 0.226.0",
+ "wat",
+]
+
+[[package]]
+name = "wasmi_collections"
+version = "0.41.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "851ede16bb0837aaa922de87f87db449865b674091cea4fb0d493d12d34d4d4d"
+dependencies = [
+ "string-interner",
+]
+
+[[package]]
+name = "wasmi_core"
+version = "0.41.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ca2415ca8f7e9dc4032fa43dc8320dd7ef8f347bcb842df2ceefc9d546085a0"
+dependencies = [
+ "downcast-rs 2.0.2",
+ "libm",
+]
+
+[[package]]
+name = "wasmi_ir"
+version = "0.41.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5c4744a9ee5fe8ad3b6b553f04cebb850eac00d07cdf1025310c7887ca9a193"
+dependencies = [
+ "wasmi_core",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.226.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc28600dcb2ba68d7e5f1c3ba4195c2bddc918c0243fd702d0b6dbd05689b681"
+dependencies = [
+ "bitflags 2.13.0",
+ "indexmap 2.14.0",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.252.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3eb099dcadcde5be9eef55e3a337128efd4e44b4c93122487e4d2e4e1c6627c"
+dependencies = [
+ "bitflags 2.13.0",
+ "indexmap 2.14.0",
+ "semver",
+]
+
+[[package]]
+name = "wast"
+version = "252.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "942a3449d6a593fccc111a6241c8df52bda168af30e40bf9580d4394d7374c65"
+dependencies = [
+ "bumpalo",
+ "leb128fmt",
+ "memchr",
+ "unicode-width",
+ "wasm-encoder",
+]
+
+[[package]]
+name = "wat"
+version = "1.252.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c72a4ba7088f7bac94cf516e49882bdf97068904a563768cf249efc839ec42cb"
+dependencies = [
+ "wast",
+]
+
+[[package]]
 name = "wayland-backend"
 version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2857dd20b54e916ec7253b3d6b4d5c4d7d4ca2c33c2e11c6c76a99bd8744755d"
 dependencies = [
  "cc",
- "downcast-rs",
+ "downcast-rs 1.2.1",
  "rustix 1.1.4",
  "scoped-tls",
  "smallvec",

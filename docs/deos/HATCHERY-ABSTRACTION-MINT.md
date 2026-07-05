@@ -150,7 +150,7 @@ containment check — because conformance, not byte-identity, is the bar.
 
 ## 5. The bar (Track 2 = Track 1) — met
 
-A passing test suite (`sdk/src/hatchery_mint.rs::tests`, 13 tests, green):
+A passing test suite (`sdk/src/hatchery_mint.rs::tests`, 15 tests, green):
 
 * **mint a kind with an invariant** — `minting_bakes_the_invariant_into_the_descriptor`,
   `distinct_invariants_are_distinct_kinds`,
@@ -163,45 +163,55 @@ A passing test suite (`sdk/src/hatchery_mint.rs::tests`, 13 tests, green):
   `forged_membership_is_rejected`, `empty_program_is_a_forge_for_any_invariant`,
   with the conformance-not-byte-identity boundary pinned by
   `conforming_superset_program_passes_membership` and
-  `forge_that_carries_invariant_under_different_vk_still_conforms`.
-
-> CI note: at authoring time the `dregg-sdk` crate cannot *link* because a
-> parallel workstream's in-flight `Effect::{Promise,Notify,React}` variants
-> leave `turn/src/reversible.rs` non-exhaustive (a shared-tree breakage owned by
-> another agent, not this module — `hatchery_mint.rs` has **zero** `dregg-turn`
-> usage). The module's logic was validated green by running its test suite
-> against `dregg-cell` in isolation (13/13 pass); it re-greens through the SDK
-> the moment the sibling `turn` edits quiesce.
+  `forge_that_carries_invariant_under_different_vk_still_conforms`;
+* **an attestation is recorded and tied to the proven Lean rung** —
+  `attesting_hpres_records_the_crown`, `attested_kind_carries_the_contract_hash_material`,
+  and `invariant_matches_lean_rung` (the Rust rejection mirrors the Lean witnesses
+  of `metatheory/Dregg2/Deos/Hatchery.lean`).
 
 ---
 
-## 6. The next slice — binding the hpres proof
+## 6. The hpres proof — bound (the forever-crown is REAL)
 
-The `HpresProof` slot is presently `Pending`: the *runtime* enforcement (the
-executor refusing a violating turn) stands in for the Lean proof that the
-constraint set is a genuine single-step invariant. This does **not** launder a
-gap — a `Pending` kind is still enforced first-class by the kernel; what is
-deferred is the machine-checked "holds forever against any adversary" crown.
+The `HpresProof` slot is no longer a `Pending` stand-in. `HpresProof::Attested {
+contract_hash }` (`hatchery_mint.rs:189/198/292`, via `MintedKind::attest_hpres`)
+binds a minted kind to a machine-checked `Dregg2.Verify.Contract.CellContract`,
+and the Lean rung is landed in `metatheory/Dregg2/Deos/Hatchery.lean` — the LAST
+of the six house capacities, the house COMPLETE:
 
-The next slice (`MINT.next_slice`) binds `HpresProof::Attested { contract_hash }`
-to a concrete `Dregg2.Verify.Contract.CellContract` by content hash:
+1. The per-turn gate **is** the declared invariant (`evalStep_admits_iff_*`), an
+   admitted step preserves it (`step_preserves`, the **hpres**), and the same
+   `CellContract` carry skeleton lifts it to the unbounded trajectory —
+   `invariant_forever` (`Hatchery.lean:233`): under EVERY schedule of admitted
+   turns, a minted cell carries its invariant for life.
+2. The `Attested` structure **cannot be constructed without a real contract**
+   (hence a real `step_ob` proof term), so an attestation is a *proved*
+   forever-crown — `attested_enforces_forever` (`Hatchery.lean:291`), not a
+   trusted flag — and an attestation for a *different* invariant is rejected by
+   the decidable content-hash check, `forged_attestation_rejected`
+   (`Hatchery.lean:315`). The Rust `tests::invariant_matches_lean_rung` mirrors
+   these witnesses so the executor's rejection is tied to the proven statement.
 
-1. For each `Invariant` variant, exhibit the `CellContract` whose `Inv` is the
-   Lean reflection of the baked `StateConstraint` set and whose `step_ob` is
-   discharged by `exec_frame` (the Tier-1 tactic) — for `MonotoneField` this is
-   the `monotone_registry%` shape's one-step lemma; for `BalanceNeverBelow` it
-   is a `FieldGte`-preservation arm.
-2. Pin the contract with `#assert_axioms` to `{propext, Classical.choice,
-   Quot.sound}` (the Hatchery's discipline), and hash the artifact.
-3. `MintedKind::attest_hpres(contract_hash)` records the binding; a deployed
-   kind then carries `livingCellA_carries`'s "∀ n, holds" guarantee, not merely
-   the structural runtime check.
+The DEEPER weld — making the `Attested` forever-crown real for a *pure light
+client*, not just a re-executing validator — is also built: the per-turn FOLD
+over a re-proved contract-attestation leaf
+(`dregg_circuit_prove::hatchery_leaf_adapter::prove_hatchery_leaf`), connected to
+the mint leg's claimed `contract_hash` teeth by
+`prove_hatchery_binding_node_segmented`. This binds the `(contract_hash,
+invariant_digest)` tuple IN the deployed recursion tree, so a mint whose
+`contract_hash` is backed by no verifying attestation is UNSAT — the adversarial
+refutation `metatheory/Dregg2/Circuit/HatcheryBackingAttack.lean`
+(`deployed_admits_unbacked_hatchery`), with the fold tooth biting in
+`hatchery_leaf_adapter::tests::forged_contract_hash_is_rejected_by_the_fold`.
 
-The hard edge of that slice is the Lean ↔ Rust faithfulness axis (the
-`StateConstraint` evaluator agreeing with the `CellContract.Inv` reflection) —
-the same denotational-differential work the broader campaign tracks; the mint's
-job is to carry the *slot* for the attestation and to enforce first-class in the
-meantime.
+**The one honest remaining edge** (per `metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md`,
+hatchery row) is not the Lean proof — it is two named descriptor seams: the
+deployed mint leg must **dual-expose** its `contract_hash` teeth (a descriptor
+PI-exposure change — the VK-affecting "big-bang" piece this node consumes), and
+full in-AIR re-verification that a `contract_hash` resolves to a verifying
+`CellContract` proof term stays the named off-AIR digest-of-attestation cost.
+The forever-crown and the fold machinery are real today; these are the circuit
+dual-expose seams, not a missing proof.
 
 ---
 

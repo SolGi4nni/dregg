@@ -340,12 +340,16 @@ turn drives a genuine scene-gated present advancing the framebuffer); the
 framebuffer's last hop to a scanned-out panel is the F1/F2/F3 graphics frontier
 the compositor already names, NOT solved here.
 
-### 3.6 What still needs the real-seL4 Microkit runner
+### 3.6 What the real-seL4 Microkit runner needed — NOW LANDED (see §3.6.1)
+
+**All four steps below are CLOSED on real seL4** — `sel4/deos-live.system` boots
+live-repaint-on-turn under QEMU (`make run-deos-live`). This subsection is kept as
+the design record of what the transcription required; §3.6.1 is the landing.
 
 The semihost proves the LOOP (same PD source). To see it on the seL4 framebuffer
-(`make run-image`) needs the Microkit SDK (`MICROKIT_SDK` unset / `microkit` not
-on PATH in this environment; `qemu-system-aarch64` IS present). The remaining
-real-seL4 work, none of it a new primitive:
+originally needed the Microkit SDK (`microkit` was not on PATH when this was first
+written; `qemu-system-aarch64` IS present). The real-seL4 work that was required,
+none of it a new primitive:
 
 1. **`deos-live.system`** — the §3.2 two-PD assembly (`deos-image` PD ⊕
    `executor` PD ⊕ `turn_in`/`commit_out`/`repaint_out` DMA regions ⊕ the two
@@ -412,6 +416,12 @@ notification — on real seL4, not the stub. Run `make run-deos-live`.
 
 ## 4. Concrete next-step PD/IPC sketch (the smallest end-to-end slice)
 
+> The **repaint-on-turn** half of this sketch has since LANDED (§3.6.1,
+> `deos-live.system`, `make run-deos-live`). What remains genuinely open is the
+> **input-drives-turn** half: the virtio-tablet pointer (§2, still no `pointer.rs` /
+> no tablet flag in the Makefile) and wiring a keypress/click to trigger the turn.
+> The sketch below is retained as the original end-to-end shape.
+
 The smallest slice that demonstrates BOTH input-drives-turn AND repaint-on-turn,
 reusing only proven primitives:
 
@@ -469,15 +479,15 @@ transcription of the now-proven semihost wiring (§3.6).
   SAME PD source that runs on real seL4; it adds ONLY the projection + the wire,
   no new primitive — the deos `signals.rs` dirty-set → repaint-hook model lifted
   across the PD boundary.
-- **The bare-metal seL4 demonstration still needs the Microkit SDK** (§3.6;
-  `MICROKIT_SDK` unset / `microkit` absent in this environment, `qemu-system-
-  aarch64` present). Three transcription steps remain (a `deos-live.system`
-  two-PD assembly copying `net.system`'s shared-DMA+`<channel>` topology with a
-  `turn_in/commit_out/repaint_out` queue; the bare-metal executor-PD's
-  `repaint_out` write + notify; the deos-image PD's `notified(CH_REPAINT)` arm) —
-  the exact code the semihost proves, transcribed to `memory_region_symbol!` +
-  `Channel`. Run `make run-image` after `deos-live.system` lands; the semihost
-  proof runs now with `cd sel4/dregg-firmament && cargo test --test
-  live_repaint_on_turn`.
+- **The bare-metal seL4 demonstration has LANDED** (§3.6.1). `sel4/deos-live.system`
+  is the two-PD assembly (the `executor` PD ⊕ the `deos_image` PD, `turn_in`/
+  `commit_out` shared regions + the two `<channel>`s); the bare-metal executor-PD
+  commits a verified turn and signals, and the deos-image PD's `REPAINT` channel arm
+  (`deos-image/src/main.rs:78`) reads `commit_out` and repaints. It boots under
+  `qemu-system-aarch64` with ZERO faults across both PDs — **run `make
+  run-deos-live`** (`sel4/Makefile:412`). The executor-PD Lean-ELF runtime link that
+  §3.6 named as the WALL was cleared by the `executor-microkit-pd` keystone
+  (`sel4/dregg-pd/executor-microkit-pd/WALL.md`). The semihost proof still runs with
+  `cd sel4/dregg-firmament && cargo test --test live_repaint_on_turn`.
 - **No missing kernel/Microkit/virtio primitive.** Every seam is "implement the
   handler the code already documents" or "copy the proven net.system topology."

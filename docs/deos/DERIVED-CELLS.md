@@ -130,13 +130,19 @@ The unit tests in `cell/src/derived.rs` (all green, `cargo test -p dregg-cell
   (why a forge cannot be hidden).
 - `wrong_spec_is_rejected`, `filtered_sum_view`, `missing_source_is_rejected`,
   `value_encoding_roundtrips` (incl. `i64::MIN`/`MAX` and negatives).
+- `invariant_matches_lean_rung` — the Rust↔Lean tie: the executor forge/stale
+  rejection agrees with the `Dregg2/Deos/DerivedCell.lean` theorem (see §5).
 
 ---
 
 ## 5. Next slice: circuit binding
 
 The check in §3–4 is **executor-level** — a genuine forge rejection a verifier
-runs in the clear. The remaining slice is the **in-circuit witness**, so that a
+runs in the clear. The **executor-invariant Lean rung has since landed**:
+`metatheory/Dregg2/Deos/DerivedCell.lean` proves `bind_verifies` (honest
+round-trip), `forged_value_rejected` (the forge tooth), and `stale_rejected` (the
+stale tooth) as theorems, and `cell/src/derived.rs::tests::invariant_matches_lean_rung`
+ties the Rust rejection to it. What remains is the **in-circuit witness**, so that a
 light client verifying a *batch* sees the derivation enforced by the EffectVM
 circuit (part of the proven kernel transition) rather than re-running the check
 out of band:
@@ -149,8 +155,10 @@ out of band:
    commitment proven in the ledger root, the heap-opening for the
    `KEY_CLAIMED_VALUE` key proven against the derived cell's `heap_root`).
 3. A Lean rung: `verifyBatch accept ⟹ derived.claimed = f(sources.committed)`,
-   joining the circuit-soundness obligation table in
-   `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`.
+   joining the circuit-soundness obligation table (the grounded circuit what-is now
+   lives at `docs/reference/lean-circuit.md`). This is the *in-circuit* sibling of
+   the executor-invariant `DerivedCell.lean` rung above.
 
-Until that lands, derived cells are sound under the executor check and the
-commitment binding; the circuit rung is the named follow-up, not a silent gap.
+Until that lands, derived cells are sound under the executor check, the landed
+executor-invariant Lean rung, and the commitment binding; the **in-circuit**
+verifyBatch rung is the one named follow-up, not a silent gap.

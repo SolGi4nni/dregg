@@ -1,5 +1,17 @@
 # Compute-vs-Attest / Input-Wire-Binding Audit (the DEPLOYED circuit)
 
+> **⚠ GEOMETRY STALE (post-v12/v13-geom regen) — the CONCLUSIONS still hold, the NUMBERS do not.**
+> This audit traced the `transferVmDescriptor2R24` geometry as of 2026-06-28
+> (`trace_width=817`, `public_input_count=62`). The v12-geom and v13-geom big-bang regens have
+> since widened it: the committed row now shows **`trace_width=2495`, `public_input_count=68`**,
+> and the AFTER-carrier base moved (≈151→227). So every CONCRETE column index below (the BEFORE
+> block base 188, AFTER block base 239, commit carriers 705..712/809..816, and the `PI[46..53]`/
+> `PI[54..61]` last-16-PI cites) is **pre-regen and must be re-traced** — with `pi_count=68` the
+> "last 16 PIs" are indices 52..67. The load-bearing verdict is UNCHANGED: the deployed core
+> computes over root-bound wires, and the three named seams (§Real findings) remain staged/tracked.
+> Only the specific column/PI numbers are stale; treat them as "as of 2026-06-28". (The balance
+> gate `var[76]−var[54]−var[68]+2·var[69]·var[68]` itself survived the regens intact.)
+
 Date: 2026-06-28. Scope: read-only soundness audit answering one sharp question for the
 **deployed** verify path (NOT the staged gentian/satisfaction welds):
 

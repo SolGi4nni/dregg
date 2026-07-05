@@ -1,5 +1,21 @@
 # The Moldable Inspector & Gadget Framework for the dregg Desktop (starbridge-v2)
 
+> **STATUS — SHIPPED (framework + the whole L1–L10 ladder landed).** This began as a
+> forward design + build plan; it is now the delivered record. The framework spine lives
+> in `starbridge-v2/src/presentable.rs`: `trait Presentable`, `trait Gadget`,
+> `trait CommittingGadget`, `enum PresentationKind` (all seven kinds), `Registry`, and
+> `Spotter` — the L1 spine landed in commit `800945db6` ("L1 — the Presentation Spine").
+> Note the `Gadget`/`CommittingGadget` traits landed *inside* `presentable.rs`, not a
+> separate `gadget.rs` (the `gadget.rs` filename in §1.2's code block never became a real
+> file). Every planned lane shipped as its own module: **L2** `predicate_composer.rs`,
+> **L3** `turn_builder.rs`, **L4** `cap_inspector.rs`, **L6** `receipts_inspector.rs`,
+> **L7** `token_inspector.rs`, **L8** `federation_inspector.rs`, **L9** `circuit_inspector.rs`,
+> **L10** `settlement_inspector.rs`; 27 `impl Presentable` blocks now span every lane. Read
+> Part 3 as the delivered index (each lane names its real module), and the **~74-None
+> coverage matrix in Part 2 as the authoring-time census** — the formerly-all-None blocks
+> (slice 3 predicates, slice 9 federation, slices 7 & 11 circuit/commitment) now have real
+> inspectors. Part 1 remains the accurate design rationale.
+
 ## Executive summary
 
 starbridge-v2 today has ONE reflective shape — `reflect.rs`'s `Inspectable`: a flat, uniform field-tree projected from a live protocol object, with seven `ObjectKind`s and four cross-cutting axes (ocap edges, verification, provenance, image commitment). The census shows ~120 protocol types and ~95% of them have NO inspector at all. The framework generalizes the single field-tree into Pharo's moldable multiplicity: a `Presentable` trait where each protocol object offers MULTIPLE named **presentations** (the existing `Inspectable` becomes the mandatory `raw-fields` presentation; `graph`/`domain-visual`/`affordances`/`provenance`/`invariant`/`source` join it), and a `Gadget` trait for interactive value CONSTRUCTION that reuses the established `IntentDraft → simulate() → commit()` predict-then-commit spine so every gadget emits a REAL protocol value flowing through the verified executor. Both layers stay gpui-free and `cargo test`-able exactly as `reflect.rs`/`wonder.rs`/`inspect_act.rs` already are — the model is pure data; a thin gpui layer renders presentation kinds and gadget field-kinds generically. A `Spotter` universal search indexes every `Presentable` by its presentations' searchable text, and the existing `Halo` ring (wonder.rs) becomes the per-object direct-manipulation layer whose commands open presentations and arm gadgets. Complete coverage is a 12-slice × {presentations, gadgets, coverage} ledger covering every census type, with NO type left without at least the `raw-fields` floor.
@@ -380,26 +396,29 @@ Every type in this slice is **None** in starbridge-v2 today (the census states "
 
 ---
 
-## Part 3 — THE PRIORITIZED BUILD PLAN
+## Part 3 — THE BUILD PLAN (delivered — this is now the module index)
 
-Ordered by value × independence. Each lane is a coherent, gpui-free, `cargo test`-able module a single agent can build. "Needs primitive first" flags the dependency on the framework spine.
+Originally ordered by value × independence; every lane below has since landed as a coherent,
+gpui-free, `cargo test`-able module in `starbridge-v2/src/`. The `[…]` tags and "needs primitive
+first" notes are the original dependency planning, kept as rationale; the **→ module** pointer on
+each lane names where it actually shipped.
 
-### L1 — The Presentation Spine `[FRAMEWORK PRIMITIVE — must land first]`
+### L1 — The Presentation Spine `[FRAMEWORK PRIMITIVE — must land first]` → shipped: `presentable.rs` (commit `800945db6`)
 **Build:** `presentable.rs` (the `Presentable` trait, `Presentation`, `PresentationKind`, the seven `PresentationBody` variants), the registry, and `Spotter`. Make `reflect.rs`'s existing `Inspectable` the `RawFields` body verbatim, and re-house `inspect_act.rs`'s `Message` list as the `Affordances` body. Ship `impl Presentable` for the already-Live types (Cell, Receipt, Factory, Proof, Image, the organs) as the proof-of-shape.
 **Reuses:** `reflect.rs` (RawFields), `inspect_act.rs` (Affordances), `graph.rs` (Graph body), `dreggverse_map.rs`/`links_here.rs` (Spotter navigation).
 **Primitive needed:** none — it IS the primitive. **Pure-additive?** No — every other lane depends on it. This lane unblocks the rest.
 
-### L2 — The Predicate/Caveat Composer `[needs L1]`
+### L2 — The Predicate/Caveat Composer `[needs L1]` → shipped: `predicate_composer.rs`
 **Build:** the `StateConstraint`/`SimpleStateConstraint`/`Pred`/`WitnessedPredicate` builder (slice 3 + slice 12's constraint half): `Constraint Composer` (value gadget over the 50+ atoms), the `SRC(tree)` + `IV(cost/coordination §8 classifier)` + `Trace(eval)` presentations, the anti-strip `AnyOfBound` safety checker, and the live `evaluate_simple_constraint` test-harness verifier gadget.
 **Reuses:** `cell/src/program.rs` + `cell/src/predicate.rs` (the real evaluators — gadget `validate()` calls them), `cell/src/witness.rs`. The "lamesauce language uplift" the Refinement Epoch memory names.
 **Primitive needed:** L1's `Gadget`/`SubGadget`/`List` field kinds (predicates are recursively composed). **Pure-additive?** Mostly — it adds new gadgets/presentations; the only shared primitive is the recursive `SubGadget`. Highest value: the richest entirely-`None` surface, and the one the project's vision (`project-dregg3-campaign`, "one Pred algebra") most wants legible.
 
-### L3 — The Effect/CallForest/Turn Builder `[needs L1; partially exists]`
+### L3 — The Effect/CallForest/Turn Builder `[needs L1; partially exists]` → shipped: `turn_builder.rs`
 **Build:** generalize `simulate.rs`'s `IntentDraft` into the universal `Effect Composer` / `Action Builder` / `CallTree`/`CallForest` builder / `Turn Composer` (slices 1, 2, 6) as `CommittingGadget`s, with the `Compose→Simulate→Review→Commit` flow (already `IntentDraft→simulate→commit`), the `Conservation Checker` verifier, and the `Authorization Composer`.
 **Reuses:** `simulate.rs` verbatim (`IntentDraft`, `EffectKind`, `simulate`, `commit`, `SimOutcome`), `affordance.rs` (`AffordanceSurface::fire`), `inspect_act.rs` (the act loop).
 **Primitive needed:** L1 + the `CommittingGadget` trait (lands in L1). **Pure-additive?** Yes — extends the existing `IntentDraft` rather than replacing it. Foundational: it produces the values every other committing gadget composes.
 
-### L4 — Capabilities, Attenuation & the Cap-Crown `[needs L1]`
+### L4 — Capabilities, Attenuation & the Cap-Crown `[needs L1]` → shipped: `cap_inspector.rs`
 **Build:** the full `CapabilityRef`/`CapabilitySet`/`CanonicalCapTree`/`AuthRequired` surface (slices 4, 5-cap): `Cap Attenuator` (value, `validate` = real `is_attenuation`), `Grant/Revoke Wizards` (commit), the `Lattice` presentation for `AuthRequired`, the `MerkleTree(tombstone)` cap-crown view + `Membership Prover` verifier, the R7 `Freshness Checker`.
 **Reuses:** `affordance.rs`/`shell.rs` (`is_attenuation` gate, already Live), `circuit/src/cap_root.rs` (`CanonicalCapTree`), `cell/src/capability.rs`.
 **Primitive needed:** L1 + L3's grant/revoke `CommittingGadget`s. **Pure-additive?** Yes. High value: the ocap web is the protocol's spine and the ARGUS linchpin (`project-cap-reshape-plan`).
@@ -409,27 +428,27 @@ Ordered by value × independence. Each lane is a coherent, gpui-free, `cargo tes
 **Reuses:** `reflect.rs` (extends `reflect_cell`), `cell/src/state.rs`/`lifecycle.rs`/`commitment.rs`.
 **Primitive needed:** L1 + L3 (semantic-verb commits). **Pure-additive?** Yes — deepens the already-Live cell view.
 
-### L6 — Receipts, Provenance & Time-Travel `[needs L1; partially exists]`
+### L6 — Receipts, Provenance & Time-Travel `[needs L1; partially exists]` → shipped: `receipts_inspector.rs`
 **Build:** the `TurnReceipt`/`WitnessedReceipt`/`ConsumedCapWitness`/`RecordedStep`/`Checkpoint`/`Mmr`/`RangeOpening` surface (slice 6): the `PV(causal scrubber)` over the already-Live `replay.rs` History, the `MerkleTree(consumed-cap path)` verifier, the `Q-Chain Verifier`, the MMR range-proof verifier.
 **Reuses:** `replay.rs` (History/Checkpoint, Live), `reflect.rs` (`reflect_receipt`/`reflect_nullifiers`), `dregg-query/src/mmr.rs`, `dregg-analyzer/src/receipts.rs`.
 **Primitive needed:** L1 only (verifiers are read-only `Gadget`s). **Pure-additive?** Yes.
 
-### L7 — Tokens & Cipherclerk `[needs L1; partially exists]`
+### L7 — Tokens & Cipherclerk `[needs L1; partially exists]` → shipped: `token_inspector.rs`
 **Build:** the macaroon/biscuit/cipherclerk surface (slice 8): `HMAC Chain Replayer` + `Datalog Authorizer Sim` (verifiers), `Token Attenuator`, `Delegation Envelope Builder/Receiver`, the `Wallet` presentation over the already-Live `cipherclerk.rs`, and the `narrowed_authority ⊆ kernel-cap` comparison (`IV`).
 **Reuses:** `cipherclerk.rs` (Live — HeldToken/DelegatedToken/AgentCipherclerk), `macaroon/`/`token/` crates, `sdk/src/cipherclerk.rs`.
 **Primitive needed:** L1 + L4 (the cap-comparison reuses `is_attenuation`). **Pure-additive?** Yes.
 
-### L8 — Federation & Consensus `[needs L1; entirely new]`
+### L8 — Federation & Consensus `[needs L1; entirely new]` → shipped: `federation_inspector.rs`
 **Build:** the whole slice-9 surface (~30 types, all `None`): `Blocklace DAG` (Graph), `Finality ladder` (DV), `QuorumCertificate`/`AttestedRoot`/`Checkpoint`/`Beacon` (RF + IV verifiers), `Vouch graph` + `AdmissionRegistry` (G + DV), `EquivocationCourt` docket (PV), the `Quorum Calculator` + `Tau Sim` + `Safety Verifier`.
 **Reuses:** `federation/`, `blocklace/`, `coord/`, `node/` crates; the differential tests (`bls_quorum_diff` etc.) as the correctness hooks. Needs a `NodeClient` bridge (the census notes channel/mailbox/court are "behind captp").
 **Primitive needed:** L1 + the remote-node bridge (the `RemoteOrgan` → live transition the census flags). **Pure-additive?** Yes, but largest and most independent — a whole new object family. Lower priority only because it's federated (the embedded single-custody world is the daily surface); high standalone value when the N=3 devnet panel lands.
 
-### L9 — Circuit & Commitment Internals `[needs L1; entirely new]`
+### L9 — Circuit & Commitment Internals `[needs L1; entirely new]` → shipped: `circuit_inspector.rs`
 **Build:** slices 7 & 11 internals (~20 types, all `None`): `EffectVmDescriptor2`/`TableDef2`/`VmConstraint2` (table-layout + constraint-dependency presentations), `AirDescriptor` (fingerprint + VK-composition IV), `StateCommitment`/`V9RotationContext`/`CrossCellDelta`/`NoteCommitment`/`NullifierSet`/`HeapRoot`/`CapabilityRoot` (Merkle-tree + conservation-aggregation + anti-ghost verifiers). Read-only/verifier-heavy.
 **Reuses:** `circuit/src/descriptor_ir2.rs`/`air_descriptor.rs`/`cap_root.rs`/`heap_root.rs`, `cell/src/commitment.rs`/`note.rs`/`nullifier_set.rs`. Serves the Circuit-Soundness Apex campaign (`project-circuit-soundness-apex`).
 **Primitive needed:** L1 + the `MerkleTree`/`Trace` presentation bodies (land in L1). **Pure-additive?** Yes. Specialist surface — the audit/soundness lane, lower daily-UX value but high correctness value.
 
-### L10 — Settlement Families & Factory Authoring `[needs L1, L2, L3]`
+### L10 — Settlement Families & Factory Authoring `[needs L1, L2, L3]` → shipped: `settlement_inspector.rs`
 **Build:** the settlement organ builders (slices 10-settlement, 12-factory): `Escrow/Obligation/Bridge/Channel` deal builders (value→commit), the `FactoryDescriptor Builder` + `CellProgram Builder`/`Case Editor`/`Guard Composer`, the deal `state-machine editor`, `Condition-Commitment Builder`.
 **Reuses:** `cell/src/blueprint.rs` (the settlement Lean keystones), `cell/src/factory.rs`, `organ_ops.rs`/`organs.rs` (the trustline/flash-well drivers as the template), `edit.rs` (`FactoryBuilder`/`ProgramBuilder` already exist).
 **Primitive needed:** L1 + L2 (constraint composer — settlement terms ARE constraint sets) + L3 (commit spine). **Pure-additive?** Yes, but it composes L2's predicate gadgets and L3's commit gadgets — it's the capstone that fuses the language uplift with the construction spine into "build a verified userspace app," the Refinement-Epoch "not-a-toy apps" goal.

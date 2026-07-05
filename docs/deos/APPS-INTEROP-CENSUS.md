@@ -1,28 +1,44 @@
 # starbridge-apps: full-featuredness + interoperability census
 
-A read-only census of the ~22 apps under `starbridge-apps/` (plus `shared/`),
+> **STATUS — PARTLY SUPERSEDED (the keystone gap is CLOSED).** This census (2026-06-27)
+> concluded the apps did NOT interoperate — 0 `Transfer`/`Mint`, no shared value medium, no
+> DSI. That verdict has since been overtaken by the build. The **`Payable` DSI now exists**
+> (`app-framework/src/payable.rs`, re-exported `app-framework/src/lib.rs` — `Payable`, `pay`,
+> `pay_effects`, `PAY_METHOD`, `BALANCE_METHOD`, `payable_descriptor`), and the census's own §5
+> "cleanest first interop win" is **BUILT**: `bounty-board` pays out a real `Effect::Transfer`
+> into an `escrow-market` escrow cell that **settles it onward** over the same interface
+> (`bounty-board/src/lib.rs`, `escrow-market/src/lib.rs`). Real `Effect::Transfer` now fires in
+> `billing`, `bounty-board`, `escrow-market`, `execution-lease`, `subscription`; `first-room`
+> emits `Effect::Mint`. The §1 histogram and §3 verdict below are the pre-DSI snapshot — read
+> them as the "before". The one gap in §4 that is **still genuinely open**: no starbridge-app
+> implements `RingTradeParticipant` (atomic multi-party ring barter — gap #5). Sections are
+> annotated inline; verify code vs HEAD.
+
+A read-only census of the ~28 app crates under `starbridge-apps/` (plus `shared/`),
 answering one direct question: **how full-featured is each app, and do they
 INTEROPERATE — does token/asset VALUE flow between them?**
 
-The short answer, up front and honest:
+The short answer, up front and honest (as of the census; superseded points marked):
 
 - **Full-featuredness:** most apps are *real, individually sound* state
   machines — a factory-born cell whose installed `CellProgram` is re-checked by
   the verified executor on every touching turn, plus a service (`invoke()`)
   face, a deos card, and a real test suite. ~15 grade FULL, ~4 PARTIAL, ~2
   SKELETON.
-- **Interop:** **the apps do NOT interoperate.** No value flows between apps.
-  No cap delegates across apps. No service composes across apps. They are
-  *strangers in one building* — when co-launched onto a shared `World` they
-  physically share a ledger, but each pins its primary cell to its own
-  cipherclerk's cell id and never references another app's cell, asset, or cap.
-  The composition story (`first-room`, the `RingTradeParticipant` trait) is
-  aspirational scaffolding sitting atop mutually non-interacting apps.
+- **Interop (SUPERSEDED — was NONE, now the value layer is wired):** at census
+  time the apps did NOT interoperate — no value flowed between apps, no cap
+  delegated across apps. That is **no longer true for value**: apps now transact
+  over the shared per-asset ledger through the `Payable` DSI (real
+  `Effect::Transfer` across an app boundary — `bounty-board` → `escrow-market`).
+  What remains: no app yet implements `RingTradeParticipant` (atomic multi-party
+  barter). The rest of this section is the pre-DSI diagnosis, kept as the record
+  of what the gap *was* and how it was closed.
 
-This is a *gallery of isolated demos*, not an interoperating ecosystem — yet.
-The good news: the substrate to fix it already exists (one verified per-asset
-ledger, the `RingTradeParticipant` trait, the shared-`World` launcher). The gap
-is wiring, not primitives.
+This *was* a gallery of isolated demos; the value-flow gap it diagnosed has since
+been closed (the `Payable` DSI + the built `bounty-board`→`escrow-market` path).
+The census's own thesis held: the substrate already existed (one verified per-asset
+ledger, the shared-`World` launcher), and the fix was wiring, not primitives — that
+wiring has now largely landed.
 
 ---
 
@@ -46,7 +62,7 @@ Each app is a Rust crate with a near-uniform skeleton:
 - `src/reactor.rs` (8 apps) — the AX5 reactive twin: watches a cell and
   re-fires effects.
 
-**Effect vocabulary, across ALL apps (histogram):**
+**Effect vocabulary, across ALL apps (histogram — PRE-DSI snapshot, 2026-06-27):**
 
 ```
  385  Effect::SetField
@@ -61,13 +77,16 @@ Each app is a Rust crate with a near-uniform skeleton:
    0  Effect::Burn
 ```
 
-**This histogram is the whole interop story in one glance.** Every app models
-its world as `SetField` (scalar state) + `EmitEvent`. **Not a single app emits a
-`Transfer`, `Mint`, or `Burn`.** dregg's per-asset Σδ=0 conservation
-(`turn/src/action.rs`) is the value layer the apps were supposed to transact
-over — and 21 of 22 apps never touch it. "Value" in escrow-market,
-compute-exchange, bounty-board is a *scalar field on the app's own cell*, not a
-conserved asset that can move to another cell.
+**At census time this histogram was the whole interop story in one glance** — every
+app modelled its world as `SetField` (scalar state) + `EmitEvent`, and not a single
+app emitted a `Transfer`, `Mint`, or `Burn`. **That has since changed:** real
+`Effect::Transfer` now fires in `billing`, `bounty-board`, `escrow-market`,
+`execution-lease`, and `subscription`, and `first-room` emits `Effect::Mint` —
+so the three bottom rows are no longer zero. dregg's per-asset Σδ=0 conservation
+(`turn/src/action.rs`) is the value layer the apps were supposed to transact over,
+and the value-carrying apps now *do* touch it (via the `Payable` DSI). "Value" in
+the apps the census still leaves untouched remains a *scalar field on the app's own
+cell*, not yet a conserved asset that can move to another cell.
 
 ---
 
@@ -114,7 +133,13 @@ caveats. The thinness is not in the apps; it is *between* them.
 
 ## 3. The interop verdict (the key question)
 
-### 3a. Token/asset value flow between apps: **NONE.**
+> **SUPERSEDED for value flow.** §3a's "NONE" was true at census time and is now false:
+> the `Payable` DSI (`app-framework/src/payable.rs`) and the built
+> `bounty-board`→`escrow-market` `Transfer` path give a real cross-app value flow.
+> §3b (cap/service interop) and §3c/§3d largely still stand as written. Kept below as the
+> diagnosis that drove the fix.
+
+### 3a. Token/asset value flow between apps: **was NONE at census time; now WIRED via the `Payable` DSI.**
 
 - **No app emits `Transfer`/`Mint`/`Burn`** (§1 histogram). The kernel value
   layer (`AssetId := issuer-cell`, per-asset Σδ=0, `turn/src/action.rs`) is
@@ -222,28 +247,32 @@ federation allow-list, not a value/cap primitive.)
 
 ## 4. The interop gaps, ranked
 
-What's missing to turn the gallery of isolated demos into an interoperating
-ecosystem, most-foundational first:
+What was missing to turn the gallery of isolated demos into an interoperating
+ecosystem, most-foundational first. **Status flags added post-build:** #1 and #3
+are now BUILT; #5 is the one still genuinely open.
 
-1. **A shared asset/value layer the apps actually transact over.** Today value
-   is per-app scalar fields. The fix: apps emit real `Effect::Transfer` over
-   shared `AssetId`s on the co-launched `World`, so a payment in one app is a
-   balance another can spend. The substrate exists (Σδ=0 executor); the apps
-   must *use* it instead of `SetField` for money. **This is the keystone gap** —
-   without a shared value medium, none of the others matter.
+1. **[BUILT] A shared asset/value layer the apps actually transact over.** At
+   census time value was per-app scalar fields. This is **now done**: apps emit
+   real `Effect::Transfer` over shared `AssetId`s (`billing`, `bounty-board`,
+   `escrow-market`, `execution-lease`, `subscription`), so a payment in one app
+   is a balance another can spend. The substrate always existed (Σδ=0 executor);
+   the apps now *use* it instead of `SetField` for money. This was the keystone
+   gap, and it is closed.
 
 2. **A common currency / treasury cell.** For value to flow, apps need a shared
    denominating asset (a `dregg`/credit issuer cell whose `AssetId` every app
    references). Right now each app would invent its own. Mint once, let all apps
    price/pay/escrow in it.
 
-3. **DSI — dregg standard interfaces (the #1 ERC lesson).** Agreed
-   `InterfaceDescriptor`s (a `Payable` interface, a `Escrowable` interface, an
-   `Ownable`/transfer-of-control interface) so apps interop *by default*: any
-   app holding a cap to a cell exposing `Payable.pay(asset, amount)` can pay it
-   without bespoke wiring. The `service.rs`/`invoke()` machinery is the right
-   layer; the interfaces just need to be **shared and standardized** in
-   `starbridge-apps/shared/` rather than per-app.
+3. **[BUILT] DSI — dregg standard interfaces (the #1 ERC lesson).** The
+   `Payable` interface is **now real** (`app-framework/src/payable.rs`,
+   re-exported from `app-framework/src/lib.rs`): `pay`/`pay_effects` desugar to a
+   real conserving `Effect::Transfer`, `payable_descriptor` + `PAY_METHOD` /
+   `BALANCE_METHOD` are the agreed method signatures, so any app holding a cap to
+   a `Payable` cell can pay it without bespoke wiring. Consumed by `bounty-board`,
+   `escrow-market`, `billing`, `subscription`, `execution-lease`, `first-room`,
+   `vat`. Further DSIs (`Escrowable`, `Ownable`/transfer-of-control) are the
+   natural follow-ons; `Payable` proved the shape.
 
 4. **A cross-app invoke / cap-delegation path.** `invoke()` is single-cell
    today. Add the ability for app A's turn to (a) hold a cap to app B's cell and
@@ -251,10 +280,13 @@ ecosystem, most-foundational first:
    *call* an escrow's `release`, or a gallery sale can *call* a treasury's
    `credit`. Cap delegation across apps is the authorization half of this.
 
-5. **Wire `RingTradeParticipant` into the apps.** The atomic multi-party ring
-   primitive (`app-framework/src/ring_trade.rs`) is built and unused. Having ≥2
-   apps implement it gives atomic cross-app barter (e.g. gallery-piece ⇄
-   escrow-funds in one all-or-nothing ring) with real Σδ=0 conservation.
+5. **[STILL OPEN] Wire `RingTradeParticipant` into the apps.** The atomic
+   multi-party ring primitive (`app-framework/src/ring_trade.rs`) is built and
+   **still unused** (`grep 'impl RingTradeParticipant' starbridge-apps/` = 0 hits
+   at HEAD). Having ≥2 apps implement it gives atomic cross-app barter (e.g.
+   gallery-piece ⇄ escrow-funds in one all-or-nothing ring) with real Σδ=0
+   conservation. This is the surviving gap in this list — the `Payable` DSI (#3)
+   gives one-directional pay; the ring gives all-or-nothing multi-leg barter.
 
 6. **A real shared-`World` co-launch that wires inter-app caps.** Extend
    `app_registry.rs`/`launch_on_world` so co-launched apps can be granted caps to
@@ -270,9 +302,14 @@ ecosystem, most-foundational first:
 
 ---
 
-## 5. The cleanest first interop win
+## 5. The cleanest first interop win — **BUILT**
 
-**Prove a single token value flow across two apps, end to end.** Concretely:
+**Prove a single token value flow across two apps, end to end.** This is **done**:
+a `bounty-board` payout emits a real `Effect::Transfer` into an `escrow-market`
+escrow cell that **settles it onward** to the payee over the shared `Payable`
+interface (`bounty-board/src/lib.rs`, `escrow-market/src/lib.rs` — "escrow receives
+value as a real `Effect::Transfer` and settles it onward to the payee through the
+shared `Payable` interface, so per-asset Σδ=0 holds"). The plan that landed:
 
 > Mint a shared credit asset on a treasury cell. Co-launch `escrow-market` and
 > `bounty-board` onto ONE `World`. Have a bounty payout in `bounty-board` emit a

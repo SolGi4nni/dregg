@@ -2,7 +2,11 @@
 
 This is the protocol face of `DISTRIBUTED-TIMETRAVEL-SEMANTICS.md`: how parties *do* distributed
 time-travel — fork a past, explore it freely, and stitch the useful part back into main — soundly.
-Present-tense; first-principles. Most of it is reuse; the genuinely-new surface is two small turns.
+Present-tense; first-principles. Most of it is reuse; the genuinely-new surface is two small
+primitives — and they have since **landed** as host-layer session primitives (not kernel Effect
+turns): `ForkMembraneHost::stitch_pair`, lifted into `starbridge_v2::branch_stitch_session::BranchStitchSession`,
+with a runnable flagship at `starbridge-apps/branch-stitch-multiplayer` and the merge guts in
+`grain-fork/src/lib.rs::stitch`. The design below reads as the shape they took.
 
 ## The shape in one breath
 
@@ -13,7 +17,7 @@ divergent branch **stitches itself back** through one gated door (a possibly-los
 branch authors, conserving + authority-checked + conflict-rejecting at settlement). The nesting *is*
 the safety; the single door *is* the soundness.
 
-## 1. The consensual-branch handshake (`EnterVirtualization`, a new joint turn)
+## 1. The consensual-branch handshake (the branch-open, `BranchStitchSession::open`/`fork`)
 
 A branch is opened by a **joint turn** (`FamilyBinding` / the existing joint-turn machinery): the
 parties co-sign, each consenting via its own cap, to fork a *shared* child world off a past
@@ -24,8 +28,8 @@ never `Main/Live`, *by construction* — the type cannot lie about which-kind-of
 agree we are in a virtualized past" is therefore not a convention but a co-signed, witnessed fact.
 
 Reused: joint-turns (`FamilyBinding`), the membrane (the shared branch is a per-party-projected
-surface), the derived liveness-type. New: the `EnterVirtualization` joint turn that mints the
-branch world + the typed branch-caps.
+surface), the derived liveness-type. New (BUILT): `BranchStitchSession::open`/`fork` mints the
+branch world + the typed branch-caps — a host-layer session primitive, not a kernel Effect turn.
 
 ## 2. Nesting IS the safety (capability confinement + the one door)
 
@@ -49,7 +53,7 @@ So: **you may do anything in the branch (diverge wildly, full reversibility, no 
 branch can do nothing to main except through one narrow, checked door.** Divergence stays imaginary
 until a deliberate stitch.
 
-## 3. The lossy stitch-back (`Stitch`, the new DX primitive)
+## 3. The lossy stitch-back (`stitch_pair` / `BranchStitchSession`, the built DX primitive)
 
 A divergent branch **authors a reconciliation forest** that merges its useful essence into main —
 allowed to be **lossy**, which is the point:
@@ -80,10 +84,15 @@ liveness-type (honest virtual surface), capability confinement (containment), Se
 (the door), conservation/nullifiers (conflict rejection), linear-logic-drop (explicit loss),
 partial-turns (cross-party holes), the cap-stratified meta-tower (recursive nesting).
 
-**New** (the small protocol): (1) the `EnterVirtualization` joint turn (mint the branch world + typed
-branch-caps); (2) the `Stitch` reconciliation primitive (the semi-automated, linear-drop-forced,
-pushout-correct merge-into-main through the Settlement Soundness gate).
+**New — and BUILT** (the small protocol, realized as host-layer session primitives, not kernel
+Effect turns): (1) the branch-open (`BranchStitchSession::open`/`fork`) that mints the branch world +
+typed branch-caps; (2) the stitch-back (`ForkMembraneHost::stitch_pair`, lifted into
+`BranchStitchSession`, merge guts in `grain-fork/src/lib.rs::stitch`) — the semi-automated,
+linear-drop-forced, pushout-correct merge-into-main through the Settlement Soundness gate. The gate
+itself is the proven, axiom-clean `settlement_soundness` (`metatheory/Metatheory/SettlementSoundness.lean`),
+whose stitch face is `stitch_drops_revoked_authority`; the runnable flagship
+`starbridge-apps/branch-stitch-multiplayer` exercises the live proven gate in its beat C.
 
-Two small turns; everything else is composition. The branch-and-stitch protocol is distributed
+Two small primitives; everything else is composition. The branch-and-stitch protocol is distributed
 time-travel made *operable* — and houyhnhnm "virtualization as branching" made *cap-secure and
 witnessed*.

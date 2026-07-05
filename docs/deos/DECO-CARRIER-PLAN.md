@@ -182,6 +182,17 @@ changing the fold shape.
 
 ## 2. The recommended build — the uniform 5-step carrier recipe, DECO-instantiated
 
+> **BUILT.** Per the Status header, every step of this recipe LANDED — the leaf
+> (`circuit-prove/src/deco_leaf_adapter.rs`), the felt anchor
+> (`circuit/src/dsl/deco_payment.rs::deco_payment_hash_felt`), the socket
+> (`CarrierWitness::Deco` + `from_retained_deco`, `joint_turn_aggregation.rs:215,336`),
+> the fold arm (`ivc_turn_chain.rs:3180`), and the Lean floor
+> (`DecoBindingFromFold.lean` + `DecoBackingAttack.lean`). The steps below read in
+> the original future tense as the as-built design rationale. The ONE genuinely-
+> deferred item is the deployed `stripeMint`/`withPaymentHashPin` descriptor emit +
+> TSV regen (Step 1's deployed half), which rides the coordinated big-bang regen
+> (§2 finale), NOT a solo flip.
+
 Following `docs/WELD-STATE.md` §6 (WELD-STATE.md:541) and the bridge precedent term-for-term.
 
 ### Step 1 — teeth-emit + THE THIRD EDGE (the deployed `stripeMint` descriptor)
@@ -268,8 +279,8 @@ mechanism — the `hash_fact`/`TID_P2` chip is exactly what note-spend already u
   `prove_descriptor_leaf_dual_expose_at(..., DECO_PAYMENT_HASH_PI, 1)`; (3)
   `prove_deco_leaf_with_claim(bundle, config)`; (4)
   `prove_deco_payment_binding_node_segmented(dual, leaf, config)`. THE shared edit of
-  `ivc_turn_chain.rs` (clobber hazard). Add `DECO_PAYMENT_HASH_PI` / `DECO_CLAIM_LEN`
-  consts beside the bridge ones (ivc_turn_chain.rs:2865).
+  `ivc_turn_chain.rs` (clobber hazard). Add `DECO_PAYMENT_HASH_PI` /
+  `DECO_PAYMENT_HASH_CLAIM_LEN` consts beside the bridge ones (ivc_turn_chain.rs:2865).
 - **Tooth:** a `circuit-prove/tests/deco_binding_deployed_tooth.rs`, twin of
   `bridge_binding_deployed_tooth.rs`, exercising honest / forged-payment-identity poles on
   the native committed `stripeMint` row + the regen-tie geometry + the paymentIntentId
@@ -302,14 +313,18 @@ not fire independently.
 
 ## 3. The descriptor + PI layout (geometry / VK cost)
 
-- **New PIs:** ONE tail felt — `DECO_PAYMENT_HASH_PI` (`DECO_CLAIM_LEN = 1`), the felt-
-  domain payment identity, exactly like `BRIDGE_MINT_HASH_CLAIM_LEN = 1`
-  (ivc_turn_chain.rs:2867). The full PaymentFacts tuple (amountCents, currency, recipient,
+- **New PIs:** ONE felt — `DECO_PAYMENT_HASH_PI` (`DECO_PAYMENT_HASH_CLAIM_LEN = 1`),
+  the felt-domain payment identity. As built it **reuses the bridge mint-hash lane
+  exactly** — `DECO_PAYMENT_HASH_PI == 46` (ivc_turn_chain.rs:2881), the same index as
+  `BRIDGE_MINT_HASH_PI` (a mint row publishes ONE mint-hash PI at 46; bridge and DECO
+  both pin it), with `DECO_PAYMENT_HASH_CLAIM_LEN = 1` (ivc_turn_chain.rs:2883) twinning
+  `BRIDGE_MINT_HASH_CLAIM_LEN = 1` (ivc_turn_chain.rs:2867). The full PaymentFacts tuple (amountCents, currency, recipient,
   paymentIntentId — 4 fields, each 1 felt if <2^31, else 2 felts for amount/id split) is
   carried in the **claim tuple of the leaf's own PIs**, not the deployed-leg PIs. ONE lane
   binds the whole tuple: the payment identity is the leaf's in-AIR `hash_fact` chain over
   its own PI-pinned facts, exactly bridge's "ONE lane binds the whole spend tuple"
-  (ivc_turn_chain.rs:2862). So the deployed descriptor grows by **one PI**.
+  (ivc_turn_chain.rs:2862). As built, the `stripeMint` leg pins its identity at the
+  **existing** mint-hash lane 46 rather than appending a new one.
 - **VK-affecting:** yes — a new `stripeMint` descriptor with a bumped
   `public_input_count` regenerates that descriptor's VK. Per WELD-STATE.md:564 the blast
   radius is per-descriptor: append at TAIL, never touch `[0..46)`, the descriptor touches
@@ -430,14 +445,14 @@ regen rides the coordinated one-shot big-bang, not a solo flip.
 
 ## Appendix — the mirror table (bridge → DECO)
 
-| Bridge (built) | DECO (to build) |
+| Bridge (built) | DECO (built) |
 |---|---|
 | `note_spend_leaf_adapter.rs` (note-spend STARK leaf) | `deco_leaf_adapter.rs` (Poseidon2 commitment leaf) |
 | `note_spend_mint_hash_felt` (note_spend_leaf_adapter.rs:154) | `payment_hash` = `hash_fact` over PaymentFacts |
 | `BridgeWitnessBundle` (joint_turn_aggregation.rs:253) | `DecoWitnessBundle` (payment_facts, salt, pis) |
 | `from_retained_bridge` (joint_turn_aggregation.rs:283) | `from_retained_deco(VerifiedPayment)` |
 | `CarrierWitness::Bridge` arm (ivc_turn_chain.rs:3114) | `CarrierWitness::Deco` arm |
-| `BRIDGE_MINT_HASH_PI = 46` (ivc_turn_chain.rs:2865) | `DECO_PAYMENT_HASH_PI` (tail) |
+| `BRIDGE_MINT_HASH_PI = 46` (ivc_turn_chain.rs:2865) | `DECO_PAYMENT_HASH_PI = 46` (same lane, ivc_turn_chain.rs:2881) |
 | `mintV3BridgeHash` / `withMintHashPin` (EffectVmEmitRotationV3.lean) | `stripeMint` / `withPaymentHashPin` |
 | nullifier double-spend (bridge_ledger.rs:294) | paymentIntentId double-mint — **same set, already wired** (stripe_mirror.rs:73) |
 | `BridgeBindingFromFold.lean` | `DecoBindingFromFold.lean` |

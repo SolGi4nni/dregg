@@ -64,15 +64,23 @@ surface between modes, edit a card's view live, author a new surface as a card �
 over the coherent frame. v1 = a frame you can navigate; v2 = a frame you can rewrite while it
 runs. The coherence and the reflectivity are the same campaign from two sides.
 
-## Build order
+## Build order — SHIPPED (`starbridge-v2/src/cockpit/frame.rs`)
 
-1. Palette scroll fixed (navigation works at all). ✅ in flight.
+The whole ladder is built. `CockpitMode::{Inhabit,Author,Dev,Inspect,Operate}` (`frame.rs`, cites
+this doc) is the five-mode rail; the rail order and surface→mode mapping are READ from a live
+`deos_js::LayoutCard` cell, and moving a surface between modes dispatches
+`deos_js::LayoutCard::reshape(LayoutPatch::MoveSurface)` as a receipted cap-gated turn with blame —
+so step 5 (the reflective turn) is real, not just designed.
+
+1. Palette scroll fixed (navigation works at all). ✅ done.
 2. **The frame + five modes + the rail** — the structural pass (this doc's core): one chrome, the
    left rail, the mode router, the always-present top bar + dock toggle. Re-home the 20 surfaces
-   under the five modes (no surface deleted — regrouped).
-3. **The home garden** — the Inhabit landing as clickable cells with visible affordances.
+   under the five modes (no surface deleted — regrouped). ✅ done (`CockpitMode`, `frame.rs`).
+3. **The home garden** — the Inhabit landing as clickable cells with visible affordances. ✅ done
+   (the Inhabit landing hosts Home/Wonder/Objects/Graph).
 4. **The Dev workspace** — editor+terminal+shell consolidated into one IDE strip/mode (zed, a
-   file tree, a PTY), and the Dock made persistent.
+   file tree, a PTY), and the Dock made persistent. ✅ done (the Dev mode).
 5. **Surfaces → deos-js cards** — the reflective turn (joins the fully-reflective-cockpit
-   campaign): the frame becomes malleable from within.
+   campaign): the frame becomes malleable from within. ✅ done — the layout is a live
+   `deos_js::LayoutCard` and a reshape-from-within is a receipted `LayoutPatch::MoveSurface` turn.
 </content>

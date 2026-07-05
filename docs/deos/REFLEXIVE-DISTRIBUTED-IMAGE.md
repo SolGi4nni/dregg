@@ -12,11 +12,24 @@ branch IS), and `DOCUMENT-LANGUAGE.md` (where the collective intelligence accret
 I assert about cv I read from its tree (cited as `cv:<path>`); what I cite from the deos
 docs is from HEAD.*
 
+> **STATUS — the §3.3 first milestone SHIPPED (and §1's remote reflection is substantially
+> built).** The mirror-cap dialed over the firmament `n` lives in `starbridge-v2/src/`:
+> `remote_mirror.rs` + `remote_mirror_live.rs` + `two_image_firmament.rs` + `netlayer_image.rs`
+> (the remote sovereign image over the netlayer), `meta_debug.rs` (the M5 suspend / "debug the
+> debugger", `impl Presentable for MetaDebugView`), and `cv_provenance.rs` (`impl Presentable for
+> CvProvenance` — the cv blame/provenance bridge of §3.3). So the "buildable this week" framing of
+> §2.5 / §3.3 is now the delivered record. Two grounding corrections applied inline below: (1) the
+> **mirror-cap is a `starbridge-v2` + companion-doc construct** layered over firmament's real
+> `Target::Distributed{cell}` — the firmament `Target` enum (`sel4/dregg-firmament/src/lib.rs`) has
+> no `Mirror` variant; (2) cv is at **v0.9.21** at HEAD. The §1 mechanism prose and §4 seams remain
+> the accurate design rationale.
+
 ---
 
 ## 0. THE ONE-SENTENCE ANSWER
 
-> **The firmament's mirror-cap (a `Capability` over `Target::Mirror{over, depth}`) dialed
+> **The firmament's mirror-cap (a `Capability` carrying a `Mirror{over, depth}` handle — a
+> `starbridge-v2` construct over firmament's `Target::Distributed`) dialed
 > over the netlayer at `n>1` makes reflection itself distributable — you inspect, branch,
 > time-travel, suspend, and resume a REMOTE sovereign image through the same
 > `granted ⊆ held` gate, seeing exactly the depth your mirror authorizes and nothing more,
@@ -49,13 +62,14 @@ base it reflects, and the only thing that crosses the wire is an *attenuated mir
 
 The enabling fact is already in the substrate: a mirror-cap is a firmament `Capability`
 (`FIRMAMENT-REFLEXIVE-SUBSTRATE.md` §1.2), and the firmament's distance parameter `n`
-(`sel4/dregg-firmament/src/lib.rs:307-348`) resolves *any* cap local (`n=1`,
-kernel/executor path) or distributed (`n>1`, the executor→net path) **with the same verbs**
-(`lib.rs:26-43`). So a remote meta-level is, verbatim:
+(`Bounds::distributed(n)` in `sel4/dregg-firmament/src/lib.rs`) resolves *any* cap local (`n=1`,
+kernel/executor path) or distributed (`n>1`, the executor→net path) **with the same verbs**.
+So a remote meta-level is, verbatim:
 
 > a **mirror-cap dialed over the netlayer** (`FIRMAMENT-REFLEXIVE-SUBSTRATE.md` §4.1) — a
-> `Target::Mirror{ over }` whose `over` resolves to a `Target::Distributed{cell}` on
-> another federation member.
+> `Mirror{ over }` handle (a `starbridge-v2` construct — `remote_mirror.rs`; firmament's own
+> `Target` enum carries no `Mirror` variant) whose `over` resolves to firmament's real
+> `Target::Distributed{cell}` on another federation member.
 
 ### 1.2 The four reflective acts, distributed
 
@@ -79,7 +93,7 @@ inspectable partial turn across the wire and accepting their edited drain throug
 ### 1.3 What `Bounds` relax (the honest weakening)
 
 The `Bounds{revocation_immediate, commit_synchronous, n}` on every resolution
-(`lib.rs:307-322`) state honestly what held — and distributed reflection differs from local
+(`pub struct Bounds` in `sel4/dregg-firmament/src/lib.rs`) state honestly what held — and distributed reflection differs from local
 *only* in these, never in the verbs (`FIRMAMENT-REFLEXIVE-SUBSTRATE.md` §4.3):
 
 - **`revocation_immediate`** — at `n=1`, drop the remote operator's mirror-cap and they lose
@@ -144,7 +158,7 @@ struct MetaLevel {
 
 ### 2.1 What ClusterVision actually is (read from `~/dev/cv`)
 
-ClusterVision (`cv`, version 0.9.18, an 8-crate Rust workspace) is *not* a chat viewer — it
+ClusterVision (`cv`, version 0.9.21, an 8-crate Rust workspace) is *not* a chat viewer — it
 is a **lossless, queryable, cross-harness corpus of agent-coding work**. The README's framing
 ("Vibecoding is a clusterfuck. When it gets hazy, you need clustervision") undersells the
 substrate underneath. Concretely, from the tree:
@@ -334,7 +348,7 @@ record cannot be silently tampered (every promotion is a receipted turn); reflec
 collaborator's image is an *attenuated mirror*, not ambient access; and it is *distributable*,
 so the collective can span machines without a trusted central image.
 
-### 3.3 The first buildable milestone
+### 3.3 The first buildable milestone `[SHIPPED — starbridge-v2/src/cv_provenance.rs + meta_debug.rs + remote_mirror*.rs]`
 
 **Milestone: "Blame this cell" — the cv provenance backlink, live in the deos inspector.**
 

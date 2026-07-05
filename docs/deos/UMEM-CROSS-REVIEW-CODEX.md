@@ -1,5 +1,7 @@
 # UMEM Cross-Review - Codex Source Review
 
+> **Point-in-time review artifact (~2026-06-24).** Companion to `docs/deos/UMEM-CROSS-REVIEW.md`. Line numbers below have drifted against HEAD but the cited symbols and the substantive seam analysis still hold. One dated detail: this review argues over a *five*-constructor `Domain` enum; a sixth constructor `working` has since been added (`metatheory/Dregg2/Crypto/UniversalMemory.lean:87-94`, the umem realization of `UDomain::Working` at `turn/src/umem.rs:118`) — which partially answers §1 / Open-Questions-#3 (the transient scratch domain rides the same one memcheck trace and publishes no committed boundary), though the deeper ask (generalize to an arbitrary/injective tag manifest) is still open.
+
 Scope: second review of `docs/deos/UMEM-CROSS-REVIEW.md` against the current Rust and Lean source, with no code edits.
 
 Local checks run:

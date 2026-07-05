@@ -55,25 +55,29 @@ model* — declarative, hypertext-driven, server-rendered, progressively enhance
 ## The verified-deos program (a verified *desktop* OS — the Lean targets)
 
 The desktop adds ZERO new trust, so its safety is provable from the kernel's own
-metatheory. The modeling targets (Lean, `metatheory/Dregg2/Deos/…`, QUEUED for after
-the rotation HARDSWAP clears `metatheory/`):
+metatheory. The four modeling targets (Lean, `metatheory/Dregg2/Deos/…`) are ALL
+DISCHARGED at HEAD; the sibling `desktop-os-research/FRUSTUM-REPLAY-MEMBRANE.md`
+advances PAST them (the C1 replay derivation + C2 negotiation algebra, `ReplayMembrane.lean`):
 
 1. **Surface-as-capability.** `Target::Surface(cell)` is a point on the existing
-   `(target, rights)` gradation; prove a window confers no authority beyond its
-   rights (the same shape as `notifyCap_confers_no_edge`).
+   `(target, rights)` gradation; a window confers no authority beyond its
+   rights (the same shape as `notifyCap_confers_no_edge`). **DISCHARGED:**
+   `Surface.lean::surfaceConfersExactly` + `viewSurface_confers_no_edge`.
 2. **Membrane non-amplification.** The rehydration membrane composes `is_attenuation`
-   across hops; prove `reshare A→B→C ⟹ C's authority ⊆ B's held ⊆ A's` (the chained
-   lattice law — lift the proven `is_attenuation` to projection composition). The Rust
+   across hops; `reshare A→B→C ⟹ C's authority ⊆ B's held ⊆ A's` (the chained
+   lattice law — the proven `is_attenuation` lifted to projection composition). The Rust
    `Membrane` in `starbridge-web-surface` is the realization; the Lean is the proof it
-   cannot amplify.
-3. **Rehydration confinement = the liveness-type.** Prove `ReplayedDeterministic`
+   cannot amplify. **DISCHARGED:** `Membrane.lean::reshare_chain_attenuates`.
+3. **Rehydration confinement = the liveness-type.** `ReplayedDeterministic`
    *is exactly* the confined fragment: a context whose every external interaction was
    an attested turn replays deterministically; otherwise `ReconstructedApproximate`.
    This makes the liveness-type a *proven* confinement readout (the doc's "derived"
-   row, lifted to a theorem) — the verified-desktop crown.
-4. **Affordance soundness.** A cell-affordance interaction is a verified turn; prove
-   an agent can only fire affordances its caps authorize (gateOK on the affordance
-   effect-template), and the post-state surface binds the attested root.
+   row, lifted to a theorem) — the verified-desktop crown. **DISCHARGED:**
+   `Rehydration.lean::replayedDeterministic_iff_confined`.
+4. **Affordance soundness.** A cell-affordance interaction is a verified turn; an
+   agent can only fire affordances its caps authorize (gateOK on the affordance
+   effect-template), and the post-state surface binds the attested root. **DISCHARGED:**
+   `Affordance.lean::fire_authorized_iff` + `firedSurface_binds_attested_root`.
 
 These four are "a verified desktop OS": every visual/interactive primitive reduces to
 a kernel theorem. None are new mathematics — they are the firmament's existing
@@ -126,12 +130,18 @@ affordances, and rehydration.
   tooth and a stale-state fire by the state tooth (both anti-ghost, nothing submitted),
   a both-pass fire runs a real verified turn through the executor, and a frustum-snapshot
   rehydrates per-viewer (an incomparable identity gets no projection).
-- **QUEUED (fires when the rotation HARDSWAP clears `metatheory/`/`turn/`/`node/`):**
-  the verified-deos Lean modeling (the four theorems above) · the membrane wired into
-  the live captp sturdyref path (not just the web crate) · starbridge-v2 native cockpit
-  embedding the affordance surfaces.
+- **DISCHARGED (Lean, `metatheory/Dregg2/Deos/`):** the verified-deos modeling — the
+  four theorems above (`Surface.lean` · `Membrane.lean` · `Rehydration.lean` ·
+  `Affordance.lean`), extended PAST them by `ReplayMembrane.lean` (C1/C2). See
+  `desktop-os-research/FRUSTUM-REPLAY-MEMBRANE.md`.
+- **OPEN (forward):** the membrane wired into the live captp sturdyref path (not just
+  the web crate) · starbridge-v2 native cockpit embedding the affordance surfaces.
 - **WOOD (frontier):** the certified compositor-PD (sole framebuffer+input cap holder,
-  seL4) + the libservo link (`MockSurface` + a `dregg://` attested fetch stand in today).
+  seL4). The cap-gated render path to pixels has since LANDED (`servo-render::fetch_render_present`,
+  the Stage-A pipeline; the gpui-offscreen→seL4 framebuffer path is closed per
+  `docs/reference/{firmament,cockpit}.md`); the remaining seam is the libservo DOM
+  rasterization (`MockSurface` + a `dregg://` attested fetch stand in for the real
+  `WebView` today).
 
 *Cross-refs: `desktop-os-research/REHYDRATABLE-SURFACES.md` (the membrane model) ·
 `desktop-os-research/ARCHITECTURES.md` (the compositor-PD) · `STARBRIDGE-V2.md` (the

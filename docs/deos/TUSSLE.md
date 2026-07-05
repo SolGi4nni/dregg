@@ -140,9 +140,17 @@ members entry, plus this doc:
   `Match` (a sequence of frames played to a target score, advancing only through verified joint turns).
 - **`src/resolution.rs`** — the deterministic frame resolution: the pure `resolve_contact` function
   and the balanced score-leg it emits for the verified fold.
+- **`src/card.rs`** — the frame surface as a renderer-independent `deos.ui.*` CARD (the
+  `deos_view::ViewNode` view-tree, pure `serde_json`): the down-payment on staged follow-on #2
+  (the render surface), shipped as DATA the deos world's three renderers consume, not a renderer call.
 - **`src/tests.rs`** — 20 tests covering the four teeth (fog-of-war, the enum gate, the verified
   turn, cap-gating) plus reproducibility and a full match to a knockout. `cargo test -p starbridge-tussle`
   is green.
+- **`tests/deos_seam.rs`** — the deos-native `commit → reveal → resolve` verbs fired through the
+  REAL executor against the full figure `CellProgram`, proving the verified caveats bite in the fire
+  path itself (an illegal joint reveal is a real executor refusal, not a `program.evaluate`-only check).
+- **`tests/reexpress_deos_app.rs`** + **`manifest.json`** — the deos-app re-expression (the app as a
+  first-class deos citizen with its manifest).
 - **`examples/tussle_match.rs`** — a runnable headless match
   (`cargo run -p starbridge-tussle --example tussle_match`): a scripted bout printing each frame's
   commit → reveal → resolution + the running score (read from the verified ledger) + the conserved
@@ -156,7 +164,7 @@ against the real Lean export. The heart is done; the body parts that dress it ar
 This lane is the HEART. Each follow-on welds an existing deos organ onto it.
 
 1. **The pg-dregg match server.** Host the match state on pg-dregg (durable verified state, the
-   `PG-DREGG-VS-DBOS.md` substrate): each `Frame::resolve` is a pg-dregg transaction; the score
+   pg-dregg substrate — `docs/design-frontiers/PG-DREGG-DX.md`): each `Frame::resolve` is a pg-dregg transaction; the score
    ledger is durable; two remote players submit sealed moves through the SDK. The figure cells become
    web-of-cells citizens. *Welds: `pg-dregg/` + `sdk-py`/`sdk-ts`.*
 

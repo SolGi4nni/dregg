@@ -1,5 +1,17 @@
 # THE FIRMAMENT REFLEXIVE SUBSTRATE
 
+> **BUILT — two of the three design tasks have landed; one seam is still genuinely open.**
+> This began as a design doc; the body below is preserved as the design rationale. State at HEAD:
+> **Task B (Suspend) is DONE** — `World{ suspended, pending }`, the `commit_turn` pre-check,
+> `CommitOutcome::Queued`, the `TurnQueued` event, `pub enum ResumeMode { Drain, Modified(..) }`,
+> and `suspend()`/`resume()`/`resume_drain()` all live in `starbridge-v2/src/world.rs`.
+> **Task C (the cap-stratified tower) is DONE** — `FocusTarget` carries the
+> `DebugFrame(MetaLevelId)`/`World`/`Cockpit` arms (`starbridge-v2/src/presentable.rs`), and
+> `MetaLevelId`/`MetaDebugView`/`MetaStack` are implemented (`starbridge-v2/src/meta_debug.rs`).
+> **Task A (the mirror-cap: `Target::Mirror{over,depth}` + `MirrorDepth`) is the single open seam** —
+> `dregg_firmament::Target` still has only `Local`/`Distributed`/`Surface`/`HostPd`; no `Mirror` arm exists yet.
+> The deferred dataflow self-cycle (Seam 1) also remains open by design. See §6 for the per-task status.
+
 ## Cap-secure self-hosting: mirror-caps, the cap-stratified reflective tower, and Suspend
 
 starbridge is a self-hosting reflexive image: the inspector, the debugger, and
@@ -167,6 +179,10 @@ whole system already runs through.
 
 ### 2.2 The `MetaStack` as the lazily-materialized tower (3-Lisp)
 
+*(BUILT — `MetaLevelId`, `MetaDebugView` (with `capture()`), and `MetaStack` live in
+`starbridge-v2/src/meta_debug.rs`; the `FocusTarget::{DebugFrame, World, Cockpit}` arms live in
+`starbridge-v2/src/presentable.rs`. The sketch below matches the shipped shape.)*
+
 A 3-Lisp reflective tower is conceptually infinite but **lazily materialized**:
 levels exist only when reflection demands them, and the implementation grounds in
 a finite non-reflective processor. dregg's tower is the same shape:
@@ -228,6 +244,10 @@ a mirror over whom, who lands receipts) is independent of how the projection
 ---
 
 ## 3. THE SUSPEND PRIMITIVE
+
+*(BUILT — the gate, queue, `CommitOutcome::Queued`, `ResumeMode`, and `suspend`/`resume`/`resume_drain`
+live in `starbridge-v2/src/world.rs`. The design below is the rationale; the code blocks show the shape
+that shipped, `Modified(Vec<Turn>)` in place of the sketch's `ConditionalBatch`.)*
 
 ### 3.1 Suspend ≠ Snapshot
 
@@ -507,33 +527,32 @@ between the two is named in §6.
 
 ### Ordered design tasks
 
-- **Task A — the new cap kind (mirror-cap).** Add `Target::Mirror{ over, depth }`
+- **Task A — the new cap kind (mirror-cap). [OPEN — the single genuine seam.]** Add `Target::Mirror{ over, depth }`
   and `MirrorDepth{Structure ⊑ ReadState ⊑ Live}` to `dregg-firmament`; extend
   the rights lattice to `AuthRequired × MirrorDepth` so `Capability::attenuate`
   narrows on both axes through the *existing* `is_attenuation` meet. *Verify:* a
   `Live` mirror attenuates to `ReadState`/`Structure`; a `Structure` mirror
   refuses to widen — the `surface.rs:321-328` read-only-mirror test generalized.
-- **Task B — the Suspend gate.** Add `World{ suspended, pending }`, the
+- **Task B — the Suspend gate. [DONE — `starbridge-v2/src/world.rs`.]** `World{ suspended, pending }`, the
   `commit_turn` pre-check, the `CommitOutcome::Queued` arm, the `TurnQueued`
   event, and `suspend()` / `resume(ResumeMode)` with `ResumeMode::{Drain,
-  Modified(ConditionalBatch)}` draining in `execConditionalTurn` topo order.
-  *Verify:* turns staged while suspended queue and do not commit; `resume(drain)`
-  applies them in dependency order; `resume(modified)` edits the batch but each
-  turn still passes the executor gate; the head stamps paused-live `Liveness`.
-- **Task C — the `FocusTarget` arm + `MetaDebugView`.** Add
-  `FocusTarget::{DebugFrame(MetaLevelId), World, Cockpit}`, a
-  `MetaDebugView impl Presentable`, and the `MetaStack` push/pop replacing the
-  flat `Tab` siblings; wire the suspend-&-inspect button (suspend → push a
-  `MetaLevel` holding a `ReadState` mirror over `World` + the `pending`
-  continuation). *Verify:* "debug the debugger" focuses the inspector on its own
+  Modified(..)}` draining the pending queue in arrival order — all landed
+  (`suspend`, `resume`, `resume_drain`, `is_suspended`). *Verified:* turns staged while suspended queue and do not commit; `resume(drain)`
+  applies them in order; `resume(modified)` edits the batch but each
+  turn still passes the executor gate.
+- **Task C — the `FocusTarget` arm + `MetaDebugView`. [DONE — `presentable.rs` + `meta_debug.rs`.]**
+  `FocusTarget::{DebugFrame(MetaLevelId), World, Cockpit}` (`starbridge-v2/src/presentable.rs`),
+  `MetaLevelId`/`MetaDebugView` (with `capture()`) and the `MetaStack` push/pop
+  (`starbridge-v2/src/meta_debug.rs`) are all built. *Verified:* "debug the debugger" focuses the inspector on its own
   `MetaDebugView` recursively; the tower grounds at the native gpui loop (no
-  infinite materialization); each level's reflective authority is a real
-  mirror-cap, attenuated downward.
+  infinite materialization). The one thing Task C still awaits is Task A: each level's
+  reflective authority becomes a real *mirror-cap* only once `Target::Mirror` exists — today the
+  tower's authority rides the existing surface/read caps.
 
-Sequencing: A is independent and first (the cap kind is the substrate). B depends
-on nothing but the `World` commit seam (it can land in parallel with A). C depends
-on A (mirror-caps) and reuses B's suspend to drive its button. The deferred
-dataflow-fixpoint (Seam 1) sequences *after* C, in the fixpoint explorer.
+Sequencing (as-built): B landed on the `World` commit seam; C landed on the `FocusTarget`/`present()`
+dispatch and reuses B's suspend to drive its button. **A (mirror-cap) is the remaining substrate work** —
+until it lands, the tower is stratified by construction but not yet cap-*confined* on the reflection axis.
+The deferred dataflow-fixpoint (Seam 1) sequences *after* A, in the fixpoint explorer.
 
 ---
 

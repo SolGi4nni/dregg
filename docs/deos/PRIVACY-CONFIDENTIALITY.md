@@ -1,5 +1,19 @@
 # Privacy & Confidentiality
 
+> **STATUS — Milestone 0 SHIPPED; the crypto organs live in the `dregg-cell-crypto` crate.**
+> The read-cap rung this document designs has landed: `ReadCap` (with `ReadCap::attenuate`,
+> the `granted.slots ⊆ held.slots` read-lattice) lives in `cell-crypto/src/read_cap.rs`
+> (crate `dregg_cell_crypto`), the membrane read-side dual welds through it
+> (`cell/src/membrane.rs`, `crate::read_cap::ReadCap::attenuate`), and the moldable
+> inspector surfaces it live in `starbridge-v2/src/read_cap_lens.rs` (which states outright
+> "the privacy weld landed … PRIVACY-CONFIDENTIALITY.md Milestone 0"). So **§4 Milestone 0
+> below is delivered**, not the next ship. **M1** (selective disclosure) and **M2**
+> (ZK-private cells, VK-affecting, ember-gated) remain the forward rungs.
+>
+> Also note the §0 primitive citations: the ECIES note-encryption / stealth / value-commitment
+> / sealer / oblivious-transfer primitives moved out of `cell/src/` into the dedicated
+> `dregg-cell-crypto` crate — their paths are `cell-crypto/src/*` throughout (fixed inline below).
+
 dregg's authority model is cold on **write**: a capability says who may *change* a
 cell's state, attenuably, with a verifiable receipt. The dual question — who may
 *read* a cell's state — is not yet a first-class capability, even though almost
@@ -23,12 +37,12 @@ read-authority; the pieces themselves are real and, several of them, Lean-proven
 | Organ | File | What it gives |
 | --- | --- | --- |
 | **Per-field visibility** | `cell/src/state.rs:74` `FieldVisibility { Public, Committed, SelectivelyDisclosable }`; `CellState.field_visibility[16]`, `commitments[16]` (`state.rs:103-108`) | Each of a cell's 16 state slots is independently *public*, *committed* (only a hash is on-chain, value private), or *selectively disclosable* (committed + provable without reveal). The data model for read-confidentiality is **already in the cell**. |
-| **ECIES note encryption** | `cell/src/note_encryption.rs` | X25519 ephemeral DH → BLAKE3-KDF → ChaCha20-Poly1305. Encrypts a note opening so *only the recipient may read it* (`note_encryption.rs:6`), drops straight into `Effect::NoteCreate { encrypted_note }`. The recipient's `view_pubkey` is the decryption authority. |
+| **ECIES note encryption** | `cell-crypto/src/note_encryption.rs` | X25519 ephemeral DH → BLAKE3-KDF → ChaCha20-Poly1305. Encrypts a note opening so *only the recipient may read it* (`note_encryption.rs:6`), drops straight into `Effect::NoteCreate { encrypted_note }`. The recipient's `view_pubkey` is the decryption authority. |
 | **Anonymous notes** | `cell/src/note.rs` | Consume-once cells with *private state*: a Poseidon2 commitment to `(owner, fields[8], randomness, nonce)`; spend = reveal a nullifier only the owner can compute. Validity is self-proving (STARK + Merkle path), contents hidden. |
-| **Stealth addresses** | `cell/src/stealth.rs` | Monero/EIP-5564 one-time CellIds: a `view_pubkey` lets the recipient *scan* for incoming notes; a `spend_pubkey` controls spending. Unlinkable identities → metadata privacy. |
-| **Value commitments** | `cell/src/value_commitment.rs` | Pedersen-over-Ristretto: hiding + binding + homomorphic. The executor verifies conservation (`Σin − Σout = excess`) **without learning amounts**. |
-| **Sealer/Unsealer** | `cell/src/seal.rs` | E-style rights-amplification: X25519 + ChaCha20-Poly1305 sealed boxes for partition-tolerant capability transfer (forward-secret per seal). |
-| **Oblivious transfer** | `cell/src/oblivious_transfer.rs` | 1-of-n OT (Naor-Pinkas-style) — the receiver learns one message, the sender learns nothing about which. A building block for private queries. |
+| **Stealth addresses** | `cell-crypto/src/stealth.rs` | Monero/EIP-5564 one-time CellIds: a `view_pubkey` lets the recipient *scan* for incoming notes; a `spend_pubkey` controls spending. Unlinkable identities → metadata privacy. |
+| **Value commitments** | `cell-crypto/src/value_commitment.rs` | Pedersen-over-Ristretto: hiding + binding + homomorphic. The executor verifies conservation (`Σin − Σout = excess`) **without learning amounts**. |
+| **Sealer/Unsealer** | `cell-crypto/src/seal.rs` | E-style rights-amplification: X25519 + ChaCha20-Poly1305 sealed boxes for partition-tolerant capability transfer (forward-secret per seal). |
+| **Oblivious transfer** | `cell-crypto/src/oblivious_transfer.rs` | 1-of-n OT (Naor-Pinkas-style) — the receiver learns one message, the sender learns nothing about which. A building block for private queries. |
 | **Membrane / per-viewer projection** | `starbridge-web-surface/src/affordance.rs:387` (`Viewer`, `Membrane`, `project_membrane`, `membrane_shows`) | The fog-of-war: a surface projects DIFFERENT affordance/content sets to different viewers along **two** dimensions — the cap dimension (`is_attenuation`) AND a `permits` *disclosure bit* (witness-graph clearance). Two viewers at equal cap-authority but different `permits` see distinct surfaces. **Lean-proven** non-amplifying (`metatheory/Dregg2/Deos/Membrane.lean`, twin `membraneShows`). |
 | **ZK-hiding STARK** | `circuit/src/stark_zk.rs` | `p3_fri::HidingFriPcs` (PCS `ZK=true`) over `MerkleTreeHidingMmcs` (salted leaves): the *same* prove/verify doubles the trace with random rows, commits a random codeword, and salts every leaf so query openings *reveal nothing about the witness beyond the public inputs*. Statistically ZK by construction. The circuit already proves "I performed action X" without revealing the chain/caps (`circuit/src/lib.rs:47,72`). |
 
@@ -89,7 +103,7 @@ this viewer see the result?"*. They are **dual faces of the same cap**:
 - **Attenuation is the same operation in both directions:** `granted ⊆ held`. A
   read-cap for slots {3,4,5} attenuates to one for {3} exactly as a write-cap for
   `{send, delegate}` attenuates to `{send}`. The `is_attenuation` gate
-  (`cell/src/capability.rs:603`) is reused verbatim; only the lattice changes
+  (`cell/src/capability.rs`) is reused verbatim; only the lattice changes
   (which *slots/fields* may be opened, vs which *effects* may be issued).
 - **Confidential computation is where they meet:** a turn carries a write-cap (it
   may mutate) AND its receipt is decryptable only under a read-cap (the result is
@@ -122,7 +136,7 @@ ReadCap {
   that decrypts only the granted slots (key-derivation below). There is no
   amplification: you cannot grant read of a slot you cannot read.
 - **`view_key` is the decryption authority.** Reuse the existing ECIES path
-  (`cell/src/note_encryption.rs`): each `Committed`/encrypted slot is sealed to a
+  (`cell-crypto/src/note_encryption.rs`): each `Committed`/encrypted slot is sealed to a
   per-slot symmetric key; the `ViewKey` is the material (or the X25519 secret) that
   derives those per-slot keys. Per-slot derivation = `KDF(root_view_key,
   domain="dregg-read-slot v1", slot_index)`, so a cap for slots {3,4} hands a key
@@ -215,7 +229,7 @@ All of `old_state, new_state, cap_chain, witness` are the **private witness**; o
 `old_commit, new_commit, vk, height` are public inputs. This is precisely the
 two-axis authority + apply + conservation obligation the **Circuit-Soundness Apex**
 campaign is already proving for the *non-private* case
-(`docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`); the ZK-private cell **inherits that
+(`docs/reference/lean-circuit.md`); the ZK-private cell **inherits that
 soundness for free** and *adds hiding on top* via §3c. The light-client
 unfoolability theorem (`verifyBatch accept ⟹ ∃ genuine kernel transition`) holds
 verbatim — the witness being hidden does not weaken it, because soundness is a
@@ -231,7 +245,7 @@ Split clean, in the spirit of *don't-launder-a-load-bearing-insecurity*:
   **does not hand-roll masking** (the doc names that a "classic soundness footgun").
   This is the load-bearing crypto and it is honest about its strength: hiding is
   statistical-ZK at the configured blinding degree, soundness is FRI's ~130-bit
-  floor (match the commitment to it — `docs/FAITHFUL-STATE-COMMITMENT.md`).
+  floor (match the commitment to it — `docs/FAITHFUL-COMMITMENT-LAW.md`).
 - **Lean-provable (the logical layer):** the *transition-correctness* obligation in
   §3b — that a satisfying witness implies a genuine kernel transition, that the cap
   chain is non-amplifying, that conservation holds. This is the Metatheory trunk's
@@ -249,10 +263,13 @@ Split clean, in the spirit of *don't-launder-a-load-bearing-insecurity*:
 
 ## 4. The design & the first buildable milestone
 
-### Milestone 0 — the read-cap on the existing cap substrate (the first ship)
-The smallest end-to-end confidential read, all on organs that exist:
+### Milestone 0 — the read-cap on the existing cap substrate (SHIPPED)
+The smallest end-to-end confidential read, all on organs that exist — now delivered:
+`ReadCap` + `ReadCap::attenuate` in `cell-crypto/src/read_cap.rs`, the membrane read-side dual
+in `cell/src/membrane.rs`, and the live inspector surface in `starbridge-v2/src/read_cap_lens.rs`.
+The four pieces, as built:
 
-1. **`ReadCap` type** (§2a) in `cell/`, sharing `is_attenuation` and the caveat/
+1. **`ReadCap` type** (§2a) in `cell-crypto/` (crate `dregg_cell_crypto`), sharing `is_attenuation` and the caveat/
    breadstuff machinery with the write-cap. The `slots: FieldSet` lattice + the
    HKDF-tree `ViewKey` derivation (`KDF(root, slot_index)`).
 2. **Encrypted `Committed` slots** (§2b): on `SetField` of a `Committed` slot,
@@ -331,7 +348,7 @@ other work comes first* (M0 unblocks the whole confidentiality story cheaply).
 
 dregg's `Permissions` gate write, never read; but the confidentiality organs
 already exist disconnected — per-field `FieldVisibility` (`cell/src/state.rs:74`),
-ECIES note encryption (`cell/src/note_encryption.rs`), stealth addresses, value
+ECIES note encryption (`cell-crypto/src/note_encryption.rs`), stealth addresses, value
 commitments, sealers, OT, the Lean-proven per-viewer **Membrane** fog-of-war
 (`starbridge-web-surface/src/affordance.rs`), and a real ZK-hiding STARK
 (`circuit/src/stark_zk.rs`, `HidingFriPcs`). The design adds a **read-cap**: an

@@ -116,10 +116,15 @@ What no prior system could reach, because none had the spine:
 - **Prototype (executor-side / protocol-designed, not yet circuit-bound):** membrane composition ·
   branch-and-stitch multiplayer · the dregg-as-host jail (real jail + dregg-tools-only effect-path;
   the live brain in-jail via a confined MCP tool-bridge is the closing wire).
-- **Frontier (the roadmap):** the world painting in a *browser tab* and on seL4 (renderer-
-  independence) · the document language at full fidelity (the patch-history living *in* the cell,
-  dregg-doc's `substrate` ride) · cross-*machine* migrate · the MUD (a shared cap-secured world
-  you wander, collecting gadget-cards) · the gadget rolodex · co-driven multiplayer cards.
+- **Renderer-independence (demonstrated, fidelity seams named):** the world painting in a
+  *browser tab* — the gpui-web cockpit paints a real frame and drives real turns in-tab (terminal
+  PTY wired + proven; editor/chat backends wasm-reachable, view-mounts pending — `WEB-DEOS.md`) —
+  and on **seL4**, where a committed turn drives live-repaint of the framebuffer end-to-end
+  (`sel4/dregg-firmament/tests/live_repaint_on_turn.rs`, at semihost fidelity).
+- **Frontier (the roadmap):** the document language at full fidelity (the patch-history living
+  *in* the cell, dregg-doc's `substrate` ride) · cross-*machine* migrate · the MUD (a shared
+  cap-secured world you wander, collecting gadget-cards) · the gadget rolodex · co-driven
+  multiplayer cards.
 
 ## The north star (the self-hosting cure)
 

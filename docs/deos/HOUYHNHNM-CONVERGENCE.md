@@ -14,10 +14,10 @@ would have helped David's team" turn out to be the **same question**.
 
 | Houyhnhnm principle (ch.) | dregg/deos today | the David's-team wound it answers |
 |---|---|---|
-| **Orthogonal persistence** — everything persists by default, no "save" button, *you never lose your session* (ch2–3) | the blocklace IS the persistence journal; `World::open` recovers an image; **but boot still spins a fresh `demo_world` — never wired** (WM-3) | "in-session wakes don't survive a full reboot"; "monitors die on compaction/reboot"; restart loses state |
+| **Orthogonal persistence** — everything persists by default, no "save" button, *you never lose your session* (ch2–3) | the blocklace IS the persistence journal; `World::open_recovering` recovers an image; **and boot is now wired to it** — `starbridge-v2/src/durable_desktop.rs::boot_desktop_world` boots over `World::open_recovering` (recover → re-execute → verify), and `session::open_session_world` opens the durable per-principal image on login; the ephemeral `demo_world` is now only an explicit escape hatch (WM-3, LANDED) | "in-session wakes don't survive a full reboot"; "monitors die on compaction/reboot"; restart loses state |
 | **Persistence log = input events + deterministic replay** (ch3) | the blocklace + the replay tape + symbolic/collapse — *exactly this* | the recovery story: replay from the log, not reconstruct by hand |
 | **Virtualization = branching; errors stay imaginary in unmerged branches** (ch3–4) | **the rehydratable membrane + branch-and-stitch + the TIME scrubber — built** | the team used 157 worktrees / 271 branches as the *human-hack* version; the destructive codex-wedge had no branch isolation |
-| **The Monitor** — an external simple-but-complete system that stops, inspects, fixes, restarts a broken system; recursively virtualizable (ch3, ch6) | the cockpit inspector + the seL4 monitor PD + the live image — *substrate exists; no recovery-monitor* | **THE 15-HOUR WEDGE**: needed exactly this — instead a restart-loop that logged "revert OK" while the live artifact re-wedged every 4 min |
+| **The Monitor** — an external simple-but-complete system that stops, inspects, fixes, restarts a broken system; recursively virtualizable (ch3, ch6) | the cockpit inspector + the seL4 monitor PD + the live image — **and now the recovery monitor itself: `sel4/dregg-firmament/src/recovery_monitor.rs` (the Houyhnhnm Recovery Monitor — reads the live artifact, `RecoveryNotHolding` on claimed-vs-actual divergence, restart-loop escalation, fail-closed post-restart probe; BUILT)** | **THE 15-HOUR WEDGE**: needed exactly this — instead a restart-loop that logged "revert OK" while the live artifact re-wedged every 4 min |
 | **Non-stop change / live upgrade from within; code-change-as-a-transaction; linear-logic upgrade (must *explicitly* drop data)** (ch5) | dregg turns are code-change transactions; conservation Σδ=0 *is* the linear-logic discipline; dregg-doc patches | "sanitize-*before*-revert" was a transaction the team had to invent; the shared-revert was non-transactional → re-wedge |
 | **"I object to doing things computers can do" / the save-habit is wasted wetware** (ch2) | the witness IS the artifact; receipts; ToolGateway — the computer does the verifying | **THE ROOT FAILURE**: "assertion-over-artifact — a tool asserting success the live artifact refutes" (`revert OK`, `refreshed=5` over dead tokens) |
 | **Polycentric kernel** — every subsystem its own kernel; decentralized invariant enforcement; full abstraction *enforced*, not by-convention; linear logic for resources (ch6) | dregg **is** this: cells are polycentric kernels, cell-programs enforce their own invariants, caps = linear logic, the membrane = enforced full abstraction; no single privileged kernel | the RSH was *one central stop-hook layer enforcing a static set* — the un-Houyhnhnm anti-pattern the council named ("structural-proof can become a new overbearing stop-hook religion") |
@@ -31,25 +31,28 @@ would have helped David's team" turn out to be the **same question**.
 
 dregg/deos already embodies more Houyhnhnm principles than any extant system — it *is* the
 polycentric kernel, virtualization-as-branching, linear-logic resources, artifact-over-assertion,
-and verified-semantics-where-it-matters. **To be *more* Houyhnhnm is to wire the principles that
-are designed-but-not-yet-realized — and those are precisely the gaps that burned David's team.**
+and verified-semantics-where-it-matters. **The two principles that were once designed-but-not-yet-realized
+— precisely the gaps that burned David's team — have since LANDED.**
 
-Two stand out, both highest-Houyhnhnm and highest-would-have-helped:
+Two stood out, both highest-Houyhnhnm and highest-would-have-helped, both now closed:
 
 1. **Orthogonal persistence / never-lose-your-session** (ch2–3) — boot resumes the *exact* image
-   where it closed; no save button; the blocklace is the log. The machinery (`World::open`,
-   redb dual-write) exists; it is *not wired into boot*. This directly answers "in-session wakes
-   don't survive reboot." → frontier **WM-3** (queued).
+   where it closed; no save button; the blocklace is the log. The machinery (`World::open_recovering`,
+   redb dual-write) exists AND is now wired into boot: `starbridge-v2/src/durable_desktop.rs::boot_desktop_world`
+   boots the desktop over `World::open_recovering` (recover → re-execute → verify), and
+   `session::open_session_world` opens the durable per-principal image on login. This directly answers
+   "in-session wakes don't survive reboot." → **WM-3, LANDED**.
 
 2. **The Monitor** (ch3, ch6) — a *Houyhnhnm recovery monitor*: an external, simple-but-complete
    watcher that reads the **live artifact** (never a self-reported "OK"), detects claimed-vs-actual
    divergence (the council's `RECOVERY_NOT_HOLDING`; cred-steward's "every auto-process must prove
    it fired on real input AND that the result persisted"), and can stop / inspect / fix / restart
    a wedged subsystem — recursively (a monitor of monitors). This is *exactly* the thing that would
-   have ended the 15-hour codex-wedge in minutes instead of fighting the operator for a day. dregg
-   has the substrate (the inspector reads live cell state; the firmament host-PD can stop/restart a
-   confined subprocess; the receipt model makes the artifact the witness). It is **not yet a
-   feature**. → THE standout new build.
+   have ended the 15-hour codex-wedge in minutes instead of fighting the operator for a day. It is
+   now **built**: `sel4/dregg-firmament/src/recovery_monitor.rs` is that monitor — the firmament's
+   simplest component (reads live cell state, `RecoveryNotHolding` on divergence, restart-loop
+   escalation, fail-closed post-restart probe; its module doc names this convergence essay directly).
+   → THE standout build, LANDED.
 
 The deepest point: the council, under fire, re-derived Houyhnhnm computing —
 *enforce-not-advise* = preemptive>cooperative (ch8); *artifact-over-assertion* = "I object to doing

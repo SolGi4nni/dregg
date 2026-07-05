@@ -20,11 +20,18 @@ HEAD unless flagged. Where a memory note and the code disagree, the code wins.
 - **The "−48.6% chip-drop" is REAL and reproducible** — but it is an **isolated micro-probe**
   (a synthetic 4-row, 6-column descriptor), and the win materializes **only when the chip table
   is dropped**, which a "memory-only descriptor" does and a real deployed effect does NOT.
-- **On the DEPLOYED path the win is unrealized.** The welded registry that the flag-day pushes
-  toward (`rotation-wide-umem-welded-registry-staged.tsv`) is **purely additive**: it keeps
-  `main/chip/range/memory/map_ops` and ADDS `umemory/umem_boundary` on top. 0 of 54 members
-  drop the chip. Static cost: **+0.8% summed trace width, +2 tables/member, +0.6% constraints**.
-  In its current migration form umem is a small **regression**, not a win.
+- **On the DEPLOYED path the win is unrealized — and the welded prover is not yet the default.**
+  Two umem toggles must not be conflated. The executor's umem *observation bridge* is ON by default
+  (`umem_witness_enabled: AtomicBool::new(true)` at every `TurnExecutor` ctor,
+  `turn/src/executor/mod.rs:1008/1070/1114` — the G4 observation epoch: the deployed executor *witnesses*
+  the umem boundary). But the umem-**welded proving registry / VK** stays **STAGED, not flipped**: the
+  deployed prover default remains per-map until the gated VK epoch (`sdk/src/full_turn_proof.rs` —
+  "no VK bump, no default flip, `umem_witness_enabled` untouched"; `rotation-wide-umem-welded-registry-staged.tsv`
+  is the staged *target*, not the deployed default). Measured on that staged welded form it is **purely
+  additive**: it keeps `main/chip/range/memory/map_ops` and ADDS `umemory/umem_boundary` on top. 0 of 54
+  members drop the chip. Static cost: **+0.8% summed trace width, +2 tables/member, +0.6% constraints**.
+  In its current welded form umem is a small **regression**, not a win — and the table-collapse win
+  remains the pending lever the gated VK epoch would unlock.
 - **The "~130,000×" is NOT a umem benchmark** — it is a dated profiler note about per-turn
   *commitment* FFI (a different subsystem). It does not belong in the umem efficiency story and
   is not cited here as evidence.
@@ -87,7 +94,9 @@ that contains *only* that leg. It does not (and does not claim to) measure a rea
 
 Parsed from the deployed staged registries, matching members by name (54 members common to
 both; `rotation-wide-registry-staged.tsv` = the per-map "bare wide" baseline at the 8-felt
-commitment, `rotation-wide-umem-welded-registry-staged.tsv` = the umem flag-day target):
+commitment, `rotation-wide-umem-welded-registry-staged.tsv` = the umem-welded form — **STAGED**, the
+target of the gated VK epoch, *not* yet the deployed prover default (the executor observation bridge is
+on; the welded VK is not flipped):
 
 | metric (summed over 54 matched members) | bare wide (per-map) | umem-welded | Δ |
 |---|---|---|---|
@@ -146,8 +155,8 @@ home-grown gamble.
 separate sorted-Merkle map tables (cap / nullifier / heap / index / record-digest), each with its
 own reconciliation. Collapsing them removes duplicated boundary-reconciliation machinery, and the
 per-op micro-win (−48.6% when the chip drops) is genuine. The catch is purely about *realization*:
-the deployed form is an additive overlay (§2), so the architectural payoff — the table collapse —
-is **deferred, not delivered**. You currently pay the abstraction's cost (two extra tables, a new
+the now-deployed form is an additive overlay (§2), so the architectural payoff — the table collapse —
+is **still pending, not delivered**. You currently pay the abstraction's cost (two extra tables, a new
 soundness-critical AIR family, the boundary-binding leg) without yet collecting its proof-size
 dividend.
 
@@ -191,11 +200,12 @@ oversells it.
 
 **Recommendation for the honest story:** sell umem on **capability** (passable/composable
 witnessed memory) and on the **architectural unification** (one argument, table-collapse as the
-eventual win), not on the −48.6% chip-drop. Before the flag-day, either (i) measure a REAL
-deployed turn umem-vs-per-map (not a micro-probe) so the proof-size claim is grounded at
-deployment scale, or (ii) commit to the table-collapse form (drop the per-map tables for the
-descriptors that can) so the win is actually realized rather than an additive overlay that
-regresses size by +0.8%.
+eventual win), not on the −48.6% chip-drop. With the observation bridge on by default but the welded
+prover still STAGED (per-map remains the deployed default), the still-open lever is to either (i)
+measure a REAL deployed turn umem-vs-per-map (not a
+micro-probe) so the proof-size claim is grounded at deployment scale, or (ii) commit to the
+table-collapse form (drop the per-map tables for the descriptors that can) so the win is actually
+realized rather than an additive overlay that regresses size by +0.8%.
 
 ---
 
@@ -210,10 +220,12 @@ regresses size by +0.8%.
 - Circuit AIR: `circuit/src/descriptor_ir2.rs` — `Ir2Air::UMemory/UMemBoundary` (:1809), the
   additive boundary note (:90-128), `BUS_UMEM_*` (:282).
 - Executor bridge: `turn/src/umem.rs` — `project_executor_state` (:513), `fold` (:1062),
-  `emit_trace`/Blum trace. **Deployed default `umem_witness_enabled: true`** — the umem VK
-  epoch FIRED (G4, `da0c47dd6`/`443661298`): the welded form is the deployed default and the
-  executor drops the bare wide member whenever a welded twin exists (fail-closed). This
-  paragraph previously described the pre-flip state; kept corrected for the record.
+  `emit_trace`/Blum trace. **The executor observation bridge is ON by default**
+  (`umem_witness_enabled: AtomicBool::new(true)`, `turn/src/executor/mod.rs:1008/1070/1114` — the G4
+  observation epoch, the deployed executor *witnesses* the umem boundary). The umem-**welded proving
+  registry / VK stays STAGED**: per-map remains the deployed prover default until the gated VK epoch
+  (`sdk/src/full_turn_proof.rs`: "STAGED … no VK bump, no default flip, `umem_witness_enabled`
+  untouched"; `turn/src/executor/proof_verify.rs:1162`). Do not read the observation flag as the VK flip.
 - Lean: `metatheory/Dregg2/Crypto/UniversalMemory.lean` — `universal_memory_sound` (:210),
   `_single` (:236).
 - Per-turn baseline: `.docs-history-noclaude/PROOF-ECONOMICS.md:20` (451.7 KiB `effect-vm`).

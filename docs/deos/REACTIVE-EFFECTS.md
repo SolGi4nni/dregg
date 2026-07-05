@@ -37,7 +37,7 @@ already refuses a double-spend.
 
 Lean (proven, `metatheory/Dregg2/...`):
 
-- `Await.commit_resumes_once` (`Await.lean:260`) — a continuation resumes **exactly
+- `Await.commit_resumes_once` (`Dregg2/Await.lean`) — a continuation resumes **exactly
   once** on commit (`OneShot.resume` consumes it). One-shot is a *static* invariant.
 - `holeFill_binds_in_circuit` (`Exec/GuardedHole.lean:59`) — **the keystone**: a
   successful hole-fill BINDS *both* legs — the δ (the post-state is exactly the
@@ -47,7 +47,7 @@ Lean (proven, `metatheory/Dregg2/...`):
   violating value does not fill.
 - `condTurn_dependency_sound` (`Exec/ConditionalTurn.lean:407`) — topo order is
   respected; a consumer runs after its producer fills the awaited slot.
-- `forward_is_handler_commit` (`Exec/ConditionalTurn.lean:602`) — the batch's
+- `forward_is_handler_commit` (`Dregg2/Exec/ConditionalTurn.lean`) — the batch's
   slot-fill *is* `Await.commit_resumes_once` (the await↔executor bridge).
 
 ### The live UI (ad-hoc, no kernel backing)
@@ -195,19 +195,22 @@ routes; this slice keeps the `turn/` machinery self-contained and proven).
 
 ---
 
-## 7. The next slice (named precisely)
+## 7. What landed, and the one seam that remains
 
-This slice delivers the **executor-side** one-shot enforcement (the
-`ReactiveCoordinator` + the two-teeth react gate) and the design weld. Two lifts
-remain, each named, not parked:
+This design delivered the **executor-side** one-shot enforcement (the
+`ReactiveCoordinator` + the two-teeth react gate) and the weld.
 
-1. **Effect-vocabulary integration.** Add `ReactiveEffect` as a real `Effect`
-   variant the `TurnExecutor` dispatches (so `Notify`/`React` are emitted *inside* a
-   turn's `CallForest`, not driven by a side coordinator), and replace
-   `synthetic_resolution_receipt` (`reactive.rs`) with the genuine executor receipt
-   from running the resolved `wake` turn. This is the `execConditionalTurn` /
-   `FullForest` / apex-fold wiring the partial-turn memory flags as "WIRE, not
-   build."
+1. **Effect-vocabulary integration — LANDED.** `ReactiveEffect` is no longer only
+   a side coordinator: `Effect::Promise` (`turn/src/action.rs:1400`),
+   `Effect::Notify` (`action.rs:1414`), and `Effect::React` (`action.rs:1431`) are
+   first-class `Effect` variants the `TurnExecutor` dispatches, emitted *inside* a
+   turn's `CallForest`. Each carries its `LinearityClass` (Promise/Notify =
+   `Generative` at `action.rs:1845/1846` — they mint a hole; React = `Terminal` at
+   `action.rs:1863` — it spends one), the executor handles them at
+   `action.rs:2302/2475/2573`, and `turn/src/reversible.rs:406-411` treats
+   Promise/Notify as hole-mints and `React` as a `NullifierConsumed` spend (the
+   same inversion class as `NoteSpend`). The "side `ReactiveCoordinator`" of §3-§4
+   is now the prior state; the vocabulary rides the real dispatch path.
 
 2. **The circuit witness for `React`.** The Lean obligation **named but not yet
    discharged** for this exact ADT: that a light client verifying a batch bearing a

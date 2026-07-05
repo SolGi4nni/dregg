@@ -34,11 +34,16 @@ What a verifier checks for ONE whole-history proof —
    last_new, count, acc]` must equal the carried public inputs
    `[genesis_root, final_root, num_turns, chain_digest]`.
 
-Public inputs (`WholeChainProof`, `ivc_turn_chain.rs:1296-1304`): `genesis_root:
-BabyBear`, `final_root: BabyBear`, `chain_digest: [BabyBear; 4]`
-(`SEG_DIGEST_WIDTH = 4`, `:249`), `num_turns: usize`. All BabyBear (31-bit) — they
-embed losslessly into any larger field (BN254/BLS12-381 scalars). The wire
-envelope is `WholeChainProofBytes` (`:1357`), which carries the same four publics
+Public inputs (`WholeChainProof`, `ivc_turn_chain.rs`): `genesis_root: [BabyBear;
+SEG_ANCHOR_WIDTH]`, `final_root: [BabyBear; SEG_ANCHOR_WIDTH]`, `chain_digest:
+[BabyBear; SEG_DIGEST_WIDTH]`, `num_turns: usize` — the roots and digest are now
+each **8 BabyBear lanes** (`SEG_DIGEST_WIDTH = 8`, `SEG_ANCHOR_WIDTH = 8`; the
+v11 8-felt ~124-bit faithful-commitment migration reaching the whole-chain
+public-input shape — the host verifier's segment tooth reads them as
+`genesis_root8`/`final_root8`/`chain_digest_0..`). Still all BabyBear limbs
+(31-bit each) — they embed losslessly into any larger field (BN254/BLS12-381
+scalars). The wire
+envelope is `WholeChainProofBytes` (`:1357`), which carries the same publics
 plus the `vk_fingerprint_hex` anchor. The Rust light client that runs teeth 1–3 is
 `lightclient/src/lib.rs` (`verify_history`, `:183`; `AttestedHistory`, `:130`).
 
@@ -122,9 +127,10 @@ The wrap exists precisely to move that work off-chain into the SNARK.
 
 The on-chain cost is independent of dregg's verifier size once wrapped: a Groth16
 verifier on BN254 is **~250–300k gas** (one EIP-197 pairing of fixed size + a
-handful of EIP-196 scalar-mults for the 4 public inputs). PLONK/BN254 is somewhat
-higher (~300–500k) but needs no per-circuit ceremony. The 4 BabyBear publics cost a
-few k gas to fold into the pairing input. This is the SP1/RISC0 EVM-settlement
+handful of EIP-196 scalar-mults for the public inputs). PLONK/BN254 is somewhat
+higher (~300–500k) but needs no per-circuit ceremony. The BabyBear publics (the
+two 8-lane roots + 8-lane digest + `num_turns`) cost a few k gas to fold into the
+pairing input. This is the SP1/RISC0 EVM-settlement
 envelope, unchanged by what the SNARK wraps.
 
 ## 2. Midnight — native proof-carrying is foreclosed (by Midnight's architecture)

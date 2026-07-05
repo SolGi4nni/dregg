@@ -13,8 +13,8 @@ builders-dev adoption path. It is written in present tense from first
 principles; the runnable first slice lives in
 `pg-dregg/tests/cap_secured_store.rs` (the RLS row-filter) and
 `dregg-query/tests/cap_secured_read.rs` (the attested read). The substrate it
-builds on is documented in `docs/PG-DREGG.md` (the extension) and
-`docs/EPISTEMIC-DATALOG.md` (the query surface).
+builds on is documented in `docs/design-frontiers/PG-DREGG-DX.md` (the extension)
+and the `dregg-query/` crate (the query surface).
 
 ---
 
@@ -72,7 +72,7 @@ deos ships the store as a self-contained unit:
 **PostgreSQL 18** is the storage engine. pg18 is chosen deliberately: virtual
 generated columns, `RETURNING old/new`, uuidv7, OAuth, async I/O, and the
 `CHECK ... NOT ENFORCED` / `NOT NULL ... NOT VALID` constraint forms pg-dregg
-already uses (`docs/PG-DREGG-PG18.md`). The bundle preloads the pg-dregg
+already uses (`docs/design-frontiers/PG-DREGG-DX.md` Tier B). The bundle preloads the pg-dregg
 extension (`shared_preload_libraries = 'pg_dregg'`) and configures the issuer
 public key once (`dregg.issuer_pubkey`), which is the database's trust root.
 
@@ -152,7 +152,8 @@ verify when an agent takes a turn. So:
 > the SAME proven decision from the SAME token.
 
 There is no second authority model to drift. The assurance boundary is named
-honestly (`docs/PG-DREGG.md` §4): the *decision* is verified; the *integration*
+honestly (`docs/design-frontiers/PG-DREGG-DX.md` §6, the honest-gaps burn-down):
+the *decision* is verified; the *integration*
 (the GUC plumbing, the LRU, the per-row invocation) is conventional extension
 code, tested directly in the postgres-free core.
 
@@ -266,13 +267,16 @@ kind of value that justifies a small adoption, not a rewrite.
   pre-set issuer key) is the next deos-distribution step
   (`docs/deos/DEOS-DISTRIBUTION.md`); the extension and read face it bundles are
   the pieces proven here.
-- **Named seam — the Tier-C proof gate** (`tier-c`/`tier-d` features) was
-  unwired by the circuit crate-split (the `prover` feature retired; the IVC
-  recursion tower moved to `dregg-circuit-prove`). pg-dregg's `tier-c` dep and
-  `src/attest.rs` import are repointed to `dregg-circuit-prove`; the
-  `tier_c_real_proof.rs` integration test's internal circuit paths still need
-  the mechanical port to the split crate. This is a HORIZONLOG follow-up; it
-  does not affect the postgres-free core or the cap-secured-store slice (the
-  Tier-C *chain* re-validation ships unconditionally; only the heavyweight
-  *proof* attestation is behind the seam).
+- **Tier-C proof gate — the crate-split port is DONE** (`tier-c`/`tier-d`
+  features). The circuit crate-split retired the `prover` feature and moved the
+  IVC recursion tower to `dregg-circuit-prove`; pg-dregg's `tier-c` dep and
+  `src/attest.rs` import now point at it (`pg-dregg/Cargo.toml` wires both the
+  `tier-c` dep and the dev-dep to `../circuit-prove`; `attest.rs:436` calls
+  `dregg_circuit_prove::ivc_turn_chain`). The `tier_c_real_proof.rs` integration
+  test is fully ported — it is `#![cfg(feature = "tier-c")]` and imports
+  `dregg_circuit_prove::{ivc_turn_chain, joint_turn_aggregation}`. What remains
+  is a deliberate build-cost gate, not an unfinished port: the Tier-C *chain*
+  re-validation ships unconditionally; only the heavyweight *proof* attestation
+  sits behind the `tier-c` feature (off by default so the postgres-free core and
+  the cap-secured-store slice stay circuit-free).
 ```

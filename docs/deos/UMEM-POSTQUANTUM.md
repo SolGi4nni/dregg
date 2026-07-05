@@ -93,11 +93,15 @@ the soundness of the writes themselves.
   caps. Under Grover the relevant question is the **hash output / commitment width**,
   not the FRI query count: FRI soundness error is an interactive-protocol bound that
   Grover does not generically halve, but the **Poseidon2 Merkle commitment** and any
-  fixed-output digest are subject to Grover preimage / BHT collision search. The 4-felt
-  (`≈124`-bit) commitment surface flagged in MEMORY (the FAITHFUL-STATE-COMMITMENT
-  concern) is exactly the quantity to size against a Grover adversary: a `124`-bit
-  digest gives `~62`-bit quantum collision resistance under the (optimistic) BHT model
-  — which is the line to widen if a PQ-Grover margin is wanted.
+  fixed-output digest are subject to Grover preimage / BHT collision search. The
+  faithful **8-felt (`≈124`-bit) commitment surface is already DEPLOYED** (the
+  `node8` gadget, `CAP_DIGEST_W`/`HEAP_DIGEST_W = 8`, v9→v13 geometry — see
+  `docs/FAITHFUL-COMMITMENT-LAW.md` / `docs/reference/faithful-commitment.md`), and
+  it is exactly the quantity to size against a Grover adversary: a `124`-bit digest
+  gives `~62`-bit quantum collision resistance under the (optimistic) BHT model. So
+  the remaining PQ-Grover question is a **margin** one against that deployed 124-bit
+  surface (widen further only if a larger quantum margin is demanded), not a
+  faithful-commitment widening still-to-do — that campaign has landed.
 - The grinding term (`query_proof_of_work_bits = 16`, `STARK-FLOOR.md:104`) is a hash
   preimage PoW; Grover halves its effective cost (`16 → ~8` bits). Negligible either
   way, but worth noting it is a Grover-soft term.
@@ -129,9 +133,12 @@ trust" — fully post-quantum, three changes:
    already PQ, so the simplest fully-PQ posture is "no DLog value commitments."
 
 3. **Size the hashes for Grover.** Keep Poseidon2/BLAKE3/FRI, but pin the commitment
-   and digest widths so post-Grover margins meet the target. Concretely: match the
-   commitment surface to the FRI `~130`-bit envelope (the `8-felt` / `~248`-bit
-   direction noted in `docs/FAITHFUL-STATE-COMMITMENT.md`), and prefer the proven
+   and digest widths so post-Grover margins meet the target. The commitment surface is
+   already matched to the FRI `~130`-bit envelope: the faithful `8-felt` (`~124`-bit)
+   commitment is DEPLOYED at HEAD (`docs/FAITHFUL-COMMITMENT-LAW.md` /
+   `docs/reference/faithful-commitment.md`; the historical widening analysis is
+   archived at `.docs-history-noclaude/FAITHFUL-STATE-COMMITMENT.md`), so this is a
+   margin-tuning knob rather than open work. Prefer the proven
    (Johnson-bound `73`-bit) parameter envelope or raise queries if a quantum margin is
    demanded. X25519 transport → a PQ KEM (ML-KEM) closes the adjacent confidentiality
    leg.

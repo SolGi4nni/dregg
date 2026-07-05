@@ -215,8 +215,14 @@ band:
    concretely, a batch containing one or more spends implies that, in every epoch
    touched, the sum of spends did not exceed `limit_per_epoch`, the epoch cursor
    advanced only across genuine boundaries, and no closed epoch's headroom was
-   reused — joining the circuit-soundness obligation table in
-   `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`.
+   reused — joining the circuit-soundness story tracked in
+   `docs/reference/lean-circuit.md`.
 
 Until that lands, rate-limited allowances are sound under the executor checks and
 the commitment binding; the circuit rung is the named follow-up, not a silent gap.
+(Unlike the sibling standing-obligation and membrane capacities, there is no
+`invariant_matches_lean_rung` wired into `allowance.rs` yet — so this circuit
+binding is genuinely the next slice, not a mislabel. An app-level model does
+exist, though: `metatheory/Dregg2/Apps/Allowance.lean` promotes the falsification
+probe `Dregg2.Verify.AllowanceFactoryProbe` into a live factory-instantiable
+allowance cell.)

@@ -1,5 +1,12 @@
 # umem-as-a-primitive — cross-review brief (for Codex)
 
+> **Point-in-time review artifact (~2026-06-24).** Reads as the state at that session.
+> One address-space change since: the `Domain` enum has gained a **sixth** constructor,
+> `working` (Stage D service/interpreter scratch; deliberately never projected into
+> committed state — `working_commitment_inert`), mirrored by Rust `UDomain::Working = 5`.
+> The named symbols and the seven-item proof frontier below otherwise still hold; cited
+> Lean line numbers have drifted but the symbols are intact.
+
 *A second voice is requested. This document hands Codex the universal-memory work
 landed in one session, names every soundness seam honestly, and lays out the Lean
 proof frontier the new semantics open. Critique it, contradict it, and add your own

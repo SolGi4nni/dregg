@@ -68,32 +68,51 @@ pub fn felt_of_str(s: &str) -> BabyBear {
     hash_many(&felts)
 }
 
-/// [`deco_payment_hash_felt`] from the RAW Stripe attestation material — the
-/// executor/SDK entry point (`bridge/src/stripe_mirror.rs` holds a `String`
-/// currency / payment-intent id and a 32-byte `recipient` CellId, not felts). The
-/// byte→felt encoding here is the DECO twin of
+/// **THE CANONICAL BYTE→FELT PROJECTION of the raw Stripe attestation material**
+/// onto the four `PaymentFacts` felts `(amountCents, currency, recipient,
+/// paymentIntentId)` — the ONE encoder the executor felt-attach
+/// (`bridge/src/stripe_mirror.rs::VerifiedPayment`), the deployed producer
+/// (`generate_rotated_stripe_mint_wide`), and the DECO leaf witness all decompose
+/// through, so the felt the executor writes, the felt the producer pins at PI 46,
+/// and the facts the leaf recomputes over are IDENTICAL by construction (the
+/// anti-vacuity tie). The byte→felt encoding is the DECO twin of
 /// [`crate::dsl::note_spending::bridge_mint_hash_felt`]:
 ///
 ///   * `amount_cents`: the low-`2^30` limb (total for any valid Stripe amount);
 ///   * `currency` / `payment_intent_id`: the canonical string felt [`felt_of_str`];
 ///   * `recipient`: the 32-byte CellId compressed via `hash_many(encode_hash(..))`
 ///     (the `bytes_to_babybear` convention shared with the bridge recipient/root).
+pub fn stripe_payment_facts_felts(
+    amount_cents: u64,
+    currency: &str,
+    recipient: &[u8; 32],
+    payment_intent_id: &str,
+) -> [BabyBear; 4] {
+    let amount_lo = BabyBear::new((amount_cents & ((1u64 << AMOUNT_LIMB_BITS) - 1)) as u32);
+    [
+        amount_lo,
+        felt_of_str(currency),
+        hash_many(&BabyBear::encode_hash(recipient)),
+        felt_of_str(payment_intent_id),
+    ]
+}
+
+/// [`deco_payment_hash_felt`] from the RAW Stripe attestation material — the
+/// executor/SDK entry point (`bridge/src/stripe_mirror.rs` holds a `String`
+/// currency / payment-intent id and a 32-byte `recipient` CellId, not felts).
 ///
-/// So the identity is over the SAME felts the DECO leaf recomputes in-AIR — the
-/// byte↔felt tie is this projection, not a laundered re-hash.
+/// The identity is over the SAME felts the DECO leaf recomputes in-AIR (via
+/// [`stripe_payment_facts_felts`]) — the byte↔felt tie is this projection, not a
+/// laundered re-hash.
 pub fn stripe_payment_hash_felt(
     amount_cents: u64,
     currency: &str,
     recipient: &[u8; 32],
     payment_intent_id: &str,
 ) -> BabyBear {
-    let amount_lo = BabyBear::new((amount_cents & ((1u64 << AMOUNT_LIMB_BITS) - 1)) as u32);
-    deco_payment_hash_felt(
-        amount_lo,
-        felt_of_str(currency),
-        hash_many(&BabyBear::encode_hash(recipient)),
-        felt_of_str(payment_intent_id),
-    )
+    let [amount_lo, currency_f, recipient_f, pi_f] =
+        stripe_payment_facts_felts(amount_cents, currency, recipient, payment_intent_id);
+    deco_payment_hash_felt(amount_lo, currency_f, recipient_f, pi_f)
 }
 
 #[cfg(test)]

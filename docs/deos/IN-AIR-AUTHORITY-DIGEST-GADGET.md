@@ -107,7 +107,7 @@ partial/phantom UNSAT teeth), `#assert_all_clean` (13 keystones), no off-band hy
 Constraints (1)(2)(3) are ordinary `VmConstraint::Gate` polynomials of degree ≤ 2 — the SAME
 vocabulary the satisfaction weld uses — over three columns:
 
-* `authDigestCol = BEFORE_BASE + B_AUTHORITY_DIGEST` (col 210; Lean `EFFECT_VM_WIDTH + 24`): the
+* `authDigestCol = BEFORE_BASE + B_AUTHORITY_DIGEST` (col 212 = `EFFECT_VM_WIDTH` 188 + 24; Lean `EFFECT_VM_WIDTH + 24`): the
   committed r23 limb, wide-bound (`gentian_auth_digest_absorbed`).
 * `witDigestCol = PARAM_BASE + 3` (col 71): the recompute output, a free param the producer fills.
 * `floorCol = PARAM_BASE + 4` (col 72): the decoded `floorHasEscrow` bit, a free param.

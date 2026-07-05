@@ -36,7 +36,7 @@ Claude Code session picks it up automatically; the tools then appear as
 | `spotter {query,as?}` | fuzzy-search every object's every face (the ⌘K palette). |
 | `graph {kind,format}` | emit an interaction map — `ocap` (the capability web), `affordance` (object→message→effect), or `interactions` (this session's nav+act trail) — as `json` or Graphviz `dot`. |
 | `render {cell,out?}` | render a cell's full inspector view to a self-contained dark-theme HTML page (the portable, annotatable Firebug DOM). |
-| `screenshot {out?}` | bake the **real gpui Cockpit element tree**, over this session's driven state (it replays the committed act-trail), to an 800×600 PNG via the headless-render subprocess. |
+| `screenshot {out?,size?,tab?}` | bake the **real gpui Cockpit element tree**, over this session's driven state (it replays the committed act-trail), to a PNG via the headless-render subprocess. `size` is a logical `WxH` — default **1280×832** (the full cockpit, no truncation); pass `800x600` for the seL4-framebuffer geometry. `tab` picks the cockpit surface (`home`/`inspector`/`graph`/`proofs`/`objects`/`debugger`/`replay`/…). |
 | `view` | session summary: cells, anchors, acts committed, cells visited. |
 
 Cell handles accept an anchor name (`treasury`/`service`/`user`), a full 64-char

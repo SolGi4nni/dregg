@@ -89,6 +89,16 @@ pub struct VerifiedPayment {
     pub recipient: CellId,
     /// The amount (cents) to mint.
     pub amount: u64,
+    /// **THE FELT-DOMAIN DECO PAYMENT IDENTITY** (the light-client-witnessable
+    /// binding, `docs/deos/DECO-CARRIER-PLAN.md` §1). Computed by the executor via
+    /// [`dregg_circuit::dsl::deco_payment::stripe_payment_hash_felt`] over the SAME
+    /// `PaymentFacts` the DECO commitment leaf recomputes IN-AIR — so the felt the
+    /// executor writes, the felt the deployed `stripeMint` producer pins at PI 46
+    /// (`generate_rotated_stripe_mint_wide`), and the felt the leaf recomputes are
+    /// IDENTICAL (the anti-vacuity tie). ⚑ This is NOT the byte-domain BLAKE3
+    /// `payment_nullifier` above — that stays the consume-once double-mint key; this
+    /// felt is the DECO fold's `connect` anchor.
+    pub payment_hash: dregg_circuit::field::BabyBear,
 }
 
 /// The metadata key, on the Stripe payment object, that carries the dregg cell
@@ -588,6 +598,16 @@ impl StripeMirrorState {
             payment_nullifier: payment_nullifier(&self.config.asset, &att.payment_intent_id),
             recipient: att.recipient,
             amount: att.amount_cents,
+            // The felt-domain DECO payment identity the light client witnesses (the
+            // deployed `stripeMint` producer pins THIS at PI 46; the DECO leaf
+            // recomputes it in-AIR). Decomposed through the ONE canonical encoder so
+            // executor-written == producer-pinned == leaf-recomputed.
+            payment_hash: dregg_circuit::dsl::deco_payment::stripe_payment_hash_felt(
+                att.amount_cents,
+                &att.currency,
+                &att.recipient.0,
+                &att.payment_intent_id,
+            ),
         })
     }
 

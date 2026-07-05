@@ -3,8 +3,8 @@
 *(2026-06-14. The canonical articulation of ember's "rehydratable screenshot"
 idea, grounded in the dregg substrate. A living draft — the vision is ember's;
 this doc names it back against what is actually in the tree. Sibling:
-`ARCHITECTURES.md` (the compositor-PD), `DISTRIBUTED-SERVO-FACETS.md` (the
-web-of-cells fetch), `BUILD-STATUS.md` (`starbridge-web-surface`).)*
+`../reference/firmament.md` (the compositor-PD), `BUILD-STATUS.md`
+(`starbridge-web-surface`).)*
 
 ## Thesis (one sentence)
 
@@ -88,7 +88,7 @@ type level instead of by good manners.)
 
 | the vision | dregg component | state |
 |---|---|---|
-| certified compositor | the **compositor-PD** (sole framebuffer+input cap holder; `ARCHITECTURES.md` Nitpicker lens) | designed (still wood — the framebuffer/input-cap PD + the libservo link) |
+| certified compositor | the **compositor-PD** (sole framebuffer+input cap holder; `../reference/firmament.md` compositor-PD section) | designed (still wood — the framebuffer/input-cap PD + the libservo link) |
 | witness-graph | the **receipt/ledger graph** — `AttestedRoot` + receipt-stream + verified turns (*the graph the rotation flip is hardening the proofs of*) | live |
 | live servo contexts | **`starbridge-web-surface`** — the cap-gated `WebSurfaceDelegate` | built |
 | frame embeds a handle | a **sturdyref** (captp `SwissTable::enliven` + `Netlayer::dial`) | **built** (`starbridge-web-surface::Sturdyref` — a `dregg://` cap-handle + authority lineage + witness-log; over the existing `DreggUri`/`AttestedRoot`) |
@@ -102,7 +102,7 @@ type) over substrate already being hardened — not a research moonshot. **As of
 2026-06-14 the sturdyref encoding, the membrane enforcer (the per-viewer projection
 + the chained-attenuation algebra over the real `is_attenuation`), and the derived
 liveness-type are STEEL** — running, tested code in `starbridge-web-surface`
-(`src/rehydrate.rs`, `examples/rehydrate_demo.rs`, 18 module tests). What is still
+(`src/rehydrate.rs`, `examples/rehydrate_demo.rs`, 19 module tests). What is still
 wood: the certified compositor-PD (the framebuffer/input cap holder) + the libservo
 link (a `dregg://` attested fetch stands in for the compositor's render-pass, as
 `MockSurface` stands in for the libservo `WebView`), and the membrane's

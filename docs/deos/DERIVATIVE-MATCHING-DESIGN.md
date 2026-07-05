@@ -6,19 +6,28 @@ proven in dregg's own Lean — using the Zhuchko–Veanes–Ebner ERE≤ formali
 `~/dev/_research/extended-regexes` purely as a **proven blueprint / reference
 architecture**, never as a code dependency. The in-circuit DFA-AIR is untouched.
 
-> **Status at HEAD.** This is now mostly LANDED, in `metatheory/Dregg2/Crypto/Deriv/`,
+> **Status at HEAD.** This is now LANDED, in `metatheory/Dregg2/Crypto/Deriv/`,
 > every file `#assert_axioms`-clean and `sorry`-free. The `PredRE` inductive +
 > `null`/`der`/`derives`/`Matches` (Stage 0, `Core.lean:39,81,97,110,221`), the
 > `correctness : derives ↔ Matches` re-proof (Stage 1, `Correctness.lean:267`), the
 > Rust `Pattern::Not` deny-filter through the derivative front-end (Stage 2,
 > `dfa/src/compiler.rs:404,911`), Brzozowski `der_finite` (Stage 3 capstone,
 > `Finiteness.lean:298`), and the `tableDfa_faithful` keystone + `determinizer_faithful`
-> close (Stage 4, `TableDfa.lean:133`, `Powerset.lean:150`) are all built. The single
-> remaining open obligation is `ThompsonRecognizes` (Thompson-construction
-> correctness — `Thompson.lean:131`), discharged for the canonical single-symbol
-> automaton (`symENfa_recognizes`, `Thompson.lean:215`) but open for the
-> concat/star/union induction (mathlib provides no Thompson correctness). The rest of
-> this doc reads as the grounded design; §5.1 carries the per-stage landed status.
+> close (Stage 4, `TableDfa.lean:133`, `Powerset.lean:150`) are all built. And the
+> `ThompsonRecognizes` obligation (Thompson-construction correctness) — flagged here
+> as the last open wall when this doc was first written — is now CLOSED for the full
+> Thompson fragment: `thompson_recognizes` (`Thompson.lean:751`) proves
+> `ThompsonRecognizes (thompson R) R` for every `IsThompson R` (empty/sym/concat/union/
+> star, the star ε-loop closed by `region_escape` + `star_decomp`), and
+> `legacy_determinized_faithful_thompson` (`Thompson.lean:760`) carries the deployed
+> legacy path to `Matches`-faithful end-to-end — both in the file's `#assert_all_clean`
+> list. The only genuine residuals now are (a) the deliberately-EXCLUDED `inter`/`neg`
+> constructors — `IsThompson` (`Thompson.lean:725`) drops them because the deployed
+> `compiler.rs::pattern_to_nfa` does not realize them; they route through the derivative
+> determinizer (`Powerset.lean`) instead of the Thompson/legacy path — (b) the standard
+> crypto/AIR carriers under `Dfa.lean`, and (c) the still-gated Stage 5 stateful
+> `(old,new)` lift (§5.1). The rest of this doc reads as the grounded design; §5.1
+> carries the per-stage landed status.
 
 The owner's stance, made precise: **dregg's `Pred` is already the EBA shape**
 (a free Boolean algebra over predicate atoms, folded to `Bool` against a
@@ -356,7 +365,7 @@ a theorem, not an untrusted Rust gap under an otherwise-clean AIR proof.
    own correctness — itself currently *unproven Rust*, a sub-gap), then invoke
    DFA minimization uniqueness.
 
-   > **Update — the subset/determinization factor is now mechanized**
+   > **Update — the whole determinization edge is now mechanized and closed**
    > (`metatheory/Dregg2/Crypto/Deriv/Thompson.lean`). The `pattern_to_nfa().
    > determinize()` pipeline factors as *Thompson-construction correctness ∘
    > subset-construction correctness*. The right factor — `compiler.rs::Nfa::
@@ -365,15 +374,24 @@ a theorem, not an untrusted Rust gap under an otherwise-clean AIR proof.
    > `NFA.toDFA_correct` (subset construction): `determinizedTable_accepts` proves
    > the deployed flat-table fold (`ofDFA`, = mathlib `DFA.eval`) recognizes
    > exactly the Thompson ε-NFA's language, and `legacy_determinized_faithful`
-   > carries that to `Matches`-faithful via `correctness`, generic over the
-   > `Set σ` subset-state space (`tableDfa_faithful'`). The remaining LEFT factor
-   > is isolated as the single obligation `ThompsonRecognizes M R := ∀ w, w ∈
-   > M.accepts ↔ derives w R` — Thompson-construction correctness — which mathlib
-   > does **not** provide (it routes regex→language through Brzozowski derivatives,
-   > not Thompson). It is shown *inhabited* (non-vacuous) by `symENfa_recognizes`
-   > for the canonical single-symbol automaton, but the inductive
-   > `accepts (thompson R) = Matches R` over the concat/star/union sub-automata
-   > (the ε-closure-across-the-join reasoning) is the genuine remaining wall.
+   > (`Thompson.lean:159`) carries that to `Matches`-faithful via `correctness`,
+   > generic over the `Set σ` subset-state space (`tableDfa_faithful'`). The LEFT
+   > factor — `ThompsonRecognizes M R := ∀ w, w ∈ M.accepts ↔ derives w R`
+   > (`Thompson.lean:149`), Thompson-construction correctness, which mathlib does
+   > **not** provide (it routes regex→language through Brzozowski derivatives, not
+   > Thompson) — is now **discharged** by an explicit Lean Thompson construction
+   > `thompson : PredRE → εNFA` and `thompson_recognizes` (`Thompson.lean:751`),
+   > proving `ThompsonRecognizes (thompson R) R` for the full `IsThompson` fragment
+   > (empty/sym/concat/union/star); the star ε-loop-across-the-join reasoning that
+   > was the remaining wall is closed via `region_escape` + the path-length
+   > induction `star_decomp`. `legacy_determinized_faithful_thompson`
+   > (`Thompson.lean:760`) then makes the deployed legacy path `Matches`-faithful
+   > end-to-end, and both are in the file's `#assert_all_clean` list. The
+   > single-symbol inhabitant `symENfa_recognizes` (`Thompson.lean:233`) survives
+   > as the base case. What the Thompson/legacy path deliberately does NOT cover is
+   > `inter`/`neg` — `IsThompson` (`Thompson.lean:725`) excludes them because
+   > `compiler.rs::pattern_to_nfa` does not realize intersection/complement; those
+   > route through the derivative determinizer instead.
 
    **Honest sub-risk:** dregg's `determinize` is
    *not* minimized (it is reachable-subset, which can have non-minimal states),
@@ -488,18 +506,26 @@ speculative stateful lift is still gated.
   list of regexes covers every derivative class. `#assert_axioms`-clean (subset
   `{propext, Classical.choice, Quot.sound}`). Reference: `finiteness-derivatives`
   (ITP'25), read-only.
-- **Stage 4 — the faithfulness close: LANDED MODULO one factor.** The keystone
+- **Stage 4 — the faithfulness close: LANDED.** The keystone
   `tableDfa_faithful` (`TableDfa.lean:133`) trusts ANY flat table whose `accepts`
   agrees with `derives`; `determinizer_faithful` (`Powerset.lean:150`) discharges
   that contract for the table the determinizer emits, making the compiled boolean
   semantics a THEOREM. The deployed determinized table is shown faithful to
-  `Matches` (`legacy_determinized_faithful`, `Thompson.lean:141`) modulo the one
-  remaining obligation `ThompsonRecognizes` (`Thompson.lean:131`) — Thompson-
-  construction correctness — which mathlib does not provide (it routes regex→language
-  through Brzozowski derivatives, not Thompson). It is **inhabited / non-vacuous**
-  via `symENfa_recognizes` (`Thompson.lean:215`, the canonical single-symbol
-  automaton); the inductive concat/star/union case (ε-closure-across-the-join) is the
-  genuine remaining wall.
+  `Matches` (`legacy_determinized_faithful`, `Thompson.lean:159`) via the
+  `ThompsonRecognizes` factor (`Thompson.lean:149`) — Thompson-construction
+  correctness, which mathlib does not provide (it routes regex→language through
+  Brzozowski derivatives, not Thompson). That factor is now **discharged for the full
+  Thompson fragment**: an explicit Lean `thompson : PredRE → εNFA` +
+  `thompson_recognizes` (`Thompson.lean:751`) prove it for every `IsThompson R`
+  (empty/sym/concat/union/star — the star ε-loop-across-the-join case, once the
+  genuine wall, closed by `region_escape` + `star_decomp`), and
+  `legacy_determinized_faithful_thompson` (`Thompson.lean:760`) makes the deployed
+  legacy path `Matches`-faithful end-to-end. Both are `#assert_all_clean`;
+  `symENfa_recognizes` (`Thompson.lean:233`) is the single-symbol base case.
+  `IsThompson` (`Thompson.lean:725`) deliberately excludes `inter`/`neg` (the
+  deployed `pattern_to_nfa` does not realize them — they ride the derivative
+  determinizer instead), so the complement/intersection surface is Powerset's job,
+  not this factor's gap.
 - **Stage 5 — the stateful `(old,new)` lift: STILL GATED / open research.** Lift
   `Pred` to `σ := (Value × Value)` so the reactive atoms work, with the previous
   frame threaded as derivative residual state. The policy/caveat-trace unification —
@@ -628,15 +654,19 @@ plus the **determinization-equivalence** that makes the compiled boolean semanti
 *trusted* under the otherwise-clean AIR proof (`tableDfa_faithful` +
 `determinizer_faithful`, `TableDfa.lean:133` / `Powerset.lean:150`). The
 representation bridge ("derivative-class" ↔ "powerset-of-NFA-state") goes through
-mathlib's verified subset construction; the single remaining obligation is
-`ThompsonRecognizes` (`Thompson.lean:131`, the left/Thompson factor) — inhabited
-for the single-symbol case (`symENfa_recognizes`), open for the concat/star/union
-induction. Stages 0–2 (the verified `PredRE` matcher + the `Pattern::Not`
-deny-filter) and Stages 3–4 (the faithfulness close, modulo `ThompsonRecognizes`)
-are landed; Stage 5 (the reactive `(old,new)` lift) stays a gated open research
-question whose **single binding soundness constraint** is the right-skew:
-derivatives decide *language* questions, `decideRefines` decides *reactive-
-simulation* questions, and the two must never be conflated.
+mathlib's verified subset construction; the Thompson/left factor
+`ThompsonRecognizes` (`Thompson.lean:149`) — once the last open wall — is now
+**closed for the full Thompson fragment** (`thompson_recognizes`,
+`Thompson.lean:751`; `legacy_determinized_faithful_thompson`, `:760`; both
+`#assert_all_clean`), the star ε-loop-across-the-join case discharged by
+`region_escape` + `star_decomp`. `IsThompson` deliberately excludes `inter`/`neg`
+(they ride the derivative determinizer, not the legacy Thompson path). Stages 0–2
+(the verified `PredRE` matcher + the `Pattern::Not` deny-filter) and Stages 3–4
+(the faithfulness close, `ThompsonRecognizes` and all) are landed; Stage 5 (the
+reactive `(old,new)` lift) stays a gated open research question whose **single
+binding soundness constraint** is the right-skew: derivatives decide *language*
+questions, `decideRefines` decides *reactive-simulation* questions, and the two
+must never be conflated.
 
 ### Cited sources
 

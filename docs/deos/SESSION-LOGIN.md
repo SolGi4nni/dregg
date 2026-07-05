@@ -2,9 +2,10 @@
 
 The desktop spine runs L5 (the surface tree) through L8 (the cockpit / WM)
 over capabilities. The WM/login investigation found one piece missing from
-that spine: there is no **login manager**. Every primitive the manager needs
-exists; the manager that composes them does not. This document designs that
-small, trusted, L6-adjacent cell.
+that spine: there was no **login manager**. Every primitive the manager needs
+exists; the manager that composes them did not — until now. This document
+designs that small, trusted, L6-adjacent cell; the v1 manager it designs is
+now BUILT at `starbridge-v2/src/session.rs` (see §6).
 
 The model is one sentence:
 
@@ -31,9 +32,9 @@ designation flow over them, exactly as the powerbox is a designation flow over
 | attenuation = caveats + re-HMAC | the macaroon root-key → cap-tree | `token/src/macaroon_backend.rs` |
 | hand a cap from held caps | `Powerbox` grant ceremony (`Effect::GrantCapability`) | `starbridge-v2/src/powerbox.rs:237` |
 | the per-factory initial cap set | `CapTemplate { target: CapTarget, max_permissions, attenuatable }` | `cell/src/factory.rs:502` |
-| logout = the cap goes dark | `Effect::RevokeCapability { cell, slot }`, n=1 synchronous | `turn/src/action.rs:970`, `sel4/dregg-firmament/src/surface.rs:407` |
+| logout = the cap goes dark | `Effect::RevokeCapability { cell, slot }`, n=1 synchronous | `turn/src/action.rs`, `sel4/dregg-firmament/src/surface.rs` |
 | verifiable credentials / KERI pre-rotation | the identity app | `starbridge-apps/identity/src/lib.rs` |
-| multi-user legitimacy floors | the polis | `metatheory/Metatheory/{Polis,DreggPolis}.lean` |
+| multi-user legitimacy floors | the polis | `metatheory/Polis/{Polis,DreggPolis}.lean` |
 
 Two facts make this safe by construction, both already proven and both
 re-enforced by the real executor:
@@ -148,7 +149,7 @@ the system principal's cap *to* `root_cell` where that is the spine edge). At
 instant the revoke turn returns, the caps are gone from real cell-state; any
 surface present / app invoke that depended on the tree "finds nothing held and
 is refused, so the window cannot paint even one more frame"
-(`sel4/dregg-firmament/src/surface.rs:392`). The whole cap-tree goes dark
+(`sel4/dregg-firmament/src/surface.rs`). The whole cap-tree goes dark
 because every leaf was reachable only through the root edges now removed.
 
 This is the n=1 single-machine collapse the dregg4 vision names: distributed
@@ -167,7 +168,7 @@ auditable the same way every other dregg turn is.
 
 ## 3. The polis frame — multi-user and agent inhabitants
 
-The polis (`metatheory/Metatheory/Polis.lean`) is the multi-inhabitant law.
+The polis (`metatheory/Polis/Polis.lean`) is the multi-inhabitant law.
 The session model slots into it directly.
 
 ### 3.1 Each session is a floor
@@ -189,7 +190,7 @@ structural — it holds *whatever* the inhabitant does, human or agent.
 
 ### 3.2 Schism is the empty meet
 
-`disjoint_floors_no_polis` (`Polis.lean:53`): a polis exists only where the
+`disjoint_floors_no_polis` (`Polis.lean:335`): a polis exists only where the
 exported floors have a non-empty meet. Two users with no shared cell and no
 shared surface do not form a desktop polis — and that is correct, not a bug:
 they are simply two disjoint sessions on one image, the edge of the polis being
@@ -283,13 +284,15 @@ deployment configures "what authority does this desktop have to hand out".
 
 ---
 
-## 6. Type sketch
+## 6. The built module
 
-A compile-checked sketch lives at `starbridge-v2/src/session.rs` (the same
-`embedded-executor`-gated, gpui-free, `cargo test`-able home as `powerbox.rs`).
-It defines `Principal`, `CapEntry` / `CapTemplate`, `Session`, and
-`LoginManager` over the real `World`, `CellId::derive_raw`, `Effect::Grant/
-RevokeCapability`, and the `Powerbox` grant path — and its tests exercise the
-full ceremony: authenticate (a held-key check stand-in) → derive → grant the
-template → the session c-list reflects exactly the template → revoke darkens the
-whole tree. See the module docs there for the line-by-line grounding.
+The v1 login manager is BUILT, not merely sketched: `starbridge-v2/src/session.rs`
+is a full module (the same `embedded-executor`-gated, gpui-free, `cargo test`-able
+home as `powerbox.rs`). It defines `Principal`, `CapEntry` / `CapTemplate`,
+`Session`, `SessionRecord`, and `LoginManager` over the real `World`,
+`CellId::derive_raw`, `Effect::Grant/RevokeCapability`, and the `Powerbox` grant
+path — and its tests exercise the full ceremony: authenticate (a held-key check
+stand-in) → derive → grant the template → the session c-list reflects exactly the
+template → revoke darkens the whole tree. `open_session_world` (same module) opens
+the durable per-principal image on login. See the module docs there for the
+line-by-line grounding.

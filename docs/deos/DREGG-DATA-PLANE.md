@@ -133,7 +133,7 @@ data plane owns *mechanism* (enqueue / wake / drain / receipt).
 - `captp/src/data_plane.rs` — the `Bus` and its types (`SendCap`, `Delivery`,
   `Waker`, `Wake`, `ChannelName`, `TopicName`, `DataPlaneError`), re-exported at the
   `dregg_captp` crate root.
-- 7 tests covering the lifecycle (enqueue → wake → drain → witness), the
+- 9 tests covering the lifecycle (enqueue → wake → drain → witness), the
   receipt-identity both polarities (handled vs convictable-drop), pub/sub fan-out to
   N subscribers, the refused over-attenuated/revoked/mis-addressed enqueue (no
   phantom work), the non-amplifying cap algebra, and the unforgeable wake.

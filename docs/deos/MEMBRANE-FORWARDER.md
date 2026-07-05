@@ -95,7 +95,7 @@ In order:
 4. **Requested effect within exposed authority** — outside ⇒ `NotExposed`
    (`exercising_outside_exposed_authority_is_refused`).
 
-## The bar (passing tests, `cargo test -p dregg-cell membrane` — 13 green)
+## The bar (passing tests, `cargo test -p dregg-cell membrane` — 14 green)
 
 - `a_plus_b_exercises_c` — A+B exercises C (**success**).
 - `a_alone_is_refused` / `b_alone_is_refused` — A-alone / B-alone (**refused**).
@@ -109,13 +109,19 @@ The full `dregg-cell --lib` suite is green (699 tests).
 
 ## Honest seams (named with their lanes)
 
-- **Executor-level, not yet circuit-bound.** A `SealedMembrane` is a
-  verified-policy object; `MembraneCap` is the exposed cap C. Binding the
-  membrane's `exposed` mask into the cell state-commitment / cap-root the
-  circuit sees (so a light client *witnesses* "C's authority = a&b") is the
-  circuit follow-up — the same VK-gated lane the cap-root reshape
-  (`project-cap-reshape-plan`) drives. The non-amp tooth here is the executor
-  tooth; the circuit tooth is its shadow.
+- **Executor tooth PROVEN, circuit tooth not yet bound.** The executor non-amp
+  floor is no longer just smoke-tested: it is the executor image of the
+  kernel-clean Lean rung `metatheory/Dregg2/Deos/Membrane.lean` (the upward
+  conjunction leg — `membrane_non_amplifies` — proven by reuse of the same
+  `capAuthConferred ⊆` order / `attenuate_subset` the cap crown proves on), and
+  `membrane.rs::non_amp_floor_matches_lean_rung` mirrors that rung's witnesses on
+  the Rust side. What remains is the **circuit** tooth: a `SealedMembrane` is a
+  verified-policy object and `MembraneCap` is the exposed cap C, but binding the
+  membrane's `exposed` mask into the cell state-commitment / cap-root the circuit
+  sees (so a light client *witnesses* "C's authority = a&b") is still the circuit
+  follow-up — the same VK-gated lane the cap-root reshape
+  (`project-cap-reshape-plan`) drives. The proven executor tooth is real; the
+  circuit tooth is its named shadow.
 - **2-of-2 is the genuine slice, not the ceiling.** `CompositionPolicy` is the
   additive surface for k-of-n (hold a `Vec` of facets, require a quorum) and
   predicate-gated composition (the `CapabilityCaveat::Witnessed` surface).

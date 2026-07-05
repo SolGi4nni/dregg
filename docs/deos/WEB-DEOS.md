@@ -270,11 +270,12 @@ Servo is the lone native-only holdout.
 
 ## Distance to full parity (honest)
 
-The full `cockpit::Cockpit` is now **bundled and booted in-browser** (WebGPU
-initializes; first paint is blocked by a `gpui_web` run-loop reentrancy — see
-"Honest verification" above). Two of the three former blockers are CLOSED; the
-remaining gaps are (a) the `gpui_web` run-loop closure-reentrancy that precedes
-first paint, and (b) the native-resource backends:
+The full `cockpit::Cockpit` is now **bundled, booted, and PAINTING in-browser**
+(WebGPU initializes and the cockpit element tree draws a real frame in headless
+Chrome — `web/cockpit-gpui-web-painted.png`; see "Honest verification" above).
+All three former blockers are CLOSED — including the run-loop reentrancy, fixed
+by leaking the owning `Rc` on wasm (see "The fix"). The only remaining gaps are
+the native-resource backends:
 
 1. **`cockpit::Cockpit` is binary-private.** ✅ CLOSED. `cockpit`/`login`/`views`
    were lifted from `main.rs` into the library behind a gpui-gated `pub mod`
@@ -286,11 +287,13 @@ first paint, and (b) the native-resource backends:
    with `default-features = false` (its tree-sitter syntax grammars are all
    opt-in features, none enabled). `gpui_component::init(cx)` is called at web
    boot exactly as native does.
-3. **The `gpui_web` run-loop reentrancy (NEW, the live blocker).** ⏳ OPEN. After
-   WebGPU init, the single-threaded run-loop throws `closure invoked recursively
-   or after being dropped` before first paint (see "Honest verification"). This
-   is in the `gpui_web` fork's scheduler, not this crate; it is what stands
-   between "boots + WebGPU up" and "paints the cockpit".
+3. **The `gpui_web` run-loop reentrancy.** ✅ CLOSED. Earlier the single-threaded
+   run-loop threw `closure invoked recursively or after being dropped` before
+   first paint. This was a lifetime bug in the `gpui_web` fork's app boot (the
+   `Application`'s owning `Rc` was dropped while the browser still held its
+   scheduled rAF/ResizeObserver closures), NOT a scheduler re-entrancy. The fix
+   leaks the owning `Rc` on wasm in `Application::run` (`crates/gpui/src/app.rs`,
+   `emberian/zed` fork; see "The fix"). The cockpit now paints a real frame.
 4. **The native-resource backends** (terminal PTY, editor Fs, web-shell servo) —
    each needs its wire per the app map.
    - **Terminal PTY** — ✅ **WIRED + PROVEN.** `starbridge_web::pty_ws` is the
@@ -325,10 +328,12 @@ first paint, and (b) the native-resource backends:
 
 "Can gpui *boot* in the browser" is settled — `gpui_web` is a complete platform,
 the full cockpit bundle loads, and WebGPU initializes. "Does gpui *paint* the
-cockpit in the browser" is **not yet** settled: the run-loop reentrancy (#3)
-blocks the first frame in headless Chrome. The remaining work is that run-loop
-fix, then the three native-resource backends (websocket / Fs / wasm-SDK), with
-servo the single native-only surface.
+cockpit in the browser" is **now settled too**: after the `Rc`-leak fix (#3) the
+run-loop drives rAF + ResizeObserver and the cockpit element tree draws a real
+frame in headless Chrome (`web/cockpit-gpui-web-painted.png`). The remaining work
+is the three native-resource backends (websocket / Fs / wasm-SDK) — of which the
+terminal PTY wire is already built + proven — with servo the single native-only
+surface.
 
 ## Files
 

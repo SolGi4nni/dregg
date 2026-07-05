@@ -109,7 +109,11 @@ leakage" (Herzberg et al. 1995):
    epochs. It must corrupt `t` *within one epoch window*. This is the *mobile-adversary* model:
    the adversary moves, the shares refresh, and the intersection over a window stays sub-threshold.
 
-The Lean statement to add (sketch, against the existing `ThresholdFrame`):
+The Lean statement — **now BUILT and `#assert_axioms`-clean** at
+`metatheory/Metatheory/ResharingChain.lean` (`structure ReshareLink` at :64,
+`theorem reshareChain_forward_secret` at :108, kernel-pinned at :142). The
+sketch below is what got built, essentially verbatim, against the existing
+`ThresholdFrame`:
 
 ```lean
 /-- A reshare LINK: two threshold frames over the SAME secret value (recoverable
@@ -382,9 +386,13 @@ genuinely useful to dregg on at least four product surfaces.**
 
 That claim is novel (the cliff-across-a-link identity and the dial duality are not in the lit), it
 is grounded in primitives dregg already has, and it is useful on recovery, privacy, governance, and
-time-travel. The recommendation is to **build the `ResharingChain` Lean module** (the `ReshareLink`
-+ `reshareChain_forward_secret` of §A, the event-structure embedding of §B, the lineage emitter of
-§C) as the D-side sibling of `PreRotation.lean`, and the single three-reader cell-app of §D.
+time-travel. **BUILT:** the `ResharingChain` Lean module now exists as the D-side sibling of
+`PreRotation.lean` — `metatheory/Metatheory/ResharingChain.lean` carries `ReshareLink` +
+`reshareChain_forward_secret` (§A) *and* the prime-event-structure embedding of §B
+(`PrimeEventStructure`, `ConcurrentFork`, `fork_descendants_conflict`, `fork_not_in_one_config`),
+all `#assert_axioms`-clean. **Still open** are the two downstream welds: the §C lineage *emitter*
+(a `ReshareLink` circuit descriptor beside `Dregg2/Circuit/Emit/EffectVmEmitRotationCaveat.lean` —
+no reshare sibling exists yet) and the single three-reader `ResharingChain` cell-app of §D.
 
 ---
 

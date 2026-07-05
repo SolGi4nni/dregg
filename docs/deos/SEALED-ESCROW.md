@@ -132,7 +132,7 @@ variant *rejects*, against the one core.
 
 ### The forges are genuinely rejected
 
-The unit tests in `cell/src/escrow_sealed.rs` (all 15 green, `cargo test -p
+The unit tests in `cell/src/escrow_sealed.rs` (all 16 green, `cargo test -p
 dregg-cell --lib escrow_sealed::`):
 
 - `honest_two_leg_exchange_completes` — both legs deposited, settles atomically,
@@ -184,7 +184,7 @@ transition) rather than re-running the check out of band:
 3. A Lean rung: `verifyBatch accept ⟹ exchange atomic` — concretely, a settled
    batch implies both legs were `Deposited`+conforming before and both `Consumed`
    after, with no leg consumed twice across the batch — joining the
-   circuit-soundness obligation table in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`.
+   circuit-soundness obligation table in `docs/reference/lean-circuit.md`.
 
 Until that lands, sealed escrows are sound under the executor checks and the
 commitment binding; the circuit rung is the named follow-up, not a silent gap.

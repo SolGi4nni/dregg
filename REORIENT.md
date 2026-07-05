@@ -1,6 +1,6 @@
 # REORIENT — read this first after any context loss
 
-*(maintained for session continuity; update at every major landing. Last: 2026-06-21 — THE TWO-TRACK EPOCH: floor (soundness, ~14/30 light-client-forced + the rest closeable/irreducible) + house (capacity: reactive effect SHIPPED, 4 more building). Goal = "safely live within dregg" on two tracks.)*
+*(maintained for session continuity; update at every major landing. Last: 2026-07-05 — grounded re-orient after a ~2-day drive by a different instance (07-02→07-04). THE HEADLINE: the universal-fold carrier campaign + the v13 faithful-commitment geometry are BUILT + COMMITTED + apex-clean + tooth-gated — but STAGED, not the deployed default; the VK-epoch flip + devnet re-genesis are the pending human-go. Read the 2026-07-05 CURRENT STATE block below FIRST; the older blocks are dead history.)*
 
 > ⚑ POST-COMPACT: read `HORIZONLOG.md` → the "POST-COMPACT ORIENTATION (2026-06-21)" entry FIRST — it carries the
 > live 8-agent swarm roster, the held-welds-to-bank, the Track-1 queue (the revokeCapability #1 route-FORGE is the
@@ -63,7 +63,126 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
-## ⚑⚑⚑ CURRENT STATE (2026-06-20 — Opus 4.8 1M; THE ASSURANCE EPOCH — soundness ground-truthed, the goal = "safely live within dregg")
+## ⚑⚑⚑ CURRENT STATE (2026-07-05 — grounded re-orient of a ~2-day drive; HEAD = `origin/main` a squashed "initial commit" @ 07-04, freshest tree)
+
+> ⚑ GIT TOPOLOGY: the working tree = `origin/main` = a single squashed `initial commit` dated 07-04 14:09
+> (a cleaned public-facing snapshot — it strip-deleted `orb/`, `sandstorm-bridge/` slop). The REAL
+> development lineage is the `hbox/fable/*` branches (tip `hbox/fable/hbox-import` `5269d0e28`, 07-03 22:35;
+> the referenced 07-02/07-03 commit hashes live there, not in HEAD's one-commit history). The squash tree is
+> a later/superset of those tips, so **the working tree is ground truth** — verify code vs HEAD, not the
+> commit graph. `git log --all` shows the full history; `git branch -a` the branches.
+
+### THE WELD — RESOLVED (deployed-WIRED + apex-clean + tooth-gated, but STAGED; the flip is NOT taken)
+
+The 07-03 drive executed the **v12→v13 geometry epoch** and drove **all 8 carriers** to a positive
+fold-binding — going PAST WELD-STATE.md's (07-02) "blocked / do NOT fire the regen" verdicts, which are now
+**STALE** (they predate the campaign that crossed their widening walls). Grounded at HEAD:
+
+- **All 8 carriers are FOLD-WIRED into the deployed chain prover** — `prove_chain_core_rotated`
+  (`circuit-prove/src/ivc_turn_chain.rs:3083-3463`) has match arms for `CarrierWitness::{Custom, Bridge,
+  Deco, Dsl, Factory, Hatchery, Sovereign, Membership}` (the witness socket is generalized:
+  `RotatedParticipantLeg.carrier_witness: Option<CarrierWitness>`, `joint_turn_aggregation.rs:130/150`). Each
+  arm is gated by `carrier_claim_pins_admitted` (fail-closed until the descriptor carries the STEP-3 claim
+  pins — the big-bang regen tie) + the zero-sentinel refusal. No wildcard arm (a new variant is a compile
+  error).
+- **Every carrier has a positive `*BindingFromFold.lean` (not just the `*BackingAttack.lean` refutation)** —
+  `metatheory/Dregg2/Circuit/{Custom,Bridge,Deco,Dsl,Factory,Hatchery,Membership,Sovereign}BindingFromFold.lean`
+  all exist, `#assert_axioms`-clean, non-vacuous (both `honest_*` and `forged_*_unsat` poles; e.g.
+  `BridgeBindingFromFold.lean:324-330`). Bridge was "the 7th, LAST carrier" (`afb2a5b48`, STEP-7 flip);
+  DECO is the 8th (fiat/Stripe money-in), fully built (`8419f23c5` marks `DECO-CARRIER-PLAN.md` BUILT).
+  The deployed teeth bite through the real `prove_turn_chain_recursive → verify_turn_chain_recursive`
+  ("both poles BIT on the committed mint row", `abdc8ebe6`; "the DECO connect BITES through recursion",
+  `225f37cb9`) + an adversarial `carrier-forgery forge … vs the DEPLOYED registry` (`d459bd7c7`).
+- **v13 geometry is at HEAD:** `NUM_PRE_LIMBS = 169`, `B_SPAN = 227`, `GRAD_ROT_WIDTH = 1581`
+  (`circuit/src/effect_vm/trace_rotated.rs:94/100/136`); `V9_NUM_PRE_LIMBS = 169`
+  (`cell/src/commitment.rs:700`). The **`fields[0..7]` ~31-bit residual is CLOSED** (56 completion lanes
+  112..167 + 1 pad; `commitment.rs:1006` "CLOSES the last degraded-felt residual"; `5dc16477d`). STEP 4/5
+  regen to N=169/227 landed (`a6e78ee27`, `b98aaf2d4`). Apex re-keyed across the emits (`02a40cd83`).
+
+**⚑ THE SOBER PART — this is STAGED, NOT the deployed default. "LIVE ON IRON" overclaims.** The DEPLOYED
+default the live prover/verifier runs is still the **1-felt `V3_STAGED_REGISTRY_TSV`**
+(`rotation-v3-staged-registry.tsv`, FP `df5f0a76…`, `effect_vm_descriptors.rs:821`). The faithful-8-felt
+**`WIDE_REGISTRY_STAGED_TSV`** where the carriers + ~124-bit whole-turn commitment live is an explicit
+**STAGED-ADDITIVE cover** — "the live 1-felt `V3_STAGED_REGISTRY_TSV` / FP / VK are UNTOUCHED … the parallel
+wide path beside them" (`effect_vm_descriptors.rs:1189-1229`); `umem_witness_enabled` stays false. So on the
+deployed default the carrier arms are wired-but-INERT (no claim pins → `carrier_claim_pins_admitted` refuses).
+What IS deployed-faithful today: the **six Merkle ROOTS** (cap/heap/fields/nullifier/commitments/cells) at
+8-felt from the earlier v9→v10→v11 epoch (WELD-STATE §1b; TRUST-BASE-CENSUS intro). The carriers + the
+whole-turn wide 8-felt binding are one **gated VK-epoch flip** away from being the default. **WELD-STATE.md is
+stale** (still says blocked); the 07-05 `docs/deos/_TRIAGE-2026-07-05.md` pass independently flags this
+"planning-doc over-pessimism for landed work" pattern (43 CURRENT / 66 MOSTLY_CURRENT / 11 ASPIRATIONAL_MISLABELED).
+
+### THE REDEPLOY — the human-go package (`docs/HANDOFF-v13-VK-EPOCH.md`, grounded @ `29ab74bc1`)
+
+The v13 VK epoch is packaged for ember's eyes-open call. Three human-gated items, each reduced to one command/read:
+1. **Push + re-genesis.** The handoff was written when origin was 91 behind; origin/main has since advanced to
+   the 07-04 squash (the code IS on origin). **Devnet re-genesis is the eyes-open act** —
+   `deploy/genesis/generate.sh --force` (or the on-instance `deploy/aws/federation-keygen.sh`) mints fresh
+   keys ⇒ a NEW `federation_id` (non-deterministic per regen, dry-run confirmed) ⇒ a fresh chain; all
+   `FEDERATION_ID` pins (Discord bot, bridge) must be re-pointed. The AWS box (`34.224.208.52`) pulls from
+   origin via `deploy/aws/update.sh` — do NOT push to the `devnetbox` remote.
+2. **The lassie Lean seed** (`docs/HANDOFF-lassie-lean-seed.md`) — cut the first HEAD-matching
+   `libdregg_lean.a` release so fresh clones fetch (minutes) instead of cold-bootstrap (hours). Provenance:
+   `lean4:v4.30.0` · mathlib `1c2b90b1…` · Dregg2 tree `3eb066d2…`. ⚠ The committed pin
+   `dregg-lean-ffi/lean-seed.pin` is **stale + unpublished** (`TAG=` empty, tree `b5c88ddd…` predates HEAD) —
+   no seed has ever been cut. Handed to opus-driver on lassie. Also: `metatheory/lakefile.toml` pins mathlib at
+   an absolute macOS path (`/Users/ember/src/mathlib4`) — a known rough edge for a Linux bootstrap.
+3. **The N3 committee-restart hole — DIAGNOSED, NOT FIXED** (`docs/HANDOFF-committee-restart-fix.md`, `29ab74bc1`).
+   A full-mode committee node persists a `StoredAttestedRoot` with only its OWN single sig at `threshold =
+   committee size`, so on restart `verify_signed_anchor_and_rollback` fail-closes (`1 < 3`) after finalizing
+   ≥1 height. The diagnosis test STANDS (`persist/src/tests.rs:137
+   full_mode_single_sig_root_is_refused_genuine_quorum_accepted`); **neither fix has landed** (no
+   `AttestedRootSig`/`merkle_root` binding in `node/src/finalization_votes.rs`). Recommendation = **Fix B**
+   (extend `FinalizationVote` to bind `merkle_root`, `VOTE_DOMAIN` v1→v2, retain `(voter, sig)` pairs — rides
+   proven vote machinery, one consensus-visible message). Both A and B first need the shared prereq: make the
+   attested-root preimage deterministic (drop the wall-clock timestamp; domain bump `-v4`→`-v5`). **This gates a
+   clean committee restart** — pick A or B before re-genesis if you want restart-durable committee nodes.
+
+### THE OTHER 2-DAY LANDINGS (grounded)
+
+- **deos-hermes brain-in-jail** (`f765c761d`/`b5fe0ff97`/`257c945ec`) — REAL. A live LLM runs INSIDE the
+  confined PD: `deos-hermes/src/brain.rs` `HttpLlm` builds a provider request from the conversation, calls
+  over `LlmHttpCaller` with the operator's BYO key (held in the brain's pocket, reaches only the provider),
+  parses the tool-use response into a `BrainStep`. Egress is a provider-only door (`egress.rs`,
+  `257c945ec`). Tested against a mock caller; the live HTTP path is coded, "live against a real endpoint".
+- **dregg-agent R0/R2** (`6f58b7086`/`c5de88508`) — R0: the receipt key is a random persisted secret, not
+  `BLAKE3(agent_id)`. R2: agent actions become REAL kernel turns (receipts are views over the committed turn),
+  via `grain-turn` (`752db87d1` witnesses WHICH action via `ACTION_SLOT` + end-to-end `verify_r2`).
+- **DECO/zkTLS Stripe money-in crown** (`f35b930fe`) — PR#23 Part A metabolized: DECO/zkTLS + Stripe
+  verification (`Crypto/Deco.lean` + `Verify/Stripe*`, assert_axioms-clean). This is the verify-side of the
+  DECO carrier (the 8th fold carrier above). Demo: untracked `dreggnet/demo/stripe-receiver` (keep OUT of any push).
+- **Audits (all READ-ONLY censuses in `docs/audit/`, findings addressed):**
+  `TRUST-BASE-CENSUS.md` (`278ecc3b4`) — the "name every residual" discipline largely holds; the one headline
+  "live setField soundness gap" was **REFUTED on attack** (`R1`, `1c6a2942a`: it grounded on a defined-but-
+  NOT-deployed descriptor `v3OfFrozenSetField`; the deployed member's freeze binds). `PRODUCER-DESCRIPTOR-
+  COVERAGE.md` (`R3`, `756e6a4c1`) — every deployed member classified + an anti-regression gate
+  (`producer_descriptor_coverage_gate.rs`); UNCOVERED counts dominated by the cap-write family (uncovered
+  by design). `ORPHAN-SWEEP.md` (`eb2058351`) — proven-but-undeployed descriptors/keystones; its "dangerous
+  #1" (accumulator LC-faithfulness) was **REFUTED by a forge tooth** (`7dcf4cdf1`). No open P1 finding
+  survived the sweep; the standing truth these surface is the STAGED-vs-DEPLOYED boundary above.
+- **DreggNet ABANDONED, ported dregg-native** (`0f12286a3`/`0310c9e31`) — DreggNet is being deleted, its real
+  parts ported into dregg-native crates (`dregg-sandbox` ← exec, `starbridge-apps/{org,billing,domains,guard,
+  vat,edge-mandate}`, `dregg-umem`); breadstuffs references DreggNet **zero** times (`915d2acf6`). `dreggnet/`
+  still has ~301 tracked files in-tree (not fully removed) — a residual cleanup, not a dependency.
+
+### IN-FLIGHT / HUMAN-GATED (what needs ember)
+
+1. **THE VK-EPOCH FLIP + DEVNET RE-GENESIS** (the big one) — flip the deployed default from the 1-felt V3
+   registry to the faithful-8-felt wide/carrier path, then re-genesis the live N3 federation. Eyes-open,
+   ember's act (fresh `federation_id`, re-point all pins). Everything upstream is built + committed + apex-clean.
+2. **N3 committee-restart: pick Fix A or B** (recommendation B) — gates a clean committee restart; land before
+   re-genesis for restart-durable committee nodes.
+3. **Cut the lassie Lean seed** (opus-driver on lassie) — unblocks fast fresh-clone builds; the pin is stale.
+4. **Working tree is dirty** (unrelated to the handoff): `M Cargo.lock`, untracked `dreggnet/demo/`,
+   `docs/deos/_TRIAGE-2026-07-05.md` (a fresh doc-staleness pass). Leave or stage separately; the v13 docs
+   commit touched only `docs/`.
+
+**Bottom line:** the buff light client + all 8 carriers + faithful ~124-bit commitment are BUILT, COMMITTED,
+`#assert_axioms`-clean, and tooth-gated through the real recursion path — a genuine, verified achievement —
+but they sit in the STAGED wide path. The deployed default is still 1-felt; the live federation still runs the
+old chain. The next RIGHT thing is the ember-gated VK-epoch flip + re-genesis (with the N3 fix landed first).
+
+## ⚑⚑⚑ (SUPERSEDED ↑ 2026-07-05) CURRENT STATE (2026-06-20 — Opus 4.8 1M; THE ASSURANCE EPOCH — soundness ground-truthed, the goal = "safely live within dregg")
 
 THE FLIP LANDED long ago (the 2026-06-14 block below is dead history). The work since is a deep ASSURANCE epoch:
 the circuit-soundness reckoning closed (the byte-identity "differential" was hiding that `Satisfied2` didn't

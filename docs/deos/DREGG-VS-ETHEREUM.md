@@ -104,7 +104,7 @@ dregg primitive cited), **(B) a real lesson** dregg should adopt, or **(C) N/A**
 | **ERC-777** reactive hooks | `tokensReceived` callback on transfer | **A** | **Reactor** — `filter()`/`react()` → `ReactionPlan`, cap-gated (`app-framework/src/reactor.rs:209`). Stronger: reactions desugar to ordinary kernel Effects the proof already covers; no reentrancy surprise (777's hooks were a notorious reentrancy vector). |
 | **ERC-4337** account abstraction | UserOps, bundlers, EntryPoint, paymasters | **A (partial)** | Caps *are* account abstraction — auth is data, delegation/session-keys are attenuated caps. `invoke()` is the command front-door, no privileged EntryPoint (`app-framework/src/invoke.rs:325`). **Lesson half:** the *paymaster UX pattern* (sponsored fees) is worth importing — see §3. |
 | **EIP-7702** set-EOA-code | EOA temporarily delegates to contract code | **A** | This is Ethereum *retrofitting capabilities onto accounts*. dregg never had ambient EOAs to retrofit; delegation is native (`Effect::SpawnWithDelegation`, `action.rs:1081`). Validates the direction of travel. |
-| **ERC-4626** tokenized vault | standard deposit/withdraw/share-price | **A (sketch)** | Vault capacity (`cell/src/vault.rs`) + **derived cells** for share accounting (`cell/src/derived.rs`). Honest status: vault is a *factory-wired Rust sketch* (forge-detector tests), not yet an individually-proven Lean rung. The *standard interface* lesson (§3) applies hard here. |
+| **ERC-4626** tokenized vault | standard deposit/withdraw/share-price | **A** | Vault capacity (`cell/src/vault.rs`) + **derived cells** for share accounting (`cell/src/derived.rs`), now with an individually-proven Lean rung: `metatheory/Dregg2/Deos/Vault.lean` carries `deposit_no_dilution` / `deposit_price_non_decreasing` (the no-dilution keystone) + `zero_mint_rejected` (the ERC-4626 inflation-attack tooth), with a `VaultSatDescriptor`. Stronger: share-price non-decrease is *proven*, not audited. The remaining gap is only the *standard interface* lesson (§3). |
 | **ERC-3643 / ERC-1404** permissioned tokens | transfer restricted by on-chain identity/whitelist | **A** | Caveat-gated transfer: `CapabilityCaveat::Witnessed(WitnessedPredicate)` with `MerkleMembership`/`NonMembership`/`Dfa` (`cell/src/predicate.rs:128`,`231`). Stronger: the predicate is a *witnessed proof*, not a mutable on-chain whitelist read. |
 | **ERC-6551** token-bound accounts | give an NFT a smart-account wallet | **A** | Cells own cells natively: `SpawnWithDelegation`/`RefreshDelegation`/`RevokeDelegation` (`action.rs:1081`). Stronger: 6551 is an *add-on registry* bolting an account onto an NFT; here every cell already is an account that can hold caps and spawn children. |
 | **ERC-7521 / ERC-7683** intents | declarative intents + solver settlement | **A (partial)** | Conditional/eventual turns, guarded holes, promise pipelining (Partial-Turn epoch: `turn/src/{eventual,conditional,pending}.rs`); escrow/blueprint settlement (`cell/src/blueprint.rs`). **Lesson half:** the *standard intent struct* (one `GaslessCrossChainOrder` any solver fills) is a social-coordination win — see §3. |
@@ -169,23 +169,27 @@ process is docs + a HORIZONLOG track.
 
 **What it is.** Pick the three highest-traffic ERCs — **ERC-20 (fungible)**,
 **ERC-4626 (vault)**, **ERC-5805/Governor (governance)** — and ship their dregg
-equivalents as first DSIs, *closing the honest gaps the survey found*: the vault
-capacity is currently a factory-wired Rust sketch (`cell/src/vault.rs`, no
-individual Lean rung) and governance has threshold auth but no standard
-interface.
+equivalents as first DSIs. The vault mechanism is already proven-real
+(`metatheory/Dregg2/Deos/Vault.lean`, the no-dilution + zero-mint-reject rung);
+the honest remaining gaps are at the *interface* layer — neither vault nor
+governance has a standard DSI, and governance still has only ad-hoc threshold
+auth with no standard interface.
 
-**Why it helps dregg.** These three are where "already-native (sketch)" and "(B)
-lesson" cluster. Promoting vault and governance from sketch/ad-hoc to a proven
-rung + standard interface turns a hand-wave into an interoperable, attested
-primitive — and gives the strongest concrete demos of "dregg does what DeFi does,
-soundly."
+**Why it helps dregg.** These three are where the "(B) lesson" clusters.
+Promoting the already-proven vault rung and the ad-hoc governance auth into a
+standard interface turns a proven-but-siloed primitive into an interoperable,
+attested one — and gives the strongest concrete demos of "dregg does what DeFi
+does, soundly."
 
-**How it lands.** Vault → finish the Lean rung à la the already-proven
-`Deos/{Membrane,DerivedCell,SealedEscrow,StandingObligation}.lean` family, with
+**How it lands.** Vault → the Lean rung is already landed
+(`Deos/Vault.lean`, in the proven
+`Deos/{Membrane,DerivedCell,SealedEscrow,StandingObligation}.lean` family), with
 share accounting as a **derived cell** (`derived.rs`) so share-price is a
 verifiable function of reserves — strictly stronger than ERC-4626, which has had
-real-world inflation/donation share-price exploits that a *proven* derived-cell
-invariant rules out. Governance → a DSI over the existing threshold
+real-world inflation/donation share-price exploits that the proven
+`zero_mint_rejected` / `deposit_no_dilution` invariants rule out. The work that
+remains is wrapping that rung in a canonical DSI descriptor. Governance → a DSI
+over the existing threshold
 `Authorization::Custom` predicate (`action.rs:325`) + governed namespaces
 (`state.rs`), no new effect.
 
@@ -248,8 +252,8 @@ documentation + a registry crate.
 
 1. **R1 — Dregg Standard Interfaces library** (the core ERC lesson; mechanism
    exists, social set is missing). ★★★★★
-2. **R2 — Standardize fungible/vault/governance first**, closing the vault-sketch
-   and governance-interface gaps. ★★★★☆
+2. **R2 — Standardize fungible/vault/governance first**, wrapping the already-proven
+   vault rung and the governance auth in standard interfaces. ★★★★☆
 3. **R3 — Paymaster/sponsored-fee UX pattern** as a standard Reactor. ★★★★☆
 4. **R4 — Standard intent envelope + solver interface** over existing settlement.
    ★★★☆☆

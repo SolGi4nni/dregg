@@ -119,6 +119,13 @@ The honest-accept path (`discharge` accepting) and every forge-reject path run
 through the SAME `ObligationState::check_discharge` / `audit` verification core,
 so a stub in either direction fails one polarity (non-vacuity by construction).
 
+This executor invariant is **PROVEN, not just smoke-tested**: the on-schedule /
+never-skipped discipline is the executor image of the kernel-clean Lean rung
+`metatheory/Dregg2/Deos/StandingObligation.lean` (grounded by reuse of the
+committed-heap root + the `StrictMonotonic` cursor discipline), and
+`obligation_standing.rs::invariant_matches_lean_rung` mirrors that rung's
+witnesses on the Rust side.
+
 ---
 
 ## 4. The API (the genuine slice)
@@ -158,40 +165,45 @@ The honest on-schedule discharge ACCEPTS and advances the cursor, and the
 obligation state is bound into the canonical commitment (discharging re-seals it
 — a light client sees the cursor move), so a forge cannot be hidden.
 
-Tests: `cargo test -p dregg-cell --lib obligation_standing::` — 13 green.
+Tests: `cargo test -p dregg-cell --lib obligation_standing::` — 14 green.
 
 ---
 
-## 5. Next slice: circuit binding
+## 5. The circuit binding (BUILT — VK-epoch flip is the last seam)
 
 The checks in §3–4 are **executor-level** — genuine forge rejections a verifier
-runs in the clear. The remaining slice is the **in-circuit witness**, so that a
-light client verifying a *batch* sees on-schedule discharge enforced by the
-EffectVM circuit (part of the proven kernel transition) rather than re-running
-the check out of band:
+runs in the clear. The **in-circuit witness** — so that a light client verifying
+a *batch* sees on-schedule discharge enforced by the EffectVM circuit (part of
+the proven kernel transition) rather than re-running the check out of band — is
+now **built**, not a pending slice:
 
-1. A `DischargeObligation` effect descriptor whose **gate binds** *"the current
-   period is due (`clock >= start + k·period`) ∧ not-yet-discharged
-   (`next_due == start + k·period`) ⟹ discharged ∧ cursor advanced by one
-   period (`next_due' == next_due + period`, `count' == count + 1`)"* into the
-   commitment — the same shape as the value/note gates already in
-   `circuit/descriptors/`. The gate must bind the cursor-advance and the
-   amount-equality into the commitment, else the rung is FALSE (the standing
-   circuit-soundness apex bar). This is the one-shot nullifier shape the
-   noteSpend grow-gate already carries, specialized to the per-period cursor.
+1. The `DischargeObligation` effect descriptor is emitted. The tag-18 emit
+   keystone `metatheory/Dregg2/Deos/DischargeSatDescriptor.lean`
+   (`dischargeSatVmDescriptor2R24 cur tot due`) carries the genuine
+   `EffectVmDescriptor2` at the deployed v12 / R=24 rotated geometry, plus the
+   **refinement rung**: a satisfying trace with the capacity selector on FORCES
+   the discharge discipline (due `clock >= start + k·period` ∧ not-yet-discharged
+   `next_due == start + k·period` ⟹ discharged ∧ cursor advanced by one period,
+   `next_due' == next_due + period`, `count' == count + 1`). The in-AIR gate
+   polynomials — the cursor-advance, the total-advance, and the due-ness range
+   gadget with constraint-level teeth — live in
+   `circuit/src/effect_vm/discharge_weld.rs`. This is the one-shot nullifier
+   shape the noteSpend grow-gate already carries, specialized to the per-period
+   cursor.
 
 2. The committed cursors (`next_due`, `discharged_count`, `discharged_total`) and
-   the terms digest as **heap-opening witnesses** (each opened against the
-   obligation cell's `heap_root`, the cell's commitment proven in the ledger
+   the terms digest are bound as **heap-opening witnesses** (each opened against
+   the obligation cell's `heap_root`, the cell's commitment proven in the ledger
    root).
 
-3. A Lean rung: `verifyBatch accept ⟹ obligation honored on schedule` —
-   concretely, a batch containing a discharge implies the period was genuinely
+3. The Lean rung — `verifyBatch accept ⟹ obligation honored on schedule`,
+   concretely: a batch containing a discharge implies the period was genuinely
    due and undischarged before and is discharged with the cursor advanced after,
-   with no period discharged twice across the batch — joining the
-   circuit-soundness obligation table in
-   `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`.
+   with no period discharged twice across the batch — joins the circuit-soundness
+   story tracked in `docs/reference/lean-circuit.md`.
 
-Until that lands, standing obligations are sound under the executor checks and
-the commitment binding; the circuit rung is the named follow-up, not a silent
-gap.
+The **one honest remaining seam** is the deliberately-gated **VK epoch flip**:
+committing the wide-welded VK that exposes the tag-18/19 discharge PIs and
+flipping the deployed default on. The descriptor and weld themselves are built;
+until the flip, standing obligations are witnessed by the executor rung + the
+commitment binding, with the circuit descriptor staged behind the VK gate.

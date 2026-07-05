@@ -42,7 +42,7 @@ The question is what that buys them.
 ## 2. The adversary model — leaked key = an opaque controller
 
 The model is exactly the deployed Polis frame
-(`metatheory/Metatheory/Polis.lean`): a controller is an **opaque, universally
+(`metatheory/Polis/Polis.lean`): a controller is an **opaque, universally
 quantified function** `ctrl : State → Action` that the safety theorem never inspects —
 *"verify the cage, not the animal"* (`polis_safety`, `:102`). The leaked-key attacker
 **is** such a controller: it holds the compromised principal's caps and drives the

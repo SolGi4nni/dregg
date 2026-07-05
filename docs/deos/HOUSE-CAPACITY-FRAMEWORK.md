@@ -101,19 +101,30 @@ machine, settled by the already-wired `CreateCellFromFactory` + `Transfer` +
 `SetField` triple — no new `Effect`, no VK change, the locked value living in the
 minted cell's own balance.
 
-This is the route for **vault** and **allowance**: every gate they need already
-exists in the `StateConstraint` vocabulary (`FieldGteHeight`/`PreimageGate` for
-the vault lock; `RateLimit`/`RateLimitBySum` + a `Monotonic` epoch cursor for the
-allowance). They weld as `*_state_constraints` + `*_factory_descriptor` + a
-`Dregg2/Apps/<Cap>.lean` twin with an `EscrowFactoryProbe`-style PASS probe — the
-factory analogue of the grounding template above. See
-`metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md` for the per-capability census.
+This is the route for **allowance** (`Apps/Allowance.lean`): every gate it needs
+already exists in the `StateConstraint` vocabulary (`RateLimit`/`RateLimitBySum` +
+a `Monotonic` epoch cursor). It welds as `*_state_constraints` +
+`*_factory_descriptor` + a `Dregg2/Apps/<Cap>.lean` twin with an
+`EscrowFactoryProbe`-style PASS probe — the factory analogue of the grounding
+template above. See `metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md` for the
+per-capability census.
 
-The distinction: **invariant capacities** (membrane, derived) get a `Deos/*.lean`
-rung over a reuse base; **settlement capacities** (vault, allowance, escrow,
-obligation) get an `Apps/*.lean` factory twin over the constraint vocabulary.
-Both are "by reuse, no VK bump"; they differ only in which proven object they
-reuse.
+**Vault landed via BOTH routes.** Rather than only the predicted factory twin
+(`Apps/Vault.lean`, over `FieldGteHeight`/`PreimageGate`), the share-vault also
+took the invariant route directly: a `Deos/Vault.lean` heap-root rung
+(`root_binds_get`) proving `deposit_no_dilution` / `withdraw_no_dilution` — so
+the vault is provably immune to the ERC-4626 inflation attack — wired by
+`cell/src/vault.rs::tests::share_vault_matches_lean_rung`. The two groundings are
+complementary: the `Deos` rung binds the no-dilution invariant into the committed
+heap, the `Apps` twin binds the lock/gate constraints into the factory descriptor.
+
+The distinction: **invariant capacities** get a `Deos/*.lean` rung over a reuse
+base; **settlement capacities** get an `Apps/*.lean` factory twin over the
+constraint vocabulary. As it landed, most of the house took the invariant route:
+membrane, derived, escrow, obligation, and vault all have a `Deos/*.lean` rung
+over the heap-root / cap-lattice reuse base, and escrow / obligation / vault
+*also* carry an `Apps/*.lean` factory twin. Only allowance is factory-only. Both
+are "by reuse, no VK bump"; they differ only in which proven object they reuse.
 
 ---
 
@@ -125,6 +136,7 @@ reuse.
 | **derived** | heap root (`root_binds_get`) | `Deos/DerivedCell.lean` | **GROUNDED** — `bind_verifies` + forge/stale/wrong-spec teeth + `claim_bound_in_root`, Rust `invariant_matches_lean_rung` |
 | **escrow** | heap root (`root_binds_get`) + one-shot Consumed | `Deos/SealedEscrow.lean` | **GROUNDED** — `deposit_both_ready` + `replay_rejected` (one-shot) + `nonconforming_claim_rejected` + `over_claim_rejected` + `leg_status_bound_in_root`, Rust `invariant_matches_lean_rung` |
 | **obligation** (standing/recurring) | heap root (`root_binds_get`) + `StrictMonotonic` cursor | `Deos/StandingObligation.lean` | **GROUNDED** — `cursor_strict_mono` + `replay_rejected` (one-shot/period) + early/over/behind-schedule teeth + `cursor_bound_in_root`, Rust `invariant_matches_lean_rung` |
+| **share-vault** | heap root (`root_binds_get`, no-dilution) | `Deos/Vault.lean` (+ `Apps/Vault.lean` twin) | **GROUNDED** — `deposit_no_dilution` + `deposit_price_non_decreasing` + `withdraw_no_dilution` + `forged_shares_rejected` teeth (provably immune to ERC-4626 inflation), Rust `share_vault_matches_lean_rung` |
 | **hatchery** (abstraction-mint) | `CellProgram::evaluate_with_meta` + a proved `Verify.Contract.CellContract` | `Deos/Hatchery.lean` | **GROUNDED** — `evalStep_admits_iff_*` + `step_preserves` (the hpres) + `invariant_forever` (the `CellContract` carry skeleton reused) + `Attested`/`attested_enforces_forever` (`HpresProof::Attested` ⟺ a machine-checked contract) + `program_missing_invariant_rejected` + `violating_*_rejected`, Rust `invariant_matches_lean_rung` |
 
 The escrow and obligation rungs are the **invariant-capacity** route (a `Deos/*.lean` rung over the

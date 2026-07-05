@@ -1,7 +1,20 @@
 # Commitment / anchor waist census — "what other 31-bit waists need to expand?"
 
+> **STATUS (regrounded):** the census's two HIGHEST waists have since been
+> LIFTED. The whole-chain light-client anchor is now 8-felt
+> (`SEG_ANCHOR_WIDTH = 8` / `SEG_DIGEST_WIDTH = 8`,
+> `circuit-prove/src/ivc_turn_chain.rs:254,267`; `WholeChainAttestation` fields
+> at `lightclient/src/lib.rs:136,139`) and the IVC attenuation-fold accumulator
+> is now 8-felt (`ACCUMULATED_HASH_WIDTH = 8`, `circuit/src/ivc.rs:187`, with a
+> build-time `assert_eq!(ACCUMULATED_HASH_WIDTH, 8, "the faithful floor is 8
+> felts")`). Rows #1 and #2 below are now **class D (at floor)**. The live
+> remainder is #3 sovereign (STAGED, still 4-felt), #4 `custom_proof_commitment`
+> (4-felt, VK-affecting, deliberately deferred), cap-open, and #5 the
+> identity-fold C\* question.
+
 > The faithful floor is **8 felts / ~124-bit collision resistance**
-> (`docs/FAITHFUL-STATE-COMMITMENT.md`), matching the deployed FRI ~130-bit
+> (`docs/FAITHFUL-COMMITMENT-LAW.md`, grounded at
+> `docs/reference/faithful-commitment.md`), matching the deployed FRI ~130-bit
 > soundness. A commitment narrower than that is a *waist*: a low-collision door
 > under a high-soundness proof. The
 > [`dont-launder-a-load-bearing-insecurity`] scar was EXACTLY a 31-bit
@@ -32,9 +45,9 @@ soundness-load-bearing set is small. Verdicts:
 | `EMIT_EVENT_TOPIC_HASH` / `PAYLOAD_HASH` | **8** | ~124 | **D** | `circuit/src/effect_vm/pi.rs:574,577` |
 | `custom_program_vk_hash` (8-limb of 32B VK) | **8** | ~124 | **D** | `circuit/src/effect_vm/pi.rs:289`; `circuit-prove/src/custom_proof_bind.rs:111` |
 | `SCHEMA_NOTE_SPEND/CREATE/BURN` binding fields (8 limbs/32B) | **8** | ~248 raw | **D** | `circuit/src/effect_action_air.rs:639` |
-| **Whole-chain anchor `genesis_root`/`final_root`** (light-client) | **1** | ~15 | **A** | `circuit-prove/src/ivc_turn_chain.rs:257,523`; `lightclient/src/lib.rs:134,137` |
-| **Whole-chain `chain_digest` / segment `acc`** (`SEG_DIGEST_WIDTH`) | **4** | ~62 | **A** | `circuit-prove/src/ivc_turn_chain.rs:249`; `lightclient/src/lib.rs:140` |
-| **IVC attenuation-fold `AccumulatedHash`** (`ACCUMULATED_HASH_WIDTH`) | **4** | ~62 | **A** | `circuit/src/ivc.rs:183,189,586` |
+| **Whole-chain anchor `genesis_root`/`final_root`** (light-client) | **8** | ~124 | **D** (LIFTED, was A) | `circuit-prove/src/ivc_turn_chain.rs` `SEG_ANCHOR_WIDTH=8`; `lightclient/src/lib.rs:136,139` |
+| **Whole-chain `chain_digest` / segment `acc`** (`SEG_DIGEST_WIDTH`) | **8** | ~124 | **D** (LIFTED, was A) | `circuit-prove/src/ivc_turn_chain.rs` `SEG_DIGEST_WIDTH=8`; `lightclient/src/lib.rs:142` |
+| **IVC attenuation-fold `AccumulatedHash`** (`ACCUMULATED_HASH_WIDTH`) | **8** | ~124 | **D** (LIFTED, was A) | `circuit/src/ivc.rs` `ACCUMULATED_HASH_WIDTH=8` |
 | **Cap-open 1-felt V3 commit (no-rotation fallback)** | **1** | ~15 | **A** (known) | `node/src/turn_proving.rs:1162` (`wide_from_felt`) |
 | **`custom_proof_commitment` (Custom proof_bind col 72)** | **4** | ~62 | **A** (known) | `circuit-prove/src/custom_proof_bind.rs:61,70` |
 | `SOVEREIGN_TRANSITION_PROOF_COMMITMENT` (inner-proof PI commit) | **4** | ~62 | **B** | `circuit/src/effect_vm/pi.rs:246` |
@@ -65,46 +78,43 @@ lifted by sibling lanes. **The new findings this census surfaces are the
 aggregation / IVC anchors**, which are the *top* of the trust stack: a
 whole-history light client trusts these directly.
 
-### 1. Whole-chain light-client anchor — `genesis_root`/`final_root` 1-felt + `chain_digest` 4-felt  ⟵ HIGHEST
+### 1. Whole-chain light-client anchor — `genesis_root`/`final_root` + `chain_digest`  ⟵ HIGHEST — **CLOSED (lifted to 8-felt)**
 
 `lightclient::verify_history` reads `WholeChainAttestation { genesis_root,
 final_root, num_turns, chain_digest }`. These come from the recursion root's
-exposed segment claim `[first_old, last_new, count, acc_0..3]`
-(`ivc_turn_chain.rs` `SEG_FIRST_OLD/SEG_LAST_NEW` single felts; `acc` =
-`SEG_DIGEST_WIDTH = 4`). So the deployed whole-history client's STATE
-endpoints are **single-felt (~15-bit birthday)** and the ordered-history
-commitment is **4-felt (~62-bit)** — both below the floor that the *per-turn*
-legs already meet (8-felt `OLD/NEW_COMMIT`). This is the most load-bearing
-gap, because it sits ABOVE every per-turn close: an adversary who can grind
-~2^15 genuine states to collide `first_old`/`last_new`, or ~2^62 to collide
-`acc`, fools the whole-history attestation regardless of how faithful each
-turn's internal 8-felt commit is.
+exposed segment claim `[first_old8, last_new8, count, acc_0..7]`
+(`ivc_turn_chain.rs` `SEG_LAST_NEW`/`SEG_COUNT` offsets; `acc` =
+`SEG_DIGEST_WIDTH`). **This waist has been lifted.** The endpoints are now
+`SEG_ANCHOR_WIDTH = 8` felts (`first_old8`/`last_new8`) and the ordered-history
+commitment `acc` is `SEG_DIGEST_WIDTH = 8` felts — both AT the ~124-bit floor
+the *per-turn* legs meet (8-felt `OLD/NEW_COMMIT`).
+`WholeChainAttestation.genesis_root`/`final_root` are typed
+`[BabyBear; SEG_ANCHOR_WIDTH]` and `chain_digest` is
+`[BabyBear; SEG_DIGEST_WIDTH]` (`lightclient/src/lib.rs:136,139,142`).
 
-The 8-felt twin **already exists in the prover**: `FinalizedTurn` carries
-`wide_old_root8`/`wide_new_root8`, the **WIDE temporal tooth**
-(`TurnChainError::WideChainBreak`) binds continuity at the 8-felt anchor, and
-`MissingWideAnchor` fails closed for a narrow leg in a wide fold. What is NOT
-yet wired is the **exposed claim**: the in-circuit `expose_claim` still emits
-single-felt `first_old`/`last_new` and 4-felt `acc`.
+The original gap: this sits ABOVE every per-turn close, so a narrow anchor here
+(the pre-lift ~15-bit `first_old`/`last_new` or ~62-bit `acc`) would have fooled
+the whole-history attestation regardless of how faithful each turn's internal
+8-felt commit is. The 8-felt twin already existed in the prover (`FinalizedTurn`
+`wide_old_root8`/`wide_new_root8`, the WIDE temporal tooth
+`TurnChainError::WideChainBreak`, `MissingWideAnchor` fail-closed); the lift
+wired it into the **exposed claim** — `expose_claim` now emits `first_old8`/
+`last_new8` (8 felts each) and the 8-felt `acc`, `WholeChainAttestation` + host
+tooth compare all 8, and `Dregg2.Circuit.RecursiveAggregation` is aligned. The
+recursion root op-list changed and `RecursionVk` re-emitted as part of the lift.
 
-**Lift shape:** widen `SEG_DIGEST_WIDTH` 4→8, expose `first_old8`/`last_new8`
-(8 felts each) through the segment combine/`expose_claim`, widen
-`WholeChainAttestation` + host tooth-4 to compare all 8, and align
-`Dregg2.Circuit.RecursiveAggregation` (the aggregate-attests facts). The
-recursion root circuit's op-list changes → `RecursionVk` re-emits → re-pin the
-trust anchor; that VK re-emit is part of the lift.
+### 2. IVC attenuation-fold `AccumulatedHash` — **CLOSED (lifted to 8-felt)**  ⟵ HIGH
 
-### 2. IVC attenuation-fold `AccumulatedHash` — 4-felt (~62-bit)  ⟵ HIGH
-
-`circuit/src/ivc.rs` `ACCUMULATED_HASH_WIDTH = 4` is the delegation /
+`circuit/src/ivc.rs` `ACCUMULATED_HASH_WIDTH = 8` is the delegation /
 attenuation fold-chain accumulator (distinct from the whole-chain accumulator
-above). Its doc-comments **launder** the width — calling 4 felts "124 bits of
-collision resistance" / "124-bit birthday-attack resistance" — which is the
-exact scar: the *collision/birthday* bound of a 124-bit digest is ~62 bits.
-The **width lift** 4→8 (`ACCUMULATED_HASH_WIDTH`, `StateTransitionAir`,
-`extend_accumulated_hash_wide`) re-emits the attenuation IVC AIR's VK and
-aligns its Lean twin — done in this campaign, which also makes the comments
-true rather than just de-laundered.
+above). **This waist has been lifted.** The width is now 8 felts, guarded by a
+build-time `assert_eq!(ACCUMULATED_HASH_WIDTH, 8, "the faithful floor is 8
+felts")` (`circuit/src/ivc.rs:2459`), and the doc-comments now correctly state
+8 felts = ~124-bit collision resistance rather than laundering a 4-felt
+(~62-bit) width as "124-bit". The lift (`ACCUMULATED_HASH_WIDTH`,
+`StateTransitionAir`, `extend_accumulated_hash_wide`) re-emitted the attenuation
+IVC AIR's VK and aligned its Lean twin — done in this campaign, which also made
+the comments true rather than just de-laundered.
 
 ### 3. Sovereign inner-transition proof commitment + VK — 4-felt, STAGED (class B)
 
@@ -169,15 +179,15 @@ facts are emitted from Lean, law #1). That is expected and fine — the VK
 re-emit is part of the lift, not a reason to defer it. The order, by
 soundness-criticality:
 
-1. **Whole-chain anchor 1/4-felt → 8-felt** (highest; the top-of-stack
-   light-client trust anchor). `SEG_DIGEST_WIDTH` 4→8, expose
-   `first_old8`/`last_new8` (8 felts each), widen `WholeChainAttestation` +
-   host tooth-4 to 8, align `Dregg2.Circuit.RecursiveAggregation`. The
-   prover's `wide_*_root8` already exists — this wires it into the exposed
-   claim.
-2. **IVC attenuation-fold `AccumulatedHash` 4-felt → 8-felt** —
-   `ACCUMULATED_HASH_WIDTH` 4→8 across `circuit/src/ivc.rs` +
-   `StateTransitionAir`, align the Lean IVC twin.
+1. ✅ **DONE — Whole-chain anchor 1/4-felt → 8-felt** (highest; the top-of-stack
+   light-client trust anchor). `SEG_ANCHOR_WIDTH = 8` / `SEG_DIGEST_WIDTH = 8`,
+   `expose_claim` emits `first_old8`/`last_new8` (8 felts each),
+   `WholeChainAttestation` + host tooth widened to 8,
+   `Dregg2.Circuit.RecursiveAggregation` aligned. The prover's `wide_*_root8` was
+   wired into the exposed claim; `RecursionVk` re-emitted.
+2. ✅ **DONE — IVC attenuation-fold `AccumulatedHash` 4-felt → 8-felt** —
+   `ACCUMULATED_HASH_WIDTH = 8` across `circuit/src/ivc.rs` +
+   `StateTransitionAir`, Lean IVC twin aligned, build-time floor assert added.
 3. **Sovereign transition-proof commit+VK 4-felt → 8-felt** (staged today, so
    free to widen) — `SOVEREIGN_TRANSITION_PROOF_{COMMITMENT,VK_HASH}_LEN` 4→8;
    cascades `BASE_COUNT` + the `RotationLayout`/`PiV3` drift guard.

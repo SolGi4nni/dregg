@@ -85,8 +85,10 @@ independently runnable and reversible until the last:
 0. **deos as ONE app on stock GrapheneOS** *(no OS modification; the risk-free
    slice — `MOBILE-DEOS.md`)*. The deos native process (verified core + a gpui
    frame) in a single full-screen app. **The verified core half is DONE** (§3,
-   `MOBILE-DEOS.md §7`); the gpui frame half has a named wall (the gpui android
-   platform backend).
+   `MOBILE-DEOS.md §7`); the gpui frame half is **built-and-demonstrated** — the
+   `gpui_android` `PlatformAndroid` backend exists and `mobile/deos-android-paint`
+   paints on the emulator; a real-arm64-hardware painted frame is the last mile
+   (§7 wall #1).
 1. **deos claims `HOME`** — add the `HOME` intent category; deos is the launcher
    on an otherwise-stock GrapheneOS phone. The first rip-and-tear claim. Still an
    app, still in the sandbox, no signing/relock.
@@ -213,17 +215,25 @@ the same card to its faces and reshapes it live.
 
 ## 7. The honest walls (one place, no laundering)
 
-1. **gpui has no android platform backend.** gpui's `Platform`/`PlatformWindow`/
-   dispatcher/IME/lifecycle layer is gated to macos/linux/windows/freebsd only;
-   the fork carries **no** `android-activity`/`ndk` dependency. The `gpui_wgpu`
-   *renderer* takes a `raw_window_handle` (which an `ANativeWindow` can supply), so
-   the **draw** path is reachable — but a real gpui frame on android needs a new
-   `PlatformAndroid` backend (window from `ANativeWindow`, an android event/IME
-   pump, the lifecycle states). That is a gpui-fork change, which this build pass is
-   constrained not to make. **This is the precise content of the doc's
-   "demonstrated-not-productized" note** (`MOBILE-DEOS.md §5`): not a recompile, a
-   backend port. Step 2 (a gpui frame on android) is blocked here until the gpui
-   android backend is built (upstream gpui-mobile is the demonstrated shape to lift).
+1. **The gpui android backend is BUILT — the last mile is a real-arm64 painted
+   frame.** gpui's stock `Platform`/`PlatformWindow`/dispatcher/IME/lifecycle layer
+   is gated to macos/linux/windows/freebsd only, so a `PlatformAndroid` backend
+   (window from `ANativeWindow`, an android event/IME pump, the lifecycle states)
+   was the named port — and it now **exists**: the emberian/zed gpui fork carries a
+   new `gpui_android` `PlatformAndroid` backend
+   (`~/dev/emberian-zed/crates/gpui_android`), and `mobile/deos-android-paint`
+   ("graphideOS step 2: a gpui app painting a real deos frame on android", packaged
+   as an APK via cargo-apk) drives it — depending on `gpui_android` +
+   `android-activity 0.6` (so the "**no** `android-activity`/`ndk` dependency" line
+   is stale: the step-2 package pulls exactly that). The `gpui_wgpu` renderer takes
+   the `ANativeWindow`'s `raw_window_handle`, and the `PlatformAndroid` renderer
+   **initializes on-device**, with captured frames committed alongside the package
+   (`deos-on-android.png`, `deos-on-android-hostgpu.png`, `run-state-swiftshader.png`,
+   `run-state-hostgpu.png` — the emulator paints under both SwiftShader and the host
+   GPU). What remains is a painted frame on **real arm64 hardware** (the emulator
+   captures prove the backend, not the phone GPU path). So Step 2 is
+   **built-and-demonstrated**, not blocked; upstream gpui-mobile was the shape, and
+   the fork lifted it.
 2. **The Lean-linked producer needs an android Lean archive.** §3: the Rust verify
    path runs; the verified-Lean *producer* (`libdregg_lean.a`) is not yet
    cross-compiled for `aarch64-linux-android`.
@@ -236,17 +246,18 @@ the same card to its faces and reshapes it live.
    service replaced by a deos-cell needs a Soong module forwarding binder
    transactions into turns; real engineering, one service at a time.
 
-None of these is foundational. The deepest two (the gpui android backend, the Lean
-android archive) are *named ports* of existing shapes; the build-tree wall is a
-*hardware/host* constraint, not a design one.
+None of these is foundational. The gpui android backend — once the deepest wall —
+is now built (wall #1); the remaining named port is the Lean android archive, and
+the build-tree wall is a *hardware/host* constraint, not a design one.
 
 ---
 
 ## 8. The path, in one line
 
 **Run the verified core + a gpui frame as one `aarch64` Android app on stock
-GrapheneOS (the verified core half is DONE; the gpui frame waits on a gpui android
-backend), claim `HOME`, then — on a Linux build node — fork the GrapheneOS manifest
+GrapheneOS (the verified core half is DONE; the gpui frame is built-and-demonstrated
+via the `gpui_android` backend + `deos-android-paint`, with only a real-arm64
+painted frame remaining), claim `HOME`, then — on a Linux build node — fork the GrapheneOS manifest
 and reforge the top-half layer by layer (launcher → cells → services-as-cells →
 binder-as-turns → permissions-as-caps → SystemUI-as-cockpit), keeping Graphene's
 hardened bottom-half and rooting the whole cap graph in the Titan-M2 secure

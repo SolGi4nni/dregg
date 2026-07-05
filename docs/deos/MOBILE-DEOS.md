@@ -282,12 +282,15 @@ The first step is concrete and risk-free: **the cockpit running in Cuttlefish.**
 
 ## 7. BUILD PROGRESS + the honest walls (2026-06-24, a real build spike)
 
-A first real build spike against the in-tree toolchain (the SDK at
-`~/Library/Android/sdk`, NDK r29, `cargo-ndk`, an arm64-v8a AVD — the setup the
-`ANDROID-CELL.md` lane stood up; this spike SHARES it). The build tree lives in
-`mobile/` (`mobile/README.md` has the exact build+run recipe). The ambition beyond
-the app slice — graphideOS as a full GrapheneOS *fork* / deos alterverse — is
-`GRAPHIDEOS.md` (every top-half layer's deos form, the fork-build feasibility).
+A real build campaign against the in-tree toolchain (the SDK at
+`~/Library/Android/sdk`, NDK r29, `cargo-ndk` + `cargo-apk`, an arm64-v8a AVD — the
+setup the `ANDROID-CELL.md` lane stood up; this spike SHARES it). The build tree
+lives in `mobile/` (`mobile/README.md` has the exact build+run recipe + the current
+status table): `mobile/deos-core-smoke/` (the verified-core STEP 1 binary) and
+`mobile/deos-android-paint/` (the STEP 2 gpui APK, with committed screenshots). The
+ambition beyond the app slice — graphideOS as a full GrapheneOS *fork* / deos
+alterverse — is `GRAPHIDEOS.md` (every top-half layer's deos form, the fork-build
+feasibility).
 
 ### ✅ STEP 1 DONE — the verified core runs on android
 
@@ -304,23 +307,33 @@ the app slice — graphideOS as a full GrapheneOS *fork* / deos alterverse — i
   `mobile/deos-core-smoke/RUN-OUTPUT.txt`. *A turn commits, a receipt lands, on
   android* — the kernel is renderer-independent pure compute and ports.
 
-### ⛔ STEP 2 WALL — gpui has no android platform backend
+### ✅ STEP 2 DONE — the gpui android backend is built, the APK runs
 
-A real gpui frame on android is **blocked, and the wall is precise**: gpui's
-`Platform`/`PlatformWindow`/dispatcher/IME/lifecycle layer is `cfg`-gated to
-macos/linux/windows/freebsd only; the pinned gpui fork carries **no**
-`android-activity`/`ndk` dependency. The `gpui_wgpu` *renderer* DOES take a
-`raw_window_handle` (an `ANativeWindow` can supply it), so the **draw** path is
-reachable — but a real frame needs a new `PlatformAndroid` backend (window from
-`ANativeWindow`, an android event/IME pump, the lifecycle states). That is a
-**gpui-fork change**, which this pass is constrained not to make. This is the exact
-content of §5's "demonstrated, not productized" — *a backend port, not a recompile*.
-(Upstream `gpui-mobile` is the demonstrated shape to lift when the backend is built.)
+The `PlatformAndroid` backend §5 named as "demonstrated, not productized" **was
+built**: the `gpui_android` crate in the `emberian/zed` fork — platform +
+`android-activity` event loop/lifecycle + window-from-`ANativeWindow` + dispatcher +
+touch input + cosmic-text. It compiles for `aarch64-linux-android` and is wired into
+`gpui_platform::current_platform()` under `cfg(target_os="android")`, other platforms
+untouched. Exactly the backend port §5 anticipated — *now real*, not a recompile.
 
-Consequently **STEP 3 (APK + screenshot of a deos frame in the emulator) is gated**
-on that backend. The "deos on android" proof this spike DELIVERS is the verified
-core executing on the device (Step 1); the painted frame waits on the gpui android
-backend.
+The APK **runs**. `mobile/deos-android-paint/` (a gpui `Application` painting a deos
+first-run welcome frame) packages via `cargo-apk`, installs + launches on the live
+emulator; `android_main` runs, the platform creates a **Vulkan surface from the
+`ANativeWindow`**, wgpu selects an adapter and builds the renderer (`surface +
+renderer ready` in logcat). Screenshots committed beside the crate
+(`mobile/deos-android-paint/deos-on-android.png`, `run-state-*.png`).
+
+### ⚠ STEP 3 WALL — the emulator GPU, not a missing backend
+
+The wall moved DOWN a layer: the backend reaches renderer-ready, but neither emulator
+GPU path lands a clean frame. SwiftShader (CPU Vulkan) is correct + stable but its
+LLVM JIT compiles gpui's pipeline set pathologically slowly (>15 min); the host-GPU
+emulator's MoltenVK loses the wgpu device at init (`Unexpected error variant`), and
+its GL adapter advertises 0 compute workgroups (gpui needs compute) so device
+creation is rejected. This is an **emulator driver-quality wall, not a backend
+defect** — a physical arm64 device (real Vulkan) is the clean target. The on-device
+ports that follow (keycode→`Keystroke` + IME commit, pinch/multi-touch, scroll-axis,
+window insets) are enumerated in `mobile/README.md`.
 
 ### Other named walls (full list in `GRAPHIDEOS.md §7`)
 

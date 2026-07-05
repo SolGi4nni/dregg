@@ -1,5 +1,16 @@
 # Re-Grounding dregg's Matching Layer on a Boolean-Closed Derivative Algebra
 
+> **STATUS (partly landed):** the Rust half of this doc's Stage 3 has since SHIPPED —
+> the derivative FilterTree compiler (`dfa/src/derivative.rs`, Brzozowski/Antimirov
+> front-end, lazy intersection, native complement) + `Pattern::Not`
+> (`dfa/src/compiler.rs`) make the cap-secure **deny filter EXPRESSIBLE**, out-of-circuit
+> and AIR-neutral (same flat `Dfa`). The landing doc is
+> [DERIVATIVE-MATCHING-DESIGN.md](DERIVATIVE-MATCHING-DESIGN.md). What remains OPEN is
+> the Lean reuse — Stages 0/4/5 (the license-blocked `extended-regexes` port, the
+> `derivativeCompile ≡ tableDfa` equivalence lemma, the `Pred`/`CaveatPred` trace-lift).
+> Read the body as the design rationale; treat the §1.3-"inexpressible" / §4.3-Stage-3
+> framing as historical.
+
 dregg has **at least four** independent "boolean matching" surfaces, each
 re-deriving the same operators (intersection, complement, union) over a
 different carrier, with different closure proofs and different in-circuit
@@ -7,12 +18,13 @@ stories. This document asks one question: **can RE#/ERE≤'s boolean-closed
 symbolic-derivative algebra — closed under `&`/`~`/lookaround, input-linear,
 and Lean-formalized — serve as the *one* foundation those surfaces share?**
 
-This is a design/research doc for the owner to decide on. It does not propose a
-landing; it lays out the case, the reusable Lean artifact, the in-circuit
-split (which the prior eval `REGEX-AUTOMATON-EVAL.md` already settled for the
-DFA face), a staged re-grounding design, and an honest account of what is
-uncertain. Nothing here is built; several claims below are explicitly flagged
-as *unverified*.
+This is a design/research doc for the owner to decide on. It lays out the case,
+the reusable Lean artifact, the in-circuit split (which the prior eval
+`REGEX-AUTOMATON-EVAL.md` already settled for the DFA face), a staged re-grounding
+design, and an honest account of what is uncertain. Since it was written, the
+**Rust** derivative front-end (Stage 3) has landed (`dfa/src/derivative.rs` +
+`Pattern::Not`); the **Lean** reuse (Stages 0/4/5) remains open, several claims
+below still explicitly flagged as *unverified*.
 
 ---
 
@@ -84,14 +96,18 @@ every root→leaf path** (`compile_subtree` → `dfa_intersection`, `:134-145`);
 `revoke` (`:125`) flips a node to accept-all (intersection identity) and
 `compile_combined` rebuilds. A k-deep tree is a k-fold DFA product,
 `O(∏|S_i|)` — the actual state-explosion site. The compiler
-(`dfa/src/compiler.rs`) is eager Thompson-NFA → subset-construction → flat
-`Dfa` table; intersection is `dfa_intersection` (a Cartesian product), and
-**complement does not exist** (`Pattern` `:369-395` has `All`/`Any`/`PrefixOf`,
-no `Not`). A capability-secure *deny* filter (match everything except a revoked
-namespace) is therefore currently **inexpressible**.
+(`dfa/src/compiler.rs`) was eager Thompson-NFA → subset-construction → flat
+`Dfa` table; intersection is `dfa_intersection` (a Cartesian product).
+**Complement HAS SINCE LANDED** (this doc's Stage 3, Rust half): `Pattern::Not`
+(`compiler.rs`) is compiled through the lazy Brzozowski/Antimirov derivative
+front-end (`dfa/src/derivative.rs`) rather than the NFA-product path (Thompson
+NFAs have no complement constructor), so the capability-secure *deny* filter
+(match everything except a revoked namespace) is now **expressible** and emits the
+same flat `Dfa` the AIR consumes.
 
-**Boolean operators it needs:** intersection (have it, eager/explosive),
-complement (want it for deny-filters, don't have it), union.
+**Boolean operators it needs:** intersection (have it — eager product, or the
+lazy derivative `inter`), complement (now have it via `Pattern::Not` /
+`derivative.rs`), union.
 
 ### 1.4 The shape of the problem
 
@@ -109,7 +125,8 @@ presented as a **Boolean algebra of characteristic functions** (`Value → Value
 Brzozowski/Antimirov derivative construction lives over. The gap is that
 §1.1's algebras are boolean over a **single frame**, while a derivative algebra
 is boolean over a **sequence** — and FilterTree is the only surface that is
-already sequence-shaped (and it has the explosion and the missing complement).
+already sequence-shaped (and it had the explosion and the missing complement —
+both now supplied by the landed derivative front-end, §1.3).
 
 ---
 
@@ -239,7 +256,7 @@ biggest reason to care about the Lean reuse.
 
 | Surface | Carrier | Re-ground? | Why |
 |---|---|---|---|
-| **FilterTree / intent / routing** (§1.3) | byte/symbol sequences | **Yes — primary.** Derivative compiler for `&`/`~`/`\|`, emitting the same flat `Dfa`. | Already sequence-shaped; has the explosion *and* the missing complement. The natural home for ERE≤. |
+| **FilterTree / intent / routing** (§1.3) | byte/symbol sequences | **Yes — primary; Rust half DONE.** Derivative compiler for `&`/`~`/`\|` (`derivative.rs` + `Pattern::Not`), emitting the same flat `Dfa`. | Already sequence-shaped; had the explosion *and* the missing complement — the derivative front-end now supplies both. The natural home for ERE≤. |
 | **Predicate `Pred`** (§1.1) | single `(old,new)` frame | **Partial — as the EBA instance** under a lifted sequence layer (a turn-*trace* of frames). | Already a boolean algebra of `Value→Value→Bool`; would become the per-symbol acceptance test, with `der` stepping one turn. *Unverified that the lift is sound.* |
 | **`CaveatPred`** (§1.1) | request `Ctx` | **Maybe — same EBA, different σ.** | Shares connective shape but a deliberately distinct denotation domain; unifying needs reconciling `Ctx` vs `(old,new)` under one σ. The temporal floors/ceilings *are* a 1-frame degenerate of a trace lookbehind. |
 | **Cap-authority lattice** (§1.2) | capability tokens | **No.** | No complement, incomparable Custom vk_hashes — not a complemented lattice; monotone-by-design. Welding it in would be wrong. |
@@ -304,9 +321,13 @@ REGEX-AUTOMATON-EVAL.md §6; stages 0 and 4–5 are this doc's additions.
   give-up, `regex-automata`-hybrid-modeled); same `Dfa` output, same AIR.
   `Dfa::table_size_bytes` becomes the enforced budget.
 - **Stage 3 — derivative `&`/`~` compiler + `Pattern::Not` (out-of-circuit,
-  the payoff).** Swap `dfa_intersection` for the RE#-style derivative front-end;
-  add `Pattern::Not` so deny-filters are expressible. Retires the `FilterTree`
-  explosion. Still emits a flat `Dfa`.
+  the payoff). ✅ DONE (Rust).** `dfa/src/derivative.rs` is the RE#-style
+  Brzozowski/Antimirov front-end (lazy intersection, native complement); `Pattern::Not`
+  (`compiler.rs`) makes deny-filters expressible, routed through the derivative path.
+  Retires the `FilterTree` product explosion. Still emits a flat `Dfa` (AIR-neutral).
+  Landed independently of the Stage-0 license gate — the derivative front-end lives
+  entirely in the compiler and does not need the `extended-regexes` port. See
+  [DERIVATIVE-MATCHING-DESIGN.md](DERIVATIVE-MATCHING-DESIGN.md).
 - **Stage 4 — the equivalence lemma (the faithfulness close).** Prove (or port)
   `derivativeCompile P ≡ tableDfa` so the boolean semantics is no longer an
   untrusted Rust gap under the clean AIR proof. **This is the stage that
@@ -377,20 +398,23 @@ REGEX-AUTOMATON-EVAL.md §6; stages 0 and 4–5 are this doc's additions.
 
 dregg already *has* the Boolean-algebra carrier (`Pred`/`CaveatPred`/the closure
 modules — proven `#assert_axioms`-clean) and the stable in-circuit trust
-boundary (the table-opaque `TableDfa` proof). What it lacks is **(a) the
-sequence/derivative layer that would unify the frame-algebras with the
-sequence-matcher, (b) `~` for the FilterTree, and (c) a Lean equivalence theorem
+boundary (the table-opaque `TableDfa` proof). It **now has (b) `~` for the
+FilterTree** — the derivative front-end + `Pattern::Not` landed (Stage 3, Rust).
+What it still lacks is **(a) the sequence/derivative layer that would unify the
+frame-algebras with the sequence-matcher, and (c) a Lean equivalence theorem
 making the compiled boolean semantics trusted.** ERE≤'s formalization is a
 near-exact fit for (a) and (c) — same EBA abstraction, same `⊢ ↔ ⊫` correctness
-shape, Lean4+mathlib — and RE#'s derivative algebra is the right *compiler* for
+shape, Lean4+mathlib — and RE#'s derivative algebra was the right *compiler* for
 (b) (the eval already proved it is the *wrong* in-circuit transition).
 
-The move is a **weld, not a build** — *if* the license clears. The
-recommendation: pursue Stage 0 (license + port spike) as the gating decision,
-land Stages 1–3 (they are good independent of the unification), and treat the
-predicate/caveat lift (Stage 5) as a genuine open research question, not a
-foregone conclusion — the turn-trace σ instantiation and the right-skew
-non-distributivity are real, unverified frontiers.
+The move is a **weld, not a build** — *if* the license clears. Stage 3's Rust half
+already landed (the derivative compiler + `Pattern::Not`, license-independent). The
+remaining recommendation: pursue Stage 0 (license + port spike) as the gating
+decision for the *Lean* reuse, land Stages 1–2 (good independent of the
+unification), close Stage 4 (the equivalence lemma), and treat the predicate/caveat
+lift (Stage 5) as a genuine open research question, not a foregone conclusion — the
+turn-trace σ instantiation and the right-skew non-distributivity are real, unverified
+frontiers.
 
 ### Cited sources
 
@@ -402,7 +426,7 @@ non-distributivity are real, unverified frontiers.
   `Dregg2/Authority/{ArithmeticClosure,RelationalClosure,Caveat}.lean`,
   `cell/src/program/types.rs`, `cell/src/{permissions,capability}.rs`,
   `token/src/{action_set,datalog_verify}.rs`.
-- DFA face: `dfa/src/{filter,compiler}.rs`, `circuit/src/dsl/dfa_routing.rs`,
+- DFA face: `dfa/src/{filter,compiler,derivative}.rs`, `circuit/src/dsl/dfa_routing.rs`,
   `metatheory/Dregg2/Crypto/DfaAcceptanceAir.lean`,
   `cell/src/predicate.rs`, `turn/src/executor/membership_verifier.rs`.
 - The settled in-circuit split: `docs/deos/REGEX-AUTOMATON-EVAL.md`.

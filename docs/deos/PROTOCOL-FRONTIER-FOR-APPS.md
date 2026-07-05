@@ -1,5 +1,13 @@
 # The Protocol Frontier For Apps — what dregg supports that apps only touch aspirationally
 
+> **As-of census (~2026-06-27), partially executed since.** This is a point-in-time
+> snapshot. Its chosen flagship — a real `SealedEscrow` atomic swap — has since
+> **LANDED** (`demo/tests/sealed_escrow_atomic_swap.rs`), and `escrow-market` itself
+> was regrounded onto the proven capacity (`SealedEscrowMarket`). Those two rows are
+> flipped below; the rest of the spine (Vault/Membrane/StandingObligation UNUSED,
+> conditional/eventual/promises UNUSED, no app implements a RingTradeParticipant)
+> still holds. Re-census before treating any single row as live state.
+
 dregg's substrate has grown far richer than its example apps exercise. This is a
 pillar-by-pillar census of the *rich primitives that exist* (proven and wired)
 against *which app actually uses them* (file:line), so we can see the aspirational
@@ -31,16 +39,19 @@ proven in `metatheory/Dregg2/Deos/{SealedEscrow,Vault,Membrane,StandingObligatio
 
 | Capacity | API surface | App usage | Verdict |
 |---|---|---|---|
-| **SealedEscrow** | `open_escrow`/`deposit_leg`/`settle`/`reclaim_leg`/`check_claim` (`cell/src/escrow_sealed.rs:375,391,580,595,503`) | none — `starbridge-apps/escrow-market/src/lib.rs:12-50` **fakes** atomic escrow with `FieldLteField`/`WriteOnce`/`SumEqualsAcross`/`StrictMonotonic` slot caveats + `SetField` | **FAKED** |
+| **SealedEscrow** | `open_escrow`/`deposit_leg`/`settle`/`reclaim_leg`/`check_claim` (`cell/src/escrow_sealed.rs:375,391,580,595,503`) | **regrounded** — `starbridge-apps/escrow-market/src/lib.rs` now drives the proven capacity via `SealedEscrowMarket` (`:180`), re-exporting `dregg_cell::escrow_sealed`; the old slot-caveat lifecycle is RETAINED only for out-of-scope dependents and is no longer the app's headline escrow (`:38-46`). Also the flagship `demo/tests/sealed_escrow_atomic_swap.rs`. | **USED** |
 | **Vault** (conditional timelock) | `open_vault`/`claim`, `VaultTerms`/`Condition` (`cell/src/vault.rs`) | none | **UNUSED** |
 | **Membrane** (forwarder / upward authority `meet`) | `Membrane`/`SealedMembrane`/`exercise`/`seal` (`cell/src/membrane.rs`) | none | **UNUSED** |
 | **StandingObligation** (recurring discharge) | `open_obligation`/`discharge`, `ObligationTerms` (`cell/src/obligation_standing.rs`) | none | **UNUSED** |
 | **DerivedCell** (committed aggregate over sources) | `bind_derivation`/`verify_derivation`, `DerivationSpec` (`cell/src/derived.rs`) | `starbridge-apps/supply-chain-provenance/src/derived.rs:47,111-138` | **USED** |
 | **Hatchery** (object factory / EROS-style minting) | `FactoryDescriptor`/`CapTemplate`/`ChildVkStrategy` (`cell/src/factory.rs`) | `starbridge-apps/polis/src/lib.rs:114,303-315,1184` + framework re-exports (208 sites) | **USED** |
 
-Four of the six proven capacities have **zero** app users; the one most squarely an
-app domain (escrow-market) **re-implements escrow by hand** instead of calling the
-proven `SealedEscrow`.
+Three of the six proven capacities (Vault, Membrane, StandingObligation) still have
+**zero** app users. The escrow gap this census originally flagged as its most glaring
+fake — `escrow-market` re-implementing escrow by hand — has since been **closed**:
+the app was regrounded onto the proven `SealedEscrow` capacity (`SealedEscrowMarket`),
+and a disjoint flagship demo (`demo/tests/sealed_escrow_atomic_swap.rs`) drives the
+`cell` API end to end. See the flagship section below (now landed).
 
 ### 2. umem cell-heaps (per-cell committed witnessed memory)
 
@@ -128,18 +139,23 @@ demonstrate* against *tractability of a clean, disjoint demo this lane can build
 
 | # | Pillar → demo | Houyhnhnm properties shown | Tractability |
 |---|---|---|---|
-| **1** | **SealedEscrow atomic fair-exchange** — a real app trades value "I give X iff you give Y" through the proven capacity | capability-secure · witnessed · atomic/persistent (+ the canonical ocap *escrow exchange agent*) | **HIGH** (pure `cell` API, disjoint from escrow-market) — **chosen flagship** |
+| **1** | **SealedEscrow atomic fair-exchange** — a real app trades value "I give X iff you give Y" through the proven capacity | capability-secure · witnessed · atomic/persistent (+ the canonical ocap *escrow exchange agent*) | **HIGH** (pure `cell` API, disjoint from escrow-market) — **LANDED** |
 | **2** | **Branch-and-stitch multiplayer** — two agents fork the world, diverge, stitch under settlement-soundness | distributed · reversible · witnessed · **branch-and-stitch** · persistent | MEDIUM (production `stitch_pair` lives in starbridge-v2) |
 | **3** | **Promise-pipelined coordination** — apps coordinate via `EventualRef`/`Pipeline`/CapTP without round-trips | distributed · capability-secure · witnessed (the E/Houyhnhnm lineage itself) | MEDIUM (turn-level API, no app precedent) |
 | **4** | **Time-travel / undo on a live app** — `ReversibleHistory` un-turns an app's history to a past consistent state, stopping at committed boundaries | reversible · witnessed · persistent | HIGH (extends the kvstore `project_ledger` slice) |
 | **5** | **Hatchery minting user-defined service kinds** + Mint/Burn — an app mints its own asset well and spawns child service-cells | persistent · content-addressed · capability-secure (generative) | MEDIUM |
 
-### The chosen flagship (this pass): a real SealedEscrow atomic swap
+### The chosen flagship — LANDED: a real SealedEscrow atomic swap
 
-**Why.** It is the single most *tractable* "real app drives a proven capacity end to
-end" demo, and it demolishes the census's most glaring fake: `escrow-market`
-hand-rolls escrow from slot caveats while the proven `SealedEscrow` capacity sits
-unused. The escrow-exchange agent is also the *canonical object-capability /
+**Landed.** `demo/tests/sealed_escrow_atomic_swap.rs` now drives the proven
+`dregg_cell::escrow_sealed` capacity end to end, and `escrow-market` itself was
+regrounded onto the capacity (`SealedEscrowMarket`) — so the census's most glaring
+fake (`escrow-market` hand-rolling escrow from slot caveats while the proven
+`SealedEscrow` capacity sat unused) is now demolished on both fronts. The rest of
+this section is the design rationale that drove that build.
+
+**Why.** It was the single most *tractable* "real app drives a proven capacity end to
+end" demo. The escrow-exchange agent is also the *canonical object-capability /
 agoric-commerce pattern* (Miller's E / Agoric "escrow exchange") — the bedrock of
 trustless distributed agent commerce, which is exactly the Houyhnhnm picture of
 mutually-suspicious agents exchanging value safely.

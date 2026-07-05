@@ -98,7 +98,8 @@ The *who-may-rotate* decision is a weighted-threshold BLS quorum.
 ### HOW — KERI pre-rotation (the rotation mechanics)
 
 Independently of *who* authorizes, the `KeyRotationGate` enforces *how* a
-rotation must be shaped (`cell/src/program.rs`, `StateConstraint::KeyRotationGate`;
+rotation must be shaped (`StateConstraint::KeyRotationGate`, defined in
+`cell/src/program/types.rs` and evaluated in `cell/src/program/eval.rs`;
 kernel semantics in `metatheory/Dregg2/Apps/PreRotation.lean`).
 
 Every key-state event commits to the **digest of the next, unexposed key set**
@@ -129,8 +130,8 @@ enforces the rotation mechanics. Both must pass.
 
 The charter carries a `cooling_period`. The gate enforces
 `old[last_rotated] + cooling_period <= height` and stamps the new rotation's own
-height as the next window's anchor (`cell/src/program.rs` step 4–5;
-Lean `TemporalAtom.cooledSince`). A rotation is therefore *visible to the
+height as the next window's anchor (`cell/src/program/eval.rs`, the
+`KeyRotationGate` cooling step; Lean `TemporalAtom.cooledSince`). A rotation is therefore *visible to the
 council the whole time*: a recovery cannot complete instantly and silently. The
 window gives the genuine holder (or honest guardians) time to observe an
 in-progress recovery and contest it. It is a time-lock, not a vote — orthogonal

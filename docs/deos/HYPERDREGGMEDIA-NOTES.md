@@ -1,5 +1,13 @@
 # HYPERDREGGMEDIA — investigation notes
 
+> **STATUS (regrounded 2026-07-05):** kept as the original pre-charter investigation
+> notes + rationale — but the §6 "shortest path" has since LANDED IN FULL. All eight
+> authoring surfaces are now BUILT (file cites inline in §6 below), so the "what's
+> missing is authoring" framing is historical, not a to-do list. Branch-and-stitch
+> multiplayer is now executor-side LIVE in production (`stitch_pair`;
+> `settlement_soundness` proven + axiom-clean — `docs/reference/lean-distributed.md`);
+> its light-client circuit-weld is the one honest open seam that remains.
+
 *Pre-charter working notes. "The HyperCard guy on a tab of acid." Investigation captured before
 the charter is written — so the charter stands on grounded soul, not vibes. Two sweeps: the
 lineage (what the 40-year dream was + why each ancestor fell short) and the substrate census
@@ -104,8 +112,11 @@ spent forty years trying to tear down. Here it was never poured.
    cap-gated verified turns; the prompt becomes the program *and* the program is confined +
    rewindable. *(BUILT.)*
 3. **Multiplayer as cap-bounded world-forks that stitch by pushout** — fork the whole world
-   safely, merge with zero loss, the conflict is a first-class object. *(partly PROTOTYPE: membrane
-   composition + branch-and-stitch are executor-side / protocol-designed, not yet circuit-bound.)*
+   safely, merge with zero loss, the conflict is a first-class object. *(branch-and-stitch is now
+   executor-side LIVE in production — `stitch_pair`, with `settlement_soundness` proven +
+   axiom-clean, `docs/reference/lean-distributed.md`; the ONE open seam is the light-client
+   circuit-weld, i.e. binding the stitch so a re-executing validator AND a pure light client
+   witness it, not yet circuit-bound. Membrane composition rides the same seam.)*
 4. **Verified time-travel** — the past is cryptographically the *same* past for every
    participant; fork counterfactuals from a virtualized past. *(rewind/snapshot BUILT;
    cross-device RCCS settlement SPECULATIVE.)*
@@ -161,8 +172,11 @@ provenanced transclusion, code-as-patch-history, renderer-independence, desktop-
 - **BUILT + proven:** cells · caps · turns · receipts · **transclusion** · reversible turns ·
   deos-js · run_js · deos-view render · program-source-document · desktop-as-document · time-travel
   rewind · starbridge-v2 live image · the patch-core document language.
-- **PROTOTYPE (executor-side / protocol-designed, not yet circuit-bound):** membrane composition ·
-  branch-and-stitch multiplayer.
+- **EXECUTOR-SIDE LIVE, light-client circuit-weld still the open seam:** branch-and-stitch
+  multiplayer (live in production `stitch_pair`; `settlement_soundness` proven + axiom-clean) ·
+  membrane composition. The turns run + settle through the verified executor today; the remaining
+  work is binding the stitch into the circuit so a pure light client (not just a re-executing
+  validator) witnesses it.
 - **SPECULATIVE / future:** Golden-Vision recursive-proof aggregation · cross-device RCCS
   settlement · the four named-not-proven verified-deos Lean theorems (surface-as-cap / membrane
   non-amp / liveness-type / affordance-soundness).
@@ -173,10 +187,12 @@ provenanced transclusion, code-as-patch-history, renderer-independence, desktop-
 
 ## 6. The shortest path — the authoring layer (immediate development directions)
 
-The *substrate* is built; what's missing is **authoring** — today you inspect + navigate cards but
-can't *edit* them from within. The unifying truth: **every authoring gesture is an affordance;
-every affordance is a turn; every turn is a receipt.** So the whole authoring layer is one machinery
-pointed at the cells' own schemas. The eight surfaces between us and a HyperCard-of-dregg:
+The *substrate* was built; the authoring layer named here was the shortest path from it to a
+HyperCard-of-dregg — and it has since ALL LANDED (each surface below is marked **BUILT** with its
+file; this section is now a built-map, not a to-do list). The unifying truth held: **every
+authoring gesture is an affordance; every affordance is a turn; every turn is a receipt.** So the
+whole authoring layer became one machinery pointed at the cells' own schemas. The eight surfaces
+between the substrate and a HyperCard-of-dregg, all now built:
 
 1. **Card editor** (`card_editor.rs`) — edit a card's view/affordances/fields *as verified turns
    on the cell*. The keystone: turns inspection into authoring. **BUILT** (`deos-js/src/card_editor.rs`):
@@ -187,20 +203,23 @@ pointed at the cells' own schemas. The eight surfaces between us and a HyperCard
    editor's `held` — an unauthorized card-edit is refused in-band (the cap tooth). An agent (`run_js`
    shape) authors a card's UI through the same path, each edit a receipt attributed to the agent.
    Proven by running (`deos-js/tests/card_editor.rs`, `deos-view/tests/card_editor_rerenders.rs`).
-2. **Multi-cell agent turns** (extend `deos-hermes/run_js`) — the agent authors stories spanning
-   cells, cap-tooth-confined across vessels. (Lets a Claude build a whole stack, not one card.)
-3. **Stitcher UI** (`stitcher.rs`) — render a conflict antichain as two live alternatives; pick /
-   edit / commit a resolution patch. (Conflicts-as-objects, made touchable.)
-4. **Fork / consent UI** (`fork_ui.rs`) — show EMBEDDED/STUDYREF/NETWORKBOUNDARY tiers + a consent
-   inbox (pending ConditionalTurns, upgrade requests). (Multiplayer you can *see*.)
-5. **`dregg://` link-paste** (extend `desktop_doc.rs` + `deos-view`) — select a cell → get a URI →
-   paste a live provenanced transclusion + resolve-status. (Xanadu links, usable.)
-6. **Desktop authoring** (extend `view_cell.rs`) — drag z-order / open / close as layout-edit
-   turns. (The desktop becomes editable, and the edits are receipts.)
-7. **Document composer** (`document_composer.rs`) — add/reorder/role embeds (`Op::Embed/Connect/
-   Delete`) as turns on the document cell. (Compose a doc from cells, by hand.)
-8. **Provenance navigator** (extend `reflect.rs` + `time_travel.rs`) — blame/who-did-what face;
-   click a receipt → turn details + author → time-travel there. (The receipt-chain, walkable.)
+2. **Multi-cell agent turns** — the agent authors stories spanning cells, cap-tooth-confined across
+   vessels. (Lets a Claude build a whole stack, not one card.) **BUILT** (`deos-hermes/src/run_js.rs`:
+   `RunJsComposeTool` / `RunJsAuthoringTool`, behind `js-agent` — the agent's multi-cell compose
+   under its own `held`).
+3. **Stitcher UI** — render a conflict antichain as two live alternatives; pick / edit / commit a
+   resolution patch. (Conflicts-as-objects, made touchable.) **BUILT** (`starbridge-v2/src/stitcher.rs`).
+4. **Fork / consent UI** — show EMBEDDED/STUDYREF/NETWORKBOUNDARY tiers + a consent inbox (pending
+   ConditionalTurns, upgrade requests). (Multiplayer you can *see*.) **BUILT** (`starbridge-v2/src/fork_ui.rs`).
+5. **`dregg://` link-paste** — select a cell → get a URI → paste a live provenanced transclusion +
+   resolve-status. (Xanadu links, usable.) **BUILT** (`starbridge-v2/src/link_paste.rs`).
+6. **Desktop authoring** — drag z-order / open / close as layout-edit turns. (The desktop becomes
+   editable, and the edits are receipts.) **BUILT** (`starbridge-v2/src/desktop_authoring.rs`, over
+   `view_cell::WorkspaceCell`).
+7. **Document composer** — add/reorder/role embeds (`Op::Embed/Connect/Delete`) as turns on the
+   document cell. (Compose a doc from cells, by hand.) **BUILT** (`starbridge-v2/src/document_composer.rs`).
+8. **Provenance navigator** — blame/who-did-what face; click a receipt → turn details + author →
+   time-travel there. (The receipt-chain, walkable.) **BUILT** (`starbridge-v2/src/provenance_navigator.rs`).
 
 **Plus the agent-authors-its-own-UI demo** (the Nous flex): a Claude `run_js`-patches a live
 applet's view-source (a dregg-doc) → deos-view re-renders → the UI changed, the edit a receipt.

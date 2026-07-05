@@ -165,7 +165,7 @@ forged-proof, and double-claim tests RED — and also the honest-height test, wh
 "not yet claimable before release" assertion the never-rejecting stub violates —
 while the forged-lock and wrong-beneficiary tests (gated *above* the stub) and the
 honest-proof path stay GREEN. **Observed under mutation: 4 failed, 8 passed.**
-Reverting the stub restores **12 green**.
+Reverting the stub restores the **12 conditional-vault tests** green.
 
 | forge                                                  | rejection            |
 |--------------------------------------------------------|----------------------|
@@ -181,7 +181,19 @@ the vault settled; the honest hashlock claim with the genuine preimage ACCEPTS; 
 the vault state is bound into the canonical commitment (opening locks it, claiming
 re-seals it — a light client sees the vault settle), so a forge cannot be hidden.
 
-Tests: `cargo test -p dregg-cell --lib vault::` — **12 green**.
+Tests: `cargo test -p dregg-cell --lib vault::` — **19 green** (the 12
+conditional-timelock tests documented here, plus 7 for the share-vault capacity
+that now shares this module — see the note below).
+
+> **Note — `cell/src/vault.rs` also hosts a second, distinct capacity.** Below the
+> conditional-timelock vault (line 544+) lives the **share vault**, an ERC-4626-style
+> pool whose share-price is *proven* immune to the first-depositor inflation attack
+> (`ShareVaultState::shares_for_deposit`, `deposit_never_dilutes_existing_holders`).
+> That capacity has its OWN Lean rungs — `metatheory/Dregg2/Deos/Vault.lean` (the
+> share-price relation + no-dilution) and `metatheory/Dregg2/Deos/VaultSatDescriptor.lean`
+> (the tag-19 vault-DEPOSIT in-AIR gate, staged). It is a *separate* house capacity
+> from the conditional-release vault this doc describes; the §5 circuit rung below is
+> the conditional-**release** vault's open follow-up, not the share vault's.
 
 ---
 
@@ -214,8 +226,8 @@ check out of band:
    released value moved only if `at_block >= release_height` (for `AtHeight`) or the
    private witness hashed to the committed digest (for `OnProof`), the vault was
    unsettled before the claim, and the vault is settled exactly once after —
-   joining the circuit-soundness obligation table in
-   `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`.
+   joining the circuit-soundness obligation table (the grounded circuit what-is now
+   lives at `docs/reference/lean-circuit.md`).
 
 Until that lands, conditional vaults are sound under the executor checks and the
 commitment binding; the circuit rung is the named follow-up, not a silent gap.

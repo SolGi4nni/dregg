@@ -1,5 +1,22 @@
 # ERE≤ Lean Formalization — Reuse Assessment for dregg Boolean Matching
 
+> **SUPERSEDED — kept as historical context.** This note's *recommendation* (PORT
+> the ERE≤ artifact — vendor + re-elaborate at v4.30.0) was **not taken**, and its
+> headline "the middle theorem `derivativeCompile ≡ tableDfa` doesn't exist and is
+> months of new automata theory" **has been crossed by a different route.** The
+> decision of record is `DERIVATIVE-MATCHING-DESIGN.md` §0: **reference-only** —
+> re-prove a lookaround-free derivative tower *over dregg's own `Pred`* (never
+> import `RE α`), which dissolves both blockers this doc rates (no license, no
+> toolchain bump). And the "missing middle theorem" is now **built and
+> `#assert_axioms`-clean** in `metatheory/Dregg2/Crypto/Deriv/`: `der_finite`
+> (`Finiteness.lean:298`), the `tableDfa_faithful` + `determinizer_faithful` close
+> (`TableDfa.lean:133` / `Powerset.lean:150`), and the Thompson/left factor
+> `ThompsonRecognizes` closed for the full Thompson fragment (`thompson_recognizes`,
+> `Thompson.lean:751`). **What stays accurate below** is the artifact census — the
+> 13-file/2761-line ERE≤ theory is real, sorry-free, on a v4.24-rc1 toolchain, and
+> its EBA shape genuinely aligns with dregg's `Pred` (§1). Read this doc for *that*
+> census; read `DERIVATIVE-MATCHING-DESIGN.md` for what was actually built.
+
 Read-only research note. Decides whether re-grounding dregg's boolean matching on the
 Zhuchko et al. extended-regex (ERE≤) Lean theory is a days-scale weld or a months-scale
 project. Nothing in dregg's kernel / circuit / Lean was changed to produce this.

@@ -7,7 +7,10 @@
 
 ## 0. WHY THIS DOCUMENT EXISTS
 
-`docs/deos/REFLEXIVE-MIGRATION.md` §2.3.5, §4.5.2, §7.3 names the deepest open
+`REFLEXIVE-MIGRATION.md` §2.3.5, §4.5.2, §7.3 (now archived to
+`.docs-history-noclaude/deos/REFLEXIVE-MIGRATION.md`; its live successors are
+`docs/deos/FIRMAMENT-REFLEXIVE-SUBSTRATE.md` and
+`docs/deos/REFLEXIVE-DISTRIBUTED-IMAGE.md`) names the deepest open
 question of the self-hosting desktop: *when the projector projects cells that
 include its own UI view-state, how do we break the self-invalidation cycle?* We
 have tentatively picked a **unit-delay** (read the previous frame's self-view;
@@ -33,7 +36,9 @@ place that decides the verdict.
 ### 1.1 The projector is a pure dataflow node
 
 Strip away gpui and the cockpit's fifty fields. The semantic core
-(`presentable.rs:881`, `Registry::present`) is one **pure function**:
+(`presentable.rs`, `Registry::present`) is one **pure function**
+(all `presentable.rs:NNN` line numbers below are indicative — the file has been
+re-edited since; the *symbols* are the durable anchors):
 
 ```
 present : (state, focus, viewer) → Vec<Presentation>

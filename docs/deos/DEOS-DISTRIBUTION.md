@@ -6,10 +6,10 @@ verified executor, the firmament, and the compositor become ONE thing a user
 carries, installs, and boots into a full cap-secure desktop OS.*
 
 > Companion docs: `DEOS.md` (the brand: deos runs on dregg runs in robigalia) ·
-> `DEOS-APPS.md` (the app model) · `STARBRIDGE-V2.md` (the cockpit) ·
-> `DREGG-DESKTOP-OS.md` (the L0–L8 stack, the seL4 ladder) ·
-> `desktop-os-research/WINDOWS-PORT.md` (the cross-OS native-full build) ·
-> `WORLD-PERSISTENCE-PLAN.md` (the durable image).
+> `DEOS-APPS.md` (the app model) · `docs/reference/cockpit.md` (the cockpit) ·
+> `docs/reference/firmament.md` (the firmament / seL4 stack) ·
+> `../desktop-os-research/WINDOWS-PORT.md` (the cross-OS native-full build) ·
+> `docs/reference/persist.md` (the durable image).
 
 ---
 
@@ -43,7 +43,7 @@ foundations.
 `starbridge-v2` (its own workspace) is the cockpit: shell/WM + compositor +
 inspector + the embedded verified executor. Built `native-full` it links the real
 Lean archive (`libdregg_lean.a`) and runs a live local dregg world in-process
-(`STARBRIDGE-V2.md`). Its `dock/` engine (vendored from Zed's `workspace`) hosts
+(`docs/reference/cockpit.md`). Its `dock/` engine (vendored from Zed's `workspace`) hosts
 arbitrary panes through the slim `CockpitSurface` trait
 (`starbridge-v2/src/dock/surface.rs`), its `shell.rs`/`surface.rs` is the
 cap-first window manager over real `dregg_firmament::SurfaceBacking`, and its
@@ -79,8 +79,8 @@ The cockpit's `World::commit_turn` runs the real `dregg_turn::TurnExecutor` over
 a `dregg_cell::Ledger` in-process, linking `libdregg_lean.a`. This is the same
 verified producer the federation runs; the cockpit *is* the executor's host. On
 the host it links the ordinary platform Lean runtime; on seL4 it is the
-root-task-with-std host of the ELF closure (`DREGG-DESKTOP-OS.md` L3 / WALL step
-4).
+root-task-with-std host of the ELF closure (`docs/reference/firmament.md`; the
+seL4 root-task L3 host).
 
 ### The firmament + the confinement substrate (the key enabler)
 
@@ -119,17 +119,19 @@ becomes.
 `compositor_pd.rs` is the minimal framebuffer multiplexer enforcing the scene
 teeth (T1 non-overlap · T2 label-binding · T3 focus-exclusivity) over the
 `EmulatedKernel`; the cockpit's `shell.rs` is the cap-first WM/compositor today
-(L6/L7/L8 collapsed into one process — `DREGG-DESKTOP-OS.md` §2 realization
-note).
+(L6/L7/L8 collapsed into one process — `docs/reference/cockpit.md`).
 
 ### Persistence — the durable image
 
 `dregg-persist` (redb: pure-Rust ACID, WAL+fsync) is the durability spine.
 `starbridge-v2/src/persistence.rs` wires `WorldPersist` over it
 (`persistence_wasm.rs` is the uninhabited stub for the browser, where the image
-is always ephemeral). Today the cockpit boots a fresh demo genesis each launch;
-`WORLD-PERSISTENCE-PLAN.md` is the weld to open-an-image-and-land-where-you-were.
-This is the load-bearing piece for self-containment: **the image is the world**.
+is always ephemeral). Boot-recovery is **built**: `starbridge-v2/src/durable_desktop.rs`
+opens the durable world via `World::open_recovering` (recover → re-execute → verify,
+then attach the store), so a relaunch lands you back on the exact committed cell
+graph rather than a fresh genesis (`WorldPersist::recover`, `persistence.rs`; and
+`docs/reference/persist.md`). This is the load-bearing piece for self-containment:
+**the image is the world**.
 
 ### Existing packaging (the proof points)
 
@@ -228,7 +230,7 @@ from `dregg.system`):
   distinct: the OS image is read-mostly firmware, the world image is the mutable
   durable cell graph (§4).
 
-The seL4 ladder for getting here is `DREGG-DESKTOP-OS.md` §6 R3 Stages A–E. The
+The seL4 ladder for getting here is `docs/reference/firmament.md` (the seL4 stack). The
 host bundle ships *now*; the seL4 image is the same binaries with the firmament
 kernel swapped (`EmulatedKernel`/`ProcessKernel` → real `rust-sel4`), per the
 same-code microkit-facade contract (L1).
@@ -272,14 +274,14 @@ and the Lean archive (hundreds of MB). Three levers keep the bundle sane:
      `pds/`, started cold only when the user opens one.
    - **The servo elephant is deferrable.** The default web-shell ships the
      `swgl-standalone` render path (CPU rasterizer, no mozjs, no GPU toolchain —
-     `BUILD-STATUS.md`); the full `libservo` HTML/JS engine is a feature-gated
+     `../desktop-os-research/BUILD-STATUS.md`); the full `libservo` HTML/JS engine is a feature-gated
      payload (`servo` feature) the distribution can include or omit. A "lite"
      deos omits libservo and browses the `dregg://` web-of-cells natively
      (already real); a "full" deos includes the servo PD.
 3. **Lazy cold-start.** Confined-PD apps are not spawned at boot; the dock/dock
    shows them as launchable affordances, and the powerbox spawns the PD on first
    open. Boot stays fast (the cockpit opens instantly on the at-rest image —
-   `STARBRIDGE-V2.md` "the window opens instantly"); the heavy PDs amortize.
+   `docs/reference/cockpit.md`, "the window opens instantly"); the heavy PDs amortize.
 
 So the distribution is **not** one giant statically-linked monolith: it is a
 small-ish cockpit (executor + dock + first-party panes) plus a `pds/` directory
@@ -326,7 +328,7 @@ meets identity (§4).
 ### Versioning + cell-graph persistence across boots
 
 The world survives boots because the executor commits every turn into the redb
-image (the `WORLD-PERSISTENCE-PLAN.md` weld). Versioning has two axes:
+image (`docs/reference/persist.md`). Versioning has two axes:
 
 - **The OS/bundle version** (the cockpit + app binaries + executor archive) — a
   normal software version; an upgrade replaces the bundle.
@@ -395,8 +397,9 @@ surfaces) vs. the full confined-PD-per-app target.
   `deos-native-full-windows-x86_64.zip` already links the real executor).
 - Mount the three GUI apps as `cockpit-surface` panes (the two-edit drop per app;
   adapters exist in `starbridge-v2/src/dock/{editor,terminal,chat}_surface.rs`).
-- Wire `dregg-persist` into `World` so the image survives boots
-  (`WORLD-PERSISTENCE-PLAN.md` (A)) — the self-containment keystone.
+- The image survives boots — **built**: `World::open_recovering` in
+  `starbridge-v2/src/durable_desktop.rs` recovers the exact cell graph on relaunch
+  (`docs/reference/persist.md`) — the self-containment keystone.
 - Bundle hermes as a confined gateway-backed agent (the activity surface reads
   the ledger).
 - Ship the SWGL web-of-cells web-shell (no servo/mozjs).
@@ -428,7 +431,7 @@ launch wiring.*
 
 ### Phase 2 — the L6/L7/L8 separation (the real desktop OS shape)
 
-*Status: the documented target (`DREGG-DESKTOP-OS.md` §2 realization note); the
+*Status: the documented target (`docs/reference/cockpit.md`); the
 active build.*
 
 - Demote the cockpit from "the root that contains everything" to **one shell app
@@ -440,7 +443,7 @@ active build.*
 
 ### Phase 3 — the seL4 image distribution
 
-*Status: the ladder is `DREGG-DESKTOP-OS.md` §6 R3 A–E.*
+*Status: the ladder is `docs/reference/firmament.md` (the seL4 stack).*
 
 - Host the executor on `sel4-musl` + root-task-with-std (WALL step 4).
 - Bring up the compositor-PD + driver-PDs; assemble `dregg.system`.

@@ -222,6 +222,19 @@ proof system, but a large, soundness-critical circuit.
 
 ## 4. The load-bearing unknown
 
+> **Update — this unknown is now partly discharged in Lean, not just diff-tested.**
+> The companion `docs/deos/FRI-VERIFIER-PROOF-ENGINEERING.md` has since landed a
+> SPECIFIED Lean verifier `verifyAlgo` (`metatheory/Dregg2/Circuit/FriVerifier.lean`,
+> `def verifyAlgo`) whose soundness-relevant teeth are proven, plus the bridge
+> `starkSound_of_verifyAlgo` (`FriVerifierBridge.lean`) that makes `StarkSound` a
+> theorem resting on two named residuals. The transcript/table-fidelity trust below
+> is now captured as the `GnarkRefines` / `TranscriptRefines` code-refines-spec
+> obligation (`FriVerifier.lean:849 def GnarkRefines`): the gnark circuit's job is
+> to *refine* the proven `verifyAlgo`, so "bit-exact with the Rust verifier" becomes
+> a refinement statement rather than a purely empirical differential-testing hope.
+> The residual below is still real (the refinement obligation must be discharged),
+> but it is no longer an unstructured unknown.
+
 **Writing a correct BabyBear batch-STARK FRI verifier in gnark.** Everything else
 is integration over vetted tooling (gnark's Groth16/pairing, the existing Rust
 bridge, a tool-generated Solidity verifier). The circuit is the risk because it is

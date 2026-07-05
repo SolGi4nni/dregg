@@ -18,8 +18,9 @@ chains; the mirror brings another chain's *value* into dregg.
   user locks N $DREGG  ──lock event──►  oracle/validator-set attests the lock
   into the lock vault                              │
                                                    ▼
-                                       MirrorState.observe + Effect::Mint
-                                       (mints N mirror-$DREGG to recipient,
+                                       MirrorState::mint_against_lock + Effect::Mint
+                                       (verify_lock → credit_lock → mints N
+                                        mirror-$DREGG to recipient,
                                         well-debited dual ⇒ per-asset Σδ=0)
                                                    │
                                                    ▼  (ordinary dregg asset)
@@ -43,8 +44,11 @@ chains; the mirror brings another chain's *value* into dregg.
    `(lock_id, spl_mint, amount, dregg_recipient, epoch)`.
 3. dregg verifies the attestation against the oracle key for that epoch, checks
    the `lock_id` has not been seen (replay), checks `amount ∈ [min, max]`, and
-   credits `currently_locked += amount`.
-4. The mirror mints `N` mirror-$DREGG to the recipient via the existing
+   credits `currently_locked += amount` (`MirrorState::verify_lock` →
+   `credit_lock`; the finer-grained `record_escrow` raises `currently_locked`
+   ahead of `draw_mint` drawing against it).
+4. The mirror mints `N` mirror-$DREGG to the recipient via
+   `MirrorState::mint_against_lock`, which produces the existing
    `Effect::Mint { target, slot: 0, amount }`. `Mint` is `Generative`: the
    asset's *issuer well* is debited as the conserving dual, so the turn is
    per-asset `Σδ = 0` (`turn/src/action.rs` — `Effect::Mint`, `LinearityClass`).
@@ -89,20 +93,36 @@ aggregated to one epoch key), reused here directly. An optional **watchtower**
 "trust the quorum" into "trust the quorum *unless* anyone proves fraud", but it
 still rests on at least one honest watching party and an on-Solana fraud oracle.
 
-**The trustless path (named, not built):** a real trustless mirror needs dregg
-to *verify the Solana lock itself*, not trust an attestation. Two routes:
+**The trustless path (BUILT to `ConsensusVerified`):** a real trustless mirror
+needs dregg to *verify the Solana lock itself*, not trust an attestation. This
+is now the **Solana light client** route, and its cryptography + consensus
+arithmetic are real (no longer a stub): `verify_lock_proof_consensus`
+(`bridge/src/solana_trustless.rs`) reaches `LockProofTrust::ConsensusVerified` by
+checking, against a tracked per-epoch `EpochStakeTable`, that ≥ 2/3 of active
+stake validly voted the claimed `bank_hash` (real per-vote Ed25519 +
+stake-weighted sum + duplicate collapse via `verify_supermajority`), that the
+`bank_hash` recomputes from its committed components (`BankHashComponents::compute`,
+binding the accounts hash + PoH tail), that the vault account's lock record is
+included in that accounts hash (`verify_accounts_inclusion`, domain-separated
+sorted Merkle), and — when present — that the PoH tick chain links the slot's
+blockhash to a verified anchor (`verify_poh_segment` / `verify_poh_anchored`).
+It routes through the SAME `credit_lock` conservation accounting as the trusted
+path. Full design (Option A vs B, the migration): `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
 
-- A **Solana light client** in dregg: verify Tower BFT / PoH consensus (a large
-  Ed25519 vote-signature set) plus an inclusion proof of the lock account's
-  post-state in Solana's accounts hash. This is materially harder than an
-  Ethereum light client: Solana has no compact header chain like Ethereum's
-  MPT-rooted headers, and the validator set / vote accounting is large.
-- A **zk proof of the lock**: a SNARK/STARK attesting "account X held ≥ N
-  $DREGG locked at slot S under program P". The **Ethereum** side of this repo
-  already has the STARK→SNARK→EVM *settlement* pattern
-  (`bridge/src/ethereum.rs`, gap = the gnark Groth16 STARK-verifier circuit);
-  the *inbound* zk-proof-of-lock for Solana is a distinct, unbuilt artifact and
-  is **not** reusable from the ETH settlement path. This is the honest gap.
+The **zk proof of the lock** (a SNARK/STARK attesting "account X held ≥ N $DREGG
+locked at slot S under program P") is the *other* route and remains distinct: the
+**Ethereum** side of this repo already has the STARK→SNARK→EVM *settlement*
+pattern (`bridge/src/ethereum.rs`, gap = the gnark Groth16 STARK-verifier
+circuit), but the *inbound* zk-proof-of-lock for Solana is **not** reusable from
+the ETH settlement path.
+
+**The honest gap that remains** is narrowed to the **mainnet wire-format
+adapter layer** (`solana_trustless.rs` calls it out explicitly): parsing real
+vote `Transaction`s into `ValidatorVote`s, sourcing/rotating the
+`EpochStakeTable` from Solana's stake program, the exact accounts-hash
+fan-out/preimage, and a bounded/recursive PoH anchor policy. The `LockProofTrust`
+dial tells the caller exactly which level a verification achieved, so the
+structural check (`StructureOnly`) can never be mistaken for the consensus check.
 
 ## The payment path (end-to-end, real rails)
 
@@ -134,11 +154,20 @@ flows through the one verified value rail.
   kernel `Effect::Mint`, redeem producing the real `Effect::Burn` + unlock
   request, and the proof that bridged $DREGG pays an execution-lease through
   `resolve_pay` (one conserving `Effect::Transfer`).
-- **Modeled / trusted:** the attestation itself (trusted-oracle, not yet a
-  Solana light client or zk-proof-of-lock).
+- **Trusted (this first slice):** the attestation itself (trusted-oracle). The
+  trustless replacement is now built to `ConsensusVerified` (see above /
+  `solana_trustless.rs` + `solana_consensus.rs`); this doc's *slice* is still the
+  trusted-oracle path, with the light client as its now-real successor.
+- **Real (trustless successor):** the Solana-consensus verification —
+  stake-weighted Ed25519 vote check, bank-hash recompute/binding, sorted-Merkle
+  accounts inclusion, PoH tick-chain linking — reaching
+  `LockProofTrust::ConsensusVerified` (`bridge/src/solana_trustless.rs`,
+  `bridge/src/solana_consensus.rs`; design `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`).
 - **Not built (named gaps):** the Solana-side lock-vault SPL program; the
-  trustless Solana light client / inbound zk-proof-of-lock; the executor wiring
-  that grants the mirror cell `EFFECT_MINT` authority over its own issuer well
-  in a live `World` (the effect is produced here; minting it requires the
-  mirror cell to hold mint authority — see `turn/src/executor/apply.rs`,
-  `holds_mint_authority`).
+  mainnet **wire-format adapter layer** for the trustless path (real vote
+  `Transaction` parsing, `EpochStakeTable` sourcing/rotation, exact
+  accounts-hash preimage, PoH anchor policy); the inbound zk-proof-of-lock
+  route; the executor wiring that grants the mirror cell `EFFECT_MINT` authority
+  over its own issuer well in a live `World` (the effect is produced here;
+  minting it requires the mirror cell to hold mint authority — see
+  `turn/src/executor/apply.rs`, `holds_mint_authority`).

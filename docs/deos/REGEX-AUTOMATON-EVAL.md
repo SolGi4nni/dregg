@@ -30,15 +30,20 @@ the DFA explode (intersection and complement).** Concretely:
    §4 and §5.)
 
 2. **Out-of-circuit: adopt RE#-style symbolic derivatives as the *compiler* for
-   `Pattern::All` (intersection) and a future complement combinator.** The
-   pattern that actually blows up `dregg-dfa` today is the `FilterTree`
-   intersection/complement case (`filter.rs`), not literal routes. RE#'s
-   derivative algebra makes intersection and complement *first-class, native
-   derivative rules* (`δ_x(R&S) = δ_x(R) & δ_x(S)`, `δ_x(~R) = ~δ_x(R)`) and
-   determinizes *lazily, on demand*, only materializing the DFA states an actual
-   input reaches. That is strictly better than dregg's current eager
-   product-then-determinize (`dfa_intersection` + `determinize`) for building the
-   *committed table* that the circuit then consumes.
+   `Pattern::All` (intersection) and a complement combinator.** *(BUILT — this
+   half of the recommendation has landed, see `dfa/src/derivative.rs` and
+   `DERIVATIVE-MATCHING-DESIGN.md`.)* The pattern that actually blows up
+   `dregg-dfa` is the `FilterTree` intersection/complement case (`filter.rs`),
+   not literal routes. RE#'s derivative algebra makes intersection and complement
+   *first-class, native derivative rules* (`δ_x(R&S) = δ_x(R) & δ_x(S)`,
+   `δ_x(~R) = ~δ_x(R)`) and determinizes *lazily, on demand*, only materializing
+   the DFA states an actual input reaches. That is strictly better than the old
+   eager product-then-determinize (`dfa_intersection` + `determinize`) for
+   building the *committed table* that the circuit then consumes.
+   `dfa/src/derivative.rs` realizes exactly this (`Re::and` = the derivative
+   `inter` constructor, `Re::complement`, `der b`), and `FilterTree` now folds
+   its subtree with `Re::and` instead of eager `dfa_intersection`
+   (`filter.rs:90-93,168`).
 
 3. **The honest tradeoff:** this keeps the circuit unchanged (low risk, the AIR is
    already Lean-backed and `#assert_axioms`-clean per the route-commitment pivot)
@@ -131,10 +136,13 @@ a chain of `k` filters is a `k`-fold product, `O(∏ |S_i|)` states in the worst
 case. **This** is the structural state-explosion the owner is worried about, and
 it is intersection-driven — precisely the operator RE# makes cheap.
 
-There is no complement combinator in `Pattern` today (`compiler.rs:368-395` has
-`All`/`Any`/`PrefixOf` but no `Not`). A capability-secure "deny" filter
-(match everything *except* a revoked namespace) would want one, and complement is
-the other operator that forces determinization-blowup.
+There is now a complement combinator: `Pattern::Not(Box<Pattern>)`
+(`compiler.rs:404`, constructor `Pattern::not` at `:453`, routed through the
+derivative path via `has_not` at `:461`). A capability-secure "deny" filter
+(match everything *except* a revoked namespace) is therefore expressible today —
+it compiles through `dfa/src/derivative.rs` (`Re::complement`), since complement
+is the operator that forces determinization-blowup and so must NOT go through the
+eager `pattern_to_nfa` path (`compiler.rs:692-698` rejects a bare `Not` there).
 
 ---
 
@@ -398,12 +406,15 @@ Lean model and the deployed `vk_hash` stay valid throughout.
    `Dfa` struct (`compiler.rs:32-41`) → the same committed table → the same AIR.
    `Dfa::table_size_bytes` becomes the enforced budget.
 
-3. **Derivative-based intersection/complement (out-of-circuit, the payoff).**
-   Behind the `FilterTree` and `Pattern::All` API, swap the eager `dfa_intersection`
-   product for an RE#-style derivative compiler: states are derivative-regexes,
-   `δ(R&S)=δR&δS` / `δ(~R)=~δR`, lazily explored. Add a `Pattern::Not` combinator
-   so capability-secure *deny* filters are expressible. The output is still a flat
-   `Dfa` for the existing AIR. This is the change that actually retires the
+3. ✅ **DONE — Derivative-based intersection/complement (out-of-circuit, the
+   payoff).** Behind the `FilterTree` and `Pattern::All` API, the eager
+   `dfa_intersection` product was swapped for an RE#-style derivative compiler:
+   states are derivative-regexes (`Re`), `δ(R&S)=δR&δS` / `δ(~R)=~δR`, lazily
+   explored — all in `dfa/src/derivative.rs` (`Re::and`, `Re::complement`,
+   `der b`, byte-class boundaries for lazy determinization). `Pattern::Not`
+   (`compiler.rs:404`) makes capability-secure *deny* filters expressible, and
+   `FilterTree` folds with `Re::and` (`filter.rs:90-93,168`). The output is still
+   a flat `Dfa` for the existing AIR. This is the change that retired the
    `FilterTree` explosion.
 
 4. **Keep the DFA AIR as the prover throughout.** No NFA-direct or

@@ -143,7 +143,7 @@ agent's mandate; held caps: …]", tool_call_id)`. The model sees the refusal as
 a normal tool-result and adapts. No faked success, ever — matching the
 starbridge invariant "a refused action is shown as REFUSED, never faked"
 (`starbridge-v2/src/agent.rs:83`, test
-`a_refused_action_is_shown_as_refused_never_faked` at `agent.rs:525`).
+`a_refused_action_is_shown_as_refused_never_faked` in `starbridge-v2/src/agent.rs`).
 
 ### 2.4 The adapter (Python ↔ dregg bridge)
 
@@ -188,7 +188,7 @@ the `World` (the ledger):
   - **RECENT ACTIONS** — `AgentAction` per committed/refused turn
     (`agent.rs:79`), `committed: false` flagged for refusals — the receipts of
     every tool-call.
-  - **AUTHORIZATIONS** — `build_authorizations` (`agent.rs:299`): the legible
+  - **AUTHORIZATIONS** — `build_authorizations` (`agent.rs`): the legible
     "which verbs does this mandate admit" view.
 - `AgentSurface` (`agent.rs:404`) binds the agent cell to a compositor
   `SurfaceId` — the agent-activity panel **is** a `Capability{Surface(cell)}`,

@@ -283,11 +283,11 @@ inspector framework, `docs/deos/INSPECTOR-FRAMEWORK.md`):
    `inspect_identity` (`sdk/src/identity.rs:50`) and the council commitment.
 
 2. **WHAT I HOLD** — my capability tokens, surfaced from the *real* cipherclerk
-   (`reflect_token`, `starbridge-v2/src/cipherclerk.rs:592`): each cap as "what
+   (`reflect_token`, `starbridge-v2/src/cipherclerk.rs`): each cap as "what
    it lets me touch, and how narrowed." Not a hex dump — a sentence.
 
 3. **WHAT I'VE GRANTED, AND UNDO** — the delegations I've made
-   (`reflect_delegation`, `cipherclerk.rs:645`) and the **revoke** gesture. Each
+   (`reflect_delegation`, `cipherclerk.rs`) and the **revoke** gesture. Each
    granted cap shows the grantee and a single "take it back" action that builds
    the real revocation turn. (Revocation is the dual of the powerbox grant; the
    panel makes "who can touch my stuff, and stop them" a one-click question.)
@@ -330,6 +330,12 @@ involved.
 The work is the weld + the UX, in three milestones.
 
 ### Milestone 1 (first buildable): identity-as-cell + social recovery on the live substrate
+
+**STATUS: SHIPPED.** The recovery flow lands as `sdk/tests/identity_social_recovery_e2e.rs`
+(a cipherclerk with NO old keys recovers via a guardian quorum on the REAL executor, and is
+REFUSED sub-threshold), and the trust panel v1 lands as `starbridge-v2/src/trust_panel.rs`
+(the WHO-I-AM + RECOVERY faces, projected off real protocol state, quorum math mirroring the
+executor's `ThresholdSigVerifier`). The description below is what got built.
 
 Smallest end-to-end slice that makes the #1 guarantee real:
 
@@ -395,20 +401,25 @@ ones, not gaps we can wave away. Each is named *with* its closure lane.
   asserted. *Closure lane: usability testing of the recovery drill against the
   Pug handoff bar (works without ember in the loop).*
 
-- **The device-trust model has a bootstrapping seam.** Adding a device means
-  getting its new public key into a rotation — which needs an authenticated
-  channel between two devices (QR pairing, etc.) or it is itself an attack
-  surface. The pre-rotation gate secures the *commitment*; getting the right key
-  *to* the commitment is the unbuilt seam. *Closure lane: the device-pairing
-  ceremony (likely a short-lived powerbox-style designation between the old and
-  new device).*
+- **The device-trust model has a bootstrapping seam — now CLOSED.** Adding a
+  device means getting its new public key into a rotation — which needs an
+  authenticated channel between two devices (QR pairing, etc.) or it is itself an
+  attack surface. The pre-rotation gate secures the *commitment*; getting the
+  right key *to* the commitment is the seam — and it landed as the device-pairing
+  ceremony: `DevicePairingVerifier` → `Authorization::Custom { PAIRING_VK }`
+  (`sdk/src/device_pairing.rs`), where an already-authorized device signs an
+  Ed25519 attestation over the new device's pubkey (a powerbox-style designation),
+  welded end-to-end on the real executor in `sdk/tests/device_pairing_e2e.rs`.
 
-- **Guardian liveness and rotation.** Guardians lose their own keys, die, fall
-  out with you. The council commitment is pinned per identity, so *changing your
-  guardian set* is itself an authority operation that must be specced (almost
-  certainly: a council amendment authorized by the *current* council quorum,
-  riding the polis amendment machinery). Until specced, a recovery council is
-  set-once — a real limitation. *Closure lane: the guardian-set-rotation verb.*
+- **Guardian liveness and rotation — now BUILT.** Guardians lose their own keys,
+  die, fall out with you. The council commitment is pinned per identity, so
+  *changing your guardian set* is itself an authority operation — and it is
+  specced + built: `dregg_sdk::guardian_rotation` (`sdk/src/guardian_rotation.rs`),
+  a polis-amendment-shaped turn where the CURRENT K-of-N quorum signs an aggregate
+  advancing `COUNCIL_COMMIT_SLOT` to a new committee's `members_commitment()` (the
+  old shares retire — proactive refresh), with teeth in
+  `sdk/tests/guardian_set_rotation_e2e.rs` (3-of-5 rotates, 2-of-5 refused, the new
+  council then governs a recovery). The council is no longer set-once.
 
 - **The committee registration is host-trusted today.** `StaticThresholdSigPolicy`
   maps a commitment → committee in host memory
@@ -418,7 +429,7 @@ ones, not gaps we can wave away. Each is named *with* its closure lane.
   write into the commitment" obligation the circuit-soundness campaign tracks).
   Recovery-by-quorum is sound for the local sovereign case now; making it
   light-client-unfoolable is the circuit-soundness tie-in. *Closure lane: the
-  council-commitment binding obligation in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`.*
+  council-commitment binding obligation in `docs/reference/lean-circuit.md`.*
 
 - **Threshold-sig setup ceremony.** HINTS needs a KZG universal setup
   (`hints::GlobalData`) and each guardian must publish a hint. Silent setup

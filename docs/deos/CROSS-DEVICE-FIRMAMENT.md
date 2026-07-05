@@ -310,12 +310,14 @@ rises, the verbs never change.**
 The smallest end-to-end thing that proves the model and is buildable on shipped
 substrate:
 
-1. **Persist the image** (the prerequisite, already planned). Wire
-   `dregg-persist`'s redb commit log into the `World` per
-   `WORLD-PERSISTENCE-PLAN.md` (§A–C: dual-write at `commit_turn`, `World::open`
-   recovery via checkpoint⊕overlay, fail-closed convergence on the canonical root).
-   A device that can't durably hold its image can't sync one. **This is the
-   first concrete task** — it is fully specified and independent of everything else.
+1. **Persist the image** (the prerequisite, now **BUILT**). `dregg-persist`'s redb
+   commit log is wired into the `World`: `world.rs` carries a
+   `persist: Option<WorldPersist>` (`starbridge-v2/src/world.rs`) that dual-writes
+   each turn into the redb commit log + input-turn table, and `World::open` /
+   `World::open_recovering` restore durably via checkpoint⊕overlay with fail-closed
+   convergence on the canonical root (see `docs/reference/persist.md`,
+   `WORLD-PERSISTENCE-PLAN.md` §A–C). A device that can't durably hold its image
+   can't sync one — and now it can.
 
 2. **Two devices replicate one image's cells** over the existing blocklace +
    `node/src/blocklace_sync.rs` + the `AttestedRoot`/`merkle_root_of_receipt_hashes`
@@ -338,12 +340,16 @@ substrate:
    frame. This needs the thin-client mobile shim (§3.3) but reuses cell migration
    (§2.3) entirely.
 
-Milestone 1–3 ride **only shipped machinery** (persist, blocklace, attested roots,
-branch-and-stitch's gate) plus the *two new branch-and-stitch turns*
-(`EnterVirtualization`, `Stitch`) the distributed-time-travel work already scopes.
-The Willow range-reconcile (§2.2) is an efficiency layer on top — not a milestone-1
-blocker (a small image reconciles by full pull). Milestone 4 needs the mobile
-client shim.
+Milestone 1–3 ride **only shipped machinery** (persist — now built, blocklace,
+attested roots, branch-and-stitch's gate). Branch-and-stitch itself is no longer a
+pair of scoped turns: it **landed** as host-layer session primitives
+(`ForkMembraneHost::stitch_pair` lifted into
+`starbridge_v2::branch_stitch_session::BranchStitchSession`), with a runnable
+flagship at `starbridge-apps/branch-stitch-multiplayer` over the proven
+`settlement_soundness` gate — so milestone 3's headline demo rides shipped
+machinery, not pending turns. The Willow range-reconcile (§2.2) is an efficiency
+layer on top — not a milestone-1 blocker (a small image reconciles by full pull).
+Milestone 4 needs the mobile client shim.
 
 ---
 

@@ -91,7 +91,8 @@ genuine → false accept. Not fails-closed, not out-of-scope. The mitigating con
   (`cell/src/commitment.rs:204`); felt-packing for the STARK public input
   `canonical_to_babybear_pi` (`cell/src/commitment.rs:635`, 8 BabyBear felts at ~30 bits each).
 - Rotated Poseidon2 commitment (circuit / light-client face): `compute_rotated_pre_limbs`
-  (`cell/src/commitment.rs:900`), the v9 chained `wireCommit` (`cell/src/commitment.rs:1044`).
+  (`cell/src/commitment.rs`), the chained `wireCommit` (`cell/src/commitment.rs`) — now the v11
+  8-felt `node8` geometry (~124-bit faithful; `docs/reference/faithful-commitment.md`, v9→v10→v11).
 - Sorted-Poseidon2 leaf roots: `compute_heap_root` (`cell/src/state.rs:409`),
   `compute_fields_root` (`cell/src/commitment.rs:380`), `compute_canonical_capability_root`
   (`cell/src/commitment.rs:595`). The heap tree sorts leaves
@@ -104,7 +105,7 @@ genuine → false accept. Not fails-closed, not out-of-scope. The mitigating con
 `#assert_axioms`-clean): equal full-state roots ⟹ equal whole `RecordKernelState`. But it binds
 the **model**, conditional on abstract injectivity carriers (`cmb`/`CH`/`RH` collision-hardness).
 It does **NOT** prove the deployed Rust `compute_canonical_state_commitment` /
-`CanonicalHeapTree::root` / `canonical_to_babybear_pi` / v9 `wireCommit` *equal* `recStateCommit`.
+`CanonicalHeapTree::root` / `canonical_to_babybear_pi` / v11 `wireCommit` *equal* `recStateCommit`.
 That Rust↔model equality is established by **differential + KAT tests** over concrete values
 (`circuit/tests/effect_vm_commit_lean_differential.rs` — explicitly "byte-identity of the
 COMMITMENT HASH TREE against an independent Lean-limb re-fold, NOT executor agreement";
@@ -301,15 +302,22 @@ soundness break. The Property-B gaps:
   honest turn forever** (the FinalityGate admits by `(creator,seq)` membership, not position, so it
   doesn't catch it). The module's own header: *"The deployed code does NOT sit inside the true
   theorem — that is the soundness finding this module reports."* The node-side index slicing
-  (`blocklace_sync.rs`) is the Rust-only glue that is unsound under honest lag.
-- **Gap B2 — `FinalityCert` checks signer COUNT, not signatures.** `has_quorum`
-  (`lightclient/src/lib.rs:303`) only counts distinct signers ≥ `2n/3+1` over bare pubkeys
-  (`distinct_signers:289`). **No Ed25519 verification, no binding of signatures to
-  `finalized_root`, no committee-root binding of `participant_count`.** The Lean `CertValid` is
-  the full predicate; the Rust gate discharges only `CertQuorum` (the count). As written, a cert
-  listing `2n/3+1` honest *pubkeys* (no real signatures) over a forged root passes leg 3 —
-  *unless* an upstream transport authenticates the cert first (to be confirmed; within this crate
-  it is unchecked).
+  (`blocklace_sync.rs`) is the Rust-only glue that is unsound under honest lag. **Update since this
+  census:** a dedicated `node/src/execution_cursor.rs` (`ExecutionCursor`) now carries the
+  `stableCheck` observability signal and detects the catch-up reorg (loud log +
+  `dregg_tau_prefix_shifts_total`); the gap is not yet fully closed (still conditional on
+  `FinalizedRegionStable`), but the "bare index, no machinery" description is stale.
+- **Gap B2 — `FinalityCert` signature verification — CLOSED since this census.** As written in
+  2026-06-26 the cert checked signer COUNT over bare pubkeys, with no Ed25519 verification. That
+  is now fixed: `FinalityCert` carries the Ed25519 signatures, and `distinct_signers`
+  (`lightclient/src/lib.rs`) counts a validator toward the quorum **only when its signature
+  `verify_strict`s over `finality_signing_message(finalized_root, participant_count)`** — a forged
+  or unbound (wrong-root) signature is not counted. The committee-anchored path
+  `distinct_committee_signers` / `has_committee_quorum` further binds the quorum to the client's
+  TRUSTED committee (defeating the mint-fresh-keys attack), and the production
+  `verify_finalized_history` uses that committee-anchored path. The Rust gate now discharges the
+  signature/binding legs of the Lean `CertValid`, not merely `CertQuorum` (the count). **No longer
+  an open soundness gap.**
 - **Gap B3 — `xsort` tie-break is differential-only** (the OPEN-CM-XSORT residual): the Lean
   `(round,id)` linearization is a golden-vector-matched projection of the Rust `xsort`, not a
   proof.
@@ -342,20 +350,20 @@ the already-modeled and fails-closed candidates demoted (they are named, not ran
    `authority_bearing(desc) → has_crown(desc)`. Tractable because the per-descriptor crown
    semantics are *already* Lean-modeled; what's missing is the totality/structural-resolution step.
 
-2. **`FinalityCert` signature verification** (Gap B2, `lightclient/src/lib.rs:303`). For any
-   value-bearing client (wallet/bridge) on Property B, a count-not-signatures quorum check is a
-   forged-finality false-accept. Mostly an *implementation* fix (verify Ed25519 over
-   `(finalized_root, epoch)`, bind the committee root) plus proving the Rust check discharges the
-   already-written Lean `CertValid` — `CertQuorum` is done, the signature/binding legs are the gap.
-   Tractable; confirm the transport-authentication assumption first.
+2. **The finalized-prefix / `executed_up_to` cursor** (Gap B1, `node/src/blocklace_sync.rs`). The
+   node's index-slicing was *refuted* unsound under honest lag by `TauPrefixMonotone.lean` — a
+   finalized honest turn can be skipped. **Partially addressed since this census:** a dedicated
+   `node/src/execution_cursor.rs` (`ExecutionCursor`) now exists, carrying the `stableCheck`
+   observability signal and detecting reorg-by-catchup (loud log + `dregg_tau_prefix_shifts_total`),
+   with `blocklace_sync.rs` holding it (`cursor: Arc<RwLock<ExecutionCursor>>`). The remaining work
+   is the identity-keyed cursor advancing so the deployed code sits *inside*
+   `tau_finalized_prefix_monotone` (the gap is still conditional on `FinalizedRegionStable`), and
+   proving it — but the "bare index, no machinery" framing is now stale. Tractable because the Lean
+   side is done.
 
-3. **The finalized-prefix / `executed_up_to` cursor** (Gap B1,
-   `node/src/blocklace_sync.rs:911`). The node's index-slicing is *refuted* unsound under honest
-   lag by `TauPrefixMonotone.lean` — a finalized honest turn can be skipped. The corrected theorem
-   and the `stableCheck` fix are *already specified in Lean*; the work is wiring the node to
-   evaluate `stableCheck` (or an identity-keyed cursor) before advancing, then proving the deployed
-   code sits inside `tau_finalized_prefix_monotone`. Tractable because the Lean side is done; the
-   gap is the Rust glue not honoring it.
+   *(Gap B2 — `FinalityCert` signature verification — is now CLOSED, see §6; it was the #2 near-term
+   fix in the 2026-06-26 census and has since landed the Ed25519 `verify_strict` + committee-anchored
+   quorum.)*
 
 ### Tier 2 — soundness-critical, Rust-only, but a larger proof effort
 
@@ -410,10 +418,11 @@ the already-modeled and fails-closed candidates demoted (they are named, not ran
 
 ## The honest one-liner
 
-The genuinely soundness-critical, Rust-only, and not-yet-Lean-grounded set is **three small
-glue/check gaps** (the authority-floor deny-list; the `FinalityCert` signature check; the
+The genuinely soundness-critical, Rust-only, and not-yet-Lean-grounded set (as of this census,
+since narrowed) is **two small glue/check gaps** (the authority-floor deny-list; the
 finalized-prefix cursor) plus **two foundational refinement proofs** (Rust-commitment ≡ model;
-Rust-executor ≡ `recKExec` / swap-totality). The deny-list and the two finality gaps are the
-high-leverage near-term work — small, sharp, and each already has its Lean counterpart waiting.
-The two refinements are the deep TCB-shrink. Everything else is already modeled, fails-closed, or
+Rust-executor ≡ `recKExec` / swap-totality) — the third original glue gap, the `FinalityCert`
+signature check, has since CLOSED (Ed25519 `verify_strict` + committee-anchored quorum). The
+deny-list and the finalized-prefix gap are the high-leverage near-term work — small, sharp, and
+each already has its Lean counterpart waiting. The two refinements are the deep TCB-shrink. Everything else is already modeled, fails-closed, or
 the standard crypto floor. ( ◕‿◕ )

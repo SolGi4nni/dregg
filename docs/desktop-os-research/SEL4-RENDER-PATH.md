@@ -474,12 +474,22 @@ process-handle sentinel (the static PD is its own symbol space), `dlsym` returns
 - Zero faults, zero unhandled syscalls, driver rc=0.
 
 ### THE NEXT LEVER — the gpui Scene → RGBA → ramfb render layer
-The software-Vulkan + LLVM-JIT + W→X + submit-TCB substrate is all GREEN in-VM. The
-remaining rung (WIRING.md §"The render call"): link wgpu + gpui_wgpu, drive
-`WgpuRenderer::render_scene_to_image` on one cockpit `gpui::Scene` → RGBA → the
-`render_blit.rs` RGBA→XRGB8888→ramfb loop, then byte-compare the first in-VM frame
-against the render-host bake `cockpit_frame.rgba` to prove parity. This is Rust render
-wiring on top of a proven substrate, not an OS-capability wall.
+The software-Vulkan + LLVM-JIT + W→X + submit-TCB substrate is all GREEN in-VM.
+
+**Update — the blit layer LANDED + is host-verified.** `sel4/render-pd/src/render_blit.rs`
+now carries the RGBA→XRGB8888→ramfb frame layer (`blit_rgba_to_framebuffer`,
+render_blit.rs:42) with host tests green (`genuine_frame_converts_to_xrgb8888`,
+`solid_clear_color_round_trips`, `short_rgba_is_rejected_fail_closed`). So the
+Scene→RGBA→XRGB8888→framebuffer half is built and characterized; it currently blits
+into a PD-owned static framebuffer stand-in.
+
+The genuine remaining gap is therefore narrower than "the whole render layer": link
+wgpu + gpui_wgpu and drive `WgpuRenderer::render_scene_to_image` on one cockpit
+`gpui::Scene` in-PD (no `render_scene_to_image`/`gpui_wgpu` symbol is linked in
+`sel4/render-pd/src/` yet), wire `render_blit.rs`'s output to the **real ramfb
+device-cap framebuffer** (not the static stand-in), then byte-compare the first in-VM
+frame against the render-host bake `cockpit_frame.rgba` to prove parity. This is Rust
+render wiring on top of a proven substrate, not an OS-capability wall.
 
 Touched only `sel4/render-pd/` (`scripts/llvm-target-diag.c` new + wired into
 `build.rs`/`driver-render.c`; `scripts/musl-compat.c` dl* overrides) + this note.

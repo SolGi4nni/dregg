@@ -31,7 +31,9 @@ Nothing in the cap model, the scene teeth, or the digest-gate changes.
   passed — the rlibs are cached in `target/`). A clean `cargo build --features
   libservo` finishes in ~6–7 min; incremental rebuilds in ~1 min.
 - The output `RgbaFrame` flows to `compositor_seam::present_frame` (the compositor
-  gate) and to a gpui `img()` in `starbridge-v2/src/cockpit/panels_web.rs:657`.
+  gate) and to a gpui `img()` in the cockpit web-shell tab
+  (`starbridge-v2/src/cockpit/panels_webshell.rs`, the live `http(s)://` browser —
+  distinct from `panels_web.rs`, the `dregg://` web-of-cells browser).
 
 **The gap this doc addresses:** that render was a one-shot snapshot — no events in,
 no re-render, no scroll. And the only backend was CPU SWGL.
@@ -124,10 +126,11 @@ scroll input. **This is the move from static snapshot to live embedded webview,
 proven by two differing tiles.** Click and pointer-move are wired through the same
 `apply_input`.
 
-### What remains to make it FLUID in the cockpit (the wiring, not new engine work)
+### Interspersing it into the cockpit (the wiring, not new engine work) — LANDED
 
-The spike proves the engine half. To intersperse a live web pane into the gpui
-cockpit (`panels_web.rs`), the remaining work is plumbing:
+The spike proves the engine half; the plumbing below has since landed in
+`starbridge-v2/src/cockpit/panels_webshell.rs` (persistent engine + pane,
+`webshell_apply_live_input` event bridge, repaint). The four pieces, as built:
 
 1. **A persistent `Servo` + `WebView` per web pane** (not the per-call build the
    spike uses). Servo's `servo_config::opts` is a process-wide `OnceCell`, so there
@@ -309,10 +312,15 @@ remains for route (a).
 
 ## 5. The concrete next step
 
-1. **Cockpit live pane** (interactivity, no new engine work): hold ONE persistent
-   `Servo` engine + a per-pane `WebView`, bridge gpui pane events → `apply_input`,
-   repaint on `notify_new_frame_ready`. This makes the web pane scroll/click LIVE
-   in the cockpit on the existing SWGL backend.
+1. **Cockpit live pane** — DONE: `starbridge-v2/src/cockpit/panels_webshell.rs` is
+   the live `http(s)://` web-shell browser tab (URL bar via
+   `gpui_component::input::InputState`, back/forward/reload nav, live content tile).
+   It holds ONE persistent `Servo` engine + pane, and the event bridge
+   `webshell_apply_live_input` lowers gpui pane events (scroll/click/move/keys) into
+   a `servo_render::webview::WebInput` delivered to the persistent live pane via
+   `apply_input`, repainting the tile. web-shell is in the default `desktop` feature
+   (→ `servo` → `servo-render/libservo`), so `libservo` is on in the windowed build.
+   (Distinct from `panels_web.rs`, the `dregg://` web-of-cells browser.)
 2. **GPU route (a)** — DONE: `ServoGpuContext` (surfman hardware GL + offscreen FBO +
    `glReadPixels` readback) + `gpu_available()` / `make_rendering_context` runtime
    selection are in `servo-render/src/gpu_context.rs`, green under `--features

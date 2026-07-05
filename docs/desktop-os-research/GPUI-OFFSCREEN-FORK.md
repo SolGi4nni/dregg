@@ -14,9 +14,10 @@ through this exact renderer; that swap is now closed.)
 The weld is closed end-to-end. The deos-image PD (`sel4/dregg-pd/deos-image/`) now has
 **two live modes on one framebuffer**, switched with **TAB**:
 - `Mode::Image` — the Pharo/Smalltalk object browser of the six real deos cells.
-- `Mode::Cockpit` — a **real gpui render of a starbridge-v2-cockpit-shaped Scene** (the
-  WORLD/SHELL/REFLECT layout, hand-built — see the frontier note below), blitted onto the
-  ramfb framebuffer QEMU scans out (`src/cockpit_frame.rs`).
+- `Mode::Cockpit` — a **real gpui render of the LIVE `cockpit::Cockpit` element tree** (the
+  WORLD/SHELL/REFLECT layout, via `starbridge-v2/src/main.rs::render_cockpit_headless` — the
+  hand-built cockpit-shaped stand-in the first bring-up used is now swapped out, see "The live
+  element tree" below), blitted onto the ramfb framebuffer QEMU scans out (`src/cockpit_frame.rs`).
 
 The cockpit frame is rendered at the framebuffer's exact `800×600` by the **actual gpui
 renderer** (`gpui_wgpu::WgpuRenderer::render_scene_to_image`, the patch below) on lavapipe

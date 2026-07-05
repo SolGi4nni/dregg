@@ -94,7 +94,7 @@ The `MembraneHost` trait (in `membrane.rs`) is the typed contract the comms-PD i
 `drive(fork, turn_bytes) -> TurnReceiptDigest`, `stitch(fork) -> StitchOutcome`. The chat UI only ever
 holds the inert `MembraneEnvelope` and (when a comms-PD is present) a `dyn MembraneHost`.
 
-## The MERGE = branch-and-stitch (the roadmap part: mechanism buildable, proof open)
+## The MERGE = branch-and-stitch (built: mechanism landed, proof closed)
 
 The stitch is the one door from a divergent fork back to mainline. It is, precisely, a **pushout in
 the event-structure configuration lattice** (`docs/deos/{BRANCH-AND-STITCH-PROTOCOL,DISTRIBUTED-
@@ -122,9 +122,10 @@ TIMETRAVEL-SEMANTICS}.md`):
 - **The merged turn passes through the mainline settlement gate** (Σδ=0 · current-authority vs the
   finalized-tip revocation set · nullifier non-membership), fail-closed. This is the **Settlement
   Soundness** property — *authority-live-at-settlement* — which extends light-client unfoolability to
-  the stitched turn. It is the open formal frontier: the mechanism is buildable from the listed
-  machinery; the *proof* that a stitched turn the light client accepts implies a genuine kernel
-  transition is the circuit-soundness campaign's settlement extension.
+  the stitched turn. This is now a **proven, `#assert_axioms`-clean theorem**: `settlement_soundness`
+  (`metatheory/Metatheory/SettlementSoundness.lean`) plus its circuit-side module
+  (`metatheory/Dregg2/Circuit/SettlementSoundness.lean`) — a stitched turn the light client accepts
+  implies a genuine kernel transition. No longer the open frontier it was written as.
 
 **Cross-party stitch = a partial turn with holes the consenting parties fill** (the partial-turn /
 promises thread): each hole is a `PendingTurnRegistry` entry; filling it (`resolve`) is a one-shot
@@ -132,23 +133,29 @@ spend = the consent point. A hole IS a nullifier; resolution IS a spend; one-sho
 double-spend non-membership the circuit already enforces. So promise-pipelined cross-party merges
 inherit light-client-unfoolability for free.
 
-## Buildable now vs. roadmap
+## Buildable now vs. built-since
 
 **Buildable now** (compose the listed machinery; no new crypto):
 - mint: `World::fork` + the `Ledger::iter()`/`Cell::capabilities` cull + `ship_snapshot` + `Sturdyref`.
 - rehydrate: `apply_snapshot_verified` (fail-closed) + `rehydrate` + `Membrane::project` + `World::fork`.
 - drive: `World::commit_turn` on the fork (already the real verified executor).
-- the wire envelope + the Matrix transport (`MembraneEnvelope`; a `WorkerRequest::SendMessage` variant
-  carrying the namespaced field — the one wiring gap the chat `send` path already anticipates).
-- the chat affordance: `⬡ attach membrane` is present; it calls the comms-PD's `MembraneHost::mint`.
+- the wire envelope + the Matrix transport (`MembraneEnvelope`; the namespaced field carried on an
+  `m.room.message`).
+- the chat affordance: `⬡ attach membrane` is present (`deos-matrix/src/chat.rs`); it calls
+  `source.mint_membrane` and reports "membrane minted + sent" — the mint→send path is now wired,
+  not merely anticipated.
 
-**Roadmap** (designed, mechanism buildable, proof is the frontier):
-- the stitch pushout + conflict-object surfacing as a concrete algorithm over the blocklace config
-  lattice (the clean-merge auto-part is mechanical; the conflict drop is the typed-loss UX).
-- **Settlement Soundness** as a closed theorem (authority-live-at-settlement ⟹ light-client accepts
-  ⟹ genuine kernel transition) — lands in the circuit-soundness apex campaign.
-- the confined comms-PD that hosts `MembraneHost` (the executor + firmament caps + web-of-cells live
-  there; the chat client stays a pure gpui front-end over the `ChatSource` + `MembraneHost` seams).
+**Built since** (the roadmap items below have LANDED):
+- the stitch pushout + conflict-object surfacing: `ForkMembraneHost::stitch_pair`
+  (`starbridge-v2/src/shared_fork.rs`) is the executor-backed impl of `mint`/`rehydrate`/`drive`/`stitch`,
+  and `starbridge-v2/src/branch_stitch_session.rs` is the stitch guts wired to the settlement-sound gate
+  (the clean-merge auto-part is mechanical; the conflict drop is the typed-loss UX).
+- **Settlement Soundness** is a closed, `#assert_axioms`-clean theorem (authority-live-at-settlement
+  ⟹ light-client accepts ⟹ genuine kernel transition) — `metatheory/Metatheory/SettlementSoundness.lean`,
+  landed in the circuit-soundness apex campaign.
+- the confined comms-PD that hosts `MembraneHost`: `ForkMembraneHost` is the real executor-backed host
+  (the executor + firmament caps + web-of-cells live there; the chat client stays a pure gpui front-end
+  over the `ChatSource` + `MembraneHost` seams).
 
 ## Why this is the right seam
 

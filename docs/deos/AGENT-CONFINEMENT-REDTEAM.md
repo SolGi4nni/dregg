@@ -38,7 +38,7 @@ is a receipted turn, and it cannot cross to another vessel.**
 | 6 | **Sandbox escape — exec** | DENIED (by construction) | The confined child has NO exec authority (Seatbelt `process-exec*` / seccomp `execve` denied) — which is why the agent body must BE a Rust ACP peer, not an `execve`'d binary. | critical |
 | 7 | **Empowered-but-accountable** (a JS-driven / broad agent action) | ALLOWED + RECEIPTED | The agent SHOULD act broadly over its OWN world — a feature. Every such action still passes the gate (`gateOK`/cap tooth) AND leaves a real `TurnReceipt` → SEE-able and REWIND-able. | (feature) |
 | 7 | **Cross-vessel reach — THE EDGE** (forged `SetField`/`EmitEvent` into ANOTHER vessel's cell) | REFUSED | A worker's credential is anchored in its OWN cell; the executor `collect_touched_cells` re-checks every touched cell's authority, so an effect targeting a foreign cell fails. The agent stays fully empowered over its own cell. | critical |
-| 7 | **Unbounded executor reachability** (a tool path to a raw executor at root) | NONE EXISTS | Every admitted tool-call terminates in a cap-gated, metered, receipted `ToolGateway` worker; every kind has a finite rate ceiling + deadline. No `HermesGateway` method hands back a root handle. **No Hermes→deos-js wiring exists today.** | critical |
+| 7 | **Unbounded executor reachability** (a tool path to a raw executor at root) | NONE EXISTS | Every admitted tool-call terminates in a cap-gated, metered, receipted `ToolGateway` worker; every kind has a finite rate ceiling + deadline. No `HermesGateway` method hands back a root handle. **The Hermes→deos-js binding now EXISTS (`deos-hermes/src/run_js.rs`, behind `js-agent`) and mounts the JS runtime under the AGENT'S `held`, never root — it keeps the invariant, it does not open a root path.** | critical |
 
 ## Item 7 — the deos-js / agent-co-pilot angle (the standing invariant)
 
@@ -59,11 +59,17 @@ What the deployed code already enforces (verified by inspection +
   (`action.effect_set_field(self.cell, …)`); a confined `ToolGateway` worker's
   effects are authority-checked per touched cell. A forged effect into another
   vessel's cell is refused.
-- **No root path.** There is NO `deos_hermes → deos-js` symbol wiring today
-  (grep-confirmed). When that binding is built, it MUST mount the JS runtime
-  under the CALLER'S attenuated cap — a `ToolGateway`-style worker bounded by the
-  driver's `held`, exactly as an applet's `fire` is bounded — **never root**.
-  This is the invariant the future binding must keep.
+- **No root path.** The `deos_hermes → deos-js` binding is now BUILT
+  (`deos-hermes/src/run_js.rs`, "THE HANDS", behind the `js-agent` feature —
+  `RunJsTool` EMBEDDED + `RunJsTool::run_attached_on` ATTACHED-to-live-World). It
+  keeps exactly the invariant this doc set: it mounts the JS runtime under the
+  AGENT'S attenuated cap (the mandate's `held`), NEVER root — the cap tooth in
+  `deos_js::Applet::fire` / `AttachedApplet::fire` refuses any over-reach in-band,
+  and a JS-driven turn binds the agent's OWN cell (cross-vessel reach blocked).
+  The `run_js` tool-call itself is admitted as a normal scoped, rate-limited
+  `ToolGrant` — a metered, receipted tool turn, bounded exactly as an applet's
+  `fire` is. So the surface stays empowered-but-accountable-but-bounded; the
+  invariant the binding had to keep, it keeps.
 
 ## The tests
 

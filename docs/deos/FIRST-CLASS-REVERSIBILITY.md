@@ -1,9 +1,23 @@
 # First-class reversibility for dregg/deos
 
+> **STATUS — M-REV-0 BUILT.** The un-turn is no longer "the piece to make first-class" —
+> it shipped. `Effect::invert`, `Turn::invert`, the `Inversion` enum (`Clean` / `Contextual`
+> / `Committed`), `CommittedReason`, and `ReversibleHistory::undo_to` all live in
+> **`turn/src/reversible.rs`** (exported from `turn/src/lib.rs`) — NOT in
+> `starbridge-v2/src/replay.rs` as §3.2/§5.2 below anticipate (fix that xref as you read).
+> The headline round-trip tooth exists and passes
+> (`undo_to_lands_on_the_same_verified_state_as_replay_to`), as do the fail-closed tests
+> (`turn_invert_fails_closed_on_a_committed_effect`, `undo_to_refuses_to_cross_a_committed_step`).
+> **The one genuinely-open piece is §5.3:** `EffectInvert.lean` does not exist — the Rust
+> round-trip is a *test*, not yet a *proof*. Read §§1–4 and §5.2 as a description of shipped
+> behaviour (present-tense design rationale), with the file-home corrected to
+> `turn/src/reversible.rs`.
+
 *The whole system can run backward. Every turn can be undone, causal-consistently;
 the history is a reversible computation with islands of deliberate, correct
 irreversibility. This is the RCCS (Reversible CCS, Danos–Krivine) frame, and dregg
-is already most of an instance — the un-turn is the piece to make first-class.*
+is already most of an instance — the un-turn (BUILT: `turn/src/reversible.rs`) is the
+piece that made it first-class.*
 
 Present tense, first principles. §1 says what reversibility *means* here. §2 maps
 what is already latent in the tree. §3 is the design that makes it first-class. §4
@@ -191,7 +205,7 @@ already-known boundary read as "what cannot run backward."
 | land at any past cursor (verified) | `History::replay_to`, root-tooth | **built** + tested |
 | redo differently (fork) | `fork_at`, `simulate` | **built** + tested |
 | reversible substrate (confined branch) | `EnterVirtualization` / branch-and-stitch | **designed** |
-| effect inverse (the un-turn) | `Patch::invert` (doc subset) | **built for doc; to generalize** |
+| effect inverse (the un-turn) | `Patch::invert` (doc subset) → generalized to `Effect::invert`/`Turn::invert` (`turn/src/reversible.rs`) | **BUILT** (Lean proof still open, §5.3) |
 | RCCS-with-committed-actions frame | the time-travel verdict | **settled** |
 | irreversible boundary, bounded | Settlement Soundness, `Revocation.lean` | **proved-bounded** |
 
@@ -202,19 +216,26 @@ already-known boundary read as "what cannot run backward."
 Three constructions: the substrate-wide `Effect::invert`; the reversible-history
 object; and the compositions (meta-debug rewind, document undo).
 
-### 3.1 `Effect::invert` / `Turn::invert` — the un-turn on the real substrate
+### 3.1 `Effect::invert` / `Turn::invert` — the un-turn on the real substrate — **BUILT**
 
-Generalize `Patch::invert` to `turn/src/action.rs::Effect`. The signature is
-*contextual*, taking the pre-state the forward effect acted on, because the honest
-inverses need the pre-image:
+This generalizes `Patch::invert` to `turn/src/action.rs::Effect`, and it is **shipped** at
+`turn/src/reversible.rs` (`Effect::invert` returning `Inversion`, and `Turn::invert`). The
+signature is *contextual*, taking the pre-state (a `&Ledger`) the forward effect acted on,
+because the honest inverses need the pre-image. The real API:
 
-```text
-Effect::invert(self, pre: &CellView) -> InverseResult
-  where InverseResult =
-    | Clean(Effect)          // self-inverse from the effect alone (Transfer, grant↔revoke, seal↔unseal)
-    | Contextual(Effect)     // inverse needs `pre` (SetField old value, revoked-cap content)
-    | Committed(Reason)      // no inverse, by design (Destroy, Burn, NoteSpend, nonce-ratchet)
+```rust
+Effect::invert(&self, pre: &Ledger) -> Inversion
+  where enum Inversion {
+    Clean(Effect),               // self-inverse from the effect alone (Transfer, grant↔revoke, seal↔unseal)
+    Contextual(Effect),          // inverse needs `pre` (SetField old value, revoked-cap content)
+    Committed(CommittedReason),  // no inverse, by design (Destroy, Burn, NoteSpend, nonce-ratchet)
+  }
 ```
+
+The match is exhaustive on purpose (no `_ =>` arm) — like `Effect::linearity`, every new
+`Effect` variant is forced by `rustc` to declare its reversibility tier. `Inversion::is_reversible`
+answers Clean-or-Contextual; `CommittedReason` names *why* an effect is a wall
+(`NullifierConsumed`, `ValueBurned`, `FreshnessRatchet`, `AuthorityRevoked`, …).
 
 A `Turn::invert(pre_cursor)` builds the inverse forest: walk the forward effects in
 **reverse order**, invert each against the pre-state at that point (the cursor
@@ -237,11 +258,12 @@ one round-trip lemma per reversible effect (mirroring `dregg-doc`'s round-trip t
 promoted to proofs). The committed effects are *excluded from the theorem* — their
 irreversibility is a precondition of the round-trip lemma, not a gap in it.
 
-### 3.2 The reversible-history object — `ReversibleHistory`
+### 3.2 The reversible-history object — `ReversibleHistory` — **BUILT**
 
-`History` (`replay.rs`) records steps and roots. The reversible-history object adds
-the *causal links* and the *inverse-readiness* so a stretch can be rolled back, not
-just landed at:
+`ReversibleHistory` is **shipped** at `turn/src/reversible.rs` (it holds `Arc`-shared
+`ReversibleStep`s + per-step `roots`), NOT at `starbridge-v2/src/replay.rs` (which retains
+only `replay_to`/`fork_at` over its own `History`). It adds the *causal links* and the
+*inverse-readiness* so a stretch can be rolled back, not just landed at:
 
 - **It already carries the pre-images.** Each `RecordedStep::Committed` holds the
   `turn` and `receipt`; the cursor at `k` (`replay_to(k)`) is the pre-state for the
@@ -434,53 +456,59 @@ what an inverse needs: something to invert, a pre-image to invert against, and a
 consent membrane to gate the reversal. Reversibility is latent in dregg *because*
 dregg already pays the cost (reified, witnessed, gated turns) that makes it possible.
 
-### 5.2 The first buildable milestone
+### 5.2 The first milestone — **LANDED**
 
 **M-REV-0: `Effect::invert` + `ReversibleHistory::undo_to`, with the round-trip
-tooth.** Concretely, the smallest end-to-end reversible loop:
+tooth — BUILT** in `turn/src/reversible.rs`. What shipped, the smallest end-to-end
+reversible loop:
 
-1. **`Effect::invert(pre)`** in `turn/` (or a new `turn/src/invert.rs`) covering the
-   *clean + contextual* effects — Transfer, SetField, grant↔revoke, seal↔unseal,
-   EmitEvent, CreateCell — and returning `Committed(reason)` for Destroy/Burn/
-   NoteSpend/IncrementNonce. This is the `Patch::invert` shape (`dregg-doc/src/patch.rs`)
-   lifted to the protocol Effect set.
-2. **`ReversibleHistory::undo_to(k)`** in `starbridge-v2/src/replay.rs` (the natural
-   home — it holds the turns, receipts, and roots): build the inverse turns for steps
-   `k+1..head` in reverse, apply each through the verified executor (gated), and
-   **verify the reconstructed root equals `roots[k]`** — fail-closed on mismatch
-   (`RootMismatch`), and fail-closed if any step is committed.
-3. **The headline test** (mirroring `replay_to_each_step_matches_the_recorded_root`):
-   for a fixture history of clean turns, `undo_to(k)` lands on the *identical verified
-   root* as `replay_to(k)`, for every `k` — the two paths to step `k` agree. Plus the
-   fail-closed test: a history with a `Burn` or `NoteSpend` refuses to `undo_to` past
-   it.
+1. **`Effect::invert(pre)`** — in `turn/src/reversible.rs` (NOT the anticipated
+   `turn/src/invert.rs`), covering the *clean + contextual* effects — Transfer,
+   SetField, grant↔revoke, seal↔unseal, EmitEvent, CreateCell — and returning
+   `Committed(reason)` for Destroy/Burn/NoteSpend/IncrementNonce. This is the
+   `Patch::invert` shape (`dregg-doc/src/patch.rs`) lifted to the protocol Effect set.
+2. **`ReversibleHistory::undo_to(k)`** — also in `turn/src/reversible.rs` (which holds
+   the `Arc`-shared steps, receipts, and roots — this is the corrected home; the doc
+   earlier guessed `starbridge-v2/src/replay.rs`): it builds the inverse turns for steps
+   `k+1..head` in reverse, applies each through the verified executor (gated), and
+   **verifies the reconstructed root equals `roots[k]`** — fail-closed on mismatch, and
+   fail-closed if any step is committed (`window_reversible`).
+3. **The headline test** exists and passes:
+   `undo_to_lands_on_the_same_verified_state_as_replay_to` — for a fixture history of
+   clean turns, `undo_to(k)` lands on the *identical verified root* as replay-forward,
+   for every `k`. Plus the fail-closed tests: `turn_invert_fails_closed_on_a_committed_effect`
+   and `undo_to_refuses_to_cross_a_committed_step` (a history with a `Burn`/`NoteSpend`
+   refuses to undo past it).
 
-This is a weld, not a build: `replay.rs` already lands at any cursor and verifies;
-`Patch::invert` already shows the inverse shape; the executor already gates. M-REV-0
-connects them into "the live image runs backward, checkably, within the reversible
-window." From there, the second milestone wires `undo_to` to the meta-debug rewind
-button (§3.3) so the *desktop itself* scrubs backward — the Robigalia dream, made an
-exercised affordance.
+This was a weld, not a build: replay already lands at any cursor and verifies;
+`Patch::invert` already showed the inverse shape; the executor already gates. M-REV-0
+connected them into "the live image runs backward, checkably, within the reversible
+window." The next milestone — wiring `undo_to` to the meta-debug rewind button (§3.3)
+so the *desktop itself* scrubs backward — remains the forward step from here.
 
-### 5.3 The Lean follow (small, composes)
+### 5.3 The Lean follow (small, composes) — **STILL OPEN**
 
-`EffectInvert.lean`: one round-trip lemma per clean+contextual effect
+This is the one genuinely-remaining piece: `EffectInvert.lean` does **not** exist yet
+(no `metatheory` file matches `*invert*`; no `apply (invert …)` lemma). The faithfulness
+obligation currently lives as a *Rust test* (the round-trip in `turn/src/reversible.rs`),
+not a *proof*. Closing it: one round-trip lemma per clean+contextual effect
 (`apply (invert e σ) (apply e σ) = σ`), with the committed effects as the lemma's
-exclusion precondition. This promotes `dregg-doc`'s round-trip *tests* to *proofs* at
-the protocol level, and it composes with the existing `CrashRecovery`/`LaceMerge`
-trunk — the un-turn's faithfulness sits beside `recover = replay` as the *backward*
-companion to the *forward* recovery identity.
+exclusion precondition — promoting the round-trip test to a proof at the protocol level,
+composing with the existing `CrashRecovery`/`LaceMerge` trunk (the un-turn's faithfulness
+sits beside `recover = replay` as the *backward* companion to the *forward* recovery
+identity).
 
 ---
 
 ## 6. The shape, once more
 
-dregg is *already* a reversible computation with committed actions — the math is
-settled, the substrate pays the right costs, and four of the five pieces are in the
-tree (verified replay, fork, branch-and-stitch design, `Patch::invert`). The piece
-that makes reversibility **first-class** is the un-turn on the real substrate:
-`Effect::invert` + `ReversibleHistory::undo_to`, gated like any turn, verified by the
-same root tooth run backward, and fail-closed at the irreversible boundary. The
+dregg is a reversible computation with committed actions — the math is settled, the
+substrate pays the right costs, and all five pieces are now in the tree (verified replay,
+fork, branch-and-stitch, `Patch::invert`, and — the piece that makes reversibility
+**first-class** — the un-turn on the real substrate: `Effect::invert` +
+`ReversibleHistory::undo_to` in `turn/src/reversible.rs`, gated like any turn, verified by
+the same root tooth run backward, and fail-closed at the irreversible boundary). The last
+open thread is the Lean faithfulness proof (§5.3). The
 irreversible boundary is not a wall around an incomplete feature — it is the precise
 set of facts other parties rely on (settled tips, revoked authority, consumed
 nullifiers), and its one-directionality *is* the system's integrity. Reversibility

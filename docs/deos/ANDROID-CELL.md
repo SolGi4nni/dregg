@@ -130,6 +130,18 @@ an app, expose its surface as an `RgbaFrame` — with one impl per host:
   every decision leaves an `IoReceipt` (content-addressed: `blake3(origin ‖ tag ‖
   peer?)`).
 
+**The crate has since grown well beyond these four gates.** The same
+cap-gate-in-front-of-ambient-authority discipline now covers the rest of Android's
+authority surface, each its own module: `broadcastgate.rs` (`sendBroadcast`),
+`contentgate.rs` (`content://` providers), `notifgate.rs` (notification post),
+`organgate.rs` (`getSystemService`), `permgate.rs` (the runtime-permission model),
+`storagegate.rs` (scoped-storage / `MediaStore`), plus `apps.rs` (the
+install↔launch↔intent registry) and — the umem revolution landed here too —
+`checkpoint.rs` + `checkpointed_runtime.rs` (the confined runtime's observable state
+as a checkpointable umem in the live path). This doc still narrates the original four
+seams (runtime/frame/present/net) as the load-bearing pattern; the full gate set is
+the current build.
+
 **Run path (the live spike, macOS dev host):**
 
 ```sh

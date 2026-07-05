@@ -1,6 +1,22 @@
 # V12 GEOMETRY EPOCH — the bang's final act (design spec)
 
-Status: **DESIGN / SCOPE ONLY** (no code moved). This is the fireable spec for the
+> **STATUS: SHIPPED — then superseded by v13.** This is no longer a proposal; the v12
+> geometry widening LANDED exactly as specced. The three named octets are live in the tree:
+> `B_CHILD_VK_OCTET = 88`, `B_CONTRACT_HASH_OCTET = 96`, `B_PUBKEY_OCTET = 104`
+> (`circuit/src/effect_vm/trace_rotated.rs`), with producer fill in
+> `cell/src/commitment.rs::compute_rotated_pre_limbs` and `turn/src/rotation_witness.rs`
+> (child_vk8 on CreateCellFromFactory rows, contract_hash8 on hatchery-mint rows, pubkey8
+> unconditionally — O1 resolved as route (a), the turn-level octet). The four per-carrier
+> third edges also landed: `metatheory/Dregg2/Circuit/{Factory,Sovereign,Membership,Hatchery}BindingFromFold.lean`
+> (+ Bridge/Dsl/Custom/Deco twins) and `Emit/MembershipAuthRootEdge.lean` (the §4 fields
+> read-open gadget). HEAD has since grown ONE more accumulator step past v12: the **v13
+> fields-octet grow** (`NUM_PRE_LIMBS 112 → 169`, `B_SPAN 151 → 227`, +56 fields[0..7]
+> completion lanes + 1 pad limb). So the constant table in §2d below reads at the *pre-v12*
+> (v11) geometry — kept for the historical delta it documents; the live values are v13's
+> 169/227/169/170/171. Everything under here is preserved as the design rationale of a
+> completed epoch.
+
+Status (historical): **DESIGN / SCOPE ONLY** at time of writing. This was the fireable spec for the
 one geometry widening that unblocks the four carriers walled by BANG WAVES 1/2/3 +
 hatchery-contract. Read alongside `docs/WELD-STATE.md` §1a, §3, §5 items 9/10/11.
 
@@ -111,7 +127,11 @@ anti-vacuity discipline. Offer the shared octet only if ember wants the narrower
 
 ### 2d. The constant/file carriers (where the geometry lives)
 
-| constant | HEAD value | file:line | v12 value (primary) |
+*(the "pre-v12" column below is the v11 geometry this epoch started from; the "v12 value"
+column is what this epoch shipped. HEAD is now v13 — `NUM_PRE_LIMBS 169`, `B_SPAN 227`,
+`B_IROOT 169`, `B_STATE_COMMIT 170`, `B_CHAIN_BASE 171` — one accumulator step further.)*
+
+| constant | pre-v12 (v11) value | file:line | v12 value (primary) |
 |---|---|---|---|
 | `NUM_PRE_LIMBS` | 88 | `circuit/src/effect_vm/trace_rotated.rs:90` | 112 |
 | `B_SPAN` | 119 | `trace_rotated.rs:97` | 151 |

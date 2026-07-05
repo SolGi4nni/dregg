@@ -202,30 +202,35 @@ heterogeneous units + win conditions, the federated web-of-cells distribution, t
 agents (playing a full match), and the membrane-negotiation spectator are all the
 genuine cap discipline today (Tier A).
 
-## The plan (sequenced behind the HARDSWAP)
+## The plan (the HARDSWAP has since cleared — items 1-2 LANDED)
 
-- **NOW (parallel, standalone `starbridge-web-surface`, disjoint from the deputy):**
-  the affordance + frustum-snapshot stack (`a9401bb9`) — the deos UI substrate — AND
-  **the forcing-function webgame BUILT on it** (`game.rs` + `fog_of_war_demo.rs`):
-  fog-of-war = the membrane's per-viewer projection, the no-peek keystone, moves =
-  cap-gated affordances, an AI agent-player, and a fog-respecting spectator snapshot.
-  This proves the deos thesis end-to-end (the security property IS the game mechanic)
-  on the genuine cap discipline, standalone, without waiting for the HARDSWAP.
-- **The instant the HARDSWAP clears the root workspace + `metatheory`:**
-  1. **Rebuild the app-framework as the deos-app composition** (a `deos-app` crate /
-     scaffold that wires cells×affordances + pg-dregg state + the sdk surface + the
-     web-of-cells distribution + rehydration; `dregg new deos-app`).
-  2. **Lift the standalone webgame onto the composed framework** — wire `game.rs`'s
-     moves through a live `TurnExecutor` (close the inherited intent→executed-turn
-     seam) and onto pg-dregg durable state + the web-of-cells lobby, so the skirmish
-     is a multi-node integrated deos app, not a single-process model.
-  3. **The #169 tempo dial for interactive** (optimistic local + verified-at-boundary)
-     so the game is real-time, not turn-paced.
-  4. **Re-express 1-2 existing apps** on the new framework to prove the composition
-     (the supply-chain / orchestration apps become *integrated* deos apps).
+*(The 2026-06-14 "sequenced behind the rotation HARDSWAP" framing is history: the
+cutover cleared the root workspace + `metatheory`, the tree is unified (one target),
+and the app-framework rebuild is BUILT. Kept below with the built items relabeled.)*
+
+- **DONE (standalone `starbridge-web-surface`):** the affordance + frustum-snapshot
+  stack (`a9401bb9`) — the deos UI substrate — AND **the forcing-function webgame
+  BUILT on it** (`game.rs` + `fog_of_war_demo.rs`): fog-of-war = the membrane's
+  per-viewer projection, the no-peek keystone, moves = cap-gated affordances, an AI
+  agent-player, and a fog-respecting spectator snapshot. This proves the deos thesis
+  end-to-end (the security property IS the game mechanic) on the genuine cap discipline.
+- **Since the cutover landed:**
+  1. **DONE — the app-framework IS the deos-app composition.** `app-framework/src/deos_app.rs`
+     defines `DeosCell`/`DeosApp` wiring affordance surfaces over the `EmbeddedExecutor`,
+     the web-of-cells publish, the rehydration seam, and the generated web component —
+     with the cap∧state `GatedAffordance` rung (`src/affordance.rs`, the Rust twin of the
+     Lean `Dregg2.Deos.GatedAffordance`). `DeosApp::register` registers the gated
+     affordances + caps.
+  2. **DONE (mechanism) — the live-`TurnExecutor` fire path is closed.**
+     `DeosCell::fire_gated_through_executor` runs a real verified turn through the
+     `EmbeddedExecutor` (exemplar: `examples/deos_council_board.rs` +
+     `tests/deos_council_board.rs` — the `approve` button lights IFF caps AND state pass,
+     a both-pass fire runs a real verified turn). Remaining forward: lift the fog-of-war
+     game itself onto this path + pg-dregg durable state + the web-of-cells lobby, so the
+     skirmish is a multi-node integrated deos app, not a single-process model.
+  3. **OPEN — the #169 tempo dial for interactive** (optimistic local +
+     verified-at-boundary) so the game is real-time, not turn-paced.
+  4. **Re-express 1-2 existing apps** on the framework to prove the composition (the
+     council board is the first integrated exemplar; the supply-chain / orchestration
+     apps are next).
 - **WOOD:** the seL4 compositor-PD + the libservo link (the real pixels).
-
-Why behind the HARDSWAP: `dregg-app-framework` is a root-workspace crate depending on
-turn/cell/sdk — exactly what the deputy is rewriting — so rebuilding it now would
-build against a moving target AND break the deputy's `cargo test --workspace` gauntlet.
-Design now; build the instant the cutover lands.
