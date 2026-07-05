@@ -216,6 +216,63 @@ theorem light_client_verifies_whole_history
     , final_is_genuine_fold := hfin
     , genesis_pinned := hgen }
 
+/-! ### 3b. THE GENESIS ANCHOR — the verify-side dual of the final-root anchor (PREFIX completeness).
+
+`AggregateAttests.genesis_pinned` pins the public genesis root only to the PROVER-CHOSEN first folded
+step (`steps.head`). The deployed finality path pins the FINAL root to the committee-ratified head; its
+EXACT DUAL pins the GENESIS root to the client's TRUSTED genesis/checkpoint (`expectedGenesis`). Without
+it, a prover can fold a valid, committee-finalizable history from a FABRICATED/midpoint genesis to the
+true head, HIDING the entire prefix (the TIER3 LANE-2c residual). With it, the attested history provably
+STARTS at `expectedGenesis`. This is a VERIFY-SIDE anchor — a caller-supplied expected genesis compared
+against the fold's public `genesisRoot` — NOT a circuit/VK change (exactly as the final-root anchor is
+verify-side; the Rust dual is `verify_finalized_history(..., expected_genesis)`). -/
+
+/-- **`AnchoredAttests`** — `AggregateAttests` PLUS the verify-side genesis anchor: the public genesis
+the aggregate carries IS the client's trusted `expectedGenesis`. -/
+structure AnchoredAttests
+    (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep) (expectedGenesis : ℤ) : Prop where
+  /-- the full whole-history attestation (every turn correct, correctly ordered, genuine final fold,
+  genesis pinned to the first folded step). -/
+  attests : AggregateAttests Proof CH RH cmb compress compressN agg g steps
+  /-- the CLIENT-SIDE anchor: the aggregate's public genesis root is the trusted genesis. -/
+  genesis_anchored : agg.genesisRoot = expectedGenesis
+
+/-- **`light_client_verifies_anchored_history` (THE GENESIS-ANCHORED HEADLINE).** A light client that
+checks `verify agg.root = true` AND pins the aggregate's public genesis to its trusted `expectedGenesis`
+obtains `AnchoredAttests`. Mirrors the final-root anchor exactly: the finality path checks
+`agg.finalRoot`'s head against the committee-ratified root; this checks `agg.genesisRoot` against the
+trusted genesis. -/
+theorem light_client_verifies_anchored_history
+    (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep) (expectedGenesis : ℤ)
+    (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
+    (hroot : verify agg.root = true)
+    (hanchor : agg.genesisRoot = expectedGenesis) :
+    AnchoredAttests Proof CH RH cmb compress compressN agg g steps expectedGenesis :=
+  { attests := light_client_verifies_whole_history Proof verify CH RH cmb compress compressN agg g steps es hroot
+  , genesis_anchored := hanchor }
+
+/-- **`anchored_history_starts_at_genesis` (the prefix-gap closer).** The attested history genuinely
+STARTS at the anchored genesis: the FIRST folded step's before-root (or the genesis state root, for an
+empty chain) equals `expectedGenesis`. This is the fact a fabricated-genesis prover cannot satisfy — the
+DUAL of `final_is_genuine_fold` checked against the committee head. -/
+theorem anchored_history_starts_at_genesis
+    (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep) (expectedGenesis : ℤ)
+    (anch : AnchoredAttests Proof CH RH cmb compress compressN agg g steps expectedGenesis) :
+    (match steps.head? with
+      | none   => stateRoot CH RH cmb compress compressN g.kernel zeroTurn
+      | some s => ChainStep.oldRoot CH RH cmb compress compressN s) = expectedGenesis := by
+  rw [← anch.attests.genesis_pinned]; exact anch.genesis_anchored
+
+/-- **`anchored_attests_rejects_fabricated_genesis` (THE GENESIS ANTI-GHOST TOOTH).** No aggregate whose
+public genesis differs from the client's `fabricated` anchor can be `AnchoredAttests` for it — the
+`genesis_anchored` field is contradictory. So a prover presenting a history that does NOT start at the
+trusted genesis (a hidden prefix) is REJECTED by the anchor. Mirrors `tampered_aggregate_cannot_bind`. -/
+theorem anchored_attests_rejects_fabricated_genesis
+    (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep) (fabricated : ℤ)
+    (hne : agg.genesisRoot ≠ fabricated)
+    (anch : AnchoredAttests Proof CH RH cmb compress compressN agg g steps fabricated) :
+    False := hne anch.genesis_anchored
+
 /-! ## 4. The RUN + CONSERVATION the light client inherits (no re-execution).
 
 `AggregateAttests` gives the per-step executor transitions + the ordering; composed with state-level
@@ -295,6 +352,32 @@ theorem conserves_from_verification
   -- conservation follows from the VERIFIED tooth + genesis pin + structural envelope; no StateChained.
   exact verified_history_conserves CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
     g steps hgen hatt.ordered hstruct
+
+/-- **`anchored_conserves_from_verification` (conservation FROM the anchored genesis — BOTH ends pinned).**
+A light client that checks `verify agg.root = true` AND pins the genesis to its trusted `expectedGenesis`
+learns BOTH (1) the history genuinely STARTS at `expectedGenesis` and (2) the WHOLE history conserves
+value from that anchored genesis — with NO `StateChained` hypothesis. The genesis is no longer
+prover-chosen: the conservation statement is now anchored at BOTH ends (final ← committee head via the
+finality seam, genesis ← trusted anchor here — the verify-side dual `AnchoredAttests` carries), closing
+the prefix-completeness gap (TIER3 LANE 2c). -/
+theorem anchored_conserves_from_verification
+    (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
+    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hRest : RestHashIffFrame RH)
+    (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep) (expectedGenesis : ℤ)
+    (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
+    (hroot : verify agg.root = true)
+    (hgen : KernelGenesisPin g steps) (hstruct : SeamStruct steps)
+    (hanchor : agg.genesisRoot = expectedGenesis) :
+    ((match steps.head? with
+        | none   => stateRoot CH RH cmb compress compressN g.kernel zeroTurn
+        | some s => ChainStep.oldRoot CH RH cmb compress compressN s) = expectedGenesis)
+      ∧ recTotal (lastStateOf g steps).kernel = recTotal g.kernel := by
+  refine ⟨?_, ?_⟩
+  · have hatt := light_client_verifies_whole_history Proof verify CH RH cmb compress compressN agg g steps es hroot
+    rw [← hatt.genesis_pinned]; exact hanchor
+  · exact conserves_from_verification Proof verify CH RH cmb compress compressN
+      hCmb hCompress hCompressN hLeaf hRest agg g steps es hroot hgen hstruct
 
 /-- **`non_omission_from_verification` (THE WHOLE-HISTORY NON-OMISSION HEADLINE — from `verify agg.root`).**
 A light client that checks ONLY `verify agg.root = true` (re-witnessing NOTHING) learns the receipt log
@@ -409,6 +492,28 @@ theorem real_chain_first_turn_executed :
     recCexec teethGenesis honestTurn = some honestStep.post := by
   have h := light_client_fires_on_real_chain.every_turn honestStep (by simp [realSteps])
   simpa [honestStep] using h
+
+/-- **`anchored_fires_on_real_chain` (genesis-anchor non-vacuity, POSITIVE).** On the realizing
+instance, anchoring to the GENUINE genesis (`realAggregate.genesisRoot`) fires `AnchoredAttests`: the
+anchored headline delivers a real attestation whose genesis is pinned to the trusted value. So the
+genesis anchor is not vacuous — the true-genesis history passes. -/
+theorem anchored_fires_on_real_chain :
+    AnchoredAttests RealProof zCH zRH zcmb zcompress zcompressN
+      realAggregate teethGenesis realSteps realAggregate.genesisRoot :=
+  light_client_verifies_anchored_history RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+    realAggregate teethGenesis realSteps realAggregate.genesisRoot real_engine_sound rfl rfl
+
+/-- **`anchored_tooth_bites_on_real_chain` (genesis-anchor non-vacuity, NEGATIVE — the tooth BITES).**
+A WRONG expected genesis (the genuine genesis + 1, which differs) admits NO `AnchoredAttests` on the
+realizing instance: any such witness contradicts its own `genesis_anchored` field. So the anchor is a
+REAL discriminator (satisfiable AND refutable), not a vacuous conjunct — a fabricated-genesis history is
+REJECTED. -/
+theorem anchored_tooth_bites_on_real_chain
+    (anch : AnchoredAttests RealProof zCH zRH zcmb zcompress zcompressN
+      realAggregate teethGenesis realSteps (realAggregate.genesisRoot + 1)) :
+    False :=
+  anchored_attests_rejects_fabricated_genesis RealProof zCH zRH zcmb zcompress zcompressN
+    realAggregate teethGenesis realSteps (realAggregate.genesisRoot + 1) (by omega) anch
 
 end Realize
 
@@ -722,6 +827,13 @@ end Accumulator
 
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.every_leaf_verifies_implies_executed
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.light_client_verifies_whole_history
+-- the GENESIS ANCHOR (the verify-side dual of the final-root anchor — PREFIX completeness, TIER3 2c):
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.light_client_verifies_anchored_history
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.anchored_history_starts_at_genesis
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.anchored_attests_rejects_fabricated_genesis
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.anchored_conserves_from_verification
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.anchored_fires_on_real_chain
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.anchored_tooth_bites_on_real_chain
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.attested_history_conserves
 -- the CRITICAL-3 closure: conservation-over-history DERIVED from `verify agg.root`, no StateChained:
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.conserves_from_verification

@@ -369,11 +369,20 @@ fn main() {
         participant_count: 4,
         finalized_root: final_root,
     };
-    let finalized =
-        verify_finalized_history(&agg, &vk_anchor, final_root, &cert, &demo_committee(4))
-            .expect("aggregate + root-seam + 3-of-4 quorum cert all hold");
+    // The client also holds its trusted GENESIS anchor (like the VK + committee anchors) and pins the
+    // aggregate's genesis to it — the exact dual of the final-root seam, closing the whole-history
+    // prefix gap (TIER3 LANE 2c): a prover that folds from a fabricated/midpoint genesis is refused.
+    let finalized = verify_finalized_history(
+        &agg,
+        &vk_anchor,
+        final_root,
+        &cert,
+        &demo_committee(4),
+        Some(agg.genesis_root),
+    )
+    .expect("aggregate + root-seam + genesis-anchor + 3-of-4 quorum cert all hold");
     println!(
-        "  three legs hold: aggregate verifies, root seam binds, {} of 4 distinct signers ratify.",
+        "  four legs hold: aggregate verifies, root seam binds, GENESIS anchored, {} of 4 distinct signers ratify.",
         finalized.quorum_signers
     );
     println!(
@@ -393,9 +402,31 @@ fn main() {
         participant_count: 4,
         finalized_root: final_root,
     };
-    match verify_finalized_history(&agg, &vk_anchor, final_root, &weak, &demo_committee(4)) {
+    match verify_finalized_history(
+        &agg,
+        &vk_anchor,
+        final_root,
+        &weak,
+        &demo_committee(4),
+        None,
+    ) {
         Ok(_) => panic!("a sub-quorum cert must be refused"),
         Err(e) => println!("  sub-quorum finality cert REFUSED: {e}"),
+    }
+
+    // A fabricated genesis is refused — the prefix-hiding forge cannot pass the genesis anchor.
+    let mut fabricated_genesis = agg.genesis_root;
+    fabricated_genesis[0] += BabyBear::ONE;
+    match verify_finalized_history(
+        &agg,
+        &vk_anchor,
+        final_root,
+        &cert,
+        &demo_committee(4),
+        Some(fabricated_genesis),
+    ) {
+        Ok(_) => panic!("a fabricated genesis anchor must be refused"),
+        Err(e) => println!("  fabricated-genesis (hidden-prefix) history REFUSED: {e}"),
     }
 
     // A wrong trust anchor is refused too — the VK pin (item: a root proof of a DIFFERENT circuit

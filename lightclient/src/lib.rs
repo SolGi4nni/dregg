@@ -451,6 +451,19 @@ pub enum FinalizedError {
         /// The root the client was shown.
         shown: u32,
     },
+    /// **THE GENESIS ANCHOR broke** — the EXACT DUAL of the final-root seam. The client supplied its
+    /// trusted `expected_genesis` (its genesis/checkpoint anchor, held exactly like the VK + committee
+    /// anchors), and the aggregate's proven `genesis_root` is NOT it. The proof attests a complete,
+    /// finalized history from SOME genesis — but not from THE genesis the client trusts, so a prover
+    /// folding a valid history from a FABRICATED/midpoint genesis to the true head (hiding the entire
+    /// prefix) is rejected here. Closes TIER3 LANE 2c. (Carries the 8-felt anchors' head lanes; the
+    /// full arrays are compared, this reports the first felt for diagnostics.)
+    GenesisMismatch {
+        /// The client's trusted genesis anchor (head lane of the 8-felt `expected_genesis`).
+        expected: u32,
+        /// The genesis the aggregate actually folds from (head lane of `agg.genesis_root`).
+        proven: u32,
+    },
     /// Leg 3: the finality certificate did NOT exhibit a super-ratification quorum — fewer than
     /// `2n/3 + 1` distinct COMMITTEE members signed a verifying vote. The shown root was not
     /// finalized by the trusted committee; NO attestation. (Votes by keys OUTSIDE the trusted
@@ -480,6 +493,11 @@ impl core::fmt::Display for FinalizedError {
             FinalizedError::CertRootMismatch { certified, shown } => write!(
                 f,
                 "finalized light-client: cert finalized root {certified} but was shown {shown}"
+            ),
+            FinalizedError::GenesisMismatch { expected, proven } => write!(
+                f,
+                "finalized light-client: aggregate folds from genesis {proven} but the client's \
+                 trusted genesis anchor is {expected} — the history hides a prefix (not from THE genesis)"
             ),
             FinalizedError::NoQuorum {
                 distinct_signers,
@@ -537,12 +555,31 @@ pub struct FinalizedAttestation {
 /// keys are not in `committee` (so they contribute nothing to the quorum), and the threshold is
 /// taken over the trusted committee size, not the cert-supplied `participant_count`. An empty
 /// `committee` is refused outright (`UnanchoredCommittee`) — a count-only quorum is never accepted.
+///
+/// # The genesis anchor (`expected_genesis`) — the EXACT DUAL of the final-root seam
+///
+/// `expected_genesis` is the client's trusted genesis/checkpoint state anchor (the 8-felt faithful
+/// commitment), held exactly like the VK + committee anchors and NEVER read from the artifact. It
+/// closes the whole-history PREFIX-completeness gap (TIER3 LANE 2c):
+///
+/// - **`Some(g)`** — assert `agg.genesis_root == g`. The finality cert + committee anchor the FINAL
+///   root to the ratified head; this anchors the GENESIS root to the client's trusted start. A prover
+///   that folds a valid, committee-finalizable history from a FABRICATED (or midpoint) genesis to the
+///   true head — HIDING the entire prefix — has `agg.genesis_root != g`, so it is rejected with
+///   [`FinalizedError::GenesisMismatch`]. **Supply/conservation-from-genesis auditors MUST pass
+///   `Some(true_genesis)`** — otherwise "conservation" is only "from the claimed genesis."
+/// - **`None`** — preserve the historical "from the ATTESTED genesis" behavior: the verdict attests a
+///   complete, correctly-ordered, finalized history from SOME (prover-chosen) genesis, not
+///   necessarily from THE genesis. This is the honest E-Unfoolability statement for callers that
+///   legitimately do not hold a trusted genesis (e.g. a client syncing a suffix from a checkpoint it
+///   has NOT yet pinned). A `None` caller inherits the prefix residual by choice, not by omission.
 pub fn verify_finalized_history(
     agg: &WholeChainProof,
     expected_vk: &RecursionVk,
     finalized_root: BabyBear,
     cert: &FinalityCert,
     committee: &[[u8; 32]],
+    expected_genesis: Option<[BabyBear; SEG_ANCHOR_WIDTH]>,
 ) -> Result<FinalizedAttestation, FinalizedError> {
     // Anchor or refuse: a light client with no configured committee cannot verify finality. A
     // count-only / cert-supplied quorum is NEVER an acceptance gate (LC-2).
@@ -554,6 +591,20 @@ pub fn verify_finalized_history(
     let history = verify_history(agg, expected_vk).map_err(|e| match e {
         LightClientError::AggregateInvalid(te) => FinalizedError::AggregateInvalid(te),
     })?;
+
+    // THE GENESIS ANCHOR (the exact dual of the final-root seam below). `verify_history` just
+    // Fiat–Shamir-attested `agg.genesis_root` against the binding proof, so it is the GENUINE folded
+    // genesis (not a bare field). If the client supplied its trusted genesis, the folded history must
+    // START there — otherwise the prover hid a prefix (folded from a fabricated/midpoint genesis to
+    // the true head). This is the whole-history completeness anchor at the LEFT end (TIER3 LANE 2c).
+    if let Some(g) = expected_genesis {
+        if agg.genesis_root != g {
+            return Err(FinalizedError::GenesisMismatch {
+                expected: g[0].as_u32(),
+                proven: agg.genesis_root[0].as_u32(),
+            });
+        }
+    }
 
     // Leg 2 (seam, aggregate side): the proven endpoint must be the shown root. The BFT quorum
     // signs the single-felt head STATE root (the rotated commit the node finalizes), which is lane
@@ -1037,8 +1088,9 @@ mod tests {
         );
 
         let vk = agg.root_vk_fingerprint();
-        let attestation = verify_finalized_history(&agg, &vk, final_root, &cert, &committee(4))
-            .expect("aggregate + quorum cert + seam must all hold");
+        let attestation =
+            verify_finalized_history(&agg, &vk, final_root, &cert, &committee(4), None)
+                .expect("aggregate + quorum cert + seam must all hold");
 
         assert_eq!(attestation.history.num_turns, 2, "both turns attested");
         assert_eq!(
@@ -1049,6 +1101,77 @@ mod tests {
             attestation.quorum_signers, 3,
             "the quorum is 3 distinct signers"
         );
+    }
+
+    /// **THE GENESIS-ANCHOR FORGE TOOTH (prefix-completeness, TIER3 LANE 2c).** The whole-history
+    /// fold pins `final_root` to the committee-ratified head but, WITHOUT this anchor, pins
+    /// `genesis_root` to NOTHING — so a prover can fold a valid, committee-finalizable history from a
+    /// FABRICATED (or midpoint) genesis to the true head, hiding the ENTIRE prefix. `expected_genesis`
+    /// is the exact dual of the final-root seam: `Some(true_genesis)` REJECTS the prefix-hidden history
+    /// (`GenesisMismatch`), accepts the true-genesis one, and `None` preserves the honest
+    /// "from the attested genesis" behavior.
+    #[test]
+    fn finalized_light_client_anchors_genesis() {
+        // History A — the TRUE history the client trusts. Its genuine 8-felt genesis anchor IS the
+        // client's trusted genesis/checkpoint.
+        let (turns_a, _ga, final_a) = make_chain(1000, 0, 7, 2);
+        let (agg_a, _att) = fold_and_attest(&turns_a).expect("history A folds");
+        let vk = agg_a.root_vk_fingerprint();
+        let cert_a = make_cert(3, 4, final_a);
+        let com = committee(4);
+        let true_genesis = agg_a.genesis_root;
+
+        // NONE: the historical behavior — the finalized history verifies from the ATTESTED genesis.
+        verify_finalized_history(&agg_a, &vk, final_a, &cert_a, &com, None)
+            .expect("None preserves the from-attested-genesis behavior");
+
+        // SOME(true): the genuine history is accepted under the trusted genesis anchor (positive arm).
+        let att = verify_finalized_history(&agg_a, &vk, final_a, &cert_a, &com, Some(true_genesis))
+            .expect("the true genesis anchor accepts the genuine history");
+        assert_eq!(
+            att.history.genesis_root, true_genesis,
+            "the accepted history is anchored to the trusted genesis"
+        );
+
+        // SOME(fabricated): tweak one lane of the trusted anchor — the SAME genuine aggregate is now
+        // REJECTED, because the client demands a genesis this history does not fold from.
+        let mut fabricated = true_genesis;
+        fabricated[0] += BabyBear::ONE;
+        assert_ne!(fabricated, true_genesis);
+        match verify_finalized_history(&agg_a, &vk, final_a, &cert_a, &com, Some(fabricated)) {
+            Err(FinalizedError::GenesisMismatch { expected, proven }) => {
+                assert_eq!(expected, fabricated[0].as_u32());
+                assert_eq!(proven, true_genesis[0].as_u32());
+            }
+            other => panic!(
+                "a genesis anchor the history does not fold from must be rejected; got {other:?}"
+            ),
+        }
+
+        // THE PREFIX-HIDING FORGE, faithfully: a DIFFERENT genuine, finalizable history B (a real fold
+        // from a DIFFERENT genesis) — the "prefix-hidden" chain a prover could present to a client that
+        // trusts history A's genesis. Every turn in B is genuine and B is committee-finalized at ITS
+        // head, yet B does not start at the client's trusted genesis. WITHOUT the anchor B verifies
+        // (exactly the LANE 2c residual); WITH `Some(true_genesis)` it is REJECTED — the prefix is no
+        // longer hideable. (Same K=2 window ⇒ same VK anchor, per the shape-not-content property.)
+        let (turns_b, _gb, final_b) = make_chain(5000, 9, 13, 2);
+        let (agg_b, _attb) = fold_and_attest(&turns_b).expect("history B folds");
+        assert_ne!(
+            agg_b.genesis_root, true_genesis,
+            "B genuinely starts at a different genesis"
+        );
+        let cert_b = make_cert(3, 4, final_b);
+        // Unanchored: B is a perfectly valid finalized history (from ITS OWN genesis) — the residual.
+        verify_finalized_history(&agg_b, &vk, final_b, &cert_b, &com, None).expect(
+            "B is a valid finalized history from its own genesis (the unanchored residual)",
+        );
+        // Anchored to A's trusted genesis: B is refused — it hides the prefix before its start.
+        match verify_finalized_history(&agg_b, &vk, final_b, &cert_b, &com, Some(true_genesis)) {
+            Err(FinalizedError::GenesisMismatch { .. }) => {}
+            other => panic!(
+                "a history that does not start at the trusted genesis must be rejected; got {other:?}"
+            ),
+        }
     }
 
     /// **REJECTION TOOTH 1 — tampered aggregate.** Splicing a foreign public final root onto the
@@ -1072,7 +1195,7 @@ mod tests {
         // A genuine quorum for the ORIGINAL finalized root — the relabeled aggregate must be
         // refused outright (the carried publics no longer verify against the binding proof).
         let cert = make_cert(3, 4, final_root);
-        match verify_finalized_history(&agg, &vk, final_root, &cert, &committee(4)) {
+        match verify_finalized_history(&agg, &vk, final_root, &cert, &committee(4), None) {
             Err(FinalizedError::AggregateInvalid(
                 dregg_circuit_prove::ivc_turn_chain::TurnChainError::ClaimedPublicsUnattested {
                     ..
@@ -1089,7 +1212,7 @@ mod tests {
         // aggregate verifies, but its proven endpoint is not the root the client was shown.
         let shown = final_root + BabyBear::ONE;
         let cert_b = make_cert(3, 4, shown);
-        match verify_finalized_history(&agg, &vk, shown, &cert_b, &committee(4)) {
+        match verify_finalized_history(&agg, &vk, shown, &cert_b, &committee(4), None) {
             Err(FinalizedError::AggregateRootMismatch { proven, shown: s }) => {
                 assert_eq!(proven, final_root.as_u32());
                 assert_eq!(s, shown.as_u32());
@@ -1116,7 +1239,7 @@ mod tests {
         );
 
         let vk = agg.root_vk_fingerprint();
-        match verify_finalized_history(&agg, &vk, final_root, &weak_cert, &committee(4)) {
+        match verify_finalized_history(&agg, &vk, final_root, &weak_cert, &committee(4), None) {
             Err(FinalizedError::NoQuorum {
                 distinct_signers,
                 threshold,
@@ -1144,7 +1267,7 @@ mod tests {
         assert!(cert.has_quorum(), "the cert itself carries a real quorum");
 
         let vk = agg.root_vk_fingerprint();
-        match verify_finalized_history(&agg, &vk, final_root, &cert, &committee(4)) {
+        match verify_finalized_history(&agg, &vk, final_root, &cert, &committee(4), None) {
             Err(FinalizedError::CertRootMismatch { certified, shown }) => {
                 assert_eq!(certified, foreign_root.as_u32());
                 assert_eq!(shown, final_root.as_u32());
@@ -1178,7 +1301,7 @@ mod tests {
         );
 
         let vk = agg.root_vk_fingerprint();
-        match verify_finalized_history(&agg, &vk, final_root, &padded_cert, &committee(4)) {
+        match verify_finalized_history(&agg, &vk, final_root, &padded_cert, &committee(4), None) {
             Err(FinalizedError::NoQuorum {
                 distinct_signers, ..
             }) => {
@@ -1234,7 +1357,7 @@ mod tests {
         );
         assert!(!forged.has_committee_quorum(&trusted));
 
-        match verify_finalized_history(&agg, &vk, final_root, &forged, &trusted) {
+        match verify_finalized_history(&agg, &vk, final_root, &forged, &trusted, None) {
             Err(FinalizedError::NoQuorum {
                 distinct_signers,
                 threshold,
@@ -1254,7 +1377,7 @@ mod tests {
         // foreign keys, not the honest quorum).
         let honest = make_cert(3, 4, final_root);
         assert!(
-            verify_finalized_history(&agg, &vk, final_root, &honest, &trusted).is_ok(),
+            verify_finalized_history(&agg, &vk, final_root, &honest, &trusted, None).is_ok(),
             "the genuine committee's quorum still finalizes"
         );
     }
@@ -1270,7 +1393,7 @@ mod tests {
 
         // A genuine 3-of-4 quorum — but the client holds NO committee.
         let cert = make_cert(3, 4, final_root);
-        match verify_finalized_history(&agg, &vk, final_root, &cert, &[]) {
+        match verify_finalized_history(&agg, &vk, final_root, &cert, &[], None) {
             Err(FinalizedError::UnanchoredCommittee) => {}
             other => panic!("an unanchored client must refuse outright; got {other:?}"),
         }
@@ -1312,7 +1435,7 @@ mod tests {
             "but NONE carry a valid signature — the binding leg counts zero"
         );
         assert!(!unsigned.has_quorum(), "an unsigned cert is not a quorum");
-        match verify_finalized_history(&agg, &vk, final_root, &unsigned, &committee(4)) {
+        match verify_finalized_history(&agg, &vk, final_root, &unsigned, &committee(4), None) {
             Err(FinalizedError::NoQuorum {
                 distinct_signers, ..
             }) => assert_eq!(distinct_signers, 0),
@@ -1335,7 +1458,7 @@ mod tests {
             0,
             "signatures bound to a different root do not verify over this cert's root"
         );
-        match verify_finalized_history(&agg, &vk, final_root, &wrong_root, &committee(4)) {
+        match verify_finalized_history(&agg, &vk, final_root, &wrong_root, &committee(4), None) {
             Err(FinalizedError::NoQuorum { .. }) => {}
             other => panic!("a wrong-root-bound finality cert must be rejected; got {other:?}"),
         }
@@ -1344,7 +1467,9 @@ mod tests {
         // forgery, not the honest cert).
         let honest = make_cert(3, 4, final_root);
         assert_eq!(honest.distinct_signers(), 3);
-        assert!(verify_finalized_history(&agg, &vk, final_root, &honest, &committee(4)).is_ok());
+        assert!(
+            verify_finalized_history(&agg, &vk, final_root, &honest, &committee(4), None).is_ok()
+        );
     }
 
     /// **THE REJECTION TOOTH (Rust witness).** A light client REFUSES a corrupted aggregate

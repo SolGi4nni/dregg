@@ -99,13 +99,14 @@ verifies but (i) OMITS a real turn between two folded states, or (ii) INJECTS a 
 that never happened, or (iii) TRUNCATES?
 
 **Verdict: HOLDS for the two named attacks (interior-omission and injection) — no
-forge is constructible. There is ONE honest residual, and it is at the GENESIS
-(prefix) end, not "between two folded states": the deployed verify pins `final_root`
-to the committee-finalized head but does NOT anchor `genesis_root` to any trusted
-value. Completeness is therefore "the whole history FROM the prover-chosen genesis,"
-and a from-true-genesis claim requires the client to additionally pin `genesis_root`
-to its trusted genesis/checkpoint — a check the deployed API neither performs nor
-exposes as a parameter.**
+forge is constructible. The ONE honest residual was at the GENESIS (prefix) end: the
+deployed verify pinned `final_root` to the committee-finalized head but did NOT anchor
+`genesis_root` to any trusted value. `→ CLOSED (2026-07-05)`: `verify_finalized_history`
+now takes an `expected_genesis: Option<[BabyBear; 8]>` — the exact verify-side dual of
+the final-root seam — and REJECTS (`FinalizedError::GenesisMismatch`) any history whose
+folded `genesis_root` is not the client's trusted anchor. `None` preserves the honest
+"from the attested genesis" behavior for callers that legitimately hold no trusted
+genesis. See 2c below for the close.**
 
 ### 2a. Interior omission — CLOSED by the temporal tooth (UNSAT, no forge buildable)
 
@@ -189,21 +190,44 @@ or expose this genesis anchor**, so a `verify_finalized_history` verdict alone
 attests "a complete, correctly-ordered, finalized history from SOME genesis," not
 "…from THE genesis."
 
-**Classification: reducible-open (a missing/unexposed anchor check), correctly
-bounded to the checkpoint-trust model.** The close is a one-parameter addition:
-`verify_finalized_history(..., expected_genesis: [BabyBear; 8])` asserting
-`agg.genesis_root == expected_genesis` (the genesis dual of the existing VK + final-
-root anchors). Until then, the honest statement of the E-Unfoolability guarantee is
-"whole-history conservation **from the attested `genesis_root`**," and downstream
-whole-history/supply auditors must supply and check that anchor themselves.
+**Classification: reducible-open → CLOSED (2026-07-05).** The close is the
+one-parameter addition it was scoped to be — the genesis dual of the existing VK +
+final-root anchors — now landed in BOTH layers, `#assert_axioms`-clean, with a biting
+forge tooth:
 
-**Why no forge is committed for 2c:** the interior/injection forges (2a/2b) are
-UNSAT-by-construction and cannot be built; the prefix "forge" (2c) is a LEGITIMATE
-sub-history that genuinely verifies — demonstrating it requires an expensive real
-fold and would prove only the already-grounded fact that `genesis_root` is a free
-input (`RecursiveAggregation.lean:194` + `lib.rs:540` signature). The finding is
-grounded at file:line rather than re-proven by an expensive fold, per the audit's
-economy directive.
+- **Rust (`lightclient/src/lib.rs`).** `verify_finalized_history` now takes
+  `expected_genesis: Option<[BabyBear; SEG_ANCHOR_WIDTH]>`. When `Some(g)` it asserts
+  `agg.genesis_root == g` (checked right after `verify_history` Fiat–Shamir-attests the
+  carried `genesis_root`, so it is the GENUINE folded genesis, not a bare field) and
+  rejects a mismatch with the new `FinalizedError::GenesisMismatch` — the exact dual of
+  the `final_root` seam at the same call site. `None` preserves the honest
+  "from the attested genesis" behavior for callers with no trusted genesis (documented
+  on the fn). The deployed demo (`whole_history_demo.rs`) now passes
+  `Some(agg.genesis_root)` on the happy path and demonstrates a fabricated-genesis
+  REFUSAL.
+- **Lean (`RecursiveAggregation.lean`).** `AnchoredAttests` = `AggregateAttests` +
+  the verify-side anchor `agg.genesisRoot = expectedGenesis`;
+  `light_client_verifies_anchored_history` delivers it; `anchored_history_starts_at_
+  genesis` concludes the fold provably STARTS at the trusted genesis (the dual of
+  `final_is_genuine_fold`); `anchored_conserves_from_verification` concludes conservation
+  FROM that anchored genesis (both ends pinned). All `#assert_axioms`-clean.
+
+**The tooth BITES (no fake green):**
+
+- Rust `finalized_light_client_anchors_genesis` (`lib.rs`): `None` accepts,
+  `Some(true_genesis)` accepts, `Some(fabricated)` REJECTS with `GenesisMismatch`, and a
+  DIFFERENT genuine finalized history B (a real fold from a different genesis — the
+  actual prefix-hiding chain) verifies under `None` but is REJECTED when anchored to A's
+  trusted genesis.
+- Lean `anchored_tooth_bites_on_real_chain`: a WRONG expected genesis
+  (`genesisRoot + 1`) admits NO `AnchoredAttests` on the realizing instance (contradicts
+  `genesis_anchored`); `anchored_fires_on_real_chain` witnesses the positive. Non-vacuous
+  both ways.
+
+With the anchor, a `verify_finalized_history` verdict attests "a complete, correctly-
+ordered, finalized history FROM THE (trusted) genesis." Supply/conservation-from-genesis
+auditors MUST pass `Some(true_genesis)`; a `None` caller inherits the prefix residual by
+explicit choice, not by an unexposed API gap.
 
 ---
 
