@@ -200,6 +200,45 @@ theorem execFullTurnA_conserves_exact_satisfiable :
   obtain ⟨s', h⟩ := Option.isSome_iff_exists.mp hsome
   exact ⟨s', h, execFullTurnA_conserves_exact g0 s' traj b h⟩
 
+/-! ## §5b — `reachable_total_zero` BITING TEETH (a nonzero-sum state is UNREACHABLE).
+
+`reachable_total_zero_satisfiable` (§above) proves the value law FIRES on a concrete reachable state
+(genesis `g0`). The DUAL — the discriminating tooth — is a NAMED, axiom-clean refutation that the law
+is `:= True`: a fabricated single-cell state whose issuer well was never debited carries a nonzero
+per-asset total, so it FAILS `ExactConservation` AND is therefore UNREACHABLE from any value-empty
+genesis (`reachable_total_zero` refuses it). This is the term-level counterpart of the
+`#guard`-only authority/genesis-order teeth in `ReachableConservation.lean` — promoted to a theorem a
+`*_teeth` companion / the non-vacuity meta-gate can register (`docs/audit/NON-VACUITY-MANIFEST.md`). -/
+
+/-- A fabricated kernel: one live cell `2` holding `5` units of asset `1` with no matching issuer-well
+debit — value that entered WITHOUT an issuer-move, so the books do not close. -/
+def badKernel : RecordKernelState :=
+  { g0.kernel with accounts := {2}, bal := fun _ a => if a = 1 then 5 else 0 }
+
+/-- The fabricated state carrying `badKernel`. -/
+def badState : RecChainedState := { g0 with kernel := badKernel }
+
+/-- `badKernel`'s asset-`1` total is `5`, not `0` (the sum over the singleton `{2}`). -/
+theorem badKernel_total : recTotalAsset badKernel 1 = 5 := by
+  simp [recTotalAsset, badKernel, Finset.sum_singleton]
+
+/-- **THE `reachable_total_zero` TEETH** — the value law DISCRIMINATES: a nonzero-sum state
+provably FAILS `ExactConservation`, so the law is two-valued (not vacuously `:= True`). -/
+theorem reachable_total_zero_teeth : ¬ ExactConservation badKernel := by
+  intro h
+  have h1 := h 1
+  rw [badKernel_total] at h1
+  omega
+
+/-- **THE BITE** — a nonzero-sum state is UNREACHABLE: `reachable_total_zero` forbids it. If `badState`
+were reachable, the law would force `ExactConservation badKernel`, contradicting the teeth. So the
+value law genuinely constrains the reachable state space (imbalance cannot be reached). -/
+theorem nonzero_state_unreachable : ¬ Reachable badState := fun h =>
+  reachable_total_zero_teeth (reachable_total_zero badState h)
+
+#assert_axioms reachable_total_zero_teeth
+#assert_axioms nonzero_state_unreachable
+
 /-! ## §6 — TAG the 15 conservation keystones (re-pinning aliases, type inferred).
 
 The executor-conservation TEETH are the EXISTING `IssuerMove` breaks the ledger names: the LEGACY

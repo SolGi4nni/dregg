@@ -178,6 +178,21 @@ def egC : Cap := reshare [Auth.write, Auth.read] [Auth.read] egA
 -- and an authority A NEVER held (`call`) is absent from any reshare, even if a keep-set names it:
 #guard !(Auth.call ∈ capAuthConferred (reshareN [[Auth.call], [Auth.call]] egA) : Bool)
 
+/-- **`reshareN_attenuates` NON-VACUITY (fires + is PROPER).** The `#guard`s above check the chain
+computes; this is the NAMED, axiom-clean companion the non-vacuity meta-gate registers
+(`docs/audit/NON-VACUITY-MANIFEST.md`). It USES `reshareN_attenuates` on a concrete two-hop chain
+(so its `⊆` conclusion is exercised, not vacuous) AND witnesses the attenuation is STRICT: `grant`
+is held by A upstream but DARKENED downstream — the subset is proper, so the theorem constrains
+something. -/
+theorem reshareN_attenuates_satisfiable :
+    capAuthConferred (reshareN [[Auth.write, Auth.read], [Auth.read]] egA)
+        ⊆ capAuthConferred egA
+      ∧ Auth.grant ∈ capAuthConferred egA
+      ∧ Auth.grant ∉ capAuthConferred (reshareN [[Auth.write, Auth.read], [Auth.read]] egA) :=
+  ⟨reshareN_attenuates _ egA, by decide, by decide⟩
+
+#assert_axioms reshareN_attenuates_satisfiable
+
 end Witnesses
 
 /-! ## §6 — THE UPWARD LEG: the conjunction forwarder (`cell/src/membrane.rs`).
