@@ -20,8 +20,11 @@
 //!    at the v12 geometry (`trace_width` derived through the canonical constants on BOTH sides);
 //!  * an HONEST discharge settle (cursor +period, total +amount, due ≤ clock) PROVES + VERIFIES;
 //!  * an HONEST vault deposit (fair mint, `Ta·m ≤ Sa·d`) PROVES + VERIFIES;
-//!  * the SIX forge arms are REFUSED: EARLY discharge (clock < due) / CURSOR-NOT-ADVANCED (replay) /
-//!    WRONG-AMOUNT; ZERO-MINT inflation (ERC-4626) / OVER-MINT dilution / NO-DEPOSIT.
+//!  * the SIX gate-mechanic forge arms are REFUSED: EARLY discharge (clock < due) / CURSOR-NOT-ADVANCED
+//!    (replay) / WRONG-AMOUNT; ZERO-MINT inflation (ERC-4626) / OVER-MINT dilution / NO-DEPOSIT;
+//!  * the THREE G5 FREE-PARAM-BIND forge arms are REFUSED: a FORGED PERIOD / FORGED AMOUNT (a producer
+//!    scalar filled to satisfy the gate but ≠ the committed caveat term) and a FABRICATED CLOCK (a
+//!    scalar ≠ the published block height) — the binds close the last free-param soundness hole.
 //!
 //! ## STAGED — what still rides the BIG-BANG regen (the named riders)
 //!
@@ -30,9 +33,11 @@
 //!    in `effect_vm_descriptors.rs`;
 //!  * the caveat-manifest COVERAGE tie (routing a declared-18/19 turn through these descriptors,
 //!    `rotated_descriptor_name_for_declared_*`);
-//!  * PI/manifest-param binding of the `period`/`amount`/`clock` scalar columns (today they are
-//!    producer-filled free params; the flip binds `clock` to the published block height and
-//!    `period`/`amount` to the committed caveat params) + the welded VK commit.
+//!  * the welded VK commit + live admission (the descriptor/registry big-bang). NOTE: the
+//!    free-param BINDING itself is now CLOSED here (G5) — `discharge_weld::discharge_floor_gates`
+//!    carries the slot-selected param bind (`period`/`amount` → the committed caveat params, PI 45)
+//!    and the clock bind (`clock` → the published block height, PI 44), and the three forge arms below
+//!    prove it bites; only the committed VK for the welded descriptor still rides the big-bang.
 //!
 //! SLOW (full batch STARKs). Run:
 //!   `cargo test -p dregg-circuit --test gentian_discharge_vault_prove --release -- --nocapture \
@@ -113,12 +118,18 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
 }
 
 /// The carrier inputs. `due_block` seeds `initial_state.fields[DUE]` (frozen through the settle —
-/// the committed due block both blocks read); zero for the vault arms.
-fn carrier_inputs(due_block: u32) -> (CellState, RotatedBlockWitness, RotatedBlockWitness) {
+/// the committed due block both blocks read); zero for the vault arms. `committed_height` is the
+/// cell's committed block height — it rides pre-limb 31 → the AFTER-block `committed_height` column
+/// (PI 44), which the G5 clock-bind pins `CLOCK_COL` to (the REAL published clock).
+fn carrier_inputs(
+    due_block: u32,
+    committed_height: u32,
+) -> (CellState, RotatedBlockWitness, RotatedBlockWitness) {
     let balance: i64 = 100_000;
     let mut initial_state = CellState::new(balance as u64, 0);
     initial_state.fields[DUE] = BabyBear::new(due_block);
-    let cell = producer_cell(balance);
+    let mut cell = producer_cell(balance);
+    cell.state.set_committed_height(committed_height as u64);
     let mut ledger = Ledger::new();
     ledger.insert_cell(cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
@@ -136,16 +147,23 @@ fn carrier_inputs(due_block: u32) -> (CellState, RotatedBlockWitness, RotatedBlo
 }
 
 /// A capacity-declaring caveat manifest: slot 0 type tag = `tag` (18 or 19), bound into the
-/// caveat-commit chain (PI 45) like the escrow manifest in the gentian escrow exercise.
-fn capacity_manifest(tag: u32) -> RotatedCaveatManifest {
+/// caveat-commit chain (PI 45) like the escrow manifest in the gentian escrow exercise. `params`
+/// carries the DECLARED capacity terms (discharge: `[period, amount, 0, 0]`) — the committed terms
+/// the G5 bind gates pin the producer `PERIOD_COL`/`AMOUNT_COL` scalars to.
+fn capacity_manifest_with_params(tag: u32, params: [u32; 4]) -> RotatedCaveatManifest {
     let mut m = RotatedCaveatManifest::default();
     m.entries[0] = RotatedCaveatEntry {
         type_tag: tag,
         domain_tag: cav::DOMAIN_REGISTERS,
         key: BabyBear::ZERO,
-        params: [BabyBear::ZERO; 4],
+        params: params.map(BabyBear::new),
     };
     m
+}
+
+/// The zero-param manifest (vault: the no-dilution gate reads state directly, no declared scalars).
+fn capacity_manifest(tag: u32) -> RotatedCaveatManifest {
+    capacity_manifest_with_params(tag, [0; 4])
 }
 
 fn mem() -> MemBoundaryWitness {
@@ -218,22 +236,56 @@ fn vault_descriptor() -> EffectVmDescriptor2 {
     desc
 }
 
-/// Build a discharge settle-carrier trace: legs CUR/TOT flip `before → after`, the committed due
-/// block rides frozen field slot DUE, the exported production aux-fill fills the gadget columns.
+/// The full-control discharge settle-carrier builder — the DECLARED (committed manifest) terms +
+/// published height are separated from the PRODUCER-FILLED scalars so the G5 forge arms can drive
+/// them apart. Legs CUR/TOT flip `before → after`; the committed due block rides frozen slot DUE;
+/// `declared_*`/`published_height` land in the caveat params + committed-height column (the committed
+/// carriers), `fill_*` in the producer scalar columns (`PERIOD_COL`/`AMOUNT_COL`/`CLOCK_COL`).
+#[allow(clippy::too_many_arguments)]
+fn discharge_trace_ex(
+    desc: &EffectVmDescriptor2,
+    before: (u32, u32),
+    after: (u32, u32),
+    declared_period: u32,
+    declared_amount: u32,
+    published_height: u32,
+    fill_period: u32,
+    fill_amount: u32,
+    fill_clock: u32,
+) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    let (st, bw, aw) = carrier_inputs(DUE_BLOCK, published_height);
+    let m = capacity_manifest_with_params(
+        SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION,
+        [declared_period, declared_amount, 0, 0],
+    );
+    let (mut trace, dpis) =
+        generate_rotated_settle_escrow_trace_forged(&st, &bw, &aw, &m, CUR, TOT, before, after)
+            .expect("the discharge settle carrier must generate");
+    assert_eq!(dpis.len(), 47);
+    fill_discharge_aux(
+        &mut trace,
+        desc.trace_width,
+        DUE,
+        fill_period,
+        fill_amount,
+        fill_clock,
+    );
+    (trace, dpis)
+}
+
+/// The HONEST-terms discharge trace: the declared manifest terms EQUAL the filled scalars and the
+/// published height EQUALS the filled clock — the baseline for the honest / due-ness / cursor /
+/// wrong-amount arms (where `before`/`after`/`clock` vary but the terms track the fill).
 fn discharge_trace(
     desc: &EffectVmDescriptor2,
     before: (u32, u32),
     after: (u32, u32),
     clock: u32,
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
-    let (st, bw, aw) = carrier_inputs(DUE_BLOCK);
-    let m = capacity_manifest(SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION);
-    let (mut trace, dpis) =
-        generate_rotated_settle_escrow_trace_forged(&st, &bw, &aw, &m, CUR, TOT, before, after)
-            .expect("the discharge settle carrier must generate");
-    assert_eq!(dpis.len(), 47);
-    fill_discharge_aux(&mut trace, desc.trace_width, DUE, PERIOD, AMOUNT, clock);
-    (trace, dpis)
+    discharge_trace_ex(
+        desc, before, after, PERIOD, AMOUNT, /*published_height*/ clock, PERIOD, AMOUNT,
+        /*fill_clock*/ clock,
+    )
 }
 
 /// Build a vault deposit-carrier trace: legs ASSET/SHARE flip `before → after`, the exported
@@ -243,7 +295,7 @@ fn vault_trace(
     before: (u32, u32),
     after: (u32, u32),
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
-    let (st, bw, aw) = carrier_inputs(0);
+    let (st, bw, aw) = carrier_inputs(0, 0);
     let m = capacity_manifest(SLOT_CAVEAT_TAG_VAULT_DEPOSIT);
     let (mut trace, dpis) =
         generate_rotated_settle_escrow_trace_forged(&st, &bw, &aw, &m, ASSET, SHARE, before, after)
@@ -368,6 +420,87 @@ fn wrong_amount_discharge_refused() {
         "a wrong-amount discharge MUST be refused"
     );
     eprintln!("DISCHARGE (wrong amount): REFUSED.");
+}
+
+// ====================================================================================================
+// TOOTH D4 (G5 FREE-PARAM BIND) — a FORGED PERIOD is REFUSED. The declared caveat period is 100, but
+// the forger discharges by 999: advance the cursor by 999 AND fill PERIOD_COL = 999 so the SATISFACTION
+// cursor gate still vanishes. Without the bind this proves (the period was a free param); WITH the bind,
+// the slot-selected gate bit·(committed 100 − 999) bites → UNSAT. This is what makes the bind real.
+// ====================================================================================================
+#[test]
+fn forged_period_discharge_refused() {
+    let desc = discharge_descriptor();
+    let (trace, dpis) = discharge_trace_ex(
+        &desc,
+        (1000, 0),
+        (/*after_cur*/ 1999, 50), // advance by the FORGED period 999
+        /*declared_period*/ 100,
+        /*declared_amount*/ AMOUNT,
+        /*published_height*/ CLOCK,
+        /*fill_period*/ 999, // satisfaction cursor gate now vanishes...
+        /*fill_amount*/ AMOUNT,
+        /*fill_clock*/ CLOCK,
+    );
+    assert!(
+        !accepts(&desc, &trace, &dpis),
+        "a forged period (scalar ≠ committed caveat term) MUST be refused by the bind gate"
+    );
+    eprintln!("DISCHARGE (forged period 999 ≠ committed 100): REFUSED.");
+}
+
+// ====================================================================================================
+// TOOTH D5 (G5 FREE-PARAM BIND) — a FORGED AMOUNT is REFUSED. Declared amount 50; the forger discharges
+// 9999: advance the total by 9999 AND fill AMOUNT_COL = 9999 so the satisfaction total gate vanishes —
+// the bind gate bit·(committed 50 − 9999) bites → UNSAT.
+// ====================================================================================================
+#[test]
+fn forged_amount_discharge_refused() {
+    let desc = discharge_descriptor();
+    let (trace, dpis) = discharge_trace_ex(
+        &desc,
+        (1000, 0),
+        (1100, /*after_tot*/ 9999),
+        /*declared_period*/ PERIOD,
+        /*declared_amount*/ 50,
+        /*published_height*/ CLOCK,
+        /*fill_period*/ PERIOD,
+        /*fill_amount*/ 9999, // satisfaction total gate now vanishes...
+        /*fill_clock*/ CLOCK,
+    );
+    assert!(
+        !accepts(&desc, &trace, &dpis),
+        "a forged amount (scalar ≠ committed caveat term) MUST be refused by the bind gate"
+    );
+    eprintln!("DISCHARGE (forged amount 9999 ≠ committed 50): REFUSED.");
+}
+
+// ====================================================================================================
+// TOOTH D6 (G5 FREE-PARAM BIND) — a FABRICATED CLOCK is REFUSED. The published block height is 999 (an
+// obligation due at 1000 is genuinely NOT yet due). The forger fabricates CLOCK_COL = 1000 to pass the
+// due-ness range gadget (1000 ≥ 1000) — but the clock-bind sel·(CLOCK_COL 1000 − published 999) bites
+// → UNSAT. Without the bind, the forger claims due-ness at an invented clock.
+// ====================================================================================================
+#[test]
+fn fabricated_clock_discharge_refused() {
+    let desc = discharge_descriptor();
+    let (trace, dpis) = discharge_trace_ex(
+        &desc,
+        (1000, 0),
+        (1100, 50),
+        /*declared_period*/ PERIOD,
+        /*declared_amount*/ AMOUNT,
+        /*published_height*/
+        999, // the REAL chain height (obligation due 1000 is NOT due yet)
+        /*fill_period*/ PERIOD,
+        /*fill_amount*/ AMOUNT,
+        /*fill_clock*/ 1000, // fabricated clock to fake due-ness
+    );
+    assert!(
+        !accepts(&desc, &trace, &dpis),
+        "a fabricated clock (scalar ≠ published block height) MUST be refused by the clock-bind gate"
+    );
+    eprintln!("DISCHARGE (fabricated clock 1000 ≠ published 999): REFUSED.");
 }
 
 // ====================================================================================================

@@ -43,14 +43,26 @@
 //! below ([`fill_discharge_aux`]); `gentian_discharge_vault_prove.rs` proves real STARKs against it
 //! (honest settle proves+verifies; early / cursor-not-advanced / wrong-amount REFUSED). What still
 //! rides the ONE big-bang descriptor regen: the `rotation-v3-staged-registry.tsv` row + the
-//! drift-gate FP pin, the declared-tag-18 routing tie, the PI/manifest-param binding of
-//! `PERIOD_COL`/`AMOUNT_COL`/`CLOCK_COL`, and the welded VK commit + live admission.
+//! drift-gate FP pin, the declared-tag-18 routing tie, and the welded VK commit + live admission.
+//!
+//! ## G5 — the FREE-PARAM BINDING is CLOSED (the `PERIOD_COL`/`AMOUNT_COL`/`CLOCK_COL` hole)
+//!
+//! The three schedule scalars are producer-filled; absent a bind a forger CHOOSES them (discharging by
+//! a self-selected period/amount or claiming due-ness at a fabricated clock). [`discharge_floor_gates`]
+//! now pins them to COMMITTED state: `PERIOD_COL`/`AMOUNT_COL` are gated equal to the declared discharge
+//! caveat's `params[0]`/`params[1]` (slot-selected by the floor decode's is-discharge bit; the param
+//! columns made uniform so the settle-row bind lands on the last-row PI-45 `caveatCommit` term), and
+//! `CLOCK_COL` is gated equal to the AFTER-block `committed_height` column (published as PI 44, folded
+//! into the state commit). The teeth are `gentian_discharge_vault_prove::{forged_period,forged_amount,
+//! fabricated_clock}` (a scalar filled to satisfy the satisfaction gate but ≠ the committed term/clock
+//! is UNSAT). Vault (tag 19) has NO free scalars — its gate reads before/after state directly — so no
+//! analog is needed there.
 
 use super::carrier_floor_weld::caveat_tag_col;
 use super::columns::rotation::caveat as cav;
 use super::pi::SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION;
 use super::satisfaction_weld::{after_field_col, before_field_col};
-use super::trace_rotated::GRAD_ROT_WIDTH;
+use super::trace_rotated::{AFTER_BASE, B_COMMITTED_HEIGHT, GRAD_ROT_WIDTH};
 use crate::descriptor_ir2::{VmConstraint2, WindowExpr, WindowGateSpec};
 use crate::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
@@ -73,6 +85,33 @@ pub const PERIOD_COL: usize = super::columns::PARAM_BASE + 5;
 pub const AMOUNT_COL: usize = super::columns::PARAM_BASE + 6;
 /// The batch-height `clock` scalar column (the schedule clock). PI-bound (the deployed `block_height`).
 pub const CLOCK_COL: usize = super::columns::PARAM_BASE + 7;
+
+// ---------------------------------------------------------------------------
+// THE FREE-PARAM BINDING carriers (G5): the three scalar columns above are producer-filled and,
+// absent a bind, a forger picks them — discharging by a chosen period/amount or claiming due-ness at
+// a fabricated clock. These consts name the COMMITTED state they are gated equal to below.
+// ---------------------------------------------------------------------------
+
+/// In-entry offset of the committed `period` param (`params[0]`) of caveat slot `k`. The 7-felt entry
+/// layout is `[type_tag, domain_tag, key, p0, p1, p2, p3]`; `caveat_tag_col(k)` is the `type_tag`
+/// (offset 0), so `params[p]` rides `caveat_tag_col(k) + 3 + p`. These param felts are folded by the
+/// deployed `caveatCommit` chain into PI 45 (the caveat commit) — the SAME pin the carrier-floor tag
+/// decode reads — so binding a producer scalar to them binds it to the cell's DECLARED capacity terms.
+pub const CAVEAT_PERIOD_PARAM: usize = 0;
+/// In-entry offset of the committed `amount` param (`params[1]`) of caveat slot `k`.
+pub const CAVEAT_AMOUNT_PARAM: usize = 1;
+
+/// The committed caveat-manifest param column for slot `k`, param index `p` (`0 = period`,
+/// `1 = amount`) — `caveat_tag_col(k) + 3 + p`, a caveat-commit-bound (PI 45) column.
+pub const fn caveat_param_col(k: usize, p: usize) -> usize {
+    caveat_tag_col(k) + 3 + p
+}
+
+/// **THE COMMITTED BLOCK-HEIGHT COLUMN** — the AFTER state-block `committed_height` limb
+/// (`AFTER_BASE + B_COMMITTED_HEIGHT`). It is published as rotated PI 44 AND folded into the after
+/// state commit (PI 43), so a pure light client holds it as the REAL chain height; the `clock` scalar
+/// is gated equal to it below (due-ness is then checked against the published clock, not a chosen one).
+pub const COMMITTED_HEIGHT_COL: usize = AFTER_BASE + B_COMMITTED_HEIGHT;
 
 /// The discharge tag as a signed felt constant (`= 18`). Lean
 /// `Dregg2.Deos.ConstraintBinding.tagDischargeObligation`.
@@ -210,6 +249,42 @@ fn caveat_uniform_gate(tag_col: usize) -> VmConstraint2 {
     })
 }
 
+// --- the FREE-PARAM BINDING gates (G5): pin period/amount to the committed caveat terms, clock to
+// the published block height (mirror of the carrier-floor decode's tag binding, extended to params). ---
+
+/// (param-bind_k) **the slot-selected term bind** `bit_k · (caveat_param_col(k,p) − scalar_col) == 0`
+/// (degree 2). `bit_k` is the floor decode's is-discharge boolean (1 iff `tag_k == 18`), so on the
+/// slot that DECLARES discharge this FORCES the producer scalar (`PERIOD_COL`/`AMOUNT_COL`) EQUAL to
+/// that slot's committed caveat param; on every non-discharge slot (`bit_k = 0`) it is inert. A forger
+/// filling a scalar ≠ the declared term (to discharge by a chosen period/amount) makes it bite (UNSAT).
+fn param_bind_gate(k: usize, param_off: usize, scalar_col: usize) -> VmConstraint2 {
+    gate(LeanExpr::mul(
+        var(bit_col(k)),
+        LeanExpr::add(var(caveat_param_col(k, param_off)), neg(var(scalar_col))),
+    ))
+}
+
+/// (param-uniformity_k) the period/amount caveat param columns' `nxt − loc == 0` (on-transition) —
+/// the tag-uniformity sibling for the param columns. Without it a forger could commit the honest terms
+/// on the LAST row (the PI-45 `caveatCommit` fold reads the last row) while lighting FORGED params on
+/// the settle row (row 0), where the bind + satisfaction gates fire. Uniformity couples row-0 to the
+/// committed last row, so the settle-row param the bind pins to IS the declared committed term.
+fn caveat_param_uniform_gate(k: usize, param_off: usize) -> VmConstraint2 {
+    caveat_uniform_gate(caveat_param_col(k, param_off))
+}
+
+/// (clock-bind) `sel · (CLOCK_COL − COMMITTED_HEIGHT_COL) == 0` (degree 2). The committed-height
+/// column is published as PI 44 (and folded into the after state commit), so this pins the producer
+/// `clock` scalar to the REAL published block height: the due-ness leg (`before[due] ≤ clock`) is then
+/// checked against the published clock. A forger filling `CLOCK_COL` ≠ the published height (to
+/// fabricate due-ness for a not-yet-due obligation) makes it bite (UNSAT).
+fn clock_bind_gate() -> VmConstraint2 {
+    sel_gate(
+        DISCHARGE_SEL_COL,
+        LeanExpr::add(var(CLOCK_COL), neg(var(COMMITTED_HEIGHT_COL))),
+    )
+}
+
 /// **THE DISCHARGE FLOOR DECODE + FIRST-ROW SELECTOR-FORCE + CAVEAT-UNIFORMITY GATES (STAGED).**
 /// Decode "this cell declares discharge (some bound caveat type-tag == 18)" from the caveat-commit
 /// bound type-tag columns, force the capacity selector ON on the settle (first) row, and force the
@@ -231,6 +306,19 @@ pub fn discharge_floor_gates() -> Vec<VmConstraint2> {
     for k in 0..cav::MAX_CAVEATS {
         g.push(caveat_uniform_gate(caveat_tag_col(k)));
     }
+    // G5 FREE-PARAM BINDING: pin the producer period/amount/clock scalars to committed state so a
+    // forger cannot choose them. period/amount → the declared slot's caveat params (PI-45-committed),
+    // clock → the published block height (PI 44). The param columns are made uniform (settle == last
+    // committed row) so the slot-selected bind lands on the DECLARED term, not a settle-row forgery.
+    for k in 0..cav::MAX_CAVEATS {
+        g.push(param_bind_gate(k, CAVEAT_PERIOD_PARAM, PERIOD_COL));
+        g.push(param_bind_gate(k, CAVEAT_AMOUNT_PARAM, AMOUNT_COL));
+    }
+    for k in 0..cav::MAX_CAVEATS {
+        g.push(caveat_param_uniform_gate(k, CAVEAT_PERIOD_PARAM));
+        g.push(caveat_param_uniform_gate(k, CAVEAT_AMOUNT_PARAM));
+    }
+    g.push(clock_bind_gate());
     g
 }
 
@@ -478,7 +566,16 @@ mod tests {
 
         for k in 0..cav::MAX_CAVEATS {
             row[caveat_tag_col(k)] = BabyBear::new(tags[k]);
+            // The DECLARED discharge slot carries the committed capacity terms in its caveat params
+            // (period = params[0], amount = params[1]); the G5 bind gates pin the producer scalars to
+            // these. A non-discharge slot's params stay 0 (its is-discharge bit is 0 ⟹ bind inert).
+            if tags[k] == TAG_DISCHARGE as u32 {
+                row[caveat_param_col(k, CAVEAT_PERIOD_PARAM)] = BabyBear::new(period);
+                row[caveat_param_col(k, CAVEAT_AMOUNT_PARAM)] = BabyBear::new(amount);
+            }
         }
+        // The committed block-height column (PI 44), which the clock-bind pins `CLOCK_COL` to.
+        row[COMMITTED_HEIGHT_COL] = BabyBear::new(clock);
         row[DISCHARGE_SEL_COL] = BabyBear::new(sel);
         row[before_field_col(CUR)] = BabyBear::new(before_cur);
         row[before_field_col(TOT)] = BabyBear::new(before_tot);
@@ -729,6 +826,87 @@ mod tests {
         assert!(
             bites,
             "a non-uniform caveat manifest must trip a uniformity gate"
+        );
+    }
+
+    // -----------------------------------------------------------------------------------------------
+    // G5 FREE-PARAM BINDING teeth (fast, gate-eval): a forger who fills a scalar to satisfy the
+    // satisfaction gate but ≠ the committed term/clock is caught by the bind gate.
+    // -----------------------------------------------------------------------------------------------
+
+    /// An honest settle row (declared period 100, amount 50, committed clock 1000) — the baseline the
+    /// forge tests mutate.
+    fn honest_settle_row() -> Vec<BabyBear> {
+        make_row(
+            [TAG_DISCHARGE as u32, 19, 0, 0],
+            /*sel*/ 1,
+            /*before*/ 1000,
+            0,
+            1000,
+            /*after*/ 1100,
+            50,
+            1000,
+            /*period*/ 100,
+            /*amount*/ 50,
+            /*clock*/ 1000,
+        )
+    }
+
+    #[test]
+    fn forged_period_scalar_is_unsat() {
+        // The declared caveat period is 100 (committed in the manifest params). A forger discharges by
+        // 999: advance the cursor by 999 AND fill PERIOD_COL = 999 so the SATISFACTION gate
+        // (after − before − PERIOD_COL) still vanishes — but the bind gate bit·(committed 100 − 999)
+        // bites. This is the free-param hole: without the bind, the forger picks the period.
+        let gates = discharge_gates(CUR, TOT, DUE);
+        let mut row = honest_settle_row();
+        row[after_field_col(CUR)] = BabyBear::new(1999); // advance by the FORGED period 999
+        row[PERIOD_COL] = BabyBear::new(999); // satisfaction gate now vanishes...
+        assert!(
+            !all_zero_settle(&gates, &row),
+            "a forged period (scalar ≠ committed caveat term) must be UNSAT via the bind gate"
+        );
+    }
+
+    #[test]
+    fn forged_amount_scalar_is_unsat() {
+        // The declared caveat amount is 50. A forger discharges 9999: advance the total by 9999 AND
+        // fill AMOUNT_COL = 9999 so the satisfaction gate vanishes — the bind gate bit·(50 − 9999) bites.
+        let gates = discharge_gates(CUR, TOT, DUE);
+        let mut row = honest_settle_row();
+        row[after_field_col(TOT)] = BabyBear::new(9999);
+        row[AMOUNT_COL] = BabyBear::new(9999);
+        assert!(
+            !all_zero_settle(&gates, &row),
+            "a forged amount (scalar ≠ committed caveat term) must be UNSAT via the bind gate"
+        );
+    }
+
+    #[test]
+    fn fabricated_clock_is_unsat() {
+        // The published block height is 999 (the committed-height column). A not-yet-due obligation
+        // (due block 1000) is EARLY at clock 999. A forger fabricates CLOCK_COL = 1000 to pass the
+        // due-ness range gadget (1000 ≥ 1000) — but the clock-bind sel·(CLOCK_COL − committed height)
+        // = 1000 − 999 bites. Without the bind, the forger claims due-ness at an invented clock.
+        let gates = discharge_gates(CUR, TOT, DUE);
+        let mut row = honest_settle_row();
+        row[COMMITTED_HEIGHT_COL] = BabyBear::new(999); // the REAL published clock is 999
+        // CLOCK_COL stays 1000 (fabricated); the due-ness gadget is satisfied, but the clock-bind bites.
+        // (before[due] = 1000 ≤ fabricated clock 1000, so ONLY the clock-bind distinguishes the forge.)
+        assert!(
+            !all_zero_settle(&gates, &row),
+            "a fabricated clock (scalar ≠ published block height) must be UNSAT via the clock-bind gate"
+        );
+    }
+
+    #[test]
+    fn honest_terms_and_clock_satisfy_the_binds() {
+        // The dual control: honest declared terms + published clock satisfy EVERY gate incl. the binds.
+        let gates = discharge_gates(CUR, TOT, DUE);
+        let row = honest_settle_row();
+        assert!(
+            all_zero_settle(&gates, &row),
+            "honest committed terms + published clock must satisfy the bind gates (no false reject)"
         );
     }
 }
