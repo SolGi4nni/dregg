@@ -411,3 +411,95 @@ crown wiring + live producer wiring; sound deployed-flip stays GENTIAN-blocked a
 (separate gated epochs / refuted), and the off-AIR manifest verifier rollout (not a descriptor
 regen). It is a small, additive, geometry-stable v13→v13.1 regen — **not** the not-fireable
 seven-carrier universal-fold bang.
+
+---
+
+## 9. GENTIAN FLAG-DAY — the bare-descriptor dodge CLOSED (soundness core landed 2026-07-05)
+
+> **STATUS: the SOUND CORE + the anti-launder forge are LANDED + GREEN; the deployed-cohort
+> emit-weld + regen + apex re-verify is the remaining ember-gated step (scoped precisely below).**
+> This section supersedes §2.1's "sound deployed-flip stays GENTIAN-blocked / OUT" for the SOUNDNESS
+> question: the terminal blocker §2.1 named (in-AIR `B_AUTHORITY_DIGEST`→selector) was already
+> discharged by PATH (b) in `CarrierBoundFloorGadget` (decode from the caveat-manifest columns, no
+> separate digest limb). The dodge is now closed IN PROOF; what remains is the mechanical (but
+> geometry-widening) whole-cohort emit + the apex re-verify.
+
+### 9.1 What LANDED this session (proven, axiom-clean, committed)
+
+- **Lean soundness core — `metatheory/Dregg2/Deos/BareCohortFloorRefuse.lean`** (`#assert_all_clean`,
+  17 keystones, non-vacuous both poles). The FLOOR==0-REFUSE weld: reuse the PROVEN caveat-manifest
+  floor decode (`CarrierBoundFloorGadget.carrierGates`, bound to the committed manifest at PI 45 by
+  `caveatCommit`/`caveatCommit_binds`) + one new `floorZeroRefuseGate` (`floorCol == 0`).
+  - **`declared_escrow_unsat_under_bare`** — the PRIMARY named forge: a settle-escrow routed to any
+    BARE cohort member `d` is UNSAT when the committed manifest declares escrow (the decode lights
+    `floorCol = 1`; the refuse gate demands `0`; jointly unsatisfiable). ∀ `d` — covers every member.
+  - **`declared_tag_unsat_under_bare` (tag-parametric)** + instances
+    `declared_{discharge,vault}_unsat_under_bare` — the same closes tags 18/19.
+  - **`non_declared_floor_zero`** — completeness: a non-declaring cell decodes `floorCol = 0`, refuse
+    inert (no false reject; the flip is complete, not merely sound).
+- **Rust deployed-column shadow — `circuit/src/effect_vm/bare_floor_refuse_weld.rs`** (7/7 tests).
+  Per capacity tag {17,18,19}: a decode block over the caveat-commit-bound type-tag columns
+  (`caveat_tag_col(k)` = 643/650/657/664 at v13 geometry) + `floor_zero_refuse_gate`, at disjoint
+  aux headroom. `bare_floor_refuse_gates()` = 3 blocks + 4 uniformity = 43 gates.
+  - **THE ANTI-LAUNDER FORGE TOOTH BITES:** `declared_escrow_is_unsat_under_bare`,
+    `declared_discharge_and_vault_are_unsat_under_bare` (declared-capacity row → `floor=1` → refuse
+    bites → UNSAT); `non_declared_cell_is_accepted_by_bare` (no false reject);
+    `caveat_uniformity_bites_on_non_uniform_manifest`.
+- Commits: `f74ab2694` (escrow core), `b11416faa` (capacity-general), `addfa3c32` (Rust shadow+tooth).
+
+### 9.2 ⚑ THE GEOMETRY CORRECTION (verified against HEAD — supersedes the "geometry-stable" premise)
+
+`transferVmDescriptor2R24.trace_width == 1581 == GRAD_ROT_WIDTH` (measured in
+`circuit/descriptors/rotation-v3-staged-registry.tsv`). The refuse block's DECODE-WITNESS aux columns
+(bit/inv/or/floor, ~44 for three disjoint tag blocks) start AT `GRAD_ROT_WIDTH` — i.e. **beyond** every
+member's current width. So welding the refuse into the emit is **NOT** a PI-tail-append / geometry-stable
+regen: it **widens each cohort member's `trace_width`** (1581 → ~1626). This is the honest flag-day cost —
+a per-member geometry widening (the `main` table arity moves), larger than §6's "cheapest class" estimate.
+(The escrow SATISFACTION descriptor already paid an analogous widening — `WELD-STATE.md:221-223` B_SPAN
+51→119; the bare-cohort refuse pays it across the whole cohort.)
+
+### 9.3 The remaining ordered step (the ember-gated flip — NOT fired)
+
+1. **Emit weld (STEP 1).** In `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotationV3.lean`, map every
+   `v3RegistryBare` member through the three-tag refuse weld before `withDfaRcPins`:
+   `d ↦ (BareCohortFloorRefuse for tags 17,18,19) d`. The Lean transformer is
+   `gentianBareRefuseDescriptorT tag d` (compose the three tags at DISJOINT aux column blocks — the
+   Rust `bare_floor_refuse_weld` column layout is the deployed alignment). Widen each member's
+   `traceWidth` to cover the aux block (≥ `GRAD_ROT_WIDTH + 3·REFUSE_STRIDE`). Add a `#guard` that every
+   welded member carries the 43-gate block; re-state the apex over the welded registry.
+   - **G5 free-param binding (the real soundness item at `gentian_discharge_vault_prove.rs:33-35`):**
+     bind `PERIOD_COL/AMOUNT_COL/CLOCK_COL` (`discharge_weld.rs:71-75`, today producer-filled FREE) to
+     the committed caveat params + `clock` to the published block height via PI/manifest-param pins.
+     Mirror for the vault slot params.
+2. **ONE regen (STEP 2).** `scripts/emit-descriptors.sh` → **ALL cohort fingerprints move + every
+   `trace_width` moves** (the flag-day). `scripts/check-descriptor-drift.sh` must PASS (re-emit
+   byte-identical).
+3. **Apex re-verify (STEP 4).** `lake build Dregg2` green + `#assert_axioms` clean on
+   `lightclient_unfoolable` + the 5 `AssuranceCase` guarantees UNDER the widened/welded cohort VKs.
+   ⚑ EXPECT CASCADE: theorems that pattern-match member constraint lists / `trace_width` /
+   `Rfix` positions will need re-grounding (the "per-file green hides a red umbrella" hazard — build the
+   WHOLE tree, not per-file). This is the multi-run grind.
+4. **Live-wire routing + producers (STEP 3).** Un-stage `rotated_descriptor_name_for_declared_escrow`
+   (`trace_rotated.rs:2343`, currently STAGED `:2338`) + discharge/vault analogs; wire
+   `fill_carrier_decode`/`fill_discharge_aux`/`fill_vault_aux` from the live rotated generator so an
+   honest declared-capacity turn routes through + proves the SATISFACTION descriptor on the default
+   path (the bare member now REFUSES it).
+5. **Deploy (STEP 5, ember fires — NOT done):** the re-genesis (`generate.sh --force`) + LC VK
+   redistribution (`git push origin main` + client rebuild). Because this moves the deployed-default
+   cohort VKs AND every `trace_width`, it IS an eyes-open devnet re-genesis (per `HANDOFF-v13` §1d),
+   not a mere staged-add. ember's call.
+
+### 9.4 The anti-launder GATE (respected)
+
+The flip is REAL, not laundered: `declared_tag_unsat_under_bare` PROVES the forge is UNSAT on the default
+path for every bare member + every capacity tag, and the Rust tooth BITES today. The dodge is closed the
+instant the emit-weld + regen land the refuse into the deployed VKs. Until then the deployed descriptors
+are byte-identical (STAGED) — the sound core is proven but not yet flipped, and this doc does not claim
+otherwise.
+
+### 9.5 Noted pre-existing drift (not this session's)
+
+`circuit/src/effect_vm/carrier_floor_weld.rs:348` pins `caveat_tag_col(0) == 291`, stale at v13 geometry
+(the deployed `CAVEAT_BASE` moved to 642 → `caveat_tag_col(0) == 643`). That concrete drift-pin test is
+likely RED at HEAD independent of this work; the definitional binding (`caveat_tag_col = CAVEAT_BASE + 1
++ k·ENTRY_SIZE`) is correct. Fix the pin when touching that module.
