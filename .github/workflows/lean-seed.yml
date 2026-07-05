@@ -7,10 +7,11 @@
 # fresh verified-node build from HOURS into MINUTES: scripts/fetch-lean-seed.sh downloads it,
 # verifies the checksum + exports, and drops it in place. See docs/LEAN-SEED-ARTIFACT.md.
 #
-# WHERE IT RUNS: seeding compiles thousands of leanc objects and needs the pinned mathlib checkout
-# at the LOCAL PATH named in metatheory/lakefile.toml. A stock GitHub-hosted runner has neither the
-# checkout nor the hours — so this runs on a SELF-HOSTED beefy build host (David's lassie), which
-# already carries a warm `.lake` + the mathlib pin. The `runner` input lets you point at a
+# WHERE IT RUNS: seeding compiles thousands of leanc objects. metatheory/lakefile.toml pins mathlib
+# as a PORTABLE git+rev dependency, so lake fetches it on any host — but a stock GitHub-hosted runner
+# still lacks the HOURS (and a warm `.lake` / prebuilt mathlib cache). So this runs on a SELF-HOSTED
+# beefy build host (David's lassie), where bootstrap.sh pulls the prebuilt mathlib oleans
+# (`lake exe cache get`, minutes) and seeds the archive. The `runner` input lets you point at a
 # different self-hosted label. The manual `gh release`-from-lassie path is documented in
 # docs/LEAN-SEED-ARTIFACT.md for when the workflow host is unavailable.
 name: Publish Lean seed

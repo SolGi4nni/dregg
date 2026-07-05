@@ -42,43 +42,36 @@ command -v lake >/dev/null 2>&1 || die "lake (the Lean 4 build tool) not on PATH
 echo "  cargo: $(command -v cargo)"
 echo "  lake:  $(command -v lake)"
 
-# ── 2. the mathlib path dependency ───────────────────────────────────────────
-# metatheory/lakefile.toml requires mathlib as a LOCAL PATH dependency (it avoids
-# re-resolving the registry on every build). A fresh machine must put a mathlib
-# checkout at that path, at the pinned revision, BEFORE any lake command works.
-step "Checking the mathlib path dependency"
+# ── 2. the mathlib git dependency (portable — no host-specific path) ──────────
+# metatheory/lakefile.toml requires mathlib as a PORTABLE `git`+`rev` dependency:
+# `lake` fetches it into metatheory/.lake/packages/mathlib on ANY host, with no
+# assumption about where breadstuffs was cloned. The FIRST fetch of mathlib's
+# prebuilt oleans (`lake exe cache get`) is minutes; compiling mathlib from source
+# (if the cache is unavailable) is hours.
+#
+# LOCAL FAST PATH: if you already have a warm mathlib checkout at the pinned rev,
+# symlink it into the packages dir BEFORE the first build so lake reuses it:
+#     ln -sfn /path/to/your/mathlib4 metatheory/.lake/packages/mathlib
+step "Checking the mathlib git dependency"
 
-MATHLIB_REL="$(sed -n 's/^path = "\(.*\)"/\1/p' "$META/lakefile.toml" | head -1)"
-[ -n "$MATHLIB_REL" ] || die "could not read the mathlib path from $META/lakefile.toml"
-MATHLIB_DIR="$META/$MATHLIB_REL"
-# The pinned revision is named in the lakefile comment (a 40-hex sha).
+# The pinned revision is the 40-hex sha in metatheory/lakefile.toml (the `rev =` line).
 MATHLIB_REV="$(grep -oE '[0-9a-f]{40}' "$META/lakefile.toml" | head -1 || true)"
+MATHLIB_DIR="$META/.lake/packages/mathlib"
+echo "  mathlib pin: ${MATHLIB_REV:-<see metatheory/lakefile.toml>} (git dependency)"
 
-if [ ! -f "$MATHLIB_DIR/lakefile.lean" ]; then
-  die "mathlib checkout MISSING at: $MATHLIB_DIR
-  (metatheory/lakefile.toml pins mathlib as the local path '$MATHLIB_REL', resolved
-  relative to metatheory/. Nothing Lean builds until it exists.)
-
-  Put it there at the pinned revision:
-      git clone https://github.com/leanprover-community/mathlib4 \"$MATHLIB_DIR\"
-      git -C \"$MATHLIB_DIR\" checkout ${MATHLIB_REV:-<the rev named in metatheory/lakefile.toml>}
-      ( cd \"$MATHLIB_DIR\" && lake exe cache get )   # prebuilt mathlib artifacts; HIGHLY recommended
-
-  then re-run this script. ('lake exe cache get' downloads mathlib's prebuilt build
-  products; without it the first build compiles mathlib from source — hours.)"
-fi
-if [ -n "$MATHLIB_REV" ] && command -v git >/dev/null 2>&1 && [ -d "$MATHLIB_DIR/.git" ]; then
-  HAVE_REV="$(git -C "$MATHLIB_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
-  if [ "$HAVE_REV" != "$MATHLIB_REV" ]; then
-    echo "  WARNING: mathlib checkout is at $HAVE_REV"
-    echo "           but metatheory/lakefile.toml pins  $MATHLIB_REV"
-    echo "           A mismatched mathlib usually fails the lake build; if it does:"
-    echo "               git -C \"$MATHLIB_DIR\" checkout $MATHLIB_REV"
-  else
-    echo "  mathlib: $MATHLIB_DIR @ $HAVE_REV (matches the pin)"
+# Pull mathlib's PREBUILT oleans if they are not already present (minutes, not the
+# hours-long from-source compile). `lake exe cache get` also materialises the mathlib
+# git checkout as a side effect on a fresh box. We only run it when the oleans are
+# missing, so a warm/symlinked checkout (e.g. a maintainer's) is left untouched.
+if [ ! -e "$MATHLIB_DIR/.lake/build/lib/lean/Mathlib.olean" ]; then
+  step "Fetching prebuilt mathlib oleans (lake exe cache get — minutes; avoids the hours-long compile)"
+  if ! ( cd "$META" && lake exe cache get ); then
+    echo "  WARNING: 'lake exe cache get' did not complete. The next 'lake build' will fetch"
+    echo "           mathlib and, if no prebuilt cache is available for this rev, COMPILE it"
+    echo "           from source (hours). Re-run this script once network/cache is available."
   fi
 else
-  echo "  mathlib: $MATHLIB_DIR (present)"
+  echo "  mathlib oleans: present ($MATHLIB_DIR) — skipping cache fetch"
 fi
 
 # ── 3. build the verified executor (Lean → C facets) ────────────────────────

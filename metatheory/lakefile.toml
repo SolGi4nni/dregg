@@ -1,13 +1,23 @@
 name = "Dregg2"
 defaultTargets = ["Dregg2", "Metatheory", "Polis"]
 
-# Pin mathlib to the revision matching ~/src/mathlib4 @ v4.30.0
-# (rev 1c2b90b13009c65b090d95a83c98e248deafb6f1). Using a local `path`
-# require avoids re-downloading the registry; switch to a `git`+`rev`
-# require if building on a machine without the local checkout.
+# Pin mathlib to the exact revision matching v4.30.0
+# (rev 1c2b90b13009c65b090d95a83c98e248deafb6f1). This is a PORTABLE `git`+`rev`
+# require: `lake` fetches mathlib itself into `.lake/packages/mathlib` on any host,
+# with NO assumption about where the repo was cloned. (It replaced a host-fragile
+# `path = "../../../src/mathlib4"` local require that only resolved when breadstuffs
+# was cloned exactly two levels under $HOME with mathlib as a $HOME/src sibling —
+# which broke a fresh Linux cold-bootstrap on lassie. See docs/LEAN-SEED-ARTIFACT.md.)
+#
+# LOCAL FAST PATH (optional, no re-download): if you already have a warm mathlib
+# checkout at the pinned rev, symlink it into the packages dir BEFORE the first
+# `lake build` so lake reuses it instead of cloning + re-fetching oleans:
+#     ln -sfn /path/to/your/mathlib4 metatheory/.lake/packages/mathlib
+# (`.lake/` is gitignored + per-machine; this changes nothing committed.)
 [[require]]
 name = "mathlib"
-path = "../../../src/mathlib4"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "1c2b90b13009c65b090d95a83c98e248deafb6f1"
 
 [[lean_lib]]
 name = "Dregg2"

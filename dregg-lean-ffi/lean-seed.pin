@@ -13,12 +13,16 @@
 # Recompute the live values any time with:  scripts/lean-seed-key.sh
 #
 # TAG empty ⇒ NO seed has been published for this repo yet. Until a release is cut (on a beefy
-# build host — see docs/LEAN-SEED-ARTIFACT.md, "cutting a seed on lassie"), fetch fails loud and
-# the only verified-node path is a local ./scripts/bootstrap.sh (the hours-long bootstrap).
+# build host — see docs/LEAN-SEED-ARTIFACT.md, "Cutting a seed release on lassie"), fetch fails
+# loud and the only verified-node path is a local ./scripts/bootstrap.sh (the hours-long bootstrap).
+#
+# The provenance below is a REFERENCE snapshot of the current HEAD (recompute live with
+# scripts/lean-seed-key.sh). The publish workflow OVERWRITES it (setting TAG + GENERATED_UTC) when
+# it cuts the first seed — that is the moment this file becomes a live pointer instead of a note.
 
 TAG=
 LEAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 MATHLIB_REV=1c2b90b13009c65b090d95a83c98e248deafb6f1
-DREGG_TREE_HASH=b5c88ddd9aaf3052b65bfd1423ebd02018ff1a80
+DREGG_TREE_HASH=3bea33c406065d230f478a504197dc24d83bb3bc
 GENERATED_UTC=
-NOTE=unpublished — no seed release cut yet; see docs/LEAN-SEED-ARTIFACT.md
+NOTE=unpublished — cut the first seed on lassie per docs/LEAN-SEED-ARTIFACT.md (v13 seed)

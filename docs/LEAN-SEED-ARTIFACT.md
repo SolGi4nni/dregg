@@ -65,32 +65,69 @@ build panics with the exact cause instead. (Confirmed wired: `dregg-lean-ffi/bui
 
 ## Cutting a seed release (needs a beefy build host — "lassie")
 
-Seeding compiles thousands of leanc objects and needs the mathlib checkout at the **local path**
-pinned in `metatheory/lakefile.toml` (currently an absolute path — a stock GitHub-hosted runner has
-neither the checkout nor the hours). Cut seeds on a **self-hosted beefy host** (David's *lassie*)
-that carries a warm `.lake` + the mathlib pin.
+Seeding compiles thousands of leanc objects. `metatheory/lakefile.toml` pins mathlib as a
+**portable `git`+`rev` dependency**, so `lake` fetches it on any host with no clone-location
+assumption — but a stock GitHub-hosted runner still lacks the **hours** (and a prebuilt mathlib
+cache). Cut seeds on a **self-hosted beefy host** (David's *lassie*, Linux, 128t/1TB).
 
 ### Via the workflow (preferred)
 
-`Actions → Publish Lean seed → Run workflow`, with a `tag` (e.g. `lean-seed-2026-07-01`) and the
+`Actions → Publish Lean seed → Run workflow`, with a `tag` (e.g. `lean-seed-2026-07-05`) and the
 self-hosted `runner` label. It runs `bootstrap.sh`, compresses, uploads the asset + `.sha256` to
 the release, and commits the pin bump. Run it once **per platform** you want to serve (each
 self-hosted host contributes its own native asset to the same tag).
 
-### By hand on lassie (when the workflow host is down)
+### By hand on lassie — the exact cold-bootstrap recipe (copy-paste)
+
+This is the full ordered command list to cut the **first** seed on a fresh Linux box. Nothing here
+depends on a host-specific path — mathlib is git-fetched by lake.
 
 ```sh
-# on lassie, in a fresh-ish breadstuffs checkout at the target commit:
-./scripts/bootstrap.sh                                  # (re)seed a HEAD-matching libdregg_lean.a
-asset="$(scripts/lean-seed-key.sh --asset)"
-zstd -q -19 --long=27 -T0 dregg-lean-ffi/libdregg_lean.a -o "$asset"
+# 0. Prerequisites (once per box). elan installs in minutes; it does NOT compile mathlib.
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh          # rust (cargo)
+curl https://elan.lean-lang.org/elan-init.sh -sSf | sh                  # elan (lake); re-open shell
+#   plus: git, zstd, and GitHub `gh` (authed: `gh auth login`) on PATH.
+
+# 1. Clone breadstuffs anywhere (clone LOCATION does not matter — the mathlib pin is git+rev).
+git clone git@github.com:emberian/dregg.git breadstuffs
+cd breadstuffs
+
+# 2. Cold-bootstrap the verified Lean seed. bootstrap.sh:
+#      - reads the mathlib git pin from metatheory/lakefile.toml,
+#      - runs `lake exe cache get` to pull mathlib's PREBUILT oleans (minutes, not the hours-long
+#        from-source compile),
+#      - `lake build`s the Dregg2.Exec.FFI closure,
+#      - seeds dregg-lean-ffi/libdregg_lean.a and verifies the FFI kernel round-trips.
+#    EXPECTED TIME (honest): with the mathlib cache available this is ~30-90 min on lassie (the
+#    leanc compile of the ~6000-object Dregg2+deps closure dominates). If the mathlib prebuilt
+#    cache is UNAVAILABLE for this rev, mathlib compiles from source and it is HOURS — this is the
+#    one-time cold-boot cost the published seed exists to spare everyone else.
+./scripts/bootstrap.sh
+
+# 3. Name + compress + checksum the platform-native seed (asset name encodes os·arch·lean·key).
+asset="$(scripts/lean-seed-key.sh --asset)"                             # libdregg_lean-Linux-x86_64-v4.30.0-<key>.a.zst
+zstd -q -19 --long=27 -T0 dregg-lean-ffi/libdregg_lean.a -o "$asset"    # ~180 MB → ~20 MB
 sha256sum "$asset" > "$asset.sha256"
-gh release create lean-seed-YYYY-MM-DD --title "Lean seed YYYY-MM-DD" --notes "seed for <commit>" \
-  || true
-gh release upload  lean-seed-YYYY-MM-DD "$asset" "$asset.sha256" --clobber
-# then bump dregg-lean-ffi/lean-seed.pin: set TAG + the provenance from `scripts/lean-seed-key.sh`,
-# commit, push. fetch-lean-seed.sh now serves it in minutes.
+
+# 4. Publish to a release (create the tag if absent), then upload the asset + its checksum.
+tag=lean-seed-$(date -u +%Y-%m-%d)
+gh release create "$tag" --title "Lean seed $tag" --notes "seed for $(git rev-parse --short HEAD)" || true
+gh release upload  "$tag" "$asset" "$asset.sha256" --clobber
+
+# 5. Bump the committed pointer so fetch-lean-seed.sh serves it, then commit + push.
+{ sed -n '1,/^$/p' dregg-lean-ffi/lean-seed.pin | sed '/^$/d'; echo;
+  echo "TAG=$tag";
+  scripts/lean-seed-key.sh | grep -E '^(LEAN_TOOLCHAIN|MATHLIB_REV|DREGG_TREE_HASH)=';
+  echo "GENERATED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)";
+  echo "NOTE=published by hand on lassie";
+} > dregg-lean-ffi/lean-seed.pin.new && mv dregg-lean-ffi/lean-seed.pin.new dregg-lean-ffi/lean-seed.pin
+git add dregg-lean-ffi/lean-seed.pin
+git -c commit.gpgsign=false commit -m "chore(seed): publish Lean seed $tag + bump pin"
+git push
 ```
+
+The **hand-back to the maintainer**: the release tag, the asset filename, and its sha256. From then
+on `scripts/fetch-lean-seed.sh` links a verified node in minutes for anyone on that platform.
 
 The compressed asset is small (~20 MB for the ~180 MB archive, ≈8.6× with `zstd -19`).
 
@@ -105,10 +142,24 @@ The compressed asset is small (~20 MB for the ~180 MB archive, ≈8.6× with `zs
 - The seed is **never** committed to the repo (`.gitignore`: `libdregg_lean.a*`) — only published as
   a release asset.
 
-## Known rough edge
+## The mathlib pin is portable (git+rev)
 
-`metatheory/lakefile.toml` pins mathlib as an **absolute local path** (`/Users/ember/src/mathlib4`).
-That is fine on the maintainer's box and on a provisioned lassie, but it means bootstrap on a
-stranger's machine needs mathlib at that same path (or a `DREGG_METATHEORY_DIR`/symlink workaround).
-This is exactly why the **fetch path exists** — a stranger should fetch the seed and never bootstrap.
-Making the mathlib pin relative is tracked separately (it touches the Lean build config).
+`metatheory/lakefile.toml` pins mathlib as a **`git`+`rev` dependency** at the exact revision
+matching Lean `v4.30.0` (`1c2b90b13009c65b090d95a83c98e248deafb6f1`). `lake` fetches it into
+`metatheory/.lake/packages/mathlib` on any host — a fresh clone at **any location** resolves, with
+no `/Users/…` / `/home/…` / clone-depth assumption. (This replaced a host-fragile
+`path = "../../../src/mathlib4"` local require that only resolved when breadstuffs was cloned exactly
+two levels under `$HOME` with mathlib as a `$HOME/src` sibling — which broke a fresh Linux
+cold-bootstrap on lassie.)
+
+**Local fast path (maintainer boxes, optional — no re-download):** if you already have a warm
+mathlib checkout at the pinned rev, symlink it into the packages dir *before* the first `lake build`
+so lake reuses it (its warm `.lake/build` oleans and all) instead of cloning + re-fetching:
+
+```sh
+ln -sfn /path/to/your/mathlib4 metatheory/.lake/packages/mathlib
+```
+
+`.lake/` is gitignored and per-machine, so this changes nothing committed. Plain `lake build` reads
+the manifest and uses whatever is in the packages dir as-is (it does not `git fetch`/`checkout` your
+symlinked checkout — only `lake update` would), so the symlinked mathlib is left untouched.

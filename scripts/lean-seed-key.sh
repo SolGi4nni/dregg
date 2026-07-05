@@ -36,11 +36,17 @@ platform="${os}-${arch}"
 lean_toolchain="$(tr -d '[:space:]' < "$META/lean-toolchain" 2>/dev/null || echo unknown)"
 
 # ── mathlib pin ─────────────────────────────────────────────────────────────
-# The pinned revision is the 40-hex sha named in metatheory/lakefile.toml (the mathlib dep is a
-# local `path`, so the sha lives in the pin comment there — and in lake-manifest.json).
-mathlib_rev="$(grep -oE '[0-9a-f]{40}' "$META/lakefile.toml" 2>/dev/null | head -1 || true)"
+# The pinned revision is the 40-hex sha on the `rev = "…"` line of the mathlib `[[require]]`
+# in metatheory/lakefile.toml (a portable git+rev require). Prefer that explicit assignment over
+# any 40-hex that also appears in a comment; fall back to lake-manifest.json's mathlib entry.
+mathlib_rev="$(grep -E '^[[:space:]]*rev[[:space:]]*=' "$META/lakefile.toml" 2>/dev/null \
+  | grep -oE '[0-9a-f]{40}' | head -1 || true)"
+if [ -z "${mathlib_rev:-}" ]; then
+  # Fallback: any 40-hex in the lakefile (e.g. the pin comment), then the manifest.
+  mathlib_rev="$(grep -oE '[0-9a-f]{40}' "$META/lakefile.toml" 2>/dev/null | head -1 || true)"
+fi
 if [ -z "${mathlib_rev:-}" ] && [ -f "$META/lake-manifest.json" ]; then
-  mathlib_rev="$(grep -A6 '"name": *"mathlib"' "$META/lake-manifest.json" 2>/dev/null \
+  mathlib_rev="$(grep -B4 '"name": *"mathlib"' "$META/lake-manifest.json" 2>/dev/null \
     | grep -oE '[0-9a-f]{40}' | head -1 || true)"
 fi
 mathlib_rev="${mathlib_rev:-unknown}"
