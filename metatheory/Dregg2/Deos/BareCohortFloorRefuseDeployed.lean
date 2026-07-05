@@ -354,6 +354,64 @@ theorem declared_vault_unsat_deployed (hash : List ℤ → ℤ) (hCR : Poseidon2
   declared_capacity_unsat_deployed hash hCR _ 2 (Or.inr (Or.inr rfl)) d hsat hi hnl committedManifest
     hbind hreq
 
+/-! ## §5b — THE PEEL: `Satisfied2 (gentianDeployedBareRefuse d) ⟹ Satisfied2 d`.
+
+The flag-day re-keys the apex over the WELDED cohort (`v3RegistryRefused` — every bare member wrapped
+`withDfaRcPins ∘ gentianDeployedBareRefuse`). The apex's per-effect soundness rungs are stated at the
+BARE face (`Satisfied2 d ⟹ genuine kernel step`). Since the weld only APPENDS `.base (.gate …)`
+constraints (`deployedRefuseGates`, 39 pure gates — no mem-op / map-op / range / hash-site) and WIDENS
+`traceWidth` (transparent to `Satisfied2`, which never bounds by `traceWidth`), a satisfying witness of
+the welded member is a fortiori a satisfying witness of the bare face: peel the appended gates and every
+existing rung lifts (`List.mem_append_left`). The exact structural mirror of
+`EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins` (the rc-pin peel), so the two compose:
+`Satisfied2 (withDfaRcPins (gentianDeployedBareRefuse d)) ⟹ Satisfied2 (gentianDeployedBareRefuse d)
+⟹ Satisfied2 d`. -/
+
+/-- The refuse gates are all `.base (.gate …)`, so they contribute NO mem-op (the mem log is unchanged). -/
+theorem memOpsOf_gentianDeployedBareRefuse (d : EffectVmDescriptor2) :
+    memOpsOf (gentianDeployedBareRefuse d) = memOpsOf d := by
+  simp only [memOpsOf, gentianDeployedBareRefuse, List.filterMap_append,
+    deployedRefuseGates, blockGates, refuseGatesAt, decodeGatesAt,
+    floorZeroRefuseGate, isZeroDefGateT, isZeroForceGateT, orSeedGate, orFoldGate,
+    List.filterMap_cons, List.filterMap_nil, List.append_nil, List.nil_append,
+    List.cons_append]
+
+/-- The refuse gates contribute NO map-op (the map log is unchanged). -/
+theorem mapOpsOf_gentianDeployedBareRefuse (d : EffectVmDescriptor2) :
+    mapOpsOf (gentianDeployedBareRefuse d) = mapOpsOf d := by
+  simp only [mapOpsOf, gentianDeployedBareRefuse, List.filterMap_append,
+    deployedRefuseGates, blockGates, refuseGatesAt, decodeGatesAt,
+    floorZeroRefuseGate, isZeroDefGateT, isZeroForceGateT, orSeedGate, orFoldGate,
+    List.filterMap_cons, List.filterMap_nil, List.append_nil, List.nil_append,
+    List.cons_append]
+
+/-- **THE REFUSE PEEL — `Satisfied2 (gentianDeployedBareRefuse d) ⟹ Satisfied2 d`.** The weld only
+APPENDS pure `.gate` constraints (and widens `traceWidth`): the inner constraints stay members
+(`List.mem_append_left`), sites / ranges / mem / map logs are unchanged, so every existing per-effect
+soundness lemma lifts to the welded descriptor by peeling the weld first. Mirrors
+`satisfied2_of_withDfaRcPins`. -/
+theorem satisfied2_of_gentianDeployedBareRefuse (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash (gentianDeployedBareRefuse d) minit mfin maddrs t) :
+    Satisfied2 hash d minit mfin maddrs t := by
+  have hmem : memLog (gentianDeployedBareRefuse d) t = memLog d t := by
+    simp [memLog, memOpsOf_gentianDeployedBareRefuse]
+  have hmap : mapLog (gentianDeployedBareRefuse d) t = mapLog d t := by
+    simp [mapLog, mapOpsOf_gentianDeployedBareRefuse]
+  exact
+    { rowConstraints := fun i hi c hc => h.rowConstraints i hi c (by
+        show c ∈ (gentianDeployedBareRefuse d).constraints
+        unfold gentianDeployedBareRefuse
+        exact List.mem_append_left _ hc)
+    , rowHashes := h.rowHashes
+    , rowRanges := h.rowRanges
+    , memAddrsNodup := h.memAddrsNodup
+    , memClosed := fun op hop => h.memClosed op (by rw [hmem]; exact hop)
+    , memDisciplined := by rw [← hmem]; exact h.memDisciplined
+    , memBalanced := by rw [← hmem]; exact h.memBalanced
+    , memTableFaithful := by rw [← hmem]; exact h.memTableFaithful
+    , mapTableFaithful := by rw [← hmap]; exact h.mapTableFaithful }
+
 /-! ## §6 — NON-VACUITY TEETH: the deployed column layout + both decode poles BITE. -/
 
 section Witnesses
@@ -410,7 +468,11 @@ end Witnesses
   declared_capacity_unsat_deployed,
   declared_escrow_unsat_deployed,
   declared_discharge_unsat_deployed,
-  declared_vault_unsat_deployed
+  declared_vault_unsat_deployed,
+  memOpsOf_gentianDeployedBareRefuse,
+  mapOpsOf_gentianDeployedBareRefuse,
+  satisfied2_of_gentianDeployedBareRefuse
 ]
+-- (helper filterMap lemmas inlined into the memOpsOf/mapOpsOf simp above.)
 
 end Dregg2.Deos.BareCohortFloorRefuseDeployed
