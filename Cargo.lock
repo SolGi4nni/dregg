@@ -4394,6 +4394,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-deco-prove"
+version = "0.1.0"
+dependencies = [
+ "dregg-bridge",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-types",
+ "ed25519-dalek",
+ "serde",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "dregg-demo"
 version = "0.1.0"
 dependencies = [

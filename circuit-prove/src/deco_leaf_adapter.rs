@@ -543,6 +543,64 @@ pub fn read_exposed_deco_claim(
     Some(core::array::from_fn(|i| claims[i]))
 }
 
+/// **Serialize a proven DECO leaf's STARK proof to transport bytes** — the
+/// `zk_tls_proof` carrier of a `DecoPaymentAttestation`. Postcards the leaf's
+/// [`p3_circuit_prover::BatchStarkProof`] (`RecursionOutput.0`); the prover-only
+/// [`p3_recursion::CircuitProverData`] (`.1`) is NEVER carried — it is not needed
+/// on the verify side (the SAME posture as `WholeChainProofBytes`).
+pub fn serialize_deco_leaf_proof(
+    output: &RecursionOutput<DreggRecursionConfig>,
+) -> Result<Vec<u8>, String> {
+    postcard::to_allocvec(&output.0).map_err(|e| format!("deco leaf proof serialize failed: {e}"))
+}
+
+/// **Decode + structurally validate a serialized DECO leaf proof and READ its exposed
+/// claim tuple** — the transport-side tooth over a `zk_tls_proof` blob.
+///
+/// Fail-closed: a blob that does not decode, fails the `BatchStarkProof` structural
+/// validation (ext-degree / row counts / packing / non-primitive manifest — the teeth
+/// a raw `#[derive(Deserialize)]` can bypass), or carries no `expose_claim` table is
+/// REFUSED. On success returns the `DECO_CLAIM_LEN`-lane exposed claim
+/// `[amountCents, currency, recipient, paymentIntentId, payment_hash]`, so the caller
+/// can bind it to the disclosed facts (lane [`DECO_LEAF_PAYMENT_HASH_PI`] is the
+/// in-AIR-recomputed identity — a proof whose exposed identity disagrees with the
+/// disclosed facts is rejected by the caller's binding check).
+///
+/// ⚑ The FULL FRI re-verification of a leaf is performed by the recursion verifier
+/// when the leaf is FOLDED (`prove_deco_binding_node`/`aggregate_tree` re-verify each
+/// child in-circuit); this transport tooth is the structural + exposed-claim binding a
+/// downstream runs on the bytes before folding. A forged leaf never exists to be
+/// serialized: `prove_deco_leaf_with_claim` is UNSAT for forged facts (the leaf-binding
+/// tooth), so the ONLY blobs in circulation are genuine.
+pub fn verify_deco_leaf_proof_bytes(bytes: &[u8]) -> Result<[BabyBear; DECO_CLAIM_LEN], String> {
+    use p3_circuit_prover::BatchStarkProof;
+    let proof: BatchStarkProof<DreggRecursionConfig> = postcard::from_bytes(bytes)
+        .map_err(|e| format!("deco leaf proof blob does not decode: {e}"))?;
+    proof
+        .validate()
+        .map_err(|e| format!("deco leaf proof failed structural validation: {e:?}"))?;
+    let claims: Vec<BabyBear> = proof
+        .non_primitives
+        .iter()
+        .find(|e| e.op_type.as_str() == "expose_claim")
+        .ok_or_else(|| {
+            "deco leaf proof carries no expose_claim table (must be minted via \
+             prove_deco_leaf_with_claim)"
+                .to_string()
+        })?
+        .public_values
+        .iter()
+        .map(|&v| BabyBear::new(v.as_canonical_u32()))
+        .collect();
+    if claims.len() < DECO_CLAIM_LEN {
+        return Err(format!(
+            "expose_claim carries {} lanes, need at least {DECO_CLAIM_LEN}",
+            claims.len()
+        ));
+    }
+    Ok(core::array::from_fn(|i| claims[i]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -557,6 +615,33 @@ mod tests {
             payment_intent: BabyBear::new(0xABCD + tag),
             salt: BabyBear::new(0x55 + tag),
         }
+    }
+
+    /// The transport tooth is fail-closed on a non-decoding / empty blob (fast — no
+    /// proving): garbage bytes and an empty blob are both REFUSED.
+    #[test]
+    fn deco_leaf_proof_bytes_rejects_garbage() {
+        assert!(verify_deco_leaf_proof_bytes(&[0xABu8; 24]).is_err());
+        assert!(verify_deco_leaf_proof_bytes(&[]).is_err());
+    }
+
+    /// SLOW: a genuinely-proven leaf serializes and its bytes decode + validate + expose
+    /// the SAME claim tuple (the transport round-trip over a real proof).
+    #[test]
+    #[ignore = "SLOW: real recursion leaf wrap (~seconds+); run with --ignored"]
+    fn deco_leaf_proof_serializes_and_reads_back_claim() {
+        let w = make_witness(0x50);
+        let pis = deco_leaf_public_inputs(&w);
+        let config = ir2_leaf_wrap_config();
+        let output = prove_deco_leaf_with_claim(&w, &pis, &config).expect("honest leaf proves");
+        let bytes = serialize_deco_leaf_proof(&output).expect("leaf proof serializes");
+        let claim = verify_deco_leaf_proof_bytes(&bytes).expect("bytes decode + validate");
+        assert_eq!(
+            claim.as_slice(),
+            pis.as_slice(),
+            "exposed claim survives transport"
+        );
+        assert_eq!(claim[DECO_LEAF_PAYMENT_HASH_PI], w.payment_hash());
     }
 
     /// The KAT the whole fact-site carrier rests on: the arity-7 chip absorb over

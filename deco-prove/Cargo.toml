@@ -1,0 +1,27 @@
+[package]
+name = "dregg-deco-prove"
+version.workspace = true
+edition.workspace = true
+description = "The DECO/zkTLS Stripe money-in PROVER: given disclosed Stripe payment facts + a (notary-attested) TLS-transcript commitment, produce a DecoPaymentAttestation carrying a genuine STARK proof over the deployed DECO leaf AIR that dregg-bridge::verify_deco_payment accepts. Complements the already-landed verifier + Lean crown; the last missing crypto leg of trustless money-in. The MPC-TLS/notary capture layer is the NAMED interim (see docs/deos/DECO-PROVER-STATUS.md)."
+
+[dependencies]
+# The felt-domain canonical encoder (stripe_payment_hash_felt / the PaymentFacts
+# projection) — the ONE anchor the leaf, the producer, and the executor share.
+dregg-circuit = { path = "../circuit" }
+# The heavy recursion prover: the DECO leaf adapter (prove_deco_leaf_with_claim),
+# the leaf-proof (de)serialization teeth, and ir2_leaf_wrap_config.
+dregg-circuit-prove = { path = "../circuit-prove" }
+# DecoPaymentAttestation + the verifier this prover must satisfy.
+dregg-bridge = { path = "../bridge" }
+dregg-types = { path = "../types" }
+# The interim NOTARY attestation over the TLS-transcript commitment: a real
+# ed25519 signature (the SAME curve/lib as the bridge's off-AIR §8 carrier). NOT
+# MPC-TLS — the named trust boundary (docs/deos/DECO-PROVER-STATUS.md).
+ed25519-dalek = { version = "2", features = ["std"] }
+sha2 = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# The RAM mint path (mint_against_deco / live_supply bookkeeping) is a bridge
+# test-utils surface; enable it so the e2e round-trip can assert conservation.
+dregg-bridge = { path = "../bridge", features = ["test-utils"] }
