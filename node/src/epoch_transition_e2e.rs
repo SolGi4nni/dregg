@@ -116,7 +116,7 @@ fn finalize_across(nodes: &mut [Node], signers: &[&SigningKey], blk: BlockId) ->
     // Every signer signs the block; every node records every vote (gossip).
     let votes: Vec<FinalizationVote> = signers
         .iter()
-        .map(|sk| FinalizationVote::sign(sk, blk, FinalityLevel::Ordered))
+        .map(|sk| FinalizationVote::sign(sk, blk, FinalityLevel::Ordered, [0x5A; 32]))
         .collect();
     let mut attested = Vec::new();
     for node in nodes.iter_mut() {
@@ -152,7 +152,7 @@ fn validator_added_and_removed_live_chain_continues() {
     // ── Before ratification, the new validator d cannot influence finality. ──
     for node in &mut nodes {
         assert!(!node.votes.is_committee_member(&pk(&d)));
-        let v = FinalizationVote::sign(&d, BlockId([101; 32]), FinalityLevel::Ordered);
+        let v = FinalizationVote::sign(&d, BlockId([101; 32]), FinalityLevel::Ordered, [0x5A; 32]);
         assert_eq!(
             node.votes.record(&v),
             RecordOutcome::Rejected,
@@ -222,7 +222,7 @@ fn validator_added_and_removed_live_chain_continues() {
         assert!(!node.cm.current.is_participant(&pk(&d)));
         assert!(!node.votes.is_committee_member(&pk(&d)));
         // d (removed) can no longer contribute to a quorum.
-        let v = FinalizationVote::sign(&d, BlockId([103; 32]), FinalityLevel::Ordered);
+        let v = FinalizationVote::sign(&d, BlockId([103; 32]), FinalityLevel::Ordered, [0x5A; 32]);
         assert_eq!(node.votes.record(&v), RecordOutcome::Rejected);
     }
 }
@@ -266,7 +266,12 @@ fn under_quorum_transition_is_rejected() {
         assert!(!node.cm.current.is_participant(&pk(&evil)));
         assert_eq!(node.votes.committee_size(), 3);
         assert!(!node.votes.is_committee_member(&pk(&evil)));
-        let v = FinalizationVote::sign(&evil, BlockId([0xE1; 32]), FinalityLevel::Ordered);
+        let v = FinalizationVote::sign(
+            &evil,
+            BlockId([0xE1; 32]),
+            FinalityLevel::Ordered,
+            [0x5A; 32],
+        );
         assert_eq!(
             node.votes.record(&v),
             RecordOutcome::Rejected,

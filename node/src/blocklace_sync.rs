@@ -704,9 +704,10 @@ impl BlocklaceHandle {
         &self,
         block_id: BlockId,
         level: dregg_blocklace::finality::FinalityLevel,
+        merkle_root: [u8; 32],
     ) {
         use crate::finalization_votes::FinalizationVote;
-        let vote = FinalizationVote::sign(&self.signing_key, block_id, level);
+        let vote = FinalizationVote::sign(&self.signing_key, block_id, level, merkle_root);
 
         // Record our own vote (a member's local finality is one signature toward
         // its own quorum) through the SAME funnel as a received vote, so that if
@@ -3676,10 +3677,22 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                         col.has_voted(&block_id, &handle.self_key)
                     };
                     if !already {
+                        // Bind the vote to the finalized committed state root, so
+                        // this vote's signature IS a persisted `finalization_quorum`
+                        // signature (N3 committee-restart fix). For a Turn block that
+                        // is the post-execution `canonical_ledger_root` (execution of
+                        // this block completed above); non-Turn blocks (membership /
+                        // checkpoint) anchor no persisted attested root, so their
+                        // vote binds the current canonical root harmlessly.
+                        let merkle_root = {
+                            let s = state.read().await;
+                            canonical_ledger_root(&s.ledger)
+                        };
                         handle
                             .emit_finalization_vote(
                                 block_id,
                                 dregg_blocklace::finality::FinalityLevel::Ordered,
+                                merkle_root,
                             )
                             .await;
                     }
@@ -3740,6 +3753,16 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
             // Save the executed block-id set and blocklace metadata (tips,
             // equivocators, ordering state) so restarts don't re-execute turns.
             persist_blocklace_state(&state, &handle).await;
+
+            // ── N3 committee-restart anchor: back-fill vote quorums ──────────
+            // Committee finalization votes arrive async over gossip, AFTER a
+            // root is first persisted with only the local signature. Once a
+            // >=threshold quorum over a recently finalized root has assembled in
+            // the collector, re-store that root carrying the quorum so a restart
+            // can re-anchor it (`verify_finalization_quorum`). The persisted
+            // quorum trails the finalized head by the gossip round(s) it takes
+            // the votes to converge — the deliberate liveness cost of Fix B.
+            backfill_finalization_quorums(&state, &handle).await;
         }
     });
 }
@@ -3757,6 +3780,66 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
 /// 2. Writes a fresh [`dregg_types::AttestedRoot`] anchored to the blocklace
 ///    `block_id` + finality round (audit F3 / gap D), so the executor on the
 ///    next turn no longer sees `block_height = 0`.
+/// Re-persist recently finalized attested roots that now carry an assembled
+/// committee finalization-vote quorum — the N3 committee-restart anchor (Fix B).
+///
+/// A full-mode committee node first persists each attested root synchronously
+/// with only its OWN signature (`1 < threshold`); the cross-node quorum forms a
+/// gossip round or two later as peers' [`FinalizationVote`]s converge in the
+/// collector. This scans a bounded window of the most recent roots and, for any
+/// whose `finalization_quorum` is still empty but whose block now has a genuine
+/// `>= threshold` quorum over the SAME `merkle_root`, re-stores the root with
+/// that quorum attached. On restart, `verify_finalization_quorum` then re-anchors
+/// it — closing the fail-close WITHOUT accepting any root that lacks a real
+/// committee quorum.
+///
+/// [`FinalizationVote`]: crate::finalization_votes::FinalizationVote
+async fn backfill_finalization_quorums(state: &NodeState, handle: &BlocklaceHandle) {
+    /// How many recent heights to reconcile per finality tick. The quorum trails
+    /// the head by only a round or two, so a small window converges it while
+    /// bounding the per-tick work.
+    const WINDOW: u64 = 32;
+
+    let s = state.read().await;
+    let latest_h = match s.store.latest_attested_root() {
+        Ok(Some(r)) => r.height,
+        _ => return,
+    };
+    let start = latest_h.saturating_sub(WINDOW);
+    let col = handle.votes.read().await;
+    for h in start..=latest_h {
+        let root = match s.store.attested_root_at_height(h) {
+            Ok(Some(r)) => r,
+            _ => continue,
+        };
+        if root.has_finalization_quorum() {
+            continue;
+        }
+        let Some(block_id) = root.blocklace_block_id else {
+            continue;
+        };
+        if let Some((qroot, sigs)) = col.assembled_quorum(&BlockId(block_id)) {
+            // Only attach a quorum that binds THIS root's exact committed state
+            // and meets the root's own threshold — never fabricate an anchor.
+            if qroot == root.merkle_root && sigs.len() >= root.threshold {
+                let updated = dregg_persist::StoredAttestedRoot {
+                    finalization_quorum: sigs,
+                    ..root
+                };
+                match s.store.store_attested_root(&updated) {
+                    Ok(()) => debug!(
+                        height = h,
+                        "back-filled committee finalization quorum (restart anchor assembled)"
+                    ),
+                    Err(e) => {
+                        warn!(error = %e, height = h, "failed to back-fill finalization quorum")
+                    }
+                }
+            }
+        }
+    }
+}
+
 async fn execute_finalized_turn(
     state: &NodeState,
     handle: &BlocklaceHandle,
@@ -4592,6 +4675,23 @@ async fn execute_finalized_turn(
 
             // Persist the attested root so the next turn's executor sees
             // its height (closes audit gap D — was never written).
+            // N3 committee-restart fix (Fix B): if a >=threshold committee
+            // finalization-vote quorum over THIS finalized root has already
+            // assembled (peer votes that arrived before this synchronous
+            // persist), capture it now. Usually empty at first persist — our own
+            // vote is emitted just after this returns and peer votes trail over
+            // gossip — so the quorum is normally back-filled later by
+            // `backfill_finalization_quorums`. Populating it here too closes the
+            // case where the quorum is already complete.
+            let finalization_quorum = handle
+                .votes
+                .read()
+                .await
+                .assembled_quorum(&block_id)
+                .filter(|(root, _)| *root == attested.merkle_root)
+                .map(|(_, sigs)| sigs)
+                .unwrap_or_default();
+
             let stored = dregg_persist::StoredAttestedRoot {
                 merkle_root: attested.merkle_root,
                 note_tree_root: attested.note_tree_root,
@@ -4605,6 +4705,7 @@ async fn execute_finalized_turn(
                 threshold: attested.threshold,
                 federation_id: attested.federation_id,
                 receipt_stream_root: attested.receipt_stream_root,
+                finalization_quorum,
             };
             if let Err(e) = s.store.store_attested_root(&stored) {
                 warn!(error = %e, height = new_height, "failed to persist attested root");

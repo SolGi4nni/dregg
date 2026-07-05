@@ -1255,10 +1255,16 @@ impl NodeState {
                         "recovery signed-anchor: the latest attested root is from a different \
                          federation epoch — signed anchor not enforced this boot (NODE-1)"
                     );
-                } else if signed.verify_signatures(committee) {
-                    // The federation quorum genuinely signed (its `merkle_root` IS the
-                    // canonical ledger root at finalization, see blocklace_sync) — an
-                    // offline attacker cannot forge this.
+                } else if signed.verify_signatures(committee)
+                    || signed.verify_finalization_quorum(committee)
+                {
+                    // A genuine committee quorum over this root: EITHER the
+                    // light-client attestation (`verify_signatures`, the local
+                    // node's sig over the full preimage — solo / threshold-1) OR
+                    // the assembled committee finalization-vote quorum
+                    // (`verify_finalization_quorum`, the N3 restart anchor for a
+                    // full-mode node). Its `merkle_root` IS the canonical ledger
+                    // root at finalization; an offline attacker cannot forge it.
                     signed_floor = signed.height;
                     // Binding: if the recovered head IS the attested height, its canonical
                     // root MUST equal the SIGNED merkle_root. A ledger tampered to a state
@@ -1280,20 +1286,80 @@ impl NodeState {
                             signed.height
                         ));
                     }
-                } else {
-                    // Same-epoch root, but its quorum signature does NOT verify against the
+                } else if signed.quorum_signatures.len() >= signed.threshold
+                    || signed.has_finalization_quorum()
+                {
+                    // The root CLAIMS a quorum (enough signatures / a non-empty
+                    // finalization quorum) but it does NOT verify against the
                     // committee — a forged/tampered attestation. Refuse.
                     tracing::error!(
                         height = signed.height,
-                        "the latest stored attested root carries NO valid committee quorum \
-                         signature — STORE INTEGRITY EVENT (NODE-1), refusing to start"
+                        "the latest stored attested root CLAIMS a committee quorum that does NOT \
+                         verify — STORE INTEGRITY EVENT (NODE-1), refusing to start"
                     );
                     return Err(format!(
-                        "recovery anchor failed: the latest stored attested root at height {} has \
-                         no valid committee quorum signature — refusing to trust an \
-                         unsigned/forged finalization (NODE-1)",
+                        "recovery anchor failed: the latest stored attested root at height {} \
+                         claims a committee quorum that does not verify — refusing to trust a \
+                         forged finalization (NODE-1)",
                         signed.height
                     ));
+                } else {
+                    // A TRAILING full-mode head: persisted synchronously with only
+                    // the local node's single signature (`1 < threshold`), its
+                    // cross-node finalization-vote quorum not yet assembled (the
+                    // votes converge a gossip round or two after the head — the
+                    // deliberate liveness cost of Fix B). This is NOT forgery — it
+                    // makes no quorum CLAIM. Anchor instead to the highest LOWER
+                    // root that DOES carry a valid quorum; the unaggregated head is
+                    // replayable tail (the executed set is recovered separately).
+                    //
+                    // Tamper-check preserved: even without a quorum, the head
+                    // carries the local node's OWN signature binding its
+                    // merkle_root. A ledger recovered to a root that does NOT match
+                    // that self-signed root at the head height is refused — the
+                    // integrity guarantee the lone signature provides is kept.
+                    if head_height == signed.height
+                        && recovered_root != signed.merkle_root
+                        && signed.has_any_valid_committee_signature(committee)
+                    {
+                        tracing::error!(
+                            height = signed.height,
+                            recovered = %dregg_types::hex_encode(&recovered_root),
+                            signed = %dregg_types::hex_encode(&signed.merkle_root),
+                            "recovered ledger root does NOT match the SELF-SIGNED attested root at \
+                             the head height — STORE INTEGRITY EVENT (NODE-1), refusing"
+                        );
+                        return Err(format!(
+                            "recovery anchor failed: recovered ledger root {} != the self-signed \
+                             attested root {} at height {} — refusing to serve a tampered ledger \
+                             (NODE-1)",
+                            dregg_types::hex_encode(&recovered_root),
+                            dregg_types::hex_encode(&signed.merkle_root),
+                            signed.height
+                        ));
+                    }
+                    let mut best: u64 = 0;
+                    if let Ok(roots) = s.store.all_attested_roots() {
+                        for r in &roots {
+                            if r.height < signed.height
+                                && r.federation_id.0 == s.federation_id
+                                && r.threshold_qc.is_none()
+                                && (r.verify_signatures(committee)
+                                    || r.verify_finalization_quorum(committee))
+                                && r.height > best
+                            {
+                                best = r.height;
+                            }
+                        }
+                    }
+                    signed_floor = best;
+                    tracing::warn!(
+                        head = signed.height,
+                        anchored = signed_floor,
+                        "recovery signed-anchor: the latest attested root has no assembled \
+                         committee quorum yet (trailing head) — anchored to the last \
+                         quorum-signed height; the unaggregated tail is replayed (NODE-1)"
+                    );
                 }
             }
             Ok(None) => {
@@ -2596,6 +2662,7 @@ mod crash_recovery_overlay_tests {
                 threshold: 3,
                 federation_id: dregg_types::FederationId(fed_id),
                 receipt_stream_root: None,
+                finalization_quorum: Vec::new(),
             };
             s.store
                 .store_attested_root(&forged)

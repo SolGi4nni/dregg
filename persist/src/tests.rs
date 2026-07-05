@@ -32,6 +32,7 @@ fn sample_attested_root(height: u64) -> StoredAttestedRoot {
         threshold: 2,
         federation_id: dregg_types::FederationId::PLACEHOLDER,
         receipt_stream_root: None,
+        finalization_quorum: Vec::new(),
     }
 }
 
@@ -157,6 +158,7 @@ fn full_mode_single_sig_root_is_refused_genuine_quorum_accepted() {
         threshold: 3,
         federation_id: dregg_types::FederationId::PLACEHOLDER,
         receipt_stream_root: Some([0xEF; 32]),
+        finalization_quorum: Vec::new(),
     };
     let msg = root.signing_message();
 
@@ -195,6 +197,165 @@ fn full_mode_single_sig_root_is_refused_genuine_quorum_accepted() {
         !root.verify_signatures(&committee),
         "three signatures over a DIFFERENT merkle_root must NOT satisfy the \
          anchor — the check binds the committed state root, not just a count"
+    );
+}
+
+/// REGRESSION — the N3 committee-restart hole is CLOSED by Fix B.
+///
+/// This reproduces the exact wedge and proves the fix, at the persistence
+/// boundary a real restart crosses (`store_attested_root` → drop the store →
+/// reopen → `latest_attested_root` → verify the anchor):
+///
+///   * PRE-FIX shape (the wedge): a full-mode root carrying only the local
+///     node's single signature at `threshold = committee-size` CANNOT re-anchor
+///     — neither the light-client `verify_signatures` nor the new
+///     `verify_finalization_quorum` accepts it. This is the fail-close a
+///     committee node hit after finalizing >=1 height.
+///   * POST-FIX shape (Fix B): the same root, once the >=threshold committee
+///     finalization-vote quorum has assembled into `finalization_quorum`,
+///     survives the store/reload restart and `verify_finalization_quorum`
+///     ACCEPTS it — the node re-anchors and keeps finalizing.
+///   * SOUNDNESS held: a root whose `finalization_quorum` is a sub-threshold or
+///     wrong-root set of signatures is still REFUSED after reload. No quorum,
+///     no anchor.
+#[test]
+fn committee_node_restarts_cleanly_with_finalization_quorum() {
+    use dregg_types::{SigningKey, sign};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("committee_restart.redb");
+
+    // A 3-member full-mode committee; threshold = supermajority(3) = 3.
+    let sks: Vec<SigningKey> = (1u8..=3)
+        .map(|s| SigningKey::from_bytes(&[s; 32]))
+        .collect();
+    let committee: Vec<PublicKey> = sks.iter().map(|k| k.public_key()).collect();
+
+    let block_id = [0xCD; 32];
+    let merkle_root = [0xAB; 32];
+
+    // The record the FIXED commit path persists once the vote quorum assembles:
+    // the local single sig stays in `quorum_signatures` (light-client
+    // attestation), and the >=threshold committee finalization-vote signatures
+    // over `(block_id, merkle_root)` fill `finalization_quorum`.
+    let vote_msg = dregg_types::finalization_vote_signing_message(&block_id, &merkle_root);
+    let quorum: Vec<(PublicKey, Signature)> = sks
+        .iter()
+        .map(|k| (k.public_key(), sign(k, &vote_msg)))
+        .collect();
+
+    let base = StoredAttestedRoot {
+        merkle_root,
+        note_tree_root: None,
+        nullifier_set_root: None,
+        height: 1,
+        timestamp: 1_700_000_000,
+        blocklace_block_id: Some(block_id),
+        finality_round: Some(1),
+        // The single LOCAL signature over the full `signing_message()` — this is
+        // all a full-mode node holds synchronously (1 < threshold 3).
+        quorum_signatures: vec![(
+            committee[0],
+            sign(
+                &sks[0],
+                &StoredAttestedRoot {
+                    merkle_root,
+                    note_tree_root: None,
+                    nullifier_set_root: None,
+                    height: 1,
+                    timestamp: 1_700_000_000,
+                    blocklace_block_id: Some(block_id),
+                    finality_round: Some(1),
+                    quorum_signatures: Vec::new(),
+                    threshold_qc: None,
+                    threshold: 3,
+                    federation_id: dregg_types::FederationId::PLACEHOLDER,
+                    receipt_stream_root: None,
+                    finalization_quorum: Vec::new(),
+                }
+                .signing_message(),
+            ),
+        )],
+        threshold_qc: None,
+        threshold: 3,
+        federation_id: dregg_types::FederationId::PLACEHOLDER,
+        receipt_stream_root: None,
+        finalization_quorum: Vec::new(),
+    };
+
+    // ── THE WEDGE (pre-fix persisted shape): only the lone local sig. ──
+    // Neither anchor path can re-verify it → the node fail-closes.
+    assert!(
+        !base.verify_signatures(&committee),
+        "lone local sig (1 < 3) must NOT satisfy the light-client anchor"
+    );
+    assert!(
+        !base.verify_finalization_quorum(&committee),
+        "an empty finalization_quorum must NOT satisfy the restart anchor (the wedge)"
+    );
+
+    // ── FIX B (post-quorum-assembly persisted shape). ──
+    let fixed = StoredAttestedRoot {
+        finalization_quorum: quorum.clone(),
+        ..base.clone()
+    };
+
+    // Persist it, then simulate a RESTART: drop the store, reopen from disk.
+    {
+        let store = PersistentStore::open(&path).unwrap();
+        store.store_attested_root(&fixed).unwrap();
+    }
+    let reloaded = {
+        let store = PersistentStore::open(&path).unwrap();
+        store.latest_attested_root().unwrap().unwrap()
+    };
+    assert_eq!(reloaded.height, 1);
+    assert!(
+        reloaded.verify_finalization_quorum(&committee),
+        "after restart, a genuine >=threshold committee finalization-vote quorum \
+         over the finalized root MUST re-anchor — the committee node restarts cleanly"
+    );
+
+    // ── SOUNDNESS: a sub-threshold quorum is still refused after reload. ──
+    let sub_quorum = StoredAttestedRoot {
+        finalization_quorum: quorum[..2].to_vec(), // 2 < 3
+        ..base.clone()
+    };
+    assert!(
+        !sub_quorum.verify_finalization_quorum(&committee),
+        "a sub-threshold finalization quorum must be refused — no weakening"
+    );
+
+    // ── SOUNDNESS: >=threshold signatures over a DIFFERENT root are refused. ──
+    let wrong_msg = dregg_types::finalization_vote_signing_message(&block_id, &[0x00; 32]);
+    let wrong_root_quorum: Vec<(PublicKey, Signature)> = sks
+        .iter()
+        .map(|k| (k.public_key(), sign(k, &wrong_msg)))
+        .collect();
+    let forged = StoredAttestedRoot {
+        finalization_quorum: wrong_root_quorum,
+        ..base.clone()
+    };
+    assert!(
+        !forged.verify_finalization_quorum(&committee),
+        "three sigs over a DIFFERENT merkle_root must NOT anchor THIS root — the \
+         quorum binds the committed state, not just a count"
+    );
+
+    // ── SOUNDNESS: an equivocating single voter cannot inflate the quorum. ──
+    let one = sks[0].public_key();
+    let one_sig = sign(&sks[0], &vote_msg);
+    let inflated = StoredAttestedRoot {
+        finalization_quorum: vec![
+            (one, one_sig.clone()),
+            (one, one_sig.clone()),
+            (one, one_sig.clone()),
+        ],
+        ..base.clone()
+    };
+    assert!(
+        !inflated.verify_finalization_quorum(&committee),
+        "one voter repeated 3x is 1 distinct signer < threshold 3 — refused"
     );
 }
 
@@ -499,6 +660,7 @@ fn test_attested_root_includes_note_tree() {
         threshold: 1,
         federation_id: dregg_types::FederationId::PLACEHOLDER,
         receipt_stream_root: None,
+        finalization_quorum: Vec::new(),
     };
 
     // Store and recover.

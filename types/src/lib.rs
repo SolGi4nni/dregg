@@ -386,6 +386,37 @@ pub fn merkle_root_of_receipt_hashes(receipts: &[[u8; 32]]) -> [u8; 32] {
     layer[0]
 }
 
+/// The domain-separation tag for a committee member's finalization vote over a
+/// finalized `(block_id, merkle_root)`. Bumped v1 -> v2 with the N3
+/// committee-restart fix, when the vote gained its `merkle_root` binding: a v2
+/// vote signs the finalized state root it attests, so a quorum of these votes
+/// IS the restart anchor's quorum. The bump fences the format against a v1 vote
+/// (which signed `block_id || level` only) being replayed as a v2 root vote.
+pub const FINALIZATION_VOTE_DOMAIN_V2: &[u8] = b"dregg-finalization-vote-v2";
+
+/// The canonical bytes a committee member signs when it votes that it has
+/// finalized `block_id` over committed state root `merkle_root`.
+///
+/// This is the SINGLE source of truth for the finalization-vote preimage,
+/// shared by the node's `FinalizationVote` (which produces the signatures) and
+/// the persistence layer's `StoredAttestedRoot::verify_finalization_quorum`
+/// (which re-verifies the persisted quorum on restart). Keeping it here — the
+/// crate both depend on — makes the two byte-identical by construction, so a
+/// gossiped finalization vote's signature verifies as a persisted quorum
+/// signature with no format drift.
+///
+/// It binds ONLY the two provably-deterministic quantities that identify the
+/// finalized state — the blocklace `block_id` and the canonical `merkle_root` —
+/// so every honest committee member computes the identical preimage regardless
+/// of local wall clock or per-node DAG bookkeeping.
+pub fn finalization_vote_signing_message(block_id: &[u8; 32], merkle_root: &[u8; 32]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(FINALIZATION_VOTE_DOMAIN_V2.len() + 32 + 32);
+    buf.extend_from_slice(FINALIZATION_VOTE_DOMAIN_V2);
+    buf.extend_from_slice(block_id);
+    buf.extend_from_slice(merkle_root);
+    buf
+}
+
 impl AttestedRoot {
     /// Convenience constructor for the common "no blocklace binding yet" case
     /// (tests, legacy fixtures). Production code in `node/` always sets
@@ -550,7 +581,16 @@ impl AttestedRoot {
         // v2 binds the blocklace block_id + finality_round so that two
         // attested roots at the same `height` from different blocklace forks
         // are distinguishable (closes audit F3).
-        msg.extend_from_slice(b"dregg-attested-root-v4");
+        // v5 (N3 committee-restart fix): the wall-clock `timestamp` is DROPPED
+        // from the signed preimage. Binding a per-node wall clock made the
+        // preimage non-deterministic across the committee, so peers could never
+        // produce matching signatures over the same finalized root (the blocker
+        // that forced the committee-restart hole). The `timestamp` field is
+        // retained on the struct for display/freshness heuristics but is no
+        // longer consensus-bound. The domain bump v4->v5 fences the format: a v4
+        // verifier reconstructing a v5 preimage fails the signature check, so all
+        // committee members must upgrade together (a genesis/epoch boundary).
+        msg.extend_from_slice(b"dregg-attested-root-v5");
         msg.extend_from_slice(&self.federation_id.0);
         msg.extend_from_slice(&self.merkle_root);
         match self.note_tree_root {
@@ -572,7 +612,8 @@ impl AttestedRoot {
             }
         }
         msg.extend_from_slice(&self.height.to_le_bytes());
-        msg.extend_from_slice(&self.timestamp.to_le_bytes());
+        // NOTE (v5): `timestamp` is intentionally NOT mixed in — see the domain
+        // comment above. It stays a struct field but out of the signed preimage.
         match self.blocklace_block_id {
             Some(ref id) => {
                 msg.push(0x01);
@@ -1049,17 +1090,51 @@ mod tests {
     }
 
     #[test]
-    fn v4_signing_message_distinct_from_v3_legacy_preimage() {
-        // Bumping the domain tag from v3 to v4 means a v4 root's
-        // signing message starts with "dregg-attested-root-v4" — a v3
-        // verifier reconstructing the preimage with v3 tag would fail
-        // signature check, so legacy verifiers MUST be upgraded.
-        let v4_root = root_with_receipts([0xCC; 32], &[[0x99; 32]]);
-        let msg = v4_root.signing_message();
-        assert!(msg.starts_with(b"dregg-attested-root-v4"));
+    fn v5_signing_message_distinct_from_legacy_preimage() {
+        // Bumping the domain tag to v5 means a v5 root's signing message starts
+        // with "dregg-attested-root-v5" — a v4 verifier reconstructing the
+        // preimage with the v4 tag (and mixing the now-dropped timestamp) would
+        // fail the signature check, so legacy verifiers MUST be upgraded.
+        let v5_root = root_with_receipts([0xCC; 32], &[[0x99; 32]]);
+        let msg = v5_root.signing_message();
+        assert!(msg.starts_with(b"dregg-attested-root-v5"));
         // The receipt_stream_root tag (0x01) precedes the 32-byte hash
         // at the end of the preimage.
         assert_eq!(msg[msg.len() - 33], 0x01u8);
+    }
+
+    #[test]
+    fn v5_preimage_is_timestamp_independent() {
+        // The N3 determinism prerequisite: two attested roots that agree on
+        // everything EXCEPT the wall-clock timestamp produce the IDENTICAL
+        // signed preimage, so committee members with skewed clocks sign matching
+        // bytes over the same finalized state.
+        let a = root_with_receipts([0x42; 32], &[[0x01; 32]]);
+        let mut b = a.clone();
+        b.timestamp = a.timestamp + 9_999;
+        assert_eq!(
+            a.signing_message(),
+            b.signing_message(),
+            "timestamp must not affect the v5 signed preimage"
+        );
+    }
+
+    #[test]
+    fn finalization_vote_message_binds_block_and_root() {
+        // The shared finalization-vote preimage binds both the block id and the
+        // finalized merkle_root: flipping either yields a different message.
+        let base = finalization_vote_signing_message(&[0x11; 32], &[0x22; 32]);
+        assert!(base.starts_with(FINALIZATION_VOTE_DOMAIN_V2));
+        assert_ne!(
+            base,
+            finalization_vote_signing_message(&[0x11; 32], &[0x23; 32]),
+            "a different merkle_root must change the vote preimage"
+        );
+        assert_ne!(
+            base,
+            finalization_vote_signing_message(&[0x10; 32], &[0x22; 32]),
+            "a different block_id must change the vote preimage"
+        );
     }
 
     #[test]

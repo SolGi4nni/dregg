@@ -55,6 +55,23 @@ pub struct StoredAttestedRoot {
     /// the receipt-stream binding. See `dregg_types::AttestedRoot`.
     #[serde(default)]
     pub receipt_stream_root: Option<[u8; 32]>,
+    /// N3 committee-restart fix (Fix B): the assembled quorum of committee
+    /// **finalization votes** over this root's `(blocklace_block_id,
+    /// merkle_root)` — each pair a distinct committee member's Ed25519 signature
+    /// over [`dregg_types::finalization_vote_signing_message`].
+    ///
+    /// This is the record that lets a FULL-MODE committee node restart cleanly.
+    /// `quorum_signatures` carries the local node's signature over the full
+    /// `signing_message()` preimage (the light-client attestation); a full-mode
+    /// node only ever holds ONE such local signature synchronously, so on its
+    /// own it is `1 < threshold` and cannot re-anchor. `finalization_quorum`
+    /// instead accumulates the >=threshold cross-node vote signatures (which
+    /// arrive async over gossip and are back-filled here as the quorum forms),
+    /// verified on restart by [`Self::verify_finalization_quorum`]. Empty for
+    /// legacy roots and for a freshly persisted head whose vote quorum has not
+    /// yet assembled (the anchor recovers to the last quorum-carrying root).
+    #[serde(default)]
+    pub finalization_quorum: Vec<(PublicKey, Signature)>,
 }
 
 impl StoredAttestedRoot {
@@ -97,6 +114,84 @@ impl StoredAttestedRoot {
         true
     }
 
+    /// Does this root carry a (non-empty) finalization-vote quorum record?
+    ///
+    /// Distinguishes a genuinely-unsigned/trailing head (empty — the vote
+    /// quorum has not assembled yet, which the restart anchor treats as
+    /// "not yet anchored", NOT as forgery) from a root that CLAIMS a quorum
+    /// (non-empty — which must then verify or the root is rejected as forged).
+    pub fn has_finalization_quorum(&self) -> bool {
+        !self.finalization_quorum.is_empty()
+    }
+
+    /// Verify the assembled committee **finalization-vote** quorum
+    /// (`finalization_quorum`) — the N3 committee-restart anchor (Fix B).
+    ///
+    /// Returns `true` only when ALL of:
+    ///   * this root is anchored to a blocklace block (`blocklace_block_id` is
+    ///     `Some` — the vote preimage binds it);
+    ///   * every `(voter, sig)` is a committee member's valid Ed25519 signature
+    ///     over [`dregg_types::finalization_vote_signing_message`] for THIS
+    ///     root's `(blocklace_block_id, merkle_root)` — a signature over any
+    ///     other root or block does not count;
+    ///   * the number of **distinct** valid committee signers is `>= threshold`
+    ///     (an equivocating/duplicated voter counts at most once, so a single
+    ///     member cannot inflate the quorum).
+    ///
+    /// This never accepts a root without a genuine >=threshold committee quorum
+    /// over the exact finalized state — it closes the liveness fail-close
+    /// WITHOUT relaxing the soundness bar.
+    pub fn verify_finalization_quorum(&self, committee: &[PublicKey]) -> bool {
+        let Some(block_id) = self.blocklace_block_id else {
+            return false;
+        };
+        if self.finalization_quorum.len() < self.threshold {
+            return false;
+        }
+        let message = dregg_types::finalization_vote_signing_message(&block_id, &self.merkle_root);
+        let mut distinct: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
+        for (pk, sig) in &self.finalization_quorum {
+            if !committee.contains(pk) {
+                return false;
+            }
+            if !pk.verify(&message, sig) {
+                return false;
+            }
+            distinct.insert(pk.0);
+        }
+        distinct.len() >= self.threshold
+    }
+
+    /// Does at least one committee-member signature validly bind THIS root's
+    /// `merkle_root` — from EITHER the light-client `quorum_signatures` (over
+    /// `signing_message`) OR the `finalization_quorum` (over the
+    /// finalization-vote message)?
+    ///
+    /// This is weaker than a quorum (a single valid signature suffices) and is
+    /// used ONLY for the restart tamper-check: even when a full committee quorum
+    /// has not yet assembled for a trailing head, a ledger recovered to a root
+    /// that does NOT match any self/committee-signed root must still be refused.
+    /// It preserves the merkle_root-binding integrity the lone local signature
+    /// provides, without treating that lone signature as a quorum anchor.
+    pub fn has_any_valid_committee_signature(&self, committee: &[PublicKey]) -> bool {
+        let full_msg = self.signing_message();
+        for (pk, sig) in &self.quorum_signatures {
+            if committee.contains(pk) && pk.verify(&full_msg, sig) {
+                return true;
+            }
+        }
+        if let Some(block_id) = self.blocklace_block_id {
+            let vote_msg =
+                dregg_types::finalization_vote_signing_message(&block_id, &self.merkle_root);
+            for (pk, sig) in &self.finalization_quorum {
+                if committee.contains(pk) && pk.verify(&vote_msg, sig) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Compute the canonical message that was signed for this attested root.
     ///
     /// Mirrors [`dregg_types::AttestedRoot::signing_message`] (v3): includes
@@ -109,7 +204,10 @@ impl StoredAttestedRoot {
     /// `tests::full_mode_single_sig_root_is_refused_genuine_quorum_accepted`).
     pub(crate) fn signing_message(&self) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"dregg-attested-root-v4");
+        // v5 (N3 committee-restart fix): the wall-clock `timestamp` is DROPPED
+        // from the signed preimage so the root's preimage is deterministic
+        // across the committee. Mirrors `dregg_types::AttestedRoot::signing_message`.
+        msg.extend_from_slice(b"dregg-attested-root-v5");
         msg.extend_from_slice(&self.federation_id.0);
         msg.extend_from_slice(&self.merkle_root);
         match self.note_tree_root {
@@ -127,7 +225,7 @@ impl StoredAttestedRoot {
             None => msg.push(0x00),
         }
         msg.extend_from_slice(&self.height.to_le_bytes());
-        msg.extend_from_slice(&self.timestamp.to_le_bytes());
+        // NOTE (v5): `timestamp` is intentionally NOT mixed in (determinism).
         match self.blocklace_block_id {
             Some(ref id) => {
                 msg.push(0x01);
