@@ -139,7 +139,12 @@ sites, rotated+graduated). Positions 0..44 are UNCHANGED, so every `Rfix_*` rfl-
 preserved; `actionTagToPos 56` re-keys to 45 so `Rfix 56` resolves to `heapWriteV3` (no longer the
 transfer fallback). -/
 def v3RegistryHeap : List (String × EffectVmDescriptor2) :=
-  Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen
+  -- THE FLAG-DAY: the apex ranges over the DEPLOYED welded registry (`v3RegistryCapOpenDep` — the 36
+  -- cohort members carry the capacity-floor refuse; the cap-open tail 36..44 is identical to the bare
+  -- `v3RegistryCapOpen`). So `vkOfRegistry Rfix` / `StarkSound hash Rfix` quantify over the descriptors a
+  -- light client actually verifies AFTER the flag-day emit — the refuse is in the committed VK bytes. The
+  -- cohort-routed per-effect rungs peel the weld back to their bare face (`satisfied2_of_v3RefusedMember`).
+  Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpenDep
     ++ [("heapWriteVmDescriptor2R24",
          -- OPTION I: the DEPLOYED heap-write descriptor is the after-spine membership
          -- `effHeapWriteV3 heapWriteV3 …` (EXACTLY as cap deploys `effCapOpenWriteV3`), so `Rfix 56`
@@ -278,7 +283,7 @@ def v3RegistryHeap : List (String × EffectVmDescriptor2) :=
          Dregg2.Circuit.Emit.CarrierComposed.transferV3Membership)]
 
 theorem v3RegistryHeap_length : v3RegistryHeap.length = 61 := by
-  simp [v3RegistryHeap, Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen_length]
+  simp [v3RegistryHeap, Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpenDep_length]
 
 /-- The heapWrite member lands at tail position 45 — `Rfix 56` resolves THERE. -/
 theorem v3RegistryHeap_heapWrite :

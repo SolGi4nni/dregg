@@ -138,7 +138,7 @@ theorem closedLogExtract_burn_closed
     ClosedLogExtract Slive LH hash Rfix 4 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
-  have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+  have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
     Dregg2.Circuit.RotatedKernelRefinementMintBurn.burnV3 hsat
   obtain ⟨actor, cell, a, amt, permOut, hside, hpub, logNeeds⟩ :=
     readout minit mfin maddrs t pubLogPost pre post hsat
@@ -166,7 +166,7 @@ theorem closedLogExtract_bridgeMint_closed
   -- (withSelectorGate selM.MINT mintV3)`), rc-EMIT-wrapped; peel the uniform `withDfaRcPins` wrap
   -- (4 additive `.piBinding` pins), then the additive mint-hash pin, then strip the appended
   -- selector-binding gate to recover the bare-`mintV3` witness the readout/rung consume.
-  have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+  have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3BridgeHash hsat
   have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withMintHashPin hash
     (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSelectorGate
@@ -197,7 +197,7 @@ theorem closedLogExtract_incrementNonce_closed
     ClosedLogExtract Slive LH hash Rfix 7 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
-  have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+  have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
     Dregg2.Circuit.RotatedKernelRefinementIncNonce.incNonceV3 hsat
   obtain ⟨actor, cell, n, permOut, hside, hpub, logNeeds⟩ :=
     readout minit mfin maddrs t pubLogPost pre post hsat
@@ -486,7 +486,7 @@ theorem closedLogExtract_cellSeal_closed
   -- rc-EMIT-wrapped); peel the uniform wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellSealV3
       minit mfin maddrs t :=
-    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellSealV3 hsat
   obtain ⟨actor, cell, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact cellSeal_closedLog_sat hash hside hsat' pre post actor cell pc pubLogPre pubLogPost hdecLog
@@ -508,7 +508,7 @@ theorem closedLogExtract_cellUnseal_closed
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellUnsealV3
       minit mfin maddrs t :=
-    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellUnsealV3 hsat
   obtain ⟨actor, cell, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact cellUnseal_closedLog_sat hash hside hsat' pre post actor cell pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
@@ -532,7 +532,7 @@ theorem closedLogExtract_cellDestroy_closed
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellDestroyV3
       minit mfin maddrs t :=
-    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellDestroyV3 hsat
   obtain ⟨actor, cell, certHash, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact cellDestroy_closedLog_sat compressN2 hN hash hside hsat' pre post actor cell certHash pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
@@ -585,7 +585,7 @@ theorem closedLogExtract_receiptArchive_closed
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.receiptArchiveV3
       minit mfin maddrs t :=
-    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.receiptArchiveV3 hsat
   obtain ⟨actor, cell, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact receiptArchive_closedLog_sat hash hside hsat' pre post actor cell pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
@@ -609,7 +609,7 @@ theorem closedLogExtract_setPermissions_closed
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setPermsV3
       minit mfin maddrs t :=
-    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setPermsV3 hsat
   obtain ⟨actor, cell, p, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact setPermissions_closedLog_sat hash hside hsat' pre post actor cell p pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
@@ -631,7 +631,7 @@ theorem closedLogExtract_setVK_closed
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setVKV3
       minit mfin maddrs t :=
-    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setVKV3 hsat
   obtain ⟨actor, cell, vk, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact setVK_closedLog_sat hash hside hsat' pre post actor cell vk pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
@@ -740,7 +740,7 @@ theorem closedLogExtract_createCellFromFactory_closed
           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.factoryV3
           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_CHILD_VK_OCTET)
         Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_CONTRACT_HASH_OCTET
-        (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.satisfied2_of_withDfaRcPins hash
+        (Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
           Dregg2.Circuit.Emit.EffectVmEmitRotationV3.factoryV3Carriers hsat))
   obtain ⟨actor, newCell, vk, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact createCellFromFactory_closedLog_sat hash hsat' pre post actor newCell vk pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
