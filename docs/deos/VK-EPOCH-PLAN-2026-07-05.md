@@ -416,8 +416,10 @@ seven-carrier universal-fold bang.
 
 ## 9. GENTIAN FLAG-DAY — the bare-descriptor dodge CLOSED (soundness core landed 2026-07-05)
 
-> **STATUS: the SOUND CORE + the anti-launder forge are LANDED + GREEN; the deployed-cohort
-> emit-weld + regen + apex re-verify is the remaining ember-gated step (scoped precisely below).**
+> **STATUS: the SOUND CORE + the anti-launder forge + the DEPLOYED-ALIGNED column-parametric keystone
+> (§9.1b, `gentianDeployedBareRefuse` — the sound emit-weld TARGET, traceWidth widening baked in) are
+> LANDED + GREEN + crown-wired; the emit-map + regen + apex geometry-cascade re-verify is the remaining
+> multi-run grind (RESUME AT §9.3 STEP 1), then the ember-gated deploy.**
 > This section supersedes §2.1's "sound deployed-flip stays GENTIAN-blocked / OUT" for the SOUNDNESS
 > question: the terminal blocker §2.1 named (in-AIR `B_AUTHORITY_DIGEST`→selector) was already
 > discharged by PATH (b) in `CarrierBoundFloorGadget` (decode from the caveat-manifest columns, no
@@ -447,6 +449,32 @@ seven-carrier universal-fold bang.
     `caveat_uniformity_bites_on_non_uniform_manifest`.
 - Commits: `f74ab2694` (escrow core), `b11416faa` (capacity-general), `addfa3c32` (Rust shadow+tooth).
 
+### 9.1b What LANDED the SECOND session (2026-07-05 pt2 — the deployed-aligned soundness enabler)
+
+- **Drift-pin fix** — `circuit/src/effect_vm/carrier_floor_weld.rs:348` pinned the STALE
+  `caveat_tag_col(0) == 291`; corrected to the v13 value `643` (derived: `CAVEAT_BASE = V1_WIDTH(188) +
+  2·B_SPAN(227) = 642`, `caveat_tag_col(k) = 642 + 1 + 7·k` = 643/650/657/664). Both drift-pin tests
+  (`carrier_floor_weld` + `bare_floor_refuse_weld`) green.
+- **Column-parametric DEPLOYED soundness — `metatheory/Dregg2/Deos/BareCohortFloorRefuseDeployed.lean`**
+  (`#assert_all_clean`, 12 keystones, non-vacuous). Lifts `BareCohortFloorRefuse`'s abstract-column
+  (`CARRIER_BASE = 388`, single block) keystone to the **DEPLOYED caveat columns** (`ebDep k = 642 + 1 +
+  7·k` = 643/650/657/664) with **three DISJOINT aux blocks** (escrow 17 / discharge 18 / vault 19 at
+  `GRAD_ROT_WIDTH(1581) + b·REFUSE_STRIDE(16) + {bit/inv/or/floor}`, mirroring the Rust
+  `bare_floor_refuse_weld` deployed alignment EXACTLY — `#guard`s pin 643/650/657/664 + fcDep 1593/1609/
+  1625 + 36 disjoint aux cols). `declared_tag_unsat_at` is column-parametric over ANY containing
+  descriptor (membership hypotheses), so it composes over the three-block deployed member;
+  `declared_{escrow,discharge,vault}_unsat_deployed` are the three closed dodges. **`hbind` is
+  dischargeable by the LIVE PI-45 caveat pin** because the tag columns ARE the deployed `caveatCommit`
+  columns (not a free assumption). `gentianDeployedBareRefuse d` bakes the traceWidth widening
+  (`max d.traceWidth 1626`, `#guard REFUSE_TRACE_WIDTH == 1626`) so the emitted-descriptor SHAPE is
+  proven. This is the **true, non-laundered soundness enabler** for the emit-weld: the emit maps THIS
+  transformer over `v3RegistryBare`.
+- **Crown-wire** — both `BareCohortFloorRefuse` (was reachable only standalone) and the new
+  `BareCohortFloorRefuseDeployed` imported into `Dregg2/Deos.lean`; `lake build Dregg2` green (4256 jobs)
+  with both axiom-clean in the apex corpus.
+- Commits: `carrier_floor_weld` drift fix, `BareCohortFloorRefuseDeployed` add, crown-wire (three
+  checkpoints this session).
+
 ### 9.2 ⚑ THE GEOMETRY CORRECTION (verified against HEAD — supersedes the "geometry-stable" premise)
 
 `transferVmDescriptor2R24.trace_width == 1581 == GRAD_ROT_WIDTH` (measured in
@@ -458,36 +486,68 @@ a per-member geometry widening (the `main` table arity moves), larger than §6's
 (The escrow SATISFACTION descriptor already paid an analogous widening — `WELD-STATE.md:221-223` B_SPAN
 51→119; the bare-cohort refuse pays it across the whole cohort.)
 
-### 9.3 The remaining ordered step (the ember-gated flip — NOT fired)
+### 9.3 The remaining ordered step (the ember-gated flip — RESUME POINT, grounded 2026-07-05 pt2)
 
-1. **Emit weld (STEP 1).** In `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotationV3.lean`, map every
-   `v3RegistryBare` member through the three-tag refuse weld before `withDfaRcPins`:
-   `d ↦ (BareCohortFloorRefuse for tags 17,18,19) d`. The Lean transformer is
-   `gentianBareRefuseDescriptorT tag d` (compose the three tags at DISJOINT aux column blocks — the
-   Rust `bare_floor_refuse_weld` column layout is the deployed alignment). Widen each member's
-   `traceWidth` to cover the aux block (≥ `GRAD_ROT_WIDTH + 3·REFUSE_STRIDE`). Add a `#guard` that every
-   welded member carries the 43-gate block; re-state the apex over the welded registry.
+> **RESUME AT STEP 1.** The soundness enabler (§9.1b) is LANDED + green: the deployed-aligned,
+> column-parametric refuse transformer `gentianDeployedBareRefuse` (in
+> `Dregg2/Deos/BareCohortFloorRefuseDeployed.lean`) is the transformer to map over the cohort — it is
+> PROVEN sound at the deployed columns with the traceWidth widening baked in. Steps 1–4 are the
+> geometry-cascade grind that reds the apex tree; the ember-gated deploy is Step 5.
+
+1. **Emit weld (STEP 1) — the VK-shape change.** In
+   `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotationV3.lean`, change `v3Registry` (def at `:5372`) to
+   map each `v3RegistryBare` member through `gentianDeployedBareRefuse` (import
+   `Dregg2.Deos.BareCohortFloorRefuseDeployed`). Order: `withDfaRcPins (gentianDeployedBareRefuse d)`
+   (the refuse widens traceWidth 1581→1626; `withDfaRcPins` is width-invariant + adds 4 PIs → the
+   welded member keeps piCount+4 and width 1626). Do NOT touch the 9 cap-open members
+   (`v3RegistryCapOpen` tail at `CapOpenEmit.lean:1280`, widths 1910+) — they are not the bare route and
+   their aux would collide (out of task scope).
+   - **`#guard` breakage to fix (expected — the flag-day):** `EffectVmEmitRotationV3.lean:5376-5378`
+     (`w.traceWidth == b.traceWidth` — now 1626 ≠ 1581, update), `:5382-5385` (piCount guards — recompute
+     with the widened width; piCount is UNCHANGED by the refuse, only width moves, so these stay if they
+     only check piCount), `:5387` (length 36 — unchanged), and the member-name guards downstream (names
+     now carry the `-gentian-deployed-bare-refuse` suffix — either accept the suffix in the guards or add
+     it in the expected strings).
    - **G5 free-param binding (the real soundness item at `gentian_discharge_vault_prove.rs:33-35`):**
      bind `PERIOD_COL/AMOUNT_COL/CLOCK_COL` (`discharge_weld.rs:71-75`, today producer-filled FREE) to
      the committed caveat params + `clock` to the published block height via PI/manifest-param pins.
-     Mirror for the vault slot params.
-2. **ONE regen (STEP 2).** `scripts/emit-descriptors.sh` → **ALL cohort fingerprints move + every
-   `trace_width` moves** (the flag-day). `scripts/check-descriptor-drift.sh` must PASS (re-emit
-   byte-identical).
-3. **Apex re-verify (STEP 4).** `lake build Dregg2` green + `#assert_axioms` clean on
-   `lightclient_unfoolable` + the 5 `AssuranceCase` guarantees UNDER the widened/welded cohort VKs.
-   ⚑ EXPECT CASCADE: theorems that pattern-match member constraint lists / `trace_width` /
-   `Rfix` positions will need re-grounding (the "per-file green hides a red umbrella" hazard — build the
-   WHOLE tree, not per-file). This is the multi-run grind.
-4. **Live-wire routing + producers (STEP 3).** Un-stage `rotated_descriptor_name_for_declared_escrow`
+     Mirror for the vault slot params. (This is the discharge/vault SATISFACTION descriptor soundness,
+     orthogonal to the bare-refuse; land it alongside.)
+2. **Apex cascade re-ground (STEP 1 tail — the multi-run grind).** ⚑ The reference sites (grounded):
+   `Dregg2/Circuit/{CircuitSoundnessAssembled,CircuitSoundness,RotatedKernelRefinement,
+   RotatedKernelRefinementExercise,RotatedKernelRefinementAttenuate,RotatedKernelRefinementMintBurn}.lean`
+   + `Emit/CapOpenEmit.lean` reference `v3Registry`/`v3RegistryBare`. The refinement theorems that state
+   "Satisfied2 (member) → genuine kernel step" survive appended constraints IF they drop-extra (a
+   satisfying witness of the welded member still satisfies the base gates); the ones that rfl-match the
+   EXACT constraint list / `Rfix` position / `traceWidth` need re-grounding. Build the WHOLE tree
+   (`lake build Dregg2`), not per-file (the shared-registry red-umbrella hazard). Mirror how v13
+   cascaded: bump the offset/position sites as lake surfaces them.
+3. **ONE regen (STEP 2).** `scripts/emit-descriptors.sh` → **ALL cohort fingerprints move + every
+   `trace_width` moves** (1581→1626). `scripts/check-descriptor-drift.sh` must PASS (`lake build Dregg2`
+   then re-emit byte-identical). This re-pins the `*_FP` sha256 constants in
+   `circuit/src/effect_vm_descriptors.rs` — the Rust registry FP checks then pass on the new bytes.
+4. **Apex re-verify (STEP 4).** `#assert_axioms` clean on
+   `ClosureFinal.lightclient_unfoolable_circuit_sound` + `AssuranceCase.deployed_system_secure` + the 5
+   guarantees UNDER the widened/welded cohort VKs.
+5. **Live-wire routing + producers (STEP 3).** Un-stage `rotated_descriptor_name_for_declared_escrow`
    (`trace_rotated.rs:2343`, currently STAGED `:2338`) + discharge/vault analogs; wire
    `fill_carrier_decode`/`fill_discharge_aux`/`fill_vault_aux` from the live rotated generator so an
    honest declared-capacity turn routes through + proves the SATISFACTION descriptor on the default
    path (the bare member now REFUSES it).
-5. **Deploy (STEP 5, ember fires — NOT done):** the re-genesis (`generate.sh --force`) + LC VK
+6. **Deploy (STEP 5, ember fires — NOT done):** the re-genesis (`generate.sh --force`) + LC VK
    redistribution (`git push origin main` + client rebuild). Because this moves the deployed-default
    cohort VKs AND every `trace_width`, it IS an eyes-open devnet re-genesis (per `HANDOFF-v13` §1d),
    not a mere staged-add. ember's call.
+
+### 9.3b The anti-launder verification (run after the regen)
+
+After STEP 2 regen, GREP the regenerated `circuit/descriptors/rotation-v3-staged-registry.tsv` for the
+refuse columns on every `-v3-staged` cohort row: the floor cols `1593/1609/1625` (the three per-tag OR
+terminals) and the `floor==0` refuse gate must be present in the COMMITTED rows (not just Lean). Extend
+`bare_floor_refuse_weld.rs`'s forge to assert the DEPLOYED regenerated descriptor's constraint list
+CONTAINS the refuse block (parse the emitted JSON, not the synthetic row), so the tooth bites on the
+deployed default. The Lean `declared_{escrow,discharge,vault}_unsat_deployed` is the proof; this grep +
+forge is the deployed-bytes witness that the flip is real, not staged.
 
 ### 9.4 The anti-launder GATE (respected)
 
