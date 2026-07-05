@@ -344,11 +344,12 @@ mod tests {
         for k in 0..cav::MAX_CAVEATS {
             assert_eq!(caveat_tag_col(k), CAVEAT_BASE + 1 + k * cav::ENTRY_SIZE);
         }
-        // The concrete bound columns (drift pin).
-        assert_eq!(caveat_tag_col(0), 291);
-        assert_eq!(caveat_tag_col(1), 298);
-        assert_eq!(caveat_tag_col(2), 305);
-        assert_eq!(caveat_tag_col(3), 312);
+        // The concrete bound columns (drift pin at v13 geometry: CAVEAT_BASE = V1_WIDTH(188) +
+        // 2*B_SPAN(227) = 642; ENTRY_SIZE = 7; so caveat_tag_col(0) = 643).
+        assert_eq!(caveat_tag_col(0), 643);
+        assert_eq!(caveat_tag_col(1), 650);
+        assert_eq!(caveat_tag_col(2), 657);
+        assert_eq!(caveat_tag_col(3), 664);
     }
 
     #[test]
