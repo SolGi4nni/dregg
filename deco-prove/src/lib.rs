@@ -65,6 +65,8 @@
 pub mod notary;
 pub mod prover;
 pub mod tlsn_attest;
+#[cfg(feature = "tlsn-live")]
+pub mod tlsn_live;
 
 pub use notary::{
     NotaryAttestation, NotaryKeypair, TranscriptCommitment, verify_notary_attestation,

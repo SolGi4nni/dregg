@@ -1,9 +1,25 @@
-# TLSNotary / MPC-TLS for the DECO money-in — integration design + first slice (honest)
+# TLSNotary / MPC-TLS for the DECO money-in — integration design + the REAL slice (honest)
 
 This note designs the trustless realization of the DECO Layer-2 origin attestation
 (replacing the semi-honest ed25519 notary) with **TLSNotary / MPC-TLS**, and records the
-**first real slice** now in-tree: the Layer-2 tlsn-attestation **interface + adapter**,
-exercised end-to-end by a real tlsn-format Stripe fixture.
+two slices now in-tree:
+
+1. **The modeled adapter** (`deco-prove/src/tlsn_attest.rs`) — the Layer-2 interface over a
+   tlsn-format Stripe fixture; the default build.
+2. **THE REAL INTEGRATION** (`deco-prove/src/tlsn_live.rs`, cargo feature `tlsn-live`) — the
+   **vendored (git-pinned) tlsn stack** running a **genuine local MPC-TLS 2PC roundtrip**
+   against a controllable test HTTPS server: a real `tlsn` Prover + a real local Notary do
+   the 2PC handshake, the Prover selectively discloses the payment facts (hiding the
+   `Authorization` secret), the Notary signs a real `Attestation`, the Prover builds a real
+   `Presentation`, and `presentation.verify()` yields a real `PresentationOutput` whose
+   authenticated facts drive a **conserved DECO mint** through the real `stripe_deco`
+   verifier. **This is not a model.** The only remaining step to full production is
+   operational: point the Prover at live `api.stripe.com` (§7).
+
+> **Status:** the `mpz` 2PC stack + tlsn @ `v0.1.0-alpha.15` **compile and run** in this
+> workspace (nightly 1.98, edition 2024). The real roundtrip test passes in ~1s of 2PC.
+> The earlier "not vendorable as an in-lane trustless run" verdict (§1) is **superseded** —
+> see §4b/§7.
 
 Companion notes: `docs/deos/DECO-PROVER-STATUS.md` (Layer 1 STARK + the interim notary),
 `docs/deos/DECO-MONEY-IN-STATUS.md` (the verifier + Lean crown).
@@ -42,11 +58,14 @@ Companion notes: `docs/deos/DECO-PROVER-STATUS.md` (Layer 1 STARK + the interim 
      `PresentationOutput { server_name, connection_info.time, transcript }` where
      `transcript` is a `PartialTranscript` (undisclosed bytes set to fill `X`);
      `presentation.verifying_key()` is the notary key the verifier **pins**.
-- **Verdict: not vendorable as an in-lane trustless run.** It needs a live notary
-  service + the `mpz` alpha 2PC stack + a live Stripe TLS session, on a `0.x`-alpha,
-  churning, tokio-async surface. Standing that up here would be a force-fit and could not
-  be green-gated. → we build the **interface + adapter + real fixture** (the honest
-  Branch-2 outcome) and name the remaining wiring exactly.
+- **Verdict (SUPERSEDED 2026-07-05).** The original note judged this "not vendorable as an
+  in-lane trustless run." That was too pessimistic: the `mpz` alpha 2PC stack + tlsn
+  alpha.15 **do compile and run** here, and a **local** MPC-TLS roundtrip needs **no
+  external notary binary and no live Stripe session** — the Notary is a real `tlsn`
+  verifier spawned as an in-process task over `tokio::io::duplex`, and the target is a
+  controllable local test HTTPS server. So the REAL machinery is now in-tree and
+  green-gated behind the `tlsn-live` feature (§4b). What genuinely remains is only
+  operational: swapping the local test server for live `api.stripe.com` (§7).
 
 ---
 
@@ -134,7 +153,67 @@ and the bridge verifier unchanged.
 in-tree curve; tlsn's real notary uses secp256k1/p256 — a config detail). The 2PC
 session-integrity — the reason the notary's signature is *trustless* rather than *trusted*
 — is modeled **structurally** (authenticated ranges) but **not executed**. The fixture
-stands in for a verified presentation. We do **not** claim live-trustless-Stripe money-in.
+stands in for a verified presentation. This modeled slice is the **default build**.
+
+---
+
+## 4b. THE REAL slice (in-tree, green, feature `tlsn-live`) — vendored tlsn, live-local MPC-TLS
+
+**Crate/feature:** `deco-prove` gains the `tlsn-live` cargo feature and
+`src/tlsn_live.rs` (+ `tests/tlsn_live_roundtrip.rs`). The heavy `mpz` 2PC / tokio /
+rustls backend is an **optional build feature** — with it off, the default build compiles
+none of it and stays light (the no-reflexive-features rule targets *runtime* toggles; an
+optional heavy crypto backend behind a *build* feature is the sanctioned use).
+
+**Vendoring.** tlsn is **git-only**; we pin it the way the workspace pins its other git
+forks (Plonky3, emberian/stylo, zed-industries/async-process, …): a **git dep at an exact
+rev**, not a path/patch vendor-copy. In `deco-prove/Cargo.toml`:
+
+```toml
+tlsn                      = { git = "https://github.com/tlsnotary/tlsn", rev = "47aee45b53e06648c1b2ad3689b367b8c923fdec", optional = true }
+tlsn-formats              = { git = "…", rev = "47aee45…", optional = true }
+tlsn-server-fixture-certs = { git = "…", rev = "47aee45…", optional = true }
+# rev 47aee45… == tag v0.1.0-alpha.15
+```
+
+tlsn is a path-based workspace, so depending on `tlsn` transitively resolves the whole
+tree (+ the `mpz` `v0.1.0-alpha.6` 2PC crates + `tlsn-utils`) at the pinned rev; Cargo.lock
+records all of it. **Note (API drift):** at alpha.15 the Prover and Verifier live in a
+single unified `tlsn` crate (not the older `tlsn-prover`/`tlsn-verifier`/`tlsn-common`
+split); `tlsn-core` is re-exported as `tlsn::{config, connection, transcript, webpki}` and
+the attestation surface as `tlsn::attestation`.
+
+**What the real slice DOES (`tlsn_live.rs`):**
+- Stands up a **controllable test HTTPS server** (in-process, over `tokio::io::duplex`)
+  presenting the `tlsn-server-fixture` cert (`test-server.io`) and returning a
+  Stripe-payment-shaped JSON `{"id":…,"amount":2500,"currency":"usd","status":"succeeded",
+  "metadata":{"dregg_recipient":"<64hex>"}}`. It reuses the fixture's exact `futures-rustls`
+  TLS 1.2 path so it is MPC-TLS-compatible.
+- Spawns a **real local Notary** (a `tlsn` verifier that runs the MPC-TLS commitment
+  protocol and signs a real secp256k1 `Attestation`) as an in-process task.
+- Runs a **real `tlsn` Prover** that performs the **MPC-TLS 2PC handshake** (the notary
+  co-derives session keys, sees no plaintext), `GET /v1/payment_intents/{id}` with the
+  `Authorization: Bearer …` secret, then **selectively discloses**: request target + all
+  headers **except the `Authorization` value** (redacted), and the response payment facts.
+- Builds a real `Presentation`; the verifier runs `presentation.verify()` → a real
+  `PresentationOutput`; the disclosed facts are extracted from the **authenticated**
+  response transcript, gated on `status == succeeded`, and handed to Layer 1 unchanged →
+  `DecoPaymentAttestation` → **conserved mint** through the REAL `stripe_deco` verifier.
+
+**Proven (green, non-vacuous), `tests/tlsn_live_roundtrip.rs`:**
+- the honest roundtrip mints the conserved amount (2500) through the real bridge verifier;
+- the `Authorization` secret is **hidden** (absent from the authenticated sent transcript);
+- a **tampered `Presentation`** is refused by the real `presentation.verify()` (real
+  crypto, not a structural check) — no mint;
+- a wrong **server pin** is refused.
+
+The default (non-feature) build stays green with the modeled tests (§4); the real roundtrip
+runs under `cargo test -p dregg-deco-prove --features tlsn-live`.
+
+**Honest boundary of THIS slice:** the server is a local test server, not `api.stripe.com`
+(the fixture cert is for `test-server.io`, so the server pin here is `test-server.io`; live
+pins `api.stripe.com`). Everything else — the 2PC, the attestation, selective disclosure,
+the presentation, `verify()` — is the genuine tlsn machinery.
 
 ---
 
@@ -154,22 +233,30 @@ signed presentation *is* a genuine `api.stripe.com` session.
 
 ---
 
-## 6. Exact remaining wiring to full live-Stripe money-in
+## 7. The remaining step to full live-Stripe money-in — OPERATIONAL, not code
 
-1. **Stand up a notary** — self-host the `tlsn` notary server (or pin a public one),
-   manage its `VerifyingKey` as the DECO anchor.
-2. **Add the `tlsn` prover deps** — git-pin `tlsn`/`tlsn-core`/`tlsn-mpc-tls` (+ `mpz`
-   rev), behind a `deco-prove` feature so the heavy tokio/rustls/2PC surface stays out of
-   the default build until it is exercised live.
-3. **Run the live MPC-TLS session** — `Prover::connect(api.stripe.com)` for
-   `GET /v1/payment_intents/{id}` with the merchant's key, `reveal_recv` the fact spans,
-   `reveal_sent` only the target (redact the Bearer secret) → a real `Presentation`.
-4. **Feed `presentation.verify()` output into the adapter** — replace the fixture's
-   modeled `PresentationOutput` with the real one (the field map already matches);
-   `verify_tlsn_presentation` binds it to `StripePaymentFacts` unchanged.
-5. **Flip production origin** — `NotaryKeypair::attest` → `verify_tlsn_presentation`; then
-   `bridge::verify_money_in` `MoneyIn::HmacWebhook → MoneyIn::Deco`. Money-in is trustless
-   end-to-end.
+The machinery (§4b) is built and green. What remains is a **deploy step**, not new
+integration code:
+
+1. **~~Add the `tlsn` prover deps~~ — DONE** (§4b: git-pinned behind `tlsn-live`).
+2. **~~Run a local MPC-TLS session~~ — DONE** (real prover + notary + verifier, local test
+   server, real presentation + verify + mint).
+3. **Stand up / pin a notary for production** — self-host the `tlsn` notary (or pin a
+   public one) and manage its `VerifyingKey` as the DECO anchor. (Locally the notary is an
+   in-process task; production wants a durable service or a pinned public one.)
+4. **Point the Prover at live `api.stripe.com`** — swap the local test server for a real
+   `Prover::connect(api.stripe.com)` `GET /v1/payment_intents/{id}` with the merchant's key
+   and Stripe's real Web-PKI chain; pin the server name to `api.stripe.com` instead of the
+   local `test-server.io`. The disclosure logic (redact `Authorization`, reveal the facts)
+   is unchanged.
+5. **Flip production origin** — route `bridge::verify_money_in` `MoneyIn::HmacWebhook →
+   MoneyIn::Deco` at the one call site.
 
 Layer 1 (the STARK) and the bridge verifier require **no change** at any step — they are
-origin-agnostic by construction.
+origin-agnostic by construction. `tlsn_live::verify_stripe_presentation` already extracts
+`StripePaymentFacts` from a real `PresentationOutput`; the live path reuses it verbatim.
+
+**Remaining honest trust boundary at full-live:** the Web-PKI / honest-Stripe floor
+(§5.1), the standard crypto carriers (MPC-TLS soundness, the notary signature scheme, STARK
+extractability + Poseidon2 CR). The 2PC session-binding — modeled in §4, **executed** in
+§4b — is no longer a named gap: it runs.
