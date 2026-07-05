@@ -821,7 +821,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "42a6e5186ea8f479485490f5e8d4c7b1d0768245a500342c24b9a257e6978457";
+    "f6a676cca53c42ff60b4bfea1b48e15ed89dbd2850079be1c5c58ac7afec9cd7";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
