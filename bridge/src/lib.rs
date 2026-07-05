@@ -66,6 +66,14 @@ pub mod solana_mirror;
 /// payment oracle. An agent's Stripe payment funds its DreggNet execution-lease.
 pub mod stripe_mirror;
 
+/// The **PROVEN, DECO/zkTLS-verified** Stripe money-in — the trustless upgrade
+/// from [`stripe_mirror`]'s trusted-HMAC-webhook oracle: mint only against a DECO
+/// attestation (a zkTLS proof that a live Stripe TLS session disclosed a settled
+/// payment), verified against the felt-commitment binding the deployed DECO leaf
+/// (`circuit-prove::deco_leaf_adapter`) enforces in-AIR and `Deco.lean` proves. The
+/// HMAC path stays as the explicitly-labeled fallback until the zkTLS PROVER lands.
+pub mod stripe_deco;
+
 /// The TRUSTLESS inbound proof-of-lock for the Solana mirror — the honest
 /// upgrade from the trusted-oracle attestation: verify a `SolanaLockProof`
 /// (consensus evidence + account inclusion) instead of trusting a signature.
@@ -174,6 +182,7 @@ pub use solana_wire::{
     fold_account_inclusion_16ary, ingest_vote_transaction, parse_verified_vote_tx,
     solana_account_hash, verify_account_inclusion_16ary, witness_binds,
 };
+pub use stripe_deco::{DecoPaymentAttestation, MoneyIn};
 pub use stripe_mirror::{
     DEFAULT_TOLERANCE_SECS, RECIPIENT_METADATA_KEY, STRIPE_PAYMENT_NULLIFIER_DOMAIN, StripeMint,
     StripeMirrorConfig, StripeMirrorError, StripeMirrorState, StripePaymentAttestation,

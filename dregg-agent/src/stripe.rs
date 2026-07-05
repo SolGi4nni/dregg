@@ -1,13 +1,32 @@
 //! `stripe` — the **earn** rail: a genuine Stripe webhook verify + a conserved,
 //! receipted mint.
 //!
-//! This is the open-core, dependency-light twin of breadstuffs'
-//! `bridge/src/stripe_mirror.rs` (`mint_against_webhook`): it speaks the **real**
-//! Stripe signature scheme — `Stripe-Signature: t=<ts>,v1=<hex(HMAC-SHA256(secret,
-//! "{ts}.{body}"))>` — verifies it constant-time, enforces a replay window and
-//! amount/currency bounds, dedups by `payment_intent_id` (double-mint prevention),
-//! and on success **mints conserved USD-credit** sealed into a prev-hash-chained,
-//! ed25519-signed [`MintReceipt`] a non-witness can re-verify.
+//! # ⚑ STANDALONE DEMO STUB — the REAL earn goes through `bridge`'s DECO money-in
+//!
+//! This is the open-core, dependency-light **standalone twin** of breadstuffs'
+//! `bridge/src/stripe_mirror.rs` (`mint_against_webhook`). `dregg-agent` is
+//! deliberately **substrate-only** (no `bridge` / `dregg-circuit` deps — see the
+//! crate manifest), so this module keeps its OWN private ed25519 receipt chain
+//! ([`MintReceipt`]) rather than minting a real kernel `Effect::Mint` into dregg's
+//! value layer. It is a self-contained EARN demo, NOT the production money-in.
+//!
+//! The **real, trustless earn** is `bridge`'s DECO-verified money-in
+//! (`dregg_bridge::stripe_deco::StripeMirrorState::verify_deco_payment` →
+//! `MoneyIn::Deco`): mint only against a DECO/zkTLS attestation that a live Stripe
+//! TLS session disclosed a settled payment, verified against the felt-commitment
+//! binding `Deco.lean` proves and the deployed DECO leaf enforces in-AIR. An agent
+//! that must actually mint into the shared value layer routes its earn through
+//! that bridge path (with the credentials/cell it already holds), NOT through this
+//! private receipt chain. This twin stays here only as the dependency-free demo of
+//! the Stripe signature scheme + the conservation shape.
+//!
+//! What is real in this stub: it speaks the **real** Stripe signature scheme —
+//! `Stripe-Signature: t=<ts>,v1=<hex(HMAC-SHA256(secret, "{ts}.{body}"))>` —
+//! verifies it constant-time, enforces a replay window and amount/currency bounds,
+//! dedups by `payment_intent_id` (double-mint prevention), and on success mints
+//! conserved USD-credit sealed into a prev-hash-chained, ed25519-signed
+//! [`MintReceipt`] a non-witness can re-verify. Like the bridge fallback, the HMAC
+//! webhook is a TRUSTED oracle — not the trustless DECO path.
 //!
 //! The verification logic is real; only the *transport* is recorded (a fixture
 //! signed webhook) so the demo is deterministic and offline. A forged signature is

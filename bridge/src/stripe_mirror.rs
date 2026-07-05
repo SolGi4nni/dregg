@@ -198,6 +198,17 @@ pub enum StripeMirrorError {
         backing: u64,
         amount: u64,
     },
+    /// **DECO path** ([`crate::stripe_deco`]): the attestation's committed
+    /// felt-domain `payment_hash` does NOT equal the canonical recompute over its
+    /// disclosed `PaymentFacts` — a forged-facts DECO attestation (e.g. the amount
+    /// was bumped but the committed identity was left stale). The executor-domain
+    /// twin of the DECO leaf's `forged_amount_does_not_fold` tooth
+    /// (`circuit-prove::deco_leaf_adapter`) and the `DecoBackingAttack` red-team.
+    DecoCommitmentMismatch,
+    /// **DECO path** ([`crate::stripe_deco`]): the disclosed amount is outside the
+    /// DECO leaf's range gadget `1 ≤ amountCents < 2^30`
+    /// (`Deco.lean::DecoRelation` conjunct 5 / `deco_payment::AMOUNT_LIMB_BITS`).
+    DecoAmountOutOfRange { amount: u64 },
     /// An accounting addition overflowed `u64`.
     Overflow,
 }
@@ -243,6 +254,14 @@ impl std::fmt::Display for StripeMirrorError {
             } => write!(
                 f,
                 "mint of {amount} would break conservation: live {live} + {amount} > backing {backing}"
+            ),
+            Self::DecoCommitmentMismatch => write!(
+                f,
+                "DECO attestation forged: committed payment_hash does not bind the disclosed facts"
+            ),
+            Self::DecoAmountOutOfRange { amount } => write!(
+                f,
+                "DECO amount {amount} out of range (gate 5 requires 1 <= amountCents < 2^30)"
             ),
             Self::Overflow => write!(f, "supply accounting overflow"),
         }
