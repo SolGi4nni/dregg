@@ -1984,7 +1984,7 @@ mod tests {
             n += 1;
             let mut it = line.splitn(3, '\t');
             let key = it.next().expect("tsv key");
-            let _name = it.next().expect("tsv name");
+            let name = it.next().expect("tsv name");
             let json = it.next().expect("tsv json");
             let d = parse_vm_descriptor2(json)
                 .unwrap_or_else(|e| panic!("v3 registry {key} failed parse_vm_descriptor2: {e}"));
@@ -2097,12 +2097,71 @@ mod tests {
             }
 
             // Phase B-GATE: graduation appends `7·n_sites` chip lane columns past the rotated base,
-            // so the surplus is a multiple of 7 (n_sites varies by v1 face); concrete widths pinned
-            // by the emit goldens + fingerprints.
+            // so the GRADUATED width's surplus over the appendix is a multiple of 7 (n_sites varies
+            // by v1 face; concrete widths pinned by the emit goldens + fingerprints). Two deployed
+            // welds ride KNOWN, non-lane columns PAST the graduated width — account for each
+            // EXPLICITLY (never fold it into the 7·n_sites lane count), CONFIRM it landed, and strip
+            // back to the graduated width before the mod-7 lane check:
+            //   · the GENTIAN FLAG-DAY bare-floor-refuse weld (`BareCohortFloorRefuse`) appends three
+            //     disjoint decode+refuse aux blocks ANCHORED at GRAD_ROT_WIDTH onto every deployed
+            //     bare cohort member (the `-gentian-deployed-bare-refuse` suffix), extending its width
+            //     to exactly `floor_col(last)+1`;
+            //   · the STAGED discharge/vault satisfaction descriptors ride their satisfaction-gate
+            //     FIELD columns past the graduated transfer base (settleEscrow's ride EXISTING field
+            //     columns and add none; discharge/vault add the cursor/total/due + G5 free-param /
+            //     no-dilution gadget columns).
+            use crate::effect_vm::bare_floor_refuse_weld as refuse;
+            use crate::effect_vm::trace_rotated::GRAD_ROT_WIDTH;
+            let is_refuse_welded = name.ends_with("-gentian-deployed-bare-refuse");
+            let graduated_width = if is_refuse_welded {
+                // The three per-tag refuse blocks anchor at GRAD_ROT_WIDTH; the deployed width extends
+                // EXACTLY to cover the last floor column (`floor_col(NB-1)+1`). CONFIRM the flip is
+                // REAL: assert that exact geometry AND that all three `floor_col(b) == 0` refuse gates
+                // are PRESENT in the committed descriptor (a positive coverage tooth for the flag-day,
+                // not a width fudge). Derived from the weld's own constants, so a stride/block change
+                // moves BOTH the width tooth and the gate check together.
+                const NB: usize = refuse::CAPACITY_TAGS.len();
+                let refuse_end = refuse::floor_col(NB - 1) + 1;
+                assert_eq!(
+                    d.trace_width, refuse_end,
+                    "{key}: refuse-welded member width must extend exactly to cover the {NB} \
+                     bare-floor-refuse aux blocks anchored at GRAD_ROT_WIDTH"
+                );
+                for b in 0..NB {
+                    let fc = refuse::floor_col(b);
+                    assert!(
+                        d.constraints.iter().any(|c| matches!(
+                            c,
+                            VmConstraint2::Base(VmConstraint::Gate(LeanExpr::Var(v))) if *v == fc
+                        )),
+                        "{key}: bare-floor-refuse gate (floor_col({b}) == {fc} == 0) missing — the \
+                         gentian flag-day weld did not land on this cohort member"
+                    );
+                }
+                GRAD_ROT_WIDTH
+            } else if key == "dischargeSatVmDescriptor2R24" || key == "vaultSatVmDescriptor2R24" {
+                // The STAGED discharge/vault satisfaction descriptors graduate on the transfer base
+                // (GRAD_ROT_WIDTH) and carry their satisfaction-gate FIELD columns PAST it. Pin the
+                // exact committed widths (a drift tooth on the satisfaction-gadget span, read from the
+                // committed registry TSV) and strip back to the graduated base for the lane check.
+                let expected = if key == "dischargeSatVmDescriptor2R24" {
+                    1654 // GRAD_ROT_WIDTH + the cursor/total/due + G5 free-param bind columns
+                } else {
+                    2055 // GRAD_ROT_WIDTH + the no-dilution (Ta·m ≤ Sa·d) satisfaction columns
+                };
+                assert_eq!(
+                    d.trace_width, expected,
+                    "{key}: staged satisfaction descriptor width = graduated base + its \
+                     satisfaction-gate columns"
+                );
+                GRAD_ROT_WIDTH
+            } else {
+                d.trace_width
+            };
             assert!(
-                d.trace_width >= V1_WIDTH + APPENDIX_SPAN
-                    && (d.trace_width - (V1_WIDTH + APPENDIX_SPAN)) % 7 == 0,
-                "{key}: rotated trace width = v1 width + appendix + 7·n_sites lane cols"
+                graduated_width >= V1_WIDTH + APPENDIX_SPAN
+                    && (graduated_width - (V1_WIDTH + APPENDIX_SPAN)) % 7 == 0,
+                "{key}: rotated GRADUATED trace width = v1 width + appendix + 7·n_sites lane cols"
             );
             assert!(
                 d.hash_sites.is_empty() && d.ranges.is_empty(),
@@ -2251,12 +2310,14 @@ mod tests {
                     .partition(|(col, _)| (rc_col..rc_col + 4).contains(col));
             let has_rc = !rc_pins.is_empty();
             // NOT rc-wrapped: heapWrite (v3RegistryHeap tail, no v1 prefix), the dedicated
-            // supply-mint (tail `withSelectorGate sel::MINT mintV3` over the BARE body), and the
-            // STAGED escrow-satisfaction weld (no live routing). Everything else here is the
-            // rc-wrapped cohort (+ transferFee).
+            // supply-mint (tail `withSelectorGate sel::MINT mintV3` over the BARE body), and the three
+            // STAGED capacity-satisfaction welds (escrow/discharge/vault — no live routing). Everything
+            // else here is the rc-wrapped cohort (+ transferFee).
             let rc_exempt = is_heap_write
                 || key == "supplyMintVmDescriptor2R24"
-                || key == "settleEscrowSatVmDescriptor2R24";
+                || key == "settleEscrowSatVmDescriptor2R24"
+                || key == "dischargeSatVmDescriptor2R24"
+                || key == "vaultSatVmDescriptor2R24";
             assert_eq!(
                 has_rc, !rc_exempt,
                 "{key}: dsl rc pins present iff the member is the rc-wrapped cohort"
@@ -2414,37 +2475,58 @@ mod tests {
             } else if key == "setFieldDynVmDescriptor2R24" {
                 // THE DYNAMIC setField fields-root weld (WAVE 3): the fifth pin welds the AFTER
                 // block's committed `fields_root` sub-limb to PI[46] (col `afterFieldsRootCol
-                // setFieldDynV1Face.traceWidth` = 363 in the v12 pre_limbs geometry — the AFTER block
-                // moved +32 with the B_SPAN 119→151 grow, over v11's 331 — the declared
-                // post-`fields_root` param), so a forged post-`fields_root` is UNSAT in-circuit
-                // (Lean `setFieldDynForcedV3`).
+                // setFieldDynV1Face.traceWidth` = 439 in the current pre_limbs geometry — the appended
+                // post-`fields_root` param sits at the END of the setFieldDyn v1 face, which has grown
+                // as the B_SPAN limb re-lays advanced), so a forged post-`fields_root` is UNSAT
+                // in-circuit (Lean `setFieldDynForcedV3`). Pinned from the committed registry TSV.
                 assert_eq!(
                     base_pi_count, 47,
                     "setFieldDyn: rotated 46-PI + the appended fields-root weld slot"
                 );
                 assert_eq!(
                     nullifier_pins,
-                    vec![(363, pi_base + 4)],
-                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (363, v12) to PI[46]"
+                    vec![(439, pi_base + 4)],
+                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (439) to PI[46]"
                 );
-            } else if key == "settleEscrowSatVmDescriptor2R24" {
-                // THE WELDED SEALED-ESCROW SATISFACTION descriptor (VK-EPOCH §6 BLOCKER 1, STAGED):
-                // the fifth pin welds the escrow capacity SELECTOR column (param2, col 70) to PI[46]
-                // on the first row, so a verifier that knows the cell declares the escrow capacity
-                // (the deployed COVERAGE carrier `CapacityCarrier`) can FORCE the selector on; the
-                // four selector-gated satisfaction gates over the rotated FIELD columns then force
-                // both legs Deposited→Consumed (the in-AIR `SETTLE_ESCROW` arm). NO live routing —
-                // staged beside the cohort; the descriptor a flippable escrow weld commits a VK for.
-                // Refinement proven in `metatheory/Dregg2/Deos/SettleEscrowSatDescriptor.lean`.
+            } else if key == "mintVmDescriptor2R24" {
+                // THE SUPPLY-MINT hash weld: the fifth pin welds the published mint-hash param
+                // (`PARAM_BASE + param::MINT_HASH`, col 68) to PI[46] on the first row, so a live
+                // `Effect::Mint` (e.g. a Stripe-attested credit) rides the ALREADY-EMITTED PI-46
+                // binding — the minted supply anchor is a committed public input, not free. base_pi 47.
+                assert_eq!(
+                    base_pi_count, 47,
+                    "mint: rotated 46-PI + the appended mint-hash slot"
+                );
+                assert_eq!(
+                    nullifier_pins,
+                    vec![(PARAM_BASE + param::MINT_HASH, pi_base + 4)],
+                    "mint: the fifth pin welds the published mint-hash (param0, col 68) to PI[46]"
+                );
+            } else if key == "settleEscrowSatVmDescriptor2R24"
+                || key == "dischargeSatVmDescriptor2R24"
+                || key == "vaultSatVmDescriptor2R24"
+            {
+                // THE THREE WELDED CAPACITY-SATISFACTION descriptors (VK-EPOCH §6 BLOCKER 1 + G5
+                // 18/19, STAGED): the fifth pin welds the capacity SELECTOR column (param2, col 70) to
+                // PI[46] on the first row, so a verifier that knows the cell declares the capacity (the
+                // deployed COVERAGE carrier `CapacityCarrier`) can FORCE the selector on; the
+                // selector-gated satisfaction gates over the rotated FIELD columns then force the
+                // in-AIR arm — settleEscrow's Deposited→Consumed (`SETTLE_ESCROW`), discharge's
+                // cursor/total/due + the G5 free-param binds (`DISCHARGE_OBLIGATION`), vault's
+                // no-dilution `Ta·m ≤ Sa·d` (`VAULT_DEPOSIT`). All three share the SAME selector pin
+                // (col 70 → PI[46]) and 47 PIs; they differ only in the satisfaction-gate field columns
+                // (accounted in the graduated-width check above). NO live routing — staged beside the
+                // cohort; the descriptors a flippable capacity weld commits a VK for. Refinements in
+                // `metatheory/Dregg2/Deos/{SettleEscrowSat,DischargeSat,VaultSat}Descriptor.lean`.
                 use crate::effect_vm::columns::PARAM_BASE;
                 assert_eq!(
                     base_pi_count, 47,
-                    "settleEscrowSat: rotated 46-PI + the appended selector slot"
+                    "{key}: rotated 46-PI + the appended capacity-selector slot"
                 );
                 assert_eq!(
                     nullifier_pins,
                     vec![(PARAM_BASE + 2, pi_base + 4)],
-                    "settleEscrowSat: the fifth pin welds the escrow selector (param2, col 70) to PI[46]"
+                    "{key}: the fifth pin welds the capacity selector (param2, col 70) to PI[46]"
                 );
             } else if is_heap_write {
                 // heapWrite: the base carries no v1 PIs, so the rotated descriptor publishes
@@ -2493,7 +2575,7 @@ mod tests {
             }
         }
         assert_eq!(
-            n, 58,
+            n, 60,
             "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 6 fan-out \
              cap-open members (delegate/introduce/grantCap/revoke/refreshDelegation/revokeCapability \
              — each *CapOpenVmDescriptor2R24) + the 2 LIVE effect-general legs \
@@ -2520,11 +2602,13 @@ mod tests {
              operand, so it proves + self-verifies under a dedicated selector, not by riding \
              BridgeMint's). \
              The Signature-pinned capOpenAttenuateV3/transferCapOpenV3 were DELETED (Stage D). \
-             + the WELDED SEALED-ESCROW SATISFACTION descriptor \
-             (settleEscrowSatVmDescriptor2R24, VK-EPOCH §6 BLOCKER 1 — the staged welded \
-             EffectVmDescriptor2 carrying the four selector-gated satisfaction gates over the \
-             rotated FIELD columns + the selector PI pin (col 70 → PI 46), 47 PIs; NO live routing, \
-             NO VK committed — the descriptor a flippable escrow weld commits a VK for)."
+             + the THREE WELDED CAPACITY-SATISFACTION descriptors (VK-EPOCH §6 BLOCKER 1 + G5 18/19 \
+             — the staged welded EffectVmDescriptor2s carrying the selector-gated satisfaction gates \
+             over the rotated FIELD columns + the shared selector PI pin (col 70 → PI 46), 47 PIs each; \
+             NO live routing, NO VK committed): settleEscrowSatVmDescriptor2R24 (tag 17, \
+             Deposited→Consumed, no extra columns) + dischargeSatVmDescriptor2R24 (tag 18, the \
+             cursor/total/due + G5 free-param binds) + vaultSatVmDescriptor2R24 (tag 19, the \
+             no-dilution Ta·m ≤ Sa·d gates) — the descriptors a flippable capacity weld commits VKs for."
         );
     }
 
@@ -2545,11 +2629,16 @@ mod tests {
             .lines()
             .filter(|l| !l.is_empty())
             .map(|l| l.split('\t').next().expect("live key"))
-            // The WELDED SEALED-ESCROW SATISFACTION descriptor is a STAGED satisfaction-weld member
-            // (VK-EPOCH §6 BLOCKER 1), appended LAST to the rotated registry; its WIDE+umem mirror is
-            // a separate named step (the wide cohort is the deployable host set). Excluded from the
-            // member-for-member wide-cover parity until that weld lands — it carries no live routing.
-            .filter(|k| *k != "settleEscrowSatVmDescriptor2R24")
+            // The THREE STAGED capacity-satisfaction-weld members (VK-EPOCH §6 BLOCKER 1 + G5 18/19 —
+            // settleEscrow/discharge/vault), appended LAST to the rotated registry; their WIDE+umem
+            // mirrors are a separate named step (the wide cohort is the deployable host set). Excluded
+            // from the member-for-member wide-cover parity until those welds land — they carry no live
+            // routing, so the wide registry has 57 members to the live registry's 60.
+            .filter(|k| {
+                *k != "settleEscrowSatVmDescriptor2R24"
+                    && *k != "dischargeSatVmDescriptor2R24"
+                    && *k != "vaultSatVmDescriptor2R24"
+            })
             .collect();
         let mut n = 0usize;
         for (i, line) in WIDE_REGISTRY_STAGED_TSV.lines().enumerate() {
@@ -2566,22 +2655,23 @@ mod tests {
                 "wide registry key {i} name-stable with the live registry"
             );
             let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key} wide parses: {e}"));
-            // the wide member is `host + 608` (the v12 pre_limbs re-lay grew the carrier blocks) and
-            // `host.piCount + 16`. The v12 big-bang host widths in play: 1135 (custom/setFieldDyn →
-            // 1743), 1163 (the rotated cohort → 1771), the cap-open family + the §J′ insert hosts
-            // (→ 2100), the turn-identity-pinned transferCapOpenTB (→ 2102), heapWrite's after-spine
-            // membership host (→ 2229), the refusal fields-write weld + the cap-WRITE after-spine
-            // members (→ 2243) — every wide width is `host + 608` — PLUS the two v12 teeth-exposing
-            // advances: the membership-teeth transfer (1771 + 2 teeth columns past the carriers →
-            // 1773, `CarrierComposed.transferV3MembershipWide`) and the KEY_COMMIT-gated sovereign
-            // (1771 + the 32-column chip-digest appendix → 1803,
-            // `CarrierComposed.makeSovereignV3DeployedWide`).
+            // the wide member is `host + 608` (the pre_limbs re-lay grew the carrier blocks) and
+            // `host.piCount + 16`. The committed host widths in play (read from the emitted
+            // rotation-wide-registry-staged.tsv): custom/setFieldDyn → 2465, the rotated cohort → 2493,
+            // the cap-open family + the §J′ insert hosts → 2822, the turn-identity-pinned
+            // transferCapOpenTB → 2824, heapWrite's after-spine membership host → 2951, the refusal
+            // fields-write weld + the cap-WRITE after-spine members → 2965 — every wide width is
+            // `host + 608` — PLUS the two teeth-exposing advances off the rotated-cohort width (2493):
+            // the membership-teeth transfer (2493 + 2 teeth columns past the carriers → 2495,
+            // `CarrierComposed.transferV3MembershipWide`) and the KEY_COMMIT-gated sovereign (2493 +
+            // the 32-column chip-digest appendix → 2525, `CarrierComposed.makeSovereignV3DeployedWide`).
+            // Any member off this exact set (a carrier block that grew/shrank) fails this drift tooth.
             assert!(
                 matches!(
                     d.trace_width,
-                    1743 | 1771 | 1773 | 1803 | 2100 | 2102 | 2229 | 2243
+                    2465 | 2493 | 2495 | 2525 | 2822 | 2824 | 2951 | 2965
                 ),
-                "{key}: wide width {} is a known wide geometry (1743 / 1771 / 1773 / 1803 / 2100 / 2102 / 2229 / 2243)",
+                "{key}: wide width {} is a known wide geometry (2465 / 2493 / 2495 / 2525 / 2822 / 2824 / 2951 / 2965)",
                 d.trace_width
             );
             // Every wide member carries the 16 wide-commit PIs (the 8-felt ~124-bit before/after
