@@ -118,6 +118,12 @@ struct Tenant {
     vat: VatState,
     terms: LeaseTerms,
     workdir: std::path::PathBuf,
+    /// The grain's budget ceiling (as granted at [`rent`](AgentPlatform::rent)).
+    /// The served-path minter ([`open_minter`](AgentPlatform::open_minter)) sets
+    /// its `ToolGateway` rate ceiling to this, so the executor's own `calls_made`
+    /// `FieldLte` caveat bounds the number of committed turns host-side — the
+    /// meter as a kernel caveat, not merely session-local.
+    budget: i64,
     /// The account that owns this grain — the only subject authorized to drive it.
     owner: String,
     /// **R1 — the renter finality anchor** ([`RenterAnchor`]), or `None` when the
@@ -381,6 +387,7 @@ impl AgentPlatform {
                 vat,
                 terms,
                 workdir: std::path::PathBuf::from(workdir),
+                budget,
                 owner: account.to_string(),
                 anchor,
                 checkpoint: None,
@@ -541,6 +548,51 @@ impl AgentPlatform {
         self.drive_in(host, goal, brain, Some(minter))
     }
 
+    /// **The DEFAULT served drive — R2, minter-wired.** Constructs the platform's
+    /// REAL kernel minter (`grain-turn`'s [`ToolGatewayMinter`], its `ToolGateway`
+    /// rate ceiling set to the grain's budget) and routes the drive through it, so
+    /// EVERY admitted action a hosted agent takes becomes a genuine committed
+    /// executor turn and its receipt is a VIEW over that turn ([`verify_r2`] passes).
+    /// This is the path the served HTTP route ([`drive_live`](Self::drive_live)) and
+    /// any hosted embedding drive through by default — R0→R2 for the shipped product.
+    ///
+    /// The unminted [`drive`](Self::drive) is retained as the explicit
+    /// standalone/adoption escape hatch (no executor attached, receipts below R2);
+    /// the SERVED default is this, which mints.
+    ///
+    /// Honest residual (the next wave item): the turns this mints commit to
+    /// `grain-turn`'s IN-PROCESS ledger (a fresh `AgentRuntime` per grain), NOT the
+    /// live federation ledger. So this flips the shipped product R0→R2 (the receipts
+    /// are views over real kernel turns and the meter is executor-enforced host-side)
+    /// but the *submit-the-turn-onto-the-federation-ledger* leg is still open — a
+    /// third party still trusts THIS host committed the turn (the R3 whole-history
+    /// STARK leg / the federation-submit wire is what closes it).
+    pub fn drive_serving(
+        &self,
+        host: &str,
+        goal: impl Into<String>,
+        brain: &mut dyn AgentBrain,
+    ) -> Result<GoalReport, AgentPlatformError> {
+        let mut minter = self.open_minter(host)?;
+        self.drive_in(host, goal, brain, Some(&mut minter))
+    }
+
+    /// Open the platform's real kernel minter for the grain at `host`: a
+    /// `grain-turn` [`ToolGatewayMinter`] whose `ToolGateway` rate ceiling is the
+    /// grain's granted budget (so the executor's own `calls_made` `FieldLte` caveat
+    /// is the host-side meter). Reads the budget under a momentary tenant lock and
+    /// releases it before opening the runtime (the minter owns a fresh runtime — it
+    /// touches no tenant state), so it never contends the drive's own lock.
+    fn open_minter(&self, host: &str) -> Result<grain_turn::ToolGatewayMinter, AgentPlatformError> {
+        let budget = {
+            let arc = self.tenant_arc(host)?;
+            let guard = arc.lock().expect("tenant poisoned");
+            guard.budget
+        };
+        grain_turn::ToolGatewayMinter::open(host, budget)
+            .map_err(|e| AgentPlatformError::Session(format!("open kernel minter: {e}")))
+    }
+
     /// The one drive path both public drives share: audit the rent schedule, run
     /// the goal (optionally minted), record any committed turn hashes, checkpoint.
     fn drive_in(
@@ -591,10 +643,15 @@ impl AgentPlatform {
     /// key. `model`/base URL come from `DREGG_LLM_MODEL`/`DREGG_LLM_BASE` (defaults
     /// otherwise).
     ///
-    /// Honest scope: this path is UNMINTED (receipts carry no kernel-turn link), so
-    /// a live-driven grain verifies at R0/R1, not R2 — welding the live drive
-    /// through a real `GrainTurnMinter` rides the `grain-turn` kernel weld once
-    /// that crate reconciles into this workspace (named for the main loop).
+    /// **R2 — this served path MINTS.** The drive routes through
+    /// [`drive_serving`](Self::drive_serving), which constructs the platform's real
+    /// `grain-turn` kernel minter and welds every admitted action to a genuine
+    /// committed executor turn — so the shipped served route produces R2 receipts
+    /// (views over kernel turns), not unminted shadow receipts. The per-tenant lock
+    /// is held only across `drive_serving`'s own drive (the platform-wide map lock is
+    /// already dropped, so a slow provider round-trip never stalls another tenant —
+    /// the head-of-line property is preserved). See `drive_serving` for the honest
+    /// residual (in-process ledger; the federation-submit leg is next).
     #[cfg(feature = "live-brain")]
     pub fn drive_live(
         &self,
@@ -605,20 +662,8 @@ impl AgentPlatform {
         use dregg_agent::brain::{LiveOpenAICompatCaller, OpenAICompatBrain};
 
         let goal = goal.into();
-        // Lock ONLY this grain across the blocking provider round-trip below — the
-        // platform-wide map lock is already dropped, so a slow/stalled live drive
-        // here never stalls another tenant (the head-of-line fix).
-        let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
-        let tenant = &mut *guard;
-        // Audit the rent schedule at the operator's clock — a grain behind on rent
-        // lapses ON USE rather than trusting a stale flag (the "free hosting" fix).
-        let _ = tenant
-            .lease
-            .lapse_if_behind(self.clock.load(std::sync::atomic::Ordering::Relaxed));
-        if tenant.lease.is_lapsed() {
-            return Err(AgentPlatformError::Lapsed);
-        }
+        // The live brain needs only env + goal + tools (no tenant state), so build
+        // it before locking — a missing key fails fast without touching the grain.
         let key = live_key()
             .ok_or_else(|| AgentPlatformError::Session("no LLM key in env (DREGG_LLM_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / NVIDIA_API_KEY)".into()))?;
         let base = std::env::var("DREGG_LLM_BASE")
@@ -633,10 +678,10 @@ impl AgentPlatform {
             &model,
             LiveOpenAICompatCaller::new(),
         );
-        let toolkit = OperatorTools::new(Toolkit::new(), &tenant.workdir);
-        let report = tenant.session.run_goal(&goal, &mut brain, &toolkit);
-        checkpoint_tenant(tenant)?;
-        Ok(report)
+        // The served default MINTS: route through the real kernel minter (R2), not
+        // the unminted `run_goal`. `drive_serving` handles the per-tenant lock, the
+        // lapse-on-use audit, the minted drive, and the checkpoint.
+        self.drive_serving(host, &goal, &mut brain)
     }
 
     /// Bill one rent `period` for `host` at `clock`: meter it on the lease (the
@@ -1606,6 +1651,85 @@ mod tests {
             .verify_r2(&refused_host)
             .expect("the admitted turn verifies");
         assert_eq!(r2r.linked, 1, "exactly the committed turn is linked");
+    }
+
+    /// **THE SERVED PATH MINTS — R2 through the REAL `grain-turn` minter.** This is
+    /// the wiring proof: `drive_serving` (what the served HTTP route `drive_live`
+    /// routes through) constructs the platform's genuine `grain-turn`
+    /// `ToolGatewayMinter` internally — the caller passes NO minter — and yet every
+    /// admitted receipt comes back a VIEW over a committed kernel turn: `verify_r2`
+    /// passes and `linked == admitted`. The turns are minted by the executor itself
+    /// (not the synthetic seam), so the meter is executor-enforced host-side.
+    ///
+    /// And the anti-forgery tooth BITES: a receipt whose turn link names a turn that
+    /// was never committed (a fabricated manifest) is REFUSED (`R2FabricatedLink`) —
+    /// so a forged R2 claim cannot pass, and the honest unminted `drive` is not
+    /// laundered as R2 either.
+    #[test]
+    fn served_default_path_mints_r2_through_real_grain_turn_minter() {
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+
+        // The served/default path: NO minter is passed — `drive_serving` opens the
+        // real grain-turn kernel minter itself (exactly what drive_live does).
+        let host = platform
+            .rent(
+                "served.agents.dregg",
+                "dga1_served",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("provision");
+        let mut brain = fs_plan(&[("s1.txt", "hello"), ("s2.txt", "grain")]);
+        let report = platform
+            .drive_serving(&host, "write served", &mut brain)
+            .expect("the served default drive mints");
+        assert!(report.admitted > 0, "the served grain did admitted work");
+
+        // Every admitted receipt is a view over a turn the REAL executor committed.
+        let r2 = platform
+            .verify_r2(&host)
+            .expect("the served path verifies at R2");
+        assert_eq!(
+            r2.linked as u64, report.admitted,
+            "every admitted receipt on the served path is a view over a committed kernel turn"
+        );
+
+        // FORGED variant: a receipt link naming a turn never committed is refused.
+        // The attestation over the real session, checked against a bogus manifest
+        // (no such committed turns), must trip the anti-forgery tooth.
+        let att = platform.attest(&host).expect("attest the served grain");
+        assert!(
+            att.verify_r2(&[[0u8; 32]]).is_err(),
+            "a forged manifest (turns never committed) fails R2 — a fabricated link is refused"
+        );
+
+        // And the unminted standalone `drive` is honestly below R2 (not laundered).
+        let bare = platform
+            .rent(
+                "servedbare.agents.dregg",
+                "dga1_servedb",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("provision");
+        let mut brain2 = fs_plan(&[("b1.txt", "x")]);
+        platform
+            .drive(&bare, "write unminted", &mut brain2)
+            .expect("unminted drive");
+        assert!(
+            matches!(
+                platform.verify_r2(&bare),
+                Err(AgentPlatformError::Verify(_))
+            ),
+            "the unminted standalone path does not pass R2"
+        );
     }
 
     /// A rented grain thinks LIVE: with `--features live-brain` and a provider key

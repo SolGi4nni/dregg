@@ -44,6 +44,11 @@ grain-verify = { path = "../grain-verify" }
 # tooth) instead of an ad-hoc per-tenant state.
 starbridge-vat = { path = "../starbridge-apps/vat" }
 dregg-agent = { path = "../dregg-agent" }
+# THE R2 WELD: the REAL GrainTurnMinter. Constructing its `ToolGatewayMinter` in
+# the served drive path (`drive_serving` / `drive_live`) is what turns a hosted
+# agent action into a genuine committed kernel turn — the shipped served path
+# mints (R2) rather than sealing an unminted shadow receipt (R0).
+grain-turn = { path = "../grain-turn" }
 dregg-cell = { path = "../cell" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

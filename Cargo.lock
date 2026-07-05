@@ -227,6 +227,7 @@ dependencies = [
  "dregg-agent",
  "dregg-auth",
  "dregg-cell",
+ "grain-turn",
  "grain-verify",
  "hosted-durable",
  "hosted-lease",
