@@ -30,6 +30,15 @@
 //! interim trusts the former; the latter is already proven. Flipping origin to
 //! trustless = replacing this module with an MPC-TLS `tlsn`-style capture, no change to
 //! [`crate::prover`] or the bridge verifier.
+//!
+//! ⚑ **THE SWAP POINT.** [`crate::tlsn_attest`] is that replacement's interface+adapter:
+//! it consumes a tlsn [`crate::tlsn_attest::TlsnPresentation`] (an authenticated Stripe
+//! transcript with selectively-disclosed payment facts) and produces the SAME disclosed
+//! [`StripePaymentFacts`] this module signs a commitment over — but read out of an
+//! *authenticated* transcript rather than taken on the notary's word. Production origin
+//! moves from `NotaryKeypair::attest` here to
+//! `tlsn_attest::verify_tlsn_presentation` once the `mpz` 2PC + a running tlsn notary are
+//! wired; Layer 1 and the bridge verifier are origin-agnostic and unchanged.
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_fact;

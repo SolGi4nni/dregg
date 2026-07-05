@@ -35,20 +35,42 @@
 //! (mint); a forged one is refused (`DecoCommitmentMismatch`). This is real regardless
 //! of the TLS layer below.
 //!
-//! **2. The MPC-TLS / notary capture layer ([`notary`]) — the NAMED interim.** The
-//! actual "prove a LIVE Stripe API TLS session returned payment X" needs a
-//! TLSNotary-style capture (MPC-TLS or a notary). This crate ships the documented
-//! **interim**: a notary-attested transcript commitment (a real ed25519 signature over
-//! the disclosed facts + their Poseidon2 transcript commitment). It is **NOT yet
-//! trustless at the TLS layer** — the trust boundary is a semi-honest notary that
-//! honestly observed the real Stripe session. See `docs/deos/DECO-PROVER-STATUS.md`
-//! for what is real, what is the named remaining layer, and the exact trust boundary.
-//! We do **not** claim live-trustless-TLS from the interim.
+//! **2. The MPC-TLS / notary capture layer — two forms, honestly separated.**
+//!
+//! *2a. The semi-honest interim ([`notary`]).* A notary-attested transcript commitment
+//! (a real ed25519 signature over the disclosed facts + their Poseidon2 transcript
+//! commitment). It is **NOT trustless at the TLS layer** — the trust boundary is a
+//! semi-honest notary that honestly observed the real Stripe session and did not
+//! fabricate the facts.
+//!
+//! *2b. The tlsn / MPC-TLS realization — the INTERFACE + ADAPTER ([`tlsn_attest`]).* The
+//! trustless-shaped replacement: it models the exact object a *verified*
+//! `tlsn_core::presentation::PresentationOutput` (TLSNotary v0.1.0-alpha.15) takes and
+//! performs the DECO-side binding — server pinning (`api.stripe.com`), notary pinning,
+//! the presentation signature, **selective disclosure** of the payment facts out of an
+//! *authenticated* HTTP transcript (a redacted amount is refused), the `succeeded` gate —
+//! then hands the extracted [`prover::StripePaymentFacts`] to Layer 1 unchanged. It is
+//! exercised end-to-end by a **real tlsn-format fixture** (an authenticated
+//! `GET https://api.stripe.com/v1/payment_intents/{id}` transcript that redacts the
+//! `Authorization: Bearer sk_live_…` secret). ⚑ It is the interface+adapter, **not** a
+//! live trustless MPC-TLS run: a genuine verified presentation needs the running `tlsn`
+//! notary + the `mpz` 2PC stack + a live Stripe TLS session (git-only, out of lane). The
+//! 2PC session-integrity that makes the signature *trustless* is the named remaining
+//! wiring.
+//!
+//! See `docs/deos/DECO-PROVER-STATUS.md` + `docs/deos/TLSN-INTEGRATION.md` for what is
+//! real, the exact remaining layer, and the trust boundary. We do **not** claim
+//! live-trustless-TLS from either form yet.
 
 pub mod notary;
 pub mod prover;
+pub mod tlsn_attest;
 
 pub use notary::{
     NotaryAttestation, NotaryKeypair, TranscriptCommitment, verify_notary_attestation,
 };
 pub use prover::{DecoProveError, StripePaymentFacts, prove_stripe_deco, verify_stripe_deco_stark};
+pub use tlsn_attest::{
+    TlsnAdapterError, TlsnPresentation, TlsnStripeConfig, TlsnVerifyingKey,
+    tlsn_presentation_to_attestation, verify_tlsn_presentation,
+};

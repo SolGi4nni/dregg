@@ -12,8 +12,13 @@ use dregg_bridge::{
 };
 use dregg_circuit::field::BabyBear;
 use dregg_deco_prove::prover::StripePaymentFacts;
+use dregg_deco_prove::tlsn_attest::{
+    FixturePayment, RedactedFact, STRIPE_STATUS_SUCCEEDED, TlsnFixtureNotary, TlsnStripeConfig,
+    build_stripe_tlsn_fixture, tlsn_presentation_to_attestation, verify_tlsn_presentation,
+};
 use dregg_deco_prove::{
-    NotaryKeypair, prove_stripe_deco, verify_notary_attestation, verify_stripe_deco_stark,
+    NotaryKeypair, TlsnAdapterError, prove_stripe_deco, verify_notary_attestation,
+    verify_stripe_deco_stark,
 };
 use dregg_types::CellId;
 
@@ -104,6 +109,60 @@ fn notary_attestation_binds_the_same_disclosed_facts() {
     let mut forged = f.clone();
     forged.amount_cents = 9_999;
     assert!(verify_notary_attestation(&notary_att, &kp.public_key(), &forged, salt).is_err());
+}
+
+/// FAST — **Layer 2 (tlsn/MPC-TLS interface+adapter) → the REAL bridge verifier → a
+/// conserved mint.** A tlsn-format Stripe presentation fixture (an authenticated
+/// `GET api.stripe.com/v1/payment_intents/{id}` transcript with selectively-disclosed
+/// payment facts, the Bearer secret redacted) is verified by the adapter, its extracted
+/// facts feed the DECO attestation, and the ACTUAL `stripe_deco` verifier mints the
+/// conserved amount — the trustless-shaped origin path replacing the semi-honest notary.
+/// A forged selective disclosure (redacted amount) is refused BEFORE any mint.
+///
+/// ⚑ Interface+adapter over a fixture, NOT a live MPC-TLS run — the notary+2PC session
+/// binding is the named remaining wiring (docs/deos/TLSN-INTEGRATION.md).
+#[test]
+fn tlsn_presentation_binds_into_layer2_and_mints() {
+    let mut mirror = StripeMirrorState::new(config());
+    let notary = TlsnFixtureNotary::from_seed(&[42u8; 32]);
+    let cfg = TlsnStripeConfig::new(notary.verifying_key());
+
+    let payment = FixturePayment {
+        payment_intent_id: "pi_3TLSNroundtrip".to_string(),
+        amount_cents: 2500,
+        currency: "usd".to_string(),
+        status: STRIPE_STATUS_SUCCEEDED.to_string(),
+        recipient: CellId::from_bytes([5u8; 32]),
+    };
+    let pres = build_stripe_tlsn_fixture(&notary, &payment, 1_700_000_000, None);
+
+    // The adapter verifies the presentation + extracts the disclosed facts.
+    let facts = verify_tlsn_presentation(&pres, &cfg).expect("honest tlsn presentation verifies");
+    assert_eq!(facts.amount_cents, 2500);
+    assert_eq!(facts.recipient, CellId::from_bytes([5u8; 32]));
+
+    // Bind into the DECO Layer-2 interface and mint through the REAL bridge verifier.
+    let att = tlsn_presentation_to_attestation(&pres, &cfg, None)
+        .expect("the verified presentation binds a DECO attestation");
+    assert_eq!(att.payment_hash, facts.payment_hash());
+    let minted = mirror
+        .mint_against_deco(&att)
+        .expect("the tlsn-origin attestation mints through the real verifier");
+    assert_eq!(minted.amount, 2500);
+    assert_eq!(minted.recipient, CellId::from_bytes([5u8; 32]));
+    assert_eq!(mirror.live_supply, 2500);
+    assert_eq!(mirror.total_verified_payments, 2500);
+    assert!(mirror.invariant_holds());
+
+    // A FORGED selective disclosure (amount redacted) is refused by the adapter — the
+    // facts never reach Layer 1, no mint.
+    let forged =
+        build_stripe_tlsn_fixture(&notary, &payment, 1_700_000_000, Some(RedactedFact::Amount));
+    assert_eq!(
+        verify_tlsn_presentation(&forged, &cfg).unwrap_err(),
+        TlsnAdapterError::FactRedacted { field: "amount" }
+    );
+    assert_eq!(mirror.live_supply, 2500, "no forged-disclosure mint");
 }
 
 /// SLOW (real recursion, ~seconds+): the FULL prover core — produce an attestation with
