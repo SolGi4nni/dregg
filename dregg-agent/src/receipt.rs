@@ -257,6 +257,18 @@ impl ReceiptChain {
         ReceiptChain::new(ReceiptSigner::from_seed(seed))
     }
 
+    /// **Resume** a chain under `seed` with its head already advanced to `head` — the
+    /// tip of a PERSISTED chain, so a cold-woken session's next [`seal`](ReceiptChain::seal)
+    /// links to the persisted tip rather than an empty head (a fork). `head == None`
+    /// is exactly [`from_seed`](ReceiptChain::from_seed). The seed re-derives the SAME
+    /// signer, so the resumed chain re-signs under the persisted key.
+    pub fn resume(seed: [u8; 32], head: Option<[u8; 32]>) -> ReceiptChain {
+        ReceiptChain {
+            signer: ReceiptSigner::from_seed(seed),
+            head: Mutex::new(head),
+        }
+    }
+
     /// The public key non-witnesses verify this chain's receipts under.
     pub fn signer_public(&self) -> [u8; 32] {
         self.signer.public()

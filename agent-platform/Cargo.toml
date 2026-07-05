@@ -53,3 +53,8 @@ dregg-cell = { path = "../cell" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 blake3 = "1"
+# Phase 2 (wake-from-lease): the resumable session carrier is postcard-serialized
+# (mirroring starbridge-v2's AgentMemoryCheckpoint) and chunked into the EXEC_COLL
+# heap; a fresh host-held receipt-chain secret is drawn per grain.
+postcard = { version = "1", features = ["use-std"] }
+getrandom = { version = "0.3" }

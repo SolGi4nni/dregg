@@ -1581,6 +1581,31 @@ impl AgentCloud {
         state.seq += 1;
     }
 
+    /// **Pre-charge this cloud's meter** to `consumed` for `handle` WITHOUT seeding a
+    /// carryover receipt — the meter half of a cold wake
+    /// ([`Session::wake_from_report`](crate::session::Session::wake_from_report)). The
+    /// persisted receipt chain is installed separately
+    /// ([`SessionState::restore_from_report`]) and already carries every
+    /// `consumed_after`, so the meter only needs its `drawn_total` to report the same
+    /// consumed. Draws under the reserved [`CARRYOVER_PERIOD`] key (which can never
+    /// collide with a per-action `seq >= 0` draw); clamped to the ceiling so a corrupt
+    /// carrier can never widen the bound. A no-op for `consumed <= 0`.
+    ///
+    /// This is the twin of [`restore_consumed`](AgentCloud::restore_consumed)'s meter
+    /// step, minus the genesis carryover receipt (a woken session installs the REAL
+    /// chain, so the placeholder would be a spurious extra receipt).
+    pub fn precharge_meter(&self, handle: &AgentHandle, consumed: i64) {
+        let prior = consumed.clamp(0, handle.budget);
+        if prior == 0 {
+            return;
+        }
+        let _ = self.meter.draw(
+            &MeterKey::new(&handle.id, CARRYOVER_PERIOD),
+            prior,
+            handle.block,
+        );
+    }
+
     /// A fresh, host-untrusted report snapshot from the persistent `state` — the
     /// cumulative receipt chain + the current bound (drawn so far vs the ceiling).
     fn report_snapshot(&self, handle: &AgentHandle, state: &SessionState) -> AgentRunReport {
@@ -1890,6 +1915,36 @@ impl SessionState {
     /// through [`from_secret`](SessionState::from_secret) instead.
     pub fn new_random() -> SessionState {
         SessionState::from_secret(fresh_receipt_secret())
+    }
+
+    /// **COLD-WAKE reconstruction** — rebuild persistent session state from a
+    /// PERSISTED [`AgentRunReport`] and the chain secret it was signed under. Installs
+    /// the report's receipts / log / counts / cells verbatim and resumes the chain
+    /// head at the persisted tip, so [`AgentCloud::session_report`] reproduces the
+    /// persisted chain byte-for-byte and a continued goal links to it (not a fork).
+    ///
+    /// `receipt_secret` MUST be the same secret the persisted chain was signed under —
+    /// the signer is re-derived from it (a wrong secret would re-sign the resumed head
+    /// under a foreign key, which [`verify_agent_run`] catches as a `SignerChanged`
+    /// break the moment a new receipt is appended). This installs only the chain — the
+    /// meter is pre-charged separately ([`AgentCloud::precharge_meter`]) so
+    /// `session_report`'s consumed matches without a carryover placeholder receipt.
+    pub fn restore_from_report(receipt_secret: [u8; 32], report: &AgentRunReport) -> SessionState {
+        // The next seq strictly follows the last persisted receipt (an empty chain
+        // resumes at 0), so an appended receipt keeps the monotone seq the chain and
+        // the per-action meter draw keys rely on.
+        let next_seq = report.receipts.last().map(|r| r.seq + 1).unwrap_or(0);
+        SessionState {
+            chain: ReceiptChain::resume(receipt_secret, report.tip()),
+            cells: report.cells.clone(),
+            receipts: report.receipts.clone(),
+            log: report.log.clone(),
+            admitted: report.admitted,
+            cap_refused: report.cap_refused,
+            budget_refused: report.budget_refused,
+            turn_refused: report.turn_refused,
+            seq: next_seq,
+        }
     }
 
     /// The cumulative receipt chain so far (every admitted action across every

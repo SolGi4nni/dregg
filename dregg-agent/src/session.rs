@@ -317,6 +317,54 @@ impl Session {
         )
     }
 
+    /// **COLD WAKE — rebuild a resumable session from a persisted carrier ALONE.**
+    /// The heap-driven twin of [`open_with_secret`](Session::open_with_secret) +
+    /// [`restore_consumed`](Session::restore_consumed): opens under the persisted
+    /// `receipt_secret` (so the resumed chain keeps the SAME signer), pre-charges the
+    /// meter to the persisted `report.consumed`
+    /// ([`AgentCloud::precharge_meter`](crate::agent::AgentCloud::precharge_meter)),
+    /// and installs the persisted receipt chain
+    /// ([`SessionState::restore_from_report`](crate::agent::SessionState::restore_from_report)).
+    /// The woken session's [`report`](Session::report) reproduces the persisted chain
+    /// byte-for-byte, [`verify`](Session::verify) re-witnesses it, and a continued
+    /// goal links to the persisted tip. Nothing process-local is consulted — only the
+    /// `report` + `receipt_secret` + consumed a caller read back from a durable carrier
+    /// (the `agent-platform` grain reads them from its lease's committed `EXEC_COLL`
+    /// heap). `spec` is rebuilt from the grain's rental terms so the woken
+    /// `handle.id` / budget / asset match the persisted report.
+    ///
+    /// `receipt_secret` is the chain SIGNING SEED (host-held); it is NEVER placed in
+    /// the report or any attestation — the report exposes only the public `signer`.
+    pub fn wake_from_report(
+        account: impl Into<String>,
+        mut spec: AgentSpec,
+        receipt_secret: [u8; 32],
+        report: &AgentRunReport,
+        history: Vec<GoalReport>,
+    ) -> Result<Session, AgentError> {
+        let account = account.into();
+        // Match `open_in`: bind the agent id to the account so the rebuilt handle.id
+        // equals the persisted `report.agent` (the meter subject + receipt identity).
+        spec.id = format!("agent:session:{account}");
+        let cloud = AgentCloud::new();
+        let handle = cloud.deploy(&spec)?;
+        // The meter half (drawn_total == persisted consumed) and the chain half (the
+        // persisted receipts, resumed at the tip) are installed separately, so the
+        // installed chain is the REAL one — not a carryover placeholder.
+        cloud.precharge_meter(&handle, report.consumed);
+        let state = SessionState::restore_from_report(receipt_secret, report);
+        Ok(Session {
+            account,
+            cloud,
+            handle,
+            state,
+            // The goal transcript (goal prompts + per-goal steps) is restored so a
+            // cold-woken grain still serves its /transcript replay — the full mind,
+            // not just the verifiable state.
+            history,
+        })
+    }
+
     fn open_in(
         cloud: AgentCloud,
         account: impl Into<String>,

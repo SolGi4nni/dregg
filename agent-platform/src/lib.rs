@@ -48,6 +48,8 @@ pub use share::Role;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use serde::{Deserialize, Serialize};
+
 use dregg_agent::agent::{AgentBrain, AgentRunReport, AgentVerified, GrainTurnMinter};
 use dregg_agent::receipt::ReceiptBody;
 use dregg_agent::session::{Confinement, GoalReport, Session, parse_caps_confined};
@@ -106,6 +108,66 @@ pub const WK_NUM_TURNS: u32 = WORKING_BASE + 1;
 /// The session's cumulative consumed budget.
 pub const WK_CONSUMED: u32 = WORKING_BASE + 2;
 
+/// **THE RESUMABLE-SESSION CARRIER — Phase 2 (wake-from-lease).** Beyond the three
+/// cursor slots above (which [`image_binds`] re-checks for divergence — a CURSOR, not
+/// enough to reconstruct), a checkpoint also persists the FULL resumable session
+/// carrier ([`SessionCarrier`]: the receipt secret + consumed + the whole
+/// [`AgentRunReport`] + the R2 committed-turn manifest) so a grain is WAKEABLE from
+/// its lease heap ALONE ([`AgentPlatform::wake_from_lease`]). The blob is chunked
+/// across working slots beyond `WORKING_BASE + 3`, mirroring
+/// `starbridge_v2::agent_memory::AgentMemoryCheckpoint`'s persist-and-reconstitute
+/// discipline: a LENGTH slot, a ROOT-TOOTH slot (a hash of the full carrier bytes),
+/// then N data slots (each packs 32 carrier bytes).
+///
+/// The carrier byte length (its data slots are `WK_CARRIER_DATA_BASE + i`, `i` in
+/// `0..ceil(len/32)`).
+pub const WK_CARRIER_LEN: u32 = WORKING_BASE + 3;
+/// The anti-substitution ROOT TOOTH: `blake3(carrier_bytes)`. The cold wake
+/// reassembles the data slots and REFUSES fail-closed if they do not re-hash to this
+/// (a tampered or truncated carrier — the same byte-identical discipline
+/// `AgentMemoryCheckpoint::resume_into` holds).
+pub const WK_CARRIER_ROOT: u32 = WORKING_BASE + 4;
+/// The first carrier DATA slot; slot `WK_CARRIER_DATA_BASE + i` packs carrier bytes
+/// `[32*i .. 32*i+32)` (the final slot zero-padded), read back under [`WK_CARRIER_LEN`].
+pub const WK_CARRIER_DATA_BASE: u32 = WORKING_BASE + 5;
+
+/// **THE FULL RESUMABLE SESSION CARRIER** persisted into the lease's committed
+/// `EXEC_COLL` heap every checkpoint — everything needed to reconstitute the grain's
+/// [`Session`] from the heap ALONE ([`AgentPlatform::wake_from_lease`]), the umem
+/// full-carrier discipline of `starbridge_v2::agent_memory::AgentMemoryCheckpoint`
+/// lifted onto the hosting lease.
+///
+/// ## Secret handling (be explicit — this is the R0 signing key)
+///
+/// `receipt_secret` is the grain's ed25519 receipt-chain SIGNING seed. Persisting it
+/// into the committed heap commits only its ROOT — a hash (`WK_CARRIER_ROOT`) that is
+/// third-party-safe; the heap PREIMAGE (this struct's bytes) is host-held DATA
+/// AVAILABILITY. The host runs the agent and ALREADY holds the secret, so committing
+/// the root (or attesting the grain) does NOT leak it to a third party:
+/// [`AgentRunReport::signer`] stays the PUBLIC key, and the secret appears in NO
+/// attestation / report / verify surface. **Export caveat (a SEPARATE concern, not
+/// solved here):** shipping the carrier PREIMAGE to another host to migrate the grain
+/// WOULD ship the signing secret with it — carrier export across a trust boundary
+/// needs a re-key / sealed-transfer step this in-process persist deliberately does not
+/// attempt.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SessionCarrier {
+    /// The grain's receipt-chain signing seed (see the type note — host-held; its
+    /// committed root is a hash, never exposed in an attestation).
+    receipt_secret: [u8; 32],
+    /// The cumulative consumed budget the woken meter is pre-charged to.
+    consumed: i64,
+    /// The whole cumulative session report — the receipt chain + cells + counts +
+    /// signer the woken [`Session`] is rebuilt from ([`Session::wake_from_report`]).
+    report: AgentRunReport,
+    /// **R2** — the committed-turn manifest ([`Tenant::committed_turns`]), restored so
+    /// a cold-woken grain still re-witnesses at R2 without the retained in-RAM Tenant.
+    committed_turns: Vec<[u8; 32]>,
+    /// The goal transcript (per-goal prompt + steps) so a cold-woken grain restores
+    /// its full `/transcript` history, not just the verifiable receipt state.
+    history: Vec<GoalReport>,
+}
+
 /// One rented agent grain: the confined session, its hosting lease, the terms, and
 /// the workdir its fs-grants resolve against (the platform roots every drive's
 /// toolkit here — a caller cannot hand a grain tools rooted outside its rented
@@ -123,6 +185,21 @@ struct Tenant {
     vat: VatState,
     terms: LeaseTerms,
     workdir: std::path::PathBuf,
+    /// The cap bundle string the grain was rented under. Kept so a COLD wake
+    /// ([`wake_from_lease`](AgentPlatform::wake_from_lease)) can rebuild the SAME
+    /// [`dregg_agent::session::Session`]'s `AgentSpec` (identical caps + budget +
+    /// workdir ⇒ identical asset + ceiling ⇒ the woken `handle.id`/budget/asset match
+    /// the persisted report), reconstituting the session from the heap without the
+    /// retained in-RAM one.
+    caps: String,
+    /// **The grain's receipt-chain SIGNING SECRET** (host-held). The session is opened
+    /// under it ([`Session::open_with_secret`]) so a cold wake re-signs the resumed
+    /// chain with the SAME key. It is persisted (as part of [`SessionCarrier`]) into
+    /// the committed `EXEC_COLL` heap — only its ROOT is committed (a hash,
+    /// third-party-safe); the heap preimage is host-held data availability. NEVER
+    /// placed in any attestation / report / verify surface (`report.signer` stays the
+    /// PUBLIC key). See [`SessionCarrier`] for the full secret-handling + export note.
+    receipt_secret: [u8; 32],
     /// The grain's budget ceiling (as granted at [`rent`](AgentPlatform::rent)).
     /// The served-path minter ([`open_minter`](AgentPlatform::open_minter)) sets
     /// its `ToolGateway` rate ceiling to this, so the executor's own `calls_made`
@@ -233,6 +310,13 @@ pub enum AgentPlatformError {
     /// chain tip / turn count / consumed disagree with the live session — a stale,
     /// tampered, or diverged image).
     ImageDiverged(String),
+    /// **Phase 2 (wake-from-lease)** — the resumable session carrier read back from
+    /// the `EXEC_COLL` heap could not be reconstituted fail-closed: no carrier was
+    /// persisted, a data slot was truncated (missing), the reassembled bytes did not
+    /// re-hash to the committed ROOT TOOTH (tampered), or they did not deserialize.
+    /// A cold wake ([`AgentPlatform::wake_from_lease`]) REFUSES rather than stand up a
+    /// partial or substituted session.
+    CarrierRefused(String),
 }
 
 impl std::fmt::Display for AgentPlatformError {
@@ -254,6 +338,9 @@ impl std::fmt::Display for AgentPlatformError {
             AgentPlatformError::Verify(e) => write!(f, "session re-witness failed: {e}"),
             AgentPlatformError::ImageDiverged(e) => {
                 write!(f, "the durable image does not bind the session: {e}")
+            }
+            AgentPlatformError::CarrierRefused(e) => {
+                write!(f, "resumable session carrier refused: {e}")
             }
         }
     }
@@ -349,7 +436,13 @@ impl AgentPlatform {
 
         let bundle = parse_caps_confined(caps, account, budget, workdir, Confinement::Hosted)
             .map_err(AgentPlatformError::Caps)?;
-        let session = Session::open(account, bundle.spec)
+        // Open under a fresh RANDOM receipt-chain secret we RETAIN (host-held), rather
+        // than `Session::open`'s internal random draw: the grain must be able to cold
+        // wake and re-sign the resumed chain with the SAME key, so the secret is
+        // persisted (as part of the carrier) into the committed heap — see
+        // [`SessionCarrier`] for the secret-handling + export note.
+        let receipt_secret = fresh_receipt_secret();
+        let session = Session::open_with_secret(account, bundle.spec, receipt_secret)
             .map_err(|e| AgentPlatformError::Session(e.to_string()))?;
 
         // THE FOLD + THE FUSION: rent = open_vat_prepaid (opens the durable image AND
@@ -406,6 +499,8 @@ impl AgentPlatform {
                 vat,
                 terms,
                 workdir: std::path::PathBuf::from(workdir),
+                caps: caps.to_string(),
+                receipt_secret,
                 budget,
                 owner: account.to_string(),
                 anchor,
@@ -842,6 +937,67 @@ impl AgentPlatform {
         guard.transition(host, VatTransition::BringUp)
     }
 
+    /// **COLD WAKE — rebuild the grain's session from its lease heap ALONE.** The
+    /// distinct cold path beside the vat-lifecycle [`wake`](Self::wake) (which resumes
+    /// metering but NEEDS the in-RAM `Tenant.session`): this RECONSTITUTES the session
+    /// itself from the full resumable carrier persisted in `EXEC_COLL`, the wake a
+    /// grain needs after its process-local RAM is gone.
+    ///
+    /// It reads the carrier back (length + data slots), verifies the ROOT TOOTH
+    /// FAIL-CLOSED (a tampered or truncated carrier is [`CarrierRefused`], never a
+    /// partial reconstruction — the byte-identical discipline of
+    /// `AgentMemoryCheckpoint::resume_into`), rebuilds the [`Session`] via
+    /// [`Session::wake_from_report`] (the heap-persisted secret + consumed + receipt
+    /// chain — NOT the retained in-memory session and NOT the filesystem
+    /// [`ConsumedStore`](dregg_agent::session_store::ConsumedStore)), installs it plus
+    /// the restored R2 committed-turn manifest, and RE-WITNESSES the reconstruction
+    /// (chain + durable-image bind) before returning it.
+    ///
+    /// After this, [`verify`](Self::verify) / [`verify_r2`](Self::verify_r2) hold and
+    /// [`attest`](Self::attest) reproduces the grain's chain — the session is as real
+    /// as the one that was lost. Refuses if no grain is hosted at `host` or the
+    /// carrier does not reconstitute.
+    pub fn wake_from_lease(&self, host: &str) -> Result<AgentVerified, AgentPlatformError> {
+        let arc = self.tenant_arc(host)?;
+        let mut guard = arc.lock().expect("tenant poisoned");
+        let tenant = &mut *guard;
+        // Read + reassemble + root-tooth-verify the carrier off the committed heap.
+        let carrier = read_carrier(tenant)?;
+        // Rebuild the AgentSpec exactly as `rent` did (same caps/budget/workdir ⇒ same
+        // asset + ceiling), so the woken handle.id/budget/asset match the persisted
+        // report — reading only RETAINED rental terms, never the lost session.
+        let workdir = tenant.workdir.to_string_lossy();
+        let bundle = parse_caps_confined(
+            &tenant.caps,
+            &tenant.owner,
+            tenant.budget,
+            &workdir,
+            Confinement::Hosted,
+        )
+        .map_err(AgentPlatformError::Caps)?;
+        let session = Session::wake_from_report(
+            &tenant.owner,
+            bundle.spec,
+            carrier.receipt_secret,
+            &carrier.report,
+            carrier.history,
+        )
+        .map_err(|e| AgentPlatformError::Session(e.to_string()))?;
+        drop(workdir);
+        // Install the reconstituted session + the restored R2 manifest (both from the
+        // heap), replacing whatever was — or was not — in RAM.
+        tenant.committed_turns = carrier.committed_turns;
+        tenant.session = session;
+        // Fail-closed self-check: the reconstruction re-witnesses (chain signature +
+        // budget) AND still binds the unchanged durable image, or the wake refuses.
+        let verified = tenant
+            .session
+            .verify()
+            .map_err(|e| AgentPlatformError::Verify(format!("{e:?}")))?;
+        image_binds(tenant)?;
+        Ok(verified)
+    }
+
     /// The grain's current verified lifecycle state at `host` — the vat [`VatState`]
     /// read off the lease cell (created / running / sleeping / lapsed / reaped), or
     /// [`NoSuchGrain`](AgentPlatformError::NoSuchGrain).
@@ -981,19 +1137,120 @@ impl AgentPlatform {
 /// four back on every platform `verify`, so a stale/tampered image is a refusal,
 /// not a decoration.
 ///
-/// Honest scope: the image BINDS the session (verified read-back), it does not
-/// yet carry the full receipt bytes — a grain is not yet WAKEABLE from the lease
-/// heap alone (that is THE-GRAIN's `AgentMemoryCheckpoint`-onto-`EXEC_COLL` weld,
-/// named for the main loop; the binding here is the cursor it will verify
-/// against).
+/// **Phase 2 (wake-from-lease):** the checkpoint now ALSO persists the FULL resumable
+/// session carrier ([`SessionCarrier`]) into the committed heap — the cursor slots
+/// above stay (that is what [`image_binds`] re-checks for divergence), and beyond them
+/// the carrier's length + root-tooth + data slots make the grain WAKEABLE from the
+/// heap ALONE ([`AgentPlatform::wake_from_lease`]). The carrier is written in the SAME
+/// atomic `checkpoint` write as the cursor, so a light client sees ONE advance binding
+/// BOTH the cursor and the reconstructable image.
 fn checkpoint_tenant(tenant: &mut Tenant) -> Result<(), AgentPlatformError> {
     let report = tenant.session.report();
     let digest = session_digest(&report);
+    // The three cursor slots ([`image_binds`] re-checks these) FOLLOWED BY the carrier
+    // slots (the full reconstructable image) — one working vector, one atomic write.
+    let mut working = session_binding(&report).to_vec();
+    working.extend(carrier_slots(tenant, &report)?);
     tenant
         .lease
-        .checkpoint(digest, &session_binding(&report))
+        .checkpoint(digest, &working)
         .map_err(|e| AgentPlatformError::Lease(e.to_string()))?;
     Ok(())
+}
+
+/// Build the carrier heap slots for a checkpoint: serialize the [`SessionCarrier`]
+/// (postcard, mirroring `AgentMemoryCheckpoint::to_bytes`), then lay it out as a
+/// LENGTH slot + a ROOT-TOOTH slot (`blake3` of the full bytes) + N data slots (each
+/// packs 32 carrier bytes, the last zero-padded). The root tooth is what the cold wake
+/// re-derives and refuses on mismatch (a tampered/truncated carrier).
+fn carrier_slots(
+    tenant: &Tenant,
+    report: &AgentRunReport,
+) -> Result<Vec<(u32, FieldElement)>, AgentPlatformError> {
+    let carrier = SessionCarrier {
+        receipt_secret: tenant.receipt_secret,
+        consumed: report.consumed,
+        report: report.clone(),
+        committed_turns: tenant.committed_turns.clone(),
+        history: tenant.session.history().to_vec(),
+    };
+    let bytes = postcard::to_allocvec(&carrier)
+        .map_err(|e| AgentPlatformError::CarrierRefused(format!("serialize carrier: {e}")))?;
+    let mut slots = Vec::with_capacity(2 + bytes.len().div_ceil(32));
+    slots.push((WK_CARRIER_LEN, field_from_u64(bytes.len() as u64)));
+    slots.push((WK_CARRIER_ROOT, *blake3::hash(&bytes).as_bytes()));
+    for (i, chunk) in bytes.chunks(32).enumerate() {
+        let mut fe = [0u8; 32];
+        fe[..chunk.len()].copy_from_slice(chunk);
+        slots.push((WK_CARRIER_DATA_BASE + i as u32, fe));
+    }
+    Ok(slots)
+}
+
+/// **Read + reassemble the resumable carrier off the lease's `EXEC_COLL` heap and
+/// verify its ROOT TOOTH — FAIL-CLOSED.** The read-back half of [`carrier_slots`],
+/// holding the byte-identical anti-substitution discipline of
+/// `AgentMemoryCheckpoint::resume_into`: an absent length slot (nothing persisted), a
+/// missing data slot (truncation), a byte-flip that re-hashes to a different root
+/// (tamper), or a deserialize failure is [`CarrierRefused`] — never a partial or
+/// substituted reconstruction.
+fn read_carrier(tenant: &Tenant) -> Result<SessionCarrier, AgentPlatformError> {
+    let len = tenant
+        .lease
+        .read_working(WK_CARRIER_LEN)
+        .map(|fe| u64_from_field(&fe) as usize)
+        .ok_or_else(|| {
+            AgentPlatformError::CarrierRefused(
+                "no resumable carrier persisted in the lease heap (never checkpointed)".into(),
+            )
+        })?;
+    let root = tenant.lease.read_working(WK_CARRIER_ROOT).ok_or_else(|| {
+        AgentPlatformError::CarrierRefused("carrier root-tooth slot is absent".into())
+    })?;
+    let n_slots = len.div_ceil(32);
+    let mut bytes = Vec::with_capacity(n_slots * 32);
+    for i in 0..n_slots {
+        let fe = tenant
+            .lease
+            .read_working(WK_CARRIER_DATA_BASE + i as u32)
+            .ok_or_else(|| {
+                AgentPlatformError::CarrierRefused(format!(
+                    "carrier truncated: data slot {i} of {n_slots} is missing"
+                ))
+            })?;
+        bytes.extend_from_slice(&fe);
+    }
+    bytes.truncate(len);
+    // ROOT TOOTH, fail-closed: the reassembled bytes MUST re-hash to the committed
+    // root. A flipped byte in any data slot (or a wrong length) re-derives a different
+    // root and the wake refuses — the anti-substitution tooth over the whole carrier.
+    if *blake3::hash(&bytes).as_bytes() != root {
+        return Err(AgentPlatformError::CarrierRefused(
+            "root-tooth mismatch: the reassembled carrier does not match the committed root \
+             (tampered or truncated)"
+                .into(),
+        ));
+    }
+    postcard::from_bytes(&bytes)
+        .map_err(|e| AgentPlatformError::CarrierRefused(format!("deserialize carrier: {e}")))
+}
+
+/// Decode a `u64` from the last 8 big-endian bytes of a field element — the inverse of
+/// [`hosted_lease::field_from_u64`] (kept local so this crate needs no direct
+/// `starbridge_execution_lease` dep for the one read).
+fn u64_from_field(f: &FieldElement) -> u64 {
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&f[24..32]);
+    u64::from_be_bytes(b)
+}
+
+/// A fresh, unpredictable 32-byte receipt-chain secret from OS randomness — the
+/// host-held signing seed a grain is opened under (and persists, root-committed, into
+/// its carrier) so a cold wake re-signs the resumed chain with the SAME key.
+fn fresh_receipt_secret() -> [u8; 32] {
+    let mut secret = [0u8; 32];
+    getrandom::fill(&mut secret).expect("operating-system randomness is available");
+    secret
 }
 
 /// The working-memory binding of a session report: chain tip (zero for an empty
@@ -1847,6 +2104,185 @@ mod tests {
                 Err(AgentPlatformError::Verify(_))
             ),
             "the unminted standalone path does not pass R2"
+        );
+    }
+
+    /// **PHASE 2 — A GRAIN COLD-WAKES FROM ITS LEASE HEAP ALONE, both polarities.**
+    /// A minted drive persists the FULL resumable carrier into `EXEC_COLL` (secret +
+    /// consumed + the whole report + the R2 manifest). We DROP the in-RAM session
+    /// (overwrite it with a fresh empty one — a different signer, zero receipts, zero
+    /// consumed) AND clear the committed-turn manifest, then `wake_from_lease` rebuilds
+    /// BOTH from the heap: the reconstructed session re-witnesses at R0 AND R2 and
+    /// reproduces the original signer / consumed / tip / receipt count — with no
+    /// reliance on the lost session or any filesystem store. A TRUNCATED carrier
+    /// (length past the data) and a TAMPERED data slot are each REFUSED fail-closed by
+    /// the root tooth.
+    #[test]
+    fn a_grain_cold_wakes_from_its_lease_heap_and_tamper_is_refused() {
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+        let host = platform
+            .rent(
+                "cold.agents.dregg",
+                "dga1_cold",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("provision");
+
+        // Drive a MINTED grain so the receipts carry turn links (R2 is exercised).
+        let mut minter = SyntheticMinter::new();
+        let mut brain = fs_plan(&[("a.txt", "1"), ("b.txt", "2")]);
+        platform
+            .drive_minted(&host, "write", &mut brain, &mut minter)
+            .expect("minted drive");
+
+        // Snapshot the ORIGINAL truths before we lose the session.
+        let arc = || {
+            platform
+                .tenants
+                .lock()
+                .unwrap()
+                .get(&host)
+                .cloned()
+                .unwrap()
+        };
+        let (orig_signer, orig_consumed, orig_tip, orig_len, orig_turns, orig_goals) = {
+            let t = arc();
+            let t = t.lock().unwrap();
+            let r = t.session.report();
+            (
+                r.signer,
+                r.consumed,
+                r.tip(),
+                r.receipts.len(),
+                t.committed_turns.clone(),
+                t.session.goal_count(),
+            )
+        };
+        assert!(
+            orig_len >= 2 && orig_consumed > 0,
+            "the grain did real work"
+        );
+        assert!(!orig_turns.is_empty(), "the minted drive recorded turns");
+        assert!(
+            orig_goals >= 1,
+            "the drive recorded a goal transcript to restore"
+        );
+
+        // DROP the in-RAM session: overwrite with a FRESH empty one (a DIFFERENT
+        // signer, no receipts, zero consumed) and clear the manifest — the wake must
+        // rebuild BOTH from the heap, not read them off the retained session.
+        {
+            let t = arc();
+            let mut t = t.lock().unwrap();
+            let bundle = parse_caps_confined(
+                "fs",
+                "dga1_cold",
+                10_000,
+                wd.to_str().unwrap(),
+                Confinement::Hosted,
+            )
+            .unwrap();
+            t.session = Session::open("dga1_cold", bundle.spec).unwrap();
+            t.committed_turns.clear();
+            assert_ne!(
+                t.session.report().signer,
+                orig_signer,
+                "the replacement session has a different signer (the original is gone)"
+            );
+            assert_eq!(t.session.consumed(), 0, "the replacement has a fresh meter");
+        }
+
+        // COLD WAKE from the heap ALONE.
+        platform
+            .wake_from_lease(&host)
+            .expect("cold wake rebuilds the session from EXEC_COLL");
+
+        // The reconstruction re-witnesses at R0 AND R2 and matches the original.
+        platform
+            .verify(&host)
+            .expect("the reconstructed session re-witnesses (chain + image bind)");
+        platform
+            .verify_r2(&host)
+            .expect("the reconstructed session re-witnesses at R2");
+        {
+            let t = arc();
+            let t = t.lock().unwrap();
+            let r = t.session.report();
+            assert_eq!(
+                r.signer, orig_signer,
+                "the resumed chain keeps the SAME signer"
+            );
+            assert_eq!(r.consumed, orig_consumed, "consumed restored from the heap");
+            assert_eq!(r.tip(), orig_tip, "the chain tip is the original");
+            assert_eq!(r.receipts.len(), orig_len, "every receipt was restored");
+            assert_eq!(
+                t.committed_turns, orig_turns,
+                "the R2 committed-turn manifest was restored from the heap"
+            );
+            assert_eq!(
+                t.session.goal_count(),
+                orig_goals,
+                "the goal transcript (history) was restored from the heap"
+            );
+        }
+
+        // NEGATIVE (truncation): a length past the written data slots is refused; then
+        // heal the length and confirm the wake works again.
+        let honest_len = {
+            let t = arc();
+            let t = t.lock().unwrap();
+            t.lease.read_working(WK_CARRIER_LEN).unwrap()
+        };
+        {
+            let t = arc();
+            let mut t = t.lock().unwrap();
+            let digest = session_digest(&t.session.report());
+            t.lease
+                .checkpoint(digest, &[(WK_CARRIER_LEN, field_from_u64(999_999))])
+                .expect("bump the carrier length past its data");
+        }
+        assert!(
+            matches!(
+                platform.wake_from_lease(&host),
+                Err(AgentPlatformError::CarrierRefused(_))
+            ),
+            "a truncated carrier (length past the data) is refused"
+        );
+        {
+            let t = arc();
+            let mut t = t.lock().unwrap();
+            let digest = session_digest(&t.session.report());
+            t.lease
+                .checkpoint(digest, &[(WK_CARRIER_LEN, honest_len)])
+                .expect("heal the carrier length");
+        }
+        platform
+            .wake_from_lease(&host)
+            .expect("the healed carrier wakes again");
+
+        // NEGATIVE (tamper): flipping one byte in a data slot re-hashes to a different
+        // root and the wake refuses by the root tooth.
+        {
+            let t = arc();
+            let mut t = t.lock().unwrap();
+            let mut slot = t.lease.read_working(WK_CARRIER_DATA_BASE).unwrap();
+            slot[0] ^= 0xFF;
+            let digest = session_digest(&t.session.report());
+            t.lease
+                .checkpoint(digest, &[(WK_CARRIER_DATA_BASE, slot)])
+                .expect("tamper a carrier data slot");
+        }
+        assert!(
+            matches!(
+                platform.wake_from_lease(&host),
+                Err(AgentPlatformError::CarrierRefused(_))
+            ),
+            "a tampered carrier data slot is refused by the root tooth"
         );
     }
 
