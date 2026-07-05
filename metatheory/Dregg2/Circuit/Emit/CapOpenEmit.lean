@@ -70,6 +70,7 @@ unchanged from `DeployedCapOpen`.
 -/
 import Dregg2.Circuit.DeployedCapOpen
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
+import Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused
 import Dregg2.Circuit.Emit.EffectVmEmitRotationWide
 
 namespace Dregg2.Circuit.Emit.CapOpenEmit
@@ -1343,6 +1344,44 @@ theorem v3RegistryCapOpen_delegate :
 /-- The revoke fan-out member IS `revokeCapOpenV3` (position 39). -/
 theorem v3RegistryCapOpen_revoke :
     (v3RegistryCapOpen[39]?.map (·.2)) = some revokeCapOpenV3 := rfl
+
+/-! ## §6b — THE DEPLOYED FLAG-DAY REGISTRY (`v3RegistryCapOpenDep`).
+
+The DEPLOYED cohort emit + the apex `Rfix` re-key over THIS list: the 36 cohort members are the WELDED
+cohort (`v3RegistryRefused` — every bare member carries the deployed three-block capacity-floor refuse +
+the rc pins, so the DEPLOYED VK bytes REFUSE a declared-capacity dodge), while the cap-open TAIL
+(positions 36..44) is IDENTICAL to `v3RegistryCapOpen` (not the bare route — welding their aux would
+collide, out of task scope). The staged-wide registry (`v3RegistryCapOpenWide`) stays on the bare
+`v3RegistryCapOpen`, so its structural soundness is untouched; only the deployed default flips. -/
+def v3RegistryCapOpenDep : List (String × EffectVmDescriptor2) :=
+  Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.v3RegistryRefused
+    ++ v3RegistryCapOpen.drop 36
+
+/-- `v3RegistryRefused` has the cohort length 36 (the flag-day is name/shape-stable). -/
+theorem v3RegistryRefused_length :
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.v3RegistryRefused.length = 36 := by
+  simp only [Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.v3RegistryRefused, List.length_map]
+  decide
+
+/-- The deployed registry's cap-open tail is EXACTLY the bare registry's tail (positions 36..44); only
+the cohort prefix (0..35) is welded. So every `Rfix` cap-open/tail correspondence (positions ≥ 36)
+survives verbatim. -/
+theorem v3RegistryCapOpenDep_drop36 :
+    v3RegistryCapOpenDep.drop 36 = v3RegistryCapOpen.drop 36 := by
+  rw [v3RegistryCapOpenDep, ← v3RegistryRefused_length, List.drop_left]
+
+theorem v3RegistryCapOpenDep_length : v3RegistryCapOpenDep.length = 45 := by
+  rw [v3RegistryCapOpenDep, List.length_append, v3RegistryRefused_length, List.length_drop,
+    v3RegistryCapOpen_length]
+
+#guard v3RegistryCapOpenDep.length == 45
+-- the deployed registry is name-stable with the bare registry (a NAME-stable weld).
+#guard v3RegistryCapOpenDep.map (·.1) == v3RegistryCapOpen.map (·.1)
+-- position 0 (transfer) now carries the welded (width-1626) descriptor.
+#guard (v3RegistryCapOpenDep[0]?.map (·.1)) == some "transferVmDescriptor2R24"
+#guard (v3RegistryCapOpenDep[0]?.map (·.2.traceWidth)) == some 1626
+-- the cap-open tail is untouched (the deployed prover's authority route).
+#guard (v3RegistryCapOpenDep[43]?.map (·.1)) == some "attenuateCapOpenEffVmDescriptor2R24"
 
 /-! ## §7 — Axiom hygiene. -/
 
