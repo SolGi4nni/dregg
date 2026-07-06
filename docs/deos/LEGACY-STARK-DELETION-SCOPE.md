@@ -42,6 +42,53 @@ speaks the dialects these AIRs need:
 - `Lookup(Poseidon2Chip)` — the hash chains behind membership, note-spend, DFA
   running-hash, and `poseidon2_air` itself.
 
+## ⚑ CENSUS RESULT (2026-07-06, 20-family read-only workflow `wf_edf51f70-602`, T3 verdicts adversarially verified)
+
+**GREEN LIGHT — every family FITS the current IR2 vocabulary; ZERO need an extension.**
+The one unknown that could have derailed the campaign (an AIR whose constraints have no
+`Base`/`Lookup` mapping, forcing an IR2-vocabulary lane first) does not exist. The T3
+high-risk families (membership, multi_step, presentation) were adversarially re-audited and
+all **CONFIRMED FITS**. So the whole campaign is emit-authoring, not IR design.
+
+| family | tier | IR2 verdict | Lean spec today | risk | prod consumers |
+|---|---|---|---|---|---|
+| bilateral_aggregation | T0 | FITS_WITH_NAMED_GATE | EMIT_EXISTS | LOW | 1 |
+| accumulator | T2 | FITS | NO_LEAN | MED | 3 |
+| bridge_action | T2 | FITS | NO_LEAN | MED | 4 |
+| committed_threshold | T2 | FITS | SPEC_EXISTS_NO_EMIT | MED | 12 |
+| derivation | T2 | FITS | NO_LEAN | MED | 5 |
+| dfa_routing | T2 | FITS | SPEC_EXISTS_NO_EMIT | MED | 2 |
+| effect_action | T2 | FITS | NO_LEAN | MED | 2 |
+| fold | T2 | FITS_WITH_NAMED_GATE | NO_LEAN | MED | 4 |
+| garbled | T2 | FITS_WITH_NAMED_GATE | SPEC_EXISTS_NO_EMIT | MED | 1 |
+| ivc | T2 | FITS_WITH_NAMED_GATE | NO_LEAN | MED | 9 |
+| note_spending | T2 | FITS | NO_LEAN | MED | 8 |
+| poseidon2 | T2 | FITS | EMIT_EXISTS | LOW | 0 (hand AIR already `#[deprecated]`) |
+| predicates-arithmetic | T2 | FITS_WITH_NAMED_GATE | NO_LEAN | MED | 8 |
+| predicates-relational-compound | T2 | FITS | SPEC_EXISTS_NO_EMIT | MED | 8 |
+| quantified_absence | T2 | FITS_WITH_NAMED_GATE | SPEC_EXISTS_NO_EMIT | LOW | 0 |
+| revocation | T2 | FITS_WITH_NAMED_GATE | SPEC_EXISTS_NO_EMIT | MED | 6 |
+| temporal | T2 | FITS | SPEC_EXISTS_NO_EMIT | MED | 6 |
+| membership | T3 | FITS | NO_LEAN | HIGH (verified) | 3 |
+| multi_step | T3 | FITS | NO_LEAN | HIGH (verified) | 14 |
+| presentation | T3 | FITS_WITH_NAMED_GATE | NO_LEAN | HIGH (verified) | 2 |
+
+**Re-grade vs the pre-census tiers:** the census pulled the "T0 emit exists" families UP —
+even where `EMIT_EXISTS`, the deployed replacement (e.g. `dsl/descriptors.rs` for merkle) is
+a **Rust→Rust** descriptor still carrying v1 hash-*sites*, NOT the lawful v2 chip-lookup
+emit — so the emit-from-Lean deliverable is genuinely open there too. The real cost is not
+expressibility (universal) but two things the census surfaced repeatedly:
+1. **Producer trace-fill** — the hand AIRs deploy a lossy 1-felt opaque digest; the lawful
+   emit witnesses the FULL Poseidon2 permutation per hash site (the chip already exposes the
+   arity-2/4 absorb modes + 8 output lanes — no chip change, but the trace generator grows).
+2. **Load-bearing teeth OUTSIDE the AIR constraint list** — e.g. adjacency's
+   `idx_upper − idx_lower == 1` lives in the Rust *verifier wrapper*, not the descriptor; an
+   emit author could silently drop it. Each family's dossier flags its own such catch.
+
+`FITS_WITH_NAMED_GATE` = fits, but leaves a stated off-descriptor carrier (signatures, MACs
+— the DECO-leaf posture), not a vocabulary gap. Full per-family dossiers (constraint
+inventories, emit plans, consumer lists) in workflow `wf_edf51f70-602`.
+
 ## Emission difficulty — honest tiers
 
 | tier | families | why |
