@@ -8,8 +8,9 @@ leased/metered + persisted-as-forkable-mind-cell + R2-verifiable by the renter.
 North star: *rent a coding agent you can jail, budget, fork, rewind, and
 cryptographically audit against the chain.*
 
-## STATE FOR MORNING-EMBER (2026-07-06 ~00:25, overnight session end)
-The confined-body grain is DONE and green — 9 commits (`8de7447da`..`739c1030c`).
+## STATE FOR MORNING-EMBER (2026-07-06 ~01:05, overnight session)
+The confined-body grain is DONE and green — 13 commits (`8de7447da`..`ea92ed7d3`),
+incl. the full hostile-body robustness set (crash/hang+SIGKILL/garbage/cap/flood).
 A hosted body plugs into the grain's `AgentBrain` seam as a `ConfinedBrain`
 (crate `grain-jail`), so with ZERO grain-drive-path change a body is OS-jailed
 (firmament, macOS Seatbelt — validated locally, denies /etc/passwd), yet every
@@ -39,7 +40,11 @@ APIs in `docs/deos/GRAIN-CONFINED-BODY.md` (Frontier) — a clean fresh-head sta
   via `with_net_out("host:port")`) but gives NO surface socket. Combining a net
   door WITH a clean line-protocol pipe needs either a firmament surface+confinement
   variant (edit the excluded firmament crate) or the fd-recovery dance
-  (deos-hermes's `recover_endpoint_fd`). Decide before building the LLM body.
+  (deos-hermes's `recover_endpoint_fd`). LEAD: `spawn_pd_confined_with` hands the
+  body a `KernelClient` (the CONTROL socket) — if KernelClient exposes its fd /
+  UnixStream, use THAT as the line-protocol byte-pipe (as deos-hermes uses the
+  endpoint), so the net-door Confinement + the pipe coexist with no firmament edit.
+  Verify KernelClient's API first. Decide before building the LLM body.
 
 ## Next moves (fresh head)
 1. The egress door — resolve the surface+netdoor variant question above first,
