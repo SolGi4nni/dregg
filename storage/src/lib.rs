@@ -85,7 +85,6 @@ pub mod multi_asset;
 pub mod namespace_mount;
 pub mod operator;
 #[cfg(feature = "kzg")]
-pub mod poly_queue;
 pub mod programmable;
 pub mod pubsub;
 pub mod queue;
