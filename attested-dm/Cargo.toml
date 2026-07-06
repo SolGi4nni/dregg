@@ -1,0 +1,79 @@
+# attested-dm — the provably-honest, un-jailbreakable AI dungeon-master.
+#
+# A confined + attested LLM narrates an on-chain interactive world: each narration /
+# NPC-response is a RECEIPTED attested turn advancing a world-cell, carrying a
+# `ZkOracleAttestation` proving the turn was
+#   authentic     — from a real model (a genuine `/v1/messages` session), not forged;
+#   well-formed    — the response body lies in the JSON context-free language;
+#   injection-free — the bound narration carries no `{{` handlebars delimiter.
+#
+# THE KILLER PROPERTY (un-jailbreakable): a player message that carries a prompt-
+# injection (`{{` / the injection template) is reflected into the DM's narration and
+# CAUGHT by the injection-free leg — the DM's turn over that input is REFUSED (the
+# attestation cannot be produced), so a player cannot prompt-inject the DM into
+# breaking the game's rules. The DM's authority is also cap-bounded: it can only
+# narrate / advance within its granted affordances (it cannot grant a player an
+# unearned item).
+#
+# COMPOSES the real substrate primitives, reimplementing no theorem:
+#   * zkoracle-prove — `prove_zkoracle` / `verify_zkoracle` over an Anthropic
+#     `/v1/messages` session: each narration carries a `ZkOracleAttestation`
+#     (authentic ∧ well-formed ∧ injection-free). The SAME primitives
+#     `deos_hermes::attest::AttestationCarrier` wraps; we compose them DIRECTLY (the
+#     modeled ed25519 authentic carrier + the JSON CFG parse-cert + the injection
+#     matcher — no HTTP/TLS, no verified-Lean-executor link) so the default build
+#     stays light, exactly as `confined-swarm` did. The real local MPC-TLS 2PC
+#     roundtrip is behind `tlsn-live`. The full OS-jailed confined DM body is
+#     `deos_hermes::DreggHost::run_hosted_agent_attested` (the crown) — the same
+#     attestation primitives, run inside a firmament jail.
+#
+# STANDALONE WORKSPACE (declares its own `[workspace]`): it is NOT a member of the
+# breadstuffs root — build it directly with
+#   cargo build --manifest-path attested-dm/Cargo.toml
+#   cargo test  --manifest-path attested-dm/Cargo.toml
+# Its `[patch]` tables mirror the root's (the plonky3-recursion sibling checkout + the
+# ark-serialize serde fork) so zkoracle-prove's proof dep-tree resolves identically.
+# The path deps stay members of the breadstuffs root workspace, so their
+# `workspace = true` inheritance resolves against that root unchanged.
+
+[package]
+name = "attested-dm"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "The provably-honest, un-jailbreakable AI dungeon-master: a confined + attested LLM narrator whose every narration is a receipted verifiable turn (authentic ∧ well-formed ∧ injection-free), and a player prompt-injection is refused by the injection-free leg."
+
+[lib]
+name = "attested_dm"
+path = "src/lib.rs"
+
+[dependencies]
+# THE ATTESTATION — each narration carries a `verify_zkoracle`-checkable proof it is
+# from a real model (authentic), well-formed, and injection-free. Composed directly so
+# the DM stays light (no HTTP/TLS on the default path).
+dregg-zkoracle-prove = { path = "../zkoracle-prove" }
+
+# The receipt-id commitment over a landed attestation (the on-ledger fingerprint a
+# light client recomputes) — the SAME BLAKE3 shape `deos_hermes::attest` uses.
+blake3 = "1"
+
+[features]
+# THE CROWN, run REAL-LOCALLY. Attest the narration over a GENUINE local MPC-TLS 2PC
+# roundtrip (zkoracle-prove's vendored TLSNotary) instead of the modeled ed25519
+# carrier. OFF by default so the standard build stays HTTP/TLS-free.
+tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STANDALONE workspace — mirror the root's [patch] so the proof dep-tree resolves
+# identically (see the header note).
+[workspace]
+
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
+
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
