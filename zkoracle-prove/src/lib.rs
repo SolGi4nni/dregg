@@ -50,6 +50,7 @@ pub use authentic::{
     TlsnVerifyingKey, build_anthropic_fixture, verify_anthropic_presentation,
 };
 pub use cfg::{
-    CfgError, ParseCertificate, json_grammar, prove_cfg_cert, tokenize, verify_cfg_cert,
+    CfgError, CompactCert, ParseCertificate, expand_compact, json_grammar, prove_cfg_cert,
+    prove_cfg_compact, tokenize, verify_cfg_cert, verify_cfg_compact,
 };
 pub use injection::{injection_free, injection_template};

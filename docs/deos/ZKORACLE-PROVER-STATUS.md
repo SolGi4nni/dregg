@@ -134,39 +134,61 @@ lane). It is NOT edited here.
   session-integrity that makes the notary signature *trustless* is exercised locally; a
   deployed notary + a live session is a deploy step, not new crypto.
 
+## The compact certificate — O(tokens) wire, long-context scale
+
+The attestation's well-formed leg carries a **compact certificate**
+(`cfg.rs::CompactCert`): the leftmost derivation's RULE SEQUENCE (one byte per step),
+replayed by `verify_cfg_compact` as a pushdown run — O(tokens) time and space, fully
+iterative on both prove and verify (no recursion: 100k-deep and 10M-token bodies are
+heap-bounded). The Lean side is `Dregg2/Crypto/CfgCompact.lean` (`#assert_axioms`-clean):
+`Replay` is the machine, `compact_sound` proves an accepted replay implies language
+membership, and `compact_to_chain` rebuilds the `CfgAccepts` chain object — the wire
+format changed, the theorem the capstone consumes did not. `expand_compact` is
+`compact_to_chain`'s Rust twin, and `compact_expands_to_the_exact_chain` pins the two
+provers to the identical leftmost derivation.
+
+The original form-chain (`ParseCertificate`, `Cfg.lean::chain`-shaped) remains as the
+small-input spec bridge. It is O(tokens²) symbols and its recursive prover is
+stack-bounded near 65k dense tokens — measured below; it is not the scale path.
+
 ## Measured paces (2026-07-06, Apple Silicon dev box, release build)
 
 `cargo run -p dregg-zkoracle-prove --example paces --release` — per-leg + end-to-end,
-median-of-k. Two scaling axes, because the tokenizer collapses a whole JSON string to ONE
-token: a text-heavy model response grows in BYTES but not tokens; a structure-dense body
-grows in TOKENS.
+median-of-k. Axes: TEXT (bytes grow; a JSON string lexes to ONE token), TRANSCRIPT (a
+long multi-turn context of ~26-LLM-token content blocks — ≈256k / 1M / 10M LLM tokens at
+~4 bytes each), DENSE (pure JSON-token growth, the certificate's stress axis), DEEP
+(nesting, the stack-safety pole).
 
-| case | bytes | tokens | chain symbols | cert prove | cert verify | commit | PROVE e2e | VERIFY e2e |
+| case | bytes | jtokens | cert bytes | cert prove | cert verify | commit | PROVE e2e | VERIFY e2e |
 |---|---|---|---|---|---|---|---|---|
-| text-1k (realistic) | 1.2k | 51 | 1.2k | 9 µs | 6 µs | 263 µs | **321 µs** | **317 µs** |
-| text-16k | 16.6k | 51 | 1.2k | 17 µs | 15 µs | 3.55 ms | 3.62 ms | 3.62 ms |
-| text-256k | 262k | 51 | 1.2k | 165 µs | 160 µs | 56.1 ms | 56.8 ms | 56.6 ms |
-| dense-1k elems | 2.1k | 2.1k | 2.1M | 1.41 ms | 2.60 ms | 437 µs | 1.91 ms | 3.04 ms |
-| dense-4k elems | 8.2k | 8.2k | 33.7M | 19.0 ms | 37.9 ms | 1.78 ms | 21.0 ms | 39.2 ms |
-| dense-16k elems | 32.8k | 32.8k | 537M | 649 ms | 624 ms | 7.19 ms | 610 ms | 625 ms |
+| text-1k (single response) | 1.2k | 51 | 43 | 1 µs | 2 µs | 274 µs | **318 µs** | **314 µs** |
+| text-256k | 262k | 51 | 43 | 189 µs | 197 µs | 56.6 ms | 56.6 ms | 56.5 ms |
+| **ctx-256k-LLM-tok** | 990k | 100k | 90k | 1.04 ms | 993 µs | 214 ms | **216 ms** | **215 ms** |
+| **ctx-1M-LLM-tok** | 4.0M | 400k | 360k | 4.1 ms | 4.0 ms | 849 ms | 863 ms | 852 ms |
+| **ctx-10M-LLM-tok** | 39.6M | 4.0M | 3.6M | 40 ms | 39 ms | 8.5 s | 8.6 s | 8.7 s |
+| dense-1M | 2.1M | 2.1M | 2.1M | 12.7 ms | 12.5 ms | 458 ms | 473 ms | 471 ms |
+| dense-10.5M | 21M | 21M | 21M | 130 ms | 130 ms | 4.6 s | 4.7 s | 4.8 s |
+| deep-100k | 200k | 200k | 300k | 1.6 ms | 1.2 ms | 43 ms | 45 ms | 46 ms |
+
+Old form-chain contrast (why the compact form is the wire): dense-16.4k → 537M symbols,
+~640 ms each way; dense-32.8k → **2.15G symbols, ~2.2–2.5 s**; ~65k → its recursive
+prover overflows the thread stack. The same dense-16.4k on the compact path: 33 kB cert,
+~200 µs each way.
 
 Refuse paths (hostiles bounce FAST, before any heavy leg): forged notary sig **33 µs** ·
-cross-leg splice **35 µs** · injection match alone **11 µs**. The live local MPC-TLS 2PC
+cross-leg splice **35 µs** · injection match alone **12 µs**. The live local MPC-TLS 2PC
 roundtrip (`tlsn-live` test) completes in **~0.4 s** warm.
 
 Readings:
-- **A realistic Anthropic response attests in well under a millisecond each way**; at
-  larger text sizes both directions are dominated by the linear Poseidon2
-  `content_commitment` (~215 µs/KiB), not the CFG or injection legs.
-- **⚑ NAMED FINDING — the dense axis is quadratic in tokens**: the certificate stores the
-  full derivation form-chain, O(tokens²) symbols (a 33 kB body of 33k tokens → 537M
-  symbols, ~0.6 s, ~GB-scale allocation). Harmless for model responses (strings collapse
-  to one token) but a hostile/degenerate body is a resource-blowup vector for any service
-  that PROVES or VERIFIES unbounded bodies. Closure lanes (HORIZONLOG 2026-07-06):
-  (a) a delta-encoded chain (rule+position per step, O(tokens) certificate) — a
-  certificate-format decision COORDINATED with the Lean `Cfg.lean` chain shape (the
-  capstone owner's lane, cf. ZKORACLE-COORDINATION.md); (b) an explicit token/cert-size
-  admission bound at the service boundary as interim policy.
+- **A single model response attests in ~320 µs each way**; a **256k-LLM-token context in
+  ~215 ms**, **1M in ~0.9 s**, **10M in ~8.6 s** — at every long-context size both
+  directions are dominated by the linear Poseidon2 `content_commitment` (~215 µs/KiB);
+  certificate prove/verify never exceeds ~130 ms even at 21M JSON tokens.
+- The certificate scaling wall is CLOSED (was: O(tokens²) form-chain, quadratic time +
+  GB-scale allocation + a stack-overflow near 65k dense tokens). The remaining scale
+  frontier at 10M-token contexts is the sequential Poseidon2 sponge itself; if ~9 s
+  matters for that tier, the lane is a chunked/Merkle content commitment (parallelizable)
+  — a commitment-shape decision that touches the weld, not certificate machinery.
 
 ## 🏆 The CROWN — the confined brain's turn, ATTESTED (`deos-hermes`)
 

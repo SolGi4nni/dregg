@@ -10,7 +10,7 @@
 use dregg_zkoracle_prove::attestation::{FieldSpan, content_commitment};
 use dregg_zkoracle_prove::{
     AnthropicConfig, FixtureNotary, ProveError, ZkOracleAttestation, ZkOracleError,
-    build_anthropic_fixture, prove_cfg_cert, prove_zkoracle, verify_zkoracle,
+    build_anthropic_fixture, prove_cfg_compact, prove_zkoracle, verify_zkoracle,
 };
 
 /// A realistic Anthropic messages response body — nested object/array structure. The user
@@ -68,7 +68,7 @@ fn full_zkoracle_attestation_accepts_and_hostiles_are_refused() {
     forged_pres.recv[n - 4] ^= 0xFF;
     let forged = ZkOracleAttestation {
         presentation: forged_pres,
-        cfg_cert: prove_cfg_cert(ANTHROPIC_BODY.as_bytes()).unwrap(),
+        cfg_cert: prove_cfg_compact(ANTHROPIC_BODY.as_bytes()).unwrap(),
         field_span: FieldSpan { offset: 0, len: 2 },
         content_commit: content_commitment(ANTHROPIC_BODY.as_bytes()),
     };
@@ -94,7 +94,7 @@ fn full_zkoracle_attestation_accepts_and_hostiles_are_refused() {
     // commitment is over the malformed authenticated body, so the weld passes to leg 2.
     let malformed = ZkOracleAttestation {
         presentation: malformed_pres.clone(),
-        cfg_cert: prove_cfg_cert(ANTHROPIC_BODY.as_bytes()).unwrap(),
+        cfg_cert: prove_cfg_compact(ANTHROPIC_BODY.as_bytes()).unwrap(),
         field_span: span_in(&malformed_pres, b"msg"),
         content_commit: content_commitment(malformed_body.as_bytes()),
     };
@@ -123,7 +123,7 @@ fn full_zkoracle_attestation_accepts_and_hostiles_are_refused() {
     let inject_pres = build_anthropic_fixture(&notary, inject_body, 2);
     let injecting = ZkOracleAttestation {
         presentation: inject_pres.clone(),
-        cfg_cert: prove_cfg_cert(inject_body.as_bytes()).unwrap(),
+        cfg_cert: prove_cfg_compact(inject_body.as_bytes()).unwrap(),
         field_span: span_in(&inject_pres, b"{{x"),
         content_commit: content_commitment(inject_body.as_bytes()),
     };
@@ -158,8 +158,8 @@ fn injection_catch_discriminates() {
     let presentation = build_anthropic_fixture(&notary, ANTHROPIC_BODY, 1);
 
     // benign "Paris" (a committed substring of the body) → attested + accepted.
-    let benign = prove_zkoracle(presentation.clone(), b"Paris".to_vec(), &config)
-        .expect("benign accepted");
+    let benign =
+        prove_zkoracle(presentation.clone(), b"Paris".to_vec(), &config).expect("benign accepted");
     assert!(verify_zkoracle(&benign, &config).is_ok());
 
     // malicious "{{x" → refused at prove time (the attestation cannot be produced).

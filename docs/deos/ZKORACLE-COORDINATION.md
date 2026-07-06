@@ -32,3 +32,16 @@ request bytes. The doc discloses this honestly (`ZKORACLE-CFG-HYPERGRAPH.md:98-1
 injection predicate), carriers are honest typeclass Props, `#assert_axioms`-clean, no `sorry`/`axiom`.
 The `neg` complement is anchored to `Correctness.lean:267`. The generic bridges (Hypergraph/GraphRewrite)
 are clean. Nothing here is a defect — these are the named next builds for a one-request live attestation.
+
+## 2026-07-06 addendum — the compact certificate (wire change, NOT a theorem change)
+
+The attestation's well-formed leg now carries a COMPACT certificate — the leftmost rule
+sequence, replayed as an O(tokens) pushdown (`cfg.rs::{CompactCert, verify_cfg_compact}`),
+because the form-chain was measured O(tokens²) (537M symbols at 33k dense tokens, stack
+overflow near 65k; see ZKORACLE-PROVER-STATUS "Measured paces"). **`Cfg.lean` is untouched
+and `CfgAccepts` is still the spec object**: `Dregg2/Crypto/CfgCompact.lean` proves
+`compact_sound` (accepted replay → language membership) and `compact_to_chain` (an accepted
+replay yields a `CfgAccepts` chain — via `cfg_bridge`), both `#assert_axioms`-clean. So the
+capstone composition and your Lean-side cross-leg weld consume exactly the same object; only
+the wire format between the Rust prover/verifier shrank. `expand_compact` is
+`compact_to_chain`'s Rust twin, pinned by `compact_expands_to_the_exact_chain`.

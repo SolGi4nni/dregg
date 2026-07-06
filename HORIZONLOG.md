@@ -53,21 +53,23 @@ forkable-confined-session, Mint/Burn linearity double-vision lockstep.
 HELD (uncommitted): the `producer_descriptor_coverage_gate` dischargeSat/vaultSat classification
 rows — fold after the gentian red is fixed (same file, rotation lane's).
 
-## NOW-STATE addition (2026-07-06, Fable — zkOracle prover MEASURED; one named finding)
+## NOW-STATE addition (2026-07-06, Fable — zkOracle MEASURED; the quadratic-cert finding CLOSED same-day)
 
-`zkoracle-prove/examples/paces.rs` (committed) + the "Measured paces" section of
-`docs/deos/ZKORACLE-PROVER-STATUS.md`. Headlines: a realistic /v1/messages response
-attests in ~320 µs each way (the Poseidon2 commit dominates, ~215 µs/KiB, linear);
-hostile attestations refuse in ~35 µs; the local MPC-TLS 2PC roundtrip is ~0.4 s warm.
-- **⚑ NAMED: dense-token certificate blowup (quadratic).** `ParseCertificate.chain`
-  stores full sentential forms → O(tokens²) symbols: 33k tokens → 537M symbols,
-  ~0.6 s + GB-scale allocation. Not reachable via realistic model responses (a JSON
-  string lexes to ONE token) but a degenerate/hostile body is a resource-DoS vector
-  wherever prove/verify accept unbounded bodies. CLOSURE: (a) delta-encoded chain
-  (rule+position per step → O(tokens) cert) — a cert-FORMAT decision that must stay in
-  lockstep with `Cfg.lean`'s `chain` shape, so COORDINATED with the capstone owner
-  (Alif; ZKORACLE-COORDINATION.md), not unilateral; (b) interim: an explicit
-  token/cert-size admission bound at any service boundary verifying stranger attestations.
+`zkoracle-prove/examples/paces.rs` + "Measured paces" in `docs/deos/ZKORACLE-PROVER-STATUS.md`.
+Headlines: a single /v1/messages response attests in ~320 µs each way; a 256k-LLM-token
+context in ~215 ms, 1M in ~0.9 s, 10M (40 MB) in ~8.6 s — all commitment-dominated
+(Poseidon2 ~215 µs/KiB); hostiles refuse in ~35 µs; local MPC-TLS 2PC ~0.4 s warm.
+- **CLOSED (same session): the O(tokens²) form-chain certificate** (was 537M symbols /
+  ~0.6 s at 33k dense tokens, + a hidden stack-overflow near 65k). Now the attestation
+  carries the COMPACT certificate — the leftmost rule sequence, replayed as an O(tokens)
+  pushdown, iterative both ways (100k-deep + 21M-token bodies green). Lean bridge
+  `Dregg2/Crypto/CfgCompact.lean` (`replay_derives`/`compact_sound`/`compact_to_chain`,
+  #assert_axioms-clean): the wire changed, the `CfgAccepts` object the capstone consumes
+  did not (`expand_compact` = the Rust twin; equality-with-chain pinned by test). The
+  form-chain stays as the small-input spec bridge.
+- Named (small, tiered): if ~9 s at the 10M-token tier ever matters, the lane is a
+  chunked/Merkle content commitment (parallelizable) — a commitment-SHAPE decision
+  touching the cross-leg weld, not certificate machinery. Not fired from thin need.
 
 ## NOW-STATE addition (2026-07-05 late, Fable — hyperdreggmedia doc↔code dialectic: 5-lane census, charter REWRITTEN, 4 build lanes fired)
 

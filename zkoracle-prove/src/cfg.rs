@@ -563,6 +563,15 @@ fn leftmost_chain(root: &Tree) -> Vec<Vec<Symbol>> {
 /// A well-formed body yields `Ok(cert)`; a malformed body (lex/parse failure, trailing
 /// tokens) yields `Err` — **no certificate exists for a malformed body**.
 pub fn prove_cfg_cert(body: &[u8]) -> Result<ParseCertificate, CfgError> {
+    let tree = parse_tree(body)?;
+    Ok(ParseCertificate {
+        chain: leftmost_chain(&tree),
+    })
+}
+
+/// Lex + parse `body` as a single JSON value (no trailing tokens) — the shared front
+/// half of both certificate provers.
+fn parse_tree(body: &[u8]) -> Result<Tree, CfgError> {
     let toks = tokenize(body)?;
     let mut parser = Parser {
         toks: &toks,
@@ -574,9 +583,251 @@ pub fn prove_cfg_cert(body: &[u8]) -> Result<ParseCertificate, CfgError> {
             reason: "trailing tokens after the JSON value",
         });
     }
-    Ok(ParseCertificate {
-        chain: leftmost_chain(&tree),
-    })
+    Ok(tree)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The COMPACT certificate — the leftmost RULE SEQUENCE (O(tokens), not O(tokens²)).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **The compact parse certificate** — the leftmost derivation's rule sequence (indices
+/// into [`json_grammar`]), one byte per production step.
+///
+/// The full form-chain ([`ParseCertificate`]) stores every sentential form and is
+/// O(tokens²) symbols; the forms are recomputable, so storing them is pure redundancy.
+/// A leftmost derivation is determined by its RULE SEQUENCE alone, and
+/// [`verify_cfg_compact`] replays it as a pushdown run in O(tokens) time and space.
+///
+/// This is `CfgCompact.lean`'s `Replay` certificate: `compact_sound` there proves an
+/// accepted replay implies `input ∈ g.language`, and `compact_to_chain` rebuilds the
+/// existing `CfgAccepts` chain object — [`expand_compact`] is that theorem's Rust twin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompactCert {
+    /// The leftmost derivation's rule indices into [`json_grammar`] (16 rules → u8).
+    pub rules: Vec<u8>,
+}
+
+/// The rule indices of [`json_grammar`], named (pinned by `rule_ids_match_the_grammar`).
+mod rule_id {
+    pub const VALUE_STR: u8 = 0;
+    pub const VALUE_NUM: u8 = 1;
+    pub const VALUE_TRUE: u8 = 2;
+    pub const VALUE_FALSE: u8 = 3;
+    pub const VALUE_NULL: u8 = 4;
+    pub const VALUE_OBJECT: u8 = 5;
+    pub const VALUE_ARRAY: u8 = 6;
+    pub const OBJECT_EMPTY: u8 = 7;
+    pub const OBJECT_MEMBERS: u8 = 8;
+    pub const MEMBERS_ONE: u8 = 9;
+    pub const MEMBERS_CONS: u8 = 10;
+    pub const MEMBER: u8 = 11;
+    pub const ARRAY_EMPTY: u8 = 12;
+    pub const ARRAY_ELEMENTS: u8 = 13;
+    pub const ELEMENTS_ONE: u8 = 14;
+    pub const ELEMENTS_CONS: u8 = 15;
+}
+
+/// An unfilled rule slot ([`prove_cfg_compact`]'s placeholder — always patched before
+/// return; no grammar rule has this index).
+const RULE_PENDING: u8 = 0xFF;
+
+/// A work item of the iterative compact prover: a grammar symbol to satisfy, or a
+/// deferred CHOICE for a list nonterminal (`Members`/`Elements` pick `one` vs `cons`
+/// only after their first item is consumed — the slot at `at` holds the choice's
+/// preorder position, patched when the continuation resolves).
+enum Work {
+    Sym(Symbol),
+    MembersCont { at: usize },
+    ElementsCont { at: usize },
+}
+
+/// **PRODUCE a compact certificate** over a JSON body — the O(tokens) wire form of
+/// [`prove_cfg_cert`], fully ITERATIVE (explicit work stack, no recursion): certificate
+/// production is heap-bounded, so 10M-token and 100k-deep bodies prove without touching
+/// the thread stack. The leftmost preorder position of every rule is known when its
+/// nonterminal is expanded, even where the CHOICE (one vs cons) resolves later — those
+/// slots are reserved and patched ([`Work::MembersCont`]/[`Work::ElementsCont`]).
+///
+/// A well-formed body yields `Ok`; a malformed body yields `Err`.
+pub fn prove_cfg_compact(body: &[u8]) -> Result<CompactCert, CfgError> {
+    use rule_id::*;
+    let toks = tokenize(body)?;
+    let err = |reason: &'static str| CfgError::ParseError { reason };
+    let mut out: Vec<u8> = Vec::new();
+    let mut stack: Vec<Work> = vec![Work::Sym(Symbol::N(INITIAL))];
+    let mut pos = 0usize;
+    while let Some(w) = stack.pop() {
+        match w {
+            Work::Sym(Symbol::T(t)) => {
+                if toks.get(pos) != Some(&t) {
+                    return Err(err("unexpected token"));
+                }
+                pos += 1;
+            }
+            Work::Sym(Symbol::N(nt)) => match nt {
+                JNt::Value => {
+                    let (rule, next) = match toks.get(pos) {
+                        Some(JTok::Str) => (VALUE_STR, Symbol::T(JTok::Str)),
+                        Some(JTok::Num) => (VALUE_NUM, Symbol::T(JTok::Num)),
+                        Some(JTok::True) => (VALUE_TRUE, Symbol::T(JTok::True)),
+                        Some(JTok::False) => (VALUE_FALSE, Symbol::T(JTok::False)),
+                        Some(JTok::Null) => (VALUE_NULL, Symbol::T(JTok::Null)),
+                        Some(JTok::LBrace) => (VALUE_OBJECT, Symbol::N(JNt::Object)),
+                        Some(JTok::LBrack) => (VALUE_ARRAY, Symbol::N(JNt::Array)),
+                        _ => return Err(err("expected a value")),
+                    };
+                    out.push(rule);
+                    stack.push(Work::Sym(next));
+                }
+                JNt::Object => {
+                    if toks.get(pos) != Some(&JTok::LBrace) {
+                        return Err(err("expected an object"));
+                    }
+                    if toks.get(pos + 1) == Some(&JTok::RBrace) {
+                        out.push(OBJECT_EMPTY);
+                        stack.push(Work::Sym(Symbol::T(JTok::RBrace)));
+                        stack.push(Work::Sym(Symbol::T(JTok::LBrace)));
+                    } else {
+                        out.push(OBJECT_MEMBERS);
+                        stack.push(Work::Sym(Symbol::T(JTok::RBrace)));
+                        stack.push(Work::Sym(Symbol::N(JNt::Members)));
+                        stack.push(Work::Sym(Symbol::T(JTok::LBrace)));
+                    }
+                }
+                JNt::Array => {
+                    if toks.get(pos) != Some(&JTok::LBrack) {
+                        return Err(err("expected an array"));
+                    }
+                    if toks.get(pos + 1) == Some(&JTok::RBrack) {
+                        out.push(ARRAY_EMPTY);
+                        stack.push(Work::Sym(Symbol::T(JTok::RBrack)));
+                        stack.push(Work::Sym(Symbol::T(JTok::LBrack)));
+                    } else {
+                        out.push(ARRAY_ELEMENTS);
+                        stack.push(Work::Sym(Symbol::T(JTok::RBrack)));
+                        stack.push(Work::Sym(Symbol::N(JNt::Elements)));
+                        stack.push(Work::Sym(Symbol::T(JTok::LBrack)));
+                    }
+                }
+                JNt::Members => {
+                    let at = out.len();
+                    out.push(RULE_PENDING);
+                    stack.push(Work::MembersCont { at });
+                    stack.push(Work::Sym(Symbol::N(JNt::Member)));
+                }
+                JNt::Member => {
+                    out.push(MEMBER);
+                    stack.push(Work::Sym(Symbol::N(JNt::Value)));
+                    stack.push(Work::Sym(Symbol::T(JTok::Colon)));
+                    stack.push(Work::Sym(Symbol::T(JTok::Str)));
+                }
+                JNt::Elements => {
+                    let at = out.len();
+                    out.push(RULE_PENDING);
+                    stack.push(Work::ElementsCont { at });
+                    stack.push(Work::Sym(Symbol::N(JNt::Value)));
+                }
+            },
+            Work::MembersCont { at } => {
+                if toks.get(pos) == Some(&JTok::Comma) {
+                    out[at] = MEMBERS_CONS;
+                    pos += 1;
+                    stack.push(Work::Sym(Symbol::N(JNt::Members)));
+                } else {
+                    out[at] = MEMBERS_ONE;
+                }
+            }
+            Work::ElementsCont { at } => {
+                if toks.get(pos) == Some(&JTok::Comma) {
+                    out[at] = ELEMENTS_CONS;
+                    pos += 1;
+                    stack.push(Work::Sym(Symbol::N(JNt::Elements)));
+                } else {
+                    out[at] = ELEMENTS_ONE;
+                }
+            }
+        }
+    }
+    if pos != toks.len() {
+        return Err(err("trailing tokens after the JSON value"));
+    }
+    debug_assert!(!out.contains(&RULE_PENDING));
+    Ok(CompactCert { rules: out })
+}
+
+/// **VERIFY a compact certificate binds a JSON body** — the pushdown replay
+/// (`CfgCompact.lean::Replay`), O(tokens) time and space.
+///
+/// The verifier re-tokenizes `body` ITSELF, then replays: a stack starts at
+/// `[N(initial)]`; a terminal on top must match the next input token; a nonterminal on
+/// top consumes the next certificate rule, whose `lhs` must equal it, and pushes its
+/// `rhs`. ACCEPT ⟺ the rules and the input are both exactly consumed as the stack
+/// empties — a genuine leftmost derivation of the body's token word.
+pub fn verify_cfg_compact(cert: &CompactCert, body: &[u8]) -> Result<(), CfgError> {
+    let toks = tokenize(body)?;
+    let grammar = json_grammar();
+    let mut stack: Vec<Symbol> = vec![Symbol::N(INITIAL)];
+    let mut pos = 0usize; // input cursor
+    let mut at = 0usize; // rule cursor
+    while let Some(top) = stack.pop() {
+        match top {
+            Symbol::T(t) => {
+                if toks.get(pos) != Some(&t) {
+                    return Err(CfgError::BadTail);
+                }
+                pos += 1;
+            }
+            Symbol::N(nt) => {
+                let Some(&id) = cert.rules.get(at) else {
+                    return Err(CfgError::BadStep { at });
+                };
+                let rule = grammar
+                    .get(id as usize)
+                    .filter(|r| r.lhs == nt)
+                    .ok_or(CfgError::BadStep { at })?;
+                at += 1;
+                for sym in rule.rhs.iter().rev() {
+                    stack.push(*sym);
+                }
+            }
+        }
+    }
+    if at != cert.rules.len() {
+        return Err(CfgError::BadStep { at });
+    }
+    if pos != toks.len() {
+        return Err(CfgError::BadTail);
+    }
+    Ok(())
+}
+
+/// **EXPAND a compact certificate to the full form-chain** — the Rust twin of
+/// `CfgCompact.lean::compact_to_chain`: a valid rule sequence rebuilds exactly the
+/// `CfgAccepts`-shaped [`ParseCertificate`]. O(tokens²) — a spec-bridge for tests and
+/// interop, NOT the verification path ([`verify_cfg_compact`] is O(tokens)).
+pub fn expand_compact(cert: &CompactCert) -> Result<ParseCertificate, CfgError> {
+    let grammar = json_grammar();
+    let mut form: Vec<Symbol> = vec![Symbol::N(INITIAL)];
+    let mut chain: Vec<Vec<Symbol>> = vec![form.clone()];
+    for (at, &id) in cert.rules.iter().enumerate() {
+        let i = form
+            .iter()
+            .position(|s| matches!(s, Symbol::N(_)))
+            .ok_or(CfgError::BadStep { at })?;
+        let Symbol::N(nt) = form[i] else {
+            unreachable!()
+        };
+        let rule = grammar
+            .get(id as usize)
+            .filter(|r| r.lhs == nt)
+            .ok_or(CfgError::BadStep { at })?;
+        let mut next = form[..i].to_vec();
+        next.extend_from_slice(&rule.rhs);
+        next.extend_from_slice(&form[i + 1..]);
+        form = next;
+        chain.push(form.clone());
+    }
+    Ok(ParseCertificate { chain })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -726,5 +977,178 @@ mod tests {
             chain: vec![vec![Symbol::N(JNt::Object)], vec![Symbol::T(JTok::Num)]],
         };
         assert_eq!(verify_cfg_cert(&bad, br#"1"#), Err(CfgError::BadHead));
+    }
+
+    // ── the COMPACT certificate ──
+
+    /// THE BRIDGE (Rust twin of `compact_to_chain`): the compact cert expands to EXACTLY
+    /// the chain the full prover emits, and that expansion passes the chain verifier —
+    /// so the compact form certifies the same `CfgAccepts` object.
+    #[test]
+    fn compact_expands_to_the_exact_chain() {
+        for body in [
+            ANTHROPIC_BODY,
+            br#"[[[[["deep"]]]]]"# as &[u8],
+            br#"{"a":{"b":[1,2,{"c":null}]},"d":true}"#,
+            br#"42"#,
+            br#"{}"#,
+            br#"[]"#,
+        ] {
+            let compact = prove_cfg_compact(body).expect("well-formed body → compact cert");
+            let chain = prove_cfg_cert(body).expect("well-formed body → chain cert");
+            assert_eq!(expand_compact(&compact).unwrap(), chain);
+            verify_cfg_cert(&expand_compact(&compact).unwrap(), body).unwrap();
+            verify_cfg_compact(&compact, body).unwrap();
+        }
+    }
+
+    #[test]
+    fn compact_is_linear_not_quadratic() {
+        // A dense body: the compact cert stays ~2 bytes/token while the chain's symbol
+        // count is quadratic.
+        let elems: Vec<String> = (0..512).map(|i| (i % 10).to_string()).collect();
+        let body = format!(r#"{{"data":[{}]}}"#, elems.join(","));
+        let toks = tokenize(body.as_bytes()).unwrap().len();
+        let compact = prove_cfg_compact(body.as_bytes()).unwrap();
+        assert!(compact.rules.len() < 3 * toks, "compact cert is O(tokens)");
+        let chain = prove_cfg_cert(body.as_bytes()).unwrap();
+        let symbols: usize = chain.chain.iter().map(|f| f.len()).sum();
+        assert!(
+            symbols > 100 * compact.rules.len(),
+            "the chain is the fat one"
+        );
+        verify_cfg_compact(&compact, body.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn compact_hostiles_are_refused() {
+        let body = br#"{"a":[1,{"b":null}],"c":"x"}"#;
+        let good = prove_cfg_compact(body).unwrap();
+        verify_cfg_compact(&good, body).unwrap();
+
+        // Flip a rule id → lhs mismatch or wrong shape.
+        for at in 0..good.rules.len() {
+            let mut bad = good.clone();
+            bad.rules[at] = (bad.rules[at] + 1) % 16;
+            assert!(
+                verify_cfg_compact(&bad, body).is_err(),
+                "flipping rule {at} must refuse"
+            );
+        }
+        // Truncated sequence → a nonterminal starves.
+        let mut short = good.clone();
+        short.rules.pop();
+        assert!(verify_cfg_compact(&short, body).is_err());
+        // Extended sequence → leftover rules.
+        let mut long = good.clone();
+        long.rules.push(0);
+        assert!(verify_cfg_compact(&long, body).is_err());
+        // Out-of-range rule id.
+        let mut oob = good.clone();
+        oob.rules[0] = 200;
+        assert!(matches!(
+            verify_cfg_compact(&oob, body),
+            Err(CfgError::BadStep { at: 0 })
+        ));
+        // A cert for a DIFFERENT body.
+        let other = prove_cfg_compact(br#"{"z":9}"#).unwrap();
+        assert!(verify_cfg_compact(&other, body).is_err());
+        // Empty cert on non-trivial input.
+        assert!(matches!(
+            verify_cfg_compact(&CompactCert { rules: vec![] }, body),
+            Err(CfgError::BadStep { at: 0 })
+        ));
+        // Malformed body refuses at tokenize, before any replay.
+        assert!(verify_cfg_compact(&good, br#"{"a":"#).is_err());
+    }
+
+    /// The named rule indices are pinned to [`json_grammar`]'s order (the iterative
+    /// prover's choices stay honest against the grammar the verifier replays).
+    #[test]
+    fn rule_ids_match_the_grammar() {
+        use JNt::*;
+        use JTok::*;
+        let g = json_grammar();
+        let expect: &[(u8, JNt, &[Symbol])] = &[
+            (rule_id::VALUE_STR, Value, &[Symbol::T(Str)]),
+            (rule_id::VALUE_NUM, Value, &[Symbol::T(Num)]),
+            (rule_id::VALUE_TRUE, Value, &[Symbol::T(True)]),
+            (rule_id::VALUE_FALSE, Value, &[Symbol::T(False)]),
+            (rule_id::VALUE_NULL, Value, &[Symbol::T(Null)]),
+            (rule_id::VALUE_OBJECT, Value, &[Symbol::N(Object)]),
+            (rule_id::VALUE_ARRAY, Value, &[Symbol::N(Array)]),
+            (
+                rule_id::OBJECT_EMPTY,
+                Object,
+                &[Symbol::T(LBrace), Symbol::T(RBrace)],
+            ),
+            (
+                rule_id::OBJECT_MEMBERS,
+                Object,
+                &[Symbol::T(LBrace), Symbol::N(Members), Symbol::T(RBrace)],
+            ),
+            (rule_id::MEMBERS_ONE, Members, &[Symbol::N(Member)]),
+            (
+                rule_id::MEMBERS_CONS,
+                Members,
+                &[Symbol::N(Member), Symbol::T(Comma), Symbol::N(Members)],
+            ),
+            (
+                rule_id::MEMBER,
+                Member,
+                &[Symbol::T(Str), Symbol::T(Colon), Symbol::N(Value)],
+            ),
+            (
+                rule_id::ARRAY_EMPTY,
+                Array,
+                &[Symbol::T(LBrack), Symbol::T(RBrack)],
+            ),
+            (
+                rule_id::ARRAY_ELEMENTS,
+                Array,
+                &[Symbol::T(LBrack), Symbol::N(Elements), Symbol::T(RBrack)],
+            ),
+            (rule_id::ELEMENTS_ONE, Elements, &[Symbol::N(Value)]),
+            (
+                rule_id::ELEMENTS_CONS,
+                Elements,
+                &[Symbol::N(Value), Symbol::T(Comma), Symbol::N(Elements)],
+            ),
+        ];
+        assert_eq!(g.len(), expect.len());
+        for (id, lhs, rhs) in expect {
+            assert_eq!(g[*id as usize].lhs, *lhs, "rule {id} lhs");
+            assert_eq!(g[*id as usize].rhs.as_slice(), *rhs, "rule {id} rhs");
+        }
+    }
+
+    /// STACK SAFETY — the compact prover and verifier are iterative: a 100k-DEEP body
+    /// and a 200k-WIDE body both certify without touching the thread stack. (The chain
+    /// prover stays recursive + O(n²) — it is the small-input spec bridge, not the
+    /// scale path.)
+    #[test]
+    fn compact_scales_deep_and_wide() {
+        // 100k-deep nesting.
+        let depth = 100_000;
+        let mut deep = String::with_capacity(2 * depth + 1);
+        for _ in 0..depth {
+            deep.push('[');
+        }
+        deep.push('1');
+        for _ in 0..depth {
+            deep.push(']');
+        }
+        let cert = prove_cfg_compact(deep.as_bytes()).expect("deep body certifies");
+        verify_cfg_compact(&cert, deep.as_bytes()).expect("deep cert verifies");
+
+        // 200k-wide array.
+        let elems: Vec<&str> = (0..200_000).map(|_| "7").collect();
+        let wide = format!("[{}]", elems.join(","));
+        let cert = prove_cfg_compact(wide.as_bytes()).expect("wide body certifies");
+        assert!(
+            cert.rules.len() < 3 * 200_000 + 8,
+            "compact cert stays O(tokens)"
+        );
+        verify_cfg_compact(&cert, wide.as_bytes()).expect("wide cert verifies");
     }
 }

@@ -33,7 +33,7 @@ use crate::authentic::{
     AnthropicConfig, AnthropicPresentation, AuthenticError, AuthenticSession,
     verify_anthropic_presentation,
 };
-use crate::cfg::{CfgError, ParseCertificate, prove_cfg_cert, verify_cfg_cert};
+use crate::cfg::{CfgError, CompactCert, prove_cfg_compact, verify_cfg_compact};
 use crate::injection::injection_free;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_bytes;
@@ -73,9 +73,11 @@ pub struct ZkOracleAttestation {
     /// **Authentic leg** — the verified tlsn/MPC-TLS presentation of the Anthropic
     /// `POST /v1/messages` session (x-api-key redacted).
     pub presentation: AnthropicPresentation,
-    /// **Well-formed leg** — the JSON CFG parse certificate over the authenticated
-    /// response body (`producesChain`-shaped, checked against the re-tokenized body).
-    pub cfg_cert: ParseCertificate,
+    /// **Well-formed leg** — the compact JSON CFG parse certificate over the
+    /// authenticated response body: the leftmost rule sequence (O(tokens); replayed
+    /// against the re-tokenized body, `CfgCompact.lean::Replay`-shaped; `expand_compact`
+    /// rebuilds the `producesChain` form).
+    pub cfg_cert: CompactCert,
     /// **Injection-free leg** — the committed span (within the authenticated response body)
     /// the guard extracts the field from and checks against the `neg injectionTemplate`
     /// matcher (contains no `{{`). The field is a substring of the authenticated bytes.
@@ -163,7 +165,7 @@ pub fn verify_zkoracle(
 
     // Leg 2 — well-formed, over the committed authenticated body (binds well-formedness to
     // the genuine session, not an arbitrary blob).
-    verify_cfg_cert(&att.cfg_cert, &session.response_body)
+    verify_cfg_compact(&att.cfg_cert, &session.response_body)
         .map_err(ZkOracleError::NotWellFormed)?;
 
     // Leg 3 — injection-free, over a COMMITTED SUBSTRING of the authenticated body. The
@@ -210,7 +212,7 @@ pub fn prove_zkoracle(
         offset,
         len: user_field.len(),
     };
-    let cfg_cert = prove_cfg_cert(&session.response_body).map_err(ProveError::NotWellFormed)?;
+    let cfg_cert = prove_cfg_compact(&session.response_body).map_err(ProveError::NotWellFormed)?;
     let content_commit = content_commitment(&session.response_body);
     Ok(ZkOracleAttestation {
         presentation,
@@ -354,7 +356,7 @@ mod tests {
         let inj = build_anthropic_fixture(&notary, BODY_INJECT, 1);
         let att = ZkOracleAttestation {
             presentation: inj.clone(),
-            cfg_cert: prove_cfg_cert(BODY_INJECT.as_bytes()).unwrap(),
+            cfg_cert: prove_cfg_compact(BODY_INJECT.as_bytes()).unwrap(),
             field_span: span_in(&inj, b"{{system}}"),
             content_commit: content_commitment(BODY_INJECT.as_bytes()),
         };
@@ -372,7 +374,7 @@ mod tests {
         pres.recv[n - 3] ^= 0xFF;
         let att = ZkOracleAttestation {
             presentation: pres,
-            cfg_cert: prove_cfg_cert(BODY.as_bytes()).unwrap(),
+            cfg_cert: prove_cfg_compact(BODY.as_bytes()).unwrap(),
             field_span: FieldSpan { offset: 0, len: 2 },
             content_commit: content_commitment(BODY.as_bytes()),
         };
@@ -400,7 +402,7 @@ mod tests {
         // commitment is over the (malformed) authenticated body so the weld passes to leg 2.
         let att = ZkOracleAttestation {
             presentation: pres.clone(),
-            cfg_cert: prove_cfg_cert(BODY.as_bytes()).unwrap(),
+            cfg_cert: prove_cfg_compact(BODY.as_bytes()).unwrap(),
             field_span: span_in(&pres, b"msg"),
             content_commit: content_commitment(malformed.as_bytes()),
         };
@@ -422,7 +424,7 @@ mod tests {
         let bad_auth = notary.sign(bad_auth);
         let att_a = ZkOracleAttestation {
             presentation: bad_auth,
-            cfg_cert: prove_cfg_cert(BODY.as_bytes()).unwrap(),
+            cfg_cert: prove_cfg_compact(BODY.as_bytes()).unwrap(),
             field_span: span_in(&pres, b"hello"),
             content_commit: content_commitment(BODY.as_bytes()),
         };
@@ -435,7 +437,7 @@ mod tests {
         // The commitment is over the real authenticated body, so the weld passes to leg 2.
         let att_b = ZkOracleAttestation {
             presentation: pres.clone(),
-            cfg_cert: prove_cfg_cert(br#"{"other":true}"#).unwrap(),
+            cfg_cert: prove_cfg_compact(br#"{"other":true}"#).unwrap(),
             field_span: span_in(&pres, b"hello"),
             content_commit: content_commitment(BODY.as_bytes()),
         };
@@ -449,14 +451,11 @@ mod tests {
         let inj = build_anthropic_fixture(&notary, BODY_INJECT, 1);
         let att_c = ZkOracleAttestation {
             presentation: inj.clone(),
-            cfg_cert: prove_cfg_cert(BODY_INJECT.as_bytes()).unwrap(),
+            cfg_cert: prove_cfg_compact(BODY_INJECT.as_bytes()).unwrap(),
             field_span: span_in(&inj, b"{{system}}"),
             content_commit: content_commitment(BODY_INJECT.as_bytes()),
         };
-        assert_eq!(
-            verify_zkoracle(&att_c, &cfg),
-            Err(ZkOracleError::Injection)
-        );
+        assert_eq!(verify_zkoracle(&att_c, &cfg), Err(ZkOracleError::Injection));
     }
 
     /// **THE KILLER SPLICE — the cross-leg weld.** An attestation whose evidence (cfg cert,
@@ -493,8 +492,8 @@ mod tests {
             verify_anthropic_presentation(&pres_b, &cfg).expect("B is an authentic session");
         // … a well-formed cert exists for B's body …
         assert!(
-            verify_cfg_cert(
-                &prove_cfg_cert(&session_b.response_body).unwrap(),
+            verify_cfg_compact(
+                &prove_cfg_compact(&session_b.response_body).unwrap(),
                 &session_b.response_body
             )
             .is_ok()
@@ -531,14 +530,11 @@ mod tests {
         // Post-weld: the committed span reads the authenticated `{{system}}` field.
         let att = ZkOracleAttestation {
             presentation: inj.clone(),
-            cfg_cert: prove_cfg_cert(&body).unwrap(),
+            cfg_cert: prove_cfg_compact(&body).unwrap(),
             field_span: span_in(&inj, b"{{system}}"),
             content_commit: content_commitment(&body),
         };
-        assert_eq!(
-            verify_zkoracle(&att, &cfg),
-            Err(ZkOracleError::Injection)
-        );
+        assert_eq!(verify_zkoracle(&att, &cfg), Err(ZkOracleError::Injection));
     }
 
     /// An out-of-range field span (evidence about a longer body) is refused by the weld.
@@ -548,7 +544,7 @@ mod tests {
         let body = body_of(&pres);
         let att = ZkOracleAttestation {
             presentation: pres,
-            cfg_cert: prove_cfg_cert(&body).unwrap(),
+            cfg_cert: prove_cfg_compact(&body).unwrap(),
             field_span: FieldSpan {
                 offset: body.len(),
                 len: 8,
