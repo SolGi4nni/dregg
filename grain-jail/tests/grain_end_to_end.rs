@@ -212,6 +212,77 @@ fn a_real_jailed_body_drives_a_real_grain_and_the_renter_verifies_r2() {
     );
 }
 
+/// ROBUSTNESS: a jailed body that CRASHES mid-session (exits after one admitted
+/// turn, never sending Done) leaves the grain in a clean, verifiable state — the
+/// host is not corrupted by a hostile/faulty body. The drive ends fail-closed on
+/// the socket EOF; the one committed turn still verifies at R2.
+#[cfg(feature = "real-jail")]
+#[test]
+fn a_jailed_body_that_crashes_midway_leaves_the_grain_clean_and_verifiable() {
+    use grain_jail::jail::spawn_confined_body;
+
+    let platform = AgentPlatform::new();
+    let wd = workdir();
+    let host = platform
+        .rent(
+            "crashy.agents.dregg",
+            "dga1_crashy",
+            "cell:notes/1,cell:notes/2",
+            10_000,
+            &wd,
+            terms(),
+            None,
+        )
+        .expect("provision");
+
+    // The body proposes ONE cell-write, reads its verdict, then EXITS 42 — a
+    // crash mid-session (no Done, no second proposal).
+    let line = {
+        let mut s = serde_json::to_string(&cell_write("notes/1", "partial")).unwrap();
+        s.push('\n');
+        s.into_bytes()
+    };
+    let kernel = dregg_firmament::process_kernel::ProcessKernel::new();
+    let (handle, channel) = spawn_confined_body(&kernel, move |surf| {
+        use std::io::{BufRead, BufReader, Write};
+        let mut w = surf.try_clone().unwrap();
+        let mut r = BufReader::new(surf);
+        if w.write_all(&line).and_then(|_| w.flush()).is_err() {
+            return 66;
+        }
+        let mut discard = String::new();
+        let _ = r.read_line(&mut discard); // read the verdict, then...
+        42 // ...CRASH (exit non-zero without sending Done).
+    })
+    .expect("spawn the crashy body");
+
+    let mut brain = ConfinedBrain::new(channel);
+    // The drive ends cleanly when the body's socket hits EOF after one turn.
+    let report = platform
+        .drive_serving(&host, "one then crash", &mut brain)
+        .expect("the drive survives a mid-session body crash");
+    assert_eq!(
+        report.admitted, 1,
+        "exactly the one pre-crash turn was admitted"
+    );
+
+    // The grain is CONSISTENT and the one turn verifies — a crash cannot leave a
+    // half-committed or unverifiable state.
+    let r2 = platform
+        .verify_r2(&host)
+        .expect("R2 still holds after the crash");
+    assert_eq!(r2.linked, 1);
+    platform
+        .verify(&host)
+        .expect("R0 re-witness after the crash");
+
+    let code = handle.join().expect("reap the crashed body");
+    assert_eq!(
+        code, 42,
+        "the body did crash (non-zero) — the host absorbed it"
+    );
+}
+
 /// The confined body's authority is exactly the grain's caps: a proposal for a
 /// cell the grain was NOT granted is refused by the braid (no receipt, no meter
 /// draw for it), and the drive continues to the granted write.
