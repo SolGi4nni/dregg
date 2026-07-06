@@ -1,0 +1,86 @@
+# commons-arbiter — the AI authority nobody owns, as a runnable core.
+#
+# The Commons Arbiter (docs/deos/UNCENSORABLE-UTILITY.md) is a neutral service that
+# rules on cases against a community's published rubric — a "constitution" — where no
+# single operator can forge, bias, or halt a ruling. This crate is its RUNNABLE CORE:
+#   * a confined + ATTESTED brain reads a case + rubric and issues a ruling;
+#   * the ruling is a RECEIPTED verifiable turn — a `ZkOracleAttestation` proving it is
+#       authentic     — from a real model (a genuine `/v1/messages` session), not forged;
+#       well-formed    — the response body lies in the JSON context-free language;
+#       injection-free — the bound ruling text carries no `{{` handlebars delimiter;
+#   * a forged / tampered / swapped ruling is DISTINGUISHABLE at re-verify;
+#   * the ruling is put to a committee via a `VoteEngine`-shaped quorum: it is FINAL only
+#     at `⌊2n/3⌋+1` operator ratifications — no single operator owns the authority.
+#
+# THE KILLER PROPERTY (un-censorable authority): a case whose content carries a prompt-
+# injection (`{{`) is reflected into the ruling and CAUGHT by the injection-free leg — the
+# ruling over that input is REFUSED (no attestation), so nobody can inject a verdict. The
+# Arbiter's authority is also cap-bounded: it rules only under rubric ids in its
+# jurisdiction; an out-of-jurisdiction case is refused fail-closed.
+#
+# COMPOSES the real substrate primitives, reimplementing no theorem:
+#   * zkoracle-prove — `prove_zkoracle` / `verify_zkoracle` over an Anthropic
+#     `/v1/messages` session: each ruling carries a `ZkOracleAttestation` (authentic ∧
+#     well-formed ∧ injection-free). The SAME primitives `deos_hermes::attest::
+#     AttestationCarrier` wraps; composed here DIRECTLY (the modeled ed25519 carrier + the
+#     JSON CFG parse-cert + the injection matcher — no HTTP/TLS, no verified-Lean link) so
+#     the default build stays light, exactly as `confined-swarm` / `attested-dm` did. The
+#     real local MPC-TLS 2PC roundtrip is behind `tlsn-live`. The full OS-jailed confined
+#     Arbiter body is `deos_hermes::DreggHost::run_hosted_agent_attested` (the crown).
+#
+# THE OPERATIONAL REMAINDER (named, not built): the live independent-operator federation
+# deploy — mint genesis, stand up N≥2 nodes, forward real cases to the ingress. That is the
+# OPERATE step (docs/deos/UNCENSORABLE-UTILITY.md §4), not a missing capability. The quorum
+# here is a `VoteEngine`-shaped stub of the real `collective-choice` / blocklace finality.
+#
+# STANDALONE WORKSPACE (declares its own `[workspace]`): it is NOT yet a member of the
+# breadstuffs root — build it directly with
+#   cargo build --manifest-path commons-arbiter/Cargo.toml
+#   cargo test  --manifest-path commons-arbiter/Cargo.toml
+# Its `[patch]` tables mirror the root's (the plonky3-recursion sibling checkout + the
+# ark-serialize serde fork) so zkoracle-prove's proof dep-tree resolves identically. The
+# path deps stay members of the breadstuffs root workspace, so their `workspace = true`
+# inheritance resolves against that root unchanged. Root registration is coordinated
+# separately (another lane owns the root workspace manifest).
+
+[package]
+name = "commons-arbiter"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "The Commons Arbiter: the AI authority nobody owns, as a runnable core — a confined + attested brain whose every ruling is a verifiable turn (authentic ∧ well-formed ∧ injection-free), a forged ruling refused, and finality gated on a ⌊2n/3⌋+1 operator quorum."
+
+[lib]
+name = "commons_arbiter"
+path = "src/lib.rs"
+
+[dependencies]
+# THE ATTESTATION — each ruling carries a `verify_zkoracle`-checkable proof it is from a
+# real model (authentic), well-formed, and injection-free. Composed directly so the Arbiter
+# stays light (no HTTP/TLS on the default path).
+dregg-zkoracle-prove = { path = "../zkoracle-prove" }
+
+# The receipt-id commitment over a landed ruling (the on-ledger fingerprint a light client
+# recomputes) — the SAME BLAKE3 shape `deos_hermes::attest` uses.
+blake3 = "1"
+
+[features]
+# THE CROWN, run REAL-LOCALLY. Attest the ruling over a GENUINE local MPC-TLS 2PC roundtrip
+# (zkoracle-prove's vendored TLSNotary) instead of the modeled ed25519 carrier. OFF by
+# default so the standard build stays HTTP/TLS-free.
+tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STANDALONE workspace — mirror the root's [patch] so the proof dep-tree resolves
+# identically (see the header note).
+[workspace]
+
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
+
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
