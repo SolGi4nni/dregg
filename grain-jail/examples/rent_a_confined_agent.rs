@@ -126,52 +126,98 @@ fn main() {
 
     #[cfg(feature = "real-jail")]
     {
-        use grain_jail::jail::spawn_confined_body;
+        use grain_jail::jail::spawn_confined_body_with_egress;
         use std::io::{BufRead, BufReader, Write};
+        use std::net::{SocketAddr, TcpListener, TcpStream};
+        use std::time::Duration;
 
-        let lines: Vec<Vec<u8>> = body_script()
-            .iter()
-            .map(|m| {
-                let mut s = serde_json::to_string(m).unwrap();
-                s.push('\n');
-                s.into_bytes()
-            })
-            .collect();
-        let n_proposals = lines.len() - 1;
-
-        let kernel = dregg_firmament::process_kernel::ProcessKernel::new();
-        let (handle, channel) = spawn_confined_body(&kernel, move |surf| {
-            // Prove the ambient jail: a host-file read must be denied.
-            if std::fs::File::open("/etc/passwd").is_ok() {
-                return 77;
+        // THE MOCK MODEL — a stand-in for the agent's language model. On connect
+        // it pushes the instructions the "agent" decided (here: write a cell),
+        // then DONE. A real deployment points the granted door at a real provider
+        // (or a trusted loopback proxy that does the TLS + provider call).
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock model");
+        let model_addr: SocketAddr = listener.local_addr().unwrap();
+        let instruction = serde_json::to_string(&body_script()[0]).unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let _ = writeln!(sock, "{instruction}");
+                let _ = writeln!(sock, "DONE");
             }
-            let mut w = match surf.try_clone() {
-                Ok(w) => w,
-                Err(_) => return 66,
-            };
-            let mut r = BufReader::new(surf);
-            for (i, line) in lines.iter().enumerate() {
-                if w.write_all(line).and_then(|_| w.flush()).is_err() {
-                    return 66;
+        });
+
+        let done_line = {
+            let mut s = serde_json::to_string(&grain_jail::protocol::BodyMsg::Done(
+                grain_jail::protocol::DoneNote::default(),
+            ))
+            .unwrap();
+            s.push('\n');
+            s.into_bytes()
+        };
+        let kernel = dregg_firmament::process_kernel::ProcessKernel::new();
+        let (handle, channel) = spawn_confined_body_with_egress(
+            &kernel,
+            vec![model_addr.to_string()], // the ONE door: the model, nothing else
+            Some(Duration::from_secs(5)),
+            move |surf| {
+                // The jail tooth: a host-file read must be denied.
+                if std::fs::File::open("/etc/passwd").is_ok() {
+                    return 77;
                 }
-                if i < n_proposals {
-                    let mut discard = String::new();
-                    if r.read_line(&mut discard).map(|n| n == 0).unwrap_or(true) {
-                        return 66;
+                // Reach the model over the ONE granted door; relay its
+                // instructions to the grain over the surface socket.
+                let model = match TcpStream::connect_timeout(&model_addr, Duration::from_secs(2)) {
+                    Ok(m) => m,
+                    Err(_) => return 20,
+                };
+                let mut model_r = BufReader::new(model);
+                let mut surf_w = match surf.try_clone() {
+                    Ok(w) => w,
+                    Err(_) => return 21,
+                };
+                let mut surf_r = BufReader::new(surf);
+                loop {
+                    let mut line = String::new();
+                    match model_r.read_line(&mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    let line = line.trim_end();
+                    if line == "DONE" {
+                        let _ = surf_w.write_all(&done_line).and_then(|_| surf_w.flush());
+                        break;
+                    }
+                    if surf_w
+                        .write_all(line.as_bytes())
+                        .and_then(|_| surf_w.write_all(b"\n"))
+                        .and_then(|_| surf_w.flush())
+                        .is_err()
+                    {
+                        return 23;
+                    }
+                    let mut verdict = String::new();
+                    if surf_r
+                        .read_line(&mut verdict)
+                        .map(|n| n == 0)
+                        .unwrap_or(true)
+                    {
+                        return 24;
                     }
                 }
-            }
-            0
-        })
-        .expect("spawn the OS-jailed body");
+                0
+            },
+        )
+        .expect("spawn the OS-jailed, egress-confined, model-driven body");
 
         let mut brain = ConfinedBrain::new(channel);
-        println!("driving with an OS-JAILED body (firmament process-PD: file/net/exec denied)...");
-        drive_and_report(&platform, &host, &mut brain);
-        let code = handle.join().expect("join the jailed body");
         println!(
-            "  the body ran OS-jailed and was DENIED /etc/passwd; exit {code} \
-             (77 would be a confinement leak)"
+            "driving with an OS-JAILED, MODEL-DRIVEN body (firmament process-PD: file/exec denied, \
+             net reaches ONLY the model)..."
+        );
+        drive_and_report(&platform, &host, &mut brain);
+        let code = handle.join().expect("join the model-driven body");
+        println!(
+            "  the body consulted its model over its ONE granted door, was denied /etc/passwd, \
+             and reached nothing else; exit {code} (77 = confinement leak, 20 = model unreachable)"
         );
     }
 
