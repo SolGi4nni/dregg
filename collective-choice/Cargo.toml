@@ -1,0 +1,53 @@
+[package]
+name = "collective-choice"
+version = "0.1.0"
+edition = "2024"
+description = "The general voting engine for dregg — poll → cap-bounded ballots → monotone verifiable tally → decision-turn, assembled from the four proven governance mechanisms (privacy-voting ballots, polis AffineLe quorum, tool-access-delegation non-amplifying sub_delegate, and the node nullifier set). Exposes a `VoteEngine` trait consumed by the CYOA and governance lanes."
+
+# `collective-choice` is ASSEMBLY, not invention. Every tooth is a primitive
+# that already ships and already bites through the verified executor:
+#   - one-vote-per-ballot   : `WriteOnce(VOTE)` on a factory-born ballot cell
+#                             (starbridge-privacy-voting).
+#   - monotone tally        : `Monotonic(TALLY_i)` poll slots — a tally can only
+#                             ever increase (starbridge-privacy-voting).
+#   - quorum gate           : `AffineLe { M·RESOLVED − Σ TALLY_i ≤ 0 }` — the
+#                             reusable in-cell M-of-N gate lifted from the polis
+#                             council (`starbridge-apps/polis`).
+#   - non-amplifying deleg. : `Mandate::sub_delegate` / `DelegTree::no_amplify`
+#                             (`dregg-intent::agent_mandate`) — liquid democracy.
+#   - one-vote nullifier    : a `used_ballot_nullifiers` set mirroring the node's
+#                             `used_proof_hashes` (`node/src/state.rs`).
+#
+# This crate carries its own `[workspace]` table so it builds STANDALONE
+# (`cargo build --manifest-path collective-choice/Cargo.toml`) without being a
+# member of the breadstuffs workspace; its path dependencies still resolve their
+# own `workspace = true` fields against the breadstuffs root they live under.
+[workspace]
+
+# The breadstuffs root's `[patch]` table does not reach a separate workspace, so
+# the load-bearing forks the dependency graph needs are re-declared here (paths
+# rebased one level deeper). Git patches outside this crate's graph are inert.
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
+
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+pathfinder_simd = { path = "../starbridge-v2/vendor/pathfinder_simd" }
+stylo_derive = { git = "https://github.com/emberian/stylo", rev = "abc53ac61" }
+servo-paint = { path = "../servo-render/vendor/servo-paint" }
+servo-net = { path = "../servo-render/vendor/servo-net" }
+
+[dependencies]
+dregg-app-framework = { path = "../app-framework" }
+dregg-cell = { path = "../cell", default-features = false }
+dregg-intent = { path = "../intent" }
+dregg-types = { path = "../types" }
+starbridge-privacy-voting = { path = "../starbridge-apps/privacy-voting" }
+
+blake3 = "1"
