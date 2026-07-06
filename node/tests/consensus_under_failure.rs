@@ -23,13 +23,16 @@
 //!
 //! ## What is A1-gated (honest)
 //!
-//! Cross-node FINALITY (`latest_height ≥ 1` agreed across the survivors) does not
-//! reliably converge on loopback today — the gossip-dissemination leg / the A1
-//! finality binary is the open work, exactly as documented in
-//! `three_node_ordering_rule.rs` [C] and `sustained_finality.rs`. So the finality
-//! assertion here is gated behind `DREGG_TEST_REQUIRE_FINALITY=1`: the harness is
-//! built so that once the A1 binary lands it PASSES with the finality gate on; until
-//! then it reports precisely and asserts only the production/exchange progress above.
+//! POST-KILL cross-node FINALITY (`latest_height ≥ 1` agreed across the survivors)
+//! does not converge on loopback today (measured 2026-07-06 under
+//! `DREGG_TEST_REQUIRE_FINALITY=1`: heights all 0 at n=4 and n=5 after the kill).
+//! Note the frontier has MOVED: the no-fault n=3 single-turn case NOW converges
+//! green under the same gate (`three_node_ordering_rule.rs` [C]); the remaining
+//! open legs are the sustained 3rd+ turn (`sustained_finality.rs`, 2/3) and this
+//! post-kill / n≥4 case. So the finality assertion here stays gated behind
+//! `DREGG_TEST_REQUIRE_FINALITY=1`: the harness is built so that once that lane
+//! lands it PASSES with the finality gate on; until then it reports precisely and
+//! asserts only the production/exchange progress above.
 //!
 //! ## Real-vs-engine + CI
 //!

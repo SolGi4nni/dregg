@@ -1,24 +1,26 @@
-//! LIVE-BYZANTINE Attack 5b forge — the served state attestation has no deployed
-//! committee binding (order is BFT-certified; state is not yet).
+//! LIVE-BYZANTINE Attack 5b forge — the SERVED state attestation carries no
+//! committee binding (the store now does — Fix B landed — but the API wire is
+//! still count-only).
 //!
-//! The deployed cross-node committee quorum (`node::finalization_votes`) agrees
-//! on block ORDER. The per-node `StoredAttestedRoot` binds the state `merkle_root`
-//! but, in full mode, carries only the PRODUCING node's single `quorum_signatures`
-//! entry (`blocklace_sync.rs:4589`). `GET /api/federation/roots` (`api.rs:4901`)
-//! surfaces that root as `{ merkle_root, signatures: quorum_signatures.len() }` —
-//! a COUNT, with no committee verification.
+//! The deployed cross-node committee quorum (`node::finalization_votes`, v2)
+//! binds `(block_id, merkle_root)` and, since Fix B, is back-filled into the
+//! persisted root's `finalization_quorum`
+//! (`blocklace_sync.rs::backfill_finalization_quorums`). But
+//! `GET /api/federation/roots` (`api.rs::get_federation_roots`) still surfaces
+//! a root as `{ merkle_root, signatures: quorum_signatures.len() }` — a COUNT,
+//! with no committee verification and no `finalization_quorum` exposure.
 //!
 //! This forge shows a single Byzantine node can present TWO conflicting state
 //! roots for the SAME finalized block, each passing the count-only gate the API
-//! serves, so a light client trusting that surface cannot arbitrate them — there
-//! is no committee certificate over the state in the served root.
+//! serves, so a light client trusting that surface cannot arbitrate them — the
+//! committee certificate over the state is not in the SERVED artifact. (It also
+//! models the pre-back-fill TRAILING-HEAD shape: a root persisted before its
+//! votes converge legitimately carries an empty `finalization_quorum`.)
 //!
-//! It ALSO pins the in-flight fix (N3 committee-restart / Fix B): the new
-//! `finalization_quorum` field + `verify_finalization_quorum` (which binds the
-//! committee's v2 finalization votes OVER `(block_id, merkle_root)`) is the
-//! discriminator — but the deployed producer does NOT yet back-fill it, so
-//! `has_finalization_quorum()` is false on a live root. When that weld lands, a
-//! light client gains a real committee state cert and this gap closes.
+//! It ALSO pins the Fix-B discriminator itself: `finalization_quorum` +
+//! `verify_finalization_quorum` (the committee's v2 finalization votes OVER
+//! `(block_id, merkle_root)`) is crypto-bound, not a count — the property the
+//! served surface must expose (and a light client verify) to close Attack 5b.
 //!
 //! Uses only `dregg_persist` re-exported types (no signing, no manifest edit) so
 //! it never touches the actively-edited `persist/src/tests.rs`.
@@ -28,11 +30,12 @@
 use dregg_persist::StoredAttestedRoot;
 use dregg_persist::federation::{FederationId, PublicKey, Signature};
 
-/// A full-mode attested root as the deployed commit path persists it: bound to a
-/// blocklace block + height, carrying a single (producer-local) `quorum_signatures`
-/// entry, threshold 3 (the N3 committee shape), and — crucially — an EMPTY
-/// `finalization_quorum` (the deployed producer does not yet back-fill the
-/// cross-node committee votes).
+/// A full-mode attested root as the deployed commit path FIRST persists it
+/// (the trailing-head shape, before `backfill_finalization_quorums` attaches the
+/// converged votes): bound to a blocklace block + height, carrying a single
+/// (producer-local) `quorum_signatures` entry, threshold 3 (the N3 committee
+/// shape), and an EMPTY `finalization_quorum` — also exactly the shape a forger
+/// who holds no committee keys can mint.
 fn full_mode_root(
     block_id: [u8; 32],
     merkle_root: [u8; 32],
@@ -52,7 +55,8 @@ fn full_mode_root(
         threshold: 3,
         federation_id: FederationId::PLACEHOLDER,
         receipt_stream_root: None,
-        // The deployed producer does not yet assemble this (Fix B, in flight).
+        // Empty at first persist (the quorum trails over gossip; Fix B
+        // back-fills it) — and empty forever on a forged root.
         finalization_quorum: Vec::new(),
     }
 }
@@ -96,17 +100,18 @@ fn byzantine_conflicting_state_roots_both_pass_count_only_gate() {
         "count-only completeness cannot distinguish a forged solo-threshold root"
     );
 
-    // (2) THE DEPLOYED GAP: neither served root carries a committee finalization
-    // quorum over its state, so the Fix-B discriminator is simply absent — a
-    // light client has NO committee certificate binding `merkle_root`.
+    // (2) THE SERVED GAP: neither of these roots carries a committee finalization
+    // quorum over its state (trailing-head / forged shape), and the API surfaces
+    // nothing that would distinguish a back-filled root anyway — a light client
+    // reading the served artifact has NO committee certificate binding
+    // `merkle_root`.
     assert!(!honest.has_finalization_quorum());
     assert!(!forged.has_finalization_quorum());
 
     let committee = vec![PublicKey([1; 32]), PublicKey([2; 32]), PublicKey([3; 32])];
     assert!(
         !honest.verify_finalization_quorum(&committee),
-        "an empty finalization_quorum cannot certify state (nothing to verify) — \
-         the deployed producer does not back-fill it yet"
+        "an empty finalization_quorum cannot certify state (nothing to verify)"
     );
     assert!(!forged.verify_finalization_quorum(&committee));
 }

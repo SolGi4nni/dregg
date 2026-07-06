@@ -30,9 +30,9 @@
 //!   `server_cannot_omit_position`); prover + root-pinned range verifier.
 //! - [`attested`] — `AttestedSlice` / `AttestedAnswer`: the
 //!   certificate-carrying answer type and its `verify`.
-//! - [`client`] — transport-agnostic node-API mirrors + the COMMENT-SPEC for
-//!   the node-side `/api/receipts/index/{root,range}` handlers (not yet
-//!   served) and the enrichment the typed effect summaries need.
+//! - [`client`] — transport-agnostic node-API mirrors of the node-side
+//!   `/api/receipts/index/{root,range}` handlers (served by `node/src/api.rs`)
+//!   and the enrichment the typed effect summaries need.
 //!
 //! ## The proof story (what is and is not verified)
 //!

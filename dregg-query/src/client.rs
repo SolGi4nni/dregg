@@ -12,15 +12,16 @@
 //!   summary strings, and the full canonical `TurnReceipt`.
 //!
 //! [`receipt_record_from_event`] maps a `ReceiptEvent` JSON row into a
-//! [`ReceiptRecord`]; effect detail beyond kind strings awaits the
-//! enrichment below.
+//! [`ReceiptRecord`]; typed effect detail is carried by the enrichment
+//! (`push_committed_event_enriched`, node/src/api.rs).
 //!
-//! ## COMMENT-SPEC — the node-side attested-index handlers (DO NOT yet exist)
+//! ## The node-side attested-index handlers (SERVED — this spec is discharged)
 //!
-//! The node already holds the log (`s.cclerk.receipt_chain()`, dense by
-//! `chain_index`) and the leaf values (`TurnReceipt::receipt_hash()`); the
-//! MMR prover in [`crate::mmr`] is the missing index. The handlers to add in
-//! `node/src/api.rs` (axum, same router as `/api/receipts`):
+//! Implemented in `node/src/api.rs` (axum, same router as `/api/receipts`),
+//! backed by the node's receipt chain (`s.cclerk.receipt_chain()`, dense by
+//! `chain_index`) and the incrementally-synced MMR index
+//! (`sync_receipt_index`). The spec below is kept as the contract the
+//! handlers mirror:
 //!
 //! ```text
 //! .route("/api/receipts/index/root",  get(get_receipt_index_root))
@@ -87,7 +88,7 @@ use crate::attested::{AttestedSlice, RangeCertificate};
 use crate::mmr::RangeOpening;
 use crate::receipt::{EffectSummary, ReceiptRecord};
 
-/// `GET /api/receipts/index/root` response (comment-spec'd handler above).
+/// `GET /api/receipts/index/root` response (handler: `node/src/api.rs::get_receipt_index_root`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexRootResponse {
     /// Hex-encoded 32-byte MMR root.

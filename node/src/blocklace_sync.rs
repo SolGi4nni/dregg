@@ -4721,43 +4721,25 @@ async fn execute_finalized_turn(
             // is zero), so the persisted root is a genuine quorum and the node
             // restarts cleanly.
             //
-            // ⚠ FULL-MODE COMMITTEE RESTART HOLE (caught by the N3 live run).
-            // In full mode this pushes ONLY the local signature (1 < threshold),
-            // so the persisted `quorum_signatures` do NOT carry a committee
-            // quorum. On restart `verify_signed_anchor_and_rollback` (state.rs)
-            // calls `StoredAttestedRoot::verify_signatures`, which requires
-            // `quorum_signatures.len() >= threshold` valid committee signatures
-            // over THIS root's `signing_message()`. A full-mode committee node
-            // therefore fail-closes after finalizing >=1 height. The recovery
-            // anchor is CORRECT hardening; the persistence under-feeds it.
+            // FULL-MODE COMMITTEE RESTART (caught by the N3 live run; CLOSED by
+            // Fix B). In full mode this pushes ONLY the local signature
+            // (1 < threshold), so `quorum_signatures` alone cannot re-anchor a
+            // restart — the recovery anchor (`verify_signed_anchor_and_rollback`,
+            // state.rs) is CORRECT hardening and pre-Fix-B this fail-closed the
+            // node after >=1 finalized height.
             //
-            // This is NOT a plumbing gap (the earlier "peer aggregation occurs
-            // in a follow-up commit" note was wrong). The only cross-node
-            // committee quorum that forms is the `FinalizationVote` set
-            // (finalization_votes.rs), which:
-            //   (a) signs `VOTE_DOMAIN || block_id || level` — NOT this root's
-            //       merkle_root-binding `signing_message()`;
-            //   (b) is collected ASYNC, AFTER this synchronous persist (peer
-            //       votes arrive later over gossip; the local node has not even
-            //       emitted its own vote yet at this point — see the
-            //       `emit_finalization_vote` call after `execute_finalized_turn`);
-            //   (c) is retained by `VoteCollector` as distinct-signer KEY sets
-            //       only — the signature bytes are discarded after counting.
-            // And `signing_message()` binds a wall-clock `timestamp`
-            // (executor_setup sets it via `wall_clock_secs()`), so committee
-            // peers cannot even produce matching signatures over this root.
-            //
-            // Closing this SOUNDLY (without weakening the anchor) requires a
-            // protocol addition: a DETERMINISTIC attested root (drop the
-            // wall-clock timestamp from the signed preimage / derive it from
-            // the finalized block) plus a signed-gossip exchange of committee
-            // signatures over the root, aggregated to >=threshold and threaded
-            // here — OR extending `FinalizationVote` to bind the finalized
-            // merkle_root, retaining those sigs, and persisting the root once
-            // its quorum assembles. Both are consensus-visible and carry an
-            // async-window liveness decision (this synchronous commit cannot
-            // block on network gossip). Diagnosis pinned by
-            // `dregg_persist::tests::full_mode_single_sig_root_is_refused_genuine_quorum_accepted`.
+            // Fix B (landed): `FinalizationVote` v2 binds the finalized
+            // merkle_root (`dregg-finalization-vote-v2 || block_id ||
+            // merkle_root`), the `VoteCollector` RETAINS the signature bytes
+            // (`assembled_quorum`), and the >=threshold committee quorum is
+            // persisted into the root's `finalization_quorum` — captured below
+            // when already assembled, otherwise back-filled a gossip round or
+            // two later by `backfill_finalization_quorums` (this synchronous
+            // commit never blocks on network gossip; the trailing window is the
+            // deliberate liveness cost). On restart the anchor accepts
+            // `verify_signatures || verify_finalization_quorum`. Pinned by
+            // `dregg_persist::tests::full_mode_single_sig_root_is_refused_genuine_quorum_accepted`
+            // and `tests::committee_node_restarts_cleanly_with_finalization_quorum`.
             if federation_keys.is_empty() || federation_keys.contains(&local_pk) {
                 attested.quorum_signatures.push((local_pk, sig));
             }

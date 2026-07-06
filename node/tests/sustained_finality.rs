@@ -353,10 +353,14 @@ fn three_nodes_finalize_multiple_turns_in_a_row_without_stream_storm() {
     //     tip pull closes the n=3 round cohort;
     //   * the faucet receipt-chain (full-mode `previous_receipt_hash = None`) and a
     //     reserved in-flight nonce stop the 2nd+ turn rejecting / replaying.
-    // The committee finalizes turn-after-turn with the chain climbing. The hard gate
-    // stays env-guarded: a CI lane runs it with adequate resources, while a developer
-    // box that is CPU-saturated by 3 in-process nodes + the test harness still gets a
-    // precise report instead of a contention flake.
+    // MEASURED 2026-07-06 (dev box, DREGG_TEST_REQUIRE_FINALITY=1): 2/3 turns commit,
+    // reproducibly — including with DREGG_TEST_FINALITY_WAIT_S=90 (so NOT a timeout
+    // flake; turns 1-2 commit fast, the 3rd consecutive turn never commits). The
+    // single-turn sibling `three_node_ordering_rule.rs` [C] converges green under the
+    // same gate, so the residual is specific to the SUSTAINED (3rd+) turn — the
+    // remaining round-production / faucet-nonce tail, not gossip and not the ordering
+    // rule. The hard gate stays env-guarded until that lane closes; the default run
+    // reports precisely.
     eprintln!("committed {committed_turns}/{NUM_TURNS} turns in a row");
     if require_finality {
         assert_eq!(

@@ -24,11 +24,11 @@
 //! are the whole genuine log in order — the same input a single
 //! [`Coverage::WholeLog`](crate::attested::Coverage) slice would certify.
 //!
-//! ## Wiring (deliberately unwired at port time)
+//! ## Wiring
 //!
-//! New file only. To activate: `dregg-query/src/lib.rs` add `pub mod windows;`
-//! (+ optionally `pub use windows::verify_windows;`). No new dependencies
-//! (`serde_json` is already a dependency).
+//! Wired: `dregg-query/src/lib.rs` declares `pub mod windows;`. The node-side
+//! paged source is `GET /api/receipts/index/range` (`node/src/api.rs`). No
+//! extra dependencies (`serde_json` is already a dependency).
 
 use crate::client::IndexRangeResponse;
 use crate::mmr::{Blake3Mmr, MmrHasher};
