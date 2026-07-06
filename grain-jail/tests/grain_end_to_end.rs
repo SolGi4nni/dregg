@@ -122,6 +122,96 @@ fn confined_brain_drives_a_real_grain_metered_receipted_and_r2_verified() {
     );
 }
 
+/// THE COMPLETE MECHANIC: a REAL firmament-jailed body (OS-sandboxed, host-file
+/// read denied) drives a REAL grain over a socketpair — the whole north star bar
+/// the LLM: an OS-jailed body whose every action is cap-gated, metered,
+/// receipted, and R2-verifiable by the renter. Run with `--features real-jail`.
+#[cfg(feature = "real-jail")]
+#[test]
+fn a_real_jailed_body_drives_a_real_grain_and_the_renter_verifies_r2() {
+    use grain_jail::jail::spawn_confined_body;
+
+    let platform = AgentPlatform::new();
+    let wd = workdir();
+    let host = platform
+        .rent(
+            "jailed.agents.dregg",
+            "dga1_jailed",
+            "cell:notes/1,cell:notes/2",
+            10_000,
+            &wd,
+            terms(),
+            None,
+        )
+        .expect("provision the jailed grain");
+
+    // The body's outgoing lines, pre-serialized in the parent (the post-fork
+    // child does no serde alloc): two cell-writes, then Done.
+    let lines: Vec<Vec<u8>> = [
+        cell_write("notes/1", "hello-from-the-jail"),
+        cell_write("notes/2", "still-jailed"),
+        BodyMsg::Done(DoneNote::default()),
+    ]
+    .iter()
+    .map(|m| {
+        let mut s = serde_json::to_string(m).unwrap();
+        s.push('\n');
+        s.into_bytes()
+    })
+    .collect();
+    let n_proposals = lines.len() - 1;
+
+    let kernel = dregg_firmament::process_kernel::ProcessKernel::new();
+    let (handle, channel) = spawn_confined_body(&kernel, move |surf| {
+        use std::io::{BufRead, BufReader, Write};
+        // The jail must deny a host-file read (ambient confinement tooth).
+        if std::fs::File::open("/etc/passwd").is_ok() {
+            return 77;
+        }
+        let mut w = match surf.try_clone() {
+            Ok(w) => w,
+            Err(_) => return 66,
+        };
+        let mut r = BufReader::new(surf);
+        for (i, line) in lines.iter().enumerate() {
+            if w.write_all(line).and_then(|_| w.flush()).is_err() {
+                return 66;
+            }
+            if i < n_proposals {
+                let mut discard = String::new();
+                if r.read_line(&mut discard).map(|n| n == 0).unwrap_or(true) {
+                    return 66;
+                }
+            }
+        }
+        0
+    })
+    .expect("spawn the jailed body");
+
+    // Drive the REAL grain with the REAL jailed body. drive_serving pulls a
+    // proposal off the jail socket, cap-gates + meters + mints it, and feeds the
+    // verdict back — in lockstep with the confined child.
+    let mut brain = ConfinedBrain::new(channel);
+    let report = platform
+        .drive_serving(&host, "write from the jail", &mut brain)
+        .expect("the jailed body drives the grain");
+    assert_eq!(report.admitted, 2, "both jailed cell-writes were admitted");
+
+    // The renter verifies every jailed turn is a committed kernel turn.
+    let r2 = platform
+        .verify_r2(&host)
+        .expect("R2 verify the jailed session");
+    assert_eq!(r2.linked as u64, report.admitted);
+
+    // The jailed body completed cleanly AND could not escape the sandbox.
+    let code = handle.join().expect("join the jailed body");
+    assert_eq!(
+        code, 0,
+        "the jailed body finished the drive and was denied /etc/passwd \
+         (77 = confinement leak, 66 = I/O fault)"
+    );
+}
+
 /// The confined body's authority is exactly the grain's caps: a proposal for a
 /// cell the grain was NOT granted is refused by the braid (no receipt, no meter
 /// draw for it), and the drive continues to the granted write.
