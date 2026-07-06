@@ -133,10 +133,9 @@ pub mod factories;
 pub mod flashwell;
 pub mod full_turn_proof;
 pub mod hatchery_mint;
+pub mod hints_onboarding;
 pub mod identity;
 pub mod job_escrow;
-// TEMP-DISABLED-FOR-DEVICE-PAIRING-VERIFY: sibling draft, Cargo deps not yet wired
-pub mod hints_onboarding;
 pub mod mnemonic;
 pub mod polis;
 pub mod privacy;
