@@ -219,6 +219,18 @@ fn security_property_manifest() -> Vec<Row> {
                 bites: "forged_payment_hash_unsat_demo",
             },
         },
+        // ── SealedEscrow's economic no-theft world-property (Deos/SealedEscrow.lean §9) ──────────────
+        // The escrow analogue of Vault's no-dilution / Lease's budget conservation (survey gap #3):
+        // a reachability invariant over the deployed op set (deposit/settle/reclaim). fires — a
+        // reachable honest settle legitimately extracts to the counterparties; bites — the half-open
+        // theft (taking a leg without funding one's own) is UNREACHABLE.
+        Row {
+            theorem: "sealedescrow_no_theft @ Deos/SealedEscrow.lean:753",
+            tooth: HasBitingTooth {
+                fires: "honest_swap_reachable",
+                bites: "halfopen_theft_unreachable",
+            },
+        },
     ]
 }
 

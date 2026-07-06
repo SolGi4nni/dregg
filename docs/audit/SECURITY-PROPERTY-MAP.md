@@ -159,7 +159,7 @@ math / the executor / an off-AIR gate predicate — *not yet* over the deployed 
 | **Vault** (`Deos/Vault.lean`) | **YES — economic** | `deposit_no_dilution` (`:175`): `T * sharesOut T S d ≤ S * d`; `deposit_price_non_decreasing` (`:187`): `T*(S+sharesOut) ≤ S*(T+d)` — price-per-share never decreases, ∀ deposits; `withdraw_no_dilution` (`:196`) | **pure share-math** (the property). ERC-4626 inflation-attack immunity is REAL, as a property. |
 | Vault — gate face | GATE-REJECTION | `inflation_attack_rejected` (`:369`), `dilution_rejected` (`:378`), `assets_not_conserved_rejected` (`:387`) | off-AIR `VaultDepositGate` predicate |
 | Vault — light-client | REFINEMENT / binding, **STAGED** | `vault_satisfaction_witnessed` (`CapacitySatisfaction.lean:406`), `vault_gate_root_bound` (`Vault.lean:401`) | committed state-commit; NOT in deployed VK |
-| **SealedEscrow** (`Deos/SealedEscrow.lean`) | **Partial** — one-shot + binding only | `replay_rejected` (`:257`, over the real `settle` fn); `settle_gate_forces_atomic` (`:361`, refinement); `partial_settle_rejected` (`:372`), `phantom_settle_rejected` (`:383`, gate); root-binding `leg_status_bound_in_root` (`:303`), `settle_gate_root_bound` (`:397`) | executor `settle` + off-AIR `SettleGate` + committed root. **NO** standalone "funds cannot be stolen" economic invariant. |
+| **SealedEscrow** (`Deos/SealedEscrow.lean`) | **YES — economic no-theft (reachability)** + one-shot + binding | `sealedescrow_no_theft` (`:753`, reachability invariant: per-leg `paid+locked=entered` ∧ never-funded party receives nothing), `escrow_solvent` (`:769`, payouts ≤ deposits); teeth `honest_swap_reachable`/`halfopen_theft_unreachable`/`phantom_extraction_unreachable`; plus `replay_rejected` (`:257`), `settle_gate_forces_atomic` (`:361`), `partial_settle_rejected` (`:372`), `phantom_settle_rejected` (`:383`); root-binding `leg_status_bound_in_root` (`:303`), `settle_gate_root_bound` (`:397`) | reachability over deployed ops (deposit/settle/reclaim); executor `settle` + off-AIR `SettleGate` + committed root |
 | **StandingObligation** (`Deos/StandingObligation.lean`) | **YES — monotonicity** | `cursor_strict_mono` (`:208`): `j < k → cursorAt t j < cursorAt t k`; teeth `replay_rejected` (`:277`), `early_discharge_rejected` (`:286`), `over_discharge_rejected` (`:294`) | pure arithmetic (property); `DischargeOk`/`DischargeGate` (teeth) |
 | **Membrane** (`Deos/Membrane.lean`) | **YES — purest, over the KERNEL** | `reshareN_attenuates` (`:122`): any reshare chain confers `⊆` the original authority; `reshare_refuses_amplification` (`:145`); `membrane_non_amplifies` (`:223`) | **the kernel `Exec.attenuate` / `capAuthConferred`** — no gate, no circuit |
 | **PrepaidLease** (`Deos/PrepaidLease.lean`) | **YES — economic conservation** | `budget_never_overdrawn` (`:378`); `remaining_plus_drawn_conserved` (`:396`): `remaining + drawn = budget` (Σδ=0); `cursor_strict_mono` (`:236`) | pure budget model (property); off-AIR `DischargeGate` (teeth) |
@@ -204,11 +204,18 @@ the deployed AIR — unrelated to the capacity floor, listed so it is not mistak
    (`CapacitySatisfaction.lean:46-54`). So in production today a *re-executing validator* is witnessed,
    a *pure light client* is not. This is the "circuit tooth is the executor tooth's named shadow" seam.
 
-3. **SealedEscrow has no standalone economic no-theft invariant.** Unlike Vault (`deposit_no_dilution`)
-   and PrepaidLease (`remaining_plus_drawn_conserved`), escrow safety is expressed only as
-   one-shot-replay over the real `settle`, gate-forcing/gate-rejection over the off-AIR `SettleGate`,
-   and commitment-binding — there is no universally-quantified "funds cannot be stolen / value is
-   conserved across a settle" theorem over the kernel/executor transition.
+3. ~~**SealedEscrow has no standalone economic no-theft invariant.**~~ **CLOSED** (`SealedEscrow.lean`
+   §9, `sealedescrow_no_theft` `:753`). Escrow now carries the economic no-theft world-property Vault
+   (`deposit_no_dilution`) and PrepaidLease (`remaining_plus_drawn_conserved`) already had: a
+   *reachability invariant* over the FULL deployed op set — **deposit / settle / reclaim** (the last
+   was previously absent from the Lean model). Every reachable escrow satisfies **per-leg value
+   conservation** (`paid s + locked s = entered s` — no leg pays out beyond what entered it; a
+   never-deposited leg pays nothing) and **no free lunch** (`status s = Empty → recv s = 0`: a party
+   that never funded receives nothing), with `escrow_solvent` (`:769`, `recvTotal ≤ enteredTotal`) as
+   the total-value corollary. Anti-vacuity both poles: `honest_swap_reachable` (a reachable settle
+   genuinely extracts — A gets B's leg, B gets A's) fires; `halfopen_theft_unreachable` (taking a
+   counterparty's leg without funding one's own is UNREACHABLE) + `phantom_extraction_unreachable`
+   bite. `#assert_axioms`-clean; registered as row 21 of `NON-VACUITY-MANIFEST.md`.
 
 4. **The "UC layer" is an abstract theory shelf, not wired to the deployed system.** Of ten
    `Metatheory/*` files, only **SettlementSoundness** is genuinely connected to a deployed construct.
