@@ -501,6 +501,14 @@ impl Swarm {
         &self.workers
     }
 
+    /// Mutable access to the workers — the symmetric accessor. Used by the demo to FORGE a
+    /// cross-worker contact (implant a sibling's source trace into a worker's mind) and show
+    /// the non-collusion tooth is load-bearing: [`Self::cross_contacts`] then lights up and
+    /// [`Self::verify`] flips to refused. An honest swarm never mutates a worker's mind this way.
+    pub fn workers_mut(&mut self) -> &mut [Worker] {
+        &mut self.workers
+    }
+
     /// The sources, one per worker.
     pub fn sources(&self) -> &[Source] {
         &self.sources
@@ -576,6 +584,112 @@ impl Swarm {
     pub fn root_budget(&self) -> i64 {
         self.root_budget
     }
+
+    /// **The non-collusion property, made concrete — the cross-contact probe matrix.** For
+    /// every ORDERED pair of distinct workers `(observer, subject)`, actually PROBE the
+    /// observer's mind at the subject's source key ([`ConfinedSession::recall`]). In an honest
+    /// swarm every probe returns `None`: no worker's mind ever carried another's source. This
+    /// is the property that makes these analysts *provably* independent — not asserted, but
+    /// *probed*, cell by cell. (Worker A's mind provably never touched B's: the `(A,B)` cell is
+    /// `None`.)
+    pub fn cross_contacts(&self) -> Vec<CrossContact> {
+        let mut out = Vec::with_capacity(self.workers.len().saturating_mul(self.workers.len()));
+        for observer in &self.workers {
+            for subject in &self.workers {
+                if observer.index == subject.index {
+                    continue;
+                }
+                out.push(CrossContact {
+                    observer: observer.index,
+                    subject: subject.index,
+                    subject_source: subject.source.name.clone(),
+                    recalled: observer.session.recall(subject.source_key()),
+                });
+            }
+        }
+        out
+    }
+
+    /// Whether every cross-worker probe came back empty — the workers are PAIRWISE ISOLATED
+    /// (no mind ever touched another's source). The conjunction of [`Self::cross_contacts`]
+    /// being all-`None`. A single non-`None` cell would mean two minds met — collusion.
+    pub fn fully_isolated(&self) -> bool {
+        self.cross_contacts().iter().all(|c| c.recalled.is_none())
+    }
+
+    /// **Structured report objects** — one verifiable [`ReportCard`] per worker, the summary a
+    /// consumer of the swarm reads. Every field is grounded in the worker's own verifiable
+    /// state: the source it was jailed to, the byte-count + digest of exactly what it read,
+    /// whether its report `verify_zkoracle`-attests, and its remaining (conserved) budget.
+    pub fn report_cards(&self, carrier: &SwarmAttestationCarrier) -> Vec<ReportCard> {
+        self.workers
+            .iter()
+            .map(|w| {
+                let attested = w
+                    .attestation
+                    .as_ref()
+                    .is_some_and(|att| verify_zkoracle(att, carrier.config()).is_ok());
+                let door = w
+                    .session
+                    .confinement()
+                    .doors()
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                ReportCard {
+                    worker: w.index,
+                    source_name: w.source.name.clone(),
+                    source_door: door,
+                    bytes_read: w.source.content.len(),
+                    source_digest: w.source.digest(),
+                    attested,
+                    budget_remaining: w.budget(),
+                    report: w.report.clone(),
+                }
+            })
+            .collect()
+    }
+}
+
+/// One cell of the non-collusion proof matrix: does `observer`'s mind carry `subject`'s
+/// source trace? [`CrossContact::recalled`] is the observer's actual recall at the subject's
+/// source key — `None` is the witness that the subject's source *never touched* the observer's
+/// mind. Every off-diagonal cell of an honest swarm is `None`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossContact {
+    /// The worker whose mind is being probed.
+    pub observer: usize,
+    /// The worker whose source key is looked up in the observer's mind.
+    pub subject: usize,
+    /// The subject's source name (for a legible print).
+    pub subject_source: String,
+    /// The observer's recall at the subject's source key. `None` == provably isolated: the
+    /// subject's source never entered the observer's mind (no cross-worker contact).
+    pub recalled: Option<[u8; 32]>,
+}
+
+/// A structured, verifiable summary of one worker's finding — the "report object" a consumer
+/// of the swarm reads. Built from the worker's public, verifiable state (nothing asserted):
+/// the source it was jailed to, what it read (bytes + digest), whether its report attests, and
+/// its remaining conserved budget.
+#[derive(Clone, Debug)]
+pub struct ReportCard {
+    /// The worker's source index.
+    pub worker: usize,
+    /// The source this worker was jailed to.
+    pub source_name: String,
+    /// The single egress door the worker was confined to.
+    pub source_door: String,
+    /// How many authentic bytes the worker read from its source.
+    pub bytes_read: usize,
+    /// The BLAKE3 digest of the source content — the witnessed trace of what it read.
+    pub source_digest: [u8; 32],
+    /// Whether the worker's report carries a `verify_zkoracle`-accepted attestation.
+    pub attested: bool,
+    /// The worker's remaining prepaid budget (its conserved share of the root's).
+    pub budget_remaining: i64,
+    /// The report text the worker's brain produced from its one source.
+    pub report: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
