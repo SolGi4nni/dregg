@@ -9,9 +9,13 @@
 //!   [`MetaDirectory`] (registry-of-registries / yellow pages),
 //!   [`DirectoryFactory`] (constrained directory creation) and
 //!   [`TopicSubscriptionManager`] (gossip-topic audience bounding).
-//! * [`vfs`] — `Volume` / `Blob` / `Directory` triple modeling Robigalia's
-//!   VFS as a userspace library that decomposes into existing Effect VM
-//!   effects (`NoteCreate`, `NoteSpend`, `SetField`, balance accounting).
+//! * [`vfs`] — `Volume` / `Blob` / `Directory` triple: a self-contained
+//!   DESIGN SKETCH of Robigalia's VFS over dregg vocabulary. Its operations
+//!   record a crate-local [`vfs::VfsEffect`] trace whose variant names
+//!   mirror real Effect VM effects (`NoteCreate`, `NoteSpend`, `SetField`),
+//!   but nothing in this crate constructs real `dregg-turn` effects or
+//!   reaches the executor — see the `vfs` module docs for the honest
+//!   status and what a real weld would take.
 //! * [`factory`] — [`directory_factory_descriptor`] returning a
 //!   `dregg_cell::factory::FactoryDescriptor` shape for the directory-cell
 //!   pattern, so apps can `createFromFactory` a directory and have the
@@ -19,8 +23,11 @@
 //!
 //! The earlier DFA routing module that used to live here has been promoted
 //! to the canonical [`dregg_dfa`] crate (see `DFA-RATIONALIZATION-DESIGN.md`).
-//! This crate now reuses real workspace types (`dregg_types::FederationId`,
-//! `dregg_types::CellId`) rather than the stub identifiers it once carried.
+//! This crate reuses the real workspace identifiers `dregg_types::FederationId`
+//! and `dregg_types::CellId`; the remaining identity types it exports
+//! ([`SturdyRef`], [`MemberId`], `GossipTopic`, `CommitmentId`) are
+//! crate-local STAND-INS for canonical types that live (or will live)
+//! elsewhere — each is labeled as such at its definition in [`directory`].
 //!
 //! [`directory`]: crate::directory
 //! [`vfs`]: crate::vfs

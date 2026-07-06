@@ -1,4 +1,25 @@
-//! Userspace VFS/storage layer built from dregg primitives.
+//! Userspace VFS/storage DESIGN SKETCH over dregg vocabulary.
+//!
+//! # Status: local sketch, NOT executor-backed
+//!
+//! This module is a self-contained, in-memory model of how Robigalia's VFS
+//! would map onto dregg. Its operations record a crate-local [`VfsEffect`]
+//! trace ([`EffectTrace`]) whose variant names mirror real Effect VM
+//! effects — but that trace is consumed by nothing outside this crate:
+//!
+//! * No real `dregg-turn` `Effect` values are constructed here, and nothing
+//!   is submitted to the real executor. The real `Effect::NoteSpend` /
+//!   `Effect::NoteCreate` (`turn/src/action.rs`) carry STARK spending
+//!   proofs, encrypted note payloads, asset-typed value conservation, and
+//!   optional Pedersen commitments; [`VfsEffect`] carries none of that.
+//! * Commitments/nullifiers here are BLAKE3 over toy domains; real notes
+//!   use the circuit's hash and randomized openings.
+//! * The "AIR constraints" documented on [`VfsAirConstraintSketch`] are
+//!   prose string constants — no prover parses or enforces them.
+//!
+//! A real weld would build turns against the `turn` crate's executor seam
+//! (real `Effect` shapes, real proofs, a real ledger) — that is other-crate
+//! integration work, not something this sketch performs.
 //!
 //! # Design Heritage
 //!
@@ -20,19 +41,22 @@
 //! eliminates the indirection overhead of traditional file systems (inode -> block
 //! mapping) because the address IS the content.
 //!
-//! # Proving Strategy
+//! # Intended Proving Strategy (design target, not implemented here)
 //!
-//! Every VFS operation maps to Effect VM effects. A turn that performs VFS operations
-//! generates a trace where:
-//! - `CreateBlob` = `NoteCreate` (content-addressed, returns commitment)
-//! - `ReadBlob` = merkle membership proof (no state change, verified externally)
-//! - `Splice` = `NoteSpend` (old blob) + `NoteCreate` (new blob) in one turn
-//! - `Swap` = `SetField` with nonce precondition on the directory cell
-//! - Volume accounting = balance checks (already enforced by Effect VM)
+//! The design thesis is that each VFS operation WOULD map onto existing
+//! Effect VM effects:
+//! - `CreateBlob` -> `NoteCreate` (content-addressed, returns commitment)
+//! - `ReadBlob` -> merkle membership proof (no state change, verified externally)
+//! - `Splice` -> `NoteSpend` (old blob) + `NoteCreate` (new blob) in one turn
+//! - `Swap` -> `SetField` with nonce precondition on the directory cell
+//! - Volume accounting -> balance checks (which the Effect VM does enforce,
+//!   for real turns — not for anything emitted here)
 //!
-//! The AIR constraints for VFS operations are a SUBSET of the existing Effect VM
-//! constraints. No new AIR is needed -- VFS is a user-space library on top of the
-//! existing proving system.
+//! Under that mapping the VFS would need no new AIR: its operations would be
+//! a subset of existing Effect VM constraints. This module demonstrates the
+//! decomposition shape in a local trace; it does NOT perform it against the
+//! real proving system, and the real effect shapes are richer than the
+//! mirrors here (see the status note above).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -46,7 +70,9 @@ pub use dregg_types::CellId;
 /// Monotonically increasing version counter on a cell.
 pub type Nonce = u64;
 
-/// A note commitment (content address). BLAKE3 hash of the note contents.
+/// STAND-IN note commitment (content address): a BLAKE3 hash of the blob
+/// contents. Not `dregg-turn`'s `NoteCommitment` — real note commitments
+/// use the circuit's hash with randomized openings.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NoteCommitment(pub [u8; 32]);
 
@@ -63,13 +89,17 @@ impl fmt::Debug for NoteCommitment {
     }
 }
 
-/// A nullifier: proof that a note has been spent. Published to prevent double-use.
+/// STAND-IN nullifier: marks a sketch-blob as spent. Not `dregg-turn`'s
+/// `Nullifier` — real nullifiers are checked against the production
+/// nullifier set with a STARK spending proof; this one is a BLAKE3 hash
+/// tracked only in this module's local trace.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Nullifier(pub [u8; 32]);
 
-/// Capability reference -- an unforgeable token granting access to a resource.
-/// In the real system this is a c-list index + swiss number. Here we model it
-/// as a typed wrapper carrying the target cell and permitted operations.
+/// STAND-IN capability reference for this sketch. In the real system a
+/// capability is a c-list index + swiss number enforced by the executor;
+/// here it is a plain struct carrying the target cell and a permission
+/// bitmask, checked only by this module's own Rust code.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapRef {
     /// The cell this capability targets.
@@ -99,24 +129,29 @@ impl Permissions {
 }
 
 // =============================================================================
-// Effect types (mirrors Effect VM, subset needed for VFS)
+// Effect types — STAND-IN mirror of Effect VM names (crate-local only)
 // =============================================================================
 
-/// Effects that VFS operations decompose into for proving.
-/// Each variant maps to an existing Effect VM row type.
+/// STAND-IN effect vocabulary recorded by the VFS operations in this module.
+///
+/// Each variant is named after the Effect VM row type the operation WOULD
+/// decompose into in a real port. This is NOT `dregg_turn::Effect`: the
+/// real variants carry spending proofs / encrypted payloads / asset-typed
+/// values that these mirrors omit, and traces built here never reach the
+/// executor or any prover.
 #[derive(Clone, Debug)]
 pub enum VfsEffect {
-    /// Create a blob: produces a NoteCreate in the trace.
+    /// Create a blob: the intended real-effect target is `NoteCreate`.
     CreateBlob {
         commitment: NoteCommitment,
         size: u64,
     },
-    /// Spend (consume) a blob: produces a NoteSpend in the trace.
+    /// Spend (consume) a blob: the intended real-effect target is `NoteSpend`.
     SpendBlob {
         nullifier: Nullifier,
         commitment: NoteCommitment,
     },
-    /// Update a directory entry: produces a SetField in the trace.
+    /// Update a directory entry: the intended real-effect target is `SetField`.
     SetEntry {
         dir_cell: CellId,
         field_idx: u32,
@@ -129,7 +164,10 @@ pub enum VfsEffect {
     VolumeCredit { amount: u64 },
 }
 
-/// A completed turn's effect trace, ready for proving.
+/// A crate-local record of the [`VfsEffect`]s an operation sequence emitted.
+///
+/// In the intended design this is the shape of "a turn's effect list";
+/// here it is an in-memory `Vec` that no executor or prover consumes.
 #[derive(Clone, Debug, Default)]
 pub struct EffectTrace {
     pub effects: Vec<VfsEffect>,
@@ -164,9 +202,11 @@ impl EffectTrace {
 /// to a cell's balance (computrons) which bounds how much storage/computation it
 /// can allocate.
 ///
-/// Volume cells are proven to never go negative via the Effect VM's balance
-/// continuity constraint: `balance_after = balance_before - debit + credit` with
-/// overflow check.
+/// In the intended design, volume cells would be proven to never go negative
+/// via the Effect VM's balance continuity constraint
+/// (`balance_after = balance_before - debit + credit` with overflow check).
+/// In this sketch, non-negativity is enforced by plain Rust checks in
+/// [`Volume::allocate`] / [`Volume::free`] — nothing is proven.
 #[derive(Clone, Debug)]
 pub struct Volume {
     /// The cell backing this volume.
@@ -244,11 +284,14 @@ impl Volume {
 /// the address (commitment hash). No indirection table, no inode-to-block map.
 /// The commitment IS the address.
 ///
-/// In dregg terms, each Blob is a note:
-/// - Creating a blob = creating a note commitment (NoteCreate effect)
-/// - Reading a blob = proving membership in the note tree (Merkle proof)
-/// - Deleting a blob = spending the note (reveal nullifier, NoteSpend effect)
-/// - Splicing a blob = spend old + create new in one atomic turn
+/// Each Blob is MODELED AFTER a dregg note (the intended mapping):
+/// - Creating a blob ~ creating a note commitment (`NoteCreate` target)
+/// - Reading a blob ~ proving membership in the note tree (Merkle proof)
+/// - Deleting a blob ~ spending the note (reveal nullifier, `NoteSpend` target)
+/// - Splicing a blob ~ spend old + create new in one atomic turn
+///
+/// The commitments/nullifiers computed here are BLAKE3 toys local to this
+/// sketch — they are not entries in any real note tree.
 ///
 /// The `splice()` operation provides Robigalia-style atomic partial update:
 /// you can replace a range within the blob, producing a new blob with a new
@@ -284,8 +327,10 @@ impl Blob {
         NoteCommitment(*hasher.finalize().as_bytes())
     }
 
-    /// Compute the nullifier for this blob.
-    /// Only the volume owner can produce this (requires spending key).
+    /// Compute the nullifier for this blob. In the real system only the note
+    /// owner can produce this (the spending key is bound at note creation and
+    /// checked by the spending proof); in this sketch it is derived from
+    /// whatever key the caller passes — nothing binds key to owner.
     fn compute_nullifier(commitment: &NoteCommitment, spending_key: &[u8; 32]) -> Nullifier {
         let mut hasher = blake3::Hasher::new_derive_key("dregg-vfs blob nullifier v1");
         hasher.update(&commitment.0);
@@ -318,11 +363,12 @@ impl Blob {
         })
     }
 
-    /// Splice: atomically replace a byte range within this blob.
+    /// Splice: replace a byte range within this blob, consuming the old blob
+    /// (spend) and creating a new one (create).
     ///
-    /// This consumes the old blob (spend) and creates a new one (create) in a
-    /// single turn. The atomicity comes from the Effect VM: both effects are in
-    /// the same trace, proven together.
+    /// In the intended design both effects ride a single turn and the Effect
+    /// VM makes the pair atomic. Here, "atomicity" is just that both entries
+    /// land in the same local [`EffectTrace`] `Vec` — nothing is proven.
     ///
     /// Returns the new blob. The old blob is marked spent.
     pub fn splice(
@@ -465,11 +511,13 @@ pub enum EntryTarget {
 /// - `swap()` is the fundamental mutation primitive (compare-and-swap)
 /// - Stateless interaction: no cursors, no implicit seek position
 ///
-/// Properties (from dregg):
+/// Intended dregg-side properties (design targets, not implemented in this
+/// sketch — e.g. `Directory::new` currently ignores its owner argument):
 /// - Directory cell has a c-list: entries ARE capabilities
 /// - Factory provenance: who created this directory is tracked
 /// - Distributed GC: when all references to a blob are removed from all
-///   directories, the blob becomes eligible for collection (via CapTP GC)
+///   directories, the blob becomes eligible for collection (via CapTP GC);
+///   here [`BlobRefTracker`] does the local-refcount half only
 #[derive(Clone, Debug)]
 pub struct Directory {
     /// The cell backing this directory.
@@ -549,10 +597,13 @@ impl Directory {
     /// Atomic swap: replace an entry only if its version matches `expected_version`.
     ///
     /// This is the fundamental mutation primitive from the Robigalia VFS design.
-    /// It composes with the Effect VM because:
+    /// The intended Effect VM mapping (not performed here) is:
     /// 1. The version check maps to a nonce precondition on the cell
-    /// 2. The update maps to a SetField effect
-    /// 3. Both are in the same trace row, proven atomically
+    /// 2. The update maps to a `SetField` effect
+    /// 3. Both ride the same turn, proven atomically
+    ///
+    /// In this sketch the version check is a plain in-memory comparison and
+    /// the "effect" is a local [`VfsEffect::SetEntry`] record.
     ///
     /// If the version does not match, the operation fails without mutation --
     /// the caller must re-read and retry (optimistic concurrency).
@@ -609,8 +660,8 @@ impl Directory {
         Ok(entry)
     }
 
-    /// Rename: atomic remove + insert as a single turn.
-    /// Both effects appear in the same trace, so the rename is atomic.
+    /// Rename: remove + insert recorded together (in the intended design,
+    /// a single atomic turn; here, two entries in the same local trace).
     pub fn rename(
         &mut self,
         old_name: &[u8],
@@ -705,9 +756,10 @@ impl Directory {
 /// When a blob's reference count hits zero across all directories (local and remote),
 /// it becomes eligible for garbage collection.
 ///
-/// This composes with captp/gc.rs: the ExportGcManager tracks cross-federation
-/// references, while this tracks local directory references. A blob is collectible
-/// only when BOTH counts are zero.
+/// Intended composition (not wired): captp/gc.rs's ExportGcManager tracks
+/// cross-federation references, while this tracks local directory references;
+/// a blob would be collectible only when BOTH counts are zero. This sketch
+/// implements only the local half.
 #[derive(Clone, Debug, Default)]
 pub struct BlobRefTracker {
     /// blob commitment -> set of directories referencing it.
@@ -760,11 +812,12 @@ impl BlobRefTracker {
 /// It enforces:
 /// - All blob creation/deletion goes through a volume (resource accounting)
 /// - All naming goes through directories (capability-secured)
-/// - All mutations produce an effect trace (provable)
+/// - All mutations produce a local [`EffectTrace`] record
 ///
 /// The VFS itself is stateless in the Robigalia sense: each operation takes
-/// explicit parameters (no hidden cursors). The returned effect trace is what
-/// gets proven by the Effect VM.
+/// explicit parameters (no hidden cursors). In the intended design the
+/// returned effect trace is what a turn would carry to the Effect VM; here
+/// it is returned to the caller and consumed by nothing.
 pub struct Vfs {
     /// Volume registry (volume cell ID -> volume state).
     pub volumes: HashMap<CellId, Volume>,
@@ -800,11 +853,12 @@ impl Vfs {
     /// Write a blob and name it in a directory, atomically.
     ///
     /// This is the common "create file" operation. It:
-    /// 1. Allocates from the volume (VolumeDebit)
-    /// 2. Creates the blob (NoteCreate -- nameless write)
-    /// 3. Inserts the entry in the directory (SetField)
+    /// 1. Allocates from the volume (`VolumeDebit` record)
+    /// 2. Creates the blob (`CreateBlob` record -- nameless write)
+    /// 3. Inserts the entry in the directory (`SetEntry` record)
     ///
-    /// All three effects are in the same trace: proven in one turn.
+    /// All three records land in one local trace; in the intended design
+    /// they would ride a single turn and be proven together.
     pub fn write_file(
         &mut self,
         dir_id: &CellId,
@@ -848,8 +902,9 @@ impl Vfs {
         Ok((receipt, trace))
     }
 
-    /// Atomic rename across directories (if same volume).
-    /// Both the remove-from-source and insert-to-dest are in one trace.
+    /// Rename across directories (if same volume). Both the remove-from-source
+    /// and insert-to-dest records land in one local trace (in the intended
+    /// design: one atomic turn).
     pub fn move_file(
         &mut self,
         src_dir_id: &CellId,
@@ -902,60 +957,65 @@ pub enum VfsError {
 }
 
 // =============================================================================
-// AIR constraint sketch (documentation of what the prover enforces)
+// AIR constraint SKETCH — prose string constants, not wired to any prover
 // =============================================================================
 
-/// Documents the AIR constraints that validate VFS operations.
+/// PROSE SKETCH of the AIR constraints that would validate VFS operations
+/// under the intended Effect VM mapping.
 ///
-/// These are NOT new constraints -- they map onto existing Effect VM rows.
-/// This trait exists to make the mapping explicit and testable.
-pub trait VfsAirConstraints {
+/// The associated constants are human-readable strings. No prover parses,
+/// evaluates, or enforces them; nothing in this crate is proven. Each
+/// comment names the EXISTING Effect VM constraint the operation would lean
+/// on in a real port — the intent being that the VFS would need no new AIR.
+pub trait VfsAirConstraintSketch {
     /// Volume balance continuity:
     /// `balance_after = balance_before + credit - debit`
-    /// Already enforced by Effect VM row for NoteSpend/NoteCreate.
+    /// Intended target: the Effect VM's balance continuity for real
+    /// NoteSpend/NoteCreate rows.
     const BALANCE_CONTINUITY: &'static str =
         "row.balance_after == row.balance_before + row.credit - row.debit";
 
     /// Blob commitment well-formedness:
     /// `commitment == H(data || volume_id)`
-    /// Enforced by NoteCreate constraint (commitment = H(fields || randomness)).
+    /// Intended target: the NoteCreate constraint (commitment = H(fields || randomness)).
+    /// Note the sketch computes BLAKE3 without randomness — the shapes differ.
     const BLOB_COMMITMENT: &'static str =
         "row.commitment == poseidon2(row.data_fields || row.volume_cell)";
 
     /// Directory swap atomicity:
     /// `entry.version_before == expected_version AND nonce_after == nonce_before + 1`
-    /// Enforced by SetField constraint with nonce precondition.
+    /// Intended target: the SetField constraint with nonce precondition.
     const SWAP_ATOMICITY: &'static str =
         "row.nonce_before == row.expected_nonce AND row.nonce_after == row.nonce_before + 1";
 
     /// Nullifier uniqueness:
     /// Published nullifier must not already appear in the nullifier set.
-    /// Enforced by NoteSpend constraint (Merkle non-membership proof).
+    /// Intended target: the NoteSpend constraint (Merkle non-membership proof).
     const NULLIFIER_UNIQUENESS: &'static str = "nullifier_set.contains(row.nullifier) == false";
 
     /// Splice atomicity:
     /// Old blob spent AND new blob created in the same trace (consecutive rows).
-    /// Enforced by the turn boundary: all effects in one trace are atomic.
+    /// Intended target: the turn boundary (all effects in one turn are atomic).
     const SPLICE_ATOMICITY: &'static str =
         "trace contains NoteSpend(old) AND NoteCreate(new) with matching volume";
 }
 
-/// Marker struct implementing the constraint documentation.
-pub struct VfsConstraints;
-impl VfsAirConstraints for VfsConstraints {}
+/// Marker struct carrying the constraint-sketch documentation.
+pub struct VfsConstraintSketch;
+impl VfsAirConstraintSketch for VfsConstraintSketch {}
 
 // =============================================================================
 // Migration callbacks (from nameless writes paper)
 // =============================================================================
 
 /// When the underlying storage moves a blob (e.g., during compaction or
-/// replication), it notifies the VFS of the new address. In dregg terms,
-/// this is a "migration turn": spend the old note, create a new note with
-/// the same content but different tree position.
+/// replication), it notifies the VFS of the new address. In the intended
+/// design this is a "migration turn": spend the old note, create a new note
+/// with the same content but different tree position, proven like any other
+/// turn (with a content-preservation constraint `H(old_data) == H(new_data)`).
 ///
-/// The migration is proven like any other turn -- the Effect VM ensures
-/// the old commitment is consumed and a new one is created with the same
-/// content hash (custom constraint: `H(old_data) == H(new_data)`).
+/// Here, [`MigrationCallback::apply`] performs in-memory directory swaps
+/// and records local [`VfsEffect`]s — no turn, no proof.
 #[derive(Clone, Debug)]
 pub struct MigrationCallback {
     /// Old commitment being retired.

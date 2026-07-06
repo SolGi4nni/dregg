@@ -39,25 +39,31 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use dregg_types::{CellId, FederationId};
 
 // ---------------------------------------------------------------------------
-// Local types
+// Local STAND-IN types
 //
 // `CellId` and `FederationId` are the real workspace identifiers (from
 // `dregg-types`). `MemberId`, `GossipTopic`, `SturdyRef` and `CommitmentId`
-// are introduced here because no canonical home exists yet — see
-// `STORAGE-REFLECTIVITY-RBG-DFA-AUDIT.md` for the long-term plan to put
-// `SturdyRef` next to the captp `dregg://` URI machinery and `MemberId`
-// next to constitution membership in `dregg-federation`. They are kept
-// local rather than placeholder-stubbed so the `directory` module is
+// are crate-local STAND-INS: shape-alike newtypes introduced here because
+// no canonical home exists yet. They are NOT the captp / federation /
+// intent types they mirror, and nothing in this crate validates them
+// against those systems (membership here is a plain `HashSet` check, not
+// a constitution attestation). See `audits/STORAGE-REFLECTIVITY-RBG-DFA-AUDIT.md`
+// for the long-term plan to put `SturdyRef` next to the captp `dregg://`
+// URI machinery (`OcapnSturdyRef`) and `MemberId` next to constitution
+// membership in `dregg-federation`. They are kept as working local types
+// rather than opaque placeholders so the `directory` module is
 // self-consistent and immediately usable.
 // ---------------------------------------------------------------------------
 
-/// A dregg:// URI (federation + cell + swiss number), the directory-entry
-/// payload that points at a remote capability.
+/// STAND-IN for a dregg:// URI (federation + cell + swiss number), the
+/// directory-entry payload that points at a remote capability.
 ///
-/// Mirrors the `dregg://` URI / SturdyRef pattern carried by `captp` for
-/// cross-federation enlivening. Stored explicitly here so directory
-/// listings carry both the location (federation + cell) and the bearer
-/// secret (swiss number) needed to enliven the capability.
+/// Mirrors the shape of the `dregg://` URI / SturdyRef pattern carried by
+/// `captp` (`OcapnSturdyRef`) for cross-federation enlivening, but is a
+/// crate-local type: nothing here enlivens it or checks the swiss number.
+/// Stored explicitly so directory listings carry both the location
+/// (federation + cell) and the bearer secret (swiss number) a real
+/// enlivening would need.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SturdyRef {
     pub federation_id: FederationId,
@@ -78,7 +84,10 @@ pub struct GossipTopic(pub [u8; 32]);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CommitmentId(pub [u8; 32]);
 
-/// A member of a federation (identified by their public key hash).
+/// STAND-IN member identity (a public-key-hash newtype). Not the
+/// constitution membership identity from `dregg-federation`; membership
+/// checks against it in this crate are plain set lookups, not
+/// blocklace-attested constitution proofs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MemberId(pub [u8; 32]);
 
@@ -605,11 +614,13 @@ pub struct MatchPattern {
 /// Each `ScopedIntentPool` is bound to exactly one `DirectoryCell`. Intents posted here
 /// propagate only over the directory's gossip topic, ensuring only members see them.
 ///
-/// # Provable Scoping
+/// # Scoping (design intent: provable)
 ///
-/// Because the directory's membership set is known (derived from the constitution), we
-/// can PROVE "this intent was only visible to N participants": the membership proof
-/// at the relevant block height bounds the audience.
+/// The design intent is that because the directory's membership set is known
+/// (derived from the constitution), "this intent was only visible to N
+/// participants" becomes PROVABLE: a membership proof at the relevant block
+/// height bounds the audience. This crate computes the audience bound from
+/// its local membership set; it does not produce that attestation.
 pub struct ScopedIntentPool {
     /// The directory cell this pool is bound to.
     #[allow(
@@ -1038,11 +1049,13 @@ impl std::error::Error for DirectoryFactoryError {}
 /// gossip topic. When the reference is dropped (CapTP GC fires a DropRef), they
 /// unsubscribe. This ensures intents only propagate to authorized participants.
 ///
-/// # Provable Audience Bounding
+/// # Audience Bounding (design intent: provable)
 ///
-/// Because constitution membership is attested on the blocklace, we can produce a
-/// proof: "at block height H, the directory had N members. Therefore, this intent
-/// posted at height H was visible to at most N parties." This is the scoping guarantee.
+/// The design intent: because constitution membership is attested on the
+/// blocklace, one could produce a proof "at block height H, the directory had
+/// N members; therefore this intent posted at height H was visible to at most
+/// N parties." This manager tracks the in-memory subscription counts that
+/// bound the audience; it does not produce blocklace attestations.
 pub struct TopicSubscriptionManager {
     /// Maps gossip topics to the set of currently subscribed members.
     subscriptions: HashMap<GossipTopic, HashSet<MemberId>>,
@@ -1118,10 +1131,11 @@ impl TopicSubscriptionManager {
             .unwrap_or_default()
     }
 
-    /// Produce a proof statement: "at this moment, topic T has N subscribers."
+    /// Produce a claim: "at this moment, topic T has N subscribers."
     ///
-    /// In production, this would be attested on the blocklace (membership proof + height).
-    /// Here we return the audience bound as a provable claim.
+    /// In production this would be attested on the blocklace (membership
+    /// proof + height); here it is an unattested snapshot of this manager's
+    /// in-memory subscription state.
     pub fn audience_bound_claim(&self, topic: &GossipTopic) -> AudienceBoundClaim {
         let subscriber_ids: Vec<MemberId> = self
             .subscriptions
@@ -1138,8 +1152,9 @@ impl TopicSubscriptionManager {
 
 /// A claim about the audience bound for a gossip topic.
 ///
-/// This can be used to prove: "this intent was visible to at most N parties."
-/// In production, this would be attested on the blocklace with a membership proof.
+/// States: "this intent was visible to at most N parties." In production
+/// this would be attested on the blocklace with a membership proof; as
+/// produced here it is an unattested in-memory snapshot.
 #[derive(Clone, Debug)]
 pub struct AudienceBoundClaim {
     /// The gossip topic this claim is about.
@@ -1847,8 +1862,8 @@ mod tests {
 
         let claim = topic_mgr.audience_bound_claim(&compute_dir.gossip_topic);
         assert_eq!(claim.audience_size, 2);
-        // Provable: member(4) and member(5) NEVER saw this intent because they
-        // are not subscribers of this directory's gossip topic.
+        // Audience bound: member(4) and member(5) never saw this intent because
+        // they are not subscribers of this directory's gossip topic.
 
         // 8. Non-members of the compute directory cannot even list its contents
         assert!(compute_dir.list(member(4)).is_err());
