@@ -69,6 +69,10 @@
 
 pub mod toolkit;
 
+/// GPU execution tier types (class / bounds / meter / probe). Fail-closed until
+/// an owned GPU engine lands (a tier descriptor, not a live backend).
+pub mod gpu;
+
 /// The sandbox / capability grade a workload is authorized to run at.
 ///
 /// Maps onto the dregg execution-lease cap-grade. Ordered weakest → strongest

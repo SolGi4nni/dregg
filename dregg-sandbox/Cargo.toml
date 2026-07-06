@@ -38,5 +38,11 @@ wat = "1"
 # Typed run errors (same idiom as dregg-agent's credential wire errors).
 thiserror = { workspace = true }
 
+# Hand-rolled workload characterization bench (no criterion; `fn main`, fully
+# offline). Runs the real `run_source` hot path + the fail-closed-seam refusal.
+[[bench]]
+name = "workload_exec"
+harness = false
+
 [lints]
 workspace = true

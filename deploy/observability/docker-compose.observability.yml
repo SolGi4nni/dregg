@@ -1,0 +1,85 @@
+# dregg observability stack — Prometheus + Alertmanager + Grafana + exporters.
+#
+# Ported from the operated layer's observability compose and re-grounded on the
+# native deploy: the dregg nodes on this box bind their HTTP APIs to
+# 127.0.0.1:8420/8421/8422 (deploy/aws/dregg-node@.service), so every service
+# here runs with HOST networking and binds loopback — nothing in this stack is
+# reachable from off-box. Reach Grafana over an SSH tunnel:
+#
+#   ssh -L 3000:127.0.0.1:3000 <box>    # then http://localhost:3000
+#
+# Bring-up (on the box):
+#   cd /opt/dregg-observability   # or wherever this dir is rsync'd
+#   GRAFANA_ADMIN_PASSWORD=... docker compose -f docker-compose.observability.yml up -d
+#
+# GRAFANA_ADMIN_PASSWORD is REQUIRED (the `:?` refuses to boot without it) —
+# never bake a credential into this file.
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    network_mode: host
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+      - --web.listen-address=127.0.0.1:9090
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    network_mode: host
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --web.listen-address=127.0.0.1:9093
+      - --cluster.listen-address=
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+
+  # A request-logging webhook sink so every alert leaves an inspectable local
+  # record even before a real paging sink is wired:
+  #   docker logs dregg-obs-alert-sink-1
+  alert-sink:
+    image: mendhak/http-https-echo:33
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      HTTP_PORT: "8888"
+      HTTPS_PORT: "8889"
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      GF_SERVER_HTTP_ADDR: 127.0.0.1
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    network_mode: host
+    pid: host
+    restart: unless-stopped
+    command:
+      - --web.listen-address=127.0.0.1:9100
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:

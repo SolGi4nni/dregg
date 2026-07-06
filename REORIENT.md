@@ -163,7 +163,9 @@ The v13 VK epoch is packaged for ember's eyes-open call. Three human-gated items
 - **DreggNet ABANDONED, ported dregg-native** (`0f12286a3`/`0310c9e31`) — DreggNet is being deleted, its real
   parts ported into dregg-native crates (`dregg-sandbox` ← exec, `starbridge-apps/{org,billing,domains,guard,
   vat,edge-mandate}`, `dregg-umem`); breadstuffs references DreggNet **zero** times (`915d2acf6`). `dreggnet/`
-  still has ~301 tracked files in-tree (not fully removed) — a residual cleanup, not a dependency.
+  was a 301-file, 2.4G in-tree twin, now DELETED (2026-07-05) — a 4-lane gap audit (kept private) confirmed it
+  was never ahead of the private operated-layer repo and everything real is ported/superseded; genuine gaps
+  were drafted + wired into native crates. Residual cleanup DONE.
 
 ### IN-FLIGHT / HUMAN-GATED (what needs ember)
 

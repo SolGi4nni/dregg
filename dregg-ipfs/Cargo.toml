@@ -1,0 +1,29 @@
+# Ported dregg-native from the retired operated layer (the prior operated layer).
+# WIRING (not yet applied): add "dregg-ipfs" to the root workspace `members`.
+[package]
+name = "dregg-ipfs"
+description = "The IPFS bridge: a dregg blake3 content commitment IS an IPFS CIDv1 (blake3 multihash, raw codec), so a content-addressed dregg object/site/delta is pinned + fetched over IPFS and re-witnessed against the same address. The verified core is net-free — the IPFS transport is an injected seam (`IpfsClient`)."
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[lib]
+name = "dregg_ipfs"
+path = "src/lib.rs"
+
+# Deliberately dependency-light + platform-portable: the CID bridge + the
+# `IpfsClient` seam + `MockIpfs` carry NO network closure, so
+# `cargo test -p dregg-ipfs` runs the whole cell↔CID alignment in-process on any
+# host. The real Kubo client is a pure RPC formatter over an INJECTED `HttpPost`
+# transport (the caller supplies the HTTP; the bundled std-only `StdHttpPost` is
+# for a local daemon), so the verified core never pulls an HTTP/TLS stack.
+[dependencies]
+blake3 = "1"
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

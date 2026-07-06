@@ -28,6 +28,13 @@ dregg-auth = { path = "../../dregg-auth" }
 
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
+# Live DNS verification backend (off by default to keep the crate dependency-light;
+# `LiveDns` is a production `DnsResolver` instance, `MockDns` is the test one).
+hickory-resolver = { version = "0.25", default-features = false, features = ["system-config", "tokio"], optional = true }
+tokio = { version = "1", features = ["rt", "time"], optional = true }
+
+[features]
+live-dns = ["dep:hickory-resolver", "dep:tokio"]
 
 [lints]
 workspace = true

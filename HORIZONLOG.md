@@ -8,6 +8,31 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-05, Fable — join-with-a-doc + operated-layer-gap wiring LANDED)
+
+**join-with-a-doc** — LANDED (`b772205dd`): live membership survives restart
+(`node/src/committee_replay.rs` derives the committee from the chain), the ADMIT
+verb (`GET /api/membership`, `POST /membership/approve`, `approve-membership`
+CLI), `docs/guide/FEDERATION-JOIN.md`. The genesis re-roll is demoted to
+bootstrap + disaster-recovery. No follow-up; the re-roll trap is closed.
+
+**Operated-layer functionality-gap wiring** — a 4-lane gap audit (kept in the
+private operated-layer repo) compared the abandoned operated layer to the native
+crates; the operated cloud is DEAD-BY-DESIGN, the in-tree twin under `_attic/`
+was never ahead and is now DELETED. Auth/value/compute cores are ported/
+superseded. Genuine gaps were drafted as new files and are now WIRED + green:
+`webauth-core`/`agent-host`/`dregg-ipfs` (new workspace members),
+`hosted-durable::{settle_ledger,durable_settlement,pg_outbox}` (pg behind a `pg`
+feature — the dead `settle_meter_outbox` cfg now compiles), `billing::alerts`,
+`dregg-query::windows`, `dregg-sandbox::gpu` + workload bench,
+`storage::bucket_commitment`, `deos-view::source_health`, `http-serve::limits`,
+`domains::live` (`live-dns` feature), `deploy/observability` + `docs/ops`.
+Two mod-only ports still need CALL-SITE wiring: `source_health` into
+`console::ConsoleModel`, and `limits` into `http-serve::serve`. MISSING-BIG items
+(not drafted): live `PaySubmitter` over a native node; the multi-tenant load/soak
+harness; status subsystem; webauth forward-auth server; vat/machines gateway
+plane; content-addressed static-site hosting.
+
 ## NOW-STATE addition (2026-07-02, Fable — DreggNet-native redesign: 3 substrate work-items)
 - DreggNet is being rebuilt into a dregg APPLICATION (spec `~/dev/DreggNet/docs/DREGGNET-NATIVE-REDESIGN.md`).
   One project, no repo border — most of it is deleting DreggNet shadow and calling existing dregg libs. Three pieces

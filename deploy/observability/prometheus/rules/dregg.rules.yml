@@ -1,0 +1,238 @@
+# dregg alert rules — ported from the operated layer's rule set (the prior operated layer) and RE-GROUNDED on
+# the metrics the native node actually emits (node/src/metrics.rs). Severity
+# label `page` | `warn` routes in ../alertmanager/alertmanager.yml
+# (page = wake someone; warn = look soon).
+#
+# Dropped from the old set as dead-by-design here (their signal source was the
+# the prior operated layer ops json-exporter feed / blackbox probes over the operated fabric,
+# none of which exist natively): BackendDown, GatewayDown,
+# PostgresConnectionPressure, BridgeConservationBreach. If a bridge
+# conservation gauge ever lands on the node's /metrics, resurrect the breach
+# page — it was the single most important page in the old set.
+
+groups:
+  - name: dregg-consensus
+    rules:
+      # PAGE — rust<->lean finality divergence (a consensus-implementation bug).
+      # dregg_consensus_differential_divergence_total advances only when the
+      # blocklace differential check disagrees with the Lean model.
+      - alert: ConsensusDivergence
+        expr: max(dregg_consensus_differential_divergence_total) > 0
+        for: 0m
+        labels:
+          severity: page
+        annotations:
+          summary: "rust<->lean finality DIVERGENCE detected"
+          description: "dregg_consensus_differential_divergence_total > 0 — a consensus-implementation bug; investigate now. Runbook: docs/ops/INCIDENT-RESPONSE.md."
+
+      # PAGE — a node's /metrics is unscrapeable (the node is down or wedged).
+      - alert: NodeDown
+        expr: up{job="dregg-node"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "dregg node down ({{ $labels.node }})"
+          description: "the {{ $labels.node }} /metrics scrape has failed for 2m — the node is down or wedged. Runbook: docs/ops/INCIDENT-RESPONSE.md."
+
+      # PAGE — turns are pending but nothing is finalizing (consensus stalled).
+      # The native gate: work is queued (mempool non-empty) while attestations
+      # are flat. An idle chain never fires this (empty mempool).
+      - alert: NodeNotFinalizing
+        expr: >
+          (increase(dregg_consensus_attested_total[10m]) == 0)
+          and (dregg_mempool_pending > 0)
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "turns pending but consensus is NOT finalizing ({{ $labels.node }})"
+          description: "mempool has pending turns but dregg_consensus_attested_total has been flat for 10m — quorum unreachable or consensus stalled. Check every committee member's /status (quorum needs ALL of n=3). Runbook: docs/ops/INCIDENT-RESPONSE.md."
+
+      # WARN — submissions arrive but finalized height is flat.
+      - alert: HeightNotAdvancing
+        expr: >
+          (delta(dregg_block_height[30m]) == 0)
+          and (increase(dregg_turns_submitted_total[30m]) > 0)
+        for: 30m
+        labels:
+          severity: warn
+        annotations:
+          summary: "finalized height flat for 30m under real load ({{ $labels.node }})"
+          description: "turns were submitted in the last 30m but dregg_block_height did not advance — investigate a finality stall. Runbook: docs/ops/INCIDENT-RESPONSE.md."
+
+      # WARN/PAGE — inbound gossip streams being rejected at the edge. The
+      # operated layer added this after a live gossip storm took the edge down
+      # with zero dashboard visibility; the reject counter is emitted at every
+      # inbound stream-reject site (conn_limit / read_timeout / unknown_sender /
+      # bad_signature / decode_failed). A sustained moderate rate WARNs; a storm
+      # PAGEs before the box saturates.
+      - alert: GossipStreamRejectionRate
+        expr: sum(rate(dregg_gossip_stream_rejected_total[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warn
+        annotations:
+          summary: "gossip stream rejections elevated"
+          description: "inbound gossip streams rejected at >0.5/s for 5m — a misbehaving peer or the onset of a storm. By-reason breakdown: dregg · Security dashboard. Runbook: docs/ops/INCIDENT-RESPONSE.md."
+      - alert: GossipStreamStorm
+        expr: sum(rate(dregg_gossip_stream_rejected_total[5m])) > 5
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "GOSSIP STORM — inbound streams rejected at storm rate"
+          description: "inbound gossip stream rejections exceed 5/s for 2m — the gossip-storm signature. Shed/triage the offending peer(s) (dregg_gossip_stream_rejected_total{peer,reason}) before the box saturates. Runbook: docs/ops/INCIDENT-RESPONSE.md."
+
+      # WARN — tau-prefix-shift activity (reorg/prefix churn pressure signal).
+      - alert: TauPrefixShifts
+        expr: increase(dregg_tau_prefix_shifts_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "tau-prefix shifts observed"
+          description: "dregg_tau_prefix_shifts_total advanced in the last 15m — reorg/prefix churn; watch."
+
+      # WARN — a committee member has gone silent (no vote observed recently).
+      # dregg_validator_last_seen_timestamp_seconds{voter} is set on every vote.
+      - alert: ValidatorSilent
+        expr: (time() - dregg_validator_last_seen_timestamp_seconds) > 600
+        for: 5m
+        labels:
+          severity: warn
+        annotations:
+          summary: "validator {{ $labels.voter }} silent >10m"
+          description: "no finalization vote observed from {{ $labels.voter }} for over 10 minutes. At n=3 the threshold is 3 (f=0): ONE silent member halts finality. Runbook: docs/ops/INCIDENT-RESPONSE.md."
+
+  - name: dregg-security
+    rules:
+      # WARN — revocations advancing; a spike can indicate cap churn / response
+      # to compromise.
+      - alert: RevocationSpike
+        expr: increase(dregg_revocations_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "revocations observed"
+          description: "dregg_revocations_total advanced in the last 15m."
+
+      # WARN — a spike of refused turns (every TurnResult::Rejected). A burst
+      # can mean a probe of the gates or a client bug; the Security dashboard
+      # classifies it (auth vs cap vs other).
+      - alert: TurnRejectSpike
+        expr: increase(dregg_turns_rejected_total[10m]) > 20
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "turn-rejection spike ({{ $labels.node }})"
+          description: ">20 turns rejected in 10m — a gate probe or a misbehaving client; see the dregg · Security dashboard."
+
+      # WARN — authentication failures spiking (credential probe).
+      - alert: AuthFailureSpike
+        expr: increase(dregg_auth_failures_total[10m]) > 20
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "auth-failure spike ({{ $labels.node }})"
+          description: ">20 authentication failures in 10m — someone is probing credentials."
+
+      # WARN — capability refusals spiking (authority probe).
+      - alert: CapRefusalSpike
+        expr: increase(dregg_cap_refusals_total[10m]) > 20
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "capability-refusal spike ({{ $labels.node }})"
+          description: ">20 capability refusals in 10m — an authority probe or a mis-attenuated client."
+
+      # WARN — sandbox denials observed (confined code hit the walls).
+      - alert: SandboxDenials
+        expr: increase(dregg_sandbox_denials_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "sandbox denials observed ({{ $labels.node }})"
+          description: "dregg_sandbox_denials_total advanced — confined code attempted something outside its cage."
+
+  - name: dregg-proving
+    rules:
+      # WARN — async proving jobs failing.
+      - alert: AsyncProofFailures
+        expr: increase(dregg_async_proofs_total{result="failed"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "async proof failures ({{ $labels.node }})"
+          description: "dregg_async_proofs_total{result=\"failed\"} advanced in the last 15m — the proving pool is failing jobs."
+
+      # WARN — submitted proofs failing verification (invalid, not just error).
+      - alert: InvalidProofSubmissions
+        expr: increase(dregg_proofs_verified_total{result="invalid"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "invalid proofs submitted ({{ $labels.node }})"
+          description: "dregg_proofs_verified_total{result=\"invalid\"} advanced — someone submitted proofs that fail verification (a probe or a broken prover)."
+
+  - name: dregg-hosts
+    rules:
+      # WARN — a node_exporter host target is down (host unreachable / exporter
+      # crashed). Distinct from NodeDown (the dregg node scrape).
+      - alert: HostExporterDown
+        expr: up{job="node-exporter"} == 0
+        for: 5m
+        labels:
+          severity: warn
+        annotations:
+          summary: "host node_exporter target down ({{ $labels.instance }})"
+          description: "the node_exporter on {{ $labels.instance }} has been unreachable for 5m — the host may be down or the exporter crashed."
+
+      # PAGE path — a root/data filesystem is nearly full. >85% warns, >95% pages.
+      - alert: HostDiskAlmostFull
+        expr: >
+          100 * (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint!~"/host/.*"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint!~"/host/.*"})) > 85
+        for: 10m
+        labels:
+          severity: warn
+        annotations:
+          summary: "disk >85% on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: "filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is over 85% full for 10m. Runbook: docs/ops/INCIDENT-RESPONSE.md."
+      - alert: HostDiskCritical
+        expr: >
+          100 * (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint!~"/host/.*"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint!~"/host/.*"})) > 95
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "disk >95% on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: "filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is over 95% full — imminent write failure."
+
+      # WARN — sustained memory pressure (<10% available).
+      - alert: HostMemoryPressure
+        expr: 100 * (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 10
+        for: 10m
+        labels:
+          severity: warn
+        annotations:
+          summary: "memory <10% available on {{ $labels.instance }}"
+          description: "available memory has been under 10% for 10m on {{ $labels.instance }} — OOM risk."
+
+      # PAGE — the kernel OOM killer fired.
+      - alert: HostOOMKill
+        expr: increase(node_vmstat_oom_kill[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+        annotations:
+          summary: "OOM kill on {{ $labels.instance }}"
+          description: "the kernel OOM killer reaped a process on {{ $labels.instance }} in the last 5m."

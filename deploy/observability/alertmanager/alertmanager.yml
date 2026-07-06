@@ -1,0 +1,50 @@
+# dregg Alertmanager — routes fired rules to a notification sink (ported from
+# the operated layer's page/warn model: page = wake someone; warn = look soon).
+#
+# THIS FILE IS THE LOG-ONLY FALLBACK. Every alert lands in `alert-sink` (a
+# request-logger container): `docker logs dregg-obs-alert-sink-1` — a real,
+# inspectable webhook path with no external dependency. To page a human, point
+# the `page-log` receiver's webhook_configs url at a real HTTPS sink (a Discord
+# webhook relay, PagerDuty events v2, ntfy, ...) — and keep the alert-sink copy
+# alongside it so the local record never goes away.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default-log
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 1h
+  routes:
+    # page-severity alerts route to the page receiver.
+    - matchers:
+        - severity = "page"
+      receiver: page-log
+      repeat_interval: 10m   # re-fire pages every 10 minutes while unresolved
+    # warn-severity alerts route to the warn receiver.
+    - matchers:
+        - severity = "warn"
+      receiver: warn-log
+
+receivers:
+  - name: default-log
+    webhook_configs:
+      - url: http://127.0.0.1:8888/alert
+        send_resolved: true
+  - name: page-log
+    webhook_configs:
+      - url: http://127.0.0.1:8888/page
+        send_resolved: true
+        # Replace (or accompany) with the real HTTPS paging sink.
+  - name: warn-log
+    webhook_configs:
+      - url: http://127.0.0.1:8888/warn
+        send_resolved: true
+
+inhibit_rules:
+  # A node-down page suppresses the dependent consensus/height warns.
+  - source_matchers: [severity = "page", alertname = "NodeDown"]
+    target_matchers: [severity = "warn"]
+    equal: ['cluster']

@@ -1,0 +1,465 @@
+{
+  "uid": "dregg-consensus",
+  "title": "dregg \u00b7 Consensus",
+  "description": "Finality, committee liveness, and blocklace shape \u2014 the chain-is-healthy pane. Sources: node/src/metrics.rs on each scraped node.",
+  "tags": [
+    "dregg",
+    "consensus"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Finalized height",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "max by (node) (dregg_block_height)",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Federation peers connected",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "max by (node) (dregg_federation_peers_connected)",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "0 on a solo gateway is normal; 0 on a federation member means the mesh did not form.",
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 3,
+      "title": "rust<->lean divergence (MUST be 0)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "max(dregg_consensus_differential_divergence_total)",
+          "refId": "A",
+          "legendFormat": "divergence"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "dregg_consensus_differential_divergence_total \u2014 any nonzero value pages (ConsensusDivergence).",
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Mempool pending",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "max by (node) (dregg_mempool_pending)",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 5,
+      "title": "Blocklace depth / frontier",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "max(dregg_blocklace_depth)",
+          "refId": "A",
+          "legendFormat": "depth"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "max(dregg_blocklace_frontier)",
+          "refId": "B",
+          "legendFormat": "frontier"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 6,
+      "title": "Finalized height over time",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "dregg_block_height",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Finality latency (p50 / p95)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum(rate(dregg_consensus_finality_latency_seconds_bucket[5m])) by (le))",
+          "refId": "A",
+          "legendFormat": "p50"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(dregg_consensus_finality_latency_seconds_bucket[5m])) by (le))",
+          "refId": "B",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Attestation rate",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (node) (rate(dregg_consensus_attested_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Tau prefix shifts (reorg churn)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (node) (increase(dregg_tau_prefix_shifts_total[15m]))",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "Federation root age",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "max by (node) (dregg_federation_root_age_seconds)",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "Votes by validator",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (voter) (rate(dregg_validator_votes_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{voter}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "title": "Validator silence (s since last vote)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "time() - dregg_validator_last_seen_timestamp_seconds",
+          "refId": "A",
+          "legendFormat": "{{voter}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "ValidatorSilent warns at 600s. At n=3 the threshold is 3 (f=0): one silent member halts finality."
+    }
+  ]
+}

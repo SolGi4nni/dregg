@@ -18,9 +18,21 @@ license = { workspace = true }
 [lib]
 name = "hosted_durable"
 
+[features]
+# The Postgres transactional-outbox meter (exactly-once durable metering across
+# restart). Off by default: the settlement rail stands complete without a DB;
+# `pg` pulls sqlx for the outbox reader (`pg_outbox` / `settle::settle_meter_outbox`).
+pg = ["dep:sqlx"]
+
 [dependencies]
 anyhow = "1"
 serde = { workspace = true }
+# The write-ahead settle ledger + submitter journals serialize their records as
+# JSON lines (crash-durable append-only, human-inspectable).
+serde_json = { workspace = true }
+# The Postgres outbox store (DB-gated by the `pg` feature). No default provider
+# is forced on; the outbox writes through a caller-supplied pool.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
 # The proven substrate conservation move: `apply_conserving_transfer` runs each
 # settlement through `dregg_cell::CellState`'s signed-balance discipline
 # (`recTransfer_balanceSum_conserve`) on every build.

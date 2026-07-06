@@ -1,0 +1,220 @@
+{
+  "uid": "dregg-hosts",
+  "title": "dregg \u00b7 Host Overview",
+  "description": "node_exporter host health: CPU, memory, disk, network, OOM.",
+  "tags": [
+    "dregg",
+    "hosts"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "CPU busy %",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "100 * (1 - avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Memory available %",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "100 * (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "description": "HostMemoryPressure warns under 10% for 10m."
+    },
+    {
+      "id": 3,
+      "title": "Disk used % by mountpoint",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "100 * (1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\"}))",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "description": "HostDiskAlmostFull warns >85%; HostDiskCritical pages >95%."
+    },
+    {
+      "id": 4,
+      "title": "Load (1m)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "node_load1",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Network throughput",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (instance) (irate(node_network_receive_bytes_total{device!~\"lo\"}[5m]))",
+          "refId": "A",
+          "legendFormat": "rx {{instance}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (instance) (irate(node_network_transmit_bytes_total{device!~\"lo\"}[5m]))",
+          "refId": "B",
+          "legendFormat": "tx {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "OOM kills (5m increase)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "increase(node_vmstat_oom_kill[5m])",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "HostOOMKill pages on any increase."
+    }
+  ]
+}

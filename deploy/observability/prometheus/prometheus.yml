@@ -1,0 +1,71 @@
+# dregg deploy — Prometheus scrape config.
+#
+# Ported + re-grounded from the operated layer (the prior operated layer). Everything the prior operated layer-specific
+# (the ops json-exporter feed, the gateway /status probe, the persvati thermal
+# sidecar, the headscale-overlay targets) is dropped; what remains is exactly
+# what the NATIVE deploy exposes today:
+#
+#   - dregg-node /metrics (node/src/metrics.rs) on each local node:
+#       gateway :8420, node-2 :8421, node-3 :8422 (deploy/aws/*.env.example).
+#       All nodes bind 127.0.0.1 (deploy/aws/dregg-node@.service), so this
+#       stack runs with host networking on the same box (see
+#       ../docker-compose.observability.yml).
+#   - node_exporter :9100 for host disk/mem/OOM (run the container in the
+#     compose, or the systemd unit on bare metal).
+#
+# Series that drive the rules (all real at node/src/metrics.rs):
+#   dregg_block_height, dregg_mempool_pending, dregg_federation_peers_connected,
+#   dregg_consensus_attested_total, dregg_consensus_differential_divergence_total,
+#   dregg_tau_prefix_shifts_total, dregg_gossip_stream_rejected_total{peer,reason},
+#   dregg_turns_{submitted,executed,rejected}_total, dregg_proofs_verified_total{result},
+#   dregg_async_proofs_total{result}, dregg_auth_failures_total,
+#   dregg_cap_refusals_total, dregg_sandbox_denials_total, dregg_revocations_total,
+#   dregg_validator_votes_total{voter}, dregg_validator_last_seen_timestamp_seconds{voter}.
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  external_labels:
+    cluster: dregg-devnet
+    env: aws
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["127.0.0.1:9093"]
+
+scrape_configs:
+  # --- Prometheus self ------------------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+  # --- the dregg nodes: native Prometheus exposition ------------------------
+  # The gateway (public node behind Caddy) plus the federation members on the
+  # same box. Add/remove targets to match /etc/dregg/node-*.env.
+  - job_name: dregg-node
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:8420"]
+        labels:
+          node: gateway
+      - targets: ["127.0.0.1:8421"]
+        labels:
+          node: node-2
+      - targets: ["127.0.0.1:8422"]
+        labels:
+          node: node-3
+
+  # --- HOST metrics: node_exporter ------------------------------------------
+  # CPU / RAM / disk usage+IO / network / load / OOM. Add remote boxes (other
+  # federation operators' hosts) as further targets when they expose :9100.
+  - job_name: node-exporter
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
+        labels:
+          instance: aws-edge

@@ -72,6 +72,8 @@
 pub mod atomic;
 pub mod availability;
 pub mod blinded;
+/// Poseidon2 bucket content-root: leaf-fold + trustless `ObjectOpening` reads.
+pub mod bucket_commitment;
 pub mod commitment;
 pub mod content;
 pub mod dataflow;

@@ -1,0 +1,40 @@
+# `agent-host` — the SSH-attach hosting layer for hosted agent sessions, ported
+# dregg-native from the prior operated layer's `agent-host` (the abandoned operated layer). It maps
+# an SSH public key to a cap-account + budget + cap bundle and emits the OpenSSH
+# authorized_keys forced-command lines that drop a connecting user into THEIR
+# confined `dregg-agent attach` session. Pure-std + serde; depends on `dregg-agent`
+# only for the cap-bundle parser (enrol-time validation against the real grant
+# vocabulary) and the documented attach contract.
+#
+# WIRING (main loop): add "agent-host" to [workspace] members (+ default-members),
+# delete the [workspace] opt-out table below, and switch serde/serde_json/
+# thiserror/tempfile to `workspace = true`.
+[package]
+name = "agent-host"
+description = "The SSH-attach hosting layer: map an SSH public key to a cap-account + budget + cap bundle, and emit the OpenSSH authorized_keys forced-command lines that drop a connecting user into THEIR confined `dregg-agent attach` session — brain + tools server-side, every action cap-gated + budget-drawn + receipted, per-user isolated."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+authors = ["Dregg Contributors"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/emberian/dregg"
+publish = false
+
+[lib]
+name = "agent_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-hostctl"
+path = "src/bin/agent-hostctl.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive", "std"] }
+serde_json = { version = "1" }
+thiserror = { version = "2" }
+# The cap-bundle parser (validate an enrolled caps string against the real grant
+# vocabulary) + the attach session contract. The open-source agent runtime.
+dregg-agent = { path = "../dregg-agent" }
+
+[dev-dependencies]
+tempfile = { version = "3" }
