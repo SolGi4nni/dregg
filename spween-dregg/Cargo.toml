@@ -1,0 +1,40 @@
+# `spween-dregg` — the narrative core of on-chain interactive fiction.
+#
+# Binds spween's `EffectHandler` to a dregg WORLD-CELL so a spween story runs
+# verifiably on the substrate: each choice is a cap-bounded turn, the playthrough
+# is an un-retconnable receipt chain. Ships the spween→cell compiler v0 and the
+# collective-vote branch loop.
+#
+# A breadstuffs workspace member; builds via
+# `cargo build --manifest-path spween-dregg/Cargo.toml`, path-depending the flagship
+# substrate + the real `collective-choice` engine, and the sibling `spween` repo.
+[package]
+name = "spween-dregg"
+version = "0.1.0"
+edition = "2024"
+description = "spween (a narrative-choice DSL) running on a dregg world-cell: verifiable choose-your-own-adventure — each choice a turn, the playthrough an un-retconnable receipt chain — plus the spween→cell compiler and the collective-vote branch loop."
+
+[dependencies]
+# The story engine — the sibling repo. We implement ITS `EffectHandler` trait
+# over a dregg cell (never fork the engine; dregg is the backend behind the seam).
+spween = { path = "../../spween" }
+# The flagship dregg substrate: `EmbeddedExecutor` (one real verified executor +
+# ledger), `AppCipherclerk`/`make_action`, `Effect`/`Turn`/`TurnReceipt`, and the
+# re-exported `CellProgram`/`StateConstraint`/`TransitionCase`/`TransitionGuard`
+# the gate-lowering compiles conditions into.
+dregg-app-framework = { path = "../app-framework" }
+# The cell model itself (`Cell`, `Permissions`) for birthing the world-cell.
+dregg-cell = { path = "../cell" }
+# THE REAL voting engine — the canonical cap-bounded cell-backed `VoteEngine`
+# (WriteOnce ballots, Monotonic tallies, the polis quorum `AffineLe`, non-amplifying
+# Mandate delegation). The collective-CYOA branch loop drives THIS, so the crowd-vote
+# that picks a story branch is the SAME engine that governs a federation — no stub.
+collective-choice = { path = "../collective-choice" }
+blake3 = "1"
+# Deterministic world identity (`AgentCipherclerk::from_key_bytes`) so a
+# playthrough re-verifies against a freshly re-deployed world-cell.
+zeroize = "1"
+
+# A workspace MEMBER of the breadstuffs root (registered in `members`, not
+# `default-members` — it is a heavy narrative demo). The root `[workspace]` +
+# `[patch]` tables apply; no standalone `[workspace]`/`[patch]` here.
