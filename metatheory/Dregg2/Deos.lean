@@ -178,6 +178,11 @@ import Dregg2.Deos.CarrierBoundFloorGadget
 -- #assert_all_clean; hbind dischargeable by the live PI-45 caveat pin.
 import Dregg2.Deos.BareCohortFloorRefuse
 import Dregg2.Deos.BareCohortFloorRefuseDeployed
+-- BareCohortFloorRefuseWide: the DEPLOYED-DEFAULT lift — the refuse aux blocks ride PAST the WIDE member
+-- width (past the two 13×8 wide carriers), so the capacity-floor refuse rides the WIDE / WELDED bare
+-- cohort the deployed light client actually resolves (verify_effect_vm_rotated_with_cutover), not only
+-- the V3 1-felt cohort. declared_capacity_unsat_wide (tags 17/18/19), #assert_all_clean.
+import Dregg2.Deos.BareCohortFloorRefuseWide
 -- The HATCHERY abstraction-mint house-capacity, GROUNDED (the LAST of the six — the house COMPLETE):
 -- a user-defined verified KIND's declared invariant IS enforced, forever, and its attestation is REAL.
 -- Enforcement is the SAME `CellProgram::evaluate_with_meta` gate (`evalStep`), a violating turn →
