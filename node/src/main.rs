@@ -10,6 +10,7 @@ mod api;
 mod blocklace_sync;
 mod catchup;
 mod channels_service;
+mod committee_replay;
 // THE DEOS-HOST (opt-in `deos-host` feature): the node hosts a headless userspace
 // deos-js "private server" program. Pulls in mozjs via deos-js, so it is feature-gated.
 pub mod config;
@@ -518,6 +519,27 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+
+    /// Approve a pending membership proposal on this RUNNING node — the ADMIT
+    /// half of the live epoch transition (`propose-epoch-transition` / a
+    /// joiner's auto-proposed Join registers it; each committee operator runs
+    /// THIS until the current committee's quorum is reached). Applies live: no
+    /// genesis re-roll, no restart, no federation_id change. List pending
+    /// proposals: `curl -s localhost:8420/api/membership`.
+    ApproveMembership {
+        /// The 64-hex proposal block id (from GET /api/membership).
+        #[arg(long)]
+        proposal: String,
+        /// Running node's HTTP API port.
+        #[arg(long, default_value = "8420")]
+        port: u16,
+        /// Bearer token for the node API (omit on a loopback node with no passphrase).
+        #[arg(long)]
+        token: Option<String>,
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[tokio::main]
@@ -692,6 +714,19 @@ async fn main() {
             if let Err(e) =
                 operator_join::propose_epoch_transition(port, token.as_deref(), &add, &remove, json)
                     .await
+            {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::ApproveMembership {
+            proposal,
+            port,
+            token,
+            json,
+        } => {
+            if let Err(e) =
+                operator_join::approve_membership(port, token.as_deref(), &proposal, json).await
             {
                 eprintln!("error: {e}");
                 std::process::exit(1);
@@ -1028,6 +1063,60 @@ async fn run_node(
                 failed = stats.failed,
                 "starbridge devnet backfill seeding complete (default cell set)"
             );
+        }
+    }
+
+    // Derive the committee from the persisted chain BEFORE the recovery anchor
+    // runs (`committee_replay`): a live epoch transition amends the committee
+    // ON-CHAIN without changing the `federation_id`, so (a) the signed-anchor
+    // check below must accept an attested-root quorum from any committee the
+    // constitution passed through, and (b) the consensus boot must seed the
+    // AMENDED constitution — not genesis — or a restart silently reverts the
+    // membership (the re-roll trap). A lace with no membership blocks makes
+    // this a cheap no-op.
+    {
+        let mut s = node_state.write().await;
+        let sk_bytes = s.cclerk.gossip_signing_key().to_bytes();
+        let sk = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
+        let self_key: [u8; 32] = sk.verifying_key().to_bytes();
+        let genesis_committee: Vec<[u8; 32]> = if s.known_federation_keys.is_empty() {
+            vec![self_key]
+        } else {
+            s.known_federation_keys.iter().map(|k| k.0).collect()
+        };
+        let q = dregg_blocklace::supermajority_threshold(genesis_committee.len());
+        match s.store.load_blocklace(sk, q) {
+            Ok(Some((lace, _))) => {
+                let (derived, cm) = committee_replay::derive_from_lace(
+                    &lace,
+                    &genesis_committee,
+                    blocklace_wave_timeout_ms,
+                );
+                if derived.amendments > 0 {
+                    info!(
+                        amendments = derived.amendments,
+                        version = derived.version,
+                        participants = derived.participants.len(),
+                        threshold = derived.threshold,
+                        "committee derived from chain: finalized membership \
+                         amendments survive this restart (no genesis re-roll)"
+                    );
+                    s.derived_committee_history = derived
+                        .history
+                        .iter()
+                        .map(|c| c.iter().map(|k| dregg_types::PublicKey(*k)).collect())
+                        .collect();
+                }
+                s.boot_constitution = Some(cm);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "could not load the persisted lace for boot committee derivation — \
+                     falling back to the configured (genesis) committee"
+                );
+            }
         }
     }
 

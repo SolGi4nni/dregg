@@ -1570,6 +1570,7 @@ pub fn router_with_cors(
         .route("/federation/roots", get(get_federation_roots))
         .route("/api/blocks", get(get_federation_roots))
         .route("/api/federations", get(get_federations))
+        .route("/api/membership", get(get_membership))
         .route("/api/cells", get(get_all_cells))
         .route("/api/cell/{id}", get(get_cell_detail))
         .route("/api/node/cells/{id}", get(get_cell_detail))
@@ -1862,6 +1863,11 @@ pub fn router_with_cors(
             post(post_create_from_factory),
         )
         .route("/api/programs/deploy", post(post_deploy_program))
+        // Operator-local by convention (no /api/ alias — the gateway forwards
+        // only /api/-prefixed routes): cast THIS node's approval vote for a
+        // pending membership proposal. The production admit verb of the
+        // join-with-a-doc flow (docs/guide/FEDERATION-JOIN.md).
+        .route("/membership/approve", post(post_membership_approve))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     public_routes
@@ -4916,6 +4922,112 @@ async fn get_federation_roots(State(state): State<NodeState>) -> Json<Vec<Attest
 async fn get_federations(State(state): State<NodeState>) -> Json<Vec<FederationInfo>> {
     let s = state.read().await;
     Json(federation_infos(&s))
+}
+
+/// GET /api/membership — the live committee + every registered membership
+/// proposal with its tally.
+///
+/// The read side of the join-with-a-doc flow (docs/guide/FEDERATION-JOIN.md):
+/// a joining candidate polls this to watch its Join proposal gather
+/// approvals; committee operators read the pending list to know what to
+/// approve (`POST /membership/approve`). Committee composition and proposal
+/// tallies are chain data — safe to serve publicly. The `federation_id` stays
+/// STABLE across amendments (the live epoch transition advances the committee
+/// without re-pointing bots/bridges/light clients).
+async fn get_membership(State(state): State<NodeState>) -> Json<serde_json::Value> {
+    let (federation_id, committee_epoch) = {
+        let s = state.read().await;
+        (dregg_types::hex_encode(&s.federation_id), s.committee_epoch)
+    };
+    let Some(handle) = state.blocklace().await else {
+        return Json(serde_json::json!({
+            "federation_id": federation_id,
+            "committee_epoch": committee_epoch,
+            "consensus": "not-running",
+        }));
+    };
+    let snap = handle.membership_snapshot().await;
+    use dregg_blocklace::constitution::MembershipProposal as MP;
+    let proposals: Vec<serde_json::Value> = snap
+        .proposals
+        .iter()
+        .map(|p| {
+            let (kind, node) = match &p.proposal {
+                MP::Join { node_key, .. } => ("join", Some(dregg_types::hex_encode(node_key))),
+                MP::Leave { node_key, .. } => ("leave", Some(dregg_types::hex_encode(node_key))),
+                MP::AmendThreshold { .. } => ("amend-threshold", None),
+                MP::AmendRoutes { .. } => ("amend-routes", None),
+            };
+            serde_json::json!({
+                "proposal_block": dregg_types::hex_encode(&p.proposal_block.0),
+                "kind": kind,
+                "node": node,
+                "approvals": p.approvals,
+                "rejections": p.rejections,
+                "required": p.required,
+                "applied": p.applied,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "federation_id": federation_id,
+        "committee_epoch": committee_epoch,
+        "participants": snap.participants.iter().map(|k| dregg_types::hex_encode(k)).collect::<Vec<_>>(),
+        "threshold": snap.threshold,
+        "constitution_version": snap.version,
+        "membership_frozen": snap.frozen,
+        "self": {
+            "key": dregg_types::hex_encode(&snap.self_key),
+            "participant": snap.self_is_participant,
+        },
+        "proposals": proposals,
+    }))
+}
+
+/// Request body for `POST /membership/approve`.
+#[derive(serde::Deserialize)]
+struct MembershipApproveRequest {
+    /// Hex-encoded 32-byte block id of the membership proposal to approve
+    /// (from `GET /api/membership` → `proposals[].proposal_block`).
+    proposal_block: String,
+}
+
+/// POST /membership/approve — cast THIS node's approval vote for a pending
+/// membership proposal (operator-local: bearer-gated, no /api/ alias).
+///
+/// The production admit verb: when enough CURRENT participants run this, the
+/// proposal passes quorum on-chain and the committee advances via the live
+/// epoch transition — no genesis re-roll, no restart, `federation_id`
+/// unchanged. Refused when this node is not a committee participant, or the
+/// proposal is unknown/already applied.
+async fn post_membership_approve(
+    State(state): State<NodeState>,
+    Json(req): Json<MembershipApproveRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(bytes) = hex_decode_32(&req.proposal_block) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "proposal_block must be 64 hex chars (32 bytes)"})),
+        );
+    };
+    let Some(handle) = state.blocklace().await else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "consensus is not running on this node"})),
+        );
+    };
+    let proposal_block = dregg_blocklace::finality::BlockId(bytes);
+    match handle.approve_membership(&state, proposal_block).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "approved": req.proposal_block,
+                "note": "approval vote block created and disseminated; the amendment applies \
+                         when a quorum of current participants has approved",
+            })),
+        ),
+        Err(e) => (StatusCode::CONFLICT, Json(serde_json::json!({"error": e}))),
+    }
 }
 
 /// GET /api/blocklace/blocks — list the live blocklace DAG.

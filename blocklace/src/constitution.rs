@@ -316,6 +316,29 @@ impl VoteTracker {
         self.approval_count(&vote.proposal_block)
     }
 
+    /// Every registered proposal with its live tally:
+    /// `(proposal_block, proposal, approvals, rejections, applied)`.
+    /// Backs the operator-facing membership surface (`GET /api/membership`);
+    /// `applied` marks proposals that already amended the constitution (kept
+    /// registered for idempotent re-processing, no longer pending).
+    pub fn proposal_tallies(&self) -> Vec<(BlockId, MembershipProposal, usize, usize, bool)> {
+        let mut v: Vec<(BlockId, MembershipProposal, usize, usize, bool)> = self
+            .proposals
+            .iter()
+            .map(|(pb, p)| {
+                (
+                    *pb,
+                    p.clone(),
+                    self.approval_count(pb),
+                    self.rejection_count(pb),
+                    self.applied.contains(pb),
+                )
+            })
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    }
+
     /// Get the number of approvals for a proposal.
     pub fn approval_count(&self, proposal_block: &BlockId) -> usize {
         self.approvals

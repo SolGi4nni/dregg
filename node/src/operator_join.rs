@@ -13,9 +13,19 @@
 //!   from the same committee;
 //! * the BFT `threshold` is the strict blocklace supermajority
 //!   [`dregg_federation::quorum_threshold`] (`⌊2n/3⌋ + 1`): n=1→1, n=2→2,
-//!   **n=3→3**, n=4→3, n=5→4. Adding a member is therefore a *coordinated
-//!   re-roll* — it changes the `federation_id`, so the new committee descriptor
-//!   must be distributed to every node and the nodes restarted into full mode.
+//!   **n=3→3**, n=4→3, n=5→4.
+//!
+//! **The PRIMARY add path is LIVE, not a re-roll** (docs/guide/
+//! FEDERATION-JOIN.md): a candidate's Join proposal goes on-chain
+//! (`join` auto-proposes; `propose-epoch-transition` proposes on their
+//! behalf), each committee operator admits with [`approve_membership`]
+//! (`approve-membership` / `POST /membership/approve`), and at quorum the
+//! committee advances live — chain continues, `federation_id` unchanged,
+//! nothing restarts, and the amendment survives reboots
+//! (`committee_replay::derive_from_lace`). The [`add_validator`] re-roll
+//! below CHANGES the `federation_id` (new descriptor to every node +
+//! coordinated restart) and remains only for bootstrapping a brand-new
+//! federation and for disaster recovery.
 //!
 //! The three verbs:
 //!
@@ -465,6 +475,53 @@ pub async fn propose_epoch_transition(
     println!("committee ratifies it through finality — the chain keeps advancing, no");
     println!("federation_id change, no restart, no bot re-point. A new validator then");
     println!("joins live with: dregg-node join --bootstrap <a-live-peer>:9420");
+    Ok(())
+}
+
+/// Approve a pending membership proposal on a RUNNING node
+/// (`POST /membership/approve`) — the ADMIT half of the live epoch transition.
+///
+/// `propose-epoch-transition` (or a joiner's auto-proposed Join) registers the
+/// proposal on-chain; each committee operator runs THIS against their own node
+/// until the CURRENT committee's quorum is reached, at which point the
+/// amendment applies live — no genesis re-roll, no restart, `federation_id`
+/// unchanged. Pending proposals + their block ids: `GET /api/membership`.
+pub async fn approve_membership(
+    port: u16,
+    token: Option<&str>,
+    proposal_block: &str,
+    json_out: bool,
+) -> Result<(), String> {
+    let pb = proposal_block.trim();
+    if pb.len() != 64 || !pb.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "--proposal {pb}: must be the 64-hex proposal block id \
+             (list pending proposals with GET /api/membership)"
+        ));
+    }
+    let body = serde_json::json!({ "proposal_block": pb }).to_string();
+    let (status, resp_body) =
+        http_post_localhost(port, "/membership/approve", token, &body).await?;
+
+    if json_out {
+        println!("{resp_body}");
+        if !(200..300).contains(&status) {
+            return Err(format!("node returned HTTP {status}"));
+        }
+        return Ok(());
+    }
+
+    if !(200..300).contains(&status) {
+        return Err(format!(
+            "node returned HTTP {status}: {resp_body}\n  \
+             (a 401/403 means the node has a passphrase — pass --token <bearer>; a 409 \
+             carries the node's reason: not a participant / unknown / already applied.)"
+        ));
+    }
+
+    println!("Approval vote cast and disseminated (port {port}).");
+    println!("The amendment APPLIES once a quorum of the CURRENT committee has approved —");
+    println!("watch it land: curl -s localhost:{port}/api/membership");
     Ok(())
 }
 
