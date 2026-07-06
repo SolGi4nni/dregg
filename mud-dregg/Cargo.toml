@@ -1,0 +1,36 @@
+[package]
+name = "mud-dregg"
+version = "0.1.0"
+edition = "2021"
+description = "A multiplayer MUD (multi-user dungeon) on dregg where the divergent player-timelines ARE the proven distributed-time-travel config lattice. Rooms are cells, a player command (go/take/say) is a cap-bounded verifiable turn (nobody can forge another player's move — an ungranted action is a real `CapabilityNotHeld` executor refusal), and players FORK the world into divergent timelines, explore, and STITCH back through the settlement-sound branch-and-stitch gate: disjoint edits merge clean, and a genuine conflict (two players mutate the same entity) is a `#`-conflict REFUSED fail-closed — never a silent last-writer-wins. The config-lattice / Settlement Soundness, made playable. Composes `starbridge_v2::branch_stitch_session::BranchStitchSession` + the room/entity/turn substrate over `embedded-executor` only (gpui-free, no GPU)."
+
+# Standalone crate: its own `[workspace]` (below) detaches it from the breadstuffs
+# root workspace (whose `members` list is explicit and does not include it), so
+# `cargo build --manifest-path mud-dregg/Cargo.toml` verifies it in isolation while
+# still resolving the `path` dependencies into the sibling protocol crates.
+[dependencies]
+starbridge-v2 = { path = "../starbridge-v2", default-features = false, features = ["embedded-executor"] }
+dregg-cell = { path = "../cell", default-features = false }
+dregg-turn = { path = "../turn" }
+
+[[bin]]
+name = "mud-dregg"
+path = "src/main.rs"
+
+[workspace]
+
+# This crate is its own workspace root, so it must carry the same source patches the
+# breadstuffs root workspace applies (a standalone workspace does NOT inherit the root's
+# `[patch]`). These mirror `../Cargo.toml` verbatim, with the plonky3-recursion relative paths
+# re-based one level deeper (`../plonky3-recursion` from the root → `../../plonky3-recursion`
+# from here — both resolve to `/Users/ember/dev/plonky3-recursion`). Unused entries only warn.
+[patch.crates-io]
+# ark-serialize fork — the `serde_with` feature `dregg-hints` needs (emberian/algebra).
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
