@@ -231,6 +231,19 @@ fn security_property_manifest() -> Vec<Row> {
                 bites: "halfopen_theft_unreachable",
             },
         },
+        // ── DECO payment-attestation UNFORGEABILITY (survey gap #1, rung 4) ──────────────────────────
+        // Crypto/DecoUnforgeable.lean: DECO authenticity PROVEN unforgeable-under-standard-assumptions.
+        // The reduction forgery_yields_break turns a forged attestation into a concrete ed25519
+        // SigForgery / HMAC MacForgery — the standard floor beneath zkOracle's `authentic` leg. fires —
+        // a genuine reference attestation IS Authenticated + verifies; bites — a forge kernel admits a
+        // concrete AttForgery whose reduction extracts a genuine SigForgery.
+        Row {
+            theorem: "deco_attestation_unforgeable @ Crypto/DecoUnforgeable.lean",
+            tooth: HasBitingTooth {
+                fires: "attestation_fires",
+                bites: "attestation_bites",
+            },
+        },
     ]
 }
 

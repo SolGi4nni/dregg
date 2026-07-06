@@ -51,8 +51,26 @@ which sweeps every `@[load_bearing_keystone]` and throws at elaboration if a tag
 | 19 | `hatchery_binding_from_fold` (Circuit/HatcheryBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_contract_unsat_demo` |
 | 20 | `deco_binding_from_fold` (Circuit/DecoBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_payment_hash_unsat_demo` |
 | 21 | `sealedescrow_no_theft` (Deos/SealedEscrow.lean:753) | HAS-BITING-TOOTH | `honest_swap_reachable` | `halfopen_theft_unreachable` |
+| 22 | `deco_attestation_unforgeable` (Crypto/DecoUnforgeable.lean) | HAS-BITING-TOOTH | `attestation_fires` | `attestation_bites` |
 
-**Tally: 21 rows / 21 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING** (after Pillar 4b + escrow no-theft).
+**Tally: 22 rows / 22 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING** (after Pillar 4b + escrow no-theft + DECO attestation unforgeability).
+
+**Row 22 — DECO payment-attestation unforgeability (survey gap #1, closed — rung 4).** DECO's
+authenticity was ASSUMED, not proven (`SECURITY-PROPERTY-MAP.md:192`): `deco_authenticates_payment`
+is a soundness *refinement* (accept ⟹ facts hold, given the §8 carriers), with no proof that a payment
+*cannot be forged*. `deco_attestation_unforgeable` (`Crypto/DecoUnforgeable.lean`) is the rung-4 world
+property: modelling the ideal functionality `F_attestation` (on `F_LC`) and the game `AttForgery`/
+`AttUnforgeable`, the reduction `forgery_yields_break` turns any forged attestation of a session that
+did NOT happen into a CONCRETE ed25519 `SigForgery` OR HMAC `MacForgery` (the binding leg
+`deco_binding_forgery_to_collision` reduces to a Poseidon2 collision). The floor is EXACTLY
+`deco_binds_payment`'s trust base — ed25519 EUF-CMA + HMAC + Poseidon2 CR + STARK extractability — all
+standard, NO dregg-specific parked assumption. **fires** — `attestation_fires`: a genuine reference
+attestation IS `decoAuthenticated` (F_attestation would emit) and verifies. **bites** —
+`attestation_bites` (`Forge` namespace): a DECO forge-kernel over which a concrete `AttForgery` exists
+and the reduction extracts a genuine ed25519 `SigForgery` (sharpened by `attestation_bites_is_sig_forgery`).
+Both `#assert_axioms`-clean. Registered as `attestationDynamics` / `deco_attestation_via_schema` in the
+`governed_holds` schema (`Metatheory/Adversary/Instances.lean` §3.9), composing with — distinct from —
+`decoCarrierDynamics` (the fold-backing): unforgeability ∘ backing = the mint credited real money.
 
 **Row 21 — SealedEscrow's economic no-theft (survey gap #3, closed).** SealedEscrow (escrow capacity,
 tag 17) previously had only refinements (one-shot replay, gate-refinement, commitment-binding) — no

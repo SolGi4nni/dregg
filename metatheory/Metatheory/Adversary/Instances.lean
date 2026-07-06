@@ -74,6 +74,7 @@ import Dregg2.Circuit.DslBindingFromFold
 import Dregg2.Circuit.BridgeBindingFromFold
 import Dregg2.Circuit.HatcheryBindingFromFold
 import Dregg2.Circuit.DecoBindingFromFold
+import Dregg2.Crypto.DecoUnforgeable
 
 namespace Metatheory.Adversary
 
@@ -513,6 +514,64 @@ theorem decoCarrier_bites (E : DecoEngine) (hash : List ℤ → ℤ) (enc : E.Pr
     ¬ (decoCarrierDynamics E hash enc LeafSat hfri hCR hfactor henc).invariant f :=
   ⟨Dregg2.Circuit.DecoBindingFromFold.forged_unsat hfri hforge, fun h => hforge h.1⟩
 
+/-! ### §3.9 — DECO ATTESTATION UNFORGEABILITY (rung 4: the crypto floor BENEATH the payment carrier).
+
+`decoCarrierDynamics` (§3.8) binds "the mint's published `payment_hash` is BACKED by a verifying DECO
+sub-proof" (the fold-binding). This instance is the DISTINCT, COMPOSING leg beneath it: "a verifying
+DECO sub-proof MEANS a genuine Stripe session" — the unforgeability of the attestation itself
+(`Dregg2/Crypto/DecoUnforgeable.lean`). Composed: attestation-unforgeability ∘ carrier-backing = the
+mint credited REAL money (the two legs `DecoBackingAttack.deployed_admits_unbacked_deco` shows are
+BOTH needed). This supplies the second.
+
+`accept` = the deployed DECO verifier accepts the presented `(stmt, proof)`; `invariant` =
+`decoAuthenticated` (F_attestation would emit — a genuine Stripe-authenticated non-zero payment);
+`holds` = `deco_attestation_realizes` (the §8 carriers are FIXED at instance build, exactly as
+`circuitDynamics`'s crypto floors are — not per-control). -/
+
+open Dregg2.Crypto.Deco (Statement DecoVerifierKernel)
+open Dregg2.Crypto.PortalFloor (SignatureKernel MacKernelE)
+open Dregg2.Crypto.DecoUnforgeable (decoAuthenticated deco_attestation_realizes)
+
+/-- **`attestationDynamics`** — DECO attestation unforgeability as a `GovernedDynamics`. Control = the
+`(stmt, proof)` the prover presents; `holds` IS `deco_attestation_realizes`. A NEW instance beside
+`decoCarrierDynamics`, not a rewrite. -/
+def attestationDynamics {Dg Proof : Type}
+    [KD : DecoVerifierKernel Dg Proof] (SK : SignatureKernel Dg Dg Dg) (MK : MacKernelE Dg Dg Dg)
+    (hsigEq : KD.sigVerify = SK.sigVerify) (hmacEq : KD.macVerify = MK.verifyTag)
+    (hext : KD.extractable) (hsig : SK.unforgeable) (hmac : MK.unforgeable) :
+    GovernedDynamics where
+  Control := Statement Dg × Proof
+  Outcome := Statement Dg × Proof
+  run c := c
+  accept c := KD.verify c.1 c.2 = true
+  invariant c := decoAuthenticated SK MK KD.compress KD.encode c.1
+  holds c h := deco_attestation_realizes (KD := KD) SK MK hsigEq hmacEq hext hsig hmac c.1 c.2 h
+
+/-- **DECO ATTESTATION UNFORGEABILITY, via the ONE lemma.** An accepting DECO proof means a genuine
+Stripe session backs the statement — as an application of `governed_holds` to `attestationDynamics`.
+This IS `deco_attestation_realizes`, factored through the shared schema. -/
+theorem deco_attestation_via_schema {Dg Proof : Type}
+    [KD : DecoVerifierKernel Dg Proof] (SK : SignatureKernel Dg Dg Dg) (MK : MacKernelE Dg Dg Dg)
+    (hsigEq : KD.sigVerify = SK.sigVerify) (hmacEq : KD.macVerify = MK.verifyTag)
+    (hext : KD.extractable) (hsig : SK.unforgeable) (hmac : MK.unforgeable)
+    (stmt : Statement Dg) (proof : Proof) (hacc : KD.verify stmt proof = true) :
+    decoAuthenticated SK MK KD.compress KD.encode stmt :=
+  governed_holds (attestationDynamics SK MK hsigEq hmacEq hext hsig hmac) (stmt, proof) hacc
+
+/-- **The instance's `invariant` genuinely CONSTRAINS** (schema-level anti-vacuity, distinct from the
+`decoCarrier_bites` fold tooth): at the forge kernel the ground truth is FALSE — `decoAuthenticated`
+does NOT hold for the sample, so the invariant is not `True`. The forgery-side teeth
+(`Forge.attestation_bites` / `Forge.attestation_bites_is_sig_forgery`) live in `DecoUnforgeable`; a
+broken floor cannot even build `attestationDynamics` (its `holds` demands the carriers hold — the
+`GovernedDynamics` anti-vacuity discipline). -/
+theorem attestation_invariant_bites :
+    ¬ decoAuthenticated Dregg2.Crypto.DecoUnforgeable.Forge.forgeSigKernel
+        Dregg2.Crypto.Deco.Reference.refMacKernel
+        Dregg2.Crypto.DecoUnforgeable.Forge.forgeDeco.compress
+        Dregg2.Crypto.DecoUnforgeable.Forge.forgeDeco.encode
+        Dregg2.Crypto.Deco.Reference.sampleStmt :=
+  Dregg2.Crypto.DecoUnforgeable.Forge.forge_attestation_forgery.2
+
 /-! ## §4. Instance — THE COMPOSED APEX (`AssuranceCase.deployed_system_secure`).
 
 The marquee: the whole deployed 5-guarantee theorem (A non-amplification, B conservation, C
@@ -698,6 +757,8 @@ theorem assurance_case_governed {State Action : Type}
 #assert_axioms hatcheryCarrier_bites
 #assert_axioms deco_backing_via_schema
 #assert_axioms decoCarrier_bites
+#assert_axioms deco_attestation_via_schema
+#assert_axioms attestation_invariant_bites
 #assert_axioms deployed_system_secure_via_schema
 #assert_axioms assurance_case_governed
 

@@ -1,5 +1,37 @@
 # DECO-as-UC — the climb from "authenticity ASSUMED" to "authenticity PROVEN unforgeable"
 
+> **BUILD STATUS (rung a — game-based unforgeability): DONE.** Rung (a) is built and green in
+> `metatheory/Dregg2/Crypto/DecoUnforgeable.lean` (`#assert_axioms`-clean, ⊆ `{propext,
+> Classical.choice, Quot.sound}`):
+> - `F_attestation` (ideal functionality, on `F_LC`) + `decoAuthenticated` (the ground truth =
+>   `deco_authenticates_payment`'s conclusion) + `AttReal`/`AttRealizes`.
+> - the game `AttForgery`/`AttUnforgeable` (`attUnforgeable_iff_attRealizes`); the reduction
+>   `forgery_yields_break` (a forged attestation ⟹ a concrete ed25519 `SigForgery` / HMAC
+>   `MacForgery`) ⟹ `deco_attestation_unforgeable` / `deco_attestation_unforgeable_of_carriers`; the
+>   binding leg `deco_binding_forgery_to_collision` / `deco_binding_unforgeable` (Poseidon2 CR).
+> - `deco_attestation_realizes` (`deco_authenticates_payment` re-read as `AttRealizes`).
+> - `governed_holds` instance `attestationDynamics` + `deco_attestation_via_schema` in
+>   `metatheory/Metatheory/Adversary/Instances.lean` §3.9 (composes with, distinct from,
+>   `decoCarrierDynamics`).
+> - both-polarity non-vacuity `attestation_fires` / `Forge.attestation_bites`
+>   (+ `attestation_bites_is_sig_forgery`, `forge_not_realizes`); manifest row 22 in
+>   `docs/audit/NON-VACUITY-MANIFEST.md` + `circuit/tests/security_property_nonvacuity_gate.rs`.
+> - **FLOOR: STANDARD-ONLY.** The reduction closes to ed25519 EUF-CMA + HMAC + Poseidon2 CR + STARK
+>   extractability — EXACTLY the `deco_binds_payment` trust base. NO dregg-specific parked assumption
+>   was found (the R4 hunt came up empty, as §4 predicted).
+>
+> **⚑ COORDINATION NOTE for the other Fable (zkOracle lane) — NAMED, NOT MADE here.**
+> `zkOracle_sound` (`Dregg2/Crypto/ZkOracle.lean:71`) currently delivers its `authentic` conjunct as
+> `∃ w, Deco.DecoRelation … decoStmt w` (`ZkOracle.lean:81`), via `deco_verify_sound` (`:84`) — the
+> *satisfying-trace-exists* refinement level. It can now upgrade to the ideal-world statement
+> `DecoUnforgeable.decoAuthenticated SK MK KD.compress KD.encode decoStmt` (= "`F_attestation` emitted
+> this"), delivered by `DecoUnforgeable.deco_attestation_realizes` instead of `deco_verify_sound`. The
+> realization theorem is a drop-in with the same `verify … = true → <authentic conjunct>` shape (it
+> additionally needs the `hsigEq`/`hmacEq`/`hsig`/`hmac` §8-carrier hypotheses that
+> `deco_authenticates_payment` already takes). This upgrade is the other Fable's to make — do NOT edit
+> `ZkOracle.lean` from the DecoUnforgeable lane.
+
+
 > Closes **survey gap #1** (`docs/audit/SECURITY-PROPERTY-MAP.md:192`): *"DECO payment
 > unforgeability is ASSUMED, not proven, and has no UC proof."* This is the crypto keystone
 > under zkOracle's `authentic` leg — the money-in carrier of the verified resident.
