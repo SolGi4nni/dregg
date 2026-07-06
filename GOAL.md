@@ -60,10 +60,26 @@ surface` → clean parent `UnixStream`) is next; it needs `process-pd-sandbox`
 - Grounded the grain↔confined-body seam; wrote `docs/deos/GRAIN-CONFINED-BODY.md`.
 - UNIT 1 LANDED (`8de7447da`): `grain-jail` (protocol + `ConfinedBrain` + map +
   5 tests green), added to workspace.
-- UNIT 3 code written: `grain-jail/tests/grain_end_to_end.rs` — a ConfinedBrain
-  drives a REAL agent-platform grain (rent → drive_serving → meter → R2 verify →
-  forgery refused; + a cap-refusal test). dev-deps agent-platform/hosted-lease/
-  types. BUILDING (heavy tree).
+- UNIT 3 LANDED (`ee47494c4`): `grain-jail/tests/grain_end_to_end.rs` — a
+  ConfinedBrain drives a REAL grain (rent → drive_serving → meter → R2 verify →
+  forgery refused; + a cap-refusal test). 2 tests green.
+- UNIT 2 LANDED (`f855fec2a`): `grain-jail/src/jail.rs` (`real-jail` feature) —
+  a REAL firmament-jailed body (macOS Seatbelt) drives the ConfinedBrain over a
+  socketpair and is DENIED /etc/passwd (confinement tooth bites). Validated
+  locally. Run with `--features real-jail`.
+- UNIT 4 building: a REAL jailed body drives a REAL grain (the complete mechanic
+  bar the LLM) — the money-shot integration.
+
+## What "awesome" is next (post-spine)
+- A runnable EXAMPLE (`cargo run`) — the "rent a verifiable confined agent" demo.
+- docs/guide onramp.
+- PRODUCTIZE: agent-platform gains a first-class jailed-grain drive (⚠ agent-
+  platform is another terminal's active file — do via a grain-jail helper or a
+  quiet-window edit, not a clobber).
+- The real coding-agent body: a confined Rust harness + a GRANTED EGRESS DOOR to
+  an LLM (firmament `with_read_path`/egress) — the jail denies execve, so the
+  body is in-jail Rust reaching the model over one revocable door. [bigger]
+- SSE transcript: replay → incremental live push (spine #5).
 
 ## Open decisions for morning-ember
 - (none yet)
