@@ -69,3 +69,26 @@ The template is `metatheory/Dregg2/Storage/BucketCommitment.lean` (committed `06
 - `8b53045e5` — storage-in-lean (4/N): fountain LT decode-uniqueness (`Fountain.lean`) — real linear algebra, no carrier. Next: provider-market cell-program, then the availability capstone (compose commitment+erasure+PoR).
 - `ccfa5c2d4` — storage-in-lean (5/N): availability CAPSTONE (`Availability.lean`) — verifiable_erasure_recovers composes commitment+PoR+RS. 5 constructions proven, all #assert_axioms-clean. Next: provider-market cell-program (economic layer); then @[export] packaging.
 - `4f75080d8` — storage-in-lean (6/N): provider MARKET (`ProviderMarket.lean`) — cap-first claim + no-double-sell + slash-burns-bond, decidable-eval, no carrier. 6 constructions proven. Next: @[export] packaging (Lean->Rust round-trip), or bind erasure shards to the commitment object-level.
+
+## PURGE CAMPAIGN — retire unverified Rust in favor of the verified Lean
+The "package to Rust, retire the Rust" half of the mission. ~13.5K unverified-Rust storage lines,
+THREE buckets (purge means different things per bucket):
+
+- **PHASE 0 — dead-module sweep (SAFE, quick):** purge 0-consumer dead modules. `poly_queue` done
+  (`208712676`, -1457). RULE: never purge a module with live consumers; `cargo build -p dregg-storage`
+  green after each.
+- **PHASE 1 — BIND the hot codecs (SAFE, quick — NOT purge):** `erasure` (RS), `sharding`,
+  `bucket_commitment`-verify are GF-crunch / hot; a Lean-via-FFI codec over MB is too slow. So keep the
+  fast Rust but make it non-independent: add property-tests asserting the EXACT property the Lean proves
+  (`Erasure.rs_decode_correct` = k-of-n reconstruction; `BucketCommitment.contentRoot_injective` +
+  `read_sound`) + cite the theorem. Proved-property + checked-impl. A bind-test that can't fail on a
+  broken codec is worthless.
+- **PHASE 2 — complete the cell-programs MIGRATION (SUBSTANTIAL, the big purge):** rewire the ~47
+  consumers of the deprecated operators (`inbox`16 `operator`9 `relay`7 `programmable`6 `blinded`5
+  `pubsub`4) onto `dregg-storage-templates` + `ProviderMarket`/`QueueFactory` Lean, then delete the ~5K
+  deprecated lines. Folds in the `inbox_endpoint` client-asserted-sender auth-gap. Main-loop, per-module,
+  behavior-sensitive.
+- **PHASE 3 — @[export] the VERIFY logic (DELICATE, coordinated):** package `BucketCommitment`/
+  `Retrievability`/`availability` via `@[export]` (closure RE-SEED of `libdregg_lean.a` via
+  `scripts/rebuild-dregg2-closure.sh`) → replace the Rust verify with thin FFI bindings → purge the
+  hand-written verify. "Lean IS the runtime." Needs a clean window + FFI-lane coordination.
