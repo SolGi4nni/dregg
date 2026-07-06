@@ -1777,12 +1777,9 @@ impl Effect {
 
             // -- Monotonic: scalar counters / refcounts going up. --
             Effect::IncrementNonce { .. } => LinearityClass::Monotonic,
-            // ExportSturdyRef bumps the cell's export counter
-            // (state.fields[7]); EnlivenRef bumps the entry's use-count
-            // (state.fields[6]).
-
-            // ValidateHandoff consumes a one-shot leaf — monotonic
-            // because the leaf-consumed counter only grows.
+            // (The retired CapTP verbs — ExportSturdyRef / EnlivenRef /
+            // ValidateHandoff — were monotonic counter bumps; they no longer
+            // exist as effects. Caps-in-slots replaced them.)
 
             // Refusals bump the cell's nonce and append to the
             // refusal-log slot; both monotonic.
@@ -1791,8 +1788,8 @@ impl Effect {
             // -- Terminal: one-way state transitions, no inverse. --
             Effect::RevokeCapability { .. } => LinearityClass::Terminal,
             Effect::RevokeDelegation { .. } => LinearityClass::Terminal,
-            // DropRef decrements a refcount; once dropped, the bearer
-            // cannot "un-drop" (a new export creates a fresh ref).
+            // (Retired: DropRef — the CapTP refcount decrement — is gone with
+            // the CapTP verb set.)
 
             // Cell destroy is the canonical terminal — once Destroyed
             // the cell cannot transition to any other state
@@ -1828,9 +1825,9 @@ impl Effect {
             Effect::CreateCellFromFactory { .. } => LinearityClass::Generative,
             Effect::SpawnWithDelegation { .. } => LinearityClass::Generative,
 
-            // CreateSealPair and Seal generate fresh sealer/unsealer
-            // capability handles; the unsealing path is the dual but
-            // the creation is generative.
+            // (Retired: CreateSealPair / Seal — generative sealer/unsealer
+            // handle creation — are gone with the CapTP verb set; sealing is
+            // the CapSlotFactory caps-in-slots route now.)
 
             // Grant and Introduce mint new capability slots in the
             // recipient's c-list; from the receiving cell's POV

@@ -146,18 +146,23 @@ pub struct CellState {
     /// the absorption is a uniform no-op for legacy cells.
     #[serde(default)]
     pub(crate) committed_height: u64,
-    /// Stage 1 / `DESIGN-captp-integration.md` §4.1: per-cell CapTP swiss
-    /// table Merkle root. Initialised to the empty-tree sentinel; populated
-    /// by `Effect::ExportSturdyRef` and `Effect::EnlivenRef` in Stage 7.
+    /// Historical (`DESIGN-captp-integration.md` §4.1): per-cell CapTP swiss
+    /// table Merkle root. Initialised to the empty-tree sentinel. The Stage-7
+    /// CapTP verbs that were to populate it (`ExportSturdyRef`/`EnlivenRef`)
+    /// were RETIRED in favor of caps-in-slots via the proven `CapSlotFactory`
+    /// route, so this root stays at the sentinel on every live path.
     ///
-    /// Included in `compute_canonical_state_commitment` so the cell's
-    /// state commitment binds its CapTP exports.
+    /// Retained (not removed) because it is absorbed into
+    /// `compute_canonical_state_commitment` — dropping the field would be a
+    /// commitment-formula change.
     #[serde(default)]
     pub swiss_table_root: [u8; 32],
-    /// Stage 1 / `DESIGN-captp-integration.md` §4.3: per-cell CapTP refcount
-    /// table Merkle root (cross-federation reference counts). Initialised
-    /// to the empty-tree sentinel; populated by `Effect::ExportSturdyRef`
-    /// and `Effect::DropRef` in Stage 7.
+    /// Historical (`DESIGN-captp-integration.md` §4.3): per-cell CapTP refcount
+    /// table Merkle root (cross-federation reference counts). Initialised to
+    /// the empty-tree sentinel; its populating verbs (`ExportSturdyRef`/
+    /// `DropRef`) were retired with the CapTP verb set (see
+    /// `swiss_table_root`), so it stays at the sentinel on every live path.
+    /// Retained: absorbed into the state commitment.
     #[serde(default)]
     pub refcount_table_root: [u8; 32],
     /// `_RECORD-LAYER-UPGRADE.md` §B (Stage 0): the committed root of the

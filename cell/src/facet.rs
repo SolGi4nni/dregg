@@ -52,10 +52,12 @@ pub const EFFECT_ESCROW_OPS: EffectMask = 1 << 15;
 pub const EFFECT_DELEGATION_OPS: EffectMask = 1 << 16;
 pub const EFFECT_SOVEREIGN_OPS: EffectMask = 1 << 17;
 pub const EFFECT_QUEUE_OPS: EffectMask = 1 << 18;
-/// CapTP operations: ExportSturdyRef, EnlivenRef, DropRef, ValidateHandoff.
-///
-/// Stage 7 / P1.A: these are the runtime emitters for the AIR-only orphan
-/// CapTP variants (selectors 14..17 in `circuit/src/effect_vm.rs`).
+/// Historical: the CapTP verbs (ExportSturdyRef, EnlivenRef, DropRef,
+/// ValidateHandoff) this bit gated were RETIRED (VERB-LOCKSTEP — caps-in-slots
+/// via the proven `CapSlotFactory` route replaced them; their VM selectors
+/// 14..17 are retired/repurposed in `circuit/src/effect_vm`). The bit is
+/// RETAINED because `EffectMask` values are persisted in stored capability
+/// facets — reassigning it would silently re-scope old grants.
 pub const EFFECT_CAPTP_OPS: EffectMask = 1 << 19;
 /// `Effect::Refusal` — categorical dual of acting-effects; proof of
 /// non-action per `CROSS-CELL-CATEGORICAL-ANALYSIS.md §3.3 / §9.2.2`.

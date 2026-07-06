@@ -72,10 +72,18 @@ pub struct SealedBox {
     /// is epoch-stamped: `seal_epoch` was captured from this cell's
     /// `delegation_epoch()` at seal time, and BOTH stamp fields are absorbed
     /// into the box commitment (so a third party without the plaintext cannot
-    /// strip or alter the stamp). The executor's `apply_unseal` rejects the
-    /// box (`TurnError::CapabilityStale`) iff
-    /// `seal_epoch < sealer.delegation_epoch()` — a cap sealed BEFORE a
-    /// revocation can no longer be unsealed AFTER it.
+    /// strip or alter the stamp). There is NO executor unseal verb (the CapTP
+    /// Seal/Unseal effects were retired with the CapSlotFactory caps-in-slots
+    /// route): [`SealPair::unseal`] verifies the stamp's INTEGRITY only, and a
+    /// host that unseals should reject
+    /// `seal_epoch < sealer.delegation_epoch()` itself. The LIVE staleness
+    /// tooth is downstream at cap EXERCISE — the executor re-checks the
+    /// contained cap's `stored_epoch` against the grantor's current
+    /// `delegation_epoch` (`TurnError::CapabilityStale`,
+    /// `turn/src/executor/apply.rs` R7 gate) — so a snapshot-carrying cap
+    /// (`stored_epoch: Some`) sealed BEFORE a revocation cannot be EXERCISED
+    /// after it even if unsealed. A contained cap with `stored_epoch: None`
+    /// rides the migration window below.
     ///
     /// ⚠ MIGRATION WINDOW (loud, per DREGG3 §6 R7): `#[serde(default)]` —
     /// legacy boxes decode as `None`/`0` and are EXEMPT from the staleness
@@ -190,17 +198,20 @@ impl SealPair {
     }
 
     /// Legacy / unstamped seal: no R7 epoch stamp (`sealer: None`). Boxes
-    /// produced this way fall in the R7 MIGRATION WINDOW — the executor's
-    /// `apply_unseal` cannot freshness-check them and lets them through.
-    /// Prefer [`SealPair::seal_stamped`].
+    /// produced this way fall in the R7 MIGRATION WINDOW — an unsealing host
+    /// has no stamp to freshness-check, and a contained legacy cap
+    /// (`stored_epoch: None`) is exempt from the executor's exercise-time
+    /// re-check too. Prefer [`SealPair::seal_stamped`].
     pub fn seal(&self, cap: &CapabilityRef) -> SealedBox {
         self.seal_inner(cap, None, 0)
     }
 
     /// R7 epoch-stamped seal: records the sealing cell's identity and its
     /// `delegation_epoch()` at seal time, binding both into the box
-    /// commitment. `apply_unseal` rejects the box once the sealer's epoch
-    /// advances past `seal_epoch` (revocation kills sealed-away caps).
+    /// commitment so an unsealing host can reject the box once the sealer's
+    /// epoch advances past `seal_epoch` (revocation kills sealed-away caps;
+    /// the executor's exercise-time `stored_epoch` re-check is the live
+    /// backstop — see the [`SealedBox::sealer`] doc).
     pub fn seal_stamped(&self, cap: &CapabilityRef, sealer: CellId, seal_epoch: u64) -> SealedBox {
         self.seal_inner(cap, Some(sealer), seal_epoch)
     }

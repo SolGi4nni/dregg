@@ -111,12 +111,12 @@ The 16-slot array is "unsqueezed" into committed maps (record-layer upgrade):
   (`REFUSAL_AUDIT_EXT_KEY = 2^32`, `cell/src/state.rs:28`, `cell/src/state.rs:334`).
 - **`system_roots: [FieldElement; 8]`** — the kernel-owned side-table roots, each at its
   own fixed index `system_root::{ESCROW, QUEUE, REFCOUNT, STURDYREF, DELEG, NULLIFIER,
-  COMMIT, SEALED_BOXES}` (`cell/src/state.rs:46`). A `set_field*` can NEVER reach these;
+  COMMIT, SEALED_BOXES}` (`cell/src/state.rs:47`). A `set_field*` can NEVER reach these;
   only the kernel's escrow/queue/nullifier/... transitions touch them, via
-  `set_system_root` (`cell/src/state.rs:644`) — a disjoint namespace with a disjoint
-  mutator. Digested by `compute_system_roots_digest` (`cell/src/state.rs:261`).
+  `set_system_root` (`cell/src/state.rs:690`) — a disjoint namespace with a disjoint
+  mutator. Digested by `compute_system_roots_digest` (`cell/src/state.rs:267`).
 - **`heap_map` / `heap_root`** — a `(collection_id, key) → FieldElement` map; sorted-
-  Poseidon2 root via `compute_heap_root` (`cell/src/state.rs:409`), the Rust shadow of
+  Poseidon2 root via `compute_heap_root` (`cell/src/state.rs:429`), the Rust shadow of
   Lean `Substrate.Heap.root`.
 
 All three roots are **order-canonical, injective, anti-vacuous**: distinct maps cannot
@@ -223,11 +223,12 @@ circuit-side roots agree byte-identically. Revoked slots fold ZERO tombstone lea
 
 ### The rotated v9 commitment (cell ≡ circuit) — v11 geometry, faithful 8-felt components
 
-`compute_canonical_state_commitment_v9_felt` (`cell/src/commitment.rs:1187`) is the
+`compute_canonical_state_commitment_v9_felt` (`cell/src/commitment.rs:1218`) is the
 cell-side reconstruction of the EffectVM rotated trace's row-0 `STATE_COMMIT` carrier — a
-Poseidon2 `wireCommitR` over **88** pre-iroot limbs (`V9_NUM_PRE_LIMBS`,
-`cell/src/commitment.rs:702`; the v11 geometry — 37 at v9, 67 at v10) built by
-`compute_rotated_pre_limbs` (`cell/src/commitment.rs:968`). The Merkle-root and
+Poseidon2 `wireCommitR` over **169** pre-iroot limbs (`V9_NUM_PRE_LIMBS`,
+`cell/src/commitment.rs:700`; the v13 geometry — 37 at v9, 67 at v10, 88 at v11,
++56 fields-completion lanes 112..=167 + 1 pad at v13) built by
+`compute_rotated_pre_limbs` (`cell/src/commitment.rs:985`). The Merkle-root and
 authority components ride the pre-limbs **faithful 8-felt (~124-bit)**, each lane-0 at
 its historical position plus seven completion limbs: cap_root 25 ‖ 51..57
 (`compute_canonical_capability_root_8`, `cell/src/commitment.rs:585`), heap_root
@@ -235,15 +236,16 @@ its historical position plus seven completion limbs: cap_root 25 ‖ 51..57
 (`compute_authority_digest_8` — folds ALL authority residue not on a named limb:
 permissions, VK, delegate, delegation, program, mode, token_id,
 visibility/commitments/proved/side-table roots, `fields[8..16]`), perms 33 ‖ 37..43,
-vk 34 ‖ 44..50 (`cell/src/commitment.rs:968-1069`). See
+vk 34 ‖ 44..50, and — the v13 fields octet, closing the former `fields[0..7]`
+32B→1-felt fold residual — each `fields[i]` lane-0 at 4+i plus completion lanes
+`112+7i..=112+7i+6` (`cell/src/commitment.rs:985-1090`). See
 [`faithful-commitment.md`](faithful-commitment.md) for the full campaign grounding.
 
-Two honest residuals in this producer: `fields[0..7]` still fold 32B → 1 felt
-(~31-bit, `// ast-grep-ignore`-allowlisted, `cell/src/commitment.rs:990`), and the
-v11 accumulator completion limbs 67..87 are zero-filled here ("until
-producer-welded", `cell/src/commitment.rs:702`) — their genuine node8 fill lives on
-the circuit trace-producer path. The faithful 8-felt whole-image digest
-`compute_canonical_state_commitment_v9_felt8` (`cell/src/commitment.rs:1219`)
+One honest residual in this producer: the accumulator completion limbs 67..87
+(nullifier-root lanes 1..7 → 67..73, commitments-root → 74..80, cells-root →
+81..87) stay zero-filled here — their genuine node8 fill lives on the circuit
+trace-producer path (`circuit/src/effect_vm/trace_rotated.rs`). The faithful 8-felt whole-image digest
+`compute_canonical_state_commitment_v9_felt8` (`cell/src/commitment.rs:1252`)
 IS the live deployed binding (the flag-day fired — `9e5a83935`): producer,
 executor verifier, and light client all bind the 8-felt commit; the 1-felt
 `_v9_felt` survives with test/bench callers only. The one remaining 1-felt LC
