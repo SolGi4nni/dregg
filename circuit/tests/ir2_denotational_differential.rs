@@ -74,9 +74,11 @@
 //! (a constraint reads a bounded column window; a bus check is a multiset over the
 //! gathered log), the residual is small — but it is REAL and stated precisely here,
 //! not hidden. This is the empirical-but-exhaustive leg; the kernel-checked leg (the
-//! Lean `Satisfied2`↔`decideSatisfied2` reflection) is the parallel agent's
-//! `DecideSatisfied2.lean`. The WIRING SEAM to that decider is documented at the
-//! bottom of this file (`DECIDE_SATISFIED2_WIRING`).
+//! Lean `Satisfied2`↔`decideSatisfied2` reflection) is
+//! `DecideSatisfied2.lean`. The wiring to that decider is IMPLEMENTED below: PART J
+//! (`pinned_against_decideSatisfied2_goldens`) mirrors the kernel-proven decider's
+//! `#guard` golden corpus case-for-case, and PART K drives the bus arms through the
+//! real deployed batch assembly against the same goldens.
 //!
 //! ## Three-way pin (the honesty anchor)
 //!

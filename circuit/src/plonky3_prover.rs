@@ -89,6 +89,16 @@ pub type DreggStarkConfig = StarkConfig<TestPcs, EF, TestChallenger>;
 /// A Plonky3 proof object for dregg circuits.
 pub type DreggProof = Proof<DreggStarkConfig>;
 
+/// The PRODUCTION v1 FRI knobs ([`create_config`]), exported so the checked-in
+/// params→bits budget gate (`tests/fri_params_soundness_budget.rs`) computes the
+/// soundness figures FROM the deployed knobs instead of restating them. Moving
+/// any of these moves the wire (FRI shape + Fiat–Shamir) — one rotation epoch.
+pub const PROD_FRI_LOG_BLOWUP: usize = 3;
+pub const PROD_FRI_LOG_FINAL_POLY_LEN: usize = 0;
+pub const PROD_FRI_MAX_LOG_ARITY: usize = 3;
+pub const PROD_FRI_NUM_QUERIES: usize = 38;
+pub const PROD_FRI_QUERY_POW_BITS: usize = 16;
+
 pub fn create_config() -> DreggStarkConfig {
     // log_blowup must be >= log2_ceil(max_constraint_degree - 1).
     // For Poseidon2 S-box (degree 7): log2_ceil(6) = 3, so log_blowup >= 3.
@@ -105,7 +115,17 @@ pub fn create_config() -> DreggStarkConfig {
     // measured at −23% proof size. Proofs are NOT interchangeable across this
     // bump (FRI shape + Fiat–Shamir differ) — it lands inside the one
     // VK/commitment rotation epoch by design.
-    create_config_with_fri(3, 0, 3, 38, 16)
+    //
+    // The `≥ 128 conjectured` floor is ENFORCED by `tests/fri_params_soundness_budget.rs`
+    // over these exported knobs — a knob drift below the floor is a red test, not a
+    // silent downgrade.
+    create_config_with_fri(
+        PROD_FRI_LOG_BLOWUP,
+        PROD_FRI_LOG_FINAL_POLY_LEN,
+        PROD_FRI_MAX_LOG_ARITY,
+        PROD_FRI_NUM_QUERIES,
+        PROD_FRI_QUERY_POW_BITS,
+    )
 }
 
 /// Build a `DreggStarkConfig` with explicit FRI knobs. The production

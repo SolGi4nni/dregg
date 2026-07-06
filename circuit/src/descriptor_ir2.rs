@@ -4711,10 +4711,27 @@ fn ir2_config() -> DreggStarkConfig {
     // sidesteps any `Sync` requirement on the config; the cached value is byte-identical to a
     // fresh `create_config_with_fri(6, 0, 3, 19, 16)` (same deterministic knobs).
     thread_local! {
-        static IR2_CONFIG: DreggStarkConfig = create_config_with_fri(6, 0, 3, 19, 16);
+        static IR2_CONFIG: DreggStarkConfig = create_config_with_fri(
+            IR2_FRI_LOG_BLOWUP,
+            IR2_FRI_LOG_FINAL_POLY_LEN,
+            IR2_FRI_MAX_LOG_ARITY,
+            IR2_FRI_NUM_QUERIES,
+            IR2_FRI_QUERY_POW_BITS,
+        );
     }
     IR2_CONFIG.with(|c| c.clone())
 }
+
+/// The PRODUCTION IR-v2 FRI knobs ([`ir2_config`]), exported so the checked-in params→bits
+/// budget gate (`tests/fri_params_soundness_budget.rs`) computes the soundness figures FROM
+/// the deployed knobs. The `(6, 19)` pin is the measured size-optimal security-parity point
+/// (see the [`ir2_config`] doc + `docs/PROOF-ECONOMICS.md` §2c); moving any knob moves the
+/// wire (FRI shape + Fiat–Shamir).
+pub const IR2_FRI_LOG_BLOWUP: usize = 6;
+pub const IR2_FRI_LOG_FINAL_POLY_LEN: usize = 0;
+pub const IR2_FRI_MAX_LOG_ARITY: usize = 3;
+pub const IR2_FRI_NUM_QUERIES: usize = 19;
+pub const IR2_FRI_QUERY_POW_BITS: usize = 16;
 
 #[allow(clippy::too_many_arguments)]
 fn prove_vm_descriptor2_inner<SC>(
