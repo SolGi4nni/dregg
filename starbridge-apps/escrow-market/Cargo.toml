@@ -51,6 +51,12 @@ tower = "0.5"
 # value flows across the app boundary, conservation-respecting (per-asset Σδ=0). Needs the
 # sibling bounty-board app co-resident on ONE World.
 starbridge-bounty-board = { path = "../bounty-board" }
+# THE VERIFIABLE MARKET (`examples/verifiable_market.rs`): a sealed-bid auction
+# (front-run-proof price discovery) clears its winning trade through this crate's
+# atomic escrow (conserved 2-of-2 settlement + reclaim defence). Two apps, one
+# market: the auction says WHO wins at WHAT price, the escrow moves the value
+# atomically with per-asset conservation. Needs the sibling auction app.
+starbridge-sealed-auction = { path = "../sealed-auction" }
 
 [lints]
 workspace = true
