@@ -27,14 +27,11 @@
 #     `deos_hermes::DreggHost::run_hosted_agent_attested` (the crown) — the same
 #     attestation primitives, run inside a firmament jail.
 #
-# STANDALONE WORKSPACE (declares its own `[workspace]`): it is NOT a member of the
-# breadstuffs root — build it directly with
-#   cargo build --manifest-path attested-dm/Cargo.toml
-#   cargo test  --manifest-path attested-dm/Cargo.toml
-# Its `[patch]` tables mirror the root's (the plonky3-recursion sibling checkout + the
-# ark-serialize serde fork) so zkoracle-prove's proof dep-tree resolves identically.
-# The path deps stay members of the breadstuffs root workspace, so their
-# `workspace = true` inheritance resolves against that root unchanged.
+# A workspace MEMBER of the breadstuffs root (registered in `members`, not
+# `default-members`). The root `[workspace]` + `[patch]` tables apply; no standalone
+# `[workspace]`/`[patch]` here. Build it as a member with
+#   cargo build -p attested-dm
+#   cargo test  -p attested-dm
 
 [package]
 name = "attested-dm"
@@ -62,18 +59,3 @@ blake3 = "1"
 # roundtrip (zkoracle-prove's vendored TLSNotary) instead of the modeled ed25519
 # carrier. OFF by default so the standard build stays HTTP/TLS-free.
 tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STANDALONE workspace — mirror the root's [patch] so the proof dep-tree resolves
-# identically (see the header note).
-[workspace]
-
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
-
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }

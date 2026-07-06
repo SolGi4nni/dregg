@@ -17,20 +17,6 @@ dregg-turn = { path = "../turn" }
 name = "mud-dregg"
 path = "src/main.rs"
 
-[workspace]
-
-# This crate is its own workspace root, so it must carry the same source patches the
-# breadstuffs root workspace applies (a standalone workspace does NOT inherit the root's
-# `[patch]`). These mirror `../Cargo.toml` verbatim, with the plonky3-recursion relative paths
-# re-based one level deeper (`../plonky3-recursion` from the root → `../../plonky3-recursion`
-# from here — both resolve to `/Users/ember/dev/plonky3-recursion`). Unused entries only warn.
-[patch.crates-io]
-# ark-serialize fork — the `serde_with` feature `dregg-hints` needs (emberian/algebra).
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
+# A workspace MEMBER of the breadstuffs root (registered in `members`, not
+# `default-members`). The root `[workspace]` + `[patch]` tables apply; no standalone
+# `[workspace]`/`[patch]` here.

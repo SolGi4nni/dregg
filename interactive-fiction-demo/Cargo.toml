@@ -1,0 +1,42 @@
+# `interactive-fiction-demo` — the on-chain interactive-fiction stack, made ONE.
+#
+# The five parallel crates, composed into a single running playthrough:
+#   * spween-dregg      — a spween story on a verifiable world-cell (the narrative core);
+#   * collective-choice — the REAL cap-bounded cell-backed vote engine (the crowd's authorship);
+#   * mud-dregg         — multiplayer branch-stitch play (fork / explore / stitch, conflicts REFUSED);
+#   * attested-dm       — the un-jailbreakable attested AI dungeon-master (narrates the SAME world);
+#   * dregg-governance  — the federation self-governing through the SAME VoteEngine primitive.
+#
+# Run: `cargo run -p interactive-fiction-demo`
+# Prove: `cargo test -p interactive-fiction-demo`
+#
+# A workspace MEMBER (in `members`, not `default-members` — a heavy composed demo).
+[package]
+name = "interactive-fiction-demo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The on-chain interactive-fiction stack composed into one running system: a spween story whose branches the crowd votes on the REAL collective-choice engine, played across mud-dregg's branch-stitch timelines, narrated by the un-jailbreakable attested DM, governed by the same vote primitive that runs the federation — a crowd-authored, played, narrated, light-client-verifiable playthrough."
+
+[dependencies]
+# The story engine (its `parse`/`Scene`) + the dregg narrative core.
+spween = { path = "../../spween" }
+spween-dregg = { path = "../spween-dregg" }
+# The canonical vote engine (named directly for its light-client tally leg).
+collective-choice = { path = "../collective-choice" }
+# Multiplayer branch-stitch play.
+mud-dregg = { path = "../mud-dregg" }
+# The un-jailbreakable attested dungeon-master.
+attested-dm = { path = "../attested-dm" }
+# The federation self-governance face — the SAME VoteEngine primitive.
+dregg-governance = { path = "../dregg-governance" }
+
+blake3 = "1"
+
+[[bin]]
+name = "interactive-fiction-demo"
+path = "src/main.rs"
+
+[lib]
+name = "interactive_fiction_demo"
+path = "src/lib.rs"

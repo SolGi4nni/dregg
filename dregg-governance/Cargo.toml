@@ -6,13 +6,9 @@ rust-version = "1.94.0"
 description = "The governance + community face of the ONE collective-choice VoteEngine that also drives the CYOA branch-vote. A federation self-governs via the constitutional 2n/3+1 vote with auto-enact; uncensorable, verifiable community polls; one engine, three faces (governance / community / story)."
 license = "AGPL-3.0-or-later"
 
-# This crate is its OWN workspace (like dregg-tui): the parent breadstuffs
-# workspace uses an explicit `members` list that does not include it, so a
-# nested `[workspace]` keeps `cargo build --manifest-path
-# dregg-governance/Cargo.toml` fully standalone and never touches the root
-# manifest. Path-deps (dregg-blocklace) are parent-workspace members, so THEIR
-# `workspace = true` inherited fields resolve against the parent root.
-[workspace]
+# A workspace MEMBER of the breadstuffs root (registered in `members`, not
+# `default-members`). The root `[workspace]` + `[patch]` tables apply; no standalone
+# `[workspace]` here.
 
 [lib]
 name = "dregg_governance"

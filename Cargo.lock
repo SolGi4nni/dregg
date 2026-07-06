@@ -1428,6 +1428,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "attested-dm"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-zkoracle-prove",
+]
+
+[[package]]
 name = "attribute-derive"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1465,6 +1473,7 @@ dependencies = [
  "blake3",
  "deos-hermes",
  "dregg-agent",
+ "dregg-zkoracle-prove",
 ]
 
 [[package]]
@@ -1676,6 +1685,12 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
 ]
+
+[[package]]
+name = "beef"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "bimap"
@@ -2780,6 +2795,18 @@ dependencies = [
  "gpui_util",
  "indexmap 2.14.0",
  "rustc-hash 2.1.2",
+]
+
+[[package]]
+name = "collective-choice"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-intent",
+ "dregg-types",
+ "starbridge-privacy-voting",
 ]
 
 [[package]]
@@ -5034,6 +5061,14 @@ dependencies = [
  "landlock",
  "libc",
  "seccompiler",
+]
+
+[[package]]
+name = "dregg-governance"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-blocklace",
 ]
 
 [[package]]
@@ -9252,6 +9287,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "interactive-fiction-demo"
+version = "0.1.0"
+dependencies = [
+ "attested-dm",
+ "blake3",
+ "collective-choice",
+ "dregg-governance",
+ "mud-dregg",
+ "spween",
+ "spween-dregg",
+]
+
+[[package]]
 name = "interpolate_name"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10078,6 +10126,40 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 dependencies = [
  "serde_core",
  "value-bag",
+]
+
+[[package]]
+name = "logos"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff472f899b4ec2d99161c51f60ff7075eeb3097069a36050d8037a6325eb8154"
+dependencies = [
+ "logos-derive",
+]
+
+[[package]]
+name = "logos-codegen"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "192a3a2b90b0c05b27a0b2c43eecdb7c415e29243acc3f89cc8247a5b693045c"
+dependencies = [
+ "beef",
+ "fnv",
+ "lazy_static",
+ "proc-macro2",
+ "quote",
+ "regex-syntax",
+ "rustc_version",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "logos-derive"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "605d9697bcd5ef3a42d38efc51541aa3d6a4a25f7ab6d1ed0da5ac632a26b470"
+dependencies = [
+ "logos-codegen",
 ]
 
 [[package]]
@@ -11436,6 +11518,15 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "zerocopy",
+]
+
+[[package]]
+name = "mud-dregg"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-turn",
+ "starbridge-v2",
 ]
 
 [[package]]
@@ -18305,6 +18396,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b9b39299b249ad65f3b7e96443bad61c02ca5cd3589f46cb6d610a0fd6c0d6a"
 
 [[package]]
+name = "spween"
+version = "0.1.0"
+dependencies = [
+ "logos",
+ "serde_yaml",
+ "smol_str",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "spween-dregg"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "collective-choice",
+ "dregg-app-framework",
+ "dregg-cell",
+ "spween",
+ "zeroize",
+]
+
+[[package]]
 name = "sqlx"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18605,6 +18718,7 @@ dependencies = [
  "serde",
  "serde_json",
  "starbridge-bounty-board",
+ "starbridge-sealed-auction",
  "tokio",
  "tower",
 ]
@@ -18766,10 +18880,13 @@ dependencies = [
  "blake3",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-credentials",
+ "dregg-token",
  "dregg-turn",
  "dregg-types",
  "serde",
  "serde_json",
+ "starbridge-identity",
  "tokio",
  "tower",
 ]
