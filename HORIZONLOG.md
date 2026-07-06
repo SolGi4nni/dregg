@@ -55,6 +55,21 @@ each with its seam):
 - **hermes-acp exclusivity knob** — upstream: honor explicit empty `enabled_toolsets` so the dregg
   MCP server is the model's ONLY tool source.
 
+## NOW-STATE addition (2026-07-05→overnight, Fable — the confined-body grain)
+
+Standing goal (`GOAL.md`): unify the grain + confined-agent hosting stacks so a
+hosted agent (a jailed coding agent, any BYO brain) IS a first-class grain —
+OS-jailed + leased/metered + forkable-mind-cell + R2-verifiable. Design:
+`docs/deos/GRAIN-CONFINED-BODY.md`. The seam = a `ConfinedBrain` (new crate
+`grain-jail`, deps `dregg-agent` + `dregg-firmament` `process-pd` only — NOT the
+heavy sdk that keeps `deos-hermes` a standalone workspace) plugging a jailed
+subprocess into the existing `AgentBrain` seam; the grain drive path is unchanged.
+Staged: (1) protocol + brain vs a stand-in body, (2) real firmament PD jail,
+(3) drive a real grain end-to-end + R2 renter-verify. Named follow-ups:
+adapt `deos-hermes` ACP onto the `grain-jail` line protocol; cross-platform
+sandbox coverage (Linux seccomp+landlock on a Linux builder, macOS Seatbelt
+local); the grain drive-path `Spend`/priced-tool mapping for a confined body.
+
 ## NOW-STATE addition (2026-07-05, Fable — join-with-a-doc + operated-layer-gap wiring LANDED)
 
 **join-with-a-doc** — LANDED (`b772205dd`): live membership survives restart
