@@ -47,10 +47,13 @@
 //!   on a deos-js engine mounted under the agent's `held` (the cap tooth, never
 //!   root): a cap-gated, receipted verified turn. CROSS-PROCESS SEAM: an MCP
 //!   server is a SEPARATE subprocess Hermes spawns, so it cannot share the
-//!   cockpit's `Rc<RefCell<World>>`; this server's `run_js` drives its OWN
-//!   embedded verified World (a real receipted turn on its own ledger). Bridging
-//!   it back to the cockpit's live World is a socket the [`McpToolHost`] seam
-//!   names ([`McpToolHost::with_world_bridge`]).
+//!   cockpit's `Rc<RefCell<World>>`; by default this server's `run_js` drives its
+//!   OWN embedded verified World (a real receipted turn on its own ledger). The
+//!   socket back to the cockpit's live World is BUILT:
+//!   [`McpToolHost::with_world_bridge`] routes `run_js` through a
+//!   [`crate::world_bridge::SocketWorldSink`] onto the cockpit's served
+//!   `WorldSink` (`starbridge_v2::agent_attach::world_bridge`) — fail-closed
+//!   (socket absent/dead ⇒ the call refuses; never a silent embedded fallback).
 //! * **`terminal`** — the command execs INSIDE a confined firmament PD
 //!   ([`crate::confined::launch_confined`]): file/net/exec are DENIED by the host
 //!   OS sandbox (Seatbelt/seccomp+landlock), the PD's only channel is its
@@ -122,6 +125,40 @@ pub struct McpToolHost<'rt> {
     /// `None` when the `js-agent` feature is off (run_js then reports the seam).
     #[cfg(feature = "js-agent")]
     js: Option<JsHands>,
+    /// THE WORLD BRIDGE ([`McpToolHost::with_world_bridge`]) — when set, `run_js`
+    /// routes through a [`crate::world_bridge::SocketWorldSink`] onto the
+    /// COCKPIT'S live World instead of the embedded one. FAIL-CLOSED: socket
+    /// absent/dead ⇒ the tool call REFUSES (never a silent embedded fallback).
+    #[cfg(unix)]
+    bridge: Option<WorldBridge>,
+}
+
+/// The host's configured world bridge: the socket path + the session-long
+/// connection (lazily dialed on the first bridged `run_js`, reused after —
+/// the serving side accepts ONE client).
+// Only the js-agent `call_run_js_bridged` path READS the bridge; a js-agent-less
+// build still ACCEPTS the configuration (and refuses run_js at the hands seam).
+#[cfg_attr(not(feature = "js-agent"), allow(dead_code))]
+#[cfg(unix)]
+struct WorldBridge {
+    socket_path: std::path::PathBuf,
+    conn: Option<crate::world_bridge::SocketWorldSink>,
+}
+
+#[cfg(unix)]
+#[cfg_attr(not(feature = "js-agent"), allow(dead_code))]
+impl WorldBridge {
+    /// The live connection: reuse the session connection if it is alive, else
+    /// dial the socket. Errs iff the socket is absent/dead — the caller refuses.
+    fn sink(&mut self) -> std::io::Result<crate::world_bridge::SocketWorldSink> {
+        if let Some(conn) = self.conn.as_ref().filter(|c| !c.is_dead()) {
+            return Ok(conn.clone());
+        }
+        // No connection yet, or a latched-dead one: (re-)dial the socket.
+        let conn = crate::world_bridge::SocketWorldSink::connect(&self.socket_path)?;
+        self.conn = Some(conn.clone());
+        Ok(conn)
+    }
 }
 
 /// The agent's `run_js` hands inside the MCP server: the [`crate::RunJsTool`]
@@ -144,7 +181,32 @@ impl<'rt> McpToolHost<'rt> {
             tape: Vec::new(),
             #[cfg(feature = "js-agent")]
             js: None,
+            #[cfg(unix)]
+            bridge: None,
         }
+    }
+
+    /// THE EXACT REMAINING WIRE, LANDED — route this host's `run_js` onto the
+    /// COCKPIT'S live World over the world-bridge socket at `socket_path`
+    /// ([`crate::world_bridge`]): the serving side (the cockpit process, e.g.
+    /// `starbridge_v2::agent_attach::world_bridge::serve_world_bridge` over its
+    /// live `WorldSinkAdapter`) answers the `WorldSink` protocol, and every
+    /// `run_js` here runs [`crate::RunJsTool::run_attached_on`] through a
+    /// [`crate::world_bridge::SocketWorldSink`] — each fire a real verified turn
+    /// whose receipt lands on the COCKPIT'S ledger, still bounded by the agent's
+    /// `held` (the cap tooth runs client-side before any frame is sent).
+    ///
+    /// FAIL-CLOSED: with a bridge configured, `run_js` NEVER falls back to the
+    /// embedded World — socket absent/dead ⇒ the tool call REFUSES in-band with
+    /// a clear message. The connection is dialed lazily on the first bridged
+    /// call and kept for the session (the serving side accepts ONE client).
+    #[cfg(unix)]
+    pub fn with_world_bridge(mut self, socket_path: impl Into<std::path::PathBuf>) -> Self {
+        self.bridge = Some(WorldBridge {
+            socket_path: socket_path.into(),
+            conn: None,
+        });
+        self
     }
 
     /// Install the agent's `run_js` hands — a [`crate::RunJsTool`] (mounted under
@@ -247,7 +309,9 @@ impl<'rt> McpToolHost<'rt> {
     /// `run_js` — the model's chosen script runs on the agent's bounded deos-js
     /// World (mounted under `held`, never root): a cap-gated, receipted verified
     /// turn. Cross-process seam: this server's own embedded World (not the
-    /// cockpit's live `Rc<RefCell<World>>`).
+    /// cockpit's live `Rc<RefCell<World>>`) — UNLESS a world bridge is configured
+    /// ([`McpToolHost::with_world_bridge`]), in which case the script runs
+    /// ATTACHED to the cockpit's live World over the socket, fail-closed.
     #[cfg(feature = "js-agent")]
     fn call_run_js(&mut self, arguments: &Value, now: i64) -> ConfinedToolResult {
         let script = arguments
@@ -272,6 +336,13 @@ impl<'rt> McpToolHost<'rt> {
                 ..Default::default()
             };
         }
+        // THE WORLD BRIDGE — a bridge-configured host lands run_js on the
+        // COCKPIT'S live World (fail-closed: never the embedded one).
+        #[cfg(unix)]
+        if self.bridge.is_some() {
+            return self.call_run_js_bridged(&script, now);
+        }
+
         let McpToolHost { gateway, js, .. } = self;
         let js = js.as_mut().expect("checked Some above");
 
@@ -306,6 +377,95 @@ impl<'rt> McpToolHost<'rt> {
             Err(e) => ConfinedToolResult {
                 tool: "run_js".into(),
                 text: format!("run_js engine fault: {e}"),
+                admitted: false,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// `run_js` OVER THE WORLD BRIDGE — the model's script runs ATTACHED to the
+    /// COCKPIT'S live World through the [`crate::world_bridge::SocketWorldSink`]
+    /// ([`crate::RunJsTool::run_attached_on`] accepts any `WorldSink`): every
+    /// affordance fire commits a real verified turn whose receipt lands on the
+    /// COCKPIT'S ledger, still cap-gated under the agent's `held` client-side.
+    ///
+    /// FAIL-CLOSED: the socket absent/dead ⇒ the call REFUSES here, in-band,
+    /// with a clear message — it NEVER silently runs on the embedded World.
+    #[cfg(all(unix, feature = "js-agent"))]
+    fn call_run_js_bridged(&mut self, script: &str, now: i64) -> ConfinedToolResult {
+        let McpToolHost {
+            gateway,
+            js,
+            bridge,
+            ..
+        } = self;
+        let js = js
+            .as_mut()
+            .expect("bridged run_js requires js hands (checked)");
+        let bridge = bridge
+            .as_mut()
+            .expect("bridged run_js requires a bridge (checked)");
+
+        // Dial (or reuse) the cockpit's world-bridge socket — the fail-closed gate.
+        let sink = match bridge.sink() {
+            Ok(sink) => sink,
+            Err(e) => {
+                return ConfinedToolResult {
+                    tool: "run_js".into(),
+                    text: format!(
+                        "run_js REFUSED: the cockpit world-bridge socket at {} is absent or \
+                         dead ({e}). Fail-closed — a bridged run_js never falls back to the \
+                         embedded World. Start the cockpit's serve_world_bridge and retry.",
+                        bridge.socket_path.display()
+                    ),
+                    admitted: false,
+                    ..Default::default()
+                };
+            }
+        };
+
+        let call = ToolCallRequest::new("mcp", "tc-run_js", "run_js", json!({ "script": script }));
+        let agent = js.tool.agent_cell();
+        match js.tool.run_attached_on(
+            &mut js.rt,
+            Box::new(sink),
+            agent,
+            gateway,
+            &call,
+            now,
+            script,
+        ) {
+            Ok(outcome) => {
+                let admitted = outcome.tool_admitted();
+                let receipt = outcome.receipts.first().map(hex32);
+                let text = if !admitted {
+                    format!("run_js refused: {}", refusal_text(&outcome.tool_outcome))
+                } else if let Some(err) = &outcome.js_error {
+                    format!("run_js eval fault (world bridge): {err}")
+                } else {
+                    format!(
+                        "ran on the COCKPIT'S live World over the world bridge: result={:?}, \
+                         {} verified turn(s) committed on the live ledger{}",
+                        outcome.result,
+                        outcome.fires_committed,
+                        receipt
+                            .as_ref()
+                            .map(|r| format!(", receipt {}…", &r[..r.len().min(12)]))
+                            .unwrap_or_default()
+                    )
+                };
+                ConfinedToolResult {
+                    tool: "run_js".into(),
+                    text,
+                    admitted,
+                    receipt,
+                    sandbox_verdict: None,
+                    fires_committed: outcome.fires_committed,
+                }
+            }
+            Err(e) => ConfinedToolResult {
+                tool: "run_js".into(),
+                text: format!("run_js engine fault (world bridge): {e}"),
                 admitted: false,
                 ..Default::default()
             },

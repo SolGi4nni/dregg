@@ -210,18 +210,24 @@ The `cat /etc/passwd && curl …` the model asked for could not reach the file o
 network: it ran inside the dregg PD, where the OS sandbox denies that ambient
 authority. The shell ran in the container, not loose.
 
-#### The one cross-process seam (named, not faked)
+#### The one cross-process seam (named — and now WIRED)
 
 An MCP server is a **separate subprocess** Hermes spawns, so it cannot share the
-cockpit's `Rc<RefCell<World>>` (single-threaded, non-`Send`, in-process). The
-`mcp-server`'s `run_js` therefore drives its OWN embedded verified World (a real
-receipted turn on its own ledger), NOT the cockpit's live-rendered World. To land
-the model's `run_js` on the *cockpit's* live ledger over MCP, the server would bridge
-its `WorldSink` over a socket back to the cockpit process (`McpToolHost` names this:
-`run_attached_on` already accepts any `WorldSink`; the wire is a socket-backed sink
-adapter). That socket is the EXACT remaining wire — the answer path (1) already lands
-on the live cockpit World, so the two together cover both. The `terminal`
-confinement is fully real in-process (the PD is forked from the MCP server).
+cockpit's `Rc<RefCell<World>>` (single-threaded, non-`Send`, in-process). By
+default the `mcp-server`'s `run_js` drives its OWN embedded verified World (a real
+receipted turn on its own ledger), NOT the cockpit's live-rendered World. The
+socket that lands the model's `run_js` on the *cockpit's* live ledger over MCP is
+BUILT: `McpToolHost::with_world_bridge(socket_path)` routes `run_js` through a
+`SocketWorldSink` (`deos-hermes/src/world_bridge.rs` — the `WorldSink` surface
+over a Unix socket, length-prefixed serde_json frames), and the cockpit process
+answers it against its live `WorldSinkAdapter` via
+`starbridge_v2::agent_attach::world_bridge` (`serve_world_bridge` blocking on the
+World-owning thread, or `WorldBridgeServer::pump` from the frame loop). It is
+FAIL-CLOSED: socket absent/dead ⇒ the tool call refuses in-band — never a silent
+fallback to the embedded World. Proven end-to-end in
+`deos-hermes/tests/world_bridge_e2e.rs` (the answer path (1) already lands on the
+live cockpit World, so the two together cover both). The `terminal` confinement
+is fully real in-process (the PD is forked from the MCP server).
 
 ## Depth of integration — the three confinement faces
 
