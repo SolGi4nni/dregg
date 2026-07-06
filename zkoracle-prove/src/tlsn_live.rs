@@ -74,19 +74,31 @@ const API_KEY_SECRET: &str = "sk-ant-MERCHANT-API-KEY-PLACEHOLDER";
 const MAX_SENT_DATA: usize = 1 << 12;
 const MAX_RECV_DATA: usize = 1 << 14;
 
-/// A canned Anthropic `POST /v1/messages` exchange the test server answers.
+/// A canned endpoint exchange the test server answers. Endpoint-parameterized: the same
+/// live MPC-TLS machinery drives an Anthropic `POST /v1/messages`, a public GitHub
+/// `GET /repos/…/commits/…`, or a public Coinbase `GET /v2/prices/…/spot` — a new endpoint
+/// is DATA (method + path + optional secret header + response body), not a fork.
 #[derive(Clone, Debug)]
 pub struct LiveExchange {
-    /// The request body (the messages request JSON — the prompt etc.).
+    /// The HTTP method (`POST` for Anthropic, `GET` for the public read-only endpoints).
+    pub method: String,
+    /// The request target path.
+    pub path: String,
+    /// A redacted secret request header `(name, value)`, or `None` for a public endpoint.
+    pub secret_header: Option<(String, String)>,
+    /// The request body (empty for the read-only GETs).
     pub request_body: String,
-    /// The response body the server returns (an Anthropic messages object).
+    /// The response body the server returns.
     pub response_body: String,
 }
 
 impl LiveExchange {
-    /// A minimal well-formed messages exchange over `text`.
+    /// A minimal well-formed Anthropic messages exchange over `text` (POST, `x-api-key`).
     pub fn messages(prompt: &str, reply: &str) -> Self {
         LiveExchange {
+            method: "POST".to_string(),
+            path: "/v1/messages".to_string(),
+            secret_header: Some(("x-api-key".to_string(), API_KEY_SECRET.to_string())),
             request_body: format!(
                 "{{\"model\":\"claude-opus-4-8\",\"max_tokens\":64,\
                  \"messages\":[{{\"role\":\"user\",\"content\":\"{prompt}\"}}]}}"
@@ -98,6 +110,35 @@ impl LiveExchange {
                  \"stop_reason\":\"end_turn\",\"stop_sequence\":null,\
                  \"usage\":{{\"input_tokens\":12,\"output_tokens\":5}}}}"
             ),
+        }
+    }
+
+    /// A public GitHub commit lookup (GET, no secret) returning a commit-shaped body.
+    pub fn github_commit(
+        owner: &str,
+        repo: &str,
+        sha: &str,
+        author: &str,
+        date: &str,
+        message: &str,
+    ) -> Self {
+        LiveExchange {
+            method: "GET".to_string(),
+            path: format!("/repos/{owner}/{repo}/commits/{sha}"),
+            secret_header: None,
+            request_body: String::new(),
+            response_body: crate::endpoints::github::github_commit_body(sha, author, date, message),
+        }
+    }
+
+    /// A public Coinbase spot quote (GET, no secret) returning a spot-price body.
+    pub fn coinbase_spot(asset: &str, amount: &str) -> Self {
+        LiveExchange {
+            method: "GET".to_string(),
+            path: format!("/v2/prices/{asset}/spot"),
+            secret_header: None,
+            request_body: String::new(),
+            response_body: crate::endpoints::price::coinbase_spot_body(asset, amount),
         }
     }
 }
@@ -322,19 +363,20 @@ async fn prove_messages_presentation(exchange: &LiveExchange) -> Result<Vec<u8>>
         hyper::client::conn::http1::handshake(tls_connection).await?;
     tokio::spawn(connection);
 
-    let request = Request::builder()
-        .uri("/v1/messages")
-        .method("POST")
+    let mut request_builder = Request::builder()
+        .uri(exchange.path.as_str())
+        .method(exchange.method.as_str())
         .header("Host", SERVER_DOMAIN)
         .header("Accept", "*/*")
         .header("Accept-Encoding", "identity")
         .header("Connection", "close")
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .header("x-api-key", API_KEY_SECRET)
-        .body(Full::<Bytes>::new(Bytes::from(
-            exchange.request_body.clone(),
-        )))?;
+        .header("content-type", "application/json");
+    if let Some((name, value)) = &exchange.secret_header {
+        request_builder = request_builder.header(name.as_str(), value.as_str());
+    }
+    let request = request_builder.body(Full::<Bytes>::new(Bytes::from(
+        exchange.request_body.clone(),
+    )))?;
     let response = request_sender.send_request(request).await?;
     if response.status() != StatusCode::OK {
         return Err(anyhow!("server returned {}", response.status()));
@@ -405,8 +447,11 @@ async fn prove_messages_presentation(exchange: &LiveExchange) -> Result<Vec<u8>>
     let req = &http.requests[0];
     builder.reveal_sent(req.without_data())?;
     builder.reveal_sent(&req.request.target)?;
+    let secret_name = exchange.secret_header.as_ref().map(|(n, _)| n.as_str());
     for header in &req.headers {
-        if header.name.as_str().eq_ignore_ascii_case("x-api-key") {
+        // The declared secret header (if any) reveals only its NAME — the VALUE stays
+        // hidden (selective disclosure). Public endpoints have no secret; reveal all.
+        if secret_name.is_some_and(|n| header.name.as_str().eq_ignore_ascii_case(n)) {
             builder.reveal_sent(header.without_value())?;
         } else {
             builder.reveal_sent(header)?;

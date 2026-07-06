@@ -30,11 +30,12 @@
 //! response. This is the 3-way analogue of the DECO body-binding in `bridge::stripe_deco`.
 
 use crate::authentic::{
-    AnthropicConfig, AnthropicPresentation, AuthenticError, AuthenticSession,
-    verify_anthropic_presentation,
+    AuthenticError, AuthenticSession, EndpointConfig, EndpointPresentation,
+    verify_endpoint_presentation,
 };
 use crate::cfg::{CfgError, CompactCert, prove_cfg_compact, verify_cfg_compact};
 use crate::injection::injection_free;
+use crate::zk_leg::{ZkInjectionProof, ZkLegError, prove_injection_leg, verify_injection_leg};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_bytes;
 
@@ -72,7 +73,7 @@ impl FieldSpan {
 pub struct ZkOracleAttestation {
     /// **Authentic leg** — the verified tlsn/MPC-TLS presentation of the Anthropic
     /// `POST /v1/messages` session (x-api-key redacted).
-    pub presentation: AnthropicPresentation,
+    pub presentation: EndpointPresentation,
     /// **Well-formed leg** — the compact JSON CFG parse certificate over the
     /// authenticated response body: the leftmost rule sequence (O(tokens); replayed
     /// against the re-tokenized body, `CfgCompact.lean::Replay`-shaped; `expand_compact`
@@ -86,6 +87,11 @@ pub struct ZkOracleAttestation {
     /// response body. The verifier recomputes it and refuses a mismatch, binding all three
     /// legs to the SAME response.
     pub content_commit: BabyBear,
+    /// **The STARK-carried injection leg** (optional) — a real `stark::prove` of the
+    /// pinned injection DFA's run over the field ([`crate::zk_leg`]). When present the
+    /// verifier checks it FAIL-CLOSED (a wrong-run/forged/injecting proof refuses the
+    /// whole attestation); when absent leg 3 is the cleartext matcher as before.
+    pub zk_injection: Option<ZkInjectionProof>,
 }
 
 /// The verified output: the authenticated session (server + response body) once all three
@@ -110,6 +116,9 @@ pub enum ZkOracleError {
     /// injection field span lies outside it. A spliced attestation (evidence about a
     /// DIFFERENT body than the authentic session) fails here.
     CrossLegMismatch,
+    /// The STARK-carried injection leg refused (wrong run / forged proof). An
+    /// `Injecting` verdict from the leg surfaces as [`ZkOracleError::Injection`].
+    BadZkLeg(ZkLegError),
 }
 
 impl core::fmt::Display for ZkOracleError {
@@ -128,6 +137,9 @@ impl core::fmt::Display for ZkOracleError {
                     f,
                     "cross-leg weld refused: a leg's evidence is not about the authenticated response"
                 )
+            }
+            ZkOracleError::BadZkLeg(e) => {
+                write!(f, "STARK injection leg refused: {e:?}")
             }
         }
     }
@@ -148,10 +160,10 @@ impl std::error::Error for ZkOracleError {}
 /// genuinely discriminates: a benign field passes leg 3, a `{{`-bearing field fails it.
 pub fn verify_zkoracle(
     att: &ZkOracleAttestation,
-    config: &AnthropicConfig,
+    config: &EndpointConfig,
 ) -> Result<VerifiedZkOracle, ZkOracleError> {
     // Leg 1 — authentic → the authenticated response body.
-    let session = verify_anthropic_presentation(&att.presentation, config)
+    let session = verify_endpoint_presentation(&att.presentation, config)
         .map_err(ZkOracleError::NotAuthentic)?;
 
     // ── THE CROSS-LEG WELD ──
@@ -180,6 +192,16 @@ pub fn verify_zkoracle(
         return Err(ZkOracleError::Injection);
     }
 
+    // The STARK-carried injection leg, when present: the proof must be the field's
+    // genuine run of the pinned DFA (fail-closed — a stapled-on bad proof refuses the
+    // attestation even though the cleartext matcher already passed).
+    if let Some(leg) = &att.zk_injection {
+        verify_injection_leg(field, leg).map_err(|e| match e {
+            ZkLegError::Injecting => ZkOracleError::Injection,
+            other => ZkOracleError::BadZkLeg(other),
+        })?;
+    }
+
     Ok(VerifiedZkOracle { session })
 }
 
@@ -192,12 +214,12 @@ pub fn verify_zkoracle(
 /// the guard cannot mint an attestation for an injecting request (mirroring the Lean
 /// `malicious_not_injection_free`).
 pub fn prove_zkoracle(
-    presentation: AnthropicPresentation,
+    presentation: EndpointPresentation,
     user_field: Vec<u8>,
-    config: &AnthropicConfig,
+    config: &EndpointConfig,
 ) -> Result<ZkOracleAttestation, ProveError> {
     let session =
-        verify_anthropic_presentation(&presentation, config).map_err(ProveError::NotAuthentic)?;
+        verify_endpoint_presentation(&presentation, config).map_err(ProveError::NotAuthentic)?;
     // The guard refuses to attest an injecting field up front.
     if !injection_free(&user_field) {
         return Err(ProveError::Injection);
@@ -219,7 +241,21 @@ pub fn prove_zkoracle(
         cfg_cert,
         field_span,
         content_commit,
+        zk_injection: None,
     })
+}
+
+/// [`prove_zkoracle`] + a REAL STARK on the injection leg: the attestation additionally
+/// carries a `stark::prove` of the pinned injection DFA's run over the field
+/// ([`crate::zk_leg`]), which [`verify_zkoracle`] checks fail-closed.
+pub fn prove_zkoracle_with_stark(
+    presentation: EndpointPresentation,
+    user_field: Vec<u8>,
+    config: &EndpointConfig,
+) -> Result<ZkOracleAttestation, ProveError> {
+    let mut att = prove_zkoracle(presentation, user_field.clone(), config)?;
+    att.zk_injection = Some(prove_injection_leg(&user_field).ok_or(ProveError::Injection)?);
+    Ok(att)
 }
 
 /// Locate `needle` as a substring of `haystack`; an empty needle is at offset 0.
@@ -270,7 +306,9 @@ impl std::error::Error for ProveError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::authentic::{FixtureNotary, build_anthropic_fixture};
+    use crate::authentic::{
+        AnthropicConfig, AnthropicPresentation, FixtureNotary, build_anthropic_fixture,
+    };
 
     // A benign response whose disclosed body contains the user field `hello` (a substring
     // of `"text":"hello"`), so the injection-free leg has a committed span to read.
@@ -356,6 +394,7 @@ mod tests {
         let inj = build_anthropic_fixture(&notary, BODY_INJECT, 1);
         let att = ZkOracleAttestation {
             presentation: inj.clone(),
+            zk_injection: None,
             cfg_cert: prove_cfg_compact(BODY_INJECT.as_bytes()).unwrap(),
             field_span: span_in(&inj, b"{{system}}"),
             content_commit: content_commitment(BODY_INJECT.as_bytes()),
@@ -374,6 +413,7 @@ mod tests {
         pres.recv[n - 3] ^= 0xFF;
         let att = ZkOracleAttestation {
             presentation: pres,
+            zk_injection: None,
             cfg_cert: prove_cfg_compact(BODY.as_bytes()).unwrap(),
             field_span: FieldSpan { offset: 0, len: 2 },
             content_commit: content_commitment(BODY.as_bytes()),
@@ -402,6 +442,7 @@ mod tests {
         // commitment is over the (malformed) authenticated body so the weld passes to leg 2.
         let att = ZkOracleAttestation {
             presentation: pres.clone(),
+            zk_injection: None,
             cfg_cert: prove_cfg_compact(BODY.as_bytes()).unwrap(),
             field_span: span_in(&pres, b"msg"),
             content_commit: content_commitment(malformed.as_bytes()),
@@ -424,6 +465,7 @@ mod tests {
         let bad_auth = notary.sign(bad_auth);
         let att_a = ZkOracleAttestation {
             presentation: bad_auth,
+            zk_injection: None,
             cfg_cert: prove_cfg_compact(BODY.as_bytes()).unwrap(),
             field_span: span_in(&pres, b"hello"),
             content_commit: content_commitment(BODY.as_bytes()),
@@ -437,6 +479,7 @@ mod tests {
         // The commitment is over the real authenticated body, so the weld passes to leg 2.
         let att_b = ZkOracleAttestation {
             presentation: pres.clone(),
+            zk_injection: None,
             cfg_cert: prove_cfg_compact(br#"{"other":true}"#).unwrap(),
             field_span: span_in(&pres, b"hello"),
             content_commit: content_commitment(BODY.as_bytes()),
@@ -451,6 +494,7 @@ mod tests {
         let inj = build_anthropic_fixture(&notary, BODY_INJECT, 1);
         let att_c = ZkOracleAttestation {
             presentation: inj.clone(),
+            zk_injection: None,
             cfg_cert: prove_cfg_compact(BODY_INJECT.as_bytes()).unwrap(),
             field_span: span_in(&inj, b"{{system}}"),
             content_commit: content_commitment(BODY_INJECT.as_bytes()),
@@ -489,7 +533,7 @@ mod tests {
         // REGRESSION DIRECTION — pre-weld each leg was independently satisfiable, so the
         // composition ACCEPTED: the session is authentic (B) …
         let session_b =
-            verify_anthropic_presentation(&pres_b, &cfg).expect("B is an authentic session");
+            verify_endpoint_presentation(&pres_b, &cfg).expect("B is an authentic session");
         // … a well-formed cert exists for B's body …
         assert!(
             verify_cfg_compact(
@@ -530,6 +574,7 @@ mod tests {
         // Post-weld: the committed span reads the authenticated `{{system}}` field.
         let att = ZkOracleAttestation {
             presentation: inj.clone(),
+            zk_injection: None,
             cfg_cert: prove_cfg_compact(&body).unwrap(),
             field_span: span_in(&inj, b"{{system}}"),
             content_commit: content_commitment(&body),
@@ -544,6 +589,7 @@ mod tests {
         let body = body_of(&pres);
         let att = ZkOracleAttestation {
             presentation: pres,
+            zk_injection: None,
             cfg_cert: prove_cfg_compact(&body).unwrap(),
             field_span: FieldSpan {
                 offset: body.len(),

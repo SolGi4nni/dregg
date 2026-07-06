@@ -37,20 +37,34 @@
 pub mod attestation;
 pub mod authentic;
 pub mod cfg;
+pub mod endpoints;
 pub mod injection;
 #[cfg(feature = "tlsn-live")]
 pub mod tlsn_live;
+pub mod zk_leg;
 
 pub use attestation::{
     ProveError, VerifiedZkOracle, ZkOracleAttestation, ZkOracleError, prove_zkoracle,
-    verify_zkoracle,
+    prove_zkoracle_with_stark, verify_zkoracle,
 };
 pub use authentic::{
-    AnthropicConfig, AnthropicPresentation, AuthenticError, AuthenticSession, FixtureNotary,
-    TlsnVerifyingKey, build_anthropic_fixture, verify_anthropic_presentation,
+    AnthropicConfig, AnthropicPresentation, AuthenticError, AuthenticSession, EndpointConfig,
+    EndpointPresentation, EndpointSpec, FixtureNotary, SecretHeader, TlsnVerifyingKey,
+    build_anthropic_fixture, build_endpoint_fixture, verify_anthropic_presentation,
+    verify_endpoint_presentation,
 };
 pub use cfg::{
     CfgError, CompactCert, ParseCertificate, expand_compact, json_grammar, prove_cfg_cert,
     prove_cfg_compact, tokenize, verify_cfg_cert, verify_cfg_compact,
 };
+pub use endpoints::github::{
+    GithubCommitFact, github_commit_spec, prove_github_commit, verify_github_commit,
+};
+pub use endpoints::price::{
+    AttestedPrice, CoinbaseSpotOracle, PriceError, PriceOracle, coinbase_spot_spec,
+    prove_coinbase_spot, verify_coinbase_spot,
+};
 pub use injection::{injection_free, injection_template};
+pub use zk_leg::{
+    ZkInjectionProof, ZkLegError, injection_dfa_table, prove_injection_leg, verify_injection_leg,
+};

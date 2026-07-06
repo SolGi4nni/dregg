@@ -68,6 +68,7 @@ fn full_zkoracle_attestation_accepts_and_hostiles_are_refused() {
     forged_pres.recv[n - 4] ^= 0xFF;
     let forged = ZkOracleAttestation {
         presentation: forged_pres,
+        zk_injection: None,
         cfg_cert: prove_cfg_compact(ANTHROPIC_BODY.as_bytes()).unwrap(),
         field_span: FieldSpan { offset: 0, len: 2 },
         content_commit: content_commitment(ANTHROPIC_BODY.as_bytes()),
@@ -94,6 +95,7 @@ fn full_zkoracle_attestation_accepts_and_hostiles_are_refused() {
     // commitment is over the malformed authenticated body, so the weld passes to leg 2.
     let malformed = ZkOracleAttestation {
         presentation: malformed_pres.clone(),
+        zk_injection: None,
         cfg_cert: prove_cfg_compact(ANTHROPIC_BODY.as_bytes()).unwrap(),
         field_span: span_in(&malformed_pres, b"msg"),
         content_commit: content_commitment(malformed_body.as_bytes()),
@@ -123,6 +125,7 @@ fn full_zkoracle_attestation_accepts_and_hostiles_are_refused() {
     let inject_pres = build_anthropic_fixture(&notary, inject_body, 2);
     let injecting = ZkOracleAttestation {
         presentation: inject_pres.clone(),
+        zk_injection: None,
         cfg_cert: prove_cfg_compact(inject_body.as_bytes()).unwrap(),
         field_span: span_in(&inject_pres, b"{{x"),
         content_commit: content_commitment(inject_body.as_bytes()),
@@ -167,4 +170,29 @@ fn injection_catch_discriminates() {
         prove_zkoracle(presentation, b"{{x".to_vec(), &config).unwrap_err(),
         ProveError::Injection
     );
+}
+
+/// The STARK-carrying attestation roundtrips through the REAL verifier — and a
+/// stapled-on foreign/tampered STARK leg refuses the whole attestation fail-closed,
+/// even though the cleartext matcher passes.
+#[test]
+fn stark_carrying_attestation_roundtrips_and_bad_leg_refuses() {
+    use dregg_zkoracle_prove::{ZkOracleError, prove_injection_leg, prove_zkoracle_with_stark};
+
+    let notary = FixtureNotary::from_seed(&[13u8; 32]);
+    let config = AnthropicConfig::new(notary.verifying_key());
+    let presentation = build_anthropic_fixture(&notary, ANTHROPIC_BODY, 7);
+
+    let att = prove_zkoracle_with_stark(presentation.clone(), b"France".to_vec(), &config)
+        .expect("stark-carrying attestation");
+    assert!(att.zk_injection.is_some());
+    verify_zkoracle(&att, &config).expect("verifies with the STARK leg checked");
+
+    // Staple a leg proven for a DIFFERENT projection → refused (WrongRun), fail-closed.
+    let mut stapled = att.clone();
+    stapled.zk_injection = Some(prove_injection_leg(b"a-much-longer-different-field!").unwrap());
+    assert!(matches!(
+        verify_zkoracle(&stapled, &config),
+        Err(ZkOracleError::BadZkLeg(_))
+    ));
 }

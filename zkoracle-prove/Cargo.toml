@@ -20,6 +20,10 @@ dregg-circuit = { path = "../circuit" }
 ed25519-dalek = { version = "2", features = ["std"] }
 sha2 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
+# Typed extraction of the disclosed response fields (the per-endpoint response SCHEMA) —
+# the authenticated body is already proven well-formed JSON by the CFG leg; serde_json
+# reads the specific fact fields (commit author/date/message, price amount) out of it.
+serde_json = { workspace = true }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # `tlsn-live` — the REAL MPC-TLS integration against an Anthropic-shaped endpoint
@@ -59,3 +63,7 @@ tlsn-live = [
     "dep:bincode",
     "dep:anyhow",
 ]
+
+[dev-dependencies]
+# Proof-size measurement in the demo example only (StarkProof is serde).
+bincode = "1.3"

@@ -40,6 +40,98 @@ pub const API_KEY_PLACEHOLDER: &str = "sk-ant-MERCHANT-API-KEY-PLACEHOLDER";
 /// Domain separation over the modeled notary signature.
 const TLSN_PRESENTATION_DOMAIN: &[u8] = b"dregg/zkoracle/tlsn-presentation/v1";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The ENDPOINT SPECIFICATION — the DATA that turns the generic prover into a specific
+// verified-web-oracle. A new endpoint (GitHub commit, a price quote, …) is an
+// [`EndpointSpec`] + a response schema, NOT a fork of the prover: the authentic-leg
+// verifier ([`verify_endpoint_presentation`]) and the fixture builder
+// ([`build_endpoint_fixture`]) are endpoint-agnostic and driven entirely by the spec.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A secret request header whose VALUE is redacted (never authenticated) in the
+/// presentation — the "prove the response without revealing your key" property. Present
+/// for authed endpoints (Anthropic's `x-api-key`); ABSENT for public read-only endpoints
+/// (a public GitHub commit, a public price quote — nothing to hide).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecretHeader {
+    /// The header name (e.g. `x-api-key`, `authorization`).
+    pub name: String,
+    /// The placeholder value the fixture sends (an obvious non-secret, so no real-key
+    /// SHAPE lands in the tree; redaction is identical regardless of the token's contents).
+    pub placeholder: String,
+    /// A marker substring that must NEVER survive into the authenticated request bytes
+    /// (defense in depth — refuse even a partial leak).
+    pub marker: String,
+}
+
+/// **`EndpointSpec`** — the endpoint-specific configuration, factored out so a new web
+/// fact is DATA. It pins the transport identity + shape:
+///
+/// - `server_name` — the TLS host the session must be pinned to (`api.anthropic.com`,
+///   `api.github.com`, `api.coinbase.com`);
+/// - `method` — the HTTP method the request line carries (`POST`, `GET`);
+/// - `secret_header` — the redacted secret header, if any (`None` = a public endpoint).
+///
+/// The *response schema* (the typed fact a body parses into) lives with each endpoint
+/// module ([`crate::endpoints`]); this spec is the transport contract the authentic leg
+/// enforces uniformly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EndpointSpec {
+    /// A short identifier for the endpoint (`anthropic-messages`, `github-commit`,
+    /// `coinbase-spot`) — labels the oracle, surfaces in diagnostics.
+    pub id: String,
+    /// The TLS host a genuine presentation must be a session with.
+    pub server_name: String,
+    /// The HTTP method the fixture's request line carries.
+    pub method: String,
+    /// The redacted secret request header, or `None` for a public read-only endpoint.
+    pub secret_header: Option<SecretHeader>,
+}
+
+impl EndpointSpec {
+    /// The Anthropic `POST /v1/messages` oracle — the original endpoint, now expressed as
+    /// data: pin `api.anthropic.com`, redact `x-api-key`.
+    pub fn anthropic_messages() -> Self {
+        EndpointSpec {
+            id: "anthropic-messages".to_string(),
+            server_name: ANTHROPIC_SERVER_NAME.to_string(),
+            method: "POST".to_string(),
+            secret_header: Some(SecretHeader {
+                name: API_KEY_HEADER.to_string(),
+                placeholder: API_KEY_PLACEHOLDER.to_string(),
+                marker: "MERCHANT-API-KEY".to_string(),
+            }),
+        }
+    }
+}
+
+/// **`EndpointConfig`** — an [`EndpointSpec`] plus the pinned notary anchor: everything the
+/// authentic leg checks a presentation against. This is the canonical config the whole
+/// prover/verifier (`prove_zkoracle`/`verify_zkoracle`) takes; [`AnthropicConfig`] is the
+/// Anthropic-specialized constructor over it.
+#[derive(Clone, Debug)]
+pub struct EndpointConfig {
+    /// The endpoint specification (host/method/secret-header).
+    pub spec: EndpointSpec,
+    /// The pinned notary verifying key anchor.
+    pub expected_notary: TlsnVerifyingKey,
+}
+
+impl EndpointConfig {
+    /// Pin an endpoint spec + a notary anchor.
+    pub fn new(spec: EndpointSpec, expected_notary: TlsnVerifyingKey) -> Self {
+        EndpointConfig {
+            spec,
+            expected_notary,
+        }
+    }
+
+    /// The pinned server host.
+    pub fn expected_server(&self) -> &str {
+        &self.spec.server_name
+    }
+}
+
 /// The notary's verifying key — models `tlsn_core::signing::VerifyingKey { alg, data }`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TlsnVerifyingKey {
@@ -57,7 +149,7 @@ pub struct TlsnVerifyingKey {
 /// full messages JSON body — the public evidence the well-formed (CFG) and injection-free
 /// legs run over.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AnthropicPresentation {
+pub struct EndpointPresentation {
     /// The notary's verifying key (a verifier pins its own anchor).
     pub verifying_key: TlsnVerifyingKey,
     /// The authenticated server identity (must be [`ANTHROPIC_SERVER_NAME`]).
@@ -74,7 +166,7 @@ pub struct AnthropicPresentation {
     pub notary_sig: [u8; 64],
 }
 
-impl AnthropicPresentation {
+impl EndpointPresentation {
     /// The canonical bytes the notary signs: domain + pinned identity + BOTH directions'
     /// delivered bytes. Tampering any disclosed byte breaks the signature.
     fn canonical_signing_bytes(&self) -> Vec<u8> {
@@ -91,22 +183,32 @@ impl AnthropicPresentation {
     }
 }
 
-/// The pinned expectations the adapter checks a presentation against.
+/// A verified tlsn presentation, endpoint-agnostic — the original `AnthropicPresentation`
+/// name, kept as an alias since every endpoint (Anthropic, GitHub, price) shares the same
+/// presentation shape (server identity + both directions' delivered bytes + notary sig).
+pub type AnthropicPresentation = EndpointPresentation;
+
+/// **`AnthropicConfig`** — the Anthropic-specialized [`EndpointConfig`] constructor, kept
+/// for back-compat. It is a thin newtype that `Deref`s to [`EndpointConfig`], so it flows
+/// into the generic `prove_zkoracle`/`verify_zkoracle` unchanged while a GitHub or price
+/// oracle builds its own `EndpointConfig` directly.
 #[derive(Clone, Debug)]
-pub struct AnthropicConfig {
-    /// The server the presentation must be a session with (default [`ANTHROPIC_SERVER_NAME`]).
-    pub expected_server: String,
-    /// The pinned notary verifying key anchor.
-    pub expected_notary: TlsnVerifyingKey,
-}
+pub struct AnthropicConfig(pub EndpointConfig);
 
 impl AnthropicConfig {
-    /// Pin the Anthropic server + a notary anchor.
+    /// Pin the Anthropic `POST /v1/messages` endpoint + a notary anchor.
     pub fn new(expected_notary: TlsnVerifyingKey) -> Self {
-        AnthropicConfig {
-            expected_server: ANTHROPIC_SERVER_NAME.to_string(),
+        AnthropicConfig(EndpointConfig::new(
+            EndpointSpec::anthropic_messages(),
             expected_notary,
-        }
+        ))
+    }
+}
+
+impl core::ops::Deref for AnthropicConfig {
+    type Target = EndpointConfig;
+    fn deref(&self) -> &EndpointConfig {
+        &self.0
     }
 }
 
@@ -172,22 +274,25 @@ impl core::fmt::Display for AuthenticError {
 
 impl std::error::Error for AuthenticError {}
 
-/// **THE ADAPTER** — verify a tlsn presentation of an Anthropic messages session and
-/// extract the authenticated response body.
+/// **THE ADAPTER** — verify a tlsn presentation of ANY endpoint session (the generalized
+/// authentic leg) and extract the authenticated response body.
 ///
-/// Enforces, in order: server pinning, notary pinning, the presentation signature, and
-/// the `x-api-key` redaction (the secret must NOT appear in the authenticated request
-/// bytes). On success returns the authenticated response body for the downstream legs.
+/// Enforces, in order, driven entirely by [`EndpointConfig`]/[`EndpointSpec`]: server
+/// pinning (`spec.server_name`), notary pinning, the presentation signature, and — when
+/// the spec declares a secret header — its redaction (the secret value must NOT appear in
+/// the authenticated request bytes). A public read-only endpoint (`secret_header = None`)
+/// skips the redaction step (there is nothing to hide). On success returns the
+/// authenticated response body for the downstream legs.
 ///
 /// ⚑ This checks the presentation as *delivered + signed*; the 2PC session-integrity that
 /// makes the signature *trustless* is the named remaining wiring ([`crate::tlsn_live`] +
 /// module docs).
-pub fn verify_anthropic_presentation(
-    pres: &AnthropicPresentation,
-    config: &AnthropicConfig,
+pub fn verify_endpoint_presentation(
+    pres: &EndpointPresentation,
+    config: &EndpointConfig,
 ) -> Result<AuthenticSession, AuthenticError> {
     // (1) server pinning.
-    if pres.server_name != config.expected_server {
+    if pres.server_name != config.spec.server_name {
         return Err(AuthenticError::WrongServer {
             got: pres.server_name.clone(),
         });
@@ -208,11 +313,15 @@ pub fn verify_anthropic_presentation(
     vk.verify(&pres.canonical_signing_bytes(), &sig)
         .map_err(|_| AuthenticError::BadNotarySignature)?;
 
-    // (4) selective disclosure: the api-key secret must be redacted out of the sent bytes.
-    if contains_subslice(&pres.sent, API_KEY_PLACEHOLDER.as_bytes())
-        || contains_subslice(&pres.sent, b"MERCHANT-API-KEY")
-    {
-        return Err(AuthenticError::ApiKeyDisclosed);
+    // (4) selective disclosure — spec-driven. If the endpoint declares a secret header,
+    // its placeholder/marker must NOT survive into the authenticated request bytes. A
+    // public endpoint has no secret, so this step is n/a.
+    if let Some(secret) = &config.spec.secret_header {
+        if contains_subslice(&pres.sent, secret.placeholder.as_bytes())
+            || contains_subslice(&pres.sent, secret.marker.as_bytes())
+        {
+            return Err(AuthenticError::ApiKeyDisclosed);
+        }
     }
 
     // (5) extract the authenticated response body.
@@ -226,6 +335,15 @@ pub fn verify_anthropic_presentation(
     })
 }
 
+/// Back-compat alias for [`verify_endpoint_presentation`] (the Anthropic-named entry the
+/// original call sites use; the config `Deref`s from [`AnthropicConfig`]).
+pub fn verify_anthropic_presentation(
+    pres: &EndpointPresentation,
+    config: &EndpointConfig,
+) -> Result<AuthenticSession, AuthenticError> {
+    verify_endpoint_presentation(pres, config)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The fixture producer — models the tlsn notary + 2PC + live Anthropic session.
 //
@@ -234,7 +352,7 @@ pub fn verify_anthropic_presentation(
 // forgeries refuted) without the mpz 2PC stack. The genuine run is [`crate::tlsn_live`].
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The modeled notary that signs an [`AnthropicPresentation`]. Deterministic from a seed.
+/// The modeled notary that signs an [`EndpointPresentation`]. Deterministic from a seed.
 pub struct FixtureNotary {
     signing: SigningKey,
 }
@@ -255,8 +373,8 @@ impl FixtureNotary {
         }
     }
 
-    /// Sign a presentation (fills [`AnthropicPresentation::notary_sig`]).
-    pub fn sign(&self, mut pres: AnthropicPresentation) -> AnthropicPresentation {
+    /// Sign a presentation (fills [`EndpointPresentation::notary_sig`]).
+    pub fn sign(&self, mut pres: EndpointPresentation) -> EndpointPresentation {
         let sig: Signature = self.signing.sign(&pres.canonical_signing_bytes());
         pres.notary_sig = sig.to_bytes();
         pres
@@ -279,30 +397,63 @@ pub fn build_anthropic_fixture(
     notary: &FixtureNotary,
     response_body: &str,
     connection_time: u64,
-) -> AnthropicPresentation {
-    // ── Request transcript. The api-key VALUE is redacted; the header NAME stays.
-    let key_prefix = "x-api-key: ";
+) -> EndpointPresentation {
+    build_endpoint_fixture(
+        notary,
+        &EndpointSpec::anthropic_messages(),
+        MESSAGES_PATH,
+        response_body,
+        connection_time,
+    )
+}
+
+/// **Build an endpoint presentation fixture — the endpoint-agnostic producer.**
+///
+/// Constructs a realistic authenticated HTTP/1.1 transcript for ANY [`EndpointSpec`]:
+///
+/// - **Request (`sent`):** `{method} {path} HTTP/1.1`, `host: {server_name}`, and — when
+///   the spec declares a secret header — that header with its value REDACTED (fill `X`,
+///   NOT authenticated): the killer use case, prove the response WITHOUT revealing your
+///   key. A public endpoint (`secret_header = None`) sends no secret at all.
+/// - **Response (`recv`):** the status line + headers + the JSON body, authenticated in
+///   full (the public evidence the CFG + injection legs run over).
+///
+/// The presentation is signed by `notary`. This models the tlsn notary + 2PC + a live
+/// session against `server_name`; the genuine local run is [`crate::tlsn_live`].
+pub fn build_endpoint_fixture(
+    notary: &FixtureNotary,
+    spec: &EndpointSpec,
+    path: &str,
+    response_body: &str,
+    connection_time: u64,
+) -> EndpointPresentation {
+    // ── Request transcript. If a secret header is declared, its VALUE is redacted (fill
+    // X); the header NAME stays. Everything else is authenticated.
+    let secret_line = match &spec.secret_header {
+        Some(sh) => format!("{}: {}\r\n", sh.name, sh.placeholder),
+        None => String::new(),
+    };
     let sent_str = format!(
-        "POST {path} HTTP/1.1\r\n\
-         host: api.anthropic.com\r\n\
-         {kp}{secret}\r\n\
-         anthropic-version: 2023-06-01\r\n\
+        "{method} {path} HTTP/1.1\r\n\
+         host: {host}\r\n\
+         {secret_line}\
+         accept: application/json\r\n\
          content-type: application/json\r\n\r\n",
-        path = MESSAGES_PATH,
-        kp = key_prefix,
-        secret = API_KEY_PLACEHOLDER,
+        method = spec.method,
+        host = spec.server_name,
     );
-    // Redact exactly the api-key value bytes (fill X); everything else is authenticated.
-    let secret_start = sent_str
-        .find(API_KEY_PLACEHOLDER)
-        .expect("placeholder present");
-    let secret_end = secret_start + API_KEY_PLACEHOLDER.len();
     let mut sent = sent_str.into_bytes();
-    for b in &mut sent[secret_start..secret_end] {
-        *b = b'X';
+    if let Some(sh) = &spec.secret_header {
+        // Redact exactly the secret value bytes wherever the placeholder appears.
+        if let Some(secret_start) = find_subslice(&sent, sh.placeholder.as_bytes()) {
+            let secret_end = secret_start + sh.placeholder.len();
+            for b in &mut sent[secret_start..secret_end] {
+                *b = b'X';
+            }
+        }
     }
 
-    // ── Response transcript — the messages JSON body authenticated in full.
+    // ── Response transcript — the JSON body authenticated in full.
     let recv = format!(
         "HTTP/1.1 200 OK\r\n\
          content-type: application/json\r\n\
@@ -311,9 +462,9 @@ pub fn build_anthropic_fixture(
     )
     .into_bytes();
 
-    let pres = AnthropicPresentation {
+    let pres = EndpointPresentation {
         verifying_key: notary.verifying_key(),
-        server_name: ANTHROPIC_SERVER_NAME.to_string(),
+        server_name: spec.server_name.clone(),
         connection_time,
         sent,
         recv,

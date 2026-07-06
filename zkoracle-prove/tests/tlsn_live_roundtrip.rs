@@ -71,3 +71,69 @@ fn real_local_mpc_tls_roundtrip_yields_a_verified_zkoracle() {
         "server pinning must refuse a non-pinned host"
     );
 }
+
+/// GENERALITY, live-local — a PUBLIC GitHub commit lookup runs on REAL tlsn: real MPC-TLS
+/// 2PC → real Presentation → real verify() → the authenticated commit body is well-formed
+/// JSON (real CFG cert) carrying the commit fact; a tampered presentation is refused.
+#[test]
+fn real_local_mpc_tls_github_commit_roundtrip() {
+    let sha = "6dcb09b5b57875f334f61aebed695e2e4193db5e";
+    let exchange = LiveExchange::github_commit(
+        "octocat",
+        "hello-world",
+        sha,
+        "Monalisa Octocat",
+        "2011-04-14T16:00:49Z",
+        "Fix all the bugs",
+    );
+    let roundtrip = run_local_roundtrip_blocking(&exchange).expect("real MPC-TLS github roundtrip");
+    let v = &roundtrip.verified;
+    assert_eq!(v.server_name, roundtrip.pinned_server);
+
+    // Well-formed leg over the AUTHENTICATED body: a real CFG parse certificate.
+    let cert = prove_cfg_cert(&v.response_body).expect("commit body is well-formed JSON");
+    verify_cfg_cert(&cert, &v.response_body).expect("CFG certificate verifies");
+    // The authenticated body carries the commit fact.
+    let body = String::from_utf8_lossy(&v.response_body);
+    assert!(body.contains(sha), "authenticated body carries the sha");
+    assert!(body.contains("Monalisa Octocat"), "and the author");
+
+    // A tampered presentation is refused by the REAL verify().
+    let mut tampered = roundtrip.presentation_bytes.clone();
+    let n = tampered.len();
+    for i in [n / 3, n / 2, (2 * n) / 3] {
+        tampered[i] ^= 0xFF;
+    }
+    assert!(
+        verify_messages_presentation(&tampered, &roundtrip.pinned_server).is_err(),
+        "a tampered github presentation MUST fail the real verify()"
+    );
+}
+
+/// GENERALITY, live-local — a PUBLIC Coinbase spot quote runs on REAL tlsn, same machinery.
+#[test]
+fn real_local_mpc_tls_coinbase_spot_roundtrip() {
+    let exchange = LiveExchange::coinbase_spot("BTC-USD", "64250.37");
+    let roundtrip =
+        run_local_roundtrip_blocking(&exchange).expect("real MPC-TLS coinbase roundtrip");
+    let v = &roundtrip.verified;
+    assert_eq!(v.server_name, roundtrip.pinned_server);
+
+    let cert = prove_cfg_cert(&v.response_body).expect("spot body is well-formed JSON");
+    verify_cfg_cert(&cert, &v.response_body).expect("CFG certificate verifies");
+    let body = String::from_utf8_lossy(&v.response_body);
+    assert!(
+        body.contains("64250.37"),
+        "authenticated body carries the amount"
+    );
+
+    let mut tampered = roundtrip.presentation_bytes.clone();
+    let n = tampered.len();
+    for i in [n / 3, n / 2, (2 * n) / 3] {
+        tampered[i] ^= 0xFF;
+    }
+    assert!(
+        verify_messages_presentation(&tampered, &roundtrip.pinned_server).is_err(),
+        "a tampered coinbase presentation MUST fail the real verify()"
+    );
+}
