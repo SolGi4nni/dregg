@@ -336,6 +336,29 @@ says.
    stays denied (a named door, not a hole). `revoke(path)` closes it. The agent
    never mints its own egress; the door is the host's cap, revocable.
 
+   The **provider-only SOCKET door** is the network sibling: `grant_provider(host,
+   port)` opens EXACTLY one outbound endpoint (a jailed live brain's model call),
+   folded into `Confinement::net_out`. Deny-default: no grant ⇒ no outbound network
+   at all. It is enforced on **both** platforms now:
+   - **macOS** — an SBPL `(allow network-outbound (remote ip "host:port"))` rule
+     (a loopback grant pins host+port; a remote host is port-scoped, hence the
+     recommended trusted-localhost-proxy pattern).
+   - **Linux** — a seccomp **`connect`-notification** door
+     (`sandbox.rs::provider_door` + the `linux` backend). The jailed body may
+     `socket()`, but every `connect()` traps to a trusted supervisor (firmament
+     code kept in the connected net namespace) that admits EXACTLY the granted
+     endpoints — establishing the connection on the child's behalf and injecting
+     the connected fd — and `EPERM`s every other host:port. The child's own net
+     namespace stays **empty**, so deny-default is *structural*: no route exists;
+     the only reachable endpoint is one the supervisor opens after a pure `admits`
+     match; any plumbing failure (dead supervisor, unreadable sockaddr) fails
+     **closed**. Chosen over slirp4netns / veth+nftables because it needs no
+     external binary and no host-network mutation, and it matches the loopback
+     provider-door test exactly. STATUS: the policy + cBPF config layer is
+     unit-tested (`sandbox.rs` tests) and the backend cross-builds for Linux; the
+     connect-notify RUNTIME (the `provider_egress` test's socket teeth) is
+     validated on a Linux host / CI — it is not exercised on a macOS dev host.
+
 ### What is REAL vs STAND-IN (honest)
 
 REAL: the JAIL (file/net/exec/fd denied — the four base teeth + the three
