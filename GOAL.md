@@ -138,6 +138,17 @@ surface` → clean parent `UnixStream`) is next; it needs `process-pd-sandbox`
   rent_a_confined_agent --features real-jail` = OS-jailed + model-driven +
   net-reaches-only-the-model + cap-gated + metered + R2-verified, in one command.
 
+## FORK-A-CONFINED-SESSION — SCOPE VERIFIED (resume tick ~04:30)
+Checked: the tree is quiescent (agent-platform last commit `8a0b8550a`, no
+uncommitted changes). BUT the fork/rewind is NOT a small additive change: the
+Tenant persists only the LATEST SessionCarrier (overwrites the EXEC_COLL working
+slots via `advance_checkpoint` — a Monotonic cursor, no stored history), so
+rewind-to-an-earlier-point / fork-from-a-checkpoint needs a NEW checkpoint-HISTORY
+mechanism (multiple carriers at addressable roots, like `grain-fork::Grain`'s
+`checkpoints: Vec<GrainCheckpoint>` + `checkpoint_roots()`, which the Tenant lacks).
+That is a substantial agent-platform addition — coordinated/deliberate, not a
+4:30am quiet-window slip. Ember decision / coordination gated.
+
 ## CORE ASPECT ACHIEVED (2026-07-06 ~03:25)
 The confined-body grain — the goal's north star — is proven, tested (10 lib + 6
 e2e + firmament), demoed (full story runnable), documented, and robust. Every
