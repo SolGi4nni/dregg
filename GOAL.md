@@ -44,10 +44,26 @@ Design: `docs/deos/GRAIN-CONFINED-BODY.md`.
   on this macOS box, not only on a Linux builder. `spawn_pd_confined` lives in
   `sel4/dregg-firmament/src/process_kernel.rs`.
 
+## Reorder note
+UNIT 3 (real-grain end-to-end) pulled AHEAD of UNIT 2 (firmament jail): proving
+the unification against the real grain machinery is higher value-per-risk than
+hand-rolling firmament fork/fd at this hour. Key facts that made it clean:
+`drive`/`drive_serving` take `&mut dyn AgentBrain` (ConfinedBrain slots in);
+`AgentAction::CellWrite` is INTRINSIC (`agent.rs:1775` `state.cells.insert` — no
+external tool); `cell:<path>` caps grant the write. So a ConfinedBrain over an
+in-process channel drives a real grain with zero drive-path change. Unit 2 (swap
+the in-process channel for a firmament endpoint fd via `spawn_pd_confined_with_
+surface` → clean parent `UnixStream`) is next; it needs `process-pd-sandbox`
+(macOS Seatbelt works locally).
+
 ## Done-log
 - Grounded the grain↔confined-body seam; wrote `docs/deos/GRAIN-CONFINED-BODY.md`.
-- UNIT 1 code written: `grain-jail` crate (protocol + `ConfinedBrain` + map +
-  5 tests); added to workspace. Verifying (cargo lock contention).
+- UNIT 1 LANDED (`8de7447da`): `grain-jail` (protocol + `ConfinedBrain` + map +
+  5 tests green), added to workspace.
+- UNIT 3 code written: `grain-jail/tests/grain_end_to_end.rs` — a ConfinedBrain
+  drives a REAL agent-platform grain (rent → drive_serving → meter → R2 verify →
+  forgery refused; + a cap-refusal test). dev-deps agent-platform/hosted-lease/
+  types. BUILDING (heavy tree).
 
 ## Open decisions for morning-ember
 - (none yet)

@@ -7646,7 +7646,10 @@ dependencies = [
 name = "grain-jail"
 version = "0.1.0"
 dependencies = [
+ "agent-platform",
  "dregg-agent",
+ "dregg-types",
+ "hosted-lease",
  "serde",
  "serde_json",
 ]

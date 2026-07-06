@@ -28,5 +28,13 @@ dregg-agent = { path = "../dregg-agent" }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true }
 
+[dev-dependencies]
+# The end-to-end proof drives a REAL grain: rent → confined-brain drive → meter
+# → receipt → R2 verify. Dev-only, so grain-jail's own dep graph stays light
+# (no cycle: agent-platform does not depend on grain-jail).
+agent-platform = { path = "../agent-platform" }
+hosted-lease = { path = "../hosted-lease" }
+dregg-types = { path = "../types" }
+
 [lints]
 workspace = true
