@@ -124,10 +124,23 @@ fn assert_roundtrip(
     // insert-shaped grow-gate members (§J′ `effAccumInsertV3` hosts) are legitimately WIDER than the bare
     // cohort `WIDE_WIDTH` (they carry the heap-open READ appendix), exactly as heapWrite's after-spine
     // host is. So we pin the trace against the DESCRIPTOR width, not the bare-cohort constant.
+    //
+    // THE GENTIAN WIDE FLAG-DAY: a refuse-welded cohort member's descriptor is 3·REFUSE_STRIDE (48)
+    // wider than the producer's raw wide trace — the capacity-floor refuse aux columns are PROVE-time
+    // filled (`fill_refuse_aux`), NOT producer-emitted, exactly as the deployed prove wrapper does. Grow
+    // + fill so the roundtrip proves the FULL welded member (an honest non-declaring turn decodes
+    // `floor = 0`, so the refuse is inert and the member still proves + verifies — completeness).
+    let mut t: Vec<Vec<BabyBear>> = trace.to_vec();
+    if desc.trace_width > t[0].len() {
+        for row in &mut t {
+            row.resize(desc.trace_width, BabyBear::ZERO);
+            dregg_circuit::effect_vm::bare_floor_refuse_weld::fill_refuse_aux(desc, row);
+        }
+    }
     assert_eq!(
         desc.trace_width,
-        trace[0].len(),
-        "{name}: descriptor width matches trace"
+        t[0].len(),
+        "{name}: descriptor width matches (welded) trace"
     );
     assert_eq!(
         dpis.len(),
@@ -142,6 +155,9 @@ fn assert_roundtrip(
     );
 
     // The 8 BEFORE wide PIs (at wide_pi_base..+8) equal the BEFORE carrier-12 columns on row 0.
+    // Read from the RAW (pre-refuse) trace: `before_commit_8` derives the carrier base as
+    // `width − 2·8·WIDE_NUM_CARRIERS` (the carriers are the last 912 columns of the WIDE member); the
+    // gentian refuse aux rides PAST them, so growing the trace would shift that derived base.
     let commit = before_commit_8(trace);
     for j in 0..8 {
         assert_eq!(
@@ -153,7 +169,7 @@ fn assert_roundtrip(
     }
 
     let mem_boundary = MemBoundaryWitness::default();
-    let proof = prove_vm_descriptor2(desc, trace, dpis, &mem_boundary, map_heaps)
+    let proof = prove_vm_descriptor2(desc, &t, dpis, &mem_boundary, map_heaps)
         .unwrap_or_else(|e| panic!("{name}: WIDE proof must prove (816): {e}"));
     verify_vm_descriptor2(desc, &proof, dpis)
         .unwrap_or_else(|e| panic!("{name}: WIDE proof must verify: {e}"));
@@ -333,10 +349,11 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
     let desc = wide_desc(name);
     assert_eq!(
         desc.trace_width,
-        1553 + 2 * 8 * WIDE_NUM_CARRIERS,
+        1553 + 2 * 8 * WIDE_NUM_CARRIERS + 48,
         "setFieldDyn wide width = the committed narrow V1Face host (1553 = GRAD_ROT_WIDTH 1581 − four \
-         chip sites × 7 = 28) + the 2·8·WIDE_NUM_CARRIERS wide-carrier appendix = 2465 \
-         (committed wide setFieldDynVmDescriptor2R24 trace_width)"
+         chip sites × 7 = 28) + the 2·8·WIDE_NUM_CARRIERS wide-carrier appendix (912 = 2465) + the \
+         gentian capacity-floor refuse widening (3·REFUSE_STRIDE = 48 = 2513, setFieldDyn is a bare \
+         cohort member)"
     );
     assert_eq!(
         desc.public_input_count,
@@ -384,6 +401,14 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
         prev_value,
     )
     .expect("wide setFieldDyn producer");
+    // Grow + fill the gentian refuse aux (prove-time filled; setFieldDyn declares no capacity ⟹ floor=0).
+    let mut trace = trace;
+    if desc.trace_width > trace[0].len() {
+        for row in &mut trace {
+            row.resize(desc.trace_width, BabyBear::ZERO);
+            dregg_circuit::effect_vm::bare_floor_refuse_weld::fill_refuse_aux(&desc, row);
+        }
+    }
     assert_eq!(
         trace[0].len(),
         desc.trace_width,
