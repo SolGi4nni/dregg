@@ -24,6 +24,10 @@ useful divergence back through the one gated settlement door, lossily exactly wh
 ## What grounds it (real now)
 
 Every mechanism below already exists in-tree. The seam is *composition*, not invention.
+(Provenance note: this table is the DESIGN LINEAGE, not the live call graph — the wired
+`ForkMembraneHost` (`shared_fork.rs`) postcard-serializes the culled `Vec<Cell>` directly and
+rehydrates via `World::new()` + `genesis_install`; it does not call `persist::ship_snapshot` or
+`starbridge-web-surface::rehydrate`. Those remain the richer siblings the design draws on.)
 
 | Seam piece | Grounded in | Type / function |
 |---|---|---|
@@ -124,8 +128,11 @@ TIMETRAVEL-SEMANTICS}.md`):
   Soundness** property — *authority-live-at-settlement* — which extends light-client unfoolability to
   the stitched turn. This is now a **proven, `#assert_axioms`-clean theorem**: `settlement_soundness`
   (`metatheory/Metatheory/SettlementSoundness.lean`) plus its circuit-side module
-  (`metatheory/Dregg2/Circuit/SettlementSoundness.lean`) — a stitched turn the light client accepts
-  implies a genuine kernel transition. No longer the open frontier it was written as.
+  (`metatheory/Dregg2/Circuit/SettlementSoundness.lean`). The Lean side is closed; what keeps this
+  from being a *pure light-client* truth is the named residual stated in the circuit module itself
+  (`Circuit/SettlementSoundness.lean` ~:42-56): the DEPLOYED rest-hash does not yet absorb the
+  revocation-registry root — a Rust circuit-emit conformance obligation riding the gated VK epoch.
+  Executor-side the gate bites today; the light client witnesses it after that emit lands.
 
 **Cross-party stitch = a partial turn with holes the consenting parties fill** (the partial-turn /
 promises thread): each hole is a `PendingTurnRegistry` entry; filling it (`resolve`) is a one-shot
