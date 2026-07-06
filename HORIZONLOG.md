@@ -8,6 +8,53 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-05 late, Fable — hyperdreggmedia doc↔code dialectic: 5-lane census, charter REWRITTEN, 4 build lanes fired)
+
+A 5-cluster doc-vs-code census of `docs/deos/` (inhabitant / substrate+authoring / renderers /
+membrane+time / frontier-roadmap) found the drift is mostly UNDERSELL: 4 of the charter's 5
+"Frontier" items had shipped (MUD first slice, gadget rolodex, co-driven cards, dregg-doc
+substrate ride). `HYPERDREGGMEDIA.md` REWRITTEN against HEAD (glasses section, inhabitant =
+brain-in-jail CLOSED + hosted-agent economy, honest-state recalibrated, name-collision
+disambiguation). Companions corrected: `LOG-A-HERMES-IN.md` (STAND-IN era over),
+`MEMBRANE-MERGE-SEAM.md` (design-lineage vs live call graph; circuit residual named),
+`GRAPHIDEOS.md` (paint→renderer-ready), `CROSS-DEVICE-FIRMAMENT.md` (turn_gate path),
+`DEOS-RUNS.md` (+distributed_card, +dregg-doc substrate entries). 4 build lanes fired same
+breath (SourceHealth→console wiring · rolodex←live c-list · MCP world-bridge socket sink ·
+chat ViewTree mount) — outcomes recorded when they land. NAMED-NOT-BUILT (census-surfaced,
+each with its seam):
+- **[VK-lane] settlement circuit-emit conformance** — deployed rest-hash must absorb the
+  revocation-registry MDB root; residual stated in `Dregg2/Circuit/SettlementSoundness.lean:42-56`;
+  flips branch-and-stitch "executor-real"→"circuit-bound". Rides the gated VK epoch; batch with it.
+- **[VK-lane] ocap-membrane circuit teeth** — `exposed ⊑ a∧b` in-circuit + route
+  `SealedMembrane::exercise` through `ExerciseViaCapability` (`MEMBRANE-FORWARDER.md` next-slices 2/3).
+- **cross-machine surface migrate** — `MigrationTarget::Distributed` (`dock/migrate.rs:62`) + a
+  captp/dregg-sdk-net transport for the re-homed `SurfaceCapability`; rails = tear-off, HostPd
+  endpoint round-trip test, CapTP handoff nonces. Also the single `migrate(cap, Target::HostPd)`
+  verb tying the built pieces.
+- **`Target::Mirror{over,depth}`** — the lone open arm of FIRMAMENT-REFLEXIVE (Tasks B/C done);
+  `MirrorDepth` lattice rides `attenuate` verbatim.
+- **MUD phase 2** — presence + "say" over the data-plane `Bus`/`RoomCell` (the DEOS-RUNS-named seam).
+- **dregg-doc patch-history IN the heap** — serialize the blame/patch chain into umem-heap leaves
+  (`doc_heap.rs`); retire the `atom.rs` stand-in markers.
+- **gpui-web per-surface mounts** — terminal `WsTransport` grid first (backend e2e-proven, pane off
+  the gpui-web feature); then editor/chat.
+- **Objects card-as-default flip** — `objects_card` as the only Objects render, delete its gpui twin
+  (proves thin-renderer end-to-end on one surface).
+- **real `ForkMembraneHost` for standalone deos-matrix chat** — retire the `MockMembraneHost` default
+  (today real host only under `dev-surfaces`).
+- **jailed-live-brain CLI entry** — a subcommand for `DreggHost::run_hosted_agent_live` (today
+  test-only vs mock provider) + one real-provider run when credits return.
+- **`agent-host` jail wiring** — `isolation.rs::JailSpec::launch` has no production caller; wire into
+  `dregg-agent attach` so `Confinement::Hosted` can restore `shell` fail-closed.
+- **android-cell desktop mount** — the ~40-line native-full gpui body painting `RgbaFrame` +
+  forwarding `AndroidInputCmd` (`deos_desktop/android_window.rs` wire is built).
+- **unify the two MCP surfaces** — `dregg-mcp` (live image) × `deos-hermes mcp-server` (confined);
+  one host that is both confined AND live-World (depends on the world-bridge lane).
+- **cross-party stitch holes** — a genuine two-owner stitch where a conflict opens a
+  `PendingTurnRegistry` hole the other party resolves (today `CrossPartyResolution` is a type alias).
+- **hermes-acp exclusivity knob** — upstream: honor explicit empty `enabled_toolsets` so the dregg
+  MCP server is the model's ONLY tool source.
+
 ## NOW-STATE addition (2026-07-05, Fable — join-with-a-doc + operated-layer-gap wiring LANDED)
 
 **join-with-a-doc** — LANDED (`b772205dd`): live membership survives restart

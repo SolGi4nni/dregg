@@ -359,7 +359,7 @@ says.
      connect-notify RUNTIME (the `provider_egress` test's socket teeth) is
      validated on a Linux host / CI — it is not exercised on a macOS dev host.
 
-### What is REAL vs STAND-IN (honest)
+### What is REAL (the stand-in era is over)
 
 REAL: the JAIL (file/net/exec/fd denied — the four base teeth + the three
 base-tool-escape teeth, proven in-PD: an unconfined shell via `execve(/bin/sh)`,
@@ -368,15 +368,28 @@ DENIED); the EGRESS door (granted host path readable, sibling denied, both
 proven in-PD; sealed/revoke close it); the dregg TOOL effect-path (cap-gated,
 receipted turns on the verified executor, asserted on `McpToolHost`'s tape).
 
-STAND-IN: the agent's BRAIN. A maximally-confined PD denies `execve`, so it cannot
-host a process that `execve`s a python venv (and the venv here is broken —
-`ModuleNotFoundError: No module named 'acp'`). So the jail body is a faithful
-scripted agent that does what a jailed brain's tool-loop does: reach for its base
-tools (each denied), call dregg's tools (receipted), and probe the egress door.
-**THE EXACT REMAINING WIRE:** compile hermes's agent loop into the PD body (or
-grant `execve` of exactly the agent image), so the live brain runs where the
-scripted body runs today. Everything around it — the jail, the dregg-tools-only
-effect-path, the structured egress — is built and green.
+REAL: **the agent's BRAIN, in the jail.** The wire this section once named ("compile
+hermes's agent loop into the PD body") is CLOSED: `host.rs::brain_body_serving`
+compiles a real brain-driven ACP peer (`HermesAgentPeer::new(session_id, brain)`)
+INTO the confined PD body, and the generic core `run_brain_confined` runs either
+brain kind on the same jail/gate/receipt rail:
+
+- the on-box `LocalBrain`, in the DEFAULT green suite —
+  `tests/brain_in_jail.rs::confined_brain_run_is_jailed_and_leaves_real_receipts`
+  (jailed multi-step ACP turn, every admitted tool-call a real 64-hex dregg receipt);
+- a genuine `reqwest` `HttpLlm` brain (`brain.rs`, Anthropic Messages or
+  OpenAI-compat, built by `live_brain_from_env`), behind the `live-brain` feature —
+  `tests/provider_egress.rs::live_brain_in_jail_rides_the_provider_door_to_a_mock`:
+  the brain POSTs a real completion from INSIDE the exec-denied PD over the granted
+  provider socket, its tool-call receipts through the gate; execve/host-FS/other-net
+  stay denied.
+
+The honest residue (small, named): the jailed-live proof runs against a **hermetic
+loopback mock provider**; the real-provider hit is the `#[ignore]`d
+`live_completion_yields_a_nonempty_brainstep` + an env swap. And the jailed-live
+path (`DreggHost::run_hosted_agent_live`) has **no CLI entry yet** — it is exercised
+by the test, not a subcommand (`brain-live` runs the live brain over the standard
+dock gateway, NOT in the jail). Both are wiring, not architecture.
 
 ### The firmament knob
 

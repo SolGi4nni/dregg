@@ -309,6 +309,50 @@ Real multi-node `dregg-node` federations over QUIC gossip + blocklace consensus.
 
 ---
 
+## Co-driven multiplayer cards (two principals, one card, a membrane between)
+
+### Distributed card fork→stitch
+- **What it is:** two principals on DIFFERENT instances co-drive ONE shared card
+  across a membrane boundary: `seal_fork` → `open_envelope` (anti-substitution
+  root tooth) → `rehydrate_fork` → `stitch_envelopes`; both principals' edits
+  survive (co-drive, not last-writer-wins).
+- **Reproduce:**
+  ```sh
+  cd starbridge-v2
+  cargo test --features native-full distributed_card
+  # the runnable 3-beat app form:
+  cargo run -p starbridge-branch-stitch-multiplayer
+  ```
+- **Proof:** 5 tests in `src/distributed_card.rs` — envelope substitution refused
+  at the root tooth; both edits present post-stitch; a true conflict surfaces as a
+  `ConflictRegion`, never a stomp.
+- **Seam:** the envelope crosses an in-test boundary; carrying `CardForkEnvelope`
+  between two RUNNING cockpits over the Matrix `MembraneEnvelope` is the named
+  transport wire.
+
+---
+
+## The document rides the cell substrate
+
+### dregg-doc `substrate` + executor-drive
+- **What it is:** a `DocGraph` commits via the production sorted-Poseidon2 heap
+  root; a document edit runs through the genuine `TurnExecutor` (cap-gated,
+  finalized, journaled); a reopened doc re-seeds its text from the committed
+  umem-heap.
+- **Reproduce:**
+  ```sh
+  cd dregg-doc          # own workspace (root-excluded)
+  cargo test --features substrate
+  ```
+- **Proof:** 8 substrate tests incl. anti-forge-provenance,
+  construction-order-independence, stability-under-remerge; executor-drive makes
+  per-region edit caps enforceable (editor cell vs region cell).
+- **Seam:** the heap carries the current text + per-leaf provenance; the
+  blame/patch CHAIN as first-class heap state (reopen reconstructs history, not
+  just text) is the named next slice.
+
+---
+
 ## Data plane (the Bus is the spine)
 
 ### Data-plane Bus — the real spine

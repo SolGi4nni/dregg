@@ -227,11 +227,14 @@ the same card to its faces and reshapes it live.
    `android-activity 0.6` (so the "**no** `android-activity`/`ndk` dependency" line
    is stale: the step-2 package pulls exactly that). The `gpui_wgpu` renderer takes
    the `ANativeWindow`'s `raw_window_handle`, and the `PlatformAndroid` renderer
-   **initializes on-device**, with captured frames committed alongside the package
-   (`deos-on-android.png`, `deos-on-android-hostgpu.png`, `run-state-swiftshader.png`,
-   `run-state-hostgpu.png` — the emulator paints under both SwiftShader and the host
-   GPU). What remains is a painted frame on **real arm64 hardware** (the emulator
-   captures prove the backend, not the phone GPU path). So Step 2 is
+   **initializes on-device**, with captured run-state evidence committed alongside
+   the package (`deos-on-android.png`, `run-state-swiftshader.png`,
+   `run-state-hostgpu.png` — the backend reaches **renderer-ready** under both
+   SwiftShader and the host GPU; per `MOBILE-DEOS.md` §STEP-3-WALL, neither emulator
+   GPU path lands a *clean painted frame* — SwiftShader JIT-stalls, MoltenVK loses
+   the wgpu device — a driver-quality wall, not a code gap). What remains is a
+   painted frame on **real arm64 hardware** (the emulator evidence proves the
+   backend initializes, not the phone GPU paint path). So Step 2 is
    **built-and-demonstrated**, not blocked; upstream gpui-mobile was the shape, and
    the fork lifted it.
 2. **The Lean-linked producer needs an android Lean archive.** §3: the Rust verify

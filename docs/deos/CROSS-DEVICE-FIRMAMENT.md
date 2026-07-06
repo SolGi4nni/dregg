@@ -274,7 +274,7 @@ The mobile story that is **buildable in months, not years** is the **thin client
 display-cap** (read-only) to a surface rendered on your **home node** (laptop or
 cloud), plus an *optional, separately-attenuable* input-grant-cap. The compute,
 the macaroons, the fetches stay home; the phone scans out attested frames (each
-frame Ed25519-attested to the cell's committed root, `net-client/src/turn_gate.rs::
+frame Ed25519-attested to the cell's committed root, `sel4/dregg-pd/net-client/src/turn_gate.rs::
 verify_strict`) and sends **attested input** (signed gestures the home executor
 requires). A revoke darkens the phone in one round-trip; a borrowed/café phone gets
 the display-cap and *not* the input-grant — it can watch, not act. This is the
