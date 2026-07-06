@@ -58,7 +58,7 @@
 //!   default [`RecordedArbiter`] is a deterministic stand-in for a live LLM. The full OS-jailed
 //!   confined body is `deos_hermes::DreggHost::run_hosted_agent_attested` (the crown).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use dregg_zkoracle_prove::{
     build_anthropic_fixture, prove_zkoracle, verify_zkoracle, AnthropicConfig, FixtureNotary,
