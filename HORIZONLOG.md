@@ -143,16 +143,22 @@ SourceHealth→console (`d09277b1f`, deos-view 49 lib + 15 suites) · rolodex←
 tests) · MCP world-bridge socket sink (with_world_bridge + SocketWorldSink, fail-closed,
 72/72 + SpiderMonkey weld e2e) · chat ViewTree card + cockpit mount (deos-matrix 39+4,
 2 new substance tests). FRESH RESIDUES from the lanes (each classified in its commit):
-- **cockpit host binding for the world-bridge** — `serve_world_bridge`/`WorldBridgeServer::pump`
-  exist + checked, nothing in cockpit boot/frame-loop calls them yet.
-- **chat card opener** — `build_chat_card_surface` exported, no cockpit menu/keybinding opens it.
-- **rolodex designations thread** — guest surface takes `gadget_cells` from the launching host;
-  the live cockpit host does not yet thread its launched cells + session in.
+- ✅ CLOSED 07-06 (`ef749253d`, the three cockpit host wires): world-bridge served from the
+  live cockpit (env-gated, post-login pump) · chat card opens from the palette (embedded
+  world-chat source) · rolodex designations + session threaded (launch = pick-up, Held live).
+  Also mended cross-lane: the nameservice launch seed now anchors OWNER_PK_SLOT raw
+  (711ca3e33's owner gate had refused the registry's representative turn).
 - **console header-balance bind** — still renders under an unreachable source (panels gated,
   header not); one-conditional follow-up if it should displace too.
 - **world-bridge wire twins** — deos-hermes/starbridge-v2 share the frame contract by
   comment-pinned twin definitions (no dep direction possible); consider a tiny shared wire
   crate if it ever drifts.
+- **world-bridge backpressure** — a stalled bridge client can hold the pump during a large
+  Ledger write (requests bounded by MAX_FRAME_BYTES; real clients drain); a nonblocking-write
+  or per-connection budget hardening if it ever bites. Bridge serves the logged-in cockpit
+  only (not pre-login/headless bakes) — by design, revisit if a headless host wants it.
+- **Matrix-backed chat card** — the opener mounts the embedded world-chat source; the
+  federated variant is a `ChatSource` swap documented at `world_chat_card`.
 NAMED-NOT-BUILT (census-surfaced, each with its seam):
 - **[VK-lane] settlement circuit-emit conformance** — deployed rest-hash must absorb the
   revocation-registry MDB root; residual stated in `Dregg2/Circuit/SettlementSoundness.lean:42-56`;
