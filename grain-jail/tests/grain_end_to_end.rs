@@ -267,6 +267,134 @@ fn a_real_jailed_body_drives_a_real_grain_and_the_renter_verifies_r2() {
     );
 }
 
+/// THE CAPSTONE (mock brain): a jailed body reads its instructions from a "model"
+/// over its ONE granted egress door and relays them as proposals to a REAL grain
+/// — the full "rent a coding agent" loop end to end. The body reaches ONLY the
+/// model (egress-confined); everything the model asks flows through the grain's
+/// cap-gate + meter + R2. A real LLM replaces the mock (reqwest-in-jail is the
+/// documented follow-up; the live provider is broken in-env regardless).
+#[cfg(feature = "real-jail")]
+#[test]
+fn a_jailed_body_driven_by_a_model_over_its_egress_door_runs_the_grain_r2() {
+    use grain_jail::jail::spawn_confined_body_with_egress;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::time::Duration;
+
+    // The MOCK MODEL: on connect it pushes one proposal line (a cell-write the
+    // "agent" decided) then DONE. (A real model would stream tool-calls here.)
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let model_addr: SocketAddr = listener.local_addr().unwrap();
+    let proposal_line =
+        serde_json::to_string(&cell_write("notes/1", "written via a model")).unwrap();
+    std::thread::spawn(move || {
+        if let Ok((mut sock, _)) = listener.accept() {
+            let _ = writeln!(sock, "{proposal_line}");
+            let _ = writeln!(sock, "DONE");
+        }
+    });
+
+    let platform = AgentPlatform::new();
+    let wd = workdir();
+    let host = platform
+        .rent(
+            "model.agents.dregg",
+            "dga1_model",
+            "cell:notes/1",
+            10_000,
+            &wd,
+            terms(),
+            None,
+        )
+        .expect("provision");
+
+    // The jailed body: granted egress to ONLY the model. It relays the model's
+    // instruction lines to the grain over the surface socket (no serde in the
+    // child — a pure byte relay), sending the pre-known Done on the model's DONE.
+    let done_line = {
+        let mut s = serde_json::to_string(&BodyMsg::Done(DoneNote::default())).unwrap();
+        s.push('\n');
+        s.into_bytes()
+    };
+    let kernel = dregg_firmament::process_kernel::ProcessKernel::new();
+    let (handle, channel) = spawn_confined_body_with_egress(
+        &kernel,
+        vec![model_addr.to_string()],
+        Some(Duration::from_secs(5)),
+        move |surf| {
+            let model = match TcpStream::connect_timeout(&model_addr, Duration::from_secs(2)) {
+                Ok(m) => m,
+                Err(_) => return 20, // could not reach the granted model door
+            };
+            let mut model_r = BufReader::new(model);
+            let mut surf_w = match surf.try_clone() {
+                Ok(w) => w,
+                Err(_) => return 21,
+            };
+            let mut surf_r = BufReader::new(surf);
+            loop {
+                let mut line = String::new();
+                match model_r.read_line(&mut line) {
+                    Ok(0) | Err(_) => break, // model closed
+                    Ok(_) => {}
+                }
+                let line = line.trim_end();
+                if line == "DONE" {
+                    if surf_w
+                        .write_all(&done_line)
+                        .and_then(|_| surf_w.flush())
+                        .is_err()
+                    {
+                        return 22;
+                    }
+                    break;
+                }
+                // Relay the model's proposal to the grain, read the verdict.
+                if surf_w
+                    .write_all(line.as_bytes())
+                    .and_then(|_| surf_w.write_all(b"\n"))
+                    .and_then(|_| surf_w.flush())
+                    .is_err()
+                {
+                    return 23;
+                }
+                let mut verdict = String::new();
+                if surf_r
+                    .read_line(&mut verdict)
+                    .map(|n| n == 0)
+                    .unwrap_or(true)
+                {
+                    return 24;
+                }
+            }
+            0
+        },
+    )
+    .expect("spawn the model-driven jailed body");
+
+    let mut brain = ConfinedBrain::new(channel);
+    let report = platform
+        .drive_serving(&host, "do what the model says", &mut brain)
+        .expect("the model-driven jailed body drives the grain");
+    assert_eq!(
+        report.admitted, 1,
+        "the model's one instruction was admitted"
+    );
+
+    let r2 = platform.verify_r2(&host).expect("R2 verify");
+    assert_eq!(
+        r2.linked, 1,
+        "the model-driven turn is a committed kernel turn"
+    );
+
+    let code = handle.join().expect("join the model-driven body");
+    assert_eq!(
+        code, 0,
+        "the body relayed the model over its egress door cleanly \
+         (20 = could not reach the granted model, 22/23/24 = surface I/O fault)"
+    );
+}
+
 /// ROBUSTNESS: a jailed body that CRASHES mid-session (exits after one admitted
 /// turn, never sending Done) leaves the grain in a clean, verifiable state — the
 /// host is not corrupted by a hostile/faulty body. The drive ends fail-closed on
