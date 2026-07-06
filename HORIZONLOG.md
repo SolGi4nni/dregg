@@ -16,14 +16,26 @@ self-reported ≠ verified — caught a "gate now green" that had 2 failing test
 closures committed (6 commits): hosting `e25643b5e` · userspace `4c581356e` · node
 (finality) · kernel · circuit `d44dac0bd` · umem `596824ae1`.
 
-⚑⚑ THE RED (cross-corroborated 3 ways, HIDDEN under default features, ROTATION LANE's):
-the **gentian flag-day (`dd2a47a3c`) broke rotated-leg / whole-chain COMPLETENESS** —
-honest turns FAIL light-client verify at HEAD. Producer emits `…-v3-staged`; renamed TSV
-rows say `…-gentian-deployed-bare-refuse`; the gate (`joint_turn_aggregation.rs:1352`) maps
-to `None` → `prove_turn_chain_recursive` refuses every rotated leg; `effect_vm_rotation_flip`
-10/15 red, `vk_epoch_refusal_lifecycle` honest legs red, `producer_descriptor_coverage_gate`
-cell_destroy_v3/cell_unseal_v3 roundtrips red. SOUNDNESS intact; COMPLETENESS broken. Fix =
-production `fill_bare_floor_refuse_aux` in `generate_rotated_effect_vm_trace` + width pins.
+✅ THE RED — FIXED (`f51a75f0f`). The **gentian flag-day (`dd2a47a3c`) left the COMPLETENESS
+leg unfinished**: it welded the `floor==0` bare-floor-refuse gates onto every bare-cohort
+descriptor (closing the bare-descriptor escrow dodge) + updated the transfer producer, but
+the non-transfer producers left the refuse-weld aux (esp. the `inv` witnesses, cols
+GRAD_ROT_WIDTH..1626) at ZERO → decode-gate violation → OodEvaluationMismatch on honest legs
+(hidden under default features). Diagnosis corrected the hunters' "gate→None / name mismatch"
+(the names are uniform, the gate's fine). FIX = `bare_floor_refuse_weld::fill_refuse_aux` in
+the PROVE WRAPPER (descriptor_ir2, after fill_chip_lanes, keyed on the `-gentian-deployed-bare-
+refuse` name suffix) + a per-descriptor `expected_rot_width` test helper for the stale 1581→1626
+width pins. TWO-POLE verified: coverage gate 4/4, effect_vm_rotation_flip 15/15 (incl. every
+ghost-refusal), lib 8/8 (declaring→UNSAT ∧ non-declaring→accepted). The VK-epoch flip is
+un-gated on THIS now.
+
+⚑ NEW residual (`4db689f6f`, LATENT + build-gated): the interpreter denotational differential
+mis-models the deployed AIR for an every-row window gate reading `nxt` — Lean `Satisfied2`
+zero-pads the last-row `nxt` (`DescriptorIR2.lean:442`) while the evaluator wraps cyclically
+(`descriptor_ir2.rs:1582`). Soundness-SAFE (real eval strictly stricter — REJECTS what the
+denotation accepts); latent (all 67 shipped descriptors are on_transition-only; a reachability
+tooth reds the build if the shape ships). Weld = a Lean-side fix or an emitter ban. The
+differential is now mutation-canary-MEASURED non-vacuous (17/17).
 
 SECURITY FIX LANDED: the deos-js authority FAIL-OPEN (`parse_auth_label` unknown→`None`→broad
 authority, live: defineAffordance gate/grant/viewer) → fail-CLOSED refusal. TWIN still open:
