@@ -56,11 +56,11 @@
 //!   [`StarbridgeAppContext`].
 
 use dregg_app_framework::{
-    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellAffordance, CellId, CellMode,
-    CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor,
-    Event, FactoryDescriptor, FieldElement, FireError, FireExecuteError, GatedAffordance,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, TurnReceipt, canonical_program_vk,
-    field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellAffordance,
+    CellId, CellMode, CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect,
+    EmbeddedExecutor, Event, FactoryDescriptor, FieldElement, FireError, FireExecuteError,
+    GatedAffordance, InspectorDescriptor, StarbridgeAppContext, StateConstraint, TurnReceipt,
+    canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
 
 /// The deos-view CARD: the app's UI as a renderer-independent `deos.ui.*` view-tree.
@@ -236,6 +236,86 @@ pub fn ballot_factory_descriptor() -> FactoryDescriptor {
 /// All factory descriptors this starbridge-app contributes.
 pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
     vec![poll_factory_descriptor(), ballot_factory_descriptor()]
+}
+
+// =============================================================================
+// ELIGIBILITY-PROVEN VOTING — the privacy-voting × identity interlock.
+//
+// The base ballot proves *one vote per cell* but says nothing about *who may
+// vote*. An eligibility-gated ballot adds one caveat — a
+// `SenderAuthorized{CredentialSet}` — so the ballot can be bound + cast only by
+// a holder of an eligibility credential issued by `issuer_cell` under
+// `schema_id` (an `starbridge-identity` issuer's schema). Because the credential
+// is presented as an ANONYMOUS zero-knowledge presentation
+// (`identity::present_anonymous`), the voter proves "I am in the electorate"
+// WITHOUT revealing which eligible voter they are — the selective-disclosure
+// primitive applied to the ballot. Layered on top of this app's existing
+// blinding-token unlinkability, the cast is doubly private: the ballot cell does
+// not link to the voter's primary cell, and the eligibility proof names no one.
+//
+// The gate dispatches through the SAME `WitnessedPredicateRegistry` the executor
+// already runs for every `SenderAuthorized` caveat (the credential-set verifier
+// is a registered builtin), so eligibility is enforced in-band on the cast turn,
+// not checked out of band. The `(issuer_cell, schema_id)` a poll pins is exactly
+// `identity::credential_set_commitment(issuer_cell, &schema)` — one shared
+// commitment binds the two apps.
+// =============================================================================
+
+/// The perpetual `state_constraints` for an eligibility-gated ballot cell: the
+/// base one-vote-per-cell teeth ([`ballot_state_constraints`]) plus the
+/// credential-set eligibility caveat.
+pub fn eligibility_gated_ballot_constraints(
+    issuer_cell: [u8; 32],
+    schema_id: [u8; 32],
+) -> Vec<StateConstraint> {
+    let mut constraints = ballot_state_constraints();
+    constraints.push(StateConstraint::SenderAuthorized {
+        set: AuthorizedSet::CredentialSet {
+            issuer_cell,
+            credential_schema_id: schema_id,
+        },
+    });
+    constraints
+}
+
+/// The `CellProgram` for an eligibility-gated ballot: castable only by a holder
+/// of a matching eligibility credential (proven anonymously), one vote per cell.
+pub fn eligibility_gated_ballot_program(issuer_cell: [u8; 32], schema_id: [u8; 32]) -> CellProgram {
+    CellProgram::always(eligibility_gated_ballot_constraints(issuer_cell, schema_id))
+}
+
+/// Build the `FactoryDescriptor` for eligibility-gated ballot cells minted
+/// against the electorate `(issuer_cell, schema_id)`. Its `child_program_vk`
+/// content-addresses the eligibility gate, so a ballot born from this factory
+/// is provably the gated shape — a light client checks the terms by hash.
+pub fn eligibility_gated_ballot_descriptor(
+    issuer_cell: [u8; 32],
+    schema_id: [u8; 32],
+) -> FactoryDescriptor {
+    let program = eligibility_gated_ballot_program(issuer_cell, schema_id);
+    let vk = canonical_program_vk(&program);
+    FactoryDescriptor {
+        factory_vk: BALLOT_FACTORY_VK,
+        child_program_vk: Some(vk),
+        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(vk))),
+        allowed_cap_templates: vec![CapTemplate {
+            target: CapTarget::SelfCell,
+            max_permissions: AuthRequired::Signature,
+            attenuatable: true,
+        }],
+        field_constraints: vec![],
+        state_constraints: eligibility_gated_ballot_constraints(issuer_cell, schema_id),
+        default_mode: CellMode::Sovereign,
+        creation_budget: Some(100_000_000),
+    }
+}
+
+/// The 32-byte commitment the electorate `(issuer_cell, schema_id)` reduces to —
+/// the shared identifier under which the executor's credential-set verifier
+/// dispatches, and the value `starbridge-identity` computes from the same pair.
+/// A poll pins this so "is this the right electorate?" is a hash comparison.
+pub fn electorate_commitment(issuer_cell: [u8; 32], schema_id: [u8; 32]) -> [u8; 32] {
+    AuthorizedSet::credential_set_commitment(&issuer_cell, &schema_id)
 }
 
 // =============================================================================

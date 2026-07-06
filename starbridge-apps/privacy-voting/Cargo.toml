@@ -33,6 +33,15 @@ serde_json = { workspace = true }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
+# ELIGIBILITY-PROVEN VOTING (`tests/eligibility_proven_voting.rs`): the
+# privacy-voting × identity interlock — an eligibility credential (issued by an
+# identity issuer) is presented ANONYMOUSLY to prove a voter is in the electorate
+# without revealing who, and the ballot's `SenderAuthorized{CredentialSet}` gate
+# commits to the same `(issuer, schema)` the identity app computes. Needs the
+# sibling identity app + its credential + token primitives co-resident.
+starbridge-identity = { path = "../identity" }
+dregg-credentials = { path = "../../credentials" }
+dregg-token = { path = "../../token" }
 
 [lints]
 workspace = true
