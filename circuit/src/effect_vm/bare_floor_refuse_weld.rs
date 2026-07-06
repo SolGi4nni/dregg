@@ -221,25 +221,40 @@ pub fn fill_refuse_aux(desc: &crate::descriptor_ir2::EffectVmDescriptor2, row: &
     if !desc.name.ends_with(REFUSE_WELD_SUFFIX) {
         return;
     }
+    // The aux base: the V3 1-felt cohort rides the FIXED `GRAD_ROT_WIDTH` headroom (widened to
+    // `floor_col(2)+1 = 1626`). A WIDE / WELDED member's `GRAD_ROT_WIDTH` band is OCCUPIED by the two
+    // 13×8 wide carriers, so its refuse aux rides PAST the member's own width — the wide emit
+    // (`gentianWideBareRefuse`) widens by exactly `3·REFUSE_STRIDE`, so the pre-refuse (aux) base is
+    // `trace_width − 3·REFUSE_STRIDE`. The V3 width `1626` (< any wide/welded width) cleanly selects.
+    let v3_refuse_width = floor_col(CAPACITY_TAGS.len() - 1) + 1;
+    let aux_base = if desc.trace_width == v3_refuse_width {
+        GRAD_ROT_WIDTH
+    } else {
+        desc.trace_width - 3 * REFUSE_STRIDE
+    };
+    let bit_at = |b: usize, k: usize| aux_base + b * REFUSE_STRIDE + k;
+    let inv_at = |b: usize, k: usize| aux_base + b * REFUSE_STRIDE + cav::MAX_CAVEATS + k;
+    let or_at = |b: usize, j: usize| aux_base + b * REFUSE_STRIDE + 2 * cav::MAX_CAVEATS + j;
+    let floor_at = |b: usize| aux_base + b * REFUSE_STRIDE + 3 * cav::MAX_CAVEATS;
     for (b, &tag) in CAPACITY_TAGS.iter().enumerate() {
         let mut running_or = 0u32;
         for k in 0..cav::MAX_CAVEATS {
             let tag_k = row[caveat_tag_col(k)];
             let is_tag = tag_k == BabyBear::new(tag);
             let bit = u32::from(is_tag);
-            row[bit_col(b, k)] = BabyBear::new(bit);
+            row[bit_at(b, k)] = BabyBear::new(bit);
             if !is_tag {
                 // The is-zero DEFINING gate `b_k + (tag_k − T)·inv_k − 1 == 0` forces this witness
                 // when the slot is not the tag; when it IS the tag `b_k = 1` leaves `inv_k` free.
-                row[inv_col(b, k)] = (tag_k - BabyBear::new(tag))
+                row[inv_at(b, k)] = (tag_k - BabyBear::new(tag))
                     .inverse()
                     .expect("a nonzero (tag_k − T) has a field inverse");
             }
             let next_or = running_or | bit;
             if k < cav::MAX_CAVEATS - 1 {
-                row[or_col(b, k)] = BabyBear::new(next_or);
+                row[or_at(b, k)] = BabyBear::new(next_or);
             } else {
-                row[floor_col(b)] = BabyBear::new(next_or);
+                row[floor_at(b)] = BabyBear::new(next_or);
             }
             running_or = next_or;
         }
