@@ -134,6 +134,19 @@ surface` → clean parent `UnixStream`) is next; it needs `process-pd-sandbox`
   listeners) verifies granted-reachable ∧ ungranted-denied.
 - CAPSTONE LANDED (`95581b198`): a model-driven jailed body runs a real grain over
   its egress door, R2-verified — the full "rent a coding agent" loop (mock brain).
+- DEMO SHOWCASES THE FULL STORY (`91e95f3ce`): `cargo run -p grain-jail --example
+  rent_a_confined_agent --features real-jail` = OS-jailed + model-driven +
+  net-reaches-only-the-model + cap-gated + metered + R2-verified, in one command.
+
+## CORE ASPECT ACHIEVED (2026-07-06 ~03:25)
+The confined-body grain — the goal's north star — is proven, tested (10 lib + 6
+e2e + firmament), demoed (full story runnable), documented, and robust. Every
+remaining frontier item has a real blocker for solo overnight work: a REAL LLM
+needs a working provider (broken in-env; the loopback-proxy shape is already
+demonstrated by the demo's mock model over the door); productization + SSE touch
+agent-platform (another lane's file); fork-a-confined-session is spine-#4
+(grain-struct unification + an agent-platform edit). Loop stays alive for those
+under coordination / fresh conditions; nothing more is cleanly solo-buildable.
 
 ## What "awesome" is next (post-spine)
 - A runnable EXAMPLE (`cargo run`) — the "rent a verifiable confined agent" demo.
