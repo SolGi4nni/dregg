@@ -9,20 +9,17 @@
 //!   [`MetaDirectory`] (registry-of-registries / yellow pages),
 //!   [`DirectoryFactory`] (constrained directory creation) and
 //!   [`TopicSubscriptionManager`] (gossip-topic audience bounding).
-//! * [`vfs`] — `Volume` / `Blob` / `Directory` triple: a self-contained
-//!   DESIGN SKETCH of Robigalia's VFS over dregg vocabulary. Its operations
-//!   record a crate-local [`vfs::VfsEffect`] trace whose variant names
-//!   mirror real Effect VM effects (`NoteCreate`, `NoteSpend`, `SetField`),
-//!   but nothing in this crate constructs real `dregg-turn` effects or
-//!   reaches the executor — see the `vfs` module docs for the honest
-//!   status and what a real weld would take.
 //! * [`factory`] — [`directory_factory_descriptor`] returning a
 //!   `dregg_cell::factory::FactoryDescriptor` shape for the directory-cell
 //!   pattern, so apps can `createFromFactory` a directory and have the
 //!   executor enforce the slot caveats on every turn.
 //!
-//! The earlier DFA routing module that used to live here has been promoted
-//! to the canonical [`dregg_dfa`] crate (see `DFA-RATIONALIZATION-DESIGN.md`).
+//! The earlier DFA routing module that used to live here has been promoted to the
+//! canonical [`dregg_dfa`] crate (see `DFA-RATIONALIZATION-DESIGN.md`); the
+//! experimental `vfs` sketch (`Volume`/`Blob`) was REMOVED — it had no consumers
+//! and was redundant with the executor-backed storage crates (`storage`,
+//! `storage-gateway-mandate`, `kvstore`, `dregg-ipfs`). A real userspace
+//! VFS-over-cells, if ever wanted, belongs greenfield on those primitives.
 //! This crate reuses the real workspace identifiers `dregg_types::FederationId`
 //! and `dregg_types::CellId`; the remaining identity types it exports
 //! ([`SturdyRef`], [`MemberId`], `GossipTopic`, `CommitmentId`) are
@@ -30,7 +27,6 @@
 //! elsewhere — each is labeled as such at its definition in [`directory`].
 //!
 //! [`directory`]: crate::directory
-//! [`vfs`]: crate::vfs
 //! [`factory`]: crate::factory
 //! [`dregg_dfa`]: https://docs.rs/dregg-dfa
 //! [`DirectoryCell`]: crate::directory::DirectoryCell
@@ -41,7 +37,6 @@
 
 pub mod directory;
 pub mod factory;
-pub mod vfs;
 
 pub use directory::{
     AudienceBoundClaim, DirectoryCell, DirectoryEntry, DirectoryError, DirectoryFactory,
