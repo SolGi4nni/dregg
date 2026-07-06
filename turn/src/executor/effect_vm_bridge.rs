@@ -434,16 +434,13 @@ pub fn convert_turn_effects_to_vm(
                 }
 
                 // ────────────────────────────────────────────────────
-                // Stage 7 / P1.A: CapTP runtime effect projections.
-                // Each runtime variant maps to its AIR counterpart
-                // (selectors 14..17). The AIR params are bound into
-                // effects_hash via `compute_effects_hash`, so the
-                // prover commits to the specific CapTP operation.
-                // The richer Merkle-proof witnesses required to make
-                // the AIR non-tautological are added in P1.C.
-                // ────────────────────────────────────────────────────
-
-                // ────────────────────────────────────────────────────
+                // (The Stage-7 CapTP runtime projections that lived here
+                // were removed with the CapTP verbs themselves — retired
+                // in favor of the CapSlotFactory caps-in-slots route; VM
+                // selectors 14..17 are retired/repurposed in
+                // `circuit/src/effect_vm`.)
+                //
+                // Near-miss aliasing closure (#100 follow-up): three
                 // Near-miss aliasing closure (#100 follow-up): three
                 // runtime variants whose VM-side AIR coverage previously
                 // either fell through to `_` (no projection) or aliased

@@ -244,19 +244,21 @@ impl TurnExecutor {
     // boundary). Declared mint/burn rows enter the conserved sum explicitly, so
     // a DISCLOSED non-conservation balances but a HIDDEN one is caught.
     //
-    // ASSET-ID DERIVATION (the named residual — see REPORT). AssetId := the
-    // cell's `token_id` (the dregg3 "AssetId := issuer-cell" materialization,
-    // a real committed ledger field) folded to a field element. This is read
-    // from the verifier's OWN ledger (`ledger.get(cell).token_id()`), the same
-    // trusted source as the `old_commitment` match — NOT a producer-supplied
-    // per-turn annotation. RESIDUAL FOR FULL LIGHT-CLIENT SOUNDNESS: the
-    // per-cell proof publishes its NET_DELTA but does NOT yet publish its asset
-    // class as a public input, so the cross-cell collector reads the asset from
-    // the ledger rather than from the proof. Proof-BINDING the asset class (a PI
-    // slot — coordinated with the PHASE-C commit-widening that owns the PI
-    // layout) is the one remaining step to bind this on the pure light-client
-    // path. Until then the asset partition is verifier-ledger-trusted (sound for
-    // the executor; the stated prerequisite for the light client).
+    // ASSET-ID DERIVATION (the named residual, NARROWED — see
+    // `resolve_proof_asset_class`). AssetId := the cell's `token_id` (the
+    // dregg3 "AssetId := issuer-cell" materialization, a real committed ledger
+    // field) folded to a field element by the ONE canonical fold
+    // (`fold_token_id_to_asset`). The original residual — "the per-cell proof
+    // does not publish its asset class as a public input at all" — is closed:
+    // the proof publishes it at `PI[v3::ASSET_CLASS]`, AIR-bound to the row-0
+    // `aux_off::ASSET_CLASS` column (`effect_vm/air.rs`), and the live paths
+    // group by the PROOF-BOUND class via
+    // `check_per_asset_conservation_by_asset`, rejecting a PI/ledger mismatch.
+    // WHAT REMAINS (the narrowed residual): a proof carrying the ZERO sentinel
+    // (a prover leg that has not yet threaded `EffectVmContext::asset_class`)
+    // falls back to the executor's trusted ledger class — sound for the
+    // executor, but the pure light-client partition stays trivial for those
+    // legs until every prover leg populates the class.
 
     /// Derive the asset / issuer-cell class for a cell from its committed
     /// `token_id` (dregg3: AssetId := issuer-cell). Folds the 32-byte token_id

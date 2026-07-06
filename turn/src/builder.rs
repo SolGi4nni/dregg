@@ -609,10 +609,12 @@ impl<S> ActionBuilder<S> {
 
 // ─── Typed effect_* methods (P2.C) ────────────────────────────────────────────
 //
-// One method per existing `Effect` variant. The CapTP variants
-// (ExportSturdyRef, EnlivenRef, DropRef, ValidateHandoff) are owned by P1
-// and get their methods in a follow-up. `RegisterName` is not yet an
-// Effect variant and lands in a follow-up commit too.
+// One method per existing `Effect` variant. (The CapTP verbs —
+// ExportSturdyRef, EnlivenRef, DropRef, ValidateHandoff — were RETIRED, not
+// deferred: caps-in-slots via the proven `CapSlotFactory` route replaced them
+// (VERB-LOCKSTEP; `metatheory/Dregg2/Apps/CapSlotFactory.lean`), so they never
+// get builder methods. `RegisterName` was never added as an Effect variant —
+// naming stays an app-layer concern, not a kernel verb.)
 //
 // All methods are state-agnostic (available on any `S`) and consume self,
 // returning Self with the effect appended.
