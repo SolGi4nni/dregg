@@ -62,6 +62,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::fmt::{format_value, BindFmt};
+use crate::source_health::{Banner, SourceHealth, SurfaceNote};
 use crate::tree::{Crumb, MenuItem, PillCase, ViewNode};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -398,6 +399,11 @@ pub struct ConsoleModel {
     pub hermeses: Vec<HermesView>,
     /// The subject's $DREGG balance + spend.
     pub dregg: LedgerView,
+    /// Where this view's data came from and whether the source answered — drives the
+    /// page banner, the panel gate, and the per-surface notes (unreachable ≠ empty;
+    /// demo is labeled). Absent in older serialized models → a healthy live read.
+    #[serde(default)]
+    pub health: SourceHealth,
 }
 
 impl ConsoleModel {
@@ -441,6 +447,8 @@ impl ConsoleModel {
                 total_spent,
                 entries,
             },
+            // Scoping narrows WHO is shown, not WHERE the data came from.
+            health: self.health.clone(),
         }
     }
 }
@@ -533,6 +541,87 @@ pub const TURN_HERMES_VERIFY: &str = "hermes.verify";
 
 /// The verify-anything panel's turn — the submitted draft is the thing to re-witness.
 pub const TURN_CONSOLE_VERIFY: &str = "console.verify";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SOURCE-HONESTY SURFACES — the panel names [`SourceHealth`] tracks, and the
+// projections that paint its Banner / SurfaceNote in the card's own vocabulary.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The computers panel's surface name (what a live reader marks unreachable/unserved).
+pub const SURFACE_COMPUTERS: &str = "computers";
+/// The hermeses panel's surface name.
+pub const SURFACE_HERMESES: &str = "hermeses";
+/// The spend panel's surface name.
+pub const SURFACE_SPEND: &str = "spend";
+/// What the not-connected notice tells the viewer to configure.
+pub const CONSOLE_SOURCE_HINT: &str = "DEOS_CONSOLE_SOURCE";
+
+/// The page-level [`Banner`] as a card node — `None` for the healthy live view (no
+/// banner at all). A static pill + plain text, so every face paints the notice.
+fn banner_node(banner: &Banner) -> Option<ViewNode> {
+    let (pill, tag, text) = match banner {
+        Banner::None => return None,
+        Banner::NotConnected { hint } => (
+            "not connected",
+            "muted",
+            format!("no live source configured — set {hint} to connect this console"),
+        ),
+        Banner::Unreachable { endpoint } => (
+            "can't reach",
+            "bad",
+            match endpoint {
+                Some(url) => {
+                    format!("{url} did not answer — a read failure, not an empty account")
+                }
+                None => {
+                    "the source did not answer — a read failure, not an empty account".to_string()
+                }
+            },
+        ),
+        Banner::Demo => (
+            "demo data",
+            "warn",
+            "baked demo fixtures — not a live read".to_string(),
+        ),
+        Banner::Partial { failed } => (
+            "partial read",
+            "warn",
+            format!(
+                "{} did not answer — those panels carry a load error",
+                failed.join(", ")
+            ),
+        ),
+    };
+    Some(ViewNode::Row(vec![
+        static_pill(pill, tag),
+        ViewNode::Text(text),
+    ]))
+}
+
+/// The replacement body for a surface whose note is not `Ok`: a load error for an
+/// unanswered surface (NEVER the get-started empty-state CTA), an honest not-served
+/// line. `None` when the surface answered and its panel renders its data.
+fn surface_note_body(health: &SourceHealth, surface: &str) -> Option<Vec<ViewNode>> {
+    match health.surface_note(surface) {
+        SurfaceNote::Ok => None,
+        SurfaceNote::LoadError => Some(vec![ViewNode::Row(vec![
+            static_pill("load error", "bad"),
+            ViewNode::Text(format!(
+                "{surface} did not answer — a read failure, not an empty list"
+            )),
+        ])]),
+        SurfaceNote::NotServed => Some(vec![ViewNode::Text(format!(
+            "this source does not serve {surface} yet"
+        ))]),
+    }
+}
+
+/// Whether `surface`'s panel renders its DATA (sections, gauges, live pills, binds) —
+/// false means the note body (or no panel at all) is painted instead, so the bind
+/// cursor and the slot seeds must skip exactly the surfaces the card skips.
+fn surface_shows_data(health: &SourceHealth, surface: &str) -> bool {
+    health.panels_renderable() && health.surface_note(surface) == SurfaceNote::Ok
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE BUILDER — pure ConsoleModel → ViewNode (no gpui, no HTML, no IO)
@@ -862,6 +951,12 @@ pub fn console_card(model: &ConsoleModel) -> ViewNode {
         ],
     });
 
+    // ── Source honesty first: where the data came from and whether the source
+    //    answered — unreachable ≠ empty, demo is labeled, unconfigured is calm. ───
+    if let Some(banner) = banner_node(&model.health.banner(CONSOLE_SOURCE_HINT)) {
+        top.push(banner);
+    }
+
     // ── The header: who + the live $DREGG balance + the trust framing. ──────────
     top.push(ViewNode::Section {
         title: "my dregg computer".to_string(),
@@ -874,7 +969,12 @@ pub fn console_card(model: &ConsoleModel) -> ViewNode {
                     fmt: BindFmt::Amount,
                 },
                 static_pill("cap-scoped", "muted"),
-                static_pill("live truth · verified turns", "good"),
+                // Fixtures never wear the live badge (the labeled-demo invariant).
+                if model.health.is_demo() {
+                    static_pill("demo fixtures", "warn")
+                } else {
+                    static_pill("live truth · verified turns", "good")
+                },
             ]),
             ViewNode::Text(format!(
                 "{} · total spent {} units",
@@ -884,72 +984,87 @@ pub fn console_card(model: &ConsoleModel) -> ViewNode {
         ],
     });
 
-    // ── Computers — one section per vat, in a two-up grid. ──────────────────────
-    let computers: Vec<ViewNode> = if model.computers.is_empty() {
-        vec![ViewNode::Text(
-            "no computers yet — `dregg-cloud vat create --name mybox` mints one behind the funded lease".to_string(),
-        )]
-    } else {
-        vec![ViewNode::Grid {
-            cols: 2,
-            children: model
-                .computers
-                .iter()
-                .enumerate()
-                .map(|(i, v)| vat_section(i, v))
-                .collect(),
-        }]
-    };
-    top.push(ViewNode::Section {
-        title: "computers".to_string(),
-        tag: String::new(),
-        children: computers,
-    });
+    // ── The resource panels — only when the data either came from the demo bake or
+    //    from a source that answered (unreachable/unconfigured must never paint a
+    //    false empty account; the banner above carries the truth instead). ─────────
+    if model.health.panels_renderable() {
+        // ── Computers — one section per vat, in a two-up grid. ──────────────────
+        let computers: Vec<ViewNode> = surface_note_body(&model.health, SURFACE_COMPUTERS)
+            .unwrap_or_else(|| {
+                if model.computers.is_empty() {
+                    vec![ViewNode::Text(
+                        "no computers yet — `dregg-cloud vat create --name mybox` mints one behind the funded lease".to_string(),
+                    )]
+                } else {
+                    vec![ViewNode::Grid {
+                        cols: 2,
+                        children: model
+                            .computers
+                            .iter()
+                            .enumerate()
+                            .map(|(i, v)| vat_section(i, v))
+                            .collect(),
+                    }]
+                }
+            });
+        top.push(ViewNode::Section {
+            title: "computers".to_string(),
+            tag: String::new(),
+            children: computers,
+        });
 
-    // ── Hermeses — the residents living in the computers. ───────────────────────
-    let hermeses: Vec<ViewNode> = if model.hermeses.is_empty() {
-        vec![ViewNode::Text(
-            "no hermeses yet — hire a resident and it lives HERE, in your computer".to_string(),
-        )]
-    } else {
-        model
-            .hermeses
-            .iter()
-            .enumerate()
-            .map(|(i, h)| hermes_section(i, h))
-            .collect()
-    };
-    top.push(ViewNode::Section {
-        title: "hermeses — resident agents".to_string(),
-        tag: String::new(),
-        children: hermeses,
-    });
+        // ── Hermeses — the residents living in the computers. ───────────────────
+        let hermeses: Vec<ViewNode> = surface_note_body(&model.health, SURFACE_HERMESES)
+            .unwrap_or_else(|| {
+                if model.hermeses.is_empty() {
+                    vec![ViewNode::Text(
+                        "no hermeses yet — hire a resident and it lives HERE, in your computer"
+                            .to_string(),
+                    )]
+                } else {
+                    model
+                        .hermeses
+                        .iter()
+                        .enumerate()
+                        .map(|(i, h)| hermes_section(i, h))
+                        .collect()
+                }
+            });
+        top.push(ViewNode::Section {
+            title: "hermeses — resident agents".to_string(),
+            tag: String::new(),
+            children: hermeses,
+        });
 
-    // ── The spend ledger — every charge named (kind · resource · period · units). ──
-    let spend: Vec<ViewNode> = if model.dregg.entries.is_empty() {
-        vec![ViewNode::Text("no charges yet".to_string())]
-    } else {
-        vec![ViewNode::Table(
-            model
-                .dregg
-                .entries
-                .iter()
-                .map(|e| {
-                    ViewNode::Row(vec![
-                        static_pill(e.resource_kind.clone(), "muted"),
-                        ViewNode::Text(e.resource_id.clone()),
-                        ViewNode::Text(e.period.clone()),
-                        ViewNode::Text(format!("{} units", amount(e.units))),
-                    ])
-                })
-                .collect(),
-        )]
-    };
-    top.push(ViewNode::Section {
-        title: "spend".to_string(),
-        tag: String::new(),
-        children: spend,
-    });
+        // ── The spend ledger — every charge named (kind · resource · period · units). ──
+        let spend: Vec<ViewNode> =
+            surface_note_body(&model.health, SURFACE_SPEND).unwrap_or_else(|| {
+                if model.dregg.entries.is_empty() {
+                    vec![ViewNode::Text("no charges yet".to_string())]
+                } else {
+                    vec![ViewNode::Table(
+                        model
+                            .dregg
+                            .entries
+                            .iter()
+                            .map(|e| {
+                                ViewNode::Row(vec![
+                                    static_pill(e.resource_kind.clone(), "muted"),
+                                    ViewNode::Text(e.resource_id.clone()),
+                                    ViewNode::Text(e.period.clone()),
+                                    ViewNode::Text(format!("{} units", amount(e.units))),
+                                ])
+                            })
+                            .collect(),
+                    )]
+                }
+            });
+        top.push(ViewNode::Section {
+            title: "spend".to_string(),
+            tag: String::new(),
+            children: spend,
+        });
+    }
 
     // ── Verify anything — the console's standing offer: green is a proof, not a
     //    promise. The submitted draft fires a real verify turn. ────────────────────
@@ -986,10 +1101,14 @@ pub fn console_card(model: &ConsoleModel) -> ViewNode {
 ///
 /// Order (must mirror the builder): the header balance bind, then each hermes' receipts
 /// bind (hermes sections follow the computers section, which carries NO binds — its
-/// gauges and pills read immediate-mode and consume no cursor).
+/// gauges and pills read immediate-mode and consume no cursor). The hermes binds ride
+/// only when the hermeses surface renders its data — a suppressed or load-errored
+/// panel paints no binds, so the snapshot shrinks with the card.
 pub fn console_bind_values(model: &ConsoleModel) -> Vec<u64> {
     let mut values = vec![model.dregg.balance];
-    values.extend(model.hermeses.iter().map(|h| h.receipts));
+    if surface_shows_data(&model.health, SURFACE_HERMESES) {
+        values.extend(model.hermeses.iter().map(|h| h.receipts));
+    }
     values
 }
 
@@ -998,16 +1117,22 @@ pub fn console_bind_values(model: &ConsoleModel) -> Vec<u64> {
 /// each hermes' status + receipts + consumed-units. Status seeds use
 /// [`VatState::live_value`]/[`HermesStatus::live_value`] (≥ 1 — slot value 0 is the
 /// reserved as-baked fallback).
+/// Like the bind snapshot, the seeds cover only the surfaces the card actually
+/// paints — a suppressed panel has no gauges or live pills to drive.
 pub fn console_slot_seeds(model: &ConsoleModel) -> Vec<(usize, u64)> {
     let mut seeds = vec![(SLOT_BALANCE, model.dregg.balance)];
-    for (i, v) in model.computers.iter().enumerate() {
-        seeds.push((vat_spent_slot(i), v.settled_units()));
-        seeds.push((vat_status_slot(i), v.state.live_value()));
+    if surface_shows_data(&model.health, SURFACE_COMPUTERS) {
+        for (i, v) in model.computers.iter().enumerate() {
+            seeds.push((vat_spent_slot(i), v.settled_units()));
+            seeds.push((vat_status_slot(i), v.state.live_value()));
+        }
     }
-    for (i, h) in model.hermeses.iter().enumerate() {
-        seeds.push((hermes_status_slot(i), h.status.live_value()));
-        seeds.push((hermes_receipts_slot(i), h.receipts));
-        seeds.push((hermes_spent_slot(i), h.consumed_units));
+    if surface_shows_data(&model.health, SURFACE_HERMESES) {
+        for (i, h) in model.hermeses.iter().enumerate() {
+            seeds.push((hermes_status_slot(i), h.status.live_value()));
+            seeds.push((hermes_receipts_slot(i), h.receipts));
+            seeds.push((hermes_spent_slot(i), h.consumed_units));
+        }
     }
     seeds
 }
@@ -1195,6 +1320,8 @@ pub fn demo_console() -> ConsoleModel {
                 },
             ],
         },
+        // Baked fixtures wear the demo label — never passed off as a live read.
+        health: SourceHealth::demo(),
     }
 }
 
@@ -1595,5 +1722,164 @@ mod tests {
         assert_eq!(VatState::from_record("stopped"), VatState::Sleeping);
         assert_eq!(VatState::from_record("reaped"), VatState::Reaped);
         assert_eq!(VatState::from_record("wobbling"), VatState::Sleeping);
+    }
+
+    // ── SOURCE HONESTY ON THE CARD (the source_health wiring) ────────────────────
+
+    /// Every Text on the card, concatenated (the face-agnostic content probe).
+    fn card_text(tree: &ViewNode) -> String {
+        let mut s = String::new();
+        walk(tree, &mut |n| {
+            if let ViewNode::Text(t) = n {
+                s.push_str(t);
+            }
+        });
+        s
+    }
+
+    /// UNREACHABLE ≠ EMPTY: a source that did not answer renders the can't-reach
+    /// banner and NO resource panels — no vat grid, no get-started CTA, no data
+    /// painted off the unanswered read — and the bind/seed contracts shrink to
+    /// exactly what the card still shows (the header balance).
+    #[test]
+    fn an_unreachable_source_banners_and_suppresses_panels() {
+        let mut model = scoped();
+        model.health = SourceHealth {
+            endpoint: Some("http://node:8080".into()),
+            source_unreachable: true,
+            unreachable: vec![
+                SURFACE_COMPUTERS.into(),
+                SURFACE_HERMESES.into(),
+                SURFACE_SPEND.into(),
+            ],
+            ..SourceHealth::default()
+        };
+        assert!(!model.health.panels_renderable());
+        let tree = console_card(&model);
+        let text = card_text(&tree);
+        // The banner names the endpoint that did not answer.
+        assert!(text.contains("http://node:8080"));
+        assert!(text.contains("not an empty account"));
+        // The resource panels are absent entirely — no sections, no CTAs, no data.
+        let mut sections: Vec<String> = Vec::new();
+        walk(&tree, &mut |n| {
+            if let ViewNode::Section { title, .. } = n {
+                sections.push(title.clone());
+            }
+        });
+        assert!(!sections.iter().any(|t| t == "computers"));
+        assert!(!sections.iter().any(|t| t == "hermeses — resident agents"));
+        assert!(!sections.iter().any(|t| t == "spend"));
+        assert!(
+            !text.contains("no computers yet"),
+            "unreachable is never the get-started empty state"
+        );
+        assert!(
+            !text.contains("mybox"),
+            "no data painted off an unanswered read"
+        );
+        // The contracts shrink with the card: only the header balance bind survives…
+        assert_eq!(console_bind_values(&model), vec![model.dregg.balance]);
+        assert_eq!(
+            console_slot_seeds(&model),
+            vec![(SLOT_BALANCE, model.dregg.balance)]
+        );
+        // …and they still cover exactly the slots the tree reads.
+        let mut read_slots: Vec<usize> = Vec::new();
+        walk(&tree, &mut |n| match n {
+            ViewNode::Bind { slot, .. } | ViewNode::Gauge { slot, .. } => read_slots.push(*slot),
+            ViewNode::Pill { slot: Some(s), .. } => read_slots.push(*s),
+            _ => {}
+        });
+        assert_eq!(read_slots, vec![SLOT_BALANCE]);
+    }
+
+    /// A HEALTHY LIVE SOURCE renders the panels with no banner at all — and no
+    /// honesty pill (not-connected / can't-reach / demo / partial) anywhere.
+    #[test]
+    fn a_healthy_live_source_renders_panels_with_no_banner() {
+        let mut model = scoped();
+        model.health = SourceHealth::default();
+        assert_eq!(model.health.banner(CONSOLE_SOURCE_HINT), Banner::None);
+        let tree = console_card(&model);
+        let mut sections: Vec<String> = Vec::new();
+        let mut pills: Vec<String> = Vec::new();
+        walk(&tree, &mut |n| match n {
+            ViewNode::Section { title, .. } => sections.push(title.clone()),
+            ViewNode::Pill { text, .. } => pills.push(text.clone()),
+            _ => {}
+        });
+        for title in ["computers", "hermeses — resident agents", "spend"] {
+            assert!(sections.iter().any(|t| t == title), "{title} panel renders");
+        }
+        for honesty in ["not connected", "can't reach", "demo data", "partial read"] {
+            assert!(!pills.iter().any(|p| p == honesty), "no {honesty} banner");
+        }
+        assert!(pills.iter().any(|p| p == "live truth · verified turns"));
+        assert!(card_text(&tree).contains("mybox"), "the data renders");
+    }
+
+    /// DEMO DATA IS LABELED, never passed off as live: the fixture card carries the
+    /// demo banner, the header trust pill downgrades, and the panels still render.
+    #[test]
+    fn demo_fixtures_are_labeled_but_renderable() {
+        let model = scoped();
+        assert!(model.health.is_demo(), "the fixture model is demo-marked");
+        let tree = console_card(&model);
+        let mut pills: Vec<String> = Vec::new();
+        walk(&tree, &mut |n| {
+            if let ViewNode::Pill { text, .. } = n {
+                pills.push(text.clone());
+            }
+        });
+        assert!(pills.iter().any(|p| p == "demo data"), "the demo banner");
+        assert!(
+            !pills.iter().any(|p| p == "live truth · verified turns"),
+            "fixtures never wear the live badge"
+        );
+        assert!(card_text(&tree).contains("mybox"), "labeled, not hidden");
+    }
+
+    /// A PARTIALLY-FAILED SURFACE carries a load error in ITS panel (never a CTA)
+    /// while the surfaces that answered render their data — and the bind cursor +
+    /// slot seeds skip exactly the suppressed surface.
+    #[test]
+    fn a_failed_surface_is_a_load_error_while_others_render() {
+        let mut model = scoped();
+        model.health = SourceHealth {
+            unreachable: vec![SURFACE_HERMESES.into()],
+            ..SourceHealth::default()
+        };
+        let tree = console_card(&model);
+        let text = card_text(&tree);
+        // The computers panel renders its data; the hermeses panel is a load error.
+        assert!(text.contains("mybox"));
+        assert!(text.contains("hermeses did not answer"));
+        // ("deploy-bot" still appears — as a spend-ledger charge, which answered.)
+        assert!(
+            !text.contains("last beat"),
+            "no hermes data painted off the failed read"
+        );
+        assert!(
+            !text.contains("no hermeses yet"),
+            "a load error is never the hire-one CTA"
+        );
+        // No hermes receipts bind rides the cursor; vat slots still seed.
+        assert_eq!(console_bind_values(&model), vec![model.dregg.balance]);
+        let seeds = console_slot_seeds(&model);
+        assert!(seeds.iter().any(|(s, _)| *s == vat_status_slot(0)));
+        assert!(!seeds.iter().any(|(s, _)| *s == hermes_status_slot(0)));
+        // The seed/read alignment holds in the degraded state too.
+        let mut read_slots: Vec<usize> = Vec::new();
+        walk(&tree, &mut |n| match n {
+            ViewNode::Bind { slot, .. } | ViewNode::Gauge { slot, .. } => read_slots.push(*slot),
+            ViewNode::Pill { slot: Some(s), .. } => read_slots.push(*s),
+            _ => {}
+        });
+        read_slots.sort_unstable();
+        read_slots.dedup();
+        let mut seed_slots: Vec<usize> = seeds.iter().map(|(s, _)| *s).collect();
+        seed_slots.sort_unstable();
+        assert_eq!(read_slots, seed_slots);
     }
 }

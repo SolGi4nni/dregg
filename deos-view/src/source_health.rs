@@ -23,11 +23,11 @@
 //! notice and [`SourceHealth::surface_note`] per panel; `panels_renderable`
 //! decides whether resource panels appear at all.
 //!
-//! WIRING (main loop): add `pub mod source_health;` (+ re-export `SourceHealth`)
-//! to `deos-view/src/lib.rs`; then give `console::ConsoleModel` a
-//! `health: SourceHealth` field (default healthy-live) and teach the faces to
-//! render [`Banner`] / [`SurfaceNote`] — the render tests in this module state
-//! the required semantics.
+//! WIRED: `console::ConsoleModel` carries a `health: SourceHealth` field (default
+//! healthy-live); `console_card` renders the [`Banner`] page-level, gates the
+//! resource panels on [`SourceHealth::panels_renderable`], and paints each panel's
+//! [`SurfaceNote`]; the cap-scoped catalog reports health through
+//! `catalog::Catalog::health` and `ConsoleModel::from_catalog` carries it through.
 
 use serde::{Deserialize, Serialize};
 

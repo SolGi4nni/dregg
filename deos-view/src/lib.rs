@@ -35,8 +35,8 @@
 pub mod console;
 pub mod fmt;
 /// Console data-source honesty: unreachable ≠ empty ≠ fixtures (never render a
-/// live-green surface over an unreachable node). Call-site wiring into
-/// `console::ConsoleModel` is a follow-up (see the module header).
+/// live-green surface over an unreachable node). Wired into `console::ConsoleModel`
+/// (`ConsoleModel::health` drives the page banner + panel gate + per-surface notes).
 pub mod source_health;
 pub mod tree;
 pub use console::{
@@ -45,6 +45,7 @@ pub use console::{
     WitnessStance,
 };
 pub use fmt::BindFmt;
+pub use source_health::{Banner, SourceHealth, SurfaceNote};
 pub use tree::{
     disclose, parse_view_tree, pill_display, resolve_mounts, Crumb, Disclosure, HaloHandle,
     MapMountSource, MenuItem, MountSource, PillCase, RawItem, RawNode, RawPillCase, RawProps,

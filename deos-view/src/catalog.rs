@@ -51,6 +51,7 @@ use std::collections::BTreeMap;
 use dregg_auth::credential::{Caveat, Context, Credential, Pred, PublicKey, RootKey};
 
 use crate::console::{ConsoleModel, HermesView, LedgerView, SpendLine, VatView};
+use crate::source_health::SourceHealth;
 use crate::tree::MenuItem;
 
 /// The request-attribute key a resource's **owner-subject** binds under in the cap
@@ -86,6 +87,10 @@ pub trait Catalog {
     fn balance(&self, subject: &str) -> u64;
     /// When this snapshot was read (RFC3339) — the card's honest data-age line.
     fn generated_at(&self) -> String;
+    /// Whether the source answered, per surface — the card's honesty layer
+    /// (unreachable ≠ empty; demo labeled). A reader whose read failed MUST say so
+    /// here; the console suppresses the panels instead of painting a false empty.
+    fn health(&self) -> SourceHealth;
 }
 
 /// An in-memory [`Catalog`] over an already-read multi-tenant snapshot — the exact shape a
@@ -104,6 +109,9 @@ pub struct SnapshotCatalog {
     pub balances: BTreeMap<String, u64>,
     /// The snapshot's read time (RFC3339).
     pub generated_at: String,
+    /// The read's source health (default: a healthy live read — a filler that
+    /// failed to read must record the failure, not present clean empty vectors).
+    pub health: SourceHealth,
 }
 
 impl Catalog for SnapshotCatalog {
@@ -121,6 +129,9 @@ impl Catalog for SnapshotCatalog {
     }
     fn generated_at(&self) -> String {
         self.generated_at.clone()
+    }
+    fn health(&self) -> SourceHealth {
+        self.health.clone()
     }
 }
 
@@ -239,6 +250,8 @@ impl ConsoleModel {
                 total_spent,
                 entries,
             },
+            // The source's own honesty rides through the scope cut untouched.
+            health: catalog.health(),
         }
     }
 }
@@ -313,6 +326,8 @@ pub fn demo_catalog() -> SnapshotCatalog {
         spend: all.dregg.entries,
         balances,
         generated_at: all.generated_at,
+        // Fixture-sourced — labeled demo, like the model it was read from.
+        health: all.health,
     }
 }
 
@@ -517,5 +532,72 @@ mod tests {
         let direct = CapTurn::new(vat.owner.clone(), TURN_VAT_SLEEP, 0);
         assert!(direct.admitted(&scope));
         assert!(!direct.admitted(&stranger));
+    }
+
+    // ── SOURCE HONESTY RIDES THE CATALOG SEAM (unreachable ≠ empty on the card) ────
+    #[test]
+    fn an_unreachable_catalog_banners_and_suppresses_panels() {
+        let root = root();
+        // A live reader whose read failed: no rows (it could not read any) AND the
+        // failure recorded — never clean empty vectors presented as an account.
+        let cat = SnapshotCatalog {
+            generated_at: "2026-07-05T00:00:00Z".to_string(),
+            health: SourceHealth {
+                endpoint: Some("cell://world".into()),
+                source_unreachable: true,
+                unreachable: vec!["computers".into(), "hermeses".into(), "spend".into()],
+                ..SourceHealth::default()
+            },
+            ..SnapshotCatalog::default()
+        };
+        let scope = CapScope::for_subject(&root, DEMO_SUBJECT, 1_000);
+        let model = ConsoleModel::from_catalog(&cat, &scope);
+        assert!(!model.health.panels_renderable());
+
+        let card = console_card(&model);
+        let mut text = String::new();
+        let mut sections: Vec<String> = Vec::new();
+        walk(&card, &mut |n| match n {
+            ViewNode::Text(t) => text.push_str(t),
+            ViewNode::Section { title, .. } => sections.push(title.clone()),
+            _ => {}
+        });
+        // The banner names the endpoint that did not answer…
+        assert!(text.contains("cell://world"));
+        assert!(text.contains("not an empty account"));
+        // …and no resource panel (and no get-started CTA) is painted over the failure.
+        assert!(!sections.iter().any(|t| t == "computers"));
+        assert!(!sections.iter().any(|t| t == "spend"));
+        assert!(!text.contains("no computers yet"), "unreachable ≠ empty");
+    }
+
+    // ── A HEALTHY LIVE CATALOG renders the panels with no banner ───────────────────
+    #[test]
+    fn a_healthy_catalog_renders_panels_with_no_banner() {
+        let root = root();
+        let cat = SnapshotCatalog {
+            health: SourceHealth::default(),
+            ..demo_catalog()
+        };
+        let scope = CapScope::for_subject(&root, DEMO_SUBJECT, 1_000);
+        let model = ConsoleModel::from_catalog(&cat, &scope);
+        assert!(model.health.panels_renderable());
+
+        let card = console_card(&model);
+        let mut text = String::new();
+        let mut sections: Vec<String> = Vec::new();
+        let mut pills: Vec<String> = Vec::new();
+        walk(&card, &mut |n| match n {
+            ViewNode::Text(t) => text.push_str(t),
+            ViewNode::Section { title, .. } => sections.push(title.clone()),
+            ViewNode::Pill { text, .. } => pills.push(text.clone()),
+            _ => {}
+        });
+        assert!(sections.iter().any(|t| t == "computers"));
+        assert!(sections.iter().any(|t| t == "spend"));
+        assert!(text.contains("mybox"), "the viewer's data renders");
+        for honesty in ["not connected", "can't reach", "demo data", "partial read"] {
+            assert!(!pills.iter().any(|p| p == honesty), "no {honesty} banner");
+        }
     }
 }
