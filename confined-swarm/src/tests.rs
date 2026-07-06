@@ -132,6 +132,67 @@ fn a_workers_source_trace_is_absent_from_every_sibling() {
     }
 }
 
+/// THE NON-COLLUSION PROOF MATRIX — every ordered cross-worker probe comes back empty, and
+/// `fully_isolated` is the conjunction. The property is *probed*, not asserted: worker A's
+/// mind provably never touched B's (the `(A,B)` cell is `None`).
+#[test]
+fn cross_contact_matrix_is_fully_empty() {
+    let swarm = assemble_three();
+    let contacts = swarm.cross_contacts();
+    // 3 workers → 3*2 = 6 ordered off-diagonal cells.
+    assert_eq!(contacts.len(), 6);
+    for c in &contacts {
+        assert_ne!(c.observer, c.subject, "no self-cell in the matrix");
+        assert_eq!(
+            c.recalled, None,
+            "worker {}'s mind provably never touched worker {}'s source ({})",
+            c.observer, c.subject, c.subject_source
+        );
+    }
+    assert!(swarm.fully_isolated(), "the swarm is pairwise isolated");
+}
+
+/// If collusion IS forged (a sibling's source implanted into a worker's mind), the matrix
+/// catches it: the cross-contact cell is no longer `None` and `fully_isolated` goes false.
+#[test]
+fn a_forged_contact_shows_up_in_the_matrix() {
+    let mut swarm = assemble_three();
+    assert!(swarm.fully_isolated());
+    let sibling_key = swarm.workers[1].source_key();
+    let sibling_digest = swarm.workers[1].source.digest();
+    swarm.workers[0]
+        .session
+        .grain_mut()
+        .learn(sibling_key, sibling_digest);
+    assert!(!swarm.fully_isolated(), "the forged contact is caught");
+    // Exactly the (observer=0, subject=1) cell is non-empty.
+    let cell = swarm
+        .cross_contacts()
+        .into_iter()
+        .find(|c| c.observer == 0 && c.subject == 1)
+        .expect("the 0->1 cell");
+    assert_eq!(cell.recalled, Some(sibling_digest));
+}
+
+/// The structured report objects are grounded + attested: one card per worker, each carrying
+/// its source, byte-count, digest, conserved budget, and an `attested` bit that re-verifies.
+#[test]
+fn report_cards_are_grounded_and_attested() {
+    let carrier = SwarmAttestationCarrier::default();
+    let swarm = assemble_three();
+    let cards = swarm.report_cards(&carrier);
+    assert_eq!(cards.len(), 3);
+    for (i, card) in cards.iter().enumerate() {
+        assert_eq!(card.worker, i);
+        assert_eq!(card.source_name, swarm.workers()[i].source.name);
+        assert_eq!(card.source_door, swarm.workers()[i].source.door);
+        assert_eq!(card.bytes_read, swarm.workers()[i].source.content.len());
+        assert_eq!(card.source_digest, swarm.workers()[i].source.digest());
+        assert!(card.attested, "each card's report re-attests");
+        assert_eq!(card.budget_remaining, 100_000);
+    }
+}
+
 /// BUDGET-SPLIT TOOTH — an over-split (the workers' budgets sum past the root's) is REFUSED
 /// by the fork: a swarm cannot mint budget.
 #[test]
