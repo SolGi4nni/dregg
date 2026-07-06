@@ -75,6 +75,7 @@ import Dregg2.Circuit.BridgeBindingFromFold
 import Dregg2.Circuit.HatcheryBindingFromFold
 import Dregg2.Circuit.DecoBindingFromFold
 import Dregg2.Crypto.DecoUnforgeable
+import Dregg2.Crypto.DecoUC
 
 namespace Metatheory.Adversary
 
@@ -572,6 +573,62 @@ theorem attestation_invariant_bites :
         Dregg2.Crypto.Deco.Reference.sampleStmt :=
   Dregg2.Crypto.DecoUnforgeable.Forge.forge_attestation_forgery.2
 
+/-! ### §3.9b — DECO ATTESTATION UC-REALIZATION (rung 5: the summit ABOVE rung-4 unforgeability).
+
+`attestationDynamics` (§3.9) delivers the rung-4 invariant `decoAuthenticated` (F_attestation would
+emit) via `deco_attestation_realizes` alone. This instance is the rung-5 STRENGTHENING: the SAME
+per-control invariant is now delivered as the SOUNDNESS leg of a full DECO UC-REALIZATION
+(`Dregg2/Crypto/DecoUC.lean` — the simulator that WORKS + the perfect-ZK fragment + the carried
+computational floors). `holds` routes through `DecoUC.decoUC_realization_of_discharge`, so an accepting
+DECO proof's emission is witnessed AS the soundness leg of a UC realization (rung 5), not just the bare
+rung-4 lemma. The computational carriers (STARK-ZK / handshake-sim / PPT / negligible-advantage /
+composition) are FIXED at instance build, supplied by a `DecoUC.DecoUCComputationalDischarge`. -/
+
+open Dregg2.Crypto.DecoUC (decoUC_realization decoUC_realization_of_discharge
+  DecoUCComputationalDischarge UCRealizesFAtt decoUC_realizes)
+
+/-- **`attestationUCDynamics`** — DECO attestation UC-realization as a `GovernedDynamics`. Control = the
+`(stmt, proof)` presented; invariant = `decoAuthenticated` (the ideal emission); `holds` is the
+`soundness` leg of the assembled `DecoUCRealization` (rung 5), the computational discharge FIXED at
+build. Above `attestationDynamics` (rung 4): the emission now rides a UC-realization object. -/
+def attestationUCDynamics {Dg Proof : Type}
+    [KD : DecoVerifierKernel Dg Proof] (SK : SignatureKernel Dg Dg Dg) (MK : MacKernelE Dg Dg Dg)
+    (hsigEq : KD.sigVerify = SK.sigVerify) (hmacEq : KD.macVerify = MK.verifyTag)
+    (hext : KD.extractable) (hsig : SK.unforgeable) (hmac : MK.unforgeable)
+    (d : DecoUCComputationalDischarge) :
+    GovernedDynamics where
+  Control := Statement Dg × Proof
+  Outcome := Statement Dg × Proof
+  run c := c
+  accept c := KD.verify c.1 c.2 = true
+  invariant c := decoAuthenticated SK MK KD.compress KD.encode c.1
+  holds c h :=
+    (decoUC_realization_of_discharge (KD := KD) SK MK hsigEq hmacEq hext hsig hmac d).soundness
+      c.1 c.2 h
+
+/-- **DECO ATTESTATION UC-REALIZATION, via the ONE lemma.** An accepting DECO proof means a genuine
+Stripe session backs the statement — delivered AS the soundness leg of a UC realization, as an
+application of `governed_holds` to `attestationUCDynamics` (rung 5). -/
+theorem deco_attestation_uc_via_schema {Dg Proof : Type}
+    [KD : DecoVerifierKernel Dg Proof] (SK : SignatureKernel Dg Dg Dg) (MK : MacKernelE Dg Dg Dg)
+    (hsigEq : KD.sigVerify = SK.sigVerify) (hmacEq : KD.macVerify = MK.verifyTag)
+    (hext : KD.extractable) (hsig : SK.unforgeable) (hmac : MK.unforgeable)
+    (d : DecoUCComputationalDischarge)
+    (stmt : Statement Dg) (proof : Proof) (hacc : KD.verify stmt proof = true) :
+    decoAuthenticated SK MK KD.compress KD.encode stmt :=
+  governed_holds (attestationUCDynamics SK MK hsigEq hmacEq hext hsig hmac d) (stmt, proof) hacc
+
+/-- **The rung-5 statement itself, factored:** given the §8 carriers, the deployed verifier
+UC-REALIZES `F_attestation` (`UCRealizesFAtt` = soundness ∧ perfect-ZK) — the Lean-provable core of the
+summit, above the rung-4 `deco_attestation_via_schema`. -/
+theorem deco_attestation_uc_realizes {Dg Proof : Type}
+    [KD : DecoVerifierKernel Dg Proof] (SK : SignatureKernel Dg Dg Dg) (MK : MacKernelE Dg Dg Dg)
+    (hsigEq : KD.sigVerify = SK.sigVerify) (hmacEq : KD.macVerify = MK.verifyTag)
+    (hext : KD.extractable) (hsig : SK.unforgeable) (hmac : MK.unforgeable) :
+    UCRealizesFAtt KD.verify (decoAuthenticated SK MK KD.compress KD.encode) :=
+  decoUC_realizes _ _ (decoUC_realization SK MK hsigEq hmacEq hext hsig hmac
+    True True True True True trivial trivial trivial trivial trivial)
+
 /-! ## §4. Instance — THE COMPOSED APEX (`AssuranceCase.deployed_system_secure`).
 
 The marquee: the whole deployed 5-guarantee theorem (A non-amplification, B conservation, C
@@ -759,6 +816,8 @@ theorem assurance_case_governed {State Action : Type}
 #assert_axioms decoCarrier_bites
 #assert_axioms deco_attestation_via_schema
 #assert_axioms attestation_invariant_bites
+#assert_axioms deco_attestation_uc_via_schema
+#assert_axioms deco_attestation_uc_realizes
 #assert_axioms deployed_system_secure_via_schema
 #assert_axioms assurance_case_governed
 

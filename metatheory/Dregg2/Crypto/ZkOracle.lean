@@ -19,6 +19,7 @@ the malicious field does NOT (rejected) — both decided by the verified matcher
 -/
 import Dregg2.Crypto.Cfg
 import Dregg2.Crypto.Deco
+import Dregg2.Crypto.DecoUnforgeable
 import Dregg2.Crypto.Deriv.Core
 import Dregg2.Tactics
 
@@ -61,27 +62,36 @@ def InjectionFree (field : List Value) : Prop :=
 /-! ## The zkOracle capstone. -/
 
 /-- **`zkOracle_sound`** — the whole zkOracle attestation in one statement. Given the DECO and CFG
-STARK carriers and an accepting proof for each, plus an injection-free user field, the request is
-simultaneously:
-  (1) **authentic** — a genuine DECO/zkTLS session witness exists for the disclosed statement;
+STARK carriers and an accepting proof for each, plus the §8 ed25519/HMAC unforgeability carriers and an
+injection-free user field, the request is simultaneously:
+  (1) **authentic** — `F_attestation` emitted this: a genuine Stripe TLS session disclosed exactly these
+      facts to this serverKey (the ideal-world statement `decoAuthenticated`, UNFORGEABLE — not merely a
+      satisfying trace exists);
   (2) **well-formed** — the request body lies in the JSON context-free language;
   (3) **injection-free** — the user field unmatches the injection template.
-Each conjunct is a `verify_sound` discharge; the whole reduces to the two `extractable` carriers plus the
-§8 floor DECO names. This is the composition the goal asks for: authentic ∧ well-formed ∧ no-injection. -/
+Legs (2)/(3) are `verify_sound`/decidable discharges; leg (1) is the rung-4 realization
+`DecoUnforgeable.deco_attestation_realizes` — the deployed verifier REALIZES the ideal attestation
+functionality, so `authentic` now reads "F_attestation emitted this" rather than "∃ a satisfying trace."
+The whole reduces to the two `extractable` carriers plus the standard §8 floor DECO names (ed25519
+EUF-CMA + HMAC). This is the composition the goal asks for: authentic ∧ well-formed ∧ no-injection. -/
 theorem zkOracle_sound
     {Dg Pd : Type} [KD : Deco.DecoVerifierKernel Dg Pd]
     {T Pc : Type} [KC : Cfg.CfgVerifierKernel T Pc]
     (jsonGrammar : ContextFreeGrammar T)
+    (SK : PortalFloor.SignatureKernel Dg Dg Dg) (MK : PortalFloor.MacKernelE Dg Dg Dg)
+    (hsigEq : KD.sigVerify = SK.sigVerify) (hmacEq : KD.macVerify = MK.verifyTag)
+    (hsig : SK.unforgeable) (hmac : MK.unforgeable)
     (hDext : KD.extractable) (hCext : KC.extractable)
     (decoStmt : Deco.Statement Dg) (decoPf : Pd)
     (hDacc : KD.verify decoStmt decoPf = true)
     (body : List T) (cfgPf : Pc)
     (hCacc : KC.verify ⟨jsonGrammar, body⟩ cfgPf = true)
     (field : List Value) (hSafe : InjectionFree field) :
-    (∃ w, Deco.DecoRelation KD.sigVerify KD.macVerify KD.compress KD.encode decoStmt w) ∧
+    DecoUnforgeable.decoAuthenticated SK MK KD.compress KD.encode decoStmt ∧
     body ∈ jsonGrammar.language ∧
     InjectionFree field := by
-  refine ⟨Deco.deco_verify_sound hDext decoStmt decoPf hDacc, ?_, hSafe⟩
+  refine ⟨DecoUnforgeable.deco_attestation_realizes SK MK hsigEq hmacEq hDext hsig hmac
+      decoStmt decoPf hDacc, ?_, hSafe⟩
   exact Cfg.cfg_verify_sound hCext ⟨jsonGrammar, body⟩ cfgPf hCacc
 
 #assert_axioms zkOracle_sound
@@ -192,17 +202,18 @@ end Json
 /-! ## The concrete end-to-end demonstration — all three legs fired on real data. -/
 
 /-- **`zkOracle_demo`** — a CONCRETE zkOracle attestation, end to end: a reference DECO/zkTLS
-verifier PROOF authenticates the session (`refKernel` accepts `sampleStmt`, yielding the DECO relation),
-the doubly-nested JSON body `[[str]]` is well-formed, and the benign user field is injection-free. Three
-independently-verified legs, discharged together on concrete inputs — authentic ∧ well-formed ∧
-injection-free, with nothing left abstract. -/
+verifier PROOF authenticates the session (`F_attestation` emits on `sampleStmt` — a genuine Stripe
+session backs the disclosed facts, via `reference_authenticates_payment`), the doubly-nested JSON body
+`[[str]]` is well-formed, and the benign user field is injection-free. Three independently-verified
+legs, discharged together on concrete inputs — authentic ∧ well-formed ∧ injection-free, with nothing
+left abstract. The authentic leg is now the ideal-world `decoAuthenticated`, matching the strengthened
+`zkOracle_sound` capstone. -/
 theorem zkOracle_demo :
-    (∃ w, Deco.DecoRelation Deco.Reference.refSig Deco.Reference.refMac
-        Deco.Reference.refCompress Deco.Reference.refEncode Deco.Reference.sampleStmt w) ∧
+    DecoUnforgeable.decoAuthenticated Deco.Reference.refSigKernel Deco.Reference.refMacKernel
+        Deco.Reference.refKernel.compress Deco.Reference.refKernel.encode Deco.Reference.sampleStmt ∧
     Json.nestedBody ∈ Json.jsonGrammar.language ∧
     InjectionFree Demo.benignField :=
-  ⟨Deco.deco_verify_sound (K := Deco.Reference.refKernel) trivial
-      Deco.Reference.sampleStmt () (by decide),
+  ⟨Deco.Reference.reference_authenticates_payment,
    Json.nested_well_formed,
    Demo.benign_injection_free⟩
 

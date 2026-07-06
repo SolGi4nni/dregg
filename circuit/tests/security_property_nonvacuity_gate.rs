@@ -244,6 +244,21 @@ fn security_property_manifest() -> Vec<Row> {
                 bites: "attestation_bites",
             },
         },
+        // ── DECO payment-attestation UC-REALIZATION (survey gap #1, rung 5 — the summit) ─────────────
+        // Crypto/DecoUC.lean: the climb from "no false emission" (rung 4) to "the deployed protocol
+        // UC-REALIZES F_attestation". Lean proves the real core — the simulator (decoSimTranscript, a
+        // witness-free transcript that WORKS) + the perfect/statistical ZK fragment — and CARRIES the
+        // computational ≈_c layer (STARK-ZK / handshake-sim / PPT / negligible-advantage / composition)
+        // as named Prop carriers, discharged cross-system (LightClientUC.DynamicUCResidual discipline).
+        // fires — decoSim_works: the fabricated transcript satisfies the relation + the verifier accepts
+        // without a real session. bites — forge_not_ucRealizes: the forge kernel is NOT a realization.
+        Row {
+            theorem: "decoUC_realizes @ Crypto/DecoUC.lean",
+            tooth: HasBitingTooth {
+                fires: "decoSim_works",
+                bites: "forge_not_ucRealizes",
+            },
+        },
     ]
 }
 

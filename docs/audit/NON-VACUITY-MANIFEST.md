@@ -52,8 +52,9 @@ which sweeps every `@[load_bearing_keystone]` and throws at elaboration if a tag
 | 20 | `deco_binding_from_fold` (Circuit/DecoBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_payment_hash_unsat_demo` |
 | 21 | `sealedescrow_no_theft` (Deos/SealedEscrow.lean:753) | HAS-BITING-TOOTH | `honest_swap_reachable` | `halfopen_theft_unreachable` |
 | 22 | `deco_attestation_unforgeable` (Crypto/DecoUnforgeable.lean) | HAS-BITING-TOOTH | `attestation_fires` | `attestation_bites` |
+| 23 | `decoUC_realizes` (Crypto/DecoUC.lean) | HAS-BITING-TOOTH | `decoSim_works` | `forge_not_ucRealizes` |
 
-**Tally: 22 rows / 22 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING** (after Pillar 4b + escrow no-theft + DECO attestation unforgeability).
+**Tally: 23 rows / 23 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING** (after Pillar 4b + escrow no-theft + DECO attestation unforgeability + DECO attestation UC-realization).
 
 **Row 22 — DECO payment-attestation unforgeability (survey gap #1, closed — rung 4).** DECO's
 authenticity was ASSUMED, not proven (`SECURITY-PROPERTY-MAP.md:192`): `deco_authenticates_payment`
@@ -71,6 +72,29 @@ and the reduction extracts a genuine ed25519 `SigForgery` (sharpened by `attesta
 Both `#assert_axioms`-clean. Registered as `attestationDynamics` / `deco_attestation_via_schema` in the
 `governed_holds` schema (`Metatheory/Adversary/Instances.lean` §3.9), composing with — distinct from —
 `decoCarrierDynamics` (the fold-backing): unforgeability ∘ backing = the mint credited real money.
+
+**Row 23 — DECO payment-attestation UC-REALIZATION (survey gap #1, rung 5 — the summit).** Above rung 4
+("the verifier never emits a FALSE attestation"), rung 5 is "the deployed protocol UC-REALIZES
+`F_attestation`": a SIMULATOR that, given only `F_attestation`'s output, produces an indistinguishable
+DECO transcript. `Crypto/DecoUC.lean` proves the REAL, non-vacuous core: (1) the simulator
+`decoSimTranscript` — a witness-free transcript built from the disclosed statement alone (the reference
+extractor's construction) — and (2) the perfect/statistical ZK fragment (`decoView_witness_free` /
+`decoView_indep`: the disclosed view under `selective` factors through the statement, grounded in
+`PerfectZK`). The computational `≈_c` layer (STARK-ZK, DECO handshake-simulatability, PPT,
+negligible-advantage, Canetti composition) is CARRIED as named `Prop` carriers in `DecoUCRealization`
+(never `axiom`), discharged cross-system — mirroring `LightClientUC.DynamicUCResidual` /
+`UCBridge.FComDischarge`. **fires** — `decoSim_works`: the simulator's fabricated transcript genuinely
+satisfies the DECO relation AND the deployed verifier accepts, WITHOUT a real Stripe session (the
+simulator is real and its output verifies). **bites** — `forge_not_ucRealizes`: the forge kernel does
+NOT UC-realize `F_attestation` (`UCRealizesFAtt` is FALSE — a broken simulator whose output is
+distinguishable is not a realization; the anti-P→P witness), reusing `Forge.forge_not_realizes`; the
+perfect-ZK teeth `decoLeaky_no_simulator` additionally refute a session-leaking view. Both
+`#assert_axioms`-clean. Registered as `attestationUCDynamics` / `deco_attestation_uc_via_schema` /
+`deco_attestation_uc_realizes` in the `governed_holds` schema (`Instances.lean` §3.9b), above the rung-4
+`attestationDynamics`. ⚑ The fully-computational apex is NAMED-not-faked: `F_attestation` is NOT in the
+CryptHOL `F_com` harness (`Dregg2_FCom.thy` models the Pedersen COMMITMENT; `F_attestation` needs a
+from-scratch `spmf` model of STARK-ZK + the DECO 3-party handshake, absent from `Sigma_Commit_Crypto`) —
+the precise missing-framework STOP finding recorded in `DecoUC.lean`'s header.
 
 **Row 21 — SealedEscrow's economic no-theft (survey gap #3, closed).** SealedEscrow (escrow capacity,
 tag 17) previously had only refinements (one-shot replay, gate-refinement, commitment-binding) — no
