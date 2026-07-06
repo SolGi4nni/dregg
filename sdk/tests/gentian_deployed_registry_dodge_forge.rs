@@ -37,9 +37,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
     generate_rotated_transfer_shape_wide,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
-use dregg_circuit::effect_vm_descriptors::{
-    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
-};
+use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV};
 use dregg_circuit::field::BabyBear;
 use dregg_turn::rotation_witness as rw;
 
@@ -103,76 +101,68 @@ fn escrow_declaring_manifest() -> RotatedCaveatManifest {
     m
 }
 
+/// A non-declaring caveat manifest (all zero — NO capacity tag). The completeness pole: the refuse
+/// decodes `floor = 0`, is inert, and an honest normal turn still verifies (no false reject).
+fn non_declaring_manifest() -> RotatedCaveatManifest {
+    RotatedCaveatManifest::default()
+}
+
+/// The pre-flip (NON-refuse) wide bare member: the deployed refuse-welded member with the three refuse
+/// blocks stripped (the last 39 gates) and the trace narrowed to the pre-refuse width. This is EXACTLY
+/// what an old (pre-flag-day) producer — or a forger who ignores the declaration-keyed routing — would
+/// emit for a bare burn leg: a genuine wide STARK with NO capacity-floor refuse. Driving its proof
+/// through the CURRENT deployed verify is the decider (it must bind NO deployed cohort descriptor).
+fn preflip_bare_member(welded: &EffectVmDescriptor2) -> EffectVmDescriptor2 {
+    const REFUSE_GATE_COUNT: usize = 39; // 3 blocks × 13 gates (Lean `wideRefuseGates`).
+    const REFUSE_WIDTH: usize = 48; // 3 × REFUSE_STRIDE (16) — the flag-day widening.
+    let mut d = welded.clone();
+    d.name = d
+        .name
+        .trim_end_matches("-gentian-deployed-bare-refuse")
+        .to_string();
+    d.trace_width -= REFUSE_WIDTH;
+    let keep = d.constraints.len() - REFUSE_GATE_COUNT;
+    d.constraints.truncate(keep);
+    d
+}
+
 /// ====================================================================================================
-/// THE DECIDER: an honest-looking WIDE bare-cohort proof over a cell that DECLARES a capacity
-/// obligation verifies through the DEPLOYED light-client entry — no refuse bites.
+/// THE DECIDER (post-flip): the capacity-floor refuse now rides the DEPLOYED WIDE / WELDED bare cohort,
+/// so a cell that DECLARES a capacity obligation and settles via a plain bare-cohort leg is REJECTED by
+/// the deployed light-client entry `verify_effect_vm_rotated_with_cutover` — while a NON-declaring
+/// normal turn still verifies (completeness/liveness preserved).
 /// ====================================================================================================
 #[test]
 fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
-    // ---- 0. GROUND the registry split (the mismatch the meta-review flagged). ----
-    // The refuse + the satisfaction members live ONLY on the V3 1-felt registry.
-    let v3_bare = parse_vm_descriptor2(
-        registry_json(V3_STAGED_REGISTRY_TSV, WIDE_BARE_MEMBER).expect("v3 bare member"),
-    )
-    .expect("v3 bare parses");
-    let wide_bare = wide_desc(WIDE_BARE_MEMBER);
-    assert_eq!(
-        v3_bare.trace_width, 1626,
-        "the V3 bare member IS refuse-welded (1581 base + the capacity-floor refuse widening)"
-    );
-    assert_ne!(
-        wide_bare.trace_width, 1626,
-        "the WIDE bare member is a DIFFERENT emit — it does NOT carry the 1626 refuse widening"
-    );
-    // The flag-day refuse marker (`gentian-deployed-bare-refuse`, the emit's `ir` suffix) is on the V3
-    // bare member ONLY — NOT on the WIDE/WELDED bare members the deployed LC verifies against.
-    let v3_json = registry_json(V3_STAGED_REGISTRY_TSV, WIDE_BARE_MEMBER).unwrap();
+    // ---- 0. GROUND: the flip landed — the DEPLOYED WIDE + WELDED bare burn members now carry the
+    // capacity-floor refuse (the registries the deployed LC actually resolves), not only V3. ----
     let wide_json = registry_json(WIDE_REGISTRY_STAGED_TSV, WIDE_BARE_MEMBER).unwrap();
     let welded_json = registry_json(WIDE_UMEM_WELD_REGISTRY_TSV, WIDE_BARE_MEMBER).unwrap();
     assert!(
-        v3_json.contains("gentian-deployed-bare-refuse"),
-        "the V3 bare member carries the flag-day capacity-floor refuse weld"
+        wide_json.contains("gentian-deployed-bare-refuse"),
+        "the deployed WIDE bare burn now carries the capacity-floor refuse (the flip is on the \
+         deployed default registry)"
     );
     assert!(
-        !wide_json.contains("gentian-deployed-bare-refuse") && !wide_json.contains("refuse"),
-        "the WIDE bare member carries NO refuse weld — the refuse is not on the deployed registry"
+        welded_json.contains("gentian-deployed-bare-refuse"),
+        "the deployed WELDED bare burn carries the refuse too (the require_welded route is closed)"
     );
-    assert!(
-        !welded_json.contains("gentian-deployed-bare-refuse") && !welded_json.contains("refuse"),
-        "the WELDED bare member carries NO refuse weld either"
+    let wide_bare = wide_desc(WIDE_BARE_MEMBER); // the refuse-welded deployed member (width 2541)
+    assert_eq!(
+        wide_bare.trace_width, 2541,
+        "the WIDE bare burn widened 2493 -> 2541 by the three-block refuse (3 x REFUSE_STRIDE aux)"
     );
-    // The three satisfaction members are V3-only and are NOT cap-open names, so the deployed V3
-    // fallback filter (`name.contains(\"CapOpen\")`) can never surface them.
-    for sat in [
-        "settleEscrowSatVmDescriptor2R24",
-        "dischargeSatVmDescriptor2R24",
-        "vaultSatVmDescriptor2R24",
-    ] {
-        assert!(
-            registry_json(V3_STAGED_REGISTRY_TSV, sat).is_some(),
-            "{sat} is a committed V3 member"
-        );
-        assert!(
-            registry_json(WIDE_REGISTRY_STAGED_TSV, sat).is_none()
-                && registry_json(WIDE_UMEM_WELD_REGISTRY_TSV, sat).is_none(),
-            "{sat} is ABSENT from the deployed WIDE/WELDED registries the LC verifies against"
-        );
-        assert!(
-            !sat.contains("CapOpen"),
-            "{sat} is not a cap-open name, so the deployed V3 fallback filter excludes it"
-        );
-    }
+    let vk_hash = *blake3::hash(wide_json.as_bytes()).as_bytes();
 
-    // ---- 1. Build the dodge: a capacity-DECLARING cell settled via a plain bare-cohort effect. ----
+    // Shared witness scaffolding.
     let before_balance: i64 = 80_000;
-    let amount: u64 = 30; // drain 30 out of the escrow-obligated cell
+    let amount: u64 = 30;
     let st = CellState::new(before_balance as u64, 0);
     let effects = vec![Effect::Burn {
         target_hash: BabyBear::new(0),
         amount_lo: BabyBear::new(amount as u32),
         amount_full: amount,
     }];
-
     let mut ledger = Ledger::new();
     let before_cell = producer_cell(before_balance);
     let after_cell = producer_cell(before_balance - amount as i64);
@@ -196,9 +186,37 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
         &receipt_log,
         &Default::default(),
     );
+    let mem = MemBoundaryWitness::default();
+    let heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
 
-    // The caveat manifest DECLARES the escrow capacity obligation — the declaration is folded into the
-    // committed caveatCommit PI, so the proof itself carries the capacity claim.
+    // ---- 1. COMPLETENESS (liveness preserved): a NON-declaring wide burn still verifies through the
+    // deployed LC. The refuse decodes `floor = 0` on every block, is inert, and the honest normal turn
+    // proves + verifies — no false reject. ----
+    let (honest_trace, honest_dpis) = generate_rotated_transfer_shape_wide(
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &non_declaring_manifest(),
+    )
+    .expect("wide bare producer (non-declaring cell)");
+    let honest_proof = prove_vm_descriptor2(&wide_bare, &honest_trace, &honest_dpis, &mem, &heaps)
+        .expect("a NON-declaring wide bare burn proves under the refuse-welded member (floor=0)");
+    verify_vm_descriptor2(&wide_bare, &honest_proof, &honest_dpis)
+        .expect("non-declaring bare burn verifies at the descriptor level");
+    let honest_bytes = postcard::to_allocvec(&honest_proof).expect("serialize honest proof");
+    dregg_sdk::full_turn_proof::verify_effect_vm_rotated_with_cutover(
+        &honest_bytes,
+        &honest_dpis,
+        &vk_hash,
+    )
+    .expect(
+        "LIVENESS: a non-declaring normal turn must still verify through the deployed LC after the \
+         flip (the refuse is inert for a cell that declares no capacity)",
+    );
+
+    // ---- 2. THE DODGE: a cell that DECLARES the escrow capacity (tag 17, folded into caveatCommit
+    // PI 45) and settles via a plain bare-cohort burn. ----
     let manifest = escrow_declaring_manifest();
     let (trace, dpis) = generate_rotated_transfer_shape_wide(
         &st,
@@ -213,49 +231,76 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
         ROT_PI_COUNT + DFA_RC_LEN + 16,
         "wide bare-cohort PI count (base 50 + 16 wide anchors)"
     );
+
+    // ---- 2a. The declared-capacity bare leg is UNSAT under the DEPLOYED refuse-welded member: the
+    // honest producer path fills `floor = 1` (escrow declared) and the `floor == 0`-refuse gate has no
+    // satisfying assignment, so the STARK does not prove. There is NO deployed bare-dodge artifact. ----
+    // The prover trips a debug constraint-check on the unsatisfiable refuse gate (an EXPECTED abort);
+    // silence its panic hook so the run is not noisy, then restore it.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let declared_prove = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        prove_vm_descriptor2(&wide_bare, &trace, &dpis, &mem, &heaps)
+    }));
+    std::panic::set_hook(prev_hook);
+    match declared_prove {
+        Err(_) => { /* the prover aborted on the unsatisfiable refuse gate — UNSAT, dodge closed */
+        }
+        Ok(Err(_)) => { /* the prover returned an error on the unsatisfiable trace — UNSAT */ }
+        Ok(Ok(proof)) => {
+            // If a proof was somehow produced, the deployed LC must still REJECT it.
+            let bytes = postcard::to_allocvec(&proof).expect("serialize");
+            let v = dregg_sdk::full_turn_proof::verify_effect_vm_rotated_with_cutover(
+                &bytes, &dpis, &vk_hash,
+            );
+            assert!(
+                v.is_err(),
+                "a declared-capacity bare leg must NOT verify through the deployed LC"
+            );
+        }
+    }
+
+    // ---- 2b. THE DECIDER — through `verify_effect_vm_rotated_with_cutover`: even a genuine PRE-FLIP
+    // bare-dodge STARK (the exact artifact an old producer, or a forger ignoring the declaration-keyed
+    // routing, would emit — a wide bare burn with NO refuse) is REJECTED by the deployed LC. The
+    // deployed registry now carries ONLY the refuse-welded member, so the pre-flip proof binds NO
+    // deployed cohort descriptor. ----
+    let preflip = preflip_bare_member(&wide_bare);
     assert_eq!(
-        wide_bare.trace_width,
-        trace[0].len(),
-        "descriptor width == trace"
+        preflip.trace_width, 2493,
+        "pre-flip member is the un-widened wide bare burn"
     );
-
-    // ---- 2. Prove the real STARK, exactly as the deployed producer would emit it. ----
-    let mem = MemBoundaryWitness::default();
-    let heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
-    let proof = prove_vm_descriptor2(&wide_bare, &trace, &dpis, &mem, &heaps)
-        .expect("the wide bare leg proves (the deployed producer's default emit)");
-    // Sanity: it verifies at the descriptor level.
-    verify_vm_descriptor2(&wide_bare, &proof, &dpis).expect("wide bare leg verifies");
-
-    // ---- 3. THE DECIDER: drive it through the ACTUAL deployed light-client entry. ----
-    let proof_bytes = postcard::to_allocvec(&proof).expect("serialize proof");
-    let vk_hash = *blake3::hash(wide_json.as_bytes()).as_bytes();
+    assert!(
+        !preflip.name.contains("gentian-deployed-bare-refuse"),
+        "pre-flip member carries NO refuse"
+    );
+    let dodge_proof = prove_vm_descriptor2(&preflip, &trace, &dpis, &mem, &heaps).expect(
+        "the pre-flip bare-dodge STARK proves (the reconstructed pre-flag-day member has no refuse)",
+    );
+    verify_vm_descriptor2(&preflip, &dodge_proof, &dpis).expect(
+        "the pre-flip bare-dodge verifies at ITS OWN descriptor level (a real, valid STARK)",
+    );
+    let dodge_bytes = postcard::to_allocvec(&dodge_proof).expect("serialize dodge proof");
     let verdict = dregg_sdk::full_turn_proof::verify_effect_vm_rotated_with_cutover(
-        &proof_bytes,
+        &dodge_bytes,
         &dpis,
         &vk_hash,
     );
-
-    // If the deployed LC ACCEPTS this leg, the declared-capacity dodge is OPEN on the deployed path:
-    // the LC bound the WIDE bare member (no refuse), never the V3 refuse member nor a satisfaction
-    // member. That is the hole the meta-review suspected.
     match verdict {
-        Ok(()) => {
+        Err(e) => {
             eprintln!(
-                "GENTIAN DEPLOYED VERIFY — HOLE CONFIRMED: a cell DECLARING the escrow capacity \
-                 obligation (tag 17) settled via a plain bare-cohort leg was ACCEPTED by the deployed \
-                 light-client entry `verify_effect_vm_rotated_with_cutover`. The LC bound the WIDE \
-                 `{WIDE_BARE_MEMBER}` (width {}, no capacity-floor refuse); the refuse-welded V3 member \
-                 (width 1626) and the V3 satisfaction members are UNREACHABLE on the deployed path. The \
-                 gentian flip is NOT live on the deployed light-client path.",
-                wide_bare.trace_width
+                "GENTIAN DEPLOYED VERIFY — DODGE CLOSED: a declared-escrow cell settled via a plain \
+                 bare-cohort burn was REJECTED by the deployed light-client entry \
+                 `verify_effect_vm_rotated_with_cutover`. The deployed WIDE/WELDED bare burn now carries \
+                 the capacity-floor refuse (width 2541); the pre-flip bare-dodge proof binds NO deployed \
+                 cohort descriptor. Reject: {e}"
             );
         }
-        Err(e) => {
+        Ok(()) => {
             panic!(
-                "the deployed LC REJECTED the declared-capacity bare leg: {e}\n\
-                 (if this rejects, the refuse reaches the deployed path after all — re-examine the \
-                 resolution, the flip may be live)"
+                "HOLE STILL OPEN: the deployed LC ACCEPTED a declared-escrow bare-cohort dodge through \
+                 `verify_effect_vm_rotated_with_cutover` — the capacity-floor refuse is NOT live on the \
+                 deployed WIDE/WELDED registries."
             );
         }
     }
