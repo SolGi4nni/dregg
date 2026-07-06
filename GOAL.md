@@ -8,12 +8,34 @@ leased/metered + persisted-as-forkable-mind-cell + R2-verifiable by the renter.
 North star: *rent a coding agent you can jail, budget, fork, rewind, and
 cryptographically audit against the chain.*
 
-## Current thrust
-SPINE COMPLETE + DEMOED + DOCUMENTED. The confined-body grain is real: an
-OS-jailed body drives a real grain, every action cap-gated/metered/minted/
-R2-verified, robust to a body crash. Next frontier: the real coding-agent body
-(in-jail Rust harness reaching an LLM over ONE granted egress door).
-Design: `docs/deos/GRAIN-CONFINED-BODY.md`. Onramp: `docs/guide/CONFINED-AGENTS.md`.
+## STATE FOR MORNING-EMBER (2026-07-06 ~00:25, overnight session end)
+The confined-body grain is DONE and green — 9 commits (`8de7447da`..`739c1030c`).
+A hosted body plugs into the grain's `AgentBrain` seam as a `ConfinedBrain`
+(crate `grain-jail`), so with ZERO grain-drive-path change a body is OS-jailed
+(firmament, macOS Seatbelt — validated locally, denies /etc/passwd), yet every
+action is cap-gated + metered + minted + R2-verified, does real file work through
+the seam, and a crashing body leaves the grain clean. Play with it:
+`cargo run -p grain-jail --example rent_a_confined_agent [--features real-jail]`.
+
+WHY I STOPPED HERE (not blocked, a quality call): the one remaining north-star
+piece — the real coding-agent body (an in-jail LLM harness over ONE granted
+egress door) — is first-of-its-kind, security-sensitive network-confinement work
+(no existing firmament test drives the real net door from a jailed child; a
+correct deny-test must distinguish sandbox-EPERM from ECONNREFUSED on macOS SBPL).
+Rushing it at 00:25 risked a vacuous/wrong test. It is CRISPLY SCOPED with exact
+APIs in `docs/deos/GRAIN-CONFINED-BODY.md` (Frontier) — a clean fresh-head start.
+
+## Next moves (fresh head)
+1. `grain-jail::jail::spawn_confined_body_with_egress` — `Confinement::with_net_out`
+   grants ONE `host:port`; a test that a jailed body reaches only that door
+   (distinguish sandbox-deny correctly — no existing pattern to mirror, design it).
+2. The in-jail model harness: `dregg_agent::brain::OpenAICompatBrain` inside the
+   jail, reaching a MOCK model server on 127.0.0.1 over the granted door, emitting
+   confined-body proposals → the full "rent a coding agent" mechanic.
+3. PRODUCTIZE in agent-platform (a first-class confined/jailed drive) — its file
+   is another terminal's; do via a grain-jail helper or a quiet window.
+4. Run the `--features real-jail` lanes in CI/gauntlet (today `cargo test
+   -p grain-jail` silently skips them without the feature).
 
 ## Key grounding facts (verified at HEAD)
 - The unification seam is `AgentBrain` (`dregg-agent/src/agent.rs:482`):
