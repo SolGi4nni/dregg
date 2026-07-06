@@ -9,10 +9,11 @@ North star: *rent a coding agent you can jail, budget, fork, rewind, and
 cryptographically audit against the chain.*
 
 ## Current thrust
-UNITS 1 + 3 LANDED (seam proven end-to-end vs a real grain). UNIT 2 (real
-firmament OS-jail, `real-jail` feature) building — the load-bearing "body is
-OS-jailed" move. macOS Seatbelt is real+enforced so it validates locally.
-Design: `docs/deos/GRAIN-CONFINED-BODY.md`.
+SPINE COMPLETE + DEMOED + DOCUMENTED. The confined-body grain is real: an
+OS-jailed body drives a real grain, every action cap-gated/metered/minted/
+R2-verified, robust to a body crash. Next frontier: the real coding-agent body
+(in-jail Rust harness reaching an LLM over ONE granted egress door).
+Design: `docs/deos/GRAIN-CONFINED-BODY.md`. Onramp: `docs/guide/CONFINED-AGENTS.md`.
 
 ## Key grounding facts (verified at HEAD)
 - The unification seam is `AgentBrain` (`dregg-agent/src/agent.rs:482`):
