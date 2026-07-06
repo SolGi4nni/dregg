@@ -50,8 +50,21 @@ which sweeps every `@[load_bearing_keystone]` and throws at elaboration if a tag
 | 18 | `dsl_binding_from_fold` (Circuit/DslBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_rc_unsat_demo` |
 | 19 | `hatchery_binding_from_fold` (Circuit/HatcheryBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_contract_unsat_demo` |
 | 20 | `deco_binding_from_fold` (Circuit/DecoBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_payment_hash_unsat_demo` |
+| 21 | `sealedescrow_no_theft` (Deos/SealedEscrow.lean:753) | HAS-BITING-TOOTH | `honest_swap_reachable` | `halfopen_theft_unreachable` |
 
-**Tally: 20 rows / 20 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING** (after Pillar 4b).
+**Tally: 21 rows / 21 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING** (after Pillar 4b + escrow no-theft).
+
+**Row 21 — SealedEscrow's economic no-theft (survey gap #3, closed).** SealedEscrow (escrow capacity,
+tag 17) previously had only refinements (one-shot replay, gate-refinement, commitment-binding) — no
+standalone WORLD-property invariant, unlike Vault (`deposit_price_non_decreasing`) and Lease
+(`budget_never_overdrawn`). `sealedescrow_no_theft` (`Deos/SealedEscrow.lean` §9) closes it as a
+reachability invariant over the FULL deployed op set (deposit / settle / reclaim — the last was missing
+from the Lean model): every reachable escrow satisfies per-leg value conservation (`paid + locked =
+entered` — no leg pays out beyond what entered it) AND *no free lunch* (a never-funded party receives
+nothing), with `escrow_solvent` (payouts ≤ deposits) as the total-value corollary. **fires** —
+`honest_swap_reachable`: a reachable honest settle that legitimately extracts (party A gets B's leg,
+B gets A's, value DOES leave). **bites** — `halfopen_theft_unreachable`: the half-open theft (A takes
+B's locked leg without funding its own) is UNREACHABLE. Both `#assert_axioms`-clean.
 
 ## The finding (what 4b closed)
 

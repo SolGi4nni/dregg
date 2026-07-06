@@ -478,4 +478,447 @@ end Witnesses
   settle_gate_root_bound
 ]
 
+/-! ## §9 — THE NO-THEFT WORLD-PROPERTY (a reachability invariant, mirroring Guarantee B's
+`reachable_total_zero`, Vault's `deposit_price_non_decreasing`, and Lease's `budget_never_overdrawn`).
+
+§3–§6 are per-state / per-transition GATES (the executor + light-client teeth). This section lifts
+them to a WORLD property over the FULL DEPLOYED escrow op set — **deposit** (`deposit_leg`), **settle**
+(`settle`), and **reclaim** (`reclaim_leg`), the three ops `cell/src/escrow_sealed.rs` exposes — and
+proves the economic no-theft that Vault (no-dilution) and Lease (budget conservation) already carry:
+
+> **Escrowed value can leave the escrow ONLY via a settle that meets the committed release terms
+> (both legs locked → the atomic swap credits each party its COUNTERPARTY's leg) or a refund
+> (`reclaim`) to a leg's OWN depositor. No reachable sequence of ops extracts a leg's value to a
+> party that never funded, or from a leg that was never deposited.**
+
+The model is the escrow value LEDGER: each leg's lifecycle `status` and committed `amount`, plus the
+running payout `recv` to each party and the outflow `paid` from each leg. §5 already binds each leg's
+status/amount into the committed `Heap.root`, so this ledger is the abstract face of the committed
+state. A PARTY is identified with the `Side` whose leg it owns; the counterparty of leg A is party B
+(`Side.other`). This is the SAME separation the codebase uses for value: `reachable_total_zero` lives
+on the executor state (`RecChainedState`); the heap-root binding is proven separately (here, §5). -/
+
+/-- **`reclaim hash h side`** — refund one leg to its depositor before settlement: flip that leg to
+`Consumed` (the one-shot terminal), returning its locked amount to the depositor. The Lean image of
+`cell/src/escrow_sealed.rs::reclaim_leg` — the THIRD deployed op, missing from §1 until now. -/
+def reclaim (hash : List ℤ → ℤ) (h : FeltHeap) (side : Side) : FeltHeap :=
+  hset hash h escrowColl (statusKey side) stConsumed
+
+/-- Reclaim consumes the reclaimed leg (its one-shot terminal). -/
+theorem reclaim_consumes (hash : List ℤ → ℤ) (h : FeltHeap) (side : Side) :
+    boundStatus hash (reclaim hash h side) side = some stConsumed := by
+  show hget hash (reclaim hash h side) escrowColl (statusKey side) = some stConsumed
+  unfold reclaim
+  exact hget_hset_self hash _ escrowColl (statusKey side) stConsumed
+
+/-- Reclaiming one leg leaves the COUNTERPARTY leg untouched (its slot survives by
+`Heap.hget_hset_frame`, the named cap-root floor) — a reclaim is not a settlement of the other leg. -/
+theorem reclaim_frames_other (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (h : FeltHeap) (side : Side) :
+    boundStatus hash (reclaim hash h side) side.other = boundStatus hash h side.other := by
+  show hget hash (reclaim hash h side) escrowColl (statusKey side.other)
+      = hget hash h escrowColl (statusKey side.other)
+  unfold reclaim
+  exact hget_hset_frame hash hCR _ escrowColl (statusKey side) escrowColl (statusKey side.other)
+    stConsumed (by cases side <;> decide)
+
+/-! ### §9.1 — the value ledger + accounting. -/
+
+/-- The escrow VALUE LEDGER — the abstract state the three deployed ops act on. -/
+structure Ledger where
+  /-- Each leg's lifecycle code (`stEmpty`/`stDeposited`/`stConsumed`), the §1 heap encoding. -/
+  status : Side → ℤ
+  /-- Each leg's committed locked amount. -/
+  amount : Side → ℤ
+  /-- Value paid OUT to each party so far (a party = the `Side` whose leg it owns). -/
+  recv : Side → ℤ
+  /-- Value that has flowed OUT of each leg so far. -/
+  paid : Side → ℤ
+
+/-- A two-point function update (`Side` has `DecidableEq`); avoids a `Function.update` import. -/
+def upd (f : Side → ℤ) (s : Side) (v : ℤ) : Side → ℤ := fun t => if t = s then v else f t
+
+theorem upd_same (f : Side → ℤ) (s : Side) (v : ℤ) : upd f s v s = v := by simp [upd]
+theorem upd_ne (f : Side → ℤ) (s : Side) (v : ℤ) {t : Side} (h : t ≠ s) : upd f s v t = f t := by
+  simp [upd, h]
+/-- An `upd` touches only its one slot, so a two-leg sum shifts by exactly `v − f s`. -/
+theorem upd_pair_sum (f : Side → ℤ) (s : Side) (v : ℤ) :
+    upd f s v Side.A + upd f s v Side.B = (f Side.A + f Side.B) - f s + v := by
+  cases s <;> simp [upd] <;> omega
+
+/-- Value that has ENTERED the escrow from leg `s` (any non-`Empty` leg genuinely locked its amount). -/
+def entered (L : Ledger) (s : Side) : ℤ := if L.status s = stEmpty then 0 else L.amount s
+/-- Value still LOCKED (unspent, in escrow) in leg `s` (only a `Deposited` leg). -/
+def locked (L : Ledger) (s : Side) : ℤ := if L.status s = stDeposited then L.amount s else 0
+
+def enteredTotal (L : Ledger) : ℤ := entered L Side.A + entered L Side.B
+def lockedTotal (L : Ledger) : ℤ := locked L Side.A + locked L Side.B
+def paidTotal (L : Ledger) : ℤ := L.paid Side.A + L.paid Side.B
+def recvTotal (L : Ledger) : ℤ := L.recv Side.A + L.recv Side.B
+
+theorem entered_empty (L : Ledger) (s : Side) (h : L.status s = stEmpty) : entered L s = 0 := by
+  unfold entered; rw [h, if_pos rfl]
+theorem locked_empty (L : Ledger) (s : Side) (h : L.status s = stEmpty) : locked L s = 0 := by
+  unfold locked; rw [h, if_neg (by decide : ¬(stEmpty = stDeposited))]
+theorem entered_dep (L : Ledger) (s : Side) (h : L.status s = stDeposited) :
+    entered L s = L.amount s := by unfold entered; rw [h, if_neg (by decide : ¬(stDeposited = stEmpty))]
+theorem locked_dep (L : Ledger) (s : Side) (h : L.status s = stDeposited) :
+    locked L s = L.amount s := by unfold locked; rw [h, if_pos rfl]
+theorem entered_cons (L : Ledger) (s : Side) (h : L.status s = stConsumed) :
+    entered L s = L.amount s := by unfold entered; rw [h, if_neg (by decide : ¬(stConsumed = stEmpty))]
+theorem locked_cons (L : Ledger) (s : Side) (h : L.status s = stConsumed) : locked L s = 0 := by
+  unfold locked; rw [h, if_neg (by decide : ¬(stConsumed = stDeposited))]
+
+/-! ### §9.2 — the deployed op transition system (the REAL guards).
+
+Each op carries the SAME guard the Rust enforces: `deposit_leg` accepts only an `Empty` (unfunded)
+leg and a non-negative amount; `settle` requires BOTH legs `Deposited` (the committed release terms:
+"A gives X iff B gives Y") and pays each party its counterparty's leg; `reclaim_leg` requires the
+leg's own `Deposited` state and refunds the depositor. This is the abstract shape of the §1 heap ops
+(`deposit`/`settle`/`reclaim`). -/
+inductive Op : Ledger → Ledger → Prop where
+  /-- **deposit** (`deposit_leg`): lock a conforming leg — only from `Empty`, only a non-negative
+  amount. Value enters escrow; no party is credited yet. -/
+  | deposit (L : Ledger) (s : Side) (amt : ℤ) (hpos : 0 ≤ amt) (hempty : L.status s = stEmpty) :
+      Op L { status := upd L.status s stDeposited, amount := upd L.amount s amt,
+             recv := L.recv, paid := L.paid }
+  /-- **settle** (`settle`): the RELEASE-TERMS gate — BOTH legs `Deposited`. Atomically consume both
+  and pay each party its COUNTERPARTY's locked leg (the swap). -/
+  | settle (L : Ledger) (hA : L.status Side.A = stDeposited) (hB : L.status Side.B = stDeposited) :
+      Op L { status := fun _ => stConsumed, amount := L.amount,
+             recv := fun p => L.recv p + L.amount p.other, paid := fun s => L.paid s + L.amount s }
+  /-- **reclaim** (`reclaim_leg`): refund — the leg is its own depositor's, still `Deposited`.
+  Consume it and pay its amount back to the DEPOSITOR (party `s`). -/
+  | reclaim (L : Ledger) (s : Side) (hdep : L.status s = stDeposited) :
+      Op L { status := upd L.status s stConsumed, amount := L.amount,
+             recv := upd L.recv s (L.recv s + L.amount s),
+             paid := upd L.paid s (L.paid s + L.amount s) }
+
+/-- Genesis: a freshly-opened escrow (both legs `Empty`, nothing locked, nothing paid) — the Lean
+image of `open_escrow`. -/
+def opened : Ledger := { status := fun _ => stEmpty, amount := fun _ => 0, recv := fun _ => 0, paid := fun _ => 0 }
+
+/-- **Reachability**: an opened escrow, closed under the three deployed ops. -/
+inductive Reachable : Ledger → Prop where
+  | genesis : Reachable opened
+  | step (L L' : Ledger) (h : Reachable L) (hop : Op L L') : Reachable L'
+
+/-! ### §9.3 — the maintained invariant (per-leg conservation + participation + solvency backing). -/
+
+/-- The escrow ledger invariant carried across every reachable step:
+* `cons` — **per-leg value conservation**: `paid s + locked s = entered s`. Every unit that entered a
+  leg is either still locked or has been paid out — and (crucially) a leg pays out NOTHING beyond what
+  entered it. This is the escrow analogue of Lease's `remaining_plus_drawn_conserved`.
+* `lockNonneg` — locked value is non-negative (deposits are non-negative), so payouts can never exceed
+  deposits.
+* `balance` — **exchange balance**: total received = total paid out. Value is conserved across the
+  exchange (nothing is minted, nothing vanishes).
+* `participate` — **no free lunch**: a party that never funded a leg (`status = Empty`) has received
+  NOTHING. This is what forbids taking the counterparty's leg without locking your own. -/
+structure Inv (L : Ledger) : Prop where
+  cons : ∀ s, L.paid s + locked L s = entered L s
+  lockNonneg : ∀ s, 0 ≤ locked L s
+  balance : recvTotal L = paidTotal L
+  participate : ∀ s, L.status s = stEmpty → L.recv s = 0
+
+-- reusable per-side step lemmas (uniform across the three ops) --
+
+/-- A leg UNTOUCHED by a step keeps its conservation (status/amount/paid all frame off). -/
+theorem cons_frame (L : Ledger) {L' : Ledger} (t : Side)
+    (hst : L'.status t = L.status t) (ham : L'.amount t = L.amount t) (hpd : L'.paid t = L.paid t)
+    (ih : L.paid t + locked L t = entered L t) :
+    L'.paid t + locked L' t = entered L' t := by
+  have hl : locked L' t = locked L t := by unfold locked; rw [hst, ham]
+  have he : entered L' t = entered L t := by unfold entered; rw [hst, ham]
+  rw [hl, he, hpd]; exact ih
+
+/-- A leg that becomes `Deposited` from `Empty` (a deposit) keeps conservation: it locked exactly its
+new amount, paid nothing (it had paid nothing — nothing had entered). -/
+theorem cons_deposit_touch (L : Ledger) {L' : Ledger} (t : Side) (a : ℤ)
+    (hst : L'.status t = stDeposited) (ham : L'.amount t = a) (hpd : L'.paid t = L.paid t)
+    (hempty : L.status t = stEmpty) (ih : L.paid t + locked L t = entered L t) :
+    L'.paid t + locked L' t = entered L' t := by
+  rw [locked_dep L' t hst, ham, entered_dep L' t hst, ham, hpd]
+  rw [entered_empty L t hempty, locked_empty L t hempty] at ih
+  omega
+
+/-- A leg that becomes `Consumed` from `Deposited` (a settle or reclaim) keeps conservation: the value
+that leaves it (`+amount`) equals what it had locked, so nothing is extracted beyond what entered. -/
+theorem cons_consume_touch (L : Ledger) {L' : Ledger} (t : Side)
+    (hst : L'.status t = stConsumed) (ham : L'.amount t = L.amount t)
+    (hpd : L'.paid t = L.paid t + L.amount t)
+    (hdep : L.status t = stDeposited) (ih : L.paid t + locked L t = entered L t) :
+    L'.paid t + locked L' t = entered L' t := by
+  rw [locked_cons L' t hst, entered_cons L' t hst, ham, hpd]
+  rw [entered_dep L t hdep, locked_dep L t hdep] at ih
+  omega
+
+theorem lock_deposit_touch {L' : Ledger} (t : Side) (a : ℤ)
+    (hst : L'.status t = stDeposited) (ham : L'.amount t = a) (hpos : 0 ≤ a) : 0 ≤ locked L' t := by
+  rw [locked_dep L' t hst, ham]; exact hpos
+
+theorem lock_consumed {L' : Ledger} (t : Side) (hst : L'.status t = stConsumed) : 0 ≤ locked L' t := by
+  rw [locked_cons L' t hst]
+
+theorem lock_frame (L : Ledger) {L' : Ledger} (t : Side)
+    (hst : L'.status t = L.status t) (ham : L'.amount t = L.amount t) (ih : 0 ≤ locked L t) :
+    0 ≤ locked L' t := by
+  have : locked L' t = locked L t := by unfold locked; rw [hst, ham]
+  rw [this]; exact ih
+
+theorem part_nonempty {L' : Ledger} (t : Side)
+    (hst : L'.status t = stDeposited ∨ L'.status t = stConsumed) :
+    L'.status t = stEmpty → L'.recv t = 0 := by
+  intro he; rcases hst with h | h <;> rw [h] at he <;> exact absurd he (by decide)
+
+theorem part_frame (L : Ledger) {L' : Ledger} (t : Side)
+    (hst : L'.status t = L.status t) (hrv : L'.recv t = L.recv t)
+    (ih : L.status t = stEmpty → L.recv t = 0) :
+    L'.status t = stEmpty → L'.recv t = 0 := by
+  intro he; rw [hst] at he; rw [hrv]; exact ih he
+
+/-- Genesis satisfies the invariant. -/
+theorem opened_inv : Inv opened := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · intro s; rw [entered_empty opened s (by rfl), locked_empty opened s (by rfl)]; rfl
+  · intro s; rw [locked_empty opened s (by rfl)]
+  · rfl
+  · intro s _; rfl
+
+/-- **Every deployed op preserves the invariant** — the induction step. -/
+theorem Op_preserves {L L' : Ledger} (hop : Op L L') (ih : Inv L) : Inv L' := by
+  cases hop with
+  | deposit s amt hpos hempty =>
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · intro t
+        by_cases h : t = s
+        · subst h
+          exact cons_deposit_touch L t amt (upd_same _ _ _) (upd_same _ _ _) rfl hempty (ih.cons t)
+        · exact cons_frame L t (upd_ne _ _ _ h) (upd_ne _ _ _ h) rfl (ih.cons t)
+      · intro t
+        by_cases h : t = s
+        · subst h; exact lock_deposit_touch t amt (upd_same _ _ _) (upd_same _ _ _) hpos
+        · exact lock_frame L t (upd_ne _ _ _ h) (upd_ne _ _ _ h) (ih.lockNonneg t)
+      · exact ih.balance
+      · intro t
+        by_cases h : t = s
+        · subst h; exact part_nonempty t (Or.inl (upd_same _ _ _))
+        · exact part_frame L t (upd_ne _ _ _ h) rfl (ih.participate t)
+  | settle hA hB =>
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · intro t; cases t
+        · exact cons_consume_touch L Side.A rfl rfl rfl hA (ih.cons Side.A)
+        · exact cons_consume_touch L Side.B rfl rfl rfl hB (ih.cons Side.B)
+      · intro t; cases t <;> exact lock_consumed _ rfl
+      · have hb := ih.balance
+        simp only [recvTotal, paidTotal] at hb ⊢
+        simp only [Side.other]
+        omega
+      · intro t; cases t <;> exact part_nonempty _ (Or.inr rfl)
+  | reclaim s hdep =>
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · intro t
+        by_cases h : t = s
+        · subst h
+          exact cons_consume_touch L t (upd_same _ _ _) rfl (upd_same _ _ _) hdep (ih.cons t)
+        · exact cons_frame L t (upd_ne _ _ _ h) rfl (upd_ne _ _ _ h) (ih.cons t)
+      · intro t
+        by_cases h : t = s
+        · subst h; exact lock_consumed t (upd_same _ _ _)
+        · exact lock_frame L t (upd_ne _ _ _ h) rfl (ih.lockNonneg t)
+      · have hb := ih.balance
+        simp only [recvTotal, paidTotal, upd_pair_sum] at hb ⊢
+        omega
+      · intro t
+        by_cases h : t = s
+        · subst h; exact part_nonempty t (Or.inr (upd_same _ _ _))
+        · exact part_frame L t (upd_ne _ _ _ h) (upd_ne _ _ _ h) (ih.participate t)
+
+/-- Every reachable escrow ledger satisfies the invariant. -/
+theorem reachable_inv (L : Ledger) (h : Reachable L) : Inv L := by
+  induction h with
+  | genesis => exact opened_inv
+  | step L L' _ hop ih => exact Op_preserves hop ih
+
+/-- **`sealedescrow_no_theft` — THE ECONOMIC NO-THEFT WORLD-PROPERTY.** For EVERY reachable escrow
+state:
+1. **per-leg conservation** — `paid s + locked s = entered s`: no leg's value is extracted beyond
+   what was genuinely deposited into it (and a never-deposited leg pays out nothing, `entered = 0`);
+2. **no free lunch** — a party that never funded a leg (`status = Empty`) has received NOTHING.
+
+Together: escrowed value leaves ONLY via the deployed exits (settle → counterparty, reclaim → own
+depositor), never to an unfunded party and never from an unfunded leg. The escrow analogue of Vault's
+`deposit_price_non_decreasing` and Lease's `budget_never_overdrawn`, proven as a reachability
+invariant in the shape of `reachable_total_zero`. -/
+theorem sealedescrow_no_theft (L : Ledger) (h : Reachable L) :
+    (∀ s, L.paid s + locked L s = entered L s) ∧
+    (∀ s, L.status s = stEmpty → L.recv s = 0) :=
+  ⟨(reachable_inv L h).cons, (reachable_inv L h).participate⟩
+
+/-- **NO PHANTOM EXTRACTION.** A leg that was never deposited (`Empty`) pays out zero — value cannot
+be conjured from an unfunded leg. The half of no-theft that forbids extracting from nothing. -/
+theorem no_phantom_extraction (L : Ledger) (h : Reachable L) (s : Side)
+    (hempty : L.status s = stEmpty) : L.paid s = 0 := by
+  have hc := (reachable_inv L h).cons s
+  rw [entered_empty L s hempty, locked_empty L s hempty] at hc
+  omega
+
+/-- **SOLVENCY.** The total value ever paid out to all parties never exceeds the total ever deposited
+into the escrow: `recvTotal ≤ enteredTotal`. No sequence of ops lets anyone (entitled or not) walk
+away with more than was funded — the escrow can never be drained beyond its deposits. -/
+theorem escrow_solvent (L : Ledger) (h : Reachable L) : recvTotal L ≤ enteredTotal L := by
+  have inv := reachable_inv L h
+  have hbal := inv.balance
+  have hcA := inv.cons Side.A; have hcB := inv.cons Side.B
+  have hlA := inv.lockNonneg Side.A; have hlB := inv.lockNonneg Side.B
+  simp only [recvTotal, paidTotal, enteredTotal] at *
+  omega
+
+/-! ### §9.4 — NON-VACUITY, BOTH POLES.
+
+`fires`: a reachable HONEST settle that legitimately extracts value to the parties (the property is
+NOT "nothing ever leaves"). `bites`: the would-be theft states are UNREACHABLE (the biting tooth). -/
+
+-- The honest swap trajectory: opened → deposit A 100 → deposit B 250 → settle. --
+private def eA : Ledger :=
+  { status := upd opened.status Side.A stDeposited, amount := upd opened.amount Side.A 100,
+    recv := opened.recv, paid := opened.paid }
+private def eAB : Ledger :=
+  { status := upd eA.status Side.B stDeposited, amount := upd eA.amount Side.B 250,
+    recv := eA.recv, paid := eA.paid }
+private def eSettled : Ledger :=
+  { status := fun _ => stConsumed, amount := eAB.amount,
+    recv := fun p => eAB.recv p + eAB.amount p.other, paid := fun s => eAB.paid s + eAB.amount s }
+
+/-- **FIRES (honest settle reachable + legitimate extraction).** The genuine settle transition is
+reachable, and it credits each party its COUNTERPARTY's leg — party A receives B's 250, party B
+receives A's 100 (the atomic swap). Value DOES leave the escrow, to the right parties: the property
+is non-vacuous (not "nothing ever settles"). -/
+theorem honest_swap_reachable :
+    Reachable eSettled ∧ eSettled.recv Side.A = 250 ∧ eSettled.recv Side.B = 100 ∧
+      eSettled.status Side.A = stConsumed ∧ eSettled.status Side.B = stConsumed :=
+  ⟨Reachable.step eAB eSettled
+      (Reachable.step eA eAB
+        (Reachable.step opened eA Reachable.genesis
+          (Op.deposit opened Side.A 100 (by decide) rfl))
+        (Op.deposit eA Side.B 250 (by decide) (by decide)))
+      (Op.settle eAB (by decide) (by decide)),
+    by decide, by decide, by decide, by decide⟩
+
+-- The honest refund trajectory: opened → deposit A 100 → reclaim A. --
+private def eReclaimed : Ledger :=
+  { status := upd eA.status Side.A stConsumed, amount := eA.amount,
+    recv := upd eA.recv Side.A (eA.recv Side.A + eA.amount Side.A),
+    paid := upd eA.paid Side.A (eA.paid Side.A + eA.amount Side.A) }
+
+/-- **FIRES (honest reclaim reachable + refund to the DEPOSITOR).** A deposit then a reclaim is
+reachable, and the refund goes back to party A (the depositor), with the counterparty (B) receiving
+nothing — the legitimate refund exit. -/
+theorem honest_reclaim_reachable :
+    Reachable eReclaimed ∧ eReclaimed.recv Side.A = 100 ∧ eReclaimed.recv Side.B = 0 ∧
+      eReclaimed.status Side.A = stConsumed :=
+  ⟨Reachable.step eA eReclaimed
+      (Reachable.step opened eA Reachable.genesis (Op.deposit opened Side.A 100 (by decide) rfl))
+      (Op.reclaim eA Side.A (by decide)),
+    by decide, by decide, by decide⟩
+
+-- The would-be THEFT states (the biting teeth). --
+
+/-- The HALF-OPEN THEFT: leg B was deposited and consumed (`paid B = 250`), yet party A — which never
+deposited (`status A = Empty`) — walks away credited B's 250. A takes the counterparty's leg WITHOUT
+locking its own. -/
+private def halfOpenTheft : Ledger :=
+  { status := fun s => if s = Side.B then stConsumed else stEmpty,
+    amount := fun s => if s = Side.B then 250 else 0,
+    recv := fun s => if s = Side.A then 250 else 0,
+    paid := fun s => if s = Side.B then 250 else 0 }
+
+/-- **BITES (the half-open theft is UNREACHABLE).** No deployed op sequence lets party A take B's leg
+without funding its own: `participate` forces a never-funded party's receipts to zero, but the theft
+state credits the unfunded A with 250. The exact survey concern — "a settle/refund to the wrong
+party" — proven impossible. -/
+theorem halfopen_theft_unreachable : ¬ Reachable halfOpenTheft := by
+  intro h
+  have hz := (reachable_inv halfOpenTheft h).participate Side.A (by decide)
+  rw [show halfOpenTheft.recv Side.A = 250 from by decide] at hz
+  exact absurd hz (by decide)
+
+/-- The PHANTOM EXTRACTION: a payout (`paid A = 100`) claimed from a leg that was never deposited
+(`status A = Empty`). -/
+private def phantomTheft : Ledger :=
+  { status := fun _ => stEmpty, amount := fun _ => 0,
+    recv := fun _ => 0, paid := fun s => if s = Side.A then 100 else 0 }
+
+/-- **BITES (the phantom extraction is UNREACHABLE).** Value cannot be extracted from a leg that never
+locked: `no_phantom_extraction` forces an `Empty` leg's payout to zero, contradicting the fabricated
+100. -/
+theorem phantom_extraction_unreachable : ¬ Reachable phantomTheft := by
+  intro h
+  have hz := no_phantom_extraction phantomTheft h Side.A (by decide)
+  rw [show phantomTheft.paid Side.A = 100 from by decide] at hz
+  exact absurd hz (by decide)
+
+/-! ### §9.5 — NON-VACUITY TEETH (`#guard`): the accounting BITES, computed on the concrete ledgers. -/
+
+section NoTheftWitnesses
+
+-- HONEST SWAP: value leaves to the right parties; the books close; nothing stays locked.
+#guard eSettled.recv Side.A == 250        -- A receives B's leg
+#guard eSettled.recv Side.B == 100        -- B receives A's leg
+#guard recvTotal eSettled == 350
+#guard enteredTotal eSettled == 350
+#guard lockedTotal eSettled == 0
+#guard paidTotal eSettled == recvTotal eSettled   -- exchange balance
+-- per-leg conservation holds numerically:
+#guard (eSettled.paid Side.A + locked eSettled Side.A == entered eSettled Side.A)
+#guard (eSettled.paid Side.B + locked eSettled Side.B == entered eSettled Side.B)
+
+-- HONEST REFUND: the depositor gets its own leg back; the counterparty gets nothing.
+#guard eReclaimed.recv Side.A == 100
+#guard eReclaimed.recv Side.B == 0
+
+-- THE THEFT STATES violate the invariant the theorem proves reachable states satisfy (the tooth bites):
+-- half-open: A is credited (250) despite never depositing (status A Empty) — fails `participate`.
+#guard halfOpenTheft.status Side.A == stEmpty
+#guard halfOpenTheft.recv Side.A == 250
+#guard !decide (halfOpenTheft.status Side.A = stEmpty → halfOpenTheft.recv Side.A = 0)
+-- phantom: leg A pays out 100 though never deposited — fails per-leg conservation (paid ≠ entered−locked).
+#guard !decide (phantomTheft.paid Side.A + locked phantomTheft Side.A = entered phantomTheft Side.A)
+
+end NoTheftWitnesses
+
+/-! ### §9.6 — Axiom hygiene for the no-theft cone. -/
+
+#assert_all_clean [
+  reclaim,
+  reclaim_consumes,
+  reclaim_frames_other,
+  upd_same,
+  upd_ne,
+  entered_empty,
+  locked_empty,
+  entered_dep,
+  locked_dep,
+  entered_cons,
+  locked_cons,
+  cons_frame,
+  cons_deposit_touch,
+  cons_consume_touch,
+  lock_deposit_touch,
+  lock_consumed,
+  lock_frame,
+  part_nonempty,
+  part_frame,
+  opened_inv,
+  Op_preserves,
+  reachable_inv,
+  sealedescrow_no_theft,
+  no_phantom_extraction,
+  escrow_solvent,
+  honest_swap_reachable,
+  honest_reclaim_reachable,
+  halfopen_theft_unreachable,
+  phantom_extraction_unreachable
+]
+
 end Dregg2.Deos.SealedEscrow
