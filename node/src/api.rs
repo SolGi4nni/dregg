@@ -2490,14 +2490,22 @@ pub struct ServerAffordanceQuery {
     pub viewer: Option<String>,
 }
 
-fn parse_auth_label_api(label: &str) -> dregg_cell::AuthRequired {
+/// Parse a viewer authority label (the deos-js / discovery vocab).
+///
+/// An UNKNOWN label is a hard refusal, never a silent default (the twin of the
+/// deos-js `parse_auth_label` fix): `AuthRequired::None` is the BROADEST viewer
+/// here — the old `_ => None` arm silently minted maximum authority from a typo.
+/// An ABSENT field still defaults to "none" at the call site, so legit flows are
+/// untouched; only an unrecognized label surfaces as an error (HTTP 400).
+fn parse_auth_label_api(label: &str) -> Result<dregg_cell::AuthRequired, String> {
     use dregg_cell::AuthRequired;
     match label.to_lowercase().as_str() {
-        "signature" | "sig" => AuthRequired::Signature,
-        "proof" => AuthRequired::Proof,
-        "either" => AuthRequired::Either,
-        "impossible" => AuthRequired::Impossible,
-        _ => AuthRequired::None,
+        "none" => Ok(AuthRequired::None),
+        "signature" | "sig" => Ok(AuthRequired::Signature),
+        "proof" => Ok(AuthRequired::Proof),
+        "either" => Ok(AuthRequired::Either),
+        "impossible" => Ok(AuthRequired::Impossible),
+        other => Err(format!("unknown authority label '{other}'")),
     }
 }
 
@@ -2516,7 +2524,10 @@ pub async fn get_server_affordances(
         Some(bytes) => CellId(bytes),
         None => return Err(StatusCode::BAD_REQUEST),
     };
-    let held = parse_auth_label_api(q.viewer.as_deref().unwrap_or("none"));
+    // Fail-CLOSED: an unknown/typo'd viewer label refuses (400) instead of silently
+    // becoming the broadest viewer. An absent `viewer` still defaults to "none".
+    let held = parse_auth_label_api(q.viewer.as_deref().unwrap_or("none"))
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let s = state.read().await;
     let specs = match s.deos_server_surfaces.get(&cell) {
@@ -8110,6 +8121,42 @@ mod tests {
     /// Helper: create a deterministic key pair for testing.
     fn test_key(name: &str) -> [u8; 32] {
         *blake3::hash(format!("dregg-node-atomic-test:{name}").as_bytes()).as_bytes()
+    }
+
+    /// Fail-CLOSED authority-label parsing (twin of the deos-js `parse_auth_label` fix):
+    /// an unknown/typo'd label must REFUSE, never silently mint `AuthRequired::None`
+    /// (the broadest viewer). Legit labels — including the absent-field default "none"
+    /// the call site supplies — are unchanged.
+    #[test]
+    fn parse_auth_label_api_unknown_label_refuses() {
+        use dregg_cell::AuthRequired;
+
+        // The legit vocabulary is untouched (case-insensitive, "sig" alias intact).
+        assert_eq!(parse_auth_label_api("none"), Ok(AuthRequired::None));
+        assert_eq!(
+            parse_auth_label_api("signature"),
+            Ok(AuthRequired::Signature)
+        );
+        assert_eq!(parse_auth_label_api("sig"), Ok(AuthRequired::Signature));
+        assert_eq!(parse_auth_label_api("proof"), Ok(AuthRequired::Proof));
+        assert_eq!(parse_auth_label_api("either"), Ok(AuthRequired::Either));
+        assert_eq!(
+            parse_auth_label_api("impossible"),
+            Ok(AuthRequired::Impossible)
+        );
+        assert_eq!(
+            parse_auth_label_api("SIGNATURE"),
+            Ok(AuthRequired::Signature)
+        );
+
+        // The old fail-open: each of these previously became `AuthRequired::None`
+        // (broadest authority). Now they refuse in-band.
+        for typo in ["signture", "porof", "nonee", "", "admin", "all"] {
+            assert!(
+                parse_auth_label_api(typo).is_err(),
+                "label {typo:?} must refuse, not silently broaden to None"
+            );
+        }
     }
 
     /// Helper: build a minimal AtomicForest with a single noop-like action.
