@@ -2,6 +2,23 @@
 
 Exploring how Robigalia's capability-secure OS designs map to dregg's distributed runtime.
 
+## Status (honest)
+
+- `directory` — working userspace data structures (`DirectoryCell`, `ScopedIntentPool`,
+  `MetaDirectory`, ...) over the real `dregg_types::{CellId, FederationId}`; used by
+  `deos-zed`'s path->cell namespace. `MemberId`/`SturdyRef`/`GossipTopic`/`CommitmentId`
+  are crate-local STAND-INS (labeled at their definitions) — membership checks are plain
+  set lookups, not constitution attestations. The canonical directory primitive was
+  lifted into the `dregg-directory` crate.
+- `factory` — real `dregg_cell::factory::FactoryDescriptor` construction (genuine
+  on-ledger contract shape with real `StateConstraint`s).
+- `vfs` — a self-contained DESIGN SKETCH. Its operations record a crate-local
+  `VfsEffect` trace whose names mirror Effect VM effects; nothing constructs real
+  `dregg-turn` effects, reaches the executor, or is proven. The "AIR constraints"
+  there are prose string constants. See the `vfs` module docs for what a real
+  weld would take.
+- The DFA routing module that used to live here was promoted to `dregg-dfa`.
+
 ## Key Mappings
 
 | Robigalia Concept | `dregg` Equivalent | Gap/Opportunity |
