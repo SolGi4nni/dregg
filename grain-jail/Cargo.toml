@@ -22,11 +22,22 @@ license = { workspace = true }
 [lib]
 name = "grain_jail"
 
+[features]
+# The real firmament OS-jail body-spawn (`jail` module). Off by default so the
+# seam + protocol build stays `dregg-agent`-light; `real-jail` pulls the
+# process-PD confinement (macOS Seatbelt / Linux seccomp+Landlock).
+real-jail = ["dep:dregg-firmament"]
+
 [dependencies]
 # The brain seam this crate implements: AgentBrain / AgentAction / ActionObservation.
 dregg-agent = { path = "../dregg-agent" }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true }
+# The OS-jail (process-PD confinement) — OPTIONAL, only under `real-jail`.
+# process-pd-sandbox is the Endpoint-only floor + host OS sandbox. firmament is
+# its own (excluded) workspace; a member path-dep is fine (cargo ignores its
+# `[workspace]`), the same way servo-render / starbridge-v2 depend on it.
+dregg-firmament = { path = "../sel4/dregg-firmament", features = ["process-pd-sandbox"], optional = true }
 
 [dev-dependencies]
 # The end-to-end proof drives a REAL grain: rent → confined-brain drive → meter

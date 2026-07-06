@@ -7648,6 +7648,7 @@ version = "0.1.0"
 dependencies = [
  "agent-platform",
  "dregg-agent",
+ "dregg-firmament",
  "dregg-types",
  "hosted-lease",
  "serde",
