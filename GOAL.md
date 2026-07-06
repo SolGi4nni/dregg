@@ -8,22 +8,14 @@ leased/metered + persisted-as-forkable-mind-cell + R2-verifiable by the renter.
 North star: *rent a coding agent you can jail, budget, fork, rewind, and
 cryptographically audit against the chain.*
 
-## IN PROGRESS (resume tick ~01:55): THE EGRESS DOOR
-Fresh-head re-approach. Verified the macOS deny test is NON-vacuous (a loopback
-`net_out` grant → SBPL `(allow network-outbound (remote ip "localhost:PORT"))`,
-port-pinned under deny-default, so PORT_A granted / PORT_B denied even with a live
-listener on both). Firmament plumbing DONE + compiles: new
-`spawn_pd_confined_with_surface_and_egress` (threads `net_out` through
-`spawn_pd_inner_with_extra` → folds `.with_net_out()` into the already-built
-Confinement; the no-door surface variant is unchanged). grain-jail
-`spawn_confined_body_with_egress` + a non-vacuous deny test (two live loopback
-listeners, grant one, jailed body must reach granted ∧ be DENIED ungranted) —
-BUILDING (the pivotal signal). If green: commit, then the in-jail LLM harness over
-a mock model server = the full "rent a coding agent".
-
-## STATE FOR MORNING-EMBER (2026-07-06 ~01:05, overnight session)
-The confined-body grain is DONE and green — 13 commits (`8de7447da`..`ea92ed7d3`),
-incl. the full hostile-body robustness set (crash/hang+SIGKILL/garbage/cap/flood).
+## STATE FOR MORNING-EMBER (2026-07-06 ~02:20, overnight session)
+The confined-body grain — INCLUDING the egress door and the full model-driven
+mechanic — is DONE and green (18 commits, `8de7447da`..`95581b198`). The NORTH
+STAR is architecturally proven: a jailed body reads instructions from a "model"
+over its ONE granted egress door, relays them as proposals to a real grain that
+cap-gates + meters + mints + R2-verifies each, and reaches NOTHING but the model.
+The only mock is the model itself. Egress deny verified non-vacuously on macOS
+Seatbelt. Full hostile-body robustness (crash/hang+SIGKILL/garbage/cap/flood).
 A hosted body plugs into the grain's `AgentBrain` seam as a `ConfinedBrain`
 (crate `grain-jail`), so with ZERO grain-drive-path change a body is OS-jailed
 (firmament, macOS Seatbelt — validated locally, denies /etc/passwd), yet every
@@ -135,8 +127,13 @@ surface` → clean parent `UnixStream`) is next; it needs `process-pd-sandbox`
 - OP EXTENSION LANDED (`4fff5263a`): protocol `args` → generic `Op(ToolCall)` so a
   confined body does REAL file work (fs_write host-side, cap-gated).
 - HOSTILE-BODY ROBUSTNESS COMPLETE: crash (`23df1d51e`) + hang/timeout+SIGKILL-reap
-  (`4973c6a59`) + flood/OOM cap (this commit) + garbage + cap-exceed. A confined
-  or jailed body cannot wedge, fool, or OOM the host by any of these.
+  (`4973c6a59`) + flood/OOM cap (`ea92ed7d3`) + garbage + cap-exceed.
+- EGRESS DOOR LANDED (`3277d4cec`): firmament `spawn_pd_confined_with_surface_and_
+  egress` + grain-jail `spawn_confined_body_with_egress` — a jailed body reaches
+  EXACTLY one granted host:port; NON-VACUOUS deny test (macOS Seatbelt, two live
+  listeners) verifies granted-reachable ∧ ungranted-denied.
+- CAPSTONE LANDED (`95581b198`): a model-driven jailed body runs a real grain over
+  its egress door, R2-verified — the full "rent a coding agent" loop (mock brain).
 
 ## What "awesome" is next (post-spine)
 - A runnable EXAMPLE (`cargo run`) — the "rent a verifiable confined agent" demo.
