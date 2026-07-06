@@ -86,6 +86,9 @@ pub mod card;
 /// The DNS challenge seam: [`dns::DnsResolver`] + [`dns::MockDns`], domain validity,
 /// and the deterministic challenge nonce.
 pub mod dns;
+/// The live DNS backend: a real hickory-resolver `DnsResolver` (`live-dns` feature).
+#[cfg(feature = "live-dns")]
+pub mod live;
 /// The custom-domain control plane: the plaintext `domain -> binding` routing index,
 /// the cap-gated `bind`, the DNS-driven `verify`, and the gateway reads.
 pub mod registry;

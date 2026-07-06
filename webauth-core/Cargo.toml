@@ -1,0 +1,41 @@
+# `webauth-core` — the web-edge forward-auth DECISION CORE, ported dregg-native
+# from the prior operated layer (everything except the HTTP server): the pure offline
+# authorization verdict (`decide`, the 401/403 split), the stable key-derived
+# account identity (`account_id`), the session/cap mint-and-attenuate vocabulary
+# (`grant`, incl. the `vat:<cell-id>` grammar), the revocation deny-set + env
+# config (`config`), the stateless login challenge (`challenge`), and the
+# forward-auth credential reads over the real `dga1_` core (`credext`).
+#
+# The HTTP `/auth` + `/login` server (the prior operated layer) is the
+# named MISSING-BIG work item — this crate is everything it will stand on.
+#
+# WIRING (main loop): add "webauth-core" to [workspace] members (+
+# default-members), delete the [workspace] opt-out table below, and switch the
+# version'd deps to `workspace = true` where the workspace pins them.
+[package]
+name = "webauth-core"
+description = "Capability forward-auth decision core for the dregg web edge: offline dga1_ credential verdicts (401/403 split), key-derived account identity, session minting with acct/cap/expiry caveats, revocation deny-set, stateless PoP login challenge."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+authors = ["Dregg Contributors"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/emberian/dregg"
+publish = false
+
+[lib]
+name = "webauth_core"
+path = "src/lib.rs"
+
+[dependencies]
+# The dga1_ credential core (RootKey/Credential/Caveat/Pred/Context/Refusal).
+dregg-agent = { path = "../dregg-agent" }
+# CellId::derive_raw — the account id IS the substrate identity-cell id.
+dregg-types = { path = "../types" }
+blake3 = "1"
+base64 = "0.22"
+postcard = { version = "1", features = ["use-std"] }
+ed25519-dalek = { version = "2.1", features = ["std"] }
+serde = { version = "1", features = ["derive", "std"] }
+thiserror = "2"
+getrandom = "0.3"

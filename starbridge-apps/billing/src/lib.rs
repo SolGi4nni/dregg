@@ -68,6 +68,8 @@ use dregg_cell::allowance::{
 };
 
 /// The spend cap on the proven rate-limited-allowance capacity (`cell/src/allowance.rs`).
+/// Threshold budget alerts (50/80/100%) over the proven `SpendCap`.
+pub mod alerts;
 pub mod cap;
 /// The deos-view CARD: the billing dashboard as a renderer-independent view-tree.
 pub mod card;

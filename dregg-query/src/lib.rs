@@ -54,6 +54,9 @@ mod hexutil;
 pub mod mmr;
 pub mod query;
 pub mod receipt;
+/// Paged whole-log MMR window tiling — the anti-truncation / hidden-revocation
+/// verifier over a range of the committed log.
+pub mod windows;
 
 pub use attested::{
     AttestError, AttestedAnswer, AttestedSlice, Coverage, RangeCertificate, answer,

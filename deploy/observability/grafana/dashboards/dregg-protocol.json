@@ -1,0 +1,281 @@
+{
+  "uid": "dregg-protocol",
+  "title": "dregg \u00b7 Protocol",
+  "description": "Turns, proofs, gossip, and state growth \u2014 the protocol-throughput pane.",
+  "tags": [
+    "dregg",
+    "protocol"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Turns submitted (rate)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (node) (rate(dregg_turns_submitted_total[5m]))",
+          "refId": "A",
+          "legendFormat": "submitted {{node}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (status) (rate(dregg_turns_executed_total[5m]))",
+          "refId": "B",
+          "legendFormat": "executed {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "status is committed | rejected (node/src/api.rs)."
+    },
+    {
+      "id": 2,
+      "title": "Turn execution duration (p50 / p95)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum(rate(dregg_turn_execution_duration_seconds_bucket[5m])) by (le))",
+          "refId": "A",
+          "legendFormat": "p50"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(dregg_turn_execution_duration_seconds_bucket[5m])) by (le))",
+          "refId": "B",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Proof verification by result",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (result) (rate(dregg_proofs_verified_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "result is valid | invalid | error."
+    },
+    {
+      "id": 4,
+      "title": "Proof verification duration (p95)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(dregg_proof_verification_duration_seconds_bucket[5m])) by (le))",
+          "refId": "A",
+          "legendFormat": "verify p95"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(dregg_async_proof_duration_seconds_bucket[5m])) by (le))",
+          "refId": "B",
+          "legendFormat": "async prove p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Async proving pool by result",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (result) (rate(dregg_async_proofs_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "result is completed | failed | dropped."
+    },
+    {
+      "id": 6,
+      "title": "Gossip messages by direction",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (direction) (rate(dregg_gossip_messages_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{direction}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "State growth",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "max(dregg_ledger_cell_count)",
+          "refId": "A",
+          "legendFormat": "ledger cells"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "max(dregg_receipt_chain_length)",
+          "refId": "B",
+          "legendFormat": "receipt chain"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ]
+}

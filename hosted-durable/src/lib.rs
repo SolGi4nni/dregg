@@ -45,6 +45,9 @@ use serde::{Deserialize, Serialize};
 /// `dregg_cell::CellState` signed-balance discipline
 /// (`recTransfer_balanceSum_conserve`) on every build. See [`conserve`].
 pub mod conserve;
+/// The restart-surviving production settlement: validate → write-ahead reserve
+/// → submit over an injected [`payable::PaySubmitter`] → confirm.
+pub mod durable_settlement;
 /// The funded, refuse-over-budget [`meter::Account`] plus the process-global
 /// observability tally.
 pub mod meter;
@@ -52,10 +55,20 @@ pub mod meter;
 /// `Effect::Transfer` turn over an injected [`payable::PaySubmitter`] wire (a
 /// node client signs + executes it).
 pub mod payable;
+/// The Postgres transactional-outbox meter — exactly-once durable metering
+/// across restart (the double-charge race fix). DB-gated.
+#[cfg(feature = "pg")]
+pub mod pg_outbox;
 pub mod settle;
+/// The crash-durable write-ahead settle ledger (`(lease,period)` reserve →
+/// confirm), the restart-exactly-once floor under the submitter rails.
+pub mod settle_ledger;
 pub use conserve::{ConservedMove, apply_conserving_transfer};
 pub use meter::{Account, OverBudget};
 pub use payable::{PaySubmitter, PayTerms, PayableSettlement, SubmittedPay};
+/// The pg meter outbox reader the settlement fold consumes (`settle_meter_outbox`).
+#[cfg(feature = "pg")]
+pub use pg_outbox::read_meter_outbox;
 pub use settle::{
     ConservingLedger, LeaseCharge, SettleError, SettleReceipt, Settlement, TestConservingLedger,
 };

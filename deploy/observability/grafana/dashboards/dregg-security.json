@@ -1,0 +1,484 @@
+{
+  "uid": "dregg-security",
+  "title": "dregg \u00b7 Security",
+  "description": "Refusals, probes, and gossip abuse \u2014 the someone-is-knocking pane. Every series here is a refusal counter: flat is good.",
+  "tags": [
+    "dregg",
+    "security"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Auth failures (24h)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(increase(dregg_auth_failures_total[24h]))",
+          "refId": "A",
+          "legendFormat": "auth"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Cap refusals (24h)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(increase(dregg_cap_refusals_total[24h]))",
+          "refId": "A",
+          "legendFormat": "cap"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Turns rejected (24h)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(increase(dregg_turns_rejected_total[24h]))",
+          "refId": "A",
+          "legendFormat": "rejected"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Sandbox denials (24h)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(increase(dregg_sandbox_denials_total[24h]))",
+          "refId": "A",
+          "legendFormat": "sandbox"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 5,
+      "title": "Revocations (24h)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(increase(dregg_revocations_total[24h]))",
+          "refId": "A",
+          "legendFormat": "revocations"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 6,
+      "title": "Invalid proofs (24h)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(increase(dregg_proofs_verified_total{result=\"invalid\"}[24h]))",
+          "refId": "A",
+          "legendFormat": "invalid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 7,
+      "title": "Refusal rates",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(rate(dregg_auth_failures_total[5m]))",
+          "refId": "A",
+          "legendFormat": "auth failures"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(rate(dregg_cap_refusals_total[5m]))",
+          "refId": "B",
+          "legendFormat": "cap refusals"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(rate(dregg_turns_rejected_total[5m]))",
+          "refId": "C",
+          "legendFormat": "turns rejected"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum(rate(dregg_sandbox_denials_total[5m]))",
+          "refId": "D",
+          "legendFormat": "sandbox denials"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Gossip stream rejections by reason",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (reason) (rate(dregg_gossip_stream_rejected_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "The gossip-storm early warning (GossipStreamRejectionRate warns >0.5/s, GossipStreamStorm pages >5/s)."
+    },
+    {
+      "id": 9,
+      "title": "Gossip stream rejections by peer",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (peer) (rate(dregg_gossip_stream_rejected_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{peer}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "Revocations over time",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dregg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dregg-prometheus"
+          },
+          "expr": "sum by (node) (increase(dregg_revocations_total[15m]))",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ]
+}

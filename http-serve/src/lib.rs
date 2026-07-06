@@ -14,6 +14,10 @@
 //! hosting platform's `serve` layer binds to.
 
 pub mod http;
+/// Connection hardening: slow-loris read/write timeouts, 413 body cap, chunked
+/// decode bound, connection gate. Call-site wiring into `serve.rs` is a
+/// follow-up (see the module header).
+pub mod limits;
 pub mod serve;
 
 pub use http::{HttpMethod, WebRequest, WebResponse};

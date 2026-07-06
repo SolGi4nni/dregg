@@ -34,6 +34,10 @@
 // always compiled, under BOTH the `native` and `web` renderers.
 pub mod console;
 pub mod fmt;
+/// Console data-source honesty: unreachable ≠ empty ≠ fixtures (never render a
+/// live-green surface over an unreachable node). Call-site wiring into
+/// `console::ConsoleModel` is a follow-up (see the module header).
+pub mod source_health;
 pub mod tree;
 pub use console::{
     console_bind_values, console_card, console_slot_seeds, demo_console, ConsoleModel,
