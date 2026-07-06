@@ -1,0 +1,83 @@
+# confined-swarm — the provably-independent, provably-sourced AI analyst swarm.
+#
+# Fork ONE trusted, primed confined agent into N SOVEREIGN workers, each jailed to
+# exactly ONE data source, each attestation-proving what it read, and — the killer
+# property — PROVABLY NON-COLLUDING: because the workers are umem-forks of one root,
+# worker A's mind/heap never touched worker B's, so the N reports are provably
+# independent (they could not have colluded; each saw only its own source).
+#
+# COMPOSES the real substrate primitives, reimplementing no theorem:
+#   * grain-fork  — `ConfinedSession::fork_two` (one checkpoint → two sovereign
+#                   confined lives; budget SPLIT not duplicated, egress attenuated,
+#                   umem heap isolation). The fork star. We build the n-ary swarm
+#                   fork ON fork_two so total-budget conservation is enforced across
+#                   the whole chain (fork_two checks the SUM; a bare fork does not).
+#   * zkoracle-prove — `prove_zkoracle` / `verify_zkoracle` over an Anthropic
+#                   `/v1/messages` session: each worker's report carries a
+#                   `ZkOracleAttestation` (authentic ∧ well-formed ∧ injection-free).
+#                   The SAME primitives deos-hermes's `AttestationCarrier` wraps; we
+#                   compose them directly so the swarm stays light (the modeled
+#                   ed25519 carrier + JSON CFG cert + injection matcher — no HTTP/TLS,
+#                   no verified-Lean-executor link). The real local MPC-TLS 2PC is
+#                   behind `tlsn-live`.
+#
+# STANDALONE WORKSPACE (declares its own `[workspace]`): it is NOT yet a member of
+# the breadstuffs root — build it directly with
+#   cargo build --manifest-path confined-swarm/Cargo.toml
+#   cargo test  --manifest-path confined-swarm/Cargo.toml
+# Its `[patch]` tables mirror the root's (the plonky3-recursion sibling checkout +
+# the ark-serialize serde fork) so grain-fork's / zkoracle-prove's proof dep-tree
+# resolves identically. The path deps stay members of the breadstuffs root workspace,
+# so their `workspace = true` inheritance resolves against that root unchanged.
+
+[workspace]
+
+[package]
+name = "confined-swarm"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "The provably-independent, provably-sourced AI analyst swarm: fork one primed confined agent into N sovereign workers, each jailed to one source, each attested, provably non-colluding (umem fork isolation)."
+
+[lib]
+name = "confined_swarm"
+path = "src/lib.rs"
+
+[dependencies]
+# THE FORK STAR — a live confined session checkpoints and forks into two sovereign
+# lives (budget split, egress attenuated, umem heap isolation). We chain fork_two
+# into an n-ary swarm fork.
+grain-fork = { path = "../grain-fork" }
+
+# THE ATTESTATION — each worker's report carries a `verify_zkoracle`-checkable
+# proof it read an authentic, well-formed, injection-free source response.
+dregg-zkoracle-prove = { path = "../zkoracle-prove" }
+
+# LeaseTerms (a worker's own obligor lease) — the `ForkSpec` shape a fork consumes.
+hosted-lease = { path = "../hosted-lease" }
+
+# CellId — the provider/lease/asset cell ids a `LeaseTerms` names.
+dregg-cell = { path = "../cell" }
+
+# The source-content digest each worker writes into its OWN mind (the private write
+# that is provably absent from every other worker's mind — the isolation witness).
+blake3 = "1"
+
+[features]
+# THE CROWN, run REAL-LOCALLY. Attest each worker's turn over a GENUINE local
+# MPC-TLS 2PC roundtrip (zkoracle-prove's vendored TLSNotary) instead of the modeled
+# ed25519 carrier. OFF by default so the standard build stays HTTP/TLS-free.
+tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
+
+# Mirror the root workspace's patch tables so the shared proof dep-tree resolves
+# identically (see the header). The plonky3-recursion sibling checkout is one level
+# further up than the root's `../plonky3-recursion` (we are a directory deeper).
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
+
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
