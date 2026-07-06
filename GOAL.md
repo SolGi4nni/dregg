@@ -66,3 +66,4 @@ The template is `metatheory/Dregg2/Storage/BucketCommitment.lean` (committed `06
 - `06a1e8fe8` — storage-in-lean (1/N): `BucketCommitment.lean` proven + in-corpus. THE PATTERN.
 - `13ffbbff2` — storage-in-lean (2/N): PoR (`Retrievability.lean`) proven on read_sound (por_sound + anti-forgery). Next: RS/erasure decode-correctness.
 - `877a8d4ce` — storage-in-lean (3/N): RS erasure decode-correctness (`Erasure.lean`) — rs_decode_correct + no_wrong_reconstruction, real algebra via Mathlib, no carrier. Next: fountain codes, then provider-market.
+- `8b53045e5` — storage-in-lean (4/N): fountain LT decode-uniqueness (`Fountain.lean`) — real linear algebra, no carrier. Next: provider-market cell-program, then the availability capstone (compose commitment+erasure+PoR).
