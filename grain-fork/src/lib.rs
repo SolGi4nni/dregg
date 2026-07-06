@@ -61,6 +61,11 @@ use std::collections::BTreeMap;
 use dregg_cell::{
     compute_fields_root, compute_heap_root, AuthRequired, Cell, CellId, FieldElement,
 };
+
+pub mod confined;
+pub use confined::{
+    fold_receipts, ConfinedForkError, ConfinedSession, Confinement, ForkSpec, Turn,
+};
 use dregg_turn::umem::{project_cell, UKey, UProjection, UVal};
 use hosted_lease::{HostedLease, LeaseError, LeaseTerms, WORKING_BASE};
 

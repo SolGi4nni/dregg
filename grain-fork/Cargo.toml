@@ -55,3 +55,8 @@ dregg-turn = { path = "../turn" }
 # `settle_umem_stitch`, and the first-class `UmemConflict` / `ConferredCap` /
 # `SettledUmemStitch`. We CONSUME these; we do not re-derive them.
 starbridge-v2 = { path = "../starbridge-v2", default-features = false, features = ["embedded-executor"] }
+
+# The confined-session receipt chain (a domain-separated hash chain rooted at the
+# shared fork point, verifiable from `(fork_root, turns)` alone). Same blake3 the
+# grain-commons pedigree fold uses.
+blake3 = "1"

@@ -7661,6 +7661,7 @@ dependencies = [
 name = "grain-fork"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "dregg-cell",
  "dregg-turn",
  "hosted-lease",
