@@ -8,6 +8,51 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-06, Fable — COMPREHENSIVE NAMED-RESIDUAL HUNT: 6-domain sweep, safe closures committed, reds surfaced)
+
+A council of 5 fable scholar-architects (memos in a scratch council folder) + a 6-domain
+fable residual-hunt swept the whole tree; main loop AUDITED every closure (green +
+self-reported ≠ verified — caught a "gate now green" that had 2 failing tests). SAFE
+closures committed (6 commits): hosting `e25643b5e` · userspace `4c581356e` · node
+(finality) · kernel · circuit `d44dac0bd` · umem `596824ae1`.
+
+⚑⚑ THE RED (cross-corroborated 3 ways, HIDDEN under default features, ROTATION LANE's):
+the **gentian flag-day (`dd2a47a3c`) broke rotated-leg / whole-chain COMPLETENESS** —
+honest turns FAIL light-client verify at HEAD. Producer emits `…-v3-staged`; renamed TSV
+rows say `…-gentian-deployed-bare-refuse`; the gate (`joint_turn_aggregation.rs:1352`) maps
+to `None` → `prove_turn_chain_recursive` refuses every rotated leg; `effect_vm_rotation_flip`
+10/15 red, `vk_epoch_refusal_lifecycle` honest legs red, `producer_descriptor_coverage_gate`
+cell_destroy_v3/cell_unseal_v3 roundtrips red. SOUNDNESS intact; COMPLETENESS broken. Fix =
+production `fill_bare_floor_refuse_aux` in `generate_rotated_effect_vm_trace` + width pins.
+
+SECURITY FIX LANDED: the deos-js authority FAIL-OPEN (`parse_auth_label` unknown→`None`→broad
+authority, live: defineAffordance gate/grant/viewer) → fail-CLOSED refusal. TWIN still open:
+`node/src/api.rs:2493 parse_auth_label_api` (inert today, mirror the refusal).
+
+NEW STRUCTURAL GATES: `effect_enum_descriptor_residual_gate.rs` (wildcard-free match over all
+33 Effect variants — a new variant reds the build; the 5 frontier verbs are STAGED not dropped)
++ `fri_params_soundness_budget.rs` (pins FRI params→≥128 bits, was comment-conjectured).
+
+REDUCIBLE-HARD (reported, NOT fired — soundness surfaces): (1) nameservice owner-auth — a test
+PROVES an impostor's SetField(OWNER) passes (needs SenderAuthorized in the descriptor). (2)
+http-serve `limits` DoS-hardening unwired (serve.rs never calls it; 2 hunters). (3) the gentian
+red above. (4) rbg VFS "decomposes to effects only in prose" (confirmed). (5) pg-dregg 8-felt
+anchor transport widening (H1). (6) CapabilityCaveat exercise wiring (no `caveats` field yet).
+
+STALE closure-markers corrected (the RECORD was behind reality): Fix B LANDED (persist 84/84),
+committee_replay clean, ark-serialize blocker DISSOLVED, deco-prove landed, M3 drainer landed,
+source_health→ConsoleModel wired (another lane), the pg fold not dead, single-turn n=3 finality
+NOW converges (sustained 3rd-turn + post-kill n≥4 stay REAL residuals, dated).
+
+TERMINAL-FLOORS (honest, NOT bugs): FRI capacity conjecture, Poseidon2-CR, Schnorr-DL, the
+interpreter denotational differential (lone test-strength rung, irreducible sans Lean-extracting
+p3 eval), FLP/GST liveness, bridge StructureOnly (provably-can't-mint). The non-vacuity meta-gate
+BITES (verified 3/3) — the council's "vacuity wound" worry is GATED. EMBER-GATED: VK-epoch flip,
+forkable-confined-session, Mint/Burn linearity double-vision lockstep.
+
+HELD (uncommitted): the `producer_descriptor_coverage_gate` dischargeSat/vaultSat classification
+rows — fold after the gentian red is fixed (same file, rotation lane's).
+
 ## NOW-STATE addition (2026-07-05 late, Fable — hyperdreggmedia doc↔code dialectic: 5-lane census, charter REWRITTEN, 4 build lanes fired)
 
 A 5-cluster doc-vs-code census of `docs/deos/` (inhabitant / substrate+authoring / renderers /
