@@ -1458,6 +1458,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "auditable-fund"
+version = "0.1.0"
+dependencies = [
+ "agent-platform",
+ "blake3",
+ "deos-hermes",
+ "dregg-agent",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2876,6 +2886,17 @@ dependencies = [
  "serde_core",
  "toml 1.1.2+spec-1.1.0",
  "winnow 1.0.3",
+]
+
+[[package]]
+name = "confined-swarm"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-zkoracle-prove",
+ "grain-fork",
+ "hosted-lease",
 ]
 
 [[package]]
@@ -5783,6 +5804,7 @@ dependencies = [
  "hyper-util",
  "k256",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "tlsn",
  "tlsn-formats",

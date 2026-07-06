@@ -30,8 +30,6 @@
 # resolves identically. The path deps stay members of the breadstuffs root workspace,
 # so their `workspace = true` inheritance resolves against that root unchanged.
 
-[workspace]
-
 [package]
 name = "confined-swarm"
 version = "0.1.0"
@@ -68,16 +66,3 @@ blake3 = "1"
 # MPC-TLS 2PC roundtrip (zkoracle-prove's vendored TLSNotary) instead of the modeled
 # ed25519 carrier. OFF by default so the standard build stays HTTP/TLS-free.
 tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
-
-# Mirror the root workspace's patch tables so the shared proof dep-tree resolves
-# identically (see the header). The plonky3-recursion sibling checkout is one level
-# further up than the root's `../plonky3-recursion` (we are a directory deeper).
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
-
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }

@@ -25,25 +25,6 @@ rust-version = "1.94.0"
 license = "AGPL-3.0-or-later"
 description = "The auditable fund: an AI trading agent (PAPER-ONLY) whose every decision is an attested turn, every trade an on-ledger receipt, every price a zkOracle attestation — a track record a third party AUDITS instead of trusts."
 
-# ⚑ Standalone-workspace declaration (cargo's own suggested fix for a package
-# under a workspace root that is not yet a member). REMOVE this `[workspace]`
-# table when promoting auditable-fund into the repo-root `workspace.members`
-# array — a member may not carry its own workspace table. Until then this lets
-# `cargo build --manifest-path auditable-fund/Cargo.toml` resolve standalone,
-# exactly as the excluded `dregg-tui` crate does.
-[workspace]
-members = ["."]
-resolver = "2"
-
-# Mirror of the repo-root `[patch.crates-io]` entries THIS crate's dependency graph
-# needs (a standalone workspace does not inherit the root's patches). The
-# ark-serialize fork carries the `serde_with` feature `dregg-hints` requires. These
-# are git deps, path-independent — they resolve identically here and at the root.
-# (Drops on promotion into root members, together with the `[workspace]` table above.)
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
 [dependencies]
 agent-platform = { path = "../agent-platform" }
 # deos-hermes re-exports the zkOracle types (`ZkOracleAttestation`, `verify_zkoracle`,
