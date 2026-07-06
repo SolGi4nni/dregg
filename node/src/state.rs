@@ -218,6 +218,25 @@ pub struct NodeStateInner {
     pub federation_id: [u8; 32],
     /// Current committee epoch (rotates with key rotations).
     pub committee_epoch: u64,
+    /// Committees derived from the persisted lace's finalized membership
+    /// history at boot (`committee_replay::derive_from_lace`), genesis first.
+    /// Empty when the chain carries no amendments. The signed-anchor recovery
+    /// check accepts an attested-root quorum from ANY of these: a root
+    /// persisted after a live epoch transition is signed by the AMENDED
+    /// committee, and verifying it against the genesis key set alone would
+    /// fail-close an honest restart. Every entry is unforgeable to the
+    /// offline-tamper adversary the anchor defends against (it holds no
+    /// committee keys of any version).
+    pub derived_committee_history: Vec<Vec<dregg_types::PublicKey>>,
+    /// Boot handoff: the REPLAYED `ConstitutionManager` from
+    /// `committee_replay::derive_from_lace` (main sets it right after the
+    /// derivation; `run_blocklace_sync` `take()`s it as the consensus
+    /// constitution seed). Carrying the full manager — not just the participant
+    /// list — preserves IN-FLIGHT proposal/vote state across a restart, so a
+    /// proposal that had gathered votes before shutdown can still pass after,
+    /// exactly as on peers that never restarted. `None` = no derivation ran
+    /// (fresh chain / solo bootstrap): seed from the configured committee.
+    pub boot_constitution: Option<dregg_blocklace::constitution::ConstitutionManager>,
     /// Maximum age (in seconds) for accepting incoming attested roots. Default: 3600.
     pub max_root_age_secs: u64,
     /// This validator's threshold decryption key share (Phase 2 turn privacy).
@@ -871,6 +890,8 @@ impl NodeState {
                 federation_configured: false,
                 federation_id: [0u8; 32],
                 committee_epoch: 0,
+                derived_committee_history: Vec::new(),
+                boot_constitution: None,
                 max_root_age_secs: 3600,
                 threshold_key_share: None,
                 decryption_threshold: 0,
@@ -1034,6 +1055,8 @@ impl NodeState {
                 federation_configured: false,
                 federation_id: [0u8; 32],
                 committee_epoch: 0,
+                derived_committee_history: Vec::new(),
+                boot_constitution: None,
                 max_root_age_secs: 3600,
                 threshold_key_share: None,
                 decryption_threshold: 0,
@@ -1223,13 +1246,30 @@ impl NodeState {
         recovered_root: [u8; 32],
     ) -> Result<(), String> {
         let committee = &s.known_federation_keys;
+        // Candidate committees for quorum verification: every constitution
+        // version derived from the chain's finalized membership history
+        // (newest first — the likeliest signer of the latest root), then the
+        // genesis/config committee. A live epoch transition keeps
+        // `federation_id` stable, so a root persisted after an amendment is
+        // quorum-signed by an AMENDED committee — verifying against the
+        // genesis keys alone would fail-close an honest restart. Accepting any
+        // historical committee keeps the anchor's guarantee: the offline
+        // store-tamper adversary holds no committee keys of ANY version.
+        let mut quorum_candidates: Vec<&[dregg_types::PublicKey]> = s
+            .derived_committee_history
+            .iter()
+            .rev()
+            .map(|c| c.as_slice())
+            .collect();
+        quorum_candidates.push(committee.as_slice());
+        quorum_candidates.retain(|c| !c.is_empty());
         let head_height = s.store.recovered_head_height().ok().flatten().unwrap_or(0);
 
         // The UNFORGEABLE floor: the height of the latest VALIDLY-SIGNED attested root.
         let mut signed_floor: u64 = 0;
         match s.store.latest_attested_root() {
             Ok(Some(signed)) => {
-                if committee.is_empty() {
+                if quorum_candidates.is_empty() {
                     tracing::warn!(
                         height = signed.height,
                         "recovery signed-anchor SKIPPED: no committee keys loaded — cannot verify \
@@ -1255,8 +1295,9 @@ impl NodeState {
                         "recovery signed-anchor: the latest attested root is from a different \
                          federation epoch — signed anchor not enforced this boot (NODE-1)"
                     );
-                } else if signed.verify_signatures(committee)
-                    || signed.verify_finalization_quorum(committee)
+                } else if quorum_candidates
+                    .iter()
+                    .any(|c| signed.verify_signatures(c) || signed.verify_finalization_quorum(c))
                 {
                     // A genuine committee quorum over this root: EITHER the
                     // light-client attestation (`verify_signatures`, the local
@@ -1320,7 +1361,9 @@ impl NodeState {
                     // integrity guarantee the lone signature provides is kept.
                     if head_height == signed.height
                         && recovered_root != signed.merkle_root
-                        && signed.has_any_valid_committee_signature(committee)
+                        && quorum_candidates
+                            .iter()
+                            .any(|c| signed.has_any_valid_committee_signature(c))
                     {
                         tracing::error!(
                             height = signed.height,
@@ -1344,8 +1387,9 @@ impl NodeState {
                             if r.height < signed.height
                                 && r.federation_id.0 == s.federation_id
                                 && r.threshold_qc.is_none()
-                                && (r.verify_signatures(committee)
-                                    || r.verify_finalization_quorum(committee))
+                                && quorum_candidates.iter().any(|c| {
+                                    r.verify_signatures(c) || r.verify_finalization_quorum(c)
+                                })
                                 && r.height > best
                             {
                                 best = r.height;

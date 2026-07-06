@@ -1352,6 +1352,78 @@ impl BlocklaceHandle {
         self.push_new_blocks().await;
     }
 
+    /// Operator-facing: cast THIS node's approval vote for a pending
+    /// membership proposal — the production twin of the devnet
+    /// `auto_approve_joins` path (`POST /membership/approve`). An admitted
+    /// proposal reaches quorum when enough CURRENT participants run this;
+    /// the constitution amendment + live epoch transition then happen
+    /// on-chain via `execute_finalized_membership`, no genesis re-roll.
+    pub async fn approve_membership(
+        &self,
+        state: &NodeState,
+        proposal_block: BlockId,
+    ) -> Result<(), String> {
+        {
+            let c = self.constitution.read().await;
+            if !c.current.is_participant(&self.self_key) {
+                return Err(
+                    "this node is not a current committee participant — its approval would \
+                     not count toward quorum"
+                        .to_string(),
+                );
+            }
+            if c.votes.get_proposal(&proposal_block).is_none() {
+                return Err(format!(
+                    "unknown membership proposal {proposal_block} — it has not been \
+                     finalized/registered on this node yet (check GET /api/membership)"
+                ));
+            }
+            if c.votes.is_applied(&proposal_block) {
+                return Err(format!(
+                    "membership proposal {proposal_block} was already applied — the \
+                     committee has advanced"
+                ));
+            }
+        }
+        self.cast_approval_vote(state, proposal_block).await;
+        Ok(())
+    }
+
+    /// The live membership picture for the operator surface
+    /// (`GET /api/membership`): current committee, threshold, constitution
+    /// version, and every registered proposal with its tally.
+    pub async fn membership_snapshot(&self) -> MembershipSnapshot {
+        let c = self.constitution.read().await;
+        let required_for = |p: &MembershipProposal| c.current.required_votes_for(p);
+        let proposals = c
+            .votes
+            .proposal_tallies()
+            .into_iter()
+            .map(
+                |(proposal_block, proposal, approvals, rejections, applied)| {
+                    let required = required_for(&proposal);
+                    MembershipProposalStatus {
+                        proposal_block,
+                        proposal,
+                        approvals,
+                        rejections,
+                        required,
+                        applied,
+                    }
+                },
+            )
+            .collect();
+        MembershipSnapshot {
+            participants: c.current.participants.clone(),
+            threshold: c.threshold(),
+            version: c.version(),
+            frozen: c.membership_frozen,
+            self_key: self.self_key,
+            self_is_participant: c.current.is_participant(&self.self_key),
+            proposals,
+        }
+    }
+
     /// LIVE EPOCH TRANSITION — advance the running consensus committee to a
     /// newly-finalized validator set.
     ///
@@ -1448,7 +1520,7 @@ impl BlocklaceHandle {
 ///
 /// Returns the ordering blocklace and a mapping from ordering BlockIds to
 /// finality BlockIds (needed because the two types use different hash schemes).
-fn build_ordering_blocklace(
+pub(crate) fn build_ordering_blocklace(
     finality_lace: &Blocklace,
 ) -> (
     dregg_blocklace::Blocklace,
@@ -1596,15 +1668,35 @@ pub async fn run_blocklace_sync(
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&signing_key_bytes);
     let self_key: [u8; 32] = signing_key.verifying_key().to_bytes();
 
-    // Determine participants: in solo mode, just ourselves.
-    // In full mode, all known federation keys.
-    let participants: Vec<[u8; 32]> = {
-        let s = state.read().await;
-        if s.known_federation_keys.is_empty() {
-            // Solo mode or unconfigured: just ourselves.
-            vec![self_key]
-        } else {
-            s.known_federation_keys.iter().map(|k| k.0).collect()
+    // The constitution seed: prefer the REPLAYED manager main derived from the
+    // persisted chain (`committee_replay` — carries every finalized membership
+    // amendment AND in-flight proposal/vote state across the restart); fall
+    // back to a fresh constitution over the configured committee (fresh chain,
+    // solo bootstrap, or tests that never ran the boot derivation).
+    let boot_cm = {
+        let mut s = state.write().await;
+        s.boot_constitution.take()
+    };
+    let (constitution_manager, participants): (ConstitutionManager, Vec<[u8; 32]>) = match boot_cm {
+        Some(cm) => {
+            let p = cm.participants().to_vec();
+            (cm, p)
+        }
+        None => {
+            // Determine participants: in solo mode, just ourselves.
+            // In full mode, all known federation keys.
+            let participants: Vec<[u8; 32]> = {
+                let s = state.read().await;
+                if s.known_federation_keys.is_empty() {
+                    // Solo mode or unconfigured: just ourselves.
+                    vec![self_key]
+                } else {
+                    s.known_federation_keys.iter().map(|k| k.0).collect()
+                }
+            };
+            // Initialize the constitution with our participant set. (tunable via CLI)
+            let constitution = Constitution::new(participants.clone(), constitution_timeout_ms);
+            (ConstitutionManager::new(constitution), participants)
         }
     };
 
@@ -1617,12 +1709,9 @@ pub async fn run_blocklace_sync(
         participants = participants.len(),
         quorum_threshold = quorum_threshold,
         solo = (participants.len() <= 1),
+        constitution_version = constitution_manager.version(),
         "initializing blocklace consensus"
     );
-
-    // Initialize the constitution with our participant set. (tunable via CLI)
-    let constitution = Constitution::new(participants.clone(), constitution_timeout_ms);
-    let constitution_manager = ConstitutionManager::new(constitution);
 
     // Attempt to restore blocklace from persistent storage.
     let (blocklace, restored_cursor) = {
@@ -7235,6 +7324,30 @@ fn hex_nibble(b: u8) -> Option<u8> {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// One registered membership proposal with its live tally, for the operator
+/// surface. `applied` = the proposal already amended the constitution.
+#[derive(Debug, Clone)]
+pub struct MembershipProposalStatus {
+    pub proposal_block: BlockId,
+    pub proposal: MembershipProposal,
+    pub approvals: usize,
+    pub rejections: usize,
+    pub required: usize,
+    pub applied: bool,
+}
+
+/// The live membership picture (`BlocklaceHandle::membership_snapshot`).
+#[derive(Debug, Clone)]
+pub struct MembershipSnapshot {
+    pub participants: Vec<[u8; 32]>,
+    pub threshold: usize,
+    pub version: u64,
+    pub frozen: bool,
+    pub self_key: [u8; 32],
+    pub self_is_participant: bool,
+    pub proposals: Vec<MembershipProposalStatus>,
 }
 
 // ─── Membership Vote Processing ─────────────────────────────────────────────
