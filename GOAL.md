@@ -137,6 +137,18 @@ surface` → clean parent `UnixStream`) is next; it needs `process-pd-sandbox`
 - DEMO SHOWCASES THE FULL STORY (`91e95f3ce`): `cargo run -p grain-jail --example
   rent_a_confined_agent --features real-jail` = OS-jailed + model-driven +
   net-reaches-only-the-model + cap-gated + metered + R2-verified, in one command.
+- CONFINEMENT MATRIX COMPLETE (`51f796366`): the egress dual — a jailed body with
+  NO grant reaches NO network (default-deny), verified on macOS Seatbelt. (Granted
+  → exactly one door; sealed → nothing.)
+
+## THE ONE OPEN EMBER DECISION
+Everything in the goal is done + green (24 commits) EXCEPT "forkable confined
+session," which needs a substantial addition to `agent-platform` (a Tenant
+checkpoint-HISTORY mechanism — the Tenant persists only the latest carrier today;
+`grain-fork::Grain` has the history model to copy). It's a shared file + a real
+unit. DECISION: build it (a coordinated ~session's work), or leave it as a scoped
+follow-up? Until then, the confined-body grain is complete to its solo-buildable
+maximum.
 
 ## FORK-A-CONFINED-SESSION — SCOPE VERIFIED (resume tick ~04:30)
 Checked: the tree is quiescent (agent-platform last commit `8a0b8550a`, no
