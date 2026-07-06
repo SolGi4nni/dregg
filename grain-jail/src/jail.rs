@@ -17,6 +17,7 @@
 
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
+use std::time::Duration;
 
 use dregg_firmament::process_kernel::{PdProcess, ProcessKernel};
 
@@ -39,6 +40,19 @@ impl JailedBody {
     pub fn join(self) -> std::io::Result<i32> {
         self.pd.join()
     }
+
+    /// SIGKILL the jailed body, then reap it — for a body that HANGS (never
+    /// sends, or loops forever). A confined body cannot be trusted to exit; when
+    /// the drive ends on a read timeout the host kills it rather than block on
+    /// [`join`](JailedBody::join) forever. Returns the reaped exit status.
+    pub fn kill(self) -> std::io::Result<i32> {
+        // The child is jailed (only its endpoint socket), so a plain SIGKILL to
+        // its pid is sufficient and cannot touch anything else.
+        unsafe {
+            libc::kill(self.pd.pid, libc::SIGKILL);
+        }
+        self.pd.join()
+    }
 }
 
 /// Spawn `body` as an OS-jailed subprocess speaking the confined-body line
@@ -57,6 +71,27 @@ pub fn spawn_confined_body<F>(
 where
     F: FnOnce(UnixStream) -> i32,
 {
+    spawn_confined_body_with_timeout(kernel, None, body)
+}
+
+/// Like [`spawn_confined_body`], but with a per-read TIMEOUT on the parent's
+/// channel: if the body does not send its next message within `read_timeout`,
+/// the channel's `recv` returns a timeout error, which the
+/// [`ConfinedBrain`](crate::ConfinedBrain) treats as end-of-drive (fail-closed).
+///
+/// A confined body cannot be trusted to make progress — a hung or wedged body
+/// must not block the grain forever. Pair this with
+/// [`JailedBody::kill`](JailedBody::kill) to reap a body that timed out. `None`
+/// (the [`spawn_confined_body`] default) blocks indefinitely, for a fully-trusted
+/// or test body.
+pub fn spawn_confined_body_with_timeout<F>(
+    kernel: &ProcessKernel,
+    read_timeout: Option<Duration>,
+    body: F,
+) -> std::io::Result<(JailedBody, JailChannel)>
+where
+    F: FnOnce(UnixStream) -> i32,
+{
     let (pd, parent) = kernel
         .spawn_pd_confined_with_surface(vec![], move |_client, surf, _granted| body(surf))
         .map_err(|e| {
@@ -65,8 +100,11 @@ where
                 format!("firmament confined spawn failed: {e:?}"),
             )
         })?;
-    let reader = BufReader::new(parent.try_clone()?);
-    let channel = LineChannel::new(reader, parent);
+    let reader_stream = parent.try_clone()?;
+    // The timeout gates the READ side (waiting on the body's next message); the
+    // write side (verdicts) is never blocked by the body.
+    reader_stream.set_read_timeout(read_timeout)?;
+    let channel = LineChannel::new(BufReader::new(reader_stream), parent);
     Ok((JailedBody { pd }, channel))
 }
 
@@ -172,5 +210,44 @@ mod tests {
             "the jailed body completed the protocol AND could not open /etc/passwd \
              (code {CONFINE_LEAK} would be a confinement leak, {PROTOCOL_FAULT} an I/O fault)"
         );
+    }
+
+    /// A jailed body that HANGS (never sends, holds its socket open) does NOT
+    /// wedge the host: the channel's read timeout ends the drive fail-closed, the
+    /// brain records the timeout, and the body is reaped by SIGKILL rather than a
+    /// join that would block forever.
+    #[test]
+    fn a_hung_body_times_out_and_is_reaped_not_wedging_the_host() {
+        use std::time::{Duration, Instant};
+
+        let kernel = ProcessKernel::new();
+        let (handle, channel) =
+            spawn_confined_body_with_timeout(&kernel, Some(Duration::from_millis(300)), |surf| {
+                // Hang: keep the socket open (so the parent's read blocks, not
+                // EOFs) and never send. SIGKILL will end this.
+                let _keep = surf;
+                std::thread::sleep(Duration::from_secs(30));
+                0
+            })
+            .expect("spawn the hung body");
+
+        let mut brain = ConfinedBrain::new(channel);
+        let start = Instant::now();
+        // The host waits at most ~the timeout, then gives up — it does NOT block
+        // on the hung body.
+        assert_eq!(brain.next_action(0), None, "a hung body yields no action");
+        assert!(
+            brain.timed_out(),
+            "the drive ended on the read timeout (a hung body), not a clean exit"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "the host did not block waiting on the hung body (elapsed {:?})",
+            start.elapsed()
+        );
+
+        // Reap the hung body — `join` alone would block forever; `kill` SIGKILLs
+        // then reaps. This must return, not hang.
+        let _status = handle.kill().expect("kill + reap the hung body");
     }
 }

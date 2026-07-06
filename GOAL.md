@@ -25,17 +25,31 @@ correct deny-test must distinguish sandbox-EPERM from ECONNREFUSED on macOS SBPL
 Rushing it at 00:25 risked a vacuous/wrong test. It is CRISPLY SCOPED with exact
 APIs in `docs/deos/GRAIN-CONFINED-BODY.md` (Frontier) — a clean fresh-head start.
 
+## Verified GAPS (from a resume-tick verify-before-building pass)
+- FORK/REWIND a CONFINED session is BLOCKED: fork/rewind/stitch live on
+  `grain-fork::Grain` (mind = raw `learn`/`recall` cell memory, NO agent-brain
+  drive); the confined session lives on `agent-platform::Tenant` (brain-driven,
+  only R1 checkpoint-countersign, NO fork/rewind). Composing them = the spine-#4
+  grain-struct UNIFICATION (give the Tenant's Session-mind fork/rewind, OR give
+  grain-fork::Grain an AgentBrain drive) + an agent-platform edit (another
+  terminal's file). A real unit, not a demo.
+- EGRESS DOOR needs a firmament API note: `spawn_pd_confined_with_surface` gives a
+  clean byte-pipe but the DEFAULT (endpoint-only) confinement; `spawn_pd_confined_
+  with(granted, Confinement, body)` takes a custom `Confinement` (add the net door
+  via `with_net_out("host:port")`) but gives NO surface socket. Combining a net
+  door WITH a clean line-protocol pipe needs either a firmament surface+confinement
+  variant (edit the excluded firmament crate) or the fd-recovery dance
+  (deos-hermes's `recover_endpoint_fd`). Decide before building the LLM body.
+
 ## Next moves (fresh head)
-1. `grain-jail::jail::spawn_confined_body_with_egress` — `Confinement::with_net_out`
-   grants ONE `host:port`; a test that a jailed body reaches only that door
-   (distinguish sandbox-deny correctly — no existing pattern to mirror, design it).
-2. The in-jail model harness: `dregg_agent::brain::OpenAICompatBrain` inside the
-   jail, reaching a MOCK model server on 127.0.0.1 over the granted door, emitting
-   confined-body proposals → the full "rent a coding agent" mechanic.
-3. PRODUCTIZE in agent-platform (a first-class confined/jailed drive) — its file
-   is another terminal's; do via a grain-jail helper or a quiet window.
-4. Run the `--features real-jail` lanes in CI/gauntlet (today `cargo test
-   -p grain-jail` silently skips them without the feature).
+1. The egress door — resolve the surface+netdoor variant question above first,
+   then `spawn_confined_body_with_egress` (`Confinement::with_net_out`, ONE
+   host:port) + a CORRECT deny test (distinguish sandbox-EPERM from ECONNREFUSED).
+2. The in-jail model harness: `OpenAICompatBrain` inside the jail over a MOCK
+   model server on 127.0.0.1 → the full "rent a coding agent" mechanic.
+3. Spine-#4 grain-struct unification (fork/rewind a confined session).
+4. PRODUCTIZE in agent-platform (first-class confined/jailed drive) — other
+   terminal's file; helper or quiet window. + run `--features real-jail` in CI.
 
 ## Key grounding facts (verified at HEAD)
 - The unification seam is `AgentBrain` (`dregg-agent/src/agent.rs:482`):

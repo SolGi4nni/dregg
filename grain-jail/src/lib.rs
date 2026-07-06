@@ -191,6 +191,9 @@ pub struct ConfinedBrain<C: BodyChannel> {
     done: bool,
     /// Count of proposals the host refused in-band (never reached the braid).
     unmapped_refusals: u64,
+    /// Set when the drive ended because the body did not send within the
+    /// channel's read timeout (a hung/wedged body) rather than finishing.
+    timed_out: bool,
 }
 
 impl<C: BodyChannel> ConfinedBrain<C> {
@@ -200,6 +203,7 @@ impl<C: BodyChannel> ConfinedBrain<C> {
             body,
             done: false,
             unmapped_refusals: 0,
+            timed_out: false,
         }
     }
 
@@ -207,6 +211,13 @@ impl<C: BodyChannel> ConfinedBrain<C> {
     /// (a health signal: a well-behaved body produces zero).
     pub fn unmapped_refusals(&self) -> u64 {
         self.unmapped_refusals
+    }
+
+    /// `true` if the drive ended because the body stopped sending within the
+    /// channel's read timeout (a hung body) — the host should reap it
+    /// (`JailedBody::kill`) rather than assume a clean exit.
+    pub fn timed_out(&self) -> bool {
+        self.timed_out
     }
 
     /// Consume the brain, returning the underlying channel (to close the jail).
@@ -239,10 +250,21 @@ impl<C: BodyChannel> AgentBrain for ConfinedBrain<C> {
                         continue;
                     }
                 },
-                // Done, clean EOF, or a broken channel all end the drive. A
-                // protocol/parse error ends it fail-closed (never fabricate an
-                // action from garbage).
-                Ok(Some(BodyMsg::Done(_))) | Ok(None) | Err(_) => {
+                // Done or clean EOF end the drive normally.
+                Ok(Some(BodyMsg::Done(_))) | Ok(None) => {
+                    self.done = true;
+                    return None;
+                }
+                // A broken/timed-out/garbage channel ends the drive fail-closed
+                // (never fabricate an action from an error). A read timeout — a
+                // body that stopped sending — is recorded so the host reaps it.
+                Err(e) => {
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) {
+                        self.timed_out = true;
+                    }
                     self.done = true;
                     return None;
                 }
