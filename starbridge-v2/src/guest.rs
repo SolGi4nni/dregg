@@ -14,9 +14,12 @@
 //!     zed), the [`TerminalPane`] (deos-terminal), and the [`ChatPane`] (deos-
 //!     matrix) — the real surfaces the cockpit mounts, here laid out clean as a
 //!     guest's desktop, NOT buried under inspector chrome;
-//!   * a **launcher-rolodex** of acquired gadgets — one card per wired
+//!   * a **launcher-rolodex** of gadgets — one card per wired
 //!     [`AppRegistry`](crate::app_registry::AppRegistry) entry (gallery · auction ·
-//!     bounty · tussle · …), the gizmos picked up along the journey;
+//!     bounty · tussle · …), PARTITIONED by the live session c-list: a gadget is
+//!     *acquired* iff the session actually holds its cap ([`Session::reaches`] —
+//!     the MUD's "you picked it up = you hold the cap"); the rest of the catalog
+//!     renders discoverable-but-not-held (dimmed), never silently equal;
 //!   * a **wonder strip** — a few glowing, pokeable cells (the AOL register, glow =
 //!     recent activity) drawn from the live [`WonderRoom`](crate::wonder::WonderRoom);
 //!   * and the inspector is **NOT shown** — it is one summon away (the ⌘K /
@@ -47,11 +50,14 @@ use gpui::{
     IntoElement, KeyDownEvent, ParentElement, Render, Styled, Window,
 };
 
+use dregg_cell::CellId;
+
 use crate::app_registry::AppRegistry;
 use crate::dock::chat_surface::ChatPane;
 use crate::dock::editor_surface::EditorPane;
 use crate::dock::surface::CockpitSurface;
 use crate::dock::terminal_surface::TerminalPane;
+use crate::session::Session;
 use crate::wonder::WonderRoom;
 use crate::world::World;
 
@@ -87,28 +93,78 @@ fn rgb_ok() -> gpui::Hsla {
     gpui::rgb(0x57d97f).into()
 }
 
-/// One **gadget** in the launcher-rolodex — a wired app the guest has acquired,
-/// projected from a real [`crate::app_registry::AppEntry`]. Pure data (the glyph +
-/// the entry's real name/description), so the rolodex content is read off the live
-/// registry, never a mock list.
+/// Whether a rolodex gadget is actually POSSESSED — the MUD's "you picked it up =
+/// you hold the cap". Decided by the live session c-list ([`Session::reaches`]),
+/// never by the registry: the registry is the catalog, the c-list is possession.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Possession {
+    /// The session's c-list reaches this gadget's app cell — acquired, held.
+    Held,
+    /// A catalog entry whose cap the session does NOT hold (or there is no
+    /// session / no launched cell to hold) — discoverable, rendered dimmed,
+    /// never silently equal to a held gadget.
+    Discoverable,
+}
+
+/// One **gadget** in the launcher-rolodex — a wired app from the real
+/// [`crate::app_registry::AppEntry`] catalog. Pure data (the glyph + the entry's
+/// real name/description + its [`Possession`]), so the rolodex content is read off
+/// the live registry AND the live session c-list, never a mock list.
 struct Gadget {
     glyph: &'static str,
     name: String,
     blurb: String,
+    /// Is the gadget's cap actually held by the session (the c-list decides)?
+    possession: Possession,
 }
 
-/// The acquired gadgets — one per wired registry entry, in registry order, each
-/// given a warm glyph by id (the rest of the row is the entry's REAL name +
-/// one-line description). This is the "rolodex of gizmos and gadgets acquired from
-/// the journey", read straight off [`AppRegistry::standard`].
-fn acquired_gadgets() -> Vec<Gadget> {
+impl Gadget {
+    fn held(&self) -> bool {
+        self.possession == Possession::Held
+    }
+}
+
+/// The gadget rolodex, partitioned by POSSESSION — one card per wired registry
+/// entry, in registry order, each marked [`Possession::Held`] iff the live
+/// `session` actually REACHES the gadget's app cell in the ledger
+/// ([`Session::reaches`] — the same c-list read the WM makes). The MUD semantics:
+/// picking a gadget up moved its cap into your c-list (`mud::pick_up`), so
+/// "acquired" is a fact of the ledger, not of the catalog.
+///
+/// `gadget_cells` is the id → app-cell designation of the gadgets that EXIST in
+/// this world (a launched app's cell, e.g. `LaunchedOnWorld::primary_cell()`,
+/// keyed by registry id). A registry [`crate::app_registry::AppEntry`] carries
+/// `{id, name, description, backend}` and NO `CellId` — a gadget's cap identity
+/// is born at launch, exactly as a MUD item is a cell in the world, so the host
+/// that launched the apps supplies the designations. An entry with no session, no
+/// designated cell, or an unreached cell is [`Possession::Discoverable`] — the
+/// catalog face, honestly not-held.
+fn acquired_gadgets(
+    session: Option<(&Session, &World)>,
+    gadget_cells: &[(&str, CellId)],
+) -> Vec<Gadget> {
     AppRegistry::standard()
         .entries()
         .iter()
-        .map(|e| Gadget {
-            glyph: glyph_for(e.id),
-            name: e.name.to_string(),
-            blurb: e.description.to_string(),
+        .map(|e| {
+            let cell = gadget_cells
+                .iter()
+                .find(|(id, _)| *id == e.id)
+                .map(|(_, c)| *c);
+            let held = match (session, cell) {
+                (Some((s, w)), Some(c)) => s.reaches(w, &c),
+                _ => false,
+            };
+            Gadget {
+                glyph: glyph_for(e.id),
+                name: e.name.to_string(),
+                blurb: e.description.to_string(),
+                possession: if held {
+                    Possession::Held
+                } else {
+                    Possession::Discoverable
+                },
+            }
         })
         .collect()
 }
@@ -267,7 +323,12 @@ impl GuestView {
             editor,
             terminal,
             chat,
-            gadgets: acquired_gadgets(),
+            // The guest bake mounts with NO logged-in session (and no launched
+            // gadget cells), so every catalog entry renders honestly as
+            // discoverable-not-held — possession is the c-list's to grant, never
+            // implied by the catalog. A host with a live session partitions via
+            // `acquired_gadgets(Some((&session, &world)), &launched_cells)`.
+            gadgets: acquired_gadgets(None, &[]),
             glow,
             inspector_rows,
             // App-forward by DEFAULT — the inspector is summoned, never the default
@@ -463,10 +524,14 @@ impl GuestView {
             .into_any_element()
     }
 
-    /// The **launcher-rolodex** rail — one card per acquired gadget (a wired app),
-    /// read off the live registry. The guest's "rolodex of gizmos and gadgets"; this
-    /// is where the apps you picked up on the journey live.
+    /// The **launcher-rolodex** rail — one card per gadget, read off the live
+    /// registry AND partitioned by the live session c-list: a HELD gadget (the
+    /// session reaches its cap — the MUD's "you picked it up") renders bright; a
+    /// DISCOVERABLE one (catalog only, cap not held) renders dimmed with a "not
+    /// held" tag — never silently equal.
     fn rolodex(&self) -> impl IntoElement {
+        let held_count = self.gadgets.iter().filter(|g| g.held()).count();
+        let discoverable_count = self.gadgets.len() - held_count;
         let mut rail = div()
             .flex()
             .flex_col()
@@ -489,21 +554,41 @@ impl GuestView {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child("YOUR GADGETS"),
                     )
-                    .child(
-                        div()
-                            .text_color(theme::muted())
-                            .text_xs()
-                            .child(format!("{} acquired", self.gadgets.len())),
-                    ),
+                    .child(div().text_color(theme::muted()).text_xs().child(format!(
+                        "{held_count} held · {discoverable_count} discoverable"
+                    ))),
             )
             .child(
                 div()
                     .text_color(theme::muted())
                     .text_xs()
-                    .child("the rolodex — apps from your journey · click to launch"),
+                    .child("the rolodex — held = the cap is in your c-list · dimmed = not held"),
             );
 
         for g in &self.gadgets {
+            let held = g.held();
+            // Possession decides the card's face: a held gadget is bright; a
+            // discoverable one is dimmed (glyph + name muted) and tagged.
+            let (glyph_color, name_color) = if held {
+                (theme::accent(), theme::text())
+            } else {
+                (theme::muted(), theme::muted())
+            };
+            let mut title_row = div().flex().items_baseline().gap_1().child(
+                div()
+                    .text_color(name_color)
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(g.name.clone()),
+            );
+            if !held {
+                title_row = title_row.child(
+                    div()
+                        .text_color(theme::muted())
+                        .text_xs()
+                        .child("· not held"),
+                );
+            }
             rail = rail.child(
                 div()
                     .flex()
@@ -514,7 +599,8 @@ impl GuestView {
                     .bg(theme::panel_hi())
                     .border_1()
                     .border_color(theme::border())
-                    .child(div().text_color(theme::accent()).text_sm().child(g.glyph))
+                    .when(!held, |card| card.opacity(0.6))
+                    .child(div().text_color(glyph_color).text_sm().child(g.glyph))
                     .child(
                         div()
                             .flex()
@@ -522,13 +608,7 @@ impl GuestView {
                             .flex_1()
                             .min_w(px(0.))
                             .overflow_hidden()
-                            .child(
-                                div()
-                                    .text_color(theme::text())
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(g.name.clone()),
-                            )
+                            .child(title_row)
                             .child(
                                 div()
                                     .text_color(theme::muted())
@@ -829,12 +909,16 @@ const GUEST_TERMINAL_SESSION: &str = concat!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::{CapEntry, CapTemplate, LoginManager, LoginOutcome};
+    use crate::world::make_open_cell;
+    use dregg_cell::AuthRequired;
 
     #[test]
     fn the_rolodex_is_read_off_the_real_registry() {
-        // The acquired gadgets are EXACTLY the wired registry entries (one card per
-        // app), in registry order — the rolodex is a live projection, never a mock list.
-        let gadgets = acquired_gadgets();
+        // The rolodex is EXACTLY the wired registry entries (one card per app), in
+        // registry order — a live projection, never a mock list. With NO session,
+        // every entry is honestly DISCOVERABLE: the catalog never implies possession.
+        let gadgets = acquired_gadgets(None, &[]);
         let entries = AppRegistry::standard();
         assert_eq!(
             gadgets.len(),
@@ -843,9 +927,10 @@ mod tests {
         );
         assert!(
             !gadgets.is_empty(),
-            "the guest has acquired at least one gadget"
+            "the catalog offers at least one gadget"
         );
-        // Each gadget carries the registry entry's REAL name + a non-empty blurb.
+        // Each gadget carries the registry entry's REAL name + a non-empty blurb,
+        // and with no session NONE reads as held.
         for (g, e) in gadgets.iter().zip(entries.entries().iter()) {
             assert_eq!(g.name, e.name, "the card shows the app's real name");
             assert!(
@@ -853,6 +938,11 @@ mod tests {
                 "the card shows a real description"
             );
             assert!(!g.glyph.is_empty(), "the card carries a warm glyph");
+            assert_eq!(
+                g.possession,
+                Possession::Discoverable,
+                "no session → no possession: the catalog is not the c-list"
+            );
         }
         // Known apps get warm glyphs (the wonder register), not the fallback mark.
         assert!(
@@ -860,6 +950,110 @@ mod tests {
                 .iter()
                 .any(|g| g.name == "Sealed Gallery" && g.glyph == "🖼"),
             "the gallery gadget gets its warm glyph"
+        );
+    }
+
+    /// A world with a launched gallery gadget cell + a system principal holding
+    /// full authority over it (the ceiling a session template attenuates from) —
+    /// the login fixture for the possession tests. Returns
+    /// `(world, manager, gallery_cell)`.
+    fn gadget_world() -> (World, LoginManager, CellId) {
+        let mut w = World::new();
+        // The gadget's app cell — the cap identity a launched gallery would have
+        // on this world (a MUD item is a cell in the world).
+        let gallery_cell = w.genesis_cell(0xA0, 0);
+        // The system principal holds the gadget cap — what login grants FROM.
+        let mut sys = make_open_cell(0x55, 0);
+        sys.capabilities
+            .grant(gallery_cell, AuthRequired::None)
+            .expect("the system principal holds the gadget cap");
+        let system_principal = w.genesis_install(sys);
+        (w, LoginManager::new(system_principal), gallery_cell)
+    }
+
+    /// THE MUD TOOTH, positive face: a session that HOLDS a gadget's cap (granted
+    /// through the REAL login ceremony — a real `Effect::GrantCapability` turn)
+    /// sees that gadget as ACQUIRED, and only that gadget: possession is per-cap,
+    /// read off the live c-list, never a blanket flag.
+    #[test]
+    fn a_session_holding_the_gadget_cap_sees_it_acquired() {
+        let (mut w, mgr, gallery_cell) = gadget_world();
+        let p = mgr.authenticate([7u8; 32], true).expect("auth passes");
+        // The template grants the gallery gadget cap into the session root — the
+        // "you picked it up" moment, via the real grant path.
+        let template = CapTemplate::empty().with(CapEntry::new(
+            gallery_cell,
+            AuthRequired::None,
+            true,
+            "gallery gadget",
+        ));
+        let session = match mgr.login(&mut w, p, &template) {
+            LoginOutcome::Session(s) => s,
+            LoginOutcome::Denied { reason } => panic!("login should succeed: {reason}"),
+        };
+        // The live c-list really reaches the gadget cell (the same read the WM makes).
+        assert!(
+            session.reaches(&w, &gallery_cell),
+            "the ceremony granted the gadget cap"
+        );
+
+        let gadgets = acquired_gadgets(Some((&session, &w)), &[("gallery", gallery_cell)]);
+        let gallery = gadgets
+            .iter()
+            .find(|g| g.name == "Sealed Gallery")
+            .expect("the gallery is in the catalog");
+        assert_eq!(
+            gallery.possession,
+            Possession::Held,
+            "the session holds the gallery cap → the gadget is ACQUIRED"
+        );
+        // Every OTHER catalog entry stays discoverable — possession is per-cap.
+        for g in gadgets.iter().filter(|g| g.name != "Sealed Gallery") {
+            assert_eq!(
+                g.possession,
+                Possession::Discoverable,
+                "{} has no held cap — it must not read as acquired",
+                g.name
+            );
+        }
+        assert_eq!(
+            gadgets.iter().filter(|g| g.held()).count(),
+            1,
+            "exactly the one held cap partitions as acquired"
+        );
+    }
+
+    /// THE MUD TOOTH, negative face: a session WITHOUT the gadget's cap (an empty
+    /// template — the ocap floor) sees the gadget as NOT acquired, even though the
+    /// gadget cell exists in the world and is designated. The registry stays the
+    /// catalog; the c-list decides possession.
+    #[test]
+    fn a_session_without_the_cap_sees_it_not_acquired() {
+        let (mut w, mgr, gallery_cell) = gadget_world();
+        let p = mgr.authenticate([9u8; 32], true).expect("auth passes");
+        // Born holding NOTHING — the ocap floor.
+        let session = match mgr.login(&mut w, p, &CapTemplate::empty()) {
+            LoginOutcome::Session(s) => s,
+            LoginOutcome::Denied { reason } => panic!("login should succeed: {reason}"),
+        };
+        assert!(
+            !session.reaches(&w, &gallery_cell),
+            "the empty-template session holds no gadget cap"
+        );
+
+        let gadgets = acquired_gadgets(Some((&session, &w)), &[("gallery", gallery_cell)]);
+        assert!(
+            gadgets.iter().all(|g| !g.held()),
+            "no held cap anywhere → NOTHING reads as acquired (never silently equal)"
+        );
+        let gallery = gadgets
+            .iter()
+            .find(|g| g.name == "Sealed Gallery")
+            .expect("the gallery is in the catalog");
+        assert_eq!(
+            gallery.possession,
+            Possession::Discoverable,
+            "the gadget exists + is designated, but the cap is not held → discoverable only"
         );
     }
 
