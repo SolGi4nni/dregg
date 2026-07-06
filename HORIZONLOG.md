@@ -70,20 +70,30 @@ NAMED-NOT-BUILT (census-surfaced, each with its seam):
 - **hermes-acp exclusivity knob** — upstream: honor explicit empty `enabled_toolsets` so the dregg
   MCP server is the model's ONLY tool source.
 
-## NOW-STATE addition (2026-07-05→overnight, Fable — the confined-body grain)
+## NOW-STATE addition (2026-07-05→06 overnight, Fable — the confined-body grain LANDED)
 
-Standing goal (`GOAL.md`): unify the grain + confined-agent hosting stacks so a
-hosted agent (a jailed coding agent, any BYO brain) IS a first-class grain —
-OS-jailed + leased/metered + forkable-mind-cell + R2-verifiable. Design:
-`docs/deos/GRAIN-CONFINED-BODY.md`. The seam = a `ConfinedBrain` (new crate
-`grain-jail`, deps `dregg-agent` + `dregg-firmament` `process-pd` only — NOT the
-heavy sdk that keeps `deos-hermes` a standalone workspace) plugging a jailed
-subprocess into the existing `AgentBrain` seam; the grain drive path is unchanged.
-Staged: (1) protocol + brain vs a stand-in body, (2) real firmament PD jail,
-(3) drive a real grain end-to-end + R2 renter-verify. Named follow-ups:
-adapt `deos-hermes` ACP onto the `grain-jail` line protocol; cross-platform
-sandbox coverage (Linux seccomp+landlock on a Linux builder, macOS Seatbelt
-local); the grain drive-path `Spend`/priced-tool mapping for a confined body.
+Standing goal (`GOAL.md`): a hosted agent (a jailed body, any BYO brain) IS a
+first-class grain — OS-jailed + leased/metered + forkable-mind-cell + R2-verified.
+The NEW crate `grain-jail` (deps `dregg-agent` + serde; `real-jail` feature adds
+`dregg-firmament` — NOT the heavy sdk that keeps `deos-hermes` standalone) is a
+`ConfinedBrain` that plugs a jailed subprocess into the existing `AgentBrain`
+seam — the grain drive path is UNCHANGED. Design `docs/deos/GRAIN-CONFINED-BODY.md`,
+onramp `docs/guide/CONFINED-AGENTS.md`, demo `cargo run -p grain-jail --example
+rent_a_confined_agent [--features real-jail]`. LANDED, all green:
+- seam + line protocol + `map_proposal` (`8de7447da`); `Op(ToolCall)`/fs work +
+  the priced/cell rails (`4fff5263a`).
+- REAL firmament OS-jail body (`f855fec2a`) — macOS Seatbelt, denies /etc/passwd;
+  validated locally.
+- REAL grain end-to-end (`ee47494c4`) + a REAL jailed body driving a REAL grain,
+  R2-verified (`d994fdee9`); crash-robust (`23df1d51e`, a crashing body leaves the
+  grain clean).
+NAMED FRONTIER (fresh-head, next): the real coding-agent body — a confined in-jail
+Rust harness reaching a model over ONE granted `EgressNetGrant` door
+(`spawn_pd_confined_with` + `OpenAICompatBrain` in-jail + a mock model server);
+exact APIs in the design doc's Frontier. Also: agent-platform first-class
+jailed-drive productization (its file is another terminal's — via a helper or a
+quiet window); adapt `deos-hermes` ACP onto the line protocol; SSE incremental
+transcript (spine #5).
 
 ## NOW-STATE addition (2026-07-05, Fable — join-with-a-doc + operated-layer-gap wiring LANDED)
 

@@ -166,6 +166,13 @@ The v13 VK epoch is packaged for ember's eyes-open call. Three human-gated items
   was a 301-file, 2.4G in-tree twin, now DELETED (2026-07-05) — a 4-lane gap audit (kept private) confirmed it
   was never ahead of the private operated-layer repo and everything real is ported/superseded; genuine gaps
   were drafted + wired into native crates. Residual cleanup DONE.
+- **THE CONFINED-BODY GRAIN — LANDED (2026-07-06 overnight, autonomous `/goal`)** — new crate `grain-jail`:
+  a `ConfinedBrain` plugs a jailed subprocess into the existing `AgentBrain` seam (ZERO grain-drive-path
+  change), so a hosted body is OS-jailed (firmament, macOS Seatbelt — denies /etc/passwd) yet every action
+  is cap-gated + metered + minted + R2-verified, and a crashing body leaves the grain clean. Demo:
+  `cargo run -p grain-jail --example rent_a_confined_agent [--features real-jail]`. Trail = `GOAL.md`;
+  detail = HORIZONLOG (07-05→06) + `docs/deos/GRAIN-CONFINED-BODY.md`. FRONTIER (fresh-head next) = the
+  in-jail LLM harness over ONE granted egress door (exact APIs in the design doc).
 
 ### IN-FLIGHT / HUMAN-GATED (what needs ember)
 
