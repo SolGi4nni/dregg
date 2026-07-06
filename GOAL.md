@@ -40,11 +40,15 @@ APIs in `docs/deos/GRAIN-CONFINED-BODY.md` (Frontier) — a clean fresh-head sta
   via `with_net_out("host:port")`) but gives NO surface socket. Combining a net
   door WITH a clean line-protocol pipe needs either a firmament surface+confinement
   variant (edit the excluded firmament crate) or the fd-recovery dance
-  (deos-hermes's `recover_endpoint_fd`). LEAD: `spawn_pd_confined_with` hands the
-  body a `KernelClient` (the CONTROL socket) — if KernelClient exposes its fd /
-  UnixStream, use THAT as the line-protocol byte-pipe (as deos-hermes uses the
-  endpoint), so the net-door Confinement + the pipe coexist with no firmament edit.
-  Verify KernelClient's API first. Decide before building the LLM body.
+  (deos-hermes's `recover_endpoint_fd`). RESOLVED: the KernelClient lead is a DEAD
+  END — `KernelClient { sock: Mutex<UnixStream> }` keeps its socket PRIVATE (no
+  accessor). So the clean path is a small FIRMAMENT ADDITION: a
+  `spawn_pd_confined_with_surface_and_confinement(granted, Confinement, body)`
+  variant giving BOTH a net-door `Confinement` AND a surface `UnixStream` (mirror
+  `spawn_pd_confined_with_surface` but thread a Confinement into
+  `spawn_pd_inner_with_extra`). Editing the excluded firmament crate = coordinated/
+  fresh-head. THAT is the real first step of the egress door; then grain-jail's
+  `spawn_confined_body_with_egress` is trivial on top. Decide before building the LLM body.
 
 ## Next moves (fresh head)
 1. The egress door — resolve the surface+netdoor variant question above first,
