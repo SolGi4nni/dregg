@@ -52,4 +52,39 @@ impl Cockpit {
         self.drain_live_stream(cx);
         true
     }
+
+    /// **The WORLD-BRIDGE pump tick** — drain the cross-process `WorldSink` socket
+    /// against the cockpit's LIVE World, on the World-owning thread.
+    ///
+    /// The [`WorldBridgeServer`](starbridge_v2::agent_attach::world_bridge::WorldBridgeServer)
+    /// is non-blocking by design: each pump accepts a pending client (the
+    /// `deos_hermes` MCP subprocess) and answers every request already waiting —
+    /// a `WithLedger` crawl reads the live ledger, a `FireEffects` commits a REAL
+    /// verified turn through `World::commit_turn` (receipt on the live provenance
+    /// log). Driven by the post-paint foreground task `login::SessionShell::open`
+    /// spawns (the same idiom as [`Self::pump_live`]); a served request fires
+    /// `cx.notify()` so a bridge-committed turn paints promptly. Returns whether
+    /// the pump should keep running (`false` when no bridge is bound — the
+    /// env-ungated default — so the task self-stops).
+    #[cfg(all(feature = "agent-js", unix))]
+    pub fn pump_world_bridge(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(server) = self.world_bridge.as_mut() else {
+            return false;
+        };
+        let mut sink = starbridge_v2::agent_attach::WorldSinkAdapter::live(self.world.clone());
+        match server.pump(&mut sink) {
+            Ok(0) => {}
+            Ok(_) => {
+                // A bridge request landed (a crawl answered / a real turn committed)
+                // — repaint so the ledger/receipt surfaces reflect it this frame.
+                cx.notify();
+            }
+            Err(e) => {
+                // Fail-soft: a socket fault drops the client inside `pump`; report
+                // listener-level errors without taking the pump (or cockpit) down.
+                eprintln!("world-bridge pump: {e}");
+            }
+        }
+        true
+    }
 }

@@ -793,6 +793,25 @@ pub struct Cockpit {
     /// verb; the per-receipt updates come from `live_stream`.
     live_snapshot: Option<starbridge_v2::client::LiveSnapshot>,
 
+    // --- THE WORLD BRIDGE, SERVING SIDE (agent hands on the LIVE World) ------
+    /// The cross-process `WorldSink` server ([`starbridge_v2::agent_attach::world_bridge`])
+    /// bound over the cockpit's LIVE World — the socket a `deos_hermes` MCP
+    /// subprocess's `run_js` connects to. Bound at construction ONLY when the env
+    /// `DEOS_WORLD_BRIDGE_SOCKET` names a socket path (unset ⇒ `None`, zero
+    /// behavior change), and pumped off the frame loop by the post-paint task in
+    /// `login::SessionShell::open` (the same foreground-timer idiom as the
+    /// live-node pump) — the World never crosses threads; the socket comes to it.
+    #[cfg(all(feature = "agent-js", unix))]
+    world_bridge: Option<starbridge_v2::agent_attach::world_bridge::WorldBridgeServer>,
+
+    // --- THE LIVE LOGIN SESSION (rolodex possession + the launching host) ----
+    /// The LIVE login session's cap-tree view, threaded in by
+    /// `login::SessionShell::open` after the ceremony (`None` for the headless
+    /// bakes / pre-login mounts). The launcher's gadget ROLODEX partitions
+    /// possession against exactly this ([`starbridge_v2::session::Session::reaches`]
+    /// over the live ledger) — a launched-and-held gadget renders Held.
+    session: Option<starbridge_v2::session::Session>,
+
     // --- the WEB-OF-CELLS browser panel state ------------------------------
     /// Which `dregg://` cell the web-of-cells browser has OPENED (the focused
     /// row whose affordance surface is projected). `None` opens the first

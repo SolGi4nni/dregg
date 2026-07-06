@@ -303,6 +303,37 @@ impl Cockpit {
         // re-fold the genesis events whose cells `self.cells` already carries.
         let dynamics_cursor = world.borrow().dynamics().cursor();
 
+        // THE WORLD BRIDGE, SERVING SIDE — bind the cross-process `WorldSink`
+        // socket over THIS cockpit's live World when the operator asked for it
+        // (`DEOS_WORLD_BRIDGE_SOCKET=<path>` at boot). Env-gated: unset ⇒ `None`,
+        // zero behavior change. Fail-soft: a bind failure is reported and the
+        // cockpit boots without the bridge (never a boot abort). The non-blocking
+        // server is drained by `pump_world_bridge` off the frame loop.
+        #[cfg(all(feature = "agent-js", unix))]
+        let world_bridge = match std::env::var_os("DEOS_WORLD_BRIDGE_SOCKET") {
+            Some(path) => {
+                let path = std::path::PathBuf::from(path);
+                match starbridge_v2::agent_attach::world_bridge::WorldBridgeServer::bind(&path) {
+                    Ok(server) => {
+                        eprintln!(
+                            "world-bridge: serving the LIVE World on {} (DEOS_WORLD_BRIDGE_SOCKET)",
+                            path.display()
+                        );
+                        Some(server)
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "world-bridge: could not bind {} — the cockpit boots without the \
+                             bridge: {e}",
+                            path.display()
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
         Self {
             world,
             cells,
@@ -359,6 +390,13 @@ impl Cockpit {
             live_stream,
             live_feed,
             live_snapshot,
+            #[cfg(all(feature = "agent-js", unix))]
+            world_bridge,
+            // The LIVE login session is threaded in AFTER construction by
+            // `login::SessionShell::open` (`set_session`); the headless bakes and
+            // the pre-login mounts run session-less (the rolodex partitions
+            // honestly as all-discoverable).
+            session: None,
             web_cells_opened: None,
             web_cells_viewer_rights: dregg_cell::AuthRequired::Either,
             web_cells_outcome: None,
@@ -547,6 +585,15 @@ impl Cockpit {
 
     pub(crate) fn refresh_cells(&mut self) {
         self.cells = sorted_cells(&self.world.borrow());
+    }
+
+    /// Thread the LIVE login session into the cockpit (called by
+    /// `login::SessionShell::open` after the ceremony). The gadget rolodex's
+    /// possession partition reads THIS session's c-list against the live ledger
+    /// ([`starbridge_v2::session::Session::reaches`]); un-set (the bakes /
+    /// pre-login mounts), every catalog entry renders honestly discoverable.
+    pub fn set_session(&mut self, session: starbridge_v2::session::Session) {
+        self.session = Some(session);
     }
 
     /// M2 — THE DELTA FOLD. Pull every dynamics event since the last render and

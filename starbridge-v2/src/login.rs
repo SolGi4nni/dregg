@@ -789,6 +789,10 @@ impl SessionShell {
             // brand-new owner (the warm landing, not the wall). One click ("explore"
             // / a cell / "try this") reveals the full frame.
             cockpit.update(cx, |c, _c_cx| c.set_first_run(first_run));
+            // THE ROLODEX POSSESSION WIRE — hand the cockpit the LIVE session so
+            // the launcher's gadget rolodex partitions Held/Discoverable against
+            // the real cap-tree (`Session::reaches` over the live ledger).
+            cockpit.update(cx, |c, _c_cx| c.set_session(session_for_root.clone()));
             cockpit.update(cx, |c, c_cx| c.focus_on_open(window, c_cx));
 
             let session_shell = cx.new(|s_cx| {
@@ -851,6 +855,31 @@ impl SessionShell {
             }
         })
         .detach();
+
+        // THE WORLD-BRIDGE PUMP — drain the cross-process `WorldSink` socket (the
+        // `deos_hermes` MCP subprocess's hands on the LIVE World) on the
+        // World-owning foreground loop, the same timer idiom as the live-node
+        // pump above. Env-gated at construction (`DEOS_WORLD_BRIDGE_SOCKET`): with
+        // no bridge bound the first tick returns `false` and the task self-stops
+        // (unset ⇒ zero behavior change). A shorter beat than the SSE pump so a
+        // bridge round-trip (crawl → fire → receipt) stays snappy for the agent.
+        #[cfg(all(feature = "agent-js", unix))]
+        {
+            let bridge_cockpit = shell.read(cx).cockpit.downgrade();
+            cx.spawn(async move |cx| loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+                let keep = match bridge_cockpit.update(cx, |c, c_cx| c.pump_world_bridge(c_cx)) {
+                    Ok(keep) => keep,
+                    Err(_) => break,
+                };
+                if !keep {
+                    break;
+                }
+            })
+            .detach();
+        }
     }
 
     /// LOGOUT — revoke the session root (the whole cap-tree goes dark, synchronous

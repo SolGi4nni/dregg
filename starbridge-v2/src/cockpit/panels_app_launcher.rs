@@ -211,6 +211,66 @@ impl Cockpit {
             }
         }
 
+        // ── THE GADGET ROLODEX — the guest partition, LIVE in the cockpit ──
+        // The SAME `guest::acquired_gadgets` read the guest bake renders (there
+        // with no session — all discoverable), here over the LIVE session + the
+        // launched designations recorded above: a launched-and-picked-up gadget
+        // renders HELD (its cap is genuinely in the session c-list); the rest of
+        // the catalog renders discoverable — never silently equal.
+        #[cfg(all(feature = "gpui-ui", feature = "dev-surfaces"))]
+        {
+            let designations: Vec<(&str, CellId)> =
+                launched.iter().map(|a| (a.id.as_str(), a.cell)).collect();
+            let world = self.world.borrow();
+            let gadgets = starbridge_v2::guest::acquired_gadgets(
+                self.session.as_ref().map(|s| (s, &*world)),
+                &designations,
+            );
+            let held_count = gadgets.iter().filter(|g| g.held()).count();
+            col = col.child(
+                section_title(format!(
+                    "YOUR GADGETS · the rolodex — {held_count} held · {} discoverable",
+                    gadgets.len() - held_count
+                ))
+                .mt_2()
+                .mb_1(),
+            );
+            col = col.child(div().text_xs().text_color(theme::muted()).child(
+                if self.session.is_some() {
+                    "held = the gadget's cap is in YOUR session c-list (a launch picks it up \
+                     via a real grant turn) · dimmed = catalog only, not held"
+                } else {
+                    "no live session — every gadget renders honestly as discoverable \
+                     (possession is the c-list's to grant, never the catalog's)"
+                },
+            ));
+            for g in &gadgets {
+                let held = g.held();
+                let name_color = if held { theme::text() } else { theme::muted() };
+                let mut row = div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(theme::panel())
+                    .child(div().text_xs().text_color(name_color).child(g.glyph))
+                    .child(div().text_xs().text_color(name_color).child(g.name.clone()));
+                row = if held {
+                    row.child(pill("held", theme::good()))
+                } else {
+                    row.child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::muted())
+                            .child("· not held"),
+                    )
+                };
+                col = col.child(row);
+            }
+        }
+
         col
     }
 
@@ -236,23 +296,48 @@ impl Cockpit {
                 let cell = launched.primary_cell();
                 let rhex = reflect::short_hex(&launched.receipt.receipt_hash());
                 let actions = launched.receipt.action_count;
+                // THE ROLODEX DESIGNATION — record `(registry_id, primary_cell)`;
+                // the launcher's gadget rolodex partitions possession over exactly
+                // these designations + the live session.
                 self.apps_launched.push(LaunchedAppRecord {
                     id: id.clone(),
                     name: name.clone(),
                     cell,
                 });
+                // THE PICK-UP — with a LIVE session, designate the launched gadget
+                // into the session root's c-list via one real verified grant turn
+                // (`pick_up_gadget`), so `Session::reaches` — and the rolodex's
+                // Held partition — genuinely flips. Fail-closed: a refusal is
+                // surfaced in the banner and the gadget stays Discoverable.
+                let picked_up = match self.session.as_ref().map(|s| s.root_cell) {
+                    Some(root) => {
+                        let outcome = starbridge_v2::app_registry::pick_up_gadget(
+                            &mut self.world.borrow_mut(),
+                            root,
+                            cell,
+                        );
+                        match outcome {
+                            Ok(_) => " Picked up: its cap is now in your session c-list \
+                                      (the rolodex shows it HELD)."
+                                .to_string(),
+                            Err(e) => format!(" Pick-up refused (rolodex stays not-held): {e}"),
+                        }
+                    }
+                    None => String::new(),
+                };
                 self.selection = Selection::Cell(cell);
                 let has_card = self.has_live_card(&id);
                 self.apps_outcome = Some(format!(
                     "launched {name}: cell {} on your live World — fired its representative \
-                     verified turn (receipt {rhex}, {actions} action(s)). {} Inspect it in \
+                     verified turn (receipt {rhex}, {actions} action(s)). {}{} Inspect it in \
                      OBJECTS / INSPECTOR.",
                     reflect::short_hex(&cell.0),
                     if has_card {
                         "Its live CARD opened in a dock pane (its buttons fire real verified turns)."
                     } else {
                         ""
-                    }
+                    },
+                    picked_up
                 ));
                 // FULL VIEW MOUNTING: open the app's BESPOKE deos-view card as a live dock
                 // surface, bound to the just-launched cell on the live World — so the app

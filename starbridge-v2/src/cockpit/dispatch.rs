@@ -128,12 +128,39 @@ impl Cockpit {
                 );
                 cx.notify();
             }
+            // The CHAT CARD: chat-as-a-card over the embedded world-chat source (a
+            // send = one real verified turn on the room cell). Needs `card-pane`
+            // (the card renderer) + `embedded-executor` (the world-chat source's
+            // World) on top of `dev-surfaces` — same deferred-window open path.
+            #[cfg(all(
+                feature = "dev-surfaces",
+                feature = "card-pane",
+                feature = "embedded-executor"
+            ))]
+            CommandId::OpenChatCard => {
+                self.open_dev_pane_deferred(cx, Cockpit::open_chat_card_pane)
+            }
+            // Chat-card command present in the palette but the build lacks the card
+            // renderer / the embedded world: a comprehensive-palette no-op.
+            #[cfg(all(
+                feature = "dev-surfaces",
+                not(all(feature = "card-pane", feature = "embedded-executor"))
+            ))]
+            CommandId::OpenChatCard => {
+                self.last_outcome = Some(
+                    "Open Chat Card needs the `card-pane` + `embedded-executor` build \
+                     (the card renderer over the embedded world-chat)"
+                        .into(),
+                );
+                cx.notify();
+            }
             #[cfg(not(feature = "dev-surfaces"))]
             CommandId::OpenTerminalPane
             | CommandId::OpenEditorPane
             | CommandId::OpenAgentPane
             | CommandId::OpenCardPane
-            | CommandId::OpenMembrane => {}
+            | CommandId::OpenMembrane
+            | CommandId::OpenChatCard => {}
 
             CommandId::SwarmCoordinatorEmitA => self.swarm_coordinator_emit_a(cx),
             CommandId::SwarmWorkerADrain => self.swarm_worker_a_drain(cx),

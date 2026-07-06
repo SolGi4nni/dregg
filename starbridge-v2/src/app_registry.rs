@@ -618,6 +618,68 @@ impl LaunchedOnWorld {
     }
 }
 
+/// **PICK UP a launched gadget into a live session** — the MUD's "you picked it
+/// up = you hold the cap", at the launcher.
+///
+/// The MUD shape exactly ([`crate::mud::pick_up`]): possession moves from a
+/// HOLDER via a real [`crate::powerbox::Powerbox::grant`] turn (the executor's
+/// `mint_needs_held_factory` + no-amplification gates bite). A just-launched
+/// app has no holder yet, so the pick-up first births **the launch shelf** — a
+/// fresh genesis cell already holding the gadget cap
+/// ([`crate::world::World::genesis_cell_with_cap`], the same
+/// cap-grafted-before-install pattern the MUD uses for an item on the floor) —
+/// then grants shelf → `session_root` through the real powerbox turn. NOTE a
+/// self-grant FROM the gadget cell would be refused instead: the launched app
+/// cell carries its own `Cases` program and the executor's touched-cell
+/// program gate default-denies a non-app action naming it — a real tooth, so
+/// possession routes through a holder, never through the app's own program.
+///
+/// After a committed pick-up, [`crate::session::Session::reaches`] is true for
+/// the gadget cell and the guest rolodex
+/// ([`crate::guest::acquired_gadgets`] on the gpui builds) partitions it
+/// **Held**. Fail-closed: a refusal returns the executor's/powerbox's real
+/// reason (the gadget stays honestly Discoverable).
+#[cfg(feature = "embedded-executor")]
+pub fn pick_up_gadget(
+    world: &mut World,
+    session_root: CellId,
+    gadget_cell: CellId,
+) -> Result<Box<dregg_turn::turn::TurnReceipt>, String> {
+    use crate::powerbox::{Powerbox, PowerboxOutcome};
+
+    // THE LAUNCH SHELF — a fresh open genesis cell born holding the gadget cap
+    // (grafted BEFORE install, so this is a legitimate fresh-cell genesis like
+    // the launch's own app-cell install — never a mutation of an existing
+    // cell's c-list outside a turn). Scan for an unoccupied seed the same way
+    // the launcher does (`make_open_cell` derives the id from the seed).
+    let seed = {
+        let ledger = world.ledger();
+        let mut s: u8 = 0x9B;
+        for _ in 0..256u16 {
+            if !ledger.contains(&crate::world::make_open_cell(s, 0).id()) {
+                break;
+            }
+            s = s.wrapping_add(7); // stride coprime to 256 — visits every residue
+        }
+        s
+    };
+    let (shelf, _held_slot) = world.genesis_cell_with_cap(seed, 0, gadget_cell);
+
+    // The REAL powerbox grant: shelf (the holder) → the session root. One
+    // verified turn; the gadget cell is neither the action target nor a grant
+    // endpoint, so its app program is not in the turn's touched set.
+    match Powerbox::grant(
+        world,
+        shelf,
+        session_root,
+        gadget_cell,
+        dregg_cell::AuthRequired::None,
+    ) {
+        PowerboxOutcome::Granted { receipt, .. } => Ok(receipt),
+        PowerboxOutcome::Denied { reason } => Err(reason),
+    }
+}
+
 /// **The cockpit's app registry** — the list of pre-built starbridge-apps wired
 /// into the live image. [`AppRegistry::standard`] is the starter set; launch an
 /// entry with [`AppEntry::launch`] (or [`AppRegistry::launch`] by id).
@@ -1337,6 +1399,13 @@ impl AppRegistry {
                                 SeedField {
                                     slot: n::OWNER_HASH_SLOT,
                                     value: dregg_app_framework::field_from_bytes(&owner),
+                                },
+                                SeedField {
+                                    // The authority register: raw key, NOT hashed —
+                                    // SenderInSlot compares ctx.sender (the raw signer
+                                    // pk) against the slot bytes.
+                                    slot: n::OWNER_PK_SLOT,
+                                    value: owner,
                                 },
                                 SeedField {
                                     slot: n::EXPIRY_SLOT,

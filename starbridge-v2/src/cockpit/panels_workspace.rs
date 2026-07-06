@@ -905,6 +905,48 @@ impl Cockpit {
         self.graft_dev_pane(surface, window, cx);
     }
 
+    /// Open the CHAT CARD pane: chat-as-a-card ([`build_chat_card_surface`], the
+    /// same card renderer the composer mounts through), grafted as a split beside
+    /// the active pane. The card's room is a REAL cell and its composer input
+    /// routes `chat:send-turn` to the genuine `ChatSource::send_turn` — one
+    /// verified turn per send, a receipt on the room cell.
+    ///
+    /// The source is the EMBEDDED world-chat ([`crate::world_chat::world_chat_card`]):
+    /// rooms are real cells, a send is a real verified turn, NO homeserver / creds
+    /// required. Named seam: the Matrix-BACKED variant (a live `MatrixHandle` over
+    /// homeserver creds) is the federated alternative — the same `ChatSource`
+    /// surface, swapped inside `world_chat_card`'s constructor when a live handle
+    /// exists. Fail-soft: a build error banners and leaves the workspace untouched.
+    #[cfg(all(
+        feature = "dev-surfaces",
+        feature = "card-pane",
+        feature = "embedded-executor"
+    ))]
+    pub(crate) fn open_chat_card_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use starbridge_v2::dock::card_surface::build_chat_card_surface;
+
+        let id = self.next_dev_surface_id();
+        let chat = match crate::world_chat::world_chat_card("@ember:deos.local") {
+            Ok(chat) => chat,
+            Err(e) => {
+                eprintln!("open_chat_card_pane: could not open the world-chat card: {e}");
+                self.last_outcome = Some(format!("could not open chat card: {e}"));
+                cx.notify();
+                return;
+            }
+        };
+        let surface: Box<dyn CockpitSurface> = match build_chat_card_surface(id, chat, cx) {
+            Ok(surface) => Box::new(surface),
+            Err(e) => {
+                eprintln!("open_chat_card_pane: could not mount the chat card: {e}");
+                self.last_outcome = Some(format!("could not mount chat card: {e}"));
+                cx.notify();
+                return;
+            }
+        };
+        self.graft_dev_pane(surface, window, cx);
+    }
+
     /// Mint a dev-surface id in the high range (away from the `0..27` tab ids).
     /// Derived from the live pane count so repeated opens get distinct ids
     /// without a persistent counter field; a dev surface lives alone in its own

@@ -321,9 +321,60 @@ impl ChatSource for WorldChatSource {
         Ok(crate::reflect::short_hex(slot_id.as_bytes()))
     }
 
+    /// **The room cell, folded from the REAL world** — the default trait impl
+    /// returns a zeroed sketch (`turn_count: 0`), which would freeze the mounted
+    /// chat card's watermark/bind at 0 forever. Here the projection is honest:
+    /// `turn_count` = the written slots in the room's real ring (each posted by
+    /// ONE verified turn), `state_root` = the live world's actual state root —
+    /// so a `send_turn`'s [`deos_matrix::SendReceipt::turn_index`] genuinely
+    /// advances and the card's audit-tape pulse sees foreign posts too.
+    fn room_cell(&self, room_id: &str) -> deos_matrix::RoomCell {
+        let mut rc = deos_matrix::RoomCell::for_room(room_id);
+        let Some(ri) = self.room_index(room_id) else {
+            return rc;
+        };
+        let world = self.world.lock().unwrap();
+        let mut written = 0u64;
+        for slot_id in &self.rooms[ri].slots {
+            let posted = world
+                .ledger()
+                .get(slot_id)
+                .and_then(|c| c.state.fields.first().map(|hdr| hdr[0] == 1))
+                .unwrap_or(false);
+            if posted {
+                written += 1;
+            }
+        }
+        rc.turn_count = written;
+        rc.state_root = world.state_root();
+        rc
+    }
+
     fn backend_label(&self) -> &'static str {
         "dregg-world (the chat IS the world)"
     }
+}
+
+/// **Open the CHAT CARD over the world-backed embedded source** — the gpui-free
+/// construction the cockpit's "Open Chat Card" palette command mounts (via
+/// `dock::card_surface::build_chat_card_surface`): a fresh seeded
+/// [`WorldChatSource`] (rooms are real cells, a send is a real verified turn —
+/// no homeserver) with a [`deos_matrix::chat_card::ChatCard`] opened on its
+/// first room. Named seam: the Matrix-BACKED variant (a live `MatrixHandle`
+/// over homeserver creds) is the federated alternative source — same
+/// `ChatSource` surface, swapped at this constructor.
+pub fn world_chat_card(me: &str) -> std::result::Result<deos_matrix::chat_card::ChatCard, String> {
+    use std::sync::Arc;
+    let source = WorldChatSource::seeded(me);
+    let rooms = source
+        .rooms()
+        .map_err(|e| format!("world-chat rooms: {e}"))?;
+    let first = rooms
+        .first()
+        .ok_or_else(|| "the world-chat source seeded no rooms".to_string())?;
+    let room_id = first.room_id.to_string();
+    let src: Arc<dyn ChatSource> = Arc::new(source);
+    Ok(deos_matrix::chat_card::ChatCard::open(src, room_id))
 }
 
 #[cfg(test)]
@@ -388,6 +439,46 @@ mod tests {
             chat.timeline(&other, 80).unwrap().len(),
             1,
             "the other room has its own message"
+        );
+    }
+
+    /// The chat-card OPENER the cockpit mounts: `world_chat_card` yields a live
+    /// [`deos_matrix::chat_card::ChatCard`] over the embedded world-chat source —
+    /// opened on a real room cell, sending ONE real verified turn (the receipt's
+    /// turn index advances the room cell), the timeline read back from real cell
+    /// state. This is the gpui-free core of the "Open Chat Card" palette wire.
+    #[test]
+    fn the_chat_card_opens_over_the_embedded_world_source() {
+        let chat = world_chat_card("@ember:deos.local").expect("the card opens");
+        assert_eq!(
+            chat.backend_label(),
+            "dregg-world (the chat IS the world)",
+            "the card rides the world-backed source (no homeserver)"
+        );
+        assert!(
+            !chat.room_id().is_empty(),
+            "the card opened on the first seeded room"
+        );
+        let turns_before = chat.room().turn_count;
+        assert!(
+            chat.timeline().expect("timeline reads").is_empty(),
+            "a fresh room has no messages"
+        );
+
+        // A send through the CARD is one real verified turn on the room cell.
+        let receipt = chat
+            .send("hello through the mounted chat card")
+            .expect("the send commits a real turn");
+        assert_eq!(
+            receipt.turn_index,
+            turns_before + 1,
+            "the room cell advanced by exactly one turn"
+        );
+        let tl = chat.timeline().expect("timeline reads back");
+        assert_eq!(tl.len(), 1, "the sent message is in the live timeline");
+        assert!(
+            tl[0].body.contains("mounted chat card"),
+            "the body round-trips through real cell fields"
         );
     }
 

@@ -629,4 +629,153 @@ mod tests {
             Ok(_) => panic!("a tampered umem must NOT resume — it bypassed the root tooth"),
         }
     }
+
+    /// **THE WORLD-BRIDGE SERVING WIRE, PROVEN BY RUNNING** (gpui-free,
+    /// SpiderMonkey-free — a raw socket client speaks the frame protocol): the
+    /// non-blocking [`world_bridge::WorldBridgeServer`] the cockpit frame loop
+    /// pumps is (a) INERT with no client (each pump `Ok(0)`, the live World
+    /// untouched), (b) answers a `WithLedger` crawl with the LIVE cells,
+    /// (c) commits a `FireEffects` as ONE real verified turn on the live ledger
+    /// (height +1, the receipt hash returned over the wire), and (d) survives a
+    /// client hang-up (a later pump drops it, ready for a fresh client).
+    ///
+    /// The raw client runs on its OWN thread, exactly like the real
+    /// `deos_hermes` MCP subprocess — it DRAINS each response as it arrives. (A
+    /// `Ledger` snapshot exceeds the Unix-socket buffer, so a same-thread client
+    /// that isn't reading would stall the pump's response write; the World stays
+    /// on the pumping thread — only raw bytes cross.)
+    #[cfg(unix)]
+    #[test]
+    fn world_bridge_pump_is_inert_alone_and_serves_a_raw_client() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+
+        use world_bridge::{BridgeRequest, BridgeResponse, WorldBridgeServer};
+
+        fn write_frame<T: serde::Serialize>(w: &mut UnixStream, msg: &T) {
+            let bytes = serde_json::to_vec(msg).expect("encode frame");
+            w.write_all(&(bytes.len() as u32).to_le_bytes()).unwrap();
+            w.write_all(&bytes).unwrap();
+            w.flush().unwrap();
+        }
+        fn read_frame<T: serde::de::DeserializeOwned>(r: &mut UnixStream) -> T {
+            let mut len = [0u8; 4];
+            r.read_exact(&mut len).expect("response length header");
+            let mut buf = vec![0u8; u32::from_le_bytes(len) as usize];
+            r.read_exact(&mut buf).expect("response body");
+            serde_json::from_slice(&buf).expect("decode response")
+        }
+
+        // The cockpit's real image + the SAME live sink the cockpit pump builds.
+        let (world, anchors) = crate::world::demo_world();
+        let [_treasury, _service, user] = anchors;
+        let live = Rc::new(RefCell::new(world));
+        let cell_count = live.borrow().cell_count();
+        let mut sink = WorldSinkAdapter::live(live.clone());
+
+        // A short socket path (macOS sun_path is 104 bytes — keep it tiny).
+        let path = std::env::temp_dir().join(format!("deos-wb-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut server = WorldBridgeServer::bind(&path).expect("bind the bridge socket");
+
+        // (a) INERT with no client: pump never blocks, serves nothing, and the
+        // live World is untouched.
+        let pre_height = live.borrow().height();
+        for _ in 0..3 {
+            assert_eq!(server.pump(&mut sink).expect("inert pump"), 0);
+        }
+        assert!(!server.has_client(), "no client accepted yet");
+        assert_eq!(
+            live.borrow().height(),
+            pre_height,
+            "no turn from idle pumps"
+        );
+
+        // (b)+(c) THE RAW CLIENT — its own thread (the subprocess stand-in):
+        // connect, crawl (`WithLedger`), then fire ONE verified turn
+        // (`FireEffects`, the agent-writes-its-own-slot shape the attached
+        // applet commits), draining each response before the next request.
+        let field = {
+            let mut f = [0u8; 32];
+            f[..8].copy_from_slice(&7u64.to_le_bytes());
+            f
+        };
+        let fire_req = BridgeRequest::FireEffects {
+            agent: user,
+            method: "bump".to_string(),
+            effects: vec![Effect::SetField {
+                cell: user,
+                index: AGENT_COUNTER_SLOT,
+                value: field,
+            }],
+        };
+        let client_path = path.clone();
+        let client = std::thread::spawn(move || {
+            let mut c = UnixStream::connect(&client_path).expect("connect the raw client");
+            write_frame(&mut c, &BridgeRequest::WithLedger);
+            let crawl: BridgeResponse = read_frame(&mut c);
+            write_frame(&mut c, &fire_req);
+            let fired: BridgeResponse = read_frame(&mut c);
+            (crawl, fired)
+        });
+
+        // The World-owning thread PUMPS (the frame-loop stand-in) until both
+        // requests are served — never blocking on a request that hasn't arrived.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut served = 0usize;
+        while served < 2 {
+            served += server.pump(&mut sink).expect("pump");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the pump did not serve both requests in time (served {served})"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(served, 2, "exactly the two requests were served");
+
+        let (crawl, fired) = client.join().expect("the raw client thread");
+        match crawl {
+            BridgeResponse::Ledger { cells } => {
+                assert_eq!(
+                    cells.len(),
+                    cell_count,
+                    "the crawl snapshot is the LIVE ledger's real cells"
+                );
+            }
+            other => panic!("expected the Ledger snapshot, got {other:?}"),
+        }
+        match fired {
+            BridgeResponse::Fired(Ok(hash)) => {
+                let w = live.borrow();
+                let receipts = w.receipts().len();
+                assert!(receipts > 0, "the receipt is on the live log");
+                assert_eq!(
+                    hash,
+                    w.receipts()[receipts - 1].receipt_hash(),
+                    "the wire returned the REAL receipt hash of the committed turn"
+                );
+            }
+            other => panic!("expected a committed fire, got {other:?}"),
+        }
+        assert_eq!(
+            live.borrow().height(),
+            pre_height + 1,
+            "exactly ONE verified turn landed on the live World"
+        );
+
+        // (d) The client hung up (its thread ended) — a later pump drops it
+        // cleanly and the server is ready for a fresh client.
+        let mut dropped = false;
+        for _ in 0..20 {
+            let _ = server.pump(&mut sink).expect("post-EOF pump");
+            if !server.has_client() {
+                dropped = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(dropped, "the hung-up client was dropped");
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

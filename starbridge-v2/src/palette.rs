@@ -131,6 +131,15 @@ pub enum CommandId {
     /// branch-and-stitch settlement gate. (A no-op if the `dev-surfaces` build is
     /// off.)
     OpenMembrane,
+    /// Open the CHAT CARD — chat-as-a-card in its own split pane: the
+    /// deos-matrix chat card (room = a real cell, timeline = the cell's turn
+    /// history read back) mounted through the SAME card renderer as the
+    /// composer, its composer input routing `chat:send-turn` to the REAL
+    /// `ChatSource::send_turn` (one verified turn per send). Rides the embedded
+    /// world-chat source (real turns, no homeserver; the Matrix-backed source is
+    /// the named federated variant). (A no-op if `card-pane`/`dev-surfaces` is
+    /// off.)
+    OpenChatCard,
 
     // --- SURFACE MIGRATION (the Local→Surface tear-off) ---
     /// TEAR OFF the active surface into its own OS window — the Local→Surface
@@ -244,6 +253,7 @@ impl CommandId {
             | OpenAgentPane
             | OpenCardPane
             | OpenMembrane
+            | OpenChatCard
             | SwarmCoordinatorEmitA
             | SwarmWorkerADrain
             | SwarmCoordinatorTransferAndWake
@@ -352,6 +362,9 @@ impl CommandId {
             }
             OpenMembrane => {
                 "Open Membrane (the deos social pane · a message IS a cap-bounded world-fork you mint · drive · stitch)"
+            }
+            OpenChatCard => {
+                "Open Chat Card (chat-as-a-card · a send is ONE real verified turn on the room cell)"
             }
             ShellOpenSelected => "Shell: open the selected cell as a surface",
             ShellFocusFront => "Shell: focus the front surface (cap-gated)",
@@ -484,6 +497,9 @@ impl CommandId {
             }
             OpenMembrane => {
                 "open membrane chat deos-matrix social multiplayer message world-fork frustum mint rehydrate drive stitch settlement branch fork capability bounded room timeline send turn comms-pd dock pane"
+            }
+            OpenChatCard => {
+                "open chat card room cell timeline send turn message deos-matrix world-chat composer card view mount dock pane embedded no-homeserver"
             }
             ShellOpenSelected => "open window surface cell app spawn view",
             ShellFocusFront => "focus raise front bring forward window",
@@ -632,6 +648,8 @@ pub fn all_commands() -> Vec<Command> {
         OpenCardPane,
         // the deos MEMBRANE: the social pane where a message IS a cap-bounded world-fork
         OpenMembrane,
+        // the CHAT CARD: chat-as-a-card (a send = one real verified turn on the room cell)
+        OpenChatCard,
         // the A2 SWARM surface (multi-agent cap-coordination + notify-edge inbox)
         SwarmCoordinatorEmitA,
         SwarmWorkerADrain,

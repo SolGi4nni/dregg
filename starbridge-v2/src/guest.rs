@@ -97,7 +97,7 @@ fn rgb_ok() -> gpui::Hsla {
 /// you hold the cap". Decided by the live session c-list ([`Session::reaches`]),
 /// never by the registry: the registry is the catalog, the c-list is possession.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Possession {
+pub enum Possession {
     /// The session's c-list reaches this gadget's app cell — acquired, held.
     Held,
     /// A catalog entry whose cap the session does NOT hold (or there is no
@@ -109,17 +109,19 @@ enum Possession {
 /// One **gadget** in the launcher-rolodex — a wired app from the real
 /// [`crate::app_registry::AppEntry`] catalog. Pure data (the glyph + the entry's
 /// real name/description + its [`Possession`]), so the rolodex content is read off
-/// the live registry AND the live session c-list, never a mock list.
-struct Gadget {
-    glyph: &'static str,
-    name: String,
-    blurb: String,
+/// the live registry AND the live session c-list, never a mock list. Public: the
+/// LIVE cockpit's launcher surface renders the SAME partition (its designations
+/// are the launched apps' primary cells; its session is the login ceremony's).
+pub struct Gadget {
+    pub glyph: &'static str,
+    pub name: String,
+    pub blurb: String,
     /// Is the gadget's cap actually held by the session (the c-list decides)?
-    possession: Possession,
+    pub possession: Possession,
 }
 
 impl Gadget {
-    fn held(&self) -> bool {
+    pub fn held(&self) -> bool {
         self.possession == Possession::Held
     }
 }
@@ -139,7 +141,7 @@ impl Gadget {
 /// that launched the apps supplies the designations. An entry with no session, no
 /// designated cell, or an unreached cell is [`Possession::Discoverable`] — the
 /// catalog face, honestly not-held.
-fn acquired_gadgets(
+pub fn acquired_gadgets(
     session: Option<(&Session, &World)>,
     gadget_cells: &[(&str, CellId)],
 ) -> Vec<Gadget> {
@@ -1055,6 +1057,83 @@ mod tests {
             Possession::Discoverable,
             "the gadget exists + is designated, but the cap is not held → discoverable only"
         );
+    }
+
+    /// **THE LIVE-COCKPIT ROLODEX WIRE, END TO END** (gpui-free): the launching
+    /// host's flow exactly — a REAL login session, a REAL registry launch onto the
+    /// live World (`launch_on_world` → `primary_cell`, the recorded designation),
+    /// then the pick-up ([`crate::app_registry::pick_up_gadget`], one real verified
+    /// grant turn into the session root) — and `acquired_gadgets` over the live
+    /// session + designation flips the launched gadget from Discoverable to HELD,
+    /// leaving every other catalog entry discoverable.
+    #[test]
+    fn a_launched_and_picked_up_gadget_renders_held_live() {
+        use crate::app_registry::pick_up_gadget;
+        use crate::powerbox::RegistryLauncher;
+
+        // A live world + a REAL login session born holding NOTHING (the ocap floor).
+        let mut w = World::new();
+        let sys = w.genesis_install(make_open_cell(0x55, 0));
+        let mgr = LoginManager::new(sys);
+        let p = mgr.authenticate([3u8; 32], true).expect("auth passes");
+        let session = match mgr.login(&mut w, p, &CapTemplate::empty()) {
+            LoginOutcome::Session(s) => s,
+            LoginOutcome::Denied { reason } => panic!("login should succeed: {reason}"),
+        };
+
+        // LAUNCH gallery onto the LIVE world — the launching host's designation
+        // is the launched app's primary cell, keyed by the registry id.
+        let shared = Rc::new(RefCell::new(w));
+        let launched = RegistryLauncher::standard([0x5Eu8; 32])
+            .launch_on_world("gallery", shared.clone())
+            .expect("gallery is a wired registry app")
+            .expect("the launch commits its representative turn");
+        let cell = launched.primary_cell();
+
+        // BEFORE the pick-up: launched + designated, but the cap is NOT in the
+        // session c-list — honestly Discoverable (designation ≠ possession).
+        {
+            let w = shared.borrow();
+            let gadgets = acquired_gadgets(Some((&session, &w)), &[("gallery", cell)]);
+            let gallery = gadgets
+                .iter()
+                .find(|g| g.name == "Sealed Gallery")
+                .expect("the gallery is in the catalog");
+            assert_eq!(
+                gallery.possession,
+                Possession::Discoverable,
+                "launched but not picked up → not held"
+            );
+        }
+
+        // THE PICK-UP: one real verified grant turn into the session root.
+        pick_up_gadget(&mut shared.borrow_mut(), session.root_cell, cell)
+            .expect("the pick-up grant commits through the real executor");
+
+        // AFTER: the live c-list genuinely reaches the gadget, and the rolodex
+        // partition renders it HELD — every other entry stays discoverable.
+        {
+            let w = shared.borrow();
+            assert!(
+                session.reaches(&w, &cell),
+                "the pick-up put the gadget cap in the session c-list"
+            );
+            let gadgets = acquired_gadgets(Some((&session, &w)), &[("gallery", cell)]);
+            let gallery = gadgets
+                .iter()
+                .find(|g| g.name == "Sealed Gallery")
+                .expect("the gallery is in the catalog");
+            assert_eq!(
+                gallery.possession,
+                Possession::Held,
+                "launched-and-picked-up → the rolodex renders it HELD"
+            );
+            assert_eq!(
+                gadgets.iter().filter(|g| g.held()).count(),
+                1,
+                "exactly the picked-up gadget partitions as held"
+            );
+        }
     }
 
     #[test]
