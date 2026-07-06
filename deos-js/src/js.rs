@@ -1330,7 +1330,12 @@ unsafe extern "C" fn native_affordances(
     } else {
         "none".into()
     };
-    let held = parse_auth_label(&label);
+    // An unknown viewer label projects the EMPTY surface (fail-closed), never the full
+    // one (`None` held is the broadest — it sees everything).
+    let held = match parse_auth_label(&label) {
+        Ok(h) => h,
+        Err(_) => return return_string(&mut cx, &args, "[]"),
+    };
     let json = CURRENT_APPLET.with(|c| {
         let guard = c.borrow();
         match guard.as_ref() {
@@ -1411,16 +1416,23 @@ unsafe extern "C" fn native_search(context: *mut RawJSContext, argc: u32, vp: *m
     return_string(&mut cx, &args, &json)
 }
 
-/// Parse an authority label from JS into an `AuthRequired` (the held authority for
-/// affordance projection). Unknown → `None` (the broadest — sees everything).
-fn parse_auth_label(label: &str) -> dregg_cell::AuthRequired {
+/// Parse an authority label from JS into an `AuthRequired`.
+///
+/// An UNKNOWN label is a hard refusal, never a silent default. The lattice is dual-use,
+/// so no sentinel is fail-closed in both positions: in the `required`/`granted`
+/// position `None` means "anyone may fire/exercise" (open at `is_satisfied_by`-style
+/// enforcement), while at the applet cap tooth (`is_attenuation(held, required)`)
+/// `Impossible` passes ANY held. A typo'd label must therefore surface in-band as an
+/// error, not silently mint the broadest authority (the old `_ => None` fail-open).
+fn parse_auth_label(label: &str) -> Result<dregg_cell::AuthRequired, String> {
     use dregg_cell::AuthRequired;
     match label.to_lowercase().as_str() {
-        "signature" | "sig" => AuthRequired::Signature,
-        "proof" => AuthRequired::Proof,
-        "either" => AuthRequired::Either,
-        "impossible" => AuthRequired::Impossible,
-        _ => AuthRequired::None,
+        "none" => Ok(AuthRequired::None),
+        "signature" | "sig" => Ok(AuthRequired::Signature),
+        "proof" => Ok(AuthRequired::Proof),
+        "either" => Ok(AuthRequired::Either),
+        "impossible" => Ok(AuthRequired::Impossible),
+        other => Err(format!("unknown authority label '{other}'")),
     }
 }
 
@@ -1609,7 +1621,8 @@ fn parse_affordance_spec(spec_json: &str) -> Result<AffordanceSpec, String> {
     if name.is_empty() {
         return Err("affordance spec needs a name".into());
     }
-    let required = parse_auth_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("none"));
+    let required = parse_auth_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("none"))
+        .map_err(|e| format!("affordance spec: {e}"))?;
     let slot = v.get("slot").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
     let value = v.get("value").and_then(|x| x.as_u64()).unwrap_or(0);
     let op = match v.get("op").and_then(|x| x.as_str()).unwrap_or("add") {
@@ -1725,7 +1738,8 @@ unsafe extern "C" fn native_server_define_affordance(
             return Err("defineAffordance needs a name".into());
         }
         let required =
-            parse_auth_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("none"));
+            parse_auth_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("none"))
+                .map_err(|e| format!("defineAffordance: {e}"))?;
         let effects = match v.get("effects").and_then(|x| x.as_array()) {
             Some(arr) => arr
                 .iter()
@@ -1937,10 +1951,16 @@ unsafe extern "C" fn native_server_grant(
             Some(c) => c,
             None => return false,
         };
+        // A bad permission label REFUSES the grant (a typo must not mint the broadest
+        // always-allowed capability).
+        let permissions = match parse_auth_label(&req_label) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
         let cap = dregg_cell::CapabilityRef {
             target: on,
             slot: 0,
-            permissions: parse_auth_label(&req_label),
+            permissions,
             breadstuff: None,
             expires_at: None,
             allowed_effects: None,
@@ -2088,7 +2108,8 @@ fn parse_compose_step(v: &serde_json::Value) -> Result<ComposeStep, String> {
         v.get("required")
             .and_then(|x| x.as_str())
             .unwrap_or("signature"),
-    );
+    )
+    .map_err(|e| format!("compose step: {e}"))?;
     match op {
         "mintCard" => {
             let seed = v
@@ -2142,7 +2163,8 @@ fn parse_compose_step(v: &serde_json::Value) -> Result<ComposeStep, String> {
                 v.get("granted")
                     .and_then(|x| x.as_str())
                     .unwrap_or("signature"),
-            );
+            )
+            .map_err(|e| format!("compose grant: {e}"))?;
             Ok(ComposeStep::GrantCap {
                 from,
                 to,
@@ -2243,6 +2265,83 @@ unsafe extern "C" fn native_compose(context: *mut RawJSContext, argc: u32, vp: *
     let json = compose_outcome_json(&outcome);
     LAST_COMPOSE.with(|c| *c.borrow_mut() = Some(outcome));
     return_string(&mut cx, &args, &json)
+}
+
+#[cfg(test)]
+mod auth_label_tests {
+    //! The fail-closed gate on authority labels: a typo'd label must REFUSE in-band,
+    //! never silently mint `AuthRequired::None` (the old `_ => None` fail-open).
+    use super::*;
+    use dregg_cell::AuthRequired;
+
+    #[test]
+    fn known_labels_parse_unchanged() {
+        assert_eq!(parse_auth_label("none"), Ok(AuthRequired::None));
+        assert_eq!(parse_auth_label("signature"), Ok(AuthRequired::Signature));
+        assert_eq!(parse_auth_label("sig"), Ok(AuthRequired::Signature));
+        assert_eq!(parse_auth_label("proof"), Ok(AuthRequired::Proof));
+        assert_eq!(parse_auth_label("either"), Ok(AuthRequired::Either));
+        assert_eq!(parse_auth_label("impossible"), Ok(AuthRequired::Impossible));
+        // Case-insensitive stays supported (a legit flow).
+        assert_eq!(parse_auth_label("Signature"), Ok(AuthRequired::Signature));
+    }
+
+    #[test]
+    fn unknown_label_is_refused_not_none() {
+        for bad in ["signatur", "SIGN", "open", "custom", "", "  ", "nonee"] {
+            let got = parse_auth_label(bad);
+            assert!(
+                got.is_err(),
+                "label '{bad}' must refuse, got {got:?} (the fail-open would mint None)"
+            );
+        }
+    }
+
+    #[test]
+    fn affordance_spec_with_typo_required_is_refused() {
+        // The old behavior minted `required: None` (anyone may fire) from a typo.
+        let err = parse_affordance_spec(r#"{"name":"withdraw","required":"signatur"}"#)
+            .expect_err("typo'd required must refuse the spec");
+        assert!(err.contains("unknown authority label"), "err: {err}");
+        // The legit flow is untouched: absent `required` defaults to the documented
+        // "none", and a spelled-out label parses.
+        assert_eq!(
+            parse_affordance_spec(r#"{"name":"peek"}"#)
+                .unwrap()
+                .required,
+            AuthRequired::None
+        );
+        assert_eq!(
+            parse_affordance_spec(r#"{"name":"withdraw","required":"signature"}"#)
+                .unwrap()
+                .required,
+            AuthRequired::Signature
+        );
+    }
+
+    #[test]
+    fn compose_grant_with_typo_granted_is_refused() {
+        let cell_hex = "11".repeat(32);
+        let v: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{"op":"grant","from":"{cell_hex}","to":"{cell_hex}","granted":"evrything"}}"#
+        ))
+        .unwrap();
+        match parse_compose_step(&v) {
+            Err(err) => assert!(err.contains("unknown authority label"), "err: {err}"),
+            Ok(_) => panic!("typo'd granted must refuse the step"),
+        }
+        // Legit flow: the documented default ("signature") when the field is absent.
+        let v: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{"op":"grant","from":"{cell_hex}","to":"{cell_hex}"}}"#
+        ))
+        .unwrap();
+        match parse_compose_step(&v) {
+            Ok(ComposeStep::GrantCap { granted, .. }) => {
+                assert_eq!(granted, AuthRequired::Signature)
+            }
+            _ => panic!("expected GrantCap parsing the default-granted step"),
+        }
+    }
 }
 
 /// Decode 64-char hex into `out` (exact-length match required). Returns false on any

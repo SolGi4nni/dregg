@@ -94,9 +94,11 @@ composing composes with either an embedded or an attached crawl target.
 
 ### Authority labels
 
-JS names authority by string: `parse_auth_label` (`src/js.rs:1320-1329`) maps
-`"signature"`/`"proof"`/`"either"`/`"impossible"` to `AuthRequired` variants; anything else
-(including `"none"`) → `AuthRequired::None` (the broadest).
+JS names authority by string: `parse_auth_label` (`src/js.rs:1427-1446`) maps
+`"none"`/`"signature"`/`"proof"`/`"either"`/`"impossible"` to `AuthRequired` variants; an
+UNKNOWN label is refused in-band (spec/compose/grant parsing errors; the `affordances`
+projection returns the empty surface) — a typo never silently mints `AuthRequired::None`
+(the broadest).
 
 ### `deos.server.*` — the private-server / GM surface (`src/js.rs:566-587`)
 

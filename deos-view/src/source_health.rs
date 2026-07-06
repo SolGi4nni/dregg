@@ -3,8 +3,8 @@
 //! viewer what they are looking at.
 //!
 //! Ported dregg-native from the prior operated layer (`SourceHealth`,
-//! model.rs:229-301) — the epistemics the retired console enforced and the native
-//! console card does not yet carry:
+//! model.rs:229-301) — the epistemics the retired console enforced, now carried by
+//! the native console card (see WIRED below):
 //!
 //! * **unreachable ≠ empty** — a source that did not answer must render as
 //!   "can't reach", NEVER as an empty account with get-started CTAs;
