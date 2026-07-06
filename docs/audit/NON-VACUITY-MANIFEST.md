@@ -13,11 +13,19 @@ claim a WORLD property, per `docs/audit/SECURITY-PROPERTY-MAP.md`), each pinned 
 The **meta-gate** that enforces this manifest — `circuit/tests/security_property_nonvacuity_gate.rs` —
 is a static ledger (the `keystone_descriptor_deployment_gate.rs` idiom, because Lean theorems are not
 reflectively enumerable from Rust). It REDS when a load-bearing theorem is `Missing` a tooth, when a
-`SpotCheckedOnly` row lacks a `promote:` closure lane, or when a named companion is **absent from the
-metatheory Lean source** (the ledger cannot go stale silently — deleting a Lean tooth reds the gate).
-Its companion in-band check is Lean's `#keystone_audit_tagged` (`Dregg2/Verify/KeystoneLint.lean`),
-which sweeps every `@[load_bearing_keystone]` and throws at elaboration if a tagged keystone loses its
-`satisfiable`/`teeth`. This gate is the **totality** layer over that per-keystone discipline.
+`SpotCheckedOnly` row lacks a `promote:` closure lane, or when a named companion fails source-grounding.
+⚑ **STRENGTHENED after the adversarial meta-review** (`META-REVIEW-GATE-AND-DECOUC.md` §1.2, which found
+the old grounding was a bare-name-anywhere existence check that a `def bites := True` or a moved companion
+would pass): every companion is now written `name @ Relative/Path.lean`, and the scan records each
+declaration's **(name, kind, relative-file)**. A companion is grounded IFF a declaration of that name is
+(1) a `theorem`/`lemma` — NOT a `def`/`abbrev` (closes the `def := True` hole) AND (2) in the exact file
+the row pins (closes the wrong-file / carrier-multiplicity holes — the eight carriers share the
+`honest_companion_fires` name, so each row now pins its own carrier file). The gate still cannot read a
+Lean *proof* to certify non-vacuity — that stays Lean's job (`#assert_axioms`,
+`#keystone_audit_tagged` in `Dregg2/Verify/KeystoneLint.lean`, which throws at elaboration if a tagged
+keystone loses its `satisfiable`/`teeth`) — but it now enforces that each tooth is a theorem in its
+stated home, not merely a name present somewhere. This gate is the **totality** layer over the
+per-keystone discipline.
 
 ## Status classes
 
@@ -52,9 +60,14 @@ which sweeps every `@[load_bearing_keystone]` and throws at elaboration if a tag
 | 20 | `deco_binding_from_fold` (Circuit/DecoBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_payment_hash_unsat_demo` |
 | 21 | `sealedescrow_no_theft` (Deos/SealedEscrow.lean:753) | HAS-BITING-TOOTH | `honest_swap_reachable` | `halfopen_theft_unreachable` |
 | 22 | `deco_attestation_unforgeable` (Crypto/DecoUnforgeable.lean) | HAS-BITING-TOOTH | `attestation_fires` | `attestation_bites` |
-| 23 | `decoUC_realizes` (Crypto/DecoUC.lean) | HAS-BITING-TOOTH | `decoSim_works` | `forge_not_ucRealizes` |
+| 23 | `decoUC_realizes` — **WRAPPER-OF-22, NOT A DISTINCT SUMMIT** (Crypto/DecoUC.lean) | HAS-BITING-TOOTH (soundness leg only) | `decoSim_works` | `forge_not_ucRealizes` |
+| 24 | `budget_never_overdrawn` (Deos/PrepaidLease.lean:378) | HAS-BITING-TOOTH | `opened_discharge_accepts` | `insufficient_budget_rejected` |
 
-**Tally: 23 rows / 23 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING** (after Pillar 4b + escrow no-theft + DECO attestation unforgeability + DECO attestation UC-realization).
+**Tally: 24 rows / 24 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING.** Row 23 is retained only to
+keep its (soundness-conjunct) teeth registered — it is **NOT counted as a distinct world-property**; its
+Lean content is identical to row 22 (see the row-23 note below). The *distinct* world-properties are
+rows 1–22 + 24. Every companion is written `name @ file` and the gate now cross-checks theorem-kind +
+file-locality (not bare-name-anywhere) — see "How the meta-gate is itself non-vacuous."
 
 **Row 22 — DECO payment-attestation unforgeability (survey gap #1, closed — rung 4).** DECO's
 authenticity was ASSUMED, not proven (`SECURITY-PROPERTY-MAP.md:192`): `deco_authenticates_payment`
@@ -73,28 +86,36 @@ Both `#assert_axioms`-clean. Registered as `attestationDynamics` / `deco_attesta
 `governed_holds` schema (`Metatheory/Adversary/Instances.lean` §3.9), composing with — distinct from —
 `decoCarrierDynamics` (the fold-backing): unforgeability ∘ backing = the mint credited real money.
 
-**Row 23 — DECO payment-attestation UC-REALIZATION (survey gap #1, rung 5 — the summit).** Above rung 4
-("the verifier never emits a FALSE attestation"), rung 5 is "the deployed protocol UC-REALIZES
-`F_attestation`": a SIMULATOR that, given only `F_attestation`'s output, produces an indistinguishable
-DECO transcript. `Crypto/DecoUC.lean` proves the REAL, non-vacuous core: (1) the simulator
-`decoSimTranscript` — a witness-free transcript built from the disclosed statement alone (the reference
-extractor's construction) — and (2) the perfect/statistical ZK fragment (`decoView_witness_free` /
-`decoView_indep`: the disclosed view under `selective` factors through the statement, grounded in
-`PerfectZK`). The computational `≈_c` layer (STARK-ZK, DECO handshake-simulatability, PPT,
-negligible-advantage, Canetti composition) is CARRIED as named `Prop` carriers in `DecoUCRealization`
-(never `axiom`), discharged cross-system — mirroring `LightClientUC.DynamicUCResidual` /
-`UCBridge.FComDischarge`. **fires** — `decoSim_works`: the simulator's fabricated transcript genuinely
-satisfies the DECO relation AND the deployed verifier accepts, WITHOUT a real Stripe session (the
-simulator is real and its output verifies). **bites** — `forge_not_ucRealizes`: the forge kernel does
-NOT UC-realize `F_attestation` (`UCRealizesFAtt` is FALSE — a broken simulator whose output is
-distinguishable is not a realization; the anti-P→P witness), reusing `Forge.forge_not_realizes`; the
-perfect-ZK teeth `decoLeaky_no_simulator` additionally refute a session-leaking view. Both
-`#assert_axioms`-clean. Registered as `attestationUCDynamics` / `deco_attestation_uc_via_schema` /
-`deco_attestation_uc_realizes` in the `governed_holds` schema (`Instances.lean` §3.9b), above the rung-4
-`attestationDynamics`. ⚑ The fully-computational apex is NAMED-not-faked: `F_attestation` is NOT in the
-CryptHOL `F_com` harness (`Dregg2_FCom.thy` models the Pedersen COMMITMENT; `F_attestation` needs a
-from-scratch `spmf` model of STARK-ZK + the DECO 3-party handshake, absent from `Sigma_Commit_Crypto`) —
-the precise missing-framework STOP finding recorded in `DecoUC.lean`'s header.
+**Row 23 — DECO "UC-realization": DOWNGRADED to a WRAPPER-OF-22 (rung 5 NOT reached).** ⚑ An adversarial
+meta-review (`docs/audit/META-REVIEW-STATEMENTS.md` §1, `META-REVIEW-GATE-AND-DECOUC.md` §2.2) found this
+was the ONE genuinely hollow marquee: the load-bearing proposition `UCRealizesFAtt` carried a second
+conjunct `∀ stmt w₁ w₂, decoDisclosedView stmt w₁ = decoDisclosedView stmt w₂` that — because
+`decoDisclosedView` is DEFINED to discard the witness — unfolds to `stmt = stmt`, provable by `rfl` for
+ANY `verify`/`Auth`. So `UCRealizesFAtt` was logically EQUAL to `AttRealizes` (rung-4 soundness); the
+"perfect-ZK teeth" `decoLeaky_no_simulator` refute `decoLeakyView`, a function NOT wired into the
+proposition; and the computational carriers (`stark_zk`/`handshake_sim`/`simulator_ppt`/
+`negligible_advantage`/`composes`) are `True`/`trivial` in every builder. **Retraction (not deletion):**
+the vacuous conjunct has been REMOVED — `UCRealizesFAtt` is now DEFINITIONALLY `AttRealizes` — and the
+DocStrings across `Crypto/DecoUC.lean` + `Instances.lean` §3.9b relabel it as "rung-4 soundness
+re-exported under the UC name; the computational-UC summit is UNBUILT (needs the spmf /
+process-calculus framework named in the header)." **fires** — `decoSim_works`: the toy reference
+simulator's witness-free transcript is accepted (a real satisfiability witness for the accept-set, not
+UC content). **bites** — `forge_not_ucRealizes`: the soundness leg FAILS over the forge kernel — ⚑ this
+is IDENTICAL content to row 22's `attestation_bites` (it bites the soundness conjunct, the only conjunct
+left). So row 23 is **not a distinct summit**; it is a truthfully-named wrapper whose teeth duplicate row
+22's. Both `#assert_axioms`-clean. The DECO-UC plan (`docs/deos/DECO-UC-PLAN.md`) rung-5 status is now
+UNBUILT-not-reached.
+
+**Row 24 — Lease budget-never-overdrawn (coverage omission, closed).** `META-REVIEW-GATE-AND-DECOUC.md`
+§1.3 found `budget_never_overdrawn` (`Deos/PrepaidLease.lean:378`) — a load-bearing economic world-property
+the manifest's OWN row-21 comment named as a Vault/escrow peer ("Lease's budget conservation") — had NO
+gate row. `budget_never_overdrawn` proves the committed remaining budget after `n` discharges is exactly
+`budget − n·rent` (the prepaid budget draws down by exactly one rent per metered period, no drift).
+**fires** — `opened_discharge_accepts`: an honest opened-lease discharge (drawing exactly the rent, budget
+covering it, at/after the first due block) is ACCEPTED (the live path the teeth close). **bites** —
+`insufficient_budget_rejected`: a discharge whose committed remaining prepaid budget cannot cover the rent
+is REJECTED — the meter cannot advance past what the budget prepaid (the refusal half the theorem's own
+docstring names). Both `#assert_axioms`-clean.
 
 **Row 21 — SealedEscrow's economic no-theft (survey gap #3, closed).** SealedEscrow (escrow capacity,
 tag 17) previously had only refinements (one-shot replay, gate-refinement, commitment-binding) — no
@@ -129,14 +150,45 @@ only**, not a NAMED companion the meta-gate could register:
 Both are now registered rows above, and the meta-gate cross-checks that these exact names exist in the
 Lean source, so deleting either tooth reds the build.
 
+## The satisfiability ledger — every GovernedDynamics instance's `accept` is INHABITED
+
+`governed_holds` is `∀ c, accept (run c) → invariant (run c)`. A `*_bites` tooth proves `accept ≠ True`;
+it does NOT prove `∃ c, accept (run c)`. So an instance whose `accept` were UNSATISFIABLE would satisfy
+`governed_holds` VACUOUSLY and escape the world-property gate above. The meta-review named this exact hole
+("the anti-vacuity apparatus only pretended to close it"). `satisfiability_manifest()` in the gate closes
+it as a first-class tooth: one row per `GovernedDynamics` instance in `Metatheory/Adversary/*`, each pinned
+to a NAMED `∃ c, accept (run c)` companion, source-grounded the same way (theorem-kind + file). Gated by
+`every_governed_instance_has_satisfiable_accept`.
+
+| instance | satisfiability companion | class |
+|---|---|---|
+| `polisDynamics` | `polis_accept_satisfiable` (Schema.lean) | PROVEN concrete (`accept := True`, witness = shield) |
+| `circuitDynamics` | `circuit_accept_satisfiable_of_floor` (Schema.lean) | NAMED FLOOR — accept folds `WitnessDecodes` |
+| `settlementDynamics` | `settlement_accept_satisfiable` (Instances.lean) | PROVEN concrete (via `deployedSettle_nonvacuous.1`) |
+| `wholeHistoryDynamics` | `wholeHistory_accept_satisfiable_of_floor` (Instances.lean) | NAMED FLOOR — accept folds `EngineSound` |
+| 8× carriers (`custom`…`deco`) | `honestSat` (each `*BindingFromFold.lean`) | PROVEN concrete — a satisfying honest fold |
+| `assuranceApexDynamics` | `apex_accept_satisfiable_of_floor` (Instances.lean) | NAMED FLOOR — accept folds `hcov`/`EngineSound`/genesis |
+| `attestationDynamics` | `attestation_accept_satisfiable` (Instances.lean) | PROVEN concrete (reference kernel, `decoSim_works.2`) |
+| `attestationUCDynamics` | `attestation_accept_satisfiable` (Instances.lean) | PROVEN concrete (same accept-set as `attestationDynamics`) |
+
+⚑ **Honest split:** where accept directly names an inhabited set (`polis`/`settlement`/carriers/
+`attestation`) the companion PROVES `∃ c, accept c` concretely; where accept FOLDS a per-control
+realizability floor (`circuit`'s `WitnessDecodes`, `wholeHistory`'s `EngineSound`, `apex`'s `hcov`) the
+companion is a `*_of_floor` that takes the floor as an EXPLICIT hypothesis — the vacuity risk is made
+VISIBLE, not hidden, and no witness is faked. All `#assert_axioms`-clean.
+
 ## How the meta-gate is itself non-vacuous
 
 `meta_gate_bites` (`security_property_nonvacuity_gate.rs`) proves the gate REDS on: a `Missing` row, an
 un-laned `SpotCheckedOnly` row, a `HasBitingTooth` naming a companion absent from the source (the
-stale-ledger catch), and an empty companion name — and PASSES a fully-grounded row (so it is not
-red-for-everything). The decisive case removes the real `reachable_total_zero_teeth` name from the
-scanned source-set and asserts the gate reds on exactly that row. A coverage gate that passed vacuously
-would be the exact sin it polices; this one is proven to bite.
+stale-ledger catch), an empty companion name, **a `def`-downgraded companion** (a name that exists only
+as a `def`, not a `theorem`/`lemma` — the new theorem-kind check), and **a wrong-file companion** (a real
+theorem that lives in a DIFFERENT file than the row pins — the new file-locality check) — and PASSES a
+fully-grounded (theorem, right-file) row (so it is not red-for-everything). Two DECISIVE cases run against
+the REAL source: (i) removing the real `reachable_total_zero_teeth` name reds exactly that row; (ii)
+collapsing all eight carriers' `honest_companion_fires` to ONE carrier file reds the OTHER seven carrier
+rows (proving per-carrier file pinning is enforced — the multiplicity hole the review found). A coverage
+gate that passed vacuously would be the exact sin it polices; this one is proven to bite the new ways.
 
 ## Adding a new security property
 

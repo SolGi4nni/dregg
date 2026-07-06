@@ -138,6 +138,15 @@ theorem settlement_invariant_bites :
   show ¬ LiveAtTip KeyLeak.demoTopo demoLog' demoHeld deadTip demoAc
   exact demo_unsettleable_when_revoked
 
+/-- **(SATISFIABILITY — settlement, PROVEN concrete).** `accept c := deployedSettle c.T …` is INHABITED:
+the same demo cap that `deployedSettle_nonvacuous` shows settles inside the stale window is a concrete
+accepted control. So `∃ c, accept (run c)` — the settlement guarantee is not vacuously governed. Reuses
+`deployedSettle_nonvacuous.1` (the deployed TRUE-side witness). -/
+theorem settlement_accept_satisfiable :
+    ∃ c, (settlementDynamics deployedSettle_binds_live_authority).accept
+      ((settlementDynamics deployedSettle_binds_live_authority).run c) :=
+  ⟨⟨KeyLeak.demoTopo, demoLog', demoHeld, liveTip, demoAc⟩, deployedSettle_nonvacuous.1⟩
+
 /-! ## §2. Instance — WHOLE-HISTORY (light client verifies the whole history, anchored). -/
 
 open Dregg2.Circuit.RecursiveAggregation
@@ -206,6 +215,22 @@ theorem wholeHistory_invariant_bites (Proof : Type) (verify : Proof → Bool)
     ¬ (wholeHistoryDynamics Proof verify CH RH cmb compress compressN expectedGenesis).invariant c :=
   fun hinv => anchored_attests_rejects_fabricated_genesis Proof CH RH cmb compress compressN
     c.agg c.g c.steps expectedGenesis hne hinv
+
+/-- **(SATISFIABILITY — whole-history, NAMED FLOOR).** `accept c := EngineSound … ∧ verify root = true ∧
+genesisRoot = expectedGenesis` folds the per-presentation realizability floor `EngineSound`. So
+`∃ c, accept (run c)` RESTS ON that floor: given a presented aggregate that is engine-sound, verifies,
+and anchors to the trusted genesis, accept is inhabited. Named `_of_floor` to make the vacuity risk
+VISIBLE — the whole-history guarantee is non-vacuous exactly when an honest sound-engine aggregate for
+the anchored genesis exists (the honest prover's own output). -/
+theorem wholeHistory_accept_satisfiable_of_floor (Proof : Type) (verify : Proof → Bool)
+    (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ) (RH : Dregg2.Exec.RecordKernelState → ℤ)
+    (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) (expectedGenesis : ℤ)
+    (c : WHControl Proof)
+    (hes : EngineSound Proof verify CH RH cmb compress compressN c.agg c.g c.steps)
+    (hroot : verify c.agg.root = true) (hanchor : c.agg.genesisRoot = expectedGenesis) :
+    ∃ d, (wholeHistoryDynamics Proof verify CH RH cmb compress compressN expectedGenesis).accept
+      ((wholeHistoryDynamics Proof verify CH RH cmb compress compressN expectedGenesis).run d) :=
+  ⟨c, hes, hroot, hanchor⟩
 
 /-! ## §3. Instances — THE 8 CARRIER BINDINGS (each `*_binding_from_fold`, from the FOLD).
 
@@ -573,24 +598,41 @@ theorem attestation_invariant_bites :
         Dregg2.Crypto.Deco.Reference.sampleStmt :=
   Dregg2.Crypto.DecoUnforgeable.Forge.forge_attestation_forgery.2
 
-/-! ### §3.9b — DECO ATTESTATION UC-REALIZATION (rung 5: the summit ABOVE rung-4 unforgeability).
+/-- **(SATISFIABILITY — attestation, PROVEN concrete).** `accept c := KD.verify c.1 c.2 = true` is
+INHABITED at the reference DECO kernel: the disclosed sample statement with the simulator's witness-free
+transcript is accepted (`DecoUC.decoSim_works.2`). So `∃ c, accept (run c)` — the attestation guarantee
+(and the rung-5 wrapper `attestationUCDynamics`, whose accept is identical) is not vacuously governed.
+The reference §8 carriers are the toy witnesses (`rfl`/`trivial`), exactly as in `DecoUC.ref_ucRealizes`. -/
+theorem attestation_accept_satisfiable :
+    ∃ c, (attestationDynamics (KD := Dregg2.Crypto.Deco.Reference.refKernel)
+        Dregg2.Crypto.Deco.Reference.refSigKernel Dregg2.Crypto.Deco.Reference.refMacKernel
+        rfl rfl trivial (fun _ _ _ h => of_decide_eq_true h) trivial).accept
+      ((attestationDynamics (KD := Dregg2.Crypto.Deco.Reference.refKernel)
+        Dregg2.Crypto.Deco.Reference.refSigKernel Dregg2.Crypto.Deco.Reference.refMacKernel
+        rfl rfl trivial (fun _ _ _ h => of_decide_eq_true h) trivial).run c) :=
+  ⟨(Dregg2.Crypto.Deco.Reference.sampleStmt, ()), Dregg2.Crypto.DecoUC.decoSim_works.2⟩
 
-`attestationDynamics` (§3.9) delivers the rung-4 invariant `decoAuthenticated` (F_attestation would
-emit) via `deco_attestation_realizes` alone. This instance is the rung-5 STRENGTHENING: the SAME
-per-control invariant is now delivered as the SOUNDNESS leg of a full DECO UC-REALIZATION
-(`Dregg2/Crypto/DecoUC.lean` — the simulator that WORKS + the perfect-ZK fragment + the carried
-computational floors). `holds` routes through `DecoUC.decoUC_realization_of_discharge`, so an accepting
-DECO proof's emission is witnessed AS the soundness leg of a UC realization (rung 5), not just the bare
-rung-4 lemma. The computational carriers (STARK-ZK / handshake-sim / PPT / negligible-advantage /
-composition) are FIXED at instance build, supplied by a `DecoUC.DecoUCComputationalDischarge`. -/
+/-! ### §3.9b — DECO ATTESTATION: the rung-4 soundness leg re-exported (NOT a rung-5 summit).
+
+⚑ RELABELED after the meta-review (`docs/audit/META-REVIEW-STATEMENTS.md` §1): what was presented here as
+"rung 5, the UC-realization summit above rung 4" is, in Lean, rung-4 soundness re-exported under the UC
+name. `DecoUC.UCRealizesFAtt` is now DEFINITIONALLY `AttRealizes` (its formerly-shipped `rfl`-vacuous
+ZK conjunct was removed), and its computational carriers are `True`/`trivial` in every builder. So
+`attestationUCDynamics` delivers the SAME invariant `decoAuthenticated` as the rung-4 `attestationDynamics`
+(§3.9), routed through `DecoUC.decoUC_realization_of_discharge` — a WRAPPER, not a distinct guarantee. It
+is kept (not deleted) so the manifest can name it truthfully as a wrapper-of-22 whose computational-UC
+content is UNBUILT. The genuine computational summit needs the spmf / process-calculus framework named in
+`DecoUC.lean`'s header. -/
 
 open Dregg2.Crypto.DecoUC (decoUC_realization decoUC_realization_of_discharge
   DecoUCComputationalDischarge UCRealizesFAtt decoUC_realizes)
 
-/-- **`attestationUCDynamics`** — DECO attestation UC-realization as a `GovernedDynamics`. Control = the
-`(stmt, proof)` presented; invariant = `decoAuthenticated` (the ideal emission); `holds` is the
-`soundness` leg of the assembled `DecoUCRealization` (rung 5), the computational discharge FIXED at
-build. Above `attestationDynamics` (rung 4): the emission now rides a UC-realization object. -/
+/-- **`attestationUCDynamics`** — the rung-4 soundness leg routed through the UC wrapper as a
+`GovernedDynamics`. Control = the `(stmt, proof)` presented; invariant = `decoAuthenticated` (the ideal
+emission); `holds` is the `soundness` leg of the assembled `DecoUCRealization`, the computational
+discharge FIXED at build. ⚑ NOT above `attestationDynamics` (rung 4) in content: since `UCRealizesFAtt`
+is definitionally `AttRealizes` and the computational carriers are `True`, this delivers the SAME
+invariant via a wrapper — a truthfully-named re-export, not a distinct summit. -/
 def attestationUCDynamics {Dg Proof : Type}
     [KD : DecoVerifierKernel Dg Proof] (SK : SignatureKernel Dg Dg Dg) (MK : MacKernelE Dg Dg Dg)
     (hsigEq : KD.sigVerify = SK.sigVerify) (hmacEq : KD.macVerify = MK.verifyTag)
@@ -618,9 +660,11 @@ theorem deco_attestation_uc_via_schema {Dg Proof : Type}
     decoAuthenticated SK MK KD.compress KD.encode stmt :=
   governed_holds (attestationUCDynamics SK MK hsigEq hmacEq hext hsig hmac d) (stmt, proof) hacc
 
-/-- **The rung-5 statement itself, factored:** given the §8 carriers, the deployed verifier
-UC-REALIZES `F_attestation` (`UCRealizesFAtt` = soundness ∧ perfect-ZK) — the Lean-provable core of the
-summit, above the rung-4 `deco_attestation_via_schema`. -/
+/-- **The re-exported soundness leg, factored:** given the §8 carriers, the deployed verifier satisfies
+`UCRealizesFAtt`. ⚑ Since `UCRealizesFAtt` is now DEFINITIONALLY `AttRealizes` (the vacuous ZK conjunct
+removed) and the computational carriers below are all `True`, this concludes EXACTLY the rung-4 soundness
+`deco_attestation_via_schema` already gives — it is NOT a distinct summit. Kept under the historic name
+so the audit trail is legible; see `docs/audit/NON-VACUITY-MANIFEST.md` row 23 (wrapper-of-22). -/
 theorem deco_attestation_uc_realizes {Dg Proof : Type}
     [KD : DecoVerifierKernel Dg Proof] (SK : SignatureKernel Dg Dg Dg) (MK : MacKernelE Dg Dg Dg)
     (hsigEq : KD.sigVerify = SK.sigVerify) (hmacEq : KD.macVerify = MK.verifyTag)
@@ -723,6 +767,29 @@ theorem deployed_system_secure_via_schema
   governed_holds (assuranceApexDynamics verify CH RH cmb compress compressN UC hCmb hCompress
     hCompressN hLeaf hRest) c hacc
 
+/-- **(SATISFIABILITY — apex, NAMED FLOOR).** The apex `accept` is a seven-fold conjunction folding the
+per-turn realizability floors (`EachStepMemProg` coverage `hcov`, `EngineSound`, `KernelGenesisPin`,
+`SeamStruct`). So `∃ c, accept (run c)` RESTS ON that floor: given any committed control that exhibits the
+accept conjunction (an honest deployed turn that executes, commits the noteSpend, and whose light client
+verifies the anchored aggregate), accept is inhabited. Named `_of_floor` to make the vacuity risk
+VISIBLE — the composed five-guarantee apex is non-vacuous exactly when an honest deployed turn realizes
+the whole accept floor. -/
+theorem apex_accept_satisfiable_of_floor
+    (UC : UCodec) (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
+    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hRest : RestHashIffFrame RH)
+    (c : @DeployedControl Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag
+      _ _ AProof)
+    (hacc : (assuranceApexDynamics verify CH RH cmb compress compressN UC hCmb hCompress hCompressN
+      hLeaf hRest).accept c) :
+    ∃ d : @DeployedControl Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag
+        _ _ AProof,
+      (assuranceApexDynamics verify CH RH cmb compress compressN UC hCmb hCompress hCompressN
+        hLeaf hRest).accept
+      ((assuranceApexDynamics verify CH RH cmb compress compressN UC hCmb hCompress hCompressN
+        hLeaf hRest).run d) :=
+  ⟨c, hacc⟩
+
 end Apex
 
 /-! ## §5. THE PAYOFF — the WHOLE assurance case is `governed_holds`, N instances, ONE adversary.
@@ -795,9 +862,11 @@ theorem assurance_case_governed {State Action : Type}
 #assert_axioms settlement_soundness_via_schema
 #assert_axioms settlement_accept_bites
 #assert_axioms settlement_invariant_bites
+#assert_axioms settlement_accept_satisfiable
 #assert_axioms whole_history_via_schema
 #assert_axioms wholeHistory_accept_bites
 #assert_axioms wholeHistory_invariant_bites
+#assert_axioms wholeHistory_accept_satisfiable_of_floor
 #assert_axioms custom_backing_via_schema
 #assert_axioms customCarrier_bites
 #assert_axioms factory_backing_via_schema
@@ -816,9 +885,11 @@ theorem assurance_case_governed {State Action : Type}
 #assert_axioms decoCarrier_bites
 #assert_axioms deco_attestation_via_schema
 #assert_axioms attestation_invariant_bites
+#assert_axioms attestation_accept_satisfiable
 #assert_axioms deco_attestation_uc_via_schema
 #assert_axioms deco_attestation_uc_realizes
 #assert_axioms deployed_system_secure_via_schema
+#assert_axioms apex_accept_satisfiable_of_floor
 #assert_axioms assurance_case_governed
 
 end Metatheory.Adversary

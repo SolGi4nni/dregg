@@ -188,6 +188,46 @@ theorem adversary_governed_uniformly {State Action : Type}
      governed_holds (circuitDynamics hash S R hCR kstep hrefines)
        (A.forgedPI, A.forgedProof) ⟨hacc, hwitdec⟩⟩
 
+/-! ## §4b. ACCEPT-SATISFIABILITY — each instance's `accept` is INHABITED (not vacuously governed).
+
+`governed_holds` is `∀ c, accept (run c) → invariant (run c)`. If an instance's `accept` were
+UNSATISFIABLE (no control is ever accepted), the guarantee would hold VACUOUSLY and the `*_bites` teeth
+(which only prove `accept ≠ True`) would NOT catch it. So each `GovernedDynamics` instance owes a
+satisfiability witness `∃ c, accept (run c)` — proven concretely where the accept-set is directly
+inhabited, or as an EXPLICIT `_of_floor` companion (making the realizability floor VISIBLE) where accept
+folds a per-control floor. These are registered in `docs/audit/NON-VACUITY-MANIFEST.md` (§ satisfiability)
+and gated by `security_property_nonvacuity_gate.rs::every_governed_instance_has_satisfiable_accept`. -/
+
+/-- **(SATISFIABILITY — polis, PROVEN concrete).** `accept _ := True`, so `∃ c, accept (run c)` holds
+with any control — witness the shield policy. Genuinely satisfiable, no floor: the polis dynamics is not
+vacuously governed. -/
+theorem polis_accept_satisfiable {State Action : Type}
+    (step : State → Action → State) (safe : State → Prop)
+    (pol : State → Action → Prop) (shield : State → Action) (init : State)
+    (sound : SoundPolicy step safe pol)
+    (shieldSafe : ∀ s, safe s → safe (step s (shield s)))
+    (initSafe : safe init) :
+    ∃ c, (polisDynamics step safe pol shield init sound shieldSafe initSafe).accept
+      ((polisDynamics step safe pol shield init sound shieldSafe initSafe).run c) :=
+  ⟨shield, trivial⟩
+
+/-- **(SATISFIABILITY — circuit, NAMED FLOOR).** `accept p := verifyBatch … = accept ∧ WitnessDecodes …`
+folds the per-forgery realizability floor `WitnessDecodes`. So `∃ c, accept (run c)` RESTS ON that floor:
+given a batch that both verifies AND witness-decodes, accept is inhabited. Named `_of_floor` to make the
+vacuity risk VISIBLE — the circuit guarantee is non-vacuous exactly when a verifying, witness-decoding
+batch exists (the honest prover's own output). -/
+theorem circuit_accept_satisfiable_of_floor
+    (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry)
+    (hCR : Poseidon2SpongeCR hash) [StarkSound hash R]
+    (kstep : EffectIdx → RecChainedState → RecChainedState → Prop)
+    (hrefines : ∀ e, descriptorRefines S hash (R e) (kstep e))
+    (pi : BatchPublicInputs) (π : BatchProof)
+    (hv : verifyBatch (vkOfRegistry R) pi π = Verdict.accept)
+    (hw : WitnessDecodes hash R S pi) :
+    ∃ c, (circuitDynamics hash S R hCR kstep hrefines).accept
+      ((circuitDynamics hash S R hCR kstep hrefines).run c) :=
+  ⟨(pi, π), hv, hw⟩
+
 /-! ## §5. ANTI-VACUITY — the schema carries REAL content (it is NOT a `P → P`).
 
 Two obligations: (POSITIVE) a non-trivial instance whose accept-set genuinely rejects and whose
@@ -243,6 +283,8 @@ theorem broken_holds_field_empty :
 #assert_axioms governed_holds
 #assert_axioms polis_nondomination_via_schema
 #assert_axioms unfoolability_via_schema
+#assert_axioms polis_accept_satisfiable
+#assert_axioms circuit_accept_satisfiable_of_floor
 #assert_axioms adversary_governed_uniformly
 #assert_axioms evenNeqOne_accept_nontrivial
 #assert_axioms evenNeqOne_invariant_nontrivial

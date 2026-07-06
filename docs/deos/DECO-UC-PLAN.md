@@ -20,30 +20,40 @@
 >   extractability — EXACTLY the `deco_binds_payment` trust base. NO dregg-specific parked assumption
 >   was found (the R4 hunt came up empty, as §4 predicted).
 >
-> **BUILD STATUS (rung b — computational UC-realization): DONE to the tree-uniform altitude; the
-> fully-computational apex NAMED-not-faked.** Rung 5 is built and green in
-> `metatheory/Dregg2/Crypto/DecoUC.lean` (`#assert_axioms`-clean):
-> - **The SIMULATOR, a real object that WORKS.** `decoSimTranscript` fabricates a full DECO transcript
->   from the DISCLOSED statement ALONE (the reference extractor's witness-free construction, read as the
->   ideal-world simulator). `decoSim_works` PROVES the fabricated transcript satisfies the DECO relation
->   AND the deployed verifier accepts — a bona-fide accepting attestation without a real Stripe session.
-> - **The PERFECT/statistical ZK fragment (Lean-proved).** Under the `selective` dial floor the
->   verifier's disclosed view is the statement alone; `decoView_witness_free`/`decoView_indep` prove it
->   factors through the statement (grounded in `PerfectZK`). `decoLeaky_no_simulator` is the teeth: a
->   session-leaking view cannot be simulated (distinguishable) — the fragment is a real constraint.
-> - **The STATIC soundness half = rung 4.** `DecoUCRealization.soundness` is `deco_attestation_realizes`
->   (`AttRealizes` — the real client never accepts where `F_attestation` rejects).
-> - **The computational `≈_c` layer CARRIED, never faked.** `DecoUCRealization` bundles STARK-ZK,
->   DECO handshake-simulatability, PPT, negligible-advantage, and Canetti composition as named `Prop`
->   carriers (never `axiom`), discharged cross-system via `DecoUCComputationalDischarge` — mirroring
->   `LightClientUC.DynamicUCResidual` and `UCBridge.FComDischarge`. `decoUC_realizes` entails the
->   Lean-provable core `UCRealizesFAtt` (soundness ∧ perfect-ZK).
-> - **Both-polarity non-vacuity.** `ref_ucRealizes` (a real reference kernel UC-realizes) /
->   `forge_not_ucRealizes` (the forge kernel is NOT a realization — `UCRealizesFAtt` FALSE, the
->   anti-P→P witness). Manifest row 23; gate row `decoUC_realizes`; meta-gate 3/3.
+> **BUILD STATUS (rung b — computational UC-realization): UNBUILT — NOT REACHED.** ⚑ An adversarial
+> meta-review (`docs/audit/META-REVIEW-STATEMENTS.md` §1, `META-REVIEW-GATE-AND-DECOUC.md` §2.2) found
+> the "rung-5 summit" previously claimed here was HOLLOW: the load-bearing `UCRealizesFAtt` carried a
+> `rfl`-vacuous second conjunct (a CONSTANT disclosed-view equality `stmt = stmt`), making it logically
+> EQUAL to `AttRealizes` (= rung-4 soundness); the advertised perfect-ZK teeth `decoLeaky_no_simulator`
+> refute `decoLeakyView`, a function NOT wired into the proposition; and the computational carriers are
+> `True`/`trivial` in every builder. **Retraction landed** (`metatheory/Dregg2/Crypto/DecoUC.lean`,
+> `#assert_axioms`-clean): the vacuous conjunct is REMOVED (`UCRealizesFAtt` is now definitionally
+> `AttRealizes`), and every docstring across `DecoUC.lean` + `Instances.lean` §3.9b relabels this as
+> **rung-4 soundness re-exported under the UC name — the computational-UC summit is UNBUILT.** What is
+> genuinely proved (rung 4 + fragments):
+> - **The SIMULATOR, a real object that WORKS (toy).** `decoSimTranscript` + `decoSim_works` — a
+>   witness-free transcript the *reference toy* verifier accepts. A real satisfiability witness; NOT a
+>   STARK simulator (the reference verify is a two-integer check, not a STARK).
+> - **A perfect-ZK MODEL FRAGMENT, NOT wired into the UC claim.** `decoView_witness_free`/`decoView_indep`
+>   are `rfl` over a CONSTANT view chosen witness-free by definition — documentation, not a proof about
+>   the deployed verifier. `decoLeaky_no_simulator` is a genuine two-valued tooth but over `decoLeakyView`,
+>   which is NOT a conjunct of `UCRealizesFAtt`.
+> - **The STATIC soundness half = rung 4** (the real deliverable). `DecoUCRealization.soundness` is
+>   `deco_attestation_realizes` (`AttRealizes`).
+> - **The computational `≈_c` layer CARRIED (all `True`/`trivial`), never faked as `axiom`.**
+>   `DecoUCRealization` still bundles STARK-ZK / handshake-sim / PPT / negligible-advantage / composition
+>   as named `Prop` carriers; every builder fills them with `True`. `decoUC_realizes` now returns just
+>   `r.soundness` (a `P → P`-shaped re-export), discarding the carriers.
+> - **Non-vacuity (of the SOUNDNESS leg).** `ref_ucRealizes` (holds on the reference kernel) /
+>   `forge_not_ucRealizes` (FALSE over the forge kernel — identical content to rung-4's forgery bite).
+>   Manifest row 23 is DOWNGRADED to **wrapper-of-22, not a distinct summit**.
 > - **Governed schema:** `attestationUCDynamics` / `deco_attestation_uc_via_schema` /
->   `deco_attestation_uc_realizes` in `Metatheory/Adversary/Instances.lean` §3.9b, above rung-4
->   `attestationDynamics`.
+>   `deco_attestation_uc_realizes` in `Metatheory/Adversary/Instances.lean` §3.9b — a truthfully-named
+>   WRAPPER delivering the SAME invariant as rung-4 `attestationDynamics`, NOT above it in content.
+> - **To actually reach rung 5:** build the spmf / probabilistic-process-calculus model (route b-i,
+>   greenfield Lean, Pillar 1) OR mechanize `F_attestation` in the CryptHOL harness (route b-ii); wire a
+>   load-bearing view of the deployed verifier so `decoLeaky_no_simulator` becomes a bite that FIRES on
+>   `UCRealizesFAtt`. Both remain UNBUILT.
 > - **⚑ THE PRECISE MISSING-FRAMEWORK FINDING (the honest STOP for the fully-computational apex).**
 >   Route (b-ii) — mechanize `F_attestation` in the CryptHOL harness alongside `F_com` — is NOT
 >   achievable with what exists. `uc-crypthol/Dregg2_FCom.thy` models `F_com` = the Pedersen COMMITMENT

@@ -1,13 +1,25 @@
 /-
-# Dregg2.Crypto.DecoUC — DECO attestation UC-REALIZATION (rung 5: the summit of the DECO-as-UC ladder).
+# Dregg2.Crypto.DecoUC — DECO attestation: the rung-4 soundness leg re-exported + an UNBUILT rung-5 UC wrapper.
 
-`Dregg2/Crypto/DecoUnforgeable.lean` is **rung 4**: the game-based unforgeability of the DECO payment
-attestation (a forged attestation ⟹ a concrete ed25519 `SigForgery` / HMAC `MacForgery`), with
-`deco_attestation_realizes` = "the deployed verifier realizes `F_attestation`" (the SOUNDNESS half).
-This module is **rung 5**: the climb from "the verifier never emits a FALSE attestation" (soundness) to
-"the deployed protocol π UC-REALIZES the ideal functionality `F_attestation`" — a SIMULATOR that, given
-only `F_attestation`'s output, produces an indistinguishable DECO transcript, with the distinguisher's
-advantage bounded by the named standard floors.
+⚑ **RUNG 5 (computational UC-realization) IS NOT REACHED.** An adversarial meta-review
+(`docs/audit/META-REVIEW-STATEMENTS.md` §1, `docs/audit/META-REVIEW-GATE-AND-DECOUC.md` §2.2) found the
+previously-shipped "rung-5 summit" was HOLLOW: the load-bearing proposition `UCRealizesFAtt` carried a
+second conjunct `∀ stmt w₁ w₂, decoDisclosedView stmt w₁ = decoDisclosedView stmt w₂` that, because
+`decoDisclosedView` is DEFINED to discard the witness, unfolds to `stmt = stmt` — provable by `rfl` for
+ANY `verify`/`Auth`, honest or forged. So `UCRealizesFAtt` was logically EQUAL to `AttRealizes` (rung-4
+soundness); the ZK conjunct carried zero falsifiable content, and the computational carriers
+(`stark_zk`/`handshake_sim`/`simulator_ppt`/`negligible_advantage`/`composes`) are `True`/`trivial` in
+every builder. This module has been RELABELED to say so: the vacuous conjunct is REMOVED, and what
+remains is honestly named as **rung-4 soundness re-exported under the UC name, with the computational
+`≈_c` summit UNBUILT.**
+
+`Dregg2/Crypto/DecoUnforgeable.lean` is **rung 4** and is REAL: the game-based unforgeability of the DECO
+payment attestation (a forged attestation ⟹ a concrete ed25519 `SigForgery` / HMAC `MacForgery`), with
+`deco_attestation_realizes` = "the deployed verifier realizes `F_attestation`" (the SOUNDNESS half). The
+genuine rung-5 climb — "the deployed protocol π UC-REALIZES the ideal functionality `F_attestation`": a
+SIMULATOR that, given only `F_attestation`'s output, produces an indistinguishable DECO transcript, with
+the distinguisher's advantage NEGLIGIBLE — needs the spmf / probabilistic-process-calculus framework that
+is NOT in this tree (see the missing-framework STOP below). It is UNBUILT.
 
 ## What is PROVED in Lean here (the real, non-vacuous core)
 
@@ -19,14 +31,16 @@ advantage bounded by the named standard floors.
   accepting attestation without the secret. (Anti-vacuity FIRES: the simulator is real, its output
   verifies.)
 
-  **(2) THE PERFECT/STATISTICAL ZK FRAGMENT (§2).** Under the `selective` dial floor (`Deco.lean:392`)
-  the verifier's DISCLOSED view is the statement alone (serverKey + facts); the session witness
-  (sessionKey/transcript/salt) is HIDDEN. `decoView_witness_free` / `decoView_indep` prove the disclosed
-  view factors through the statement — the information-theoretic content of "the verifier learns nothing
-  about the session", grounded in `Metatheory/Open/PerfectZK.lean` (`hperf` / `view_indep_of_witness`).
-  `decoLeaky_no_simulator` is the TEETH: a DECO verifier that leaked the session key CANNOT be
-  simulated witness-free (distinguishable) — the perfect-ZK fragment is a real constraint, not a
-  vacuous `rfl`.
+  **(2) A PERFECT-ZK FRAGMENT (§2) — real, but NOT the shipped UC content.** Under the `selective` dial
+  floor (`Deco.lean:392`) a CONSTANT disclosed-view function `decoDisclosedView` (defined to discard the
+  witness) trivially factors through the statement — `decoView_witness_free` / `decoView_indep` are `rfl`.
+  ⚑ These are a MODEL fragment, NOT a proof about the deployed verifier: because the view is chosen
+  constant in the witness, the equalities carry no information about `verify`. `decoLeaky_no_simulator`
+  IS a genuine two-valued tooth (a session-key-leaking view has no witness-free simulator) — BUT it
+  refutes `decoLeakyView`, a function NOT wired into `UCRealizesFAtt`. So the perfect-ZK fragment is a
+  real fragment that does NOT, in this model, constrain the deployed verifier. The former claim that this
+  fragment made the UC proposition non-vacuous was the overclaim the meta-review caught; the vacuous
+  constant-view conjunct has been REMOVED from `UCRealizesFAtt` rather than dressed up.
 
   **(3) THE STATIC SOUNDNESS HALF (§3).** `AttRealizes` (rung 4) IS the simulator's soundness
   obligation: the real client never accepts where `F_attestation` rejects. `decoUC_realization.soundness`
@@ -105,37 +119,42 @@ theorem decoSim_works :
   · rfl
   · decide
 
-/-! ## §2 — THE PERFECT/STATISTICAL ZK FRAGMENT: the disclosed view is witness-free.
+/-! ## §2 — A PERFECT-ZK MODEL FRAGMENT (NOT wired into the UC proposition).
 
-Under the `selective` dial floor (`Deco.lean:392`) the verifier's disclosed observable is the public
-statement (serverKey + facts); the session witness — session key, transcript, salt — is HIDDEN. This is
-the DECO instantiation of the perfect-ZK law `view s w = sim s` (`PerfectZK.lean:88`): the real disclosed
-view equals a witness-free simulation. -/
+⚑ These lemmas are about a CONSTANT view function chosen witness-free BY DEFINITION; they are `rfl` and
+carry no information about the deployed `verify`. They are kept as a documented model fragment (and to
+host the genuine `decoLeaky_no_simulator` tooth), but — per the meta-review — they are NOT part of the
+load-bearing `UCRealizesFAtt` proposition, whose formerly-shipped `rfl`-vacuous conjunct has been removed.
+The genuine perfect/statistical ZK of the DECO verifier is part of the UNBUILT computational summit. -/
 
-/-- The verifier's DISCLOSED view under `selective`: the public statement. Witness-independent. -/
+/-- A CONSTANT disclosed-view function (witness-free by definition). Not the deployed verifier's view;
+`decoView_witness_free`/`decoView_indep` are `rfl` precisely because this discards `_w`. -/
 def decoDisclosedView {Dg : Type} (stmt : Statement Dg) (_w : CircuitIR Dg) : Statement Dg := stmt
 
-/-- The simulator reproduces the disclosed view from the statement ALONE (witness-free). -/
+/-- The simulator reproduces the constant view from the statement ALONE (trivially, by construction). -/
 def decoSimView {Dg : Type} (stmt : Statement Dg) : Statement Dg := stmt
 
-/-- **(PERFECT-ZK FRAGMENT)** the disclosed verifier view is a witness-free simulation (`view s w =
-sim s`). The DECO perfect-ZK law for the disclosed observable, grounded in `PerfectZK.hperf`. -/
+/-- **(MODEL FRAGMENT, `rfl`)** the constant view is a witness-free simulation. ⚑ `rfl` by construction
+(the view discards `w`); carries no content about the deployed `verify`. Documentation, not a UC leg. -/
 theorem decoView_witness_free {Dg : Type} (stmt : Statement Dg) (w : CircuitIR Dg) :
     decoDisclosedView stmt w = decoSimView stmt := rfl
 
-/-- **(PERFECT-ZK FRAGMENT, information-theoretic content)** any two session witnesses yield the SAME
-disclosed view: the verifier extracts ZERO information about the hidden session (`view_indep_of_witness`
-at DECO). -/
+/-- **(MODEL FRAGMENT, `rfl`)** any two witnesses yield the SAME constant view. ⚑ `rfl` by construction —
+NOT a proof that the deployed DECO verifier hides the session. Documentation, not a UC leg. -/
 theorem decoView_indep {Dg : Type} (stmt : Statement Dg) (w₁ w₂ : CircuitIR Dg) :
     decoDisclosedView stmt w₁ = decoDisclosedView stmt w₂ := rfl
 
 /-- A LEAKY (non-ZK) DECO view that exposes the hidden session key — the anti-instance. -/
 def decoLeakyView (_stmt : Statement Int) (w : CircuitIR Int) : Int := w.sessionKey
 
-/-- **(BITES — perfect-ZK teeth)** the leaky view CANNOT be simulated witness-free: two transcripts
-differing only in the hidden session key produce DIFFERENT views, so NO `sim : Statement → Int`
-reproduces it. A DECO verifier that leaked the session would be DISTINGUISHABLE — the perfect-ZK
-fragment is a real constraint, not a vacuous `rfl`. Dual of `PerfectZK.Teeth.leaky_no_simulator`. -/
+/-- **(GENUINE TWO-VALUED TOOTH — over `decoLeakyView`, NOT over `UCRealizesFAtt`)** a view that leaks
+the session key CANNOT be simulated witness-free: two transcripts differing only in the hidden session
+key produce DIFFERENT leaky views, so NO `sim : Statement → Int` reproduces it. This is a real
+constraint — BUT on `decoLeakyView`, a function that is NOT a conjunct of the load-bearing
+`UCRealizesFAtt` (the meta-review's finding: the shipped UC conjunct was the vacuous CONSTANT view, not
+this one). Kept as the honest witness that a leaky verifier WOULD be distinguishable; wiring it into a
+proposition about the deployed `verify` is part of the UNBUILT computational summit. Dual of
+`PerfectZK.Teeth.leaky_no_simulator`. -/
 theorem decoLeaky_no_simulator :
     ¬ ∃ sim : Statement Int → Int,
         ∀ (stmt : Statement Int) (w : CircuitIR Int), decoLeakyView stmt w = sim stmt := by
@@ -149,18 +168,22 @@ theorem decoLeaky_no_simulator :
   simp only [decoLeakyView] at h0 h1
   exact absurd (h0.trans h1.symm) (by decide)
 
-/-! ## §3 — THE UC-REALIZATION: soundness (rung 4) + perfect-ZK (Lean) + carried computational floors. -/
+/-! ## §3 — THE (RE-EXPORTED RUNG-4) SOUNDNESS LEG + carried-but-unbuilt computational floors.
 
-/-- **`UCRealizesFAtt verify Auth`** — the DECO attestation UC-realization proposition (rung 5, the
-Lean-provable core): the deployed verifier realizes `F_attestation` (SOUNDNESS — no false emission; rung
-4) AND the honest disclosed transcript is witness-free (the perfect-ZK simulator fragment). The
-computational `≈_c` layer rides alongside as `DecoUCRealization` carriers. FALSIFIABLE — see
-`forge_not_ucRealizes`. -/
+⚑ `UCRealizesFAtt` is NOT the UC summit. After the meta-review, its vacuous `rfl`-conjunct (the constant
+disclosed view) has been REMOVED; it is now DEFINITIONALLY `AttRealizes` — the rung-4 soundness property,
+re-exported under the historic UC name. It is FALSIFIABLE (the soundness conjunct fails over a forgeable
+oracle — `forge_not_ucRealizes`), but it adds NOTHING over rung 4. The genuine ZK/`≈_c` conjuncts are
+UNBUILT (they need the spmf framework named in the header). -/
+
+/-- **`UCRealizesFAtt verify Auth`** — the DECO attestation SOUNDNESS leg (rung 4), re-exported under the
+UC name. ⚑ DEFINITIONALLY `AttRealizes verify Auth`: the deployed verifier never emits a FALSE
+attestation. The previously-shipped second conjunct (a `rfl`-true constant-view equality that carried no
+content and made this logically equal to `AttRealizes` anyway) has been REMOVED as vacuous. The genuine
+perfect/statistical + computational ZK conjuncts are UNBUILT. FALSIFIABLE — see `forge_not_ucRealizes`. -/
 def UCRealizesFAtt {Dg Proof : Type} (verify : Statement Dg → Proof → Bool)
     (Auth : Statement Dg → Prop) : Prop :=
-  AttRealizes verify Auth ∧
-  (∀ (stmt : Statement Dg) (w₁ w₂ : CircuitIR Dg),
-    decoDisclosedView stmt w₁ = decoDisclosedView stmt w₂)
+  AttRealizes verify Auth
 
 /-- **`DecoUCRealization verify Auth`** — the DECO attestation UC-realization, assembled: the Lean-proved
 core (soundness + perfect-ZK) TOGETHER with the named computational carriers a full discharge supplies.
@@ -218,19 +241,23 @@ def decoUC_realization {Dg Proof : Type} [KD : DecoVerifierKernel Dg Proof]
   negligible_advantage_holds := hnegl
   composes_holds := hcomp
 
-/-- **`decoUC_realizes`** — the realization structure ENTAILS the Lean-provable UC-realization proposition
-`UCRealizesFAtt` (soundness ∧ perfect-ZK). The computational carriers ride alongside as fields; this is
-the part of the rung-5 statement that IS a Lean theorem. -/
+/-- **`decoUC_realizes`** — the assembled structure ENTAILS `UCRealizesFAtt`. ⚑ Since `UCRealizesFAtt` is
+now DEFINITIONALLY `AttRealizes`, this is just `r.soundness` — it concludes exactly the rung-4 soundness
+its hypothesis already supplies (a `P → P`-shaped re-export). It DISCARDS all the computational-carrier
+fields (`stark_zk`/…/`composes`), which are `True`/`trivial` in every builder: rung 5 adds nothing over
+rung 4 here. Named honestly rather than deleted, so the manifest can point at the truth. -/
 theorem decoUC_realizes {Dg Proof : Type} (verify : Statement Dg → Proof → Bool)
     (Auth : Statement Dg → Prop) (r : DecoUCRealization verify Auth) :
     UCRealizesFAtt verify Auth :=
-  ⟨r.soundness, r.zk_disclosed⟩
+  r.soundness
 
-/-! ## §4 — NON-VACUITY (both poles): a real UC realization HOLDS; a broken simulator is NOT one. -/
+/-! ## §4 — NON-VACUITY (both poles) OF THE SOUNDNESS LEG: it HOLDS on the reference kernel; it FAILS on
+a forgeable oracle. ⚑ Both poles are about the soundness conjunct (= all of `UCRealizesFAtt` now); they
+do NOT witness any ZK/computational content, which is UNBUILT. -/
 
-/-- **(FIRES)** the reference DECO kernel UC-REALIZES `F_attestation`: `UCRealizesFAtt` HOLDS (with the
-toy instance's computational carriers trivially discharged) — soundness from the reference §8 carriers,
-perfect-ZK by construction. The positive pole for the UC proposition. -/
+/-- **(FIRES)** the reference DECO kernel satisfies the soundness leg `UCRealizesFAtt` (= `AttRealizes`)
+— from the reference §8 carriers. ⚑ This is rung-4 soundness on the toy kernel, NOT evidence of a UC
+realization; the computational carriers are trivially `True`. The positive pole for the soundness leg. -/
 theorem ref_ucRealizes :
     UCRealizesFAtt Reference.refKernel.verify
       (decoAuthenticated Reference.refSigKernel Reference.refMacKernel
@@ -241,17 +268,17 @@ theorem ref_ucRealizes :
       (fun _ _ _ h => of_decide_eq_true h) trivial
       True True True True True trivial trivial trivial trivial trivial)
 
-/-- **(BITES — broken sim is NOT a realization; the anti-P→P witness)** the forge kernel does NOT
-UC-realize `F_attestation`: `UCRealizesFAtt` is FALSE over it — its soundness conjunct fails (a verified
-attestation of a session that did NOT happen). So `UCRealizesFAtt` is a real, FALSIFIABLE proposition
-the sound floor earns and a forgeable oracle loses. A broken simulator whose output IS distinguishable
-is not a realization. Reuses `Forge.forge_not_realizes`. -/
+/-- **(BITES — the soundness leg FAILS over a forgeable oracle; the anti-P→P witness)** the forge kernel
+does NOT satisfy `UCRealizesFAtt` (= `AttRealizes`): it is FALSE over the forge kernel (a verified
+attestation of a session that did NOT happen). So the leg is a real, FALSIFIABLE proposition the sound
+floor earns and a forgeable oracle loses. ⚑ This bites the SOUNDNESS conjunct — it is identical to
+rung-4's `forge_attestation_forgery`; it does NOT establish any ZK/UC content beyond rung 4. Reuses
+`Forge.forge_not_realizes`. -/
 theorem forge_not_ucRealizes :
     ¬ UCRealizesFAtt Forge.forgeDeco.verify
         (decoAuthenticated Forge.forgeSigKernel Reference.refMacKernel
-          Forge.forgeDeco.compress Forge.forgeDeco.encode) := by
-  rintro ⟨hsound, _⟩
-  exact Forge.forge_not_realizes hsound
+          Forge.forgeDeco.compress Forge.forgeDeco.encode) :=
+  fun hsound => Forge.forge_not_realizes hsound
 
 /-! ## §5 — THE CROSS-SYSTEM COMPUTATIONAL DISCHARGE (the honest residual, named — never an `axiom`).
 
