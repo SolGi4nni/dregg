@@ -29,6 +29,11 @@ use dregg_agent::agent::{ActionObservation, AgentAction, AgentBrain};
 
 pub mod protocol;
 
+/// The real firmament OS-jail body-spawn (`real-jail` feature): fork a body into
+/// a process-PD confined to Endpoint-only and drive it with a [`ConfinedBrain`].
+#[cfg(feature = "real-jail")]
+pub mod jail;
+
 pub use protocol::{BodyMsg, DoneNote, Proposal, Verdict};
 
 /// The transport to a confined body: read its next message, write it a verdict.

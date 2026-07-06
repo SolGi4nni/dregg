@@ -9,9 +9,9 @@ North star: *rent a coding agent you can jail, budget, fork, rewind, and
 cryptographically audit against the chain.*
 
 ## Current thrust
-STEP 1/2 — build the confined-body grain: a `ConfinedBrain` (new crate
-`grain-jail`) that plugs a jailed subprocess into the existing `AgentBrain`
-seam, so the grain's body is OS-jailed with zero change to the drive path.
+UNITS 1 + 3 LANDED (seam proven end-to-end vs a real grain). UNIT 2 (real
+firmament OS-jail, `real-jail` feature) building — the load-bearing "body is
+OS-jailed" move. macOS Seatbelt is real+enforced so it validates locally.
 Design: `docs/deos/GRAIN-CONFINED-BODY.md`.
 
 ## Key grounding facts (verified at HEAD)

@@ -1,0 +1,176 @@
+//! The real firmament OS-jail backing a confined body (`real-jail` feature).
+//!
+//! [`spawn_confined_body`] forks a body into a firmament process-PD confined to
+//! Endpoint-only — file, network, and `exec` denied (macOS Seatbelt / Linux
+//! seccomp+Landlock; `sel4/dregg-firmament/src/sandbox.rs`) — and hands back the
+//! parent-side [`JailChannel`]. A [`ConfinedBrain`](crate::ConfinedBrain) drives
+//! that channel EXACTLY as it drives an in-process one; the only difference is
+//! the body is now an OS-jailed subprocess whose sole channel is the socketpair.
+//!
+//! The body runs as a Rust closure inside the jail (the jail denies `execve`, so
+//! it cannot be an arbitrary external binary — that needs a granted exec-door, a
+//! later slice; the confined-Rust-harness-plus-granted-egress body is the shape
+//! for an LLM-driven agent). Its authority over the grain is still exactly the
+//! grain's caps — the jail is the *ambient* floor beneath the cap gate, closing
+//! the case where an untrusted body ignores the cap system and makes raw
+//! syscalls.
+
+use std::io::BufReader;
+use std::os::unix::net::UnixStream;
+
+use dregg_firmament::process_kernel::{PdProcess, ProcessKernel};
+
+use crate::LineChannel;
+
+/// The parent-side channel to a jailed body: the confined-body line protocol
+/// over the process-PD's surface socketpair. Drive it with a
+/// [`ConfinedBrain`](crate::ConfinedBrain).
+pub type JailChannel = LineChannel<BufReader<UnixStream>, UnixStream>;
+
+/// A running jailed body. [`join`](JailedBody::join) waits for it and returns its
+/// exit code (`0` = clean; the firmament `CONFINE_FAILED_EXIT` = 99 means the
+/// sandbox could not be applied and the body never ran — fail-closed).
+pub struct JailedBody {
+    pd: PdProcess,
+}
+
+impl JailedBody {
+    /// Wait for the jailed body to exit; returns its exit code.
+    pub fn join(self) -> std::io::Result<i32> {
+        self.pd.join()
+    }
+}
+
+/// Spawn `body` as an OS-jailed subprocess speaking the confined-body line
+/// protocol over a socketpair, returning the jailed handle plus the parent-side
+/// [`JailChannel`] to drive with a [`ConfinedBrain`](crate::ConfinedBrain).
+///
+/// `body` runs INSIDE the jail with its end of the socketpair (a [`UnixStream`]).
+/// It should keep post-fork work minimal (the process is forked without `exec`):
+/// pre-serialize anything heavy in the parent and capture it. Confinement is
+/// applied before `body` runs; if it cannot be applied the child exits
+/// fail-closed without running `body`.
+pub fn spawn_confined_body<F>(
+    kernel: &ProcessKernel,
+    body: F,
+) -> std::io::Result<(JailedBody, JailChannel)>
+where
+    F: FnOnce(UnixStream) -> i32,
+{
+    let (pd, parent) = kernel
+        .spawn_pd_confined_with_surface(vec![], move |_client, surf, _granted| body(surf))
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("firmament confined spawn failed: {e:?}"),
+            )
+        })?;
+    let reader = BufReader::new(parent.try_clone()?);
+    let channel = LineChannel::new(reader, parent);
+    Ok((JailedBody { pd }, channel))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ConfinedBrain;
+    use crate::protocol::{BodyMsg, DoneNote, Proposal};
+    use dregg_agent::agent::{ActionObservation, AgentAction, AgentBrain};
+    use std::io::{BufRead, Write};
+
+    /// The exit code the jailed body returns if it could open a host file it must
+    /// not be able to (a confinement LEAK — the jail failed to deny file reads).
+    const CONFINE_LEAK: i32 = 77;
+    /// The body returns this if the protocol I/O over the socket faulted.
+    const PROTOCOL_FAULT: i32 = 66;
+
+    /// A real firmament-jailed body drives a `ConfinedBrain` over a socketpair,
+    /// AND the jail denies it a host-file read. Proves the confined-body seam
+    /// works over a genuine OS-jail with the ambient confinement enforced.
+    #[test]
+    fn jailed_body_drives_the_brain_and_cannot_open_host_files() {
+        // Pre-serialize the body's outgoing lines IN THE PARENT so the post-fork
+        // child does no serde allocation — one proposal per admitted step, then
+        // Done. (Fork-without-exec: keep the child's work minimal.)
+        let lines: Vec<Vec<u8>> = [
+            BodyMsg::Propose(Proposal::invoke("a")),
+            BodyMsg::Propose(Proposal::invoke("b")),
+            BodyMsg::Done(DoneNote::default()),
+        ]
+        .iter()
+        .map(|m| {
+            let mut s = serde_json::to_string(m).unwrap();
+            s.push('\n');
+            s.into_bytes()
+        })
+        .collect();
+        let n_proposals = lines.len() - 1; // last line is Done (no verdict follows)
+
+        let kernel = ProcessKernel::new();
+        let (handle, channel) = spawn_confined_body(&kernel, move |surf| {
+            // IN THE JAIL. Ambient-confinement tooth: a host file read is DENIED.
+            if std::fs::File::open("/etc/passwd").is_ok() {
+                return CONFINE_LEAK;
+            }
+            let mut w = match surf.try_clone() {
+                Ok(w) => w,
+                Err(_) => return PROTOCOL_FAULT,
+            };
+            let mut r = BufReader::new(surf);
+            for (i, line) in lines.iter().enumerate() {
+                if w.write_all(line).and_then(|_| w.flush()).is_err() {
+                    return PROTOCOL_FAULT;
+                }
+                // Read the host's verdict after each PROPOSAL (not after Done).
+                if i < n_proposals {
+                    let mut discard = String::new();
+                    if r.read_line(&mut discard).map(|n| n == 0).unwrap_or(true) {
+                        return PROTOCOL_FAULT;
+                    }
+                }
+            }
+            0
+        })
+        .expect("spawn the jailed body");
+
+        // Drive the jailed body over the real socket with a ConfinedBrain.
+        let mut brain = ConfinedBrain::new(channel);
+
+        assert_eq!(
+            brain.next_action(0),
+            Some(AgentAction::Invoke {
+                service: "a".into()
+            }),
+            "the jailed body's first proposal crossed the jail socket and mapped"
+        );
+        brain.observe(&ActionObservation {
+            action: "invoke:a".into(),
+            admitted: true,
+            refusal: None,
+            tool_ok: Some(true),
+            tool_summary: None,
+        });
+        assert_eq!(
+            brain.next_action(1),
+            Some(AgentAction::Invoke {
+                service: "b".into()
+            })
+        );
+        brain.observe(&ActionObservation {
+            action: "invoke:b".into(),
+            admitted: false,
+            refusal: Some("no cap".into()),
+            tool_ok: None,
+            tool_summary: None,
+        });
+        // Done → the drive ends.
+        assert_eq!(brain.next_action(2), None);
+
+        let code = handle.join().expect("join the jailed body");
+        assert_eq!(
+            code, 0,
+            "the jailed body completed the protocol AND could not open /etc/passwd \
+             (code {CONFINE_LEAK} would be a confinement leak, {PROTOCOL_FAULT} an I/O fault)"
+        );
+    }
+}
