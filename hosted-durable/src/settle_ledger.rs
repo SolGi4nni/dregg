@@ -44,13 +44,12 @@
 //! the on-chain turn hash + post-transfer balances. On load, the **last**
 //! record for a key wins, so a confirmed record supersedes its reservation.
 //!
-//! ## Wiring (deliberately unwired at port time)
+//! ## Wiring (applied)
 //!
-//! This file was ported as a NEW file only. To activate:
-//! 1. `hosted-durable/src/lib.rs`: add `pub mod settle_ledger;`
-//! 2. `hosted-durable/Cargo.toml`: add `serde_json = { workspace = true }`
-//! 3. Consult it from the submitter side around `PayableSettlement::settle`
-//!    (reserve_or_replay → submit → confirm).
+//! `pub mod settle_ledger;` is in `hosted-durable/src/lib.rs`, `serde_json` is a
+//! crate dependency, and the submitter side consults it through
+//! [`crate::durable_settlement::DurableSettlement`] (reserve_or_replay → submit
+//! → confirm around its injected [`crate::payable::PaySubmitter`]).
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};

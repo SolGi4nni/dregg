@@ -14,16 +14,14 @@
 //! [`read_meter_outbox`] and settles each as one conserving `Effect::Transfer`
 //! (see [`crate::payable`]).
 //!
-//! WIRING (not yet applied):
-//! - `hosted-durable/Cargo.toml`: add
-//!   `sqlx = { version = "0.8", optional = true, default-features = false, features = ["runtime-tokio", "postgres"] }`
-//!   and `anyhow = { version = "1", optional = true }`, plus a feature
-//!   `pg = ["dep:sqlx", "dep:anyhow"]`.
-//! - `hosted-durable/src/lib.rs`: `#[cfg(feature = "pg")] pub mod pg_outbox;`
-//! - a `#[ignore]`-by-default pg test porting the old
-//!   `durable_workflow_charges_the_outbox_exactly_once_per_step_across_a_crash`
-//!   tooth (the prior operated layer) against
-//!   `DATABASE_URL`.
+//! WIRING (applied): `hosted-durable/Cargo.toml` carries the `pg` feature
+//! (`pg = ["dep:sqlx"]`, sqlx `runtime-tokio` + `postgres`; `anyhow` is a plain
+//! dependency) and `hosted-durable/src/lib.rs` has
+//! `#[cfg(feature = "pg")] pub mod pg_outbox;`.
+//!
+//! Named residual (still open): the `#[ignore]`-by-default pg test porting the
+//! old `durable_workflow_charges_the_outbox_exactly_once_per_step_across_a_crash`
+//! tooth (the prior operated layer) against `DATABASE_URL`.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

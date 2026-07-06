@@ -30,12 +30,14 @@
 //! `dregg_payable::resolve_pay` (the verified DFA route over the shared
 //! `payable_descriptor`, the `Signature` cap gate, and the desugar to the
 //! single conserving `Effect::Transfer`) before submission, so the client-side
-//! desugar is the same verified code path the node runs. Linking it is
-//! currently blocked at the workspace root: `dregg-turn`'s optional
-//! `ark-serialize` requirement needs the breadstuffs `[patch.crates-io]` fork
-//! replicated in the operated-layer root manifest (see the source durable manifest, the
-//! BLOCKED RESIDUAL note, for the exact two patch lines). Until that lands the
-//! desugar runs only node-side, behind the wire.
+//! desugar is the same verified code path the node runs. The old blocker
+//! (replicating the breadstuffs `ark-serialize` `[patch.crates-io]` fork into
+//! the operated-layer root manifest) DISSOLVED when this crate was ported into
+//! the breadstuffs workspace, whose root already carries that patch and builds
+//! `dregg-payable` as a sibling member. What remains is plain wiring — a
+//! `dregg-payable` path dependency plus a `resolve_pay` pass ahead of
+//! [`PaySubmitter::submit_pay`]. Until that lands the desugar runs only
+//! node-side, behind the wire.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

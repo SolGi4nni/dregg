@@ -27,13 +27,13 @@
 //! item). The ledger's own lock makes reserve → submit → confirm effectively
 //! exactly-once per key even under concurrent settles of the same period.
 //!
-//! ## Wiring (deliberately unwired at port time)
+//! ## Wiring (applied)
 //!
-//! This file was written as a NEW file only. To activate:
-//! 1. `hosted-durable/src/lib.rs`: add `pub mod durable_settlement;` (after
-//!    `pub mod settle_ledger;` — this module depends on it).
-//! 2. `hosted-durable/Cargo.toml`: `serde_json = { workspace = true }` (already
-//!    required by `settle_ledger`).
+//! `pub mod durable_settlement;` is in `hosted-durable/src/lib.rs` (after
+//! `pub mod settle_ledger;`, which this module depends on) and `serde_json` is
+//! a crate dependency. This rail is the injectable production [`Settlement`];
+//! callers choose it where they would otherwise inject a bare
+//! [`crate::payable::PayableSettlement`].
 
 use std::collections::HashMap;
 use std::io;
