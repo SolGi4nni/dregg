@@ -8,6 +8,19 @@ leased/metered + persisted-as-forkable-mind-cell + R2-verifiable by the renter.
 North star: *rent a coding agent you can jail, budget, fork, rewind, and
 cryptographically audit against the chain.*
 
+## IN PROGRESS (resume tick ~01:55): THE EGRESS DOOR
+Fresh-head re-approach. Verified the macOS deny test is NON-vacuous (a loopback
+`net_out` grant → SBPL `(allow network-outbound (remote ip "localhost:PORT"))`,
+port-pinned under deny-default, so PORT_A granted / PORT_B denied even with a live
+listener on both). Firmament plumbing DONE + compiles: new
+`spawn_pd_confined_with_surface_and_egress` (threads `net_out` through
+`spawn_pd_inner_with_extra` → folds `.with_net_out()` into the already-built
+Confinement; the no-door surface variant is unchanged). grain-jail
+`spawn_confined_body_with_egress` + a non-vacuous deny test (two live loopback
+listeners, grant one, jailed body must reach granted ∧ be DENIED ungranted) —
+BUILDING (the pivotal signal). If green: commit, then the in-jail LLM harness over
+a mock model server = the full "rent a coding agent".
+
 ## STATE FOR MORNING-EMBER (2026-07-06 ~01:05, overnight session)
 The confined-body grain is DONE and green — 13 commits (`8de7447da`..`ea92ed7d3`),
 incl. the full hostile-body robustness set (crash/hang+SIGKILL/garbage/cap/flood).

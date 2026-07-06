@@ -100,6 +100,47 @@ where
                 format!("firmament confined spawn failed: {e:?}"),
             )
         })?;
+    channel_over(pd, parent, read_timeout)
+}
+
+/// Spawn a confined body WITH a granted outbound network door: the body may
+/// `connect` to EXACTLY the `net_out` endpoints (`"host:port"`) and nothing else
+/// network-wise — every other remote stays denied by the default-deny sandbox
+/// (macOS SBPL / Linux connect-notify supervisor). This is the door a confined
+/// agent body reaches its model provider through; its only outward reach is the
+/// granted endpoint, its only inward reach the grain's cap-gated seam over the
+/// channel. Empty `net_out` ⇒ the fully net-sealed jail (= [`spawn_confined_body`]).
+pub fn spawn_confined_body_with_egress<F>(
+    kernel: &ProcessKernel,
+    net_out: Vec<String>,
+    read_timeout: Option<Duration>,
+    body: F,
+) -> std::io::Result<(JailedBody, JailChannel)>
+where
+    F: FnOnce(UnixStream) -> i32,
+{
+    let (pd, parent) = kernel
+        .spawn_pd_confined_with_surface_and_egress(
+            vec![],
+            net_out,
+            move |_client, surf, _granted| body(surf),
+        )
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("firmament confined+egress spawn failed: {e:?}"),
+            )
+        })?;
+    channel_over(pd, parent, read_timeout)
+}
+
+/// Wrap the parent's surface stream into a [`JailChannel`] (a read clone with the
+/// optional timeout + the write half), pairing it with the jailed handle.
+fn channel_over(
+    pd: PdProcess,
+    parent: UnixStream,
+    read_timeout: Option<Duration>,
+) -> std::io::Result<(JailedBody, JailChannel)> {
     let reader_stream = parent.try_clone()?;
     // The timeout gates the READ side (waiting on the body's next message); the
     // write side (verdicts) is never blocked by the body.
@@ -249,5 +290,54 @@ mod tests {
         // Reap the hung body — `join` alone would block forever; `kill` SIGKILLs
         // then reaps. This must return, not hang.
         let _status = handle.kill().expect("kill + reap the hung body");
+    }
+
+    /// A jailed body granted ONE outbound door reaches EXACTLY that door and no
+    /// other — the ambient-egress tooth. The test is non-vacuous: BOTH endpoints
+    /// are live loopback listeners, so a connect that the sandbox ALLOWS
+    /// completes and one it DENIES fails (EPERM) — success-vs-failure cleanly
+    /// distinguishes allow from deny (no connection-refused ambiguity).
+    #[test]
+    fn a_jailed_body_reaches_only_the_granted_egress_door() {
+        use std::net::{SocketAddr, TcpListener, TcpStream};
+        use std::time::Duration;
+
+        // One door we GRANT, one we do NOT — both listening.
+        let granted = TcpListener::bind("127.0.0.1:0").unwrap();
+        let ungranted = TcpListener::bind("127.0.0.1:0").unwrap();
+        let granted_addr: SocketAddr = granted.local_addr().unwrap();
+        let ungranted_addr: SocketAddr = ungranted.local_addr().unwrap();
+        // Accept + drop so an ALLOWED connect actually completes.
+        std::thread::spawn(move || granted.incoming().for_each(|s| drop(s)));
+        std::thread::spawn(move || ungranted.incoming().for_each(|s| drop(s)));
+
+        let kernel = ProcessKernel::new();
+        let (handle, _channel) = spawn_confined_body_with_egress(
+            &kernel,
+            vec![granted_addr.to_string()], // grant ONLY the granted door
+            None,
+            move |_surf| {
+                // Both connects use a short timeout so a DENY (or a stall) does
+                // not wedge the test.
+                let reach =
+                    |a: SocketAddr| TcpStream::connect_timeout(&a, Duration::from_secs(2)).is_ok();
+                let reach_granted = reach(granted_addr);
+                let reach_ungranted = reach(ungranted_addr);
+                match (reach_granted, reach_ungranted) {
+                    (true, false) => 0,   // CORRECT: granted reachable, ungranted denied
+                    (true, true) => 10,   // LEAK: reached an ungranted endpoint
+                    (false, false) => 11, // the grant did not take (granted unreachable)
+                    (false, true) => 12,  // both wrong
+                }
+            },
+        )
+        .expect("spawn a jailed body with one granted egress door");
+
+        let code = handle.join().expect("join the egress body");
+        assert_eq!(
+            code, 0,
+            "the jailed body reached ONLY the granted door \
+             (10 = LEAK to an ungranted endpoint, 11 = grant did not take, 12 = both)"
+        );
     }
 }

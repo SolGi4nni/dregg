@@ -1327,6 +1327,46 @@ impl ProcessKernel {
     where
         F: FnOnce(KernelClient, UnixStream, Vec<CapHandle>) -> i32,
     {
+        self.surface_spawn_inner(granted, Vec::new(), body)
+    }
+
+    /// [`Self::spawn_pd_confined_with_surface`] PLUS a granted outbound network
+    /// door: the confined child keeps its control + surface sockets AND may
+    /// `connect` to EXACTLY the `net_out` endpoints (`"host:port"`, the same
+    /// grant vocabulary as [`crate::sandbox::Confinement::with_net_out`]) — every
+    /// other remote stays denied by the default-deny sandbox (macOS SBPL / the
+    /// Linux connect-notify supervisor). Empty `net_out` ⇒ the fully net-sealed
+    /// jail, identical to [`Self::spawn_pd_confined_with_surface`].
+    ///
+    /// This is the door a confined agent body reaches its model provider through:
+    /// its ONLY outward reach is the granted endpoint, its ONLY inward reach the
+    /// surface socket (the host's cap-gated seam). Fail-closed exactly the same.
+    #[cfg(all(feature = "process-pd-sandbox", unix))]
+    pub fn spawn_pd_confined_with_surface_and_egress<F>(
+        &self,
+        granted: Vec<CapHandle>,
+        net_out: Vec<String>,
+        body: F,
+    ) -> Result<(PdProcess, UnixStream), SpawnError>
+    where
+        F: FnOnce(KernelClient, UnixStream, Vec<CapHandle>) -> i32,
+    {
+        self.surface_spawn_inner(granted, net_out, body)
+    }
+
+    /// The shared core of the two surface-spawn variants: make the surface
+    /// socketpair, fork+confine keeping control + surface (plus any `net_out`
+    /// door), hand the body the surface socket, and return the parent's end.
+    #[cfg(all(feature = "process-pd-sandbox", unix))]
+    fn surface_spawn_inner<F>(
+        &self,
+        granted: Vec<CapHandle>,
+        net_out: Vec<String>,
+        body: F,
+    ) -> Result<(PdProcess, UnixStream), SpawnError>
+    where
+        F: FnOnce(KernelClient, UnixStream, Vec<CapHandle>) -> i32,
+    {
         // The SURFACE socketpair — the second firmament Endpoint, alongside the
         // control socketpair `spawn_pd_inner` makes. Created BEFORE the fork so
         // both ends exist in the parent; the child keeps its end through
@@ -1342,7 +1382,8 @@ impl ProcessKernel {
 
         // Spawn with the surface child-fd carried into the confinement keep-list
         // and handed to the body. `spawn_pd_inner` closes the parent's surface
-        // end in the child and keeps only the granted fds (control + surface).
+        // end in the child and keeps only the granted fds (control + surface),
+        // opening exactly the granted `net_out` door(s).
         let res = self.spawn_pd_inner_with_extra(
             granted,
             child_surf_fd,
@@ -1353,6 +1394,7 @@ impl ProcessKernel {
                 body(client, surf, granted)
             },
             true,
+            net_out,
         );
 
         match res {
@@ -1385,6 +1427,7 @@ impl ProcessKernel {
         parent_extra_fd: RawFd,
         body: F,
         confine: bool,
+        net_out: Vec<String>,
     ) -> Result<PdProcess, SpawnError>
     where
         F: FnOnce(KernelClient, UnixStream, Vec<CapHandle>) -> i32,
@@ -1417,10 +1460,15 @@ impl ProcessKernel {
 
             // THE CONFINEMENT — keep BOTH the control socket AND the surface
             // Endpoint; close every other fd; drop file/network/exec authority.
+            // Fold in any granted net-out door(s): the ONLY outbound endpoint(s)
+            // the child may reach (every other remote stays denied by default).
             #[cfg(all(feature = "process-pd-sandbox", unix))]
             if confine {
-                let c =
+                let mut c =
                     crate::sandbox::Confinement::endpoint_only(child_fd).with_fds([child_extra_fd]);
+                for endpoint in &net_out {
+                    c = c.with_net_out(endpoint.clone());
+                }
                 if let Err(e) = crate::sandbox::confine_child(&c) {
                     eprintln!("[pd] CONFINEMENT FAILED — refusing to run body: {e}");
                     use std::io::Write as _;
