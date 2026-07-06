@@ -44,4 +44,5 @@ Design: `docs/deos/GRAIN-CONFINED-BODY.md`.
 - Grain R3 whole-history STARK is a known gap (`WHOLE_HISTORY_GAP`); R2 is the
   verifiability ceiling today.
 - `agent-host/src/isolation.rs` bwrap jail is built-but-unwired.
-- Public substrate repo: never write the operated-product name or "Elide".
+- Public substrate repo: never write the operated-product name or the wrong
+  stack name (the HTTP stack is `httpe`); a commit hook enforces this.
