@@ -111,6 +111,258 @@ pub fn attach_agent(
     AttachedApplet::attach(Box::new(sink), agent, held, affordances, AGENT_COUNTER_SLOT)
 }
 
+/// THE WORLD BRIDGE, SERVING SIDE — answer the cross-process `WorldSink`
+/// protocol over a Unix domain socket, against the cockpit's LIVE
+/// [`WorldSinkAdapter`] (or any other `WorldSink`).
+///
+/// The client half is `deos_hermes::world_bridge::SocketWorldSink` (the MCP
+/// subprocess's `run_js` hands). The two crates cannot depend on each other, so
+/// the wire is the contract and THIS module is its serving twin — the frame
+/// (`u32` LE length + serde_json) and the [`BridgeRequest`]/[`BridgeResponse`]
+/// enums must stay shape-identical to `deos-hermes/src/world_bridge.rs`,
+/// variant for variant. (Named seam: the twins share no code, only bytes — a
+/// cross-crate compatibility test needs a dep neither direction wants.)
+///
+/// ## DESIGN — the non-`Send` reality
+///
+/// The cockpit World is `Rc<RefCell<World>>`, pinned to one thread. The serving
+/// loop therefore runs ON THE THREAD THAT OWNS THE SINK — the World never
+/// crosses threads; the socket comes to it. Two modes:
+///
+///   * [`serve_world_bridge`] — BLOCKING: bind, accept ONE client, answer to
+///     EOF. For a dedicated world-owning thread / a headless bake / a test.
+///   * [`WorldBridgeServer::pump`] — NON-BLOCKING drain for the live cockpit:
+///     the gpui frame loop calls `pump(&mut sink)` each tick; it accepts a
+///     pending client and answers every request already waiting, then returns.
+///     No channel, no second thread — the socket itself is the queue the
+///     cockpit thread polls.
+#[cfg(unix)]
+pub mod world_bridge {
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::path::Path;
+
+    use serde::de::DeserializeOwned;
+    use serde::{Deserialize, Serialize};
+
+    use dregg_cell::{Cell, CellId};
+    use dregg_turn::action::Effect;
+
+    use deos_js::WorldSink;
+
+    /// The largest frame accepted (matches the deos-hermes twin).
+    pub const MAX_FRAME_BYTES: usize = 256 * 1024 * 1024;
+
+    /// One request on the world-bridge wire — the `WorldSink` surface, exactly.
+    /// MUST stay shape-identical to `deos_hermes::world_bridge::BridgeRequest`.
+    #[derive(Debug, Serialize, Deserialize)]
+    pub enum BridgeRequest {
+        /// The crawl read: snapshot the live cells.
+        WithLedger,
+        /// Commit ONE verified turn (`WorldSink::fire_effects`).
+        FireEffects {
+            agent: CellId,
+            method: String,
+            effects: Vec<Effect>,
+        },
+        /// Mint an OPEN, funded cell (`WorldSink::mint_open_cell`).
+        MintOpenCell { seed: String, funding: u64 },
+    }
+
+    /// One response per request, in order. MUST stay shape-identical to
+    /// `deos_hermes::world_bridge::BridgeResponse`.
+    #[derive(Debug, Serialize, Deserialize)]
+    pub enum BridgeResponse {
+        /// The `WithLedger` snapshot (the client rebuilds a local `Ledger`).
+        Ledger { cells: Vec<Cell> },
+        /// The `FireEffects` verdict: the REAL receipt hash on the live ledger,
+        /// or the executor's rejection reason.
+        Fired(Result<[u8; 32], String>),
+        /// The `MintOpenCell` verdict.
+        Minted(Result<CellId, String>),
+    }
+
+    /// Write one length-prefixed serde_json frame.
+    fn write_frame<W: Write, T: Serialize>(w: &mut W, msg: &T) -> std::io::Result<()> {
+        let bytes = serde_json::to_vec(msg)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+        w.write_all(&bytes)?;
+        w.flush()
+    }
+
+    /// Read one frame; `Ok(None)` = clean EOF at a frame boundary.
+    fn read_frame<R: Read, T: DeserializeOwned>(r: &mut R) -> std::io::Result<Option<T>> {
+        let mut len = [0u8; 4];
+        match r.read_exact(&mut len) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e),
+        }
+        let n = u32::from_le_bytes(len) as usize;
+        if n > MAX_FRAME_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("world-bridge frame of {n} bytes exceeds the {MAX_FRAME_BYTES} cap"),
+            ));
+        }
+        let mut buf = vec![0u8; n];
+        r.read_exact(&mut buf)?;
+        serde_json::from_slice(&buf)
+            .map(Some)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    /// Answer ONE request against the live sink.
+    fn answer(sink: &mut dyn WorldSink, req: BridgeRequest) -> BridgeResponse {
+        match req {
+            BridgeRequest::WithLedger => {
+                let mut cells: Vec<Cell> = Vec::new();
+                sink.with_ledger(&mut |l| {
+                    cells = l.iter().map(|(_, c)| c.clone()).collect();
+                });
+                BridgeResponse::Ledger { cells }
+            }
+            BridgeRequest::FireEffects {
+                agent,
+                method,
+                effects,
+            } => BridgeResponse::Fired(sink.fire_effects(agent, &method, effects)),
+            BridgeRequest::MintOpenCell { seed, funding } => {
+                BridgeResponse::Minted(sink.mint_open_cell(&seed, funding))
+            }
+        }
+    }
+
+    /// BLOCKING serve: bind `socket_path` (removing a stale socket file), accept
+    /// ONE client, answer requests against `sink` until the client closes the
+    /// connection (EOF). Returns the number of requests served. Runs on the
+    /// thread that owns the sink (the World never crosses threads).
+    pub fn serve_world_bridge(
+        socket_path: &Path,
+        sink: &mut dyn WorldSink,
+    ) -> std::io::Result<usize> {
+        let _ = std::fs::remove_file(socket_path);
+        let listener = UnixListener::bind(socket_path)?;
+        let (mut stream, _addr) = listener.accept()?;
+        let mut served = 0usize;
+        while let Some(req) = read_frame::<_, BridgeRequest>(&mut stream)? {
+            write_frame(&mut stream, &answer(sink, req))?;
+            served += 1;
+        }
+        Ok(served)
+    }
+
+    /// The NON-BLOCKING serving mode for the live cockpit: bind once, then call
+    /// [`WorldBridgeServer::pump`] from the frame loop on the World-owning
+    /// thread. Each pump accepts a pending client (one at a time) and answers
+    /// every request already waiting on the socket, without ever blocking the
+    /// frame.
+    pub struct WorldBridgeServer {
+        listener: UnixListener,
+        client: Option<UnixStream>,
+    }
+
+    impl WorldBridgeServer {
+        /// Bind the bridge socket (removing a stale socket file). Non-blocking
+        /// accept; call [`Self::pump`] from the owning thread's loop.
+        pub fn bind(socket_path: &Path) -> std::io::Result<Self> {
+            let _ = std::fs::remove_file(socket_path);
+            let listener = UnixListener::bind(socket_path)?;
+            listener.set_nonblocking(true)?;
+            Ok(WorldBridgeServer {
+                listener,
+                client: None,
+            })
+        }
+
+        /// Whether a client is currently connected.
+        pub fn has_client(&self) -> bool {
+            self.client.is_some()
+        }
+
+        /// Drain the bridge: accept a pending client if none is connected, then
+        /// answer every request already waiting, returning how many were served
+        /// this pump. Never blocks: with no pending client/request it returns
+        /// `Ok(0)` immediately. A client EOF/fault drops the connection (the
+        /// next pump can accept a fresh client); requests are small, so once a
+        /// frame has begun the read completes blockingly (the client writes
+        /// each frame whole).
+        pub fn pump(&mut self, sink: &mut dyn WorldSink) -> std::io::Result<usize> {
+            if self.client.is_none() {
+                match self.listener.accept() {
+                    Ok((stream, _addr)) => {
+                        stream.set_nonblocking(false)?;
+                        self.client = Some(stream);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(0),
+                    Err(e) => return Err(e),
+                }
+            }
+            let mut served = 0usize;
+            while let Some(stream) = self.client.as_mut() {
+                // Probe non-blockingly: is a request (or EOF) waiting? A
+                // non-blocking read of the 4-byte length header either returns
+                // bytes (a frame has begun — finish it blockingly below; the
+                // client writes each frame whole, so the rest is imminent),
+                // 0 (EOF), or WouldBlock (nothing pending this pump).
+                stream.set_nonblocking(true)?;
+                let mut header = [0u8; 4];
+                let probed = stream.read(&mut header);
+                stream.set_nonblocking(false)?;
+                match probed {
+                    Ok(0) => {
+                        self.client = None; // clean EOF — client hung up
+                        break;
+                    }
+                    Ok(n) => {
+                        let outcome = (|| -> std::io::Result<BridgeRequest> {
+                            if n < header.len() {
+                                stream.read_exact(&mut header[n..])?;
+                            }
+                            let len = u32::from_le_bytes(header) as usize;
+                            if len > MAX_FRAME_BYTES {
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    format!(
+                                        "world-bridge frame of {len} bytes exceeds the \
+                                         {MAX_FRAME_BYTES} cap"
+                                    ),
+                                ));
+                            }
+                            let mut buf = vec![0u8; len];
+                            stream.read_exact(&mut buf)?;
+                            serde_json::from_slice(&buf).map_err(|e| {
+                                std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+                            })
+                        })();
+                        match outcome {
+                            Ok(req) => {
+                                let resp = answer(sink, req);
+                                if write_frame(stream, &resp).is_err() {
+                                    self.client = None;
+                                    break;
+                                }
+                                served += 1;
+                            }
+                            Err(_) => {
+                                self.client = None; // EOF mid-frame or a corrupt frame
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => {
+                        self.client = None;
+                        break;
+                    }
+                }
+            }
+            Ok(served)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

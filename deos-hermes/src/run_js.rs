@@ -142,6 +142,14 @@ impl RunJsTool {
         }
     }
 
+    /// The agent's cell id (`derive_raw(public_key, token_id)` — the same
+    /// content-address [`deos_js::Applet::mint`] derives). This is the cell an
+    /// ATTACHED run ([`RunJsTool::run_attached_on`]) binds on the PROVIDED World
+    /// (e.g. across the world bridge): the agent of every committed turn there.
+    pub fn agent_cell(&self) -> CellId {
+        CellId::derive_raw(&self.public_key, &self.token_id)
+    }
+
     /// Build the agent's bounded applet (its own world, mounted under its `held`).
     /// A fresh deos-js applet on its own embedded verified executor. Each declared
     /// affordance bumps the counter slot by `arg` and is gated on its `required`.

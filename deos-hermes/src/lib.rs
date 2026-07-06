@@ -105,6 +105,7 @@ pub mod run_js;
 pub mod screenshot;
 pub mod surface;
 pub mod tool_effects;
+pub mod world_bridge;
 
 pub use acp::{PermissionOutcome, ToolCallRequest, ToolKind};
 pub use acp_client::{
@@ -122,6 +123,8 @@ pub use grant_registry::{GrantRegistry, MandateKey};
 #[cfg(unix)]
 pub use host::{DreggHost, HostedAgentReport, HostedToolVerdict};
 pub use mcp_server::{ConfinedToolResult, DREGG_TOOL_NAMES, McpServer, McpToolHost};
+#[cfg(unix)]
+pub use world_bridge::{BridgeWorld, SocketWorldSink, serve_world_bridge};
 
 // Re-export the grounding SDK types a HOST needs to construct a confined gateway
 // (mint a root token, build a runtime) WITHOUT depending on `dregg-sdk` directly —
