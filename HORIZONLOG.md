@@ -8,6 +8,26 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-06 afternoon, Fable — session cap before context rotation)
+
+A long day across FOUR arcs (all commits "ember arlynx"; multi-terminal tree): (1) the CONFINED-BODY
+GRAIN shipped ([[project-confined-body-grain]]: grain-jail seam + real firmament OS-jail + egress
+door + model-driven capstone + full hostile-body robustness). (2) A 5-lens SCHOLAR-ARCHITECT council
++ a 6-domain COMPREHENSIVE NAMED-RESIDUAL HUNT — safe closures committed, honest reds surfaced;
+ember DISTRUSTED the report and was right (the "circuit-dark verbs" alarm was overstated). (3) The
+GENTIAN completeness RED (a real hidden red the hunt found) FIXED two-pole (`f51a75f0f`,
+`bare_floor_refuse_weld::fill_refuse_aux` — the flag-day left the non-transfer producers unfilled)
++ the interpreter differential hardened (`4db689f6f`, mutation-canary MEASURED). (4) Weapons-free
+swarm closed the fail-open twin (`75f6b0032`), http-serve DoS limits (`331eaa637`), nameservice
+owner-auth seizure bug (`711ca3e33`), rbg VFS demoted→DITCHED (`b67c3fc0c`,`7c752fbb2`).
+
+⚑ NOW THE ACTIVE LANE: **STORAGE-IN-LEAN** ([[project-storage-in-lean]], `GOAL.md`) — rebuild the
+Rust storage layer IN LEAN (proven), package to Rust via @[export]. Pattern PROVEN:
+`Dregg2/Storage/BucketCommitment.lean` (`06a1e8fe8`, #assert_axioms-clean, only Poseidon2SpongeCR).
+Mis-fire scar: NOT Rust-first-with-"probes"; census-first (I clobbered a 29KB erasure.rs). Next:
+RS/erasure decode-correctness, PoR, fountain, provider-market, @[export] packaging. Owed: the
+inbox_endpoint client-asserted-sender auth-gap.
+
 ## NOW-STATE addition (2026-07-06 pm, Fable — owner-auth lane REFUTED the pinned fix; substrate seam named)
 
 An owner-auth closure lane empirically REFUTED the fix pinned in
