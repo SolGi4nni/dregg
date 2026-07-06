@@ -1002,8 +1002,9 @@ pub mod ddl {
     /// Reads stay free SQL; writes stay verified-only.
     ///
     /// Builds on [`tier_b`] (the role model). Idempotent. The node-side drainer
-    /// (queue → `execute_via_producer` → mirror) is the M3 follow-up
-    /// (`docs/PG-DREGG.md` §11.x); this installs the enqueue half + its gate.
+    /// (queue → `execute_via_producer` → mirror) is [`crate::drainer`] /
+    /// `bin/drainerd` (the landed M3 half, `docs/PG-DREGG.md` §11.x); this
+    /// installs the enqueue half + its gate.
     pub fn write_outbox() -> String {
         let mut s = String::new();
         s.push_str(SUBMIT_QUEUE);

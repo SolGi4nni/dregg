@@ -26,8 +26,7 @@
 //! The domain-separation string (`dregg-bucket-content-root-v1`) is native to
 //! this substrate; there is no legacy corpus to stay byte-compatible with.
 //!
-//! WIRING (one line, not yet applied): `pub mod bucket_commitment;` in
-//! `storage/src/lib.rs`.
+//! Wired: `pub mod bucket_commitment;` in `storage/src/lib.rs`.
 
 use std::collections::BTreeMap;
 

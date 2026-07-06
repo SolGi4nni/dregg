@@ -1,5 +1,5 @@
 # Ported dregg-native from the retired operated layer (the prior operated layer).
-# WIRING (not yet applied): add "dregg-ipfs" to the root workspace `members`.
+# Wired: "dregg-ipfs" is in the root workspace `members` + `default-members`.
 [package]
 name = "dregg-ipfs"
 description = "The IPFS bridge: a dregg blake3 content commitment IS an IPFS CIDv1 (blake3 multihash, raw codec), so a content-addressed dregg object/site/delta is pinned + fetched over IPFS and re-witnessed against the same address. The verified core is net-free — the IPFS transport is an injected seam (`IpfsClient`)."

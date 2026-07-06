@@ -10,7 +10,7 @@
 //!
 //! ```text
 //!   Stripe API  ── live TLS session ──►  DECO/zkTLS PROVER  ──►  DecoPaymentAttestation
-//!    (settled payment disclosed)         (⚑ NOT YET IN-TREE)      { facts, payment_hash, zk_tls_proof }
+//!    (settled payment disclosed)         (`dregg-deco-prove`)     { facts, payment_hash, zk_tls_proof }
 //!                                                                        │
 //!                                                                        ▼
 //!                                              StripeMirrorState::verify_deco_payment
@@ -92,8 +92,10 @@ const AMOUNT_LIMB_BITS: u32 = 30;
 /// `PaymentFacts`: the payment facts a verified DECO/zkTLS proof binds, plus the
 /// felt-domain `payment_hash` the in-AIR leaf exposes and the STARK proof carrier.
 ///
-/// Holding one is (once the prover lands) evidence that a live TLS session with
-/// Stripe disclosed this settled payment — the trustless analogue of holding a
+/// Holding one is evidence that a live TLS session with Stripe disclosed this
+/// settled payment (produced by `dregg-deco-prove::prove_stripe_deco`; the TLS
+/// capture layer's own trust label — semi-honest notary interim vs tlsn MPC-TLS —
+/// lives with that crate) — the trustless analogue of holding a
 /// [`crate::stripe_mirror::StripePaymentAttestation`] (whose trusted leg is a
 /// shared-secret HMAC).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,11 +164,12 @@ impl DecoPaymentAttestation {
 pub enum MoneyIn<'a> {
     /// The PROVEN, trustless path: mint only against a DECO/zkTLS attestation
     /// ([`StripeMirrorState::verify_deco_payment`]). The intended production
-    /// default (gated by the prover being in-tree).
+    /// default; the in-tree prover is `dregg-deco-prove::prove_stripe_deco`
+    /// (see `examples/deco_money_in.rs` for the end-to-end drive).
     Deco(&'a DecoPaymentAttestation),
-    /// FALLBACK: trusted HMAC until the DECO prover lands — NOT trustless. The only
-    /// working money-in today; kept so production flips to [`MoneyIn::Deco`] the
-    /// moment the prover exists.
+    /// FALLBACK: trusted HMAC — NOT trustless (Stripe's webhook secret is the
+    /// oracle). Kept as the explicitly-labeled trusted alternative; a production
+    /// deployment flips to [`MoneyIn::Deco`] at its one call site.
     HmacWebhook {
         /// The raw signed webhook.
         webhook: &'a StripeWebhookEvent,

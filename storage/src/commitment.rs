@@ -16,8 +16,10 @@
 //! # Relationship to `commit/src/typed.rs`
 //!
 //! `commit/src/typed.rs` (upstream) is the canonical home of this pattern.
-//! storage is in the workspace `exclude` list and cannot depend on
-//! `commit` without pulling extra crates (`dregg-dsl-runtime`). We
+//! storage was in the workspace `exclude` list when this landed and could not
+//! depend on `commit` without pulling extra crates (`dregg-dsl-runtime`);
+//! storage is a workspace member today, so folding this module into the
+//! upstream framework is an open dedup lane. We
 //! intentionally duplicate the pattern here — same domain-tagging strategy,
 //! same `canonical_32_to_felts_4` shape, same `seal`/`empty` API — atop
 //! the public Poseidon2 surface in `dregg_circuit::poseidon2`.

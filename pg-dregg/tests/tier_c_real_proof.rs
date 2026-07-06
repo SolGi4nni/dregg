@@ -125,17 +125,33 @@ fn bb_to_bytes(b: BabyBear) -> [u8; 32] {
     out
 }
 
+/// Project an upstream 8-felt FAITHFUL-FLOOR state anchor into the single-felt
+/// 32-byte form the `pg-dregg` transport carries today. A deployed narrow-leg
+/// proof broadcasts its one rotated commit felt across the eight lanes
+/// (`WholeChainProof::genesis_root` docs), so the lanes MUST be uniform here —
+/// asserted, not truncated: a genuine wide-leg anchor (differing lanes) fails
+/// loudly at the named transport-widening follow-up (`attest.rs`) instead of
+/// silently dropping lanes.
+fn anchor_to_bytes(anchor: [BabyBear; 8]) -> [u8; 32] {
+    assert!(
+        anchor.iter().all(|l| *l == anchor[0]),
+        "narrow-leg anchor lanes must be uniform (the broadcast shape); a genuine \
+         wide-leg anchor needs the 8-felt transport widening (the named pg-dregg follow-up)"
+    );
+    bb_to_bytes(anchor[0])
+}
+
 /// Project a real `WholeChainProof` into the `pg-dregg` SQL transport, exactly as
 /// the documented `tier-c`/node producer would (`postcard(&root.0)` +
-/// `postcard(&binding_proof)` + the four `BabyBear → [u8;32]` publics).
+/// `postcard(&binding_proof)` + the `BabyBear → [u8;32]`-packed publics).
 fn transport_from_proof(whole: &WholeChainProof) -> SerializedWholeChainProof {
     let root_proof = postcard::to_allocvec(&whole.root.0).expect("root BatchStarkProof encodes");
     let binding_proof = postcard::to_allocvec(&whole.binding_proof).expect("binding Proof encodes");
     SerializedWholeChainProof::new(
         root_proof,
         binding_proof,
-        bb_to_bytes(whole.genesis_root),
-        bb_to_bytes(whole.final_root),
+        anchor_to_bytes(whole.genesis_root),
+        anchor_to_bytes(whole.final_root),
         core::array::from_fn(|i| bb_to_bytes(whole.chain_digest[i])),
         whole.num_turns as u64,
     )
@@ -161,11 +177,11 @@ fn tier_c_real_proof_attests_and_tamper_is_refused() {
     let publics = verify_serialized_proof(&bytes, &vk)
         .expect("a REAL whole-chain proof must verify against its own anchor via the tier-c gate");
     // The attested window summary is the proof's bound publics, surfaced for the SRF.
-    assert_eq!(publics.genesis_root, bb_to_bytes(whole.genesis_root));
-    assert_eq!(publics.final_root, bb_to_bytes(whole.final_root));
+    assert_eq!(publics.genesis_root, anchor_to_bytes(whole.genesis_root));
+    assert_eq!(publics.final_root, anchor_to_bytes(whole.final_root));
     assert_eq!(
         publics.chain_digest,
-        core::array::from_fn::<_, 4, _>(|i| bb_to_bytes(whole.chain_digest[i]))
+        core::array::from_fn::<_, 8, _>(|i| bb_to_bytes(whole.chain_digest[i]))
     );
     assert_eq!(publics.num_turns, 3);
 
