@@ -68,4 +68,12 @@ theorem stripe_money_in_loss_bounded
 
 #guard decide (openReserve 100).ReserveWF
 
+/-! ## Axiom hygiene: the reserve apexes self-guard against a future axiom leak in their own
+derivation (the tripwire fails the build if the whitelist `{propext, Classical.choice, Quot.sound}`
+is ever escaped). -/
+
+#assert_axioms stripe_exposure_within_reserve_forever
+#assert_axioms stripe_reserve_solvent_forever
+#assert_axioms stripe_money_in_loss_bounded
+
 end Dregg2.Verify.StripeReserve

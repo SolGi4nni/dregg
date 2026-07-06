@@ -124,13 +124,20 @@ theorem stripe_deco_cascade_nonvacuous :
             (claimToStmt (11 : Int) sampleClaim) w :=
   stripe_deco_attest_sound 42 (11 : Int) emptyBase sampleClaim () trivial (by decide)
 
--- Non-vacuity axiom footprint: rests only on the standard kernel axioms.
-#print axioms stripe_deco_cascade_nonvacuous
+-- Non-vacuity axiom footprint: rests only on the standard kernel axioms (enforcing tripwire —
+-- fails the build if the whitelist `{propext, Classical.choice, Quot.sound}` is ever escaped).
+#assert_axioms stripe_deco_cascade_nonvacuous
 
 -- the DECO verifier accepts a valid attested claim, rejects a zero-amount (non-succeeded) claim, and the
 -- registry fail-closes on the wrong kind:
 #guard (decoClaimVerifier (11 : Int) sampleClaim ())
 #guard (! decoClaimVerifier (11 : Int) (⟨0, 840, 1, 999⟩ : Claim) ())
 #guard (! registryVerify (stripeDecoReg 42 (11 : Int) emptyBase) (.custom 8) sampleClaim ())
+
+/-! ## Axiom hygiene: the K1 attest-soundness + the K5/K1 DECO-backed discharge self-guard
+(kernel-clean tripwire). -/
+
+#assert_axioms stripe_attest_sound
+#assert_axioms stripe_deco_attest_sound
 
 end Dregg2.Verify.StripeAttest

@@ -119,4 +119,11 @@ def demoSched : MISched := fun n =>
 
 #guard decide (openReserve 100).ReserveWF
 
+/-! ## Axiom hygiene: the end-to-end money-in apex + its bridge self-guard (kernel-clean tripwire). -/
+
+#assert_axioms miTraj_eq_trajC
+#assert_axioms stripe_money_in_loss_bounded_e2e
+#assert_axioms stripe_exposure_within_reserve_e2e
+#assert_axioms authorized_mint_discharges_payment
+
 end Dregg2.Verify.StripeMoneyIn

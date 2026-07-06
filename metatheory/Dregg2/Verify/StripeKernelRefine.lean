@@ -232,4 +232,11 @@ theorem kernel_run_loss_bounded
 
 #guard decide (mkReserve 100 40 20).ReserveWF
 
+/-! ## Axiom hygiene: the kernel-grounded loss-bound apex + its per-op simulations self-guard
+(kernel-clean tripwire). -/
+
+#assert_axioms kernel_reserve_loss_bounded
+#assert_axioms valid_kstep_preserves_refines
+#assert_axioms kernel_run_loss_bounded
+
 end Dregg2.Verify.StripeKernelRefine

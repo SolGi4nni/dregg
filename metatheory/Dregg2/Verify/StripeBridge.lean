@@ -85,4 +85,11 @@ private def encW : Int → Unit := fun _ => ()
 #guard (! stripeGate (stripeDecoReg 7 (11 : Int) emptyBase) 7 encC encW 0 0)  -- amount 0 → reject
 #guard (! stripeGate (stripeDecoReg 8 (11 : Int) emptyBase) 7 encC encW 0 40) -- wrong kind/vk → fail-closed
 
+/-! ## Axiom hygiene: the attested-release keystones (K2 conserve/fail-closed, K1∘K2 discharge)
+self-guard (kernel-clean tripwire). -/
+
+#assert_axioms stripe_release_conserves
+#assert_axioms stripe_release_requires_attestation
+#assert_axioms stripe_release_discharges_claim
+
 end Dregg2.Verify.StripeBridge
