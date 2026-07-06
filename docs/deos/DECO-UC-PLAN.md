@@ -20,6 +20,48 @@
 >   extractability — EXACTLY the `deco_binds_payment` trust base. NO dregg-specific parked assumption
 >   was found (the R4 hunt came up empty, as §4 predicted).
 >
+> **BUILD STATUS (rung b — computational UC-realization): DONE to the tree-uniform altitude; the
+> fully-computational apex NAMED-not-faked.** Rung 5 is built and green in
+> `metatheory/Dregg2/Crypto/DecoUC.lean` (`#assert_axioms`-clean):
+> - **The SIMULATOR, a real object that WORKS.** `decoSimTranscript` fabricates a full DECO transcript
+>   from the DISCLOSED statement ALONE (the reference extractor's witness-free construction, read as the
+>   ideal-world simulator). `decoSim_works` PROVES the fabricated transcript satisfies the DECO relation
+>   AND the deployed verifier accepts — a bona-fide accepting attestation without a real Stripe session.
+> - **The PERFECT/statistical ZK fragment (Lean-proved).** Under the `selective` dial floor the
+>   verifier's disclosed view is the statement alone; `decoView_witness_free`/`decoView_indep` prove it
+>   factors through the statement (grounded in `PerfectZK`). `decoLeaky_no_simulator` is the teeth: a
+>   session-leaking view cannot be simulated (distinguishable) — the fragment is a real constraint.
+> - **The STATIC soundness half = rung 4.** `DecoUCRealization.soundness` is `deco_attestation_realizes`
+>   (`AttRealizes` — the real client never accepts where `F_attestation` rejects).
+> - **The computational `≈_c` layer CARRIED, never faked.** `DecoUCRealization` bundles STARK-ZK,
+>   DECO handshake-simulatability, PPT, negligible-advantage, and Canetti composition as named `Prop`
+>   carriers (never `axiom`), discharged cross-system via `DecoUCComputationalDischarge` — mirroring
+>   `LightClientUC.DynamicUCResidual` and `UCBridge.FComDischarge`. `decoUC_realizes` entails the
+>   Lean-provable core `UCRealizesFAtt` (soundness ∧ perfect-ZK).
+> - **Both-polarity non-vacuity.** `ref_ucRealizes` (a real reference kernel UC-realizes) /
+>   `forge_not_ucRealizes` (the forge kernel is NOT a realization — `UCRealizesFAtt` FALSE, the
+>   anti-P→P witness). Manifest row 23; gate row `decoUC_realizes`; meta-gate 3/3.
+> - **Governed schema:** `attestationUCDynamics` / `deco_attestation_uc_via_schema` /
+>   `deco_attestation_uc_realizes` in `Metatheory/Adversary/Instances.lean` §3.9b, above rung-4
+>   `attestationDynamics`.
+> - **⚑ THE PRECISE MISSING-FRAMEWORK FINDING (the honest STOP for the fully-computational apex).**
+>   Route (b-ii) — mechanize `F_attestation` in the CryptHOL harness alongside `F_com` — is NOT
+>   achievable with what exists. `uc-crypthol/Dregg2_FCom.thy` models `F_com` = the Pedersen COMMITMENT
+>   (`Sigma_Commit_Crypto.Pedersen`); `F_attestation` is a DIFFERENT functionality needing an `spmf`
+>   model of STARK zero-knowledge (a proof-transcript simulator) and of the DECO 3-party MPC-TLS
+>   handshake — NEITHER is in `Sigma_Commit_Crypto`/`CryptHOL`; both are a from-scratch multi-week
+>   Isabelle mechanization. And `UCBridge.lean`'s caveat records the local AFP cannot rebuild even
+>   `F_com` under this release. Route (b-i) — fully-in-Lean computational UC — needs the greenfield
+>   probabilistic-process-calculus `PerfectUC.lean:65` names "a module of its own" (Pillar 1, 2-4 weeks).
+>   So the fully-computational `≈_c` apex is reached to EXACTLY the altitude every other UC result in the
+>   tree reaches (static reduction + real simulator + perfect fragment + named computational carriers);
+>   the negligible-advantage core is the named new tool, NOT a fudge and NOT a perfect-UC stand-in.
+>
+> **STEP 0 DONE (zkOracle wired to rung 4).** `ZkOracle.lean`'s `authentic` conjunct now reads
+> `DecoUnforgeable.decoAuthenticated …` ("F_attestation emitted this", unforgeable) via
+> `deco_attestation_realizes` — upgraded from the rung-3 `∃ w, DecoRelation …` (∃-trace). Both
+> `zkOracle_sound` and `zkOracle_demo` re-verify `#assert_axioms`-clean.
+
 > **⚑ COORDINATION NOTE for the other Fable (zkOracle lane) — NAMED, NOT MADE here.**
 > `zkOracle_sound` (`Dregg2/Crypto/ZkOracle.lean:71`) currently delivers its `authentic` conjunct as
 > `∃ w, Deco.DecoRelation … decoStmt w` (`ZkOracle.lean:81`), via `deco_verify_sound` (`:84`) — the
