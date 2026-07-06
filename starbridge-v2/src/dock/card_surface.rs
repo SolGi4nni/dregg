@@ -48,11 +48,13 @@ use crate::web_cells::WebCellsBrowser;
 use crate::wonder::WonderRoom;
 
 use crate::agent_attach::{attach_agent, WorldSinkAdapter, AGENT_COUNTER_SLOT};
-use crate::card_pane::{build_card_over_live, CardPane, SharedAttached};
+use crate::card_pane::{
+    build_card_over_live, CardPane, CardSubstance, CardSubstanceRef, SharedAttached,
+};
 use crate::world::World;
 
-#[cfg(feature = "app-registry")]
-use crate::card_pane::CardSubstanceRef;
+use deos_matrix::chat_card::ChatCard;
+use deos_matrix::chat_view::{chat_view_json, CHAT_DRAFT_KEY, CHAT_SEND_TURN, CHAT_TURNS_SLOT};
 
 use super::surface::{CockpitSurface, SurfaceId};
 
@@ -2119,6 +2121,233 @@ impl CockpitSurface for AppCardSurface {
 }
 
 // ===========================================================================
+// THE CHAT CARD — chat-as-a-card mounted as a dock surface (the view-mount that
+// discharges WEB-DEOS.md's "chat backend wasm-reachable, view-mounts pending").
+//
+// `deos_matrix::chat_card::ChatCard` is the gpui-free logic core (room = a
+// RoomCell, timeline = the cell's turn history read back, send = a real turn via
+// `ChatSource::send_turn`); `deos_matrix::chat_view::chat_view` is its
+// renderer-independent `deos.ui.*` projection. THIS mount is the same shape as
+// the composer/app-card mounts (projection → `deos_view::parse_view_tree` →
+// `ViewNode` → `CardPane` → `CockpitSurface`), with one crucial difference the
+// standard mode-card mount cannot express: the card's substance routes the
+// composer input's `CHAT_SEND_TURN` fire to the REAL `ChatSource::send_turn`
+// (the send↔turn weldpoint), not to a counter applet's affordance registry.
+// ===========================================================================
+
+/// **The chat card's live substance** — the [`CardSubstance`] backing a mounted
+/// chat card renders over. Reads answer from the REAL room cell (`get_u64` is the
+/// cell's live `turn_count`; `receipt_count` is the same count as the audit-tape
+/// watermark, so own sends AND foreign messages both advance it), the composer
+/// draft lives here as ephemeral view-state (NEVER cell state), and
+/// [`CardSubstance::fire`] routes [`CHAT_SEND_TURN`] to [`ChatCard::send`] — ONE
+/// real verified turn against the room cell, leaving a [`deos_matrix::SendReceipt`].
+///
+/// The native renderer's `input` is display/agent-driven (deos-view's honest
+/// parity boundary), so the draft is seeded through [`Self::set_draft`] (the
+/// agent/test path today; the web renderer's editable field is live).
+pub struct ChatCardSubstance {
+    chat: ChatCard,
+    /// The composer's ephemeral draft (the `CHAT_DRAFT_KEY` view-state).
+    draft: String,
+    /// The receipt the LAST send left (turn index + post-root) — the honest "it
+    /// really committed" read a host/test inspects after a fire.
+    last_receipt: Option<deos_matrix::SendReceipt>,
+}
+
+impl ChatCardSubstance {
+    /// Wrap a chat card as a live card substance.
+    pub fn new(chat: ChatCard) -> Self {
+        ChatCardSubstance {
+            chat,
+            draft: String::new(),
+            last_receipt: None,
+        }
+    }
+
+    /// Seed the composer draft (the agent/test path — the native `input` is
+    /// display-only, so the draft arrives here rather than from a keystroke).
+    pub fn set_draft(&mut self, draft: impl Into<String>) {
+        self.draft = draft.into();
+    }
+
+    /// The chat card this substance drives (for re-projection / inspection).
+    pub fn chat(&self) -> &ChatCard {
+        &self.chat
+    }
+
+    /// The receipt the last send left, if any (turn index + post-root).
+    pub fn last_receipt(&self) -> Option<&deos_matrix::SendReceipt> {
+        self.last_receipt.as_ref()
+    }
+}
+
+impl CardSubstance for ChatCardSubstance {
+    fn cell(&self) -> CellId {
+        // The room cell IS the card's sovereign cell — the same 32 bytes the chat
+        // side derives (`deos_matrix::CellId` is the bytes; here they name the
+        // bind source the pane's signal registry keys on).
+        CellId(self.chat.room().cell_id.0)
+    }
+
+    fn receipt_count(&self) -> usize {
+        // The room cell's live turn count is the honest audit-tape watermark: a
+        // send through THIS substance moves it, and so does a foreign message
+        // (both conservatively caught up by the pulse; never under-invalidating).
+        self.chat.room().turn_count as usize
+    }
+
+    fn get_u64(&self, slot: usize) -> u64 {
+        // The chat card's one bound scalar: the room cell's live turn count.
+        if slot == CHAT_TURNS_SLOT {
+            self.chat.room().turn_count
+        } else {
+            0
+        }
+    }
+
+    fn get_view(&self, key: &str) -> Option<String> {
+        (key == CHAT_DRAFT_KEY).then(|| self.draft.clone())
+    }
+
+    fn fire(&mut self, method: &str, _arg: i64) -> Result<(), String> {
+        // THE SEND↔TURN ROUTE: the composer input's submit fires CHAT_SEND_TURN;
+        // the draft (ephemeral view-state) becomes the body of ONE real verified
+        // turn against the room cell via `ChatSource::send_turn`. An empty draft
+        // or an unknown affordance is refused in-band — no turn, no receipt.
+        if method != CHAT_SEND_TURN {
+            return Err(format!("chat card: unknown affordance '{method}'"));
+        }
+        let body = self.draft.trim().to_string();
+        if body.is_empty() {
+            return Err("chat card: empty draft — nothing to send".to_string());
+        }
+        let receipt = self.chat.send(&body).map_err(|e| e.to_string())?;
+        self.last_receipt = Some(receipt);
+        self.draft.clear();
+        Ok(())
+    }
+}
+
+/// The chat card mounted as a [`CockpitSurface`] — the [`CardPane`] gpui entity
+/// (the same renderer every other card mounts through) over the shared
+/// [`ChatCardSubstance`] (the real room cell the rendered widgets read + fire).
+pub struct ChatCardSurface {
+    id: SurfaceId,
+    entity: Entity<CardPane>,
+    substance: Rc<RefCell<ChatCardSubstance>>,
+    focus: FocusHandle,
+}
+
+/// **Mount the chat card as a dock surface** — the same mount shape as the
+/// composer card ([`ModeCard::Composer`] via the card mounts above): generate the
+/// renderer-independent view-tree (here `deos_matrix::chat_view`'s `deos.ui.*`
+/// JSON), bridge it through the canonical [`deos_view::parse_view_tree`], and
+/// host the resulting [`CardPane`] — except the substance routes the composer's
+/// [`CHAT_SEND_TURN`] to the REAL [`deos_matrix::ChatSource::send_turn`].
+///
+/// `chat` is an opened [`ChatCard`] over whichever [`deos_matrix::ChatSource`]
+/// the cockpit holds (the seeded `MockSource` offline, the live comms-PD source
+/// wired). A build error is returned for the caller to surface fail-soft.
+#[allow(clippy::result_large_err)]
+pub fn build_chat_card_surface(
+    id: u64,
+    chat: ChatCard,
+    cx: &mut App,
+) -> Result<ChatCardSurface, String> {
+    // Project the card's live state to the renderer-independent view-tree and
+    // bridge it into the renderer's `ViewNode` (the same JSON every renderer —
+    // native / web / discord / seL4 viewer — parses).
+    let json = chat_view_json(&chat);
+    let tree: ViewNode = deos_view::parse_view_tree(&json)
+        .map_err(|e| format!("chat card view-tree bridge: {e}"))?;
+
+    let room = chat.room();
+    let title = format!(
+        "chat · {} — live room cell ({})",
+        room.room_id,
+        chat.backend_label()
+    );
+
+    // Share the substance so the rendered input/binds and the host drive the SAME
+    // room cell (one live object).
+    let substance = Rc::new(RefCell::new(ChatCardSubstance::new(chat)));
+    let sub_dyn: CardSubstanceRef = substance.clone();
+    let entity = cx.new(|_cx| CardPane::new_substance(sub_dyn, tree, title));
+
+    Ok(ChatCardSurface {
+        id: SurfaceId(id),
+        entity,
+        substance,
+        focus: cx.focus_handle(),
+    })
+}
+
+impl ChatCardSurface {
+    /// The shared chat substance (so a host/agent can seed the draft, fire the
+    /// send, and read the last receipt — the SAME backing the widgets drive).
+    pub fn substance(&self) -> Rc<RefCell<ChatCardSubstance>> {
+        self.substance.clone()
+    }
+
+    /// The [`CardPane`] gpui entity (for a host that mounts the card body directly).
+    pub fn entity_handle(&self) -> Entity<CardPane> {
+        self.entity.clone()
+    }
+
+    /// **Re-project the view from the live room cell** — the timeline rows are
+    /// static projections (not binds), so after a send (or a foreign message
+    /// arriving on the room cell) the host calls this to regenerate the
+    /// `deos.ui.*` tree off the live card and swap it into the pane (the same
+    /// re-bridge + [`CardPane::set_tree`] route [`ModeCardSurface::edit_view`]
+    /// uses). The substance is untouched — only the view is refreshed.
+    pub fn refresh_view<T: 'static>(&self, cx: &mut Context<T>) -> Result<(), String> {
+        let json = chat_view_json(self.substance.borrow().chat());
+        let tree: ViewNode = deos_view::parse_view_tree(&json)
+            .map_err(|e| format!("chat card view-tree re-bridge: {e}"))?;
+        self.entity.update(cx, |card, cx| {
+            card.set_tree(tree);
+            cx.notify();
+        });
+        Ok(())
+    }
+}
+
+impl CockpitSurface for ChatCardSurface {
+    fn item_id(&self) -> SurfaceId {
+        self.id
+    }
+
+    fn tab_label(&self) -> SharedString {
+        SharedString::from("chat")
+    }
+
+    fn render_body(&mut self, _window: &mut Window, cx: &mut App) -> AnyElement {
+        // Immediate-mode binds re-read the live room cell at render time, so a
+        // notify each frame keeps the bound turn count current after a send
+        // (mirrors `CardSurface`).
+        self.entity.update(cx, |_card, cx| cx.notify());
+        div()
+            .size_full()
+            .child(self.entity.clone())
+            .into_any_element()
+    }
+
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn CockpitSurface> {
+        Box::new(ChatCardSurface {
+            id: self.id,
+            entity: self.entity.clone(),
+            substance: self.substance.clone(),
+            focus: self.focus.clone(),
+        })
+    }
+}
+
+// ===========================================================================
 // TESTS — the stateful cards render LIVE state, not stale data. The honesty
 // claim: a carded surface reflects the SAME live cockpit state its gpui panel
 // shows. These exercise the pure view-builders over the render-models (the same
@@ -2375,5 +2604,98 @@ mod tests {
         let ejson = powerbox_view(&empty).to_json();
         assert!(ejson.contains("0 grantable target(s)"));
         assert!(ejson.contains("not ambient"));
+    }
+
+    /// CHAT: the mounted substance routes the composer's fire to the REAL
+    /// `ChatSource::send_turn` — the draft becomes one verified turn on the room
+    /// cell (timeline grows, receipt lands, draft clears), and an empty draft or an
+    /// unknown affordance is refused in-band (no turn).
+    #[test]
+    fn chat_substance_routes_send_to_the_real_send_turn() {
+        use deos_matrix::source::MockSource;
+        use std::sync::Arc;
+
+        let src: Arc<dyn deos_matrix::ChatSource> = Arc::new(MockSource::seeded());
+        let room_id = src.rooms().unwrap()[0].room_id.to_string();
+        let chat = ChatCard::open(src, room_id);
+        let before = chat.timeline().unwrap().len();
+        let turns_before = chat.room().turn_count;
+
+        let mut sub = ChatCardSubstance::new(chat);
+        assert_eq!(
+            sub.get_u64(CHAT_TURNS_SLOT),
+            turns_before,
+            "the bound scalar is the room cell's live turn count"
+        );
+
+        // An empty draft is refused in-band — no turn, no receipt.
+        assert!(sub.fire(CHAT_SEND_TURN, 0).is_err());
+        assert!(sub.last_receipt().is_none());
+
+        // An unknown affordance is refused in-band.
+        sub.set_draft("hello from the cockpit mount");
+        assert!(sub.fire("bump", 1).is_err());
+
+        // The real route: draft → send_turn → one verified turn on the room cell.
+        sub.fire(CHAT_SEND_TURN, 0)
+            .expect("the send routes to the real send_turn");
+        let receipt = sub.last_receipt().expect("the send left a receipt");
+        assert_eq!(receipt.turn_index, turns_before + 1);
+        assert_eq!(
+            sub.get_view(CHAT_DRAFT_KEY).as_deref(),
+            Some(""),
+            "the draft cleared after the send"
+        );
+        let after = sub.chat().timeline().unwrap();
+        assert_eq!(
+            after.len(),
+            before + 1,
+            "the room cell's history grew by one"
+        );
+        assert_eq!(after.last().unwrap().body, "hello from the cockpit mount");
+        assert_eq!(
+            sub.receipt_count() as u64,
+            turns_before + 1,
+            "the watermark advanced with the turn"
+        );
+    }
+
+    /// CHAT: the deos-matrix projection bridges through the SAME canonical parser
+    /// every renderer uses — and the parsed tree carries the composer input bound
+    /// to the send action id the substance routes.
+    #[test]
+    fn chat_card_json_bridges_to_the_renderer() {
+        use deos_matrix::source::MockSource;
+        use std::sync::Arc;
+
+        fn find_input(node: &ViewNode) -> Option<(String, String)> {
+            match node {
+                ViewNode::Input {
+                    bind_view,
+                    fire_turn,
+                    ..
+                } => Some((bind_view.clone(), fire_turn.clone())),
+                ViewNode::VStack(cs)
+                | ViewNode::Row(cs)
+                | ViewNode::List(cs)
+                | ViewNode::Table(cs) => cs.iter().find_map(find_input),
+                ViewNode::Section { children, .. } | ViewNode::Grid { children, .. } => {
+                    children.iter().find_map(find_input)
+                }
+                _ => None,
+            }
+        }
+
+        let src: Arc<dyn deos_matrix::ChatSource> = Arc::new(MockSource::seeded());
+        let room_id = src.rooms().unwrap()[0].room_id.to_string();
+        let chat = ChatCard::open(src, room_id);
+
+        let json = chat_view_json(&chat);
+        let tree = deos_view::parse_view_tree(&json)
+            .expect("the chat projection parses through the canonical bridge");
+        let (bind_view, fire_turn) =
+            find_input(&tree).expect("the parsed tree carries the composer input");
+        assert_eq!(bind_view, CHAT_DRAFT_KEY);
+        assert_eq!(fire_turn, CHAT_SEND_TURN);
     }
 }

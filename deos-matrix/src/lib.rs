@@ -27,6 +27,10 @@ pub mod cell;
 // CHAT AS A HYPERDREGGMEDIA CARD — room = a cell, message = a turn, send = an
 // affordance; the timeline is the cell's history. Over the gpui-free ChatSource.
 pub mod chat_card;
+// The chat card's VIEW-TREE projection — ChatCard as a renderer-independent
+// `deos.ui.*` element-tree (pure serde_json; the shape every deos-view renderer
+// parses), so the chat paints native/web/discord/seL4 from one piece of data.
+pub mod chat_view;
 pub mod client;
 pub mod membrane;
 pub mod object;
