@@ -8,6 +8,29 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-06 pm, Fable — owner-auth lane REFUTED the pinned fix; substrate seam named)
+
+An owner-auth closure lane empirically REFUTED the fix pinned in
+`starbridge-apps/nameservice/tests/lifecycle.rs`'s TODO(owner-auth) BEFORE installing it —
+do NOT follow that TODO: `StateConstraint::SenderAuthorized{PublicRoot{set_root_index}}` reads
+the POST-effects root (`cell/src/program/eval.rs:631-637`, fed post-state by
+`execute_tree.rs:998-1005`), so on a slot the same turn rotates it INVERTS the hole (legit
+owner→recipient rotation REFUSED; intruder self-transfer/squat ACCEPTED — both shown at
+executor level, evidence in the lane log). A flat install also collides with
+`register_name_attested`'s existing ProofBytes blob (witness binding is by-uniqueness,
+`eval.rs:660-663`). The lane stood down on discovering a parallel session mid-landing a SOUND
+two-phase design in `nameservice/src/lib.rs` (OWNER_PK_SLOT + PENDING_OWNER_PK_SLOT, AnyOf
+caveats, propose→accept; three polarities check out). Named follow-ups:
+- **pre-state sender atom (substrate seam, post-VK-flip):** no constraint atom binds a sender
+  to the PRE-state value of a slot rotating in the same turn (the `KeyRotationGate` gap class,
+  `cell/src/program/types.rs:1316-1319`). Closure = a new atom in `cell/` + metatheory mirror +
+  AIR tag — sequence AFTER the running VK epoch.
+- **lifecycle.rs pinning-test flip** — still documents-the-gap; owed to whichever lane lands
+  owner-auth (the stood-down lane's two-pole executor-level test shape is reusable, see
+  scratch lane-n-test.log). Also rewrite the refuted TODO comment.
+- **program-layer gating breadth** — the landing design gates only the owner slots;
+  renew/revoke/set_target remain owner-ungated at the program layer (signature-layer only).
+
 ## NOW-STATE addition (2026-07-06, Fable — COMPREHENSIVE NAMED-RESIDUAL HUNT: 6-domain sweep, safe closures committed, reds surfaced)
 
 A council of 5 fable scholar-architects (memos in a scratch council folder) + a 6-domain
