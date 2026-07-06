@@ -3065,3 +3065,1316 @@ fn faithfulness_guard_real_assembly_bus() {
         cases.len()
     );
 }
+
+// ===========================================================================
+// PART L — MUTATION CANARIES: the HARNESS itself must go RED on a planted
+// divergence (the proof-integrity discipline: a differential that cannot FAIL on a
+// real Lean↔Rust drift is decorative). Each canary plants a semantic mutation on
+// ONE side and asserts the comparison the guard performs actually flips.
+// ===========================================================================
+
+/// CANARY 1 — a planted INTERPRETER drift is flagged by the REAL deployed evaluator.
+/// The pre-leg-#1 denotation (gate enforced on the wrap row) is the historically-REAL
+/// interpreter mutation; against it, the ACTUAL `Ir2Air::eval` (not the transcription)
+/// must disagree on the 1-row broken gate. This proves the real-evaluator leg of the
+/// sweep (PART C2) can go red — the exact comparison `faithfulness_guard_*` performs.
+#[test]
+fn mutation_canary_real_evaluator_flags_planted_interpreter_drift() {
+    let d = Descriptor2 {
+        constraints: vec![Constraint::Gate(LeanExpr::Add(
+            Box::new(v(0)),
+            Box::new(neg(v(1))),
+        ))],
+    };
+    let t = VmTraceC {
+        rows: vec![vec![5, 6]], // gate body = -1 ≠ 0 on the only (wrap) row
+        tf: empty_tf(),
+    };
+    let no_op = Openings::default();
+    let zi = |_: i128| 0i128;
+    let zf = |_: i128| (0i128, 0i128);
+
+    let real = real_eval_accepts(&d, &t).expect("gate-only descriptor is row-local eligible");
+    let den_pre = denote_satisfied2(&d, &t, &no_op, &zi, &zf, &[], LegSemantics::PreLeg1);
+    let den_live = denote_satisfied2(&d, &t, &no_op, &zi, &zf, &[], LegSemantics::Live);
+
+    assert!(
+        real,
+        "the REAL Ir2Air::eval does not bind a gate on the wrap row of a 1-row trace"
+    );
+    assert!(!den_pre, "the planted (pre-leg-#1) interpreter REJECTS it");
+    assert_ne!(
+        real, den_pre,
+        "CANARY BITES: the real-evaluator leg detects the planted interpreter drift \
+         (real accept vs mutated-denotation reject) — the differential is NON-VACUOUS"
+    );
+    assert_eq!(real, den_live, "the live denotation agrees (control)");
+}
+
+/// CANARY 2 — a planted DESCRIPTOR/CIRCUIT drift is flagged by the REAL deployed
+/// evaluator: mutate the descriptor the real `Ir2Air::eval` runs (gate body +1;
+/// transition target column) while the denotation keeps the honest one. The
+/// real-evaluator verdict must flip against the denotation.
+#[test]
+fn mutation_canary_real_evaluator_flags_planted_descriptor_mutation() {
+    // honest gate+transition witness (2 rows, satisfying by construction).
+    let honest = Descriptor2 {
+        constraints: vec![
+            Constraint::Gate(LeanExpr::Add(Box::new(v(0)), Box::new(neg(v(1))))),
+            Constraint::Transition { hi: 0, lo: 0 },
+        ],
+    };
+    let t = VmTraceC {
+        rows: vec![gt_row(7, 7), gt_row(7, 7)],
+        tf: empty_tf(),
+    };
+    let no_op = Openings::default();
+    let zi = |_: i128| 0i128;
+    let zf = |_: i128| (0i128, 0i128);
+    let den = denote_satisfied2(&honest, &t, &no_op, &zi, &zf, &[], LegSemantics::Live);
+    assert!(den, "the honest witness satisfies the honest denotation");
+
+    // mutation A: the deployed circuit carries `gate body + 1` (an off-by-one drift).
+    let mutant_gate = Descriptor2 {
+        constraints: vec![
+            Constraint::Gate(LeanExpr::Add(
+                Box::new(LeanExpr::Add(Box::new(v(0)), Box::new(neg(v(1))))),
+                Box::new(k(1)),
+            )),
+            Constraint::Transition { hi: 0, lo: 0 },
+        ],
+    };
+    let real_a = real_eval_accepts(&mutant_gate, &t).expect("row-local");
+    assert_ne!(
+        real_a, den,
+        "CANARY BITES: a +1 gate-body drift in the deployed descriptor makes the REAL \
+         Ir2Air::eval reject the witness the denotation accepts — the differential flags it"
+    );
+
+    // mutation B: the deployed circuit reads the WRONG transition target column (lo 0→1).
+    let mutant_trans = Descriptor2 {
+        constraints: vec![
+            Constraint::Gate(LeanExpr::Add(Box::new(v(0)), Box::new(neg(v(1))))),
+            Constraint::Transition { hi: 0, lo: 1 },
+        ],
+    };
+    let real_b = real_eval_accepts(&mutant_trans, &t).expect("row-local");
+    assert_ne!(
+        real_b, den,
+        "CANARY BITES: a transition-column drift (lo 0→1) in the deployed descriptor is \
+         detected by the real-evaluator differential"
+    );
+}
+
+/// The eval-side descriptor mutations CANARY 3 sweeps: each models a REAL bug class
+/// (a forgotten bus receive; a row-domain drift — the leg-#1 class; an opening-kind
+/// confusion). The mutation is applied to the descriptor the EVAL side runs; the
+/// denotation keeps the honest descriptor.
+#[derive(Clone, Copy)]
+enum EvalMutation {
+    /// The eval drops every lookup (models a missing chip/range membership receive).
+    DropLookups,
+    /// The eval treats every-row window gates as transition-only (the row-domain
+    /// drift class the leg-#1 divergence lived in).
+    EveryRowWindowAsTransition,
+    /// The eval checks map READS against the write-opening oracle (opening-kind
+    /// confusion; also skews the map-log op codes).
+    MapReadAsWrite,
+}
+
+fn mutate_desc(d: &Descriptor2, m: EvalMutation) -> Descriptor2 {
+    let constraints = d
+        .constraints
+        .iter()
+        .filter_map(|c| match (m, c) {
+            (EvalMutation::DropLookups, Constraint::Lookup(_)) => None,
+            (EvalMutation::EveryRowWindowAsTransition, Constraint::WindowGate(w)) => {
+                Some(Constraint::WindowGate(WindowC {
+                    body: w.body.clone(),
+                    on_transition: true,
+                }))
+            }
+            (EvalMutation::MapReadAsWrite, Constraint::MapOp(mo)) if mo.op == MapKind::Read => {
+                let mut mo2 = mo.clone();
+                mo2.op = MapKind::Write;
+                Some(Constraint::MapOp(mo2))
+            }
+            _ => Some(c.clone()),
+        })
+        .collect();
+    Descriptor2 { constraints }
+}
+
+/// Count denotation↔eval disagreements over the SAME generated corpus the
+/// faithfulness guard sweeps, with an optional eval-side descriptor mutation.
+fn corpus_disagreements(mutation: Option<EvalMutation>) -> usize {
+    let mut cov = Coverage::default();
+    let mut n = 0usize;
+    let mut seed: u64 = 0;
+    for &arm in ALL_ARMS.iter() {
+        for &h in arm_heights(arm) {
+            for polarity_accept in [true, false] {
+                if !polarity_accept && h < reject_min_height(arm) {
+                    continue;
+                }
+                for _ in 0..3 {
+                    seed = seed.wrapping_add(1);
+                    let mut rng =
+                        Rng::new(seed.wrapping_mul(0x1234_5678_9ABC_DEF1).wrapping_add(1));
+                    let case = gen_case(&mut rng, arm, h, polarity_accept, &mut cov);
+                    let den = denote_satisfied2(
+                        &case.desc,
+                        &case.t,
+                        &case.op,
+                        &*case.minit,
+                        &*case.mfin,
+                        &case.maddrs,
+                        LegSemantics::Live,
+                    );
+                    let eval_desc = match mutation {
+                        Some(m) => mutate_desc(&case.desc, m),
+                        None => Descriptor2 {
+                            constraints: case.desc.constraints.clone(),
+                        },
+                    };
+                    let air = eval_enforces(
+                        &eval_desc,
+                        &case.t,
+                        &case.op,
+                        &*case.minit,
+                        &*case.mfin,
+                        &case.maddrs,
+                    );
+                    if den != air {
+                        n += 1;
+                    }
+                }
+            }
+        }
+    }
+    n
+}
+
+/// CANARY 3 — the SWEEP HARNESS detects each planted eval-side mutation: over the same
+/// generated corpus the faithfulness guard runs, every mutation class produces at least
+/// one denotation↔eval disagreement, while the unmutated control produces ZERO. A
+/// mutation that produced no disagreement would mean the corpus cannot catch that bug
+/// class — a coverage hole this canary turns into a hard failure.
+#[test]
+fn mutation_canary_sweep_detects_planted_eval_mutants() {
+    let control = corpus_disagreements(None);
+    assert_eq!(
+        control, 0,
+        "control: the unmutated eval agrees with the denotation on the whole corpus"
+    );
+
+    let drop_lookups = corpus_disagreements(Some(EvalMutation::DropLookups));
+    assert!(
+        drop_lookups > 0,
+        "CANARY DEAD: dropping every lookup receive from the eval produced NO disagreement \
+         — the corpus cannot catch a missing chip/range membership check"
+    );
+
+    let window_domain = corpus_disagreements(Some(EvalMutation::EveryRowWindowAsTransition));
+    assert!(
+        window_domain > 0,
+        "CANARY DEAD: re-domaining every-row window gates to transition-only produced NO \
+         disagreement — the corpus cannot catch the leg-#1 row-domain drift class"
+    );
+
+    let map_kind = corpus_disagreements(Some(EvalMutation::MapReadAsWrite));
+    assert!(
+        map_kind > 0,
+        "CANARY DEAD: confusing map READ openings with WRITE openings produced NO \
+         disagreement — the corpus cannot catch an opening-kind drift"
+    );
+
+    eprintln!(
+        "MUTATION CANARIES BITE: control 0 disagreements; drop-lookups {drop_lookups}, \
+         window-domain {window_domain}, map-kind {map_kind} — every planted eval drift is \
+         detected by the sweep, so the differential is empirically NON-VACUOUS."
+    );
+}
+
+// ===========================================================================
+// PART M — the ROW-DOMAIN BOUNDARY in the OVER-ENFORCEMENT direction, driven through
+// the REAL deployed evaluator. The generated corpus builds accept witnesses that
+// satisfy the gates on EVERY row (wrap row included), so a deployed evaluator that
+// erroneously bound gate/transition/window(on_transition) on the wrap row would have
+// passed the whole sweep. These cases plant a violation ONLY on the wrap row — the
+// Lean denotation says ACCEPT (the arm is `True` on `isLast`), and the REAL
+// `Ir2Air::eval` must agree. The every-row window twin (which MUST reject a last-row
+// break) pins that the real evaluator genuinely distinguishes the two domains.
+// ===========================================================================
+
+#[test]
+fn real_evaluator_wrap_row_domain_boundaries() {
+    let no_op = Openings::default();
+    let zi = |_: i128| 0i128;
+    let zf = |_: i128| (0i128, 0i128);
+
+    // -- gate violated ONLY on the wrap row, heights 1, 2, 3: all three oracles ACCEPT. --
+    for h in [1usize, 2, 3] {
+        let d = Descriptor2 {
+            constraints: vec![Constraint::Gate(LeanExpr::Add(
+                Box::new(v(0)),
+                Box::new(neg(v(1))),
+            ))],
+        };
+        let mut rows: Vec<Row> = (0..h - 1).map(|_| vec![7, 7]).collect();
+        rows.push(vec![5, 6]); // broken ONLY on the wrap row
+        let t = VmTraceC {
+            rows,
+            tf: empty_tf(),
+        };
+        let den = denote_satisfied2(&d, &t, &no_op, &zi, &zf, &[], LegSemantics::Live);
+        let air = eval_enforces(&d, &t, &no_op, &zi, &zf, &[]);
+        let real = real_eval_accepts(&d, &t).expect("row-local");
+        assert!(den, "h={h}: the denotation skips the gate on the wrap row");
+        assert!(
+            air,
+            "h={h}: the transcription skips the gate on the wrap row"
+        );
+        assert!(
+            real,
+            "h={h}: OVER-ENFORCEMENT DRIFT — the REAL Ir2Air::eval bound a gate on the \
+             wrap row the Lean denotation does not bind"
+        );
+    }
+
+    // -- transition violated ONLY on the wrap window (last→first), heights 2, 3. --
+    for h in [2usize, 3] {
+        let d = Descriptor2 {
+            constraints: vec![Constraint::Transition { hi: 0, lo: 0 }],
+        };
+        let mut rows: Vec<Row> = (0..h - 1).map(|_| gt_row(0, 0)).collect();
+        let mut last = gt_row(0, 0);
+        last[STATE_AFTER_BASE] = 99; // wrap window (last→first) would need first.before == 99
+        rows.push(last);
+        let t = VmTraceC {
+            rows,
+            tf: empty_tf(),
+        };
+        let den = denote_satisfied2(&d, &t, &no_op, &zi, &zf, &[], LegSemantics::Live);
+        let air = eval_enforces(&d, &t, &no_op, &zi, &zf, &[]);
+        let real = real_eval_accepts(&d, &t).expect("row-local");
+        assert!(
+            den && air,
+            "h={h}: both transcriptions skip the wrap window"
+        );
+        assert!(
+            real,
+            "h={h}: OVER-ENFORCEMENT DRIFT — the REAL Ir2Air::eval bound the transition \
+             on the wrap window (cyclic last→first) the denotation does not bind"
+        );
+    }
+
+    // -- window(on_transition) violated ONLY on the wrap window. --
+    {
+        let d = Descriptor2 {
+            constraints: vec![Constraint::WindowGate(WindowC {
+                // body = Nxt(1) - Loc(1) - Nxt(0), the cumulative-sum primitive.
+                body: WinExpr::Add(
+                    Box::new(WinExpr::Add(
+                        Box::new(WinExpr::Nxt(1)),
+                        Box::new(WinExpr::Mul(
+                            Box::new(WinExpr::Const(-1)),
+                            Box::new(WinExpr::Loc(1)),
+                        )),
+                    )),
+                    Box::new(WinExpr::Mul(
+                        Box::new(WinExpr::Const(-1)),
+                        Box::new(WinExpr::Nxt(0)),
+                    )),
+                ),
+                on_transition: true,
+            })],
+        };
+        // rows [0,5] → [3,8]: the genuine transition holds; the wrap window
+        // (row1→row0) computes 5 - 8 - 0 = -3 ≠ 0 — violated iff erroneously bound.
+        let t = VmTraceC {
+            rows: vec![vec![0, 5], vec![3, 8]],
+            tf: empty_tf(),
+        };
+        let den = denote_satisfied2(&d, &t, &no_op, &zi, &zf, &[], LegSemantics::Live);
+        let air = eval_enforces(&d, &t, &no_op, &zi, &zf, &[]);
+        let real = real_eval_accepts(&d, &t).expect("row-local");
+        assert!(den && air, "both transcriptions skip the wrap window");
+        assert!(
+            real,
+            "OVER-ENFORCEMENT DRIFT — the REAL Ir2Air::eval bound an on_transition window \
+             gate on the wrap window"
+        );
+    }
+
+    // -- the DISCRIMINATING twin: an every-row (Loc-only) window broken on the LAST row
+    //    must be REJECTED by all three oracles at every height — proving the real
+    //    evaluator genuinely distinguishes the two window domains (not skipping the
+    //    wrap row wholesale). --
+    for h in [1usize, 2, 3] {
+        let d = Descriptor2 {
+            constraints: vec![Constraint::WindowGate(WindowC {
+                body: WinExpr::Add(
+                    Box::new(WinExpr::Loc(0)),
+                    Box::new(WinExpr::Mul(
+                        Box::new(WinExpr::Const(-1)),
+                        Box::new(WinExpr::Loc(1)),
+                    )),
+                ),
+                on_transition: false,
+            })],
+        };
+        let mut rows: Vec<Row> = (0..h - 1).map(|_| vec![4, 4]).collect();
+        rows.push(vec![4, 5]); // broken on the LAST row — the every-row gate binds there
+        let t = VmTraceC {
+            rows,
+            tf: empty_tf(),
+        };
+        let den = denote_satisfied2(&d, &t, &no_op, &zi, &zf, &[], LegSemantics::Live);
+        let air = eval_enforces(&d, &t, &no_op, &zi, &zf, &[]);
+        let real = real_eval_accepts(&d, &t).expect("row-local");
+        assert!(!den && !air, "h={h}: both transcriptions bind the last row");
+        assert!(
+            !real,
+            "h={h}: the REAL Ir2Air::eval must bind an every-row window on the last row"
+        );
+    }
+
+    eprintln!(
+        "WRAP-ROW DOMAIN BOUNDARY PASS: the REAL Ir2Air::eval skips gate/transition/\
+         window(on_transition) on the wrap row exactly as the Lean denotation says, and \
+         still binds every-row windows there — both directions of the row-domain seam \
+         are now pinned through the deployed evaluator."
+    );
+}
+
+// ===========================================================================
+// PART N — A GENUINE, PINNED Lean↔Rust DIVERGENCE (the most valuable finding this
+// audit produced) + the reachability tooth that keeps it un-exploitable.
+//
+// THE DIVERGENCE: for an EVERY-ROW window gate (`on_transition = false`) whose body
+// reads `nxt`, the two sides disagree on the LAST row:
+//   * the Lean denotation (`envAt`, `DescriptorIR2.lean:442`): `nxt := rows.getD (i+1)
+//     zeroAsg` — the last row's `nxt` is the ZERO assignment (and the Lean §
+//     `WindowConstraint` doc-comment claiming "`nxt` is the wrap row" contradicts its
+//     own definition);
+//   * the DEPLOYED evaluator (`ir2_eval_accepts`, `descriptor_ir2.rs:1582`
+//     `(row_index + 1) % height`; the STARK's rotation likewise): the last row's
+//     `next` is CYCLIC — row 0.
+// So a trace whose row 0 is nonzero in a column the body reads is ACCEPTED by the
+// Lean denotation and REJECTED by the real evaluator (real stricter here — the
+// SOUND direction, no false accept; a completeness/faithfulness drift nonetheless).
+//
+// REACHABILITY (why this is latent, not live): NO shipped descriptor emits an
+// every-row window gate at all (`descriptor_ir2.rs:2230` — "carried for grammar
+// completeness"); the tooth below FAILS the build the day one ships with a
+// `nxt`-reading body, forcing the seam to be welded (fix Lean `envAt`/`holdsAt` to
+// wrap, or forbid `nxt` in every-row bodies) BEFORE it can carry authority.
+// ===========================================================================
+
+/// THE PINNED DIVERGENCE WITNESS. If this test ever FAILS, the divergence has been
+/// (deliberately or accidentally) welded — re-audit and retire the pin + the tooth
+/// together with the fix.
+#[test]
+fn known_divergence_everyrow_nxt_window_wrap_row_pinned() {
+    let no_op = Openings::default();
+    let zi = |_: i128| 0i128;
+    let zf = |_: i128| (0i128, 0i128);
+    let d = Descriptor2 {
+        constraints: vec![Constraint::WindowGate(WindowC {
+            body: WinExpr::Nxt(0),
+            on_transition: false,
+        })],
+    };
+
+    // h=2, row0 nonzero: Lean nxt(last) = zeroAsg ⇒ ACCEPT; real nxt(last) = row0 ⇒ REJECT.
+    let t = VmTraceC {
+        rows: vec![vec![5], vec![0]],
+        tf: empty_tf(),
+    };
+    let den = denote_satisfied2(&d, &t, &no_op, &zi, &zf, &[], LegSemantics::Live);
+    let air = eval_enforces(&d, &t, &no_op, &zi, &zf, &[]);
+    let real = real_eval_accepts(&d, &t).expect("row-local");
+    assert!(
+        den,
+        "the Lean denotation reads zeroAsg for the last row's nxt and ACCEPTS"
+    );
+    assert!(
+        air,
+        "the transcription `eval_enforces` mirrors the Lean zero-pad (it therefore \
+         MIS-MODELS the deployed cyclic rotation on this arm — pinned here, not hidden)"
+    );
+    assert!(
+        !real,
+        "the REAL Ir2Air::eval reads the CYCLIC wrap row (row 0 = 5) and REJECTS"
+    );
+
+    // h=1 self-wrap: the only row's `next` is ITSELF in the deployed evaluator.
+    let t1 = VmTraceC {
+        rows: vec![vec![5]],
+        tf: empty_tf(),
+    };
+    let den1 = denote_satisfied2(&d, &t1, &no_op, &zi, &zf, &[], LegSemantics::Live);
+    let real1 = real_eval_accepts(&d, &t1).expect("row-local");
+    assert!(den1, "Lean: nxt = zeroAsg ⇒ body 0 ⇒ accept");
+    assert!(!real1, "real: nxt = the row itself (5) ⇒ reject");
+
+    // control: with row0 ≡ 0 in the read column, the two sides AGREE (the divergence
+    // is exactly the wrap-read, nothing else).
+    let t0 = VmTraceC {
+        rows: vec![vec![0], vec![0]],
+        tf: empty_tf(),
+    };
+    let den0 = denote_satisfied2(&d, &t0, &no_op, &zi, &zf, &[], LegSemantics::Live);
+    let real0 = real_eval_accepts(&d, &t0).expect("row-local");
+    assert!(den0 && real0, "control: zero wrap column ⇒ both accept");
+
+    eprintln!(
+        "PINNED DIVERGENCE (every-row nxt-window @ wrap row): Lean Satisfied2 ACCEPTS \
+         (envAt zero-pads nxt past the last row) while the DEPLOYED Ir2Air::eval REJECTS \
+         (cyclic rotation reads row 0). Direction: real STRICTER (sound; no false accept). \
+         Reachability: NO shipped descriptor emits an every-row window gate — enforced by \
+         shipped_descriptors_do_not_carry_everyrow_nxt_window_gates. WELD BEFORE SHIPPING \
+         ONE (fix Lean envAt/WindowConstraint.holdsAt to wrap, or forbid nxt in every-row \
+         bodies)."
+    );
+}
+
+/// Extract every `window_gate` JSON object from a descriptor wire string (the objects
+/// are brace-balanced and contain no braces inside string literals).
+fn window_gate_objects(json: &str) -> Vec<String> {
+    let needle = "\"t\":\"window_gate\"";
+    let bytes = json.as_bytes();
+    let mut out = Vec::new();
+    let mut search = 0usize;
+    while let Some(pos) = json[search..].find(needle) {
+        let abs = search + pos;
+        let start = json[..abs]
+            .rfind('{')
+            .expect("window_gate key inside an object");
+        let mut depth = 0usize;
+        let mut end = start;
+        for (i, &b) in bytes[start..].iter().enumerate() {
+            match b {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = start + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.push(json[start..=end].to_string());
+        search = abs + needle.len();
+    }
+    out
+}
+
+/// THE REACHABILITY TOOTH for the pinned divergence above: no shipped descriptor may
+/// carry an every-row (`on_transition:false`) window gate whose body reads `nxt` —
+/// that is exactly the shape on which the Lean denotation (zero-pad) and the deployed
+/// AIR (cyclic wrap) disagree. Shipping one without first welding the seam would make
+/// the divergence LIVE; this tooth turns that into a red build.
+#[test]
+fn shipped_descriptors_do_not_carry_everyrow_nxt_window_gates() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/descriptors");
+    let mut scanned = 0usize;
+    let mut gates = 0usize;
+    let mut offenders: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(dir).expect("circuit/descriptors exists") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("descriptor readable");
+        scanned += 1;
+        for obj in window_gate_objects(&text) {
+            gates += 1;
+            let every_row = obj.contains("\"on_transition\":false");
+            let reads_nxt = obj.contains("\"t\":\"nxt\"");
+            if every_row && reads_nxt {
+                offenders.push(format!("{}: {obj}", path.display()));
+            }
+        }
+    }
+    assert!(scanned > 0, "the shipped-descriptor corpus must be present");
+    assert!(
+        gates > 0,
+        "the scan must actually see window gates (non-vacuous)"
+    );
+    assert!(
+        offenders.is_empty(),
+        "A SHIPPED DESCRIPTOR CARRIES THE DIVERGENT SHAPE (every-row window gate reading \
+         `nxt`): the Lean denotation zero-pads the last row's nxt while the deployed AIR \
+         wraps cyclically — WELD THE SEAM (see known_divergence_everyrow_nxt_window_wrap_row_pinned) \
+         BEFORE SHIPPING:\n{}",
+        offenders.join("\n")
+    );
+    eprintln!(
+        "REACHABILITY TOOTH PASS: {scanned} shipped descriptors scanned, {gates} window \
+         gates seen, none is an every-row nxt-reading gate — the pinned divergence stays \
+         unreachable."
+    );
+}
+
+// ===========================================================================
+// PART N2 — the ℤ→BabyBear REPRESENTATION residual, pinned at its exact boundary.
+// The whole enumeration keeps values ≤ BOUND_V ≪ p so field reduction is never
+// load-bearing; this test DEMONSTRATES the residual is real (a value of exactly p
+// aliases to field 0 — the ℤ denotation rejects what the deployed field evaluator
+// accepts) and that agreement holds right up to p-1. So `BOUND_V ≪ p` is a
+// load-bearing convention, not decoration, and the named residual has a witness.
+// ===========================================================================
+
+#[test]
+fn field_reduction_residual_boundary_pinned() {
+    use dregg_circuit::field::BABYBEAR_P;
+    let p = BABYBEAR_P as i128;
+    assert!(
+        BOUND_V < p,
+        "the enumeration's value bound must stay far below the field modulus"
+    );
+
+    let no_op = Openings::default();
+    let zi = |_: i128| 0i128;
+    let zf = |_: i128| (0i128, 0i128);
+    // gate body = col0 (must vanish on transition rows).
+    let d = Descriptor2 {
+        constraints: vec![Constraint::Gate(v(0))],
+    };
+    let mk = |val: i128| VmTraceC {
+        rows: vec![vec![val], vec![0]],
+        tf: empty_tf(),
+    };
+
+    // value = p: aliases to field 0 — the REAL evaluator accepts, the ℤ denotation rejects.
+    let t_p = mk(p);
+    let den_p = denote_satisfied2(&d, &t_p, &no_op, &zi, &zf, &[], LegSemantics::Live);
+    let real_p = real_eval_accepts(&d, &t_p).expect("row-local");
+    assert!(!den_p, "ℤ: p ≠ 0 — the denotation rejects");
+    assert!(
+        real_p,
+        "field: p ≡ 0 (mod p) — the deployed evaluator accepts (THE ALIASING WITNESS)"
+    );
+
+    // value = p-1 and value = 0: inside the representable range, the two sides agree.
+    let t_pm1 = mk(p - 1);
+    let den_pm1 = denote_satisfied2(&d, &t_pm1, &no_op, &zi, &zf, &[], LegSemantics::Live);
+    let real_pm1 = real_eval_accepts(&d, &t_pm1).expect("row-local");
+    assert!(
+        !den_pm1 && !real_pm1,
+        "p-1: both reject (agreement up to p-1)"
+    );
+
+    let t_0 = mk(0);
+    let den_0 = denote_satisfied2(&d, &t_0, &no_op, &zi, &zf, &[], LegSemantics::Live);
+    let real_0 = real_eval_accepts(&d, &t_0).expect("row-local");
+    assert!(den_0 && real_0, "0: both accept");
+
+    eprintln!(
+        "ℤ→BabyBear RESIDUAL PINNED: agreement holds on [0, p-1]; at exactly p the field \
+         aliases to 0 (real accepts, ℤ denotation rejects) — the BOUND_V ≪ p convention is \
+         load-bearing and the named representation residual has a concrete witness."
+    );
+}
+
+// ===========================================================================
+// PART O — REAL-ASSEMBLY BUS EXTENSIONS: multi-op memory serial chains, the
+// duplicate-boundary-address tooth, map INSERT, wide-lane (all-8-felt) root forges,
+// and exact range boundary values — each driven through the DEPLOYED multi-table
+// batch STARK (`bus_assembly_accepts`), and — wherever the ℤ shape is expressible —
+// cross-checked DIRECTLY against the Lean-denotation transcription
+// (`denote_satisfied2`) on the structurally-identical ℤ twin. That makes these
+// genuine denotation-vs-deployed-assembly differentials, not label pins.
+// ===========================================================================
+
+/// The ℤ twin of a real-assembly memory case: run `denote_satisfied2` on the
+/// structurally-identical exact-integer witness.
+#[allow(clippy::too_many_arguments)]
+fn mem_twin_denotes(
+    rows: Vec<Row>,
+    maddrs: Vec<i128>,
+    init: Vec<(i128, i128)>,
+    fin: Vec<(i128, (i128, i128))>,
+) -> bool {
+    let d = Descriptor2 {
+        constraints: vec![
+            Constraint::Lookup(LookupC {
+                table: TID_RANGE,
+                tuple: vec![v(0)],
+            }),
+            Constraint::MemOp(MemOpC {
+                guard: k(1),
+                addr: v(0),
+                value: v(1),
+                prev_value: v(2),
+                prev_serial: v(3),
+                kind: Kind::Write,
+            }),
+            Constraint::MemOp(MemOpC {
+                guard: k(1),
+                addr: v(0),
+                value: v(4),
+                prev_value: v(5),
+                prev_serial: v(6),
+                kind: Kind::Read,
+            }),
+        ],
+    };
+    // memory table = the gathered log (table-faithful by construction: the forges
+    // here live in the DISCIPLINE/BALANCE legs, exactly like the real prover, which
+    // derives the table itself).
+    let base = VmTraceC {
+        rows: rows.clone(),
+        tf: Default::default(),
+    };
+    let log = mem_log(&d, &base);
+    let mut tf = std::collections::HashMap::new();
+    tf.insert(TID_RANGE, range_rows(8));
+    tf.insert(TID_MEMORY, log.iter().map(op_row).collect::<Table>());
+    tf.insert(TID_MAPOPS, Vec::new());
+    let t = VmTraceC { rows, tf };
+    let minit = move |a: i128| {
+        init.iter()
+            .find(|(x, _)| *x == a)
+            .map(|(_, v)| *v)
+            .unwrap_or(0)
+    };
+    let mfin = move |a: i128| {
+        fin.iter()
+            .find(|(x, _)| *x == a)
+            .map(|(_, v)| *v)
+            .unwrap_or((0, 0))
+    };
+    denote_satisfied2(
+        &d,
+        &t,
+        &Openings::default(),
+        &minit,
+        &mfin,
+        &maddrs,
+        LegSemantics::Live,
+    )
+}
+
+/// Multi-op memory serial chains + the duplicate-boundary-address tooth, through the
+/// REAL batch assembly, each cross-checked against the ℤ denotation twin. This
+/// extends the bus differential's memory coverage from a single write/read pair to a
+/// cross-row serial chain (log ordering + replay across rows) — the axis where an
+/// off-by-one in the Blum serial discipline would live.
+#[test]
+fn real_assembly_memory_serial_chain_differential() {
+    let d = real_mem_desc();
+    // cols: [addr, w_val, w_prev, w_serial, r_val, r_prev, r_serial]; one write+read
+    // pair PER ROW, serials 1..4 across two rows.
+    let r0: Vec<i128> = vec![5, 9, 7, 0, 9, 9, 1];
+    let r1: Vec<i128> = vec![5, 11, 9, 2, 11, 11, 3];
+    let boundary = MemBoundaryWitness {
+        addrs: vec![5],
+        init_vals: vec![7],
+    };
+    let to_bb = |r: &Vec<i128>| -> Vec<Bb> {
+        let mut row: Vec<Bb> = r.iter().map(|&x| bb(x)).collect();
+        row.resize(8, bb(0));
+        row
+    };
+
+    // -- honest 2-row chain: accept on BOTH the ℤ denotation and the real assembly. --
+    let den = mem_twin_denotes(
+        vec![r0.clone(), r1.clone()],
+        vec![5],
+        vec![(5, 7)],
+        vec![(5, (11, 4))],
+    );
+    let real = bus_assembly_accepts(&d, &[to_bb(&r0), to_bb(&r1)], &boundary, &[]);
+    assert!(den, "ℤ twin: the honest serial chain satisfies Satisfied2");
+    assert_eq!(
+        den, real,
+        "LEAN↔RUST DRIFT on the honest 2-row memory serial chain (denotation {den}, \
+         real assembly {real})"
+    );
+
+    // -- discipline forge across rows: row1's read returns 10 ≠ its claimed prev 11. --
+    let mut bad_read = r1.clone();
+    bad_read[4] = 10;
+    let den_b = mem_twin_denotes(
+        vec![r0.clone(), bad_read.clone()],
+        vec![5],
+        vec![(5, 7)],
+        vec![(5, (11, 4))],
+    );
+    let real_b = bus_assembly_accepts(&d, &[to_bb(&r0), to_bb(&bad_read)], &boundary, &[]);
+    assert!(!den_b, "ℤ twin rejects the cross-row read-discipline break");
+    assert_eq!(
+        den_b, real_b,
+        "LEAN↔RUST DRIFT on the cross-row discipline forge (denotation {den_b}, real {real_b})"
+    );
+
+    // -- stale prev_serial forge: row1's write claims prior serial 1 (genuine: 2). --
+    let mut stale = r1.clone();
+    stale[3] = 1;
+    let den_s = mem_twin_denotes(
+        vec![r0.clone(), stale.clone()],
+        vec![5],
+        vec![(5, 7)],
+        vec![(5, (11, 4))],
+    );
+    let real_s = bus_assembly_accepts(&d, &[to_bb(&r0), to_bb(&stale)], &boundary, &[]);
+    assert!(!den_s, "ℤ twin rejects the stale prev_serial replay");
+    assert_eq!(
+        den_s, real_s,
+        "LEAN↔RUST DRIFT on the stale-serial forge (denotation {den_s}, real {real_s})"
+    );
+
+    // -- the DUPLICATE-BOUNDARY-ADDRESS tooth (Lean `memAddrsNodup`): a declared
+    //    boundary with the same address twice must be REFUSED by the deployed assembly
+    //    exactly as the denotation refuses it. --
+    let dup_boundary = MemBoundaryWitness {
+        addrs: vec![5, 5],
+        init_vals: vec![7, 7],
+    };
+    let den_d = mem_twin_denotes(
+        vec![r0.clone(), r1.clone()],
+        vec![5, 5],
+        vec![(5, 7)],
+        vec![(5, (11, 4))],
+    );
+    let real_d = bus_assembly_accepts(&d, &[to_bb(&r0), to_bb(&r1)], &dup_boundary, &[]);
+    assert!(
+        !den_d,
+        "ℤ twin: memAddrsNodup rejects the duplicated address"
+    );
+    assert_eq!(
+        den_d, real_d,
+        "LEAN↔RUST DRIFT on the duplicate-boundary-address tooth (denotation {den_d}, \
+         real assembly {real_d}) — a deployed assembly that ACCEPTS a duplicated \
+         boundary address would double-count its init/final rows"
+    );
+
+    eprintln!(
+        "MEMORY SERIAL-CHAIN DIFFERENTIAL PASS: honest 2-row chain accepts; cross-row \
+         discipline forge, stale-serial forge, and the duplicate-boundary-address tooth \
+         all reject — ℤ denotation ≡ REAL batch assembly on every case."
+    );
+}
+
+/// Map INSERT (the fresh-key sorted insert — the effect family behind nullifier
+/// installs and cell births) through the REAL assembly, plus WIDE-LANE forges: the
+/// deployed root binding is all EIGHT felts, so a perturbation in a HIGH lane (5 or 7)
+/// must reject even though the Lean scalar denotation (which reads lane 0 only — the
+/// separately-named `hmapDec` heap-opening floor) cannot see it. The lane-0 forge is
+/// the agreement case; the high-lane forges PIN the width relationship: the deployed
+/// assembly is STRICTLY STRONGER than the scalar denotation (the sound direction).
+#[test]
+fn real_assembly_map_insert_and_wide_lane_differential() {
+    // -- INSERT: leaves {100→77, 200→88}, insert 150→55 (bracketed fresh key). --
+    let d_ins = real_map_desc(RealMapKind::Insert);
+    let leaves = vec![
+        HeapLeaf {
+            addr: bb(100),
+            value: bb(77),
+        },
+        HeapLeaf {
+            addr: bb(200),
+            value: bb(88),
+        },
+    ];
+    let tree = CanonicalHeapTree8::new(leaves.clone(), HEAP_TREE_DEPTH);
+    let root = tree.root8();
+    let w = tree
+        .insert_witness(HeapLeaf {
+            addr: bb(150),
+            value: bb(55),
+        })
+        .expect("fresh bracketed key has an insert witness");
+
+    // the ℤ twin (scalar lane-0 shadow, per the Lean `MapOp.holdsAt` insert arm =
+    // `writesTo` — same oracle shape as write).
+    let root0 = root[0].as_u32() as i128;
+    let new_root0 = w.new_root[0].as_u32() as i128;
+    let twin_cs = Descriptor2 {
+        constraints: vec![Constraint::MapOp(MapOpC {
+            guard: k(1),
+            root: v(0),
+            key: v(1),
+            value: v(2),
+            new_root: v(3),
+            op: MapKind::Insert,
+        })],
+    };
+    let twin_row: Row = vec![root0, 150, 55, new_root0];
+    let base_t = VmTraceC {
+        rows: vec![twin_row.clone()],
+        tf: Default::default(),
+    };
+    let mut tf = std::collections::HashMap::new();
+    tf.insert(TID_MAPOPS, map_log(&twin_cs, &base_t));
+    tf.insert(TID_MEMORY, Vec::new());
+    let twin_t = VmTraceC {
+        rows: vec![twin_row],
+        tf,
+    };
+    let mut twin_op = Openings::default();
+    twin_op.writes.insert((root0, 150, 55, new_root0));
+    let zi = |_: i128| 0i128;
+    let zf = |_: i128| (0i128, 0i128);
+    let den_ins = denote_satisfied2(
+        &twin_cs,
+        &twin_t,
+        &twin_op,
+        &zi,
+        &zf,
+        &[],
+        LegSemantics::Live,
+    );
+    assert!(den_ins, "ℤ twin: the genuine insert satisfies Satisfied2");
+
+    let real_ins = bus_assembly_accepts(
+        &d_ins,
+        &[map_bus_row(&root, bb(150), bb(55), &w.new_root)],
+        &MemBoundaryWitness::default(),
+        &[leaves.clone()],
+    );
+    assert_eq!(
+        den_ins, real_ins,
+        "LEAN↔RUST DRIFT on the genuine map INSERT (denotation {den_ins}, real {real_ins})"
+    );
+
+    // -- lane-0 new_root forge: VISIBLE to the scalar denotation — both reject. --
+    let mut forged0 = w.new_root;
+    forged0[0] += bb(1);
+    let real_f0 = bus_assembly_accepts(
+        &d_ins,
+        &[map_bus_row(&root, bb(150), bb(55), &forged0)],
+        &MemBoundaryWitness::default(),
+        &[leaves.clone()],
+    );
+    assert!(
+        !real_f0,
+        "the real assembly rejects a lane-0-forged insert new_root"
+    );
+
+    // -- lane-5 new_root forge: INVISIBLE to the lane-0 scalar denotation, but the
+    //    deployed assembly binds all 8 lanes and must REJECT. (The scalar twin accepts
+    //    — that is the NAMED hmapDec width floor, pinned here, not laundered: the
+    //    deployed side is strictly stronger, so no false accept exists.) --
+    let mut forged5 = w.new_root;
+    forged5[5] += bb(1);
+    let real_f5 = bus_assembly_accepts(
+        &d_ins,
+        &[map_bus_row(&root, bb(150), bb(55), &forged5)],
+        &MemBoundaryWitness::default(),
+        &[leaves.clone()],
+    );
+    assert!(
+        !real_f5,
+        "WIDE-LANE HOLE: the deployed assembly ACCEPTED an insert whose new_root is \
+         forged in lane 5 — the 8-felt root binding is NOT binding all lanes"
+    );
+
+    // -- map READ with the ROOT forged in lane 7 (both root and new_root, consistently):
+    //    no heap has that root, so the deployed assembly must REJECT. --
+    let d_read = real_map_desc(RealMapKind::Read);
+    let mut froot: [Bb; HEAP_DIGEST_W] = root.limbs();
+    froot[7] += bb(1);
+    let real_r7 = bus_assembly_accepts(
+        &d_read,
+        &[map_bus_row(&froot, bb(100), bb(77), &froot)],
+        &MemBoundaryWitness::default(),
+        &[leaves.clone()],
+    );
+    assert!(
+        !real_r7,
+        "WIDE-LANE HOLE: the deployed assembly ACCEPTED a map read against a root \
+         forged in lane 7 — the 8-felt root binding is NOT binding all lanes"
+    );
+
+    eprintln!(
+        "MAP INSERT + WIDE-LANE DIFFERENTIAL PASS: genuine insert accepts (ℤ twin agrees); \
+         lane-0 forge rejects on both sides; lane-5 and lane-7 forges reject through the \
+         REAL assembly (all 8 root lanes bound — the deployed side strictly stronger than \
+         the lane-0 scalar denotation, the named hmapDec width floor)."
+    );
+}
+
+/// Exact range-boundary values through the REAL assembly: 0 (the zero felt), 255 (the
+/// max in-bound value for bits=8), and 256 (the first out-of-bound value — a sharper
+/// adversarial probe than a far-out value, since an off-by-one in the limb
+/// decomposition would live exactly here). Plus the zero-input chip digest. Each
+/// verdict is cross-checked against the ℤ denotation twin (range) or the polarity
+/// twin (chip).
+#[test]
+fn real_assembly_boundary_values_differential() {
+    let zi = |_: i128| 0i128;
+    let zf = |_: i128| (0i128, 0i128);
+    let no_op = Openings::default();
+
+    // -- range [0, 256): the ℤ twin descriptor. --
+    let twin_cs = Descriptor2 {
+        constraints: vec![Constraint::Lookup(LookupC {
+            table: TID_RANGE,
+            tuple: vec![v(0)],
+        })],
+    };
+    let twin = |val: i128| -> bool {
+        let mut tf = empty_tf();
+        tf.insert(TID_RANGE, range_rows(8));
+        let t = VmTraceC {
+            rows: vec![vec![val]],
+            tf,
+        };
+        denote_satisfied2(&twin_cs, &t, &no_op, &zi, &zf, &[], LegSemantics::Live)
+    };
+    let d = real_range_desc(8);
+    for (val, label) in [(0i128, "zero"), (255, "max-in-bound"), (256, "first-oob")] {
+        let den = twin(val);
+        let real = bus_assembly_accepts(
+            &d,
+            &[vec![bb(val), bb(0), bb(0), bb(0)]],
+            &MemBoundaryWitness::default(),
+            &[],
+        );
+        assert_eq!(
+            den, real,
+            "LEAN↔RUST DRIFT on the range boundary value {val} ({label}): denotation \
+             {den}, real assembly {real}"
+        );
+    }
+
+    // -- the zero-input chip digest: hash[0,0] is a genuine absorb (the zero felt is a
+    //    legitimate wire value, not a padding artifact); its forged twin rejects. --
+    let d_chip = real_chip_desc();
+    let digest = chip_digest2(bb(0), bb(0));
+    let mut row = vec![bb(0); d_chip.trace_width];
+    row[2] = digest;
+    let real_z = bus_assembly_accepts(&d_chip, &[row.clone()], &MemBoundaryWitness::default(), &[]);
+    assert!(
+        real_z,
+        "the genuine zero-input chip digest proves + verifies"
+    );
+    let mut forged = row;
+    forged[2] = digest + bb(1);
+    let real_zf = bus_assembly_accepts(&d_chip, &[forged], &MemBoundaryWitness::default(), &[]);
+    assert!(!real_zf, "the forged zero-input chip digest rejects");
+
+    eprintln!(
+        "BOUNDARY-VALUE DIFFERENTIAL PASS: range 0 / 255 / 256 decide identically on the \
+         ℤ denotation and the REAL assembly (the off-by-one seat is clean); the zero-input \
+         chip digest is genuine-accept / forged-reject."
+    );
+}
+
+// ===========================================================================
+// PART P — the BOUNDARY / PI-BINDING arms (`.boundary first|last`, `.piBinding
+// first|last`): DEPLOYED in every shipped descriptor (every pi_binding pins a public
+// input = a commitment), row-POSITION-guarded (`when_first_row` / `when_last_row` —
+// the same guard class the leg-#1 divergence lived in), and previously NOT
+// differential-tested at all. Lean semantics (`VmConstraint.holdsVm`,
+// `Emit/EffectVmEmit.lean:440`):
+//   .boundary .first b      → isFirst = true → b.eval loc = 0
+//   .boundary .last  b      → isLast  = true → b.eval loc = 0
+//   .piBinding .first col k → isFirst = true → loc col = pub k
+//   .piBinding .last  col k → isLast  = true → loc col = pub k
+// The differential: an arm-for-arm ℤ transcription of holdsVm vs the REAL deployed
+// `Ir2Air::eval` (which binds these under `when_first_row()`/`when_last_row()`),
+// over heights 1..3 × both polarities × OFF-GUARD violations (a violation planted on
+// a row the guard does NOT cover must still ACCEPT — the over-enforcement direction).
+// ===========================================================================
+
+use dregg_circuit::lean_descriptor_air::VmRow;
+
+#[derive(Clone)]
+enum BaseArm {
+    BFirst(LeanExpr),
+    BLast(LeanExpr),
+    PiFirst { col: usize, k: usize },
+    PiLast { col: usize, k: usize },
+}
+
+/// The arm-for-arm ℤ transcription of `VmConstraint.holdsVm` for the boundary / pi
+/// arms (isFirst = row 0, isLast = row n-1; both true on a 1-row trace).
+fn denote_boundary_pi(arms: &[BaseArm], rows: &[Row], pis: &[i128]) -> bool {
+    let n = rows.len();
+    if n == 0 {
+        return false;
+    }
+    for (i, row) in rows.iter().enumerate() {
+        let is_first = i == 0;
+        let is_last = i + 1 == n;
+        for a in arms {
+            let ok = match a {
+                BaseArm::BFirst(b) => !is_first || eval_z(b, row) == 0,
+                BaseArm::BLast(b) => !is_last || eval_z(b, row) == 0,
+                BaseArm::PiFirst { col, k } => !is_first || at(row, *col) == pis[*k],
+                BaseArm::PiLast { col, k } => !is_last || at(row, *col) == pis[*k],
+            };
+            if !ok {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Build the DEPLOYED descriptor carrying the boundary / pi arms.
+fn boundary_pi_real_desc(arms: &[BaseArm]) -> EffectVmDescriptor2 {
+    let constraints = arms
+        .iter()
+        .map(|a| match a {
+            BaseArm::BFirst(b) => VmConstraint2::Base(RealVmConstraint::Boundary {
+                row: VmRow::First,
+                body: b.clone(),
+            }),
+            BaseArm::BLast(b) => VmConstraint2::Base(RealVmConstraint::Boundary {
+                row: VmRow::Last,
+                body: b.clone(),
+            }),
+            BaseArm::PiFirst { col, k } => VmConstraint2::Base(RealVmConstraint::PiBinding {
+                row: VmRow::First,
+                col: *col,
+                pi_index: *k,
+            }),
+            BaseArm::PiLast { col, k } => VmConstraint2::Base(RealVmConstraint::PiBinding {
+                row: VmRow::Last,
+                col: *col,
+                pi_index: *k,
+            }),
+        })
+        .collect();
+    EffectVmDescriptor2 {
+        name: "ir2-boundary-pi-arms".to_string(),
+        trace_width: 4,
+        public_input_count: 2,
+        tables: Vec::new(),
+        constraints,
+        hash_sites: Vec::new(),
+        ranges: Vec::new(),
+    }
+}
+
+/// Run the REAL deployed evaluator on a boundary/pi case.
+fn boundary_pi_real_eval(arms: &[BaseArm], rows: &[Row], pis: &[i128]) -> bool {
+    let desc = boundary_pi_real_desc(arms);
+    let rows_i64: Vec<Vec<i64>> = rows
+        .iter()
+        .map(|r| {
+            let mut row = vec![0i64; 4];
+            for (c, &x) in r.iter().enumerate().take(4) {
+                row[c] = x as i64;
+            }
+            row
+        })
+        .collect();
+    let pis_i64: Vec<i64> = pis.iter().map(|&x| x as i64).collect();
+    descriptor_ir2::ir2_eval_accepts_i64(&desc, &rows_i64, &pis_i64)
+}
+
+/// **THE BOUNDARY / PI-BINDING DIFFERENTIAL.** Every case must decide IDENTICALLY on
+/// the `holdsVm` ℤ transcription and the REAL deployed `Ir2Air::eval`; the accept
+/// cases plant violations on every OFF-GUARD row so an over-enforcing deployed guard
+/// (`when_first_row` leaking onto other rows, or vice versa) is caught, not just an
+/// under-enforcing one.
+#[test]
+fn faithfulness_guard_boundary_pi_arms_real_eval() {
+    // body = col0 - col1.
+    let body = || LeanExpr::Add(Box::new(v(0)), Box::new(neg(v(1))));
+    let pis: Vec<i128> = vec![42, 7];
+
+    struct BpCase {
+        label: &'static str,
+        arms: Vec<BaseArm>,
+        rows: Vec<Row>,
+        pis: Vec<i128>,
+        expect: bool,
+    }
+    let ok = |c0: i128, c1: i128| -> Row { vec![c0, c1, 0, 0] };
+    let mut cases: Vec<BpCase> = Vec::new();
+
+    for h in [1usize, 2, 3] {
+        // boundary-first: satisfied on row 0; VIOLATED on every other row (the guard
+        // must not leak past the first row).
+        let mut rows = vec![ok(9, 9)];
+        rows.extend((1..h).map(|_| ok(9, 1)));
+        cases.push(BpCase {
+            label: "boundary-first accept (off-guard rows violate)",
+            arms: vec![BaseArm::BFirst(body())],
+            rows,
+            pis: pis.clone(),
+            expect: true,
+        });
+        // boundary-first: violated on row 0.
+        let mut rows = vec![ok(9, 8)];
+        rows.extend((1..h).map(|_| ok(3, 3)));
+        cases.push(BpCase {
+            label: "boundary-first reject (first row violates)",
+            arms: vec![BaseArm::BFirst(body())],
+            rows,
+            pis: pis.clone(),
+            expect: false,
+        });
+        // boundary-last: satisfied on the last row; violated on every earlier row.
+        let mut rows: Vec<Row> = (0..h - 1).map(|_| ok(9, 1)).collect();
+        rows.push(ok(6, 6));
+        cases.push(BpCase {
+            label: "boundary-last accept (off-guard rows violate)",
+            arms: vec![BaseArm::BLast(body())],
+            rows,
+            pis: pis.clone(),
+            expect: true,
+        });
+        let mut rows: Vec<Row> = (0..h - 1).map(|_| ok(3, 3)).collect();
+        rows.push(ok(6, 5));
+        cases.push(BpCase {
+            label: "boundary-last reject (last row violates)",
+            arms: vec![BaseArm::BLast(body())],
+            rows,
+            pis: pis.clone(),
+            expect: false,
+        });
+        // pi-first {col 0, pi 0 = 42}: bound on row 0; other rows carry a NON-pi value.
+        let mut rows = vec![ok(42, 0)];
+        rows.extend((1..h).map(|_| ok(999, 0)));
+        cases.push(BpCase {
+            label: "pi-first accept (off-guard rows differ from the pi)",
+            arms: vec![BaseArm::PiFirst { col: 0, k: 0 }],
+            rows,
+            pis: pis.clone(),
+            expect: true,
+        });
+        let mut rows = vec![ok(41, 0)];
+        rows.extend((1..h).map(|_| ok(42, 0)));
+        cases.push(BpCase {
+            label: "pi-first reject (first row misses the pi)",
+            arms: vec![BaseArm::PiFirst { col: 0, k: 0 }],
+            rows,
+            pis: pis.clone(),
+            expect: false,
+        });
+        // pi-last {col 1, pi 1 = 7}.
+        let mut rows: Vec<Row> = (0..h - 1).map(|_| vec![0, 999, 0, 0]).collect();
+        rows.push(vec![0, 7, 0, 0]);
+        cases.push(BpCase {
+            label: "pi-last accept (off-guard rows differ from the pi)",
+            arms: vec![BaseArm::PiLast { col: 1, k: 1 }],
+            rows,
+            pis: pis.clone(),
+            expect: true,
+        });
+        let mut rows: Vec<Row> = (0..h - 1).map(|_| vec![0, 7, 0, 0]).collect();
+        rows.push(vec![0, 8, 0, 0]);
+        cases.push(BpCase {
+            label: "pi-last reject (last row misses the pi)",
+            arms: vec![BaseArm::PiLast { col: 1, k: 1 }],
+            rows,
+            pis: pis.clone(),
+            expect: false,
+        });
+    }
+
+    // h=1 CONJUNCTIONS: first == last, so BOTH guards bind the single row.
+    cases.push(BpCase {
+        label: "h=1 boundary first∧last accept",
+        arms: vec![
+            BaseArm::BFirst(body()),
+            BaseArm::BLast(LeanExpr::Add(Box::new(v(0)), Box::new(k(-5)))),
+        ],
+        rows: vec![ok(5, 5)], // col0-col1 = 0 AND col0-5 = 0
+        pis: pis.clone(),
+        expect: true,
+    });
+    cases.push(BpCase {
+        label: "h=1 boundary first∧last reject (last-guard arm violated)",
+        arms: vec![
+            BaseArm::BFirst(body()),
+            BaseArm::BLast(LeanExpr::Add(Box::new(v(0)), Box::new(k(-5)))),
+        ],
+        rows: vec![ok(6, 6)], // col0-col1 = 0 but col0-5 = 1
+        pis: pis.clone(),
+        expect: false,
+    });
+    cases.push(BpCase {
+        label: "h=1 pi first∧last accept (both pis equal)",
+        arms: vec![
+            BaseArm::PiFirst { col: 0, k: 0 },
+            BaseArm::PiLast { col: 0, k: 1 },
+        ],
+        rows: vec![ok(42, 0)],
+        pis: vec![42, 42],
+        expect: true,
+    });
+    cases.push(BpCase {
+        label: "h=1 pi first∧last reject (conflicting pis unsatisfiable)",
+        arms: vec![
+            BaseArm::PiFirst { col: 0, k: 0 },
+            BaseArm::PiLast { col: 0, k: 1 },
+        ],
+        rows: vec![ok(42, 0)],
+        pis: vec![42, 7],
+        expect: false,
+    });
+
+    let mut accepts = 0usize;
+    let mut rejects = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+    for c in &cases {
+        let den = denote_boundary_pi(&c.arms, &c.rows, &c.pis);
+        if den != c.expect {
+            failures.push(format!(
+                "case {:?} (h={}): the holdsVm transcription decided {den}, intended {}",
+                c.label,
+                c.rows.len(),
+                c.expect
+            ));
+            continue;
+        }
+        let real = boundary_pi_real_eval(&c.arms, &c.rows, &c.pis);
+        if real != den {
+            failures.push(format!(
+                "case {:?} (h={}): LEAN↔RUST DRIFT — holdsVm transcription {den} but the \
+                 REAL Ir2Air::eval decided {real}",
+                c.label,
+                c.rows.len()
+            ));
+        }
+        if den {
+            accepts += 1;
+        } else {
+            rejects += 1;
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "BOUNDARY/PI-BINDING DIFFERENTIAL FAILURES ({}):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    assert!(
+        accepts > 0 && rejects > 0,
+        "both polarities must be present (accepts {accepts}, rejects {rejects})"
+    );
+
+    // the MUTATION CANARY for this leg: the same honest case, with the deployed side
+    // handed a PERTURBED public input, must disagree with the denotation.
+    let arms = vec![BaseArm::PiFirst { col: 0, k: 0 }];
+    let rows = vec![ok(42, 0)];
+    let den = denote_boundary_pi(&arms, &rows, &[42, 7]);
+    let real_mut = boundary_pi_real_eval(&arms, &rows, &[43, 7]);
+    assert!(den, "the honest pi binding satisfies the denotation");
+    assert_ne!(
+        real_mut, den,
+        "CANARY DEAD: a perturbed public input on the deployed side was NOT detected — \
+         the pi-binding differential cannot catch a commitment drift"
+    );
+
+    eprintln!(
+        "BOUNDARY/PI-BINDING DIFFERENTIAL PASS: {} cases ({accepts} accept, {rejects} \
+         reject) — the holdsVm ℤ transcription ≡ the REAL Ir2Air::eval on the \
+         `.boundary first|last` / `.piBinding first|last` arms across heights 1..3, \
+         including off-guard violations (no over-enforcement) and the h=1 first==last \
+         conjunction; the perturbed-pi canary bites.",
+        cases.len()
+    );
+}
