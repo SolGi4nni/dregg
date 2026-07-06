@@ -11,6 +11,10 @@ description = "The zkOracle PROVER: PRODUCES a zkOracle attestation (authentic �
 # exactly as `InjectionFree field := derives field (.neg injectionTemplate)` in
 # metatheory/Dregg2/Crypto/ZkOracle.lean.
 dregg-dfa = { path = "../dfa" }
+# The Poseidon2 sponge (`poseidon2::hash_bytes`, the felt-domain content commitment the
+# content-root uses) — the ONE shared commitment threaded across the 3 legs so the
+# attestation proves authentic ∧ well-formed ∧ injection-free about the SAME response.
+dregg-circuit = { path = "../circuit" }
 # The (modeled) notary signature over the tlsn presentation — real ed25519 (the SAME
 # curve/lib deco-prove's notary carrier uses).
 ed25519-dalek = { version = "2", features = ["std"] }

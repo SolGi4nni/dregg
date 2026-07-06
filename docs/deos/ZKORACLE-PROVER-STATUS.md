@@ -66,6 +66,43 @@ blob. `prove_zkoracle` refuses to even PRODUCE an attestation for an injecting u
 field (the guard cannot mint an attestation for an injecting request — the operational
 mirror of `Demo.malicious_not_injection_free`).
 
+## The cross-leg weld — ONE committed response, not three independent objects
+
+Verifying the three legs is not enough on its own: they must be about the **same request**.
+The adversarial audit found that pre-weld the legs referenced independent objects — the
+well-formed leg was already bound to the authenticated body (it re-tokenizes it), but the
+**injection-free leg ran over a free-standing `user_field`** unrelated to the session. So a
+splice — an authentic + well-formed session whose real content INJECTS, certified
+"injection-free" by supplying a benign standalone field — was accepted.
+
+The weld threads **ONE shared Poseidon2 content commitment** across the three legs
+(`content_commitment` = `dregg_circuit::poseidon2::hash_bytes` over the authenticated
+response body, the SAME sponge primitive the content-root uses):
+
+- **authentic** yields the response body; `verify_zkoracle` recomputes the commitment
+  and refuses any attestation whose committed value disagrees (`CrossLegMismatch`);
+- **well-formed** checks its certificate against that same authenticated body;
+- **injection-free** runs over a committed SUBSTRING of that same authenticated body — the
+  field is a `FieldSpan` the verifier extracts ITSELF (`prove_zkoracle` refuses a field
+  that is not a substring of the authenticated response, `FieldNotInResponse`), NOT a
+  free-standing input a splicer could swap.
+
+So the attestation now proves authentic ∧ well-formed ∧ injection-free about the SAME
+committed response. A spliced attestation (evidence about body A stapled onto an authentic
+session for body B) is REFUSED — the `cross_leg_splice_is_refused` /
+`unbound_injection_field_splice_now_refused` tests confirm the regression direction
+(accepted pre-weld → refused post-weld). This is the 3-way analogue of the DECO
+body-binding closed in `bridge/src/stripe_deco.rs` (the felt-commitment `payment_hash`).
+
+### ⚑ The Lean-side weld is the coordinated follow-up (Alif's work)
+
+This is the **Rust-side** weld: the prover realization now proves one-request. The Lean
+`metatheory/Dregg2/Crypto/ZkOracle.lean::zkOracle_sound` still states the three legs
+over **independent objects** (`decoStmt`, `body`, `field`). Closing that — a
+shared-commitment hypothesis binding `decoStmt.facts` ↔ `body` ↔ `field` to one committed
+response, mirroring this `content_commitment` — is the coordinated Lean-side follow-up (Alif's
+lane). It is NOT edited here.
+
 ## What is REAL vs the operational remainder
 
 - **REAL (default build, `cargo test -p dregg-zkoracle-prove`, 21 tests green):** the
@@ -107,9 +144,14 @@ the §8 crypto floor + the external Web-PKI floor).
 
 ## Crates touched
 
-- `zkoracle-prove/` (NEW): the 3-leg prover+verifier + the real tlsn-live lane + tests.
+- `zkoracle-prove/` (NEW): the 3-leg prover+verifier + the cross-leg weld + the real
+  tlsn-live lane + tests.
 - `Cargo.toml`: added `zkoracle-prove` to workspace members + default-members.
+- `zkoracle-prove/Cargo.toml`: added `dregg-circuit` (path) for the Poseidon2 sponge
+  (`hash_bytes`, the shared content commitment) — a workspace path dep, not a new external
+  crate.
 
 No Lean sources, no gentian/assurance/`orb` files, no lease files, and nothing in `_attic`
-were changed. The default build depends only on `dregg-dfa` + `ed25519-dalek` + `sha2`
-(light); the heavy tlsn backend is behind the `tlsn-live` feature.
+were changed. The default build depends on `dregg-dfa` + `dregg-circuit` (for the Poseidon2
+content commitment) + `ed25519-dalek` + `sha2`; the heavy tlsn backend is behind the
+`tlsn-live` feature.
