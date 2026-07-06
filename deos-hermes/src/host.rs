@@ -157,6 +157,12 @@ pub struct HostedAgentReport {
     /// a real receipt (admitted) or an in-band refusal (over-cap), decided on the
     /// verified executor OUTSIDE the jail.
     pub tool_verdicts: Vec<HostedToolVerdict>,
+    /// THE CROWN — the zkOracle attestation of the confined brain's TURN, when the run
+    /// was attested ([`DreggHost::run_hosted_agent_attested`]). `Some` ⇒ this jailed turn
+    /// carries a `verify_zkoracle`-checkable proof it was authentic (the session) ∧
+    /// well-formed (the response JSON) ∧ injection-free (the bound field), ALONGSIDE the
+    /// confinement teeth above. `None` for a plain (unattested) hosted run.
+    pub attestation: Option<dregg_zkoracle_prove::ZkOracleAttestation>,
 }
 
 impl HostedAgentReport {
@@ -190,6 +196,7 @@ impl HostedAgentReport {
             agent_text: run.agent_text,
             stop_reason: run.stop_reason,
             tool_verdicts,
+            attestation: None,
         }
     }
 
@@ -359,6 +366,45 @@ impl DreggHost {
             ungranted_net,
             LocalBrain::new(),
         )
+    }
+
+    /// THE CROWN — run a confined brain AND ATTEST its turn. Drives the jailed brain over
+    /// the granted provider egress door (the SAME confinement-proving run as
+    /// [`DreggHost::run_hosted_agent_net`]: jailed + door open + sibling denied), THEN
+    /// produces a [`ZkOracleAttestation`](dregg_zkoracle_prove::ZkOracleAttestation)
+    /// over the brain's TURN and attaches it to the report.
+    ///
+    /// The result carries BOTH proofs of one jailed LLM turn: the confinement teeth
+    /// ([`HostedAgentReport::jailed`] / [`HostedAgentReport::egress_net_granted_open`] /
+    /// [`HostedAgentReport::egress_net_sibling_denied`]) AND
+    /// [`HostedAgentReport::attestation`] — a `verify_zkoracle`-checkable proof (against
+    /// `carrier.config()`) that the turn was authentic ∧ well-formed ∧ injection-free. The
+    /// agent is physically BOUNDED and provably reasoning from an authentic response.
+    ///
+    /// Attestation is produced on the verified executor OUTSIDE the jail (the modeled
+    /// authentic carrier by default; the real local MPC-TLS 2PC under
+    /// [`crate::attest::attest_turn_live`] with `zk-live`). If the brain's own turn output
+    /// carries a `{{` handlebars-injection attempt the attestation cannot be minted and
+    /// this returns an error (a jailed turn that injects is not attestable).
+    pub fn run_hosted_agent_attested(
+        &self,
+        kernel: &ProcessKernel,
+        gateway: HermesGateway<'_>,
+        goal: &str,
+        granted_net: Option<(&str, u16)>,
+        ungranted_net: Option<(&str, u16)>,
+        carrier: &crate::attest::AttestationCarrier,
+    ) -> std::io::Result<HostedAgentReport> {
+        // (1) The confined brain run — the confinement evidence (jailed + provider door).
+        let mut report =
+            self.run_hosted_agent_net(kernel, gateway, goal, granted_net, ungranted_net)?;
+        // (2) ATTEST the turn: the brain's own output → an authentic ∧ well-formed ∧
+        //     injection-free attestation, bound to this one response.
+        let (attestation, _field) = carrier
+            .attest_turn(&report.agent_text)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        report.attestation = Some(attestation);
+        Ok(report)
     }
 
     /// RUN A LIVE BRAIN IN THE JAIL — the real model drives the confined ACP loop,

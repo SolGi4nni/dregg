@@ -80,6 +80,7 @@
 pub mod acp;
 pub mod acp_client;
 pub mod agent_peer;
+pub mod attest;
 pub mod brain;
 pub mod bridge;
 #[cfg(feature = "js-agent")]
@@ -112,11 +113,19 @@ pub use acp_client::{
     AcpClient, AcpError, AcpPeer, AcpTransport, JsRunRecord, PromptRun, RunJsHook, StreamEvent,
 };
 pub use agent_peer::HermesAgentPeer;
+pub use attest::{AttestationCarrier, messages_body};
+// THE CROWN — re-export the zkOracle attestation surface a HOST verifies with, so a
+// caller attaches + checks a confined turn's attestation without depending on
+// `dregg-zkoracle-prove` directly.
 pub use brain::{
     AgentConvo, BrainStep, HttpLlm, LlmBrain, LlmHttpCaller, LlmKeys, LocalBrain, MoonshotCaller,
     OpenAICompatCaller, ToolObservation,
 };
 pub use bridge::{HermesGateway, ToolMarket};
+pub use dregg_zkoracle_prove::{
+    AnthropicConfig, ProveError, VerifiedZkOracle, ZkOracleAttestation, ZkOracleError,
+    verify_zkoracle,
+};
 #[cfg(unix)]
 pub use egress::{EgressGrant, EgressNetGrant, EgressPolicy, provider_host_port};
 pub use grant_registry::{GrantRegistry, MandateKey};

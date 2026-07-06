@@ -3798,6 +3798,7 @@ dependencies = [
  "dregg-firmament",
  "dregg-sdk",
  "dregg-turn",
+ "dregg-zkoracle-prove",
  "gpui",
  "gpui-component",
  "gpui-component-assets",

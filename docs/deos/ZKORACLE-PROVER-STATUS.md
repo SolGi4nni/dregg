@@ -134,6 +134,62 @@ lane). It is NOT edited here.
   session-integrity that makes the notary signature *trustless* is exercised locally; a
   deployed notary + a live session is a deploy step, not new crypto.
 
+## 🏆 The CROWN — the confined brain's turn, ATTESTED (`deos-hermes`)
+
+The prover above PRODUCES an attestation over a `/v1/messages` session. The crown WELDS
+that into the confined brain: a jailed LLM turn now yields BOTH the jail-confinement
+evidence AND a zkOracle attestation of the model's reasoning. `deos-hermes` — where a
+brain runs INSIDE a firmament OS-jail (file/exec/network denied) and its model-provider
+call rides EXACTLY the granted egress socket door (`egress.rs` / `host.rs`) — now depends
+on `dregg-zkoracle-prove` and attests each turn.
+
+- **`deos-hermes/src/attest.rs` (NEW) — `AttestationCarrier`.** `attest_turn(agent_text)`
+  shapes the confined brain's OWN turn output into an Anthropic messages response body and
+  binds that text injection-free, then calls `prove_zkoracle` → a `ZkOracleAttestation`
+  proving the turn was authentic (the session) ∧ well-formed (the response JSON CFG cert)
+  ∧ injection-free (no `{{` in the model's words, a committed substring of the response).
+  `clean_field` keeps the `{` / `}` bytes so a genuine injection attempt in the model's
+  output still fires the leg (the catch is preserved, not sanitized away).
+
+- **`deos-hermes/src/host.rs` — `DreggHost::run_hosted_agent_attested(...)`.** The SAME
+  jailed run that proves confinement (`run_hosted_agent_net`: jailed + provider door open +
+  sibling denied), then attaches the attestation to the run's `HostedAgentReport` (new
+  `attestation: Option<ZkOracleAttestation>` field). One run → both proofs.
+
+- **Real-locally (default, light): the modeled authentic carrier.** The default path uses
+  the crate's modeled ed25519 authentic adapter over the exact response bytes + the REAL
+  JSON CFG cert + the REAL verified injection matcher — no HTTP/TLS. It proves the whole
+  PRODUCE→VERIFY plumbing hermetically.
+
+- **Real-locally (`zk-live`): a genuine local MPC-TLS 2PC roundtrip.**
+  `deos-hermes/src/attest.rs::attest_turn_live` (feature `zk-live` → the crate's `tlsn-live`)
+  drives the real local 2PC roundtrip (server + notary + prover in-process; the notary sees
+  no plaintext; a real `presentation.verify()`) and attests over the body that roundtrip
+  AUTHENTICATED — so the certified bytes came from a real 2PC session, not a fixture
+  literal. Heavy `mpz`/tokio/rustls backend behind the feature; the default stays light.
+
+- **The crown test (`deos-hermes/tests/crown_attested_turn.rs`, 2 tests green):**
+  `jailed_turn_is_also_attested` — a jailed brain run over the granted provider door
+  produces an attestation `verify_zkoracle` ACCEPTS, WHILE the confinement teeth hold
+  (jailed, base tools neutralized, granted socket open, sibling denied, tool-calls still
+  receipted). `hostile_turns_are_refused_each_on_its_leg` — a tampered session →
+  `NotAuthentic`, a malformed response → `NotWellFormed`, an injecting turn → `Injection`.
+  Plus 5 `attest.rs` unit tests. So the green is load-bearing: a real turn is certified.
+
+### Honest boundaries of the crown
+
+- The attestation's **authentic *leg*** is still the modeled ed25519 carrier over the
+  response bytes, even in `zk-live` (where the bytes ARE really-authenticated by the 2PC
+  roundtrip run in the same call). **Fusing the real tlsn `PresentationOutput` into the
+  authentic leg** — so the leg IS the MPC-TLS presentation, not the modeled carrier — is
+  part of the operational remainder, alongside the live `api.anthropic.com` session.
+
+- **Binding the attestation into the agent's R2 kernel turn** — so the receipt-on-the-ledger
+  carries the zkOracle proof — is the natural next weld, but it touches `agent-platform`
+  (a hot shared tree) and is **NOT wired here**. This lane proves the confined brain
+  PRODUCES a verifiable attestation of its turn; carrying it onto the ledger is the named
+  follow-up.
+
 ## Trust base
 
 Per-leg: the tlsn/MPC-TLS soundness + the notary signature scheme (authentic), the JSON
@@ -150,6 +206,12 @@ the §8 crypto floor + the external Web-PKI floor).
 - `zkoracle-prove/Cargo.toml`: added `dregg-circuit` (path) for the Poseidon2 sponge
   (`hash_bytes`, the shared content commitment) — a workspace path dep, not a new external
   crate.
+- `deos-hermes/` (the CROWN weld): `src/attest.rs` (NEW — `AttestationCarrier`,
+  `attest_turn`, `attest_turn_live`), `src/host.rs` (`run_hosted_agent_attested` +
+  `HostedAgentReport::attestation`), `src/lib.rs` (re-exports), `tests/crown_attested_turn.rs`
+  (NEW). `deos-hermes/Cargo.toml`: added `dregg-zkoracle-prove` (path, default-light) +
+  the `zk-live` feature (→ `dregg-zkoracle-prove/tlsn-live`). No `agent-platform` edit
+  (the R2-turn binding is the named follow-up).
 
 No Lean sources, no gentian/assurance/`orb` files, no lease files, and nothing in `_attic`
 were changed. The default build depends on `dregg-dfa` + `dregg-circuit` (for the Poseidon2
