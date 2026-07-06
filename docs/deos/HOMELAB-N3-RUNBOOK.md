@@ -164,3 +164,81 @@ commit":
      after the faucet turn (the proof at the new VK verified on the running node).
    * A receipt fetched from a node the turn was NOT submitted on shows the turn
      (cross-node execution) — as the baseline showed for node3.
+5. **Committee-restart acceptance (N3 Fix B — `2e38c8c49`).** The committee-restart
+   hole is CLOSED: a full-mode node now re-anchors on restart from the assembled
+   ≥threshold finalization-vote quorum (`merkle_root` bound into `FinalizationVote`,
+   `VOTE_DOMAIN` v1→v2, deterministic attested-root preimage `-v4`→`-v5`). This ships
+   WITH the v13 re-genesis (clean wipe — no in-place migration of old-format persisted
+   state). Fix B was validated via the persist regression + the node unit suite but
+   NOT a live multi-node restart, so the cut's acceptance test IS that restart:
+   * re-genesis → drive a faucet turn → confirm `latest_height≥1` finalized on all N,
+   * `~/n3/stop.sh` ONE validator, then re-`start.sh` just it,
+   * confirm it **re-anchors and keeps finalizing** (`latest_height` resumes climbing
+     on all N) rather than fail-closing/wedging. A wedge here is a Fix-B regression to
+     investigate, not expected BFT behavior.
+
+## The coordinated cut — T0 checklist (the David homelab redeploy)
+
+The David homelab (lassie + snoopy) runs the same N-validator lifecycle as this
+persvati twin; the redeploy is the SAME re-run, coordinated across David's hosts. It
+is **ember-gated** (the VK-epoch flip is her eyes-open decision) and **David-coordinated**
+(his committee restarts). This checklist is the ordered script so the cut is scripted,
+not a scramble. Nothing below is run until ember says go AND David is standing by.
+
+**Pre-flight (all must be green before T0):**
+- [ ] **N3 Fix B landed** — `2e38c8c49` on the cut binary's tree (committee-restart hole
+      closed; the acceptance test in step 5 above).
+- [ ] **The two P1 security fixes folded in** — captp wrong-magic + net mTLS allowlist
+      client-cert, each with a biting regression. Verify by CONTENT, not by sha (the
+      AGPL full-history rewrite squashed to one `initial commit`, orphaning the original
+      commit hashes): captp — `grep 'envelope.magic != Self::MAGIC' captp/src/store_forward.rs`
+      (the fail-closed guard) + the `DREGG-CAPTP-WRONG-MAGIC-ACCEPTED` regression in that
+      file; net — `build_client_config_with_allowlist` in `net/src/node.rs` uses
+      `.with_client_auth_cert(...)` (NOT `with_no_client_auth()`) on the pinning path.
+      (Both confirmed present in the tree at the current HEAD.)
+- [ ] **ember's VK-epoch flip is eyes-open done** — the RecursionVk/`factory_vk_hex` are
+      derived from the circuit baked into the binary, so "the VK reaches the homelab" =
+      "the homelab rebuilds + re-genesises on the post-flip commit." The cut binary must
+      be that commit.
+- [ ] **The exact cut SHA is pinned** — hand David the one commit to build (`git rev-parse
+      HEAD`) so the seed, the binary, and the pin all key to ONE source.
+
+**T0 — the ordered cut:**
+1. **Build the HEAD-matching Lean seed on lassie.** David runs, on lassie (the beefy
+   Linux build host), the recipe in `docs/LEAN-SEED-ARTIFACT.md` §"Cutting a seed release
+   on lassie" — either the `Publish Lean seed` workflow (`Actions → Run workflow`, tag
+   `lean-seed-<date>`, runner `lassie`) or the copy-paste hand recipe (`bootstrap.sh` →
+   `scripts/lean-seed-key.sh --asset` → `zstd` → `gh release upload` + `.sha256`). This is
+   the hours-saving step: a verified build without it is an hours-long cold mathlib boot.
+2. **Bump + verify the pin.** The workflow rewrites `dregg-lean-ffi/lean-seed.pin` (TAG +
+   provenance); on the hand path, bump it per the doc. Confirm `scripts/lean-seed-key.sh`'s
+   live `DREGG_TREE_HASH` MATCHES the pin (no drift warning) — proves the published seed is
+   HEAD-matching for the cut SHA.
+3. **Distribute the faithful (v13, verified-linked) binary to every validator.** On each
+   host at the cut SHA: `./scripts/fetch-lean-seed.sh` (pulls the platform-native seed in
+   minutes, verifies sha256 + the `dregg_exec_full_forest_auth` export), then
+   `DREGG_REQUIRE_LEAN=1 cargo build --release -p dregg-node`. The `DREGG_REQUIRE_LEAN=1`
+   gate FAILS LOUD rather than silently shipping a marshal-only (un-verified) node — so a
+   green build here IS a verified build. (Same-platform hosts can copy one built binary;
+   cross-platform hosts each fetch their own seed asset + build.)
+4. **Wipe + fresh genesis + restart all-N.** Coordinated across the committee:
+   `stop.sh` all → wipe the live `dregg.redb` / data dirs (the fresh-genesis clean-wipe
+   assumption Fix B ships under — archive first, `N3_WIPE=1` deletes) → `genesis.sh` mints a
+   FRESH committee genesis (`federation_id` commits the new pubkeys + the regenerated
+   `factory_vk_hex` at the new VK) → `start.sh` boots all N `--federation-mode full
+   --consensus blocklace`. For the prove-turns acceptance boot the nodes must be
+   verified-linked (step 3): `N3_ALLOW_UNVERIFIED=0 N3_PROVE_TURNS=1 start.sh`.
+5. **Verify cross-node finality (the acceptance gate).** Drive one faucet turn; require:
+   [A] all N `mode=full`, `consensus_live=true`; [B] cross-node block exchange (distinct
+   block creators = N); [C] the turn finalizes (`latest_height≥1`) on ALL N with the
+   receipt present on a node it was NOT submitted on. On the prove-turns boot,
+   `dregg_proofs_verified_total{result="valid"}` increments (the full-turn STARK
+   re-verified at the NEW VK on the commit path). THEN the committee-restart acceptance
+   (step 5 of Phase-4 above): stop one validator, restart it, confirm it re-anchors and
+   keeps finalizing — not wedge.
+
+**The last gate before this can run:** the seed has NOT been cut yet
+(`lean-seed.pin` TAG is empty). T0-step-1 is the gating action — everything downstream
+(binary, pin, distribution) keys to that seed + the cut SHA. So the redeploy is
+prereq-ready and waits on exactly: **ember's go (VK flip eyes-open) + David cutting the
+lassie seed at the handed SHA.**

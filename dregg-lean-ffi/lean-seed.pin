@@ -23,6 +23,6 @@
 TAG=
 LEAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 MATHLIB_REV=1c2b90b13009c65b090d95a83c98e248deafb6f1
-DREGG_TREE_HASH=3bea33c406065d230f478a504197dc24d83bb3bc
+DREGG_TREE_HASH=c45df206568e0202ce8e076bebca782f15be7640
 GENERATED_UTC=
-NOTE=unpublished — cut the first seed on lassie per docs/LEAN-SEED-ARTIFACT.md (v13 seed)
+NOTE=unpublished — cut the first seed on lassie per docs/LEAN-SEED-ARTIFACT.md (v13 seed). DREGG_TREE_HASH refreshed to the live metatheory/Dregg2 subtree at the v13/gentian HEAD (recompute any time with scripts/lean-seed-key.sh; the publish workflow overwrites this block when it cuts a seed).
