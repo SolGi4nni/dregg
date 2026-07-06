@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use dregg_agent::agent::{AgentAction, AgentSpec, PlannedBrain, ToolKit, ToolOutcome};
 use dregg_agent::session::Session;
-use grain_turn::{ACTION_SLOT, CONSUMED_SLOT, ToolGatewayMinter, action_commit};
+use grain_turn::{ACTION_SLOT, ATTESTATION_SLOT, CONSUMED_SLOT, ToolGatewayMinter, action_commit};
 
 /// A trivial toolkit — the R2 tests exercise the kernel-turn weld, not a live tool.
 struct NoKit;
@@ -156,4 +156,44 @@ fn the_executor_calls_made_caveat_refuses_over_rate_turns_host_side() {
             .and_then(|a| a.turn_receipt_hash)
             .is_some()
     }));
+}
+
+// ── THE FUSION: an attested turn witnesses its attestation commitment ─────────
+#[test]
+fn a_bound_attestation_commitment_is_witnessed_on_the_committed_turn() {
+    let budget = 10;
+    // An UNATTESTED minter: the attestation slot stays at the cell's zero default.
+    let mut bare = ToolGatewayMinter::open("grain-bare", budget).expect("admit");
+    let spec = AgentSpec::new("ignored", budget).with_service("work");
+    let mut sess_bare = Session::open_seeded([81u8; 32], "dga1_renter", spec.clone()).unwrap();
+    sess_bare.run_goal_minted("do one", &mut work_plan(1), &NoKit, Some(&mut bare));
+    assert_eq!(
+        bare.read_slot(ATTESTATION_SLOT),
+        Some([0u8; 32]),
+        "an unattested turn leaves the attestation slot at zero (distinguishable)"
+    );
+    assert_eq!(bare.bound_attestation(), None);
+
+    // An ATTESTED minter: bind a commitment; every minted turn witnesses it.
+    let commitment = [0xABu8; 32];
+    let mut minter = ToolGatewayMinter::open("grain-attested", budget).expect("admit");
+    minter.bind_attestation(commitment);
+    let mut sess = Session::open_seeded([82u8; 32], "dga1_renter", spec).unwrap();
+    sess.run_goal_minted("do two", &mut work_plan(2), &NoKit, Some(&mut minter));
+
+    // The COMMITTED kernel state (read off the real ledger) carries the commitment.
+    assert_eq!(
+        minter.read_slot(ATTESTATION_SLOT),
+        Some(commitment),
+        "the committed turn commits to the bound attestation"
+    );
+    // A DIFFERENT (forged) commitment is distinguishable from the witnessed one — the
+    // slot is a binding witness, not a constant.
+    assert_ne!(
+        minter.read_slot(ATTESTATION_SLOT),
+        Some([0xCDu8; 32]),
+        "a forged binding does not match the witnessed commitment"
+    );
+    sess.verify()
+        .expect("the attested minted session re-witnesses");
 }

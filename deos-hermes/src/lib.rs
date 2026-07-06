@@ -113,7 +113,7 @@ pub use acp_client::{
     AcpClient, AcpError, AcpPeer, AcpTransport, JsRunRecord, PromptRun, RunJsHook, StreamEvent,
 };
 pub use agent_peer::HermesAgentPeer;
-pub use attest::{AttestationCarrier, messages_body};
+pub use attest::{AttestationCarrier, attestation_commitment, messages_body};
 // THE CROWN — re-export the zkOracle attestation surface a HOST verifies with, so a
 // caller attaches + checks a confined turn's attestation without depending on
 // `dregg-zkoracle-prove` directly.

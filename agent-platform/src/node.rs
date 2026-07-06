@@ -50,7 +50,7 @@ use dregg_sdk::{
     AgentCipherclerk, AgentRuntime, CALLS_MADE_SLOT, Effect, SdkError, ToolGateway, ToolGrant,
 };
 use dregg_turn::TurnReceipt;
-use grain_turn::{ACTION_SLOT, CONSUMED_SLOT, HEAP_ROOT_SLOT, action_commit};
+use grain_turn::{ACTION_SLOT, ATTESTATION_SLOT, CONSUMED_SLOT, HEAP_ROOT_SLOT, action_commit};
 
 // The grain mandate parameters — MIRROR `grain-turn`'s private constants exactly, so
 // the node-backed minter presents the identical cap-gated worker + mandate the
@@ -200,6 +200,11 @@ pub struct NodeMinter {
     /// The presentation clock every grain turn is stamped at (the DEADLINE leg is far
     /// out; the RATE leg `calls_made <= budget` is the meter).
     now: i64,
+    /// The zkOracle attestation commitment bound onto this minter's turns — a 32-byte
+    /// hash of the confined brain's `ZkOracleAttestation`, witnessed at
+    /// [`ATTESTATION_SLOT`]. `None` = unattested (the slot stays zero). Set with
+    /// [`bind_attestation`](Self::bind_attestation).
+    pending_attestation: Option<[u8; 32]>,
 }
 
 impl NodeMinter {
@@ -240,6 +245,7 @@ impl NodeMinter {
             gateway,
             node,
             now: 0,
+            pending_attestation: None,
         })
     }
 
@@ -247,6 +253,31 @@ impl NodeMinter {
     /// to read/verify the finalized chain).
     pub fn node(&self) -> LocalNode {
         self.node.clone()
+    }
+
+    /// **Bind a zkOracle attestation commitment onto this minter's turns** — every turn
+    /// minted after this call witnesses `commitment` at [`ATTESTATION_SLOT`], so the
+    /// turn landed on the node's finalized log commits to "driven by an attested brain."
+    /// `commitment` is the canonical hash of the confined brain's `ZkOracleAttestation`
+    /// (`deos_hermes::attestation_commitment`); a light client re-verifies the
+    /// attestation and confirms its recomputed commitment equals the landed slot.
+    pub fn bind_attestation(&mut self, commitment: [u8; 32]) {
+        self.pending_attestation = Some(commitment);
+    }
+
+    /// The attestation commitment currently bound (witnessed on the next turn), or
+    /// `None` if this minter's turns are unattested.
+    pub fn bound_attestation(&self) -> Option<[u8; 32]> {
+        self.pending_attestation
+    }
+
+    /// The attestation commitment WITNESSED on the node's committed grain-turn-cell —
+    /// read straight off the finalized ledger state at [`ATTESTATION_SLOT`]. `Some(c)`
+    /// once at least one turn has been minted after [`bind_attestation`]; a turn minted
+    /// unattested leaves it at the zero default (`Some([0;32])`). This is the
+    /// ground-truth a light client checks against the recomputed attestation commitment.
+    pub fn attestation_slot(&self) -> Option<[u8; 32]> {
+        self.read_slot(ATTESTATION_SLOT)
     }
 
     /// The number of grain turns committed so far (the on-ledger `calls_made`).
@@ -276,7 +307,7 @@ impl GrainTurnMinter for NodeMinter {
         // the session's post-draw consumed total, the agent's committed heap root,
         // AND the action commit — so the committed turn witnesses WHAT the action
         // was, byte-identically to the shipped R2 weld.
-        let work = vec![
+        let mut work = vec![
             Effect::SetField {
                 cell,
                 index: CONSUMED_SLOT,
@@ -293,6 +324,16 @@ impl GrainTurnMinter for NodeMinter {
                 value: action_commit(label, cost),
             },
         ];
+        // THE FUSION: a bound attestation commitment rides the SAME metered turn — the
+        // turn landed on the node's finalized log commits to the confined brain's
+        // zkOracle attestation. An unattested turn omits it (slot stays zero).
+        if let Some(commitment) = self.pending_attestation {
+            work.push(Effect::SetField {
+                cell,
+                index: ATTESTATION_SLOT,
+                value: commitment,
+            });
+        }
         // The genuine executor turn, committed onto the NODE's ledger. `Err` = the
         // executor refused host-side (over-rate / insolvent) — no draw, no receipt.
         let toolreceipt = self
@@ -316,5 +357,6 @@ const _: () = {
     assert!(CONSUMED_SLOT == 5);
     assert!(HEAP_ROOT_SLOT == 6);
     assert!(ACTION_SLOT == 7);
+    assert!(ATTESTATION_SLOT == 8);
     assert!(CALLS_MADE_SLOT == 4);
 };

@@ -74,6 +74,12 @@ serde_json = "1"
 # operational remainder (docs/deos/ZKORACLE-PROVER-STATUS.md).
 dregg-zkoracle-prove = { path = "../zkoracle-prove" }
 
+# The canonical 32-byte commitment to a `ZkOracleAttestation` (`attestation_commitment`)
+# a minted R2 turn witnesses — a length-prefixed BLAKE3 over the attestation's
+# verifier-visible fields, the SAME hash `grain-turn::action_commit` uses. Already in the
+# lockfile transitively (the dregg crates depend on it); no new lockfile surface.
+blake3 = "1"
+
 # THE LIVE LLM TRANSPORT (gated by `live-brain`, OFF by default). A real
 # `reqwest::blocking` POST to an OpenAI-compatible `/v1/chat/completions` endpoint
 # OR the Anthropic Messages API (`/v1/messages`), with the operator's BYO key in
@@ -181,3 +187,11 @@ libc = "0.2"
 [dev-dependencies]
 blake3 = "1"
 hex = "0.4"
+
+# THE FUSION round-trip (`crown_attested_ledger`): the confined brain's zkOracle
+# attestation is committed into a REAL R2 kernel turn that LANDS on a `LocalNode` and is
+# light-client-verifiable. Drives the genuine `grain-turn` / agent-platform node minter
+# (no cycle: agent-platform does not depend on deos-hermes). Test-only surface.
+agent-platform = { path = "../agent-platform" }
+grain-turn = { path = "../grain-turn" }
+dregg-agent = { path = "../dregg-agent" }

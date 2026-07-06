@@ -3790,9 +3790,11 @@ dependencies = [
 name = "deos-hermes"
 version = "0.1.0"
 dependencies = [
+ "agent-platform",
  "anyhow",
  "blake3",
  "deos-js",
+ "dregg-agent",
  "dregg-cell",
  "dregg-doc",
  "dregg-firmament",
@@ -3804,6 +3806,7 @@ dependencies = [
  "gpui-component-assets",
  "gpui_platform",
  "gpui_wgpu",
+ "grain-turn",
  "hex",
  "image",
  "libc",

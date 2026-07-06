@@ -702,7 +702,7 @@ impl AgentPlatform {
         goal: impl Into<String>,
         brain: &mut dyn AgentBrain,
     ) -> Result<GoalReport, AgentPlatformError> {
-        self.drive_in(host, goal, brain, Mint::None)
+        self.drive_in(host, goal, brain, Mint::None, None)
     }
 
     /// **R2 — [`drive`](Self::drive) welded to genuine kernel turns.** Every
@@ -724,7 +724,7 @@ impl AgentPlatform {
         brain: &mut dyn AgentBrain,
         minter: &mut dyn GrainTurnMinter,
     ) -> Result<GoalReport, AgentPlatformError> {
-        self.drive_in(host, goal, brain, Mint::External(minter))
+        self.drive_in(host, goal, brain, Mint::External(minter), None)
     }
 
     /// **The DEFAULT served drive — R2, minter-wired.** Constructs the platform's
@@ -757,17 +757,41 @@ impl AgentPlatform {
         goal: impl Into<String>,
         brain: &mut dyn AgentBrain,
     ) -> Result<GoalReport, AgentPlatformError> {
-        self.drive_in(host, goal, brain, Mint::Node)
+        self.drive_in(host, goal, brain, Mint::Node, None)
+    }
+
+    /// **THE FUSION — a served drive whose minted turns commit to a zkOracle
+    /// attestation.** Exactly [`drive_serving`](Self::drive_serving), but every turn
+    /// minted onto the grain's [`node::LocalNode`] ALSO witnesses `attestation_commitment`
+    /// (the canonical hash of the confined brain's `ZkOracleAttestation` —
+    /// `deos_hermes::attestation_commitment`) at the grain-turn cell's attestation slot.
+    /// So the on-ledger, finalized receipt now binds "this action was driven by a
+    /// **jailed** (`deos-hermes` host) **attested** (authentic ∧ well-formed ∧
+    /// injection-free) brain," and [`verify_landed_attested`](Self::verify_landed_attested)
+    /// confirms the landed turn carries the commitment. A light client holding the
+    /// attestation recomputes its commitment and checks it equals the witnessed slot —
+    /// an unattested or forged binding is distinguishable.
+    pub fn drive_serving_attested(
+        &self,
+        host: &str,
+        goal: impl Into<String>,
+        brain: &mut dyn AgentBrain,
+        attestation_commitment: [u8; 32],
+    ) -> Result<GoalReport, AgentPlatformError> {
+        self.drive_in(host, goal, brain, Mint::Node, Some(attestation_commitment))
     }
 
     /// The one drive path both public drives share: audit the rent schedule, run
     /// the goal (optionally minted), record any committed turn hashes, checkpoint.
+    /// `attestation` (Node mint only) binds a zkOracle attestation commitment onto the
+    /// minted turns.
     fn drive_in(
         &self,
         host: &str,
         goal: impl Into<String>,
         brain: &mut dyn AgentBrain,
         mint: Mint<'_>,
+        attestation: Option<[u8; 32]>,
     ) -> Result<GoalReport, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
         let mut guard = arc.lock().expect("tenant poisoned");
@@ -817,6 +841,12 @@ impl AgentPlatform {
                     .node_minter
                     .as_mut()
                     .expect("node minter brought up above");
+                // THE FUSION: bind the zkOracle attestation commitment onto the minter,
+                // so every turn this drive commits also witnesses the confined brain's
+                // attestation (a `None` leaves the turns unattested).
+                if let Some(commitment) = attestation {
+                    node_minter.bind_attestation(commitment);
+                }
                 let mut recording = RecordingMinter {
                     inner: node_minter,
                     minted: Vec::new(),
@@ -1022,6 +1052,40 @@ impl AgentPlatform {
             finalized_len: node.finalized_len(),
             manifest_len: guard.committed_turns.len(),
         })
+    }
+
+    /// **THE FUSION verify — the landed turns are bound to a zkOracle attestation.**
+    /// Runs [`verify_landed`](Self::verify_landed) (the light-client chain verify +
+    /// manifest-membership check), THEN confirms the grain's committed grain-turn cell
+    /// witnesses `expected_commitment` at its attestation slot — i.e. the finalized,
+    /// on-ledger turns commit to the confined brain's `ZkOracleAttestation`.
+    ///
+    /// A light client passes the commitment it recomputed from the attestation it holds
+    /// (`deos_hermes::attestation_commitment(&att)`); this returns `Ok` iff the landed
+    /// turns carry exactly that commitment. An UNATTESTED grain (slot at the zero
+    /// default) or a FORGED binding (a different hash on the ledger than the real
+    /// attestation's) is [`AgentPlatformError::Verify`] — distinguishable, not accepted.
+    pub fn verify_landed_attested(
+        &self,
+        host: &str,
+        expected_commitment: [u8; 32],
+    ) -> Result<Landed, AgentPlatformError> {
+        let landed = self.verify_landed(host)?;
+        let arc = self.tenant_arc(host)?;
+        let guard = arc.lock().expect("tenant poisoned");
+        let minter = guard.node_minter.as_ref().ok_or_else(|| {
+            AgentPlatformError::Verify("grain has no node minter (never driven-minted)".into())
+        })?;
+        match minter.attestation_slot() {
+            Some(c) if c == expected_commitment => Ok(landed),
+            Some(c) => Err(AgentPlatformError::Verify(format!(
+                "landed turn's attestation commitment {c:?} does not match the expected \
+                 attestation {expected_commitment:?} (forged or wrong-brain binding)"
+            ))),
+            None => Err(AgentPlatformError::Verify(
+                "the grain's committed turn cell has no attestation slot".into(),
+            )),
+        }
     }
 
     /// Lapse the lease at `host` if it is behind schedule at `clock` (non-payment):
@@ -2390,6 +2454,97 @@ mod tests {
         // The honest chain is still intact + verifiable after the rejected attempts.
         verify_receipt_chain(&node.chain())
             .expect("the node chain is untouched by forgery attempts");
+    }
+
+    /// **THE FUSION — the attestation commitment is BOUND INTO the landed R2 turns.**
+    /// The served-attested drive mints every action onto the grain's real node AND
+    /// witnesses a zkOracle attestation commitment on the same finalized turns. This
+    /// proves the wire end-to-end at the platform level:
+    ///   1. an attested drive lands its turns AND `verify_landed_attested` confirms the
+    ///      landed turns carry the exact commitment (jailed → attested → committed →
+    ///      landed → verifiable);
+    ///   2. the SAME grain driven with a DIFFERENT expected commitment is REFUSED (a
+    ///      forged/wrong-brain binding is distinguishable);
+    ///   3. an UNATTESTED grain (plain `drive_serving`) is refused by
+    ///      `verify_landed_attested` (its turns carry no commitment) — so the binding is
+    ///      load-bearing, not a constant-accept.
+    ///
+    /// (The commitment here is an opaque 32-byte hash — the platform is crypto-agnostic;
+    /// that this hash IS the canonical `ZkOracleAttestation` fingerprint, re-verifiable
+    /// against the real attestation, is proven in `deos-hermes`'s crown ledger test.)
+    #[test]
+    fn served_attested_drive_binds_the_attestation_into_the_landed_turns() {
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+
+        // A stand-in for `deos_hermes::attestation_commitment(&att)` (a confined,
+        // attested brain's zkOracle attestation fingerprint).
+        let attestation = [0x5Au8; 32];
+        let wrong = [0x5Bu8; 32];
+
+        let host = platform
+            .rent(
+                "attested.agents.dregg",
+                "dga1_attested",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("provision");
+
+        let mut brain = fs_plan(&[("a.txt", "one"), ("b.txt", "two")]);
+        let report = platform
+            .drive_serving_attested(&host, "write attested", &mut brain, attestation)
+            .expect("the attested served drive mints + lands");
+        assert!(report.admitted > 0, "the attested grain did admitted work");
+
+        // (1) The turns landed AND commit to exactly this attestation.
+        let landed = platform
+            .verify_landed_attested(&host, attestation)
+            .expect("the landed turns carry the attestation commitment");
+        assert_eq!(landed.finalized_len, landed.manifest_len);
+        assert!(landed.finalized_len > 0, "real turns finalized + attested");
+        // Plain verify_landed still passes (the R2 + federation legs are untouched).
+        platform.verify_landed(&host).expect("still landed");
+
+        // (2) A DIFFERENT (forged) attestation is distinguishable — REFUSED.
+        assert!(
+            matches!(
+                platform.verify_landed_attested(&host, wrong),
+                Err(AgentPlatformError::Verify(_))
+            ),
+            "a forged/wrong-brain binding does not verify against the landed commitment"
+        );
+
+        // (3) An UNATTESTED grain's landed turns carry no commitment → refused. The
+        // binding is load-bearing: a plain served drive is distinguishable from attested.
+        let bare_host = platform
+            .rent(
+                "bare.agents.dregg",
+                "dga1_bare",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("provision bare");
+        let mut bare_brain = fs_plan(&[("c.txt", "three")]);
+        platform
+            .drive_serving(&bare_host, "write bare", &mut bare_brain)
+            .expect("the unattested served drive mints + lands");
+        platform
+            .verify_landed(&bare_host)
+            .expect("the bare grain's turns landed");
+        assert!(
+            matches!(
+                platform.verify_landed_attested(&bare_host, attestation),
+                Err(AgentPlatformError::Verify(_))
+            ),
+            "an unattested grain has no attestation binding → refused (distinguishable)"
+        );
     }
 
     /// **PHASE 2 — A GRAIN COLD-WAKES FROM ITS LEASE HEAP ALONE, both polarities.**

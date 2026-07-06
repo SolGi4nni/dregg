@@ -240,11 +240,66 @@ on `dregg-zkoracle-prove` and attests each turn.
   authentic leg** — so the leg IS the MPC-TLS presentation, not the modeled carrier — is
   part of the operational remainder, alongside the live `api.anthropic.com` session.
 
-- **Binding the attestation into the agent's R2 kernel turn** — so the receipt-on-the-ledger
-  carries the zkOracle proof — is the natural next weld, but it touches `agent-platform`
-  (a hot shared tree) and is **NOT wired here**. This lane proves the confined brain
-  PRODUCES a verifiable attestation of its turn; carrying it onto the ledger is the named
-  follow-up.
+- **Binding the attestation into the agent's R2 kernel turn is now WIRED** (see the
+  fusion section below): the minted turn commits to the attestation and lands on the node
+  ledger. The attestation's authentic *leg* is still the modeled ed25519 carrier; the
+  live-Anthropic session + the deployed homelab node are the remaining operational legs.
+
+## 🏆🏆 THE FUSION — jailed + attested + ON THE VERIFIABLE LEDGER (`grain-turn`, `agent-platform`, `deos-hermes`)
+
+The crown proved the confined brain PRODUCES a verifiable attestation of its turn. The
+fusion carries it onto the ledger: the minted R2 kernel turn now COMMITS to the
+attestation, so the finalized, light-client-verifiable receipt proves **jailed ∧ attested
+∧ finalized**. The full chain:
+
+> confined brain (OS-jailed) → produces a `ZkOracleAttestation` (authentic ∧ well-formed ∧
+> injection-free) → the minted R2 turn commits to its hash → lands on the `LocalNode`'s
+> finalized ledger → a light client re-verifies the chain AND recomputes the attestation
+> commitment to confirm the landed turn is bound to THIS attestation.
+
+- **`deos-hermes/src/attest.rs` — `attestation_commitment(&ZkOracleAttestation) -> [u8;32]`.**
+  The canonical 32-byte commitment a turn witnesses: a length-prefixed BLAKE3 over the
+  attestation's verifier-visible fields (the pinned session identity, the notary-signed
+  `sent`/`recv` transcripts + signature, the cross-leg content commitment, the injection
+  field span). A total fingerprint — a tampered session, spliced body, or re-aimed span all
+  change it. Pure: a light client holding the attestation recomputes it. (Re-exported from
+  `deos_hermes`.)
+
+- **`grain-turn/src/lib.rs` — `ATTESTATION_SLOT` (= 8) + `ToolGatewayMinter::bind_attestation`.**
+  A new witnessed slot on the grain turn-cell alongside `CONSUMED`/`HEAP_ROOT`/`ACTION`.
+  When a commitment is bound, `mint_turn` writes it on the SAME metered turn; an unattested
+  turn leaves it at the cell's zero default (distinguishable). `grain-turn` stays
+  crypto-agnostic — it commits to a caller-supplied hash.
+
+- **`agent-platform/src/node.rs` — `NodeMinter::bind_attestation` + `attestation_slot`.**
+  The node-backed minter witnesses `ATTESTATION_SLOT` on every turn it commits onto the
+  `LocalNode`'s ledger AND lands on its finalized log — so the finalized receipt carries the
+  binding. A compile-time assert pins `ATTESTATION_SLOT == 8`.
+
+- **`agent-platform/src/lib.rs` — `drive_serving_attested` + `verify_landed_attested`.** The
+  served drive that binds the commitment onto every minted turn, and the light-client verify
+  that runs `verify_landed` THEN confirms the landed turns witness exactly the expected
+  commitment. An unattested grain or a forged (wrong-hash) binding is refused —
+  distinguishable, not accepted.
+
+- **Tests (all green, non-vacuous):**
+  - `grain-turn/tests/kernel_turns.rs::a_bound_attestation_commitment_is_witnessed_on_the_committed_turn`
+    — an attested turn witnesses its commitment on the committed ledger state; an unattested
+    turn's slot is zero; a forged hash mismatches.
+  - `agent-platform` `served_attested_drive_binds_the_attestation_into_the_landed_turns`
+    (platform-level) — an attested served drive lands + `verify_landed_attested` confirms the
+    binding; a different commitment and an unattested grain are each refused.
+  - `deos-hermes/tests/crown_attested_ledger.rs` (2 tests, the END-TO-END fusion) — a genuine
+    `run_hosted_agent_attested` jailed run's attestation is committed into a real `NodeMinter`
+    turn that LANDS on the node, the chain light-client-verifies, and the recomputed
+    `attestation_commitment(&att)` equals the on-ledger witness; a forged binding, an
+    unattested turn, and a tampered attestation are each distinguishable.
+
+- **Operational remainder (NAMED):** the live `api.anthropic.com` session (real key +
+  deployed/pinned notary) + fusing the real tlsn `PresentationOutput` into the authentic leg
+  (as in the crown), and forwarding the finalized turn to an EXTERNAL homelab federation node
+  over HTTP (`with_node_url` — the in-process `LocalNode` models the executor + receipt-log
+  half a single node runs locally). The Stripe/live-billing session is likewise a deploy step.
 
 ## Trust base
 
@@ -262,14 +317,24 @@ the §8 crypto floor + the external Web-PKI floor).
 - `zkoracle-prove/Cargo.toml`: added `dregg-circuit` (path) for the Poseidon2 sponge
   (`hash_bytes`, the shared content commitment) — a workspace path dep, not a new external
   crate.
-- `deos-hermes/` (the CROWN weld): `src/attest.rs` (NEW — `AttestationCarrier`,
-  `attest_turn`, `attest_turn_live`), `src/host.rs` (`run_hosted_agent_attested` +
-  `HostedAgentReport::attestation`), `src/lib.rs` (re-exports), `tests/crown_attested_turn.rs`
-  (NEW). `deos-hermes/Cargo.toml`: added `dregg-zkoracle-prove` (path, default-light) +
-  the `zk-live` feature (→ `dregg-zkoracle-prove/tlsn-live`). No `agent-platform` edit
-  (the R2-turn binding is the named follow-up).
+- `deos-hermes/` (the CROWN weld): `src/attest.rs` (`AttestationCarrier`, `attest_turn`,
+  `attest_turn_live`, + `attestation_commitment` for the fusion), `src/host.rs`
+  (`run_hosted_agent_attested` + `HostedAgentReport::attestation`), `src/lib.rs` (re-exports),
+  `tests/crown_attested_turn.rs`, `tests/crown_attested_ledger.rs` (NEW — the end-to-end
+  fusion). `deos-hermes/Cargo.toml`: `dregg-zkoracle-prove` (path, default-light) + the
+  `zk-live` feature; `blake3` (for `attestation_commitment`, already in the lockfile); dev-deps
+  `agent-platform`/`grain-turn`/`dregg-agent` for the fusion round-trip (no cycle —
+  `agent-platform` does not depend on `deos-hermes`).
 
-No Lean sources, no gentian/assurance/`orb` files, no lease files, and nothing in `_attic`
-were changed. The default build depends on `dregg-dfa` + `dregg-circuit` (for the Poseidon2
-content commitment) + `ed25519-dalek` + `sha2`; the heavy tlsn backend is behind the
-`tlsn-live` feature.
+- `grain-turn/` (the FUSION, kernel half): `src/lib.rs` (`ATTESTATION_SLOT`,
+  `ToolGatewayMinter::bind_attestation`/`bound_attestation`, the slot witnessed in
+  `mint_turn`), `tests/kernel_turns.rs` (the attestation-slot witness test).
+
+- `agent-platform/` (the FUSION, node half): `src/node.rs` (`NodeMinter::bind_attestation`/
+  `attestation_slot`, the slot witnessed in `mint_turn`, the compile-time slot assert),
+  `src/lib.rs` (`drive_serving_attested`, `verify_landed_attested`, the platform-level test).
+
+No Lean sources, no gentian/assurance/`orb` files, no lease/node-consensus files, and nothing
+in `_attic` were changed. The default build depends on `dregg-dfa` + `dregg-circuit` (for the
+Poseidon2 content commitment) + `ed25519-dalek` + `sha2` + `blake3`; the heavy tlsn backend is
+behind the `tlsn-live` feature.

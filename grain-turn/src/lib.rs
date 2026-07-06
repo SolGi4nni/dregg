@@ -74,6 +74,21 @@ pub const HEAP_ROOT_SLOT: usize = 6;
 /// receipt and its linked turn cannot silently disagree about the action.
 pub const ACTION_SLOT: usize = 7;
 
+/// Slot on the grain turn-cell that witnesses the commitment to the zkOracle
+/// attestation the turn was driven UNDER — a 32-byte hash of the confined brain's
+/// [`ZkOracleAttestation`](dregg_zkoracle_prove::ZkOracleAttestation) (authentic ∧
+/// well-formed ∧ injection-free) bound onto the SAME metered turn. Written only when
+/// a commitment is [`bound`](ToolGatewayMinter::bind_attestation); an unattested turn
+/// leaves it at the cell's zero default, so a landed receipt reveals whether the turn
+/// was driven by an attested brain. THE FUSION: the on-ledger turn now commits to
+/// "this action was driven by a jailed, attested brain" — a light client holding the
+/// attestation recomputes its commitment and confirms it equals THIS slot.
+///
+/// grain-turn stays crypto-agnostic: it commits to a caller-supplied 32-byte hash.
+/// The canonical hash of a `ZkOracleAttestation` is
+/// `deos_hermes::attestation_commitment` (where the attestation type lives).
+pub const ATTESTATION_SLOT: usize = 8;
+
 /// Domain separator for [`action_commit`].
 pub const ACTION_COMMIT_DOMAIN: &[u8] = b"dregg-grain-action-commit-v1";
 
@@ -125,6 +140,12 @@ pub struct ToolGatewayMinter {
     /// The committed turn hashes, in order — the "committed-turn manifest" a
     /// grain-verify R2 tooth checks the agent's receipts against.
     minted: Vec<[u8; 32]>,
+    /// The zkOracle attestation commitment (a 32-byte hash of the confined brain's
+    /// [`ZkOracleAttestation`](dregg_zkoracle_prove::ZkOracleAttestation)) to bind onto
+    /// the turns this minter commits — witnessed at [`ATTESTATION_SLOT`]. `None` = the
+    /// turns are unattested (the slot stays at its zero default). Set with
+    /// [`bind_attestation`](Self::bind_attestation).
+    pending_attestation: Option<[u8; 32]>,
 }
 
 impl ToolGatewayMinter {
@@ -149,7 +170,26 @@ impl ToolGatewayMinter {
             gateway,
             now: 0,
             minted: Vec::new(),
+            pending_attestation: None,
         })
+    }
+
+    /// **Bind a zkOracle attestation commitment onto this minter's turns.** Every turn
+    /// minted after this call witnesses `commitment` at [`ATTESTATION_SLOT`] — the
+    /// on-ledger turn now commits to "this action was driven by an attested brain."
+    /// `commitment` is the canonical hash of the confined brain's
+    /// [`ZkOracleAttestation`](dregg_zkoracle_prove::ZkOracleAttestation)
+    /// (`deos_hermes::attestation_commitment`); a light client re-verifies the
+    /// attestation and confirms its recomputed commitment equals the landed slot. Pass
+    /// the commitment for the brain turn that drove this action.
+    pub fn bind_attestation(&mut self, commitment: [u8; 32]) {
+        self.pending_attestation = Some(commitment);
+    }
+
+    /// The attestation commitment currently bound (witnessed on the next turn), or
+    /// `None` if the turns are unattested.
+    pub fn bound_attestation(&self) -> Option<[u8; 32]> {
+        self.pending_attestation
     }
 
     /// Read a witnessed slot straight off the COMMITTED grain turn-cell state in
@@ -195,7 +235,7 @@ impl GrainTurnMinter for ToolGatewayMinter {
         // are written as grain-turn-cell state, so the committed turn witnesses
         // WHAT the action was — which action, at what cost, over which heap —
         // not merely that a turn happened.
-        let work = vec![
+        let mut work = vec![
             Effect::SetField {
                 cell,
                 index: CONSUMED_SLOT,
@@ -212,6 +252,17 @@ impl GrainTurnMinter for ToolGatewayMinter {
                 value: action_commit(label, cost),
             },
         ];
+        // THE FUSION: when an attestation commitment is bound, witness it on the SAME
+        // metered turn — the committed kernel transition now commits to the confined
+        // brain's zkOracle attestation, so the landed receipt binds "driven by an
+        // attested brain." An unattested turn omits it (the slot stays zero).
+        if let Some(commitment) = self.pending_attestation {
+            work.push(Effect::SetField {
+                cell,
+                index: ATTESTATION_SLOT,
+                value: commitment,
+            });
+        }
         // The genuine executor turn. `Err` = the executor refused host-side (its
         // `calls_made` caveat over-rate, or an insolvent turn) — the agent run loop
         // treats it as a refused action (no draw, no receipt).

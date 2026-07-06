@@ -30,17 +30,61 @@
 //!   plaintext; a real `presentation.verify()`) against an Anthropic-shaped endpoint, and
 //!   attests over the body that roundtrip AUTHENTICATED — so the certified bytes came
 //!   from a real 2PC session, not a fixture literal.
+//! - **THE FUSION (WIRED):** [`attestation_commitment`] hashes an attestation into a
+//!   32-byte commitment the R2 kernel turn witnesses, so the finalized on-ledger receipt
+//!   binds "driven by an attested brain" — jailed ∧ attested ∧ finalized. See
+//!   `grain-turn::ATTESTATION_SLOT`, `agent_platform::AgentPlatform::drive_serving_attested`
+//!   / `verify_landed_attested`, and `tests/crown_attested_ledger.rs`.
 //! - **Operational remainder (NAMED, not built here):** a real `api.anthropic.com`
 //!   session (real key + deployed/pinned notary), AND fusing the real tlsn
 //!   `PresentationOutput` into the attestation's authentic *leg* (so the authentic leg IS
-//!   the MPC-TLS presentation, not the modeled ed25519 carrier). And binding the
-//!   attestation into the agent's R2 kernel turn (touches `agent-platform`). See
+//!   the MPC-TLS presentation, not the modeled ed25519 carrier). And forwarding the
+//!   finalized turn to an external homelab federation node. See
 //!   `docs/deos/ZKORACLE-PROVER-STATUS.md`.
 
 use dregg_zkoracle_prove::{
     AnthropicConfig, FixtureNotary, ProveError, ZkOracleAttestation, build_anthropic_fixture,
     prove_zkoracle,
 };
+
+/// Domain separator for [`attestation_commitment`].
+const ATTESTATION_COMMIT_DOMAIN: &[u8] = b"dregg-zkoracle-attestation-commit-v1";
+
+/// **The canonical 32-byte commitment to a [`ZkOracleAttestation`]** — the hash the R2
+/// kernel turn witnesses to bind "this turn was driven by an attested brain."
+///
+/// A length-prefixed BLAKE3 over the attestation's load-bearing, verifier-visible fields:
+/// the authentic leg (pinned server, connection time, the redacted-request `sent`
+/// transcript, the notary-signed `recv` response transcript, the notary signature), the
+/// cross-leg content commitment (the Poseidon2 sponge over the authenticated body), and
+/// the injection-checked field span. Every bit a `verify_zkoracle` check depends on is
+/// folded in, so the commitment is a total fingerprint of the attestation: a tampered
+/// session, a spliced body, or a re-aimed field span all change it. Pure — a light client
+/// holding the attestation recomputes this and checks it equals the value witnessed on the
+/// landed turn ([`AgentPlatform::verify_landed_attested`](../agent_platform/index.html)).
+///
+/// (Length prefixes on the two variable transcripts prevent a `sent`/`recv` boundary
+/// collision.)
+pub fn attestation_commitment(att: &ZkOracleAttestation) -> [u8; 32] {
+    let pres = &att.presentation;
+    let mut h = blake3::Hasher::new();
+    h.update(ATTESTATION_COMMIT_DOMAIN);
+    // Authentic leg — the pinned session identity + the signed transcripts.
+    h.update(&(pres.server_name.len() as u64).to_le_bytes());
+    h.update(pres.server_name.as_bytes());
+    h.update(&pres.connection_time.to_le_bytes());
+    h.update(&(pres.sent.len() as u64).to_le_bytes());
+    h.update(&pres.sent);
+    h.update(&(pres.recv.len() as u64).to_le_bytes());
+    h.update(&pres.recv);
+    h.update(&pres.notary_sig);
+    // Cross-leg weld — the shared content commitment over the authenticated body.
+    h.update(&att.content_commit.as_u32().to_le_bytes());
+    // Injection-free leg — the committed field span within the authenticated body.
+    h.update(&(att.field_span.offset as u64).to_le_bytes());
+    h.update(&(att.field_span.len as u64).to_le_bytes());
+    *h.finalize().as_bytes()
+}
 
 /// The session time stamped on the modeled presentation carrier (unix seconds). The
 /// attestation is about the response BODY; the exact timestamp is not load-bearing.
