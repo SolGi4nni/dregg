@@ -8,6 +8,32 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-06 eve, Fable — STORAGE-IN-LEAN cluster COMPLETE: 6 proven constructions)
+
+The "rebuild the Rust storage layer IN LEAN, proven" half of [[project-storage-in-lean]] is DONE —
+the whole decentralized-verifiable-storage north star, Lean-proven, `#assert_axioms`-clean, carriers
+ONLY at the honest crypto (`Poseidon2SpongeCR`) / probabilistic (sampling) boundaries, real proofs
+(no probes, no laundered math). `metatheory/Dregg2/Storage/`:
+- `BucketCommitment.lean` (`06a1e8fe8`) — content commitment on MMR; `contentRoot_injective` (root
+  binds the object set) + `read_sound` (trustless read). THE PATTERN.
+- `Retrievability.lean` (`13ffbbff2`) — PoR: `por_sound` (a passing provider holds the genuine
+  committed objects) + anti-forgery, on `read_sound`.
+- `Erasure.lean` (`877a8d4ce`) — RS k-of-n decode-correctness via Mathlib polynomial interpolation,
+  NO carrier.
+- `Fountain.lean` (`8b53045e5`) — LT/rateless decode-uniqueness, real linear algebra.
+- `Availability.lean` (`ccfa5c2d4`) — the capstone: `verifiable_erasure_recovers` composes
+  commitment+PoR+RS (a client with only the root recovers the true blob from k audited shards).
+- `ProviderMarket.lean` (`4f75080d8`) — the economic layer as a cell-program: cap-first claim +
+  no-double-sell + slash-burns-bond (the `#assert_axioms` gate CAUGHT a sorryAx here — the
+  anti-launder tooth works).
+
+REMAINING half = @[export] PACKAGING (Lean->Rust): DELICATE cross-cutting phase. `libdregg_lean.a`
+is a READ-ONLY seed of the FFI closure (~8200 .o), re-produced only out-of-band via
+`scripts/rebuild-dregg2-closure.sh`. Packaging a Storage export = @[export] the def + import into the
+huge shared `Dregg2.Exec.FFI` + a Rust binding in `dregg-lean-ffi` + a closure RE-SEED. Needs a
+dedicated careful window (shared build; another lane active). NOT rushed. Also still owed: the
+`app-framework/src/inbox_endpoint.rs` client-asserted-sender auth-gap.
+
 ## NOW-STATE addition (2026-07-06 afternoon, Fable — session cap before context rotation)
 
 A long day across FOUR arcs (all commits "ember arlynx"; multi-terminal tree): (1) the CONFINED-BODY
