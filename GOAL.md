@@ -64,4 +64,4 @@ The template is `metatheory/Dregg2/Storage/BucketCommitment.lean` (committed `06
 
 ## Done-log
 - `06a1e8fe8` — storage-in-lean (1/N): `BucketCommitment.lean` proven + in-corpus. THE PATTERN.
-- `9007bbac7` — storage-in-lean (2/N): PoR (`Retrievability.lean`) proven on read_sound (por_sound + anti-forgery). Next: RS/erasure decode-correctness.
+- `13ffbbff2` — storage-in-lean (2/N): PoR (`Retrievability.lean`) proven on read_sound (por_sound + anti-forgery). Next: RS/erasure decode-correctness.
