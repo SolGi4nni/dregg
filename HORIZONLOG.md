@@ -8,6 +8,27 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-07, Fable — wide purge swarm: named residuals from the honesty + bind sweeps)
+
+The 5-lane purge swarm (bindings + dead-sweep + honesty + Phase-2 recon) surfaced LOGIC residuals the
+agents refused to fake (recorded here, NOT laundered green):
+- ⚑ **tool-access-delegation: INVERTED DEADLINE (REAL BUG).** `tad_cell_program` uses
+  `FieldLteHeight(DEADLINE)` → the kernel admits iff `DEADLINE <= height` — the exact INVERSE of the
+  Lean `now <= deadline` policy: it REFUSES live mandates and ADMITS expired ones forever. Fix: flip to
+  `FieldGteHeight`, re-point the `DEADLINE=0` seed convention, and fix the `deos_seam` test (which
+  currently ENSHRINES the inversion). starbridge-apps/tool-access-delegation.
+- **availability/retrieval: DAS confidence-inflation.** `erasure::verify_chunk_against_root`
+  authenticates at `proof.leaf_index` but never checks `chunk.index == proof.leaf_index` → a genuine
+  chunk with a lying `index` field passes verify, so `sample_das` can count a held chunk for ANY
+  sampled index (confidence inflation). Safety preserved only by the final content-hash check (turns
+  it into an availability failure, not a forgery). A Phase-2 tooth: add the `index == leaf_index` check.
+- agent-orchestration: audit_run doesn't cross-check step<->receipt CONTENT (only arithmetic over the
+  log's own records); mcp binds a 64-bit TRUNCATED digest (full-digest binding = named next slice).
+- vat: `vat_cell_program` has ZERO installers/submitters — the verified-turn wire is unbuilt (carried).
+- nameservice: FieldDelta substrate variant now exists (types.rs:976) — the caveat can be wired.
+Purge swarm DONE: sharding bound (40ef4285d), availability+retrieval bound, 12 honesty overclaims
+corrected (b7a235e22), dead-sweep clean, Phase-2 recon mapped (bf2942330). auth-gap closed (e16dfe17e).
+
 ## NOW-STATE addition (2026-07-06 late, Fable — THE STORAGE EXTRACTION ROUND-TRIPS)
 
 The storage-in-lean mission's CAPSTONE landed (`2ae48bf1b`): "Lean IS the runtime" for storage, proven
@@ -6692,3 +6713,9 @@ leave a receipt — all on the verified substrate.
 2. **18/19 welds:** range-check (discharge due-ness) + multi-limb-product (vault no-dilution, overflows BabyBear) gadgets — after (1).
 3. **Solana mainnet-real:** geyser/custom-RPC validator plugin for real accounts-hash inclusion proofs
    (RPC exposes neither real bank hash nor Merkle inclusion → can't have real-vote-sig + real-inclusion both today).
+
+## ⚑ SITE/DOCS FOLLOW-UPS from the 2026-07-07 web-presence split (dregg.net redesigned; site/root = technical hub)
+- `readme.md` carries 9 dead links at HEAD (docs/ASSURANCE.md, DREGG3.md, ORGANS.md, PATH-PRESERVE.md, FIRMAMENT.md, PG-DREGG.md, EMBEDDABLE-LEAN-RUNTIME.md, DREGG-DESKTOP-OS.md → now only under .docs-history-noclaude/; node/src/mcp.rs → now node/src/mcp/). README-LLMs.md cites several of the same moved paths. Re-point or restore.
+- Dead-devnet fallback endpoints (`devnet.dregg.fg-goose.online`) still hardcoded in site/dregg-works/{verify-badge.js,transclude.js,index.html}, site/light-client/index.html, site/transclusion/{index.html,README.md}.
+- site/quickstart/ and site/src/_includes/studio/ are empty scaffolding; pages.yml sanity step doesn't cover dist/transclusion or dist/deos-viewer (build-script teeth do).
+- dregg-site (~/dev/dregg-site) is now zola multipage; first deploy must confirm CloudFront serves `/egg/` subdirectory indexes (S3 website endpoint or a viewer-request rewrite fn) — noted in its DEPLOY.md.
