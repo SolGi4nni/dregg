@@ -40,8 +40,9 @@
 //! 4. [`build_renew_action`] — increments the registry cell's
 //!    `EXPIRY_SLOT` by the configured rent-extension epoch length and
 //!    emits a `name-renewed` event. The baked-in `Monotonic(EXPIRY_SLOT)`
-//!    caveat enforces the expiry only moves forward; the exact-increment
-//!    `FieldDelta` caveat (Tier-1 #1) is not yet baked in.
+//!    caveat enforces the expiry only moves forward, and the exact-increment
+//!    `FieldDelta` caveat (Tier-1 #1) on the `renew_name` case pins it to advance by EXACTLY one
+//!    rent epoch (no over- or under-extension).
 //!
 //! 5. [`build_transfer_action`] — the CURRENT owner re-points the
 //!    owner-hash slot and stages the incoming owner's raw key; the
@@ -86,9 +87,9 @@ use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellAffordance,
     CellId, CellMode, CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect,
     EmbeddedExecutor, Event, FactoryDescriptor, FieldElement, FireExecuteError, GatedAffordance,
-    InputRef, InspectorDescriptor, StarbridgeAppContext, StateConstraint, TurnReceipt,
-    WitnessedPredicate, WitnessedPredicateKind, canonical_program_vk, field_from_bytes,
-    field_from_u64, hex_encode_32, symbol,
+    InputRef, InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase,
+    TransitionGuard, TurnReceipt, WitnessedPredicate, WitnessedPredicateKind, canonical_program_vk,
+    field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
 
 /// The nameservice as a SERVICE CELL on the `invoke()` front door (the
@@ -217,7 +218,7 @@ pub const NAME_FACTORY_VK: [u8; 32] = *b"starbridge-nameservice-factory!!";
 /// Lifted as an `Always`-guarded `CellProgram::Cases` so future
 /// operation-scoped cases can be added without restructuring.
 pub fn name_cell_program() -> CellProgram {
-    let mut constraints = vec![
+    let mut global = vec![
         StateConstraint::WriteOnce {
             index: NAME_HASH_SLOT as u8,
         },
@@ -228,8 +229,28 @@ pub fn name_cell_program() -> CellProgram {
             index: REVOKED_SLOT as u8,
         },
     ];
-    constraints.extend(owner_authorization_constraints());
-    CellProgram::always(constraints)
+    global.extend(owner_authorization_constraints());
+    // All matching cases' constraints are enforced (executor `CellProgram::Cases` semantics), so the
+    // global life-of-name invariants apply to EVERY transition, and the `renew_name` transition
+    // additionally must advance `EXPIRY` by EXACTLY one rent epoch.
+    CellProgram::Cases(vec![
+        TransitionCase {
+            guard: TransitionGuard::Always,
+            constraints: global,
+        },
+        // Tier-1 #1, now baked in: on `renew_name`, `EXPIRY` advances by EXACTLY
+        // `DEFAULT_RENT_EPOCH_BLOCKS` — no over-extension (a longer lease for one rent's pay) or
+        // under-extension. The `Monotonic` caveat only forced the expiry FORWARD; this pins the step.
+        TransitionCase {
+            guard: TransitionGuard::MethodIs {
+                method: symbol("renew_name"),
+            },
+            constraints: vec![StateConstraint::FieldDelta {
+                index: EXPIRY_SLOT as u8,
+                delta: field_from_u64(DEFAULT_RENT_EPOCH_BLOCKS),
+            }],
+        },
+    ])
 }
 
 /// **The owner-authorization caveats** — the cell-program teeth that make an
@@ -462,9 +483,9 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 ///    owner-authorization caveats bind the turn sender against (see
 ///    [`owner_authorization_constraints`]).
 /// 4. `SetField(cell=registry_cell, index=EXPIRY_SLOT, value=expiry_height)`
-///    — anchors the rent expiry. The on-cell `FieldDelta` constraint
-///    (when Tier-1 #1 lands) enforces subsequent `renew_name` turns
-///    increment exactly by `DEFAULT_RENT_EPOCH_BLOCKS`.
+///    — anchors the rent expiry. The on-cell `FieldDelta` constraint on the
+///    `renew_name` case enforces that subsequent `renew_name` turns increment
+///    EXPIRY exactly by `DEFAULT_RENT_EPOCH_BLOCKS`.
 /// 5. `EmitEvent(cell=registry_cell, topic="name-registered",
 ///    data=[name_hash, owner_hash, expiry])` — surfaces the
 ///    registration for off-chain indexers.
@@ -1579,16 +1600,27 @@ mod tests {
         // Sanity: the program text actually contains the three slot caveats
         // the factory advertises in `state_constraints`.
         let p = name_cell_program();
-        let constraints = match p {
-            CellProgram::Cases(cases) => cases
-                .into_iter()
-                .flat_map(|c| c.constraints)
-                .collect::<Vec<_>>(),
+        let cases = match p {
+            CellProgram::Cases(cases) => cases,
             other => panic!("expected CellProgram::Cases, got {other:?}"),
         };
+        // The renew case pins EXPIRY to advance by EXACTLY one rent epoch (Tier-1 #1, baked in).
+        let renew = cases
+            .iter()
+            .find(|c| matches!(c.guard, TransitionGuard::MethodIs { method } if method == symbol("renew_name")))
+            .expect("a MethodIs(renew_name) case");
+        assert!(renew.constraints.iter().any(|c| matches!(
+            c,
+            StateConstraint::FieldDelta { index, delta }
+                if *index == EXPIRY_SLOT as u8 && *delta == field_from_u64(DEFAULT_RENT_EPOCH_BLOCKS)
+        )), "renew must carry the exact-increment FieldDelta on EXPIRY");
+        let constraints = cases
+            .into_iter()
+            .flat_map(|c| c.constraints)
+            .collect::<Vec<_>>();
         assert_eq!(
             constraints.len(),
-            3 + owner_authorization_constraints().len()
+            3 + owner_authorization_constraints().len() + 1
         );
         assert!(constraints.iter().any(|c| matches!(
             c,
