@@ -37,6 +37,7 @@ pub mod discovery;
 pub mod events;
 pub mod mailbox;
 pub mod names;
+pub mod node_world_sink;
 pub mod remote;
 
 mod wire_codec;
@@ -66,6 +67,11 @@ pub use deos_server::{
     DiscoveredAffordance, FireOutcome, ServerDiscovery, discover_server_affordances,
     fire_affordance,
 };
+
+// ── The client-side NodeWorldSink (inhabit a remote box's node over HTTP) ─────
+pub use node_world_sink::NodeHttpClient;
+#[cfg(feature = "world-sink")]
+pub use node_world_sink::NodeWorldSink;
 
 // ── Silo client / discharge / discovery / events ─────────────────────────────
 pub use client::{PresentationResult, RevocationStatus, SiloClient};

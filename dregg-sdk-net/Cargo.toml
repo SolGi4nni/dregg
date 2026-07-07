@@ -36,6 +36,13 @@ dregg-macaroon = { workspace = true, features = ["crypto"] }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "biscuit", "rand-deps"] }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 
+# OPTIONAL: the `deos-js` WorldSink trait, pulled ONLY under the `world-sink`
+# feature so the base net layer stays free of the mozjs elephant (mirrors how
+# `node`'s in-process NodeWorldSink is `deos-host`-gated). The light HTTP client
+# half (`/turns/submit` POST + `/api/cells` read) carries no deos-js dep; the
+# `WorldSink` impl over it lives behind this feature.
+deos-js = { path = "../deos-js", optional = true }
+
 async-trait = "0.1"
 base64 = { workspace = true }
 blake3 = "1"
@@ -50,6 +57,11 @@ serde_json = { workspace = true }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 zeroize = { workspace = true }
+
+[features]
+# The client-side NodeWorldSink (a deos_js::WorldSink over a remote node's HTTP
+# API). Off by default: the base net layer stays mozjs-free.
+world-sink = ["dep:deos-js"]
 
 [dev-dependencies]
 dregg-intent = { path = "../intent" }
