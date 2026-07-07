@@ -7778,7 +7778,7 @@ pub(crate) fn provision_signer_actor_cell(ledger: &mut dregg_cell::Ledger, signe
             let cell = dregg_cell::Cell::with_balance(*signer, default_token_id, 0);
             let _ = ledger.insert_cell(cell);
         }
-        Some(existing) if existing.public_key == [0u8; 32] => {
+        Some(existing) if *existing.public_key() == [0u8; 32] => {
             // A zero-pk REMOTE STUB was materialized at this id by an earlier
             // Transfer-destination provisioning (e.g. a faucet grant to a client cell
             // no node had seen — `provision_transfer_destinations`). Now that the
