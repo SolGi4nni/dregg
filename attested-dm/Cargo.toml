@@ -54,6 +54,11 @@ dregg-zkoracle-prove = { path = "../zkoracle-prove" }
 # light client recomputes) — the SAME BLAKE3 shape `deos_hermes::attest` uses.
 blake3 = "1"
 
+# THE FEDERATION SEAM — `NodeTarget::Local` (default, in-process ledger) or `Federation`
+# (route each landed narration's receipt commitment to a real `DREGG_NODE_URL` node +
+# confirm it landed). One flip from a live federation; a rejected submit refuses the turn.
+dregg-node-target = { path = "../node-target" }
+
 [features]
 # THE CROWN, run REAL-LOCALLY. Attest the narration over a GENUINE local MPC-TLS 2PC
 # roundtrip (zkoracle-prove's vendored TLSNotary) instead of the modeled ed25519

@@ -256,4 +256,54 @@ mod tests {
     fn the_playable_arc() {
         run_arc();
     }
+
+    /// FEDERATION SEAM — with a `Federation` target, a committed command-turn is submitted
+    /// to the node and confirmed landed: the turn's `turn_hash` shows up on the node's
+    /// finalized log, and local world state advances exactly as in Local mode.
+    #[test]
+    fn federation_target_lands_committed_command_turns() {
+        use dregg_node_target::{NodeTarget, StubNode};
+
+        let node = StubNode::new();
+        let mut dungeon = Dungeon::new().with_node_target(NodeTarget::federation(node.clone()));
+        let l = dungeon.layout();
+
+        let out = dungeon.issue(l.alice, &Command::Go { room: l.hall });
+        assert!(
+            out.committed(),
+            "an authorized command commits AND lands on the federation node: {out:?}"
+        );
+        let receipt = match out {
+            crate::dungeon::CommandOutcome::Committed { receipt } => receipt,
+            other => panic!("expected a committed turn, got {other:?}"),
+        };
+        assert!(
+            node.contains(&receipt),
+            "the turn_hash landed on the node's log"
+        );
+        assert_eq!(node.len(), 1);
+        // No regression: the room cell still records alice's presence via the committed turn.
+        assert_eq!(
+            dungeon.field(l.hall, SLOT_PRESENCE),
+            Some(actor_tag(l.alice))
+        );
+    }
+
+    /// A federation node that refuses the submit makes the command fail-closed: the caller
+    /// gets a `Refused` outcome, and nothing landed.
+    #[test]
+    fn federation_reject_refuses_the_command() {
+        use dregg_node_target::{NodeTarget, StubNode};
+
+        let node = StubNode::rejecting();
+        let mut dungeon = Dungeon::new().with_node_target(NodeTarget::federation(node.clone()));
+        let l = dungeon.layout();
+
+        let out = dungeon.issue(l.alice, &Command::Go { room: l.hall });
+        assert!(
+            out.refused(),
+            "a node that refuses the submit fails the command: {out:?}"
+        );
+        assert_eq!(node.len(), 0, "nothing landed — fail-closed");
+    }
 }

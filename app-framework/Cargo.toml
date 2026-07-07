@@ -25,7 +25,12 @@ dregg-types = { path = "../types" }
 # ONE verified `pay` route table. The cipherclerk-bound `invoke` /
 # `invoke_with_descriptor` / free `pay` here delegate to that pure core.
 dregg-payable = { path = "../dregg-payable" }
-dregg-storage = { path = "../storage" }
+# `kzg` is REQUIRED, not optional: `queue_endpoint` (an unconditional module) imports
+# `dregg_storage::programmable::{ProgrammableQueue, ValidationContext}`, which storage
+# gates behind its `kzg` feature. Without this app-framework fails to compile in any
+# subgraph that does not otherwise unify `kzg` on (`cargo build -p dregg-app-framework`
+# and every narrow `-p` consumer). Declaring the feature app-framework actually uses.
+dregg-storage = { path = "../storage", features = ["kzg"] }
 dregg-captp = { path = "../captp" }
 
 # The REAL transclusion primitive (`starbridge_web_surface::transclusion`): the

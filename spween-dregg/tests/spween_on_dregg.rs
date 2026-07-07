@@ -391,3 +391,56 @@ fn warp_to_hall(world: &mut WorldCell) {
     // sanity: value_to_u64 of a Bool is 1 (has_key was set).
     assert_eq!(value_to_u64(&Value::Bool(true)), 1);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The federation seam: a committed choice-turn optionally routes to a real node.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// With a `Federation` target, each committed choice-turn is submitted to the node and
+/// confirmed landed — the turn's `turn_hash` shows up on the node's finalized log.
+#[test]
+fn federation_target_lands_committed_choice_turns() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let s = scene();
+    let force = force_the_door_choice(&s);
+    let node = StubNode::new();
+
+    let mut strong = WorldCell::deploy(&s, 41)
+        .expect("deploy")
+        .with_node_target(NodeTarget::federation(node.clone()));
+    strong.seed_var("strength", Value::Int(6));
+
+    let receipt = strong
+        .apply_choice("gate", 0, &force)
+        .expect("an eligible choice commits AND lands on the federation node");
+    // The committed turn's hash landed on the node's finalized log — cross-node-verifiable.
+    assert!(node.contains(&receipt.turn_hash));
+    assert_eq!(node.len(), 1);
+    // Local state advanced exactly as in Local mode (no regression from routing).
+    assert_eq!(strong.read_passage(), Some(2));
+    assert_eq!(strong.read_var("strength"), 5);
+}
+
+/// A federation node that refuses the submit makes the choice fail-closed: the caller
+/// learns the turn did not replicate (`WorldError::Federation`).
+#[test]
+fn federation_reject_refuses_the_choice() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let s = scene();
+    let force = force_the_door_choice(&s);
+    let node = StubNode::rejecting();
+
+    let mut strong = WorldCell::deploy(&s, 42)
+        .expect("deploy")
+        .with_node_target(NodeTarget::federation(node.clone()));
+    strong.seed_var("strength", Value::Int(6));
+
+    let refused = strong.apply_choice("gate", 0, &force);
+    assert!(
+        matches!(refused, Err(WorldError::Federation(_))),
+        "a node that refuses the submit fails the choice, got {refused:?}"
+    );
+    assert_eq!(node.len(), 0, "nothing landed — fail-closed");
+}

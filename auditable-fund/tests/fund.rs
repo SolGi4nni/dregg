@@ -323,3 +323,67 @@ fn forged_track_record_fails_audit() {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FEDERATION SEAM — a landed trade turn optionally routes to a real node.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// With a `Federation` target, each landed trade turn is submitted to the node and
+/// confirmed landed — the turn's `turn_hash` shows up on the federation node's log,
+/// alongside the unchanged in-process `LocalNode` track record.
+#[test]
+fn federation_target_lands_trade_turns() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let ora = oracle(ASSET, "1000.00");
+    let node = StubNode::new();
+    let mut fund =
+        open_fund(mandate(), &ora).with_node_target(NodeTarget::federation(node.clone()));
+
+    let mut brain = RecordedBrain::new(vec![
+        Decision::buy(ASSET, 3, "accumulate"),
+        Decision::hold("wait"),
+    ]);
+
+    let o1 = fund.step(&ora, &mut brain).expect("buy lands + replicates");
+    let o2 = fund
+        .step(&ora, &mut brain)
+        .expect("hold lands + replicates");
+
+    // Both landed trade turns replicated to the federation node.
+    assert_eq!(node.len(), 2);
+    assert!(node.contains(&o1.turn_hash));
+    assert!(node.contains(&o2.turn_hash));
+
+    // The in-process track record is unchanged by routing (no regression).
+    assert_eq!(fund.position(ASSET), 3);
+    let track = fund.export();
+    for r in &track.records {
+        assert!(track.node.contains(&r.turn_hash));
+    }
+}
+
+/// A federation node that refuses the submit makes the step fail-closed: the trade did
+/// not replicate (`FundError::Federation`), nothing landed on the federation node, and
+/// the book was NOT committed.
+#[test]
+fn federation_reject_fails_the_step_closed() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let ora = oracle(ASSET, "1000.00");
+    let node = StubNode::rejecting();
+    let mut fund =
+        open_fund(mandate(), &ora).with_node_target(NodeTarget::federation(node.clone()));
+
+    let mut brain = RecordedBrain::new(vec![Decision::buy(ASSET, 3, "accumulate")]);
+
+    let refused = fund.step(&ora, &mut brain);
+    assert!(
+        matches!(refused, Err(FundError::Federation(_))),
+        "a node that refuses the submit fails the step, got {refused:?}"
+    );
+    // Nothing replicated, and the book was not committed (fail-closed).
+    assert_eq!(node.len(), 0);
+    assert_eq!(fund.position(ASSET), 0);
+    assert_eq!(fund.cash(), 1_000_000);
+}

@@ -267,3 +267,50 @@ fn a_forged_commitment_never_finalizes_the_true_ruling() {
     // A non-committee operator is rejected outright.
     assert!(committee.cast(poll, 9, receipt.id).is_err());
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The federation seam: a landed ruling optionally routes to a real node.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// With a `Federation` target, a genuine in-jurisdiction ruling lands locally AND its
+/// receipt commitment is submitted to the node + confirmed landed.
+#[test]
+fn federation_target_lands_ruling_commitments() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let node = StubNode::new();
+    let arb = arbiter().with_node_target(NodeTarget::federation(node.clone()));
+    let mut ledger = CaseLedger::new();
+    let case = Case::new("alice", "tos-v1", "a normal question about pricing");
+
+    let receipt = arb
+        .rule_case(&mut ledger, &tos_rubric(), &case)
+        .expect("a genuine case is ruled AND lands on the federation node");
+
+    assert_eq!(ledger.ledger.len(), 1, "one ruling landed locally");
+    assert!(
+        node.contains(&receipt.id),
+        "its commitment landed on the node"
+    );
+    assert_eq!(node.len(), 1);
+}
+
+/// A federation node that refuses the submit refuses the ruling fail-closed: the ledger
+/// records nothing (anti-ghost) and the caller gets `ArbiterError::Federation`.
+#[test]
+fn federation_reject_refuses_the_ruling() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let node = StubNode::rejecting();
+    let arb = arbiter().with_node_target(NodeTarget::federation(node.clone()));
+    let mut ledger = CaseLedger::new();
+    let case = Case::new("alice", "tos-v1", "a normal question about pricing");
+
+    let err = arb.rule_case(&mut ledger, &tos_rubric(), &case);
+    assert!(
+        matches!(err, Err(ArbiterError::Federation(_))),
+        "a rejecting node refuses the ruling, got {err:?}"
+    );
+    assert_eq!(ledger.ledger.len(), 0, "anti-ghost: nothing landed locally");
+    assert_eq!(node.len(), 0, "nothing landed on the node");
+}

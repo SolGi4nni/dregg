@@ -16,9 +16,13 @@
 //! bookkeeping.
 
 use dregg_cell::{AuthRequired, CellId, FieldElement};
+use dregg_node_target::{NodeTarget, SubmittedTurn};
 use dregg_turn::action::Effect;
 
 use starbridge_v2::world::{make_open_cell, set_field, World};
+
+/// The federation event-topic label a committed dungeon command-turn is submitted under.
+const MUD_DOMAIN: &str = "mud-dregg";
 
 /// The state slot a room uses for the "who is present" presence mark (a `go`/enter write).
 pub const SLOT_PRESENCE: usize = 0;
@@ -123,6 +127,10 @@ impl WorldCell for Layout {
 pub struct Dungeon {
     world: World,
     layout: Layout,
+    /// Where a committed command-turn routes. [`NodeTarget::Local`] (the default) keeps the
+    /// turn on this in-process executor; [`NodeTarget::Federation`] additionally submits it
+    /// to a real `DREGG_NODE_URL` node and confirms it landed.
+    node_target: NodeTarget,
 }
 
 /// The outcome of issuing a command on the live dungeon — a thin, legible echo of the real
@@ -213,7 +221,18 @@ impl Dungeon {
                 cavern,
                 sword,
             },
+            node_target: NodeTarget::Local,
         }
+    }
+
+    /// **Make this dungeon federation-capable.** By default a dungeon runs `Local` (every
+    /// committed command-turn stays on this in-process executor). Pass a
+    /// [`NodeTarget::Federation`] (e.g. from [`NodeTarget::from_env`], reading
+    /// `DREGG_NODE_URL`) to additionally submit each committed command-turn to a real
+    /// federation node and confirm it landed — one flip from a live federation.
+    pub fn with_node_target(mut self, target: NodeTarget) -> Self {
+        self.node_target = target;
+        self
     }
 
     /// The dungeon's cell layout (the [`WorldCell`]).
@@ -246,6 +265,18 @@ impl Dungeon {
         let turn = self.world.turn(actor, effects);
         match self.world.commit_turn(turn) {
             starbridge_v2::world::CommitOutcome::Committed { receipt, .. } => {
+                // FEDERATION SEAM: in `Local` mode this is a no-op; in `Federation` mode the
+                // committed command-turn is submitted to the real node + confirmed landed, and
+                // a rejected / unreachable / non-landing submit refuses the command
+                // (fail-closed) — the caller learns it did not replicate.
+                if let Err(e) = self
+                    .node_target
+                    .route(&SubmittedTurn::new(MUD_DOMAIN, receipt.turn_hash))
+                {
+                    return CommandOutcome::Refused {
+                        reason: e.to_string(),
+                    };
+                }
                 CommandOutcome::Committed {
                     receipt: receipt.turn_hash,
                 }

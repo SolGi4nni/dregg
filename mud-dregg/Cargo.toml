@@ -12,6 +12,9 @@ description = "A multiplayer MUD (multi-user dungeon) on dregg where the diverge
 starbridge-v2 = { path = "../starbridge-v2", default-features = false, features = ["embedded-executor"] }
 dregg-cell = { path = "../cell", default-features = false }
 dregg-turn = { path = "../turn" }
+# THE FEDERATION SEAM — a committed command-turn optionally routes to a real node
+# (`DREGG_NODE_URL`); `NodeTarget::Local` (default) keeps it in-process, unchanged.
+dregg-node-target = { path = "../node-target" }
 
 [[bin]]
 name = "mud-dregg"
