@@ -205,3 +205,13 @@ hex = "0.4"
 agent-platform = { path = "../agent-platform" }
 grain-turn = { path = "../grain-turn" }
 dregg-agent = { path = "../dregg-agent" }
+
+# Pillar-4 full round-trip: the real-executor test node (dregg-sdk-net's
+# `test-support`) + postcard/tokio to drive a NodeWorldSink-backed brain fire
+# THROUGH node execution and read the receipt back. test-support ONLY here (it is
+# mozjs-free — the TestNode is executor+HTTP, no deos-js); NodeWorldSink's
+# `world-sink` rides the `node-brain` feature the round-trip test requires. So the
+# default `cargo test` stays mozjs-free; the test module is `cfg(node-brain)`.
+dregg-sdk-net = { path = "../dregg-sdk-net", features = ["test-support"] }
+postcard = { version = "1", features = ["use-std"] }
+tokio = { version = "1", features = ["full"] }
