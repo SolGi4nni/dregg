@@ -1,0 +1,241 @@
+/-
+# Dregg2.Circuit.Emit.NoteSpendingLeafEmit — the note-spend recursion-leaf descriptor, EMITTED
+FROM LEAN.
+
+## What this file IS
+
+The `EffectVmDescriptor2` that `circuit-prove`'s `note_spend_leaf_adapter::note_spend_to_descriptor2`
+builds in Rust today — the RECURSION-FOLDABLE IR-v2 leaf of the deployed DSL note-spending circuit
+`dregg-note-spending-dsl-v3` (`circuit/src/dsl/note_spending.rs`, width 62, 6 PIs) WIDENED by the
+in-AIR mint-hash recompute (2 extra fact sites + the PI-6 pin, 7 PIs total). The whole spend
+semantics is here: the FULL-WIDTH 28-limb commitment binding (the 7-site `hash_fact` chain
+C2a..C2g), the two-step 8-limb nullifier derivation (C3/C4, binding 248-bit spending-key
+knowledge), position-aware Merkle membership (C6) with chain continuity (C7), and the boundary
+PI pins (nullifier / merkle_root / value / asset / dest-federation / value_hi + the mint identity).
+
+The LAW this closes: `note_spend_to_descriptor2` authored BOTH the descriptor AND its IR-v2 lowering
+in Rust. Here the descriptor's constraint SEMANTICS are emitted from Lean and byte-pinned
+(`emitVmJson2` `#guard`); Rust merely DECODES (`parse_vm_descriptor2`) and proves. The gate
+(`circuit-prove/tests/note_spending_emit_gate.rs`) decodes this exact string and asserts it EQUALS
+the production `note_spend_to_descriptor2()` — a byte drift on either side breaks THIS `#guard` or
+that `assert_eq!`.
+
+## Constraint → carrier map (every hand-AIR constraint, per the note_spending dossier)
+
+| source constraint                                   | IR-v2 carrier                                            |
+|-----------------------------------------------------|---------------------------------------------------------|
+| C1 `is_merkle` boolean                              | `.base (.gate (is_merkle·(is_merkle−1)))`               |
+| C2a..C2g full-width commitment `hash_fact` chain    | 7 selector-muxed arity-7 `Poseidon2Chip` lookups        |
+| C2-final `COMMITMENT == COMMITMENT_FULL` (gated)    | `.base (.gate)` (inverted-gated equality)               |
+| C2-link value / value_hi / asset PI↔limb (gated)    | 3 `.base (.gate)` inverted-gated equalities             |
+| C3/C4 two-step nullifier `hash_fact`                | 2 selector-muxed arity-7 `Poseidon2Chip` lookups        |
+| C5 position validity `pos·(pos−1)·(pos−2)·(pos−3)`  | `.base (.gate)` degree-4 polynomial                     |
+| C6 Merkle membership `hash_fact` (position-aware)   | 1 selector-muxed arity-7 `Poseidon2Chip` lookup         |
+| C7 Merkle chain continuity `next[CUR]==loc[PARENT]` | `.windowGate` (two-row, on-transition)                  |
+| 6 boundary PI pins                                  | 6 `.base (.piBinding …)`                                |
+| mint-hash recompute (2 sites) + MINT_ROOT/HASH pins | 2 lookups + 2 `.base (.piBinding …)`                    |
+
+No Range lookup exists in this family: the high value limb is bound through the commitment
+`hash_fact` chain, NOT a bit-decomposition (dossier §value_hi). The Poseidon2 collision carrier
+(the chip permutation soundness) is the named executor-verified primitive — the fact sites' arity-7
+absorb IS `poseidon2::hash_fact` (KAT-pinned Rust-side by `fact_arity7_chip_absorb_matches_hash_fact`).
+
+## The fact-site mux (the carrier `note_spend_to_descriptor2::gated_fact_site` builds)
+
+Each `ConstraintExpr::Hash` = `hash_fact(pred, terms)` is ONE Poseidon2 permutation seeded
+`st[0]=pred, st[1..5]=terms, st[5]=0xFACF, st[6]=1`; the chip's arity-7 row seeds those 7 lanes
+verbatim. Hash sites are ROW-GATED (commitment/nullifier/mint on `1−is_merkle`, Merkle on
+`is_merkle`), so the tuple is muxed by the selector `s`: value lanes ride as `s·col`, the two
+domain constants stay constant, the digest lane rides as `s·out + (1−s)·K₀` where
+`K₀ = hash_fact(0,[]) = 657167757`. On a firing row the tuple IS the genuine site; on a non-firing
+row it degenerates to the constant zero-fact permutation row.
+
+## Axiom hygiene
+Definitional descriptor + byte-pinned `#guard` + two genuinely-proven non-vacuous semantic lemmas
+(the C7 continuity WindowExpr and the C1 boolean gate — each TRUE and FALSE witnessed).
+`#assert_axioms` of both ⊆ {} (pure `omega` / `mul_eq_zero`). NEW file; imports read-only.
+-/
+import Dregg2.Circuit.DescriptorIR2
+
+namespace Dregg2.Circuit.Emit.NoteSpendingLeafEmit
+
+open Dregg2.Circuit (Assignment)
+open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
+open Dregg2.Circuit.DescriptorIR2
+  (EffectVmDescriptor2 VmConstraint2 Lookup TableId WindowExpr WindowConstraint
+   CHIP_RATE CHIP_OUT_LANES emitVmJson2)
+
+set_option autoImplicit false
+
+/-! ## §1 — The deployed column layout (from `note_spending_air::{col,limb_col,merkle_col,pi}`
+and `note_spend_leaf_adapter`'s mint columns). All indices are the GROUND-TRUTH Rust constants. -/
+
+/-- `is_merkle` row-type selector (`col::IS_MERKLE`). -/
+def IS_MERKLE : Nat := 16
+/-- The `hash_fact` domain-separation marker `state[5]` (`0xFACF = 64207`). -/
+def NS_FACT_MARK : Int := 64207
+/-- The zero-fact digest `K₀ = hash_fact(0, []).as_u32()` the muxed-off rows degenerate to.
+Computed by `poseidon2::hash_fact(BabyBear::ZERO, &[])` — pinned here, Rust-side re-derived. -/
+def K0 : Int := 657167757
+
+/-- `x − y` with no subtraction node (`x + (−1)·y`), the Rust `sub` in the adapter. -/
+def subE (x y : EmittedExpr) : EmittedExpr := .add x (.mul (.const (-1)) y)
+
+/-! ## §2 — the row-gated fact-site tuple (the Lean twin of `gated_fact_site`).
+
+`fire`/`hold` are the selector's firing indicator + complement. On a firing row the tuple is the
+genuine `hash_fact` absorb; on a non-firing row every value lane muxes to 0 and the digest lane to
+`K₀`. -/
+
+/-- The Unless-selector (`InvertedGated`: fires when the column is 0). -/
+def unlessFire (c : Nat) : EmittedExpr := subE (.const 1) (.var c)
+def unlessHold (c : Nat) : EmittedExpr := .var c
+/-- The When-selector (`Gated`: fires when the column is 1). -/
+def whenFire (c : Nat) : EmittedExpr := .var c
+def whenHold (c : Nat) : EmittedExpr := subE (.const 1) (.var c)
+
+/-- The 25-wide arity-7 `Poseidon2Chip` lookup tuple carrying ONE row-gated `hash_fact` site:
+`[7, s·in0..s·in4, 0xFACF, 1, 0×9, s·out+(1−s)·K₀, lane0..6]`. `inputCols` = pred :: ≤4 terms. -/
+def factTuple (fire hold : EmittedExpr) (outputCol : Nat) (inputCols : List Nat)
+    (laneBase : Nat) : List EmittedExpr :=
+  (.const 7)
+    :: (List.range 5).map (fun i =>
+          match inputCols[i]? with
+          | some c => .mul fire (.var c)
+          | none   => .const 0)
+    ++ [.const NS_FACT_MARK, .const 1, .const 0, .const 0, .const 0,
+        .const 0, .const 0, .const 0, .const 0, .const 0, .const 0]
+    ++ [.add (.mul fire (.var outputCol)) (.mul hold (.const K0))]
+    ++ (List.range 7).map (fun j => .var (laneBase + j))
+
+/-- A commitment/nullifier/mint fact site (fires when `is_merkle = 0`). -/
+def unlessSite (outputCol : Nat) (inputCols : List Nat) (laneBase : Nat) : VmConstraint2 :=
+  .lookup ⟨TableId.poseidon2, factTuple (unlessFire IS_MERKLE) (unlessHold IS_MERKLE)
+    outputCol inputCols laneBase⟩
+
+/-- The Merkle-membership fact site (fires when `is_merkle = 1`). -/
+def whenSite (outputCol : Nat) (inputCols : List Nat) (laneBase : Nat) : VmConstraint2 :=
+  .lookup ⟨TableId.poseidon2, factTuple (whenFire IS_MERKLE) (whenHold IS_MERKLE)
+    outputCol inputCols laneBase⟩
+
+/-! ## §3 — the pure-local Base gates (the adapter's `local_gate_body`). -/
+
+/-- C1 `is_merkle` boolean: `is_merkle·(is_merkle − 1)`. -/
+def binaryGate (c : Nat) : EmittedExpr := .mul (.var c) (.add (.var c) (.const (-1)))
+
+/-- An inverted-gated equality `(1 − sel)·(a − b)` (C2-final and the three C2-link pins). -/
+def invEqGate (sel a b : Nat) : EmittedExpr := .mul (subE (.const 1) (.var sel)) (subE (.var a) (.var b))
+
+/-- C5 position validity `pos·(pos−1)·(pos−2)·(pos−3) = pos⁴ − 6pos³ + 11pos² − 6pos`, lowered
+term-by-term exactly as the adapter's `Polynomial` arm (`neg_6 = p − 6 = 2013265915`). -/
+def posGate : EmittedExpr :=
+  let v : Nat := 4
+  let t0 := .mul (.mul (.mul (.mul (.const 1) (.var v)) (.var v)) (.var v)) (.var v)
+  let t1 := .mul (.mul (.mul (.const 2013265915) (.var v)) (.var v)) (.var v)
+  let t2 := .mul (.mul (.const 11) (.var v)) (.var v)
+  let t3 := .mul (.const 2013265915) (.var v)
+  .add (.add (.add t0 t1) t2) t3
+
+/-! ## §4 — the constraint list (deployed order: C1, C2 chain, C2 links, C3/C4, C5, C6, C7,
+boundaries, mint extension). Lane bases increment by `CHIP_OUT_LANES − 1 = 7` per site, from
+`EXT_BASE_WIDTH = 65`, in site order. -/
+
+def noteSpendConstraints : List VmConstraint2 :=
+  [ .base (.gate (binaryGate IS_MERKLE))            -- C1
+  , unlessSite 48 [20, 21, 22, 23, 24] 65           -- C2a  chain[0]
+  , unlessSite 49 [48, 25, 26, 27, 28] 72           -- C2b
+  , unlessSite 50 [49, 29, 30, 31, 32] 79           -- C2c
+  , unlessSite 51 [50, 33, 34, 35, 36] 86           -- C2d
+  , unlessSite 52 [51, 37, 38, 39, 40] 93           -- C2e
+  , unlessSite 53 [52, 41, 42, 43, 44] 100          -- C2f
+  , unlessSite 54 [53, 45, 46, 47] 107              -- C2g  COMMITMENT_FULL
+  , .base (.gate (invEqGate IS_MERKLE 5 54))        -- C2-final COMMITMENT == COMMITMENT_FULL
+  , .base (.gate (invEqGate IS_MERKLE 1 28))        -- C2-link value == VALUE_LO
+  , .base (.gate (invEqGate IS_MERKLE 19 29))       -- C2-link value_hi == VALUE_HI limb
+  , .base (.gate (invEqGate IS_MERKLE 2 30))        -- C2-link asset == ASSET_LO
+  , unlessSite 17 [5, 6, 7, 8, 9] 114               -- C3 nullifier intermediate
+  , unlessSite 14 [17, 10, 11, 12, 13] 121          -- C4 nullifier final
+  , .base (.gate posGate)                           -- C5 position validity
+  , whenSite 5 [0, 1, 2, 3, 4] 128                  -- C6 Merkle membership (position-aware)
+  , .windowGate ⟨.add (.nxt 0) (.mul (.const (-1)) (.loc 5)), true⟩  -- C7 chain continuity
+  , .base (.piBinding VmRow.first 14 0)             -- nullifier == pi0
+  , .base (.piBinding VmRow.first 1 2)              -- value == pi2
+  , .base (.piBinding VmRow.first 2 3)              -- asset_type == pi3
+  , .base (.piBinding VmRow.last 0 1)               -- last CURRENT == merkle_root pi1
+  , .base (.piBinding VmRow.first 18 4)             -- destination_federation == pi4
+  , .base (.piBinding VmRow.first 19 5)             -- value_hi == pi5
+  , .base (.piBinding VmRow.first 62 1)             -- MINT_ROOT (row-0 copy of root) == pi1
+  , unlessSite 63 [14, 62, 18, 2] 135               -- mint m1 = hash_fact(nullifier,[root,dest,asset])
+  , unlessSite 64 [63, 1, 19] 142                   -- mint_hash = hash_fact(m1,[value_lo,value_hi])
+  , .base (.piBinding VmRow.first 64 6) ]           -- mint_hash == pi6
+
+/-- **`noteSpendLeafDesc`** — the note-spend recursion-leaf `EffectVmDescriptor2`. The chip table
+(`TID_P2`) is Presence-detected from the lookups, so `tables` is empty exactly as the deployed
+descriptor leaves it. Width 149 = `EXT_BASE_WIDTH (65) + 12 sites × 7 lanes`. -/
+def noteSpendLeafDesc : EffectVmDescriptor2 :=
+  { name        := "note-spend-leaf::dregg-note-spending-dsl-v3"
+  , traceWidth  := 149
+  , piCount     := 7
+  , tables      := []
+  , constraints := noteSpendConstraints
+  , hashSites   := []
+  , ranges      := [] }
+
+/-! ## §5 — the byte-pinned wire golden (the Rust decoder ingests THIS string). -/
+
+#guard emitVmJson2 noteSpendLeafDesc ==
+  "{\"name\":\"note-spend-leaf::dregg-note-spending-dsl-v3\",\"ir\":2,\"trace_width\":149,\"public_input_count\":7,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":20}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":21}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":22}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":23}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":24}},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":48}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":65},{\"t\":\"var\",\"v\":66},{\"t\":\"var\",\"v\":67},{\"t\":\"var\",\"v\":68},{\"t\":\"var\",\"v\":69},{\"t\":\"var\",\"v\":70},{\"t\":\"var\",\"v\":71}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":48}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":25}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":26}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":27}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":28}},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":49}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":72},{\"t\":\"var\",\"v\":73},{\"t\":\"var\",\"v\":74},{\"t\":\"var\",\"v\":75},{\"t\":\"var\",\"v\":76},{\"t\":\"var\",\"v\":77},{\"t\":\"var\",\"v\":78}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":49}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":29}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":30}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":31}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":32}},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":50}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":79},{\"t\":\"var\",\"v\":80},{\"t\":\"var\",\"v\":81},{\"t\":\"var\",\"v\":82},{\"t\":\"var\",\"v\":83},{\"t\":\"var\",\"v\":84},{\"t\":\"var\",\"v\":85}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":50}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":33}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":34}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":35}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":36}},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":51}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":86},{\"t\":\"var\",\"v\":87},{\"t\":\"var\",\"v\":88},{\"t\":\"var\",\"v\":89},{\"t\":\"var\",\"v\":90},{\"t\":\"var\",\"v\":91},{\"t\":\"var\",\"v\":92}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":51}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":37}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":38}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":39}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":40}},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":52}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":93},{\"t\":\"var\",\"v\":94},{\"t\":\"var\",\"v\":95},{\"t\":\"var\",\"v\":96},{\"t\":\"var\",\"v\":97},{\"t\":\"var\",\"v\":98},{\"t\":\"var\",\"v\":99}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":52}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":41}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":42}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":43}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":44}},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":53}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":100},{\"t\":\"var\",\"v\":101},{\"t\":\"var\",\"v\":102},{\"t\":\"var\",\"v\":103},{\"t\":\"var\",\"v\":104},{\"t\":\"var\",\"v\":105},{\"t\":\"var\",\"v\":106}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":53}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":45}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":46}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":47}},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":54}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":107},{\"t\":\"var\",\"v\":108},{\"t\":\"var\",\"v\":109},{\"t\":\"var\",\"v\":110},{\"t\":\"var\",\"v\":111},{\"t\":\"var\",\"v\":112},{\"t\":\"var\",\"v\":113}]},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":54}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":28}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":19},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":29}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":30}}}}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":5}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":6}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":7}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":8}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":9}},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":17}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":114},{\"t\":\"var\",\"v\":115},{\"t\":\"var\",\"v\":116},{\"t\":\"var\",\"v\":117},{\"t\":\"var\",\"v\":118},{\"t\":\"var\",\"v\":119},{\"t\":\"var\",\"v\":120}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":17}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":10}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":11}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":12}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":13}},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":14}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":121},{\"t\":\"var\",\"v\":122},{\"t\":\"var\",\"v\":123},{\"t\":\"var\",\"v\":124},{\"t\":\"var\",\"v\":125},{\"t\":\"var\",\"v\":126},{\"t\":\"var\",\"v\":127}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2013265915},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":11},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2013265915},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"var\",\"v\":0}},{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"var\",\"v\":1}},{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"var\",\"v\":2}},{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"var\",\"v\":3}},{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"var\",\"v\":4}},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":128},{\"t\":\"var\",\"v\":129},{\"t\":\"var\",\"v\":130},{\"t\":\"var\",\"v\":131},{\"t\":\"var\",\"v\":132},{\"t\":\"var\",\"v\":133},{\"t\":\"var\",\"v\":134}]},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":0,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":62,\"pi_index\":1},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":14}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":62}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":18}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":2}},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":63}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":135},{\"t\":\"var\",\"v\":136},{\"t\":\"var\",\"v\":137},{\"t\":\"var\",\"v\":138},{\"t\":\"var\",\"v\":139},{\"t\":\"var\",\"v\":140},{\"t\":\"var\",\"v\":141}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":63}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":1}},{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":19}},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"var\",\"v\":64}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":657167757}}},{\"t\":\"var\",\"v\":142},{\"t\":\"var\",\"v\":143},{\"t\":\"var\",\"v\":144},{\"t\":\"var\",\"v\":145},{\"t\":\"var\",\"v\":146},{\"t\":\"var\",\"v\":147},{\"t\":\"var\",\"v\":148}]},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":64,\"pi_index\":6}],\"hash_sites\":[],\"ranges\":[]}"
+
+/-! ## §6 — genuinely-proven, non-vacuous semantic lemmas (the load-bearing teeth). -/
+
+/-- The C7 continuity WindowExpr body. -/
+def contBodyW : WindowExpr := .add (.nxt 0) (.mul (.const (-1)) (.loc 5))
+
+/-- C7 chain continuity: the body vanishes EXACTLY when the next level's path input equals this
+level's parent (`next[CURRENT] = loc[PARENT]`) — the Lean face of the emitted `.windowGate`. -/
+theorem cont_body_zero_iff (env : VmRowEnv) :
+    contBodyW.eval env = 0 ↔ env.nxt 0 = env.loc 5 := by
+  simp only [contBodyW, WindowExpr.eval]
+  constructor <;> intro h <;> omega
+
+/-- C1 boolean: the gate body vanishes EXACTLY when `is_merkle ∈ {0, 1}`. -/
+theorem binary_gate_zero_iff (a : Assignment) :
+    (binaryGate IS_MERKLE).eval a = 0 ↔ a IS_MERKLE = 0 ∨ a IS_MERKLE = 1 := by
+  simp only [binaryGate, EmittedExpr.eval]
+  rw [mul_eq_zero]
+  constructor
+  · rintro (h | h)
+    · exact Or.inl h
+    · exact Or.inr (by omega)
+  · rintro (h | h)
+    · exact Or.inl h
+    · exact Or.inr (by omega)
+
+-- Non-vacuity witnesses: continuity ACCEPTS a chained window, REJECTS an unchained one.
+#guard decide (contBodyW.eval ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩ = 0)
+#guard decide (¬ (contBodyW.eval ⟨fun i => if i = 5 then 3 else 0, fun _ => 0, fun _ => 0⟩ = 0))
+-- Non-vacuity witnesses: the boolean gate ACCEPTS is_merkle=1, REJECTS is_merkle=2.
+#guard decide ((binaryGate IS_MERKLE).eval (fun i => if i = IS_MERKLE then 1 else 0) = 0)
+#guard decide (¬ ((binaryGate IS_MERKLE).eval (fun i => if i = IS_MERKLE then 2 else 0) = 0))
+
+/-! ## §7 — shape pins. -/
+
+#guard noteSpendLeafDesc.traceWidth == 149
+#guard noteSpendLeafDesc.piCount == 7
+#guard noteSpendLeafDesc.constraints.length == 27
+-- 12 fact sites (7 commitment chain + 2 nullifier + 1 Merkle + 2 mint).
+#guard (noteSpendConstraints.filter (fun c => match c with | .lookup _ => true | _ => false)).length == 12
+-- 8 PI bindings (6 source boundaries + MINT_ROOT + MINT_HASH).
+#guard (noteSpendConstraints.filter (fun c => match c with
+          | .base (.piBinding _ _ _) => true | _ => false)).length == 8
+-- 1 window gate (C7).
+#guard (noteSpendConstraints.filter (fun c => match c with | .windowGate _ => true | _ => false)).length == 1
+-- each fact tuple is CHIP_TUPLE_LEN = 1 + CHIP_RATE + CHIP_OUT_LANES wide.
+#guard (factTuple (unlessFire IS_MERKLE) (unlessHold IS_MERKLE) 48 [20, 21, 22, 23, 24] 65).length
+         == 1 + CHIP_RATE + CHIP_OUT_LANES
+
+#assert_axioms cont_body_zero_iff
+#assert_axioms binary_gate_zero_iff
+
+end Dregg2.Circuit.Emit.NoteSpendingLeafEmit
