@@ -100,3 +100,36 @@ Two sequential gates on one pipeline:
 - IMMEDIATE PATH TO THE PAYOFF: submit-path fix + gate-off (Rust tau) → a real flagship turn should
   finalize cross-node on the live mesh. NO verified executor needed for finality (gate-off Rust tau
   is correct); the attestation is separate/real regardless. → SURFACE TO EMBER (decision).
+
+## ═══ FULL INTEGRATION (07-07) — the picture is complete ═══
+### n=3 finality-gate: DEFINITIVE (b08c738ca) — it's PERFORMANCE, not correctness
+- Mechanism CONFIRMED by logs: "Rust ordering::tau differential AGREES" — NEVER DIVERGENCE — with
+  `finalized` stuck at 27 while the DAG grows to 49. A *completed* poll on the grown lace would log
+  Rust=45 → DIVERGENCE. It never did ⇒ the poll NEVER COMPLETED: the serial finality-executor is
+  BLOCKED awaiting the slow O(history) Lean `compute_order` FFI. Slowness, not divergence.
+- Gate-OFF (DREGG_FINALITY_GATE=0, Rust tau) → 3/3 streams. Gate-ON (Lean, default) → 2/3 stall.
+  n=4 was a CONFOUND (ran gate-off). FIX (designed): memoize compute_order via tauOrderFast/
+  tauOrderFast_eq; and/or bounded-timeout fail-open to already-computed Rust tau (A1 neighborhood).
+### #2 seed: DONE (1c58283fe) — a verified node LINKS against HEAD
+- HEAD-matching Lean seed CUT + VERIFIED on nextop (Darwin-arm64, 21min warm): 8 C-ABI exports +
+  tauOrderFast present (absent in stale seed = clean HEAD-differential), FFI round-trips. dregg-node
+  built verified (exit 0, zero marshal warnings, lean_available()==true). Installed + pinned +
+  fetch-asset staged (~/dregg-seed-staging, Darwin-arm64). TAG empty (publish = ember-gated push).
+- ⚠ PLATFORM: seed is Darwin-arm64 (Mach-O). hbox=Linux-x86_64+cold, persvati unreachable → hbox +
+  David's lassie need their OWN Linux seed (cut on a Linux box; can't cross-produce from macOS).
+### #4 real LLM: DONE + GREEN (ffc8cdd7e) — the last modeled edge closed
+- REAL Nemotron (nvidia/llama-3.3-nemotron-super-49b-v1) call WORKED in-env (fresh-nonce-verified,
+  not recorded, curl-shell transport) through the unchanged brain code → ZkOracleAttestation VERIFIES
+  (authentic∧well-formed∧injection-free); injection caught; tamper refused. Rebuilt exact bytes green.
+- Honest wall: the FULLY-confined in-jail live call is bounded by a macOS fork()+objc crash (not
+  reqwest-TLS — network reachable), needs a Linux seccomp PD. Named, not faked. Jail+door teeth proven.
+
+## ═══ THE PAYOFF NEEDS EXACTLY 3 CONSENSUS/KERNEL FIXES (all designed, ember's call) ═══
+1. SUBMIT-PATH (design gap): route clients through /turns/submit + provision the actor cell at
+   finalization from SignedTurn.signer. Touches execute_finalized_turn (commitment path).
+2. FINALITY-GATE (perf): memoize compute_order / fail-open bounded-timeout. IMMEDIATE lever = gate-off
+   (config, DREGG_FINALITY_GATE=0, Rust tau proven-correct) — no code change.
+3. VERIFIED-QUIC (A1 class): the verified binary's blocking executor starves the async QUIC runtime →
+   spawn_blocking. Needed for a VERIFIED (not gate-off) live mesh.
+- IMMEDIATE PATH: submit-path fix + gate-off → a real attested turn finalizes cross-node (marshal
+  finality). + fixes 2&3 → VERIFIED. "know WHY" = DONE; "run for real" = gated on these 3 (ember).
