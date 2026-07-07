@@ -231,3 +231,20 @@ The deployable-storage engine's RULES live in Lean (proven), the I/O in Rust. Ve
 - CRYPTO NOTE (ember): ed25519 stays for now (the hard PQ parts — STARK/FRI + Poseidon2 — are ALREADY
   hash-based/PQ-plausible; identity is the migratable part). PQ SIGNATURES later = Dilithium/Falcon/
   SPHINCS+, NOT Kyber (Kyber is a KEM/encryption). Migrate via crypto-agility + cross-attestation. 2027.
+
+### PROTOCOL-IN-LEAN — COMPLETE (2026-07-07 full-send). 13 constructions, end-to-end proven.
+Storage core (1-7): BucketCommitment · Retrievability(PoR) · Erasure(RS) · Fountain · Availability ·
+ProviderMarket · Deployed(extraction runs). Protocol layer (8-13, all #assert_axioms-clean):
+- 8 DealLifecycle (271949459) — deal state machine, illegal step unrepresentable.
+- 9 MarketAudit (41be35f29) — audit drives lifecycle: honest=>safe, withholding=>slashed.
+- 10 DealLifecycleTrace (07bad8124) — ACYCLIC + forward-only (never moves backward).
+- 11 DealPayment (ebfc4260c) — value CONSERVED (settle/slash payouts; burn is real, not skimmed).
+- 12 ProviderRegistry (e407bdd7f) — provider stake lifecycle, cap-first registration.
+- 13 ClientProtocol (5a2f0e2a9) — THE END-TO-END THEOREM data_survives_and_cheaters_pay: composes
+  Availability + MarketAudit into "your data recovers if k providers honest ∧ honest keep bond ∧
+  cheaters slashed" — DERIVED, not asserted.
+REMAINING SEAM (mechanical follow-on): ProviderMarket <-> DealLifecycle refinement. ProviderMarket is
+the executor-wired cell-program but COARSE (open/claimed + a slash-with-auditFailed-bool; it predates +
+collapses the audit states). Clean close = upgrade ProviderMarket to carry the full DealLifecycle
+states so the cell-program refines the abstract protocol; needs the RecordKernelState field mechanics.
+NEXT after that: the deployment (Rust I/O daemon/client/market-on-ledger) — orb transport deferred.
