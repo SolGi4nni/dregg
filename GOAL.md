@@ -324,3 +324,17 @@ GENUINELY REMAINING (each PROVEN deep/gated by actually digging in, not hand-wav
 3. vat verified-turn wire — vat has ZERO executor integration (no cipherclerk/executor imports); the
    wire is a from-scratch feature: a transition->effects builder + fire_vat_transition + install + a
    two-pole executor test. A genuine feature build.
+
+### RESIDUAL GRIND — round 3 (2026-07-07): audit_run CLOSED. Only 2 remain (both genuinely gated/feature).
+- audit_run step<->receipt cross-check CLOSED (e39df1e40): engine retains the EXECUTED turn per step
+  (new EmbeddedExecutor::submit_turn_executed — turn.hash() == receipt.turn_hash); audit_run verifies
+  the stored turn hashes to its receipt AND its effects bind the step's worker/tool/cost/sub_task
+  (TurnReceiptMismatch / StepNotFaithful). Threaded through DurableLog::append. Two-pole tested (a
+  forged step record is caught). I'd flagged this "needs turn-crate infra" — I built the infra.
+  [Campaign total: 12 soundness/binding fixes.]
+REMAINING (2):
+1. canonical_32_to_felts VK regen — RE-KEYS the live federation. ember's key, genuinely. Dual-BLAKE3
+   binds meanwhile; masking non-exploitable for CR-digest input. NOT a code fix I can land.
+2. vat verified-turn wire — vat has ZERO executor integration (no cipherclerk/executor imports). A
+   from-scratch feature: transition->effects builder + fire_vat_transition + install + a two-pole
+   executor test. A genuine feature build (not a residual-bug), buildable next.
