@@ -676,4 +676,205 @@ mod tests {
         assert!(sample_availability(8, 10, 8) > 0.99);
         assert!(sample_availability(5, 10, 1) <= 0.5 + 1e-9);
     }
+
+    /// Checked-impl of the proven spec
+    /// `Dregg2/Storage/Erasure.lean::rs_decode_correct` (k-of-n: a message
+    /// encoded into `n` shards is recovered from ANY `k` of them) +
+    /// `no_wrong_reconstruction` (distinct degree-`< k` messages cannot share
+    /// `k` shards — so with fewer than `k` shards the decoder must FAIL, never
+    /// silently return wrong bytes).
+    ///
+    /// These tests bind the fast GF(2^8) Rust codec to that Lean theorem pair:
+    /// the POSITIVE pole exercises every distinct `k`-subset for several small
+    /// `(n, k)` plus many random `k`-drops for a larger `n`; the NEGATIVE pole
+    /// exhaustively feeds every `(k-1)`-subset (and all sizes `0..k`, and
+    /// `k` duplicated copies of one shard) and asserts reconstruction errors.
+    /// A codec that returned wrong bytes, or reconstructed from `< k` distinct
+    /// shards, turns this module RED.
+    mod lean_spec_binding {
+        use super::*;
+
+        /// All `k`-element subsets of `0..n` (as index vectors).
+        fn k_subsets(n: usize, k: usize) -> Vec<Vec<usize>> {
+            fn go(
+                start: usize,
+                n: usize,
+                k: usize,
+                cur: &mut Vec<usize>,
+                out: &mut Vec<Vec<usize>>,
+            ) {
+                if cur.len() == k {
+                    out.push(cur.clone());
+                    return;
+                }
+                for i in start..n {
+                    cur.push(i);
+                    go(i + 1, n, k, cur, out);
+                    cur.pop();
+                }
+            }
+            let mut out = Vec::new();
+            go(0, n, k, &mut Vec::new(), &mut out);
+            out
+        }
+
+        /// Tiny deterministic PRNG (xorshift64) — no external dep, reproducible.
+        struct XorShift64(u64);
+        impl XorShift64 {
+            fn next(&mut self) -> u64 {
+                let mut x = self.0;
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                self.0 = x;
+                x
+            }
+            /// A uniformly-ish random `k`-subset of `0..n` (Fisher–Yates prefix).
+            fn subset(&mut self, n: usize, k: usize) -> Vec<usize> {
+                let mut idx: Vec<usize> = (0..n).collect();
+                for i in 0..k {
+                    let j = i + (self.next() as usize) % (n - i);
+                    idx.swap(i, j);
+                }
+                idx.truncate(k);
+                idx
+            }
+        }
+
+        /// Deterministic non-trivial payload of `len` bytes.
+        fn payload(len: usize, seed: u8) -> Vec<u8> {
+            (0..len)
+                .map(|i| {
+                    (i as u8)
+                        .wrapping_mul(31)
+                        .wrapping_add(seed)
+                        .wrapping_add((i >> 8) as u8)
+                })
+                .collect()
+        }
+
+        /// POSITIVE pole (`rs_decode_correct`): for several `(n, k)`, EVERY
+        /// distinct `k`-subset of the `n` shards reconstructs the exact
+        /// original bytes — data-only, parity-only, and every mix.
+        #[test]
+        fn every_k_subset_reconstructs_exactly() {
+            // (chunk_size, expansion, data_len) => (k, n):
+            //   (8, 2, 16) => k=2, n=4   (C(4,2)=6 subsets)
+            //   (8, 3, 16) => k=2, n=6   (C(6,2)=15)
+            //   (8, 2, 24) => k=3, n=6   (C(6,3)=20)
+            //   (8, 2, 32) => k=4, n=8   (C(8,4)=70)
+            for (chunk_size, expansion, data_len) in [
+                (8usize, 2usize, 16usize),
+                (8, 3, 16),
+                (8, 2, 24),
+                (8, 2, 32),
+            ] {
+                let data = payload(data_len, 0xA5);
+                let encoder = ErasureEncoder::new(chunk_size, expansion);
+                let chunks = encoder.encode(&data);
+                let k = encoder.n_data_for(data.len());
+                let n = chunks.len();
+                assert_eq!(n, k * expansion);
+
+                for subset_idx in k_subsets(n, k) {
+                    let subset: Vec<ErasureChunk> =
+                        subset_idx.iter().map(|&i| chunks[i].clone()).collect();
+                    let recovered = encoder
+                        .reconstruct(&subset, data.len())
+                        .unwrap_or_else(|e| {
+                            panic!("(k={k}, n={n}) subset {subset_idx:?} failed: {e:?}")
+                        });
+                    assert_eq!(
+                        recovered, data,
+                        "(k={k}, n={n}) subset {subset_idx:?} reconstructed WRONG bytes"
+                    );
+                }
+            }
+        }
+
+        /// POSITIVE pole, property-style at larger `n`: k=10, n=30 — 300
+        /// random distinct `k`-drop patterns (C(30,10) is too large to
+        /// enumerate) all reconstruct the exact original.
+        #[test]
+        fn random_k_drops_reconstruct_larger_n() {
+            let data = payload(10 * 16, 0x3C); // 10 data shards of 16 bytes
+            let encoder = ErasureEncoder::new(16, 3); // k=10, n=30
+            let chunks = encoder.encode(&data);
+            let k = encoder.n_data_for(data.len());
+            let n = chunks.len();
+            assert_eq!((k, n), (10, 30));
+
+            let mut rng = XorShift64(0xD1E6_6D1E_6D1E_6001);
+            for trial in 0..300 {
+                let keep = rng.subset(n, k);
+                let subset: Vec<ErasureChunk> = keep.iter().map(|&i| chunks[i].clone()).collect();
+                let recovered = encoder
+                    .reconstruct(&subset, data.len())
+                    .unwrap_or_else(|e| panic!("trial {trial}: kept {keep:?}, failed: {e:?}"));
+                assert_eq!(recovered, data, "trial {trial}: kept {keep:?}, WRONG bytes");
+            }
+        }
+
+        /// NEGATIVE pole (`no_wrong_reconstruction`): with FEWER than `k`
+        /// distinct shards reconstruction must FAIL — exhaustively, EVERY
+        /// `(k-1)`-subset (all data/parity mixes) errors with
+        /// `InsufficientChunks`; none silently returns bytes.
+        #[test]
+        fn every_below_k_subset_fails() {
+            for (chunk_size, expansion, data_len) in [
+                (8usize, 2usize, 16usize),
+                (8, 3, 16),
+                (8, 2, 24),
+                (8, 2, 32),
+            ] {
+                let data = payload(data_len, 0x5A);
+                let encoder = ErasureEncoder::new(chunk_size, expansion);
+                let chunks = encoder.encode(&data);
+                let k = encoder.n_data_for(data.len());
+                let n = chunks.len();
+
+                // Every subset of every size strictly below k must fail.
+                for size in 0..k {
+                    for subset_idx in k_subsets(n, size) {
+                        let subset: Vec<ErasureChunk> =
+                            subset_idx.iter().map(|&i| chunks[i].clone()).collect();
+                        match encoder.reconstruct(&subset, data.len()) {
+                            Err(ReconstructError::InsufficientChunks { have, need }) => {
+                                assert_eq!((have, need), (size, k));
+                            }
+                            Err(other) => panic!(
+                                "(k={k}, n={n}) subset {subset_idx:?}: wrong error {other:?}"
+                            ),
+                            Ok(bytes) => panic!(
+                                "(k={k}, n={n}) subset {subset_idx:?}: reconstructed {} bytes \
+                                 from FEWER than k shards — the negative pole is broken",
+                                bytes.len()
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+
+        /// NEGATIVE pole, sharpened: `k` COPIES of one shard are still only
+        /// ONE distinct evaluation point — the Lean theorem needs `k` DISTINCT
+        /// points (`received.card ≥ k`), so duplicates must not count toward
+        /// the threshold.
+        #[test]
+        fn duplicated_shards_do_not_count_toward_k() {
+            let data = payload(24, 0x77);
+            let encoder = ErasureEncoder::new(8, 2); // k=3, n=6
+            let chunks = encoder.encode(&data);
+            let k = encoder.n_data_for(data.len());
+            assert_eq!(k, 3);
+
+            let dupes: Vec<ErasureChunk> = std::iter::repeat(chunks[0].clone()).take(k).collect();
+            let err = encoder.reconstruct(&dupes, data.len()).unwrap_err();
+            assert!(
+                matches!(err, ReconstructError::InsufficientChunks { have: 1, need }
+                    if need == k),
+                "k duplicates of one shard must count as 1 distinct shard, got {err:?}"
+            );
+        }
+    }
 }

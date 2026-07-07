@@ -26,6 +26,13 @@
 //! The domain-separation string (`dregg-bucket-content-root-v1`) is native to
 //! this substrate; there is no legacy corpus to stay byte-compatible with.
 //!
+//! Checked-impl of the proven spec
+//! `Dregg2/Storage/BucketCommitment.lean::{contentRoot_injective, read_sound}`:
+//! the tests below assert exactly what the Lean theorems prove — the content
+//! root BINDS the committed object set (`contentRoot_injective`) and a
+//! `verify_opening` accepts ONLY the genuinely committed object at its
+//! position, refusing any substitution/forgery (`read_sound`).
+//!
 //! Wired: `pub mod bucket_commitment;` in `storage/src/lib.rs`.
 
 use std::collections::BTreeMap;
@@ -295,6 +302,13 @@ mod tests {
         c
     }
 
+    /// Checked-impl of the proven spec
+    /// `Dregg2/Storage/BucketCommitment.lean::contentRoot_injective`: the
+    /// content root BINDS the committed object set — two DIFFERENT object sets
+    /// produce DIFFERENT roots. Every mutation class (changed byte, moved key,
+    /// changed content-type, ADDED object, REMOVED object, swapped bodies)
+    /// must move the root; a commitment that failed to bind any of these would
+    /// make this test RED.
     #[test]
     fn content_root_is_deterministic_and_sensitive() {
         let a = bucket_with(&[("a.txt", "hi"), ("b.json", "{}")]);
@@ -311,6 +325,54 @@ mod tests {
         let mut t = bucket_with(&[("b.json", "{}")]);
         t.insert("a.txt".into(), Object::new("text/plain", b"hi".to_vec()));
         assert_ne!(content_root(&a), content_root(&t));
+        // An ADDED object moves the root (no ghost object hides under a root).
+        let added = bucket_with(&[("a.txt", "hi"), ("b.json", "{}"), ("c.bin", "x")]);
+        assert_ne!(content_root(&a), content_root(&added));
+        // A REMOVED object moves the root.
+        let removed = bucket_with(&[("a.txt", "hi")]);
+        assert_ne!(content_root(&a), content_root(&removed));
+        // The empty bucket is separated from every non-empty one above.
+        let empty = BucketContent::new();
+        for other in [&a, &d, &m, &t, &added, &removed] {
+            assert_ne!(content_root(&empty), content_root(other));
+        }
+        // Swapping two objects' bodies (same keys, same multiset of bytes)
+        // moves the root — the leaf binds body to key, not just to the set.
+        let swapped = bucket_with(&[("a.txt", "{}"), ("b.json", "hi")]);
+        assert_ne!(content_root(&a), content_root(&swapped));
+    }
+
+    /// `contentRoot_injective`, property-swept: across a family of pairwise
+    /// DIFFERENT object sets (varying counts, keys, bodies, types), every pair
+    /// of roots is pairwise DISTINCT. Any collision here — any two different
+    /// committed sets under one root — would make this RED.
+    #[test]
+    fn binding_pairwise_distinct_roots_across_different_object_sets() {
+        let buckets: Vec<BucketContent> = vec![
+            BucketContent::new(),
+            bucket_with(&[("k", "")]),
+            bucket_with(&[("k", "v")]),
+            bucket_with(&[("k", "w")]),
+            bucket_with(&[("k2", "v")]),
+            bucket_with(&[("k", "v"), ("k2", "v")]),
+            bucket_with(&[("k", "v"), ("k2", "w")]),
+            bucket_with(&[("k", "v"), ("k2", "v"), ("k3", "v")]),
+            {
+                let mut c = bucket_with(&[("k2", "v")]);
+                c.insert("k".into(), Object::new("text/plain", b"v".to_vec()));
+                c
+            },
+        ];
+        let roots: Vec<String> = buckets.iter().map(content_root).collect();
+        for i in 0..roots.len() {
+            for j in (i + 1)..roots.len() {
+                assert_ne!(
+                    roots[i], roots[j],
+                    "different object sets #{i} and #{j} must have different roots \
+                     (contentRoot_injective)"
+                );
+            }
+        }
     }
 
     #[test]
@@ -323,16 +385,85 @@ mod tests {
         assert_eq!(leaf.len(), 64, "the object leaf is 8-felt wide (64 hex)");
     }
 
+    /// Checked-impl of the proven spec
+    /// `Dregg2/Storage/BucketCommitment.lean::read_sound`, POSITIVE pole: a
+    /// genuine opening of a committed object at its position verifies, for
+    /// EVERY key of the bucket, and the served object is byte-identical to the
+    /// committed one.
     #[test]
     fn trustless_read_round_trips() {
         let c = bucket_with(&[("a.txt", "hello"), ("b.json", "{\"k\":1}")]);
         let op = open(&c, "a.txt").expect("present");
         assert!(verify_opening(&op));
         assert_eq!(op.object.body, b"hello");
+        // Every committed key opens and verifies (read_sound, genuine side).
+        for (k, committed) in &c {
+            let op = open(&c, k).expect("committed key opens");
+            assert!(verify_opening(&op), "genuine opening of {k} verifies");
+            assert_eq!(
+                &op.object, committed,
+                "the served object IS the committed one"
+            );
+        }
         // Opening a missing key yields nothing.
         assert!(open(&c, "missing").is_none());
     }
 
+    /// `read_sound`, NEGATIVE pole (anti-forgery, the mandatory tooth): a
+    /// SUBSTITUTED object served with a fully self-consistent forged opening —
+    /// the forger recomputes the leaf for the forged bytes AND rewrites the
+    /// leaf list to match, keeping only the genuine committed root — is
+    /// REFUSED. A `verify_opening` that accepted this forgery would make this
+    /// test RED: the forged leaf list no longer re-folds to the committed
+    /// root, exactly the Lean refusal (a substituted object has a different
+    /// leaf under CR).
+    #[test]
+    fn consistent_forged_substitution_is_refused_against_genuine_root() {
+        let c = bucket_with(&[("a.txt", "hello"), ("b.json", "{}")]);
+        let genuine_root = content_root(&c);
+        let forged_object = Object::new("application/octet-stream", b"HELLO-forged".to_vec());
+        assert_ne!(&forged_object, c.get("a.txt").unwrap());
+
+        // The forger builds the most internally-consistent opening possible:
+        // recompute the forged leaf, rewrite the listed leaf to match, and
+        // claim the GENUINE committed root.
+        let mut forged = open(&c, "a.txt").unwrap();
+        forged.object = forged_object;
+        let forged_leaf = object_leaf("a.txt", &forged.object);
+        for slot in forged.leaves.iter_mut().filter(|(k, _)| k == "a.txt") {
+            slot.1 = forged_leaf.clone();
+        }
+        assert_eq!(forged.bucket_root, genuine_root);
+        assert!(
+            !verify_opening(&forged),
+            "a substituted object under the genuine root must be refused (read_sound)"
+        );
+    }
+
+    /// `read_sound`, NEGATIVE pole: WRONG POSITION. Serving one committed
+    /// object under a DIFFERENT committed key (both genuinely in the bucket,
+    /// genuine root, genuine leaf list) is refused — the recomputed leaf
+    /// `H(other_key, object)` does not match the leaf committed at that
+    /// position. The positional binding of the Lean `Opens` hypothesis.
+    #[test]
+    fn committed_object_served_at_wrong_position_is_refused() {
+        let c = bucket_with(&[("a.txt", "hello"), ("b.json", "{}")]);
+        // A genuine opening for "b.json", but the server swaps in the (also
+        // genuinely committed) object of "a.txt".
+        let mut op = open(&c, "b.json").unwrap();
+        op.object = c.get("a.txt").unwrap().clone();
+        assert!(
+            !verify_opening(&op),
+            "a committed object at the WRONG position must be refused (read_sound)"
+        );
+        // And claiming the wrong key on an otherwise-genuine opening fails too.
+        let mut op = open(&c, "a.txt").unwrap();
+        op.key = "b.json".to_string();
+        assert!(!verify_opening(&op));
+    }
+
+    /// `read_sound`, NEGATIVE pole: a tampered body (single flipped byte,
+    /// original leaf list) is refused — the recomputed leaf moves.
     #[test]
     fn tampered_bytes_fail_verification() {
         let c = bucket_with(&[("a.txt", "hello"), ("b.json", "{}")]);
