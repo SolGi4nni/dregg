@@ -37,8 +37,20 @@ whole-tree-build-gated, with a before/after perf benchmark wired into the first 
   (no-double-spend, structural/carrier-free, cheat_double_spend necessity witness) —
   hand-verified + committed 2026-07-07 (workflows were killed by a process restart before
   recording verdicts; I'm the integration gate, verified on my own tree).
-- SAFE / additive (do when worth it): push the honest Rung-2 PARTIALs → full — ivc,
-  predicates-relational-compound, revocation are crypto-dischargeable additive proof.
+- ~~SAFE / additive: push the 3 Rung-2 PARTIALs → full (crypto-dischargeable)~~ **REFUTED
+  2026-07-07 (workflow wf_40ec9ac2-272).** All 3 are EMIT-FIXES, not crypto-dischargeable:
+  · **predicates-relational-compound → a FORMALLY PROVEN soundness gap** (committed
+    `PredicatesRelationalCompoundRung2.lean` §5b, `fg_accepts_unequal_committed`): the `diff`
+    column is never tied to `value_a − value_b`, so a Satisfied2 EQ proof accepts UNEQUAL
+    committed values — in BOTH the emit AND the deployed Rust hand-AIR. The campaign's 2nd real
+    deployed-circuit bug (cf. membership ordering gap `0f8d478b2`). CLOSE = in-AIR gate
+    `diff = value_a − value_b` (emit-fix, byte-golden, HELD).
+  · **ivc**: residuals are the two inter-row transition gates (`IvcContinuity`/`IvcStepIncrement`)
+    the deployed StateTransitionAir OMITS for padding-safety — emit-fix, not a proof.
+  · **revocation**: `DiffLowerRangeSound` (the strict-lower ordering bound) is re-assumed, not
+    forced by the descriptor — emit-fix (a range gate).
+  So the remaining Rung-2 partials are all downstream of the HELD emit-fixes (byte-golden), which
+  ride Phase 2b. Nothing further is both safe-additive AND authorized until the cutover opens.
 - HELD (ember-gated, confirm first): Phase 2b cutover (16 prod files still call hand
   `stark::prove`; rewire → `prove_vm_descriptor2` + delete hand AIRs + `git rm stark.rs`) and
   the membership emit-fix (byte-golden). Wait for the free tree + ember confirm; go INCREMENTAL,
