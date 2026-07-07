@@ -39,12 +39,15 @@ def serverName : List UInt8 := [83, 101, 114, 118, 101, 114]
 def serverVal : List UInt8 := [114, 101, 97, 99, 116, 111, 114]
 
 /-- **The real header rewrite program.** An ordered `Header.Op` list interpreted
-by `Header.run`: first `.hop Header.hopStd` strips every RFC 7230 §6.1
-hop-by-hop header, then `.set serverName serverVal` installs the `Server`
-header (replacing any prior one). This is the genuine `Header` decision/transform
-function — a stub would fail the byte-effect theorems below. -/
+by `Header.run`: first `.hopDyn` strips the RFC 9110 §7.6.1 hop-by-hop set — the
+fixed `Header.hopStd` connection-management table *and* every field the response's
+own `Connection` header nominates (parsed at apply time from the actual headers,
+so a `Connection`-nominated field is removed, not forwarded) — then
+`.set serverName serverVal` installs the `Server` header (replacing any prior
+one). This is the genuine `Header` decision/transform function — a stub would
+fail the byte-effect theorems below. -/
 def rewriteProg : List _root_.Header.Op :=
-  [ .hop _root_.Header.hopStd, .set serverName serverVal ]
+  [ .hopDyn, .set serverName serverVal ]
 
 /-! ## Bridging `Response` headers ↔ `Header.Headers`
 

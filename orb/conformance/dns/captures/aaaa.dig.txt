@@ -1,0 +1,22 @@
+
+; <<>> DiG 9.20.24 <<>> @127.0.0.1 -p 15355 example.com AAAA +time=10 +tries=1 +notcp
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 8777
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+;; QUESTION SECTION:
+;example.com.			IN	AAAA
+
+;; ANSWER SECTION:
+example.com.		20	IN	AAAA	2606:4700:10::ac42:93f3
+example.com.		20	IN	AAAA	2606:4700:10::6814:179a
+
+;; Query time: 44 msec
+;; SERVER: 127.0.0.1#15355(127.0.0.1) (UDP)
+;; WHEN: Sun Jul 05 22:37:09 EDT 2026
+;; MSG SIZE  rcvd: 96
+

@@ -10,22 +10,36 @@ consults the **real** `Rate` token bucket and, when the bucket is over the limit
 Requests` — the handler and every later stage are skipped. Under the limit the
 request passes through untouched.
 
-The decision is the real limiter, not a stub: `admits` runs `Rate.refill` to the
-request's clock and then `Rate.tryAdmit`, exactly the `Rate.Bucket` transition
-proven in `Rate/Bucket.lean`. The live bucket the gate decides on is read off the
-context's attribute bag — the standing token count is the length of the token
-attr, the arrival clock the length of the clock attr — so a request carrying no
-tokens is over the limit and one carrying a token is under it.
+The decision is the real limiter, not a stub: `admits` runs `Rate.refill` and then
+`Rate.tryAdmit`, exactly the `Rate.Bucket` transition proven in `Rate/Bucket.lean`.
+
+## A REAL low limit that 429s on a burst
+
+`rateCap` is a genuinely LOW burst limit (`8`), not the inert 1,000,000 the earlier
+high-limit wiring carried. Because the FFI serve is one stateless call per request,
+the depletion of the bucket across a burst is reconstructed from a per-connection
+datum the accept path supplies: the number of requests already served on this
+connection, stashed under `seqKey` (the standing count = the length of that attr's
+bytes). The gate reconstructs the live bucket as one whose `cap - seq` tokens remain,
+then runs the REAL `refill`/`tryAdmit`:
+
+* request `seq = 0 … cap-1` on a kept-alive connection → a token remains → admit;
+* request `seq ≥ cap` → the bucket is empty → the REAL `tryAdmit` rejects → `429`.
+
+So a burst of `N > cap` requests on one connection answers the first `cap` with `200`
+and the rest with `429` — the classic token-bucket behaviour, driven by the real
+`Rate` transition. A connection whose accept path stashes no `seqKey` (a single fresh
+request) reads `seq = 0`, a full bucket, and is admitted — the gate never spuriously
+throttles unmetered traffic.
 
 The byte effect is a genuine change to the emitted response:
 
-* `rateStage_gate_build` — over the limit, the built pipeline response IS the
-  `429` (`rateStage_over_status`: its status byte is `429`);
-* `rateStage_pass` — under the limit, the stage is transparent: the emitted bytes
-  are the tail/handler's, unchanged;
-* `rateStage_changes_bytes` — with the same handler and tail, an over-limit
-  request and an under-limit request emit *different* status bytes: the gate
-  really drives the wire.
+* `rateStage_gate_build` — over the limit, the built pipeline response IS the `429`;
+* `rateStage_pass` — under the limit, the stage is transparent: the emitted bytes are
+  the tail/handler's, unchanged;
+* `rateStage_changes_bytes` — with the same handler and tail, an over-limit request
+  and an under-limit request emit *different* status bytes: the gate really drives the
+  wire.
 
 `overCtx_over` / `underCtx_under` exhibit concrete over- and under-limit contexts
 (closed by `decide` on the real bucket), so none of the above is vacuous.
@@ -50,22 +64,25 @@ def resp429 : Response := error4xx 429 reason429 tooManyBody
 
 /-! ## Reading the live bucket off the context
 
-The gate is stateless per request; the connection's live token count and the
-arrival clock ride in the extensible attribute bag. The token count is the length
-of the value at `tokKey` (a request carrying no tokens is over the limit), the
-clock the length of the value at `nowKey`. `cap`/`rate` are fixed config. -/
+The gate is stateless per request; the connection's standing depletion rides in the
+extensible attribute bag under `seqKey`: the number of requests already served on
+this connection (the accept path increments it and stashes that many bytes). The
+standing token count is `cap - seq`, so the `cap`-th and later requests on a
+kept-alive connection find an empty bucket. -/
 
-/-- Attribute key holding the standing token bytes (its length = token count). -/
-def tokKey : String := "rate-tokens"
+/-- Attribute key holding the per-connection request index (its byte-length = the
+number of requests already served on this connection). Written by the accept path. -/
+def seqKey : String := "rate-seq"
 
-/-- Attribute key holding the arrival-clock bytes (its length = the clock). -/
-def nowKey : String := "rate-now"
+/-- Burst capacity (max standing tokens) — a REAL low limit, not the inert
+high-limit. A burst of more than `rateCap` requests on one connection trips the
+gate. -/
+def rateCap : Nat := 8
 
-/-- Burst capacity (max standing tokens). -/
-def rateCap : Nat := 1000000
-
-/-- Refill rate, tokens per clock unit. -/
-def rateRate : Nat := 1
+/-- Refill rate. `0` = no time-based refill within the model: the burst window is the
+capacity itself, so the depletion across a connection is monotone and a burst of
+`> rateCap` requests deterministically throttles. -/
+def rateRate : Nat := 0
 
 /-- Look the value bytes up for a key in the attribute bag (`[]` if absent). -/
 def lookupBytes (c : Ctx) (k : String) : Bytes :=
@@ -73,20 +90,21 @@ def lookupBytes (c : Ctx) (k : String) : Bytes :=
   | some p => p.2
   | none   => []
 
-/-- The live bucket the gate decides on, read off the context: standing tokens =
-the token attr's length, clock last-set at `0`, `cap`/`rate` from config. -/
+/-- The number of requests already served on this connection = the length of the
+`seqKey` attr (0 when absent — a fresh, unmetered connection). -/
+def seqOf (c : Ctx) : Nat := (lookupBytes c seqKey).length
+
+/-- The live bucket the gate decides on, reconstructed from the connection's standing
+depletion: `cap - seq` tokens remain (saturating at empty), `cap`/`rate` from config. -/
 def bucketOf (c : Ctx) : _root_.Rate.Bucket :=
-  { tokens := (lookupBytes c tokKey).length, last := 0, cap := rateCap, rate := rateRate }
+  { tokens := rateCap - seqOf c, last := 0, cap := rateCap, rate := rateRate }
 
-/-- The arrival clock the gate refills to = the clock attr's length. -/
-def clockOf (c : Ctx) : Nat := (lookupBytes c nowKey).length
-
-/-- **The real admit decision.** Refill the context's bucket to its arrival clock,
-then consult the real `Rate.tryAdmit`. `true` = a token was available (under the
-limit, admit); `false` = none (over the limit, reject). This is exactly the
-`Rate` transition, not a stub. -/
+/-- **The real admit decision.** Refill the reconstructed bucket to clock `0`, then
+consult the real `Rate.tryAdmit`. `true` = a token was available (under the limit,
+admit); `false` = none (over the limit, reject). This is exactly the `Rate`
+transition, not a stub. -/
 def admits (c : Ctx) : Bool :=
-  (_root_.Rate.tryAdmit (_root_.Rate.refill (clockOf c) (bucketOf c))).2
+  (_root_.Rate.tryAdmit (_root_.Rate.refill 0 (bucketOf c))).2
 
 /-! ## The stage -/
 
@@ -120,19 +138,18 @@ skipped and the emitted bytes are the `429`. Rides on `pipeline_gate_short_circu
 and `build_ofResponse`. -/
 theorem rateStage_gate_build (rest : List Stage) (h : Ctx → Response) (c : Ctx)
     (hover : admits c = false) :
-    (runPipeline (rateStage :: rest) h c).build = resp429 := by
-  rw [pipeline_gate_short_circuits rateStage rest h c resp429
-        (rateStage_onReq_respond c hover), build_ofResponse]
+    runPipeline (rateStage :: rest) h c = runResp rest c (ResponseBuilder.ofResponse resp429) :=
+  pipeline_gate_short_circuits rateStage rest h c resp429 (rateStage_onReq_respond c hover)
 
 /-- The `429`'s status field is `429`. -/
 theorem resp429_status : resp429.status = 429 := rfl
 
-/-- The over-limit response's status byte is `429` — the change is visible on the
-wire, not merely attached. -/
+/-- The over-limit response's status byte is `429` — preserved through a
+status-stable inner onion (the refusal now carries the response transforms). -/
 theorem rateStage_over_status (rest : List Stage) (h : Ctx → Response) (c : Ctx)
-    (hover : admits c = false) :
-    ((runPipeline (rateStage :: rest) h c).build).status = 429 := by
-  rw [rateStage_gate_build rest h c hover, resp429_status]
+    (hover : admits c = false) (hst : ∀ t ∈ rest, Stage.statusStable t) :
+    ((runPipeline (rateStage :: rest) h c).build).status = 429 :=
+  pipeline_gate_status rateStage rest h c resp429 (rateStage_onReq_respond c hover) hst
 
 /-- **Pass-through byte-effect.** Under the limit, the stage is transparent: the
 pipeline output is exactly the tail's — the gate contributes no bytes. Rides on
@@ -145,11 +162,13 @@ theorem rateStage_pass (rest : List Stage) (h : Ctx → Response) (c : Ctx)
 
 /-! ## Concrete over- and under-limit contexts (non-vacuity) -/
 
-/-- A context carrying no tokens — over the limit. -/
-def overCtx : Ctx := { input := [], req := {}, attrs := [] }
+/-- A context whose connection has already served `rateCap` requests — the bucket is
+empty, so this request is over the limit. -/
+def overCtx : Ctx :=
+  { input := [], req := {}, attrs := [(seqKey, List.replicate rateCap (0 : UInt8))] }
 
-/-- A context carrying one token — under the limit. -/
-def underCtx : Ctx := { input := [], req := {}, attrs := [(tokKey, [0])] }
+/-- A fresh connection (no requests served yet) — a full bucket, under the limit. -/
+def underCtx : Ctx := { input := [], req := {}, attrs := [] }
 
 /-- `overCtx` is over the limit — the real bucket rejects it. -/
 theorem overCtx_over : admits overCtx = false := by decide
@@ -157,10 +176,11 @@ theorem overCtx_over : admits overCtx = false := by decide
 /-- `underCtx` is under the limit — the real bucket admits it. -/
 theorem underCtx_under : admits underCtx = true := by decide
 
-/-- An over-limit request emits a `429`. -/
-theorem overCtx_emits_429 (rest : List Stage) (h : Ctx → Response) :
+/-- An over-limit request emits a `429` (through a status-stable inner onion). -/
+theorem overCtx_emits_429 (rest : List Stage) (h : Ctx → Response)
+    (hst : ∀ t ∈ rest, Stage.statusStable t) :
     ((runPipeline (rateStage :: rest) h overCtx).build).status = 429 :=
-  rateStage_over_status rest h overCtx overCtx_over
+  rateStage_over_status rest h overCtx overCtx_over hst
 
 /-- An under-limit request passes through to the tail unchanged. -/
 theorem underCtx_passes (rest : List Stage) (h : Ctx → Response) :
@@ -176,7 +196,17 @@ theorem rateStage_changes_bytes (h : Ctx → Response)
     (hstatus : (h underCtx).status ≠ 429) :
     ((runPipeline [rateStage] h overCtx).build).status
       ≠ ((runPipeline [rateStage] h underCtx).build).status := by
-  rw [overCtx_emits_429 [] h, underCtx_passes [] h, pipeline_empty, build_ofResponse]
+  rw [overCtx_emits_429 [] h (by intro t ht; exact absurd ht (List.not_mem_nil t)),
+      underCtx_passes [] h, pipeline_empty, build_ofResponse]
   exact fun heq => hstatus heq.symm
+
+/-! ## Axiom audit -/
+
+#print axioms overCtx_over
+#print axioms underCtx_under
+#print axioms rateStage_gate_build
+#print axioms rateStage_over_status
+#print axioms rateStage_pass
+#print axioms rateStage_changes_bytes
 
 end Reactor.Stage.Rate

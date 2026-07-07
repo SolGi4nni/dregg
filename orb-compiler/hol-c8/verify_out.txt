@@ -1,0 +1,67 @@
+===== collectSp_def =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀input. collectSp input = collectFrom 0 input
+
+===== collectFrom_def =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ (∀off. collectFrom off [] = []) ∧
+  ∀off b bs.
+    collectFrom off (b::bs) =
+    if b = 32 then off::collectFrom (off + 1) bs
+    else collectFrom (off + 1) bs
+
+===== collect_step_hit =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ i < LENGTH input ∧ input❲i❳ = 32 ⇒
+  collectFrom 0 (TAKE (i + 1) input) = collectFrom 0 (TAKE i input) ++ [i]
+
+===== wordsEncoded_snoc =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ wordsEncoded xs outB s ∧ 8 * LENGTH xs < dimword (:64) ∧
+  s2.memory = s.memory⦇outB + n2w (8 * LENGTH xs) ↦ Word (n2w v)⦈ ⇒
+  wordsEncoded (xs ++ [v]) outB s2
+
+===== memRel_store_disjoint (reused C7) =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ memRel input bs s ∧ (∀j. j < LENGTH input ⇒ a ≠ byte_align (bs + n2w j)) ⇒
+  memRel input bs (s with memory := s.memory⦇a ↦ Word v⦈)
+
+===== collectBody_step =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ colInv input bs outB i s ∧ i < LENGTH input ⇒
+  ∃s2.
+    evaluate (collectBody,s) = (NONE,s2) ∧ s2.clock = s.clock ∧
+    colInv input bs outB (i + 1) s2
+
+===== collectLoop_run =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀m input bs outB i s.
+    colInv input bs outB i s ∧ LENGTH input − i ≤ m ∧
+    LENGTH input − i ≤ s.clock ⇒
+    ∃s'.
+      evaluate (collectLoop,s) = (NONE,s') ∧
+      wordsEncoded (collectFrom 0 input) outB s' ∧
+      FLOOKUP s'.locals «bp» =
+      SOME (ValWord (outB + n2w (8 * LENGTH (collectFrom 0 input))))
+
+===== collectLoop_refines_collectSp =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ FLOOKUP s.locals «i» = SOME (ValWord 0w) ∧
+  FLOOKUP s.locals «len» = SOME (ValWord (n2w (LENGTH input))) ∧
+  FLOOKUP s.locals «base» = SOME (ValWord bs) ∧
+  FLOOKUP s.locals «bp» = SOME (ValWord outB) ∧
+  (∃bb. FLOOKUP s.locals «b» = SOME (ValWord bb)) ∧ memRel input bs s ∧
+  LENGTH input < 2 ** 63 ∧ 8 * LENGTH input < dimword (:64) ∧
+  EVERY (λx. x < 256) input ∧
+  (∀j. j < LENGTH input ⇒ outB + n2w (8 * j) ∈ s.memaddrs) ∧
+  (∀m j.
+     m < LENGTH input ∧ j < LENGTH input ⇒
+     outB + n2w (8 * m) ≠ byte_align (bs + n2w j)) ∧ LENGTH input ≤ s.clock ⇒
+  ∃s'.
+    evaluate (collectLoop,s) = (NONE,s') ∧
+    wordsEncoded (collectSp input) outB s' ∧
+    FLOOKUP s'.locals «bp» =
+    SOME (ValWord (outB + n2w (8 * LENGTH (collectSp input))))
+
+AXIOMS arenaCollectLinkA = 0
+> 

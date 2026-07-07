@@ -1,6 +1,8 @@
 import Reactor.Contract
 import Reactor.H2
 import Reactor.Deploy
+import Reactor.H2Response
+import H2.Conn
 
 /-!
 # Reactor.H2Ingress — making the real HTTP/2 engine EXECUTE at runtime (h2c)
@@ -160,6 +162,193 @@ theorem h2c_runtime_dispatch (bid : Nat) (bs payload : Bytes) (sid n : Nat)
       , RingSubmission.recycleBuffer bid ]
   rw [hseam]
   rfl
+
+/-! ## The h2c serve — a complete HTTP/2 response over a real socket
+
+`h2c_runtime_dispatch` proves the real H2 engine DECODES the request and
+dispatches it. But a real HTTP/2 client (`curl --http2-prior-knowledge`) needs
+more than a dispatched request: RFC 9113 §3.4 requires the server to send a
+**connection preface** — "a potentially empty SETTINGS frame" — as the first
+frame, and §6.5 requires each peer to ACK the other's SETTINGS. Until those
+frames arrive the client blocks and the connection times out.
+
+The h2c fork used to hand the h2c bytes to the HTTP/1.1 serializer, so an h2c
+client that spoke HTTP/2 on the way in got `HTTP/1.1 … CRLF …` on the way out —
+no SETTINGS frame, so a real H2 client never completes. This section closes that
+gap: `serveH2c` drives the real H2 engine on the post-preface frames, routes the
+decoded request through the deployed guarded application layer, and emits a
+complete, spec-conformant HTTP/2 response byte stream:
+
+```text
+  server SETTINGS (empty)          -- RFC 9113 §3.4 server connection preface
+  SETTINGS with ACK flag           -- RFC 9113 §6.5 acknowledge the peer's SETTINGS
+  HEADERS  (HPACK :status, END_HEADERS)   -- RFC 9113 §6.2, the response head
+  DATA     (body, END_STREAM)             -- RFC 9113 §6.1, the response body
+```
+
+The HEADERS+DATA frames are the REAL `Reactor.H2Response.encodeResponse`, which
+`h2_response_roundtrip` proves decode back through the real H2 frame + HPACK
+decoders to exactly the status and body they encode. -/
+
+open Proto (Bytes)
+
+/-- The octet length of the HTTP/2 connection preface
+`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` (RFC 9113 §3.4). The host strips nothing; the
+h2c fork hands `serveH2c` the whole opening burst (preface + first frames) and
+this is where the preface is consumed before the frames are decoded. -/
+def h2cPrefaceLen : Nat := 24
+
+/-- The **server connection preface**: an empty SETTINGS frame (RFC 9113 §3.4,
+§6.5). `00 00 00 | 04 | 00 | 00 00 00 00` — length 0, type SETTINGS (0x4),
+flags 0, stream 0. This MUST be the first frame the server sends; a real H2
+client blocks until it arrives. -/
+def serverSettings : Bytes :=
+  [0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+/-- A **SETTINGS ACK** (RFC 9113 §6.5): the ACK flag (0x1) set, empty payload,
+stream 0 — acknowledges the client's SETTINGS frame. -/
+def settingsAck : Bytes :=
+  [0x00, 0x00, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00]
+
+/-- The stream the first h2c request rides (RFC 9113 §5.1.1: client-initiated
+streams are odd; prior-knowledge clients open on stream 1). The response frames
+are emitted on the same stream. -/
+def h2cStream : Nat := 1
+
+/-- Decode the request the client sent, by driving the REAL H2 engine over the
+post-preface frames: `Reactor.step deployConfig` from the h2c connection
+`mkH2c`, then pull the dispatched request out of the reactor's submissions. The
+client's SETTINGS / WINDOW_UPDATE frames produce no dispatch (they are control
+frames); the HEADERS frame dispatches the HPACK-decoded request. `none` only if
+no HEADERS frame completed in the burst. -/
+def h2cRequestOf (post : Bytes) : Option Proto.Request :=
+  dispatchedReq
+    (Reactor.step Reactor.Deploy.deployConfig
+      (Proto.State.active mkH2c)
+      (RingEvent.recvInto 0 post)).2
+
+/-- The deployed guarded response for a decoded request — the SAME gate order as
+the shipped HTTP/1.1 guarded serve (`Reactor.Deploy.serveGuarded`): a
+path-traversal target is refused `404`, an undeclared/denied target is refused
+`403`, and everything else is answered by the REAL application router
+(`Reactor.App.handle` over `demoApp`: `/health → 200 "ok"`, `/static → 200`,
+default `404`). So an h2c request meets the identical routing + policy the H1
+path enforces — the H2 path is not a bypass. -/
+def guardedResponse (req : Proto.Request) : Response :=
+  if Reactor.Deploy.targetEscapes req then
+    Reactor.Deploy.traversalBlocked404
+  else
+    match Reactor.Deploy.deployDecisionOf req with
+    | none   => Reactor.Deploy.forbidden403
+    | some _ => Reactor.App.handle Reactor.App.demoApp req
+
+/-- **The deployed application behind the H2 connection engine.** Build the
+`Proto.Request` from the engine-validated request head and route it through the
+**full deployed middleware fold** (`Reactor.Deploy.deployRespFull2Of` — the same
+thirteen-stage `deployStagesFull2` pipeline the HTTP/1.1 dataplane runs: the
+jwt/ipfilter/rate/cache/redirect gates, the traversal/policy gates, and the
+cors/gzip/htmlrewrite/security-headers/header transforms), then hand back the
+HPACK-encoded response head (`Reactor.H2Response.encodeHeaderBlock`, field names
+lowercased per RFC 9113 §8.2.1) plus the body for the engine to frame and pace.
+So an H2 `/health` carries `Strict-Transport-Security` and `Server`; an H2
+request with `Accept-Encoding: gzip` gets `Content-Encoding: gzip`; an H2
+`/admin` without a bearer token gets `401` — the H2 path is not a bypass. -/
+def h2cHandler : H2.Conn.Handler := fun r =>
+  let req : Proto.Request :=
+    { method := r.method
+      target := r.target
+      version := Reactor.H2.h2Version
+      headers := r.headers }
+  let resp := Reactor.Deploy.deployRespFull2Of r.raw req
+  { block := Reactor.H2Response.encodeHeaderBlock resp.status resp.headers
+    body := resp.body }
+
+/-- **`serveH2c` — the one-shot h2c serve.** Drive the full HTTP/2 connection
+engine (`H2.Conn.feed` — preface validation, per-frame RFC 9113 §4–§6 rules,
+CONTINUATION assembly, HPACK with the real decode-side dynamic table, the
+per-stream FSM, SETTINGS/PING acknowledgement, flow-controlled response DATA)
+over the whole opening burst, with the deployed middleware fold as the
+application (`h2cHandler`). The output opens with the server SETTINGS preface
+(§3.4) and acknowledges the client's SETTINGS (§6.5.3), so a real H2 client
+(`curl --http2-prior-knowledge`) completes its GET against these bytes.
+
+One-shot-host contract: this entry serves a single buffered burst and the host
+closes after writing. If the burst carried no request at all (no HEADERS frame)
+and no error was signalled, a `403` response is appended on stream 1 so a
+prior-knowledge client that sent only control frames gets a well-formed HTTP/2
+refusal rather than a hang. An interactive host threads the engine state through
+`drorb_h2c_conn_feed` instead and needs no such fallback. -/
+def serveH2c (input : Bytes) : Bytes :=
+  let (st, out, _close) := H2.Conn.feed Reactor.H2.h2Huffman h2cHandler {} input
+  if st.maxSid = 0 && !st.closed then
+    out ++ Reactor.H2Response.encodeResponse h2cStream Reactor.Deploy.forbidden403
+  else out
+
+/-! ## The interactive host seam (C ABI)
+
+The one-shot `serveH2c` answers a single buffered burst. A conformant HTTP/2
+server must also answer frames that arrive AFTER its SETTINGS reached the peer
+(PING liveness probes, SETTINGS synchronization, WINDOW_UPDATE-paced response
+bodies, RFC 9113 §6.5.3/§6.7/§6.9) — that requires the host to keep the
+connection open and thread the engine state across socket reads. These two
+exports are that seam: the host owns the socket and the loop; every protocol
+decision stays in the verified engine. -/
+
+/-- `drorb_h2c_conn_init` — a fresh engine connection state for one accepted
+socket. The host treats it as an opaque object and threads it through
+`drorb_h2c_conn_feed`. -/
+@[export drorb_h2c_conn_init]
+def drorbH2cConnInit (_ : UInt8) : H2.Conn.ConnState := {}
+
+/-- `drorb_h2c_conn_feed` — feed one socket read to the engine. Returns the
+successor connection state and one ByteArray: octet 0 is the close flag
+(1 = write the remaining octets, then close the socket cleanly), octets 1..
+are the response frames to write. -/
+@[export drorb_h2c_conn_feed]
+def drorbH2cConnFeed (st : H2.Conn.ConnState) (input : ByteArray) :
+    H2.Conn.ConnState × ByteArray :=
+  let (st', out, close) := H2.Conn.feed Reactor.H2.h2Huffman h2cHandler st input.toList
+  (st', ByteArray.mk (((if close then (1 : UInt8) else 0) :: out).toArray))
+
+/-! ### Runtime execution proofs (`#guard`, kernel-evaluated)
+
+These force evaluation of the whole h2c serve on real inputs — the real H2 frame
+decode, the real HPACK arena decode, the real router, and the real response
+encode — and check the bytes a real client would parse. -/
+
+/-! The server preface decodes, through the REAL `H2.decode`, as an empty
+SETTINGS frame on stream 0 (not an ACK) — the RFC 9113 §3.4 connection preface. -/
+#guard H2.decode serverSettings Reactor.H2.h2MaxFrameSize
+  = .complete (.settings 0 false []) 9
+
+/-! The ACK decodes as a SETTINGS frame with the ACK flag set (RFC 9113 §6.5). -/
+#guard H2.decode settingsAck Reactor.H2.h2MaxFrameSize
+  = .complete (.settings 0 true []) 9
+
+/-- An on-wire h2c HEADERS frame for `GET /health`, stream 1,
+`END_STREAM|END_HEADERS`: HPACK `:method: GET` (indexed static 2, `0x82`),
+`:scheme: http` (indexed static 6, `0x86` — the engine enforces the RFC 9113
+§8.3.1 mandatory request pseudo-headers), then `:path` (literal without
+indexing over static name 4, value `/health`). -/
+def healthHeadersFrame : Bytes :=
+  [0x00, 0x00, 0x0b, 0x01, 0x05, 0x00, 0x00, 0x00, 0x01,
+   0x82, 0x86, 0x04, 0x07, 0x2f, 0x68, 0x65, 0x61, 0x6c, 0x74, 0x68]
+
+/-! **The end-to-end h2c serve, kernel-evaluated.** A realistic opening burst —
+the real 24-octet client connection preface (`H2.Conn.clientPreface`; the engine
+VALIDATES it per RFC 9113 §3.4), the client's (empty) SETTINGS frame, then the
+`GET /health` HEADERS frame — driven through `serveH2c` emits: the server
+SETTINGS preface (9 octets), the SETTINGS ACK (9 octets), then a response that
+decodes — through the REAL `Reactor.H2Response.decodeResponse` (real `H2.decode`
++ real `H2.Hpack.decodeHeaderBlock` + real arena `Store.resolve`) — back to
+exactly status `200` and body `ok`: the deployed router's `/health` answer,
+delivered as real HTTP/2 frames. This is the bytes a real H2 client completes
+on. -/
+#guard
+  (Reactor.H2Response.decodeResponse
+    ((serveH2c (H2.Conn.clientPreface
+        ++ serverSettings ++ healthHeadersFrame)).drop 18))
+    = some (Reactor.natToDec 200, (String.toUTF8 "ok").toList)
 
 end H2Ingress
 end Reactor

@@ -1,0 +1,61 @@
+// C7 probe: an ALLOCATING, memory-BUILDING emission (not a scan).
+//
+// Two allocations, both proven in arenaAllocLinkATheory:
+//  (1) writeSpans  — parse the request line, then bump-allocate a 3-record span
+//      array (method/target/version as (offset,length) pairs) and WRITE it into
+//      Pancake memory.  Proven: `spansEncoded (spanListOf (parseReqLine 0 line))`.
+//  (2) fillLoop    — a GENERAL-N bump-fill loop: write [0,1,...,i1-1] into a
+//      second arena, one word per iteration, bump pointer advancing.  Proven:
+//      `wordsEncoded (GENLIST (\i.i) N)` for all N.  Here N = i1 (data-dependent).
+//
+// Compile: cake --pancake < arenawrite.pnk > arenawrite.S
+//          cc -O2 arenawrite.S basis_ffi.c arenawrite_ffi.c -o arenawrite -lm
+// Run:     LINE="GET / HTTP/1.1" ./arenawrite
+
+fun main() {
+  var base = @base;
+  var buf = base + 1024;
+  @load_line(base, 24, buf, 4096);
+  var len = lds 1 (base + 16);
+
+  // --- parse: scan 1 -> i1 (method length) ---
+  var i1 = 0; var found1 = 0; var b = 0;
+  while (i1 < len && found1 == 0) {
+    b = ld8 (buf + i1);
+    if b == 32 { found1 = 1; } else { i1 = i1 + 1; }
+  }
+  // --- parse: scan 2 -> i2 (target length) ---
+  var start2 = i1 + 1; var i2 = 0; var found2 = 0;
+  while (start2 + i2 < len && found2 == 0) {
+    b = ld8 (buf + start2 + i2);
+    if b == 32 { found2 = 1; } else { i2 = i2 + 1; }
+  }
+  var start3 = i1 + i2 + 2;
+  var verlen = 0;
+  if start3 < len { verlen = len - start3; } else { verlen = 0; }
+
+  // --- (1) writeSpans: bump-allocate + WRITE the 3 span records ---
+  var out = base + 64;   // the bump pointer / allocation base
+  var bp = out;
+  st bp, 0;          bp = bp + 8;   // record 0: method.off = 0
+  st bp, i1;         bp = bp + 8;   // record 0: method.len
+  st bp, start2;     bp = bp + 8;   // record 1: target.off = i1 + 1
+  st bp, i2;         bp = bp + 8;   // record 1: target.len
+  st bp, start3;     bp = bp + 8;   // record 2: version.off = i1 + i2 + 2
+  st bp, verlen;     bp = bp + 8;   // record 2: version.len
+  // bp is now out + 48 : the advanced bump pointer (48 = recordSize * count)
+
+  // --- (2) fillLoop: GENERAL-N bump-fill; N = i1 (data-dependent) ---
+  var farena = base + 512;
+  var fbp = farena;
+  var kk = 0;
+  while (kk < i1) {
+    st fbp, kk;         // element kk = kk
+    fbp = fbp + 8;      // bump advance
+    kk = kk + 1;
+  }
+  st base + 24, i1;     // hand the fill count to the reporter
+
+  @report_arena(out, 48, base, 4096);
+  return 0;
+}

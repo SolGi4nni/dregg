@@ -1,0 +1,74 @@
+=== boundScanEmit.signed_lt_n2w64 ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀x y. x < 2 ** 63 ∧ y < 2 ** 63 ⇒ (n2w x < n2w y ⇔ x < y)
+
+=== boundScanEmit.eval_guard ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ stRel a off len r0 s ⇒
+  eval s
+    (Cmp Less (Var Local «alen») (Op Add [Var Local «off»; Var Local «len»])) =
+  SOME (ValWord (if boundScan a off len = NONE then 1w else 0w))
+
+=== boundScanEmit.evaluate_impl ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ stRel a off len r0 s ⇒
+  evaluate (boundsChk,s) =
+  (NONE,
+   if boundScan a off len = NONE then
+     set_var «result» (ValWord (n2w (c0_encode (boundScan a off len)))) s
+   else s)
+
+=== boundScanEmit.impl_encodes_spec ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ stRel a off len r0 s ⇒
+  ∃s'.
+    evaluate (boundsChk,s) = (NONE,s') ∧
+    (boundScan a off len = NONE ⇒
+     FLOOKUP s'.locals «result» =
+     SOME (ValWord (n2w (c0_encode (boundScan a off len))))) ∧
+    (boundScan a off len ≠ NONE ⇒ s' = s)
+
+=== viewFitEmit.eval_guard ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ vfRel b base extent r0 s ⇒
+  eval s
+    (Cmp Less (Var Local «cap»)
+       (Op Add [Var Local «base»; Var Local «extent»])) =
+  SOME (ValWord (if viewFit b base extent = NONE then 1w else 0w))
+
+=== viewFitEmit.evaluate_impl ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ vfRel b base extent r0 s ⇒
+  evaluate (viewChk,s) =
+  (NONE,
+   if viewFit b base extent = NONE then
+     set_var «out» (ValWord (n2w (vf_encode (viewFit b base extent)))) s
+   else s)
+
+=== viewFitEmit.impl_encodes_spec ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ vfRel b base extent r0 s ⇒
+  ∃s'.
+    evaluate (viewChk,s) = (NONE,s') ∧
+    (viewFit b base extent = NONE ⇒
+     FLOOKUP s'.locals «out» =
+     SOME (ValWord (n2w (vf_encode (viewFit b base extent))))) ∧
+    (viewFit b base extent ≠ NONE ⇒ s' = s)
+
+=== toggleEmit.toggleStep_def ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ toggleStep =
+  If (Cmp Equal (Var Local «state») (Const 0w))
+    (Seq (Assign Local «state» (Const 1w)) (Assign Local «out» (Const 0w)))
+    (Seq (Assign Local «state» (Const 0w)) (Assign Local «out» (Const 1w)))
+
+=== toggleEmit.toggle_def ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀q i. toggle q i = (¬q,if q then 1 else 0)
+
+=== toggleEmit.mRel_def ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀q o0 s.
+    mRel q o0 s ⇔
+    FLOOKUP s.locals «state» = SOME (ValWord (encQ q)) ∧
+    FLOOKUP s.locals «out» = SOME (ValWord o0)

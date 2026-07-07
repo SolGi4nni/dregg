@@ -154,3 +154,84 @@ LEAN_EXPORT lean_object *orb_mac_serve_udp(uint16_t port, lean_object *handler,
     close(usock);
     return lean_io_result_mk_ok(lean_box(0));
 }
+
+/*
+ * orb_quic_serve : UInt16 -> (ByteArray -> IO (Array ByteArray)) -> IO Unit
+ *
+ * The STATEFUL QUIC server loop. Unlike orb_mac_serve_udp (a pure per-datagram
+ * ByteArray->ByteArray), this passes each received datagram to a Lean IO handler
+ * that owns the connection state (an IO.Ref closed over on the Lean side) and
+ * returns an ARRAY of datagrams to send back to the sender (the coalesced
+ * Initial+Handshake flight, a 1-RTT response, or nothing). This is what a real
+ * QUIC handshake needs: the client Initial, the client Handshake (Finished), and
+ * the client 1-RTT (H3 request) arrive in separate datagrams and the server must
+ * carry state across them. Still untrusted: this file only moves bytes and calls
+ * the Lean handler; all parsing/crypto/state lives in verified/proven Lean.
+ */
+LEAN_EXPORT lean_object *orb_quic_serve(uint16_t port, lean_object *handler,
+                                        lean_object *world) {
+    (void)world;
+
+    int usock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (usock < 0) return udp_io_err("orb-quic: socket() failed");
+
+    int one = 1;
+    setsockopt(usock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(port);
+
+    if (bind(usock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(usock);
+        return udp_io_err("orb-quic: bind() failed (port in use?)");
+    }
+
+    fprintf(stderr, "orb-quic: QUIC server listening on 127.0.0.1:%u "
+                    "(verified EverCrypt handshake flight)\n", (unsigned)port);
+    fflush(stderr);
+
+    uint8_t buf[ORB_UDP_MAX];
+    for (;;) {
+        struct sockaddr_in src;
+        socklen_t slen = sizeof(src);
+        ssize_t n = recvfrom(usock, buf, sizeof(buf), 0,
+                             (struct sockaddr *)&src, &slen);
+        if (n < 0) { if (errno == EINTR) continue; break; }
+
+        lean_object *dg = lean_alloc_sarray(1, (size_t)n, (size_t)n);
+        if (n) memcpy(lean_sarray_cptr(dg), buf, (size_t)n);
+
+        /* Call the Lean IO handler: ByteArray -> IO (Array ByteArray).
+         * lean_apply_2 consumes handler+dg+world; inc the borrowed handler. */
+        lean_inc(handler);
+        lean_object *res = lean_apply_2(handler, dg, lean_io_mk_world());
+        if (lean_io_result_is_error(res)) {
+            fprintf(stderr, "orb-quic: handler raised IO error\n");
+            fflush(stderr);
+            lean_dec(res);
+            continue;
+        }
+        lean_object *arr = lean_io_result_get_value(res); /* borrowed */
+        size_t cnt = lean_array_size(arr);
+        size_t total = 0;
+        for (size_t i = 0; i < cnt; i++) {
+            lean_object *out = lean_array_get_core(arr, i); /* borrowed */
+            size_t rn = lean_sarray_size(out);
+            if (rn > 0) {
+                sendto(usock, lean_sarray_cptr(out), rn, 0,
+                       (struct sockaddr *)&src, slen);
+                total += rn;
+            }
+        }
+        fprintf(stderr, "orb-quic: recv %zd bytes -> %zu datagram(s), %zu bytes sent\n",
+                n, cnt, total);
+        fflush(stderr);
+        lean_dec(res);
+    }
+
+    close(usock);
+    return lean_io_result_mk_ok(lean_box(0));
+}

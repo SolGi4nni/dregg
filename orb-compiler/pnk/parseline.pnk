@@ -1,0 +1,90 @@
+// C6 probe: the WHOLE Arena request-line parser, in Pancake.
+//
+// This is `parseRequestLine off line` from Arena/Parse.lean, emitted as a
+// COMPOSITION of the C5 find-first-SP scan (`findByteIdx SP`) used TWICE at
+// shifted offsets, plus the span arithmetic and the three residual checks
+// (no-third-SP, non-empty method, "HTTP/" version prefix).  off = 0 here.
+//
+//   i1  <- findByteIdx SP line                  (first  SP: method length)
+//   i2  <- findByteIdx SP (drop (i1+1) line)    (second SP: target length)
+//   rest2 = drop (i1+i2+2) line
+//   ok  = found1 && found2 && no SP in rest2 && i1 != 0 && startsWithHttpSlash rest2
+//   spans: method=(0,i1) target=(i1+1,i2) version=(i1+i2+2, |rest2|)
+//
+// The whole line is in the buffer at @base+64; @load_line writes its length at
+// @base+16.  Results go in the control block: ok@+24, i1@+32, i2@+40, ver@+48.
+//
+// Compile: cake --pancake < parseline.pnk > parseline.S
+//          cc -O2 parseline.S basis_ffi.c parseline_ffi.c -o parseline -lm
+// Run:     LINE="GET / HTTP/1.1" ./parseline    ->  SOME method=(0,3) target=(4,1) version=(6,8)
+
+fun main() {
+  var base = @base;
+  var buf = base + 64;
+  @load_line(base, 24, buf, 4096);
+  var len = lds 1 (base + 16);
+
+  // --- scan 1 : first SP -> i1 (method length) ---
+  var i1 = 0;
+  var found1 = 0;
+  var b = 0;
+  while (i1 < len && found1 == 0) {
+    b = ld8 (buf + i1);
+    if b == 32 { found1 = 1; } else { i1 = i1 + 1; }
+  }
+
+  // --- scan 2 : first SP in rest1 = [i1+1, len) -> i2 (target length) ---
+  var start2 = i1 + 1;
+  var i2 = 0;
+  var found2 = 0;
+  while (start2 + i2 < len && found2 == 0) {
+    b = ld8 (buf + start2 + i2);
+    if b == 32 { found2 = 1; } else { i2 = i2 + 1; }
+  }
+
+  // --- scan 3 : any SP in rest2 = [start3, len) ? (must be none) ---
+  var start3 = i1 + i2 + 2;
+  var k = 0;
+  var found3 = 0;
+  while (start3 + k < len && found3 == 0) {
+    b = ld8 (buf + start3 + k);
+    if b == 32 { found3 = 1; } else { k = k + 1; }
+  }
+
+  // --- version prefix "HTTP/" (72 84 84 80 47) at rest2[0..5) ---
+  var hmatch = 0;
+  var haveVer = 0;
+  if start3 + 5 <= len {
+    haveVer = 1;
+    if ld8 (buf + start3)     == 72 { hmatch = hmatch + 1; } else { hmatch = hmatch; }
+    if ld8 (buf + start3 + 1) == 84 { hmatch = hmatch + 1; } else { hmatch = hmatch; }
+    if ld8 (buf + start3 + 2) == 84 { hmatch = hmatch + 1; } else { hmatch = hmatch; }
+    if ld8 (buf + start3 + 3) == 80 { hmatch = hmatch + 1; } else { hmatch = hmatch; }
+    if ld8 (buf + start3 + 4) == 47 { hmatch = hmatch + 1; } else { hmatch = hmatch; }
+  } else { haveVer = 0; }
+
+  // --- assemble ok = all checks ---
+  var ok = 0;
+  if found1 == 1 {
+   if found2 == 1 {
+    if found3 == 0 {
+     if 0 < i1 {
+      if haveVer == 1 {
+       if hmatch == 5 { ok = 1; } else { ok = 0; }
+      } else { ok = 0; }
+     } else { ok = 0; }
+    } else { ok = 0; }
+   } else { ok = 0; }
+  } else { ok = 0; }
+
+  // version length = |rest2| = len - start3 (only meaningful when ok)
+  var verlen = 0;
+  if start3 < len { verlen = len - start3; } else { verlen = 0; }
+
+  st base + 24, ok;
+  st base + 32, i1;
+  st base + 40, i2;
+  st base + 48, verlen;
+  @report_line(base + 24, 32, base, 8);
+  return 0;
+}

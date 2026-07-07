@@ -8,12 +8,25 @@ a single client identity against a fixed set of trust anchors, at a given
 check time.
 
 The model is deliberately split along one boundary: **all cryptography is
-an uninterpreted named interface.**  Signature verification enters as a
-single total function `verifySig` carried in `Env`; the machine never looks
-inside it.  Every theorem here therefore holds uniformly over every possible
-signature-checking behaviour — the results are about path validation and
-identity extraction, not about the cipher.  This is the same named
-crypto-axiom boundary the `Tls` record machine uses for AEAD/KDF.
+an uninterpreted named interface.**  Two total signature-checking functions
+are carried in `Env` and the machine never looks inside either:
+
+  * `verifySig` — the certificate-chain signatures (RFC 5280 §6.1.3): a
+    certificate is signed under its issuer's public key.
+  * `cvVerify`  — the client's RFC 8446 §4.4.3 `CertificateVerify`
+    proof-of-possession: the client's signature over the handshake-transcript
+    content, checked under the *leaf* (end-entity) certificate's public key.
+    Chain validation proves the presented certificates form a trusted path;
+    this second check proves the peer actually holds the leaf's private key,
+    so a client cannot be authenticated as an identity whose certificate it
+    merely copied.
+
+Every theorem here therefore holds uniformly over every possible
+signature-checking behaviour — the results are about path validation,
+proof-of-possession and identity extraction, not about the cipher.  This is
+the same named crypto-axiom boundary the `Tls` record machine uses for
+AEAD/KDF (in deployment `cvVerify` is instantiated with the Ed25519 detached
+verify over the §4.4.3 content).
 
 Structure:
 
@@ -75,11 +88,33 @@ abbrev Chain := List Cert
 crypto boundary.  `anchors` is the trust-anchor set: the certificates the server
 trusts directly, by identity. -/
 structure Env where
-  /-- The named signature-verification interface (crypto boundary):
-  `verifySig issuer child` is `true` iff `child` is validly signed by `issuer`. -/
+  /-- The named certificate-signature interface (crypto boundary, RFC 5280
+  §6.1.3): `verifySig issuer child` is `true` iff `child` is validly signed by
+  `issuer`. -/
   verifySig : Cert → Cert → Bool
+  /-- The named CertificateVerify interface (crypto boundary, RFC 8446 §4.4.3):
+  `cvVerify leaf content sig` is `true` iff `sig` is a valid proof-of-possession
+  signature over `content` under `leaf`'s public key.  In deployment this is the
+  Ed25519 detached verify; the machine never looks inside it. -/
+  cvVerify  : Cert → ByteArray → ByteArray → Bool
   /-- The trust-anchor set: certificates trusted directly. -/
   anchors   : List Cert
+
+/-- **The RFC 8446 §4.4.3 CertificateVerify signature content**, client side.
+
+The octet string the client's `CertificateVerify` signature is computed over:
+64 `0x20` (space) octets, the ASCII context string
+`"TLS 1.3, client CertificateVerify"`, a single `0x00` separator, then the
+handshake transcript hash.  (The server side uses the same construction with the
+`"server"` context — see the `TlsHandshake` message layer.)  Given the
+transcript hash, `authenticate` reconstructs this content and hands it to the
+`cvVerify` boundary, so the §4.4.3 framing is fixed by the decision itself, not
+by the caller. -/
+def clientCertVerifyContent (transcriptHash : ByteArray) : ByteArray :=
+  ByteArray.mk ((List.replicate 64 (0x20 : UInt8)).toArray)
+    ++ "TLS 1.3, client CertificateVerify".toUTF8
+    ++ ByteArray.mk #[(0 : UInt8)]
+    ++ transcriptHash
 
 /-- `c` is inside its validity window at time `now` (inclusive on both ends). -/
 def Cert.validAt (c : Cert) (now : Time) : Bool :=

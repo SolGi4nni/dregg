@@ -1,0 +1,55 @@
+===== allocInv_def =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀blocks freeL allocL s.
+    allocInv blocks freeL allocL s ⇔
+    ALL_DISTINCT blocks ∧ ¬MEM 0w blocks ∧ PERM (freeL ++ allocL) blocks ∧
+    linked s.memory freeL ∧
+    FLOOKUP s.locals «head» = SOME (ValWord (chainHead freeL)) ∧
+    ∀x. MEM x blocks ⇒ x ∈ s.memaddrs
+
+===== linked_def =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ (∀m. linked m [] ⇔ T) ∧
+  ∀m a rest.
+    linked m (a::rest) ⇔ a ≠ 0w ∧ m a = Word (chainHead rest) ∧ linked m rest
+
+===== linked_store_disjoint =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀addrs m p v. linked m addrs ∧ ¬MEM p addrs ⇒ linked m⦇p ↦ Word v⦈ addrs
+
+===== allocInv_distinct =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ allocInv blocks freeL allocL s ⇒ ALL_DISTINCT (freeL ++ allocL)
+
+===== alloc_preserves_inv =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ allocInv blocks (a::rest) allocL s ∧
+  (∃apv. FLOOKUP s.locals «ap» = SOME (ValWord apv)) ⇒
+  ∃s'.
+    evaluate (allocProg,s) = (NONE,s') ∧ s'.clock = s.clock ∧
+    FLOOKUP s'.locals «ap» = SOME (ValWord a) ∧
+    FLOOKUP s'.locals «head» = SOME (ValWord (chainHead rest)) ∧
+    allocInv blocks rest (a::allocL) s'
+
+===== free_preserves_inv =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ allocInv blocks freeL allocL s ∧ FLOOKUP s.locals «fp» = SOME (ValWord p) ∧
+  PERM allocL (p::allocL') ⇒
+  ∃s'.
+    evaluate (freeProg,s) = (NONE,s') ∧ s'.clock = s.clock ∧
+    FLOOKUP s'.locals «head» = SOME (ValWord p) ∧
+    (∀k. k ≠ «head» ⇒ FLOOKUP s'.locals k = FLOOKUP s.locals k) ∧
+    allocInv blocks (p::freeL) allocL' s'
+
+===== freeThenAlloc_reuses =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ allocInv blocks freeL allocL s ∧ FLOOKUP s.locals «fp» = SOME (ValWord p) ∧
+  (∃apv. FLOOKUP s.locals «ap» = SOME (ValWord apv)) ∧
+  PERM allocL (p::allocL') ⇒
+  ∃s'.
+    evaluate (freeThenAlloc,s) = (NONE,s') ∧
+    FLOOKUP s'.locals «ap» = SOME (ValWord p) ∧
+    FLOOKUP s'.locals «head» = SOME (ValWord (chainHead freeL)) ∧
+    allocInv blocks freeL (p::allocL') s'
+
+AXIOMS arenaFreelistLinkA = 0

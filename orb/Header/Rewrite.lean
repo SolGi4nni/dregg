@@ -27,6 +27,7 @@ equality holds and is proved directly.
 -/
 
 import Header.Basic
+import Header.Hop
 
 namespace Header
 
@@ -125,6 +126,12 @@ inductive Op where
   | remove (n : Name)
   | add (n : Name) (v : Value)
   | hop (names : List Name)
+  /-- **The dynamic hop-strip (RFC 9110 §7.6.1).**  Strip the fixed `hopStd`
+  connection-management set *together with* every field name the message's own
+  `Connection` header nominates.  Unlike `hop`, whose name set is fixed when the
+  program is built, `hopDyn` computes its strip set from the very headers it is
+  applied to — so a `Connection`-nominated field is removed, not forwarded. -/
+  | hopDyn
 deriving Repr
 
 /-- Interpret one operation. -/
@@ -133,6 +140,7 @@ def applyOp : Op → Headers → Headers
   | .remove n, h => remove n h
   | .add n v, h => add n v h
   | .hop names, h => strip names h
+  | .hopDyn, h => strip (dynHopSet h) h
 
 /-- A rewrite program is an ordered list of operations, applied left-to-right. -/
 def run (prog : List Op) (h : Headers) : Headers :=
@@ -149,6 +157,20 @@ theorem run_cons (o : Op) (p : List Op) (h : Headers) :
 theorem run_append (p q : List Op) (h : Headers) :
     run (p ++ q) h = run q (run p h) := by
   simp [run, List.foldl_append]
+
+/-- Applying `hopDyn` is stripping the message-relative hop set (RFC 9110 §7.6.1):
+the fixed set plus the `Connection`-nominated names. -/
+theorem applyOp_hopDyn (h : Headers) : applyOp Op.hopDyn h = strip (dynHopSet h) h := rfl
+
+/-- A `hopDyn`-headed program: strip the dynamic hop set of the current headers
+first, then run the rest. -/
+theorem run_hopDyn_cons (p : List Op) (h : Headers) :
+    run (Op.hopDyn :: p) h = run p (strip (dynHopSet h) h) := by
+  rw [run_cons]; rfl
+
+/-- The lone `hopDyn` stage is exactly the dynamic strip. -/
+theorem run_hopDyn (h : Headers) : run [Op.hopDyn] h = strip (dynHopSet h) h := by
+  rw [run_hopDyn_cons, run_nil]
 
 /-- **(6) totality.**  Every operation returns a header list on every input. -/
 theorem applyOp_total (o : Op) (h : Headers) : ∃ r, applyOp o h = r := ⟨_, rfl⟩

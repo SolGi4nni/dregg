@@ -1,0 +1,20 @@
+{
+  "family": "region",
+  "desc_name": "region_viewFit",
+  "theory": "viewFitEmit",
+  "impl_name": "viewChk",
+  "rel_name": "vfRel",
+  "decide_name": "viewFit",
+  "encode_name": "vf_encode",
+  "arr": "b",
+  "off": "base",
+  "len": "extent",
+  "size_term": "LENGTH b",
+  "size_var": "cap",
+  "off_var": "base",
+  "len_var": "extent",
+  "result_var": "out",
+  "sentinel_num": 3735928559,
+  "decide_some": "base + extent",
+  "spec_aux": ""
+}

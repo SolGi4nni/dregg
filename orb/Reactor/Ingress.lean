@@ -157,6 +157,23 @@ pipeline. This is the response function the shipped orb now runs. -/
 def serveIngress (input : Bytes) : Bytes :=
   serveOverSubs (ingressSubs input) (ingressFeed input)
 
+/-- **The full ten-stage serve over an arbitrary reactor run.** Identical to
+`serveOverSubs` on the FSM-send path (faithful in-order forwarding), but on a bare
+dispatch it runs the WHOLE `Reactor.Deploy.deployStagesFull2` fold
+(jwt/ipfilter/rate/cache/redirect + traversal/policy + cors/gzip/html/security/
+header) on the dispatched request — the SAME thirteen-stage pipeline the TCP
+dataplane and `orb` run — instead of only the 3-stage guarded serve. This is the
+response function the QUIC/H3 (`Reactor.QuicIngress.datagramServe`) and
+native-socket paths use, so a non-HTTP/1.1 ingress gets the full middleware. `feed`
+drives the deploy header rewrite's proxy/DNS plan. Total. -/
+def serveFull2OverSubs (subs : List RingSubmission) (feed : Bytes) : Bytes :=
+  match sendsOf subs with
+  | [] =>
+    match Reactor.Deploy.dispatchReqOf subs with
+    | some req => Reactor.Deploy.servePipelineFull2Of feed req
+    | none     => serialize (ingressResp subs feed)
+  | sends => sends.flatten
+
 /-- Over the deployed H1 run and the whole input, the parameterized guarded serve
 is definitionally the deployed `serveGuarded` — `ingressResp (deploySubs input)
 input` unfolds to `deployResp input` and `guardOnSubs` to `guardOne`. -/

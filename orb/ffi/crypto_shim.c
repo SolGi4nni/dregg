@@ -55,6 +55,7 @@
 #include "EverCrypt_Error.h"
 #include "Hacl_Spec.h"              /* Spec_Agile_AEAD_* algorithm ids */
 #include "Hacl_Streaming_Types.h"  /* Spec_Hash_Definitions_* ids */
+#include "Hacl_NaCl.h"             /* crypto_box (X25519 + XSalsa20-Poly1305) */
 
 /* Fixed sizes (bytes) this seam enforces. */
 #define DRORB_AEAD_KEY   32u
@@ -348,6 +349,64 @@ LEAN_EXPORT lean_obj_res drorb_ed25519_sign(
         lean_sarray_cptr(sk),
         (uint32_t) lean_sarray_size(msg), lean_sarray_cptr(msg));
     return drorb_some(sig);
+}
+
+/* ---- NaCl crypto_box (X25519 + XSalsa20-Poly1305) --------------------
+ *
+ * crypto_box is the DERP / DISCO authenticated-public-key box: an ephemeral or
+ * static X25519 agreement feeds an XSalsa20-Poly1305 secretbox under a 24-byte
+ * nonce. Backend is HACL* NaCl (Hacl_NaCl.{c,h}, part of libevercrypt.a) — the
+ * same F*-verified stack as the rest of this shim. Layout is the NaCl "easy"
+ * convention: the box is `tag(16) ‖ ciphertext(mlen)`; the 24-byte nonce is NOT
+ * part of the box here (the DERP/DISCO wire carries it alongside), matching Go's
+ * box.Seal output after its nonce prefix.
+ *
+ *   drorb_crypto_box_seal : peerPub(32) selfSec(32) nonce(24) msg -> Option box(mlen+16)
+ *   drorb_crypto_box_open : peerPub(32) selfSec(32) nonce(24) box -> Option msg
+ *
+ * The shared key is X25519(selfSec, peerPub), so sealing with (peerPub=B, selfSec=a)
+ * and opening with (peerPub=A, selfSec=b) agree whenever A=a·G and B=b·G — the DH
+ * box agreement. `none` on a bad key/nonce size or (open) an authentication
+ * failure; the two are indistinguishable to the caller by design. */
+#define DRORB_BOX_NONCE 24u
+#define DRORB_BOX_TAG   16u
+
+LEAN_EXPORT lean_obj_res drorb_crypto_box_seal(
+        b_lean_obj_arg peerPub, b_lean_obj_arg selfSec,
+        b_lean_obj_arg nonce, b_lean_obj_arg msg) {
+    if (lean_sarray_size(peerPub) != DRORB_X25519_LEN) return drorb_none();
+    if (lean_sarray_size(selfSec) != DRORB_X25519_LEN) return drorb_none();
+    if (lean_sarray_size(nonce)   != DRORB_BOX_NONCE)   return drorb_none();
+    size_t mlen = lean_sarray_size(msg);
+    lean_object *out = drorb_new_ba(mlen + DRORB_BOX_TAG);
+    uint32_t rc = Hacl_NaCl_crypto_box_easy(
+        lean_sarray_cptr(out),
+        lean_sarray_cptr(msg), (uint32_t) mlen,
+        lean_sarray_cptr(nonce),
+        lean_sarray_cptr(peerPub),
+        lean_sarray_cptr(selfSec));
+    if (rc != 0u) { lean_dec_ref(out); return drorb_none(); }
+    return drorb_some(out);
+}
+
+LEAN_EXPORT lean_obj_res drorb_crypto_box_open(
+        b_lean_obj_arg peerPub, b_lean_obj_arg selfSec,
+        b_lean_obj_arg nonce, b_lean_obj_arg boxct) {
+    if (lean_sarray_size(peerPub) != DRORB_X25519_LEN) return drorb_none();
+    if (lean_sarray_size(selfSec) != DRORB_X25519_LEN) return drorb_none();
+    if (lean_sarray_size(nonce)   != DRORB_BOX_NONCE)   return drorb_none();
+    size_t clen = lean_sarray_size(boxct);
+    if (clen < DRORB_BOX_TAG) return drorb_none();
+    size_t mlen = clen - DRORB_BOX_TAG;
+    lean_object *out = drorb_new_ba(mlen);
+    uint32_t rc = Hacl_NaCl_crypto_box_open_easy(
+        lean_sarray_cptr(out),
+        lean_sarray_cptr(boxct), (uint32_t) clen,
+        lean_sarray_cptr(nonce),
+        lean_sarray_cptr(peerPub),
+        lean_sarray_cptr(selfSec));
+    if (rc != 0u) { lean_dec_ref(out); return drorb_none(); }
+    return drorb_some(out);
 }
 
 /* ---- Hashes ---------------------------------------------------------- */

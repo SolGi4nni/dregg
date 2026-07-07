@@ -1,0 +1,39 @@
+// C18 probe: a REAL, deployed serve fragment — the ASCII-UPPERCASE test at the
+// heart of `Gzip.lowerByte` (drorb `orb/Reactor/Stage/Gzip.lean`).
+// `lowerByte b = if 65 <= b && b <= 90 then b+32 else b` is the per-byte ASCII
+// case-fold used by `Gzip.lower` — the header-name/value canonicalization the
+// DEPLOYED serve runs in `Gzip.acceptsGzip` (gzipStage, position 10 of
+// `Reactor.Deploy.deployStagesFull2`) and the CORS canonical-origin path.  The
+// loop-free DECISION core (whether byte b is an uppercase letter, i.e. whether to
+// subtract 32) is `65 <= b && b <= 90 -> 1 else 0`.
+//
+// Structurally: a NESTED cascade of TWO `<=` threshold guards (3 leaves) —
+//   `65 <= b`  lowers to  Cmp NotLess (Var b) (Const 65)   (variable-on-LEFT)
+//   `b <= 90`  lowers to  Cmp NotLess (Const 90) (Var b)   (variable-on-RIGHT)
+// exercising BOTH operand orientations of the C18 NotLess companion.
+//
+// Control block at @base:
+//   [0 ..8)   b      (the byte value, invariant b < 256)
+//   [8 ..16)  result (uppercase=1 / not=0; read by @report_vec)
+//
+// Compile: cake --pancake < gzipupper.pnk > gzipupper.S
+
+fun main() {
+  var base = @base;
+  var buf = base + 16;
+  @load_vec(base, 8, buf, 4096);
+  var b = lds 1 base;
+  var result = 0;
+  if 65 <= b {
+    if b <= 90 {
+      result = 1;
+    } else {
+      result = 0;
+    }
+  } else {
+    result = 0;
+  }
+  st base + 8, result;
+  @report_vec(base + 8, 8, base, 8);
+  return 0;
+}

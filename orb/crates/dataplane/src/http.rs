@@ -20,6 +20,41 @@ pub const REQUEST_CAP: usize = 8 << 20; // 8 MiB
 /// HTTP/1.1 keep-alive framing on an h2c stream.
 pub const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n";
 
+/// The full 24-octet HTTP/2 client connection preface
+/// (`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n`, RFC 9113 §3.4). The buffer opens with it
+/// on an h2c prior-knowledge connection; [`H2_PREFACE`] is its 16-octet head,
+/// enough to fork on.
+const H2_PREFACE_FULL: usize = 24;
+
+/// Whether the h2c opening burst in `buf` already carries a complete request
+/// HEADERS frame (RFC 9113 §6.2, frame type `0x01`) past the 24-octet client
+/// connection preface. The host uses this to decide it has enough of the burst
+/// to hand to the proven H2 serve — a prior-knowledge client (curl/nghttp2)
+/// writes its preface, SETTINGS, and request HEADERS as one burst, then waits
+/// for the response, so the host must not block for bytes that never come once
+/// the HEADERS frame is in hand.
+///
+/// Walks the 9-octet frame headers (`u24 length | type | flags | u31 stream-id`)
+/// from the end of the preface; returns `true` as soon as a fully-buffered
+/// HEADERS frame is seen, `false` if the scan runs off the end of the buffer
+/// (a partial frame — read more).
+pub fn h2c_burst_complete(buf: &[u8]) -> bool {
+    let mut i = H2_PREFACE_FULL;
+    while i + 9 <= buf.len() {
+        let len = ((buf[i] as usize) << 16) | ((buf[i + 1] as usize) << 8) | (buf[i + 2] as usize);
+        let ftype = buf[i + 3];
+        let end = i + 9 + len;
+        if end > buf.len() {
+            return false; // frame body not fully buffered yet
+        }
+        if ftype == 0x01 {
+            return true; // a complete request HEADERS frame is present
+        }
+        i = end;
+    }
+    false
+}
+
 /// The result of scanning an accumulation buffer for the next complete request.
 pub enum Frame {
     /// Not enough bytes yet; read more and rescan.
@@ -188,6 +223,42 @@ pub fn request_wants_keepalive(head: &[u8]) -> bool {
         Some(v) if find_ci(v, b"keep-alive").is_some() => true,
         _ => is_11,
     }
+}
+
+/// Annotate an HTTP/1.1 response in place with an explicit `Connection` header
+/// reflecting the host's keep-alive decision, unless the response already
+/// carries one. The proven serve emits the status line, headers, and body; the
+/// host owns only the connection disposition on the wire, and states it here.
+///
+/// This matters for strict HTTP/1.1 clients (Apache Bench, some proxies) that
+/// key connection reuse off an explicit `Connection: keep-alive` token: without
+/// it they fall back to close-delimited framing and read until the server
+/// closes, while a host that keeps the socket open for the next request waits on
+/// them — both sides block until the client's poll times out. An explicit
+/// `Connection: keep-alive` (or `close`) removes the ambiguity. The header is
+/// inserted right after the status line and never added when the response — for
+/// instance a forwarded upstream reply — already states its own disposition.
+pub fn annotate_connection(resp: &mut Vec<u8>, keepalive: bool) {
+    // Insertion point: just past the status line's CRLF. A response with no
+    // status-line CRLF is not a well-formed HTTP/1.1 head (e.g. raw H2 frames);
+    // leave it untouched.
+    let Some(status_end) = resp.windows(2).position(|w| w == b"\r\n").map(|p| p + 2) else {
+        return;
+    };
+    let head_end = resp
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4)
+        .unwrap_or(resp.len());
+    if header_value(&resp[..head_end], b"connection").is_some() {
+        return; // response already states its own connection disposition
+    }
+    let token: &[u8] = if keepalive {
+        b"Connection: keep-alive\r\n"
+    } else {
+        b"Connection: close\r\n"
+    };
+    resp.splice(status_end..status_end, token.iter().copied());
 }
 
 /// Whether the *response* is self-delimiting (has Content-Length or is chunked).

@@ -1,0 +1,9 @@
+arena.size = 16
+boundScan off=0 len=16  =>  some 14695237   encoded=14695237
+boundScan off=0 len=3  =>  some 70454   encoded=70454
+boundScan off=4 len=10  =>  some 12467326   encoded=12467326
+boundScan off=14 len=2  =>  some 413   encoded=413
+boundScan off=0 len=17  =>  none   encoded=4294967295
+boundScan off=16 len=1  =>  none   encoded=4294967295
+boundScan off=10 len=8  =>  none   encoded=4294967295
+boundScan off=16 len=0  =>  some 0   encoded=0

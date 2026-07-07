@@ -1,0 +1,38 @@
+C5 ARENA request-line SP scan — two-kernel behavioral agreement.
+
+The emitted primitive is the find-first-SP loop of Arena/Parse.lean
+parseRequestLine: findByteIdx SP line = line.findIdx? (· == 32), the first-space
+split point of "method SP target SP HTTP/x" (RFC 9112 §3).
+
+Kernel 1: the REAL Lean model (drorb Arena/Parse.lean), run with `lake env lean`.
+          findByteIdx SP over each line's UTF-8 bytes (== |line| when no SP), and
+          the REAL parseRequestLine method span (off,len) where the line parses.
+Kernel 2: the compiled Pancake x64 (cake --pancake, cc -O2 ... -lm), on hbox:
+          LINE="..." ./arenascan   ->  prints the first-SP offset.
+The HOL4 kernel (hol-c5) proves the Link-A refinement (scanLoop_refines_findSp):
+the emitted While computes EXACTLY scanSp input (the HOL twin of findByteIdx SP),
+for ALL inputs — not per-vector, a universally-quantified theorem.
+
+vector (LINE)               | Pancake offset | Lean findByteIdx SP | parseRequestLine method
+----------------------------+----------------+---------------------+------------------------
+"GET / HTTP/1.1"            |       3        |         3           |  method=(0,3)
+"POST /submit HTTP/1.1"     |       4        |         4           |  method=(0,4)
+"GET /path"                 |       3        |         3           |  none (not a full req-line)
+"DELETE /a/b/c?q=1 HTTP/2"  |       6        |         6           |  method=(0,6)
+"NOSPACE"                   |       7        |         7 (= len)    |  none
+""                          |       0        |         0 (= len)    |  none
+" leading"                  |       0        |         0           |  none
+"X / HTTP/1.1"              |       1        |         1           |  method=(0,1)
+"A  B"                      |       1        |         1 (first SP) |  none
+
+All 9 vectors: Pancake offset == Lean findByteIdx SP, and where the line is a
+well-formed request line, that offset == the method span length parseRequestLine
+records (off=0, len=SP-offset). The emitted scan IS the method|target split point.
+
+Reproduce Kernel 2 (hbox):
+  cp $CAKEMLDIR/basis/basis_ffi.c .
+  /home/hbox/r05/cake-x64-64/cake --pancake < pnk/arenascan.pnk > arenascan.S
+  cc -O2 arenascan.S basis_ffi.c pnk/arenascan_ffi.c -o arenascan -lm
+  LINE="GET / HTTP/1.1" ./arenascan     # -> 3
+Reproduce Kernel 1 (drorb, Arena/Parse.olean prebuilt):
+  lake env lean --run <a file importing Arena.Parse that evals findByteIdx SP>

@@ -1,0 +1,170 @@
+
+---------------------------------------------------------------------
+     HOL4 [Trindemossen 2 (stdknl, built Thu Jul 02 02:35:34 2026)]
+
+     For introductory HOL help, type: help "hol";
+     To exit type <Control>-D
+---------------------------------------------------------------------
+** Load path (see loadPath variable) now contains 60 entries
+** after consulting Holmakefiles
+
+> <<HOL message: intLib loaded.  Use intLib.deprecate_int() to turn off integer parsing>>
+val banner = fn: string -> unit
+
+========== axioms of boundScanLinkBInst ==========
+0 axioms
+
+========== boundScanProg_is_parser_output ==========
+⊢ parse_topdecs_to_ast
+    "// C0 probe: the region/view arena bounds-check + total byte-scan, in Pancake.\n// This is the IMPLEMENTATION whose emitted machine code must refine the Lean\n// SPEC `C0.boundScan` (model/BoundScan.lean). Same semantics, byte for byte.\n//\n// Control block at @base (written/read by the FFI driver boundscan_ffi.c):\n//   [0 ..8)   arena length in bytes   (written by @load_vec)\n//   [8 ..16)  off  (view offset)      (written by @load_vec, from $OFF)\n//   [16..24)  len  (view length)      (written by @load_vec, from $LEN)\n//   [24..32)  result word             (written here; read by @report_vec)\n//   [32..)    arena bytes             (loaded by @load_vec into buf)\n//\n// Result encoding (matches C0.encode):\n//   in-bounds  -> the 24-bit rolling digest  (< 2^24)\n//   out-of-bnds-> the sentinel 4294967295 = 0xFFFFFFFF\n//\n// Compile: cake --pancake < boundscan.pnk > boundscan.S\n//          cc -O2 boundscan.S basis_ffi.c boundscan_ffi.c -o boundscan\n// Run:     OFF=o LEN=l boundscan   ->  prints the result word\n\nfun main() {\n  var base = @base;\n  var buf = base + 32;\n  @load_vec(base, 24, buf, 4096);\n  var alen = lds 1 base;\n  var off  = lds 1 (base + 8);\n  var len  = lds 1 (base + 16);\n  var result = 0;\n  // Bounds check via `<` only (the operator R05 exercised): the view is out\n  // of bounds exactly when alen < off+len. Same predicate as the Lean\n  // `off + len <= a.size`, negated.\n  if alen < (off + len) {\n    result = 4294967295;\n  } else {\n    var acc = 0;\n    var i = 0;\n    while i < len {\n      acc = ((acc * 31) + (ld8 (buf + off + i))) & 16777215;\n      i = i + 1;\n    }\n    result = acc;\n  }\n  st base + 24, result;\n  @report_vec(base + 24, 8, base, 8);\n  return 0;\n}\n" =
+  INL boundScanProg
+========== boundScanProg_pancake_good_code ==========
+⊢ pancake_good_code boundScanProg
+========== boundScanProg_distinct_params ==========
+⊢ distinct_params (functions boundScanProg)
+========== boundScanProg_distinct_names ==========
+⊢ ALL_DISTINCT (MAP FST (functions boundScanProg))
+========== boundScanProg_size_of_eids ==========
+⊢ size_of_eids boundScanProg < dimword (:64)
+========== boundScanProg_linkB  (the instantiated backend theorem) ==========
+⊢ compile_prog_max c mc boundScanProg = (SOME (bytes,bitmaps,c'),stack_max) ∧
+  s.code = FEMPTY ∧ s.locals = FEMPTY ∧ s.globals = FEMPTY ∧
+  FDOM s.eshapes = FDOM (get_eids (functions boundScanProg)) ∧
+  backend_config_ok mc.target.config c ∧ mc_conf_ok mc ∧
+  mc_init_ok mc.target.config c mc ∧ mc.target.config.ISA ≠ Ag32 ∧
+  0w <₊ mc.target.get_reg ms mc.len_reg ∧
+  globals_size =
+  (let
+     dec_shs = dec_shapes boundScanProg;
+     struct_ctxt = decs_stcnames [] boundScanProg
+   in
+     SUM (MAP (size_of_sh_with_ctxt (THE struct_ctxt)) dec_shs)) ∧
+  mc.target.get_reg ms mc.len_reg <₊ mc.target.get_reg ms mc.ptr2_reg ∧
+  mc.target.get_reg ms mc.len_reg = s.base_addr ∧
+  globals_allocatable s boundScanProg ∧
+  heap_len =
+  w2n (mc.target.get_reg ms mc.ptr2_reg + -1w * s.base_addr) DIV
+  (dimindex (:64) DIV 8) ∧
+  s.top_addr =
+  s.base_addr + bytes_in_word * n2w heap_len −
+  n2w (globals_size * dimindex (:64) DIV 8) ∧ globals_size ≤ heap_len ∧
+  s.memaddrs =
+  addresses (mc.target.get_reg ms mc.len_reg) (heap_len − globals_size) ∧
+  aligned (shift (:64) + 1)
+    (mc.target.get_reg ms mc.ptr2_reg + -1w * mc.target.get_reg ms mc.len_reg) ∧
+  adj_ptr2 =
+  mc.target.get_reg ms mc.len_reg + bytes_in_word * n2w max_stack_alloc ∧
+  adj_ptr4 =
+  mc.target.get_reg ms mc.len2_reg − bytes_in_word * n2w max_stack_alloc ∧
+  adj_ptr2 ≤₊ mc.target.get_reg ms mc.ptr2_reg ∧
+  mc.target.get_reg ms mc.ptr2_reg ≤₊ adj_ptr4 ∧
+  w2n
+    (mc.target.get_reg ms mc.ptr2_reg + -1w * mc.target.get_reg ms mc.len_reg) ≤
+  w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) ∧
+  w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) <
+  dimword (:64) ∧ s.ffi = ffi ∧ (mc.target.config.big_endian ⇔ s.be) ∧
+  OPTION_ALL (EVERY (λx. ∃s. x = ExtCall s)) c.lab_conf.ffi_names ∧
+  pan_installed bytes cbspace bitmaps data_sp c'.lab_conf.ffi_names
+    (heap_regs c.stack_conf.reg_names) mc c'.lab_conf.shmem_extra ms
+    (wlab_wloc ∘ s.memory) s.memaddrs s.sh_memaddrs ∧
+  semantics_decls s «main» boundScanProg ≠ Fail ⇒
+  machine_sem mc ffi ms ⊆
+  extend_with_resource_limit'
+    (option_lt stack_max (SOME (FST (read_limits mc.target.config c mc ms))))
+    {semantics_decls s «main» boundScanProg}
+========== oracle/axiom tags on boundScanProg_linkB ==========
+⊢ compile_prog_max c mc boundScanProg = (SOME (bytes,bitmaps,c'),stack_max) ∧
+  s.code = FEMPTY ∧ s.locals = FEMPTY ∧ s.globals = FEMPTY ∧
+  FDOM s.eshapes = FDOM (get_eids (functions boundScanProg)) ∧
+  backend_config_ok mc.target.config c ∧ mc_conf_ok mc ∧
+  mc_init_ok mc.target.config c mc ∧ mc.target.config.ISA ≠ Ag32 ∧
+  0w <₊ mc.target.get_reg ms mc.len_reg ∧
+  globals_size =
+  (let
+     dec_shs = dec_shapes boundScanProg;
+     struct_ctxt = decs_stcnames [] boundScanProg
+   in
+     SUM (MAP (size_of_sh_with_ctxt (THE struct_ctxt)) dec_shs)) ∧
+  mc.target.get_reg ms mc.len_reg <₊ mc.target.get_reg ms mc.ptr2_reg ∧
+  mc.target.get_reg ms mc.len_reg = s.base_addr ∧
+  globals_allocatable s boundScanProg ∧
+  heap_len =
+  w2n (mc.target.get_reg ms mc.ptr2_reg + -1w * s.base_addr) DIV
+  (dimindex (:64) DIV 8) ∧
+  s.top_addr =
+  s.base_addr + bytes_in_word * n2w heap_len −
+  n2w (globals_size * dimindex (:64) DIV 8) ∧ globals_size ≤ heap_len ∧
+  s.memaddrs =
+  addresses (mc.target.get_reg ms mc.len_reg) (heap_len − globals_size) ∧
+  aligned (shift (:64) + 1)
+    (mc.target.get_reg ms mc.ptr2_reg + -1w * mc.target.get_reg ms mc.len_reg) ∧
+  adj_ptr2 =
+  mc.target.get_reg ms mc.len_reg + bytes_in_word * n2w max_stack_alloc ∧
+  adj_ptr4 =
+  mc.target.get_reg ms mc.len2_reg − bytes_in_word * n2w max_stack_alloc ∧
+  adj_ptr2 ≤₊ mc.target.get_reg ms mc.ptr2_reg ∧
+  mc.target.get_reg ms mc.ptr2_reg ≤₊ adj_ptr4 ∧
+  w2n
+    (mc.target.get_reg ms mc.ptr2_reg + -1w * mc.target.get_reg ms mc.len_reg) ≤
+  w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) ∧
+  w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) <
+  dimword (:64) ∧ s.ffi = ffi ∧ (mc.target.config.big_endian ⇔ s.be) ∧
+  OPTION_ALL (EVERY (λx. ∃s. x = ExtCall s)) c.lab_conf.ffi_names ∧
+  pan_installed bytes cbspace bitmaps data_sp c'.lab_conf.ffi_names
+    (heap_regs c.stack_conf.reg_names) mc c'.lab_conf.shmem_extra ms
+    (wlab_wloc ∘ s.memory) s.memaddrs s.sh_memaddrs ∧
+  semantics_decls s «main» boundScanProg ≠ Fail ⇒
+  machine_sem mc ffi ms ⊆
+  extend_with_resource_limit'
+    (option_lt stack_max (SOME (FST (read_limits mc.target.config c mc ms))))
+    {semantics_decls s «main» boundScanProg}
+
+========== hypotheses (antecedent conjuncts) of boundScanProg_linkB ==========
+compile_prog_max c mc boundScanProg = (SOME (bytes,bitmaps,c'),stack_max) ∧
+s.code = FEMPTY ∧ s.locals = FEMPTY ∧ s.globals = FEMPTY ∧
+FDOM s.eshapes = FDOM (get_eids (functions boundScanProg)) ∧
+backend_config_ok mc.target.config c ∧ mc_conf_ok mc ∧
+mc_init_ok mc.target.config c mc ∧ mc.target.config.ISA ≠ Ag32 ∧
+0w <₊ mc.target.get_reg ms mc.len_reg ∧
+globals_size =
+(let
+   dec_shs = dec_shapes boundScanProg;
+   struct_ctxt = decs_stcnames [] boundScanProg
+ in
+   SUM (MAP (size_of_sh_with_ctxt (THE struct_ctxt)) dec_shs)) ∧
+mc.target.get_reg ms mc.len_reg <₊ mc.target.get_reg ms mc.ptr2_reg ∧
+mc.target.get_reg ms mc.len_reg = s.base_addr ∧
+globals_allocatable s boundScanProg ∧
+heap_len =
+w2n (mc.target.get_reg ms mc.ptr2_reg + -1w * s.base_addr) DIV
+(dimindex (:64) DIV 8) ∧
+s.top_addr =
+s.base_addr + bytes_in_word * n2w heap_len −
+n2w (globals_size * dimindex (:64) DIV 8) ∧ globals_size ≤ heap_len ∧
+s.memaddrs =
+addresses (mc.target.get_reg ms mc.len_reg) (heap_len − globals_size) ∧
+aligned (shift (:64) + 1)
+  (mc.target.get_reg ms mc.ptr2_reg + -1w * mc.target.get_reg ms mc.len_reg) ∧
+adj_ptr2 =
+mc.target.get_reg ms mc.len_reg + bytes_in_word * n2w max_stack_alloc ∧
+adj_ptr4 =
+mc.target.get_reg ms mc.len2_reg − bytes_in_word * n2w max_stack_alloc ∧
+adj_ptr2 ≤₊ mc.target.get_reg ms mc.ptr2_reg ∧
+mc.target.get_reg ms mc.ptr2_reg ≤₊ adj_ptr4 ∧
+w2n
+  (mc.target.get_reg ms mc.ptr2_reg + -1w * mc.target.get_reg ms mc.len_reg) ≤
+w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) ∧
+w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) <
+dimword (:64) ∧ s.ffi = ffi ∧ (mc.target.config.big_endian ⇔ s.be) ∧
+OPTION_ALL (EVERY (λx. ∃s. x = ExtCall s)) c.lab_conf.ffi_names ∧
+pan_installed bytes cbspace bitmaps data_sp c'.lab_conf.ffi_names
+  (heap_regs c.stack_conf.reg_names) mc c'.lab_conf.shmem_extra ms
+  (wlab_wloc ∘ s.memory) s.memaddrs s.sh_memaddrs ∧
+semantics_decls s «main» boundScanProg ≠ Fail ⇒
+machine_sem mc ffi ms ⊆
+extend_with_resource_limit'
+  (option_lt stack_max (SOME (FST (read_limits mc.target.config c mc ms))))
+  {semantics_decls s «main» boundScanProg}
+
+========== DONE ==========
+> 

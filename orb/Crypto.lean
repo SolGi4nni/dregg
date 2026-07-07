@@ -102,6 +102,22 @@ opaque x25519 (scalar point : ByteArray) : Option ByteArray
 @[extern "drorb_x25519_base"]
 opaque x25519Base (scalar : ByteArray) : Option ByteArray
 
+/-- NaCl `crypto_box` seal (X25519 + XSalsa20-Poly1305): `peerPub selfSec nonce
+msg ↦ some (tag ‖ ct)` (|msg|+16 bytes), or `none` on a bad key/nonce size. The
+shared key is X25519(selfSec, peerPub); the 24-byte `nonce` is carried alongside
+the box on the wire (DERP/DISCO), not inside it. This is the DERP ClientInfo /
+ServerInfo handshake box and the DISCO Ping/Pong box. -/
+@[extern "drorb_crypto_box_seal"]
+opaque cryptoBoxSeal (peerPub selfSec nonce msg : ByteArray) : Option ByteArray
+
+/-- NaCl `crypto_box` open: `peerPub selfSec nonce (tag ‖ ct) ↦ some msg` on a
+valid tag, `none` on authentication failure OR a bad size (indistinguishable to
+the caller). The receiver supplies the *sender's* public key as `peerPub` and its
+own secret as `selfSec`; the shared key X25519(selfSec, peerPub) matches the
+sender's, so a box sealed for it opens. -/
+@[extern "drorb_crypto_box_open"]
+opaque cryptoBoxOpen (peerPub selfSec nonce ct : ByteArray) : Option ByteArray
+
 /-- Ed25519 detached verify: `pub msg sig ↦ Bool`. `false` on a bad signature
 OR a wrong-length `pub`/`sig`. -/
 @[extern "drorb_ed25519_verify"]
@@ -121,6 +137,35 @@ opaque sha256 (msg : ByteArray) : ByteArray
 /-- SHA-384: `msg ↦ digest` (48 bytes). Total. -/
 @[extern "drorb_sha384"]
 opaque sha384 (msg : ByteArray) : ByteArray
+
+/-! ## CRC32C (Castagnoli) — the SCTP packet checksum (RFC 4960 §6.8, RFC 3309)
+
+Not a cryptographic primitive and not part of the trust boundary: a pure,
+total, Lean-native computation (no FFI, no axiom). SCTP protects every packet
+with CRC32C — the reflected CRC with the Castagnoli polynomial `0x1EDC6F41`
+(reversed form `0x82F63B78`), initial and final value `0xFFFFFFFF`. It is here
+because the WebRTC data-channel model (`WebrtcTransport`) and its live driver
+frame SCTP packets whose checksum this computes. -/
+
+/-- One CRC32C step over a byte (reflected, polynomial `0x82F63B78`). -/
+def crc32cByte (crc : UInt32) (b : UInt8) : UInt32 := Id.run do
+  let mut c := crc ^^^ b.toUInt32
+  for _ in [0:8] do
+    c := if c &&& 1 == 1 then (c >>> 1) ^^^ 0x82F63B78 else c >>> 1
+  return c
+
+/-- CRC32C (Castagnoli) of a byte buffer: initial `0xFFFFFFFF`, reflected input
+and output, final XOR `0xFFFFFFFF`. This is exactly the value the SCTP wire
+format carries (little-endian) in the common-header checksum field. -/
+def crc32c (data : ByteArray) : UInt32 :=
+  (data.foldl crc32cByte 0xFFFFFFFF) ^^^ 0xFFFFFFFF
+
+/-- The CRC32C value as its 4 little-endian wire bytes (RFC 3309 packing, the
+order aiortc's `struct.pack("<L", …)` produces). -/
+def crc32cBytesLE (data : ByteArray) : ByteArray :=
+  let c := crc32c data
+  ByteArray.mk #[UInt8.ofNat (c.toNat % 256), UInt8.ofNat (c.toNat / 256 % 256),
+                 UInt8.ofNat (c.toNat / 65536 % 256), UInt8.ofNat (c.toNat / 16777216 % 256)]
 
 /-! ## Assumptions: the trust boundary as Lean axioms.
 
@@ -187,6 +232,38 @@ axiom x25519_dh_agree :
     x25519Base a = some pa →
     x25519Base b = some pb →
     x25519 a pb = x25519 b pa
+
+/-- **crypto_box correctness (self).** Whatever `cryptoBoxSeal` produces under a
+key/secret/nonce, `cryptoBoxOpen` under the *same* `(peerPub, selfSec, nonce)`
+recovers the plaintext — the shared key X25519(selfSec, peerPub) is identical on
+both sides, so sealing and opening with the same handle round-trips. -/
+axiom crypto_box_open_seal_roundtrip :
+  ∀ peerPub selfSec nonce msg ct,
+    cryptoBoxSeal peerPub selfSec nonce msg = some ct →
+    cryptoBoxOpen peerPub selfSec nonce ct = some msg
+
+/-- **crypto_box authenticity / forgery-resistance.** The ONLY boxes that open
+under `(peerPub, selfSec, nonce)` are the ones `cryptoBoxSeal` produced for that
+exact plaintext — the functional shadow of INT-CTXT for the NaCl box. A model
+that accepts a DERP/DISCO message *only when* `cryptoBoxOpen … = some m` thereby
+only ever accepts a message genuinely sealed under the shared key: no party
+lacking `selfSec` (or the peer's secret) can fabricate one. -/
+axiom crypto_box_open_authentic :
+  ∀ peerPub selfSec nonce ct msg,
+    cryptoBoxOpen peerPub selfSec nonce ct = some msg →
+    cryptoBoxSeal peerPub selfSec nonce msg = some ct
+
+/-- **crypto_box DH agreement.** The DERP/DISCO cross-party property: a box the
+sender A seals *for* B — `cryptoBoxSeal B_pub A_sec nonce msg` — opens for the
+receiver B addressing A — `cryptoBoxOpen A_pub B_sec nonce`. Both sides compute
+the same shared key `A_sec·B_pub = B_sec·A_pub` (the X25519 agreement), so the
+box the client puts on the DERP wire is exactly what the real server decrypts. -/
+axiom crypto_box_agree :
+  ∀ aSec aPub bSec bPub nonce msg ct,
+    x25519Base aSec = some aPub →
+    x25519Base bSec = some bPub →
+    cryptoBoxSeal bPub aSec nonce msg = some ct →
+    cryptoBoxOpen aPub bSec nonce ct = some msg
 
 /-- **Ed25519 correctness.** A signature made with a private key verifies under
 the matching public key. `pubOf` abstracts "the public key of this seed" — the

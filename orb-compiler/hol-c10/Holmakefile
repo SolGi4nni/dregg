@@ -1,0 +1,10 @@
+INCLUDES = $(CAKEMLDIR)/misc \
+           $(CAKEMLDIR)/pancake \
+           $(CAKEMLDIR)/pancake/semantics \
+           $(CAKEMLDIR)/pancake/parser \
+           $(CAKEMLDIR)/compiler/backend \
+           $(CAKEMLDIR)/compiler/encoders/asm \
+           $(CAKEMLDIR)/semantics/ffi
+
+all: $(DEFAULT_TARGETS)
+.PHONY: all

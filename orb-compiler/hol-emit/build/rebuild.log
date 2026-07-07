@@ -1,0 +1,12 @@
+=== before ===
+=== after clean ===
+(none above = clean)
+=== BUILD ===
+Building 3 theory files
+Starting work on boundScanEmitTheory
+Starting work on toggleEmitTheory
+Starting work on viewFitEmitTheory
+toggleEmitTheory                                            (6s)   [1/3]     OK
+viewFitEmitTheory                                           (6s)   [2/3]     OK
+boundScanEmitTheory                                         (6s)   [3/3]     OK
+EXIT=0

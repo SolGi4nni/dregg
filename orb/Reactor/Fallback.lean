@@ -421,7 +421,7 @@ theorem fallback_app_head_bestMatch (rp : Fallback.RetryPolicy)
     ∃ r, Route.Match.bestMatch demoAppConfig.table
             (App.targetSegments req.target) = some r
        ∧ serveFallback rp fb (appAttempt :: post) input
-           = serialize (App.responseOfHandler r.handler) := by
+           = serialize (App.responseOfReq req r.handler) := by
   obtain ⟨r, hb, hh⟩ := App.app_routes_total demoAppConfig req
   have h1 := (fallback_app_head_serves_deployed rp fb post input req rest
     hsends hsub hok).1

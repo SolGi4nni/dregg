@@ -1,3 +1,4 @@
+import Crypto
 /-!
 # DERP: the relay frame protocol
 
@@ -54,12 +55,46 @@ The payload shapes modeled:
   framing theorems do not depend on them.
 * Rate limiting, the mesh/watch-connections broadcast, and the DERP-over-
   HTTP upgrade are not modeled.
+
+## Realized handshake (the crypto boundary, discharged)
+
+The `Handshake` section below REALIZES the boundary the original model left
+UNCLOSED: the NaCl `crypto_box` (X25519 + XSalsa20-Poly1305) that authenticates
+the ClientInfo/ServerInfo login exchange, over the verified `Crypto` primitives.
+
+* `serverKeyPayload`/`parseServerKey` — the `FrameServerKey` greeting (8-byte
+  DERP magic ‖ 32-byte server public key).
+* `buildClientInfo`/`openClientInfo` — the `FrameClientInfo` box: the client
+  seals its JSON ClientInfo to the server, wire `clientPub(32) ‖ nonce(24) ‖ box`.
+* `buildServerInfo`/`openServerInfo` — the `FrameServerInfo` box: `nonce(24) ‖ box`.
+* `derp_clientinfo_server_opens` / `derp_serverinfo_client_opens` — the
+  refinement: the box each side puts on the wire is *exactly* what the peer
+  decrypts (via the `crypto_box` DH agreement). The framing theorems still hold
+  over the realized payloads.
+* `derp_serverinfo_authentic` — the anti-spoof: a ServerInfo the client accepts
+  was genuinely sealed by the holder of the server key.
 -/
 
 namespace Derp
 
 /-- Raw byte strings, modeled as lists for ease of reasoning. -/
 abbrev Bytes := List UInt8
+
+/-- Bytes → the flat FFI buffer the `Crypto` primitives take. -/
+def baOf (l : Bytes) : ByteArray := ⟨l.toArray⟩
+
+/-- The `List UInt8` view of a `ByteArray` (via its backing array, so the
+round-trip with `List.toArray` is definitional). -/
+def bytesOf (b : ByteArray) : Bytes := b.data.toList
+
+@[simp] theorem bytesOf_length (b : ByteArray) :
+    (bytesOf b).length = b.size := Array.length_toList
+
+/-- The round-trip that lets the wire (`Bytes`) split feed the crypto boundary
+(`ByteArray`) transparently: re-packing a buffer's bytes yields the buffer. -/
+@[simp] theorem baOf_bytesOf (b : ByteArray) : baOf (bytesOf b) = b := by
+  show ByteArray.mk b.data.toList.toArray = b
+  rw [Array.toArray_toList]
 
 /-- Public keys on DERP are 32 bytes (Curve25519). -/
 def keyLen : Nat := 32
@@ -87,7 +122,10 @@ inductive FrameType where
   | unknown (tag : UInt8)
 deriving Repr, DecidableEq
 
-/-- Decode a type byte. -/
+/-- Decode a type byte. The tag numbers are the exact DERP wire assignments
+(the DERP wire `Frame*` assignments): `forwardPacket = 0x0a`, then a gap, and
+`watchConns … restarting = 0x10 … 0x15`. Tags in the unassigned gap (0x0b–0x0f,
+0x16+) decode to `unknown b`. -/
 def FrameType.ofByte : UInt8 → FrameType
   | 0x01 => .serverKey
   | 0x02 => .clientInfo
@@ -98,16 +136,16 @@ def FrameType.ofByte : UInt8 → FrameType
   | 0x07 => .notePreferred
   | 0x08 => .peerGone
   | 0x09 => .peerPresent
-  | 0x0a => .watchConns
-  | 0x0b => .closePeer
-  | 0x0c => .ping
-  | 0x0d => .pong
-  | 0x0e => .health
-  | 0x0f => .restarting
-  | 0x10 => .forwardPacket
+  | 0x0a => .forwardPacket
+  | 0x10 => .watchConns
+  | 0x11 => .closePeer
+  | 0x12 => .ping
+  | 0x13 => .pong
+  | 0x14 => .health
+  | 0x15 => .restarting
   | b => .unknown b
 
-/-- Encode a type byte. -/
+/-- Encode a type byte — the exact DERP wire assignments. -/
 def FrameType.toByte : FrameType → UInt8
   | .serverKey => 0x01
   | .clientInfo => 0x02
@@ -118,13 +156,13 @@ def FrameType.toByte : FrameType → UInt8
   | .notePreferred => 0x07
   | .peerGone => 0x08
   | .peerPresent => 0x09
-  | .watchConns => 0x0a
-  | .closePeer => 0x0b
-  | .ping => 0x0c
-  | .pong => 0x0d
-  | .health => 0x0e
-  | .restarting => 0x0f
-  | .forwardPacket => 0x10
+  | .forwardPacket => 0x0a
+  | .watchConns => 0x10
+  | .closePeer => 0x11
+  | .ping => 0x12
+  | .pong => 0x13
+  | .health => 0x14
+  | .restarting => 0x15
   | .unknown b => b
 
 /-! ## Big-endian 32-bit length field -/
@@ -443,5 +481,191 @@ theorem derp_parseFrames_bounded (maxLen : Nat) (bs : Bytes) :
     split at hg
     · next f2 rest2 h2 => rw [h] at h2; exact absurd h2 (by simp)
     · next h2 => simp at hg
+
+/-! ## The DERP login handshake — the NaCl-box key exchange, realized
+
+This section discharges the cryptographic boundary the framing model left
+UNCLOSED. Over the verified `Crypto` `crypto_box` (X25519 + XSalsa20-Poly1305),
+it builds and opens the three login frames a DERP client and relay exchange:
+
+    server → client : FrameServerKey  = magic(8) ‖ serverPub(32)
+    client → server : FrameClientInfo = clientPub(32) ‖ nonce(24) ‖ box(json)
+    server → client : FrameServerInfo = nonce(24) ‖ box(json)
+
+The `box` is a NaCl `crypto_box`: the client seals with `(serverPub, clientSec)`,
+the server opens with `(clientPub, serverSec)` — the same shared X25519 secret.
+The refinement theorems say the byte-exact payload each side writes is *exactly*
+what the peer decrypts, and that an accepted box was genuinely sealed under the
+shared key (the anti-spoof). These realize the login the framing carries. -/
+
+/-- The 24-byte NaCl-box nonce carried beside each handshake box on the wire. -/
+def nonceLen : Nat := 24
+
+/-- The 8-byte DERP magic that prefixes the server's key greeting: "DERP🔑"
+(`0x44 45 52 50 f0 9f 94 91`, the exact DERP `Magic` bytes). -/
+def serverKeyMagic : Bytes := [0x44, 0x45, 0x52, 0x50, 0xf0, 0x9f, 0x94, 0x91]
+
+/-- Build the `FrameServerKey` greeting payload: magic ‖ 32-byte server pubkey. -/
+def serverKeyPayload (serverPub : Bytes) : Bytes := serverKeyMagic ++ serverPub
+
+/-- Parse a `FrameServerKey` payload: require the magic prefix and at least a
+32-byte key after it; return the server's public key (the leading 32 bytes past
+the magic, as the relay may append future bytes). -/
+def parseServerKey (payload : Bytes) : Option Bytes :=
+  let body := payload.drop serverKeyMagic.length
+  if serverKeyMagic.isPrefixOf payload ∧ keyLen ≤ body.length then
+    some (body.take keyLen)
+  else none
+
+/-- `l.isPrefixOf (l ++ r)` always holds — a list is a prefix of itself extended. -/
+theorem isPrefixOf_self_append (l r : Bytes) : l.isPrefixOf (l ++ r) = true := by
+  induction l with
+  | nil => simp [List.isPrefixOf]
+  | cons a t ih => simp [List.isPrefixOf, ih]
+
+/-- **ServerKey greeting round-trips.** The 40-byte greeting the relay sends
+parses back to the exact server public key (for a 32-byte key). -/
+theorem derp_serverkey_roundtrip (serverPub : Bytes) (h : serverPub.length = keyLen) :
+    parseServerKey (serverKeyPayload serverPub) = some serverPub := by
+  simp only [parseServerKey, serverKeyPayload, List.drop_left]
+  rw [if_pos ⟨isPrefixOf_self_append _ _, Nat.le_of_eq h.symm⟩,
+     List.take_of_length_le (Nat.le_of_eq h)]
+
+/-- Build the `FrameClientInfo` payload the client sends: `clientPub(32) ‖
+nonce(24) ‖ box`, where `box = crypto_box_seal(serverPub, clientSec, nonce,
+info)` seals the JSON ClientInfo *to* the server. `none` if the seal fails
+(a bad key/nonce size). The payload is grouped `pub ‖ (nonce ‖ box)` so the
+server's split is the exact inverse. -/
+def buildClientInfo (clientPub serverPub clientSec nonce info : ByteArray) : Option Frame :=
+  match Crypto.cryptoBoxSeal serverPub clientSec nonce info with
+  | some box => some { ftype := .clientInfo,
+                       payload := bytesOf clientPub ++ (bytesOf nonce ++ bytesOf box) }
+  | none => none
+
+/-- The server side of ClientInfo: split the payload into `clientPub(32)`,
+`nonce(24)`, `box`, then open the box with the server's secret and the client's
+public key. Returns `(clientPub, info)` on a valid box. -/
+def openClientInfo (serverSec : ByteArray) (payload : Bytes) : Option (Bytes × Bytes) :=
+  let clientPub := payload.take keyLen
+  let r1 := payload.drop keyLen
+  let nonce := r1.take nonceLen
+  let box := r1.drop nonceLen
+  (Crypto.cryptoBoxOpen (baOf clientPub) serverSec (baOf nonce) (baOf box)).map
+    (fun info => (clientPub, bytesOf info))
+
+/-- Build the `FrameServerInfo` payload: `nonce(24) ‖ box`, where
+`box = crypto_box_seal(clientPub, serverSec, nonce, info)` seals the JSON
+ServerInfo *to* the client. -/
+def buildServerInfo (clientPub serverSec nonce info : ByteArray) : Option Frame :=
+  match Crypto.cryptoBoxSeal clientPub serverSec nonce info with
+  | some box => some { ftype := .serverInfo, payload := bytesOf nonce ++ bytesOf box }
+  | none => none
+
+/-- The client side of ServerInfo: split off `nonce(24)`, open the box with the
+client's secret and the server's public key, recovering the JSON ServerInfo. -/
+def openServerInfo (serverPub clientSec : ByteArray) (payload : Bytes) : Option Bytes :=
+  let nonce := payload.take nonceLen
+  let box := payload.drop nonceLen
+  (Crypto.cryptoBoxOpen serverPub clientSec (baOf nonce) (baOf box)).map bytesOf
+
+/-- **ClientInfo refines to the server's open (the crypto boundary, discharged).**
+Whatever `FrameClientInfo` the client builds — sealing its ClientInfo *to* the
+server under the shared X25519 secret — the server, splitting the payload and
+opening with its own secret and the client's public key, recovers *exactly*
+`(clientPub, info)`. The framed box on the wire is precisely what the real relay
+decrypts. -/
+theorem derp_clientinfo_server_opens
+    (clientPub serverPub clientSec serverSec nonce info : ByteArray)
+    (hcp : Crypto.x25519Base clientSec = some clientPub)
+    (hsp : Crypto.x25519Base serverSec = some serverPub)
+    (hpk : clientPub.size = keyLen) (hn : nonce.size = nonceLen)
+    {f : Frame}
+    (hb : buildClientInfo clientPub serverPub clientSec nonce info = some f) :
+    openClientInfo serverSec f.payload = some (bytesOf clientPub, bytesOf info) := by
+  unfold buildClientInfo at hb
+  cases hseal : Crypto.cryptoBoxSeal serverPub clientSec nonce info with
+  | none => rw [hseal] at hb; simp at hb
+  | some box =>
+    rw [hseal] at hb
+    simp only [Option.some.injEq] at hb
+    subst hb
+    have hpk' : (bytesOf clientPub).length = keyLen := by rw [bytesOf_length]; exact hpk
+    have hn' : (bytesOf nonce).length = nonceLen := by rw [bytesOf_length]; exact hn
+    have hopen : Crypto.cryptoBoxOpen clientPub serverSec nonce box = some info :=
+      Crypto.Assumptions.crypto_box_agree clientSec clientPub serverSec serverPub
+        nonce info box hcp hsp hseal
+    have e1 : (bytesOf clientPub ++ (bytesOf nonce ++ bytesOf box)).take keyLen
+                = bytesOf clientPub := List.take_left' hpk'
+    have e2 : (bytesOf clientPub ++ (bytesOf nonce ++ bytesOf box)).drop keyLen
+                = bytesOf nonce ++ bytesOf box := List.drop_left' hpk'
+    have e3 : (bytesOf nonce ++ bytesOf box).take nonceLen = bytesOf nonce :=
+      List.take_left' hn'
+    have e4 : (bytesOf nonce ++ bytesOf box).drop nonceLen = bytesOf box :=
+      List.drop_left' hn'
+    simp only [openClientInfo, e1, e2, e3, e4, baOf_bytesOf]
+    rw [hopen]; rfl
+
+/-- **ServerInfo refines to the client's open.** The mirror: whatever
+`FrameServerInfo` the relay builds — sealing its ServerInfo *to* the client — the
+client, splitting off the nonce and opening with its secret and the server's
+public key, recovers *exactly* `info`. -/
+theorem derp_serverinfo_client_opens
+    (clientPub serverPub clientSec serverSec nonce info : ByteArray)
+    (hcp : Crypto.x25519Base clientSec = some clientPub)
+    (hsp : Crypto.x25519Base serverSec = some serverPub)
+    (hn : nonce.size = nonceLen)
+    {f : Frame}
+    (hb : buildServerInfo clientPub serverSec nonce info = some f) :
+    openServerInfo serverPub clientSec f.payload = some (bytesOf info) := by
+  unfold buildServerInfo at hb
+  cases hseal : Crypto.cryptoBoxSeal clientPub serverSec nonce info with
+  | none => rw [hseal] at hb; simp at hb
+  | some box =>
+    rw [hseal] at hb
+    simp only [Option.some.injEq] at hb
+    subst hb
+    have hn' : (bytesOf nonce).length = nonceLen := by rw [bytesOf_length]; exact hn
+    have hopen : Crypto.cryptoBoxOpen serverPub clientSec nonce box = some info :=
+      Crypto.Assumptions.crypto_box_agree serverSec serverPub clientSec clientPub
+        nonce info box hsp hcp hseal
+    have e3 : (bytesOf nonce ++ bytesOf box).take nonceLen = bytesOf nonce :=
+      List.take_left' hn'
+    have e4 : (bytesOf nonce ++ bytesOf box).drop nonceLen = bytesOf box :=
+      List.drop_left' hn'
+    simp only [openServerInfo, e3, e4, baOf_bytesOf]
+    rw [hopen]; rfl
+
+/-- **An accepted ServerInfo was genuinely sealed (the anti-spoof).** If the
+client's open of a ServerInfo payload succeeds and yields `m`, then the box it
+accepted is *exactly* a `crypto_box` seal of `m` under the shared key — no party
+lacking the key could have forged it. This is the functional shadow of INT-CTXT
+(`crypto_box_open_authentic`) at the DERP frame level: the relay is authenticated
+by the box, not merely by the framing. -/
+theorem derp_serverinfo_authentic (serverPub clientSec : ByteArray) (payload : Bytes)
+    {m : Bytes} (h : openServerInfo serverPub clientSec payload = some m) :
+    Crypto.cryptoBoxSeal serverPub clientSec
+        (baOf (payload.take nonceLen)) (baOf m)
+      = some (baOf (payload.drop nonceLen)) := by
+  simp only [openServerInfo, Option.map_eq_some'] at h
+  obtain ⟨info, hopen, hinfo⟩ := h
+  subst hinfo
+  rw [baOf_bytesOf]
+  exact Crypto.Assumptions.crypto_box_open_authentic serverPub clientSec
+    (baOf (payload.take nonceLen)) (baOf (payload.drop nonceLen)) info hopen
+
+/-- **The realized ClientInfo frame still round-trips the framing** — the crypto
+payload does not break the length-prefixed envelope. A built `FrameClientInfo`,
+serialized with a tail, parses back to itself and the untouched tail. -/
+theorem derp_clientinfo_frame_roundtrips (maxLen : Nat) (tail : Bytes)
+    (clientPub serverPub clientSec nonce info : ByteArray) {f : Frame}
+    (hb : buildClientInfo clientPub serverPub clientSec nonce info = some f)
+    (hcap : f.payload.length ≤ maxLen) (haddr : f.payload.length < 16777216) :
+    parseFrame maxLen (serializeFrame f ++ tail) = some (f, tail) := by
+  have hty : f.ftype = FrameType.clientInfo := by
+    unfold buildClientInfo at hb
+    cases hseal : Crypto.cryptoBoxSeal serverPub clientSec nonce info with
+    | none => rw [hseal] at hb; simp at hb
+    | some box => rw [hseal] at hb; simp only [Option.some.injEq] at hb; rw [← hb]
+  exact derp_parse_serialize maxLen f tail hcap haddr (by rw [hty]; decide)
 
 end Derp

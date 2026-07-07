@@ -25,20 +25,48 @@ deriving Repr, DecidableEq
 
 namespace Frame
 
-/-- Frame-level well-formedness (RFC 6455 §5.5): a control frame must not be
-fragmented and carries at most 125 octets of payload. Data frames are
-unconstrained at this layer. -/
+/-- Frame-level well-formedness (RFC 6455 §5.5, §5.5.1): a control frame must not
+be fragmented and carries at most 125 octets of payload; and a Close control
+frame that carries a body must carry a status code, so its payload is either
+empty or **at least two octets** — a Close whose payload length is exactly one is
+a protocol error (§5.5.1). Data frames are unconstrained at this layer.
+
+This is the frame-validation predicate a conformant deployment runs before the
+frame reaches the reassembly/close machinery, and it is the layer that still has
+the raw payload in hand: `Ws.Close.step` downstream only ever sees an
+already-decoded status code (`Event.recvClose`), so the length-1 rejection can
+only be made here. -/
 def Wf (f : Frame) : Prop :=
-  f.opcode.isControl = true → (f.fin = true ∧ f.payload.length ≤ 125)
+  (f.opcode.isControl = true → (f.fin = true ∧ f.payload.length ≤ 125)) ∧
+  (f.opcode = Opcode.close → f.payload.length ≠ 1)
 
 instance (f : Frame) : Decidable f.Wf := by unfold Wf; infer_instance
 
-/-- A data frame is trivially well-formed at this layer (the control
-constraints do not apply). -/
+/-- A data frame is trivially well-formed at this layer (the control constraints,
+including the §5.5.1 Close-length rule, do not apply). -/
 theorem wf_of_data {f : Frame} (h : f.opcode.isData = true) : f.Wf := by
   unfold Wf
-  intro hc
-  exact absurd ⟨h, hc⟩ (Opcode.not_data_and_control f.opcode)
+  refine ⟨fun hc => absurd ⟨h, hc⟩ (Opcode.not_data_and_control f.opcode), ?_⟩
+  intro hclose
+  rw [hclose] at h
+  simp [Opcode.isData] at h
+
+/-- **§5.5.1 — a length-1 Close is a protocol error.** A Close control frame
+whose payload is exactly one octet fails frame well-formedness: a Close body must
+carry the full 2-octet status code (or be absent entirely). -/
+theorem not_wf_close_len_one {f : Frame} (hc : f.opcode = Opcode.close)
+    (h1 : f.payload.length = 1) : ¬ f.Wf := by
+  intro hwf
+  exact (hwf.2 hc) h1
+
+/-- Conversely, a Close frame whose body is present is well-formed only if it is
+at least two octets: an accepted Close carrying any payload carries a full status
+code, so the downstream decode to `Event.recvClose` is sound. -/
+theorem close_body_ge_two {f : Frame} (hc : f.opcode = Opcode.close)
+    (hne : f.payload ≠ []) (hwf : f.Wf) : 2 ≤ f.payload.length := by
+  have h1 : f.payload.length ≠ 1 := hwf.2 hc
+  have hpos : 0 < f.payload.length := List.length_pos.mpr hne
+  omega
 
 end Frame
 

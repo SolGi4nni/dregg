@@ -1,0 +1,45 @@
+// C0 probe: the region/view arena bounds-check + total byte-scan, in Pancake.
+// This is the IMPLEMENTATION whose emitted machine code must refine the Lean
+// SPEC `C0.boundScan` (model/BoundScan.lean). Same semantics, byte for byte.
+//
+// Control block at @base (written/read by the FFI driver boundscan_ffi.c):
+//   [0 ..8)   arena length in bytes   (written by @load_vec)
+//   [8 ..16)  off  (view offset)      (written by @load_vec, from $OFF)
+//   [16..24)  len  (view length)      (written by @load_vec, from $LEN)
+//   [24..32)  result word             (written here; read by @report_vec)
+//   [32..)    arena bytes             (loaded by @load_vec into buf)
+//
+// Result encoding (matches C0.encode):
+//   in-bounds  -> the 24-bit rolling digest  (< 2^24)
+//   out-of-bnds-> the sentinel 4294967295 = 0xFFFFFFFF
+//
+// Compile: cake --pancake < boundscan.pnk > boundscan.S
+//          cc -O2 boundscan.S basis_ffi.c boundscan_ffi.c -o boundscan
+// Run:     OFF=o LEN=l boundscan   ->  prints the result word
+
+fun main() {
+  var base = @base;
+  var buf = base + 32;
+  @load_vec(base, 24, buf, 4096);
+  var alen = lds 1 base;
+  var off  = lds 1 (base + 8);
+  var len  = lds 1 (base + 16);
+  var result = 0;
+  // Bounds check via `<` only (the operator R05 exercised): the view is out
+  // of bounds exactly when alen < off+len. Same predicate as the Lean
+  // `off + len <= a.size`, negated.
+  if alen < (off + len) {
+    result = 4294967295;
+  } else {
+    var acc = 0;
+    var i = 0;
+    while i < len {
+      acc = ((acc * 31) + (ld8 (buf + off + i))) & 16777215;
+      i = i + 1;
+    }
+    result = acc;
+  }
+  st base + 24, result;
+  @report_vec(base + 24, 8, base, 8);
+  return 0;
+}

@@ -1,0 +1,45 @@
+// C2 probe: the MACHINE primitive — a saturating event-counter FSM, in Pancake.
+// This is the IMPLEMENTATION whose emitted machine code must refine the Lean
+// SPEC `C2.step` / `C2.run` (model/MachineStep.lean). Same transition, byte
+// for byte.
+//
+// Control block at @base (written/read by the FFI driver machinestep_ffi.c):
+//   [16..24)  len            (# input bytes; written by @load_vec from $BYTES)
+//   [24..32)  result word    (final counter; written here; read by @report_vec)
+//   [32..)    input bytes    (the stream; loaded by @load_vec)
+//
+// The transition (matches C2.step): for each input byte b, with counter c:
+//   b <  128  -> HOLD      (c unchanged)
+//   b >= 128  -> EVENT     (saturating: c = c+1 if c<255 else 255)
+// run = fold this over the stream from c = 0. Result = final c (<= 255).
+//
+// Compile: cake --pancake < machinestep.pnk > machinestep.S
+//          cc -O2 machinestep.S basis_ffi.c machinestep_ffi.c -o machinestep
+// Run:     BYTES="128 255 129 127 0" machinestep   ->  prints final counter
+
+fun main() {
+  var base = @base;
+  var buf = base + 32;
+  @load_vec(base, 24, buf, 4096);
+  var len = lds 1 (base + 16);
+  var c = 0;
+  var i = 0;
+  while i < len {
+    var b = ld8 (buf + i);
+    // --- the single transition C2.step, exactly (see hol-c2 stepBody) ---
+    if b < 128 {
+      c = c;                 // low byte: hold
+    } else {
+      if c < 255 {
+        c = c + 1;           // high byte, unsaturated: advance
+      } else {
+        c = 255;             // high byte, saturated: hold at CAP
+      }
+    }
+    // --------------------------------------------------------------------
+    i = i + 1;
+  }
+  st base + 24, c;
+  @report_vec(base + 24, 8, base, 8);
+  return 0;
+}

@@ -34,16 +34,19 @@ identity, matched route, …) so a new stage never has to widen the shared struc
 
 * `pipeline_empty`            — `runPipeline [] h c = h c` (identity).
 * `pipeline_cons`             — the defining onion recursion (head/tail factoring).
-* `pipeline_gate_short_circuits` — a gate's `.respond r` IS the output; the
-  handler and later stages do not contribute (`pipeline_gate_ignores_rest` states
-  the independence directly).
+* `pipeline_gate_short_circuits` — a gate's `.respond r` seeds the response, which
+  the inner stages' response transforms (`runResp rest`) still run over (so a
+  short-circuit — a 3xx redirect, a 401/403/404 refusal — carries the
+  response-transform headers); the HANDLER never runs (`pipeline_gate_ignores_handler`).
+* `pipeline_gate_status`      — a short-circuit KEEPS its gate status through a
+  status-stable inner onion (the transforms add headers / rewrite the body only).
 * `pipeline_stage_effect`     — a passing stage's `onResponse` wraps the tail
   result: THE hook each lib's byte-effect theorem instantiates.
 * `pipeline_onion_order`      — `onResponse` runs in the exact reverse of
   `onRequest`.
 
 Every theorem is generic over arbitrary stages/handler/ctx and closes by
-`rfl`/`rw`, so it depends on no axioms beyond `{propext, Quot.sound}`.
+`rfl`/`rw`/induction, so it depends on no axioms beyond `{propext, Quot.sound}`.
 
 See `exampleStage` / `exampleStage_header_present` at the end for the exact,
 kernel-checked pattern a fan-out lib copies.
@@ -249,19 +252,38 @@ structure Stage where
   `ResponseBuilder` — one cell mutated in place, not a `Response` rebuilt. -/
   onResponse : Ctx → ResponseBuilder → ResponseBuilder
 
+/-- **The response-only fold (the onion, without gating).** Thread a builder back
+outward through a stage list's `onResponse` phase — each stage's `onResponse` in
+REVERSE list order (`s` outermost) — WITHOUT re-running any request phase. This is
+what a gate short-circuit runs the response-transform stages over: the inner
+stages' response transforms (security-headers, cors, …) still apply to the gate
+response, but their request-phase gates do NOT re-fire (a short-circuit means the
+inner request processing is skipped — only the response onion runs). -/
+def runResp : List Stage → Ctx → ResponseBuilder → ResponseBuilder
+  | [], _, b => b
+  | s :: rest, c, b => s.onResponse c (runResp rest c b)
+
 /-- **The pipeline fold.** Run the request phase in order; the first stage that
-`.respond`s short-circuits (the handler and later stages are skipped). If every
-stage passes, run `handler` on the final context and seed the affine
-`ResponseBuilder` from its response (`ofResponse` — acquire the cell). The response
-phase then threads that ONE builder back outward — each passed stage's
+`.respond`s short-circuits (the handler and every later stage's REQUEST phase are
+skipped). If every stage passes, run `handler` on the final context and seed the
+affine `ResponseBuilder` from its response (`ofResponse` — acquire the cell). The
+response phase then threads that ONE builder back outward — each passed stage's
 `onResponse`, in reverse order (the onion) — mutating it in place. The caller
-`build`s the final builder to the wire `Response`. A gating stage seeds the builder
-from its `.respond` response, so the already-passed outer stages still thread it. -/
+`build`s the final builder to the wire `Response`.
+
+A gating stage seeds the builder from its `.respond` response and then runs the
+RESPONSE-TRANSFORM onion of the remaining (inner) stages over it (`runResp rest`):
+so a short-circuit response (a 3xx redirect, a 401/403/404 refusal) still carries
+the response-transform headers (security-headers, cors, the deploy header rewrite)
+the inner stages add — RFC/practice: security headers belong on ALL responses,
+including redirects and refusals. The already-passed OUTER stages then thread the
+result as before (via the `.continue` recursion), so the whole onion applies. The
+inner stages' request-phase gates do NOT re-fire — only their `onResponse`s run. -/
 def runPipeline : List Stage → (Ctx → Response) → Ctx → ResponseBuilder
   | [], handler, c => ResponseBuilder.ofResponse (handler c)
   | s :: rest, handler, c =>
     match s.onRequest c with
-    | .respond r   => ResponseBuilder.ofResponse r
+    | .respond r   => runResp rest c (ResponseBuilder.ofResponse r)
     | .continue c' => s.onResponse c' (runPipeline rest handler c')
 
 /-! ## The composition calculus -/
@@ -281,28 +303,82 @@ theorem pipeline_cons (s : Stage) (rest : List Stage) (handler : Ctx → Respons
     (c : Ctx) :
     runPipeline (s :: rest) handler c
       = match s.onRequest c with
-        | .respond r   => ResponseBuilder.ofResponse r
+        | .respond r   => runResp rest c (ResponseBuilder.ofResponse r)
         | .continue c' => s.onResponse c' (runPipeline rest handler c') := rfl
 
-/-- **`pipeline_gate_short_circuits` — a gate's response IS the output.** If `s`
-fires `.respond r`, the pipeline builder is exactly `ofResponse r` — for ANY tail
-and handler. Because the result does not mention `rest` or `handler`, neither the
-handler nor any stage after `s` runs; `build` of it is `r`. -/
+/-- `runResp` on no stages is the identity — the seed builder unchanged. -/
+@[simp] theorem runResp_nil (c : Ctx) (b : ResponseBuilder) : runResp [] c b = b := rfl
+
+/-- `runResp` head/tail: the outer stage's `onResponse` wraps the inner fold. -/
+theorem runResp_cons (s : Stage) (rest : List Stage) (c : Ctx) (b : ResponseBuilder) :
+    runResp (s :: rest) c b = s.onResponse c (runResp rest c b) := rfl
+
+/-- **`pipeline_gate_short_circuits` — a gate's response, carried through the inner
+response onion.** If `s` fires `.respond r`, the pipeline builder is the
+response-transform fold of the remaining stages over `ofResponse r` — for ANY tail
+and handler. The handler and every stage after `s` do not run their REQUEST phase;
+but the inner stages' `onResponse`s (security-headers, cors, the deploy header
+rewrite) DO run over `r`, so a short-circuit (a 3xx / 401 / 403 / 404) carries the
+response-transform headers. `build` of it is `r` enriched by those transforms; its
+STATUS is `r`'s (`pipeline_gate_status`, given the transforms are status-stable). -/
 theorem pipeline_gate_short_circuits (s : Stage) (rest : List Stage)
     (handler : Ctx → Response) (c : Ctx) (r : Response)
     (hg : s.onRequest c = .respond r) :
-    runPipeline (s :: rest) handler c = ResponseBuilder.ofResponse r := by
+    runPipeline (s :: rest) handler c = runResp rest c (ResponseBuilder.ofResponse r) := by
   rw [pipeline_cons, hg]
 
-/-- **`pipeline_gate_ignores_rest` — the skip, stated directly.** When `s` gates,
-swapping the tail AND the handler leaves the output unchanged: the handler and
-every stage after `s` are genuinely not run. -/
-theorem pipeline_gate_ignores_rest (s : Stage) (rest rest' : List Stage)
+/-- **`pipeline_gate_ignores_handler` — the handler is genuinely skipped.** When
+`s` gates, swapping the HANDLER leaves the output unchanged: the handler never
+runs. (The tail is NOT swappable now — the inner stages' `onResponse`s DO
+contribute to a short-circuit response; that is exactly the new semantics.) -/
+theorem pipeline_gate_ignores_handler (s : Stage) (rest : List Stage)
     (handler handler' : Ctx → Response) (c : Ctx) (r : Response)
     (hg : s.onRequest c = .respond r) :
-    runPipeline (s :: rest) handler c = runPipeline (s :: rest') handler' c := by
+    runPipeline (s :: rest) handler c = runPipeline (s :: rest) handler' c := by
   rw [pipeline_gate_short_circuits s rest handler c r hg,
-      pipeline_gate_short_circuits s rest' handler' c r hg]
+      pipeline_gate_short_circuits s rest handler' c r hg]
+
+/-! ### Status stability — a short-circuit keeps its gate status through the onion
+
+The response-transform onion only ADDS headers / rewrites the body / rewrites the
+header map — it never sets the status. So a gate short-circuit response keeps its
+status (a 403 stays a 403, a 404 stays a 404) even after the inner transforms run
+over it. This is the "STATUS + policy meaning preserved" guarantee for the new
+short-circuit-carries-transforms semantics. -/
+
+/-- A stage's response phase is STATUS-STABLE when its `onResponse` never changes
+the built status — every deployed response-transform (header pushes, body
+rewrites, the header-map rewrite) leaves `.status` untouched; a gate's `onResponse`
+here is the identity. -/
+def Stage.statusStable (s : Stage) : Prop :=
+  ∀ (c : Ctx) (b : ResponseBuilder), ((s.onResponse c b).build).status = b.build.status
+
+/-- Over a status-stable stage list, the response-only fold preserves the built
+status: the short-circuit response keeps its gate status through the transforms. -/
+theorem runResp_build_status (stages : List Stage) (c : Ctx) (b : ResponseBuilder)
+    (h : ∀ s ∈ stages, Stage.statusStable s) :
+    ((runResp stages c b).build).status = b.build.status := by
+  induction stages with
+  | nil => rfl
+  | cons s rest ih =>
+    have hs : Stage.statusStable s := h s (List.mem_cons_self _ _)
+    have hr : ∀ t ∈ rest, Stage.statusStable t := fun t ht => h t (List.mem_cons_of_mem _ ht)
+    calc ((runResp (s :: rest) c b).build).status
+        = ((s.onResponse c (runResp rest c b)).build).status := rfl
+      _ = ((runResp rest c b).build).status := hs c _
+      _ = b.build.status := ih hr
+
+/-- **`pipeline_gate_status` — a short-circuit keeps its gate status.** When `s`
+gates `.respond r` and every inner stage is status-stable, the BUILT pipeline
+response has status exactly `r.status`. So the security/cors/header transforms the
+short-circuit now carries add headers only — the 3xx stays a 3xx, the 403 a 403. -/
+theorem pipeline_gate_status (s : Stage) (rest : List Stage)
+    (handler : Ctx → Response) (c : Ctx) (r : Response)
+    (hg : s.onRequest c = .respond r) (hst : ∀ t ∈ rest, Stage.statusStable t) :
+    ((runPipeline (s :: rest) handler c).build).status = r.status := by
+  rw [pipeline_gate_short_circuits s rest handler c r hg,
+      runResp_build_status rest c _ hst]
+  rfl
 
 /-- **`pipeline_stage_effect` — the byte-effect hook.** When `s` passes
 (`.continue c'`), the pipeline builder is `s.onResponse c'` applied to the inner

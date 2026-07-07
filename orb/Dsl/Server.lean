@@ -496,7 +496,7 @@ def elabServer : CommandElab := fun stx => do
                        = Reactor.serialize (Reactor.Lifecycle.rewriteResp
                            (Reactor.Deploy.deployProg
                              (Reactor.Deploy.deployPlan (Reactor.Deploy.deploySubs input)) input)
-                           (Reactor.App.responseOfHandler r.handler)) :=
+                           (Reactor.App.responseOfReq req r.handler)) :=
               $ssRoutesA $name input req rest a s
                 hsends hsub hauth hesc hadmit))
         else
@@ -514,7 +514,7 @@ def elabServer : CommandElab := fun stx => do
                        = Reactor.serialize (Reactor.Lifecycle.rewriteResp
                            (Reactor.Deploy.deployProg
                              (Reactor.Deploy.deployPlan (Reactor.Deploy.deploySubs input)) input)
-                           (Reactor.App.responseOfHandler r.handler)) :=
+                           (Reactor.App.responseOfReq req r.handler)) :=
               $ssRoutesS $name input req rest s
                 hsends hsub hesc hadmit))
       -- (5) The per-feature transported seams.

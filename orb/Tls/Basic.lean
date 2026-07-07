@@ -80,14 +80,25 @@ inductive HsOut where
   /-- Not even one complete record is available: keep accumulating. -/
   | insufficient
   /-- Handshake progressed: successor engine, ciphertext consumed, a
-  flight to send, and any early (0.5-RTT) application plaintext drained
-  while the handshake is still in progress. -/
+  flight to send, any early (0.5-RTT) application plaintext drained while
+  the handshake is still in progress, and the **plaintext handshake
+  messages** of the flight the engine just emitted (RFC 8446 §4.4.1
+  transcript contribution — the bare `msg_type ‖ len ‖ body` messages the
+  engine sent, *not* the sealed record bytes in `send`). Empty when the
+  step sent no handshake messages. -/
   | more (hs : HsConn) (consumed : Nat) (send : Bytes) (early : Bytes)
+         (flightPlain : Bytes)
   /-- Handshake complete: the established record engine, ciphertext
-  consumed, the final flight, the negotiated ALPN, and early plaintext
-  drained together with the peer's finish. -/
+  consumed, the final flight, the negotiated ALPN, early plaintext drained
+  together with the peer's finish, and the **plaintext handshake messages**
+  of the server flight the engine emitted this step (ServerHello ‖
+  EncryptedExtensions ‖ Certificate ‖ CertificateVerify ‖ Finished — the
+  RFC 8446 §4.4.1 transcript contribution, plaintext, not the sealed record
+  bytes in `send`). This is the piece that was previously dropped: the
+  opaque engine surfaced the server flight only as sealed record bytes, so
+  the `Tls` record layer never saw its plaintext for the transcript. -/
   | done (rc : RecConn) (consumed : Nat) (send : Bytes) (alpn : Alpn)
-         (early : Bytes)
+         (early : Bytes) (flightPlain : Bytes)
   /-- Handshake failure (malformed record, bad MAC, policy refusal). -/
   | fail
 
@@ -223,11 +234,28 @@ structure Config where
   connection and never touch it again. -/
   extractSecrets : RecConn → Secrets
 
-/-- Machine state: the lifecycle phase plus the ghost consumed-set. -/
+/-- Machine state: the lifecycle phase, the ghost consumed-set, and the
+running handshake transcript. -/
 structure St where
   phase : Phase
   /-- Ghost: record connections whose secrets have been extracted. -/
-  consumed : List RecConn
+  consumed : List RecConn := []
+  /-- The accumulated handshake transcript: the full RFC 8446 §4.4.1
+  message sequence (`Transcript-Hash(M₁ ‖ … ‖ Mₙ)` is taken over this), in
+  protocol order — **both** every handshake message the connection
+  received across all flights (ClientHello, then the client's second flight
+  Certificate ‖ CertificateVerify ‖ Finished) **and** the plaintext of the
+  server flight the engine emitted between them (ServerHello ‖
+  EncryptedExtensions ‖ Certificate ‖ CertificateVerify ‖ Finished). A
+  received message the engine consumes off an earlier flight is not dropped
+  from the connection's view, and the emitted server flight — previously
+  surfaced only as sealed record bytes — is now interleaved in plaintext at
+  the step that sends it (via `HsOut.flightPlain`). So the accumulated bytes
+  are `ClientHello ‖ server flight ‖ client Certificate ‖ …`, the full
+  §4.4.1 transcript, even though the opaque handshake engine keeps only the
+  tail in its phase buffer. The mutual-TLS client `CertificateVerify` is
+  checked over this accumulated transcript. -/
+  transcript : Bytes := []
 deriving Repr
 
 /-- The observable and ghost effect of one step. -/

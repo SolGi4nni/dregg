@@ -22,9 +22,8 @@ Scope (deliberate cuts, all decodable-prefix layers included):
 * **String literals** (§5.2) — full framing; **Huffman is an axiomatized
   decoder interface** (`HuffmanDecoder`), not an implementation: theorems hold
   uniformly for *every* decoder behavior.
-* **Static table** (Appendix A) — the subset of indices 1–32 (1-based, as in
-  the RFC; index 0 is the invalid sentinel); indices 33–61 fail with
-  `Err.staticIndex` (a modeled-subset cut).
+* **Static table** (Appendix A) — the full table, indices 1–61 (1-based, as in
+  the RFC; index 0 is the invalid sentinel).
 * **Dynamic table** (§2.3) — explicit out-of-scope stub: an indexed reference
   into the dynamic table (index ≥ 62), a dynamic-table size update (§6.3), and
   the incremental-indexing insertion side effect (§6.2.1) are all treated as
@@ -119,7 +118,8 @@ inductive Err where
   /-- A dynamic-table reference or size update: the dynamic table is the
   explicit out-of-scope stub — no table state exists to resolve it. -/
   | dynamicUnsupported
-  /-- Static-table index outside the modeled subset (33–61). -/
+  /-- Static-table index that resolves to no entry (defensive; the full 1–61
+  table is modeled, so this is unreachable for indices ≤ 61). -/
   | staticIndex
   /-- Static-table index 0, which is invalid (RFC 7541 §6.1). -/
   | invalidIndex
@@ -197,10 +197,13 @@ theorem readStr_consumed (hd : HuffmanDecoder) (bs : Bytes) (s : Bytes) (n : Nat
 explicit UTF-8 hypothesis, as in the H1 parser and QPACK). -/
 def utf8Ok (bs : Bytes) : Bool := String.validateUTF8 (ByteArray.mk bs.toArray)
 
-/-! ## The static table subset (RFC 7541 Appendix A, indices 1–32) -/
+/-! ## The static table (RFC 7541 Appendix A, indices 1–61) -/
 
-/-- RFC 7541 Appendix A, indices 0–32 (1-based, as in the RFC; index 0 is the
-unused sentinel). Indices 33–61 are a deliberate scope cut. -/
+/-- RFC 7541 Appendix A, the full static table, indices 0–61 (1-based, as in the
+RFC; index 0 is the unused sentinel). A live H2 client (curl/nghttp2) references
+names throughout the table — `user-agent` (58), `accept` (19), `:authority` (1)
+— so the whole 61-entry table is materialized; a static index ≥ 62 is a dynamic-
+table reference (out of scope). -/
 def staticTable : List (String × String) := [
   ("", ""),                                             -- 0 (unused)
   (":authority", ""), (":method", "GET"),               -- 1, 2
@@ -218,10 +221,25 @@ def staticTable : List (String × String) := [
   ("content-disposition", ""), ("content-encoding", ""),-- 25, 26
   ("content-language", ""), ("content-length", ""),     -- 27, 28
   ("content-location", ""), ("content-range", ""),      -- 29, 30
-  ("content-type", ""), ("cookie", "")]                 -- 31, 32
+  ("content-type", ""), ("cookie", ""),                 -- 31, 32
+  ("date", ""), ("etag", ""),                           -- 33, 34
+  ("expect", ""), ("expires", ""),                      -- 35, 36
+  ("from", ""), ("host", ""),                           -- 37, 38
+  ("if-match", ""), ("if-modified-since", ""),          -- 39, 40
+  ("if-none-match", ""), ("if-range", ""),              -- 41, 42
+  ("if-unmodified-since", ""), ("last-modified", ""),   -- 43, 44
+  ("link", ""), ("location", ""),                       -- 45, 46
+  ("max-forwards", ""), ("proxy-authenticate", ""),     -- 47, 48
+  ("proxy-authorization", ""), ("range", ""),           -- 49, 50
+  ("referer", ""), ("refresh", ""),                     -- 51, 52
+  ("retry-after", ""), ("server", ""),                  -- 53, 54
+  ("set-cookie", ""), ("strict-transport-security", ""),-- 55, 56
+  ("transfer-encoding", ""), ("user-agent", ""),        -- 57, 58
+  ("vary", ""), ("via", ""),                            -- 59, 60
+  ("www-authenticate", "")]                             -- 61
 
-/-- Resolve a 1-based static-table index in the modeled subset. Index 0 and
-indices ≥ 33 fall outside the modeled table (`none`). -/
+/-- Resolve a 1-based static-table index. Index 0 (the sentinel) and indices ≥ 62
+(a dynamic-table reference) fall outside the table (`none`). -/
 def staticEntry (i : Nat) : Option (String × String) :=
   if i = 0 then none else staticTable[i]?
 

@@ -118,6 +118,60 @@ theorem parse_ack_lead (b : Bytes) (h : parse b = some .ack) :
         split at h <;> · first | (split at h <;> simp_all) | simp_all
       · rw [if_neg ho] at h; simp at h
 
+/-! ## DCEP message encoding (RFC 8832 §5), the inverse of `parse`
+
+The opener side serializes a DATA_CHANNEL_OPEN / DATA_CHANNEL_ACK onto SCTP
+stream 0 (PPID 50). These are the exact bytes the live driver puts on the wire;
+`encodeOpen_roundtrip` proves they decode back through `parse` to the message
+they encode — so the driver's DCEP bytes refine this model. -/
+
+/-- Big-endian encode of a 16-bit value. -/
+def enc16 (n : Nat) : Bytes := [UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]
+
+/-- Big-endian encode of a 32-bit value. -/
+def enc32 (n : Nat) : Bytes :=
+  [UInt8.ofNat (n / 16777216 % 256), UInt8.ofNat (n / 65536 % 256),
+   UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]
+
+/-- Encode a DATA_CHANNEL_OPEN (RFC 8832 §5.1): the message-type byte, the
+one-byte channel type, the 16-bit priority, the 32-bit reliability parameter,
+the 16-bit label and protocol lengths, then the label and protocol bytes. -/
+def encodeOpen (channelType priority reliability : Nat) (label protocol : Bytes) : Bytes :=
+  openType :: UInt8.ofNat channelType ::
+    (enc16 priority ++ enc32 reliability
+      ++ enc16 label.length ++ enc16 protocol.length ++ label ++ protocol)
+
+/-- Encode a DATA_CHANNEL_ACK (RFC 8832 §5.2): a single message-type byte. -/
+def encodeAck : Bytes := [ackType]
+
+/-- A big-endian 16-bit value round-trips through `enc16` when it is in range. -/
+theorem be16_enc16 (n : Nat) (h : n < 65536) :
+    be16 (UInt8.ofNat (n / 256 % 256)) (UInt8.ofNat (n % 256)) = n := by
+  simp only [be16, UInt8.toNat_ofNat]
+  omega
+
+/-- **DATA_CHANNEL_OPEN round-trips through `parse` (RFC 8832 §5).** The bytes the
+driver emits for a reliable channel (channel type / priority / reliability all
+`0`, the WebRTC default profile) decode back to exactly the OPEN they encode:
+label and protocol recovered verbatim, lengths intact. The driver's on-the-wire
+DCEP OPEN is therefore precisely the message this model decodes. -/
+theorem encodeOpen_roundtrip (label protocol : Bytes)
+    (hl : label.length < 65536) (hp : protocol.length < 65536) :
+    parse (encodeOpen 0 0 0 label protocol)
+      = some (.open 0 0 0 label.length protocol.length label protocol) := by
+  have hll : be16 (UInt8.ofNat (label.length / 256 % 256))
+      (UInt8.ofNat (label.length % 256)) = label.length := be16_enc16 _ hl
+  have hpp : be16 (UInt8.ofNat (protocol.length / 256 % 256))
+      (UInt8.ofNat (protocol.length % 256)) = protocol.length := be16_enc16 _ hp
+  simp only [encodeOpen, enc16, enc32, List.cons_append, List.append_assoc,
+             List.nil_append]
+  simp only [parse]
+  rw [if_neg (show ¬ (openType = ackType) by decide)]
+  simp only [if_true]
+  rw [hll, hpp, if_pos (by simp [List.length_append])]
+  simp only [List.take_left, List.drop_left, List.take_length, be32, be16,
+             UInt8.toNat_ofNat]
+
 /-! ## The open handshake FSM (RFC 8832 §6) -/
 
 /-- Channel setup state from the opener's view (RFC 8832 §6): before sending;

@@ -166,4 +166,94 @@ example : get [99,111,110,110,101,99,116,105,111,110] (strip hopStd exHeaders) =
 /-- An end-to-end header survives with its value intact. -/
 example : get exCT.name (strip hopStd exHeaders) = some exCT.value := by decide
 
+/-! ### RFC 9110 §7.6.1 — the message-relative (dynamic) hop set
+
+`hopStd` is the *fixed* connection-management set.  RFC 9110 §7.6.1 additionally
+requires that an intermediary parse the message's `Connection` header before
+forwarding and remove every field it names as a `connection-option` — those
+fields are connection-specific too and MUST NOT be relayed end-to-end.  A static
+`strip hopStd` misses them, forwarding a `Connection`-nominated field downstream
+(a header leak / request-smuggling vector).
+
+`connOptionNames` parses the option names out of the message's `Connection`
+field(s); `dynHopSet` is the effective set the deployed strip must use:
+`hopStd` together with those nominated names. -/
+
+/-- ASCII comma — the `#rule` list separator (RFC 9110 §5.6.1). -/
+def comma : UInt8 := 44
+
+/-- Optional whitespace (RFC 9110 §5.6.3): space (`SP`) or horizontal tab (`HTAB`). -/
+def isOWS (b : UInt8) : Bool := b == 32 || b == 9
+
+/-- Drop leading and trailing OWS from a token. -/
+def trimOWS (t : Name) : Name :=
+  ((t.dropWhile isOWS).reverse.dropWhile isOWS).reverse
+
+/-- Split a field value at commas into raw tokens (RFC 9110 §5.6.1, `#rule`). -/
+def rawTokens (v : Value) : List Name :=
+  let p := v.foldr
+    (fun b (acc : Name × List Name) =>
+      if b == comma then ([], acc.1 :: acc.2) else (b :: acc.1, acc.2))
+    (([], []) : Name × List Name)
+  p.1 :: p.2
+
+/-- The connection-option names carried by one `Connection` field value: split at
+commas, trim OWS, drop empties. -/
+def connTokens (v : Value) : List Name :=
+  ((rawTokens v).map trimOWS).filter (fun t => !t.isEmpty)
+
+/-- The `connection` field name (lower-case bytes). -/
+def connName : Name := [99,111,110,110,101,99,116,105,111,110]
+
+/-- Is `n` the `Connection` field name (case-insensitively)? -/
+def isConnName (n : Name) : Bool := nameEqb connName n
+
+/-- **The declared connection-options of a message.**  For every `Connection`
+field in `h`, the option names it lists — the additional hop-by-hop fields the
+sender/upstream marked for removal before forwarding (RFC 9110 §7.6.1). -/
+def connOptionNames (h : Headers) : List Name :=
+  (h.filter (fun f => isConnName f.name)).foldr
+    (fun f acc => connTokens f.value ++ acc) []
+
+/-- **The effective hop set for forwarding a message.**  The fixed `hopStd`
+connection-management table together with every field name the message's
+`Connection` header nominates.  This is what the deployed strip must use so that a
+`Connection`-nominated field is removed, not relayed downstream. -/
+def dynHopSet (h : Headers) : List Name := hopStd ++ connOptionNames h
+
+/-- `isHop` distributes over an append of name tables. -/
+theorem isHop_append (a b : List Name) (n : Name) :
+    isHop (a ++ b) n = (isHop a n || isHop b n) := by
+  unfold isHop; rw [List.any_append]
+
+/-- Every fixed-set hop name is still a hop name in the dynamic set — so the
+dynamic strip removes at least everything the static strip did. -/
+theorem isHop_hopStd_dynHopSet {n : Name} {msg : Headers} (h : isHop hopStd n = true) :
+    isHop (dynHopSet msg) n = true := by
+  unfold dynHopSet; rw [isHop_append, h, Bool.true_or]
+
+/-! Worked vectors for the dynamic set. -/
+
+/-- `Connection: X-Secret` — a field that nominates `X-Secret` hop-by-hop. -/
+def exConnSecret : Field := ⟨[67,111,110,110,101,99,116,105,111,110], [88,45,83,101,99,114,101,116]⟩
+
+/-- `X-Secret: leak` — the nominated field that MUST be stripped. -/
+def exSecret : Field := ⟨[88,45,83,101,99,114,101,116], [108,101,97,107]⟩
+
+/-- A message whose `Connection` header nominates `X-Secret`. -/
+def exDyn : Headers := [exConnSecret, exSecret, exCT]
+
+/-- The dynamic set includes the `Connection`-nominated `X-Secret`. -/
+example : isHop (dynHopSet exDyn) exSecret.name = true := by decide
+
+/-- The fixed set alone does NOT — the leak a static strip leaves. -/
+example : isHop hopStd exSecret.name = false := by decide
+
+/-- The dynamic strip removes both the `Connection` field and the nominated
+`X-Secret`, keeping only the end-to-end `Content-Type`. -/
+example : strip (dynHopSet exDyn) exDyn = [exCT] := by decide
+
+/-- The static strip leaks `X-Secret` downstream — the bug the dynamic set closes. -/
+example : get exSecret.name (strip hopStd exDyn) = some exSecret.value := by decide
+
 end Header

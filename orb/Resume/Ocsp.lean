@@ -9,9 +9,12 @@ never be handed out.  The current staple lives in a cache cell that a reload
 staple or the new one — never a field-torn mix.  This is the same atomic-swap
 shape the config reload uses.
 
-  * `Staple`   — the stapled response: its validity window and an opaque body.
+  * `Staple`   — the stapled response: its validity window, certificate status,
+                 the `certID` of the certificate it speaks for, and an opaque body.
   * `fresh`    — the freshness predicate `now ∈ [thisUpdate, nextUpdate)`.
-  * `serve?`   — the single-staple serve decision (serve iff fresh).
+  * `accepts`  — the deployed acceptance decision: status `good`, fresh, and the
+                 `certID` matches the served certificate (RFC 6960 §2.2/§3.2/§4.2.1).
+  * `serve?`   — the single-staple serve decision (serve iff `accepts`).
   * `Cache`    — the current staple cell plus an append-only served log.
   * `request`  — serve the current staple iff present and fresh (else stutter).
   * `swap`     — replace the whole staple cell in one atomic step.
@@ -19,11 +22,27 @@ shape the config reload uses.
 
 namespace Resume
 
-/-- A stapled OCSP response: the validity window `[thisUpdate, nextUpdate)` and
-an opaque body identity. -/
+/-- The three OCSP certificate statuses (RFC 6960 §2.2 `CertStatus`): the
+certificate is `good` (not revoked), `revoked`, or its status is `unknown` to
+the responder. Only `good` certifies non-revocation. -/
+inductive CertStatus where
+  | good
+  | revoked
+  | unknown
+deriving DecidableEq, Repr
+
+/-- A stapled OCSP response: the validity window `[thisUpdate, nextUpdate)`, the
+certificate `certStatus` (RFC 6960 §2.2), the `certId` naming the certificate the
+response speaks for (RFC 6960 §4.2.1 `CertID`), and an opaque body identity. -/
 structure Staple where
   thisUpdate : Nat
   nextUpdate : Nat
+  /-- RFC 6960 §2.2 `CertStatus` — `good`, `revoked`, or `unknown`. -/
+  certStatus : CertStatus
+  /-- RFC 6960 §4.2.1 `CertID` — the identity of the certificate this response
+  certifies, an opaque `Nat`; the deployed gate requires it to equal the served
+  certificate's identity. -/
+  certId : Nat
   body : Nat
 deriving DecidableEq, Repr
 
@@ -43,28 +62,75 @@ theorem stale_not_fresh (s : Staple) (now : Nat) (h : s.nextUpdate ≤ now) :
   | false => rfl
   | true => have := (fresh_iff s now).mp hb; omega
 
-/-- The single-staple serve decision: hand out the staple iff it is fresh. -/
-def serve? (s : Staple) (now : Nat) : Option Staple :=
-  if s.fresh now = true then some s else none
+/-- **The deployed staple-acceptance decision** (RFC 6960 §2.2/§3.2/§4.2.1): a
+stapled response is accepted iff its certificate status is `good`, it is fresh
+(`thisUpdate ≤ now < nextUpdate`), and its `certID` names the served certificate
+(`servedCertId`). Total: every field is decided. Freshness alone is *not*
+sufficient — a revoked or wrong-certificate staple is rejected. -/
+def Staple.accepts (s : Staple) (now servedCertId : Nat) : Bool :=
+  decide (s.certStatus = CertStatus.good) && s.fresh now && decide (s.certId = servedCertId)
 
-/-- Whatever is served is the current staple, and it is fresh. -/
-theorem served_is_fresh {s r : Staple} {now : Nat} (h : serve? s now = some r) :
-    r = s ∧ s.thisUpdate ≤ now ∧ now < s.nextUpdate := by
+/-- Acceptance agrees with the RFC-6960 conjunction exactly. -/
+theorem accepts_iff (s : Staple) (now servedCertId : Nat) :
+    s.accepts now servedCertId = true ↔
+      s.certStatus = CertStatus.good
+      ∧ (s.thisUpdate ≤ now ∧ now < s.nextUpdate)
+      ∧ s.certId = servedCertId := by
+  simp only [Staple.accepts, Bool.and_eq_true, decide_eq_true_eq, fresh_iff, and_assoc]
+
+/-- A revoked (or unknown) staple is never accepted, however fresh. -/
+theorem revoked_not_accepted (s : Staple) (now servedCertId : Nat)
+    (h : s.certStatus ≠ CertStatus.good) : s.accepts now servedCertId = false := by
+  cases hb : s.accepts now servedCertId with
+  | false => rfl
+  | true => exact absurd ((accepts_iff s now servedCertId).mp hb).1 h
+
+/-- A staple whose `certID` does not name the served certificate is never
+accepted, however fresh and `good`. -/
+theorem mismatch_not_accepted (s : Staple) (now servedCertId : Nat)
+    (h : s.certId ≠ servedCertId) : s.accepts now servedCertId = false := by
+  cases hb : s.accepts now servedCertId with
+  | false => rfl
+  | true => exact absurd ((accepts_iff s now servedCertId).mp hb).2.2 h
+
+/-- The single-staple serve decision: hand out the staple iff it is accepted —
+`good`, fresh, and for the served certificate. -/
+def serve? (s : Staple) (now servedCertId : Nat) : Option Staple :=
+  if s.accepts now servedCertId = true then some s else none
+
+/-- Whatever is served is the current staple, and it was accepted: `good`, fresh,
+and naming the served certificate. -/
+theorem served_is_valid {s r : Staple} {now servedCertId : Nat}
+    (h : serve? s now servedCertId = some r) :
+    r = s ∧ s.certStatus = CertStatus.good
+      ∧ (s.thisUpdate ≤ now ∧ now < s.nextUpdate) ∧ s.certId = servedCertId := by
   unfold serve? at h
-  by_cases hf : s.fresh now = true
+  by_cases hf : s.accepts now servedCertId = true
   · rw [if_pos hf] at h
-    obtain ⟨h1, h2⟩ := (fresh_iff s now).mp hf
-    exact ⟨(Option.some.inj h).symm, h1, h2⟩
+    exact ⟨(Option.some.inj h).symm, (accepts_iff s now servedCertId).mp hf⟩
   · rw [if_neg hf] at h; exact absurd h (by simp)
 
 /-- **Freshness invariant (point form).**  A staple at or past `nextUpdate` is
 never served. -/
-theorem stale_never_served (s : Staple) (now : Nat) (h : s.nextUpdate ≤ now) :
-    serve? s now = none := by
-  have hnf : ¬ (s.fresh now = true) := by
-    intro hf; have := (fresh_iff s now).mp hf; omega
+theorem stale_never_served (s : Staple) (now servedCertId : Nat)
+    (h : s.nextUpdate ≤ now) : serve? s now servedCertId = none := by
+  have hnf : ¬ (s.accepts now servedCertId = true) := by
+    intro ha; have := ((accepts_iff s now servedCertId).mp ha).2.1; omega
   unfold serve?
   rw [if_neg hnf]
+
+/-- **A revoked staple is never served**, however fresh — the deployed decision
+refuses it. -/
+theorem revoked_never_served (s : Staple) (now servedCertId : Nat)
+    (h : s.certStatus ≠ CertStatus.good) : serve? s now servedCertId = none := by
+  unfold serve?
+  rw [if_neg (by rw [revoked_not_accepted s now servedCertId h]; simp)]
+
+/-- **A wrong-certificate staple is never served**, however fresh and `good`. -/
+theorem mismatch_never_served (s : Staple) (now servedCertId : Nat)
+    (h : s.certId ≠ servedCertId) : serve? s now servedCertId = none := by
+  unfold serve?
+  rw [if_neg (by rw [mismatch_not_accepted s now servedCertId h]; simp)]
 
 /-! ### The staple cache and its atomic swap -/
 

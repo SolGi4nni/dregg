@@ -34,15 +34,24 @@ import Reactor.Ws
 import Reactor.Quic
 import Reactor.QuicIngress
 
-/-! ## (1) The HTTP handler — the same proven pipeline `orb-mac` serves.
+/-! ## (1) The HTTP handler — the same full thirteen-stage pipeline the dataplane serves.
 
-One connection's request bytes in, the deployed guarded response bytes out
-(`deployStepIngress` over a fresh `ObsState.init`), exactly as `IoMac.handleConn`
-runs it. The WS shell calls this for any non-upgrade request. -/
+One connection's request bytes in, the deployed response bytes out: the SAME serve
+the Rust dataplane's `drorb_serve` runs — fork on the h2c preface to the real H2
+engine (`serveIngress`); everything else runs the HTTP/1.1 path through the full
+`deployStepFull2` fold, which carries all thirteen byte-drivers (the five gates —
+jwt/ipfilter/rate/cache/redirect — the traversal/policy gates, and the
+cors/gzip/htmlrewrite/security/header transforms). This closes the native-socket
+stage-parity gap: the native path is no longer the 3-stage guarded serve. The WS
+shell calls this for any non-upgrade request. -/
 @[export orb_mac_multi_http]
 def multiHttpHandle (req : ByteArray) : ByteArray :=
+  let bytes := req.toList
   let (out, _obs) :=
-    Reactor.Ingress.deployStepIngress Reactor.Observe.ObsState.init req.toList
+    if Reactor.Ingress.hasH2Preface bytes then
+      (Reactor.Ingress.serveIngress bytes, Reactor.Observe.ObsState.init)
+    else
+      Reactor.Deploy.deployStepFull2 Reactor.Observe.ObsState.init bytes
   ByteArray.mk out.toArray
 
 /-! ## (2) The WebSocket frame handler — the REAL frame engine, echoed.
@@ -78,7 +87,7 @@ def udpHandle (datagram : ByteArray) : ByteArray :=
               (Reactor.Quic.Payload.stream 7 h3)
   let subs := (Reactor.QuicIngress.datagramServe
     Reactor.QuicIngress.demoConfig Reactor.QuicIngress.demoState ev).2
-  let resp := Reactor.Ingress.serveOverSubs subs h3
+  let resp := Reactor.Ingress.serveFull2OverSubs subs h3
   ByteArray.mk resp.toArray
 
 /-! ## (4) The two extern IO loops (in the untrusted C shells) -/

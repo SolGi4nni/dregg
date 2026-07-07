@@ -392,4 +392,254 @@ theorem run_connected_needs_upstreamOk (evs : List TEv) (p : TPhase)
       rw [this.2]; exact List.mem_cons_self _ _
     · exact List.mem_cons_of_mem _ (ih (tstep p e) hc h)
 
+/-! ## Proxy bypass / `NO_PROXY` (direct-connection allowlist)
+
+A forward-proxy client does not send *every* request through the proxy: a
+`NO_PROXY` list names destinations that must be reached **directly**, bypassing
+the proxy entirely. The matching rule (as implemented by common command-line
+clients) is a domain-boundary suffix match:
+
+* an entry `*` bypasses the proxy for every host;
+* an entry equal to the host matches (exact);
+* an entry that is a **label-boundary suffix** of the host matches —
+  `example.com` matches `sub.example.com` (and a leading-dot entry
+  `.example.com` means the same), but the partial label `ample.com` does **not**
+  match `example.com` (matching only at a `.` boundary is what stops an
+  over-broad entry from silently bypassing the proxy for an unrelated host);
+* an empty entry matches nothing.
+
+When any entry matches, the connection is `direct` — the proxy is not used, so
+**no CONNECT tunnel is opened through it** for that host; otherwise the route is
+`viaProxy`.
+-/
+
+/-- Strip a single leading `.` from a `NO_PROXY` entry, so `.example.com` and
+`example.com` are treated identically. -/
+def stripLeadingDot (e : String) : String :=
+  if e.startsWith "." then e.drop 1 else e
+
+/-- Does a single `NO_PROXY` entry match `host`? Domain-boundary suffix match,
+with `*` as bypass-all and `""` as match-nothing. -/
+def noProxyMatch (entry host : String) : Bool :=
+  if entry = "*" then true
+  else if entry = "" then false
+  else
+    let e := stripLeadingDot entry
+    host == e || host.endsWith ("." ++ e)
+
+/-- Does the whole `NO_PROXY` list bypass the proxy for `host`? True iff some
+entry matches. -/
+def bypassProxy (noProxy : List String) (host : String) : Bool :=
+  noProxy.any (fun e => noProxyMatch e host)
+
+/-- The connection route selected for a host under a `NO_PROXY` policy. -/
+inductive Route where
+  | direct
+  | viaProxy
+deriving DecidableEq, Repr
+
+/-- The route: `direct` when the host is bypassed, else `viaProxy`. -/
+def route (noProxy : List String) (host : String) : Route :=
+  if bypassProxy noProxy host then .direct else .viaProxy
+
+/-- **A matching entry bypasses the proxy.** If any entry in the list matches the
+host, the list bypasses — a bypass is *witnessed* by a matching entry. -/
+theorem bypass_of_match {noProxy : List String} {host entry : String}
+    (hmem : entry ∈ noProxy) (hm : noProxyMatch entry host = true) :
+    bypassProxy noProxy host = true :=
+  List.any_eq_true.mpr ⟨entry, hmem, hm⟩
+
+/-- `noProxyMatch "*" host` is always `true`. -/
+theorem noProxyMatch_star (host : String) : noProxyMatch "*" host = true := by
+  unfold noProxyMatch; exact if_pos rfl
+
+/-- **`*` bypasses everything.** A `NO_PROXY` list containing `*` routes every
+host directly. -/
+theorem bypass_star {noProxy : List String} {host : String}
+    (h : "*" ∈ noProxy) : bypassProxy noProxy host = true :=
+  bypass_of_match h (noProxyMatch_star host)
+
+/-- The empty `NO_PROXY` list never bypasses. -/
+theorem bypass_nil (host : String) : bypassProxy [] host = false := rfl
+
+/-- **A bypassed host is routed directly** (so no tunnel is opened through the
+proxy for it). -/
+theorem route_direct_of_bypass {noProxy : List String} {host : String}
+    (h : bypassProxy noProxy host = true) : route noProxy host = .direct := by
+  simp [route, h]
+
+/-- **A non-bypassed host is routed through the proxy.** -/
+theorem route_via_of_not_bypass {noProxy : List String} {host : String}
+    (h : bypassProxy noProxy host = false) : route noProxy host = .viaProxy := by
+  simp [route, h]
+
+/-- **Empty `NO_PROXY` ⇒ every host goes through the proxy.** -/
+theorem route_nil (host : String) : route [] host = .viaProxy :=
+  route_via_of_not_bypass (bypass_nil host)
+
+/-- **No matching entry ⇒ not bypassed.** If every entry fails to match, the host
+is *not* bypassed — bypass requires a witnessing match (the contrapositive of
+`bypass_of_match`, ruling out a spurious direct route with no matching entry). -/
+theorem not_bypass_of_no_match {noProxy : List String} {host : String}
+    (h : ∀ e ∈ noProxy, noProxyMatch e host = false) :
+    bypassProxy noProxy host = false := by
+  cases hb : bypassProxy noProxy host with
+  | false => rfl
+  | true =>
+    obtain ⟨e, hmem, hm⟩ := List.any_eq_true.mp hb
+    rw [h e hmem] at hm; exact absurd hm (by simp)
+
+/-- **No matching entry ⇒ routed through the proxy.** -/
+theorem route_via_of_no_match {noProxy : List String} {host : String}
+    (h : ∀ e ∈ noProxy, noProxyMatch e host = false) :
+    route noProxy host = .viaProxy :=
+  route_via_of_not_bypass (not_bypass_of_no_match h)
+
+/-! ### `NO_PROXY` decision table (matches a real proxy client's `--noproxy`)
+
+These reproduce, in-model, the routing decisions a real command-line client
+makes for the same inputs: an exact or label-boundary-suffix entry bypasses the
+proxy (`direct`), a partial-label entry does not (`viaProxy`), `*` bypasses all,
+and an empty list always uses the proxy. Each `#guard` is checked at build time
+by evaluation (no axiom is introduced). -/
+
+-- Exact host entry ⇒ direct.
+#guard (route ["example.com"] "example.com" = .direct)
+-- Label-boundary suffix ⇒ direct.
+#guard (route ["example.com"] "sub.example.com" = .direct)
+-- Leading-dot entry is equivalent to the bare suffix ⇒ direct.
+#guard (route [".example.com"] "sub.example.com" = .direct)
+-- Partial label is NOT a boundary suffix ⇒ proxy is used.
+#guard (route ["ample.com"] "example.com" = .viaProxy)
+-- `*` bypasses every host ⇒ direct.
+#guard (route ["*"] "anything.test" = .direct)
+-- Comma-list membership: matching the second entry bypasses ⇒ direct.
+#guard (route ["foo.com", "example.com"] "example.com" = .direct)
+-- No matching entry ⇒ proxy is used.
+#guard (route ["other.com"] "example.com" = .viaProxy)
+-- An empty list always uses the proxy.
+#guard (route [] "example.com" = .viaProxy)
+
+/-! ## MITM interception: leaf-certificate minting + cache (RFC 9110 §9.3.6)
+
+When a forward proxy *intercepts* a CONNECT tunnel (rather than blind-forwarding
+it), it terminates TLS locally and presents the client a leaf certificate for
+the requested host, signed by the proxy's own CA. To avoid re-minting on every
+connection, minted leaves are cached, keyed by host. This section models that
+minting + cache as total functions and proves the properties that matter:
+
+* a minted leaf is signed by the configured CA and carries the requested host as
+  its subject (`mintLeaf_signed`, `mintLeaf_subject`) — no host confusion;
+* minting is gated on an access decision: a **denied host is never minted a
+  leaf** (`denied_no_leaf`), so an interception the policy forbids never
+  produces a forged certificate;
+* the cache is **stable**: a host already in the cache reuses its stored leaf,
+  unchanged, on every subsequent interception (`cache_hit_stable`), and a fresh
+  mint is immediately cached (`mint_then_cached`) — hence the leaf identity for a
+  host is deterministic across connections (`getOrMint_idempotent`).
+
+The X.509 signature *bytes* are a crypto boundary: "signed by the CA" is modeled
+as `issuer = ca`. The real signing/verification is exercised out-of-model by a
+standard TLS tool (see the accompanying notes); here we prove the orchestration
+(host-binding, gating, caching) that sits above it.
+-/
+
+/-- An abstract certificate-authority identity: the proxy's signing CA. -/
+structure CaId where
+  name : String
+deriving DecidableEq, Repr
+
+/-- A minted leaf certificate: the subject host, the issuing CA, and a serial.
+"Signed by `ca`" is modeled as `issuer = ca`. -/
+structure Leaf where
+  subject : String
+  issuer  : CaId
+  serial  : Nat
+deriving DecidableEq, Repr
+
+/-- Mint a fresh leaf for `host` under CA `ca` with serial `serial`. -/
+def mintLeaf (ca : CaId) (host : String) (serial : Nat) : Leaf :=
+  { subject := host, issuer := ca, serial := serial }
+
+/-- **A minted leaf is signed by the configured CA.** -/
+theorem mintLeaf_signed (ca : CaId) (host : String) (s : Nat) :
+    (mintLeaf ca host s).issuer = ca := rfl
+
+/-- **A minted leaf's subject is exactly the requested host** — the proxy never
+mints a leaf for a different name than the one the client asked to reach. -/
+theorem mintLeaf_subject (ca : CaId) (host : String) (s : Nat) :
+    (mintLeaf ca host s).subject = host := rfl
+
+/-- The leaf cache: an association list keyed by host. -/
+abbrev LeafCache := List (String × Leaf)
+
+/-- Look a host up in the cache. -/
+def LeafCache.get (c : LeafCache) (host : String) : Option Leaf :=
+  (c.find? (fun kv => kv.1 == host)).map (·.2)
+
+/-- Get-or-mint under an access gate. When `allowed host = false` the request is
+refused and **no leaf is minted** (`none`). On a cache hit the stored leaf is
+returned unchanged; on a miss a fresh leaf is minted, cached at the front, and
+returned. -/
+def getOrMint (allowed : String → Bool) (ca : CaId) (nextSerial : Nat)
+    (c : LeafCache) (host : String) : Option (Leaf × LeafCache) :=
+  if allowed host then
+    match c.get host with
+    | some leaf => some (leaf, c)
+    | none =>
+      let leaf := mintLeaf ca host nextSerial
+      some (leaf, (host, leaf) :: c)
+  else none
+
+/-- **A denied host is never minted a leaf.** If the access gate refuses the
+host, `getOrMint` returns `none`: the interception the policy forbids produces no
+forged certificate and opens no intercepted tunnel. -/
+theorem denied_no_leaf {allowed : String → Bool} {ca : CaId} {s : Nat}
+    {c : LeafCache} {host : String} (h : allowed host = false) :
+    getOrMint allowed ca s c host = none := by
+  simp [getOrMint, h]
+
+/-- **A cache hit is stable.** A host already in the cache reuses its stored leaf,
+and the cache is left unchanged — the leaf identity for a host does not churn
+across connections. -/
+theorem cache_hit_stable {allowed : String → Bool} {ca : CaId} {s : Nat}
+    {c : LeafCache} {host : String} {leaf : Leaf}
+    (hal : allowed host = true) (hhit : c.get host = some leaf) :
+    getOrMint allowed ca s c host = some (leaf, c) := by
+  simp [getOrMint, hal, hhit]
+
+/-- A freshly minted leaf is immediately visible in the returned cache. -/
+theorem mint_then_cached (c : LeafCache) (host : String)
+    (leaf : Leaf) : LeafCache.get ((host, leaf) :: c) host = some leaf := by
+  simp [LeafCache.get, List.find?]
+
+/-- **Leaf identity is deterministic across connections.** After the first
+interception mints a leaf for `host` (a cache miss), the *next* interception of
+the same host — allowed, against the updated cache — returns the very same leaf,
+with no new serial. Combined with `denied_no_leaf`, the per-host certificate the
+proxy presents is a single stable identity, minted at most once. -/
+theorem getOrMint_idempotent {allowed : String → Bool} {ca : CaId} {s : Nat}
+    {c : LeafCache} {host : String}
+    (hal : allowed host = true) (hmiss : c.get host = none) :
+    ∃ leaf c', getOrMint allowed ca s c host = some (leaf, c')
+      ∧ getOrMint allowed ca s c' host = some (leaf, c')
+      ∧ leaf = mintLeaf ca host s := by
+  refine ⟨mintLeaf ca host s, (host, mintLeaf ca host s) :: c, ?_, ?_, rfl⟩
+  · simp [getOrMint, hal, hmiss]
+  · exact cache_hit_stable hal (mint_then_cached c host (mintLeaf ca host s))
+
+/-! ### MITM decision table (build-time checked by evaluation) -/
+
+-- A denied host mints no leaf (deny-all gate).
+#guard (getOrMint (fun _ => false) ⟨"proxy-ca"⟩ 1 [] "blocked.test" = none)
+-- An allowed host on an empty cache mints a leaf signed by the CA (issuer =
+-- proxy-ca), subject = host, and inserts it into the cache.
+#guard (getOrMint (fun _ => true) ⟨"proxy-ca"⟩ 1 [] "site.test"
+      = some (⟨"site.test", ⟨"proxy-ca"⟩, 1⟩, [("site.test", ⟨"site.test", ⟨"proxy-ca"⟩, 1⟩)]))
+-- Re-intercepting the same host reuses the cached leaf (serial stays 1, no
+-- churn) even though the next serial offered is 9.
+#guard ((getOrMint (fun _ => true) ⟨"proxy-ca"⟩ 9
+      [("site.test", ⟨"site.test", ⟨"proxy-ca"⟩, 1⟩)] "site.test").map (·.1)
+      = some ⟨"site.test", ⟨"proxy-ca"⟩, 1⟩)
+
 end ForwardProxy

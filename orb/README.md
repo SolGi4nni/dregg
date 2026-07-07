@@ -98,14 +98,31 @@ hunt it. `#print axioms` on the headline theorems shows only the core kernel
 axioms (`propext`, `Quot.sound`, `Classical.choice`) plus the named crypto
 assumptions — no `sorry`, anywhere.
 
-## Building
+## Building & running the server
 
-Lean 4 (v4.17.0, via `elan`), core only — no Mathlib. `lake build` checks the
-proof libraries (no native deps). The crypto self-test and socket executables
-additionally link `libevercrypt.a` — build it from HACL\*'s `dist/gcc-compatible`
-and point the `-L` path in `lakefile.toml` at it (the stanzas assume
-`/opt/hacl-star/dist/gcc-compatible`). The verified-compiler probes (Lean model ↔
-Pancake source, in HOL4) build with `Holmake` against the CakeML tree.
+Prerequisites: Lean 4 (`v4.17.0`, fetched by `elan` via `lean-toolchain`), Rust +
+`cargo`, and the F\*-verified HACL\*/EverCrypt crypto backend (build
+[hacl-star](https://github.com/hacl-star/hacl-star), point `HACL_DIST` at its
+`dist/gcc-compatible`). macOS or Linux.
+
+```sh
+export HACL_DIST=/path/to/hacl-star/dist/gcc-compatible
+./build.sh                                          # -> target/release/dataplane
+DRORB_CONFIG=./sample.cfg ./target/release/dataplane 127.0.0.1:8080
+curl http://127.0.0.1:8080/health                   # -> 200 ok
+```
+
+`build.sh` builds the FFI shims, compiles the proven serve to `libdrorb.a`, and links
+the native dataplane. **The first build cold-compiles the Lean serve core — tens of
+minutes;** rebuilds are incremental. The full operator guide (config grammar, vhosts,
+proxy, TLS certs, live reload, metrics, systemd) is in
+[`deploy/README.md`](./deploy/README.md).
+
+To build **and re-check every proof**, run a full `lake build` (core Lean, no Mathlib;
+slower — it elaborates every theorem). That path also links the Lean-built
+executables, whose `lakefile.toml` stanzas assume `/opt/hacl-star` — symlink it, or set
+`LIBRARY_PATH=$HACL_DIST` (which `build.sh` does). The verified-compiler probes ship
+separately in the companion `orb-compiler/` drop.
 
 ## Licence
 

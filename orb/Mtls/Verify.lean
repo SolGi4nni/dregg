@@ -16,9 +16,21 @@ The four declarative predicates (`allValid`, `linkedSigned`, `nonLeafCA`,
 `topAnchored`) name those same conditions independently of the recursion; the
 `Theorems` file proves `verifyFrom` is *exactly* their conjunction.
 
-`authenticate` layers identity extraction on top: a verified chain yields the
-single leaf subject; anything else yields no identity.  There is no path from a
-failed verification to an identity — the no-bypass property.
+`authenticate` layers identity extraction on top.  Two independent proofs must
+succeed before an identity is established:
+
+  * the RFC 5280 §6.1 certificate path validates (`verifyFrom`); and
+  * the client's RFC 8446 §4.4.3 `CertificateVerify` signature verifies under
+    the leaf (end-entity) certificate's public key over the transcript-derived
+    content (`env.cvVerify leaf (clientCertVerifyContent transcriptHash) cvSig`).
+
+A verified path proves the presented certificates chain to a trust anchor; the
+CertificateVerify proves the peer holds the leaf's *private key*.  Without the
+second check a client presenting any publicly-visible certificate chain would be
+authenticated as that identity without proving possession — an auth bypass.  A
+verified chain with an absent or bad CertificateVerify therefore yields **no**
+identity; anything else yields no identity too.  There is no path from a failed
+verification to an identity — the no-bypass property.
 -/
 
 import Mtls.Basic
@@ -82,14 +94,23 @@ def topAnchored (env : Env) (chain : Chain) : Prop :=
 
 /-! ### Identity extraction -/
 
-/-- **Identity extraction.**  A verified chain yields exactly the leaf
-(client-certificate) subject as the authenticated identity; an unverified or
-empty chain yields no identity.  There is no branch from a failed verification
-to `some` — authentication cannot be bypassed. -/
-def authenticate (env : Env) (now : Time) (chain : Chain) : Option Name :=
+/-- **Identity extraction.**  An identity is established for the leaf
+(client-certificate) subject **iff both** the RFC 5280 §6.1 path validates
+(`verifyFrom`) **and** the client's RFC 8446 §4.4.3 `CertificateVerify`
+signature `cvSig` verifies under the leaf certificate's public key over the
+transcript-derived content (proof of possession of the leaf private key).
+`transcriptHash` is the handshake transcript hash and `cvSig` the client's
+CertificateVerify signature, both surfaced from the handshake.  An unverified or
+empty chain — or a chain whose CertificateVerify is absent or bad — yields no
+identity.  There is no branch from a failed check to `some`: authentication
+cannot be bypassed, and possession of the leaf private key is required. -/
+def authenticate (env : Env) (now : Time) (chain : Chain)
+    (transcriptHash cvSig : ByteArray) : Option Name :=
   match chain with
   | [] => none
   | leaf :: rest =>
-      if verifyFrom env now (leaf :: rest) then some leaf.subject else none
+      if verifyFrom env now (leaf :: rest)
+          && env.cvVerify leaf (clientCertVerifyContent transcriptHash) cvSig
+      then some leaf.subject else none
 
 end Mtls

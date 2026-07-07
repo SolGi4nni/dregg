@@ -61,10 +61,10 @@ def hsDrive (cfg : Config) (hs : HsConn) (buf : Bytes)
     (stay : HsConn → Bytes → Phase) : Phase × Eff :=
   match cfg.hsFeed hs buf with
   | .insufficient => (stay hs buf, {})
-  | .more hs' n snd early =>
+  | .more hs' n snd early _flightPlain =>
     (.handshaking hs' (buf.drop n),
      { out := sendIf snd ++ earlyIf cfg early })
-  | .done rc n snd alpn early =>
+  | .done rc n snd alpn early _flightPlain =>
     finishHs cfg alpn rc (buf.drop n) snd early
   | .fail => (.closed, { out := [.send cfg.fatalAlert, .close] })
 
@@ -170,11 +170,57 @@ def stepPhase (cfg : Config) : Phase → Input → Phase × Eff
   -- ── closed: silent and absorbing ──
   | .closed, _ => (.closed, {})
 
+/-- The plaintext handshake messages a handshake outcome contributes to the
+running transcript (RFC 8446 §4.4.1). `.more`/`.done` carry the plaintext of
+the flight the engine just emitted (ServerHello ‖ EncryptedExtensions ‖
+Certificate ‖ CertificateVerify ‖ Finished on completion); the other
+outcomes emit nothing. This is the server flight's *plaintext* — distinct
+from the sealed record bytes the engine puts on the wire. -/
+def HsOut.flightPlain : HsOut → Bytes
+  | .more _ _ _ _ p   => p
+  | .done _ _ _ _ _ p => p
+  | _                 => []
+
+/-- The handshake bytes one step appends to the running transcript
+(RFC 8446 §4.4.1), in protocol order:
+
+* the freshly **received** bytes `d`, while the connection is in a
+  pre-offload phase whose received bytes are handshake traffic
+  (`accum`/`handshaking` during the handshake proper, and
+  `estabUser`/`offloadAttach` where — because the message engine reports the
+  handshake complete once the server flight is sent — the client's second
+  flight, carrying its `Certificate`/`CertificateVerify`, still arrives);
+* **followed**, in the `accum`/`handshaking` phases, by the **plaintext of
+  the server flight** the engine emits in response to those received bytes
+  (`(cfg.hsFeed hs (buf ++ d)).flightPlain` — the same `hsFeed` call
+  `hsDrive` makes). This is what closes the residual: the server flight was
+  previously visible only as the sealed record bytes in the outputs, so its
+  plaintext never entered the transcript. Interleaving it here, right after
+  the ClientHello that triggered it and before the client's second flight,
+  makes `St.transcript` the full §4.4.1 sequence
+  `ClientHello ‖ server flight ‖ client Certificate ‖ …`.
+
+Every other phase/input contributes nothing. Accumulating here means a
+message consumed off an earlier flight — and now the emitted server flight
+too — is retained in `St.transcript` even though the opaque handshake engine
+keeps only the tail in its phase buffer. -/
+def transcriptDelta (cfg : Config) : Phase → Input → Bytes
+  | .accum hs buf,          .bytesReceived d =>
+    d ++ (cfg.hsFeed hs (buf ++ d)).flightPlain
+  | .handshaking hs buf,    .bytesReceived d =>
+    d ++ (cfg.hsFeed hs (buf ++ d)).flightPlain
+  | .estabUser _ _ _,       .bytesReceived d => d
+  | .offloadAttach _ _ _ _, .bytesReceived d => d
+  | _, _ => []
+
 /-- The top-level total transition: the phase steps, the ghost
-consumed-set accumulates. -/
+consumed-set accumulates, and the handshake transcript accumulates the
+handshake bytes this step received *and* the plaintext server flight it
+emitted (RFC 8446 §4.4.1). -/
 def step (cfg : Config) (s : St) (i : Input) : St × Eff :=
   ({ phase := (stepPhase cfg s.phase i).1,
-     consumed := s.consumed ++ (stepPhase cfg s.phase i).2.consumes },
+     consumed := s.consumed ++ (stepPhase cfg s.phase i).2.consumes,
+     transcript := s.transcript ++ transcriptDelta cfg s.phase i },
    (stepPhase cfg s.phase i).2)
 
 /-- The step relation induced by the step function. -/

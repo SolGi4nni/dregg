@@ -155,7 +155,7 @@ theorem serve_routes_bestMatch (input : Bytes) (req : Proto.Request)
     (hsub : reactorSubs input = .dispatch req :: rest) :
     ∃ r, Route.Match.bestMatch demoAppConfig.table
             (App.targetSegments req.target) = some r
-       ∧ serve input = serialize (App.responseOfHandler r.handler) := by
+       ∧ serve input = serialize (App.responseOfReq req r.handler) := by
   obtain ⟨r, hbest, hhandle⟩ := App.app_routes_total demoAppConfig req
   exact ⟨r, hbest, by rw [serve_routes input req rest hsends hsub, hhandle]⟩
 

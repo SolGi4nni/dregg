@@ -419,6 +419,77 @@ theorem datachannel_nextSsn_mono (r : OrdRecv) (c : Chunk) :
     show r.nextSsn ≤ (flush r.nextSsn (c :: r.buf) (c :: r.buf).length).1
     exact flush_next_ge r.nextSsn (c :: r.buf) (c :: r.buf).length
 
+/-! ## SCTP packet serialization (RFC 4960 §3), the wire the driver puts on DTLS
+
+The sans-IO FSM above (`sctpStep`) gates the association; this is the byte layer
+the live driver frames its chunks with — the exact wire form aiortc's
+`serialize_packet` / `parse_packet` produce and validate, checksummed with the
+Lean-native `Crypto.crc32c` (RFC 3309 CRC32C). Additive and pure. -/
+
+namespace Sctp
+
+/-- Big-endian 16-bit. -/
+def u16 (n : Nat) : ByteArray :=
+  ByteArray.mk #[UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]
+/-- Big-endian 32-bit. -/
+def u32 (n : Nat) : ByteArray :=
+  ByteArray.mk #[UInt8.ofNat (n / 16777216 % 256), UInt8.ofNat (n / 65536 % 256),
+                 UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]
+
+/-- The number of padding bytes that align a length to four (RFC 4960 §3.2). -/
+def padLen (n : Nat) : Nat := (4 - n % 4) % 4
+/-- The 4-byte-alignment padding for a chunk of the given declared length. -/
+def padding (n : Nat) : ByteArray := ByteArray.mk (List.replicate (padLen n) (0 : UInt8)).toArray
+
+/-- A generic SCTP chunk (RFC 4960 §3.2): `type ‖ flags ‖ length:2 ‖ body`, where
+the 16-bit length counts the 4-byte header plus body (excluding padding), then
+the body is padded to a 4-byte boundary. -/
+def chunk (ty flags : Nat) (body : ByteArray) : ByteArray :=
+  ByteArray.mk #[UInt8.ofNat ty, UInt8.ofNat flags] ++ u16 (body.size + 4)
+    ++ body ++ padding (body.size + 4)
+
+/-- INIT chunk (type 1, RFC 4960 §3.3.2): initiate tag, advertised receiver
+window, outbound/inbound stream counts, initial TSN, then optional parameters. -/
+def initChunk (initiateTag aRwnd outStreams inStreams initialTsn : Nat)
+    (params : ByteArray) : ByteArray :=
+  chunk 1 0 (u32 initiateTag ++ u32 aRwnd ++ u16 outStreams ++ u16 inStreams
+    ++ u32 initialTsn ++ params)
+
+/-- COOKIE-ECHO chunk (type 10, RFC 4960 §3.3.11): the opaque state cookie the
+peer handed back in its INIT-ACK. -/
+def cookieEcho (cookie : ByteArray) : ByteArray := chunk 10 0 cookie
+
+/-- DATA chunk (type 0, RFC 4960 §3.3.1): flags (`0x03` = B|E, an unfragmented
+ordered message), TSN, stream id, stream sequence number, PPID, then user data. -/
+def dataChunk (flags tsn streamId streamSeq ppid : Nat) (userData : ByteArray) : ByteArray :=
+  chunk 0 flags (u32 tsn ++ u16 streamId ++ u16 streamSeq ++ u32 ppid ++ userData)
+
+/-- Serialize an SCTP packet (RFC 4960 §3.1): the 12-byte common header (source
+port, destination port, verification tag, and the CRC32C checksum computed over
+the packet with the checksum field zeroed), then the chunk bytes. Byte-for-byte
+the form aiortc's `serialize_packet` emits and `parse_packet` validates. -/
+def packet (srcPort dstPort verTag : Nat) (chunkBytes : ByteArray) : ByteArray :=
+  let hdr := u16 srcPort ++ u16 dstPort ++ u32 verTag
+  hdr ++ Crypto.crc32cBytesLE (hdr ++ ByteArray.mk #[0, 0, 0, 0] ++ chunkBytes) ++ chunkBytes
+
+/-- **SCTP chunks are 4-byte aligned (RFC 4960 §3.2).** A chunk's declared length
+plus its padding is always a multiple of four, so successive chunks tile a packet
+without misalignment — the invariant `parse_packet`'s `pos += length + padl` walk
+relies on. -/
+theorem chunk_aligned (n : Nat) : (n + padLen n) % 4 = 0 := by
+  unfold padLen; omega
+
+/-- The checksum a packet embeds is the CRC32C of that packet with the checksum
+field zeroed — i.e. a receiver recomputing the SCTP checksum over the emitted
+bytes gets exactly the four checksum bytes the packet carries. -/
+theorem packet_checksum_def (srcPort dstPort verTag : Nat) (chunkBytes : ByteArray) :
+    let hdr := u16 srcPort ++ u16 dstPort ++ u32 verTag
+    packet srcPort dstPort verTag chunkBytes
+      = hdr ++ Crypto.crc32cBytesLE (hdr ++ ByteArray.mk #[0, 0, 0, 0] ++ chunkBytes)
+        ++ chunkBytes := rfl
+
+end Sctp
+
 def version : String := "0.1.0"
 
 end WebrtcTransport

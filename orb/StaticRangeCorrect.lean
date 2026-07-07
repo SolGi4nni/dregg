@@ -200,6 +200,7 @@ theorem serveResolved_refines_spec (cfg : Config) (req : Req) (path : List Strin
     (body : Bytes) (rs : RangeSpec)
     (hfile : cfg.fs path = some body)
     (hnm : StaticFile.ifNoneMatchHit req.ifNoneMatch (cfg.etag path) = false)
+    (hims : StaticFile.ifModifiedSince304 (cfg.lastModified path) req.ifModifiedSince = false)
     (hrange : req.range = some rs) :
     (match spec body rs with
      | .sub eb f l =>
@@ -211,7 +212,8 @@ theorem serveResolved_refines_spec (cfg : Config) (req : Req) (path : List Strin
   cases hs : spec body rs with
   | unsatisfiable =>
     rw [hs] at hmatch
-    simp only [serveResolved, hfile, hnm, hrange, hmatch, Bool.false_eq_true, if_false]
+    simp only [serveResolved, hfile, hnm, hims, Bool.and_false, hrange, hmatch,
+      Bool.false_eq_true, if_false]
   | sub eb f l =>
     rw [hs] at hmatch
     -- the spec's body eb is octets; it equals slice at the resolved offsets
@@ -219,7 +221,8 @@ theorem serveResolved_refines_spec (cfg : Config) (req : Req) (path : List Strin
     have hb : eb = octets body f l := specBody_octets body rs eb f l hs
     have hslice : slice body f l = eb := by
       rw [hb]; exact slice_eq_octets body f l hvalid.1 hvalid.2
-    simp only [serveResolved, hfile, hnm, hrange, hmatch, hslice, Bool.false_eq_true, if_false]
+    simp only [serveResolved, hfile, hnm, hims, Bool.and_false, hrange, hmatch, hslice,
+      Bool.false_eq_true, if_false]
 
 /-- **Body corollary.** In the satisfiable case the served `206` body is
 literally the specified octet sequence, of the RFC 9110 §14.1.2 partial length
@@ -228,12 +231,13 @@ theorem serveResolved_body_exact (cfg : Config) (req : Req) (path : List String)
     (body : Bytes) (rs : RangeSpec) (eb : Bytes) (f l : Nat)
     (hfile : cfg.fs path = some body)
     (hnm : StaticFile.ifNoneMatchHit req.ifNoneMatch (cfg.etag path) = false)
+    (hims : StaticFile.ifModifiedSince304 (cfg.lastModified path) req.ifModifiedSince = false)
     (hrange : req.range = some rs)
     (hspec : spec body rs = .sub eb f l) :
     (serveResolved cfg req path).body = eb ∧
     (serveResolved cfg req path).status = 206 ∧
     eb.length = l + 1 - f := by
-  have href := serveResolved_refines_spec cfg req path body rs hfile hnm hrange
+  have href := serveResolved_refines_spec cfg req path body rs hfile hnm hims hrange
   rw [hspec] at href
   have hR : serveResolved cfg req path
       = Resp.partialContent eb f l body.length (cfg.etag path) := href

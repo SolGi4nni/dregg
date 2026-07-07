@@ -1,6 +1,6 @@
 name = "drorb"
 version = "0.1.0"
-defaultTargets = ["Arena", "Uring", "Proto", "Slab", "Pool", "Flow", "Quic", "H3", "Tls", "Proxy", "Policy", "Route", "H2", "Ws", "Dns", "Rate", "Captp", "Safety", "Drain", "Body", "Header", "Sticky", "Resume", "Trace", "Fallback", "Mux", "Sse", "StickTable", "Socks", "Udp", "Mtls", "Acme", "Ct", "EarlyHints", "HtmlRewrite", "Metrics", "Tap", "Har", "DownloadMgr", "Isolation", "Dsl", "Reactor", "StaticFile", "Redirect", "Cgi", "Cache", "Middleware", "Cors", "SecurityHeaders", "IpFilter", "Jwt", "BasicAuth", "Stun", "Ice", "Dcep", "Wireguard", "Derp", "Disco", "ForwardProxy", "AccessControlProxy", "RouteAdvanced", "WebrtcTransport", "H2Sound", "QpackSound", "QuicTransport", "QuicHeaderProt", "RouteCorrect", "HpackDynCorrect", "ChunkedCorrect", "ReactorStepCorrect", "TlsFsmCorrect", "H2FlowCorrect", "CacheFreshCorrect", "StaticRangeCorrect", "CorsCorrect", "JwtValidCorrect", "DnsNameCorrect"]
+defaultTargets = ["Arena", "Uring", "Proto", "Slab", "Pool", "Flow", "Quic", "H3", "Tls", "Proxy", "Policy", "Route", "H2", "Ws", "Dns", "Rate", "Captp", "Safety", "Drain", "Body", "Header", "Sticky", "Resume", "Trace", "Fallback", "Mux", "Sse", "StickTable", "Socks", "Udp", "Mtls", "Acme", "Ct", "EarlyHints", "HtmlRewrite", "Metrics", "Tap", "Har", "DownloadMgr", "Isolation", "Dsl", "Reactor", "ReactorL4", "StaticFile", "Redirect", "Cgi", "Cache", "Middleware", "Cors", "SecurityHeaders", "IpFilter", "Jwt", "BasicAuth", "Stun", "Ice", "Dcep", "Wireguard", "Derp", "Disco", "ForwardProxy", "AccessControlProxy", "RouteAdvanced", "WebrtcTransport", "H2Sound", "QpackSound", "QuicTransport", "QuicHeaderProt", "RouteCorrect", "HpackDynCorrect", "HuffmanCorrect", "ChunkedCorrect", "ReactorStepCorrect", "TlsFsmCorrect", "H2FlowCorrect", "CacheFreshCorrect", "StaticRangeCorrect", "CorsCorrect", "JwtValidCorrect", "DnsNameCorrect", "SseFrameCorrect", "ProxyHealthCorrect", "H3FrameCorrect", "QuicReplayCorrect", "DrainCorrect", "WsFrameCorrect", "MtlsVerifyCorrect", "SocksCorrect", "H2StreamCorrect", "BodyClCorrect", "IpFilterCorrect", "RedirectCorrect", "CtInclusionCorrect", "TraceW3cCorrect", "MuxPriorityCorrect", "HeaderHopCorrect", "StickyCorrect", "ProxyBreakerCorrect", "BasicAuthCorrect", "StaticEtagCorrect", "CgiCorrect", "CacheCoalesceCorrect", "TapNoLeakCorrect", "WsCloseCorrect", "ProxyTimeoutCorrect", "ForwardProxyCorrect", "IsolationCorrect", "MetricsCorrect", "SecurityHeadersCorrect", "ResumeCorrect", "FlowTokenCorrect", "EarlyHintsCorrect", "HarCorrect", "AcmeCorrect", "DnsMessageCorrect", "HtmlRewriteCorrect", "QpackDynCorrect", "TlsServe", "Datapath"]
 
 [[lean_lib]]
 name = "Arena"
@@ -14,6 +14,9 @@ root = "Arena.Check"
 # ld64 on current macOS hard-errors on the toolchain's __DATA_CONST segment
 # (missing SG_READ_ONLY); keep the data segment writable instead.
 moreLinkArgs = ["-Wl,-no_data_const"]
+
+[[lean_lib]]
+name = "Datapath"
 
 [[lean_lib]]
 name = "Uring"
@@ -145,7 +148,7 @@ root = "Arena.Orb"
 # the crypto shim + libevercrypt.a — the SAME recipe crypto-selftest uses. No
 # unverified C crosses this seam. -no_data_const is the ld64/__DATA_CONST macOS
 # workaround the other exes use.
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 [[lean_lib]]
 name = "Reactor"
@@ -158,8 +161,15 @@ name = "Reactor"
 # (libdrorb.a) and links against the Lean runtime (lib/lean/libleanshared*).
 # The Rust dataplane in crates/dataplane is that host. A library, not an exe:
 # it exports `drorb_serve`, it has no `main`.
+#
+# `Dataplane.Multi` adds the multi-protocol seams the same host drives alongside
+# the byte-stream fork: `drorb_serve_ws_frame` (the proven WebSocket frame engine)
+# and `drorb_serve_datagram` (verified EverCrypt QUIC-Initial decrypt → proven H3
+# dispatch). It is part of this library so `lake build Dataplane:static` compiles
+# both modules' objects for the archive (ffi/build-dataplane-lib.sh).
 [[lean_lib]]
 name = "Dataplane"
+globs = ["Dataplane", "Dataplane.Multi"]
 
 [[lean_lib]]
 name = "StaticFile"
@@ -237,7 +247,7 @@ name = "WebrtcTransport"
 [[lean_exe]]
 name = "orb-mac"
 root = "IoMac"
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/mac_io.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/mac_io.o", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 # `IoSel4`: the seL4 Microkit / sDDF IO boundary for the net protection domain.
 # A library (NOT a lean_exe): a Microkit PD has no `main` — it exports
@@ -265,7 +275,7 @@ name = "Crypto"
 [[lean_exe]]
 name = "crypto-selftest"
 root = "Crypto.SelfTest"
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 # `orb-linux`: the native Linux IO driver (TASK LINUX-IO). A real TCP accept loop
 # (ffi/linux_io.c — io_uring preferred, epoll fallback) that answers each
@@ -283,7 +293,7 @@ moreLinkArgs = ["-Wl,-no_data_const", "ffi/crypto_shim.o", "target/release/libae
 [[lean_exe]]
 name = "orb-linux"
 root = "IoLinux"
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/linux_io.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/linux_io.o", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 # `orb-win`: the native Windows IO driver (TASK WINDOWS-IO). A real TCP accept
 # loop over I/O Completion Ports (ffi/win_io.c — AcceptEx/WSARecv/WSASend on an
@@ -303,7 +313,7 @@ moreLinkArgs = ["-Wl,-no_data_const", "ffi/linux_io.o", "ffi/crypto_shim.o", "ta
 [[lean_exe]]
 name = "orb-win"
 root = "IoWin"
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/win_io.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/win_io.o", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 # `TlsCrypto`: the TLS 1.3 key schedule and record layer over the verified
 # `Crypto` primitives (TlsCrypto.lean). A library — the @[extern] EverCrypt
@@ -320,7 +330,7 @@ name = "TlsCrypto"
 [[lean_exe]]
 name = "tls-keyschedule-selftest"
 root = "TlsCrypto.SelfTest"
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 # `TlsHandshake`: the TLS 1.3 server-side handshake MESSAGE layer over the
 # `TlsCrypto` key schedule + record layer and the verified `Crypto` primitives
@@ -336,12 +346,34 @@ name = "TlsHandshake"
 [[lean_exe]]
 name = "tls-handshake-selftest"
 root = "TlsHandshake.SelfTest"
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+
+# `tls-wire-oracle`: the server handshake message layer exposed over stdio so an
+# EXTERNAL conformance battery (openssl s_client / testssl.sh) can drive it: the
+# untrusted TCP front in conformance/tls/front.py does accept + record framing
+# ONLY and pipes each record here; parsing, negotiation, key schedule, flight,
+# and Finished verification all run in `TlsHandshake.serverStep` on the linked
+# HACL*/EverCrypt. Same link recipe as tls-handshake-selftest, plus
+# ffi/tls_p256_shim.o (HACL* P-256, built by ffi/build-tls-p256-shim.sh) for
+# the secp256r1 key exchange this executable instantiates via TlsCrypto.P256.
+[[lean_exe]]
+name = "tls-wire-oracle"
+root = "TlsHandshake.WireOracle"
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "ffi/tls_p256_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 # `Deflate` / `Gzip`: a total, output-bounded model of DEFLATE inflate
 # (RFC 1951) and the gzip container (RFC 1952). Single-file libs; Gzip imports
 # Deflate. The headline theorem is the decompression-bomb bound
 # (`inflate_output_bounded`): output size ≤ the caller's ceiling, for all input.
+# `TlsServe`: the DSL TLS-profile READ by the handshake terminator —
+# `Dsl.Cfg.TlsProfile.applyServerParams` overrides `TlsHandshake.ServerParams`'
+# 0-RTT / OCSP / cert-pool policy from a config profile, so a deployment's
+# declared TLS profile drives which cert / staple / early-data the handshake
+# serves. Root: Dsl.Cfg.TlsServe.
+[[lean_lib]]
+name = "TlsServe"
+roots = ["Dsl.Cfg.TlsServe"]
+
 [[lean_lib]]
 name = "Deflate"
 
@@ -372,6 +404,18 @@ roots = ["Reactor.WsDeploy"]
 name = "ReactorH2Response"
 srcDir = "."
 roots = ["Reactor.H2Response"]
+
+# `ReactorL4`: the layer-4 (raw TCP / UDP) passthrough forwarding model
+# (Reactor/L4.lean). The TCP splice state machine (`stepTcp`) and the datagram
+# forwarder (`udpStep`) with byte-conservation theorems (`session_up_exact`,
+# `runTcp_down_faithful`, `udpRun_faithful`) — bytes-in = bytes-out, verbatim, in
+# order — plus the deployed-seam bridge (`deployed_accept_dials_pick`) pinning that
+# the upstream the running `crates/dataplane/src/l4.rs` shell dials is exactly the
+# proven `Reactor.ProxyDial` (`drorb_proxy_pick`) backend.
+[[lean_lib]]
+name = "ReactorL4"
+srcDir = "."
+roots = ["Reactor.L4"]
 
 # `ArenaSound`: the request-line *soundness* theory — the meaning-preservation
 # successor to `parse_wf`. Proves each resolved request-line field EQUALS its
@@ -421,7 +465,7 @@ root = "IoMacMulti"
 # (the QUIC header-protection block → EverCrypt_Cipher_chacha20) for the orb-quic
 # lane; so it links crypto_shim.o + libevercrypt.a — the same recipe the `orb` exe
 # uses. Inert for the H1/h2c/WS/UDP paths orb-mac-multi actually runs.
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/mac_io.o", "ffi/mac_udp.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/mac_io.o", "ffi/mac_udp.o", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 [[lean_lib]]
 name = "H2Sound"
@@ -441,7 +485,7 @@ name = "QuicTransport"
 [[lean_exe]]
 name = "quic-transport-selftest"
 root = "QuicTransport"
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 # `QuicHeaderProt`: QUIC header protection (RFC 9001 §5.4) over the verified
 # EverCrypt ChaCha20 block. Adds the one @[extern] the AEAD-only `Crypto` seam
@@ -451,6 +495,16 @@ moreLinkArgs = ["-Wl,-no_data_const", "ffi/crypto_shim.o", "target/release/libae
 # @[extern] symbol resolves only when something links libevercrypt (orb-quic does).
 [[lean_lib]]
 name = "QuicHeaderProt"
+
+# `QuicServer`: the QUIC v1 server RESPONSE flight (RFC 9000 / RFC 9001) over the
+# TlsHandshake key schedule + the verified Crypto primitives (QuicServer.lean).
+# Derives the handshake secrets from a decrypted ClientHello and emits the server
+# Initial (ServerHello) + Handshake (EncryptedExtensions/Certificate/
+# CertificateVerify/Finished) flight as real QUIC packets, then installs 1-RTT
+# keys on the client Finished. A library — the @[extern] EverCrypt symbols resolve
+# when orb-quic links the shim.
+[[lean_lib]]
+name = "QuicServer"
 
 # `orb-quic`: QUIC SOCKET-LIVE (TASK QUIC-SOCKET) — a real/crafted QUIC Initial
 # packet is DECRYPTED over a real UDP socket by the verified EverCrypt QUIC packet
@@ -465,13 +519,19 @@ name = "QuicHeaderProt"
 [[lean_exe]]
 name = "orb-quic"
 root = "IoQuic"
-moreLinkArgs = ["-Wl,-no_data_const", "ffi/mac_udp.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/mac_udp.o", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
 
 [[lean_lib]]
 name = "RouteCorrect"
 
 [[lean_lib]]
 name = "HpackDynCorrect"
+
+[[lean_lib]]
+name = "HuffmanCorrect"
+
+[[lean_lib]]
+name = "QpackDynCorrect"
 
 [[lean_lib]]
 name = "ChunkedCorrect"
@@ -499,3 +559,175 @@ name = "JwtValidCorrect"
 
 [[lean_lib]]
 name = "DnsNameCorrect"
+
+[[lean_lib]]
+name = "SseFrameCorrect"
+
+[[lean_lib]]
+name = "ProxyHealthCorrect"
+
+[[lean_lib]]
+name = "H3FrameCorrect"
+
+[[lean_lib]]
+name = "QuicReplayCorrect"
+
+[[lean_lib]]
+name = "DrainCorrect"
+
+[[lean_lib]]
+name = "WsFrameCorrect"
+
+[[lean_lib]]
+name = "MtlsVerifyCorrect"
+
+[[lean_lib]]
+name = "SocksCorrect"
+
+[[lean_lib]]
+name = "H2StreamCorrect"
+
+[[lean_lib]]
+name = "BodyClCorrect"
+
+[[lean_lib]]
+name = "IpFilterCorrect"
+
+[[lean_lib]]
+name = "RedirectCorrect"
+
+[[lean_lib]]
+name = "CtInclusionCorrect"
+
+[[lean_lib]]
+name = "TraceW3cCorrect"
+
+[[lean_lib]]
+name = "MuxPriorityCorrect"
+
+[[lean_lib]]
+name = "HeaderHopCorrect"
+
+[[lean_lib]]
+name = "StickyCorrect"
+
+[[lean_lib]]
+name = "ProxyBreakerCorrect"
+
+[[lean_lib]]
+name = "BasicAuthCorrect"
+
+[[lean_lib]]
+name = "StaticEtagCorrect"
+
+[[lean_lib]]
+name = "CgiCorrect"
+
+[[lean_lib]]
+name = "CacheCoalesceCorrect"
+
+[[lean_lib]]
+name = "TapNoLeakCorrect"
+
+[[lean_lib]]
+name = "WsCloseCorrect"
+
+[[lean_lib]]
+name = "ProxyTimeoutCorrect"
+
+[[lean_lib]]
+name = "ForwardProxyCorrect"
+
+[[lean_lib]]
+name = "IsolationCorrect"
+
+[[lean_lib]]
+name = "MetricsCorrect"
+
+[[lean_lib]]
+name = "SecurityHeadersCorrect"
+
+[[lean_lib]]
+name = "ResumeCorrect"
+
+[[lean_lib]]
+name = "FlowTokenCorrect"
+
+[[lean_lib]]
+name = "EarlyHintsCorrect"
+
+[[lean_lib]]
+name = "HarCorrect"
+
+[[lean_lib]]
+name = "AcmeCorrect"
+
+[[lean_lib]]
+name = "DnsMessageCorrect"
+
+[[lean_lib]]
+name = "HtmlRewriteCorrect"
+
+# `wg-live`: the WireGuard Noise IK live cross-check (WgLive.lean). drorb, as the
+# initiator, builds MessageInitiation with the proven `Wireguard.Wire` construction
+# on the verified `Crypto` X25519/ChaCha20-Poly1305 and the pure-Lean BLAKE2s
+# ratchet, sends it over a real UDP socket (ffi/wg_udp.c, precompiled to
+# ffi/wg_udp.o by `cc -c -O2 -fPIC -I "$(lean --print-prefix)/include"`) to a real
+# WireGuard peer, and runs `consumeResponse` on the reply — deriving the transport
+# keys iff the real peer accepted the handshake. NOT in defaultTargets (a live
+# harness, the WireGuard analogue of crypto-selftest). References the @[extern]
+# crypto symbols, so it links the crypto shim + AES fallback + F*-verified
+# HACL*/EverCrypt (same recipe/HACL* path convention as crypto-selftest). Set
+# LIBRARY_PATH to the HACL* dist when /opt/hacl-star is not symlinked.
+[[lean_exe]]
+name = "wg-live"
+root = "WgLive"
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/wg_udp.o", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+
+# `derp-live`: the DERP relay live cross-check (DerpLive.lean). Two clients drive
+# the proven `Derp` login handshake — sealing FrameClientInfo and opening
+# FrameServerInfo with the verified `Crypto` crypto_box (NaCl box: X25519 +
+# XSalsa20-Poly1305, via HACL* NaCl in libevercrypt.a) — against a real DERP relay
+# (derper) over a real TCP socket (ffi/derp_net.c, precompiled to ffi/derp_net.o
+# by ffi/build-derp-net.sh), then relay a real FrameSendPacket A -> relay -> B.
+# NOT in defaultTargets (a live harness, the DERP analogue of crypto-selftest).
+# Links the crypto shim + AES fallback + F*-verified HACL*/EverCrypt (same recipe
+# and HACL* path convention as crypto-selftest). Set LIBRARY_PATH to the HACL*
+# dist when /opt/hacl-star is not symlinked.
+[[lean_exe]]
+name = "derp-live"
+root = "DerpLive"
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/derp_net.o", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+
+# `wg-responder`: the RESPONDER-side live cross-check (WgResponder.lean). The
+# mirror of wg-live: here a real WireGuard peer is the INITIATOR and drorb is
+# the responder. It binds a UDP socket (ffi/wg_udp.c drorb_udp_listen/recv/reply,
+# precompiled to ffi/wg_udp.o), receives a real peer's MessageInitiation, runs
+# the proven `Peer.handleInitiation` (verify mac1, responder ratchet, open the
+# sealed static+timestamp, install the responder-oriented session) and replies
+# with the serialized MessageResponse, then `Peer.handleTransport` AEAD-opens the
+# peer's transport packet under T_recv — proof the transport keys agree. NOT in
+# defaultTargets (a live harness, the WireGuard analogue of crypto-selftest).
+# Same crypto shim + AES fallback + F*-verified HACL*/EverCrypt recipe/path
+# convention as crypto-selftest and wg-live. Set LIBRARY_PATH to the HACL* dist
+# when /opt/hacl-star is not symlinked.
+[[lean_exe]]
+name = "wg-responder"
+root = "WgResponder"
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/wg_udp.o", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]
+
+# `webrtc-live`: the WebRTC/DTLS live cross-check (WebrtcLive.lean). drorb, as the
+# DTLS client, builds a byte-exact DTLS 1.2 ClientHello (offering the x25519 named
+# group first) and sends it over a real UDP socket (ffi/webrtc_udp.c, precompiled
+# to ffi/webrtc_udp.o by `cc -c -O2 -fPIC -I "$(lean --print-prefix)/include"`) to a
+# real WebRTC peer's DTLS engine (conformance/webrtc/dtls_peer.py — aiortc's OpenSSL
+# DTLS server). It parses the peer's ServerHello flight and runs the verified
+# `Crypto.x25519` on the peer's ephemeral key from the ServerKeyExchange. NOT in
+# defaultTargets (a live harness, the WebRTC analogue of crypto-selftest / wg-live).
+# References the @[extern] crypto symbols, so it links the crypto shim + AES fallback
+# + F*-verified HACL*/EverCrypt (same recipe/HACL* path convention as crypto-selftest).
+# Set LIBRARY_PATH to the HACL* dist when /opt/hacl-star is not symlinked.
+[[lean_exe]]
+name = "webrtc-live"
+root = "WebrtcLive"
+moreLinkArgs = ["-Wl,-no_data_const", "ffi/webrtc_udp.o", "ffi/cgi_exec.o", "ffi/crypto_shim.o", "ffi/tls_p256_shim.o", "target/release/libaes_fallback.a", "-L/opt/hacl-star/dist/gcc-compatible", "-levercrypt"]

@@ -1,0 +1,6 @@
+.lake/
+target/
+*.o
+*.olean
+*.o.tmp
+venv/

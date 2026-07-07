@@ -1,0 +1,22 @@
+C9 — RECLAIMING FIXED-SIZE-BLOCK LIFO FREELIST (freelist.pnk)
+============================================================
+
+Emitted Pancake (verified allocProg / freeProg), cake-compiled + run.
+A 4-block 16-byte arena, linked head -> b0 -> b1 -> b2 -> b3 -> NULL, then the
+sequence  alloc, alloc, free(alloc2), alloc.  The THIRD alloc REUSES the freed
+block: alloc3 hands back the SAME address alloc2 got and free() returned.
+
+    cake --pancake < freelist.pnk > freelist.S      (exit 0, 226-line .S)
+    cc -O2 freelist.S basis_ffi.c freelist_ffi.c -o freelist -lm
+    ./freelist
+
+    alloc1 -> block0 (0x7d5931000210)
+    alloc2 -> block1 (0x7d5931000220)
+    free(alloc2)
+    alloc3 -> block1 (0x7d5931000220)
+    RECLAIM: alloc3 == alloc2  ->  FREED BLOCK REUSED (same address handed back out)
+
+The reuse is byte-exact: alloc3's returned pointer (0x...220) is identical to
+alloc2's — the freed block address is handed back out by the next allocation,
+matching the kernel-checked theorem `freeThenAlloc_reuses`
+(FLOOKUP s'.locals «ap» = SOME (ValWord p), the freed p).

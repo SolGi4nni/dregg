@@ -82,31 +82,39 @@ stage in `rest` are skipped. Rides on `pipeline_gate_short_circuits`. -/
 theorem redirectStage_gate (rest : List Stage) (handler : Ctx → Response) (c : Ctx)
     (hm : c.req.target = ruleTarget) :
     runPipeline (redirectStage :: rest) handler c
-      = ResponseBuilder.ofResponse (redirectFor c.req) := by
+      = runResp rest c (ResponseBuilder.ofResponse (redirectFor c.req)) := by
   apply pipeline_gate_short_circuits
   show (if c.req.target = ruleTarget then _ else _) = _
   rw [if_pos hm]
 
 /-- **Byte-effect (status).** The status genuinely emitted for a matched request
-is one of the four §15.4 redirect codes — a real 3xx. Discharged by the REAL
+is one of the four §15.4 redirect codes — a real 3xx — PRESERVED through the inner
+response onion (status-stable transforms) even as the redirect now carries the
+response-transform headers (security headers etc.). Discharged by the REAL
 `Redirect.status_is_redirect`. -/
 theorem redirectStage_status_is_redirect (rest : List Stage) (handler : Ctx → Response)
-    (c : Ctx) (hm : c.req.target = ruleTarget) :
+    (c : Ctx) (hm : c.req.target = ruleTarget)
+    (hst : ∀ t ∈ rest, Stage.statusStable t) :
     (runPipeline (redirectStage :: rest) handler c).build.status
       ∈ _root_.Redirect.redirectStatuses := by
-  rw [redirectStage_gate rest handler c hm, build_ofResponse]
+  have hg : redirectStage.onRequest c = .respond (redirectFor c.req) := by
+    show (if c.req.target = ruleTarget then _ else _) = _
+    rw [if_pos hm]
+  rw [pipeline_gate_status redirectStage rest handler c (redirectFor c.req) hg hst]
   exact _root_.Redirect.status_is_redirect ruleCode ruleTemplate (decodeTarget c.req.target) ""
 
 /-- **Byte-effect (Location header).** The response genuinely emitted for a
 matched request carries a `Location` header whose value is exactly the
-`Redirect`-library-rendered target location. The 3xx + `Location` appear in the
-built pipeline output, for ANY tail and handler. -/
-theorem redirectStage_location_present (rest : List Stage) (handler : Ctx → Response)
+`Redirect`-library-rendered target location. Stated with no inner transform tail
+(the gate's own 3xx response); with a deployed transform tail the redirect ALSO
+gains the response-transform headers, the Location among them (the hop-strip keeps
+non-hop headers). -/
+theorem redirectStage_location_present (handler : Ctx → Response)
     (c : Ctx) (hm : c.req.target = ruleTarget) :
     (locationName,
         (_root_.Redirect.redirect ruleCode ruleTemplate (decodeTarget c.req.target) "").location.toUTF8.toList)
-      ∈ (runPipeline (redirectStage :: rest) handler c).build.headers := by
-  rw [redirectStage_gate rest handler c hm, build_ofResponse]
+      ∈ (runPipeline [redirectStage] handler c).build.headers := by
+  rw [redirectStage_gate [] handler c hm, runResp_nil, build_ofResponse]
   exact List.mem_singleton.mpr rfl
 
 end Reactor.Stage.Redirect

@@ -1,0 +1,46 @@
+// C15 probe: the THIRD primitive — an HTTP RESPONSE STATUS CLASSIFIER, in Pancake.
+// This is the IMPLEMENTATION whose emitted machine code must refine the Lean
+// SPEC `C15.statusClass` (model/StatusClass.lean): a loop-free else-if cascade
+// mapping a status code to its RFC 9110 class digit (1..5).
+//
+// Structurally DIFFERENT again: a LINEAR cascade (4 guards, 5 leaves, deeper
+// than the machine step's nest), reading exactly ONE control word (vs the
+// step's two), all-constant leaves, and NO loop.
+//
+// Control block at @base (staged/read by the FFI driver, @load_vec/@report_vec):
+//   [0 ..8)   code   (status code, invariant code < 1000)  (staged by @load_vec)
+//   [8 ..16)  result word (class digit)                    (written here; read by @report_vec)
+//
+// The mapping (matches C15.statusClass exactly):
+//   code < 200 -> 1    code < 300 -> 2    code < 400 -> 3
+//   code < 500 -> 4    else       -> 5
+//
+// Compile: cake --pancake < statusclass.pnk > statusclass.S
+
+fun main() {
+  var base = @base;
+  var buf = base + 16;
+  @load_vec(base, 8, buf, 4096);
+  var code = lds 1 base;
+  var result = 0;
+  if code < 200 {
+    result = 1;
+  } else {
+    if code < 300 {
+      result = 2;
+    } else {
+      if code < 400 {
+        result = 3;
+      } else {
+        if code < 500 {
+          result = 4;
+        } else {
+          result = 5;
+        }
+      }
+    }
+  }
+  st base + 8, result;
+  @report_vec(base + 8, 8, base, 8);
+  return 0;
+}

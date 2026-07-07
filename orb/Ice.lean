@@ -1,3 +1,4 @@
+import Stun
 /-!
 # ICE candidate-pair checklist FSM (RFC 8445)
 
@@ -55,12 +56,14 @@ Beyond the core FSM this file now carries the rest of RFC 8445:
 
 ## Boundary (left uninterpreted, honestly)
 
-The STUN Binding transaction that drives `checkSucceeded` / `checkFailed` (the
-message-integrity-protected request/response of RFC 5389, modeled framing-only
-in `Stun.lean`) and candidate gathering over TURN (RFC 8656) are outside this
-model. The events here are the abstract check outcomes; whether a check
-*actually* succeeded is the (uninterpreted) STUN/DTLS boundary. The DTLS/SCTP
-transport those checks gate is `WebrtcTransport.lean`.
+Candidate gathering over TURN (RFC 8656) is outside this model, and the
+DTLS/SCTP transport the checks gate is `WebrtcTransport.lean`. The STUN wire
+layer itself is *not* a boundary any more: `checkRequest` below builds the
+actual §7.2.2 connectivity-check Binding request bytes (USERNAME, PRIORITY,
+role attribute, optional USE-CANDIDATE, MESSAGE-INTEGRITY, FINGERPRINT) on top
+of `Stun.lean`, and `conflict487Response` the authenticated §7.3.1.1 role-
+conflict error. What remains abstract is only the network: whether a given
+check transaction completes is decided by datagrams, not by this model.
 -/
 
 namespace Ice
@@ -462,6 +465,259 @@ theorem ice_restart_no_deliver (pairs : List Pair) :
   unfold restartPair mayDeliver
   simp
 
-def version : String := "0.1.0"
+/-! ## The connectivity-check wire layer (RFC 8445 §7.2.2, §7.3.1.1, §16.1)
+
+The actual STUN Binding request an ICE agent sends on a candidate pair, built
+on the RFC 5389 codec: USERNAME (`remote-ufrag ":" local-ufrag`), PRIORITY,
+the agent's role attribute carrying its tie-breaker, USE-CANDIDATE when
+nominating, then MESSAGE-INTEGRITY keyed with the peer's password and
+FINGERPRINT — and the authenticated 487 error an agent answers a role conflict
+with. -/
+
+/-- ICE-CONTROLLED (RFC 8445 §16.1): comprehension-optional, carried by the
+controlled agent, value = the 64-bit tie-breaker. -/
+def attrIceControlled : Nat := 0x8029
+
+/-- ICE-CONTROLLING (RFC 8445 §16.1): comprehension-optional, carried by the
+controlling agent, value = the 64-bit tie-breaker. -/
+def attrIceControlling : Nat := 0x802A
+
+/-- Big-endian 64-bit encode (the tie-breaker wire value, RFC 8445 §16.1). -/
+def enc64 (n : Nat) : Stun.Bytes :=
+  [UInt8.ofNat (n >>> 56), UInt8.ofNat (n >>> 48), UInt8.ofNat (n >>> 40),
+   UInt8.ofNat (n >>> 32), UInt8.ofNat (n >>> 24), UInt8.ofNat (n >>> 16),
+   UInt8.ofNat (n >>> 8), UInt8.ofNat n]
+
+/-- Big-endian decode of a tie-breaker value. -/
+def dec64 (b : Stun.Bytes) : Nat :=
+  b.foldl (fun acc x => acc * 256 + x.toNat) 0
+
+@[simp] theorem enc64_length (n : Nat) : (enc64 n).length = 8 := rfl
+
+/-- **Tie-breaker codec round-trip.** Decoding a serialized 64-bit tie-breaker
+recovers it exactly. -/
+theorem dec64_enc64 (n : Nat) (h : n < 2 ^ 64) : dec64 (enc64 n) = n := by
+  have hpow : (2 : Nat) ^ 64 = 18446744073709551616 := by rfl
+  rw [hpow] at h
+  simp only [enc64, dec64, List.foldl, UInt8.toNat_ofNat,
+    Nat.shiftRight_eq_div_pow]
+  simp only [show (2:Nat)^8 = 256 from rfl, show (2:Nat)^16 = 65536 from rfl,
+    show (2:Nat)^24 = 16777216 from rfl, show (2:Nat)^32 = 4294967296 from rfl,
+    show (2:Nat)^40 = 1099511627776 from rfl,
+    show (2:Nat)^48 = 281474976710656 from rfl,
+    show (2:Nat)^56 = 72057594037927936 from rfl]
+  omega
+
+/-- The §7.2.2 connectivity-check attribute list: USERNAME, PRIORITY, the
+role attribute with the tie-breaker, and USE-CANDIDATE when nominating (§8.1.1).
+The username is `remote-ufrag ":" local-ufrag` from the checker's perspective
+(§7.2.2), at most 513 bytes (§5.3). -/
+def connCheckAttrs (username : Stun.Bytes) (prio : UInt32)
+    (controlling : Bool) (tieBreaker : Nat) (useCand : Bool) : List Stun.Attr :=
+  [⟨Stun.attrUsername, username⟩,
+   ⟨Stun.attrPriority, Stun.u32Bytes prio⟩,
+   ⟨if controlling then attrIceControlling else attrIceControlled,
+    enc64 tieBreaker⟩] ++
+  (if useCand then [⟨Stun.attrUseCandidate, []⟩] else [])
+
+/-- **The §7.2.2 connectivity-check Binding request**, integrity-protected with
+the peer's password and fingerprinted — the exact datagram an agent sends on a
+candidate pair (the transaction driving the `perform`/`checkSucceeded` events
+of the pair FSM above). -/
+def checkRequest (pwd txid username : Stun.Bytes) (prio : UInt32)
+    (controlling : Bool) (tieBreaker : Nat) (useCand : Bool) : Stun.Bytes :=
+  Stun.withIntegrityFingerprint pwd Stun.bindingRequest txid
+    (connCheckAttrs username prio controlling tieBreaker useCand)
+
+/-- Hygiene of the connectivity-check attribute list: bounded wire fields and
+free of the integrity attribute types. -/
+theorem connCheckAttrs_hygiene (username : Stun.Bytes) (prio : UInt32)
+    (controlling : Bool) (tieBreaker : Nat) (useCand : Bool)
+    (hu : username.length ≤ 513) :
+    (∀ x ∈ connCheckAttrs username prio controlling tieBreaker useCand,
+        x.type < 65536 ∧ x.value.length < 65536) ∧
+    (∀ x ∈ connCheckAttrs username prio controlling tieBreaker useCand,
+        x.type ≠ Stun.attrMessageIntegrity) ∧
+    (∀ x ∈ connCheckAttrs username prio controlling tieBreaker useCand,
+        x.type ≠ Stun.attrFingerprint) ∧
+    (Stun.encodeAttrs
+      (connCheckAttrs username prio controlling tieBreaker useCand)).length + 32
+      < 65536 := by
+  have hpad := Stun.padLen_lt username.length
+  have hshape : ∀ x ∈ connCheckAttrs username prio controlling tieBreaker useCand,
+      (x.type = Stun.attrUsername ∨ x.type = Stun.attrPriority ∨
+       x.type = attrIceControlling ∨ x.type = attrIceControlled ∨
+       x.type = Stun.attrUseCandidate) ∧ x.value.length ≤ 513 := by
+    intro x hx
+    rcases List.mem_append.mp hx with h3 | hc
+    · rcases List.mem_cons.mp h3 with rfl | h3'
+      · exact ⟨Or.inl rfl, hu⟩
+      · rcases List.mem_cons.mp h3' with rfl | h3''
+        · exact ⟨Or.inr (Or.inl rfl), by simp⟩
+        · rcases List.mem_singleton.mp h3'' with rfl
+          cases controlling
+          · exact ⟨Or.inr (Or.inr (Or.inr (Or.inl (by simp)))), by simp⟩
+          · exact ⟨Or.inr (Or.inr (Or.inl (by simp))), by simp⟩
+    · cases useCand
+      · simp at hc
+      · rcases List.mem_singleton.mp (by simpa using hc) with rfl
+        exact ⟨Or.inr (Or.inr (Or.inr (Or.inr rfl))), by simp⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · intro x hx
+    obtain ⟨hty, hv⟩ := hshape x hx
+    refine ⟨?_, by omega⟩
+    rcases hty with h | h | h | h | h <;>
+      simp [h, Stun.attrUsername, Stun.attrPriority, attrIceControlling,
+        attrIceControlled, Stun.attrUseCandidate]
+  · intro x hx
+    obtain ⟨hty, _⟩ := hshape x hx
+    rcases hty with h | h | h | h | h <;>
+      simp [h, Stun.attrUsername, Stun.attrPriority, attrIceControlling,
+        attrIceControlled, Stun.attrUseCandidate, Stun.attrMessageIntegrity]
+  · intro x hx
+    obtain ⟨hty, _⟩ := hshape x hx
+    rcases hty with h | h | h | h | h <;>
+      simp [h, Stun.attrUsername, Stun.attrPriority, attrIceControlling,
+        attrIceControlled, Stun.attrUseCandidate, Stun.attrFingerprint]
+  · have hbound : ∀ (l : List Stun.Attr), (∀ x ∈ l, x.value.length ≤ 513) →
+        (Stun.encodeAttrs l).length ≤ 520 * l.length := by
+      intro l
+      induction l with
+      | nil => intro _; simp [Stun.encodeAttrs]
+      | cons x rest ih =>
+        intro hl
+        have hx := hl x (List.mem_cons_self x rest)
+        have hp := Stun.padLen_lt x.value.length
+        have := ih (fun y hy => hl y (List.mem_cons_of_mem x hy))
+        simp only [Stun.encodeAttrs, List.length_append, Stun.encodeAttr_length,
+          Stun.attrSize, List.length_cons]
+        omega
+    have h1 := hbound _ (fun x hx => (hshape x hx).2)
+    have hlen : (connCheckAttrs username prio controlling tieBreaker useCand).length
+        ≤ 4 := by
+      cases useCand <;> simp [connCheckAttrs]
+    omega
+
+/-- **Connectivity-check request correctness (RFC 8445 §7.2.2).** The datagram
+`checkRequest` emits (i) passes MESSAGE-INTEGRITY verification under the same
+password — what the checked peer demands before answering — (ii) passes
+FINGERPRINT verification, and (iii) parses as a Binding request that echoes the
+transaction id and carries the USERNAME. -/
+theorem checkRequest_correct (pwd txid username : Stun.Bytes) (prio : UInt32)
+    (controlling : Bool) (tieBreaker : Nat) (useCand : Bool)
+    (htx : txid.length = 12) (hu : username.length ≤ 513) :
+    Stun.messageIntegrityOk pwd
+      (checkRequest pwd txid username prio controlling tieBreaker useCand) = true ∧
+    Stun.fingerprintOk
+      (checkRequest pwd txid username prio controlling tieBreaker useCand) = true ∧
+    ∃ m, Stun.parse
+        (checkRequest pwd txid username prio controlling tieBreaker useCand) =
+        some m ∧
+      m.typ = Stun.bindingRequest ∧ m.txid = txid ∧
+      (⟨Stun.attrUsername, username⟩ : Stun.Attr) ∈ m.attrs := by
+  obtain ⟨hwf, hnoMI, hnoFP, hblen⟩ :=
+    connCheckAttrs_hygiene username prio controlling tieBreaker useCand hu
+  have hty : Stun.bindingRequest < 65536 := by simp [Stun.bindingRequest]
+  refine ⟨Stun.withIntegrityFingerprint_integrity_ok pwd Stun.bindingRequest txid _
+      hty htx hblen hwf hnoMI,
+    Stun.withIntegrityFingerprint_fingerprint_ok pwd Stun.bindingRequest txid _
+      hty htx hblen hwf hnoFP,
+    _, Stun.withIntegrityFingerprint_parses pwd Stun.bindingRequest txid _
+      hty htx hblen hwf, rfl, rfl, ?_⟩
+  simp [connCheckAttrs]
+
+/-! ## The authenticated 487 role-conflict answer (RFC 8445 §7.3.1.1) -/
+
+/-- ASCII "Role Conflict" (§7.3.1.1). -/
+def roleConflictReason : Stun.Bytes :=
+  [0x52, 0x6f, 0x6c, 0x65, 0x20, 0x43, 0x6f, 0x6e, 0x66, 0x6c, 0x69, 0x63, 0x74]
+
+/-- **§7.3.1.1 receipt rule**: whether an agent seeing its own role attribute
+in an inbound check keeps its role and answers 487 (`true`), or switches role
+and processes the check (`false`). A controlling agent keeps control iff its
+tie-breaker is ≥ the request's; a controlled agent answers 487 iff its
+tie-breaker is < the request's. -/
+def conflict487 (myRole : IceRole) (myTieBreaker theirTieBreaker : Nat) : Bool :=
+  match myRole with
+  | .controlling => decide (myTieBreaker ≥ theirTieBreaker)
+  | .controlled => decide (myTieBreaker < theirTieBreaker)
+
+/-- The 487 Binding error response, MESSAGE-INTEGRITY-protected as ICE error
+responses are (§7.3.1.1 with RFC 5389 §10.1.2). -/
+def conflict487Response (key txid : Stun.Bytes) : Stun.Bytes :=
+  Stun.withIntegrityFingerprint key Stun.bindingErrorType txid
+    [⟨Stun.attrErrorCode, Stun.errorCodeValue 487 roleConflictReason⟩]
+
+/-- **The 487 answer agrees with role resolution (§7.3.1.1).** In a
+both-controlling conflict, the agent that answers 487 (keeping control) is
+exactly the agent `resolveConflict` names controlling; in a both-controlled
+conflict, the 487 sender is exactly the agent that stays controlled. So the
+wire behavior and the role algebra can never disagree. -/
+theorem conflict487_agrees_resolve (my their : Nat) :
+    (conflict487 .controlling my their = true ↔
+      resolveConflict my their = .controlling) ∧
+    (conflict487 .controlled my their = true ↔
+      resolveConflict my their = .controlled) := by
+  unfold conflict487 resolveConflict
+  by_cases h : my ≥ their <;> simp [h] <;> omega
+
+/-- **Exactly one 487 in a both-controlling conflict.** With distinct
+tie-breakers, of the two agents each seeing the other's ICE-CONTROLLING, one
+answers 487 and the other switches role — never both, never neither. -/
+theorem conflict487_unique (a b : Nat) (h : a ≠ b) :
+    conflict487 .controlling a b ≠ conflict487 .controlling b a := by
+  unfold conflict487
+  by_cases hab : a ≥ b
+  · have hba : ¬ b ≥ a := by omega
+    simp [hab, hba]
+  · have hba : b ≥ a := by omega
+    simp [hab, hba]
+
+/-- **The 487 answer verifies (§7.3.1.1).** The role-conflict error response
+is integrity-protected under the check's short-term key, fingerprinted, parses
+as a Binding error response echoing the transaction id, and carries the 487
+ERROR-CODE. -/
+theorem conflict487Response_correct (key txid : Stun.Bytes)
+    (htx : txid.length = 12) :
+    Stun.messageIntegrityOk key (conflict487Response key txid) = true ∧
+    Stun.fingerprintOk (conflict487Response key txid) = true ∧
+    ∃ m, Stun.parse (conflict487Response key txid) = some m ∧
+      m.typ = Stun.bindingErrorType ∧ m.txid = txid ∧
+      (⟨Stun.attrErrorCode, Stun.errorCodeValue 487 roleConflictReason⟩ :
+        Stun.Attr) ∈ m.attrs := by
+  have hwf : ∀ x ∈ [(⟨Stun.attrErrorCode,
+      Stun.errorCodeValue 487 roleConflictReason⟩ : Stun.Attr)],
+      x.type < 65536 ∧ x.value.length < 65536 := by
+    intro x hx
+    rcases List.mem_singleton.mp hx with rfl
+    exact ⟨by simp [Stun.attrErrorCode],
+      by simp [Stun.errorCodeValue, roleConflictReason]⟩
+  have hnoMI : ∀ x ∈ [(⟨Stun.attrErrorCode,
+      Stun.errorCodeValue 487 roleConflictReason⟩ : Stun.Attr)],
+      x.type ≠ Stun.attrMessageIntegrity := by
+    intro x hx
+    rcases List.mem_singleton.mp hx with rfl
+    simp [Stun.attrErrorCode, Stun.attrMessageIntegrity]
+  have hnoFP : ∀ x ∈ [(⟨Stun.attrErrorCode,
+      Stun.errorCodeValue 487 roleConflictReason⟩ : Stun.Attr)],
+      x.type ≠ Stun.attrFingerprint := by
+    intro x hx
+    rcases List.mem_singleton.mp hx with rfl
+    simp [Stun.attrErrorCode, Stun.attrFingerprint]
+  have hblen : (Stun.encodeAttrs [(⟨Stun.attrErrorCode,
+      Stun.errorCodeValue 487 roleConflictReason⟩ : Stun.Attr)]).length + 32
+      < 65536 := by
+    simp [Stun.encodeAttrs, Stun.encodeAttr_length, Stun.attrSize,
+      Stun.errorCodeValue, roleConflictReason, Stun.padLen]
+  have hty : Stun.bindingErrorType < 65536 := by simp [Stun.bindingErrorType]
+  refine ⟨Stun.withIntegrityFingerprint_integrity_ok key Stun.bindingErrorType
+      txid _ hty htx hblen hwf hnoMI,
+    Stun.withIntegrityFingerprint_fingerprint_ok key Stun.bindingErrorType
+      txid _ hty htx hblen hwf hnoFP,
+    _, Stun.withIntegrityFingerprint_parses key Stun.bindingErrorType txid _
+      hty htx hblen hwf, rfl, rfl, ?_⟩
+  simp
+
+def version : String := "0.2.0"
 
 end Ice

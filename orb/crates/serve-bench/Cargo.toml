@@ -1,0 +1,23 @@
+# Standalone microbenchmark: links the leanc-compiled proven serve (libdrorb.a)
+# and calls the exported `drorb_serve` in a tight loop to profile its cost.
+#
+# Its own workspace (the empty [workspace] table below) so it builds independently
+# of the repo's crate workspace and never perturbs it.
+[package]
+name = "serve-bench"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Standalone microbenchmark that links libdrorb.a and times the exported drorb_serve on a fixed request to attribute the per-call cost across pipeline phases."
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "serve-bench"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

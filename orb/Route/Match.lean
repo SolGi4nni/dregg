@@ -1,3 +1,5 @@
+import RouteAdvanced
+
 /-
 Route.Match — host/route matching as a total function with a precedence order.
 
@@ -296,5 +298,175 @@ theorem bestMatch_is_first_of_class {rt : List (Route H)} {req : List String}
     cases hpf : rt.find? (matchesPrefix req) with
     | some rp => rw [hpf] at h; cases h; exact Or.inr (Or.inl ⟨rfl, rfl⟩)
     | none => rw [hpf] at h; exact Or.inr (Or.inr ⟨rfl, rfl, h⟩)
+
+/-! ## Host- and glob-aware dispatch (RFC 9110 §7.2 authority selection + `*`/`**`)
+
+The flat `bestMatch` table above matches path segments only. Virtual-host routing
+needs two further dimensions: authority (Host / SNI) selection, and glob path
+patterns (`*` = one segment, `**` = any suffix). Both are already proven in the
+sibling `RouteAdvanced` router (two-level host-block → first-match route dispatch,
+with `*`/`**` globs and RFC 9110 §7.4 host isolation). Rather than re-derive them,
+this section composes that router with the flat precedence table as a fallback and
+exposes the pair as one handler-returning dispatch the application layer drives.
+
+`dispatchHandler blocks flat r`:
+  1. try the virtual-host blocks (`RouteAdvanced.dispatch`: pick the first block
+     whose host pattern matches the request authority, then that block's first
+     matching route, glob included);
+  2. on no host-block match, fall back to the flat exact/prefix/default table
+     (`bestMatch`) — preserving the existing host-agnostic behavior exactly.
+-/
+
+/-- Unified host/glob dispatch: the proven virtual-host router first, else the
+flat precedence table. Returns the winning route's handler. -/
+def dispatchHandler
+    (blocks : List (RouteAdvanced.ServerBlock H)) (flat : List (Route H))
+    (r : RouteAdvanced.Req) : Option H :=
+  match RouteAdvanced.dispatch blocks r with
+  | some rt => some rt.handler
+  | none    => (bestMatch flat r.segs).map (fun x => x.handler)
+
+/-- **Conservative extension.** With no virtual-host blocks the unified dispatch
+is exactly the flat `bestMatch` over the same request path: the existing
+host-agnostic routing is preserved byte-for-byte when host routing is unused. -/
+theorem dispatchHandler_no_blocks (flat : List (Route H)) (r : RouteAdvanced.Req) :
+    dispatchHandler [] flat r = (bestMatch flat r.segs).map (fun x => x.handler) := by
+  unfold dispatchHandler RouteAdvanced.dispatch RouteAdvanced.selectBlock
+  simp [List.find?]
+
+/-- **Host isolation (RFC 9110 §7.4).** A request whose authority is not `hB` is
+never served by a virtual-host block bound to the exact host `hB`: `selectBlock`
+cannot return that block, so its handler is unreachable for this request. Wired
+straight from `RouteAdvanced.route_host_isolation`. -/
+theorem dispatchHandler_host_isolation
+    {blocks : List (RouteAdvanced.ServerBlock H)} {r : RouteAdvanced.Req}
+    {b : RouteAdvanced.ServerBlock H} {hB : List String}
+    (hb : b.host = RouteAdvanced.HostPat.exact hB) (hne : r.host ≠ hB) :
+    RouteAdvanced.selectBlock blocks r ≠ some b :=
+  RouteAdvanced.route_host_isolation hb hne
+
+/-- **Glob soundness.** A `**`-suffix route whose explicit segments match a prefix
+`front` matches `front ++ suf` for ANY suffix `suf`: the trailing `**` absorbs the
+rest of the path. Wired from `RouteAdvanced.matchPrefixSegs_append`. -/
+theorem glob_matches_suffix {ps : List RouteAdvanced.SegPat} {front : List String}
+    (h : RouteAdvanced.matchAll ps front = true) (suf : List String) :
+    RouteAdvanced.pathMatch { segs := ps, globstar := true } (front ++ suf) = true := by
+  unfold RouteAdvanced.pathMatch
+  simp only [if_pos rfl]
+  exact RouteAdvanced.matchPrefixSegs_append h suf
+
+/-- **Totality.** When no virtual-host block matches but the flat table carries a
+default route, the unified dispatch always returns a handler (never stuck). Rides
+on `bestMatch_total`. -/
+theorem dispatchHandler_isSome_of_default
+    {blocks : List (RouteAdvanced.ServerBlock H)} {flat : List (Route H)}
+    {r : RouteAdvanced.Req}
+    (hdef : ∃ rr ∈ flat, matchesDefault rr = true)
+    (hno : RouteAdvanced.dispatch blocks r = none) :
+    (dispatchHandler blocks flat r).isSome := by
+  unfold dispatchHandler
+  rw [hno]
+  have hsome := bestMatch_total (rt := flat) (req := r.segs) hdef
+  cases hb : bestMatch flat r.segs with
+  | none => rw [hb] at hsome; simp at hsome
+  | some x => simp
+
+/-- **Declared-exposure generalization of `bestMatch_mem`.** Every handler the
+unified host/glob dispatch can select is a *declared* handler: it is either the
+handler of some route in some virtual-host block, or the handler of some route in
+the flat precedence table. This lifts `bestMatch_mem` — the tenant-isolation
+exposure argument, "a served route is drawn from the declared table" — from the
+flat matcher to the full host+glob matcher: a served route is one the matcher
+selects from the declared tables, host-block or not. So routing over host-blocks
+does not escape the declared surface, and the exposure accounting the isolation
+model builds on `bestMatch_mem` generalizes to `dispatchHandler`. -/
+theorem dispatchHandler_mem_declared
+    {blocks : List (RouteAdvanced.ServerBlock H)} {flat : List (Route H)}
+    {r : RouteAdvanced.Req} {h : H}
+    (hd : dispatchHandler blocks flat r = some h) :
+    (∃ b ∈ blocks, ∃ rt ∈ b.routes, rt.handler = h)
+      ∨ (∃ fr ∈ flat, fr.handler = h) := by
+  unfold dispatchHandler at hd
+  cases hdisp : RouteAdvanced.dispatch blocks r with
+  | some rt =>
+    rw [hdisp] at hd
+    simp only [Option.some.injEq] at hd
+    obtain ⟨b, hsel, hmem, _⟩ := RouteAdvanced.dispatch_block hdisp
+    exact Or.inl ⟨b, RouteAdvanced.find?_mem hsel, rt, hmem, hd⟩
+  | none =>
+    rw [hdisp] at hd
+    cases hb : bestMatch flat r.segs with
+    | none => rw [hb] at hd; simp at hd
+    | some fr =>
+      rw [hb] at hd
+      simp only [Option.map_some', Option.some.injEq] at hd
+      exact Or.inr ⟨fr, bestMatch_mem hb, hd⟩
+
+/-! ### Concrete witness — host discrimination and glob are real (`H := Nat`)
+
+These execute the unified dispatch on concrete inputs so neither feature is
+vacuous: the SAME path `/health` under two different authorities selects two
+DIFFERENT handlers, and a `/assets/**` glob route matches a multi-segment suffix. -/
+
+/-- Two virtual-host blocks — `a.example` and `b.example` — each with a `/health`
+route returning a DIFFERENT handler id; the `a.example` block also carries an
+`/assets/**` glob route. -/
+def demoBlocks : List (RouteAdvanced.ServerBlock Nat) :=
+  [ { host := .exact ["a", "example"],
+      routes :=
+        [ { method := .anyMethod, path := { segs := [.lit "health"], globstar := false },
+            guards := [], handler := 1 },
+          { method := .anyMethod, path := { segs := [.lit "assets"], globstar := true },
+            guards := [], handler := 2 } ] },
+    { host := .exact ["b", "example"],
+      routes :=
+        [ { method := .anyMethod, path := { segs := [.lit "health"], globstar := false },
+            guards := [], handler := 3 } ] } ]
+
+/-- Build a `RouteAdvanced.Req` from split host labels and path segments. -/
+def reqOf (host segs : List String) : RouteAdvanced.Req :=
+  { host := host, method := "GET", segs := segs, headers := [], query := [] }
+
+/-- **Host discrimination is real.** Same path `/health`, different `Host` → a
+different handler fires. -/
+theorem demo_host_discriminates :
+    dispatchHandler demoBlocks [] (reqOf ["a", "example"] ["health"]) = some 1
+      ∧ dispatchHandler demoBlocks [] (reqOf ["b", "example"] ["health"]) = some 3 := by
+  constructor <;> decide
+
+/-- **Glob is real.** The `/assets/**` route matches a multi-segment suffix. -/
+theorem demo_glob_matches :
+    dispatchHandler demoBlocks [] (reqOf ["a", "example"] ["assets", "img", "logo.png"])
+      = some 2 := by decide
+
+/-! ### Concrete witness — method matching is real (`H := Nat`)
+
+The method dimension is `RouteAdvanced.MethodPat` (`anyMethod` / `exact m`), matched
+by `RouteAdvanced.routeMatches` (`methodMatch r.method req.method`) — already proven,
+and composed into `dispatchHandler` through `RouteAdvanced.dispatch`. This witness
+executes it on concrete inputs so method-scoped routing is not vacuous: the SAME path
+`/x` under two different methods selects two DIFFERENT handlers — a `GET`-guarded route
+fires for `GET`, and a `POST` falls through to the block's catch-all. -/
+
+/-- One `anyHost` block: a `GET`-only `/x` route (handler `10`) ahead of a catch-all
+(handler `20`). -/
+def demoMethodBlocks : List (RouteAdvanced.ServerBlock Nat) :=
+  [ { host := .anyHost,
+      routes :=
+        [ { method := .exact "GET", path := { segs := [.lit "x"], globstar := false },
+            guards := [], handler := 10 },
+          RouteAdvanced.catchAllRoute 20 ] } ]
+
+/-- Build a `RouteAdvanced.Req` at an explicit method. -/
+def reqOfMethod (method : String) (host segs : List String) : RouteAdvanced.Req :=
+  { host := host, method := method, segs := segs, headers := [], query := [] }
+
+/-- **Method discrimination is real.** Same path `/x`, different method → a different
+handler fires: `GET /x` hits the method-guarded route (`10`), `POST /x` misses it and
+falls to the block's catch-all (`20`). -/
+theorem demo_method_discriminates :
+    dispatchHandler demoMethodBlocks [] (reqOfMethod "GET" ["h"] ["x"]) = some 10
+      ∧ dispatchHandler demoMethodBlocks [] (reqOfMethod "POST" ["h"] ["x"]) = some 20 := by
+  constructor <;> decide
 
 end Route.Match

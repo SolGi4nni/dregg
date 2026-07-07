@@ -1,0 +1,10 @@
+cc OK (with -lm)
+--- run vectors (off len -> result) ---
+off=0 len=16 -> 14695237
+off=0 len=3 -> 70454
+off=4 len=10 -> 12467326
+off=14 len=2 -> 413
+off=0 len=17 -> 4294967295
+off=16 len=1 -> 4294967295
+off=10 len=8 -> 4294967295
+off=16 len=0 -> 0

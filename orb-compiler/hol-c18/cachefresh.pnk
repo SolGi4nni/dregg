@@ -1,0 +1,37 @@
+// C18 probe: a REAL, deployed serve fragment — the CACHE FRESHNESS test.
+// Pancake IMPLEMENTATION whose emitted machine code must refine the Lean spec
+// `Cache.Meta.isFresh` (drorb `orb/Cache.lean`), used by the
+// DEPLOYED serve: `Meta.isFresh` is the §4.2 `freshness_lifetime > current_age`
+// gate consulted by `Reactor.Stage.Cache.Config.onReq` (the cache stage,
+// `cacheEmptyStage`), which sits at position 4 of
+// `Reactor.Deploy.deployStagesFull2` (the real orb stage list).
+//
+// `Meta.isFresh m now = decide (currentAge < freshnessLifetime)`.  The runtime
+// input is the resolved `current_age` word; the configured `freshnessLifetime`
+// is a fixed data field of the stored response (here the deployed value 100).
+// So the loop-free decision is `age < 100 -> fresh(1) else stale(0)`.
+//
+// Structurally: a single ORDERED `<` guard (2 leaves) — this exercises C15's
+// `Cmp Less` machinery on REAL deployed serve code (C17 exercised `Cmp Equal`).
+//
+// Control block at @base:
+//   [0 ..8)   age    (the resolved current_age, invariant age < 2^32)
+//   [8 ..16)  result (fresh=1 / stale=0; read by @report_vec)
+//
+// Compile: cake --pancake < cachefresh.pnk > cachefresh.S
+
+fun main() {
+  var base = @base;
+  var buf = base + 16;
+  @load_vec(base, 8, buf, 4096);
+  var age = lds 1 base;
+  var result = 0;
+  if age < 100 {
+    result = 1;
+  } else {
+    result = 0;
+  }
+  st base + 8, result;
+  @report_vec(base + 8, 8, base, 8);
+  return 0;
+}

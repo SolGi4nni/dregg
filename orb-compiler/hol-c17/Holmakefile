@@ -1,0 +1,13 @@
+CAKEMLDIR = /home/hbox/src/cakeml
+INCLUDES = $(CAKEMLDIR)/misc \
+           $(CAKEMLDIR)/semantics/ffi \
+           $(CAKEMLDIR)/compiler/encoders/asm \
+           $(CAKEMLDIR)/compiler/backend \
+           $(CAKEMLDIR)/compiler/backend/proofs \
+           $(CAKEMLDIR)/pancake \
+           $(CAKEMLDIR)/pancake/semantics \
+           $(CAKEMLDIR)/pancake/parser \
+           $(CAKEMLDIR)/pancake/proofs
+
+all: $(DEFAULT_TARGETS)
+.PHONY: all

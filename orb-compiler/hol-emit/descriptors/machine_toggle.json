@@ -1,0 +1,11 @@
+{
+  "family": "machine",
+  "desc_name": "machine_toggle",
+  "theory": "toggleEmit",
+  "impl_name": "toggleStep",
+  "rel_name": "mRel",
+  "step_name": "toggle",
+  "enc_name": "encQ",
+  "state_var": "state",
+  "out_var": "out"
+}

@@ -190,7 +190,7 @@ theorem tenant_isolation_seam_binding (b : Binding) (input : Bytes)
     (hsub : reactorSubs input = .dispatch req :: rest) :
     ∃ r, Route.Match.bestMatch demoAppConfig.table
             (App.targetSegments req.target) = some r
-      ∧ serve input = serialize (App.responseOfHandler r.handler)
+      ∧ serve input = serialize (App.responseOfReq req r.handler)
       ∧ ∃ e, demoAppConfig.table[e]? = some r
           ∧ ∀ res ∈ (systemOf demoAppConfig b).touches e,
               (systemOf demoAppConfig b).scope
@@ -222,7 +222,7 @@ theorem tenant_isolation_seam (input : Bytes) (req : Proto.Request)
     (hsub : reactorSubs input = .dispatch req :: rest) :
     ∃ r, Route.Match.bestMatch demoAppConfig.table
             (App.targetSegments req.target) = some r
-      ∧ serve input = serialize (App.responseOfHandler r.handler)
+      ∧ serve input = serialize (App.responseOfReq req r.handler)
       ∧ ∃ e, demoAppConfig.table[e]? = some r
           ∧ (∀ res ∈ demoSystem.touches e,
                 demoSystem.scope (demoSystem.owner e) res = true)
@@ -258,7 +258,7 @@ theorem tenant_isolation_deployed (input : Bytes) (req : Proto.Request)
           = serialize (Reactor.Lifecycle.rewriteResp
               (Reactor.Deploy.deployProg
                 (Reactor.Deploy.deployPlan (Reactor.Deploy.deploySubs input)) input)
-              (App.responseOfHandler r.handler))
+              (App.responseOfReq req r.handler))
       ∧ ∃ e, demoAppConfig.table[e]? = some r
           ∧ (∀ res ∈ demoSystem.touches e,
                 demoSystem.scope (demoSystem.owner e) res = true)

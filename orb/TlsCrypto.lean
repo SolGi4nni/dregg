@@ -164,19 +164,84 @@ def clientApTrafficSecret (ms thash : ByteArray) : Option ByteArray :=
 def serverApTrafficSecret (ms thash : ByteArray) : Option ByteArray :=
   deriveSecret ms "s ap traffic".toUTF8 thash
 
-/-- One direction's record protection keys, derived from a traffic secret. -/
+/-- The AEAD algorithm of a negotiated TLS 1.3 cipher suite. Both supported
+suites hash with SHA-256, so the key schedule is shared; only the record
+protection differs. `TLS_AES_128_GCM_SHA256` is the RFC 8446 §9.1
+mandatory-to-implement suite; ChaCha20-Poly1305 is the portably-verified one. -/
+inductive Aead where
+  | chacha20poly1305
+  | aes128gcm
+deriving Repr, DecidableEq
+
+/-- The AEAD write-key length (RFC 8446 §7.3): 32 for ChaCha20-Poly1305,
+16 for AES-128-GCM. Both use a 12-byte IV and a 16-byte tag. -/
+def Aead.keyLen : Aead → Nat
+  | .chacha20poly1305 => 32
+  | .aes128gcm => 16
+
+/-- Algorithm-dispatching AEAD seal over the verified primitives. -/
+def Aead.seal : Aead → ByteArray → ByteArray → ByteArray → ByteArray → Option ByteArray
+  | .chacha20poly1305 => chachaSeal
+  | .aes128gcm => aesGcmSeal
+
+/-- Algorithm-dispatching AEAD open. -/
+def Aead.open' : Aead → ByteArray → ByteArray → ByteArray → ByteArray → Option ByteArray
+  | .chacha20poly1305 => chachaOpen
+  | .aes128gcm => aesGcmOpen
+
+/-- **AEAD roundtrip, uniformly over the suite.** Transported from
+`Crypto.Assumptions.chacha_open_seal_roundtrip` / `aesgcm_open_seal_roundtrip`. -/
+theorem Aead.open_seal_roundtrip (a : Aead) (key nonce ad msg ct : ByteArray)
+    (h : a.seal key nonce ad msg = some ct) :
+    a.open' key nonce ad ct = some msg := by
+  cases a with
+  | chacha20poly1305 => exact Crypto.Assumptions.chacha_open_seal_roundtrip _ _ _ _ _ h
+  | aes128gcm => exact Crypto.Assumptions.aesgcm_open_seal_roundtrip _ _ _ _ _ h
+
+/-- **AEAD authenticity, uniformly over the suite.** -/
+theorem Aead.open_authentic (a : Aead) (key nonce ad ct msg : ByteArray)
+    (h : a.open' key nonce ad ct = some msg) :
+    a.seal key nonce ad msg = some ct := by
+  cases a with
+  | chacha20poly1305 => exact Crypto.Assumptions.chacha_open_authentic _ _ _ _ _ h
+  | aes128gcm => exact Crypto.Assumptions.aesgcm_open_authentic _ _ _ _ _ h
+
+/-- One direction's record protection keys, derived from a traffic secret.
+`aead` selects the record AEAD (the negotiated suite); it defaults to
+ChaCha20-Poly1305, the construction all pre-negotiation callers used. -/
 structure RecordKeys where
   key : ByteArray
   iv : ByteArray
+  aead : Aead := .chacha20poly1305
 
-/-- `[sender]_write_key` / `[sender]_write_iv` (RFC 8446 §7.3): expand the
-traffic secret under the `"key"` and `"iv"` labels with empty context. For
-ChaCha20-Poly1305 the sizes are 32 and 12. -/
-def trafficKeys (secret : ByteArray) : Option RecordKeys :=
-  match expandLabel secret "key".toUTF8 ByteArray.empty keyLen,
+/-- `[sender]_write_key` / `[sender]_write_iv` (RFC 8446 §7.3) for a given
+AEAD: expand the traffic secret under the `"key"` and `"iv"` labels with empty
+context, at the algorithm's key length (the IV is 12 bytes for both). -/
+def trafficKeysA (a : Aead) (secret : ByteArray) : Option RecordKeys :=
+  match expandLabel secret "key".toUTF8 ByteArray.empty a.keyLen,
         expandLabel secret "iv".toUTF8 ByteArray.empty ivLen with
-  | some k, some iv => some { key := k, iv := iv }
+  | some k, some iv => some { key := k, iv := iv, aead := a }
   | _, _ => none
+
+/-- `trafficKeysA` at ChaCha20-Poly1305 — the pre-negotiation entry point. -/
+def trafficKeys (secret : ByteArray) : Option RecordKeys :=
+  trafficKeysA .chacha20poly1305 secret
+
+/-- The keys `trafficKeysA` derives carry the algorithm they were derived for:
+the record layer below therefore seals/opens with the suite the negotiation
+chose — the coherence is by construction. -/
+theorem trafficKeysA_aead (a : Aead) (secret : ByteArray) (rk : RecordKeys)
+    (h : trafficKeysA a secret = some rk) : rk.aead = a := by
+  unfold trafficKeysA at h
+  split at h
+  · cases h; rfl
+  · cases h
+
+/-- **Next-generation traffic secret** (RFC 8446 §7.2, KeyUpdate):
+`application_traffic_secret_N+1 = HKDF-Expand-Label(application_traffic_secret_N,
+"traffic upd", "", Hash.length)`. -/
+def nextTrafficSecret (secret : ByteArray) : Option ByteArray :=
+  expandLabel secret "traffic upd".toUTF8 ByteArray.empty hashLen
 
 /-- The whole schedule as one record, so its determinism is one statement. -/
 structure Schedule where
@@ -188,10 +253,13 @@ structure Schedule where
   clientAp : Option ByteArray
   serverAp : Option ByteArray
 
-/-- Derive every secret of the schedule from the shared secret and the two
-transcript hashes (handshake-phase `thHS`, application-phase `thAP`). No PSK. -/
-def deriveSchedule (dhe thHS thAP : ByteArray) : Schedule :=
-  let es := earlySecretNoPsk
+/-- Derive every secret of the schedule from the pre-shared key, the shared
+secret, and the two transcript hashes (handshake-phase `thHS`,
+application-phase `thAP`) — the full RFC 8446 §7.1 chain. A session resumed
+from a NewSessionTicket enters here with the ticket's PSK; a full handshake
+uses `zeros hashLen` (the "0" IKM of §7.1), which is `deriveSchedule` below. -/
+def deriveSchedulePsk (psk dhe thHS thAP : ByteArray) : Schedule :=
+  let es := earlySecret psk
   let hs := es.bind (fun e => handshakeSecret e dhe)
   let ms := hs.bind masterSecret
   { early := es
@@ -201,6 +269,17 @@ def deriveSchedule (dhe thHS thAP : ByteArray) : Schedule :=
     serverHs := hs.bind (fun h => serverHsTrafficSecret h thHS)
     clientAp := ms.bind (fun m => clientApTrafficSecret m thAP)
     serverAp := ms.bind (fun m => serverApTrafficSecret m thAP) }
+
+/-- The no-PSK schedule: `deriveSchedulePsk` at the zero IKM. -/
+def deriveSchedule (dhe thHS thAP : ByteArray) : Schedule :=
+  deriveSchedulePsk (zeros hashLen) dhe thHS thAP
+
+/-- `deriveSchedule` *is* the PSK chain at the §7.1 zero point — the two agree
+definitionally, so every no-PSK session is the `psk = 0` instance of the one
+schedule. -/
+theorem deriveSchedule_eq_psk_zero (dhe thHS thAP : ByteArray) :
+    deriveSchedule dhe thHS thAP = deriveSchedulePsk (zeros hashLen) dhe thHS thAP :=
+  rfl
 
 /-! ### Determinism: the schedule is a function of its inputs -/
 
@@ -213,6 +292,15 @@ theorem keyschedule_deterministic
     (hd : dhe = dhe') (h1 : thHS = thHS') (h2 : thAP = thAP') :
     deriveSchedule dhe thHS thAP = deriveSchedule dhe' thHS' thAP' := by
   subst hd; subst h1; subst h2; rfl
+
+/-- Determinism of the PSK-general schedule: equal PSK, shared secret, and
+transcript hashes yield an equal schedule — a resumed session's keys are a
+pure function of the ticket's PSK and the transcript, with no hidden input. -/
+theorem keyschedule_psk_deterministic
+    {psk dhe thHS thAP psk' dhe' thHS' thAP' : ByteArray}
+    (hp : psk = psk') (hd : dhe = dhe') (h1 : thHS = thHS') (h2 : thAP = thAP') :
+    deriveSchedulePsk psk dhe thHS thAP = deriveSchedulePsk psk' dhe' thHS' thAP' := by
+  subst hp; subst hd; subst h1; subst h2; rfl
 
 /-- Spec-conformance, made checkable by `rfl`: the schedule's fields are exactly
 the RFC 8446 §7.1 chain. -/
@@ -244,17 +332,18 @@ def recordAD (ciphertextLen : Nat) : ByteArray :=
   ByteArray.mk #[0x17, 0x03, 0x03] ++ u16be ciphertextLen
 
 /-- Seal one record: AEAD-protect `plaintext` under the direction's key, the
-per-record nonce for `seq`, and additional data `ad`. `none` only on a
-`Crypto.chachaSeal` size error. Returns `encrypted_record = ct ‖ tag`. -/
+per-record nonce for `seq`, and additional data `ad`, with the AEAD the keys
+were derived for. `none` only on a size error. Returns
+`encrypted_record = ct ‖ tag`. -/
 def recordSeal (rk : RecordKeys) (seq : Nat) (ad plaintext : ByteArray) :
     Option ByteArray :=
-  chachaSeal rk.key (recordNonce rk.iv seq) ad plaintext
+  rk.aead.seal rk.key (recordNonce rk.iv seq) ad plaintext
 
 /-- Open one record: AEAD-verify-and-decrypt `ciphertext`. `none` on
 authentication failure or a size error — the two are indistinguishable. -/
 def recordOpen (rk : RecordKeys) (seq : Nat) (ad ciphertext : ByteArray) :
     Option ByteArray :=
-  chachaOpen rk.key (recordNonce rk.iv seq) ad ciphertext
+  rk.aead.open' rk.key (recordNonce rk.iv seq) ad ciphertext
 
 /-! ### Record-layer theorems, transported from the crypto axioms -/
 
@@ -266,7 +355,7 @@ theorem record_roundtrip (rk : RecordKeys) (seq : Nat) (ad pt ct : ByteArray)
     recordOpen rk seq ad ct = some pt := by
   unfold recordSeal at h
   unfold recordOpen
-  exact Crypto.Assumptions.chacha_open_seal_roundtrip _ _ _ _ _ h
+  exact rk.aead.open_seal_roundtrip _ _ _ _ _ h
 
 /-- **Record authenticity.** The only ciphertext that opens to `pt` under a key
 is the one `recordSeal` would produce for that `pt`. This is
@@ -276,7 +365,7 @@ theorem record_open_authentic (rk : RecordKeys) (seq : Nat)
     recordSeal rk seq ad pt = some ct := by
   unfold recordOpen at h
   unfold recordSeal
-  exact Crypto.Assumptions.chacha_open_authentic _ _ _ _ _ h
+  exact rk.aead.open_authentic _ _ _ _ _ h
 
 /-- **Record forgery fails.** A record that is *not* the genuine sealing of `pt`
 never opens to `pt`: an attacker cannot fabricate, alter, or replay-with-a-
@@ -346,7 +435,7 @@ def realConfig (dhe thHS thAP : ByteArray) : Tls.Config :=
     fatalAlert := [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]
     hsFeed := fun _hs buf =>
       if buf.isEmpty then .insufficient
-      else .done { id := 0 } buf.length [] .h1 []
+      else .done { id := 0 } buf.length [] .h1 [] []
     recOpen := realRecOpen rx
     recSeal := realRecSeal tx
     recCloseNotify := realCloseNotify tx

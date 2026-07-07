@@ -1,0 +1,14 @@
+INCLUDES = $(CAKEMLDIR)/misc \
+           $(CAKEMLDIR)/semantics/ffi \
+           $(CAKEMLDIR)/compiler/encoders/asm \
+           $(CAKEMLDIR)/compiler/backend \
+           $(CAKEMLDIR)/compiler/backend/proofs \
+           $(CAKEMLDIR)/pancake \
+           $(CAKEMLDIR)/pancake/semantics \
+           $(CAKEMLDIR)/pancake/parser \
+           $(CAKEMLDIR)/pancake/proofs \
+           $(HOME)/c6work \
+           $(HOME)/hol-c11
+
+all: $(DEFAULT_TARGETS)
+.PHONY: all

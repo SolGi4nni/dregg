@@ -4,6 +4,9 @@ import Reactor.Proxy
 import Route.Match
 import Route.Path
 import Policy.Model
+import StaticFile
+import Cgi
+import Reactor.RouteMiddleware
 
 /-!
 # Reactor.App — the application layer: a dispatched request becomes a response
@@ -47,6 +50,32 @@ open Proto (Bytes Request)
 
 /-! ## Handlers and responses -/
 
+/-- **The config-representable virtual-host block answer.** A `hostGlob` block route
+selects one of these (via the proven `RouteAdvanced.dispatch`); it is the widened
+answer type that replaces the original status+body pair, so a virtual host can
+reverse-proxy / redirect / respond / serve-static PER HOST — the homelab multi-service
+case. Every variant is data-parameterized (config-denotable):
+
+  * `respond status body` — answer locally with a fixed status + body (the original
+    `(Nat × Bytes)` case);
+  * `proxy pool` — reverse-proxy this host's request to the named upstream pool. The
+    Response projection is the `502` placeholder used off the submission path; the real
+    forward is driven host-side (the deployment surfaces the proxy-vhost hostnames);
+  * `redirect status location` — a `3xx` + `Location` redirect;
+  * `static` — the embedded request-aware static-file handler. -/
+inductive VHandler where
+  | respond (status : Nat) (body : Bytes)
+  | proxy (pool : Reactor.Proxy.ProxyPool)
+  | redirect (status : Nat) (location : Bytes)
+  | static
+  /-- **A middleware-guarded route answer.** An ordered `mws` chain runs BEFORE the
+    inner answer (`Reactor.RouteMw.runChain`): the first middleware that
+    short-circuits (e.g. `bearerAuth`'s 401 on a rejected token) is served in place of
+    `inner`; if all pass, `inner`'s response is served. This is how a config route's
+    `middleware <name>` clause composes onto its handler — the effective answer is
+    `middleware >>> handler`, reusing the proven `Jwt.authenticate` gate. -/
+  | guarded (mws : List Reactor.RouteMw.RouteMw) (inner : VHandler)
+
 /-- The per-route application payload. Two variants:
 
   * `static status body` — answer locally with a fixed response (the original
@@ -61,14 +90,58 @@ open Proto (Bytes Request)
 inductive Handler where
   | static (status : Nat) (body : Bytes)
   | proxy (pool : Reactor.Proxy.ProxyPool)
+  /-- A **real static-file route.** The answer is served request-aware by
+    `responseOfReq`/`handle` through the proven `StaticFile.serveDeployed` (real
+    bytes, content-hash ETag, conditional `304`, `Range` `206`). This constructor
+    carries no payload — the file selection is driven by the request target
+    segments and headers at dispatch. `responseOfHandler`'s projection is only the
+    `200` totality placeholder used when the (request-blind) `Handler → Response`
+    view is taken; the real answer flows through `responseOfReq`. -/
+  | staticFile
+  /-- A **CGI/1.1 route** (RFC 3875): the request is answered by running `script`
+    as a real child process and framing its stdout (`Cgi.serveCgi`). The app layer
+    coerces a `< 200` script status to `502` so the deployed final stays non-1xx
+    (RFC 9110 §15.4). -/
+  | cgi (script : String)
+  /-- A **host/glob virtual-host route** (RFC 9110 §7.2 authority selection + `*`/`**`
+    globs). The answer is served **request-aware** by `responseOfReq`/`handle` through
+    the proven `RouteAdvanced.dispatch` over `blocks`: the request's `Host` authority
+    selects a virtual-host block, then that block's first matching route (glob included)
+    supplies the `(status, body)` answer. This wires the proven host/glob matcher
+    (`Route.Match.dispatchHandler`'s engine, `RouteAdvanced.dispatch`) into the served
+    path while keeping the route itself a member of the flat effective table — so
+    `bestMatch_mem` (the tenant-isolation exposure argument) is preserved by
+    construction: the served exposure is this one declared route, and the host/glob
+    dispatch happens *within* its handler, exactly as `staticFile` selects a file.
+    `responseOfHandler`'s projection is a `200` totality placeholder (the request-blind
+    view); the real answer flows through `responseOfReq`, which reads the `Host` header
+    and target path. -/
+  | hostGlob (blocks : List (RouteAdvanced.ServerBlock VHandler))
+  /-- A **redirect route** (RFC 9110 §15.4): answer with a `3xx` status and a
+    `Location` header pointing at `location`. Fully data-parameterized (a status
+    code + a target byte string), so it is config-representable — an operator
+    declares `route /old redirect 308 https://new/` and the served response is
+    exactly this handler's `status` + `Location`. `responseOfHandler` builds the
+    `Location`-carrying response directly (no request data is consulted), so
+    `responseOfReq` is definitionally `responseOfHandler` on this variant. -/
+  | redirect (status : Nat) (location : Bytes)
 
 /-- Reason phrase bytes for a status code (a small fixed table; the seed only
-needs the codes it emits). -/
+needs the codes it emits, plus the common `3xx` redirect phrases a config
+`redirect` route declares). -/
 def reasonFor (status : Nat) : Bytes :=
   (if status = 200 then "OK"
    else if status = 404 then "Not Found"
    else if status = 403 then "Forbidden"
+   else if status = 301 then "Moved Permanently"
+   else if status = 302 then "Found"
+   else if status = 307 then "Temporary Redirect"
+   else if status = 308 then "Permanent Redirect"
    else "").toUTF8.toList
+
+/-- The `Location` response-header name (lower-case ASCII), carried by a
+`redirect` handler's response. -/
+def locationName : Bytes := "location".toUTF8.toList
 
 /-- Build the serializer's `Response` from a handler. A `static` handler's status
 and body are rendered with a derived reason phrase and no caller headers (the
@@ -79,6 +152,33 @@ so `handle` stays total. -/
 def responseOfHandler : Handler → Response
   | .static status body => { status := status, reason := reasonFor status, headers := [], body := body }
   | .proxy _ => { status := 502, reason := "Bad Gateway".toUTF8.toList, headers := [], body := "no upstream".toUTF8.toList }
+  | .staticFile => { status := 200, reason := reasonFor 200, headers := [], body := "static".toUTF8.toList }
+  | .cgi script =>
+    -- Run the real CGI script, then uphold the deployed non-1xx (RFC 9110 §15.4)
+    -- final-status invariant: a script that emits an interim `1xx` Status is
+    -- coerced to `502 Bad Gateway` (a gateway rejecting an invalid upstream final).
+    let r := Cgi.serveCgi script
+    if 200 ≤ r.status then r
+    else { status := 502, reason := "Bad Gateway".toUTF8.toList, headers := [],
+           body := "cgi: invalid (interim) script status".toUTF8.toList }
+  | .hostGlob _ =>
+    -- Request-blind projection (the `Host`/path are unavailable here): a `200`
+    -- totality placeholder. The real, host/glob-dispatched answer flows through
+    -- `responseOfReq`.
+    { status := 200, reason := reasonFor 200, headers := [], body := "vhost".toUTF8.toList }
+  | .redirect status location =>
+    -- A genuine redirect: the declared `3xx` status and a `Location` header at the
+    -- declared target. No request data is consulted, so `responseOfReq` reuses this.
+    { status := status, reason := reasonFor status, headers := [(locationName, location)], body := [] }
+
+/-- The clamped `cgi` handler's status is always a genuine final (non-1xx): the
+`< 200` branch forces `502`, and the pass-through branch is `≥ 200` by its guard.
+The deployed §15.4 discharge rides on this even though the script output is opaque. -/
+theorem cgi_status_final (script : String) : 200 ≤ (responseOfHandler (.cgi script)).status := by
+  simp only [responseOfHandler]
+  split
+  · assumption
+  · decide
 
 /-! ## Application configuration -/
 
@@ -132,16 +232,177 @@ def targetSegments (target : Bytes) : List String :=
   let raw := (path.splitOn "/").filter (fun seg => seg != "")
   Route.Path.normalize raw
 
+/-- The request's authoritative host as split labels: the `Host` header value split
+on `.` (e.g. `a.example` → `["a","example"]`). Empty when no `Host` header is present.
+Header names are canonical lowercase on the deployed path (`Reactor.Config.protoReqOf`),
+so the name is matched literally as `"host"`. -/
+def hostLabelsOf (req : Request) : List String :=
+  match req.headers.find? (fun h => h.1 == "host".toUTF8.toList) with
+  | some (_, v) => (bytesToString v).splitOn "."
+  | none => []
+
+/-- Lower-case an ASCII string (RFC 9110 §5.1 field-name case-insensitivity). Header
+names are matched against a guard's declared name case-insensitively by lower-casing
+both sides. -/
+def lowerAscii (s : String) : String := String.mk (s.data.map Char.toLower)
+
+/-- The request headers as `(lower-name, value)` string pairs, for guard evaluation.
+Deployed header names are already canonical lowercase (`Reactor.Config.protoReqOf`);
+lower-casing here makes the header-required guard robust whatever the arrival casing. -/
+def headerPairsOf (req : Request) : List (String × String) :=
+  req.headers.map (fun h => (lowerAscii (bytesToString h.1), bytesToString h.2))
+
+/-- The request's query string as `(key, value)` pairs (RFC 3986 §3.4): take the
+target's `?`-suffix, split on `&`, then each field on its first `=`. Empty keys are
+dropped; query keys are case-sensitive. -/
+def queryPairsOf (req : Request) : List (String × String) :=
+  let s := bytesToString req.target
+  match s.splitOn "?" with
+  | _ :: rest =>
+    let qs := String.intercalate "?" rest
+    (qs.splitOn "&").filterMap (fun kv =>
+      match kv.splitOn "=" with
+      | []      => none
+      | k :: vs => if k = "" then none else some (k, String.intercalate "=" vs))
+  | [] => []
+
+/-- Build a `RouteAdvanced.Req` from a `Proto.Request` for host/glob dispatch: the
+`Host`-derived authority labels, the method bytes as a token, the normalized target
+segments (the same traversal-safe segments `bestMatch` matches on), and now the request
+headers (lower-cased names) and parsed query pairs — so the proven header-required /
+query-required guards (`RouteAdvanced.headerPresent` / `queryPresent`) are consulted on
+the deployed virtual-host table. -/
+def hostReqOf (req : Request) : RouteAdvanced.Req :=
+  { host := hostLabelsOf req
+    method := bytesToString req.method
+    segs := targetSegments req.target
+    headers := headerPairsOf req
+    query := queryPairsOf req }
+
 /-! ## The application handler -/
+
+/-- **Build a virtual-host block route's `Response` from its widened answer,
+request-aware.** Each config-representable `VHandler` variant projects to a genuine
+final (non-1xx) response:
+
+  * `respond status body` — the fixed status + body, with a `< 200` status clamped to
+    `502` (upholding the deployed non-1xx final invariant, RFC 9110 §15.4);
+  * `redirect status location` — a `3xx` + `Location` redirect (a `< 200` status
+    clamped to `502` the same way);
+  * `static` — the embedded request-aware static-file answer
+    (`StaticFile.serveDeployed` over this request's target segments + headers);
+  * `proxy pool` — the `502 Bad Gateway` placeholder taken off the reverse-proxy
+    submission path (the real forward is driven host-side from the surfaced
+    proxy-vhost hostnames), exactly as the flat `Handler.proxy` projection. -/
+def vhandlerResponse (req : Request) : VHandler → Response
+  | .respond status body =>
+    if 200 ≤ status then { status := status, reason := reasonFor status, headers := [], body := body }
+    else { status := 502, reason := "Bad Gateway".toUTF8.toList, headers := [],
+           body := "vh: invalid (interim) route status".toUTF8.toList }
+  | .redirect status location =>
+    if 200 ≤ status then { status := status, reason := reasonFor status,
+                           headers := [(locationName, location)], body := [] }
+    else { status := 502, reason := "Bad Gateway".toUTF8.toList, headers := [],
+           body := "vh: invalid (interim) redirect status".toUTF8.toList }
+  | .static => StaticFile.serveDeployed (targetSegments req.target) req.headers
+  | .proxy _ => { status := 502, reason := "Bad Gateway".toUTF8.toList, headers := [],
+                  body := "no upstream".toUTF8.toList }
+  | .guarded mws inner => Reactor.RouteMw.runChain req mws (vhandlerResponse req inner)
+
+/-- Every widened virtual-host answer is a genuine final (non-1xx): `respond`/`redirect`
+clamp a `< 200` status to `502`, `static` emits only literal `200/206/304/416/404`, and
+`proxy` is the `502` placeholder. -/
+theorem vhandlerResponse_status_final (req : Request) (vh : VHandler) :
+    200 ≤ (vhandlerResponse req vh).status := by
+  induction vh with
+  | respond s b => simp only [vhandlerResponse]; split
+                   · assumption
+                   · decide
+  | redirect s l => simp only [vhandlerResponse]; split
+                    · assumption
+                    · decide
+  | proxy p => simp only [vhandlerResponse]; decide
+  | static =>
+    show 200 ≤ (StaticFile.toResponse
+        (StaticFile.serveConditional StaticFile.deployedConfig
+          (StaticFile.reqOfHeaders req.headers) (targetSegments req.target))).status
+    cases StaticFile.serveConditional StaticFile.deployedConfig
+        (StaticFile.reqOfHeaders req.headers) (targetSegments req.target) <;>
+      simp only [StaticFile.toResponse] <;> decide
+  | guarded mws inner ih =>
+    show 200 ≤ (Reactor.RouteMw.runChain req mws (vhandlerResponse req inner)).status
+    exact Reactor.RouteMw.runChain_status_final req mws _ ih
+
+/-- **Request-aware response of a chosen handler.** The `staticFile` route is
+served request-aware — through the proven `StaticFile.serveDeployed` over the
+request's target segments and headers (real bytes, content-hash ETag, conditional
+`304`, `Range` `206`); the `hostGlob` route is served through the proven
+`RouteAdvanced.dispatch` over the widened block table (the `Host` authority selects a
+block, then that block's first matching route supplies a `VHandler`, built by
+`vhandlerResponse`); every other handler is exactly `responseOfHandler`. This is
+the projection `handle` uses, so the deployed serve answers `/static/<file>` with
+real file bytes rather than the request-blind placeholder. -/
+def responseOfReq (req : Request) : Handler → Response
+  | .staticFile => StaticFile.serveDeployed (targetSegments req.target) req.headers
+  | .hostGlob blocks =>
+    match RouteAdvanced.dispatch blocks (hostReqOf req) with
+    | some rt => vhandlerResponse req rt.handler
+    | none    => vhandlerResponse req (.respond 404 "not found".toUTF8.toList)
+  | h => responseOfHandler h
+
+/-- Off the request-aware routes (`staticFile`, `hostGlob`), `responseOfReq` is exactly
+`responseOfHandler` — the request-aware projection only differs on the handlers that
+consult the request (the real static-file handler and the host/glob virtual-host
+handler). -/
+theorem responseOfReq_eq {req : Request} {h : Handler}
+    (hne : h ≠ .staticFile) (hng : ∀ b, h ≠ .hostGlob b) :
+    responseOfReq req h = responseOfHandler h := by
+  cases h with
+  | staticFile => exact absurd rfl hne
+  | static s b => rfl
+  | proxy p => rfl
+  | cgi s => rfl
+  | redirect s l => rfl
+  | hostGlob b => exact absurd rfl (hng b)
+
+/-- **The request-aware host/glob response is a genuine final (non-1xx).** Whatever
+virtual-host block / glob route the request selects (or the `404` no-match default), the
+answer is built by `vhandlerResponse`, which is `≥ 200` on every widened variant. This
+feeds the deployed RFC 9110 §15.4 discharge for the `hostGlob` handler, whose
+status/body are otherwise opaque to the kernel (they come from the block table). -/
+theorem hostGlob_status_final (req : Request)
+    (blocks : List (RouteAdvanced.ServerBlock VHandler)) :
+    200 ≤ (responseOfReq req (.hostGlob blocks)).status := by
+  show 200 ≤ (match RouteAdvanced.dispatch blocks (hostReqOf req) with
+    | some rt => vhandlerResponse req rt.handler
+    | none    => vhandlerResponse req (.respond 404 "not found".toUTF8.toList)).status
+  cases RouteAdvanced.dispatch blocks (hostReqOf req) with
+  | some rt => exact vhandlerResponse_status_final req rt.handler
+  | none    => exact vhandlerResponse_status_final req _
+
+/-- **The request-aware static-file response is a genuine final (non-1xx).** The
+`StaticFile.toResponse` adapter emits only literal `200/206/304/416/404` statuses,
+so the served `/static/<file>` response — whatever conditional/range branch fires —
+is always `≥ 200`. This feeds the deployed RFC 9110 §15.4 discharge for the
+`staticFile` route, whose body/status are otherwise opaque to the kernel. -/
+theorem staticFile_status_final (req : Request) :
+    200 ≤ (responseOfReq req .staticFile).status := by
+  show 200 ≤ (StaticFile.toResponse
+      (StaticFile.serveConditional StaticFile.deployedConfig
+        (StaticFile.reqOfHeaders req.headers) (targetSegments req.target))).status
+  cases StaticFile.serveConditional StaticFile.deployedConfig
+      (StaticFile.reqOfHeaders req.headers) (targetSegments req.target) <;>
+    simp only [StaticFile.toResponse] <;> decide
 
 /-- **The application layer.** Normalize the target to segments, select a route
 with the real `Route.Match.bestMatch` over the effective table, and build the
-response from the chosen handler. The `none` arm is unreachable (the table always
-has a default) but is spelled with the default handler so `handle` is a plain
-total `def`. -/
+response from the chosen handler — **request-aware** (`responseOfReq`), so a
+`staticFile` route serves the real conditioned file bytes for THIS request. The
+`none` arm is unreachable (the table always has a default) but is spelled with the
+default handler so `handle` is a plain total `def`. -/
 def handle (ac : AppConfig) (req : Request) : Response :=
   match Route.Match.bestMatch ac.table (targetSegments req.target) with
-  | some r => responseOfHandler r.handler
+  | some r => responseOfReq req r.handler
   | none   => responseOfHandler ac.defaultHandler
 
 /-! ## The Policy admission seam (real `Policy.serveDecision`, driven)
@@ -186,7 +447,7 @@ default); the correspondence half ties `handle`'s output to `bestMatch`'s choice
 so a `handle` that ignored `bestMatch` would fail it. -/
 theorem app_routes_total (ac : AppConfig) (req : Request) :
     ∃ r, Route.Match.bestMatch ac.table (targetSegments req.target) = some r
-       ∧ handle ac req = responseOfHandler r.handler := by
+       ∧ handle ac req = responseOfReq req r.handler := by
   have hsome := Route.Match.bestMatch_total (rt := ac.table)
       (req := targetSegments req.target) (table_has_default ac)
   obtain ⟨r, hr⟩ :
@@ -203,7 +464,7 @@ matches, not a fallback slipped in behind `bestMatch`. -/
 theorem app_chosen_route_matches (ac : AppConfig) (req : Request) :
     ∃ r, Route.Match.bestMatch ac.table (targetSegments req.target) = some r
        ∧ Route.Match.matchesAny (targetSegments req.target) r = true
-       ∧ handle ac req = responseOfHandler r.handler := by
+       ∧ handle ac req = responseOfReq req r.handler := by
   obtain ⟨r, hb, hresp⟩ := app_routes_total ac req
   exact ⟨r, hb, Route.Match.bestMatch_sound hb, hresp⟩
 
@@ -213,13 +474,38 @@ theorem app_chosen_route_matches (ac : AppConfig) (req : Request) :
 `Policy.Running` snapshot; the policy lane supplies the real declared surface. -/
 def demoPolicyConfig : Policy.Config := { listeners := [], routes := [] }
 
+/-- The deployed virtual-host / glob table the default route dispatches over
+(`Route.Match.dispatchHandler`'s engine, `RouteAdvanced.dispatch`). Two exact-host
+blocks discriminate authority — `a.example` and `b.example` answer with DIFFERENT bodies
+for the same path — and the fallback `anyHost` block carries a `**`-glob route
+(`/…/assets/**`) plus a catch-all `404`. This is what makes host-based and glob routing
+observable on the wire: the request's `Host` selects the block, then the block's first
+matching route (glob included) supplies the answer. -/
+def demoVhBlocks : List (RouteAdvanced.ServerBlock VHandler) :=
+  [ { host := .exact ["a", "example"],
+      routes := [ RouteAdvanced.catchAllRoute (VHandler.respond 200 "vhost-a".toUTF8.toList) ] },
+    { host := .exact ["b", "example"],
+      routes := [ RouteAdvanced.catchAllRoute (VHandler.respond 200 "vhost-b".toUTF8.toList) ] },
+    { host := .anyHost,
+      routes :=
+        [ { method := .anyMethod,
+            path := { segs := [RouteAdvanced.SegPat.lit "health", RouteAdvanced.SegPat.lit "assets"],
+                      globstar := true },
+            guards := [], handler := VHandler.respond 200 "glob-hit".toUTF8.toList },
+          RouteAdvanced.catchAllRoute (VHandler.respond 404 "not found".toUTF8.toList) ] } ]
+
 /-- A concrete `AppConfig`: an exact route for `/health`, a prefix route under
-`/static`, and a 404 default. This is the seed the other lanes drive against. -/
+`/static`, a `/cgi-bin` prefix, and a host/glob-dispatching default (`demoVhBlocks`).
+The default handler routes host- and glob-aware via the proven `RouteAdvanced.dispatch`,
+so an admitted-but-unmatched path (e.g. `/health/…`) is answered by the virtual-host
+table: `Host: a.example` vs `b.example` return DIFFERENT bodies, and a `/health/assets/**`
+glob matches. This is the seed the other lanes drive against. -/
 def demoApp : AppConfig where
   routes :=
     [ ⟨Route.Match.Pat.exact ["health"], .static 200 "ok".toUTF8.toList⟩,
-      ⟨Route.Match.Pat.«prefix» ["static"], .static 200 "asset".toUTF8.toList⟩ ]
-  defaultHandler := .static 404 "not found".toUTF8.toList
+      ⟨Route.Match.Pat.«prefix» ["static"], .staticFile⟩,
+      ⟨Route.Match.Pat.«prefix» ["cgi-bin"], .cgi "conformance/cgi-bin/hello"⟩ ]
+  defaultHandler := .hostGlob demoVhBlocks
   lid := 0
   policy := Policy.init demoPolicyConfig
   routeKeyOf := fun _ => ⟨0, 0⟩
@@ -228,7 +514,54 @@ def demoApp : AppConfig where
 every response. -/
 theorem demoApp_routes_total (req : Request) :
     ∃ r, Route.Match.bestMatch demoApp.table (targetSegments req.target) = some r
-       ∧ handle demoApp req = responseOfHandler r.handler :=
+       ∧ handle demoApp req = responseOfReq req r.handler :=
   app_routes_total demoApp req
+
+/-! ## The widened per-host answer is real (isolation intact over `VHandler`)
+
+The homelab core: `host jelly.home` reverse-proxies while `host blog.home` responds —
+DIFFERENT widened answers under different authorities. These witnesses execute the
+proven `RouteAdvanced.dispatch` over a `VHandler` block table so per-host proxy vs
+respond is not vacuous, and instantiate the proven `route_host_isolation` at the widened
+type — tenant isolation is preserved, not weakened, by the wider answer. -/
+
+/-- A `proxy`-shaped widened answer (a decidable projection, so the discrimination
+witness can `decide` without comparing the opaque `ProxyPool`). -/
+def isProxyVH : VHandler → Bool
+  | .proxy _ => true
+  | _        => false
+
+/-- Build a `RouteAdvanced.Req` at an authority + path (any method). -/
+def reqVH (host segs : List String) : RouteAdvanced.Req :=
+  { host := host, method := "GET", segs := segs, headers := [], query := [] }
+
+/-- A two-block widened vhost table: `jelly.home` reverse-proxies (the real
+`demoPool`), `blog.home` responds `200 BLOG`. -/
+def demoVhWiden : List (RouteAdvanced.ServerBlock VHandler) :=
+  [ { host := .exact ["jelly", "home"],
+      routes := [ RouteAdvanced.catchAllRoute (VHandler.proxy Reactor.Proxy.demoPool) ] },
+    { host := .exact ["blog", "home"],
+      routes := [ RouteAdvanced.catchAllRoute (VHandler.respond 200 "BLOG".toUTF8.toList) ] } ]
+
+/-- **Per-host widened dispatch discriminates.** The SAME path under `jelly.home`
+selects a `proxy` answer, under `blog.home` a non-proxy (`respond`) answer — host
+routing over the widened `VHandler` table is real. -/
+theorem demoVhWiden_discriminates :
+    (RouteAdvanced.dispatch demoVhWiden (reqVH ["jelly", "home"] [])).map
+        (fun r => isProxyVH r.handler) = some true
+      ∧ (RouteAdvanced.dispatch demoVhWiden (reqVH ["blog", "home"] [])).map
+        (fun r => isProxyVH r.handler) = some false := by
+  constructor <;> rfl
+
+/-- **Host isolation is intact over `VHandler`.** A request whose authority is not
+`jelly.home` is never served by the `jelly.home` proxy block — the proven
+`route_host_isolation` at the widened answer type. Widening the block answer did not
+weaken tenant isolation. -/
+theorem demoVhWiden_host_isolation {req : RouteAdvanced.Req}
+    (hne : req.host ≠ ["jelly", "home"]) :
+    RouteAdvanced.selectBlock demoVhWiden req
+      ≠ some { host := .exact ["jelly", "home"],
+               routes := [ RouteAdvanced.catchAllRoute (VHandler.proxy Reactor.Proxy.demoPool) ] } :=
+  RouteAdvanced.route_host_isolation rfl hne
 
 end Reactor.App

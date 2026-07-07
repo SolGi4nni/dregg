@@ -1,0 +1,24 @@
+open HolKernel boolLib bossLib Parse;
+open stepEndToEndTheory stepInstallTheory stepLinkBInstTheory stepCoreTheory
+     stepMainRefineTheory stepSemTheory stepWrapperTheory;
+val _ = new_theory "verify";
+val _ = Globals.show_tags := true;
+fun banner s = print ("\n@@@ "^s^"\n");
+banner "step_machine_code (tags shown)";
+val _ = print (thm_to_string step_machine_code);
+banner "AXIOM COUNTS (must be 0)";
+val _ = print ("axioms stepEndToEnd  = " ^ Int.toString (length (axioms "stepEndToEnd")) ^ "\n");
+val _ = print ("axioms stepInstall   = " ^ Int.toString (length (axioms "stepInstall")) ^ "\n");
+val _ = print ("axioms stepLinkBInst = " ^ Int.toString (length (axioms "stepLinkBInst")) ^ "\n");
+val _ = print ("axioms stepMainRefine= " ^ Int.toString (length (axioms "stepMainRefine")) ^ "\n");
+val _ = print ("axioms stepSem       = " ^ Int.toString (length (axioms "stepSem")) ^ "\n");
+val _ = print ("axioms stepWrapper   = " ^ Int.toString (length (axioms "stepWrapper")) ^ "\n");
+val _ = print ("axioms stepCore      = " ^ Int.toString (length (axioms "stepCore")) ^ "\n");
+banner "stepGateProg_linkB (backend half, tags shown)";
+val _ = print (thm_to_string stepGateProg_linkB);
+banner "evaluate_stepCore (bespoke branch core, tags shown)";
+val _ = print (thm_to_string evaluate_stepCore);
+banner "stepGateProg_is_parser_output (leanc-out-of-TCB, tags shown)";
+val _ = print (thm_to_string stepGateProg_is_parser_output);
+banner "DONE";
+val _ = export_theory ();

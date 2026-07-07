@@ -1,0 +1,14 @@
+val gtm = “FLOOKUP s.locals v = SOME (ValWord (n2w (x:num))) /\ x < 9223372036854775808 /\ (y:num) < 9223372036854775808 ==> eval (s:(64,'ffi)panSem$state) (Cmp Less (Var Local v) (Const (n2w y))) = SOME (ValWord (if x < y then 1w:word64 else 0w))”;
+val _ = proofManagerLib.set_goal ([], gtm);
+val _ = proofManagerLib.e (strip_tac);
+val _ = proofManagerLib.e (`(2:num) ** 63 = 9223372036854775808` by EVAL_TAC);
+val _ = proofManagerLib.e (simp [eval_def, OPT_MMAP_def, wordLangTheory.word_op_def, asmTheory.word_cmp_def]);
+val _ = print ("\n@@AFTER_SIMP nGoals="^Int.toString(length(proofManagerLib.top_goals()))^"@@\n");
+val _ = print (term_to_string (#2 (proofManagerLib.top_goal())));
+val _ = proofManagerLib.e (`((n2w x):word64 < n2w y) = (x < y)` by (irule signed_lt_n2w64 >> fs []));
+val _ = print ("\n@@AFTER_HEQ nGoals="^Int.toString(length(proofManagerLib.top_goals()))^"@@\n");
+val (asl, gl) = proofManagerLib.top_goal();
+val _ = print ("\nASMS:\n" ^ String.concatWith "\n" (map term_to_string asl));
+val _ = print ("\nGOAL: " ^ term_to_string gl ^ "\n");
+val _ = (proofManagerLib.e (pop_assum (fn th => REWRITE_TAC [th])); print ("\n@@AFTER_POP nGoals="^Int.toString(length(proofManagerLib.top_goals()))^"@@\n")) handle e => print ("\n@@POP done/exn: "^General.exnMessage e^"@@\n");
+val _ = TextIO.flushOut TextIO.stdOut;

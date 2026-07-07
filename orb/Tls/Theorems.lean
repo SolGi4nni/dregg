@@ -333,14 +333,14 @@ theorem linInv_init (cfg : Config) : LinInv (init cfg) := by
 theorem linInv_step (cfg : Config) (s : St) (i : Input)
     (h : LinInv s) : LinInv (step cfg s i).1 := by
   obtain ⟨h1, h2⟩ := h
-  rcases s with ⟨p, g⟩
+  rcases s with ⟨p, g, t⟩
   by_cases hpw : p.postWindow = true
   · -- past the window: nothing more is consumed, the region persists
-    have hnext := postWindow_step cfg ⟨p, g⟩ i hpw
-    have hcs := postWindow_no_consumes cfg ⟨p, g⟩ i hpw
+    have hnext := postWindow_step cfg ⟨p, g, t⟩ i hpw
+    have hcs := postWindow_no_consumes cfg ⟨p, g, t⟩ i hpw
     refine ⟨fun hf => by simp [hf] at hnext, ?_⟩
-    have hc : (step cfg ⟨p, g⟩ i).1.consumed
-        = g ++ (step cfg ⟨p, g⟩ i).2.consumes := rfl
+    have hc : (step cfg ⟨p, g, t⟩ i).1.consumed
+        = g ++ (step cfg ⟨p, g, t⟩ i).2.consumes := rfl
     rw [hc, hcs, List.append_nil]
     exact h2
   · -- before the window: the consumed-set is empty, and at most the

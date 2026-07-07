@@ -228,6 +228,70 @@ decreasing_by
   simp only [List.length_drop]
   omega
 
+/-! ## Emitting SETTINGS (RFC 9114 §7.2.4) — the server side of §3.2/§6.2.1
+
+The decoder above consumes SETTINGS; a server also SENDS one on its control
+stream. `encSettings` emits the identifier/value pairs (each a varint pair);
+`decSettings_encSettings` proves it is the exact inverse of the deployed
+`decSettings` — what the server advertises (e.g.
+`SETTINGS_QPACK_MAX_TABLE_CAPACITY` = 0x01, `SETTINGS_QPACK_BLOCKED_STREAMS`
+= 0x07, RFC 9204 §5) is what any conformant peer decodes. -/
+
+/-- Encode a SETTINGS payload: identifier/value varint pairs, in order.
+`none` iff some identifier or value exceeds the varint range (§7.2.4). -/
+def encSettings : List (Nat × Nat) → Option Bytes
+  | [] => some []
+  | (i, v) :: rest =>
+    match Varint.encVarint i, Varint.encVarint v, encSettings rest with
+    | some ib, some vb, some rb => some (ib ++ (vb ++ rb))
+    | _, _, _ => none
+
+/-- **SETTINGS round-trip**: the deployed `decSettings` decodes an
+`encSettings` payload to exactly the encoded pairs. -/
+theorem decSettings_encSettings (ps : List (Nat × Nat)) (bs : Bytes)
+    (h : encSettings ps = some bs) : decSettings bs = some ps := by
+  induction ps generalizing bs with
+  | nil =>
+    unfold encSettings at h
+    cases h
+    rw [decSettings]
+  | cons pv rest ih =>
+    obtain ⟨i, v⟩ := pv
+    unfold encSettings at h
+    split at h
+    · rename_i ib vb rb hib hvb hrb
+      cases h
+      have hdi := Varint.decVarint_encVarint i ib (vb ++ rb) hib
+      have hdv := Varint.decVarint_encVarint v vb rb hvb
+      have hdrop1 : (ib ++ (vb ++ rb)).drop ib.length = vb ++ rb :=
+        List.drop_left ib (vb ++ rb)
+      have hdrop2 : (ib ++ (vb ++ rb)).drop (ib.length + vb.length) = rb := by
+        rw [show ib ++ (vb ++ rb) = (ib ++ vb) ++ rb from (List.append_assoc ib vb rb).symm]
+        exact List.drop_left' (by simp)
+      have hpos := Varint.decVarint_consumed_pos _ _ _ hdi
+      -- a varint is ≥ 1 byte, so the payload is nonempty: the cons arm fires
+      cases ib with
+      | nil => simp at hpos
+      | cons b ib' =>
+        simp only [List.cons_append] at hdi hdrop1 hdrop2 ⊢
+        rw [decSettings]
+        split
+        case h_1 heq => rw [hdi] at heq; cases heq
+        case h_2 heq =>
+          rw [hdi] at heq
+          cases heq
+          simp only [hdrop1, hdv, hdrop2, ih rb hrb]
+    · exact absurd h (by simp)
+
+/-- Execution vector: the QPACK-capacity advertisement the wiring sends —
+`[(0x01, 4096), (0x07, 100)]` — encodes and decodes back exactly. -/
+private def vecSettingsRoundTrip : Bool :=
+  match encSettings [(0x01, 4096), (0x07, 100)] with
+  | some bs => decSettings bs == some [(0x01, 4096), (0x07, 100)]
+  | none => false
+#guard vecSettingsRoundTrip
+#print axioms decSettings_encSettings
+
 /-! ## Wire vectors, checker-verified (the SETTINGS one goes through
 `#guard` because well-founded definitions do not kernel-reduce) -/
 

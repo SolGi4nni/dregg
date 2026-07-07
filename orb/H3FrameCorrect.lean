@@ -101,7 +101,9 @@ theorem specVarint_eq_decVarint (bs : Bytes) :
       rw [Varint.decVarint_case0 b rest hk]
       simp only [specVarint, hk, List.length_cons]
       rw [if_neg (by omega)]
-      simp only [List.take_zero, beValue_nil, Nat.mul_one, Nat.add_zero]
+      simp only [show (2:Nat)^0 - 1 = 0 from rfl, List.take_zero, beValue_nil,
+        Nat.pow_zero, Nat.mul_one, Nat.add_zero, Option.some.injEq,
+        Prod.mk.injEq, and_true]
     · -- 2-byte class
       by_cases hl : 1 ≤ rest.length
       · obtain ⟨r0, rest', rfl⟩ : ∃ a l, rest = a :: l := by
@@ -111,9 +113,10 @@ theorem specVarint_eq_decVarint (bs : Bytes) :
         rw [Varint.decVarint_case1 b (r0 :: rest') hk hl]
         simp only [specVarint, hk, List.length_cons]
         rw [if_neg (by omega)]
-        simp only [show (r0 :: rest').take 1 = [r0] from rfl, beValue_cons,
+        simp only [show (2:Nat)^1 - 1 = 1 from rfl,
+          show (r0 :: rest').take 1 = [r0] from rfl, beValue_cons,
           beValue_nil, List.length_nil, List.getD_cons_zero,
-          Option.some.injEq, Prod.mk.injEq]
+          Option.some.injEq, Prod.mk.injEq, and_true]
         omega
       · rw [show specVarint (b :: rest) = none from by
             simp only [specVarint, hk, List.length_cons]; rw [if_pos (by omega)],
@@ -130,10 +133,11 @@ theorem specVarint_eq_decVarint (bs : Bytes) :
         rw [Varint.decVarint_case2 b (r0 :: r1 :: r2 :: rest') hk hl]
         simp only [specVarint, hk, List.length_cons]
         rw [if_neg (by omega)]
-        simp only [show (r0 :: r1 :: r2 :: rest').take 3 = [r0, r1, r2] from rfl,
+        simp only [show (2:Nat)^2 - 1 = 3 from rfl,
+          show (r0 :: r1 :: r2 :: rest').take 3 = [r0, r1, r2] from rfl,
           beValue_cons, beValue_nil, List.length_cons, List.length_nil,
           List.getD_cons_zero, List.getD_cons_succ, Option.some.injEq,
-          Prod.mk.injEq]
+          Prod.mk.injEq, and_true]
         omega
       · rw [show specVarint (b :: rest) = none from by
             simp only [specVarint, hk, List.length_cons]; rw [if_pos (by omega)],
@@ -157,11 +161,12 @@ theorem specVarint_eq_decVarint (bs : Bytes) :
           hk hl]
         simp only [specVarint, hk, List.length_cons]
         rw [if_neg (by omega)]
-        simp only [show (r0 :: r1 :: r2 :: r3 :: r4 :: r5 :: r6 :: rest').take 7 =
+        simp only [show (2:Nat)^3 - 1 = 7 from rfl,
+          show (r0 :: r1 :: r2 :: r3 :: r4 :: r5 :: r6 :: rest').take 7 =
             [r0, r1, r2, r3, r4, r5, r6] from rfl,
           beValue_cons, beValue_nil, List.length_cons, List.length_nil,
           List.getD_cons_zero, List.getD_cons_succ, Option.some.injEq,
-          Prod.mk.injEq]
+          Prod.mk.injEq, and_true]
         omega
       · rw [show specVarint (b :: rest) = none from by
             simp only [specVarint, hk, List.length_cons]; rw [if_pos (by omega)],
@@ -211,31 +216,23 @@ theorem decFrame_refines_spec (bs : Bytes) (sf : SpecFrame)
       decFrame bs = .complete (.data sf.payload) sf.consumed) ∧
     (sf.frameType = 0x01 →
       decFrame bs = .complete (.headers sf.payload) sf.consumed) := by
+  obtain ⟨ft, pl, pay, cons⟩ := sf
   unfold specFrame at h
-  rw [specVarint_eq_decVarint] at h
-  unfold decFrame
-  cases hv1 : Varint.decVarint bs with
-  | none => rw [hv1] at h; simp at h
-  | some tp =>
-    obtain ⟨t, n1⟩ := tp
-    rw [hv1] at h ⊢
-    rw [specVarint_eq_decVarint] at h
-    cases hv2 : Varint.decVarint (bs.drop n1) with
-    | none => rw [hv2] at h; simp at h
-    | some lp =>
-      obtain ⟨len, n2⟩ := lp
-      rw [hv2] at h ⊢
+  simp only [specVarint_eq_decVarint] at h
+  rcases hv1 : Varint.decVarint bs with _ | ⟨t, n1⟩
+  · simp [hv1] at h
+  · simp only [hv1] at h
+    rcases hv2 : Varint.decVarint (bs.drop n1) with _ | ⟨len, n2⟩
+    · simp [hv2] at h
+    · simp only [hv2] at h
       by_cases hlt : (bs.drop (n1 + n2)).length < len
       · rw [if_pos hlt] at h; simp at h
-      · rw [if_pos rfl] at h
-        rw [if_neg hlt] at h
-        injection h with h
-        subst h
-        rw [if_neg hlt]
-        refine ⟨fun ht => ?_, fun ht => ?_⟩ <;>
-          · simp only at ht
-            simp only [FrameType.ofNat, ht]
-      all_goals simp_all
+      · rw [if_neg hlt] at h
+        simp only [Option.some.injEq, SpecFrame.mk.injEq] at h
+        obtain ⟨rfl, rfl, rfl, rfl⟩ := h
+        refine ⟨fun ht => ?_, fun ht => ?_⟩
+        · subst ht; simp only [decFrame, hv1, hv2]; rw [if_neg hlt]; rfl
+        · subst ht; simp only [decFrame, hv1, hv2]; rw [if_neg hlt]; rfl
 
 theorem decFrame_data_payload_exact (bs : Bytes) (sf : SpecFrame)
     (h : specFrame bs = some sf) (ht : sf.frameType = 0x00) :
@@ -255,22 +252,16 @@ payload exactly when `specFrame` succeeds. -/
 theorem specFrame_none_incomplete (bs : Bytes) (h : specFrame bs = none) :
     decFrame bs = .incomplete := by
   unfold specFrame at h
-  unfold decFrame
-  rw [specVarint_eq_decVarint] at h
-  cases hv1 : Varint.decVarint bs with
-  | none => rw [hv1]
-  | some tp =>
-    obtain ⟨t, n1⟩ := tp
-    rw [hv1] at h ⊢
-    rw [specVarint_eq_decVarint] at h
-    cases hv2 : Varint.decVarint (bs.drop n1) with
-    | none => rw [hv2]
-    | some lp =>
-      obtain ⟨len, n2⟩ := lp
-      rw [hv2] at h ⊢
+  simp only [specVarint_eq_decVarint] at h
+  rcases hv1 : Varint.decVarint bs with _ | ⟨t, n1⟩
+  · simp only [decFrame, hv1]
+  · simp only [hv1] at h
+    rcases hv2 : Varint.decVarint (bs.drop n1) with _ | ⟨len, n2⟩
+    · simp only [decFrame, hv1, hv2]
+    · simp only [hv2] at h
       by_cases hlt : (bs.drop (n1 + n2)).length < len
-      · rw [if_neg hlt]
-      · rw [if_pos rfl, if_neg hlt] at h; simp at h
+      · simp only [decFrame, hv1, hv2]; rw [if_pos hlt]
+      · rw [if_neg hlt] at h; simp at h
 
 /-! ## Non-vacuity
 

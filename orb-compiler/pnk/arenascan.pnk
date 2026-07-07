@@ -1,0 +1,40 @@
+// C5 probe: the REAL Arena request-line SP scan, in Pancake.
+//
+// This is the emittable core of Arena/Parse.lean `parseRequestLine`: the
+// find-first-SP loop `findByteIdx SP line = line.findIdx? (· == 32)` that
+// splits "method SP target SP HTTP/x" at the first space (RFC 9112 §3).
+//
+// The whole request line is provided in the buffer at @base+32; @load_line
+// (arenascan_ffi.c) reads $LINE as raw bytes and writes its length at @base+16.
+// The loop scans for the first SP (byte 32) and records its offset in «i»
+// (== len when the line has no space). @report_off prints that offset.
+//
+// The guard `i < len && found == 0` is exactly what the Link-A proof
+// (hol-c5/arenaScanLinkAScript.sml `scanGuard`) reasons about: panPtreeConversion
+// lowers `&&` to Op And [Cmp NotEqual 0w _; Cmp NotEqual 0w _], `==` to Cmp Equal,
+// `<` to Cmp Less.
+//
+// Compile: cake --pancake < arenascan.pnk > arenascan.S
+//          cc -O2 arenascan.S basis_ffi.c arenascan_ffi.c -o arenascan -lm
+// Run:     LINE="GET / HTTP/1.1" ./arenascan     ->  prints 3
+
+fun main() {
+  var base = @base;
+  var buf = base + 32;
+  @load_line(base, 24, buf, 4096);
+  var len = lds 1 (base + 16);
+  var i = 0;
+  var found = 0;
+  var b = 0;
+  while (i < len && found == 0) {
+    b = ld8 (buf + i);
+    if b == 32 {
+      found = 1;                 // SP at offset i
+    } else {
+      i = i + 1;                 // advance
+    }
+  }
+  st base + 24, i;               // the found offset (== len if no SP)
+  @report_off(base + 24, 8, base, 8);
+  return 0;
+}

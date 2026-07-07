@@ -26,6 +26,12 @@ Totality (`select_*_total`): whenever ANY eligible backend exists, selection
 succeeds — for weighted round-robin under the config-checked side condition
 that weights are positive.
 
+Least-connections comes in two flavours: plain (`leastConn`, minimal in-flight
+count) and weighted (`wleastConn`, minimal conns-per-weight ratio, compared
+cross-multiplied). Each carries an exact minimality theorem
+(`select_leastConn_min` / `select_wleastConn_min`), and the weighted policy
+degenerates to the plain one on uniform weights (`wleastConn_uniform`).
+
 A policy chain `A else B else C` returns the first policy's verdict that is
 `some`; `selectChain_none_iff` pins the failure case (every link failed) and
 `selectChain_sound` shows the chain inherits both soundness theorems.
@@ -112,6 +118,138 @@ theorem leastConn_min {bs : List Backend} {b : Backend}
         rcases List.mem_cons.mp hc with hc' | hc'
         · rw [hc']; omega
         · exact ih hr c hc'
+
+/-! ### Weighted least-connections -/
+
+/-- Load comparison for weighted least-connections: `b`'s conns-per-weight
+ratio is at most `c`'s, compared cross-multiplied so no division is needed —
+`b.conns / b.weight ≤ c.conns / c.weight ⟺ b.conns * c.weight ≤ c.conns *
+b.weight` (for positive weights). A zero-weight backend with any in-flight
+connection compares as infinitely loaded, which is the right degeneracy. -/
+def loadLe (b c : Backend) : Bool :=
+  decide (b.conns * c.weight ≤ c.conns * b.weight)
+
+/-- Cross-multiplied ratio order is transitive at positive middle weight. -/
+theorem loadLe_trans {a₁ w₁ a₂ w₂ a₃ w₃ : Nat} (hw₂ : 0 < w₂)
+    (h₁₂ : a₁ * w₂ ≤ a₂ * w₁) (h₂₃ : a₂ * w₃ ≤ a₃ * w₂) :
+    a₁ * w₃ ≤ a₃ * w₁ := by
+  have key : w₂ * (a₁ * w₃) ≤ w₂ * (a₃ * w₁) := by
+    calc w₂ * (a₁ * w₃) = a₁ * w₂ * w₃ := by ac_rfl
+      _ ≤ a₂ * w₁ * w₃ := Nat.mul_le_mul_right _ h₁₂
+      _ = a₂ * w₃ * w₁ := by ac_rfl
+      _ ≤ a₃ * w₂ * w₁ := Nat.mul_le_mul_right _ h₂₃
+      _ = w₂ * (a₃ * w₁) := by ac_rfl
+  exact Nat.le_of_mul_le_mul_left key hw₂
+
+/-- Weighted least-connections: pick the backend minimizing the
+conns-per-weight ratio; ties go to the earlier list position. With uniform
+weights this coincides with `leastConn` (`wleastConn_uniform`); with skewed
+weights a weight-2 backend is allowed twice the in-flight load of a weight-1
+backend before it stops being preferred. -/
+def wleastConn : List Backend → Option Backend
+  | [] => none
+  | b :: bs =>
+    match wleastConn bs with
+    | none => some b
+    | some c => if loadLe b c then some b else some c
+
+theorem wleastConn_total {bs : List Backend} (h : bs ≠ []) :
+    (wleastConn bs).isSome := by
+  cases bs with
+  | nil => exact absurd rfl h
+  | cons b rest =>
+    cases hr : wleastConn rest with
+    | none => simp [wleastConn, hr]
+    | some c => by_cases hb : loadLe b c <;> simp [wleastConn, hr, hb]
+
+theorem wleastConn_mem {bs : List Backend} {b : Backend}
+    (h : wleastConn bs = some b) : b ∈ bs := by
+  induction bs generalizing b with
+  | nil => cases h
+  | cons c rest ih =>
+    cases hr : wleastConn rest with
+    | none =>
+      simp only [wleastConn, hr] at h
+      cases h
+      exact List.mem_cons_self c rest
+    | some w =>
+      simp only [wleastConn, hr] at h
+      split at h
+      · cases h; exact List.mem_cons_self c rest
+      · cases h; exact List.mem_cons_of_mem _ (ih hr)
+
+/-- **Weighted least-connections minimality.** Under positive weights (the
+config-loader invariant, same side condition as WRR totality), the chosen
+backend has the minimal conns-per-weight ratio over the whole candidate
+list: `b.conns * c.weight ≤ c.conns * b.weight` for every candidate `c`. -/
+theorem wleastConn_min {bs : List Backend} {b : Backend}
+    (hw : ∀ c ∈ bs, 0 < c.weight)
+    (h : wleastConn bs = some b) :
+    ∀ c ∈ bs, b.conns * c.weight ≤ c.conns * b.weight := by
+  induction bs generalizing b with
+  | nil => cases h
+  | cons a rest ih =>
+    intro c hc
+    cases hr : wleastConn rest with
+    | none =>
+      have hrest : rest = [] := by
+        cases rest with
+        | nil => rfl
+        | cons x xs =>
+          have := wleastConn_total (bs := x :: xs) (by intro hx; cases hx)
+          rw [hr] at this
+          cases this
+      simp only [wleastConn, hr] at h
+      cases h
+      rcases List.mem_cons.mp hc with hc' | hc'
+      · rw [hc']; exact Nat.le_refl _
+      · rw [hrest] at hc'; cases hc'
+    | some w =>
+      have hw_rest : ∀ c ∈ rest, 0 < c.weight :=
+        fun c hc => hw c (List.mem_cons_of_mem _ hc)
+      have hw_w : 0 < w.weight := hw_rest w (wleastConn_mem hr)
+      simp only [wleastConn, hr] at h
+      split at h
+      · rename_i hle
+        have haw : a.conns * w.weight ≤ w.conns * a.weight := by
+          simpa [loadLe] using hle
+        cases h
+        rcases List.mem_cons.mp hc with hc' | hc'
+        · rw [hc']; exact Nat.le_refl _
+        · exact loadLe_trans hw_w haw (ih hw_rest hr c hc')
+      · rename_i hgt
+        have hwa : w.conns * a.weight ≤ a.conns * w.weight := by
+          have : ¬ a.conns * w.weight ≤ w.conns * a.weight := by
+            simpa [loadLe] using hgt
+          omega
+        cases h
+        rcases List.mem_cons.mp hc with hc' | hc'
+        · rw [hc']; exact hwa
+        · exact ih hw_rest hr c hc'
+
+/-- **Conservativity.** Over a uniform-weight pool, weighted least-connections
+is exactly plain least-connections (including tie-breaks). -/
+theorem wleastConn_uniform {bs : List Backend} {k : Nat} (hk : 0 < k)
+    (hw : ∀ c ∈ bs, c.weight = k) : wleastConn bs = leastConn bs := by
+  induction bs with
+  | nil => rfl
+  | cons a rest ih =>
+    have hw_rest : ∀ c ∈ rest, c.weight = k :=
+      fun c hc => hw c (List.mem_cons_of_mem _ hc)
+    cases hr : leastConn rest with
+    | none => simp [wleastConn, leastConn, ih hw_rest, hr]
+    | some c =>
+      have hac : a.weight = k := hw a (List.mem_cons_self a rest)
+      have hcc : c.weight = k := hw_rest c (leastConn_mem hr)
+      have hiff : a.conns * c.weight ≤ c.conns * a.weight ↔ a.conns ≤ c.conns := by
+        rw [hac, hcc]
+        constructor
+        · intro hmul
+          have h2 : k * a.conns ≤ k * c.conns := by
+            rw [Nat.mul_comm k a.conns, Nat.mul_comm k c.conns]; exact hmul
+          exact Nat.le_of_mul_le_mul_left h2 hk
+        · intro hle; exact Nat.mul_le_mul_right k hle
+      simp [wleastConn, leastConn, ih hw_rest, hr, loadLe, hiff]
 
 /-! ### Eligibility and tiers -/
 
@@ -248,6 +386,9 @@ inductive Policy where
   | weightedRoundRobin
   /-- Fewest in-flight connections, earlier position wins ties. -/
   | leastConnections
+  /-- Fewest in-flight connections per unit weight (cross-multiplied ratio),
+  earlier position wins ties. -/
+  | weightedLeastConnections
   /-- Rendezvous hashing on the request key (`Proxy.Rendezvous`). -/
   | rendezvousHash
 deriving DecidableEq, Repr
@@ -263,6 +404,7 @@ structure Ctx where
 def applyPolicy : Policy → Ctx → List Backend → Option Backend
   | .weightedRoundRobin, ctx, bs => wrr bs ctx.round
   | .leastConnections, _, bs => leastConn bs
+  | .weightedLeastConnections, _, bs => wleastConn bs
   | .rendezvousHash, ctx, bs => rendezvous ctx.hash ctx.key bs
 
 theorem applyPolicy_mem {p : Policy} {ctx : Ctx} {bs : List Backend}
@@ -270,6 +412,7 @@ theorem applyPolicy_mem {p : Policy} {ctx : Ctx} {bs : List Backend}
   cases p with
   | weightedRoundRobin => exact wrr_mem h
   | leastConnections => exact leastConn_mem h
+  | weightedLeastConnections => exact wleastConn_mem h
   | rendezvousHash => exact rendezvous_mem h
 
 /-- The tiered selector: run the policy on the best-tier eligible pool. -/
@@ -302,6 +445,29 @@ theorem select_leastConn_total {ctx : Ctx} {bs : List Backend} {w : Backend}
     (hmem : w ∈ bs) (helig : w.eligible = true) :
     (select .leastConnections ctx bs).isSome :=
   leastConn_total (tierPool_ne_nil hmem helig)
+
+/-- **Least-connections minimality through the tiered selector.** The chosen
+backend's in-flight count is minimal over the whole tier pool: no eligible
+same-tier backend was less loaded at selection time. -/
+theorem select_leastConn_min {ctx : Ctx} {bs : List Backend} {b : Backend}
+    (h : select .leastConnections ctx bs = some b) :
+    ∀ c ∈ tierPool bs, b.conns ≤ c.conns :=
+  leastConn_min h
+
+/-- Selection totality, weighted least-connections. -/
+theorem select_wleastConn_total {ctx : Ctx} {bs : List Backend} {w : Backend}
+    (hmem : w ∈ bs) (helig : w.eligible = true) :
+    (select .weightedLeastConnections ctx bs).isSome :=
+  wleastConn_total (tierPool_ne_nil hmem helig)
+
+/-- **Weighted least-connections minimality through the tiered selector.**
+Under positive weights, the chosen backend's conns-per-weight ratio is minimal
+over the whole tier pool. -/
+theorem select_wleastConn_min {ctx : Ctx} {bs : List Backend} {b : Backend}
+    (hw : ∀ c ∈ bs, 0 < c.weight)
+    (h : select .weightedLeastConnections ctx bs = some b) :
+    ∀ c ∈ tierPool bs, b.conns * c.weight ≤ c.conns * b.weight :=
+  wleastConn_min (fun c hc => hw c (tierPool_spec hc).1) h
 
 /-- Selection totality, rendezvous hashing. -/
 theorem select_hash_total {ctx : Ctx} {bs : List Backend} {w : Backend}

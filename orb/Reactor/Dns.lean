@@ -15,12 +15,17 @@ resolved by driving the real `Dns` response parser to an address.
 
 The wiring, outside-in:
 
-  * `resolve host msg` — the resolution call. It drives the REAL `Dns.parseHeader`,
-    `Dns.parseQuestion`, and `Dns.parseRR` over a DNS *response* message. `parseRR`
+  * `resolve host msg` — the resolution call. It validates the full RFC 1035 §4.1
+    message structure via `parseMessage`: the header-declared `QDCOUNT`/`ANCOUNT`/
+    `NSCOUNT`/`ARCOUNT` counts must equal the number of entries actually present, and the
+    four sections must tile the message with NO trailing octets. A response that lies
+    about its counts, or carries junk past the last section, is REJECTED. `parseMessage`
+    drives the REAL `Dns.parseHeader`, `Dns.parseQuestion`, and `Dns.parseRR`; `parseRR`
     (and `parseQuestion`) call `Dns.decodeName`, whose termination is the anti-loop
     guarantee: a compression pointer must jump strictly backward, so no adversarial
-    pointer arrangement can make resolution diverge. On a first `A` (type 1) answer
-    record it reads the 4-octet RDATA as the resolved `Proto.Addr`; otherwise `none`.
+    pointer arrangement can make resolution diverge. On a structurally valid response that
+    answers a query for `host`, it reads the first `A` (type 1) answer record's 4-octet
+    RDATA as the resolved `Proto.Addr`; otherwise `none`.
   * `Resolver` — the reactor's view of DNS: the response bytes (and expected question
     name) it holds for the host a *pre-resolution* connect address names. A real
     resolver returns `none` for a host with no answer (NXDOMAIN / SERVFAIL).
@@ -66,28 +71,97 @@ def addrOfRData : List UInt8 → Option Addr
   | [a, b, c, d] => some ⟨Dns.be32 a b c d⟩
   | _            => none
 
-/-- Read the first answer record at `off` with the REAL `Dns.parseRR` (which decodes the
-record NAME via `Dns.decodeName`, honoring the anti-loop pointer rule) and, when it is an
-`A` record (type 1), return its address. `none` on a parse failure or a non-`A` record. -/
-def answerAddr (msg : Bytes) (off : Nat) : Option Addr :=
-  match Dns.parseRR msg off with
-  | none          => none
-  | some (rr, _)  => if rr.rrType = 1 then addrOfRData rr.rdata else none
+/-- Read an `A`-record address from a resource record: when it is an `A` record (type 1),
+decode its 4-octet RDATA; otherwise `none`. -/
+def answerAddr (rr : Dns.RR) : Option Addr :=
+  if rr.rrType = 1 then addrOfRData rr.rdata else none
 
-/-- **The resolution.** Parse a DNS *response* `msg` with the real library and, when it
-answers a query for `host` (question name matches) and carries at least one answer, read
-the first answer's `A` address. Every parse step (`parseHeader`, `parseQuestion`,
-`parseRR`) is a total `Dns` function; the name fields are decoded by `Dns.decodeName`,
-whose anti-loop termination guarantee makes `resolve` total on every input. -/
-def resolve (host : List (List UInt8)) (msg : Bytes) : Option Addr :=
+/-! ## RFC 1035 §4.1 whole-message structural validation
+
+The deployed resolver does not read a *fixed* one-question/one-answer shape. It validates
+the full §4.1 message layout before extracting an answer: the header declares `QDCOUNT`
+questions and `ANCOUNT` + `NSCOUNT` + `ARCOUNT` resource records, and the four sections
+must carry *exactly* those many entries, tiling the message with **no trailing octets**. A
+message whose counts do not match its sections, or that has junk past the last section, is
+rejected — `resolve` yields no answer and the reactor issues no connect. -/
+
+/-- Consume exactly `n` questions from `off`, threading the real `Dns.parseQuestion`.
+`none` if any question fails to parse. Returns the questions and the octet just past the
+last one. -/
+def takeQuestions (msg : Bytes) : Nat → Nat → Option (List Dns.Question × Nat)
+  | off, 0 => some ([], off)
+  | off, Nat.succ n =>
+    match Dns.parseQuestion msg off with
+    | none => none
+    | some (q, c) =>
+      match takeQuestions msg (off + c) n with
+      | none => none
+      | some (qs, off') => some (q :: qs, off')
+
+/-- Consume exactly `n` resource records from `off`, threading the real `Dns.parseRR`
+(whose NAME decode honors the anti-loop pointer rule). `none` if any record fails to
+parse. Returns the records and the octet just past the last one. -/
+def takeRRs (msg : Bytes) : Nat → Nat → Option (List Dns.RR × Nat)
+  | off, 0 => some ([], off)
+  | off, Nat.succ n =>
+    match Dns.parseRR msg off with
+    | none => none
+    | some (r, c) =>
+      match takeRRs msg (off + c) n with
+      | none => none
+      | some (rs, off') => some (r :: rs, off')
+
+/-- The header plus the four decoded sections of an RFC 1035 §4.1 message. -/
+structure Message where
+  header : Dns.Header
+  questions : List Dns.Question
+  answers : List Dns.RR
+  authority : List Dns.RR
+  additional : List Dns.RR
+  deriving Repr, DecidableEq
+
+/-- **The RFC 1035 §4.1 whole-message parse.** Parse the 12-octet header, then exactly
+`QDCOUNT` questions, then `ANCOUNT`, `NSCOUNT`, `ARCOUNT` resource records across the three
+RR sections, and require the sections to tile the message exactly (final offset =
+`msg.length`): the counts must equal the number of entries present — nothing more, nothing
+less — with no trailing octets. A message that lies about its counts, or that carries junk
+past the last section, is rejected (`none`). Every parse step is a total `Dns` function; a
+compression-pointer loop terminates via `Dns.decodeName`, so this is total on every
+input. -/
+def parseMessage (msg : Bytes) : Option Message :=
   match Dns.parseHeader msg with
-  | none          => none
-  | some (h, hn)  =>
-    if 1 ≤ h.anCount then
-      match Dns.parseQuestion msg hn with
-      | none          => none
-      | some (q, qn)  => if q.qname = host then answerAddr msg (hn + qn) else none
-    else none
+  | none => none
+  | some (h, hn) =>
+    match takeQuestions msg hn h.qdCount with
+    | none => none
+    | some (qs, o1) =>
+      match takeRRs msg o1 h.anCount with
+      | none => none
+      | some (ans, o2) =>
+        match takeRRs msg o2 h.nsCount with
+        | none => none
+        | some (aut, o3) =>
+          match takeRRs msg o3 h.arCount with
+          | none => none
+          | some (add, o4) =>
+            if o4 = msg.length then some ⟨h, qs, ans, aut, add⟩ else none
+
+/-- **The resolution.** Parse a DNS *response* `msg` with the real library, validating the
+full RFC 1035 §4.1 message structure (`parseMessage`): the header-declared counts must
+match the section lengths exactly and the sections must tile the message with no trailing
+octets. Only when the message is structurally valid, answers a query for `host` (first
+question name matches) and carries at least one answer record is the first answer's `A`
+address read. A message with mismatched counts or trailing junk is REJECTED (`none`) — the
+reactor issues no connect to it. Totality is inherited from `parseMessage` (the name fields
+are decoded by `Dns.decodeName`, whose anti-loop termination guarantee makes `resolve`
+total on every input). -/
+def resolve (host : List (List UInt8)) (msg : Bytes) : Option Addr :=
+  match parseMessage msg with
+  | none   => none
+  | some m =>
+    match m.questions, m.answers with
+    | q :: _, rr :: _ => if q.qname = host then answerAddr rr else none
+    | _,      _       => none
 
 /-- **Totality — the anti-loop guarantee, lifted.** `resolve` returns a value on every
 `(host, msg)`, adversarial compression-pointer loops included. It is a plain `def`
@@ -251,9 +325,15 @@ theorem dns_terminates_on_loop : resolve hostUp msgLoop = none := by
     unfold Dns.decodeName; rw [hr]; simp only [hf]
   have hrr : Dns.parseRR msgLoop 20 = none := by
     unfold Dns.parseRR; rw [hd]
+  have htr : takeRRs msgLoop 20 1 = none := by
+    unfold takeRRs; rw [hrr]
   have hh : Dns.parseHeader msgLoop = some (⟨4660, 33152, 1, 1, 0, 0⟩, 12) := by decide
-  have hq : Dns.parseQuestion msgLoop 12 = some (⟨[[117, 112]], 1, 1⟩, 8) := by decide
-  simp only [resolve, hh, hq, hostUp, answerAddr, hrr, ite_self]
+  have hq : takeQuestions msgLoop 12 1 = some ([⟨[[117, 112]], 1, 1⟩], 20) := by decide
+  have hpm : parseMessage msgLoop = none := by
+    unfold parseMessage
+    rw [hh]
+    simp only [hq, htr]
+  simp only [resolve, hpm]
 
 /-! ## The wiring, on a path that runs
 

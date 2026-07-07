@@ -1,0 +1,107 @@
+C5 probe -- arenaScanLinkA: full theorem statements + oracle/axiom tags
+(HOL4 Trindemossen 2; CakeML panSem/panLang; built on hbox)
+
+===== scanSp_def (the Lean spec twin) =====
+[oracles: DISK_THM] [axioms: ] []
+|- scanSp [] = NONE /\
+   !b bs.
+     scanSp (b::bs) =
+     if b = 32 then SOME 0 else case scanSp bs of NONE => NONE | SOME j => SOME (SUC j)
+
+===== scanGuard_def (emitted && guard AST) =====
+[oracles: DISK_THM] [axioms: ] []
+|- scanGuard =
+   Op And
+     [Cmp NotEqual (Const 0w) (Cmp Less (Var Local «i») (Var Local «len»));
+      Cmp NotEqual (Const 0w) (Cmp Equal (Var Local «found») (Const 0w))]
+
+===== scanBody_def (emitted loop body AST) =====
+[oracles: DISK_THM] [axioms: ] []
+|- scanBody =
+   Seq (Assign Local «b» (LoadByte (Op Add [Var Local «base»; Var Local «i»])))
+     (If (Cmp Equal (Var Local «b») (Const 32w)) (Assign Local «found» (Const 1w))
+        (Assign Local «i» (Op Add [Var Local «i»; Const 1w])))
+
+===== scanLoop_def (emitted While) =====
+[oracles: DISK_THM] [axioms: ] [] |- scanLoop = While scanGuard scanBody
+
+===== scanInv_def (loop invariant; reuses C3 memRel) =====
+[oracles: DISK_THM] [axioms: ] []
+|- !input bs i found s.
+     scanInv input bs i found s <=>
+     FLOOKUP s.locals «i» = SOME (ValWord (n2w i)) /\
+     FLOOKUP s.locals «found» = SOME (ValWord (n2w found)) /\
+     FLOOKUP s.locals «len» = SOME (ValWord (n2w (LENGTH input))) /\
+     FLOOKUP s.locals «base» = SOME (ValWord bs) /\
+     (?bb. FLOOKUP s.locals «b» = SOME (ValWord bb)) /\ memRel input bs s /\
+     i <= LENGTH input /\ LENGTH input < 2 ** 63 /\ EVERY (\x. x < 256) input /\
+     (found = 0 \/ found = 1) /\ EVERY (\b. b <> 32) (TAKE i input) /\
+     (found = 1 ==> i < LENGTH input /\ fEL input i = 32)
+
+===== eval_scanGuard =====
+[oracles: DISK_THM] [axioms: ] []
+|- scanInv input bs i found s ==>
+   eval s scanGuard = SOME (ValWord (if i < LENGTH input /\ found = 0 then 1w else 0w))
+
+===== eval_scan_loadbyte (reuses C3 memRel + w2w_byte) =====
+[oracles: DISK_THM] [axioms: ] []
+|- scanInv input bs i found s /\ i < LENGTH input ==>
+   eval s (LoadByte (Op Add [Var Local «base»; Var Local «i»])) =
+   SOME (ValWord (n2w (fEL input i)))
+
+===== evaluate_scanBody (branching body, one iteration) =====
+[oracles: DISK_THM] [axioms: ] []
+|- scanInv input bs i found s /\ i < LENGTH input /\ found = 0 ==>
+   ?s2.
+     evaluate (scanBody,s) = (NONE,s2) /\ s2.clock = s.clock /\
+     (fEL input i = 32 /\ scanInv input bs i 1 s2 \/
+      fEL input i <> 32 /\ scanInv input bs (i + 1) 0 s2)
+
+===== scanLoop_unfold (one clocked-While iteration) =====
+[oracles: DISK_THM] [axioms: ] []
+|- scanInv input bs i found s /\ i < LENGTH input /\ found = 0 /\ s.clock <> 0 ==>
+   ?s2.
+     evaluate (scanLoop,s) = evaluate (scanLoop,s2) /\ s2.clock = s.clock - 1 /\
+     (fEL input i = 32 /\ scanInv input bs i 1 s2 \/
+      fEL input i <> 32 /\ scanInv input bs (i + 1) 0 s2)
+
+===== scanLoop_scan_bounded (loop-invariant induction) =====
+[oracles: DISK_THM] [axioms: ] []
+|- !k input bs i found s.
+     scanInv input bs i found s /\ LENGTH input - i <= k /\ LENGTH input - i <= s.clock ==>
+     ?s' j f.
+       evaluate (scanLoop,s) = (NONE,s') /\
+       FLOOKUP s'.locals «i» = SOME (ValWord (n2w j)) /\
+       FLOOKUP s'.locals «found» = SOME (ValWord (n2w f)) /\ (f = 0 \/ f = 1) /\
+       EVERY (\b. b <> 32) (TAKE j input) /\
+       (f = 1 ==> j < LENGTH input /\ fEL input j = 32) /\ (f = 0 ==> j = LENGTH input)
+
+===== scanLoop_refines_findSp (THE HEADLINE Link A) =====
+[oracles: DISK_THM] [axioms: ] []
+|- scanInv input bs 0 0 s /\ LENGTH input <= s.clock ==>
+   ?s'.
+     evaluate (scanLoop,s) = (NONE,s') /\
+     case scanSp input of
+       NONE =>
+         FLOOKUP s'.locals «found» = SOME (ValWord 0w) /\
+         FLOOKUP s'.locals «i» = SOME (ValWord (n2w (LENGTH input)))
+     | SOME j =>
+       FLOOKUP s'.locals «found» = SOME (ValWord 1w) /\
+       FLOOKUP s'.locals «i» = SOME (ValWord (n2w j))
+
+===== scanSp_found (spec: SP at first pos) =====
+[oracles: DISK_THM] [axioms: ] []
+|- !input j.
+     j < LENGTH input /\ fEL input j = 32 /\ EVERY (\b. b <> 32) (TAKE j input) ==>
+     scanSp input = SOME j
+
+===== scanSp_none (spec: no SP -> NONE) =====
+[oracles: DISK_THM] [axioms: ] []
+|- !input. EVERY (\b. b <> 32) input ==> scanSp input = NONE
+
+===== FOOTPRINT AUDIT =====
+axioms "arenaScanLinkA" = 0
+Every theorem above is tagged [oracles: DISK_THM] [axioms: ] -- DISK_THM is
+HOL4's on-disk-theory provenance tag (present on every theory-file theorem,
+incl. the CakeML panSem ancestors); the axioms list is EMPTY: no new_axiom,
+no cheat, no oracle beyond the standard theory-load tag.

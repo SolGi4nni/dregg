@@ -99,6 +99,51 @@ def alpnToProto : Tls.Alpn → Proto.Alpn
   | .h1 => .h1
   | .h2 => .h2
 
+/-! ## The client handshake bytes surfaced out of the live TLS state
+
+The PKI accept gate must decide the client's RFC 8446 §4.4.3 CertificateVerify
+over the **real** bytes the record/message layer produced — not over a value a
+caller hands in. `connHandshakeBytes` reads those bytes straight out of the
+deployed `Tls.St` the `TlsConn` carries: the running handshake transcript
+`Tls.St.transcript` accumulates the full RFC 8446 §4.4.1 message sequence — every
+handshake byte the connection **received** across all flights **and** the
+plaintext of the server flight it **emitted** — concatenated with the freshly
+received buffer. Because the transcript is accumulated by `Tls.step` as it
+processes each flight — not read off the current phase buffer — it retains the
+**earlier** received flights (the `ClientHello` and anything the opaque handshake
+engine consumed and dropped from its phase tail) *and* the emitted server flight
+(`ServerHello ‖ … ‖ server Finished`, interleaved in plaintext at the step that
+sends it via `HsOut.flightPlain` — previously visible only as sealed record
+bytes). So the gate sees the full §4.4.1 accumulated transcript
+(`ClientHello ‖ server flight ‖ client Certificate`), not only the retained
+second-flight tail. The gate's client-auth view
+(`Reactor.PkiWire.clientAuthOfConn`) is forced to derive from it. -/
+
+/-- The real client handshake bytes the TLS connection state carries: the running
+handshake transcript the deployed `Tls.St` has accumulated — the full RFC 8446
+§4.4.1 sequence of received flights *and* the emitted plaintext server flight
+(`Tls.St.transcript`, updated by `Tls.step`) — concatenated with the freshly
+received bytes `buf`. A pure function of the real connection state and the wire,
+never a free value; and — unlike a read of the current phase buffer — it includes
+the earlier flights the engine already consumed and the server flight the engine
+emitted. -/
+def connHandshakeBytes (tc : TlsConn) (buf : Bytes) : Bytes :=
+  tc.st.transcript ++ buf
+
+/-- The handshake bytes are exactly the connection's accumulated transcript
+followed by the freshly received bytes: the gate sees the **full** transcript the
+`Tls.St` carries (all prior flights `t`), not merely the phase-buffer tail. -/
+theorem connHandshakeBytes_eq (tc : TlsConn) (buf : Bytes) :
+    connHandshakeBytes tc buf = tc.st.transcript ++ buf := rfl
+
+/-- A receive during the handshake sees the accumulated transcript `t` (every
+byte the connection has received across all prior flights) followed by the fresh
+bytes — not the retained phase-buffer tail `a`, which is redundant with `t`. -/
+theorem connHandshakeBytes_handshaking (hs : Tls.HsConn) (a b t : Bytes)
+    (c : List Tls.RecConn) :
+    connHandshakeBytes ⟨{ phase := .handshaking hs a, consumed := c, transcript := t }⟩ b
+      = t ++ b := rfl
+
 /-! ## The adapters: drive the real `Tls.step` through the FSM's handle -/
 
 /-- Feed accumulated ciphertext to the real TLS handshake engine. Drives

@@ -5,8 +5,8 @@
 //! core — each driving its own `io_uring` instance over its own connection set.
 //! Accept, receive and send are submitted as SQEs and reaped as CQEs in batches;
 //! a shard thread never blocks on a single connection, so one thread services
-//! thousands of connections. This is the share-nothing model of a Cloudflare-tier
-//! reactor: no connection state, buffer, or slab is shared between shards.
+//! thousands of connections. This is the share-nothing reactor model: no
+//! connection state, buffer, or slab is shared between shards.
 //!
 //! ## The one shared resource, and where the ceiling is
 //!
@@ -16,9 +16,10 @@
 //! `serve`). Every shard hands its completed requests to that one thread over
 //! the gateway channel and is woken with the response through its own eventfd.
 //! The IO fabric (accept/recv/send, framing) scales across all shard cores; the
-//! serve transform does not. The steady-state ceiling is therefore
-//! `1 / (serve latency)` regardless of shard count — the honest bottleneck,
-//! measured in the perf report, not papered over.
+//! serve transform does not. The steady-state throughput ceiling is therefore
+//! `1 / (serve latency)` regardless of shard count: the single runtime owner is
+//! the bottleneck, and adding shards past the point that keeps the owner busy
+//! only adds scheduling contention, not throughput.
 //!
 //! ## Copy discipline
 //!
@@ -298,10 +299,15 @@ fn on_accept(sh: &mut Shard, res: i32, listener_fd: RawFd) {
 
 fn on_wakeup(sh: &mut Shard, mrx: &Receiver<ShardDone>, efd_buf: &mut u64) {
     // Drain every completed response (coalesced eventfd counts may batch them).
-    while let Ok(done) = mrx.try_recv() {
+    while let Ok(mut done) = mrx.try_recv() {
         if let Some(conn) = sh.slab.get(done.conn) {
             conn.keepalive =
                 !conn.h2c && conn.req_keepalive && response_is_self_delimited(&done.resp);
+            // State the connection disposition explicitly for strict HTTP/1.1
+            // clients (never on raw h2c frames — they carry no HTTP/1.1 head).
+            if !conn.h2c {
+                crate::http::annotate_connection(&mut done.resp, conn.keepalive);
+            }
             conn.resp = Some(done.resp);
             conn.sent = 0;
             let sqe = send_sqe(conn, done.conn);
@@ -353,7 +359,7 @@ fn dispatch_or_read(sh: &mut Shard, slot: u32) {
         req.extend_from_slice(&conn.acc);
         conn.acc.clear();
         let reply = ServeReply::Shard(sh.mtx.clone(), sh.efd, slot);
-        if !sh.gw.submit(req, reply) {
+        if !sh.gw.submit(req, crate::serve::Seam::Http, reply) {
             close(sh, slot);
         }
         return;
@@ -366,7 +372,7 @@ fn dispatch_or_read(sh: &mut Shard, slot: u32) {
             conn.acc.drain(..total);
             conn.req_keepalive = request_wants_keepalive(&req);
             let reply = ServeReply::Shard(sh.mtx.clone(), sh.efd, slot);
-            if !sh.gw.submit(req, reply) {
+            if !sh.gw.submit(req, crate::serve::Seam::Http, reply) {
                 close(sh, slot);
             }
         }

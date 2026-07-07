@@ -1,0 +1,46 @@
+// C8 probe: the REAL VARIABLE-LENGTH COLLECTOR, in Pancake.
+//
+// A single scan-push loop that READS the input byte-by-byte and PUSHES a
+// DATA-DEPENDENT number of records (the offset of each delimiter, SP=32) to a
+// bump-allocated arena.  This is exactly `collectLoop` in
+// hol-c8/arenaCollectLinkAScript.sml, Link-A-proven against real panSem:
+//   collectLoop_refines_collectSp : the arena ends ENCODING `collectSp input`
+//   (wordsEncoded), with bp = out + 8*LENGTH(collectSp input).
+//
+// The loop body below is a byte-exact transcription of the verified `collectBody`
+// AST (locals «base» «i» «len» «bp» «b»):
+//   b = ld8(base+i); if (b==32) { st bp,i; bp=bp+8; } i=i+1;
+// count from the DATA (number of delimiters), content read FROM the input
+// (the offsets where a delimiter sits), memRel + the layout relation threaded
+// through ONE scan-push induction.
+//
+// Compile: cake --pancake < collect.pnk > collect.S
+//          cc -O2 collect.S basis_ffi.c collect_ffi.c -o collect -lm
+// Run:     LINE="GET / HTTP/1.1" ./collect
+
+fun main() {
+  var membase = @base;
+  var base = membase + 1024;      // «base» — the input buffer pointer
+  @load_line(membase, 24, base, 4096);
+  var len = lds 1 (membase + 16); // «len» — input length (data-dependent)
+  var out = membase + 64;         // the arena / bump base for collected offsets
+  var i = 0;                      // «i»  — scan index
+  var bp = out;                   // «bp» — bump pointer = out + 8*(#pushed)
+  var b = 0;                      // «b»  — current byte
+
+  // ---- the verified collector loop (collectLoop) ----
+  while (i < len) {
+    b = ld8 (base + i);
+    if b == 32 {
+      st bp, i;                   // PUSH the delimiter offset i to the arena
+      bp = bp + 8;                // bump advance
+    }
+    i = i + 1;
+  }
+
+  // bp = out + 8*LENGTH(collectSp input); hand it to the reporter so it can read
+  // back exactly the collected offset list.
+  st membase + 24, bp;
+  @report_collect(out, 4096, membase, 4096);
+  return 0;
+}

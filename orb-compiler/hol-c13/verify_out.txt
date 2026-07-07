@@ -1,0 +1,78 @@
+========== axioms of boundScanEndToEnd ==========
+0 axioms
+
+========== axioms of boundScanInstall ==========
+0 axioms
+
+========== boundScanProg_semantics_decls  (Link A, decls level) ==========
+⊢ s.code = FEMPTY ∧ boundScanFFI a off len s ∧ (∃K. 0 < K ∧ len < K) ⇒
+  ∃loadEv rb.
+    semantics_decls s «main» boundScanProg =
+    Terminate Success
+      (s.ffi.io_events ++ loadEv ++
+       [IO_event (ExtCall «report_vec»)
+          (word_to_bytes (n2w (c0_encode (boundScan a off len))) F) rb])
+
+========== boundScan_machine_code  (THE END-TO-END spec -> machine code) ==========
+⊢ (compile_prog_max c mc boundScanProg = (SOME (bytes,bitmaps,c'),stack_max) ∧
+   s.code = FEMPTY ∧ s.locals = FEMPTY ∧ s.globals = FEMPTY ∧
+   FDOM s.eshapes = FDOM (get_eids (functions boundScanProg)) ∧
+   backend_config_ok mc.target.config c ∧ mc_conf_ok mc ∧
+   mc_init_ok mc.target.config c mc ∧ mc.target.config.ISA ≠ Ag32 ∧
+   0w <₊ mc.target.get_reg ms mc.len_reg ∧
+   globals_size =
+   (let
+      dec_shs = dec_shapes boundScanProg;
+      struct_ctxt = decs_stcnames [] boundScanProg
+    in
+      SUM (MAP (size_of_sh_with_ctxt (THE struct_ctxt)) dec_shs)) ∧
+   mc.target.get_reg ms mc.len_reg <₊ mc.target.get_reg ms mc.ptr2_reg ∧
+   mc.target.get_reg ms mc.len_reg = s.base_addr ∧
+   globals_allocatable s boundScanProg ∧
+   heap_len =
+   w2n (mc.target.get_reg ms mc.ptr2_reg + -1w * s.base_addr) DIV
+   (dimindex (:64) DIV 8) ∧
+   s.top_addr =
+   s.base_addr + bytes_in_word * n2w heap_len −
+   n2w (globals_size * dimindex (:64) DIV 8) ∧ globals_size ≤ heap_len ∧
+   s.memaddrs =
+   addresses (mc.target.get_reg ms mc.len_reg) (heap_len − globals_size) ∧
+   aligned (shift (:64) + 1)
+     (mc.target.get_reg ms mc.ptr2_reg +
+      -1w * mc.target.get_reg ms mc.len_reg) ∧
+   adj_ptr2 =
+   mc.target.get_reg ms mc.len_reg + bytes_in_word * n2w max_stack_alloc ∧
+   adj_ptr4 =
+   mc.target.get_reg ms mc.len2_reg − bytes_in_word * n2w max_stack_alloc ∧
+   adj_ptr2 ≤₊ mc.target.get_reg ms mc.ptr2_reg ∧
+   mc.target.get_reg ms mc.ptr2_reg ≤₊ adj_ptr4 ∧
+   w2n
+     (mc.target.get_reg ms mc.ptr2_reg +
+      -1w * mc.target.get_reg ms mc.len_reg) ≤
+   w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) ∧
+   w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) <
+   dimword (:64) ∧ s.ffi = ffi ∧ (mc.target.config.big_endian ⇔ s.be) ∧
+   OPTION_ALL (EVERY (λx. ∃s. x = ExtCall s)) c.lab_conf.ffi_names ∧
+   pan_installed bytes cbspace bitmaps data_sp c'.lab_conf.ffi_names
+     (heap_regs c.stack_conf.reg_names) mc c'.lab_conf.shmem_extra ms
+     (wlab_wloc ∘ s.memory) s.memaddrs s.sh_memaddrs) ∧
+  boundScanFFI a off len s ∧ (∃K. 0 < K ∧ len < K) ⇒
+  ∃loadEv rb.
+    machine_sem mc ffi ms ⊆
+    extend_with_resource_limit'
+      (option_lt stack_max
+         (SOME (FST (read_limits mc.target.config c mc ms))))
+      {Terminate Success
+         (s.ffi.io_events ++ loadEv ++
+          [IO_event (ExtCall «report_vec»)
+             (word_to_bytes (n2w (c0_encode (boundScan a off len))) F) rb])}
+
+========== oracle / axiom tag on boundScan_machine_code ==========
+oracles = [DISK_THM]
+axioms  = []
+
+========== oracle / axiom tag on boundScanProg_semantics_decls ==========
+oracles = [DISK_THM]
+axioms  = []
+
+@@@ VERIFY DONE @@@

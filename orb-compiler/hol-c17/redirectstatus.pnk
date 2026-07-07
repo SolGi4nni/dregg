@@ -1,0 +1,46 @@
+// C17 probe: a REAL, deployed serve fragment — the REDIRECT-STATUS PICK.
+// This is the Pancake IMPLEMENTATION whose emitted machine code must refine the
+// Lean spec `Redirect.Code.status` (drorb `orb/Redirect.lean`),
+// used by the DEPLOYED serve: `Redirect.Code.status` is called by
+// `Redirect.redirect` -> `Reactor.Stage.Redirect.redirectFor`/`redirectStage`,
+// which sits at position 6 of `Reactor.Deploy.deployStagesFull2` (the real orb
+// stage list). It maps a redirect `Code` (RFC 9110 15.4) to its numeric status.
+//
+// The `Code` enum is faithfully encoded as a tag word `code` in [base+0):
+//     moved301 = 0 , found302 = 1 , temp307 = 2 , perm308 = 3
+// and the mapping (byte-identical to Redirect.Code.status on those tags):
+//     code == 0 -> 301   code == 1 -> 302   code == 2 -> 307   else -> 308
+//
+// Structurally: an EQUALITY dispatch on the constructor tag (3 guards, 4 leaves)
+// — the shape a real algebraic-type `match` lowers to — vs C15's `<` cascade.
+// This is the real-serve friction the C17 probe exercises.
+//
+// Control block at @base (staged/read by @load_vec/@report_vec):
+//   [0 ..8)   code   (the encoded Code tag, invariant code < 1000)
+//   [8 ..16)  result (the status number; read by @report_vec)
+//
+// Compile: cake --pancake < redirectstatus.pnk > redirectstatus.S
+
+fun main() {
+  var base = @base;
+  var buf = base + 16;
+  @load_vec(base, 8, buf, 4096);
+  var code = lds 1 base;
+  var result = 0;
+  if code == 0 {
+    result = 301;
+  } else {
+    if code == 1 {
+      result = 302;
+    } else {
+      if code == 2 {
+        result = 307;
+      } else {
+        result = 308;
+      }
+    }
+  }
+  st base + 8, result;
+  @report_vec(base + 8, 8, base, 8);
+  return 0;
+}

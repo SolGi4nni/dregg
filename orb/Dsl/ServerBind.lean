@@ -221,7 +221,7 @@ theorem serveSpec_routes_declared (spec : Dsl.ServerSpec) (input : Bytes)
        ∧ serveSpec spec input
            = serialize (Reactor.Lifecycle.rewriteResp
                (deployProg (deployPlan (deploySubs input)) input)
-               (Reactor.App.responseOfHandler r.handler)) := by
+               (Reactor.App.responseOfReq req r.handler)) := by
   obtain ⟨r, hbest, hhandle⟩ := Reactor.App.app_routes_total (specToAppConfig spec) req
   refine ⟨r, hbest, ?_⟩
   rw [serveSpec_dispatch spec input req rest hsends hsub,
@@ -300,7 +300,7 @@ theorem serveAuthSpec_routes_declared (spec : Dsl.ServerSpec) (input : Bytes)
        ∧ serveAuthSpec spec input
            = serialize (Reactor.Lifecycle.rewriteResp
                (deployProg (deployPlan (deploySubs input)) input)
-               (Reactor.App.responseOfHandler r.handler)) := by
+               (Reactor.App.responseOfReq req r.handler)) := by
   obtain ⟨r, hbest, hserve⟩ :=
     serveSpec_routes_declared spec input req rest s hsends hsub hesc hadmit
   refine ⟨r, hbest, ?_⟩

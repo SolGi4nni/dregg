@@ -1,3 +1,5 @@
+import Crypto
+import Stun
 /-!
 # DISCO: the NAT-traversal endpoint-probing FSM
 
@@ -526,5 +528,151 @@ theorem disco_derp_to_direct_upgrade (cfg : Config) (s : St) (i : Input)
     selectPath s.eps derpHome = (derpHome, .derp) ∧
     selectPath (step cfg s i).1.eps derpHome = (ep, .direct) :=
   ⟨disco_relay_fallback _ _ hbefore, disco_direct_preferred _ _ hafter⟩
+
+/-! ## Realized crypto — DISCO Pong authentication over the verified `crypto_box`
+
+The abstract `Config.authPong` boundary is discharged here by the real NaCl
+`crypto_box` (X25519 + XSalsa20-Poly1305, verified `Crypto`). A DISCO packet is
+
+    magic(6) ‖ senderDiscoPub(32) ‖ nonce(24) ‖ box
+
+(the documented DISCO wire protocol), where the box seals the Pong body
+
+    type(1) ‖ version(1) ‖ txid(12) ‖ srcAddr .
+
+A Pong authenticates iff the box opens under the peer's disco key AND echoes the
+outstanding, unguessable transaction id. `disco_crypto_promotion_genuine` then
+composes this with the FSM's `disco_verified_needs_pong`: a path is verified only
+by a *genuinely sealed* Pong — the anti-spoof, realized on real crypto. -/
+
+/-- Raw bytes at the crypto boundary. -/
+abbrev Bytes := List UInt8
+
+/-- The `List UInt8` view of a `ByteArray` (via its backing array). -/
+def bytesOf (b : ByteArray) : Bytes := b.data.toList
+
+/-- Bytes → the flat FFI buffer the `Crypto` primitives take. -/
+def baOf (l : Bytes) : ByteArray := ⟨l.toArray⟩
+
+@[simp] theorem baOf_bytesOf (b : ByteArray) : baOf (bytesOf b) = b := by
+  show ByteArray.mk b.data.toList.toArray = b
+  rw [Array.toArray_toList]
+
+/-- The DISCO Pong message-type byte (`TypePong`). -/
+def discoTypePong : UInt8 := 0x02
+
+/-- Decode a sealed DISCO message body `type ‖ version ‖ txid(12) ‖ …` into its
+type byte and 12-byte transaction id. -/
+def decodeSealed (m : Bytes) : Option (UInt8 × Bytes) :=
+  match m with
+  | ty :: _ver :: rest => if 12 ≤ rest.length then some (ty, rest.take 12) else none
+  | _ => none
+
+/-- **Realized DISCO Pong authentication.** Open the box with the peer's disco
+public key and our disco secret; accept iff the plaintext is a Pong echoing the
+outstanding 12-byte transaction id `expectTx`. This is a concrete instantiation
+of the abstract `Config.authPong` boundary over the verified `crypto_box`. -/
+def discoAuthPong (peerPub selfSec nonce box : ByteArray) (expectTx : Bytes) : Bool :=
+  match Crypto.cryptoBoxOpen peerPub selfSec nonce box with
+  | some m =>
+    match decodeSealed (bytesOf m) with
+    | some (ty, tx) => ty == discoTypePong && tx == expectTx
+    | none => false
+  | none => false
+
+/-- **An authenticated Pong was genuinely sealed (the anti-spoof, realized).** If
+`discoAuthPong` accepts, the box opened under the shared disco key AND was
+genuinely sealed under it (the functional shadow of INT-CTXT for the DISCO box):
+a party holding neither disco secret cannot forge a Pong that opens. -/
+theorem disco_authpong_genuine (peerPub selfSec nonce box : ByteArray) (expectTx : Bytes)
+    (h : discoAuthPong peerPub selfSec nonce box expectTx = true) :
+    ∃ m, Crypto.cryptoBoxOpen peerPub selfSec nonce box = some m ∧
+         Crypto.cryptoBoxSeal peerPub selfSec nonce m = some box := by
+  cases hopen : Crypto.cryptoBoxOpen peerPub selfSec nonce box with
+  | none => exfalso; unfold discoAuthPong at h; rw [hopen] at h; simp at h
+  | some m =>
+    exact ⟨m, rfl,
+      Crypto.Assumptions.crypto_box_open_authentic peerPub selfSec nonce box m hopen⟩
+
+/-- A `Config` whose Pong authentication is the realized `crypto_box` check for a
+specific received DISCO box. -/
+def cryptoConfig (peerPub selfSec nonce box : ByteArray) (expectTx : Bytes) : Config :=
+  { authPong := fun _tx _ep => discoAuthPong peerPub selfSec nonce box expectTx }
+
+/-- **A crypto-verified path was authenticated by a genuine Pong.** If, under the
+realized crypto config, a step promotes some endpoint from not-verified to
+verified, then a real DISCO `crypto_box` was opened AND was genuinely sealed under
+the shared disco key — no forged Pong can promote a path. Composes the FSM's
+`disco_verified_needs_pong` with the box's authenticity. -/
+theorem disco_crypto_promotion_genuine
+    (peerPub selfSec nonce box : ByteArray) (expectTx : Bytes)
+    (s : St) (i : Input) (ep : Endpoint)
+    (hbefore : (lookup s.eps ep).map EpState.isVerified ≠ some true)
+    (hafter : (lookup (step (cryptoConfig peerPub selfSec nonce box expectTx) s i).1.eps ep).map
+                EpState.isVerified = some true) :
+    ∃ m, Crypto.cryptoBoxOpen peerPub selfSec nonce box = some m ∧
+         Crypto.cryptoBoxSeal peerPub selfSec nonce m = some box := by
+  obtain ⟨tx, lat, _, _, hauth⟩ :=
+    disco_verified_needs_pong (cryptoConfig peerPub selfSec nonce box expectTx) s i ep
+      hbefore hafter
+  exact disco_authpong_genuine peerPub selfSec nonce box expectTx hauth
+
+/-! ## STUN reflexive-endpoint discovery (RFC 5389), feeding candidates
+
+DISCO learns a node's *reflexive* endpoint — its public IP:port as seen through a
+NAT — from a STUN Binding response's XOR-MAPPED-ADDRESS (`Stun.decodeXorMapped`,
+RFC 5389 §15.2), reusing the STUN codec. That reflexive address becomes a
+*candidate* direct endpoint, entering the table `unprobed`: STUN seeds the
+candidate, it does NOT authenticate a path — only a Pong does. -/
+
+/-- Map a decoded STUN transport address to a DISCO candidate endpoint (folding
+its address bytes and port into the opaque `addr` the FSM keys on). -/
+def endpointOfStun (se : Stun.Endpoint) : Endpoint :=
+  { addr := (se.addr.foldl (fun a b => a * 256 + b.toNat) 0) * 65536 + se.port }
+
+/-- Extract the reflexive endpoint from a parsed STUN Binding response: find the
+XOR-MAPPED-ADDRESS attribute and decode it against the transaction id. -/
+def reflexiveEndpoint (msg : Stun.Message) : Option Endpoint :=
+  match Stun.findAttr Stun.attrXorMappedAddress msg.attrs with
+  | some a => (Stun.decodeXorMapped msg.txid a.value).map endpointOfStun
+  | none => none
+
+/-- `lookup` returning `none` means the key is absent from the table entirely. -/
+theorem lookup_none_not_mem {l : List (Endpoint × EpState)} {ep : Endpoint}
+    (h : lookup l ep = none) : ∀ st, (ep, st) ∉ l := by
+  intro st hmem
+  induction l with
+  | nil => simp at hmem
+  | cons hd t ih =>
+    obtain ⟨e, s0⟩ := hd
+    simp only [lookup] at h
+    by_cases he : e = ep
+    · rw [if_pos he] at h; exact absurd h (by simp)
+    · rw [if_neg he] at h
+      rcases List.mem_cons.mp hmem with heq | htl
+      · injection heq with h1 _; exact he h1.symm
+      · exact ih h htl
+
+/-- **A STUN-discovered reflexive endpoint still needs a Pong.** Seeding the
+reflexive candidate adds it `unprobed`; selection will not put it into use until
+a Pong verifies it. STUN discovers the address; it does not authenticate the
+path — the anti-spoofing discipline (`disco_no_promote_without_pong`) still
+gates it. -/
+theorem disco_reflexive_needs_pong (cfg : Config) (s : St) (msg : Stun.Message)
+    {ep : Endpoint} (_hrefl : reflexiveEndpoint msg = some ep)
+    (hnew : lookup s.eps ep = none) :
+    lookup (step cfg s (.addCandidate ep)).1.eps ep = some EpState.unprobed ∧
+    Output.usePath ep
+      ∉ (step cfg (step cfg s (.addCandidate ep)).1 .selectPath).2 := by
+  have hstep : (step cfg s (.addCandidate ep)).1
+      = { eps := (ep, EpState.unprobed) :: s.eps } := by
+    simp [step, hnew]
+  rw [hstep]
+  refine ⟨by simp [lookup], ?_⟩
+  intro hmem
+  obtain ⟨lat, hin⟩ := disco_no_promote_without_pong cfg _ ep hmem
+  rcases List.mem_cons.mp hin with heq | htl
+  · injection heq with _ h2; exact absurd h2 (by simp)
+  · exact lookup_none_not_mem hnew (EpState.verified lat) htl
 
 end Disco

@@ -149,31 +149,37 @@ theorem jwtStage_gates_on_reject (c : Ctx) (r : Jwt.Reason)
   rw [jwtStage_onRequest, h]
 
 /-- **The byte-effect.** When authentication rejects, the response the pipeline
-BUILDS is exactly the `401` — for any reason, any tail, any handler. The handler
-body never contributes: `pipeline_gate_short_circuits` makes the gate's response
-the whole output, and `build_ofResponse` finalizes it to `unauthorized`. -/
+BUILDS is the `401` threaded through the inner response onion (`runResp rest`) — for
+any reason, any tail, any handler. The handler body never contributes:
+`pipeline_gate_short_circuits` makes the gate's `unauthorized` the seed the inner
+response transforms run over (so the refusal carries security headers etc.). Its
+STATUS stays `401` (`jwtStage_reject_status`, when the tail is status-stable). -/
 theorem jwtStage_reject_bytes (rest : List Stage) (handler : Ctx → Response)
     (c : Ctx) (r : Jwt.Reason) (h : decision c = Jwt.Outcome.reject r) :
-    (runPipeline (jwtStage :: rest) handler c).build = unauthorized := by
-  rw [pipeline_gate_short_circuits jwtStage rest handler c unauthorized
-        (jwtStage_gates_on_reject c r h),
-      build_ofResponse]
+    runPipeline (jwtStage :: rest) handler c
+      = runResp rest c (ResponseBuilder.ofResponse unauthorized) :=
+  pipeline_gate_short_circuits jwtStage rest handler c unauthorized
+    (jwtStage_gates_on_reject c r h)
 
-/-- The emitted status is `401` on any rejection. -/
+/-- The emitted status is `401` on any rejection — preserved through a status-stable
+inner onion (the deployed transforms are all status-stable). -/
 theorem jwtStage_reject_status (rest : List Stage) (handler : Ctx → Response)
-    (c : Ctx) (r : Jwt.Reason) (h : decision c = Jwt.Outcome.reject r) :
-    ((runPipeline (jwtStage :: rest) handler c).build).status = 401 := by
-  rw [jwtStage_reject_bytes rest handler c r h]; rfl
+    (c : Ctx) (r : Jwt.Reason) (h : decision c = Jwt.Outcome.reject r)
+    (hst : ∀ t ∈ rest, Stage.statusStable t) :
+    ((runPipeline (jwtStage :: rest) handler c).build).status = 401 :=
+  pipeline_gate_status jwtStage rest handler c unauthorized
+    (jwtStage_gates_on_reject c r h) hst
 
-/-- **The handler is not run.** On a rejection, swapping BOTH the tail and the
-handler leaves the pipeline output unchanged — the protected handler body is
-genuinely skipped, never emitted. -/
-theorem jwtStage_reject_ignores_handler (rest rest' : List Stage)
+/-- **The handler is not run.** On a rejection, swapping the HANDLER leaves the
+pipeline output unchanged — the protected handler body is genuinely skipped, never
+emitted. (The tail's response transforms DO now contribute to the refusal, so the
+tail is not swappable — that is the short-circuit-carries-transforms semantics.) -/
+theorem jwtStage_reject_ignores_handler (rest : List Stage)
     (handler handler' : Ctx → Response) (c : Ctx) (r : Jwt.Reason)
     (h : decision c = Jwt.Outcome.reject r) :
     runPipeline (jwtStage :: rest) handler c
-      = runPipeline (jwtStage :: rest') handler' c :=
-  pipeline_gate_ignores_rest jwtStage rest rest' handler handler' c unauthorized
+      = runPipeline (jwtStage :: rest) handler' c :=
+  pipeline_gate_ignores_handler jwtStage rest handler handler' c unauthorized
     (jwtStage_gates_on_reject c r h)
 
 /-! ## Non-vacuous witness over the REAL `Jwt.authenticate`
@@ -192,15 +198,18 @@ def noTokenCtx : Ctx := { input := [], req := {}, attrs := [] }
 theorem noToken_rejects : decision noTokenCtx = Jwt.Outcome.reject .noToken := rfl
 
 /-- **The witnessed byte-effect.** For the credential-less request, the pipeline
-emits the `401` for any tail and handler — the gate fires off the genuine FSM. -/
+emits the `401` (threaded through the inner response onion) for any tail and
+handler — the gate fires off the genuine FSM. -/
 theorem jwtStage_no_token_bytes (rest : List Stage) (handler : Ctx → Response) :
-    (runPipeline (jwtStage :: rest) handler noTokenCtx).build = unauthorized :=
+    runPipeline (jwtStage :: rest) handler noTokenCtx
+      = runResp rest noTokenCtx (ResponseBuilder.ofResponse unauthorized) :=
   jwtStage_reject_bytes rest handler noTokenCtx .noToken noToken_rejects
 
-/-- And its status is `401`. -/
-theorem jwtStage_no_token_status (rest : List Stage) (handler : Ctx → Response) :
-    ((runPipeline (jwtStage :: rest) handler noTokenCtx).build).status = 401 := by
-  rw [jwtStage_no_token_bytes rest handler]; rfl
+/-- And its status is `401` through a status-stable inner onion. -/
+theorem jwtStage_no_token_status (rest : List Stage) (handler : Ctx → Response)
+    (hst : ∀ t ∈ rest, Stage.statusStable t) :
+    ((runPipeline (jwtStage :: rest) handler noTokenCtx).build).status = 401 :=
+  jwtStage_reject_status rest handler noTokenCtx .noToken noToken_rejects hst
 
 end Reactor.Stage.Jwt
 

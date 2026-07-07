@@ -1,0 +1,10 @@
+val _ = Globals.show_types := true;
+val gtm = “FLOOKUP s.locals v = SOME (ValWord (n2w (x:num))) /\ x < 9223372036854775808 /\ (y:num) < 9223372036854775808 ==> eval (s:(64,'ffi)panSem$state) (Cmp Less (Var Local v) (Const (n2w y))) = SOME (ValWord (if x < y then 1w:word64 else 0w))”;
+val _ = proofManagerLib.g gtm;
+val _ = proofManagerLib.e (strip_tac);
+val _ = proofManagerLib.e (simp [eval_def, OPT_MMAP_def, wordLangTheory.word_op_def, asmTheory.word_cmp_def]);
+val gg = #2 (proofManagerLib.top_goal());
+val _ = print "\n@@GOALTM@@\n";
+val _ = print (term_to_string gg);
+val _ = print "\n@@END@@\n";
+val _ = TextIO.flushOut TextIO.stdOut;

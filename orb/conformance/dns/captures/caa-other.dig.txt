@@ -1,0 +1,21 @@
+
+; <<>> DiG 9.20.24 <<>> @127.0.0.1 -p 15367 google.com TYPE257 +time=10 +tries=1 +notcp
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 40641
+;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+;; QUESTION SECTION:
+;google.com.			IN	CAA
+
+;; ANSWER SECTION:
+google.com.		86400	IN	CAA	0 issue "pki.goog"
+
+;; Query time: 50 msec
+;; SERVER: 127.0.0.1#15367(127.0.0.1) (UDP)
+;; WHEN: Sun Jul 05 22:37:10 EDT 2026
+;; MSG SIZE  rcvd: 66
+

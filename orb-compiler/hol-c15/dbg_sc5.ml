@@ -1,0 +1,12 @@
+val gtm = “statusRel code r0 s ==> evaluate (statusCore, s) = (NONE, set_var «result» (ValWord (n2w (statusClass code))) s)”;
+fun fresh () = (proofManagerLib.set_goal ([], gtm);
+   proofManagerLib.e (rpt strip_tac);
+   proofManagerLib.e (pop_assum (strip_assume_tac o REWRITE_RULE [statusRel_def]));
+   proofManagerLib.e (subgoal ‘eval s (Cmp Less (Var Local «code») (Const (n2w 200))) = SOME (ValWord (if code < 200 then (1w:word64) else 0w))’));
+fun tryit name tac = (fresh ();
+   (proofManagerLib.e tac; print ("\n@@"^name^" nGoals="^Int.toString(length(proofManagerLib.top_goals()))^"@@\n")) handle e => print ("\n@@"^name^" EXN "^General.exnMessage e^"@@\n"));
+val _ = tryit "metis" (metis_tac [eval_lt_pinned]);
+val _ = tryit "drule" (irule eval_lt_pinned >> asm_simp_tac (srw_ss()++numSimps.ARITH_ss) []);
+val _ = tryit "hommt" (ho_match_mp_tac eval_lt_pinned >> asm_simp_tac (srw_ss()++numSimps.ARITH_ss) []);
+val _ = tryit "mp_specl" (mp_tac (Q.SPECL [`s`,`«code»`,`code`,`200`] eval_lt_pinned) >> asm_simp_tac (srw_ss()++numSimps.ARITH_ss) []);
+val _ = TextIO.flushOut TextIO.stdOut;

@@ -113,6 +113,63 @@ fn main() {
         println!("cargo:warning=crypto shim {} absent — linking without it (fine when the serve closure references no crypto)", crypto_shim.display());
     }
 
+    // The CGI process-spawn shim (`ffi/cgi_exec.o`, a POSIX fork/execve/pipe/waitpid
+    // gateway). The deployed serve's application layer reaches the `.cgi` route
+    // handler (`Cgi.serveCgi` -> `drorb_cgi_exec`), so libdrorb.a references this
+    // symbol; link the object when present. Prerequisite: ffi/build-cgi-shim.sh.
+    let cgi_exec = repo_root.join("ffi").join("cgi_exec.o");
+    if cgi_exec.exists() {
+        println!("cargo:rerun-if-changed={}", cgi_exec.display());
+        println!("cargo:rustc-link-arg={}", cgi_exec.display());
+    } else {
+        println!("cargo:warning=ffi/cgi_exec.o absent — run ffi/build-cgi-shim.sh (the serve closure now reaches the CGI route)");
+    }
+
+    // The QUIC datagram fork (`drorb_serve_datagram`) reaches `QuicHeaderProt`,
+    // whose module object references `drorb_chacha20` — the ONE QUIC
+    // header-protection keystream extern (RFC 9001 §5.4.4), defined in
+    // ffi/mac_udp.c against EverCrypt's verified ChaCha20 block. Link that object
+    // when present so the datagram closure resolves; the byte-stream `drorb_serve`
+    // path never references it, so a build without the datagram export links
+    // cleanly without it. (mac_udp.o also carries `orb_mac_serve_udp`, unused by
+    // this host and left inert.)
+    let mac_udp = repo_root.join("ffi").join("mac_udp.o");
+    if mac_udp.exists() {
+        println!("cargo:rerun-if-changed={}", mac_udp.display());
+        println!("cargo:rustc-link-arg={}", mac_udp.display());
+    } else {
+        println!("cargo:warning=ffi/mac_udp.o absent — linking without it (fine when the serve closure references no QUIC header protection)");
+    }
+
+    // The TLS front door (`drorb_tls_serve`) does its own blocking socket I/O
+    // through the `ffi/derp_net.o` byte-mover (`drorb_tcp_send` / `_recv_exact` /
+    // `_close`) — the same TCP shim the DERP live driver links. libdrorb.a
+    // references these symbols once `Dataplane` imports `TlsHandshake.Post` and
+    // the TLS seam is archived, so link the object when present. Prerequisite:
+    // ffi/build-derp-net.sh (produces ffi/derp_net.o).
+    let derp_net = repo_root.join("ffi").join("derp_net.o");
+    if derp_net.exists() {
+        println!("cargo:rerun-if-changed={}", derp_net.display());
+        println!("cargo:rustc-link-arg={}", derp_net.display());
+    } else {
+        println!("cargo:warning=ffi/derp_net.o absent — run ffi/build-derp-net.sh (the TLS front door needs its TCP byte-mover)");
+    }
+
+    // The RFC 8446 §9.1 certificate signature backend (`ffi/tls_p256_shim.o`:
+    // `drorb_p256_ecdsa_sign` / `drorb_rsapss_sha256_sign` over HACL*'s verified
+    // Hacl_P256 / Hacl_RSAPSS). The TLS front door's multi-certificate pool
+    // (`Dataplane.deployedCerts`) instantiates the ECDSA-P256 / RSA-PSS
+    // CertificateVerify signers through `TlsCrypto.Sig`, so libdrorb.a references
+    // these symbols; link the object when present. Prerequisite:
+    // ffi/build-tls-p256-shim.sh.
+    let tls_p256 = repo_root.join("ffi").join("tls_p256_shim.o");
+    if tls_p256.exists() {
+        println!("cargo:rerun-if-changed={}", tls_p256.display());
+        println!("cargo:rustc-link-arg={}", tls_p256.display());
+    } else {
+        println!("cargo:warning=ffi/tls_p256_shim.o absent — run ffi/build-tls-p256-shim.sh (the TLS front door's RSA/ECDSA cert pool needs its HACL* signer)");
+    }
+
     let aes_dir = repo_root.join("target").join("release");
     if aes_dir.join("libaes_fallback.a").exists() {
         println!("cargo:rustc-link-search=native={}", aes_dir.display());

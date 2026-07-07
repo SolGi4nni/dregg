@@ -307,7 +307,7 @@ theorem no_appdata_before_connected (cfg : Config) (s : St) (i : Input)
 
 /-- Predicate: the handshake engine reports completion (Finished). -/
 def HsOut.isDone : HsOut → Prop
-  | .done _ _ _ _ _ => True
+  | .done _ _ _ _ _ _ => True
   | _ => False
 
 /-- **CONNECTED is entered only on a completing handshake.** If a step
@@ -321,10 +321,10 @@ theorem connected_only_via_hsDone (cfg : Config) (s : St) (i : Input)
     (hpost : absPhase (step cfg s i).1.phase = .connected) :
     ∃ hs buf d, (s.phase = .accum hs buf ∨ s.phase = .handshaking hs buf)
       ∧ i = .bytesReceived d ∧ HsOut.isDone (cfg.hsFeed hs (buf ++ d)) := by
-  rcases s with ⟨p, g⟩
+  rcases s with ⟨p, g, t⟩
   simp only [absPhase] at hpre
   -- The post-state phase of a `step` is the `stepPhase` phase.
-  have hstep : (step cfg ⟨p, g⟩ i).1.phase = (stepPhase cfg p i).1 := rfl
+  have hstep : (step cfg ⟨p, g, t⟩ i).1.phase = (stepPhase cfg p i).1 := rfl
   rw [hstep] at hpost
   cases p with
   | accum hs buf =>
@@ -335,8 +335,8 @@ theorem connected_only_via_hsDone (cfg : Config) (s : St) (i : Input)
       simp only [stepPhase, hsDrive] at hpost
       cases hfeed : cfg.hsFeed hs (buf ++ d) with
       | insufficient => rw [hfeed] at hpost; simp [absPhase] at hpost
-      | more hs' n snd early => rw [hfeed] at hpost; simp [absPhase] at hpost
-      | done rc n snd alpn early => trivial
+      | more hs' n snd early plain => rw [hfeed] at hpost; simp [absPhase] at hpost
+      | done rc n snd alpn early plain => trivial
       | fail => rw [hfeed] at hpost; simp [absPhase] at hpost
     | closeRequested => simp [stepPhase, absPhase] at hpost
     | peerClosed => simp [stepPhase, absPhase] at hpost
@@ -353,8 +353,8 @@ theorem connected_only_via_hsDone (cfg : Config) (s : St) (i : Input)
       simp only [stepPhase, hsDrive] at hpost
       cases hfeed : cfg.hsFeed hs (buf ++ d) with
       | insufficient => rw [hfeed] at hpost; simp [absPhase] at hpost
-      | more hs' n snd early => rw [hfeed] at hpost; simp [absPhase] at hpost
-      | done rc n snd alpn early => trivial
+      | more hs' n snd early plain => rw [hfeed] at hpost; simp [absPhase] at hpost
+      | done rc n snd alpn early plain => trivial
       | fail => rw [hfeed] at hpost; simp [absPhase] at hpost
     | closeRequested => simp [stepPhase, absPhase] at hpost
     | peerClosed => simp [stepPhase, absPhase] at hpost

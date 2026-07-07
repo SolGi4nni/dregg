@@ -1,0 +1,62 @@
+C4 — machineWholeLinkATheory : theorem statements + oracle/axiom tags
+(Globals.show_tags := true). Every theorem carries [oracles: DISK_THM] [axioms: ]
+— DISK_THM is the serialization tag, NOT a soundness oracle; the absence of any
+custom oracle or extra axiom is the clean-footprint point (the HOL4 analogue of
+Lean #print axioms). `axioms "machineWholeLinkA" = 0`: the theory introduces no
+new axioms; no `cheat`, no `new_axiom`, no SMT/other oracle — genuine HOL4 kernel
+proofs against the REAL panSemTheory / panPropsTheory.
+
+Toolchain: CakeML ed31510b3 (2026-06-29), HOL4 a9846ebe2 (Trindemossen 2, stdknl,
+2026-07-02), Poly/ML 5.9.2. Built against the real panSemTheory / panLangTheory /
+panPropsTheory. Holmake: machineWholeLinkATheory [1/1] OK (composes
+machineStepLinkATheory (C2) + machineLoopLinkATheory (C3) as dependencies; uses
+`machineLoop`, `machineLoop_refines_run`, `loopInv`, `memRel`, `fix_clock_id`,
+`mstep` verbatim, and the real-panSem frame lemmas `evaluate_invariants`,
+`evaluate_clock` from panPropsTheory).
+
+=== mainFrame_def ===   (the whole-program frame: init Decs + loop + result Store)
+[oracles: DISK_THM] [axioms: ] []
+⊢ mainFrame =
+  Dec «c» One (Const 0w)
+    (Dec «i» One (Const 0w)
+       (Dec «b» One (Const 0w)
+          (Seq machineLoop
+             (Store (Op Add [BaseAddr; Const 24w]) (Var Local «c»)))))
+
+=== loadedRel_def ===   (the @load_vec FFI postcondition, packaged and ASSUMED)
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀input bufAddr s.
+    loadedRel input bufAddr s ⇔
+    FLOOKUP s.locals «len» = SOME (ValWord (n2w (LENGTH input))) ∧
+    FLOOKUP s.locals «base» = SOME (ValWord bufAddr) ∧
+    memRel input bufAddr s ∧ LENGTH input < 2 ** 63 ∧
+    EVERY (λx. x < 256) input
+
+=== Dec_zero ===   (a `Dec v One (Const 0w)` node: run body in extended locals, restore v)
+[oracles: DISK_THM] [axioms: ] []
+⊢ evaluate (prog,st with locals := st.locals⟨v ↦ ValWord 0w⟩) = (res,st') ⇒
+  evaluate (Dec v One (Const 0w) prog,st) =
+  (res,st' with locals := res_var st'.locals (v,FLOOKUP st.locals v))
+
+=== Seq_NONE_le ===   (Seq of two NONE-returns; first spends but never raises the clock)
+[oracles: DISK_THM] [axioms: ] []
+⊢ evaluate (p1,s) = (NONE,sa) ∧ sa.clock ≤ s.clock ∧
+  evaluate (p2,sa) = (NONE,sb) ⇒
+  evaluate (Seq p1 p2,s) = (NONE,sb)
+
+=== evaluate_result_store ===   (the result Store writes n2w(fold) at base_addr + 24)
+[oracles: DISK_THM] [axioms: ] []
+⊢ FLOOKUP s'.locals «c» = SOME (ValWord w) ∧ s'.base_addr + 24w ∈ s'.memaddrs ⇒
+  evaluate (Store (Op Add [BaseAddr; Const 24w]) (Var Local «c»),s') =
+  (NONE,s' with memory := s'.memory⦇s'.base_addr + 24w ↦ Word w⦈)
+
+=== mainFrame_refines_run ===   (THE WHOLE-PROGRAM Link A: main computes C2.run to memory)
+[oracles: DISK_THM] [axioms: ] []
+⊢ loadedRel input bufAddr s ∧ LENGTH input ≤ s.clock ∧
+  s.base_addr + 24w ∈ s.memaddrs ⇒
+  ∃fs.
+    evaluate (mainFrame,s) = (NONE,fs) ∧
+    fs.memory (s.base_addr + 24w) = Word (n2w (FOLDL mstep 0 input))
+
+=== footprint audit ===
+axioms "machineWholeLinkA" = 0  (no new axioms; DISK_THM is the serialization tag, not a soundness oracle)

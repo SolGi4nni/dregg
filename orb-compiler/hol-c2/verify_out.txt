@@ -1,0 +1,38 @@
+C2 — machineStepLinkATheory : theorem statements + oracle/axiom tags
+(Globals.show_tags := true). All carry [oracles: DISK_THM] [axioms: ] — DISK_THM
+is the serialization tag, NOT a soundness oracle; the absence of any custom
+oracle or extra axiom is the clean-footprint point (HOL4 analogue of Lean
+#print axioms). Toolchain: CakeML ed31510b3, HOL4 (Trindemossen 2, stdknl,
+2026-07-02), against the real panSemTheory. Holmake: machineStepLinkATheory [1/1] OK.
+
+=== mstep_le ===
+[oracles: DISK_THM] [axioms: ] [] ⊢ ∀c b. c ≤ 255 ⇒ mstep c b ≤ 255
+
+=== signed_lt_n2w64 ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀x y. x < 2 ** 63 ∧ y < 2 ** 63 ⇒ (n2w x < n2w y ⇔ x < y)
+
+=== eval_class_guard ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ mRel c b s ⇒
+  eval s (Cmp Less (Var Local «b») (Const 128w)) =
+  SOME (ValWord (if b < 128 then 1w else 0w))
+
+=== eval_cap_guard ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ mRel c b s ⇒
+  eval s (Cmp Less (Var Local «c») (Const 255w)) =
+  SOME (ValWord (if c < 255 then 1w else 0w))
+
+=== evaluate_stepBody ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ mRel c b s ⇒
+  evaluate (stepBody,s) = (NONE,set_var «c» (ValWord (n2w (mstep c b))) s)
+
+=== stepBody_refines_step ===   (the headline: transition-system Link A)
+[oracles: DISK_THM] [axioms: ] []
+⊢ mRel c b s ⇒
+  ∃s'.
+    evaluate (stepBody,s) = (NONE,s') ∧
+    FLOOKUP s'.locals «c» = SOME (ValWord (n2w (mstep c b))) ∧
+    mRel (mstep c b) b s'

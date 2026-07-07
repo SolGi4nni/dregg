@@ -56,6 +56,8 @@ import Reactor.QuicIngress
 import Crypto
 import TlsCrypto
 import QuicHeaderProt
+import QuicServer
+import H3.Request
 
 /-! ## (0) The QUIC Initial packet protection — the QuicTransport derivations.
 
@@ -330,7 +332,7 @@ def quicDatagram (dg : ByteArray) : ByteArray :=
                   (Reactor.Quic.Payload.stream sid h3)
       let subs := (Reactor.QuicIngress.datagramServe
         Reactor.QuicIngress.demoConfig Reactor.QuicIngress.demoState ev).2
-      ByteArray.mk (Reactor.Ingress.serveOverSubs subs h3).toArray
+      ByteArray.mk (Reactor.Ingress.serveFull2OverSubs subs h3).toArray
 
 /-! ## (6) In-process self-test — craft, decrypt, dispatch on live EverCrypt
 
@@ -494,6 +496,227 @@ def diag (hexPath : String) : IO Unit := do
       IO.println "[diag] openInitial returned none: not an AES-128-GCM Initial under this DCID's keys,"
       IO.println "[diag]   or the AEAD tag/header-protection did not authenticate (forged/corrupt packet)."
 
+/-! ## (7c) The server response flight — QuicServer wired to the socket
+
+`QuicServer.stepServer` builds the ServerHello/Handshake response flight from a
+decrypted (possibly multi-packet) ClientHello, installs 1-RTT on the client
+Finished, and serves the H3 requests in 1-RTT — over a connection table, so one
+server process handles many connections. The H3 serve is the proven `datagramServe` → `serveOverSubs`
+(the same dispatch the self-test drives), lifted to `ByteArray → ByteArray`. -/
+
+/-! ### The QPACK response encoder (RFC 9204 §4.5) + the H3 HEADERS/DATA framing
+
+The proven serve produces a `Reactor.Response` (status + headers + body). To hand
+it to a real H3 client we re-express it as an HTTP/3 HEADERS frame (its field
+section QPACK-encoded) followed by a DATA frame (the body). The QPACK encoder is
+minimal: the `:status` uses the RFC 9204 Appendix A static
+table index when the code has one (103/200/304/404/503), every other field is a
+literal-with-literal-name representation (§4.5.6) with **no** Huffman coding — so a
+QPACK *encoder*-side Huffman table is never needed. No dynamic table is used
+(section prefix Required-Insert-Count 0, Base 0), so the client needs no encoder
+stream. Field names are lowercased (RFC 9114 §4.1.2 forbids uppercase). -/
+
+/-- QPACK prefix-integer encode (RFC 9204 §4.1.1): a `prefixBits`-bit prefix whose
+high representation bits are already set in `flags`. Values here are small string
+lengths / table indices. -/
+partial def encQpackInt (prefixBits : Nat) (flags : UInt8) (v : Nat) : ByteArray :=
+  let maxP := 2 ^ prefixBits - 1
+  if v < maxP then ByteArray.mk #[flags ||| UInt8.ofNat v]
+  else
+    let rec go (n : Nat) (acc : ByteArray) : ByteArray :=
+      if n < 128 then acc.push (UInt8.ofNat n)
+      else go (n / 128) (acc.push (UInt8.ofNat (n % 128 + 128)))
+    go (v - maxP) (ByteArray.mk #[flags ||| UInt8.ofNat maxP])
+
+/-- A QPACK string literal (Huffman bit clear): a `prefixBits`-bit length prefix
+carrying `flags` in its high bits, then the raw bytes. -/
+def encQpackStr (prefixBits : Nat) (flags : UInt8) (bs : ByteArray) : ByteArray :=
+  encQpackInt prefixBits flags bs.size ++ bs
+
+/-- Literal field line with literal name, no Huffman (RFC 9204 §4.5.6): the name
+uses the representation-`001` 3-bit length prefix (flags `0x20`, N=0, H=0), the
+value a 7-bit length prefix (H=0). -/
+def encQpackLiteral (name value : ByteArray) : ByteArray :=
+  encQpackStr 3 0x20 name ++ encQpackStr 7 0x00 value
+
+/-- The RFC 9204 Appendix A static-table index of a `:status` code, when it has
+one. -/
+def qpackStatusIndex (status : Nat) : Option Nat :=
+  if status = 103 then some 24
+  else if status = 200 then some 25
+  else if status = 304 then some 26
+  else if status = 404 then some 27
+  else if status = 503 then some 28
+  else none
+
+/-- The `:status` field: an indexed static field line (`1 1 idx(6)` = `0xC0 ||| idx`)
+for a code in the static table, else a literal `:status` field with the decimal
+code as value. -/
+def encQpackStatus (status : Nat) : ByteArray :=
+  match qpackStatusIndex status with
+  | some idx => ByteArray.mk #[UInt8.ofNat (0xC0 ||| idx)]
+  | none => encQpackLiteral (String.toUTF8 ":status")
+              ⟨(Reactor.natToDec status).toArray⟩
+
+/-- Lowercase one ASCII byte (`A`–`Z` → `a`–`z`). -/
+def lowerByte (b : UInt8) : UInt8 :=
+  if 65 ≤ b.toNat && b.toNat ≤ 90 then UInt8.ofNat (b.toNat + 32) else b
+
+def lowerName (bs : List UInt8) : ByteArray := ⟨(bs.map lowerByte).toArray⟩
+
+/-- The QPACK field section for a response: section prefix (Required Insert Count
+0, Base 0), the `:status` field, a derived `content-length` field (mirrors the H1
+serializer, which frames length from the body), then every response header as a
+literal field with a lowercased name. -/
+def encQpackHeaderBlock (resp : Reactor.Response) : ByteArray :=
+  let sectionPrefix := ByteArray.mk #[0x00, 0x00]
+  let status := encQpackStatus resp.status
+  let clen := encQpackLiteral (String.toUTF8 "content-length")
+                ⟨(Reactor.natToDec resp.body.length).toArray⟩
+  let hdrs := resp.headers.foldl
+    (fun acc h => acc ++ encQpackLiteral (lowerName h.1) ⟨h.2.toArray⟩) ByteArray.empty
+  sectionPrefix ++ status ++ clen ++ hdrs
+
+/-- Encode a `Reactor.Response` as the HTTP/3 stream-0 payload: a HEADERS frame
+(type `0x01`) carrying the QPACK field section, then a DATA frame (type `0x00`)
+carrying the body. The derived `content-length` (see `encQpackHeaderBlock`) is
+framed from `resp.body`, so a caller that suppresses the body (HEAD) suppresses
+the advertised length with it — the two never disagree. -/
+def encodeH3Response (resp : Reactor.Response) : ByteArray :=
+  let block := encQpackHeaderBlock resp
+  let headersFrame := ByteArray.mk #[0x01] ++ QuicServer.encVarint block.size ++ block
+  let body : ByteArray := ⟨resp.body.toArray⟩
+  let dataFrame := ByteArray.mk #[0x00] ++ QuicServer.encVarint body.size ++ body
+  headersFrame ++ dataFrame
+
+/-! ### Deriving the proven serve's structured Response for an H3 request
+
+`serveH3Resp` decodes the reassembled H3 request through the SAME proven
+`Reactor.QuicIngress.datagramServe` the TCP-side ingress runs (real `Quic.step`,
+real `H3.decFrame`, real `H3.Qpack.decodeFieldSection` — now with the deployed
+RFC 7541 Huffman decoder), extracts the dispatched `Proto.Request`, and returns
+the SAME guarded `Reactor.Response` the deployed serve produces: the traversal-404
+gate, the Policy-403 gate, or the application response. `serialize` of this
+Response is byte-for-byte the `serveOverSubs` output the H1/TCP path emits — this
+is that response, re-expressed structurally so it can be re-framed as HTTP/3. -/
+
+/-- The Huffman-capable H3 lane config: the deployed RFC 7541 Huffman decoder
+(vs. the reject-all `demoConfig` used by the pure-static kernel `#guard`s). -/
+def huffConfig : Reactor.Quic.QuicConfig := ⟨_root_.H3.Qpack.rfc7541Huffman⟩
+
+/-- An empty QPACK/arena store to decode a request field section against (the
+static table only; the deployed lane holds no dynamic table). -/
+def h3EmptyStore : Arena.Store := { main := #[], sidecar := #[], entries := [] }
+
+/-- The canned `400 Bad Request` for a request the RFC 9114 §4.1 / §4.3.1 front
+end rejects (an unexpected frame before HEADERS, an undecodable field section, or
+a head missing a required pseudo-header) — the same malformed-path response the
+HTTP/1.1 serve emits. -/
+def malformedH3Resp : Reactor.Response :=
+  Reactor.error4xx 400 Reactor.reasonBad Reactor.badBody
+
+/-- Re-frame a decoded request stream's raw QPACK field section and concatenated
+content as a canonical, grease-free HTTP/3 request stream (one HEADERS frame ‖ one
+DATA frame) for the proven dispatcher — so the unknown/reserved (GREASE) frames
+`readRequestStream` skipped are gone before the request reaches routing. -/
+def reframeRequest (enc body : List UInt8) : ByteArray :=
+  let hdr := ByteArray.mk #[0x01] ++ QuicServer.encVarint enc.length ++ ⟨enc.toArray⟩
+  let dat := ByteArray.mk #[0x00] ++ QuicServer.encVarint body.length ++ ⟨body.toArray⟩
+  hdr ++ dat
+
+/-- **The H3 request front end** (RFC 9114 §4.1 + §4.3.1). Run the raw
+request-stream bytes through the proven `readRequestStream` (skip unknown/GREASE
+frames, open on HEADERS, concatenate DATA, close on trailers), decode the field
+section, and apply the `validRequestHead` §4.3.1 gate:
+
+  * an unexpected frame / undecodable section / a head missing a required
+    pseudo-header (`:method`, and for non-CONNECT `:scheme`/`:path`/authority) is
+    answered with the canned `400` (`malformedH3Resp`) — no routing;
+  * otherwise the grease-free canonical request is dispatched through the SAME
+    proven `datagramServe` + full `deployStagesFull2` middleware fold the TCP
+    dataplane runs.
+
+Returns the structured `Response` and the request method (for HEAD suppression). -/
+def serveH3Resp (h3 : ByteArray) : Reactor.Response × List UInt8 :=
+  match _root_.H3.readRequestStream h3.toList with
+  | .incomplete => (malformedH3Resp, [])
+  | .malformed => (malformedH3Resp, [])
+  | .request enc body _trailers =>
+    match _root_.H3.Qpack.decodeFieldSection _root_.H3.Qpack.rfc7541Huffman h3EmptyStore enc with
+    | .error _ => (malformedH3Resp, [])
+    | .ok d =>
+      if _root_.H3.validRequestHead d.store d.pseudo d.fields then
+        let method := (d.pseudo.method.map (_root_.H3.resolvedBytes d.store)).getD []
+        let canonical := reframeRequest enc body
+        let ev := Reactor.Quic.DatagramEvent.recvDatagram .appData 0
+                    (Reactor.Quic.Payload.stream 0 canonical.toList)
+        let subs := (Reactor.QuicIngress.datagramServe huffConfig
+          Reactor.QuicIngress.demoState ev).2
+        let feed := canonical.toList
+        let resp := match Reactor.Deploy.dispatchReqOf subs with
+          | some req => Reactor.Deploy.deployRespFull2Of feed req
+          | none => Reactor.Ingress.ingressResp subs feed
+        (resp, method)
+      else (malformedH3Resp, [])
+
+/-- Serve one reassembled H3 request-stream byte string through the proven QUIC/H3
+front end (grease skip + §4.3.1 gate), dispatch, and guarded pipeline, returning
+the response re-framed as the HTTP/3 stream-0 payload (HEADERS frame ‖ DATA
+frame). For a `HEAD` request the response content is suppressed by the proven
+`H3.headSuppressedBody` (RFC 9110 §9.3.2) before framing, so the `content-length`
+and the DATA frame agree at zero. -/
+def serveH3 (h3 : ByteArray) : ByteArray :=
+  let (resp, method) := serveH3Resp h3
+  encodeH3Response { resp with body := _root_.H3.headSuppressedBody method resp.body }
+
+/-- The stateful QUIC server handler over an `IO.Ref` server state (a connection
+table + pre-connection ClientHello reassembly): one received datagram in, the
+datagrams to send out. Wired to the C driver `orb_quic_serve`. -/
+def quicServeHandler (ref : IO.Ref QuicServer.ServerState) (dg : ByteArray) :
+    IO (Array ByteArray) := do
+  let cur ← ref.get
+  let (cur', outs) := QuicServer.stepServer serveH3 cur dg
+  ref.set cur'
+  return outs
+
+/-- `orb_quic_serve port handler`: the stateful UDP server loop (ffi/mac_udp.c),
+recv one datagram → `handler` → send the returned datagrams. -/
+@[extern "orb_quic_serve"]
+opaque serveQuic (port : UInt16) (handler : ByteArray → IO (Array ByteArray)) : IO Unit
+
+/-! ## (7d) `--bridge`: drive the full server handshake over stdin/stdout hex.
+
+`orb-quic --bridge` reads one client datagram (hex) per line on stdin, threads it
+through the stateful `QuicServer.stepServer`, and writes `N <k>` then `k` server
+datagrams (hex) per line — so a real off-the-shelf QUIC client (aioquic) can be
+driven against the verified server flight with no sockets, for deterministic,
+inspectable handshake validation. -/
+partial def bridgeLoop (ref : IO.Ref QuicServer.ServerState)
+    (stdin : IO.FS.Stream) (stdout : IO.FS.Stream) : IO Unit := do
+  let line ← stdin.getLine
+  if line == "" then return ()              -- EOF
+  if line.trim == "" then bridgeLoop ref stdin stdout else do
+  let dg := fromHex line
+  let cur ← ref.get
+  let (cur', outs) := QuicServer.stepServer serveH3 cur dg
+  ref.set cur'
+  -- concise diagnostics (to stderr): coalesced packet kinds + table size
+  let kinds := (QuicServer.splitPackets 16 dg.toList).map
+    (fun pkt => match pkt[0]? with | some b => reprStr (QuicServer.classify b) | none => "?")
+  let phs := cur'.conns.map (fun c => reprStr c.phase)
+  IO.eprintln s!"[bridge] in {dg.size}B kinds={kinds} -> conns={phs} pending={cur'.pending.length} outs={outs.size}"
+  stdout.putStr s!"N {outs.size}\n"
+  for o in outs do
+    stdout.putStr (toHex o); stdout.putStr "\n"
+  stdout.flush
+  bridgeLoop ref stdin stdout
+
+def bridge : IO Unit := do
+  let ref ← IO.mkRef QuicServer.ServerState.empty
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  bridgeLoop ref stdin stdout
+
 /-! ## (8) main -/
 
 /-- `orb-quic [udpPort]` (default 8443): run the in-process EverCrypt decrypt→
@@ -503,6 +726,14 @@ live, decrypting each with the verified crypto before the proven H3 dispatch.
 def main (args : List String) : IO Unit := do
   match args with
   | "--diag" :: path :: _ => diag path
+  | "--bridge" :: _ => bridge
+  | "--serve" :: rest =>
+    -- Stateful QUIC server: real handshake flight + 1-RTT, over the UDP socket.
+    let udpPort : UInt16 := ((rest[0]?).bind String.toNat?).map (·.toUInt16) |>.getD 8443
+    IO.eprintln s!"orb-quic: stateful QUIC server on 127.0.0.1:{udpPort} (verified EverCrypt handshake flight)"
+    (← IO.getStdout).flush
+    let ref ← IO.mkRef QuicServer.ServerState.empty
+    serveQuic udpPort (quicServeHandler ref)
   | _ =>
     IO.println "orb-quic: QUIC SOCKET-LIVE — verified EverCrypt packet protection → proven H3 dispatch"
     IO.println "── in-process self-test (crafted Initial, live EverCrypt) ──"

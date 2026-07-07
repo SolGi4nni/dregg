@@ -1,0 +1,81 @@
+C3 — machineLoopLinkATheory : theorem statements + oracle/axiom tags
+(Globals.show_tags := true). Every theorem carries [oracles: DISK_THM] [axioms: ]
+— DISK_THM is the serialization tag, NOT a soundness oracle; the absence of any
+custom oracle or extra axiom is the clean-footprint point (the HOL4 analogue of
+Lean #print axioms). `axioms "machineLoopLinkA" = 0`: the theory introduces no
+new axioms; no `cheat`, no `new_axiom`, no SMT/other oracle — genuine HOL4 kernel
+proofs against the REAL panSemTheory.
+
+Toolchain: CakeML ed31510b3 (2026-06-29), HOL4 a9846ebe2 (Trindemossen 2, stdknl,
+2026-07-02), Poly/ML 5.9.2. Built against the real panSemTheory / panLangTheory.
+Holmake: machineLoopLinkATheory [1/1] OK (composes machineStepLinkATheory, the C2
+single-step Link A, as a dependency and uses `stepBody` + `evaluate_stepBody`
+verbatim).
+
+=== machineLoop_def ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ machineLoop = While (Cmp Less (Var Local «i») (Var Local «len»)) loopBody
+
+=== loopBody_def ===
+[oracles: DISK_THM] [axioms: ] []
+⊢ loopBody =
+  Seq (Assign Local «b» (LoadByte (Op Add [Var Local «base»; Var Local «i»])))
+    (Seq stepBody (Assign Local «i» (Op Add [Var Local «i»; Const 1w])))
+
+=== memRel_def ===   (the byte-memory LoadByte relation, threaded through the loop)
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀input bs s.
+    memRel input bs s ⇔
+    ∀j. j < LENGTH input ⇒
+        mem_load_byte s.memory s.memaddrs s.be (bs + n2w j) = SOME (n2w input❲j❳)
+
+=== loopInv_def ===   (the loop invariant = C2 state relation lifted to the loop)
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀input bs c i s.
+    loopInv input bs c i s ⇔
+    FLOOKUP s.locals «c» = SOME (ValWord (n2w c)) ∧
+    FLOOKUP s.locals «i» = SOME (ValWord (n2w i)) ∧
+    FLOOKUP s.locals «len» = SOME (ValWord (n2w (LENGTH input))) ∧
+    FLOOKUP s.locals «base» = SOME (ValWord bs) ∧
+    (∃bb. FLOOKUP s.locals «b» = SOME (ValWord bb)) ∧
+    memRel input bs s ∧ c ≤ 255 ∧ i ≤ LENGTH input ∧ LENGTH input < 2 ** 63 ∧
+    EVERY (λx. x < 256) input
+
+=== eval_loadbyte ===   (per-iteration byte read via the memory relation + w2w_byte)
+[oracles: DISK_THM] [axioms: ] []
+⊢ loopInv input bs c i s ∧ i < LENGTH input ⇒
+  eval s (LoadByte (Op Add [Var Local «base»; Var Local «i»])) =
+  SOME (ValWord (n2w input❲i❳))
+
+=== evaluate_loopBody ===   (one iteration: composes the C2 single-step theorem)
+[oracles: DISK_THM] [axioms: ] []
+⊢ loopInv input bs c i s ∧ i < LENGTH input ⇒
+  ∃s2.
+    evaluate (loopBody,s) = (NONE,s2) ∧ s2.clock = s.clock ∧
+    loopInv input bs (mstep c input❲i❳) (i + 1) s2
+
+=== machineLoop_unfold ===   (one clocked-While step: guard + dec_clock bookkeeping)
+[oracles: DISK_THM] [axioms: ] []
+⊢ loopInv input bs c i s ∧ i < LENGTH input ∧ s.clock ≠ 0 ⇒
+  ∃s2.
+    evaluate (machineLoop,s) = evaluate (machineLoop,s2) ∧
+    loopInv input bs (mstep c input❲i❳) (i + 1) s2 ∧ s2.clock = s.clock − 1
+
+=== machineLoop_fold_bounded ===   (THE LOOP: general loop-invariant induction over
+                                    panSem's clocked While — ∀ input length / clock)
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀k input bs c i s.
+    loopInv input bs c i s ∧ LENGTH input − i ≤ k ∧ LENGTH input − i ≤ s.clock ⇒
+    ∃s'.
+      evaluate (machineLoop,s) = (NONE,s') ∧
+      FLOOKUP s'.locals «c» = SOME (ValWord (n2w (FOLDL mstep c (DROP i input))))
+
+=== machineLoop_refines_run ===   (headline: whole stream from (0,0) = the Lean run)
+[oracles: DISK_THM] [axioms: ] []
+⊢ loopInv input bs 0 0 s ∧ LENGTH input ≤ s.clock ⇒
+  ∃s'.
+    evaluate (machineLoop,s) = (NONE,s') ∧
+    FLOOKUP s'.locals «c» = SOME (ValWord (n2w (FOLDL mstep 0 input)))
+
+=== footprint audit ===
+axioms "machineLoopLinkA" = 0  (no new axioms introduced by the theory)

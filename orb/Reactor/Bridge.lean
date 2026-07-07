@@ -191,7 +191,7 @@ theorem deployed_routes_bestMatch (input : Bytes) (req : Proto.Request)
     (hsub : Reactor.Deploy.deploySubs input = .dispatch req :: rest) :
     ∃ r, Route.Match.bestMatch demoAppConfig.table
             (App.targetSegments req.target) = some r
-       ∧ Reactor.serve input = serialize (App.responseOfHandler r.handler) := by
+       ∧ Reactor.serve input = serialize (App.responseOfReq req r.handler) := by
   have hsends' : sendsOf (Reactor.reactorSubs input) = [] := by
     rw [← deploySubs_eq_reactorSubs]; exact hsends
   have hsub' : Reactor.reactorSubs input = .dispatch req :: rest := by

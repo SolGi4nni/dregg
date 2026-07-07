@@ -1,3 +1,11 @@
 import Dns.Basic
 import Dns.Name
 import Dns.Message
+import Dns.Wire
+import Dns.RData
+import Dns.Dnssec
+import Dns.Params
+import Dns.Encode
+import Dns.EncodeRData
+import Dns.Resolve
+import Dns.Transport

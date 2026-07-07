@@ -1,0 +1,20 @@
+{
+  "family": "region",
+  "desc_name": "region_boundScan",
+  "theory": "boundScanEmit",
+  "impl_name": "boundsChk",
+  "rel_name": "stRel",
+  "decide_name": "boundScan",
+  "encode_name": "c0_encode",
+  "arr": "a",
+  "off": "off",
+  "len": "len",
+  "size_term": "LENGTH a",
+  "size_var": "alen",
+  "off_var": "off",
+  "len_var": "len",
+  "result_var": "result",
+  "sentinel_num": 4294967295,
+  "decide_some": "scanFrom a off len 0",
+  "spec_aux": "Definition step_def:\n  step acc b = (acc * 31 + b) MOD 16777216\nEnd\n\nDefinition scanFrom_def:\n  (scanFrom a off 0 acc = acc) /\\\n  (scanFrom a off (SUC n) acc = scanFrom a (off + 1) n (step acc (EL off a)))\nEnd\n"
+}

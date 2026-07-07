@@ -1,0 +1,63 @@
+===== spansEncoded_def =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀spans outB s.
+    spansEncoded spans outB s ⇔
+    ∀k. k < LENGTH spans ⇒
+        s.memory (outB + n2w (16 * k)) = Word (n2w (FST spans❲k❳)) ∧
+        s.memory (outB + n2w (16 * k + 8)) = Word (n2w (SND spans❲k❳))
+
+===== writeSpans_refines_parseReqLine =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ parseReqLine off line = SOME ((mOff,mLen),(tOff,tLen),vOff,vLen) ∧
+  FLOOKUP s.locals «out» = SOME (ValWord outB) ∧
+  FLOOKUP s.locals «mOff» = SOME (ValWord (n2w mOff)) ∧
+  FLOOKUP s.locals «mLen» = SOME (ValWord (n2w mLen)) ∧
+  FLOOKUP s.locals «tOff» = SOME (ValWord (n2w tOff)) ∧
+  FLOOKUP s.locals «tLen» = SOME (ValWord (n2w tLen)) ∧
+  FLOOKUP s.locals «vOff» = SOME (ValWord (n2w vOff)) ∧
+  FLOOKUP s.locals «vLen» = SOME (ValWord (n2w vLen)) ∧
+  (∃bpv. FLOOKUP s.locals «bp» = SOME (ValWord bpv)) ∧ arena6 outB s ⇒
+  ∃s'.
+    evaluate (writeSpans,s) = (NONE,s') ∧
+    spansEncoded (spanListOf (parseReqLine off line)) outB s'
+
+===== memRel_store_disjoint =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ memRel input bs s ∧ (∀j. j < LENGTH input ⇒ a ≠ byte_align (bs + n2w j)) ⇒
+  memRel input bs (s with memory := s.memory⦇a ↦ Word v⦈)
+
+===== wordsEncoded_def =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ ∀xs outB s.
+    wordsEncoded xs outB s ⇔
+    ∀k. k < LENGTH xs ⇒ s.memory (outB + n2w (8 * k)) = Word (n2w xs❲k❳)
+
+===== fillBody_eval =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ FLOOKUP s.locals «bp» = SOME (ValWord bpw) ∧
+  FLOOKUP s.locals «k» = SOME (ValWord kv) ∧ bpw ∈ s.memaddrs ⇒
+  ∃s'.
+    evaluate (fillBody,s) = (NONE,s') ∧ s'.clock = s.clock ∧
+    s'.memaddrs = s.memaddrs ∧ s'.memory = s.memory⦇bpw ↦ Word kv⦈ ∧
+    FLOOKUP s'.locals «bp» = SOME (ValWord (8w + bpw)) ∧
+    FLOOKUP s'.locals «k» = SOME (ValWord (1w + kv)) ∧
+    FLOOKUP s'.locals «n» = FLOOKUP s.locals «n»
+
+===== wordsEncoded_extend =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ wordsEncoded (GENLIST (λi. i) k) outB s ∧ 8 * k < dimword (:64) ∧
+  s2.memory = s.memory⦇outB + n2w (8 * k) ↦ Word (n2w k)⦈ ⇒
+  wordsEncoded (GENLIST (λi. i) (k + 1)) outB s2
+
+===== fillLoop_refines =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ FLOOKUP s.locals «k» = SOME (ValWord 0w) ∧
+  FLOOKUP s.locals «n» = SOME (ValWord (n2w N)) ∧
+  FLOOKUP s.locals «bp» = SOME (ValWord outB) ∧ N < 2 ** 63 ∧
+  8 * N < dimword (:64) ∧ (∀j. j < N ⇒ outB + n2w (8 * j) ∈ s.memaddrs) ∧
+  N ≤ s.clock ⇒
+  ∃s'.
+    evaluate (fillLoop,s) = (NONE,s') ∧
+    wordsEncoded (GENLIST (λi. i) N) outB s'
+
+AXIOMS arenaAllocLinkA = 0

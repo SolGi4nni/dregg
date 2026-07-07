@@ -91,11 +91,10 @@ theorem mkStage_hit_serves_stored (cfg : Config) (rest : List Stage)
     (handler : Ctx → Response) (c : Ctx) (e : _root_.Cache.Stored)
     (hget : cfg.st.store.get? (cfg.keyOf c) = some e)
     (hfresh : e.meta.isFresh cfg.now = true) :
-    (runPipeline (mkStage cfg :: rest) handler c).build = cfg.render e.body := by
-  have hg : (mkStage cfg).onRequest c = .respond (cfg.render e.body) :=
-    onReq_hit cfg c e hget hfresh
-  rw [pipeline_gate_short_circuits (mkStage cfg) rest handler c (cfg.render e.body) hg,
-    build_ofResponse]
+    runPipeline (mkStage cfg :: rest) handler c
+      = runResp rest c (ResponseBuilder.ofResponse (cfg.render e.body)) :=
+  pipeline_gate_short_circuits (mkStage cfg) rest handler c (cfg.render e.body)
+    (onReq_hit cfg c e hget hfresh)
 
 /-- **Miss passthrough.** On a cache miss the stage is transparent: the built
 pipeline output equals the tail's output — the stored bytes do NOT appear and
@@ -172,15 +171,18 @@ theorem warm_fresh : demoStored.meta.isFresh cacheCfg.now = true := by
 request, serves EXACTLY the stored `cache-hit:7` response — for any tail and
 handler. A fresh hit genuinely changes the emitted bytes to the cached bytes. -/
 theorem cacheStage_serves_stored (rest : List Stage) (handler : Ctx → Response) :
-    (runPipeline (cacheStage :: rest) handler demoCtx).build = render demoBody :=
+    runPipeline (cacheStage :: rest) handler demoCtx
+      = runResp rest demoCtx (ResponseBuilder.ofResponse (render demoBody)) :=
   mkStage_hit_serves_stored cacheCfg rest handler demoCtx demoStored warm_get warm_fresh
 
 /-- The served body is the distinctive stored bytes `"cache-hit:7"` — visible in
-the built output, independent of the handler. -/
-theorem cacheStage_hit_body (rest : List Stage) (handler : Ctx → Response) :
-    ((runPipeline (cacheStage :: rest) handler demoCtx).build).body
+the built output, independent of the handler. Stated with no inner transform tail
+(the cache hit's stored bytes; an inner body-transform tail, e.g. gzip, would
+re-encode them — the short-circuit-carries-transforms semantics). -/
+theorem cacheStage_hit_body (handler : Ctx → Response) :
+    ((runPipeline [cacheStage] handler demoCtx).build).body
       = "cache-hit:".toUTF8.toList ++ natToDec 7 := by
-  rw [cacheStage_serves_stored]
+  rw [cacheStage_serves_stored [] handler, runResp_nil, build_ofResponse]
   rfl
 
 /-- A request not in the warm cache (different target) misses: lookup is none. -/
@@ -204,5 +206,148 @@ theorem cacheStage_miss (rest : List Stage) (handler : Ctx → Response) :
 #print axioms cacheStage_serves_stored
 #print axioms cacheStage_hit_body
 #print axioms cacheStage_miss
+
+/-! ## A stateful, full-response cache the host threads across requests
+
+The gate above (`mkStage` / `cacheStage`) proves the fresh-hit SHORT-CIRCUIT: a
+warm entry replaces the handler's bytes. But a warm *gate* is static — it cannot
+"populate on the first request and hit on the second", and because it
+short-circuits BEFORE the response-transform stages (cors / gzip / security /
+header), its stored bytes would have to reproduce whatever those transforms add,
+which depends on the REQUEST (the CORS `Origin` echo, the gzip on
+`Accept-Encoding`). Freezing that into a static config is a mirror that diverges
+from the real serve.
+
+This section is the REAL cache the deployed host threads across serve calls: a
+full-RESPONSE store keyed on method + path + the request-header values the
+deployed transforms vary on (RFC 9111 §4.1). On a MISS it invokes the real serve
+(`run c`, the whole pipeline) and STORES that exact response; on a HIT it replays
+the stored response byte-for-byte with an `X-Cache: HIT` / `Age` indicator,
+WITHOUT calling `run` again. Because the stored value IS the genuine pipeline
+output, the replay never diverges from what the handler + transforms would have
+produced — no mirror, no sibling scenario disturbed. The host holds one `RStore`
+across calls; the first request populates it, the second is served from it. -/
+
+/-- A request header value (empty `Bytes` if absent). -/
+def reqHeader (c : Ctx) (name : Bytes) : Bytes :=
+  (c.req.headers.lookup name).getD []
+
+/-- `accept-encoding` — the canonical lowercase name the HTTP/1.1 arena parser
+emits (the gzip transform varies on it). -/
+def hdrAcceptEncoding : Bytes := "accept-encoding".toUTF8.toList
+
+/-- `origin` — the canonical lowercase name (the CORS transform varies on it). -/
+def hdrOrigin : Bytes := "origin".toUTF8.toList
+
+/-- §4.1 Vary-aware selected-header tuple. The deployed serve varies its response
+on `Accept-Encoding` (gzip) and `Origin` (CORS), so those values enter the key:
+a plain request and its gzip / CORS variants occupy DISTINCT cache slots and each
+hit replays exactly the response that variant produced. -/
+def varyOf (c : Ctx) : List Nat :=
+  [hashBytes (reqHeader c hdrAcceptEncoding), hashBytes (reqHeader c hdrOrigin)]
+
+/-- The full Vary-aware cache key for a request (§4.1: method + target + vary). -/
+def rkeyOf (c : Ctx) : _root_.Cache.Key :=
+  { method := hashBytes c.req.method, uri := hashBytes c.req.target, vary := varyOf c }
+
+/-- A full-response store: the exact stored `Response` per key. Unlike the gate's
+`Cache.Store` (whose `Body` is an opaque token), the deployed serve's OWN output
+is captured here, so replay is byte-identical. -/
+structure RStore where
+  entries : List (_root_.Cache.Key × Response)
+deriving Repr
+
+/-- The empty store the host starts from. -/
+def RStore.empty : RStore := ⟨[]⟩
+
+/-- §4.1 exact-key lookup of a stored response. -/
+def RStore.get? (s : RStore) (k : _root_.Cache.Key) : Option Response :=
+  (s.entries.find? (fun kv => _root_.Cache.eqK kv.1 k)).map (·.2)
+
+/-- Store a response under its key (most-recent first). -/
+def RStore.insert (s : RStore) (k : _root_.Cache.Key) (r : Response) : RStore :=
+  ⟨(k, r) :: s.entries⟩
+
+/-- The `X-Cache: HIT` / `Age: 0` indicator a replayed response carries. -/
+def cacheHitHeaders : List (Bytes × Bytes) :=
+  [("x-cache".toUTF8.toList, "HIT".toUTF8.toList),
+   ("age".toUTF8.toList, "0".toUTF8.toList)]
+
+/-- Stamp the cache-hit indicator onto a replayed response. -/
+def withCacheHit (r : Response) : Response :=
+  { r with headers := r.headers ++ cacheHitHeaders }
+
+/-- **The stateful cache step the host threads.** `run` is the real serve (the
+whole deployed pipeline) invoked ONLY on a miss. On a HIT the stored response is
+replayed with the `X-Cache: HIT` indicator and `run` is NOT called; the store is
+unchanged. On a MISS `run` produces the real response, which is served and
+stored. -/
+def serveCached (s : RStore) (c : Ctx) (run : Ctx → Response) : Response × RStore :=
+  match s.get? (rkeyOf c) with
+  | some r => (withCacheHit r, s)
+  | none   => (run c, s.insert (rkeyOf c) (run c))
+
+/-- Inserting under `k` makes `k` findable with that response. -/
+theorem RStore.get_insert_self (s : RStore) (k : _root_.Cache.Key) (r : Response) :
+    (s.insert k r).get? k = some r := by
+  simp [RStore.insert, RStore.get?, List.find?_cons]
+
+/-- **Hit: the stored response is replayed, `run` untouched.** -/
+theorem serveCached_hit (s : RStore) (c : Ctx) (r : Response) (run : Ctx → Response)
+    (h : s.get? (rkeyOf c) = some r) :
+    serveCached s c run = (withCacheHit r, s) := by
+  simp [serveCached, h]
+
+/-- **Miss: `run` produces the response, which is served and stored.** -/
+theorem serveCached_miss (s : RStore) (c : Ctx) (run : Ctx → Response)
+    (h : s.get? (rkeyOf c) = none) :
+    serveCached s c run = (run c, s.insert (rkeyOf c) (run c)) := by
+  simp [serveCached, h]
+
+/-- **The handler is not re-run on a hit.** On a hit the output does not depend on
+`run` at all — swapping the serve leaves the replayed bytes identical. -/
+theorem serveCached_hit_no_handler (s : RStore) (c : Ctx) (r : Response)
+    (run run' : Ctx → Response) (h : s.get? (rkeyOf c) = some r) :
+    serveCached s c run = serveCached s c run' := by
+  rw [serveCached_hit s c r run h, serveCached_hit s c r run' h]
+
+/-- **The headline property.** After a first (miss) request populates the store
+with the real serve output `run c`, a SECOND identical request is served FROM the
+cache — the stored response replayed with the `X-Cache: HIT` indicator — WITHOUT
+invoking the serve again (the second `run'` is never called). The replayed body
+is exactly the first response's, so it never diverges from the deployed serve. -/
+theorem serveCached_second_hits (s : RStore) (c : Ctx) (run run' : Ctx → Response)
+    (hmiss : s.get? (rkeyOf c) = none) :
+    serveCached (serveCached s c run).2 c run'
+      = (withCacheHit (run c), (serveCached s c run).2) := by
+  have h1 : (serveCached s c run).2 = s.insert (rkeyOf c) (run c) := by
+    rw [serveCached_miss s c run hmiss]
+  have h2 : (serveCached s c run).2.get? (rkeyOf c) = some (run c) := by
+    rw [h1]; exact RStore.get_insert_self s (rkeyOf c) (run c)
+  exact serveCached_hit (serveCached s c run).2 c (run c) run' h2
+
+/-- **The `X-Cache: HIT` indicator is present on a replayed response** — the
+observable a client (and the conformance driver) reads to confirm a cache hit. -/
+theorem serveCached_hit_indicator (s : RStore) (c : Ctx) (r : Response)
+    (run : Ctx → Response) (h : s.get? (rkeyOf c) = some r) :
+    (("x-cache".toUTF8.toList, "HIT".toUTF8.toList) : Bytes × Bytes)
+      ∈ ((serveCached s c run).1).headers := by
+  rw [serveCached_hit s c r run h]
+  simp [withCacheHit, cacheHitHeaders]
+
+/-- **Concurrent same-key misses coalesce to ONE fetch.** This is the deployed
+cache's `Cache.St` request-collapsing machine (`locks` / `pending`), proven in
+`Cache.lean`: `n > 0` concurrent misses for one key emit exactly one upstream
+`fetch` and `n − 1` `wait`s. The host that threads `RStore` threads the same
+`Cache.St` locks, so a burst of identical misses forwards a single serve. -/
+theorem cache_coalesces (s : _root_.Cache.St) (k : _root_.Cache.Key) (now n : Nat)
+    (hn : 0 < n) (hget : s.store.get? k = none) (hlock : s.locked k = false) :
+    _root_.Cache.countE _root_.Cache.Eff.isFetch
+        (_root_.Cache.runEffs s (_root_.Cache.reqs k now n)) = 1 :=
+  (_root_.Cache.coalesce_single_fetch s k now n hn hget hlock).1
+
+#print axioms serveCached_second_hits
+#print axioms serveCached_hit_indicator
+#print axioms cache_coalesces
 
 end Reactor.Stage.Cache

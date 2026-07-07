@@ -1,0 +1,28 @@
+=== signed_lt_n2w64 ===
+⊢ ∀x y. x < 2 ** 63 ∧ y < 2 ** 63 ⇒ (n2w x < n2w y ⇔ x < y)
+[oracles: DISK_THM] [axioms: ]
+
+=== eval_bounds_expr ===
+⊢ stRel a off len r0 s ⇒
+  eval s
+    (Cmp Less (Var Local «alen») (Op Add [Var Local «off»; Var Local «len»])) =
+  SOME (ValWord (if boundScan a off len = NONE then 1w else 0w))
+[oracles: DISK_THM] [axioms: ]
+
+=== evaluate_boundsChk ===
+⊢ stRel a off len r0 s ⇒
+  evaluate (boundsChk,s) =
+  (NONE,
+   if boundScan a off len = NONE then
+     set_var «result» (ValWord (n2w (c0_encode (boundScan a off len)))) s
+   else s)
+[oracles: DISK_THM] [axioms: ]
+
+=== boundsChk_encodes_spec ===
+⊢ stRel a off len r0 s ⇒
+  ∃s'.
+    evaluate (boundsChk,s) = (NONE,s') ∧
+    (boundScan a off len = NONE ⇒
+     FLOOKUP s'.locals «result» =
+     SOME (ValWord (n2w (c0_encode (boundScan a off len))))) ∧
+    (boundScan a off len ≠ NONE ⇒ s' = s)

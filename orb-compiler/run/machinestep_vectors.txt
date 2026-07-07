@@ -1,0 +1,37 @@
+C2 MACHINE primitive — two-kernel behavioral agreement.
+Kernel 1: the Lean model (model/MachineStep.lean, `lean --run`).
+Kernel 2: the compiled Pancake x64 (cake --pancake, cc -O2 ... -lm), on hbox.
+The HOL4 kernel (hol-c2) proves the single-transition Link A (not run per-vector;
+it is a universally-quantified theorem over all c,b).
+
+=== Kernel 1 : Lean model (C2.run) ===
+CAP = 255
+run empty (len=0)  =>  0
+run all-low (len=5)  =>  0
+run three-events (len=5)  =>  3
+run boundary-127 (len=3)  =>  0
+run boundary-128 (len=3)  =>  3
+run mixed (len=7)  =>  4
+run event-burst-300 (len=300)  =>  255  (must be 255)
+run event-burst-255 (len=255)  =>  255  (must be 255)
+run event-burst-254 (len=254)  =>  254  (must be 254)
+
+=== Kernel 2 : compiled Pancake x64 (BYTES=... ./machinestep) ===
+empty            BYTES=[] => 0
+all-low          BYTES=[0 127 16 127 0] => 0
+three-events     BYTES=[128 255 129 127 0] => 3
+boundary-127     BYTES=[127 127 127] => 0
+boundary-128     BYTES=[128 128 128] => 3
+mixed            BYTES=[128 0 144 127 160 64 255] => 4
+burst-300        => 255       (300 events, saturates at CAP=255, NO wrap)
+burst-255        => 255
+burst-254        => 254
+
+Both columns identical. The boundary bytes 127 (< 128, holds) and 128 (>= 128,
+event) exercise the classify seam; the burst-300/255/254 vectors exercise the
+saturation seam (a counter that wrapped would read 44 or 0, not 255).
+
+Build (hbox): cake at ~/r05/cake-x64-64/cake ; CakeML tree ~/src/cakeml ; HOL ~/src/HOL.
+  ~/r05/cake-x64-64/cake --pancake < machinestep.pnk > machinestep.S
+  cc -O2 machinestep.S basis_ffi.c machinestep_ffi.c -lm -o machinestep
+machinestep.S = 10089 bytes; cake_exit=0, cc_exit=0.

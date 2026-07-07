@@ -158,10 +158,13 @@ def checks : IO (List Check) := do
       out.flight.toList.take 3 == [0x16, 0x03, 0x03]⟩]
     cs := cs ++ [⟨"  established secrets derived (server hs traffic present)",
       est.schedule.serverHs.isSome⟩]
-    -- The keys are a pure function of (dhe, thHS, thSF): `hs_transcript_drives_keys`
-    -- proves `est.schedule = deriveSchedule est.dhe est.thHS est.thSF` in the kernel.
-    cs := cs ++ [⟨"  key schedule = deriveSchedule(dhe, thHS, thSF) [proven: hs_transcript_drives_keys]",
-      have _ : est.schedule = TlsCrypto.deriveSchedule est.dhe est.thHS est.thSF :=
+    -- The keys are a pure function of (psk, dhe, thHS, thSF):
+    -- `hs_transcript_drives_keys` proves
+    -- `est.schedule = deriveSchedulePsk est.psk est.dhe est.thHS est.thSF` in
+    -- the kernel (`deriveSchedule` exactly at the zero-IKM point).
+    cs := cs ++ [⟨"  key schedule = deriveSchedulePsk(psk, dhe, thHS, thSF) [proven: hs_transcript_drives_keys]",
+      have _ : est.schedule
+          = TlsCrypto.deriveSchedulePsk est.psk est.dhe est.thHS est.thSF :=
         hs_transcript_drives_keys est
       true⟩]
 
@@ -184,6 +187,27 @@ def checks : IO (List Check) := do
     | none => cs := cs ++ [⟨"seal client Finished record", false⟩]
   | (.failed, _) => cs := cs ++ [⟨"serverStep waitCH → waitClientFinished", false⟩]
   | _ => cs := cs ++ [⟨"serverStep waitCH → waitClientFinished", false⟩]
+
+  -- (6) Stateless resumption tickets (RFC 8446 §4.6.1/§4.2.11): seal → open
+  -- recovers the PSK on the linked AEAD (`ticket_roundtrip` proves this for
+  -- all inputs; this executes one instance), and the NewSessionTicket message
+  -- is well-formed (type 4, correct uint24 length).
+  let tk := ticketKey certSeed
+  let psk0 := sha256 "resumption psk".toUTF8
+  cs := cs ++ [⟨"ticket seal → open = PSK",
+    match sealTicket tk (zeros 12) psk0 with
+    | some t => (match openTicket tk t.toList with
+                 | some p => eqBA p psk0
+                 | none => false)
+    | none => false⟩]
+  cs := cs ++ [⟨"NewSessionTicket well-formed (type 4, uint24 length)",
+    match buildNewSessionTicket tk (zeros 12) (sha256 "rms".toUTF8) 0x11223344 with
+    | some msg =>
+      (match msg.toList with
+       | 0x04 :: l1 :: l2 :: l3 :: body =>
+         l1.toNat * 65536 + l2.toNat * 256 + l3.toNat == body.length
+       | _ => false)
+    | none => false⟩]
 
   return cs
 

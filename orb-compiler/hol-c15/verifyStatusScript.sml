@@ -1,0 +1,26 @@
+open HolKernel boolLib bossLib Parse;
+open statusEndToEndTheory statusInstallTheory statusLinkBInstTheory statusCoreTheory
+     statusMainRefineTheory statusSemTheory statusWrapperTheory;
+val _ = new_theory "verifyStatus";
+val _ = Globals.show_tags := true;
+fun banner s = print ("\n@@@ "^s^"\n");
+banner "status_machine_code (tags shown)";
+val _ = print (thm_to_string status_machine_code);
+banner "AXIOM COUNTS (must be 0)";
+val _ = print ("axioms statusEndToEnd  = " ^ Int.toString (length (axioms "statusEndToEnd")) ^ "\n");
+val _ = print ("axioms statusInstall   = " ^ Int.toString (length (axioms "statusInstall")) ^ "\n");
+val _ = print ("axioms statusLinkBInst = " ^ Int.toString (length (axioms "statusLinkBInst")) ^ "\n");
+val _ = print ("axioms statusMainRefine= " ^ Int.toString (length (axioms "statusMainRefine")) ^ "\n");
+val _ = print ("axioms statusSem       = " ^ Int.toString (length (axioms "statusSem")) ^ "\n");
+val _ = print ("axioms statusWrapper   = " ^ Int.toString (length (axioms "statusWrapper")) ^ "\n");
+val _ = print ("axioms statusCore      = " ^ Int.toString (length (axioms "statusCore")) ^ "\n");
+val _ = print ("axioms c14Generic      = " ^ Int.toString (length (axioms "c14Generic")) ^ "\n");
+val _ = print ("axioms panAuto         = " ^ Int.toString (length (axioms "panAuto")) ^ "\n");
+banner "statusClassProg_linkB (backend half, tags shown)";
+val _ = print (thm_to_string statusClassProg_linkB);
+banner "evaluate_statusCore (AUTO-derived branch core, tags shown)";
+val _ = print (thm_to_string evaluate_statusCore);
+banner "statusClassProg_is_parser_output (leanc-out-of-TCB, tags shown)";
+val _ = print (thm_to_string statusClassProg_is_parser_output);
+banner "DONE";
+val _ = export_theory ();

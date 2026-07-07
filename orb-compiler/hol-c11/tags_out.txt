@@ -1,0 +1,23 @@
+
+---------------------------------------------------------------------
+     HOL4 [Trindemossen 2 (stdknl, built Thu Jul 02 02:35:34 2026)]
+
+     For introductory HOL help, type: help "hol";
+     To exit type <Control>-D
+---------------------------------------------------------------------
+** Load path (see loadPath variable) now contains 60 entries
+** after consulting Holmakefiles
+
+> <<HOL message: intLib loaded.  Use intLib.deprecate_int() to turn off integer parsing>>
+val tagof = fn: thm -> PolyML.pretty
+
+=== TAG boundScanProg_linkB ===
+[oracles: DISK_THM] [axioms: ]
+=== TAG boundScanProg_is_parser_output ===
+[oracles: DISK_THM] [axioms: ]
+=== TAG boundScanProg_pancake_good_code ===
+[oracles: DISK_THM] [axioms: ]
+=== axioms count ===
+0
+=== ENDTAGS ===
+> 

@@ -1,3 +1,5 @@
+import Reactor.Serialize
+
 /-
 # Cgi — the CGI/1.1 gateway (RFC 3875)
 
@@ -122,6 +124,29 @@ structure Req where
   remoteHost : String := ""
   remoteIdent : String := ""
   remoteUser : String := ""
+
+/-! ## Request-target splitting (RFC 3875 §4.1.7 / §4.1.13) -/
+
+/-- Split a request-target into its path portion and query component at the
+**first** `?` (RFC 3875 §4.1.7 / §4.1.13). The path portion (everything before
+the first `?`) identifies the CGI script and is what `SCRIPT_NAME` carries; the
+query component is the substring **after** the first `?` (without the `?`
+delimiter, and without splitting on any later `?`), and is empty when the target
+carries no `?`. Total: defined for every input string. -/
+def splitTarget (target : String) : String × String :=
+  let cs := target.toList
+  let path := cs.takeWhile (· ≠ '?')
+  match cs.dropWhile (· ≠ '?') with
+  | []      => (String.mk path, "")          -- no `?`: whole target is the path
+  | _ :: q  => (String.mk path, String.mk q) -- drop the leading `?`; keep the rest verbatim
+
+/-- The path portion of a request-target (before the first `?`) — what
+`SCRIPT_NAME`/`PATH_INFO` are drawn from (RFC 3875 §4.1.13). -/
+def targetPath (target : String) : String := (splitTarget target).1
+
+/-- The query component of a request-target — the substring after the first `?`,
+without the `?`, empty when absent (RFC 3875 §4.1.7). -/
+def targetQuery (target : String) : String := (splitTarget target).2
 
 /-! ## The meta-variable mapping (RFC 3875 §4.1) -/
 
@@ -296,5 +321,152 @@ theorem local_redirect_classifies (loc : String) (h : isLocal loc = true) :
 theorem client_redirectdoc_example :
     (CgiResp.clientRedirectDoc "https://example/x" 302 "text/html" []).httpStatus
       = 302 := by decide
+
+/-! ## The gateway RUNS the script (RFC 3875 §7)
+
+Everything above models the *shape* of the CGI boundary — the meta-variable
+environment (§4.1) and the response classification (§6.2). This section is the
+gateway itself: it renders the environment onto a real child process, executes
+the script, and frames the child's stdout into an HTTP response. The one thing
+Lean cannot do purely — `fork`/`execve` — is the single `@[extern]` primitive
+`execBytes`, bound to `ffi/cgi_exec.c`; every other step (env rendering, header
+parsing, response classification) is total Lean code proved out above. -/
+
+/-- **The process-spawn primitive (RFC 3875 §7).** Run `script` as a child
+process with `envBlock` (a newline-separated `NAME=VALUE` environment, one line
+per entry) installed as the child's environment and `stdin` fed on its standard
+input; return the child's standard output. Opaque, bound to the POSIX
+`fork`/`execve` shim `ffi/cgi_exec.c` (`drorb_cgi_exec`). This is the ONLY
+impure step; it carries no proof obligation beyond totality of its Lean type. -/
+@[extern "drorb_cgi_exec"]
+opaque execBytes (script : @&String) (envBlock : @&String)
+    (stdin : @&ByteArray) : ByteArray
+
+/-- Render the meta-variable environment (`Cgi.envList`) as the newline-separated
+`NAME=VALUE` block the shim installs. The value keeps every byte after the first
+`=`, so a `QUERY_STRING=a=1&b=2` round-trips intact. -/
+def envBlockOf (env : List (String × String)) : String :=
+  String.intercalate "\n" (env.map (fun p => p.1 ++ "=" ++ p.2))
+
+/-- The `Req` the deployed CGI route runs a script under: a complete RFC 3875
+§4.1 environment (all 17 meta-variables receive a value). The server identity is
+fixed by the gateway; the script path fills `SCRIPT_NAME`; request-optional
+variables take the empty string per the §4.1 `"" | ...` productions. -/
+def deployReq (script : String) : Req :=
+  { requestMethod  := "GET"
+    scriptName     := script
+    serverName     := "drorb"
+    serverPort     := "80"
+    serverProtocol := "HTTP/1.1"
+    serverSoftware := "drorb/0.1"
+    gatewayInterface := "CGI/1.1"
+    remoteAddr     := "127.0.0.1" }
+
+/-! ### Parsing the script's response (RFC 3875 §6) -/
+
+/-- ASCII-lowercase a header name for case-insensitive comparison (§6.3 field
+names are case-insensitive). -/
+def lowerAscii (s : String) : String :=
+  String.mk (s.toList.map Char.toLower)
+
+/-- The leading status code of a `Status:` value (`"302 Found" ↦ some 302`). -/
+def firstNat (v : String) : Option Nat :=
+  match v.trim.splitOn " " with
+  | s :: _ => s.toNat?
+  | []     => none
+
+/-- Split the script's raw output into its header block and body at the first
+blank line (RFC 3875 §6: the CGI header fields are terminated by an empty line;
+the remainder is the response body). Handles `LF LF`, `CRLF CRLF`, and the mixed
+`LF CRLF` boundary; a body-less output yields an empty body. Total. -/
+def splitHead (rem : List UInt8) (pre : List UInt8) : List UInt8 × List UInt8 :=
+  match rem with
+  | 10 :: 10 :: rest             => (pre.reverse, rest)
+  | 13 :: 10 :: 13 :: 10 :: rest => (pre.reverse, rest)
+  | 10 :: 13 :: 10 :: rest       => (pre.reverse, rest)
+  | b :: rest                    => splitHead rest (b :: pre)
+  | []                           => (pre.reverse, [])
+
+/-- Parse the header block bytes into the three CGI header fields (§6.3.1–§6.3.3:
+Content-Type, Location, Status). Each line is `Name: Value`; the value keeps
+every byte after the first `:` (so a `Location: http://h/p` URL survives), then
+is OWS-trimmed. Unknown fields are ignored per the documented boundary. -/
+def parseHeaders (head : List UInt8) : ScriptOut :=
+  let text := String.mk (head.map (fun x => Char.ofNat x.toNat))
+  let rawLines := text.splitOn "\n"
+  let lines := rawLines.map (fun l => if l.endsWith "\r" then l.dropRight 1 else l)
+  lines.foldl (fun acc line =>
+    match line.splitOn ":" with
+    | name :: rest =>
+      let v := (String.intercalate ":" rest).trim
+      let nl := lowerAscii name.trim
+      if nl == "content-type" then { acc with contentType := some v }
+      else if nl == "location" then { acc with location := some v }
+      else if nl == "status" then { acc with status := firstNat v }
+      else acc
+    | [] => acc) ({} : ScriptOut)
+
+/-- Reason-phrase bytes for the CGI-derived HTTP statuses. -/
+def reasonPhrase (st : Nat) : Bytes :=
+  (if st == 200 then "OK"
+   else if st == 302 then "Found"
+   else if st == 500 then "Internal Server Error"
+   else if st == 502 then "Bad Gateway"
+   else "").toUTF8.toList
+
+/-- Header name/value as wire bytes. -/
+private def hdr (name value : String) : Bytes × Bytes :=
+  (name.toUTF8.toList, value.toUTF8.toList)
+
+/-- Frame a classified CGI response (RFC 3875 §6.2) into the deployed HTTP
+`Reactor.Response`: document → its status + Content-Type + body; client redirect
+→ 302 + Location; client redirect with document → its status + Content-Type +
+Location + body; local redirect → 200 (reprocessed internally, modeled empty);
+malformed (`none`) → 502. -/
+def respOf : Option CgiResp → Reactor.Response
+  | some (.document ct st body) =>
+    { status := st, reason := reasonPhrase st,
+      headers := [hdr "Content-Type" ct], body := body }
+  | some (.clientRedirect loc) =>
+    { status := 302, reason := reasonPhrase 302,
+      headers := [hdr "Location" loc], body := [] }
+  | some (.clientRedirectDoc loc st ct body) =>
+    { status := st, reason := reasonPhrase st,
+      headers := [hdr "Content-Type" ct, hdr "Location" loc], body := body }
+  | some (.localRedirect _) =>
+    { status := 200, reason := reasonPhrase 200, headers := [], body := [] }
+  | none =>
+    { status := 502, reason := reasonPhrase 502, headers := [],
+      body := "cgi: no CGI header field in script output".toUTF8.toList }
+
+/-- **`serveCgi` — the deployed CGI handler (RFC 3875 §7 + §6.2).** Build the
+§4.1 meta-variable environment for `script`, run the script as a real child
+process under that environment (the `execBytes` shim), split its output into the
+CGI header block and body (§6), classify the header block (§6.2), and frame the
+result as the HTTP response. This is the function the deployed route dispatches;
+it genuinely spawns a process and returns the script's stdout. -/
+def serveCgi (script : String) : Reactor.Response :=
+  let out := (execBytes script (envBlockOf (envList (deployReq script)))
+                ByteArray.empty).toList
+  let (head, body) := splitHead out []
+  respOf (classify { parseHeaders head with body := body })
+
+/-! ### Facts about the deployed handler (pure parts; the spawn is opaque) -/
+
+/-- The environment the deployed handler installs is the complete RFC 3875 §4.1
+environment: 17 meta-variables, every one mapped (`envList_length`). -/
+theorem deploy_env_complete (script : String) :
+    (envList (deployReq script)).length = 17 := envList_length _
+
+/-- The deployed handler installs `SCRIPT_NAME` = the script path and
+`GATEWAY_INTERFACE` = `CGI/1.1` (§4.1.4/§4.1.13). -/
+theorem deploy_env_scriptName (script : String) :
+    env (deployReq script) .scriptName = script
+    ∧ env (deployReq script) .gatewayInterface = "CGI/1.1" := ⟨rfl, rfl⟩
+
+/-- An empty header block followed by a blank line splits to an empty header and
+the whole remainder as body (RFC 3875 §6). -/
+theorem splitHead_blank_first (body : List UInt8) :
+    splitHead (10 :: 10 :: body) [] = ([], body) := rfl
 
 end Cgi

@@ -1,0 +1,31 @@
+
+---------------------------------------------------------------------
+     HOL4 [Trindemossen 2 (stdknl, built Thu Jul 02 02:35:34 2026)]
+
+     For introductory HOL help, type: help "hol";
+     To exit type <Control>-D
+---------------------------------------------------------------------
+** Load path (see loadPath variable) now contains 62 entries
+** after consulting Holmakefiles
+
+> <<HOL message: intLib loaded.  Use intLib.deprecate_int() to turn off integer parsing>>
+
+===== PHASE 1: digest loop invariant =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ digInv a off buf len 0 0 s ∧ len ≤ s.clock ⇒
+  ∃s'.
+    evaluate (digLoop,s) = (NONE,s') ∧
+    FLOOKUP s'.locals «acc» = SOME (ValWord (n2w (dscan a off len 0))) ∧
+    ∀v. v ≠ «acc» ∧ v ≠ «i» ⇒ FLOOKUP s'.locals v = FLOOKUP s.locals v
+
+===== PHASE 2a: whole decision+digest core =====
+[oracles: DISK_THM] [axioms: ] []
+⊢ coreRel a off len buf r0 s ∧ len ≤ s.clock ⇒
+  ∃s'.
+    evaluate (innerCore,s) = (NONE,s') ∧
+    FLOOKUP s'.locals «result» =
+    SOME (ValWord (n2w (c0_encode (boundScan a off len))))
+
+axioms boundScanDigestLinkA = 0
+axioms boundScanCoreLinkA   = 0
+> 

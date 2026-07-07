@@ -62,15 +62,57 @@ def statusIndex (status : Nat) : Option Nat :=
   else if status = 500 then some 14
   else none
 
-/-- One HPACK string literal: a 7-bit length prefix (Huffman bit clear) then the
-raw bytes. Assumes `bs.length < 128` (a single length octet). -/
-def encodeStr (bs : Bytes) : Bytes := UInt8.ofNat bs.length :: bs
+/-- HPACK integer continuation octets (RFC 7541 §5.1) for the amount `m` left
+after a saturated 7-bit prefix: base-128 little-endian, every octet's high bit
+set to mark continuation except the final one. The inverse of
+`H2.Hpack.decIntCont` started at `acc = 127`, `shift = 0`. -/
+def encodeIntCont (m : Nat) : Bytes :=
+  if m < 128 then [UInt8.ofNat m]
+  else UInt8.ofNat (m % 128 + 128) :: encodeIntCont (m / 128)
+termination_by m
+decreasing_by exact Nat.div_lt_self (by omega) (by omega)
+
+/-- The HPACK length prefix (RFC 7541 §5.1, 7-bit prefix with the Huffman flag
+clear) for a raw string of `len` octets: a single octet `len` when `len < 127`,
+otherwise the saturated prefix `0x7F` (127, Huffman flag clear) followed by
+`len - 127` as continuation octets. The inverse of `H2.Hpack.decPrefixInt 7` on a
+Huffman-clear first octet. -/
+def encodeLen (len : Nat) : Bytes :=
+  if len < 127 then [UInt8.ofNat len]
+  else 0x7F :: encodeIntCont (len - 127)
+
+/-- One HPACK string literal: the RFC 7541 §5.1 length prefix (Huffman flag
+clear) then the raw bytes. Correct for **any** length — a value of 128 octets or
+more uses the multi-octet continuation encoding, so its length never overflows
+the 7-bit prefix into the Huffman flag bit (which would corrupt the whole header
+block). -/
+def encodeStr (bs : Bytes) : Bytes := encodeLen bs.length ++ bs
+
+/-! **RUNTIME ROUND-TRIP for the multi-octet length path (`#guard`).** A 200-octet
+string literal — well past the 127-octet single-prefix ceiling — encoded by
+`encodeStr` reads back, through the REAL `H2.Hpack.readStr` (its own
+`decPrefixInt`/`decIntCont` prefix-integer decoder), to exactly the input bytes,
+consuming exactly the whole literal (`0x7F`, one continuation octet, 200 body =
+202 octets). The old single-octet form would have written `0xC8` — Huffman flag
+set, length prefix 72 — and corrupted the stream; this pins the fix. -/
+#guard
+  (H2.Hpack.readStr ⟨fun _ => none⟩ (encodeStr (List.replicate 200 (0x61 : UInt8)))).toOption
+    = some (List.replicate 200 (0x61 : UInt8), 202)
+
+/-- Lowercase an ASCII header field name (`A`–`Z` → `a`–`z`, other octets
+unchanged). RFC 9113 §8.2.1: an HTTP/2 field name MUST be lowercase on the wire;
+a real H2 client (nghttp2) rejects the whole response otherwise. Applied to
+regular field names in the response header block (pseudo-headers like `:status`
+are already lowercase). -/
+def lowerName (bs : Bytes) : Bytes :=
+  bs.map fun b => if 0x41 ≤ b.toNat ∧ b.toNat ≤ 0x5A then b + 0x20 else b
 
 /-- One literal header field without indexing (RFC 7541 §6.2.2): first octet
-`0x00` (pattern `0000`, index 0 ⇒ literal name), then the name and value string
-literals. The inverse of the `decodeLiteralField idx = 0` path. -/
+`0x00` (pattern `0000`, index 0 ⇒ literal name), then the name (lowercased per
+RFC 9113 §8.2.1) and value string literals. The inverse of the
+`decodeLiteralField idx = 0` path. -/
 def encodeHeaderField (name value : Bytes) : Bytes :=
-  0x00 :: encodeStr name ++ encodeStr value
+  0x00 :: encodeStr (lowerName name) ++ encodeStr value
 
 /-- The HPACK `:status` field: an **indexed** octet (`0x80 ||| idx`) for a code
 in the static table, else a literal field naming `:status` with the decimal code

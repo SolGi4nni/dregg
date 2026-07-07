@@ -1,0 +1,120 @@
+@@@ step_machine_code (tags shown)
+[oracles: DISK_THM] [axioms: ] []
+⊢ (compile_prog_max c mc stepGateProg = (SOME (bytes,bitmaps,c'),stack_max) ∧
+   s.code = FEMPTY ∧ s.locals = FEMPTY ∧ s.globals = FEMPTY ∧
+   FDOM s.eshapes = FDOM (get_eids (functions stepGateProg)) ∧
+   backend_config_ok mc.target.config c ∧ mc_conf_ok mc ∧
+   mc_init_ok mc.target.config c mc ∧ mc.target.config.ISA ≠ Ag32 ∧
+   0w <₊ mc.target.get_reg ms mc.len_reg ∧
+   globals_size =
+   (let
+      dec_shs = dec_shapes stepGateProg;
+      struct_ctxt = decs_stcnames [] stepGateProg
+    in
+      SUM (MAP (size_of_sh_with_ctxt (THE struct_ctxt)) dec_shs)) ∧
+   mc.target.get_reg ms mc.len_reg <₊ mc.target.get_reg ms mc.ptr2_reg ∧
+   mc.target.get_reg ms mc.len_reg = s.base_addr ∧
+   globals_allocatable s stepGateProg ∧
+   heap_len =
+   w2n (mc.target.get_reg ms mc.ptr2_reg + -1w * s.base_addr) DIV
+   (dimindex (:64) DIV 8) ∧
+   s.top_addr =
+   s.base_addr + bytes_in_word * n2w heap_len −
+   n2w (globals_size * dimindex (:64) DIV 8) ∧ globals_size ≤ heap_len ∧
+   s.memaddrs =
+   addresses (mc.target.get_reg ms mc.len_reg) (heap_len − globals_size) ∧
+   aligned (shift (:64) + 1)
+     (mc.target.get_reg ms mc.ptr2_reg +
+      -1w * mc.target.get_reg ms mc.len_reg) ∧
+   adj_ptr2 =
+   mc.target.get_reg ms mc.len_reg + bytes_in_word * n2w max_stack_alloc ∧
+   adj_ptr4 =
+   mc.target.get_reg ms mc.len2_reg − bytes_in_word * n2w max_stack_alloc ∧
+   adj_ptr2 ≤₊ mc.target.get_reg ms mc.ptr2_reg ∧
+   mc.target.get_reg ms mc.ptr2_reg ≤₊ adj_ptr4 ∧
+   w2n
+     (mc.target.get_reg ms mc.ptr2_reg +
+      -1w * mc.target.get_reg ms mc.len_reg) ≤
+   w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) ∧
+   w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) <
+   dimword (:64) ∧ s.ffi = ffi ∧ (mc.target.config.big_endian ⇔ s.be) ∧
+   OPTION_ALL (EVERY (λx. ∃s. x = ExtCall s)) c.lab_conf.ffi_names ∧
+   pan_installed bytes cbspace bitmaps data_sp c'.lab_conf.ffi_names
+     (heap_regs c.stack_conf.reg_names) mc c'.lab_conf.shmem_extra ms
+     (wlab_wloc ∘ s.memory) s.memaddrs s.sh_memaddrs) ∧ stepFFI c b s ⇒
+  ∃loadEv rb.
+    machine_sem mc ffi ms ⊆
+    extend_with_resource_limit'
+      (option_lt stack_max
+         (SOME (FST (read_limits mc.target.config c mc ms))))
+      {Terminate Success
+         (s.ffi.io_events ++ loadEv ++
+          [IO_event (ExtCall «report_vec»)
+             (word_to_bytes (n2w (mstep c b)) F) rb])}
+@@@ AXIOM COUNTS (must be 0)
+axioms stepEndToEnd  = 0
+axioms stepInstall   = 0
+axioms stepLinkBInst = 0
+axioms stepMainRefine= 0
+axioms stepSem       = 0
+axioms stepWrapper   = 0
+axioms stepCore      = 0
+
+@@@ stepGateProg_linkB (backend half, tags shown)
+[oracles: DISK_THM] [axioms: ] []
+⊢ compile_prog_max c mc stepGateProg = (SOME (bytes,bitmaps,c'),stack_max) ∧
+  s.code = FEMPTY ∧ s.locals = FEMPTY ∧ s.globals = FEMPTY ∧
+  FDOM s.eshapes = FDOM (get_eids (functions stepGateProg)) ∧
+  backend_config_ok mc.target.config c ∧ mc_conf_ok mc ∧
+  mc_init_ok mc.target.config c mc ∧ mc.target.config.ISA ≠ Ag32 ∧
+  0w <₊ mc.target.get_reg ms mc.len_reg ∧
+  globals_size =
+  (let
+     dec_shs = dec_shapes stepGateProg;
+     struct_ctxt = decs_stcnames [] stepGateProg
+   in
+     SUM (MAP (size_of_sh_with_ctxt (THE struct_ctxt)) dec_shs)) ∧
+  mc.target.get_reg ms mc.len_reg <₊ mc.target.get_reg ms mc.ptr2_reg ∧
+  mc.target.get_reg ms mc.len_reg = s.base_addr ∧
+  globals_allocatable s stepGateProg ∧
+  heap_len =
+  w2n (mc.target.get_reg ms mc.ptr2_reg + -1w * s.base_addr) DIV
+  (dimindex (:64) DIV 8) ∧
+  s.top_addr =
+  s.base_addr + bytes_in_word * n2w heap_len −
+  n2w (globals_size * dimindex (:64) DIV 8) ∧ globals_size ≤ heap_len ∧
+  s.memaddrs =
+  addresses (mc.target.get_reg ms mc.len_reg) (heap_len − globals_size) ∧
+  aligned (shift (:64) + 1)
+    (mc.target.get_reg ms mc.ptr2_reg + -1w * mc.target.get_reg ms mc.len_reg) ∧
+  adj_ptr2 =
+  mc.target.get_reg ms mc.len_reg + bytes_in_word * n2w max_stack_alloc ∧
+  adj_ptr4 =
+  mc.target.get_reg ms mc.len2_reg − bytes_in_word * n2w max_stack_alloc ∧
+  adj_ptr2 ≤₊ mc.target.get_reg ms mc.ptr2_reg ∧
+  mc.target.get_reg ms mc.ptr2_reg ≤₊ adj_ptr4 ∧
+  w2n
+    (mc.target.get_reg ms mc.ptr2_reg + -1w * mc.target.get_reg ms mc.len_reg) ≤
+  w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) ∧
+  w2n bytes_in_word * (2 * max_heap_limit (:64) c.data_conf − 1) <
+  dimword (:64) ∧ s.ffi = ffi ∧ (mc.target.config.big_endian ⇔ s.be) ∧
+  OPTION_ALL (EVERY (λx. ∃s. x = ExtCall s)) c.lab_conf.ffi_names ∧
+  pan_installed bytes cbspace bitmaps data_sp c'.lab_conf.ffi_names
+    (heap_regs c.stack_conf.reg_names) mc c'.lab_conf.shmem_extra ms
+    (wlab_wloc ∘ s.memory) s.memaddrs s.sh_memaddrs ∧
+  semantics_decls s «main» stepGateProg ≠ Fail ⇒
+  machine_sem mc ffi ms ⊆
+  extend_with_resource_limit'
+    (option_lt stack_max (SOME (FST (read_limits mc.target.config c mc ms))))
+    {semantics_decls s «main» stepGateProg}
+@@@ evaluate_stepCore (bespoke branch core, tags shown)
+[oracles: DISK_THM] [axioms: ] []
+⊢ stepRel c b r0 s ⇒
+  evaluate (stepCore,s) =
+  (NONE,set_var «result» (ValWord (n2w (mstep c b))) s)
+@@@ stepGateProg_is_parser_output (leanc-out-of-TCB, tags shown)
+[oracles: DISK_THM] [axioms: ] []
+⊢ parse_topdecs_to_ast
+    "// C14 probe: the MACHINE primitive as a BRANCH-ONLY step (no loop), in Pancake.\n// This is the IMPLEMENTATION whose emitted machine code must refine the Lean\n// SPEC `C2.step` (model/MachineStep.lean): a saturating event-counter step.\n// Structurally DIFFERENT from boundScan (a nested decision, NO While loop) \226\128\148\n// the branch-only case whose Link A is decidable by case-split.\n//\n// Control block at @base (staged/read by the FFI driver, @load_vec/@report_vec):\n//   [0 ..8)   c   (counter, invariant c <= 255)   (staged by @load_vec)\n//   [8 ..16)  b   (input byte, b < 256)           (staged by @load_vec)\n//   [24..32)  result word (next counter)          (written here; read by @report_vec)\n//\n// The transition (matches C2.step, exactly the c2 stepBody):\n//   b <  128  -> HOLD      (result = c)\n//   b >= 128  -> EVENT     (saturating: result = c+1 if c<255 else 255)\n//\n// Compile: cake --pancake < machinestep_gate.pnk > machinestep_gate.S\n\nfun main() {\n  var base = @base;\n  var buf = base + 32;\n  @load_vec(base, 24, buf, 4096);\n  var c = lds 1 base;\n  var b = lds 1 (base + 8);\n  var result = 0;\n  if b < 128 {\n    result = c;\n  } else {\n    if c < 255 {\n      result = c + 1;\n    } else {\n      result = 255;\n    }\n  }\n  st base + 24, result;\n  @report_vec(base + 24, 8, base, 8);\n  return 0;\n}\n" =
+  INL stepGateProg
+@@@ DONE

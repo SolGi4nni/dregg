@@ -1,0 +1,23 @@
+C8 collect — two kernels agree (compiled cake binary vs the Lean/HOL collectSp spec):
+
+  collect[n=N]  = the collected-offset arena the emitted collectLoop BUILT IN MEMORY, read back
+  spec:         = collectSp LINE recomputed directly from the bytes (the delimiter offsets)
+
+LINE="GET / HTTP/1.1"               -> collect[n=2]: 3 5        spec: 3 5
+LINE="POST /api/v1/users HTTP/1.1"  -> collect[n=2]: 4 18       spec: 4 18
+LINE="GET /index.html HTTP/1.0"     -> collect[n=2]: 3 15       spec: 3 15
+LINE="DELETE /a/b/c HTTP/2"         -> collect[n=2]: 6 13       spec: 6 13
+LINE="a b c d e"                    -> collect[n=4]: 1 3 5 7     spec: 1 3 5 7
+LINE="nospaces"                     -> collect[n=0]:            spec:
+LINE="  leading"                    -> collect[n=2]: 0 1        spec: 0 1
+LINE="trailing  "                   -> collect[n=2]: 8 9        spec: 8 9
+
+Every row: the arena the emitted program built IN MEMORY (a DATA-DEPENDENT count
+of records — n = the number of delimiters, ranging 0..4 here — whose CONTENTS are
+read FROM the input, the actual delimiter offsets) equals `collectSp input`
+byte-for-byte.  This is the Kernel-2 companion to `collectLoop_refines_collectSp`.
+
+Reproduce (hbox, work dir with the C2/C3/C5/C6/C7 scripts + arenaCollectLinkAScript.sml):
+  ./cake --pancake < pnk/collect.pnk > collect.S
+  cc -O2 collect.S basis_ffi.c pnk/collect_ffi.c -o collect -lm
+  LINE="GET / HTTP/1.1" ./collect          # -> collect[n=2]: 3 5   spec: 3 5

@@ -2,6 +2,7 @@ import Proto.Step
 import H2.Frame
 import H2.Hpack
 import H2.Stream
+import H3.Qpack
 
 /-!
 # Reactor.H2 — wiring the real HTTP/2 engine into the connection FSM
@@ -48,10 +49,17 @@ open Proto (H2Conn H2Event Request Bytes Output)
 /-- The peer's advertised `SETTINGS_MAX_FRAME_SIZE` (RFC 9113 §4.2 default). -/
 def h2MaxFrameSize : Nat := 16384
 
-/-- The Huffman decoder plugged into the HPACK decode. Reject-all: the theorems
-hold for *every* decoder behavior (`H2.Hpack` axiomatizes the interface), and
-the seam vectors avoid the Huffman bit. -/
-def h2Huffman : H2.Hpack.HuffmanDecoder := ⟨fun _ => none⟩
+/-- The Huffman decoder plugged into the HPACK decode: the **real** RFC 7541
+Appendix B decoder (`H3.Qpack.huffmanDecode`, proven a faithful inverse of the
+RFC encoder in `HuffmanCorrect.lean`). A live H2 client (curl/nghttp2) Huffman-
+codes its `:authority`/`:path`/`user-agent`/`accept` field values; with the
+former reject-all stub those blocks failed to decode and every such request fell
+through to the guarded `403`. The interface is axiomatized, so every theorem in
+`H2.Hpack` holds for *any* decoder behavior — they take the decode result as a
+hypothesis; swapping in the real decoder only lets Huffman-coded field lines
+decode (non-Huffman inputs never consult it, so all existing vectors are
+unchanged). -/
+def h2Huffman : H2.Hpack.HuffmanDecoder := ⟨H3.Qpack.huffmanDecode⟩
 
 /-- A fresh empty arena the HPACK decode of one header block writes into. -/
 def h2EmptyStore : Arena.Store := { main := #[], sidecar := #[], entries := [] }

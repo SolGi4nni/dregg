@@ -1,0 +1,37 @@
+// C14 probe: the MACHINE primitive as a BRANCH-ONLY step (no loop), in Pancake.
+// This is the IMPLEMENTATION whose emitted machine code must refine the Lean
+// SPEC `C2.step` (model/MachineStep.lean): a saturating event-counter step.
+// Structurally DIFFERENT from boundScan (a nested decision, NO While loop) —
+// the branch-only case whose Link A is decidable by case-split.
+//
+// Control block at @base (staged/read by the FFI driver, @load_vec/@report_vec):
+//   [0 ..8)   c   (counter, invariant c <= 255)   (staged by @load_vec)
+//   [8 ..16)  b   (input byte, b < 256)           (staged by @load_vec)
+//   [24..32)  result word (next counter)          (written here; read by @report_vec)
+//
+// The transition (matches C2.step, exactly the c2 stepBody):
+//   b <  128  -> HOLD      (result = c)
+//   b >= 128  -> EVENT     (saturating: result = c+1 if c<255 else 255)
+//
+// Compile: cake --pancake < machinestep_gate.pnk > machinestep_gate.S
+
+fun main() {
+  var base = @base;
+  var buf = base + 32;
+  @load_vec(base, 24, buf, 4096);
+  var c = lds 1 base;
+  var b = lds 1 (base + 8);
+  var result = 0;
+  if b < 128 {
+    result = c;
+  } else {
+    if c < 255 {
+      result = c + 1;
+    } else {
+      result = 255;
+    }
+  }
+  st base + 24, result;
+  @report_vec(base + 24, 8, base, 8);
+  return 0;
+}

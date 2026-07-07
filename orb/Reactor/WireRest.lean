@@ -94,11 +94,16 @@ theorem fallback_deployed_wins (input : Bytes) (req : Proto.Request)
 /-! ## (2) Cgi — the CGI environment of the deployed request is total -/
 
 /-- The CGI/1.1 meta-variable request derived from the deployed dispatched
-request: `REQUEST_METHOD` / `SCRIPT_NAME` come from the request head; the server
-identity is the deployed listener's. -/
+request: `REQUEST_METHOD` comes from the request head; `SCRIPT_NAME` and
+`QUERY_STRING` are the request-target split at the first `?` per RFC 3875
+§4.1.7 / §4.1.13 (`SCRIPT_NAME` = the path portion, **excluding** the query;
+`QUERY_STRING` = the substring after the first `?`, without the `?`, empty when
+absent); the server identity is the deployed listener's. -/
 def deployCgiReq (req : Proto.Request) : Cgi.Req :=
+  let target := Reactor.App.bytesToString req.target
   { requestMethod  := Reactor.App.bytesToString req.method
-    scriptName     := Reactor.App.bytesToString req.target
+    scriptName     := Cgi.targetPath target
+    queryString    := Cgi.targetQuery target
     serverName     := "drorb"
     serverPort     := "8080"
     serverProtocol := "HTTP/1.1"
@@ -110,9 +115,19 @@ def deployCgiReq (req : Proto.Request) : Cgi.Req :=
 theorem deployCgi_requestMethod (req : Proto.Request) :
     Cgi.env (deployCgiReq req) .requestMethod = Reactor.App.bytesToString req.method := rfl
 
-/-- The `SCRIPT_NAME` meta-variable is exactly the deployed request's target. -/
+/-- The `SCRIPT_NAME` meta-variable is the path portion of the deployed request's
+target — the target split at the first `?`, excluding the query (RFC 3875
+§4.1.13). -/
 theorem deployCgi_scriptName (req : Proto.Request) :
-    Cgi.env (deployCgiReq req) .scriptName = Reactor.App.bytesToString req.target := rfl
+    Cgi.env (deployCgiReq req) .scriptName
+      = Cgi.targetPath (Reactor.App.bytesToString req.target) := rfl
+
+/-- The `QUERY_STRING` meta-variable is the query component of the deployed
+request's target — the substring after the first `?`, without the `?`, empty when
+the target carries none (RFC 3875 §4.1.7). -/
+theorem deployCgi_queryString (req : Proto.Request) :
+    Cgi.env (deployCgiReq req) .queryString
+      = Cgi.targetQuery (Reactor.App.bytesToString req.target) := rfl
 
 /-- **`cgi_env_total_deployed` — the deployed request's CGI environment is
 total.** For every CGI/1.1 meta-variable, the pair `(name, value)` occurs in the
@@ -227,17 +242,20 @@ without a verified chain.** The deployed listener is plaintext, so it presents n
 client certificate (the empty chain): verification rejects it (`Mtls.verify_empty`)
 and identity extraction yields NONE (`Mtls.authenticate_empty`). There is no path
 from an absent/failed client chain to an authenticated identity. -/
-theorem mtls_no_bypass_deployed (env : Mtls.Env) (now : Mtls.Time) :
-    Mtls.verifyFrom env now [] = false ∧ Mtls.authenticate env now [] = none :=
-  ⟨Mtls.verify_empty env now, Mtls.authenticate_empty env now⟩
+theorem mtls_no_bypass_deployed (env : Mtls.Env) (now : Mtls.Time)
+    (transcriptHash cvSig : ByteArray) :
+    Mtls.verifyFrom env now [] = false
+      ∧ Mtls.authenticate env now [] transcriptHash cvSig = none :=
+  ⟨Mtls.verify_empty env now, Mtls.authenticate_empty env now transcriptHash cvSig⟩
 
 /-- **`mtls_unverified_no_identity_deployed` — an unverified client chain yields
 no identity.** Whenever the REAL path validator rejects a presented chain, the
 extractor produces no identity (`Mtls.authenticate_unverified`) — the no-bypass
 property, on any chain the deployed surface might see. -/
 theorem mtls_unverified_no_identity_deployed (env : Mtls.Env) (now : Mtls.Time)
-    (chain : Mtls.Chain) (h : Mtls.verifyFrom env now chain = false) :
-    Mtls.authenticate env now chain = none :=
+    (chain : Mtls.Chain) (transcriptHash cvSig : ByteArray)
+    (h : Mtls.verifyFrom env now chain = false) :
+    Mtls.authenticate env now chain transcriptHash cvSig = none :=
   Mtls.authenticate_unverified h
 
 /-! ## (7) Drain — the deployed listener refuses new connections after SIGTERM

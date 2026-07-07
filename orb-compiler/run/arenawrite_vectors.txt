@@ -1,0 +1,10 @@
+C7 arenawrite — two kernels agree (compiled cake binary vs Lean parseRequestLine):
+
+LINE="GET / HTTP/1.1"                 -> spans: method=(0,3) target=(4,1) version=(6,8)
+fill[N=3]: 0 1 2
+LINE="POST /api/v1/users HTTP/1.1"    -> spans: method=(0,4) target=(5,13) version=(19,8)
+fill[N=4]: 0 1 2 3
+LINE="GET /index.html HTTP/1.0"       -> spans: method=(0,3) target=(4,11) version=(16,8)
+fill[N=3]: 0 1 2
+LINE="DELETE /a/b/c HTTP/2"           -> spans: method=(0,6) target=(7,6) version=(14,6)
+fill[N=6]: 0 1 2 3 4 5

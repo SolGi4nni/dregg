@@ -1,0 +1,85 @@
+# gitleaks config — secret scanning for the pre-commit / pre-push git hooks.
+#
+# A tight ruleset tuned to real-secret SHAPES (not gitleaks' broad default). Each rule matches a
+# credential that would be a genuine leak if committed; the [allowlist] carves out published test
+# vectors and obvious placeholders so the hook bites on real secrets, not the test corpus.
+#
+# Run manually:  gitleaks dir  -c .gitleaks.toml .          # scan the working tree
+#                gitleaks git  -c .gitleaks.toml .          # scan history
+title = "secret-scan"
+
+# We deliberately do NOT `[extend] useDefault = true` — the curated rules below are the intended net.
+
+[[rules]]
+id = "stripe-webhook-secret"
+description = "Stripe webhook signing secret (whsec_…)"
+regex = '''whsec_[A-Za-z0-9]{16,}'''
+keywords = ["whsec_"]
+
+[[rules]]
+id = "stripe-secret-key"
+description = "Stripe secret/test key (sk_live_… / sk_test_…)"
+regex = '''sk_(live|test)_[A-Za-z0-9]{16,}'''
+keywords = ["sk_live_", "sk_test_"]
+
+[[rules]]
+id = "stripe-publishable-or-restricted-key"
+description = "Stripe publishable/restricted key (pk_/rk_ live|test)"
+regex = '''(pk|rk)_(live|test)_[A-Za-z0-9]{16,}'''
+keywords = ["pk_live_", "pk_test_", "rk_live_", "rk_test_"]
+
+[[rules]]
+id = "aws-access-key-id"
+description = "AWS access key id (AKIA/ASIA…)"
+regex = '''(AKIA|ASIA)[0-9A-Z]{16}'''
+keywords = ["AKIA", "ASIA"]
+
+[[rules]]
+id = "private-key-block"
+description = "PEM private key header (RSA/EC/OPENSSH/plain)"
+regex = '''-----BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY-----'''
+keywords = ["PRIVATE KEY-----"]
+
+[[rules]]
+id = "github-pat-classic"
+description = "GitHub personal access token (classic, ghp_…)"
+regex = '''ghp_[A-Za-z0-9]{36}'''
+keywords = ["ghp_"]
+
+[[rules]]
+id = "github-pat-fine-grained"
+description = "GitHub fine-grained PAT (github_pat_…)"
+regex = '''github_pat_[A-Za-z0-9_]{20,}'''
+keywords = ["github_pat_"]
+
+[[rules]]
+id = "slack-token"
+description = "Slack token (xoxb/xoxa/xoxp/xoxr/xoxs-…)"
+regex = '''xox[baprs]-[A-Za-z0-9-]{10,}'''
+keywords = ["xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"]
+
+[[rules]]
+id = "high-entropy-secret-assignment"
+description = "Secret-looking assignment (PASSWORD/SECRET/TOKEN/API_KEY/ADMIN_PASSWORD = <20+ chars>)"
+regex = '''(?i)(PASSWORD|SECRET|TOKEN|API_?KEY|ADMIN_PASSWORD)\s*[:=]\s*['"]?[A-Za-z0-9+/]{20,}'''
+keywords = ["password", "secret", "token", "apikey", "api_key", "admin_password"]
+# Placeholder values (xxx/<...>/REDACTED/PLACEHOLDER/changeme/${...}/example/dummy) are carved out by
+# the global [allowlist] below (regexTarget = "line").
+
+[allowlist]
+description = "known offline test fixtures + obvious placeholders (must NOT trip the hook)"
+regexTarget = "line"
+regexes = [
+  # --- offline demo / unit-test signers that live in the repo on purpose ---
+  '''whsec_(demo|test|attacker_guess)''',   # whsec_demo_… / whsec_test_… / whsec_attacker_guess
+  '''sk_live_secret''',                       # agent-host isolation test literal
+  # --- RFC 9001 Appendix A.1 published QUIC test vectors (public IETF constants,
+  #     NOT secrets — the cross-validation matches these on purpose) ---
+  '''c00cf151ca5be075ed0ebfb5c80323c4''',    # A.1 client_initial_secret prefix
+  '''8394c8f03e515708''',                     # A.1 Destination Connection ID
+  '''9f81a6a9be9eaa9bdebb3ceba916a2c2''',    # A.1 client Initial key
+  '''fa044b2f42a3fd3b46fb255c''',            # A.1 client Initial IV
+  '''7db5df06e7a69e432496adedb0085192''',    # A.1 initial_secret (HKDF-Extract over salt+DCID)
+  # --- obvious placeholders: value is not a real secret ---
+  '''(?i)(x{3,}|<[^>]*>|redacted|placeholder|change[-_]?me|example|dummy|sample|your[-_]|fake|\$\{)''',
+]

@@ -1,0 +1,53 @@
+// C9 probe: a RECLAIMING fixed-size-block LIFO FREELIST, in Pancake.
+//
+// A free block stores, in its FIRST WORD, the address of the next free block
+// (0 = NULL = end of list).  The two operations are byte-exact transcriptions of
+// the verified `allocProg` / `freeProg` (arenaFreelistLinkAScript.sml), Link-A-
+// proven against real panSem to PRESERVE the partition invariant `allocInv`:
+//   allocProg : ap := head ; head := *head          (pop the head block)
+//   freeProg  : *fp := head ; head := fp             (push fp to the head)
+// and freeThenAlloc_reuses : a freed address is handed BACK OUT by the next alloc.
+//
+// This driver builds a 4-block arena, links it into a freelist, then runs the
+// sequence  alloc, alloc, free(alloc2), alloc  and reports the three returned
+// pointers — the THIRD alloc REUSES the just-freed block (alloc3 == alloc2).
+//
+// Compile: cake --pancake < freelist.pnk > freelist.S
+//          cc -O2 freelist.S basis_ffi.c freelist_ffi.c -o freelist -lm
+// Run:     ./freelist
+
+fun main() {
+  var membase = @base;
+  var arena = membase + 512;      // the managed block region (16-byte blocks)
+  var b0 = arena;
+  var b1 = arena + 16;
+  var b2 = arena + 32;
+  var b3 = arena + 48;
+
+  // initialize the freelist:  head -> b0 -> b1 -> b2 -> b3 -> NULL(0)
+  st b0, b1;
+  st b1, b2;
+  st b2, b3;
+  st b3, 0;
+  var head = b0;
+
+  // ---- alloc #1  (verified allocProg: ap := head ; head := *head) ----
+  var a1 = head;  head = lds 1 head;
+
+  // ---- alloc #2 ----
+  var a2 = head;  head = lds 1 head;
+
+  // ---- free(a2)  (verified freeProg: *fp := head ; head := fp) ----
+  st a2, head;    head = a2;
+
+  // ---- alloc #3  ---- pops the head, which is the just-freed a2: REUSE
+  var a3 = head;  head = lds 1 head;
+
+  // hand the three pointers + arena base to the reporter
+  st membase + 24, a1;
+  st membase + 32, a2;
+  st membase + 40, a3;
+  st membase + 48, arena;
+  @report_freelist(membase, 4096, membase, 4096);
+  return 0;
+}

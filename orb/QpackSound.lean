@@ -330,8 +330,9 @@ theorem decodeQ_literalName_sound (hd : HuffmanDecoder) (name value : Bytes)
     (name ++ UInt8.ofNat value.length :: value) ⟨ne, ve⟩ _ hone hdrop
   refine ⟨⟨st', {}, [⟨ne, ve⟩]⟩, ne, ve, ?_, rfl, rfl, hrn, hrv⟩
   unfold decodeFieldSection encQLit encQLine
-  simp only [decPrefixInt8_zero, decPrefixInt7_zero, List.drop_zero, ne_eq,
-    not_true_eq_false, reduceIte, hlines]
+  simp only [decPrefixInt8_zero, decPrefixInt7_zero, List.drop_zero,
+    reconstructRic_zero, reconstructBase_zeroByte, Nat.add_zero,
+    Nat.not_lt_zero, reduceIte, hlines]
 
 end Qpack
 end H3

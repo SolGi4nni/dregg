@@ -74,10 +74,13 @@ def serverName : Header.Name := [83, 101, 114, 118, 101, 114]
 /-- The `Server` field value this reactor advertises. -/
 def serverVal : Header.Value := "drorb".toUTF8.toList
 
-/-- The standard response rewrite: strip RFC 7230 §6.1 hop-by-hop headers, then
-install the `Server` field.  A genuine `Header.run` program. -/
+/-- The standard response rewrite: strip the hop-by-hop headers, then install the
+`Server` field.  A genuine `Header.run` program.  The strip is `Header.Op.hopDyn`
+— the RFC 9110 §7.6.1 *dynamic* hop set (the fixed `Header.hopStd` table plus
+every field the message's own `Connection` header nominates), so a
+`Connection`-nominated field is removed before forwarding, not relayed. -/
 def stdRewrite : List Header.Op :=
-  [ Header.Op.hop Header.hopStd, Header.Op.set serverName serverVal ]
+  [ Header.Op.hopDyn, Header.Op.set serverName serverVal ]
 
 /-! ## The response path: apply the rewrite before serialize -/
 
@@ -132,7 +135,7 @@ theorem emitted_has_server (input : Bytes) :
     Header.get serverName (Header.run stdRewrite (toHeaders (baseResp input).headers))
       = some serverVal := by
   show Header.get serverName
-      (Header.set serverName serverVal (Header.strip Header.hopStd _)) = some serverVal
+      (Header.set serverName serverVal (Header.strip (Header.dynHopSet _) _)) = some serverVal
   exact Header.get_set_eq serverName serverVal _
 
 /-- **Evidence the real algebra ran (strip).** After `stdRewrite`, a lookup of
@@ -144,8 +147,9 @@ theorem emitted_strips_hop (input : Bytes) {n : Header.Name}
     (hne : Header.nameEqb serverName n = false) :
     Header.get n (Header.run stdRewrite (toHeaders (baseResp input).headers)) = none := by
   show Header.get n
-      (Header.set serverName serverVal (Header.strip Header.hopStd _)) = none
-  rw [Header.get_set, if_neg (Header.name_neq hne), Header.get_strip_hop _ hn]
+      (Header.set serverName serverVal (Header.strip (Header.dynHopSet _) _)) = none
+  rw [Header.get_set, if_neg (Header.name_neq hne),
+    Header.get_strip_hop _ (Header.isHop_hopStd_dynHopSet hn)]
 
 /-- The `Server` name really is distinct from a concrete hop header
 (`connection`), so `emitted_strips_hop` has a live instance. -/
@@ -158,6 +162,22 @@ theorem emitted_strips_connection (input : Bytes) :
     Header.get [99,111,110,110,101,99,116,105,111,110]
       (Header.run stdRewrite (toHeaders (baseResp input).headers)) = none :=
   emitted_strips_hop input (by decide) serverName_ne_connection
+
+/-- **Evidence the RFC 9110 §7.6.1 dynamic strip ran (leak closed).** Any field
+the base response's own `Connection` header nominates (distinct from `Server`) is
+absent from the emitted headers — the deployed rewrite parses the `Connection`
+header and removes the fields it names, so a `Connection: X-Secret` cannot leak
+`X-Secret` downstream. This is the behavior a static `strip Header.hopStd` lacked:
+`Header.Op.hopDyn` computes the strip set from the actual headers. -/
+theorem emitted_strips_conn_nominated (input : Bytes) {n : Header.Name}
+    (hn : Header.isHop (Header.connOptionNames (toHeaders (baseResp input).headers)) n = true)
+    (hne : Header.nameEqb serverName n = false) :
+    Header.get n (Header.run stdRewrite (toHeaders (baseResp input).headers)) = none := by
+  have hdyn : Header.isHop (Header.dynHopSet (toHeaders (baseResp input).headers)) n = true := by
+    unfold Header.dynHopSet; rw [Header.isHop_append, hn, Bool.or_true]
+  show Header.get n
+      (Header.set serverName serverVal (Header.strip (Header.dynHopSet _) _)) = none
+  rw [Header.get_set, if_neg (Header.name_neq hne), Header.get_strip_hop _ hdyn]
 
 /-! ## Seam theorem 2 — the Drain FSM gates admission -/
 

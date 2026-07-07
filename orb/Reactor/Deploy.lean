@@ -15,11 +15,14 @@ import Reactor.Stage.Header
 import Reactor.Stage.Jwt
 import IpFilter
 import Reactor.Stage.Rate
+import Reactor.Stage.IpFilter
+import Reactor.Stage.BasicAuth
 import Reactor.Stage.Cache
 import Reactor.Stage.Redirect
 import Reactor.Stage.Cors
 import Reactor.Stage.Gzip
 import Reactor.Stage.HtmlRewrite
+import Dsl.Deployment
 
 /-!
 # Reactor.Deploy — the deployed configuration and the full serving pipeline
@@ -240,7 +243,7 @@ theorem deploy_routes_bestMatch (input : Bytes) (req : Proto.Request)
        ∧ serveFull input
            = serialize (Reactor.Lifecycle.rewriteResp
                (deployProg (deployPlan (deploySubs input)) input)
-               (App.responseOfHandler r.handler)) := by
+               (App.responseOfReq req r.handler)) := by
   obtain ⟨r, hbest, hhandle⟩ := App.app_routes_total demoAppConfig req
   refine ⟨r, hbest, ?_⟩
   rw [(deploy_routes input req rest hsends hsub).1, hhandle]
@@ -358,7 +361,7 @@ theorem deploy_keeps_server (plan : List RingSubmission) (input : Bytes)
       Header.nameEqb upstreamName Reactor.Lifecycle.serverName = false))]
   show Header.get Reactor.Lifecycle.serverName
       (Header.set Reactor.Lifecycle.serverName Reactor.Lifecycle.serverVal
-        (Header.strip Header.hopStd h)) = _
+        (Header.strip (Header.dynHopSet h) h)) = _
   exact Header.get_set_eq _ _ _
 
 /-! ## The observation state on the deployed path -/
@@ -694,16 +697,19 @@ request-level wrappers just prepend the byte→segment extraction
 (`App.targetSegments` / `rawSegsOf`, which use `String.splitOn` and so only reduce
 in the compiled binary, not the kernel). -/
 
-/-- The `Policy.RouteKey` a normalized segment list maps to. The two author
-surfaces the demo declares (`/health`, `/static`) map to the declared key
+/-- The `Policy.RouteKey` a normalized segment list maps to. The author surfaces
+the demo declares (`/health`, `/static`, `/cgi-bin`) map to the declared key
 `deployRouteKey = ⟨0,0⟩`; every other surface maps to `⟨0,1⟩`, which
 `deployPolicyConfig` does NOT declare — so the REAL `serveDecision` refuses it.
 This is the adapter `App.routeKeyOf` left as a documented hole, here genuinely
-distinguishing declared from undeclared. -/
+distinguishing declared from undeclared. `/cgi-bin` is declared so the deployed
+`.cgi` route (which spawns the real CGI script) is reached rather than refused at
+the policy gate. -/
 def routeKeyOfSegs : List String → Policy.RouteKey
-  | "health" :: _ => deployRouteKey
-  | "static" :: _ => deployRouteKey
-  | _             => ⟨0, 1⟩
+  | "health" :: _  => deployRouteKey
+  | "static" :: _  => deployRouteKey
+  | "cgi-bin" :: _ => deployRouteKey
+  | _              => ⟨0, 1⟩
 
 /-- The REAL `Policy.serveDecision` on the deployed running surface, keyed on the
 route a segment list maps to. Kernel-decidable (no `splitOn`): `["health"]`
@@ -927,9 +933,11 @@ theorem gate_statuses_distinct :
 #guard escapesSegs ["health"] = false
 #guard routeKeyOfSegs ["health"] = deployRouteKey
 #guard routeKeyOfSegs ["static", "app.js"] = deployRouteKey
+#guard routeKeyOfSegs ["cgi-bin", "hello"] = deployRouteKey
 #guard routeKeyOfSegs ["nope"] = (⟨0, 1⟩ : Policy.RouteKey)
 #guard (decisionOfSegs ["health"]).isSome = true
 #guard (decisionOfSegs ["static", "app.js"]).isSome = true
+#guard (decisionOfSegs ["cgi-bin", "hello"]).isSome = true
 #guard (decisionOfSegs ["nope"]).isNone = true
 
 /-! ## (5) STAGE-PIPELINE — the deployed serve as an extensible fold over stages.
@@ -937,11 +945,14 @@ theorem gate_statuses_distinct :
 Sections (2)–(4) build the deployed serve as a MONOLITH: `deployResp` /
 `serveGuarded` bake the header rewrite and the two gates into one function.
 Adding a byte-driving feature means editing that shared function. This section
-re-expresses the CURRENT deployed behavior as a
+re-expresses the deployed behavior as a
 `Reactor.Pipeline.runPipeline` over a `deployStages : List Stage` — each concern a
-separate stage — and proves the pipeline REPRODUCES the current serve
-(`servePipeline_agrees`), so it is a safe drop-in. `main` is NOT repointed here;
-the deployed seams (2)–(4) are untouched.
+separate stage — and characterizes the pipeline's deployed bytes
+(`servePipeline_dispatch`). Under the short-circuit-carries-transforms pipeline
+semantics the fold ENRICHES gate short-circuits (the deploy header rewrite now
+applies to the 404/403 too) and lets an unknown-but-safe path reach the router's
+404, so it is no longer byte-identical to the monolithic `guardOne`; `guardOne` /
+`serveGuarded` and the seams (2)–(4) are untouched (a separate legacy/H3 path).
 
 The three current concerns become three stages, in the SAME order `guardOne`
 decides them (traversal first, then Policy, then the header rewrite):
@@ -957,9 +968,10 @@ The response phase threads the AFFINE `Reactor.Pipeline.ResponseBuilder` (one
 in-place-mutable cell, not a `Response` rebuilt per stage): the gate stages pass
 the builder untouched, and `headerRewriteStage` applies the header-map rewrite via
 `mapResp` (an in-place header-map insert/strip sequence). `servePipeline`
-`build`s the final builder to the wire response. Because the builder is a faithful
-refinement of `Response` (`Pipeline.build_*`), the built bytes are IDENTICAL, so
-`servePipeline_agrees` stays a full byte-equality with `serveGuarded`.
+`build`s the final builder to the wire response. `servePipeline_dispatch`
+characterizes those bytes; under the short-circuit-carries-transforms semantics the
+gate arms now carry the deploy header rewrite and an unknown-but-safe path reaches
+the router's 404, so the fold is no longer byte-identical to the monolith.
 
 The handler is the real application router (`App.handle demoAppConfig`). Adding a
 lib is now: define one stage file, append it to `deployStages`
@@ -978,15 +990,32 @@ def traversalStage : Stage where
     | false => .continue c
   onResponse := fun _ b => b
 
-/-- **The Policy admission gate stage.** An undeclared surface (the REAL
-`deployDecisionOf` returns `none`) short-circuits to the serializer-built
-`forbidden403`; an admitted surface passes through. -/
+/-- Byte-level dotfile test: a target of the form `/.X…` where the byte after the
+leading `/.` is neither `/` (47) nor `.` (46) — a reserved dotfile / VCS surface
+(`.git`, `.env`, `.htaccess`) a server never exposes. Distinct from `/`, `/.`,
+`/..`, `/./…` (path navigation, handled by the traversal gate / normalization). -/
+def isDotfileTarget : Proto.Bytes → Bool
+  | 47 :: 46 :: c :: _ => c != 47 && c != 46
+  | _ => false
+
+/-- **A genuinely policy-refused surface.** The REAL `deployDecisionOf` refuses it
+(`none` — not a declared surface) AND it is a reserved dotfile namespace the policy
+holds off-limits. An undeclared but NON-reserved path (a plain unknown route) is
+NOT refused here: it passes the gate and the application router answers it with its
+own 404 default. So the policy gate 403s only genuinely-reserved surfaces; an
+unknown, non-escaping, well-formed path that simply does not match a route 404s. -/
+def policyReserved (req : Proto.Request) : Bool :=
+  (deployDecisionOf req).isNone && isDotfileTarget req.target
+
+/-- **The Policy admission gate stage.** A genuinely policy-refused surface
+(`policyReserved` — undeclared AND a reserved dotfile namespace) short-circuits to
+the serializer-built `forbidden403`. Every other surface — an admitted declared
+surface (200 handler) OR a merely-unknown safe path — passes through; the
+application router then answers it (a real route, or its 404 default). This lets an
+unmatched-but-safe path reach the router's 404 rather than being blanket-403'd. -/
 def policyStage : Stage where
   name := "policy"
-  onRequest := fun c =>
-    match deployDecisionOf c.req with
-    | none   => .respond forbidden403
-    | some _ => .continue c
+  onRequest := fun c => cond (policyReserved c.req) (.respond forbidden403) (.continue c)
   onResponse := fun _ b => b
 
 /-- **The header-rewrite stage.** Always passes on the request phase; on the
@@ -1020,10 +1049,8 @@ def ctxOf (input : Bytes) : Ctx :=
 request runs the request phase (the two gates), a passing request is answered by
 the app handler seeded into the affine `ResponseBuilder`, the header rewrite
 threads that builder in place, and `.build` finalizes it to the wire response.
-Byte-for-byte the current `serveGuarded` on the dispatch path
-(`servePipeline_agrees`) — the builder is a faithful refinement — but now a fold a
-new stage extends in one file, with the response built once in place, not
-reallocated per stage. -/
+Characterized by `servePipeline_dispatch` — a fold a new stage extends in one file,
+with the response built once in place, not reallocated per stage. -/
 def servePipeline (input : Bytes) : Bytes :=
   serialize ((runPipeline deployStages appHandler (ctxOf input)).build)
 
@@ -1037,26 +1064,38 @@ this is the SAME `Response` the pre-builder fold produced. -/
 theorem runPipeline_deployStages (c : Ctx) :
     (runPipeline deployStages appHandler c).build
       = match targetEscapes c.req with
-        | true  => traversalBlocked404
+        | true  =>
+          Reactor.Lifecycle.rewriteResp
+            (deployProg (deployPlan (deploySubs c.input)) c.input) traversalBlocked404
         | false =>
-          match deployDecisionOf c.req with
-          | none   => forbidden403
-          | some _ =>
-            Reactor.Lifecycle.rewriteResp
+          cond (policyReserved c.req)
+            (Reactor.Lifecycle.rewriteResp
+              (deployProg (deployPlan (deploySubs c.input)) c.input) forbidden403)
+            (Reactor.Lifecycle.rewriteResp
               (deployProg (deployPlan (deploySubs c.input)) c.input)
-              (App.handle demoAppConfig c.req) := by
+              (App.handle demoAppConfig c.req)) := by
   show (runPipeline (traversalStage :: policyStage :: [headerRewriteStage]) appHandler c).build = _
   rw [Reactor.Pipeline.pipeline_cons]
   cases htrav : targetEscapes c.req with
   | true =>
-    simp only [traversalStage, htrav, Reactor.Pipeline.build_ofResponse]
+    -- traversal gates: the 404 is threaded through the inner onion (policy id, then
+    -- the deploy header rewrite), so it now carries the header-rewrite headers.
+    simp only [traversalStage, htrav, Reactor.Pipeline.runResp_cons, Reactor.Pipeline.runResp_nil,
+      policyStage, headerRewriteStage, Reactor.Pipeline.build_mapResp,
+      Reactor.Pipeline.build_ofResponse]
   | false =>
     simp only [traversalStage, htrav]
     rw [Reactor.Pipeline.pipeline_cons]
-    cases hpol : deployDecisionOf c.req with
-    | none => simp only [policyStage, hpol, Reactor.Pipeline.build_ofResponse]
-    | some s =>
-      simp only [policyStage, hpol]
+    cases hres : policyReserved c.req with
+    | true =>
+      -- policy refuses a reserved surface: the 403 threads through the header rewrite.
+      simp only [policyStage, hres, cond_true, Reactor.Pipeline.runResp_cons,
+        Reactor.Pipeline.runResp_nil, headerRewriteStage, Reactor.Pipeline.build_mapResp,
+        Reactor.Pipeline.build_ofResponse]
+    | false =>
+      -- policy passes (admitted OR unknown-but-safe): the app router answers, then the
+      -- deploy header rewrite. An unknown path is 404'd by the router's default here.
+      simp only [policyStage, hres, cond_false]
       rw [Reactor.Pipeline.pipeline_cons]
       simp only [headerRewriteStage, appHandler, Reactor.Pipeline.pipeline_empty,
         Reactor.Pipeline.build_mapResp, Reactor.Pipeline.build_ofResponse]
@@ -1068,45 +1107,47 @@ theorem ctxOf_req (input : Bytes) (req : Proto.Request) (rest : List RingSubmiss
   show (dispatchReqOf (deploySubs input)).getD ({} : Proto.Request) = req
   rw [hsub]; rfl
 
-/-- **`servePipeline_agrees` — behavior preservation (safe drop-in).** On a
-deployed dispatch, the stage pipeline emits EXACTLY the bytes the current
-`serveGuarded` (the function `main` runs) does. So repointing the serve at
-`servePipeline` changes no byte on the deployed path — every one of the ~63
-`*_deployed` seams over `serveGuarded`/`deployResp` still holds — while the serve
-is now an extensible fold. Full byte-equality, all three arms (403 / 404 / the
-200 header-rewrite path). -/
-theorem servePipeline_agrees (input : Bytes) (req : Proto.Request)
+/-- **`servePipeline_dispatch` — the stage pipeline's deployed bytes, characterized.**
+On a deployed dispatch, the stage fold emits the serialized gate/handler response
+with the deploy header rewrite applied to EVERY arm — including the gate
+short-circuits (the traversal 404 and the reserved-surface 403 now carry the
+response-transform headers, per the new short-circuit-carries-transforms pipeline
+semantics), and the unknown-but-safe path is answered by the application router's
+own 404 default (`App.handle`) rather than a blanket policy 403.
+
+This SUPERSEDES the old `servePipeline_agrees` byte-equality with `serveGuarded`:
+the pipeline now ENRICHES short-circuits (the header rewrite on the 403/404) and
+lets unknown paths through to the router's 404, whereas the monolithic `guardOne`
+emits the pristine, un-rewritten gate bytes and blanket-403s every undeclared
+surface. `serveGuarded`/`guardOne` and their `*_deployed` seams are untouched (a
+separate legacy/H3 path); this theorem characterizes the extensible fold `main`
+runs (`servePipelineFull2`, of which this 3-stage `servePipeline` is the core). -/
+theorem servePipeline_dispatch (input : Bytes) (req : Proto.Request)
     (rest : List RingSubmission)
-    (hsends : sendsOf (deploySubs input) = [])
     (hsub : deploySubs input = .dispatch req :: rest) :
-    servePipeline input = serveGuarded input := by
-  rw [serveGuarded_dispatch input req rest hsends hsub]
-  show serialize ((runPipeline deployStages appHandler (ctxOf input)).build) = guardOne input req
+    servePipeline input
+      = serialize (match targetEscapes req with
+          | true  =>
+            Reactor.Lifecycle.rewriteResp
+              (deployProg (deployPlan (deploySubs input)) input) traversalBlocked404
+          | false =>
+            cond (policyReserved req)
+              (Reactor.Lifecycle.rewriteResp
+                (deployProg (deployPlan (deploySubs input)) input) forbidden403)
+              (Reactor.Lifecycle.rewriteResp
+                (deployProg (deployPlan (deploySubs input)) input)
+                (App.handle demoAppConfig req))) := by
+  show serialize ((runPipeline deployStages appHandler (ctxOf input)).build) = _
   rw [runPipeline_deployStages (ctxOf input), ctxOf_req input req rest hsub]
   have hin : (ctxOf input).input = input := rfl
-  have hdemo : demoResp (deploySubs input) = App.handle demoAppConfig req := by
-    rw [hsub]; rfl
   rw [hin]
-  unfold guardOne
-  cases htrav : targetEscapes req with
-  | true => simp only [htrav]
-  | false =>
-    cases hpol : deployDecisionOf req with
-    | none => simp only [htrav, hpol]
-    | some s =>
-      simp only [htrav, hpol]
-      show serialize (Reactor.Lifecycle.rewriteResp
-          (deployProg (deployPlan (deploySubs input)) input)
-          (App.handle demoAppConfig req)) = serialize (deployResp input)
-      unfold deployResp
-      rw [hdemo]
 
 /-! ## (6) COMPOSE-SAFE — the two pure response-additions folded onto the pipeline.
 
 Section (5) re-expressed the deployed serve as `servePipeline` over `deployStages`
-(byte-equal to `serveGuarded` by `servePipeline_agrees`). This section ADDS — never
-mutates — two verified byte-driving RESPONSE stages that read nothing from the
-request and gate nothing, so they cannot change the 403/404 gate arms:
+(characterized by `servePipeline_dispatch`). This section ADDS — never mutates — two
+verified byte-driving RESPONSE stages that read nothing from the request and gate
+nothing, so they only enrich a response (add headers), never change its status:
 
 * `Reactor.Stage.SecurityHeaders.securityheadersStage` — stamps the real RFC 6797
   HSTS set (+ X-Frame-Options / X-Content-Type-Options / Referrer-Policy) onto every
@@ -1114,16 +1155,17 @@ request and gate nothing, so they cannot change the 403/404 gate arms:
 * `Reactor.Stage.Header.headerStage` — runs a real `Header.run` rewrite (strip the
   RFC 7230 §6.1 hop-by-hop headers + install a `Server` field).
 
-`deployStagesFull` APPENDS them to the unchanged `deployStages`. The append order is
-deliberate: because they are the INNERMOST stages, the traversal/policy gates (outer)
-short-circuit BEFORE them, so a refused request still emits the pristine 403/404 with
-no security headers — the pure additions only enrich the admitted 200 arm. On that
-arm their `onResponse` runs first (the onion), then the outer `headerRewriteStage`
-(the deploy `Header.run` under `deployProg`) runs last; its strip is hop-by-hop only,
-so the non-hop HSTS/security headers survive it intact (`deployProg_preserves_field`).
+`deployStagesFull` APPENDS them to the unchanged `deployStages`. On the admitted arm
+their `onResponse` runs first (the onion), then the outer `headerRewriteStage` (the
+deploy `Header.run` under `deployProg`) runs last; its strip is hop-by-hop only, so
+the non-hop HSTS/security headers survive it intact (`deployProg_preserves_field`).
+Under the short-circuit-carries-transforms pipeline semantics, a gate short-circuit
+ALSO threads its response through these inner transforms, so a refused response
+(3xx/401/403/404) now carries the same security headers — the theorems here cover
+the admitted arm; the gate-arm enrichment is proven at the full-fold seams below.
 
-`servePipeline` / `serveGuarded` / `servePipeline_agrees` and the ~63 `*_deployed`
-seams are untouched: everything here is a NEW def over the SAME proven kernel. -/
+`serveGuarded` and the ~63 `*_deployed` seams over it are untouched (a separate
+legacy/H3 path): everything here is a NEW def over the SAME proven kernel. -/
 
 /-- **The full deployed stage list.** The current `deployStages` (traversal gate,
 policy gate, deploy header rewrite) with the two safe pure response-additions
@@ -1184,13 +1226,15 @@ theorem mem_ofHeaders {f : Header.Field} {h : Header.Headers} (hm : f ∈ h) :
   List.mem_map.mpr ⟨f, hm, rfl⟩
 
 /-- **The deploy header rewrite (`deployProg`) keeps any non-hop, non-overwritten
-field.** Its program is `strip hopStd` then three `set`s (`Server` / `x-upstream` /
-`x-corr`); a field whose name is not a hop name and is none of those three survives
-the whole rewrite. This is the axiom-clean MECHANISM by which an inner-added header
+field.** Its program is the RFC 9110 §7.6.1 dynamic strip (`Header.Op.hopDyn` —
+`Header.strip (Header.dynHopSet H)`) then three `set`s (`Server` / `x-upstream` /
+`x-corr`); a field whose name is not in the message's dynamic hop set (neither a
+fixed hop-name nor `Connection`-nominated) and is none of those three survives the
+whole rewrite. This is the axiom-clean MECHANISM by which an inner-added header
 (HSTS) reaches the wire past the outer rewrite. -/
 theorem deployProg_preserves_field (plan : List RingSubmission) (input : Bytes)
     (g : Header.Field) (H : Header.Headers) (hm : g ∈ H)
-    (hhop  : Header.isHop Header.hopStd g.name = false)
+    (hhop  : Header.isHop (Header.dynHopSet H) g.name = false)
     (hsrv  : Header.nameEqb g.name Reactor.Lifecycle.serverName = false)
     (hup   : Header.nameEqb g.name upstreamName = false)
     (hcorr : Header.nameEqb g.name corrName = false) :
@@ -1199,7 +1243,7 @@ theorem deployProg_preserves_field (plan : List RingSubmission) (input : Bytes)
       = Header.set corrName (corrVal input)
           (Header.set upstreamName (upstreamVal plan)
             (Header.set Reactor.Lifecycle.serverName Reactor.Lifecycle.serverVal
-              (Header.strip Header.hopStd H))) := by
+              (Header.strip (Header.dynHopSet H) H))) := by
     unfold deployProg Reactor.Lifecycle.stdRewrite
     rw [Header.run_append]
     simp only [Header.run_cons, Header.run_nil, Header.applyOp]
@@ -1228,7 +1272,7 @@ theorem runPipeline_deployStagesFull (c : Ctx) (s : Policy.Served)
   rw [Reactor.Pipeline.pipeline_cons]
   simp only [traversalStage, htrav]
   rw [Reactor.Pipeline.pipeline_cons]
-  simp only [policyStage, hadmit]
+  simp only [policyStage, policyReserved, hadmit, Option.isNone_some, Bool.false_and, cond_false]
   rw [Reactor.Pipeline.pipeline_cons]
   simp only [headerRewriteStage, Reactor.Pipeline.build_mapResp]
 
@@ -1451,8 +1495,9 @@ body), then CORS, and `headerRewriteStage` outermost (its hop-strip keeps every
 non-hop header the inner transforms added — `deployProg_preserves_field`). -/
 def deployStagesFull2 : List Stage :=
   [ jwtAdminStage
-  , ipfilterPermissiveStage
-  , rateHighStage
+  , Reactor.Stage.BasicAuth.basicStage
+  , Reactor.Stage.IpFilter.ipfilterStage
+  , Reactor.Stage.Rate.rateStage
   , cacheEmptyStage
   , Reactor.Stage.Redirect.redirectStage
   , traversalStage
@@ -1469,6 +1514,44 @@ def deployStagesFull2 : List Stage :=
 def servePipelineFull2 (input : Bytes) : Bytes :=
   serialize ((runPipeline deployStagesFull2 appHandler (ctxOf input)).build)
 
+/-- **The metered serve context.** `ctxOf input` plus the two accept-path attrs the
+real IP-filter and rate gates read: the peer address under
+`Reactor.Stage.IpFilter.clientIpKey` (family-tagged bit-encoded, the accept
+`SocketAddr`), and the per-connection request index under
+`Reactor.Stage.Rate.seqKey` (as `connSeq` zero bytes — its length is the standing
+count the token bucket depletes against). Keeping `ctxOf`/`servePipelineFull2`
+untouched preserves every existing deployed proof; the metered gates only fire when
+the host supplies these attrs. -/
+def ctxOfMetered (clientIp : Proto.Bytes) (connSeq : Nat) (input : Bytes) :
+    Reactor.Pipeline.Ctx :=
+  { ctxOf input with
+      attrs := [ (Reactor.Stage.IpFilter.clientIpKey, clientIp)
+               , (Reactor.Stage.Rate.seqKey, List.replicate connSeq (0 : UInt8)) ] }
+
+/-- **The metered full serve.** The SAME thirteen-stage `deployStagesFull2` fold,
+keyed on `ctxOfMetered` so the real IP-filter (deny `10.0.0.0/8`) and rate
+(cap 8/connection) gates decide on the accept peer + per-connection sequence the
+host threads in. The host calls this instead of `servePipelineFull2` when it has a
+peer address and keep-alive request index to supply. -/
+def servePipelineFull2Metered (clientIp : Proto.Bytes) (connSeq : Nat) (input : Bytes) : Bytes :=
+  serialize ((runPipeline deployStagesFull2 appHandler (ctxOfMetered clientIp connSeq input)).build)
+
+/-- **The full ten-stage fold over an explicitly-supplied request.** The SAME
+`deployStagesFull2` pipeline `servePipelineFull2` runs, but keyed on a `Ctx` whose
+request comes from a NON-HTTP/1.1 ingress (an H3/QUIC dispatch or a protocol
+upgrade) rather than re-derived from raw HTTP/1.1 bytes via `deploySubs`. Returns
+the built wire `Response` so a non-HTTP carriage (H3 framing) can re-serialize it;
+`input` still drives the deploy header rewrite's proxy/DNS plan. This is how the
+QUIC/H3 and native-socket serve paths reach the identical middleware fold the TCP
+dataplane runs. -/
+def deployRespFull2Of (input : Bytes) (req : Proto.Request) : Response :=
+  (runPipeline deployStagesFull2 appHandler { input := input, req := req }).build
+
+/-- The full-fold serve keyed on a supplied request, as wire bytes — the H3/QUIC
+sibling of `servePipelineFull2`. -/
+def servePipelineFull2Of (input : Bytes) (req : Proto.Request) : Bytes :=
+  serialize (deployRespFull2Of input req)
+
 /-- **The full ten-stage observed step** — `servePipelineFull2` plus the SAME REAL
 observation advance as `deployStepFull` (`Metrics.inc`, `Tap.step`, the
 `Trace`-assigned id). This is the function `main` runs. -/
@@ -1483,28 +1566,292 @@ a plain `def`). -/
 theorem deployStepFull2_serves (st : Observe.ObsState) (input : Bytes) :
     (deployStepFull2 st input).1 = servePipelineFull2 input := rfl
 
+/-! ## (7d) DEPLOYMENT-CONFIG — the deployed serve GENERATED from a declarative config
+
+Sections (7a)–(7c) built `deployStagesFull2` + `demoApp` as hardcoded literals:
+nothing GENERATED them, so the composable `Dsl.DeploymentConfig` surface and the
+running server were disconnected. This section closes that gap. `defaultDeployment`
+is the declarative config whose `Dsl.instantiate` REPRODUCES the deployed stage
+list and route table on the nose; `servePipelineOf` runs that instantiation through
+the SAME `runPipeline` fold; and the no-regression theorems prove the config-driven
+serve is byte-identical to the hardcoded `servePipelineFull2` — so the deployed
+conformance is preserved, and the deployed serve is now the image of a config a
+grow lane extends by editing one disjoint `Dsl/Cfg/*.lean` dimension.
+
+`deployStagesFull2` and `demoApp` are UNTOUCHED — this is purely additive; the
+equalities are proved (not asserted), so every existing proof stated over the
+literals stands, and `main` (via `deployStepFull2`) still runs the identical bytes,
+now provably `= servePipelineOf defaultDeployment`. -/
+
+/-- **The default deployment, as a declarative config.** Its five disjoint
+dimensions are populated so that `Dsl.instantiate` reproduces the deployed serve:
+
+* `listener`  — the deployed admission identity/state (`demoAppConfig.lid`/`policy`);
+* `routing`   — the deployed route table + default handler + admission-key adapter;
+* `middleware`— the ordered fourteen-stage chain `deployStagesFull2`;
+* `tls`/`upstream` — empty (this cleartext deployment terminates TLS at the IO
+  boundary and carries no declared reverse-proxy pools).
+
+A grow lane extends the live deployment by editing ONE dimension here (and its own
+`Reactor/Stage/<Lib>.lean`), not by reaching into a shared literal. -/
+def defaultDeployment : Dsl.DeploymentConfig where
+  listener :=
+    { id := demoAppConfig.lid
+      policy := demoAppConfig.policy }
+  routing :=
+    { routes := demoAppConfig.routes
+      defaultHandler := demoAppConfig.defaultHandler
+      routeKeyOf := demoAppConfig.routeKeyOf }
+  middleware := { chain := deployStagesFull2 }
+
+/-- **No-regression, the stage list.** The config instantiates to EXACTLY the
+deployed fourteen-stage `deployStagesFull2` — same stages, same order. -/
+theorem instantiate_default_stages :
+    (Dsl.instantiate defaultDeployment).1 = deployStagesFull2 := rfl
+
+/-- **No-regression, the route table.** The config instantiates to EXACTLY the
+deployed `demoAppConfig` (`= App.demoApp`) — same routes, same default handler,
+same admission seam. (Structure-eta: the record `instantiate` rebuilds from
+`demoAppConfig`'s projections IS `demoAppConfig`.) -/
+theorem instantiate_default_app :
+    (Dsl.instantiate defaultDeployment).2 = demoAppConfig := rfl
+
+/-- **The config-driven serve.** `serialize` of the BUILT fold of the config's
+instantiated stage list over the config's instantiated app handler — the SAME
+`runPipeline` calculus `servePipelineFull2` runs, but with the stages and route
+table SUPPLIED BY the config rather than hardcoded. -/
+def servePipelineOf (cfg : Dsl.DeploymentConfig) (input : Bytes) : Bytes :=
+  serialize ((runPipeline (Dsl.instantiate cfg).1
+      (Dsl.handlerOf (Dsl.instantiate cfg).2) (ctxOf input)).build)
+
+/-- **The no-regression theorem — byte-identical serve.** For EVERY input, the
+config-driven serve of `defaultDeployment` emits the exact same bytes as the
+hardcoded `servePipelineFull2`. So the deployed 45/46 conformance — every byte-
+effect / status / gate theorem stated over `servePipelineFull2` — is preserved
+unchanged: the two serves are the same function. Proved by `rfl` — the config
+instantiates to the very stage list and app handler the hardcoded serve names
+(`instantiate_default_stages`/`instantiate_default_app`), and `handlerOf
+demoAppConfig` is definitionally `appHandler`. -/
+theorem servePipelineOf_default (input : Bytes) :
+    servePipelineOf defaultDeployment input = servePipelineFull2 input := rfl
+
+/-- **The deployed `main` runs the config-driven serve.** What `deployStepFull2`
+(the function `main` runs) writes is, byte-for-byte, `servePipelineOf
+defaultDeployment` — the live server is now the image of the declarative config. -/
+theorem deployStepFull2_serves_config (st : Observe.ObsState) (input : Bytes) :
+    (deployStepFull2 st input).1 = servePipelineOf defaultDeployment input := by
+  rw [deployStepFull2_serves, servePipelineOf_default]
+
+/-! ### (7d') The deployed-serve projections drive the RUNNING components
+
+`defaultDeployment` populates only the byte-pipeline dimensions; its upstream /
+TLS / L4 dimensions are empty, so the three deployed-serve projections
+(`dialChain` / `serverParamsFor` / `l4Listeners`) read their DEFAULT values — the
+byte-identical no-regression the running serve preserves. `altDeployment` is the
+SAME byte pipeline with all three IO-boundary dimensions populated: a
+least-connections `api` pool, the dual-stack TLS matrix (a 0-RTT-on and a 0-RTT-off
+profile), and a raw-TCP layer-4 listener over the `api` pool. Because the byte
+pipeline is untouched, `altDeployment` serves the identical HTTP bytes — but its
+reverse-proxy dial, TLS terminator, and L4 accept surface are all NON-default, so
+driving the running orb under `altDeployment` produces different RUNNING behaviour
+(a different backend, a different early-data verdict, a bound L4 listener) with no
+regression to the cleartext HTTP conformance. -/
+
+/-- The canonical reverse-proxy upstream pool name the deployed proxy route
+references (`/api`). Both projections and the running dial key on it. -/
+def proxyPoolName : String := "api"
+
+/-- The load-aware `api` pool: three backends (ids 0/1/2, matching
+`Reactor.ProxyDial.fleet`) selected least-connections-first. The RUNNING pick is
+health-masked and load-supplied by the host (`Reactor.ProxyDial.fleetC`); this
+pool supplies the POLICY chain the config-driven dial runs. -/
+def altApiPool : Dsl.Cfg.UpstreamPool :=
+  { name := proxyPoolName, pool := Dsl.Cfg.loadedPool, lb := .leastConn }
+
+/-- **The non-default deployment.** `defaultDeployment`'s byte pipeline, with all
+three IO-boundary dimensions populated: a least-connections `api` pool, the
+dual-stack TLS matrix, and a raw-TCP layer-4 listener (`127.0.0.1:8710`) over the
+`api` pool. -/
+def altDeployment : Dsl.DeploymentConfig :=
+  { defaultDeployment with
+      listener :=
+        { defaultDeployment.listener with
+            addr := "127.0.0.1"
+            port := 8710
+            l4 := some { upstream := proxyPoolName, mode := .tcp } }
+      tls := Dsl.Cfg.dualStackTls
+      upstream := { pools := [altApiPool] } }
+
+/-- **No LB regression.** The default deployment's `api` dial chain is the deployed
+default (a single rendezvous link) — the byte-identical serve reads exactly the
+chain the hardcoded `Reactor.ProxyDial.pick` used. -/
+theorem defaultDeployment_dialChain :
+    defaultDeployment.dialChain proxyPoolName = [Proxy.Policy.rendezvousHash] := rfl
+
+/-- **The LB knob is live.** The non-default deployment's `api` dial chain is
+least-connections — a different policy the config-driven dial runs. -/
+theorem altDeployment_dialChain :
+    altDeployment.dialChain proxyPoolName = [Proxy.Policy.leastConnections] := rfl
+
+/-- The two deployments disagree on the `api` dial chain — the config choice is not
+dead data. -/
+theorem deployments_dialChain_differ :
+    defaultDeployment.dialChain proxyPoolName ≠ altDeployment.dialChain proxyPoolName := by
+  decide
+
+/-- **No L4 regression.** The default deployment binds no layer-4 listener. -/
+theorem defaultDeployment_l4 : defaultDeployment.l4Listeners = [] := rfl
+
+/-- **The L4 knob is live.** The non-default deployment binds exactly one raw-TCP
+passthrough listener on `127.0.0.1:8710` over the `api` pool's three backends —
+the value a deploy step turns into `DRORB_L4_LISTEN` / `DRORB_PROXY_BACKENDS`. -/
+theorem altDeployment_l4 :
+    altDeployment.l4Listeners
+      = [ { bind := "127.0.0.1:8710", poolName := proxyPoolName
+            , mode := Dsl.Cfg.L4Mode.tcp, backendIds := [0, 1, 2] } ] := rfl
+
+/-- **No TLS regression.** The default (cleartext) deployment reads the base
+handshake terminator unchanged for any profile name. -/
+theorem defaultDeployment_serverParams (base : TlsHandshake.ServerParams) (name : String) :
+    defaultDeployment.serverParamsFor base name = base := rfl
+
+/-- **The TLS knob is live: 0-RTT follows the profile.** Off the SAME base
+terminator, the non-default deployment's 0-RTT-on profile (`internal-mtls`)
+advertises its early-data window while its 0-RTT-off profile (`public-web`) zeroes
+it — the config profile reaching the running handshake's early-data policy. -/
+theorem altDeployment_serverParams_early (base : TlsHandshake.ServerParams) :
+    (altDeployment.serverParamsFor base "internal-mtls").maxEarlyData = 16384
+    ∧ (altDeployment.serverParamsFor base "public-web").maxEarlyData = 0 := by
+  refine ⟨?_, ?_⟩ <;> rfl
+
+#guard defaultDeployment.l4Listeners.length == 0
+#guard altDeployment.l4Listeners.length == 1
+#eval do
+  IO.println s!"deployment projections: default dialChain(api)={repr (defaultDeployment.dialChain proxyPoolName)}, alt dialChain(api)={repr (altDeployment.dialChain proxyPoolName)}"
+  IO.println s!"deployment L4: default={repr defaultDeployment.l4Listeners}, alt={repr altDeployment.l4Listeners}"
+
+/-! ### (7c') Status-stability of every deployed stage's response phase
+
+Under the short-circuit-carries-transforms semantics, a gate response is threaded
+through the inner stages' `onResponse`s. Those transforms only ADD headers / rewrite
+the body / rewrite the header map — they never set the status. So a gate
+short-circuit keeps its status (a 401 stays a 401, a 403 a 403) even after the inner
+transforms run over it. These lemmas record that each deployed stage's response
+phase is status-stable; `deployStagesFull2_statusStable` collects them so the gate
+seams can conclude the preserved status via `Pipeline.pipeline_gate_status`. -/
+
+/-- The eight request-phase gates all have the identity response phase. -/
+theorem jwtAdminStage_statusStable : Stage.statusStable jwtAdminStage := fun _ _ => rfl
+theorem basicStage_statusStable : Stage.statusStable Reactor.Stage.BasicAuth.basicStage := fun _ _ => rfl
+theorem ipfilterStage_statusStable : Stage.statusStable Reactor.Stage.IpFilter.ipfilterStage := fun _ _ => rfl
+theorem rateStage_statusStable : Stage.statusStable Reactor.Stage.Rate.rateStage := fun _ _ => rfl
+theorem cacheEmptyStage_statusStable : Stage.statusStable cacheEmptyStage := fun _ _ => rfl
+theorem redirectStage_statusStable : Stage.statusStable Reactor.Stage.Redirect.redirectStage := fun _ _ => rfl
+theorem traversalStage_statusStable : Stage.statusStable traversalStage := fun _ _ => rfl
+theorem policyStage_statusStable : Stage.statusStable policyStage := fun _ _ => rfl
+
+/-- The deploy header rewrite touches only the header map (`deploy_rewrite_status`). -/
+theorem headerRewriteStage_statusStable : Stage.statusStable headerRewriteStage := by
+  intro c b
+  simp only [headerRewriteStage, Reactor.Pipeline.build_mapResp, deploy_rewrite_status]
+
+/-- CORS only pushes `Access-Control-Allow-Origin` (a header), never the status. -/
+theorem deployCorsStage_statusStable : Stage.statusStable deployCorsStage := by
+  intro c b
+  simp only [deployCorsStage]
+  cases _root_.Cors.acaoValue Reactor.Stage.Cors.corsPolicy (corsOriginOf c) <;>
+    simp only [Reactor.Pipeline.build_addHeader]
+
+/-- gzip rewrites the body and pushes `Content-Encoding` — the status is untouched. -/
+theorem gzipStage_statusStable : Stage.statusStable Reactor.Stage.Gzip.gzipStage := by
+  intro c b
+  simp only [Reactor.Stage.Gzip.gzipStage]
+  cases Reactor.Stage.Gzip.acceptsGzip c.req <;> rfl
+
+/-- The markup rewrite touches only the body — the status is untouched. -/
+theorem htmlrewriteStage_statusStable : Stage.statusStable Reactor.Stage.HtmlRewrite.htmlrewriteStage :=
+  fun _ _ => rfl
+
+/-- The security-header set only pushes headers — the status is untouched. -/
+theorem securityheadersStage_statusStable : Stage.statusStable Reactor.Stage.SecurityHeaders.securityheadersStage := by
+  intro c b
+  simp only [Reactor.Stage.SecurityHeaders.securityheadersStage, Reactor.Pipeline.build_addHeaders]
+
+/-- The hop-strip/`Server` rewrite touches only the header map — status untouched. -/
+theorem headerStage_statusStable : Stage.statusStable Reactor.Stage.Header.headerStage :=
+  fun _ _ => rfl
+
+/-- **Every stage in `deployStagesFull2` is status-stable.** So threading a gate
+short-circuit through the inner onion adds headers / rewrites the body only — it
+never changes the gate status. -/
+theorem deployStagesFull2_statusStable : ∀ s ∈ deployStagesFull2, Stage.statusStable s := by
+  intro s hs
+  simp only [deployStagesFull2, List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hs
+  rcases hs with h|h|h|h|h|h|h|h|h|h|h|h|h|h <;> subst h
+  · exact jwtAdminStage_statusStable
+  · exact basicStage_statusStable
+  · exact ipfilterStage_statusStable
+  · exact rateStage_statusStable
+  · exact cacheEmptyStage_statusStable
+  · exact redirectStage_statusStable
+  · exact traversalStage_statusStable
+  · exact policyStage_statusStable
+  · exact headerRewriteStage_statusStable
+  · exact deployCorsStage_statusStable
+  · exact gzipStage_statusStable
+  · exact htmlrewriteStage_statusStable
+  · exact securityheadersStage_statusStable
+  · exact headerStage_statusStable
+
 /-! ### (7d) The JWT gate seam over the COMPOSED list -/
 
-/-- **The JWT gate fires through the full ten-stage fold.** For any context whose
-target is under `/admin` and whose REAL `Jwt.authenticate` decision rejects, the
-built response of the WHOLE `deployStagesFull2` fold is exactly the `401`
-(`unauthorized`) — the gate is first, so it short-circuits the handler and every
-later stage. This is the composed-list seam: the gate genuinely drives the served
-bytes, not in isolation but in the deployed pipeline. -/
+/-- The stages after the JWT gate — the tail the JWT short-circuit's response is
+threaded through (the security-header set among them, so the `401` now carries HSTS
+on the wire, as the real orb run confirms). -/
+def full2AfterJwt : List Stage :=
+  [ Reactor.Stage.BasicAuth.basicStage
+  , Reactor.Stage.IpFilter.ipfilterStage
+  , Reactor.Stage.Rate.rateStage
+  , cacheEmptyStage
+  , Reactor.Stage.Redirect.redirectStage
+  , traversalStage
+  , policyStage
+  , headerRewriteStage
+  , deployCorsStage
+  , Reactor.Stage.Gzip.gzipStage
+  , Reactor.Stage.HtmlRewrite.htmlrewriteStage
+  , Reactor.Stage.SecurityHeaders.securityheadersStage
+  , Reactor.Stage.Header.headerStage ]
+
+/-- `deployStagesFull2` is the JWT gate followed by `full2AfterJwt`. -/
+theorem deployStagesFull2_eq : deployStagesFull2 = jwtAdminStage :: full2AfterJwt := rfl
+
+/-- Every stage after the JWT gate is status-stable. -/
+theorem full2AfterJwt_statusStable : ∀ s ∈ full2AfterJwt, Stage.statusStable s := by
+  intro s hs
+  exact deployStagesFull2_statusStable s (by rw [deployStagesFull2_eq]; exact List.mem_cons_of_mem _ hs)
+
+/-- **The JWT gate fires through the full thirteen-stage fold.** For any context
+whose target is under `/admin` and whose REAL `Jwt.authenticate` decision rejects,
+the JWT gate short-circuits: the built response of the WHOLE `deployStagesFull2`
+fold is the `401` (`unauthorized`) threaded through the inner stages' response
+onion (`full2AfterJwt`) — the handler and every later stage's REQUEST phase are
+skipped, but the response transforms (the security-header set among them) now run
+over the `401`, so the refusal carries the security headers. Its STATUS stays `401`
+(`full2_admin_status_401`), and the policy meaning (a refusal) is preserved. -/
 theorem full2_admin_gate (c : Ctx) (r : Jwt.Reason)
     (hadmin : isAdminPath c.req = true)
     (hrej : Reactor.Stage.Jwt.decision c = Jwt.Outcome.reject r) :
-    (runPipeline deployStagesFull2 appHandler c).build = Reactor.Stage.Jwt.unauthorized := by
+    (runPipeline deployStagesFull2 appHandler c)
+      = Reactor.Pipeline.runResp full2AfterJwt c
+          (ResponseBuilder.ofResponse Reactor.Stage.Jwt.unauthorized) := by
   have hgate : jwtAdminStage.onRequest c = StageStep.respond Reactor.Stage.Jwt.unauthorized := by
     show (if isAdminPath c.req then Reactor.Stage.Jwt.jwtStage.onRequest c
           else StageStep.continue c) = _
     rw [if_pos hadmin]
     exact Reactor.Stage.Jwt.jwtStage_gates_on_reject c r hrej
-  have hred : runPipeline deployStagesFull2 appHandler c
-      = ResponseBuilder.ofResponse Reactor.Stage.Jwt.unauthorized := by
-    unfold deployStagesFull2
-    exact Reactor.Pipeline.pipeline_gate_short_circuits _ _ appHandler c _ hgate
-  rw [hred, Reactor.Pipeline.build_ofResponse]
+  rw [deployStagesFull2_eq]
+  exact Reactor.Pipeline.pipeline_gate_short_circuits _ _ appHandler c _ hgate
 
 /-! ### (7e) A concrete, non-vacuous witness on the REAL `Jwt.authenticate` -/
 
@@ -1523,18 +1870,32 @@ theorem adminNoAuth_isAdmin : isAdminPath adminNoAuthReq = true := by decide
 theorem adminNoAuth_rejects :
     Reactor.Stage.Jwt.decision adminNoAuthCtx = Jwt.Outcome.reject Jwt.Reason.noToken := rfl
 
-/-- **The witnessed composed-list gate.** The full ten-stage fold serves the `401`
-for the concrete credential-less `/admin` request — the JWT gate firing off the
-genuine FSM, through every composed stage. -/
+/-- **The witnessed composed-list gate.** The full thirteen-stage fold serves the
+`401` (threaded through the inner response onion) for the concrete credential-less
+`/admin` request — the JWT gate firing off the genuine FSM, through every composed
+stage. -/
 theorem full2_admin_serves_401 :
-    (runPipeline deployStagesFull2 appHandler adminNoAuthCtx).build
-      = Reactor.Stage.Jwt.unauthorized :=
+    (runPipeline deployStagesFull2 appHandler adminNoAuthCtx)
+      = Reactor.Pipeline.runResp full2AfterJwt adminNoAuthCtx
+          (ResponseBuilder.ofResponse Reactor.Stage.Jwt.unauthorized) :=
   full2_admin_gate adminNoAuthCtx Jwt.Reason.noToken adminNoAuth_isAdmin adminNoAuth_rejects
 
-/-- The served status through the full fold is `401`. -/
+/-- **The served STATUS through the full fold is `401`** — preserved through the
+inner response onion. The transforms the refusal now carries (security headers etc.)
+add headers only; the `401` refusal is intact. Uses `Pipeline.pipeline_gate_status`
+with every post-JWT stage status-stable (`full2AfterJwt_statusStable`). -/
 theorem full2_admin_status_401 :
     ((runPipeline deployStagesFull2 appHandler adminNoAuthCtx).build).status = 401 := by
-  rw [full2_admin_serves_401]; rfl
+  have hadmin : isAdminPath adminNoAuthCtx.req = true := adminNoAuth_isAdmin
+  have hgate : jwtAdminStage.onRequest adminNoAuthCtx
+      = StageStep.respond Reactor.Stage.Jwt.unauthorized := by
+    show (if isAdminPath adminNoAuthCtx.req then Reactor.Stage.Jwt.jwtStage.onRequest adminNoAuthCtx
+          else StageStep.continue adminNoAuthCtx) = _
+    rw [if_pos hadmin]
+    exact Reactor.Stage.Jwt.jwtStage_gates_on_reject adminNoAuthCtx Jwt.Reason.noToken adminNoAuth_rejects
+  rw [deployStagesFull2_eq]
+  exact Reactor.Pipeline.pipeline_gate_status jwtAdminStage full2AfterJwt appHandler
+    adminNoAuthCtx Reactor.Stage.Jwt.unauthorized hgate full2AfterJwt_statusStable
 
 /-! ### (7f) The seam lifted to the bytes `main` writes -/
 
@@ -1547,11 +1908,16 @@ theorem jwt_decision_congr {c1 c2 : Ctx} (h : c1.req = c2.req) :
 /-- **`servePipelineFull2_admin_401` — the deployed serve emits the `401` for an
 `/admin`-no-token dispatch.** When the deployed reactor dispatches the
 credential-less `GET /admin` request, the bytes `main` writes (`servePipelineFull2`,
-the response component of `deployStepFull2`) are EXACTLY `serialize unauthorized` —
-the JWT gate firing on the deployed path, over the full ten-stage fold. -/
+the response component of `deployStepFull2`) are the serialized `401`
+(`unauthorized`) threaded through the inner response onion (`full2AfterJwt`) — the
+JWT gate firing on the deployed path, over the full thirteen-stage fold, and the
+refusal now carrying the response-transform headers (security headers among them).
+`servePipelineFull2_admin_status_401` reads off the preserved `401` status. -/
 theorem servePipelineFull2_admin_401 (input : Bytes) (rest : List RingSubmission)
     (hsub : deploySubs input = .dispatch adminNoAuthReq :: rest) :
-    servePipelineFull2 input = serialize Reactor.Stage.Jwt.unauthorized := by
+    servePipelineFull2 input
+      = serialize ((Reactor.Pipeline.runResp full2AfterJwt (ctxOf input)
+          (ResponseBuilder.ofResponse Reactor.Stage.Jwt.unauthorized)).build) := by
   have hreq : (ctxOf input).req = adminNoAuthReq := by
     show (dispatchReqOf (deploySubs input)).getD ({} : Proto.Request) = adminNoAuthReq
     rw [hsub]; rfl
@@ -1562,6 +1928,30 @@ theorem servePipelineFull2_admin_401 (input : Bytes) (rest : List RingSubmission
       adminNoAuth_rejects
   unfold servePipelineFull2
   rw [full2_admin_gate (ctxOf input) Jwt.Reason.noToken hadmin hrej]
+
+/-- **The deployed `/admin`-no-token status is `401`.** The bytes `main` writes for
+the credential-less `/admin` dispatch decode to a `401` — the JWT refusal status
+preserved through the inner response onion (only headers were added). -/
+theorem servePipelineFull2_admin_status_401 (input : Bytes) (rest : List RingSubmission)
+    (hsub : deploySubs input = .dispatch adminNoAuthReq :: rest) :
+    ((runPipeline deployStagesFull2 appHandler (ctxOf input)).build).status = 401 := by
+  have hreq : (ctxOf input).req = adminNoAuthReq := by
+    show (dispatchReqOf (deploySubs input)).getD ({} : Proto.Request) = adminNoAuthReq
+    rw [hsub]; rfl
+  have hadmin : isAdminPath (ctxOf input).req = true := by rw [hreq]; decide
+  have hrej : Reactor.Stage.Jwt.decision (ctxOf input)
+      = Jwt.Outcome.reject Jwt.Reason.noToken :=
+    (jwt_decision_congr (show (ctxOf input).req = adminNoAuthCtx.req from hreq)).trans
+      adminNoAuth_rejects
+  have hgate : jwtAdminStage.onRequest (ctxOf input)
+      = StageStep.respond Reactor.Stage.Jwt.unauthorized := by
+    show (if isAdminPath (ctxOf input).req then Reactor.Stage.Jwt.jwtStage.onRequest (ctxOf input)
+          else StageStep.continue (ctxOf input)) = _
+    rw [if_pos hadmin]
+    exact Reactor.Stage.Jwt.jwtStage_gates_on_reject (ctxOf input) Jwt.Reason.noToken hrej
+  rw [deployStagesFull2_eq]
+  exact Reactor.Pipeline.pipeline_gate_status jwtAdminStage full2AfterJwt appHandler
+    (ctxOf input) Reactor.Stage.Jwt.unauthorized hgate full2AfterJwt_statusStable
 
 /-! ### (7g) The gzip and cors transforms byte-drive through the FULL fold.
 
@@ -1616,6 +2006,24 @@ theorem ipfilterPermissiveStage_pass (c : Ctx)
         | none => StageStep.continue c) = _
   rw [h]
 
+/-- With no stashed `client.ip` the REAL `Reactor.Stage.IpFilter.ipfilterStage`
+admits: the decoded address defaults to the empty v4 address, which the deployed
+default-admit ruleset passes. This is the admitted-arm pass step the metered-serve
+default (no accept-peer attr) threads through the composed fold. -/
+theorem ipfilterStage_pass' (c : Ctx)
+    (h : c.attrs.find? (fun kv => kv.1 == Reactor.Stage.IpFilter.clientIpKey) = none) :
+    Reactor.Stage.IpFilter.ipfilterStage.onRequest c = .continue c := by
+  have haddr : Reactor.Stage.IpFilter.ctxAddr c = ⟨.v4, []⟩ := by
+    show (match c.attrs.find? (fun kv => kv.1 == Reactor.Stage.IpFilter.clientIpKey) with
+          | some kv => Reactor.Stage.IpFilter.decodeAddr kv.2
+          | none => ⟨.v4, []⟩) = _
+    rw [h]
+  have hadmit : Reactor.Stage.IpFilter.deployAdmits ⟨.v4, []⟩ = true := by decide
+  show (match Reactor.Stage.IpFilter.deployAdmits (Reactor.Stage.IpFilter.ctxAddr c) with
+        | true  => StageStep.continue c
+        | false => StageStep.respond Reactor.Stage.IpFilter.forbidden403) = _
+  rw [haddr, hadmit]
+
 /-- The high-limit token bucket always admits. -/
 theorem rateHighStage_pass (c : Ctx) : rateHighStage.onRequest c = .continue c := by
   show cond (rateHighAdmits c) (StageStep.continue c) (StageStep.respond Reactor.Stage.Rate.resp429) = _
@@ -1641,13 +2049,29 @@ theorem traversalStage_pass (c : Ctx) (h : targetEscapes c.req = false) :
         | false => StageStep.continue c) = _
   rw [h]
 
-/-- An admitted surface passes the Policy gate. -/
+/-- An admitted surface passes the Policy gate (it is not `policyReserved`, since
+`policyReserved` requires the decision to be `none`). -/
 theorem policyStage_pass (c : Ctx) (s : Policy.Served) (h : deployDecisionOf c.req = some s) :
     policyStage.onRequest c = .continue c := by
-  show (match deployDecisionOf c.req with
-        | none => StageStep.respond forbidden403
-        | some _ => StageStep.continue c) = _
-  rw [h]
+  have hf : policyReserved c.req = false := by
+    simp only [policyReserved, h, Option.isNone_some, Bool.false_and]
+  show cond (policyReserved c.req) (StageStep.respond forbidden403) (StageStep.continue c) = _
+  simp only [hf, cond_false]
+
+/-- **A merely-unknown, non-reserved path passes the Policy gate** — it is not a
+genuinely policy-refused surface, so the application router (not the policy gate)
+answers it, producing its 404 default. This is the issue-2 semantics: an
+undeclared but non-reserved surface 404s rather than being blanket-403'd. -/
+theorem policyStage_pass_unknown (c : Ctx) (h : policyReserved c.req = false) :
+    policyStage.onRequest c = .continue c := by
+  show cond (policyReserved c.req) (StageStep.respond forbidden403) (StageStep.continue c) = _
+  simp only [h, cond_false]
+
+/-- **A genuinely policy-refused (reserved) surface gates to the `403`.** -/
+theorem policyStage_refuses (c : Ctx) (h : policyReserved c.req = true) :
+    policyStage.onRequest c = .respond forbidden403 := by
+  show cond (policyReserved c.req) (StageStep.respond forbidden403) (StageStep.continue c) = _
+  simp only [h, cond_true]
 
 /-- **`full2_reduces` — the admitted-arm reduction of the full ten-stage fold.** When
 every gate passes, `runPipeline deployStagesFull2` collapses to the five inner
@@ -1655,7 +2079,9 @@ response transforms threaded through the outer deploy header rewrite — the fol
 gzip/cors byte-effects then land on. -/
 theorem full2_reduces (c : Ctx) (s : Policy.Served)
     (hadmin : isAdminPath c.req = false)
-    (hip : c.attrs.find? (fun kv => kv.1 == "client.ip") = none)
+    (hpriv : Reactor.Stage.BasicAuth.isProtectedPath c.req = false)
+    (hip : c.attrs.find? (fun kv => kv.1 == Reactor.Stage.IpFilter.clientIpKey) = none)
+    (hrate : Reactor.Stage.Rate.admits c = true)
     (hredir : ¬ (c.req.target = Reactor.Stage.Redirect.ruleTarget))
     (htrav : targetEscapes c.req = false)
     (hadmit : deployDecisionOf c.req = some s) :
@@ -1663,20 +2089,25 @@ theorem full2_reduces (c : Ctx) (s : Policy.Served)
       = (runPipeline full2InnerStages appHandler c).mapResp
           (Reactor.Lifecycle.rewriteResp
             (deployProg (deployPlan (deploySubs c.input)) c.input)) := by
-  show runPipeline (jwtAdminStage :: ipfilterPermissiveStage :: rateHighStage
+  show runPipeline (jwtAdminStage :: Reactor.Stage.BasicAuth.basicStage
+      :: Reactor.Stage.IpFilter.ipfilterStage :: Reactor.Stage.Rate.rateStage
       :: cacheEmptyStage :: Reactor.Stage.Redirect.redirectStage :: traversalStage
       :: policyStage :: headerRewriteStage :: full2InnerStages) appHandler c = _
   rw [Reactor.Pipeline.pipeline_stage_effect jwtAdminStage _ appHandler c c (jwtAdminStage_pass c hadmin),
-      Reactor.Pipeline.pipeline_stage_effect ipfilterPermissiveStage _ appHandler c c
-        (ipfilterPermissiveStage_pass c hip),
-      Reactor.Pipeline.pipeline_stage_effect rateHighStage _ appHandler c c (rateHighStage_pass c),
+      Reactor.Pipeline.pipeline_stage_effect Reactor.Stage.BasicAuth.basicStage _ appHandler c c
+        (Reactor.Stage.BasicAuth.basicStage_pass c hpriv),
+      Reactor.Pipeline.pipeline_stage_effect Reactor.Stage.IpFilter.ipfilterStage _ appHandler c c
+        (ipfilterStage_pass' c hip),
+      Reactor.Pipeline.pipeline_stage_effect Reactor.Stage.Rate.rateStage _ appHandler c c
+        (Reactor.Stage.Rate.rateStage_onReq_continue c hrate),
       Reactor.Pipeline.pipeline_stage_effect cacheEmptyStage _ appHandler c c (cacheEmptyStage_pass c),
       Reactor.Pipeline.pipeline_stage_effect Reactor.Stage.Redirect.redirectStage _ appHandler c c
         (redirectStage_pass c hredir),
       Reactor.Pipeline.pipeline_stage_effect traversalStage _ appHandler c c (traversalStage_pass c htrav),
       Reactor.Pipeline.pipeline_stage_effect policyStage _ appHandler c c (policyStage_pass c s hadmit),
       Reactor.Pipeline.pipeline_stage_effect headerRewriteStage _ appHandler c c rfl]
-  simp only [jwtAdminStage, ipfilterPermissiveStage, rateHighStage, cacheEmptyStage,
+  simp only [jwtAdminStage, Reactor.Stage.BasicAuth.basicStage,
+    Reactor.Stage.IpFilter.ipfilterStage, Reactor.Stage.Rate.rateStage, cacheEmptyStage,
     Reactor.Stage.Cache.mkStage, Reactor.Stage.Redirect.redirectStage, traversalStage,
     policyStage, headerRewriteStage]
 
@@ -1729,7 +2160,9 @@ The outer rewrite's only drop is the hop-by-hop strip, which keeps both (non-hop
 so they reach the wire — as the real orb run shows. Axiom-clean, no `sorry`. -/
 theorem full2_gzip_cors_drive (c : Ctx) (s : Policy.Served) (v : String)
     (hadmin : isAdminPath c.req = false)
-    (hip : c.attrs.find? (fun kv => kv.1 == "client.ip") = none)
+    (hpriv : Reactor.Stage.BasicAuth.isProtectedPath c.req = false)
+    (hip : c.attrs.find? (fun kv => kv.1 == Reactor.Stage.IpFilter.clientIpKey) = none)
+    (hrate : Reactor.Stage.Rate.admits c = true)
     (hredir : ¬ (c.req.target = Reactor.Stage.Redirect.ruleTarget))
     (htrav : targetEscapes c.req = false)
     (hadmit : deployDecisionOf c.req = some s)
@@ -1743,7 +2176,7 @@ theorem full2_gzip_cors_drive (c : Ctx) (s : Policy.Served) (v : String)
           ∈ ((runPipeline full2InnerStages appHandler c).build).headers
       ∧ (Reactor.Stage.Cors.acaoName, Reactor.Stage.Cors.strBytes v)
           ∈ ((runPipeline full2InnerStages appHandler c).build).headers :=
-  ⟨full2_reduces c s hadmin hip hredir htrav hadmit,
+  ⟨full2_reduces c s hadmin hpriv hip hrate hredir htrav hadmit,
    full2_gzip_ce_inner c hgz,
    full2_cors_acao_inner c v hv⟩
 

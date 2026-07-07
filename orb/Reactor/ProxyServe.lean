@@ -67,6 +67,10 @@ def routeProxy (ac : AppConfig) (ctx : Proxy.Ctx) (req : Request) : List RingSub
     match r.handler with
     | Handler.proxy pool  => proxyHandle pool ctx req
     | Handler.static _ _  => []
+    | Handler.staticFile  => []
+    | Handler.cgi _       => []
+    | Handler.hostGlob _  => []
+    | Handler.redirect _ _ => []
   | none => []
 
 /-- Pin the proxy onto the reactor's own `dispatch` submission: scan the running

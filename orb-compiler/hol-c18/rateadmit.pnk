@@ -1,0 +1,37 @@
+// C18 probe: a REAL, deployed serve fragment — the RATE-LIMIT ADMIT decision.
+// Pancake IMPLEMENTATION whose emitted machine code must refine the Lean spec
+// `Rate.tryAdmit` (drorb `orb/Rate/Bucket.lean`), used by the
+// DEPLOYED serve: `Rate.tryAdmit` is the token-bucket admit decision consulted by
+// `Reactor.Stage.Rate.admits` (the rate stage, `rateStage`/`rateHighStage`),
+// which sits at position 3 of `Reactor.Deploy.deployStagesFull2`.
+//
+// `tryAdmit b = if 1 <= b.tokens then (admit,true) else (reject,false)`.  The
+// runtime input is the available token count (post-refill); the decision bit is
+// `1 <= tokens -> admit(1) else reject(0)`.
+//
+// Structurally: a single `<=` THRESHOLD guard (2 leaves).  The Pancake parser
+// lowers `1 <= tokens` to `Cmp NotLess tokens 1` (asm word_cmp NotLess = ~(<)) —
+// a GENUINELY NEW guard kind beyond C15's `Less` and C17's `Equal`, the one the
+// C18 `panLinkA_branch_le` companion is added for.
+//
+// Control block at @base:
+//   [0 ..8)   tokens (available tokens, invariant tokens < 2^32)
+//   [8 ..16)  result (admit=1 / reject=0; read by @report_vec)
+//
+// Compile: cake --pancake < rateadmit.pnk > rateadmit.S
+
+fun main() {
+  var base = @base;
+  var buf = base + 16;
+  @load_vec(base, 8, buf, 4096);
+  var tokens = lds 1 base;
+  var result = 0;
+  if 1 <= tokens {
+    result = 1;
+  } else {
+    result = 0;
+  }
+  st base + 8, result;
+  @report_vec(base + 8, 8, base, 8);
+  return 0;
+}

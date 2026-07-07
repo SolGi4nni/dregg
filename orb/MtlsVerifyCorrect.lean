@@ -1,5 +1,5 @@
 /-
-MtlsVerifyCorrect — CORRECTNESS of mutual-TLS client-certificate verification.
+MtlsVerifyCorrect — CORRECTNESS of the mutual-TLS client-certificate decision.
 
 This module lifts the mutual-TLS client-authentication decision from a *safety*
 statement (the validator never crashes; a rejected chain yields no identity) to
@@ -8,18 +8,16 @@ specification written directly from the governing standards, and it establishes
 a client identity in **exactly** the cases the standards permit — no more, no
 less.
 
-The standards fixed here:
+The function certified here is the one the running reactor calls.  When a client
+presents a certificate chain, the reactor's PKI accept gate derives the client
+identity through `Reactor.PkiWire.mtlsIdentity`, which is *definitionally*
+`Mtls.authenticate env now chain` (`deployed_gate_eq_authenticate` below proves
+the identity by `rfl`).  The headline theorem `authenticate_correct` is stated
+over that same `Mtls.authenticate`, and `mtlsIdentity_correct` transports it onto
+the reactor gate verbatim — so the refinement binds the deployed decision, not a
+proof-local re-statement of it.
 
-  * **RFC 8446 §4.4.2 (Certificate) / §4.4.3 (CertificateVerify).**  In TLS 1.3
-    mutual authentication the client sends a `Certificate` message carrying the
-    end-entity certificate and its chain, then a `CertificateVerify` message
-    carrying a signature, made with the private key of the end-entity
-    certificate, over the handshake transcript.  §4.4.2.4 requires the server
-    to verify that the presented chain terminates in a trust anchor it is
-    configured with; §4.4.3 requires the server to verify the
-    `CertificateVerify` signature against the end-entity public key and the
-    transcript.  Both checks are mandatory: authentication succeeds only if both
-    pass, and on failure the peer is *not* authenticated.
+The standards fixed here:
 
   * **RFC 5280 §6.1 (Certification Path Validation).**  A leaf-first path
     `[c₀, c₁, …, cₙ]` is a valid certification path at verification time `now`
@@ -30,49 +28,122 @@ The standards fixed here:
     constraint (§6.1.4, `basicConstraints` `cA = TRUE`); and the top of the path
     is a configured trust anchor (§6.1.1 (d), §6.1.4).
 
-Two named cryptographic boundaries are threaded, never opened: `Env.verifySig`
-(certificate signatures, RFC 5280 §6.1.3 (a)(1)) and the `CertificateVerify`
-predicate `cvVerify` (RFC 8446 §4.4.3).  Every result holds uniformly for every
-possible behaviour of those primitives — the correctness is about the
-*composition*, not the cipher.
+  * **RFC 8446 §4.4.3 (CertificateVerify).**  The client proves possession of
+    the leaf (end-entity) private key by signing the handshake-transcript
+    content — 64 space octets, the context string
+    `"TLS 1.3, client CertificateVerify"`, a `0x00` separator, then the
+    transcript hash — under the leaf certificate's public key.  Chain validation
+    alone proves only that the presented certificates form a trusted path;
+    without this check a peer presenting any publicly-visible chain would be
+    authenticated as that identity without holding its private key.
 
-The specification (`Rfc5280Path`, `IdentityEstablished`) is stated **from the
-standards, in set-and-index vocabulary** — membership, adjacency via
-`List.zip … tail`, the terminal element via `getLast?` — with no reference to
-the validator's recursion.  The headline theorem `establish_correct` proves the
-implementation establishes an identity **iff** the specification holds, and the
-concrete `#guard`s at the end witness non-vacuity: an unverified chain, an
-expired certificate, and a bad `CertificateVerify` each yield **no** identity,
-while a well-formed chain with a good signature yields the leaf subject.
+Two cryptographic boundaries are threaded, never opened: `Env.verifySig`
+(certificate signatures, RFC 5280 §6.1.3 (a)(1)) and `Env.cvVerify` (the
+CertificateVerify proof-of-possession, RFC 8446 §4.4.3).  Every result holds
+uniformly for every possible behaviour of those primitives — the correctness is
+about the *composition* of the path-validation conditions, the proof-of-possession
+check and the identity extraction, not about the cipher.
+
+The specification (`Rfc5280Path`, `AuthIdentity`) is stated **from the standards,
+in set-and-index vocabulary** — membership, adjacency via `List.zip … tail`, the
+terminal element via `getLast?`, and the §4.4.3 proof-of-possession conjunct —
+with no reference to the validator's recursion.  The headline theorem
+`authenticate_correct` proves the deployed decision establishes an identity
+**iff** the specification holds, and the concrete `example`s at the end witness
+non-vacuity: an unverified chain, an expired certificate, a broken signature
+link, and a valid chain with a **bad/absent CertificateVerify** each yield **no**
+identity, while a well-formed chain carrying a valid CertificateVerify yields the
+leaf subject.
+
+## Binding the transcript and signature bytes to the live TLS state
+
+The deployed decision (`Mtls.authenticate`) enforces **both** the RFC 5280
+§6.1 certification-path checks and the RFC 8446 §4.4.3 `CertificateVerify`
+proof-of-possession, and this refinement certifies exactly that conjunction.
+
+The earlier residual was *plumbing*: the transcript-hash and CertificateVerify-
+signature bytes were surfaced by opaque functions — first two independent
+`TlsConn → Bytes → ByteArray` fields, then a single but still **free**
+`clientAuthOf` field a caller could fill with arbitrary bytes.  That is now
+closed: the client-auth view is **no longer a field of `PkiCfg`**.  It is
+`Reactor.PkiWire.clientAuthOfConn`, a fixed function that reads the real client
+handshake bytes out of the **live TLS connection state** — the buffer the
+deployed `Tls.St` (which the `Proto.TlsConn` carries) holds in its
+`accum`/`handshaking`/`estabUser` phase, via `Reactor.TlsWire.connHandshakeBytes`
+— and splits the client's CertificateVerify message out of that flight with the
+real RFC 8446 §4 framing (`Reactor.PkiWire.scanCV`).  Concretely:
+
+  * `PkiCfg.cvSigOf` is the **real RFC 8446 §4.4.3 parse** (`PkiWire.parseCvSig`)
+    of the CertificateVerify message `scanCV` locates in the connection's own
+    handshake buffer — a pure function of the live state, no free value; and
+  * `PkiCfg.transcriptOf` is the real `Crypto.sha256` over the handshake-context
+    prefix that precedes that message in the same buffer,
+
+so neither is a caller value and the two are forced to come from **one** real
+buffer the TLS state carries (`transcriptOf_from_state` / `cvSigOf_from_state` in
+`Reactor.Pki`).  `mtlsIdentity_state_bound_correct` below states the headline
+refinement with those state bindings made explicit: the CertificateVerify
+conjunct is over the *parsed* wire signature and the *hashed* transcript, both
+drawn from the deployed `Tls.St`.
+
+The earlier residual — that `connHandshakeBytes` surfaced only the client flight
+the abstract `Tls.St` lifecycle handle *retained* (the second-flight messages in
+its phase-buffer tail), so the transcript hash covered only that tail's
+handshake-context prefix and **not** the earlier flights the opaque handshake
+engine had already consumed and dropped — is now closed at its source. `Tls.St`
+carries a running handshake transcript field, `Tls.St.transcript`, that `Tls.step`
+accumulates as it processes **every** received flight (RFC 8446 §4.4.1:
+`Transcript-Hash(M₁ ‖ … ‖ Mₙ)` over the accumulated messages), so a message
+consumed off an earlier flight is retained in the connection's own state rather
+than dropped.  `connHandshakeBytes tc buf` is now exactly `tc.st.transcript ++
+buf` (`Reactor.TlsWire.connHandshakeBytes_eq`), so the handshake-context prefix
+`scanCV` peels off — the bytes the client `CertificateVerify` is checked over — is
+the **full accumulated transcript across all received flights** (`ClientHello ‖ …
+‖ client Certificate`), no longer the retained tail alone.
+`mtlsIdentity_state_bound_correct` below states the headline refinement with that
+accumulated field made explicit (`tc.st.transcript ++ buf`).
+
+The last accumulation step is now closed too: the **server** flight
+(`ServerHello ‖ EncryptedExtensions ‖ server Certificate ‖ server CertificateVerify
+‖ server Finished`).  Previously the opaque handshake engine emitted it only as
+sealed record bytes and never surfaced its plaintext handshake messages to the
+`Tls` record layer, so `Tls.St.transcript` accumulated the client-received bytes
+but not the server flight's plaintext.  That is fixed at the source: the handshake
+`HsOut` (`Tls.HsOut.more`/`.done`) now carries a `flightPlain` field — the
+**plaintext** server-flight handshake messages the engine emitted this step — and
+`Tls.step` interleaves it into `Tls.St.transcript` (`transcriptDelta`), right after
+the `ClientHello` that triggered it and before the client's second flight.  So
+`Tls.St.transcript` is now the full RFC 8446 §4.4.1 sequence
+`ClientHello ‖ server flight ‖ client Certificate ‖ …` — plaintext handshake
+messages, the same bytes the server's own `Established.thSF` hashes (built in
+`TlsHandshake.buildFlight` from the identical `sh ‖ ee ‖ cert ‖ cv ‖ sFin`).
+Because the transcript now contains **two** CertificateVerify messages (the
+server's, inside the server flight, and the client's), `Reactor.PkiWire.scanCV`
+locates the **client's** — the last `0x0f`, folding the server's into the signed
+context exactly as RFC 8446 §4.4.3 requires — so the client CertificateVerify is
+checked over the full §4.4.1 transcript, server flight included.
+
+What remains is a single modeling **convention**, not a security assumption, and
+it is the same one every earlier flight already obeys: the `Tls` layer treats each
+handshake message — received or emitted — as its bare `msg_type ‖ len ‖ body` bytes
+(record framing elided), matching how the server's transcript hashes are computed
+over `chMsg = stripRecord buf` and the bare builder outputs.  The forgeability is
+fully closed either way: `transcriptHash` and `certVerifyMsg` are the TLS state's
+own accumulated transcript, not independently supplied, and cannot be varied by any
+caller.
 -/
 
 import Mtls.Verify
 import Mtls.Theorems
+import Reactor.Pki
 
 namespace Mtls
 namespace Correct
 
-/-! ## The CertificateVerify boundary (RFC 8446 §4.4.3)
-
-The handshake transcript that the `CertificateVerify` signature is computed over,
-and the signature octets themselves, are opaque byte strings at this layer.  The
-predicate `cvVerify leaf transcript sig` is the named cryptographic boundary:
-`true` iff `sig` is a valid signature, under the public key bound in the
-end-entity certificate `leaf`, over the `CertificateVerify` content derived from
-`transcript` (RFC 8446 §4.4.3).  It is never opened; every theorem quantifies
-over all its possible behaviours. -/
-
-/-- The handshake transcript input to the `CertificateVerify` signature
-(RFC 8446 §4.4.3), as an opaque octet string. -/
-abbrev Transcript := List UInt8
-
-/-- The `CertificateVerify` signature octets (RFC 8446 §4.4.3), opaque. -/
-abbrev Sig := List UInt8
-
 /-! ## The independent specification
 
-Written directly from RFC 5280 §6.1 and RFC 8446 §4.4.2/§4.4.3, in
-set-and-index vocabulary, with no reference to the validator `verifyFrom`. -/
+Written directly from RFC 5280 §6.1, in set-and-index vocabulary, with no
+reference to the validator `verifyFrom`. -/
 
 /-- **RFC 5280 §6.1 certification-path validity, stated independently.**
 
@@ -100,67 +171,29 @@ structure Rfc5280Path (anchors : List Cert) (vsig : Cert → Cert → Bool)
   configured trust anchor. -/
   anchored : ∃ top, chain.getLast? = some top ∧ top ∈ anchors
 
-/-- **RFC 8446 §4.4.2 + §4.4.3 + RFC 5280 §6.1: the identity-establishment
-predicate.**  A client identity `id` is established from a presented chain,
-transcript, and `CertificateVerify` signature exactly when:
+/-- **The client-identity predicate (RFC 5280 §6.1 + RFC 8446 §4.4.3).**  A
+client identity `id` is established from a presented chain exactly when:
 
   * the chain is `leaf :: rest` and `id` is the leaf (end-entity) subject;
   * that chain is a valid RFC 5280 certification path to a configured trust
-    anchor at the verification time (§4.4.2.4); and
-  * the `CertificateVerify` signature is valid over the transcript under the
-    leaf's public key (§4.4.3).
+    anchor at the verification time; and
+  * the client's RFC 8446 §4.4.3 `CertificateVerify` signature `cvSig` verifies,
+    under the `cvVerify` boundary, over the transcript-derived content
+    (`clientCertVerifyContent transcriptHash`) with the **leaf** certificate's
+    public key — proof that the peer holds the leaf private key.
 
 If any conjunct fails there is no established identity — the peer is
-unauthenticated. -/
-def IdentityEstablished (anchors : List Cert) (vsig : Cert → Cert → Bool)
-    (cvVerify : Cert → Transcript → Sig → Bool) (now : Time) (chain : Chain)
-    (transcript : Transcript) (sig : Sig) (id : Name) : Prop :=
+unauthenticated.  The third conjunct is what stops a peer that merely copied a
+publicly-visible certificate chain from being authenticated as that identity. -/
+def AuthIdentity (anchors : List Cert) (vsig : Cert → Cert → Bool)
+    (cvVerify : Cert → ByteArray → ByteArray → Bool)
+    (now : Time) (chain : Chain) (transcriptHash cvSig : ByteArray)
+    (id : Name) : Prop :=
   ∃ leaf rest,
     chain = leaf :: rest
     ∧ Rfc5280Path anchors vsig now (leaf :: rest)
-    ∧ cvVerify leaf transcript sig = true
+    ∧ cvVerify leaf (clientCertVerifyContent transcriptHash) cvSig = true
     ∧ id = leaf.subject
-
-/-! ## The implementation under verification
-
-`establish` is the full mutual-TLS client-authentication decision: it gates the
-existing certificate-path identity extractor `Mtls.authenticate` (RFC 5280 chain
-validation + leaf-subject extraction) behind the `CertificateVerify` boundary
-(RFC 8446 §4.4.3).  The path check is `Mtls.verifyFrom`/`Mtls.authenticate`
-verbatim — this module adds only the mandatory second signature check and proves
-the composition correct. -/
-
-/-- **The verified decision.**  Establish the leaf (end-entity) subject as the
-client identity iff the presented chain validates as an RFC 5280 path
-(`verifyFrom`) **and** the `CertificateVerify` signature verifies under the leaf
-(`cvVerify`); otherwise no identity. -/
-def establish (env : Env) (cvVerify : Cert → Transcript → Sig → Bool)
-    (now : Time) (chain : Chain) (transcript : Transcript) (sig : Sig) :
-    Option Name :=
-  match chain with
-  | [] => none
-  | leaf :: rest =>
-      if verifyFrom env now (leaf :: rest) && cvVerify leaf transcript sig then
-        some leaf.subject
-      else none
-
-/-- `establish` is exactly the existing identity extractor `Mtls.authenticate`
-(RFC 5280 chain + leaf subject) gated by the `CertificateVerify` boundary — the
-composition made explicit. -/
-theorem establish_eq_authenticate_gate (env : Env)
-    (cvVerify : Cert → Transcript → Sig → Bool) (now : Time)
-    (leaf : Cert) (rest : Chain) (transcript : Transcript) (sig : Sig) :
-    establish env cvVerify now (leaf :: rest) transcript sig
-      = if cvVerify leaf transcript sig then
-          authenticate env now (leaf :: rest)
-        else none := by
-  unfold establish authenticate
-  by_cases hv : verifyFrom env now (leaf :: rest) = true
-  · by_cases hc : cvVerify leaf transcript sig = true <;>
-      simp [hv, hc]
-  · simp only [Bool.not_eq_true] at hv
-    by_cases hc : cvVerify leaf transcript sig = true <;>
-      simp [hv, hc]
 
 /-! ## Bridging lemmas: the recursive validator equals the declarative spec
 
@@ -248,39 +281,39 @@ theorem rfc5280_iff (env : Env) (now : Time) (chain : Chain) :
        (caChain_iff_nonLeafCA chain).mp hp.caChain,
        (anchoredTop_iff_topAnchored env chain).mp hp.anchored⟩
 
-/-! ## The refinement theorem
+/-! ## The refinement theorem — over the DEPLOYED decision
 
-The implementation establishes a client identity **exactly** when the
-independent specification holds — both directions, over all inputs, uniformly in
-the two cryptographic boundaries. -/
+`Mtls.authenticate` is the function the reactor's PKI gate calls to decide a
+client identity.  The theorem proves it establishes an identity **exactly** when
+the independent RFC 5280 specification holds — both directions, over all inputs,
+uniformly in the certificate-signature boundary. -/
 
-/-- **CORRECTNESS (refinement).**  The mutual-TLS decision `establish` yields the
-client identity `id` **iff** `IdentityEstablished` holds: the chain is an RFC 5280
-valid path to a configured trust anchor (RFC 8446 §4.4.2.4) *and* the
-`CertificateVerify` signature is valid over the transcript (§4.4.3), with `id`
-the end-entity subject.  Neither direction is vacuous: an unverified chain or a
-bad `CertificateVerify` makes the right side false, and the theorem then forces
-`establish = none`. -/
-theorem establish_correct (env : Env)
-    (cvVerify : Cert → Transcript → Sig → Bool) (now : Time) (chain : Chain)
-    (transcript : Transcript) (sig : Sig) (id : Name) :
-    establish env cvVerify now chain transcript sig = some id
-      ↔ IdentityEstablished env.anchors env.verifySig cvVerify now chain
-          transcript sig id := by
-  unfold IdentityEstablished
+/-- **CORRECTNESS (refinement).**  The deployed mutual-TLS decision
+`Mtls.authenticate` yields the client identity `id` **iff** `AuthIdentity` holds:
+the chain is an RFC 5280 valid path to a configured trust anchor **and** the
+client's RFC 8446 §4.4.3 `CertificateVerify` signature verifies under the leaf
+key, with `id` the end-entity subject.  Neither direction is vacuous: an
+unverified chain (bad link, expired certificate, or unanchored top) *or* a chain
+whose CertificateVerify does not verify makes the right side false, and the
+theorem then forces `authenticate = none`. -/
+theorem authenticate_correct (env : Env) (now : Time) (chain : Chain)
+    (transcriptHash cvSig : ByteArray) (id : Name) :
+    authenticate env now chain transcriptHash cvSig = some id
+      ↔ AuthIdentity env.anchors env.verifySig env.cvVerify now chain
+          transcriptHash cvSig id := by
+  unfold AuthIdentity
   cases chain with
   | nil =>
     constructor
-    · intro h; simp [establish] at h
+    · intro h; simp [authenticate] at h
     · rintro ⟨leaf, rest, hnil, _⟩; exact absurd hnil (by simp)
   | cons leaf rest =>
-    simp only [establish]
+    simp only [authenticate]
     constructor
     · intro h
       split at h
       · rename_i hcond
-        rw [Bool.and_eq_true] at hcond
-        obtain ⟨hv, hcv⟩ := hcond
+        obtain ⟨hv, hcv⟩ := Bool.and_eq_true_iff.mp hcond
         exact ⟨leaf, rest, rfl,
           (rfc5280_iff env now (leaf :: rest)).mp hv, hcv,
           (Option.some.inj h).symm⟩
@@ -292,30 +325,108 @@ theorem establish_correct (env : Env)
       subst hid
       rw [if_pos (by rw [hv, hcv]; rfl)]
 
-/-! ## No identity without both mandatory checks (RFC 8446 §4.4.2/§4.4.3) -/
+/-! ## Binding the reactor gate
 
-/-- No identity is established from a chain that is not a valid RFC 5280 path,
-whatever the `CertificateVerify` signature says. -/
-theorem no_identity_of_not_path (env : Env)
-    (cvVerify : Cert → Transcript → Sig → Bool) (now : Time) (chain : Chain)
-    (transcript : Transcript) (sig : Sig)
+`Reactor.PkiWire.mtlsIdentity` is the exact function the running reactor invokes
+to derive a client identity from a presented chain (its `mtlsOk` gate tests
+`isSome` of it).  It is definitionally `Mtls.authenticate`, and the refinement
+transports onto it with no gap. -/
+
+/-- The reactor's mTLS identity gate is exactly `Mtls.authenticate` on the
+surfaced chain — the deployed decision, made explicit as a definitional
+equality. -/
+theorem deployed_gate_eq_authenticate
+    (pcfg : Reactor.PkiWire.PkiCfg) (tc : Proto.TlsConn) (buf : Proto.Bytes) :
+    Reactor.PkiWire.mtlsIdentity pcfg tc buf
+      = authenticate pcfg.mtlsEnv pcfg.now (pcfg.chainOf tc buf)
+          (pcfg.transcriptOf tc buf) (pcfg.cvSigOf tc buf) := rfl
+
+/-- **CORRECTNESS on the reactor gate.**  The identity the running reactor's PKI
+gate derives is `some id` **iff** the RFC 5280 specification holds of the
+surfaced chain with `id` the leaf subject — the headline refinement transported
+verbatim onto the deployed `Reactor.PkiWire.mtlsIdentity`. -/
+theorem mtlsIdentity_correct
+    (pcfg : Reactor.PkiWire.PkiCfg) (tc : Proto.TlsConn) (buf : Proto.Bytes)
+    (id : Name) :
+    Reactor.PkiWire.mtlsIdentity pcfg tc buf = some id
+      ↔ AuthIdentity pcfg.mtlsEnv.anchors pcfg.mtlsEnv.verifySig pcfg.mtlsEnv.cvVerify
+          pcfg.now (pcfg.chainOf tc buf)
+          (pcfg.transcriptOf tc buf) (pcfg.cvSigOf tc buf) id := by
+  rw [deployed_gate_eq_authenticate]
+  exact authenticate_correct pcfg.mtlsEnv pcfg.now (pcfg.chainOf tc buf)
+    (pcfg.transcriptOf tc buf) (pcfg.cvSigOf tc buf) id
+
+/-- **CORRECTNESS on the reactor gate, bytes bound.**  The same refinement as
+`mtlsIdentity_correct`, but with the transcript/signature inputs shown as what
+they now *are* — the transcript hash and the **real RFC 8446 §4.4.3 parse** of the
+CertificateVerify message (`PkiWire.parseCvSig`), both projected from the single
+**state-derived** view `Reactor.PkiWire.clientAuthOfConn tc buf` (equal to
+`pcfg.clientAuthOf tc buf`, which now ignores `pcfg`).  So the deployed identity is
+`some id` iff the chain is an RFC 5280 valid path **and** the client's
+CertificateVerify — the parsed wire signature — verifies under the leaf key over
+the surfaced transcript.  The `cvSig`/`transcriptHash` are no longer opaque caller
+values. -/
+theorem mtlsIdentity_bound_correct
+    (pcfg : Reactor.PkiWire.PkiCfg) (tc : Proto.TlsConn) (buf : Proto.Bytes)
+    (id : Name) :
+    Reactor.PkiWire.mtlsIdentity pcfg tc buf = some id
+      ↔ AuthIdentity pcfg.mtlsEnv.anchors pcfg.mtlsEnv.verifySig pcfg.mtlsEnv.cvVerify
+          pcfg.now (pcfg.chainOf tc buf)
+          (Reactor.PkiWire.clientAuthOfConn tc buf).transcriptHash
+          (Reactor.PkiWire.parseCvSig
+            (Reactor.PkiWire.clientAuthOfConn tc buf).certVerifyMsg) id :=
+  mtlsIdentity_correct pcfg tc buf id
+
+/-- **CORRECTNESS on the reactor gate, bound to the live TLS connection state.**
+The strongest form: the transcript hash and CertificateVerify signature are shown
+as the extraction from the **full accumulated handshake transcript** the deployed
+`Tls.St` carries — written out here as the state field itself,
+`tc.st.transcript ++ buf` (`= Reactor.TlsWire.connHandshakeBytes tc buf` by
+`connHandshakeBytes_eq`) — split by the real RFC 8446 §4 framing
+(`Reactor.PkiWire.scanCV`).  `tc.st.transcript` is the running transcript
+`Tls.step` accumulates across **every** received flight **and** the emitted
+plaintext server flight (RFC 8446 §4.4.1 — the server flight's plaintext, formerly
+dropped as sealed-only record bytes, is now interleaved via `Tls.HsOut.flightPlain`
+at the step that sends it).  So the handshake-context prefix `scanCV` peels off — by
+walking past the server's CertificateVerify to the **client's** — is the full
+§4.4.1 transcript `ClientHello ‖ server flight ‖ client Certificate`, not the
+retained second-flight tail nor the client flight alone.  So the deployed reactor
+derives a client identity `some id` **iff** the presented chain is an RFC 5280 valid
+path **and** the client's CertificateVerify — the signature `parseCvSig` reads out
+of the client CertificateVerify message located in the connection's *own full
+accumulated transcript* — verifies under the leaf key over the transcript hashed
+(`Crypto.sha256`) from that same transcript's complete §4.4.1 handshake-context
+prefix (client **and** server flights).  Nothing on the right is a caller value:
+both byte strings are fixed functions of the live `Tls.St.transcript` and the
+received bytes. -/
+theorem mtlsIdentity_state_bound_correct
+    (pcfg : Reactor.PkiWire.PkiCfg) (tc : Proto.TlsConn) (buf : Proto.Bytes)
+    (id : Name) :
+    Reactor.PkiWire.mtlsIdentity pcfg tc buf = some id
+      ↔ AuthIdentity pcfg.mtlsEnv.anchors pcfg.mtlsEnv.verifySig pcfg.mtlsEnv.cvVerify
+          pcfg.now (pcfg.chainOf tc buf)
+          (Crypto.sha256 (TlsHandshake.ofBytes
+            (Reactor.PkiWire.scanCV (tc.st.transcript ++ buf).length
+              [] (tc.st.transcript ++ buf)).1))
+          (Reactor.PkiWire.parseCvSig
+            (Reactor.PkiWire.scanCV (tc.st.transcript ++ buf).length
+              [] (tc.st.transcript ++ buf)).2) id :=
+  mtlsIdentity_correct pcfg tc buf id
+
+/-! ## No identity without a valid RFC 5280 path -/
+
+/-- No identity is established from a chain that is not a valid RFC 5280 path
+(independently of the CertificateVerify signature). -/
+theorem no_identity_of_not_path (env : Env) (now : Time) (chain : Chain)
+    (transcriptHash cvSig : ByteArray)
     (h : ¬ Rfc5280Path env.anchors env.verifySig now chain) :
-    establish env cvVerify now chain transcript sig = none := by
-  cases hr : establish env cvVerify now chain transcript sig with
+    authenticate env now chain transcriptHash cvSig = none := by
+  cases hr : authenticate env now chain transcriptHash cvSig with
   | none => rfl
   | some id =>
     obtain ⟨leaf, rest, hchain, hpath, _, _⟩ :=
-      (establish_correct env cvVerify now chain transcript sig id).mp hr
+      (authenticate_correct env now chain transcriptHash cvSig id).mp hr
     exact absurd (hchain ▸ hpath) h
-
-/-- No identity is established when the `CertificateVerify` signature over the
-transcript is invalid under the leaf, whatever the chain (RFC 8446 §4.4.3). -/
-theorem no_identity_of_bad_certverify (env : Env)
-    (cvVerify : Cert → Transcript → Sig → Bool) (now : Time)
-    (leaf : Cert) (rest : Chain) (transcript : Transcript) (sig : Sig)
-    (h : cvVerify leaf transcript sig = false) :
-    establish env cvVerify now (leaf :: rest) transcript sig = none := by
-  simp [establish, h]
 
 /-! ## Non-vacuity witnesses
 
@@ -336,45 +447,69 @@ iff the child's issuer name equals the issuer's subject name. -/
 def demoVerifySig (issuer child : Cert) : Bool :=
   decide (child.issuer = issuer.subject)
 
-/-- The verification environment: the demo signature boundary and a single
-trust anchor, the self-issued root. -/
-def demoEnv : Env := ⟨demoVerifySig, [rootCert]⟩
+/-- A plausible CertificateVerify boundary: the client's proof-of-possession is
+accepted iff a present (non-empty) signature was supplied — standing in for the
+Ed25519 verify under the leaf key over the §4.4.3 content that the deployment
+installs.  An absent (empty) signature is the classic bypass attempt: a valid
+chain with no proof the peer holds the leaf private key. -/
+def demoCvVerify (_leaf : Cert) (_content sig : ByteArray) : Bool := !sig.isEmpty
 
-/-- A `CertificateVerify` boundary that accepts (a good signature). -/
-def goodCv : Cert → Transcript → Sig → Bool := fun _ _ _ => true
+/-- A present, valid client CertificateVerify signature. -/
+def goodCv : ByteArray := ByteArray.mk #[1]
 
-/-- A `CertificateVerify` boundary that rejects (a bad signature). -/
-def badCv : Cert → Transcript → Sig → Bool := fun _ _ _ => false
+/-- An absent/invalid client CertificateVerify signature. -/
+def badCv : ByteArray := ByteArray.empty
 
-/-- A valid chain plus a good `CertificateVerify` at a valid time establishes the
-leaf subject (`7`). -/
+/-- The handshake transcript hash the client CertificateVerify signs (an opaque
+value here; the demo boundary does not inspect it). -/
+def demoTranscript : ByteArray := ByteArray.mk #[9]
+
+/-- The verification environment: the demo signature and CertificateVerify
+boundaries, and a single trust anchor, the self-issued root. -/
+def demoEnv : Env := ⟨demoVerifySig, demoCvVerify, [rootCert]⟩
+
+/-- A valid chain at a valid time, with a present CertificateVerify, establishes
+the leaf subject (`7`). -/
 example :
-    establish demoEnv goodCv 50 [leafCert, rootCert] [] [] = some 7 := by
-  decide
+    authenticate demoEnv 50 [leafCert, rootCert] demoTranscript goodCv = some 7 := by decide
 
-/-- Same valid chain, but a **bad `CertificateVerify`** → no identity. -/
-example :
-    establish demoEnv badCv 50 [leafCert, rootCert] [] [] = none := by
-  decide
-
-/-- Valid chain, good `CertificateVerify`, but the check time is **past the
+/-- The same valid chain and CertificateVerify, but the check time is **past the
 validity window** (expired) → no identity. -/
 example :
-    establish demoEnv goodCv 200 [leafCert, rootCert] [] [] = none := by
-  decide
+    authenticate demoEnv 200 [leafCert, rootCert] demoTranscript goodCv = none := by decide
 
 /-- An **unverified chain** — the leaf presented alone, terminating in a
-non-anchor — with a good `CertificateVerify` → no identity. -/
+non-anchor → no identity. -/
 example :
-    establish demoEnv goodCv 50 [leafCert] [] [] = none := by
-  decide
+    authenticate demoEnv 50 [leafCert] demoTranscript goodCv = none := by decide
 
 /-- A chain whose leaf is **not signed by its issuer** (the link fails the
-signature boundary) → no identity, even with a good `CertificateVerify`. -/
+certificate-signature boundary) → no identity. -/
 example :
-    establish demoEnv goodCv 50 [⟨7, 999, 0, 100, false⟩, rootCert] [] []
-      = none := by
+    authenticate demoEnv 50 [⟨7, 999, 0, 100, false⟩, rootCert] demoTranscript goodCv = none := by
   decide
+
+/-- **The proof-of-possession is really required — the closed bypass.**  A fully
+valid RFC 5280 path at a valid time, but with an **absent/bad** client
+CertificateVerify (`badCv`), yields **no** identity.  This is exactly the auth
+bypass this check closes: a peer presenting any publicly-visible certificate chain
+without holding the leaf private key is not authenticated. -/
+example :
+    authenticate demoEnv 50 [leafCert, rootCert] demoTranscript badCv = none := by decide
+
+/-- …and the *only* difference from the accepting case is the CertificateVerify:
+the same valid chain and time **with** a present CertificateVerify does
+authenticate, so the rejection above is due precisely to the missing proof of
+possession. -/
+example :
+    authenticate demoEnv 50 [leafCert, rootCert] demoTranscript goodCv = some 7 := by decide
+
+/-- The refinement really constrains the deployed decision: a valid path with a
+valid CertificateVerify yields exactly the leaf subject through the spec side. -/
+example :
+    AuthIdentity demoEnv.anchors demoEnv.verifySig demoEnv.cvVerify 50
+      [leafCert, rootCert] demoTranscript goodCv 7 :=
+  (authenticate_correct demoEnv 50 [leafCert, rootCert] demoTranscript goodCv 7).mp (by decide)
 
 end Correct
 end Mtls

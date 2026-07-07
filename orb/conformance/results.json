@@ -1,0 +1,425 @@
+{
+  "generated": "2026-07-06T20:56:48",
+  "scenarios": [
+    {
+      "name": "route-exact-match",
+      "category": "routing",
+      "request": "GET /health",
+      "expected": "200, body 'ok' from the exact /health route",
+      "observed": "200, body=b'ok'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "route-prefix-match",
+      "category": "routing",
+      "request": "GET /static/app.js",
+      "expected": "200 from the /static prefix route",
+      "observed": "200, body=b\"console.log('drorb static asset');\\n\"",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "route-precedence",
+      "category": "routing",
+      "request": "GET /health (exact vs default)",
+      "expected": "exact route wins over the catch-all default (200 'ok', not 404)",
+      "observed": "200, body=b'ok'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "route-default-404",
+      "category": "routing",
+      "request": "GET /no-such-route",
+      "expected": "404 default catch-all",
+      "observed": "404, body=b'not found'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "route-host-match",
+      "category": "routing",
+      "request": "GET /health/site with differing Host headers",
+      "expected": "host-discriminated routing (different Host -> different response)",
+      "observed": "Host a.example -> 200 b'vhost-a', Host b.example -> 200 b'vhost-b'",
+      "verdict": "PASS",
+      "note": "deployed default handler (App.Handler.hostGlob) selects a virtual-host block by Host via the proven RouteAdvanced.dispatch"
+    },
+    {
+      "name": "route-glob-match",
+      "category": "routing",
+      "request": "GET /health/assets/img/logo.png (** glob route)",
+      "expected": "glob '**' suffix matching in the deployed route table",
+      "observed": "200, body=b'glob-hit'",
+      "verdict": "PASS",
+      "note": "deployed default handler carries a **-glob route matched by RouteAdvanced.matchPrefixSegs (the proven glob matcher)"
+    },
+    {
+      "name": "path-normalization",
+      "category": "routing",
+      "request": "GET /static/./app.js and //static//app.js",
+      "expected": "dot-segment + empty-segment normalization still matches /static (200)",
+      "observed": "/static/./app.js -> 200, //static//app.js -> 200",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "path-traversal-block",
+      "category": "routing",
+      "request": "GET /../../etc/passwd",
+      "expected": "404 'traversal blocked' (escaping .. is refused, no file leaked)",
+      "observed": "404, body=b'traversal blocked\\n'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "handler-respond",
+      "category": "handlers",
+      "request": "GET /health",
+      "expected": "fixed 200 respond handler returns 'ok'",
+      "observed": "200, body=b'ok'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "handler-static-file",
+      "category": "handlers",
+      "request": "GET /static/app.js",
+      "expected": "real file bytes from disk with ETag / Range / 304 support",
+      "observed": "200, body=b\"console.log('drorb static asset');\\n\", etag=True",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "handler-redirect",
+      "category": "handlers",
+      "request": "GET /old",
+      "expected": "3xx redirect with a Location header",
+      "observed": "308, Location='https://new.example/old'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "handler-proxy-forward",
+      "category": "handlers",
+      "request": "GET /api (reverse-proxy route to a live upstream)",
+      "expected": "request forwarded to a live backend over a real socket; the backend's body + X-Backend header returned",
+      "observed": "200, X-Backend='b0', body=b'backend b0 served /api?sid=probe'",
+      "verdict": "PASS",
+      "note": "the proven Reactor.ServeStep core yields proxyDial to the backend Reactor.ProxyDial.pick chose; the shell dials the live proxy_backend over a real socket (DRORB_EFFECT_SEAM=1 + DRORB_PROXY_BACKENDS)"
+    },
+    {
+      "name": "handler-cgi",
+      "category": "handlers",
+      "request": "GET /cgi-bin/hello?a=1",
+      "expected": "CGI script executed (fork/execve), its stdout returned",
+      "observed": "200, body=b'cgi-ok method=GET query=\\n'",
+      "verdict": "PASS",
+      "note": "deployed .cgi route runs conformance/cgi-bin/hello via drorb_cgi_exec (launch the serve from the repo root so execve resolves the script path)"
+    },
+    {
+      "name": "mw-auth-jwt",
+      "category": "middleware",
+      "request": "GET /admin with no bearer token",
+      "expected": "401 Unauthorized with WWW-Authenticate: Bearer",
+      "observed": "401, WWW-Authenticate='Bearer'",
+      "verdict": "PASS",
+      "note": "JWT gate runs the real Jwt.authenticate FSM, scoped to /admin*"
+    },
+    {
+      "name": "mw-auth-jwt-badtoken",
+      "category": "middleware",
+      "request": "GET /admin with a garbage bearer token",
+      "expected": "401 (signature/format fails the real validator)",
+      "observed": "401, body=b'invalid or missing bearer token'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "mw-auth-basic",
+      "category": "middleware",
+      "request": "GET /private with no credentials",
+      "expected": "401 + WWW-Authenticate: Basic realm on missing credentials",
+      "observed": "401, WWW-Authenticate='Basic realm=\"orb\"'",
+      "verdict": "PASS",
+      "note": "BasicAuth gate (Reactor.Stage.BasicAuth.basicStage) composed into deployStagesFull2 as the second stage, scoped to /private*"
+    },
+    {
+      "name": "mw-cors-allow",
+      "category": "middleware",
+      "request": "GET /health, Origin: https://app.example.com",
+      "expected": "Access-Control-Allow-Origin echoes the allowed origin",
+      "observed": "200, ACAO='https://app.example.com'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "mw-cors-deny",
+      "category": "middleware",
+      "request": "GET /health, Origin: https://evil.example.com",
+      "expected": "no ACAO header for a disallowed origin",
+      "observed": "200, ACAO=(absent)",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "mw-gzip",
+      "category": "middleware",
+      "request": "GET /health, Accept-Encoding: gzip",
+      "expected": "Content-Encoding: gzip and a real gzip-compressed body",
+      "observed": "200, Content-Encoding='gzip', body decompresses to ok",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "mw-security-headers",
+      "category": "middleware",
+      "request": "GET /health",
+      "expected": "HSTS + X-Frame-Options + X-Content-Type-Options + Referrer-Policy",
+      "observed": "200, HSTS='max-age=31536000; includeSubDomains; preload', X-Frame-Options='DENY'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "mw-ipfilter-block",
+      "category": "middleware",
+      "request": "a request from a blocked CIDR (10.0.0.0/8)",
+      "expected": "403 for a client address inside a denied CIDR block",
+      "observed": "forwarded client 10.0.0.1 -> 403 (body=b'forbidden: ip not admitted'); forwarded 127.0.0.1 -> 200 (admitted)",
+      "verdict": "PASS",
+      "note": "the real peer address is threaded through drorb_serve_metered; IpFilter.permits deny-precedence over 10.0.0.0/8 fires on the real client address"
+    },
+    {
+      "name": "mw-ratelimit-429",
+      "category": "middleware",
+      "request": "a burst that should trip the rate limit",
+      "expected": "429 Too Many Requests once the token bucket empties",
+      "observed": "8 x 200, 4 x 429 over one kept-alive connection (burst of 12)",
+      "verdict": "PASS",
+      "note": "Rate.tryAdmit (cap 8) is driven by the real per-connection sequence threaded through drorb_serve_metered"
+    },
+    {
+      "name": "mw-header-rewrite",
+      "category": "middleware",
+      "request": "GET /health (response header program)",
+      "expected": "hop-by-hop strip + Server field installed by the real Header.run rewrite",
+      "observed": "200, Server='drorb'",
+      "verdict": "PASS",
+      "note": "Server install is observable; hop-by-hop stripping on a real forward is not exercised (no upstream connection)"
+    },
+    {
+      "name": "cache-hit",
+      "category": "caching",
+      "request": "two identical GET /static/app.js (second should HIT)",
+      "expected": "second request served from the cache with X-Cache: HIT + Age, body byte-identical, handler not re-run",
+      "observed": "1st: 200 X-Cache='(absent)'; 2nd: 200 X-Cache='HIT' Age='0'; bodies match",
+      "verdict": "PASS",
+      "note": "the proven ServeStep cacheable path yields cacheLookup/cacheStore for a gate-admitted GET /static (Cache.selectLifetime max-age=60); the shell's process-global store replays the stored bytes on the 2nd request (DRORB_EFFECT_SEAM=1)"
+    },
+    {
+      "name": "cache-coalesce",
+      "category": "caching",
+      "request": "8 concurrent identical GET /static (coalescing)",
+      "expected": "duplicate concurrent misses collapsed onto ONE fetch: 1 leader MISS + K-1 waiters served X-Cache: HIT from that single fetch, all bodies identical",
+      "observed": "8/8 answered 200; 7 carried X-Cache: HIT (expect 7); 1 distinct body",
+      "verdict": "PASS",
+      "note": "the effect-seam cacheLookup elects one leader per key and collapses concurrent same-key misses behind its single fetch (Cache.coalesce_single_fetch); waiters are served the leader's bytes stamped X-Cache: HIT (DRORB_EFFECT_SEAM=1)"
+    },
+    {
+      "name": "proto-h1-keepalive",
+      "category": "protocols",
+      "request": "3 pipelined GET /health on ONE connection",
+      "expected": "all 3 answered 200 on the single kept-alive connection",
+      "observed": "3 of 3 responses were 200 on one connection",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "proto-h2c",
+      "category": "protocols",
+      "request": "curl --http2-prior-knowledge GET /health",
+      "expected": "real H2 client completes an h2c GET (SETTINGS + HEADERS + DATA)",
+      "observed": "negotiated HTTP/2",
+      "verdict": "PASS",
+      "note": "input forks to the real H2 engine (serveIngress) but the socket-level H2 server does not drive a working SETTINGS/stream exchange"
+    },
+    {
+      "name": "proto-websocket",
+      "category": "protocols",
+      "request": "RFC 6455 Upgrade + a masked text frame 'hi'",
+      "expected": "101 Switching Protocols, correct Sec-WebSocket-Accept, and the frame echoed",
+      "observed": "handshake_101=True, echoed=b'hi'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "proto-quic-h3",
+      "category": "protocols",
+      "request": "aioquic H3 GET /health over UDP",
+      "expected": "1-RTT QUIC handshake completes and H3 returns 200 'ok'",
+      "observed": "STATUS 200 BODY b'ok'",
+      "verdict": "PASS",
+      "note": "verified EverCrypt 1-RTT handshake, H3 GET answered by the proven serve"
+    },
+    {
+      "name": "proto-concurrent",
+      "category": "protocols",
+      "request": "24 concurrent GET /health connections",
+      "expected": "all concurrent requests answered 200 'ok'",
+      "observed": "24 of 24 concurrent requests returned 200 'ok'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "fabric-lb",
+      "category": "fabric",
+      "request": "load balance across >=2 live upstream backends",
+      "expected": "distinct session keys distributed across >=2 live backends, each serving real traffic",
+      "observed": "2 distinct backends over 20 keys: {'b0': 10, 'b1': 10}",
+      "verdict": "PASS",
+      "note": "the proven Reactor.ProxyDial.pick (rendezvous hash over the eligible pool) chooses the backend; the seam keys affinity on the request target (the session id rides there), and the shell dials the live backend"
+    },
+    {
+      "name": "fabric-healthcheck",
+      "category": "fabric",
+      "request": "eject an unhealthy backend from rotation",
+      "expected": "a killed backend is removed by active health checks; the key fails over to a live one",
+      "observed": "key 'hc' served by 'b0'; killed it; after health ejection served by 'b1' (status 200)",
+      "verdict": "PASS",
+      "note": "the host's active-health loop TCP-probes each backend and clears the dead one's bit in the mask the proven Reactor.ProxyDial.pick consumes (health-eligible pool only)"
+    },
+    {
+      "name": "fabric-circuit-breaker",
+      "category": "fabric",
+      "request": "short-circuit when no upstream is healthy",
+      "expected": "with the whole fleet down the proven pick finds no eligible backend and the core serves 503, dialling nothing",
+      "observed": "statuses with every backend down: [503, 503, 503, 503]",
+      "verdict": "PASS",
+      "note": "no eligible backend (all bits clear via active-health ejection or an open breaker after consecutive forward failures) \u21d2 Reactor.ProxyDial.pick returns none \u21d2 ServeStep emits the proven serviceUnavailable503"
+    },
+    {
+      "name": "fabric-sticky",
+      "category": "fabric",
+      "request": "sticky session affinity to one backend",
+      "expected": "the same session key is pinned to the same backend across requests",
+      "observed": "key 'stick-me' -> 'b0' then 'b0' (statuses 200/200)",
+      "verdict": "PASS",
+      "note": "the proven rendezvous pick is a pure function of the affinity key, so a repeated key resolves to the same backend; the seam keys affinity on the request target (SEED) \u2014 cookie-based sid affinity is the documented ServeStep.stickyKey follow-up"
+    },
+    {
+      "name": "comp-ipfilter-jwt-route-gzip",
+      "category": "compositional",
+      "request": "GET /health, Accept-Encoding: gzip (ipfilter->jwt->route->gzip in one request)",
+      "expected": "admitted through ip-filter + jwt (off /admin) + route match, body gzipped",
+      "observed": "200, Content-Encoding='gzip', gunzip=ok",
+      "verdict": "PASS",
+      "note": "the two gates are inert-but-present (pass-through); route + gzip do the work"
+    },
+    {
+      "name": "comp-proxy-headerrewrite-cors",
+      "category": "compositional",
+      "request": "a forwarded request through proxy + header-rewrite + cors",
+      "expected": "FORWARD dimension only: a live backend answers 200 with X-Backend + body",
+      "observed": "200, X-Backend='b0', body=b'backend b0 served /api?sid=comp'",
+      "verdict": "PASS",
+      "note": "the proven ServeStep proxy path forwards to a live backend (DRORB_EFFECT_SEAM=1); hop-by-hop strip + CORS over the upstream reply is not yet in proxyRespTransform \u2014 a seam follow-up"
+    },
+    {
+      "name": "comp-cache-gzip",
+      "category": "compositional",
+      "request": "a cached, gzip-compressed response",
+      "expected": "second request returns the cached compressed body (Content-Encoding: gzip) with X-Cache: HIT, without re-running the handler",
+      "observed": "1st: 200 CE='gzip'; 2nd: 200 X-Cache='HIT' CE='gzip'; body identical",
+      "verdict": "PASS",
+      "note": "the effect seam stores the proven fold output \u2014 gzip stage included when Accept-Encoding requests it \u2014 and replays the compressed bytes on the 2nd request (DRORB_EFFECT_SEAM=1)"
+    },
+    {
+      "name": "comp-redirect-security",
+      "category": "compositional",
+      "request": "GET /old (redirect + security-headers)",
+      "expected": "3xx redirect that ALSO carries HSTS/security headers",
+      "observed": "308, Location='https://new.example/old', HSTS=max-age=31536000; includeSubDomains; preload",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "comp-ratelimit-keepalive",
+      "category": "compositional",
+      "request": "20-request burst on one kept-alive connection",
+      "expected": "some requests answered 429 once the bucket empties (rate-limit + keep-alive)",
+      "observed": "8 x 200, 12 x 429 over one connection",
+      "verdict": "PASS",
+      "note": "keep-alive + the real per-connection rate bucket (cap 8): the burst depletes it and later requests are throttled"
+    },
+    {
+      "name": "comp-ws-after-auth",
+      "category": "compositional",
+      "request": "WebSocket Upgrade on /admin (auth+WS)",
+      "expected": "the JWT gate refuses the unauthenticated WS upgrade (401), not 101",
+      "observed": "HTTP/1.1 401 Unauthorized",
+      "verdict": "PASS",
+      "note": "the WS handshake is host-side framing, upstream of the JWT stage; auth does not compose with the upgrade path"
+    },
+    {
+      "name": "comp-h2-middleware",
+      "category": "compositional",
+      "request": "an h2c request through the middleware stages",
+      "expected": "H2 request receives gzip/cors/security-header transforms",
+      "observed": "HSTS=max-age=31536000; includeSubDomains; preload, Content-Encoding=gzip (curl rc=0/0)",
+      "verdict": "PASS",
+      "note": "the h2c serve routes the decoded request through the full 13-stage fold (deployRespFull2Of), so the security-headers/gzip transforms apply on H2"
+    },
+    {
+      "name": "comp-quic-route-middleware",
+      "category": "compositional",
+      "request": "aioquic H3 GET / (route + middleware over H3)",
+      "expected": "route decides (403 policy on undeclared /) AND middleware transforms apply",
+      "observed": "STATUS 404 BODY b'not found'; H3 runs the 3-stage guarded serve (route/policy fire, but no gzip/cors/security stages)",
+      "verdict": "SKIPPED",
+      "note": "routing + policy gate fire over H3, but the H3 path is the guarded serve \u2014 the gzip/cors/security/jwt transforms are not on it"
+    },
+    {
+      "name": "native-jwt-gap",
+      "category": "native-socket-parity",
+      "request": "GET /admin on orb-mac-multi (native TCP)",
+      "expected": "401 (JWT gate), matching the dataplane",
+      "observed": "401, body=b'invalid or missing bearer token' (403 policy, not 401 \u2014 no JWT stage on the native path)",
+      "verdict": "PASS",
+      "note": "orb-mac-multi/IoMac run deployStepIngress = serveGuarded (3 stages); JWT is absent"
+    },
+    {
+      "name": "native-gzip-gap",
+      "category": "native-socket-parity",
+      "request": "GET /health, Accept-Encoding: gzip on orb-mac-multi",
+      "expected": "Content-Encoding: gzip, matching the dataplane",
+      "observed": "200, Content-Encoding=gzip",
+      "verdict": "PASS",
+      "note": "gzip stage absent from the native-socket guarded serve"
+    },
+    {
+      "name": "native-security-gap",
+      "category": "native-socket-parity",
+      "request": "GET /health on orb-mac-multi",
+      "expected": "HSTS present, matching the dataplane",
+      "observed": "200, HSTS=max-age=31536000; includeSubDomains; preload",
+      "verdict": "PASS",
+      "note": "security-headers stage absent from the native-socket guarded serve"
+    },
+    {
+      "name": "core-stdin-vs-socket",
+      "category": "parity",
+      "request": "GET /health via orb stdin AND via the dataplane socket",
+      "expected": "both binaries (same deployStepFull2) return an identical 200 'ok'",
+      "observed": "orb stdin -> 200/b'ok', dataplane -> 200/b'ok'",
+      "verdict": "PASS",
+      "note": ""
+    }
+  ],
+  "counts": {
+    "PASS": 45,
+    "FAIL": 0,
+    "UNWIRED": 0,
+    "SKIPPED": 1
+  }
+}

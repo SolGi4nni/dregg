@@ -13,10 +13,14 @@ static surface a file server owes:
     an ordered list of candidates, the first existing one wins.
   * **SPA fallback**: an unmatched target resolves to the single-page
     application index instead of 404.
-  * **Conditional requests** (RFC 7232 §2.3.2, §3.2): an `If-None-Match`
-    entity-tag list is compared to the current entity-tag with the WEAK
-    comparison function; a hit yields `304 (Not Modified)` with NO body,
-    not `200`.
+  * **Conditional requests** (RFC 7232 §2.3.2, §3.2, §3.3, §6): an
+    `If-None-Match` entity-tag list is compared to the current entity-tag with
+    the WEAK comparison function; a hit yields `304 (Not Modified)` with NO
+    body, not `200`. When `If-None-Match` is ABSENT and `If-Modified-Since`
+    shows the representation not modified since the client's date (RFC 7232 §6
+    step 4), the response is likewise `304` with no body — evaluated after the
+    entity-tag precondition, per the §6 precedence. This is honored on the
+    deployed `serveResolved`/`serve`, not only in `serveConditional`.
   * **Range requests** (RFC 7233 §2.1, §4.1, §4.4): a satisfiable byte
     range yields `206 (Partial Content)` whose body is exactly the byte
     sub-slice `bytes[start .. end]` (length `end-start+1`); an
@@ -69,6 +73,7 @@ Left as a boundary / UNCLOSED:
 -/
 
 import Safety.Traversal
+import Reactor.Serialize
 
 namespace StaticFile
 
@@ -285,15 +290,33 @@ def resolvePath (cfg : Config) (req : Req) : List String :=
 
 /-! ## Response selection -/
 
-/-- Select the response for a request already resolved to `path`. The order
-is exactly RFC 7232 §3.2 + RFC 7233 §3.1: evaluate the precondition FIRST
-(a `304` pre-empts everything), then the range, then the full body; a
-missing file falls to a directory listing or `404`. -/
+/-- `If-Modified-Since` (RFC 7232 §3.3): a `304` is owed iff the representation's
+`Last-Modified` is at or before the client's date — i.e. it has NOT been modified
+since. An absent header never yields `304`. -/
+def ifModifiedSince304 (lastMod : Nat) : Option Nat → Bool
+  | none => false
+  | some ims => decide (lastMod ≤ ims)
+
+/-- Select the response for a request already resolved to `path`. The order is
+exactly RFC 7232 §6 + RFC 7233 §3.1: evaluate the entity-tag precondition FIRST
+(`If-None-Match` — step 3; a matching validator yields `304` and pre-empts
+everything). If `If-None-Match` is ABSENT and `If-Modified-Since` shows the
+representation not modified since the client's date (step 4), also yield `304`
+with no body. Only then the range, then the full body; a missing file falls to a
+directory listing or `404`.
+
+The `If-None-Match`-takes-precedence-over-`If-Modified-Since` ordering is
+RFC 7232 §6: step 4 evaluates `If-Modified-Since` only when `If-None-Match` is
+not present (`req.ifNoneMatch.isEmpty`), so a present-but-non-matching
+`If-None-Match` proceeds to the body/range path rather than to a date `304`. -/
 def serveResolved (cfg : Config) (req : Req) (path : List String) : Resp :=
   match cfg.fs path with
   | none => if cfg.isDir path then .autoindex (cfg.readDir path) else .notFound
   | some body =>
     if ifNoneMatchHit req.ifNoneMatch (cfg.etag path) then
+      .notModified (cfg.etag path)
+    else if req.ifNoneMatch.isEmpty
+        && ifModifiedSince304 (cfg.lastModified path) req.ifModifiedSince then
       .notModified (cfg.etag path)
     else
       match req.range with
@@ -354,6 +377,7 @@ theorem range_exact (cfg : Config) (req : Req) (path : List String)
     (body : Bytes) (spec : RangeSpec) (s e : Nat)
     (hfile : cfg.fs path = some body)
     (hnm : ifNoneMatchHit req.ifNoneMatch (cfg.etag path) = false)
+    (hims : ifModifiedSince304 (cfg.lastModified path) req.ifModifiedSince = false)
     (hrange : req.range = some spec)
     (hres : resolveRange body.length spec = some (s, e)) :
     serveResolved cfg req path
@@ -364,7 +388,8 @@ theorem range_exact (cfg : Config) (req : Req) (path : List String)
   have hle := resolveRange_valid body.length spec s e hres
   have hserve : serveResolved cfg req path
       = .partialContent (slice body s e) s e body.length (cfg.etag path) := by
-    simp only [serveResolved, hfile, hnm, hrange, hres, Bool.false_eq_true, if_false]
+    simp only [serveResolved, hfile, hnm, hims, Bool.and_false, hrange, hres,
+      Bool.false_eq_true, if_false]
   refine ⟨hserve, ?_, ?_, ?_⟩
   · rw [hserve]; rfl
   · rw [hserve]; rfl
@@ -379,12 +404,14 @@ theorem range_unsatisfiable (cfg : Config) (req : Req) (path : List String)
     (body : Bytes) (spec : RangeSpec)
     (hfile : cfg.fs path = some body)
     (hnm : ifNoneMatchHit req.ifNoneMatch (cfg.etag path) = false)
+    (hims : ifModifiedSince304 (cfg.lastModified path) req.ifModifiedSince = false)
     (hrange : req.range = some spec)
     (hres : resolveRange body.length spec = none) :
     serveResolved cfg req path = .rangeNotSatisfiable body.length ∧
     (serveResolved cfg req path).status = 416 := by
   have hserve : serveResolved cfg req path = .rangeNotSatisfiable body.length := by
-    simp only [serveResolved, hfile, hnm, hrange, hres, Bool.false_eq_true, if_false]
+    simp only [serveResolved, hfile, hnm, hims, Bool.and_false, hrange, hres,
+      Bool.false_eq_true, if_false]
   exact ⟨hserve, by rw [hserve]; rfl⟩
 
 /-! ## try_files and SPA fallback -/
@@ -459,13 +486,15 @@ theorem autoindex_only_dir (cfg : Config) (req : Req) (path : List String)
       exact absurd h (by simp)
   | some body =>
     rw [hfs] at h
-    -- the `some` branch can only produce notModified / ok / partial / 416
+    -- the `some` branch can only produce notModified / notModified / ok / partial / 416
     simp only at h
     split at h
     · exact absurd h (by simp)
     · split at h
       · exact absurd h (by simp)
-      · split at h <;> exact absurd h (by simp)
+      · split at h
+        · exact absurd h (by simp)
+        · split at h <;> exact absurd h (by simp)
 
 /-! ## Conditional gates: If-Modified-Since and If-Range (RFC 7232 §3.3, 7233 §3.2)
 
@@ -475,13 +504,6 @@ body for a multi-range request. Its precedence is the RFC's: `If-None-Match`
 first (RFC 7232 §6 — an entity-tag precondition overrides a date one), then
 `If-Modified-Since`, then the `If-Range` eligibility gate on the range, then the
 range-set itself. -/
-
-/-- `If-Modified-Since` (RFC 7232 §3.3): a `304` is owed iff the representation's
-`Last-Modified` is at or before the client's date — i.e. it has NOT been modified
-since. An absent header never yields `304`. -/
-def ifModifiedSince304 (lastMod : Nat) : Option Nat → Bool
-  | none => false
-  | some ims => decide (lastMod ≤ ims)
 
 /-- `If-Range` eligibility (RFC 7233 §3.2): the range is honored only if the
 `If-Range` validator still matches the current representation.
@@ -690,8 +712,241 @@ theorem weak_match_ignores_flag :
 theorem weak_match_distinguishes :
     ETag.weakMatch ⟨true, "1"⟩ ⟨true, "2"⟩ = false := by decide
 
+/-! ## Deployed wiring: a concrete embedded filesystem, driven by the real model
+
+Everything above is the sans-IO selection model over an *uninterpreted* `Config`.
+This section interprets that boundary with a concrete, config-embedded filesystem
+(a small in-binary FS map) and adapts the request/response shapes to the deployed
+serializer's `Reactor.Response`, so the running serve path answers `/static/<file>`
+with the SAME proven selection — real bytes, a real entity-tag, `If-None-Match`
+→ `304`, and a `Range` → `206`. The embedded map is the "filesystem the deployed
+handler can read": deterministic, cwd-independent, and self-contained. The
+response is chosen by `serveConditional` (the full conditional/range core proven
+above), never by a fixed stub.
+
+The entity-tag is a content hash (FNV-1a/32) rendered as an opaque hex tag, so it
+is a genuine validator of the bytes served — a changed file yields a changed tag.
+-/
+
+open Reactor (Response)
+
+/-- UTF-8 bytes of a string (header names/values and file contents). -/
+def strBytes (s : String) : Bytes := s.toUTF8.toList
+
+/-- Interpret header bytes as a Latin-1 string for structural parsing (one byte
+→ one code point); used only to split on ASCII delimiters and compare names. -/
+def bytesToStr (b : Bytes) : String := String.mk (b.map (fun x => Char.ofNat x.toNat))
+
+/-! ### Content-hash entity-tags (FNV-1a, 32-bit) -/
+
+/-- FNV-1a over the file bytes: a fast content hash whose only role is equality
+(a strong validator of the representation). -/
+def fnv1a (b : Bytes) : UInt32 :=
+  b.foldl (fun h x => (h ^^^ x.toUInt32) * (16777619 : UInt32)) (2166136261 : UInt32)
+
+/-- Lowercase hex digit for `n < 16`. -/
+def hexChar (n : Nat) : Char :=
+  if n < 10 then Char.ofNat (48 + n) else Char.ofNat (97 + (n - 10))
+
+/-- Render a `UInt32` as exactly 8 lowercase hex characters. -/
+def toHex8 (v : UInt32) : String :=
+  let n := v.toNat
+  String.mk ((List.range 8).reverse.map (fun i => hexChar ((n / (16 ^ i)) % 16)))
+
+/-- The strong content entity-tag of a file's bytes. -/
+def contentETag (b : Bytes) : ETag := ⟨false, toHex8 (fnv1a b)⟩
+
+/-- Render an entity-tag onto the wire: `"tag"`, or `W/"tag"` when weak. -/
+def renderETag (t : ETag) : Bytes :=
+  strBytes ((if t.weak then "W/" else "") ++ "\"" ++ t.tag ++ "\"")
+
+/-! ### The embedded filesystem (the config boundary, interpreted) -/
+
+/-- A served asset (the real bytes under `/static/app.js`). -/
+def appJs : Bytes := strBytes "console.log('drorb static asset');\n"
+
+/-- The embedded FS map: a resolved path → its regular-file bytes (`none` = not a
+regular file). This is the concrete instance of the `Config.fs` boundary. -/
+def staticFS : List String → Option Bytes
+  | ["static", "app.js"] => some appJs
+  | _ => none
+
+/-- The deployed static configuration: the embedded FS, content-hash entity-tags,
+no directories. `docRoot` is empty because the router hands us the already
+traversal-normalized segments (`App.targetSegments`, the safe boundary). -/
+def deployedConfig : Config where
+  docRoot := []
+  fs := staticFS
+  isDir := fun _ => false
+  readDir := fun _ => []
+  etag := fun p => match staticFS p with
+    | some b => contentETag b
+    | none => ⟨false, ""⟩
+  lastModified := fun _ => 0
+
+/-! ### Parsing the conditional/range request headers -/
+
+/-- The value of a header by case-insensitive name, as a Latin-1 string. -/
+def findHeader (name : String) (hs : List (Bytes × Bytes)) : Option String :=
+  (hs.find? (fun kv => (bytesToStr kv.1).toLower == name.toLower)).map (fun kv => bytesToStr kv.2)
+
+/-- Parse an `If-None-Match` list: comma-separated entity-tags, each optionally
+`W/`-flagged and quoted. (`*` is left unparsed — the conditional core keys on
+opaque tag equality.) -/
+def parseETagList (s : String) : List ETag :=
+  (s.splitOn ",").filterMap (fun raw =>
+    let t := raw.trim
+    if t == "" || t == "*" then none
+    else
+      let (weak, rest) := if "W/".isPrefixOf t then (true, t.drop 2) else (false, t)
+      let tag := (rest.dropWhile (· == '"')).dropRightWhile (· == '"')
+      some ⟨weak, tag⟩)
+
+/-- Parse one byte-range-spec: `a-b` (`fromTo`), `a-` (`fromOnly`), `-n`
+(`suffix`). -/
+def parseOneSpec (r : String) : Option RangeSpec :=
+  let t := r.trim
+  if "-".isPrefixOf t then (t.drop 1).toNat?.map RangeSpec.suffix
+  else match t.splitOn "-" with
+    | [a, b] =>
+      match a.toNat?, b with
+      | some fa, "" => some (RangeSpec.fromOnly fa)
+      | some fa, _  => match b.toNat? with
+                       | some fb => some (RangeSpec.fromTo fa fb)
+                       | none => none
+      | none, _ => none
+    | _ => none
+
+/-- Parse a `Range: bytes=…` header into its (satisfiable-or-not) spec set. A
+non-`bytes` unit or malformed value yields the empty set (no range). -/
+def parseRangeSet (s : String) : List RangeSpec :=
+  match s.splitOn "=" with
+  | [unit, specs] => if unit.trim == "bytes" then (specs.splitOn ",").filterMap parseOneSpec else []
+  | _ => []
+
+/-- Build the model `Req` from the raw request headers. -/
+def reqOfHeaders (hs : List (Bytes × Bytes)) : Req :=
+  let inm := ((findHeader "if-none-match" hs).map parseETagList).getD []
+  let rset := ((findHeader "range" hs).map parseRangeSet).getD []
+  { target := []
+    ifNoneMatch := inm
+    range := rset.head?
+    rangeSet := rset
+    ifModifiedSince := none
+    ifRange := none }
+
+/-! ### Adapting the selected response onto the wire -/
+
+/-- Map a selected `Resp` onto the deployed serializer's `Response`, emitting the
+real headers (`ETag`, `Accept-Ranges`, `Content-Range`) the status owes. -/
+def toResponse : Resp → Response
+  | .ok body etag =>
+    { status := 200, reason := strBytes "OK",
+      headers := [(strBytes "ETag", renderETag etag),
+                  (strBytes "Accept-Ranges", strBytes "bytes"),
+                  (strBytes "Content-Type", strBytes "application/javascript")],
+      body := body }
+  | .partialContent body first last complete etag =>
+    { status := 206, reason := strBytes "Partial Content",
+      headers := [(strBytes "ETag", renderETag etag),
+                  (strBytes "Accept-Ranges", strBytes "bytes"),
+                  (strBytes "Content-Range",
+                    strBytes ("bytes " ++ toString first ++ "-" ++ toString last ++ "/" ++ toString complete))],
+      body := body }
+  | .multipartRanges parts _ etag =>
+    { status := 206, reason := strBytes "Partial Content",
+      headers := [(strBytes "ETag", renderETag etag),
+                  (strBytes "Accept-Ranges", strBytes "bytes")],
+      body := (parts.map (·.1)).flatten }
+  | .notModified etag =>
+    { status := 304, reason := strBytes "Not Modified",
+      headers := [(strBytes "ETag", renderETag etag)], body := [] }
+  | .rangeNotSatisfiable complete =>
+    { status := 416, reason := strBytes "Range Not Satisfiable",
+      headers := [(strBytes "Content-Range", strBytes ("bytes */" ++ toString complete))], body := [] }
+  | .notFound =>
+    { status := 404, reason := strBytes "Not Found", headers := [], body := strBytes "not found" }
+  | .autoindex entries =>
+    { status := 200, reason := strBytes "OK", headers := [],
+      body := strBytes (String.intercalate "\n" entries) }
+
+/-- **The deployed static-file handler.** Given the router's already-normalized
+target segments and the raw request headers, select the response with the proven
+`serveConditional` over the embedded filesystem, then render it onto the wire.
+This is what the `/static` route dispatches to on the running serve. -/
+def serveDeployed (segments : List String) (headers : List (Bytes × Bytes)) : Response :=
+  toResponse (serveConditional deployedConfig (reqOfHeaders headers) segments)
+
+/-! ### Deployed-path witnesses (the model actually runs on real inputs)
+
+These keep the file bytes `appJs` opaque (no reduction of `String.toUTF8`) and the
+header parser out of kernel reduction (`String.splitOn` is well-founded): the
+plain-`GET`/`404` cases reduce the control flow directly, while the conditional
+and range behaviors are witnessed on `serveConditional` over `deployedConfig` with
+a pre-parsed `Req` — the exact selection `serveDeployed` invokes — composed with
+the `toResponse` status/body mapping. -/
+
+/-- The full response `serveDeployed` selects for a plain `GET /static/app.js`. -/
+theorem serveDeployed_plain :
+    serveDeployed ["static", "app.js"] []
+      = toResponse (.ok appJs (contentETag appJs)) := by
+  simp [serveDeployed, reqOfHeaders, serveConditional, deployedConfig, staticFS,
+    findHeader, ifNoneMatchHit, ifModifiedSince304, ifRangeEligible]
+
+/-- A plain `GET /static/app.js` serves the real embedded bytes with a `200` and
+an entity-tag header — the exact bytes the wire carries. -/
+theorem serveDeployed_ok :
+    (serveDeployed ["static", "app.js"] []).status = 200 ∧
+    (serveDeployed ["static", "app.js"] []).body = appJs ∧
+    (strBytes "ETag", renderETag (contentETag appJs)) ∈ (serveDeployed ["static", "app.js"] []).headers := by
+  rw [serveDeployed_plain]
+  refine ⟨rfl, rfl, ?_⟩
+  simp [toResponse]
+
+/-- An unknown target under the embedded root is a real `404`. -/
+theorem serveDeployed_missing :
+    (serveDeployed ["static", "nope.js"] []).status = 404 := by
+  simp [serveDeployed, toResponse, serveConditional, deployedConfig, staticFS, reqOfHeaders,
+    findHeader, ifNoneMatchHit, ifModifiedSince304, ifRangeEligible]
+
+/-- `toResponse` maps a `304` selection to a `304`-status response with NO body. -/
+theorem toResponse_304 (etag : ETag) :
+    (toResponse (.notModified etag)).status = 304 ∧ (toResponse (.notModified etag)).body = [] :=
+  ⟨rfl, rfl⟩
+
+/-- `toResponse` maps a single-range selection to a `206`. -/
+theorem toResponse_206 (body : Bytes) (f l c : Nat) (etag : ETag) :
+    (toResponse (.partialContent body f l c etag)).status = 206 ∧
+    (toResponse (.partialContent body f l c etag)).body = body :=
+  ⟨rfl, rfl⟩
+
+/-- On the embedded config, an `If-None-Match` carrying the current content tag
+selects `304 (Not Modified)` — the exact selection `serveDeployed` renders when a
+client sends the matching validator. -/
+theorem deployed_conditional_304 :
+    serveConditional deployedConfig
+        { target := ["static", "app.js"], ifNoneMatch := [contentETag appJs] }
+        ["static", "app.js"]
+      = .notModified (contentETag appJs) := by
+  simp [serveConditional, deployedConfig, staticFS, ifNoneMatchHit, ETag.weakMatch]
+
+/-- On the embedded config, a satisfiable `Range` selects a `206 (Partial Content)`
+whose body is exactly the requested byte sub-slice — the deployed range path. -/
+theorem deployed_range_206 (f l : Nat) (s e : Nat)
+    (hres : resolveRange appJs.length (.fromTo f l) = some (s, e)) :
+    serveConditional deployedConfig
+        { target := ["static", "app.js"], rangeSet := [.fromTo f l] }
+        ["static", "app.js"]
+      = .partialContent (slice appJs s e) s e appJs.length (contentETag appJs) := by
+  simp [serveConditional, deployedConfig, staticFS, ifNoneMatchHit, ifModifiedSince304,
+    ifRangeEligible, resolveAll, hres]
+
 end StaticFile
 
+#print axioms StaticFile.serveDeployed_ok
+#print axioms StaticFile.serveDeployed_missing
+#print axioms StaticFile.deployed_conditional_304
+#print axioms StaticFile.deployed_range_206
 #print axioms StaticFile.multipart_ranges_exact
 #print axioms StaticFile.if_modified_since_304
 #print axioms StaticFile.if_range_weak_full
