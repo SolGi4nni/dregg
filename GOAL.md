@@ -294,7 +294,9 @@ the Accumulator where it's proven (8cc597a9d) · canonical bijection->fingerprin
 tool-call FULL-digest binding, was 64-bit (e97ccbfba). [+ earlier: DAS index-fix a6b0dcccf, inverted
 deadline 2b986558d, auth-gap e16dfe17e.]
 REMAINING — each needs an ember-decision OR deeper cross-crate work; NONE is a launder:
-- sdk::verify_accumulator_non_membership: verifies PROVER-SUPPLIED alpha/Acc. The sound primitive
+- sdk::verify_accumulator_non_membership: CLOSED (37425294a) — now requires the TRUSTED accumulator,
+  checks alpha/Acc match it, binds f(x) via verify_non_membership_bound. (Was blocked on sdk dirty.)
+- [was] sdk prover-supplied verify. The sound primitive
   (verify_non_membership_bound) EXISTS; the fix is architectural — the SDK must obtain the trusted
   federation-committed accumulator (with the set) to bind f(x). This is the crypto FLOOR: setless O(1)
   non-membership is impossible over a field accumulator (needs a pairing/KZG). EMBER DECISION: hold the
