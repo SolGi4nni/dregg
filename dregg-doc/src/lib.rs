@@ -128,6 +128,11 @@ mod history;
 mod literate;
 mod merge;
 mod patch;
+// THE FORGE KEYSTONE — a PullRequest over the patch theory (review-as-stitcher):
+// conflicts three-way rendered, review = resolution patches, merge = the stitch,
+// landing = cap-gated finalized turns through executor_drive (`substrate`).
+// First slice of docs/deos/DREGG-FORGE.md.
+mod pull_request;
 mod regime;
 mod resolution;
 mod resolve;
@@ -177,6 +182,7 @@ pub use literate::{
 };
 pub use merge::{merge, merge_all};
 pub use patch::{Op, Patch};
+pub use pull_request::{MergeOutcome, PullRequest, PullRequestError};
 pub use regime::Regime;
 pub use resolution::{
     RegionResolutions, Resolution, ResolutionChoice, resolutions, resolutions_for,

@@ -105,6 +105,30 @@ impl ExecutorDrivenDoc {
     /// commit); when `false` the editor lacks it (so edits are REFUSED by the
     /// executor's cap gate — the unauthorized-region case).
     pub fn new(editor_seed: u8, region_seed: u8, editor_holds_region_cap: bool) -> Self {
+        Self::new_at(
+            &crate::graph::DocGraph::new(),
+            editor_seed,
+            region_seed,
+            editor_holds_region_cap,
+        )
+    }
+
+    /// Open an executor-driven document whose region cell starts AT `base` — the
+    /// base graph's projection is seeded into the committed `fields_map` as
+    /// genesis state (exactly the way [`ExecutorDrivenDoc::new`] seeds the
+    /// empty document), NOT as an edit. The witness graph starts as `base`.
+    ///
+    /// This is the forge's landing surface (`crate::pull_request`): a pull
+    /// request targets an EXISTING base document, and the merger (this doc's
+    /// editor) either holds the region's edit cap (the merge turns commit) or
+    /// does not (the executor's `check_cross_cell_permission` gate refuses the
+    /// first merge turn in-band — the same gate, no parallel one).
+    pub fn new_at(
+        base: &crate::graph::DocGraph,
+        editor_seed: u8,
+        region_seed: u8,
+        editor_holds_region_cap: bool,
+    ) -> Self {
         let mut ledger = Ledger::new();
 
         // The region cell (the document). Its `set_state` permission is `None`
@@ -112,13 +136,13 @@ impl ExecutorDrivenDoc {
         // so a cross-cell editor with the cap commits and one without is
         // refused at the cap check (before any signature lattice).
         //
-        // The cell is created already holding the EMPTY-DOCUMENT projection (the
-        // ROOT sentinel leaf) in its committed `fields_map` — genesis state, NOT
-        // an edit. This is the projection of `DocGraph::new()`, so the
-        // commitment-matches-projection invariant holds from genesis (and a
-        // rolled-back refused edit lands back on this consistent genesis).
+        // The cell is created already holding the base document's projection in
+        // its committed `fields_map` — genesis state, NOT an edit. This is the
+        // projection of `base`, so the commitment-matches-projection invariant
+        // holds from genesis (and a rolled-back refused edit lands back on this
+        // consistent genesis).
         let mut region_cell = open_region_cell(region_seed);
-        seed_empty_document(&mut region_cell);
+        seed_document(&mut region_cell, base);
         let region = region_cell.id();
 
         // The editor cell (the author). Open permissions so the turn-level auth
@@ -140,7 +164,7 @@ impl ExecutorDrivenDoc {
             executor: TurnExecutor::new(ComputronCosts::zero()),
             region,
             editor,
-            graph: crate::graph::DocGraph::new(),
+            graph: base.clone(),
             chain_head: None,
             nonce: 0,
         }
@@ -353,13 +377,15 @@ fn open_editor_cell(seed: u8, balance: i64) -> Cell {
     cell
 }
 
-/// Seed a region cell with the empty-document projection (the `DocGraph::new()`
-/// ROOT-sentinel leaf) in its committed `fields_map` — genesis state. Writes the
-/// same flat-key leaves [`ExecutorDrivenDoc::edit`] drives through the executor,
-/// so the commitment-matches-projection invariant holds from genesis.
-fn seed_empty_document(cell: &mut Cell) {
-    let empty = project_graph(&crate::graph::DocGraph::new());
-    for ((coll, key), value) in empty {
+/// Seed a region cell with a document graph's projection in its committed
+/// `fields_map` — genesis state. Writes the same flat-key leaves
+/// [`ExecutorDrivenDoc::edit`] drives through the executor, so the
+/// commitment-matches-projection invariant holds from genesis. For
+/// [`ExecutorDrivenDoc::new`] the graph is `DocGraph::new()` (the ROOT-sentinel
+/// leaf); for [`ExecutorDrivenDoc::new_at`] it is a pull request's base.
+fn seed_document(cell: &mut Cell, graph: &crate::graph::DocGraph) {
+    let leaves = project_graph(graph);
+    for ((coll, key), value) in leaves {
         cell.state.set_field_ext(field_key(coll, key), value);
     }
 }
