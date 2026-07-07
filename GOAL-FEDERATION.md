@@ -290,3 +290,10 @@ Two sequential gates on one pipeline:
 - Plan: cross-machine verified n=4 (hbox + nextop), gate-ON, submit a real attested client turn →
   verify cross-node finality on the LIVING verified federation = THE FULL GOAL. nextop has the fixed
   Darwin seed (payoff-target); build/confirm its fixed node. Reuse the depth-crown's ~/n4fed launch scripts.
+
+## hbox seed build — invocation fix (07-07)
+- `cargo build` does NOT build the Lean seed (build.rs requires a pre-seeded libdregg_lean.a + fails
+  loud if absent — correctly, never ships marshal-as-verified). Must run ./scripts/bootstrap.sh FIRST
+  (lake-builds metatheory/Dregg2 → the seed), THEN cargo build the node. Running bootstrap.sh on hbox
+  now (source ~/.elan/env; log hbox:~/hbox-bootstrap.log). Then cargo build -p dregg-node --release →
+  cross-machine verified n=4 deploy.
