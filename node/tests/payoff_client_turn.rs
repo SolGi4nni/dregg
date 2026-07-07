@@ -73,23 +73,34 @@ fn http_get(port: u16, path: &str) -> Option<String> {
 }
 
 /// POST raw bytes with an explicit content-type; return the response body.
-fn http_post(port: u16, path: &str, content_type: &str, body: &[u8]) -> Option<String> {
+fn http_post(
+    port: u16,
+    path: &str,
+    content_type: &str,
+    bearer: Option<&str>,
+    body: &[u8],
+) -> Option<String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(6))).ok()?;
     stream
         .set_write_timeout(Some(Duration::from_secs(6)))
         .ok()?;
+    let auth = match bearer {
+        Some(tok) => format!("Authorization: Bearer {tok}\r\n"),
+        None => String::new(),
+    };
     let head = format!(
         "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: {content_type}\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n",
+         {auth}Content-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(head.as_bytes()).ok()?;
     stream.write_all(body).ok()?;
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).ok()?;
-    let text = String::from_utf8_lossy(&buf).to_string();
-    Some(text.split_once("\r\n\r\n")?.1.to_string())
+    // Return the FULL raw response (status line + headers + body) so a non-2xx
+    // status is visible in the harness output; `json_field` still finds body fields.
+    Some(String::from_utf8_lossy(&buf).to_string())
 }
 
 /// Extract a flat top-level JSON field's raw token (no serde_json dep).
@@ -125,6 +136,33 @@ fn cell_found(port: u16, cell_hex: &str) -> bool {
         return false;
     };
     json_field(&body, "found") == Some("true")
+}
+
+/// `(found, balance)` for a cell id — the cross-node commit witness (a finalized
+/// Transfer materialises the recipient with the funded balance on every node).
+fn cell_balance(port: u16, cell_hex: &str) -> (bool, u64) {
+    let Some(body) = http_get(port, &format!("/api/cell/{cell_hex}")) else {
+        return (false, 0);
+    };
+    let found = json_field(&body, "found") == Some("true");
+    let bal = json_field(&body, "balance")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    (found, bal)
+}
+
+/// POST /api/faucet (public); true iff `"success":true`.
+fn post_faucet(port: u16, recipient_hex: &str, amount: u64) -> bool {
+    let body = format!("{{\"recipient\":\"{recipient_hex}\",\"amount\":{amount}}}");
+    http_post(
+        port,
+        "/api/faucet",
+        "application/json",
+        None,
+        body.as_bytes(),
+    )
+    .map(|r| r.contains("\"success\":true"))
+    .unwrap_or(false)
 }
 
 fn wait_for_port(port: u16, secs: u64) -> bool {
@@ -262,11 +300,16 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
     std::thread::sleep(Duration::from_secs(8));
 
     // ── The federation id the executor verifies signatures against (uniform on all
-    //    nodes in a configured federation). The client MUST sign its action over the
-    //    SAME id. Fetched from node-0's /status. ──
-    let fed_hex = status_field(http_ports[0], "executor_federation_id")
-        .expect("node-0 /status exposes executor_federation_id");
+    //    nodes in a configured federation — `federation_id_for_executor` returns the
+    //    genesis `federation_id` when configured). The client MUST sign its action over
+    //    the SAME id. Read it from the shared genesis.json (a top-level field). ──
+    let genesis_json = std::fs::read_to_string(gen_dir.join("genesis.json"))
+        .expect("read genesis.json for the federation id");
+    let fed_hex = json_field(&genesis_json, "federation_id")
+        .expect("genesis.json carries a top-level federation_id")
+        .to_string();
     let federation_id = hex_decode_32(&fed_hex).expect("federation id is 32-byte hex");
+    eprintln!("[payoff] federation id = {fed_hex}");
 
     // ── A FRESH external client identity — a deterministic seed no node has ever seen.
     //    Its default cell exists on NO node. ──
@@ -284,15 +327,67 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
         );
     }
 
-    // ── Build the client's OWN turn: a self IncrementNonce on its default cell (needs
-    //    no balance), carrying an attestation-shaped memo bound into the turn hash. ──
+    // ── STEP 1: fund the fresh client's cell via the faucet (an external client has
+    //    no genesis balance; a real turn costs computrons paid from balance). The
+    //    faucet Transfer finalizes cross-node and materialises the client's cell as a
+    //    funded remote stub on every node. This is itself a fix-2b / cross-node commit
+    //    step, but the PAYOFF is the CLIENT's OWN turn below. ──
+    let faucet_amount = 1_000_000u64;
+    assert!(
+        post_faucet(http_ports[0], &actor_hex, faucet_amount),
+        "faucet grant to the fresh client cell must be accepted on node-0"
+    );
+    eprintln!("[payoff] faucet-funded the client cell with {faucet_amount}; awaiting cross-node…");
+    let fund_deadline = Instant::now() + Duration::from_secs(wait_s);
+    let mut funded_everywhere = false;
+    while Instant::now() < fund_deadline {
+        std::thread::sleep(Duration::from_secs(2));
+        if http_ports
+            .iter()
+            .all(|&p| cell_balance(p, &actor_hex) == (true, faucet_amount))
+        {
+            funded_everywhere = true;
+            break;
+        }
+    }
+    assert!(
+        funded_everywhere,
+        "the faucet grant did not fund the client cell on all {FED_SIZE} nodes — cannot proceed \
+         to the client turn (per-node = {:?})",
+        http_ports
+            .iter()
+            .map(|&p| cell_balance(p, &actor_hex))
+            .collect::<Vec<_>>()
+    );
+    eprintln!("[payoff] client cell funded on ALL {FED_SIZE} nodes.");
+
+    // ── STEP 2 (THE PAYOFF): the fresh client signs its OWN Transfer turn — moving a
+    //    distinct amount to a brand-new destination cell D — and submits it via
+    //    /turns/submit. fix-2b UPGRADES the client's funded zero-pk stub to its
+    //    canonical pk-bound account at finalization (the client's key authorizes the
+    //    Send), and D materialises with the transferred balance on every node. ──
+    let dest_cell = {
+        // A fresh destination id no node has: derive from a throwaway pubkey.
+        let mut pk = [0u8; 32];
+        pk[0] = 0xD5;
+        pk[31] = 0x01;
+        let token = *blake3::hash(b"default").as_bytes();
+        dregg_cell::CellId::derive_raw(&pk, &token)
+    };
+    let dest_hex = hex_encode(&dest_cell.0);
+    let transfer_amount = 12_345u64;
     let action = client.make_action(
         actor_cell,
-        "attested_client_turn",
-        vec![Effect::IncrementNonce { cell: actor_cell }],
+        "attested_client_transfer",
+        vec![Effect::Transfer {
+            from: actor_cell,
+            to: dest_cell,
+            amount: transfer_amount,
+        }],
         &federation_id,
     );
     let mut turn = client.make_turn(action);
+    turn.fee = 1_000; // >= action_base (100); paid from the funded balance.
     // Attestation-shaped payload riding consensus in the turn hash. (The cryptographic
     // ZkOracleAttestation verify is proven by crown_attested_turn.rs; here it is the
     // uniform-cross-node attested-turn carrier.)
@@ -317,14 +412,42 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
     let wire = postcard::to_stdvec(&signed).expect("encode SignedTurn");
 
     eprintln!("[payoff] fresh client signer={signer_hex}");
-    eprintln!("[payoff] actor cell (unknown to all nodes) = {actor_hex}");
-    eprintln!("[payoff] turn hash = {turn_hash_hex}");
+    eprintln!("[payoff] client actor cell = {actor_hex}");
+    eprintln!("[payoff] client-turn destination cell = {dest_hex}");
+    eprintln!("[payoff] client Transfer turn hash = {turn_hash_hex} (amount {transfer_amount})");
 
-    // ── Submit via /turns/submit to node-0 (the external-client path). ──
+    // ── Unlock node-0's ingress (HTTP nodes start locked; /turns/submit gates on
+    //    `s.unlocked`). The first unlock sets the node passphrase + a bearer seed and
+    //    returns the API bearer token; subsequent protected requests carry it. This is
+    //    the node OPERATOR unlocking its own ingress — orthogonal to the CLIENT identity
+    //    (the fresh signer above), which the turn is authored by. ──
+    let unlock_resp = http_post(
+        http_ports[0],
+        "/cipherclerk/unlock",
+        "application/json",
+        None,
+        br#"{"passphrase":"payoff-devnet-passphrase"}"#,
+    )
+    .expect("POST /cipherclerk/unlock reached node-0");
+    let bearer = json_field(&unlock_resp, "bearer_token")
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    eprintln!(
+        "[payoff] node-0 unlocked (bearer token {} chars)",
+        bearer.len()
+    );
+
+    // ── Submit via /turns/submit to node-0 (the external-client path), authenticated
+    //    with the operator bearer token. ──
     let resp = http_post(
         http_ports[0],
         "/turns/submit",
         "application/octet-stream",
+        if bearer.is_empty() {
+            None
+        } else {
+            Some(bearer.as_str())
+        },
         &wire,
     )
     .expect("POST /turns/submit reached node-0");
@@ -335,50 +458,52 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
         "node-0 must ACCEPT the fresh client's signed turn (optimistic ack); got: {resp}"
     );
 
-    // ── CROSS-NODE FINALIZATION WITNESS: the fresh client's cell — provisioned
-    //    deterministically from the in-block signer at finalization — appears on ALL
-    //    FOUR nodes, and every node's attested height has advanced. ──
+    // ── CROSS-NODE FINALIZATION WITNESS (THE PAYOFF): the CLIENT's OWN Transfer turn
+    //    stream-finalizes on every node — its destination D materialises with exactly
+    //    the transferred balance on ALL FOUR nodes (only reachable by the turn being
+    //    finalized + executed through the verified tau-order on each node), and every
+    //    node's attested height advances together. ──
     let baseline_heights: Vec<u64> = http_ports.iter().map(|&p| latest_height(p)).collect();
     let deadline = Instant::now() + Duration::from_secs(wait_s);
-    let mut all_have_cell = false;
-    let mut last_present = vec![false; FED_SIZE];
+    let mut all_have_dest = false;
+    let mut last_dest = vec![(false, 0u64); FED_SIZE];
     let mut last_heights = baseline_heights.clone();
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_secs(2));
         for (i, &p) in http_ports.iter().enumerate() {
-            last_present[i] = cell_found(p, &actor_hex);
+            last_dest[i] = cell_balance(p, &dest_hex);
             last_heights[i] = latest_height(p);
         }
-        if last_present.iter().all(|&f| f) {
-            all_have_cell = true;
+        if last_dest.iter().all(|&(f, b)| f && b == transfer_amount) {
+            all_have_dest = true;
             break;
         }
     }
 
     eprintln!(
-        "[payoff] cross-node result: cell present per node = {last_present:?}, \
+        "[payoff] cross-node result: destination (found,balance) per node = {last_dest:?}, \
          heights {baseline_heights:?} -> {last_heights:?}"
     );
 
-    if all_have_cell {
+    if all_have_dest {
         eprintln!(
-            "[payoff] SUCCESS — the fresh client's attested turn stream-finalized on the \
-             VERIFIED n=4 federation: turn {turn_hash_hex} finalized, actor cell {actor_hex} \
-             provisioned on ALL {FED_SIZE} nodes."
+            "[payoff] SUCCESS — the fresh client's attested Transfer turn stream-finalized on \
+             the VERIFIED n=4 federation: turn {turn_hash_hex} finalized, destination {dest_hex} \
+             funded with {transfer_amount} on ALL {FED_SIZE} nodes; heights {last_heights:?}."
         );
     } else {
         eprintln!(
-            "[payoff] NOT fully cross-node in {wait_s}s — cell present = {last_present:?}. \
+            "[payoff] NOT fully cross-node in {wait_s}s — destination per node = {last_dest:?}. \
              (Fixes landed; residual is loopback QUIC mesh speed on this box.)"
         );
     }
 
     if require_finality {
         assert!(
-            all_have_cell,
-            "[REQUIRE_FINALITY] the fresh client's cell did not materialise on all {FED_SIZE} \
-             nodes — cross-node finalization of the external-client turn did not complete \
-             (present = {last_present:?})"
+            all_have_dest,
+            "[REQUIRE_FINALITY] the fresh client's Transfer did not fund the destination on all \
+             {FED_SIZE} nodes — cross-node finalization of the external-client turn did not \
+             complete (destination per node = {last_dest:?})"
         );
     }
 }

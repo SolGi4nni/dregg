@@ -7772,9 +7772,31 @@ fn ledger_touched_diff(
 pub(crate) fn provision_signer_actor_cell(ledger: &mut dregg_cell::Ledger, signer: &[u8; 32]) {
     let default_token_id = *blake3::hash(b"default").as_bytes();
     let actor_id = dregg_cell::CellId::derive_raw(signer, &default_token_id);
-    if ledger.get(&actor_id).is_none() {
-        let cell = dregg_cell::Cell::with_balance(*signer, default_token_id, 0);
-        let _ = ledger.insert_cell(cell);
+    match ledger.get(&actor_id) {
+        None => {
+            // Absent → materialize the canonical pk-bound account, zero balance.
+            let cell = dregg_cell::Cell::with_balance(*signer, default_token_id, 0);
+            let _ = ledger.insert_cell(cell);
+        }
+        Some(existing) if existing.public_key == [0u8; 32] => {
+            // A zero-pk REMOTE STUB was materialized at this id by an earlier
+            // Transfer-destination provisioning (e.g. a faucet grant to a client cell
+            // no node had seen — `provision_transfer_destinations`). Now that the
+            // client's OWN signed turn proves the pre-image (actor_id ==
+            // derive_raw(signer, "default")), UPGRADE the stub to the canonical
+            // pk-bound account so the client's signature authorizes its turn —
+            // PRESERVING the balance the stub accrued (the faucet grant). The id
+            // cryptographically commits to (signer, "default"), so this upgrade is
+            // byte-deterministic and uniform on every node (same in-block signer), and
+            // it MINTS NOTHING — the balance is exactly the stub's.
+            let balance = existing.state.balance();
+            let cell = dregg_cell::Cell::with_balance(*signer, default_token_id, balance);
+            let _ = ledger.remove(&actor_id);
+            let _ = ledger.insert_cell(cell);
+        }
+        Some(_) => {
+            // Already the canonical pk-bound account (pk == signer). Leave untouched.
+        }
     }
 }
 
