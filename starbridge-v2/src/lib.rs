@@ -282,6 +282,16 @@ pub mod resident_agent;
 #[cfg(feature = "agent-js")]
 pub mod distributed_card;
 
+// THE CARD-FORK CARRY BRIDGE — carry a co-driven card's fork-envelope over a LIVE
+// Matrix homeserver between two RUNNING cockpit processes. Joins `distributed_card`
+// (the portable `CardForkEnvelope` + the anti-substitution root tooth) to
+// `deos_matrix::card_carry` (the byte-only membrane wire vehicle): seal → wrap →
+// send_membrane → recv → OPEN (the tooth re-fires here, refusing a forged carry) →
+// rehydrate → stitch. Needs BOTH `agent-js` (the card machinery) and `dev-surfaces`
+// (the deos-matrix wire types). gpui-free + `cargo test`-able.
+#[cfg(all(feature = "agent-js", feature = "dev-surfaces"))]
+pub mod card_carry_bridge;
+
 // CARD PANE — mount a hyperdreggmedia CARD (a deos-js applet's view-tree) as a LIVE
 // cockpit surface, backed by the cockpit's REAL `World` (a `CardPane` gpui `Render`
 // view that fires verified turns on the live ledger). Gated on `card-pane` (pulls
