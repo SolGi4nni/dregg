@@ -4251,6 +4251,62 @@ pub fn verify_effect_vm_rotated_with_cutover(
     public_inputs: &[BabyBear],
     expected_vk_hash: &[u8; 32],
 ) -> Result<(), String> {
+    // The pure light-client entry: no out-of-band declaration in hand, so GATE B is inert (`&[]`).
+    // Byte-identical to the pre-gate-B deployed verify.
+    verify_effect_vm_rotated_inner(proof_bytes, public_inputs, expected_vk_hash, &[])
+}
+
+/// GATE B — the SDK declared-capacity route discriminator (geometry-free, defense-in-depth). Given the
+/// capacity tags an acting cell's COMMITTED declaration requires (escrow 17 / discharge 18 / vault 19,
+/// re-derived by the CALLER via `dregg_turn::executor::required_capacity_caveat_tags` over the committed
+/// `state_constraints` — bound into the `B_AUTHORITY_DIGEST` limb of the ~124-bit wide commit), the
+/// required satisfaction descriptor a declared-capacity turn MUST bind. `None` ⇒ no capacity declared ⇒
+/// the discriminator is inert (a non-declaring turn resolves normally). At most one capacity is present
+/// per turn; escrow is checked first, then discharge, then vault (mirrors the producer route
+/// `rotated_descriptor_name_for_declared_capacity`).
+pub fn required_satisfaction_member(declared_capacity_tags: &[u32]) -> Option<&'static str> {
+    use dregg_circuit::effect_vm::pi;
+    use dregg_circuit::effect_vm::trace_rotated::{
+        DISCHARGE_SAT_DESCRIPTOR_NAME, SETTLE_ESCROW_SAT_DESCRIPTOR_NAME, VAULT_SAT_DESCRIPTOR_NAME,
+    };
+    if declared_capacity_tags.contains(&pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW) {
+        Some(SETTLE_ESCROW_SAT_DESCRIPTOR_NAME)
+    } else if declared_capacity_tags.contains(&pi::SLOT_CAVEAT_TAG_DISCHARGE_OBLIGATION) {
+        Some(DISCHARGE_SAT_DESCRIPTOR_NAME)
+    } else if declared_capacity_tags.contains(&pi::SLOT_CAVEAT_TAG_VAULT_DEPOSIT) {
+        Some(VAULT_SAT_DESCRIPTOR_NAME)
+    } else {
+        None
+    }
+}
+
+/// The DECLARING light-client verify: a caller that holds the acting cell's committed declaration
+/// (a full node / the executor bridge) passes the re-derived `declared_capacity_tags` so GATE B —
+/// the verifier-side declared-capacity discriminator — is LIVE. When the cell declares a capacity, the
+/// uniquely-accepting descriptor MUST be the corresponding satisfaction member; a bare cohort member is
+/// REJECTED here, INDEPENDENT of the gate-A refuse weld (this reads only the bound descriptor NAME + the
+/// declaration, never the refuse geometry). Empty tags ⇒ byte-identical to
+/// [`verify_effect_vm_rotated_with_cutover`].
+pub fn verify_effect_vm_rotated_declaring(
+    proof_bytes: &[u8],
+    public_inputs: &[BabyBear],
+    expected_vk_hash: &[u8; 32],
+    declared_capacity_tags: &[u32],
+) -> Result<(), String> {
+    verify_effect_vm_rotated_inner(
+        proof_bytes,
+        public_inputs,
+        expected_vk_hash,
+        declared_capacity_tags,
+    )
+}
+
+fn verify_effect_vm_rotated_inner(
+    proof_bytes: &[u8],
+    public_inputs: &[BabyBear],
+    expected_vk_hash: &[u8; 32],
+    declared_capacity_tags: &[u32],
+) -> Result<(), String> {
     use dregg_circuit::descriptor_ir2::{
         DreggStarkConfig, Ir2BatchProof, parse_vm_descriptor2, verify_vm_descriptor2,
     };
@@ -4354,6 +4410,23 @@ pub fn verify_effect_vm_rotated_with_cutover(
                      cap-membership authority crown); the plain descriptor carries NO membership \
                      check, so accepting it would launder host-trusted authority into a \
                      light-client proof. Rejecting (re-prove via the cap-open route)."
+                ));
+            }
+            // ── GATE B: the declared-capacity discriminator (defense-in-depth, geometry-free). When
+            // the caller supplied the acting cell's committed declaration, a declared-capacity turn MUST
+            // bind its satisfaction member; a bare cohort member is rejected HERE — independent of the
+            // gate-A refuse weld baked into the bare VK (this reads only the uniquely-bound descriptor
+            // NAME + the declaration). Inert for the pure LC entry (empty tags) and for a non-declaring
+            // cell, so honest turns resolve normally.
+            if let Some(required) = required_satisfaction_member(declared_capacity_tags)
+                && *name != required
+            {
+                return Err(format!(
+                    "GATE B (declared-capacity discriminator): the acting cell's COMMITTED declaration \
+                     requires capacity tags {declared_capacity_tags:?}, so the proof MUST bind the \
+                     satisfaction member {required}; it bound the bare cohort descriptor {name} (no \
+                     satisfaction gate). Rejecting the bare-cohort dodge geometry-free (independent of \
+                     the refuse weld)."
                 ));
             }
             // Re-derive the rotated vk_hash from the uniquely-accepting cohort descriptor's
