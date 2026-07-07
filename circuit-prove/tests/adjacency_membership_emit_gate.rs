@@ -42,7 +42,7 @@ use dregg_circuit::poseidon2::hash_2_to_1;
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 adjacencyDesc` emits (pinned by the `#guard`
 /// in `AdjacencyMembershipEmit.lean`). If Lean's emitter drifts that `#guard` fails; if this
 /// literal drifts the `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"dregg-membership-adjacency::poseidon2-v1","ir":2,"trace_width":32,"public_input_count":5,"tables":[],"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":2}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":2}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":1}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":3},{"t":"var","v":4},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":5},{"t":"var","v":18},{"t":"var","v":19},{"t":"var","v":20},{"t":"var","v":21},{"t":"var","v":22},{"t":"var","v":23},{"t":"var","v":24}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":16}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":6},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":7}}}},{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":10}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":10}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":11},{"t":"var","v":12},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":13},{"t":"var","v":25},{"t":"var","v":26},{"t":"var","v":27},{"t":"var","v":28},{"t":"var","v":29},{"t":"var","v":30},{"t":"var","v":31}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":14}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":16}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":8},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":13}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":14},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":15}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":17},"r":{"t":"mul","l":{"t":"const","v":-2},"r":{"t":"var","v":16}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":16},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":17}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":1},{"t":"pi_binding","row":"first","col":8,"pi_index":2},{"t":"pi_binding","row":"last","col":5,"pi_index":0},{"t":"pi_binding","row":"last","col":13,"pi_index":0},{"t":"pi_binding","row":"last","col":7,"pi_index":3},{"t":"pi_binding","row":"last","col":15,"pi_index":4},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":16},"r":{"t":"const","v":-1}}},{"t":"boundary","row":"first","body":{"t":"var","v":6}},{"t":"boundary","row":"first","body":{"t":"var","v":14}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":7}},"r":{"t":"const","v":-1}}}}],"hash_sites":[],"ranges":[]}"#;
+const GOLDEN_JSON: &str = r#"{"name":"dregg-membership-adjacency::poseidon2-v1","ir":2,"trace_width":32,"public_input_count":5,"tables":[],"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":2}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":2}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":1}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":3},{"t":"var","v":4},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":5},{"t":"var","v":18},{"t":"var","v":19},{"t":"var","v":20},{"t":"var","v":21},{"t":"var","v":22},{"t":"var","v":23},{"t":"var","v":24}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":16}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":6},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":7}}}},{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":10}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":10}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":11},{"t":"var","v":12},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":13},{"t":"var","v":25},{"t":"var","v":26},{"t":"var","v":27},{"t":"var","v":28},{"t":"var","v":29},{"t":"var","v":30},{"t":"var","v":31}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":14}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":16}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":8},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":13}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":14},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":15}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":17},"r":{"t":"mul","l":{"t":"const","v":-2},"r":{"t":"var","v":16}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":16},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":17}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":1},{"t":"pi_binding","row":"first","col":8,"pi_index":2},{"t":"pi_binding","row":"last","col":5,"pi_index":0},{"t":"pi_binding","row":"last","col":13,"pi_index":0},{"t":"pi_binding","row":"last","col":7,"pi_index":3},{"t":"pi_binding","row":"last","col":15,"pi_index":4},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":16},"r":{"t":"const","v":-1}}},{"t":"boundary","row":"first","body":{"t":"var","v":6}},{"t":"boundary","row":"first","body":{"t":"var","v":14}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":7}},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":2}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":2}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":1}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":10}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":10}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}}}}}],"hash_sites":[],"ranges":[]}"#;
 
 // --- Trace column layout (must match `AdjacencyMembershipEmit.lean` §1). ---
 const L_CUR: usize = 0;
@@ -255,6 +255,23 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
             LeanExpr::add(neg(LeanExpr::Var(L_IDX_OUT)), LeanExpr::Const(-1)),
         ),
     }));
+    // THE LAST-ROW ORDERING FIX (`adjLastOrderFix`): the six child-ordering bodies re-lowered as
+    // Last-row boundaries (three per path). The transition `.gate` copies of these fire on rows
+    // 0..n-2; these boundaries cover the last row, so the top Merkle level's ordering is enforced
+    // on every row (the deployed every-row `assert_zero` semantics) and cannot be forged.
+    for body in [
+        dir_binary_body(L_DIR),
+        left_order_body(L_CUR, L_SIB, L_DIR, L_LEFT),
+        right_order_body(L_CUR, L_SIB, L_DIR, L_RIGHT),
+        dir_binary_body(U_DIR),
+        left_order_body(U_CUR, U_SIB, U_DIR, U_LEFT),
+        right_order_body(U_CUR, U_SIB, U_DIR, U_RIGHT),
+    ] {
+        constraints.push(VmConstraint2::Base(VmConstraint::Boundary {
+            row: VmRow::Last,
+            body,
+        }));
+    }
     EffectVmDescriptor2 {
         name: "dregg-membership-adjacency::poseidon2-v1".to_string(),
         trace_width: ADJ_WIDTH,
@@ -458,7 +475,7 @@ fn adjacency_emit_decodes_to_hand_built() {
     );
     assert_eq!(decoded.trace_width, ADJ_WIDTH);
     assert_eq!(decoded.public_input_count, 5);
-    assert_eq!(decoded.constraints.len(), 26);
+    assert_eq!(decoded.constraints.len(), 32);
     let chip_lookups = decoded
         .constraints
         .iter()
@@ -474,7 +491,9 @@ fn adjacency_emit_decodes_to_hand_built() {
         .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
         .count();
     assert_eq!(window_gates, 5, "cur/idx carries (×2 paths) + pow carry");
-    // The catch tooth: a Last-row Boundary must be present (the consecutiveness gate).
+    // Seven Last-row Boundaries: the consecutiveness catch tooth + the six ordering-fix bodies
+    // (`adjLastOrderFix`, three per path) that make the top Merkle level's child-ordering
+    // non-forgeable on the last row.
     let last_boundaries = decoded
         .constraints
         .iter()
@@ -489,8 +508,8 @@ fn adjacency_emit_decodes_to_hand_built() {
         })
         .count();
     assert_eq!(
-        last_boundaries, 1,
-        "the internalized consecutiveness catch tooth"
+        last_boundaries, 7,
+        "consecutiveness catch tooth + six last-row ordering-fix boundaries"
     );
 }
 
@@ -692,21 +711,21 @@ fn nonconsecutive_wide_bracket_refuses() {
 #[test]
 fn catch_tooth_is_precisely_load_bearing() {
     let full = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");
-    // The tooth-removed variant: drop the single Last-row Boundary (the consecutiveness gate).
-    let mut tooth_removed = full.clone();
-    tooth_removed.constraints.retain(|c| {
-        !matches!(
-            c,
-            VmConstraint2::Base(VmConstraint::Boundary {
-                row: VmRow::Last,
-                ..
-            })
-        )
+    // The tooth-removed variant: drop ONLY the consecutiveness Last-row boundary (leaving the six
+    // ordering-fix boundaries intact), so the (5,7) rejection is isolated to that one gate.
+    let cons = VmConstraint2::Base(VmConstraint::Boundary {
+        row: VmRow::Last,
+        body: LeanExpr::add(
+            LeanExpr::Var(U_IDX_OUT),
+            LeanExpr::add(neg(LeanExpr::Var(L_IDX_OUT)), LeanExpr::Const(-1)),
+        ),
     });
+    let mut tooth_removed = full.clone();
+    tooth_removed.constraints.retain(|c| c != &cons);
     assert_eq!(
         tooth_removed.constraints.len(),
         full.constraints.len() - 1,
-        "exactly one Last-row boundary (the consecutiveness tooth) was removed"
+        "exactly the one consecutiveness Last-row boundary was removed"
     );
 
     let leaves = sample_leaves(16);
@@ -728,5 +747,72 @@ fn catch_tooth_is_precisely_load_bearing() {
     assert!(
         !rejects(&tooth_removed, &trace, &pi),
         "without the consecutiveness tooth the wide-bracket (5,7) trace is otherwise fully valid"
+    );
+}
+
+/// STEP 4f — MUTATION CANARY (THE LAST-ROW ORDERING FIX): a genuinely dual-authenticated (5,6) pair
+/// whose TOP Merkle level is FORGED. On the last row both paths' children are overwritten with an
+/// unrelated pair `(x, y)` and the claimed root is `hash(x, y)`, so every hash/root/index/consecutive
+/// constraint still holds — yet the top spine node `L_CUR[last]` is NOT a child of the disclosed root.
+/// Under the transition-only ordering `.gate` (vacuous on the last row) this trace would satisfy the
+/// descriptor; the landed `adjLastOrderFix` (six Last-row ordering boundaries) REJECTS it. Non-vacuity:
+/// a descriptor with those six boundaries removed ACCEPTS the very same trace — so the ordering fix, and
+/// only it, is what bit. This is exactly the forge the Lean refinement proof caught.
+#[test]
+fn forged_top_level_ordering_refuses() {
+    let full = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");
+    let leaves = sample_leaves(16);
+    let levels = build_tree(&leaves);
+    let lp = auth_path(&levels, 5);
+    let up = auth_path(&levels, 6);
+    let (mut trace, _rl, il, _ru, iu) = build_trace(leaves[5], &lp, leaves[6], &up);
+    assert_eq!((il, iu), (5, 6));
+
+    // Forge the top (last) row's child pair for BOTH paths to an unrelated (x, y); claim hash(x, y).
+    let x = BabyBear::new(777);
+    let y = BabyBear::new(888);
+    let forged_root = hash_2_to_1(x, y);
+    let last = trace.len() - 1;
+    trace[last][L_LEFT] = x;
+    trace[last][L_RIGHT] = y;
+    trace[last][L_PAR] = forged_root;
+    trace[last][U_LEFT] = x;
+    trace[last][U_RIGHT] = y;
+    trace[last][U_PAR] = forged_root;
+    let pi = pis(forged_root, leaves[5], leaves[6], il, iu);
+
+    // REJECTED by the full descriptor: the last-row ordering boundary `L_LEFT - L_CUR ≠ 0` bites.
+    assert!(
+        rejects(&full, &trace, &pi),
+        "a forged top-level child pair must be REJECTED (the last-row ordering fix)"
+    );
+
+    // Non-vacuity: drop the six ordering-fix boundaries (keep the consecutiveness tooth) — the same
+    // forged trace is then ACCEPTED, so the ordering fix, and only it, is what rejected it.
+    let cons = VmConstraint2::Base(VmConstraint::Boundary {
+        row: VmRow::Last,
+        body: LeanExpr::add(
+            LeanExpr::Var(U_IDX_OUT),
+            LeanExpr::add(neg(LeanExpr::Var(L_IDX_OUT)), LeanExpr::Const(-1)),
+        ),
+    });
+    let mut ordering_removed = full.clone();
+    ordering_removed.constraints.retain(|c| {
+        !matches!(
+            c,
+            VmConstraint2::Base(VmConstraint::Boundary {
+                row: VmRow::Last,
+                ..
+            })
+        ) || c == &cons
+    });
+    assert_eq!(
+        ordering_removed.constraints.len(),
+        full.constraints.len() - 6,
+        "exactly the six last-row ordering boundaries were removed"
+    );
+    assert!(
+        !rejects(&ordering_removed, &trace, &pi),
+        "without the ordering fix the forged top-level pair is otherwise fully valid"
     );
 }

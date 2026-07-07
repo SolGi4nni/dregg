@@ -132,7 +132,8 @@ theorem combine_of_gates (hash : List ℤ → ℤ) (a : Assignment)
 
 /-- The membership tactic: every constraint we name is literally in `adjacencyDesc.constraints`. -/
 local macro "adj_mem" : tactic =>
-  `(tactic| (show _ ∈ adjacencyConstraints; simp [adjacencyConstraints, pathBlock]))
+  `(tactic| (show _ ∈ adjacencyConstraints;
+             simp [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, pathBlock]))
 
 /-- The window's `nxt` field at row `j` IS the `loc` field at row `j+1` (`envAt` reads the same
 `getD (j+1)` row). -/
@@ -406,24 +407,28 @@ theorem demo_not_adjacent :
 /-! ## §6b — THE ANTI-SCAR: a CONCRETE trace that genuinely SATISFIES the descriptor (the `Satisfied2`
 hypothesis is INHABITED — not an empty/unsatisfiable antecedent), and a concrete trace that FAILS it
 (the descriptor genuinely REJECTS). A degenerate depth-1 witness: two sibling leaves `10, 20` at
-indices `0, 1` whose shared parent (`cHash [3,4] = 304`) is the committed root. -/
+indices `0, 1`, genuinely dir-ordered as the children of their shared parent (`cHash [10,20] = 1020`),
+which is the committed root. (The children must be the GENUINE dir-ordering of `(cur, sib)` — the
+last-row ordering fix now bites any forged top pair.) -/
 
 private def cHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 100 + x) 0
 
-/-- The single satisfying row: leaves `10`/`20`, ordered children `3`/`4`, both parents = root `304`,
-indices `0`/`1`, `pow = 1`. All other columns (siblings, dirs, lanes, carries) are `0`. -/
+/-- The single satisfying row: leaves `10`/`20` as SIBLINGS, genuinely dir-ordered children
+(`L_LEFT=L_CUR=10`, `L_RIGHT=L_SIB=20`, `L_DIR=0`; `U_LEFT=10=U_SIB`, `U_RIGHT=20=U_CUR`, `U_DIR=1`),
+both parents = root `1020`, indices `0`/`1`, `pow = 1`. -/
 private def cRow : Assignment := fun c =>
-  if c = L_CUR then 10 else if c = U_CUR then 20
-  else if c = L_LEFT then 3 else if c = L_RIGHT then 4 else if c = L_PAR then 304
-  else if c = U_LEFT then 3 else if c = U_RIGHT then 4 else if c = U_PAR then 304
-  else if c = POW then 1 else if c = U_IDX_OUT then 1 else 0
+  if c = L_CUR then 10 else if c = L_SIB then 20 else if c = L_LEFT then 10
+  else if c = L_RIGHT then 20 else if c = L_PAR then 1020
+  else if c = U_CUR then 20 else if c = U_SIB then 10 else if c = U_DIR then 1
+  else if c = U_LEFT then 10 else if c = U_RIGHT then 20 else if c = U_PAR then 1020
+  else if c = U_IDX_OUT then 1 else if c = POW then 1 else 0
 
 private def cPub : Assignment := fun k =>
-  if k = PI_ROOT then 304 else if k = PI_LEAF_LOWER then 10
+  if k = PI_ROOT then 1020 else if k = PI_LEAF_LOWER then 10
   else if k = PI_LEAF_UPPER then 20 else if k = PI_IDX_UPPER then 1 else 0
 
 private def cTbl : List (List ℤ) :=
-  [Dregg2.Circuit.DescriptorIR2.chipRow cHash [3, 4] (List.replicate 7 0)]
+  [Dregg2.Circuit.DescriptorIR2.chipRow cHash [10, 20] (List.replicate 7 0)]
 
 private def cTrace : VmTrace :=
   { rows := [cRow], pub := cPub
@@ -434,12 +439,13 @@ NAMED carrier `ChipTableSound` is realizable, not just assumed. -/
 theorem concrete_chipSound : ChipTableSound cHash (cTrace.tf .poseidon2) := by
   intro r hr
   simp only [cTrace, cTbl, List.mem_singleton] at hr
-  exact ⟨[3, 4], List.replicate 7 0, by decide, by decide, hr⟩
+  exact ⟨[10, 20], List.replicate 7 0, by decide, by decide, hr⟩
 
 /-- **The `Satisfied2` HYPOTHESIS IS INHABITED.** The concrete trace genuinely satisfies the deployed
-descriptor's whole denotation — every one of the 26 constraints holds on the single row, and the
-(empty) memory/table legs close. This refutes the vacuity scar: `adjacency_sat_refines` is NOT a
-theorem over an empty antecedent. -/
+descriptor's whole denotation — every one of the 32 constraints holds on the single row (including the
+last-row ordering fix, which the genuinely dir-ordered children satisfy), and the (empty) memory/table
+legs close. This refutes the vacuity scar: `adjacency_sat_refines` is NOT a theorem over an empty
+antecedent. -/
 theorem concrete_sat :
     Satisfied2 cHash adjacencyDesc (fun _ => 0) (fun _ => (0, 0)) [] cTrace := by
   have hmemlog : memLog adjacencyDesc cTrace = [] := rfl
@@ -451,7 +457,8 @@ theorem concrete_sat :
     rw [show cTrace.rows.length = 1 from rfl] at hi
     interval_cases i
     rw [show adjacencyDesc.constraints = adjacencyConstraints from rfl] at hc
-    simp only [adjacencyConstraints, pathBlock, List.cons_append, List.nil_append] at hc
+    simp only [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, pathBlock,
+      List.cons_append, List.nil_append] at hc
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
         copyWindow, Lookup.holdsAt, hF, hL] <;>
