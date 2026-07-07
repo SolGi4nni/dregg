@@ -162,3 +162,4 @@ FFI binds both ways. Working precedent: `@[extern "dregg_ed25519_verify"]` (Port
      dregg_storage_content_root → assert a non-empty root felt. THE ROUND-TRIP: Lean logic + Rust Poseidon2.
   5. (step 3 / the real purge) DIFFERENTIAL: make Lean contentRootDeployed byte-match the Rust
      content_root (same leaf/fold/domain-sep) → retire the Rust content_root logic.
+- `2ae48bf1b` — storage-in-lean (7d): THE EXTRACTION ROUND-TRIPS. verified_content_root_runs_in_lean_calling_rust_poseidon2 PASSES — the @[export] Lean content-root runs as leanc-native code IN the Rust binary, calling the fast Rust Poseidon2 via @[extern]. "Lean IS the runtime" for storage, proven AND running. (Battled: harness restarts + a 100%-full disk + a #[used] force-link fix for DCE.) NEXT: the DIFFERENTIAL (make Lean contentRootDeployed byte-match Rust content_root -> retire the Rust logic).
