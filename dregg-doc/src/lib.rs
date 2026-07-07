@@ -141,6 +141,12 @@ mod resolve;
 // the standalone core stays dependency-free. See src/rope.rs.
 #[cfg(feature = "substrate")]
 mod executor_drive;
+// CI AS RECEIPTED TURNS — the forge's required-check gate: a PullRequest cannot
+// land until every RequiredCheck is satisfied by a committed, executor-signed
+// check-turn receipt or a verified ProofCondition witness (never a bool). The
+// proof IS the pass; no trusted CI runner. See docs/deos/DREGG-FORGE.md.
+#[cfg(feature = "substrate")]
+pub mod check;
 #[cfg(feature = "rope")]
 pub mod rope;
 #[cfg(feature = "cell-heap")]
@@ -161,6 +167,8 @@ pub mod desktop;
 
 pub use atom::{Atom, AtomId, Author, PatchId, Provenance, Status};
 pub use blame::{BlameLine, blame, blame_summary};
+#[cfg(feature = "substrate")]
+pub use check::{CheckId, CheckRefusal, CheckRequirement, CheckWitness, RequiredCheck};
 pub use commit::{Commitment, commit};
 pub use content::{Alternative, ConflictRegion, Rendered, Segment, content, walk_atoms};
 pub use depend::{

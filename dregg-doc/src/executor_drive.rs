@@ -57,7 +57,7 @@ use dregg_cell::{
     compute_canonical_state_commitment,
 };
 use dregg_turn::{
-    ActionBuilder, ComputronCosts, Effect, TurnBuilder, TurnError, TurnExecutor, TurnReceipt,
+    ActionBuilder, ComputronCosts, Effect, Turn, TurnBuilder, TurnError, TurnExecutor, TurnReceipt,
     TurnResult,
 };
 
@@ -170,6 +170,18 @@ impl ExecutorDrivenDoc {
         }
     }
 
+    /// Equip the underlying executor with an Ed25519 signing key (32-byte
+    /// seed): every subsequently COMMITTED receipt carries a genuine
+    /// `executor_signature` over [`TurnReceipt::canonical_executor_signed_message`]
+    /// (dregg-turn Stage 9 R-4), verifiable via
+    /// [`dregg_turn::verify_receipt_chain_with_keys`]. This is what lets a
+    /// check-turn receipt serve as a NON-FABRICABLE witness (a receipt struct
+    /// anyone can populate; a signature over its canonical message they
+    /// cannot) — the forge's CI gate ([`crate::check`]) requires it.
+    pub fn set_receipt_signing_key(&mut self, seed: [u8; 32]) {
+        self.executor.set_executor_signing_key(seed);
+    }
+
     /// The region (document) cell id.
     pub fn region_id(&self) -> CellId {
         self.region
@@ -209,29 +221,72 @@ impl ExecutorDrivenDoc {
     /// This is the seam where the per-region edit cap is ENFORCED: an editor
     /// without the region cap is refused with [`TurnError::CapabilityNotHeld`].
     pub fn edit(&mut self, patch: Patch) -> Result<TurnReceipt, TurnError> {
-        // Snapshot the witness graph so a refusal leaves the document untouched
-        // (the executor rolls the ledger back; the witness graph must match).
-        let graph_snapshot = self.graph.clone();
-
-        // 1. Apply the patch to the witness graph and compute the committed-map
-        //    delta the executor will write (the genuine SetField effects).
-        patch.apply(&mut self.graph);
-        let effects = self.project_delta_effects();
-
-        if effects.is_empty() {
+        // 1–2. Plan: the post-edit witness graph and the genuine Turn (the
+        //      SetField delta targeting the region cell). Pure — nothing is
+        //      mutated until the executor commits, so a refusal leaves the
+        //      document byte-identical.
+        let Some((graph, turn)) = self.plan_turn(&patch) else {
             // A no-op edit (already at this projection): nothing to drive.
-            // Roll the witness graph back to keep it byte-identical to before
-            // (apply may have inserted then-superseded structure that projects
-            // to the same leaves; the conservative choice is no state change).
-            self.graph = graph_snapshot;
             return Err(TurnError::EmptyForest);
+        };
+
+        // 3. Drive through THE REAL EXECUTOR — the sole entry point for ledger
+        //    state mutations (cap gate, journal, nonce/receipt-chain advance).
+        match self.executor.execute(&turn, &mut self.ledger) {
+            TurnResult::Committed { receipt, .. } => {
+                // Only NOW advance the witness graph, and mirror the nonce +
+                // receipt-chain head the executor advanced.
+                self.graph = graph;
+                self.nonce = self
+                    .ledger
+                    .get(&self.editor)
+                    .map(|c| c.state.nonce())
+                    .unwrap_or(self.nonce + 1);
+                self.chain_head = Some(receipt.receipt_hash());
+                Ok(receipt)
+            }
+            TurnResult::Rejected { reason, .. } => {
+                // In-band refusal (the anti-ghost tooth): the executor rolled
+                // the ledger back; the witness graph was never advanced — the
+                // document is exactly as it was before the refused edit.
+                Err(reason)
+            }
+            TurnResult::Expired | TurnResult::Pending => Err(TurnError::EmptyForest),
+        }
+    }
+
+    /// The turn [`ExecutorDrivenDoc::edit`] WOULD drive for `patch` at the
+    /// document's current state, by hash — `None` for a no-op patch (empty
+    /// projection delta). Turn construction is deterministic (agent, nonce,
+    /// effects, chain head — no wall clock), so driving the same patch next,
+    /// with no interleaved edit, commits a receipt whose `turn_hash` equals
+    /// this hash.
+    ///
+    /// This is the forge's CI binding surface: a required check
+    /// ([`crate::check::RequiredCheck`]) names the exact check turn (the job)
+    /// BEFORE it runs, and is satisfied only by that turn's committed, signed
+    /// receipt.
+    pub fn planned_turn_hash(&self, patch: &Patch) -> Option<[u8; 32]> {
+        self.plan_turn(patch).map(|(_, turn)| turn.hash())
+    }
+
+    /// Build (post-edit witness graph, genuine Turn) for `patch` at the current
+    /// state — the pure planning half of [`ExecutorDrivenDoc::edit`]. `None`
+    /// when the patch's projection delta is empty (nothing to drive).
+    ///
+    /// The Turn: agent = editor, one action targeting the region cell with the
+    /// SetField effects. `Unchecked` authorization; the region's open
+    /// `set_state` passes the turn-level auth, and the per-region CAP gate
+    /// (cross-cell `check_cross_cell_permission`) is the real enforcement at
+    /// effect-application.
+    fn plan_turn(&self, patch: &Patch) -> Option<(crate::graph::DocGraph, Turn)> {
+        let mut graph = self.graph.clone();
+        patch.apply(&mut graph);
+        let effects = self.project_delta_effects(&graph);
+        if effects.is_empty() {
+            return None;
         }
 
-        // 2. Build the genuine Turn: agent = editor, one action targeting the
-        //    region cell with the SetField effects. `Unchecked` authorization;
-        //    the region's open `set_state` passes the turn-level auth, and the
-        //    per-region CAP gate (cross-cell `check_cross_cell_permission`) is
-        //    the real enforcement at effect-application.
         let mut action =
             ActionBuilder::new_unchecked_for_tests(self.region, "doc_edit", self.editor);
         for e in &effects {
@@ -243,33 +298,7 @@ impl ExecutorDrivenDoc {
         builder.add_action(action);
         let mut turn = builder.fee(0).build();
         turn.previous_receipt_hash = self.chain_head;
-
-        // 3. Drive through THE REAL EXECUTOR — the sole entry point for ledger
-        //    state mutations (cap gate, journal, nonce/receipt-chain advance).
-        match self.executor.execute(&turn, &mut self.ledger) {
-            TurnResult::Committed { receipt, .. } => {
-                // The executor advanced the editor's nonce + receipt-chain head;
-                // mirror them for the next edit.
-                self.nonce = self
-                    .ledger
-                    .get(&self.editor)
-                    .map(|c| c.state.nonce())
-                    .unwrap_or(self.nonce + 1);
-                self.chain_head = Some(receipt.receipt_hash());
-                Ok(receipt)
-            }
-            TurnResult::Rejected { reason, .. } => {
-                // In-band refusal (the anti-ghost tooth): the executor rolled
-                // the ledger back. Roll the witness graph back to match — the
-                // document is exactly as it was before the refused edit.
-                self.graph = graph_snapshot;
-                Err(reason)
-            }
-            TurnResult::Expired | TurnResult::Pending => {
-                self.graph = graph_snapshot;
-                Err(TurnError::EmptyForest)
-            }
-        }
+        Some((graph, turn))
     }
 
     /// The receipt-chain head (the genuine `receipt_hash` of the last committed
@@ -309,12 +338,12 @@ impl ExecutorDrivenDoc {
         true
     }
 
-    /// Compute the genuine `SetField` effects for the difference between the
-    /// witness graph's projection and the region cell's current committed map.
+    /// Compute the genuine `SetField` effects for the difference between
+    /// `graph`'s projection and the region cell's current committed map.
     /// These are the kernel writes the edit performs; the executor applies the
     /// same `set_field_ext` arm they desugar to.
-    fn project_delta_effects(&self) -> Vec<Effect> {
-        let desired = project_graph(&self.graph);
+    fn project_delta_effects(&self, graph: &crate::graph::DocGraph) -> Vec<Effect> {
+        let desired = project_graph(graph);
         let cell = self.region_cell();
         let mut effects = Vec::new();
 

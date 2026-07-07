@@ -28,6 +28,14 @@
 //!   `TurnError::CapabilityNotHeld` on the FIRST turn (so nothing lands — the
 //!   cap is per `(editor, region)` and every landing turn targets the same
 //!   region). No parallel gate exists here.
+//! - **CI is receipted turns** (`substrate`): a PR can carry
+//!   [`RequiredCheck`]s ([`crate::check`]); [`PullRequest::land`] verifies
+//!   EVERY one against its presented witness (a committed, executor-signed
+//!   check-turn receipt / a verified `ProofCondition` proof — never a bool)
+//!   BEFORE driving any merge turn, refusing with
+//!   [`PullRequestError::CheckNotSatisfied`] otherwise. No trusted CI runner:
+//!   the proof IS the pass. Checks and caps are independent gates — both
+//!   required.
 //!
 //! ## Named seams (deferred, not holes)
 //!
@@ -57,6 +65,8 @@ use crate::resolution::{RegionResolutions, ResolutionChoice, resolutions};
 use crate::threeway::{ThreeWayConflict, merge_base, render_three_way, three_way};
 
 #[cfg(feature = "substrate")]
+use crate::check::{CheckId, CheckRefusal, CheckWitness, RequiredCheck};
+#[cfg(feature = "substrate")]
 use crate::executor_drive::ExecutorDrivenDoc;
 #[cfg(feature = "substrate")]
 use dregg_turn::{TurnError, TurnReceipt};
@@ -78,6 +88,18 @@ pub enum PullRequestError {
     /// `check_cross_cell_permission`, and nothing landed.
     #[cfg(feature = "substrate")]
     Refused(TurnError),
+    /// CI AS RECEIPTED TURNS: a required check is not satisfied by a verified
+    /// cryptographic witness (a committed executor-signed check-turn receipt /
+    /// a verified [`dregg_turn::ProofCondition`] proof — see [`crate::check`]).
+    /// The gate runs BEFORE any merge turn is driven, so nothing landed and
+    /// the document is byte-untouched. Never satisfiable by a bool.
+    #[cfg(feature = "substrate")]
+    CheckNotSatisfied {
+        /// The unsatisfied check's name.
+        check: CheckId,
+        /// Why its witness (or absence) failed verification.
+        reason: CheckRefusal,
+    },
 }
 
 /// A clean (or fully reviewed) merge: the merged fold plus the exact patch set
@@ -118,6 +140,16 @@ pub struct PullRequest {
     /// the order they were taken. Each is authored by its resolver and lands
     /// with the merge (resolution is just another patch).
     resolutions: Vec<Patch>,
+    /// CI AS RECEIPTED TURNS: the checks this PR must pass before it can land.
+    /// Each is satisfied only by a verified cryptographic witness at land time
+    /// ([`crate::check::RequiredCheck::satisfied_by`]) — never a bool.
+    #[cfg(feature = "substrate")]
+    required: Vec<RequiredCheck>,
+    /// The witnesses presented against the required checks (by check id, last
+    /// presentation wins). Presenting records; VERIFICATION happens at land
+    /// time — a bad witness refuses the landing, it is not laundered here.
+    #[cfg(feature = "substrate")]
+    witnesses: Vec<(CheckId, CheckWitness)>,
 }
 
 impl PullRequest {
@@ -127,7 +159,69 @@ impl PullRequest {
             base,
             head,
             resolutions: Vec::new(),
+            #[cfg(feature = "substrate")]
+            required: Vec::new(),
+            #[cfg(feature = "substrate")]
+            witnesses: Vec::new(),
         }
+    }
+
+    /// Require a check for landing (builder form): [`PullRequest::land`] will
+    /// refuse with [`PullRequestError::CheckNotSatisfied`] until `check` is
+    /// satisfied by a verified witness ([`PullRequest::present_witness`]).
+    #[cfg(feature = "substrate")]
+    pub fn with_required_check(mut self, check: RequiredCheck) -> Self {
+        self.required.push(check);
+        self
+    }
+
+    /// Require a check for landing (in-place form of
+    /// [`PullRequest::with_required_check`]).
+    #[cfg(feature = "substrate")]
+    pub fn require_check(&mut self, check: RequiredCheck) {
+        self.required.push(check);
+    }
+
+    /// The checks this PR must pass before it can land.
+    #[cfg(feature = "substrate")]
+    pub fn required_checks(&self) -> &[RequiredCheck] {
+        &self.required
+    }
+
+    /// Present a witness against a required check (a committed check-turn
+    /// receipt / a condition proof). Presenting RECORDS; verification happens
+    /// at land time — presenting garbage does not "satisfy" anything, the
+    /// landing gate refuses it with the verifier's reason. A later
+    /// presentation for the same check supersedes an earlier one.
+    #[cfg(feature = "substrate")]
+    pub fn present_witness(&mut self, check: impl Into<CheckId>, witness: CheckWitness) {
+        let id = check.into();
+        self.witnesses.retain(|(c, _)| *c != id);
+        self.witnesses.push((id, witness));
+    }
+
+    /// VERIFY every required check against its presented witness — the CI
+    /// gate [`PullRequest::land`] runs before driving any merge turn. `Ok(())`
+    /// iff EVERY required check is satisfied by a genuine cryptographic
+    /// witness ([`RequiredCheck::satisfied_by`]); otherwise the first
+    /// unsatisfied check's refusal, as [`PullRequestError::CheckNotSatisfied`].
+    #[cfg(feature = "substrate")]
+    pub fn checks_satisfied(&self) -> Result<(), PullRequestError> {
+        for check in &self.required {
+            let witness = self.witnesses.iter().find(|(c, _)| *c == check.id);
+            let refusal = match witness {
+                None => CheckRefusal::NoWitness,
+                Some((_, w)) => match check.satisfied_by(w) {
+                    Ok(()) => continue,
+                    Err(r) => r,
+                },
+            };
+            return Err(PullRequestError::CheckNotSatisfied {
+                check: check.id.clone(),
+                reason: refusal,
+            });
+        }
+        Ok(())
     }
 
     /// The target history.
@@ -257,12 +351,26 @@ impl PullRequest {
     /// ([`PullRequestError::UnresolvedConflict`] first). A landing patch whose
     /// projection delta is empty (a no-op at the committed map) is skipped, not
     /// an error.
+    ///
+    /// **CI AS RECEIPTED TURNS**: every [`RequiredCheck`] must be satisfied by
+    /// a VERIFIED cryptographic witness ([`PullRequest::checks_satisfied`])
+    /// before any merge turn is driven — an unsatisfied check refuses with
+    /// [`PullRequestError::CheckNotSatisfied`] and the document/ledger is
+    /// byte-untouched (the merge never ran). The gate ordering is
+    /// conflicts → doc-at-base → REQUIRED CHECKS → the executor's cap gate
+    /// (in-band, per driven turn); checks and caps are INDEPENDENT — a
+    /// satisfied check set does not confer the region cap.
     #[cfg(feature = "substrate")]
     pub fn land(&self, doc: &mut ExecutorDrivenDoc) -> Result<Vec<TurnReceipt>, PullRequestError> {
         let outcome = self.merge()?;
         if *doc.graph() != self.base.replay() {
             return Err(PullRequestError::DocNotAtBase);
         }
+        // THE CI GATE: verify every required check's witness BEFORE driving
+        // any turn. The proof IS the pass — a committed executor-signed
+        // check-turn receipt or a verified ProofCondition witness, never a
+        // bool (crate::check).
+        self.checks_satisfied()?;
         let mut receipts = Vec::new();
         for patch in outcome.patches {
             match doc.edit(patch) {
@@ -561,6 +669,263 @@ mod tests {
                 Err(PullRequestError::DocNotAtBase) => {}
                 other => panic!("expected DocNotAtBase, got {other:?}"),
             }
+        }
+    }
+
+    // ── CI AS RECEIPTED TURNS: the required-check gate on landing ───────────
+
+    #[cfg(feature = "substrate")]
+    mod required_checks {
+        use super::*;
+        use crate::check::{CheckRefusal, CheckWitness, RequiredCheck};
+        use crate::executor_drive::ExecutorDrivenDoc;
+        use dregg_turn::{ConditionProof, Finality, ProofCondition, TurnError};
+
+        /// RFC 8032 §7.1 TEST 1: a REAL Ed25519 (seed, verifying-key) pair —
+        /// the executor derives its verifying key from the 32-byte seed by
+        /// standard Ed25519 key generation, so this pubkey matches this seed.
+        /// dregg-doc has no ed25519 dependency; the pair arrives as data (in
+        /// the real forge, the trusted executor keys are repo policy).
+        const CI_SIGNING_SEED: [u8; 32] = [
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec,
+            0x2c, 0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03,
+            0x1c, 0xae, 0x7f, 0x60,
+        ];
+        const CI_VERIFYING_KEY: [u8; 32] = [
+            0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
+            0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
+            0xf7, 0x07, 0x51, 0x1a,
+        ];
+
+        /// The CI job's own results document: a signing executor plus the
+        /// check patch it will drive (writing the check's result line). The
+        /// check turn's hash is PLANNED (named before it runs) — that hash is
+        /// what the PR's required check binds to.
+        fn ci_job() -> (ExecutorDrivenDoc, Patch, [u8; 32]) {
+            let mut ci_doc = ExecutorDrivenDoc::new(7, 8, true);
+            ci_doc.set_receipt_signing_key(CI_SIGNING_SEED);
+            let check_patch = Patch::by(
+                Author(9),
+                [Patch::add(100, "check: build PASS\n", AtomId::ROOT).1],
+            );
+            let planned = ci_doc
+                .planned_turn_hash(&check_patch)
+                .expect("the check turn has a real projection delta");
+            (ci_doc, check_patch, planned)
+        }
+
+        #[test]
+        fn an_unsatisfied_required_check_refuses_the_landing_untouched_then_the_committed_receipt_lands_it()
+         {
+            let (mut ci_doc, check_patch, planned) = ci_job();
+
+            // The PR requires the check BEFORE it has run: the required check
+            // names the exact check turn (by planned hash) + the trusted
+            // executor key that must have signed its receipt.
+            let mut pr = clean_pr().with_required_check(RequiredCheck::committed_receipt(
+                "build",
+                planned,
+                vec![CI_VERIFYING_KEY],
+            ));
+
+            let mut doc = ExecutorDrivenDoc::new_at(&pr.base().replay(), 1, 2, true);
+            let pre = doc.state_commitment();
+
+            // POLE 1: no witness → REFUSED, and the document is BYTE-UNTOUCHED
+            // (the merge never ran — no turn was driven).
+            match pr.land(&mut doc) {
+                Err(PullRequestError::CheckNotSatisfied { check, reason }) => {
+                    assert_eq!(check.as_str(), "build");
+                    assert!(matches!(reason, CheckRefusal::NoWitness), "{reason:?}");
+                }
+                other => panic!("expected CheckNotSatisfied, got {other:?}"),
+            }
+            assert_eq!(doc.state_commitment(), pre, "no turn ran");
+            assert_eq!(*doc.graph(), pr.base().replay(), "base fold untouched");
+
+            // RUN THE CHECK: drive the real check turn through the CI doc's
+            // executor. The committed receipt IS the pass — finalized, and
+            // executor-signed (the non-fabricable part).
+            let receipt = ci_doc.edit(check_patch).expect("the check turn commits");
+            assert_eq!(
+                receipt.turn_hash, planned,
+                "the plan named exactly the turn that ran"
+            );
+            assert_eq!(receipt.finality, Finality::Final);
+            assert!(
+                receipt.executor_signature.is_some(),
+                "the CI executor signed the check receipt"
+            );
+
+            // POLE 2: the SAME PR with the committed receipt presented → the
+            // check verifies (real Ed25519 over the canonical executor-signed
+            // message) and the merge lands as finalized cap-gated turns.
+            pr.present_witness("build", CheckWitness::Receipt(receipt));
+            pr.checks_satisfied()
+                .expect("the committed receipt satisfies");
+            let receipts = pr.land(&mut doc).expect("a checked PR lands");
+            assert!(!receipts.is_empty());
+            for r in &receipts {
+                assert_eq!(r.finality, Finality::Final);
+            }
+            assert_eq!(*doc.graph(), pr.merge().unwrap().graph);
+            assert!(doc.commitment_matches_projection());
+            assert_eq!(
+                content(doc.graph()).to_marked_string(),
+                "two\nthree\n",
+                "both sides' edits landed"
+            );
+        }
+
+        #[test]
+        fn a_fabricated_or_tampered_check_receipt_never_satisfies() {
+            let (mut ci_doc, check_patch, planned) = ci_job();
+            let real = ci_doc.edit(check_patch).expect("the check turn commits");
+
+            let check = |keys: Vec<[u8; 32]>| {
+                clean_pr()
+                    .with_required_check(RequiredCheck::committed_receipt("build", planned, keys))
+            };
+            let refusal_of = |pr: &PullRequest| match pr.checks_satisfied() {
+                Err(PullRequestError::CheckNotSatisfied { reason, .. }) => reason,
+                other => panic!("expected CheckNotSatisfied, got {other:?}"),
+            };
+
+            // An UNSIGNED copy of the real receipt: refused fail-closed (a
+            // receipt struct anyone can populate; without a signature it
+            // cannot witness a check).
+            let mut unsigned = real.clone();
+            unsigned.executor_signature = None;
+            let mut pr = check(vec![CI_VERIFYING_KEY]);
+            pr.present_witness("build", CheckWitness::Receipt(unsigned));
+            assert!(matches!(refusal_of(&pr), CheckRefusal::Unsigned));
+
+            // A TAMPERED signature: real Ed25519 verification fails.
+            let mut tampered = real.clone();
+            if let Some(sig) = tampered.executor_signature.as_mut() {
+                sig[0] ^= 0x01;
+            }
+            let mut pr = check(vec![CI_VERIFYING_KEY]);
+            pr.present_witness("build", CheckWitness::Receipt(tampered));
+            assert!(matches!(refusal_of(&pr), CheckRefusal::SignatureUnverified));
+
+            // A receipt signed by an UNTRUSTED executor (wrong trusted key
+            // set): refused — no trusted-runner laundering.
+            let mut wrong_key = [0u8; 32];
+            wrong_key[0] = 0xAA;
+            let mut pr = check(vec![wrong_key]);
+            pr.present_witness("build", CheckWitness::Receipt(real.clone()));
+            assert!(matches!(refusal_of(&pr), CheckRefusal::SignatureUnverified));
+
+            // A receipt for a DIFFERENT turn (a real committed one, even):
+            // refused — the check names the exact check turn.
+            let other_patch = Patch::by(
+                Author(9),
+                [Patch::add(101, "some other job\n", AtomId::ROOT).1],
+            );
+            let other = ci_doc.edit(other_patch).expect("another turn commits");
+            assert!(other.executor_signature.is_some());
+            let mut pr = check(vec![CI_VERIFYING_KEY]);
+            pr.present_witness("build", CheckWitness::Receipt(other));
+            assert!(matches!(refusal_of(&pr), CheckRefusal::WrongTurn { .. }));
+
+            // The genuine article still satisfies (the poles are about the
+            // witness, not the gate being stuck closed).
+            let mut pr = check(vec![CI_VERIFYING_KEY]);
+            pr.present_witness("build", CheckWitness::Receipt(real));
+            pr.checks_satisfied()
+                .expect("the real signed receipt passes");
+        }
+
+        #[test]
+        fn a_proof_condition_check_is_satisfied_only_by_the_real_witness() {
+            // The check is a ProofCondition (HashPreimage): satisfied only by
+            // revealing the actual preimage, verified through the REAL
+            // dregg_turn::resolve_condition path.
+            let preimage: [u8; 32] = [0x42; 32];
+            let hash: [u8; 32] = *blake3::hash(&preimage).as_bytes();
+            let mut pr = clean_pr().with_required_check(RequiredCheck::condition(
+                "release-key",
+                ProofCondition::HashPreimage { hash },
+            ));
+
+            let mut doc = ExecutorDrivenDoc::new_at(&pr.base().replay(), 1, 2, true);
+            let pre = doc.state_commitment();
+
+            // No witness → refused, untouched.
+            match pr.land(&mut doc) {
+                Err(PullRequestError::CheckNotSatisfied { check, reason }) => {
+                    assert_eq!(check.as_str(), "release-key");
+                    assert!(matches!(reason, CheckRefusal::NoWitness));
+                }
+                other => panic!("expected CheckNotSatisfied, got {other:?}"),
+            }
+            assert_eq!(doc.state_commitment(), pre);
+
+            // A WRONG preimage → still refused (verification, not presence).
+            pr.present_witness(
+                "release-key",
+                CheckWitness::Condition(ConditionProof::Preimage([0x13; 32])),
+            );
+            match pr.land(&mut doc) {
+                Err(PullRequestError::CheckNotSatisfied { reason, .. }) => {
+                    assert!(
+                        matches!(reason, CheckRefusal::ConditionUnsatisfied(_)),
+                        "{reason:?}"
+                    );
+                }
+                other => panic!("expected CheckNotSatisfied, got {other:?}"),
+            }
+            assert_eq!(doc.state_commitment(), pre, "still no turn ran");
+
+            // The REAL preimage → the condition verifies and the PR lands.
+            pr.present_witness(
+                "release-key",
+                CheckWitness::Condition(ConditionProof::Preimage(preimage)),
+            );
+            let receipts = pr.land(&mut doc).expect("the witnessed PR lands");
+            assert!(!receipts.is_empty());
+            assert_eq!(*doc.graph(), pr.merge().unwrap().graph);
+            assert!(doc.commitment_matches_projection());
+        }
+
+        #[test]
+        fn checks_and_caps_are_independent_gates() {
+            // A fully satisfied check set does NOT confer the region cap: a
+            // capless merger is still refused in-band by the executor.
+            let (mut ci_doc, check_patch, planned) = ci_job();
+            let receipt = ci_doc.edit(check_patch).expect("the check turn commits");
+
+            let mut pr = clean_pr().with_required_check(RequiredCheck::committed_receipt(
+                "build",
+                planned,
+                vec![CI_VERIFYING_KEY],
+            ));
+            pr.present_witness("build", CheckWitness::Receipt(receipt));
+            pr.checks_satisfied().expect("the check IS satisfied");
+
+            // The merger LACKS the base region's edit cap.
+            let mut capless = ExecutorDrivenDoc::new_at(&pr.base().replay(), 1, 2, false);
+            let pre = capless.state_commitment();
+            match pr.land(&mut capless) {
+                Err(PullRequestError::Refused(TurnError::CapabilityNotHeld { .. })) => {}
+                other => panic!("expected the cap refusal, got {other:?}"),
+            }
+            assert_eq!(capless.state_commitment(), pre, "nothing landed");
+
+            // And the cap alone is not enough without the check: strip the
+            // witness, hold the cap → the CHECK gate refuses first.
+            let mut unchecked = pr.clone();
+            unchecked.witnesses.clear();
+            let mut held = ExecutorDrivenDoc::new_at(&pr.base().replay(), 1, 2, true);
+            match unchecked.land(&mut held) {
+                Err(PullRequestError::CheckNotSatisfied { .. }) => {}
+                other => panic!("expected CheckNotSatisfied, got {other:?}"),
+            }
+
+            // Both gates open → lands.
+            let receipts = pr.land(&mut held).expect("check + cap → lands");
+            assert!(!receipts.is_empty());
         }
     }
 }
