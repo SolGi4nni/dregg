@@ -178,3 +178,10 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
 
 ## Done-log
 *(append one line per landing: commit · pillar · the two-pole proof · a-bar or b-bar)*
+- Pillar 0 (a-bar) — `NodeWorldSink` (dregg-sdk-net, `world-sink` feat): remote WorldSink commits via
+  `/turns/submit` + reads via `/api/cell/{id}`. Both poles vs a real-executor test node (commit+read;
+  overreach refused); 70 lib green; no-feature build mozjs-free. Unblocks 1/2/4.
+- Pillar 3 (a-bar) — `card_carry` + `card_carry_bridge`: a `CardForkEnvelope` crosses two cockpit
+  sessions over a live Conduit; byte-only in deos-matrix, tooth re-fired in starbridge-v2. 42+5
+  deos-matrix / 5 starbridge green; forged carry refused, garbage fail-closed; live full-loop keeps
+  both edits both sides. native-full gate green. b-bar (two machines) = same wire, deferred to iron.
