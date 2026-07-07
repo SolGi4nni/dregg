@@ -243,3 +243,17 @@ Two sequential gates on one pipeline:
   is DEPLOYABLE to the live mesh NOW. Fully-verified live deploy waits on Alif's Lean.
 - EMBER DECISION PENDING: deploy gate-off milestone to live now / hold for Alif's fully-verified /
   ember-only fail-open (gate-ON timeout→Rust tau, weakens the guarantee).
+
+## CORRECTION + the real fix (we OWN the Lean; not a stopping point)
+- ember: we fully own everything incl. the Lean — there is NO handoff to Alif. The verified-gate
+  perf fix is OURS.
+- ROOT CAUSE (grounded in BlocklaceFinality.lean): the finality caches are LIST-backed — mkPastCache
+  (:310) builds causalPastIncl (:143, O(n²) via acc.dedup/contains) per block = O(n³) to BUILD every
+  FFI call; cachedPast (:318) + roundLookup (:82) do O(n) List.find? per lookup ×O(n²) calls. That's
+  the measured super-linear blow-up (35 blocks→9.2s), recomputed every poll.
+- FIX (lane ae93e407): @[implemented_by] HashMap/HashSet-backed fast runtimes for causalPastIncl +
+  cachedPast + roundLookup — PURE List defs kept for ALL theorems/#guards (cachedPast_eq, tauOrderFast_eq,
+  TauPrefixMonotone, tauGolden), MANDATORY differential #guard proving fast≡pure on a round-2-shaped n=4
+  DAG (implemented_by is TRUSTED → the guard is the soundness net; flag the small TCB add to ember).
+  Then rebuild the Lean seed + node + PROVE gate-ON round-2 finalizes = the FULLY-VERIFIED payoff.
+- Then deploy fully-verified to the live mesh = THE FULL GOAL.
