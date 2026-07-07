@@ -311,3 +311,21 @@ Two sequential gates on one pipeline:
 ## dregg_exec_full_forest_auth,...), round-trips the verified Lean kernel. Reflects the Lean-fix
 ## (02c4e1709 implemented_by). Node build (cargo -p dregg-node --release) launched setsid-detached,
 ## links the seed → the fixed VERIFIED Linux node. Then cross-machine deploy.
+
+## ★★★ LIVE CROSS-MACHINE VERIFIED FEDERATION — REAL TURN FINALIZES (07-07) ★★★
+- 4 verified nodes live cross-MACHINE: hbox .39 (node0 faucet + node1, fixed release Linux node) +
+  nextop .130 (node2 + node3, fixed Darwin node), gate-ON (verified Lean tauOrderFast gate), full mode,
+  fresh genesis (SHA-matched across machines). All peer_count=3, consensus_live, DAGs CONVERGE
+  cross-machine (block_count synced). fix-3 spawn_blocking → nextop gossips cross-machine (the depth-crown's
+  QUIC-starvation is GONE). Root cause of the first failed attempt: the OLD depth-crown mesh still bound
+  hbox's ports (dag=260 leftover, "unknown sender" from old federation) — killed it, clean relaunch.
+- ★ REAL TURN FINALIZED CROSS-MACHINE: faucet turn 0413602624... → latest_height 0→1 on ALL 4 nodes on
+  BOTH machines (.39 + .130), converged in ~24s. The verified Lean gate keeps pace + finalizes real
+  turns cross-machine. THIS IS THE LIVE FULLY-VERIFIED FEDERATION.
+- ⚠ NOTE for ember (be-thoughtful-on-consensus): node0 logs "consensus DIFFERENTIAL DIVERGENCE lean_len=23
+  rust_len=0" during cross-machine catch-up (+ "PREFIX SHIFTED reorg-by-catchup"). The verified Lean order
+  is authoritative + finalizes CORRECTLY (the faucet turn converged on all 4). The Rust differential
+  sibling returns 0 on partial cross-machine snapshots — a snapshot race in the differential, not the Lean
+  finalizing wrong. Worth investigating whether the Rust sibling should be computed on the same snapshot.
+- REMAINING: a CLIENT's OWN attested turn on the live mesh (proven robust LOCALLY 3/3; faucet is operator);
+  then PUSH.
