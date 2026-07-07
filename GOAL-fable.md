@@ -66,6 +66,12 @@ verified-resident demo, then **(3) N3 on the unified/fixed foundation**. Rung-5 
   construction sites (measured, not guessed). VERIFYING: gauntlet on af1002570 (default whole-tree) + iron worktree
   b4dffqbzb building tlsn-live + running the FUSED zk_live_carrier (verify_zkoracle_live ACCEPTS + live-leg canary bites).
   Move-2's largest seam CLOSED once iron-green; remainder = only the live api.anthropic.com session (ember-gated).
+- 2026-07-07 · CENTERPIECE unified with the fusion (`caf93260a`): verified_resident now attests via the TRUSTLESS
+  MPC-TLS leg under `--features zk-live` (step ④ cfg-branches: default = modeled ed25519 [verified locally, exit 0,
+  labels the leg]; zk-live = attest_turn_live + verify_zkoracle_live, real presentation.verify()). Default path
+  UNCHANGED + green. The whole resident loop (cap·attest·refuse·ledger·persist) now rides real crypto — VERIFIED on
+  iron by my eyes: ④ "authentic leg = REAL MPC-TLS 2PC presentation (trustless)", full 6-step loop + mountain banner,
+  exit 0. Gauntlet PASS on a fusion tip (default unaffected — deos-hermes example). Worktree cleaned. DONE ✅.
 - 2026-07-07 · FUSION CLOSED ✅ (verified by me, both paths): default whole-tree GAUNTLET-RESULT: PASS @af1002570;
   zk-live iron run (worktree, `a2dfc8674`) green — `verify_zkoracle_live` ACCEPTS (authentic leg = REAL
   presentation.verify(), trustless 2PC, NOT modeled ed25519) ∧ well-formed ∧ injection-free; LIVE-LEG CANARY bites
