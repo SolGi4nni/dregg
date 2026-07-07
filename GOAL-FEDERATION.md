@@ -349,3 +349,16 @@ Two sequential gates on one pipeline:
   over or fixed unsupervised — be-thoughtful-on-consensus → EMBER.
 - STATUS vs goal: fully-verified payoff PROVEN ROBUST single-machine (the core); real turn finalized
   cross-machine ONCE; SUSTAINED cross-machine finality hit this real wall. Mesh left running for inspection.
+
+## PUSHED (07-07) + diagnosis running (ember: both)
+- PUSHED: HEAD → origin github.com:emberian/dregg branch `fed-verified-deploy` (reviewable branch,
+  non-clobbering, gitleaks-clean). The proven work: finality-gate @[implemented_by] fix (02c4e1709),
+  submit-path + spawn_blocking, the payoff harness (db9b02d6b), live_client_turn capstone (7cb0cf49b),
+  the full trail. PR link: github.com/emberian/dregg/pull/new/fed-verified-deploy.
+- DIAGNOSIS running (lane a745a84e, read-only): docs/CROSS-MACHINE-FINALITY-FINDING.md — root-cause the
+  reorg-induced stall + the Rust-executor authority inversion + whether the two Lean seeds (Linux vs
+  Darwin) are deterministic across platforms. Design-only, ember's call to fix.
+- GOAL STATUS: core ACHIEVED + PUSHED. n=3 mechanism KNOWN. Fully-verified payoff PROVEN ROBUST
+  single-machine (3/3). Real turn finalized cross-machine once. Sustained cross-machine finality = a
+  REAL finding, characterized + surfaced (not papered). The live deploy DISCOVERED a real Rust-executor
+  consensus bug — the differential doing its job.
