@@ -127,3 +127,20 @@ ORDER (each step a complete-consistent commit; green-gate the whole tree after e
    remains before each module deletion.
 RISK: step 2 changes a LIVE auth contract — needs focused care + two-pole tests, NOT a hasty tail-of-
 session cut. Best as a dedicated focused push with the plan above as the anti-strand insurance.
+
+### THE EXTRACTION (the real "Lean is the runtime" for storage) — ember's @[extern]-to-fast-Rust architecture
+Insight (ember): don't reimplement Poseidon2 in Lean (the proofs are over an ABSTRACT CR hash — the
+stronger form). Instead the Lean hash is `@[extern "dregg_poseidon2_hash"] opaque` (Lean-opaque,
+proofs assume Poseidon2SpongeCR — the §8 floor), realized at runtime by the FAST Rust Poseidon2
+(circuit::binding::from_poseidon2). Verified LOGIC = Lean (leanc-compiled); hot PRIMITIVE = fast Rust;
+FFI binds both ways. Working precedent: `@[extern "dregg_ed25519_verify"]` (PortalFloor.lean).
+- STEP 1 (DONE, `5b5fc8099`): `Dregg2/Storage/Deployed.lean` — contentRootDeployed over the FFI hash +
+  contentRootDeployed_injective (binding via the CR carrier). Lean side, lake-green, axiom-clean.
+- STEP 2 (next, fiddly + heavy — do fresh): (a) `@[export dregg_storage_content_root] def (String) :
+  String` marshaling wrapper (parse objects → contentRootDeployed → encode felt; mirror FFI.lean's
+  parseFullTurn/encode). (b) Rust `#[no_mangle] extern "C" fn dregg_poseidon2_hash(...)` wrapping
+  from_poseidon2 (match the Lean lean_object calling convention — the fiddly part), in the
+  dregg-lean-ffi shim. (c) the extern-"C" decl of the @[export] wrapper + a Rust caller. (d) add
+  Deployed + the wrapper module to build.rs's compile list; heavy build (delta leanc + 171MB link).
+  (e) DIFFERENTIAL test: Lean-extracted content_root vs Rust content_root — if they AGREE (same
+  Poseidon2 + encoding), the Rust content_root LOGIC can be retired (the real purge). Verify green.
