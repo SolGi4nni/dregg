@@ -4169,7 +4169,16 @@ async fn execute_finalized_turn(
     drop(s);
 
     let turn_for_exec = signed_turn.turn.clone();
+    let signer_for_exec = signed_turn.signer.0;
     let exec_join = tokio::task::spawn_blocking(move || {
+        // Provision the ACTOR cell (the signer's own default cell) on the CLONE the
+        // FFI executes against, if absent — byte-deterministic from the in-block,
+        // sig-verified signer, so every node materializes the IDENTICAL canonical
+        // account. This lets a fresh external client's FIRST `/turns/submit` turn
+        // finalize uniformly cross-node instead of `cell not found`. The pre→post
+        // diff below classifies the provisioned cell as created, so the overlay
+        // installs it on the authoritative ledger on every node.
+        provision_signer_actor_cell(&mut exec_ledger, &signer_for_exec);
         // Provision Transfer destinations on the CLONE the FFI executes against
         // (byte-deterministic — the identical zero-stub every node inserts). The
         // pre→post diff below classifies each provisioned+credited destination as
@@ -7734,6 +7743,41 @@ fn ledger_touched_diff(
 ///
 /// Idempotent: a destination already present (genesis cell, a prior turn, or a
 /// peer that legitimately holds the canonical cell) is left untouched.
+///
+/// Provision the finalized turn's ACTOR cell as the deterministic signer-bound
+/// default cell BEFORE the turn executes, so a fresh external client's FIRST turn
+/// finalizes uniformly cross-node instead of being rejected `cell not found`.
+///
+/// SOUNDNESS / UNIFORMITY. The actor cell id is `derive_raw(signer, "default")`.
+/// Unlike a Transfer *destination* (whose pre-image is NOT carried over consensus,
+/// forcing a zero-pk `remote_stub` above), the actor's pre-image IS in the block:
+/// `SignedTurn.signer`, whose signature over the turn hash is verified at
+/// `execute_finalized_turn` (`blocklace_sync.rs` sig-check, above this call) AND
+/// independently at ingress (`api.rs` `post_submit_signed_turn`). Because `signer`
+/// is in-block and sig-verified, every node provisions the IDENTICAL canonical cell
+/// `Cell::with_balance(signer, "default", 0)` — a real pk-bound account, byte-
+/// deterministic from the in-block signer. This is the same cross-node uniformity
+/// argument `provision_transfer_destinations` relies on, but STRONGER: the actor's
+/// key is known, so the provisioned cell is the canonical account, not a stub.
+///
+/// This provisions ONLY the signer's own default cell — never authority over any
+/// other cell. A turn whose `agent` is some *other* absent cell still rejects
+/// (correctly; we fabricate no foreign authority). At ingress the signed-turn path
+/// requires `turn.agent == derive_raw(signer, "default")`, so for the external
+/// client path this materializes exactly the acting cell.
+///
+/// Idempotent: an actor cell already present (a genesis/operator cell, a prior
+/// turn, or a legitimately peer-held cell) is left untouched — only a
+/// never-before-seen fresh client's default cell is materialized.
+pub(crate) fn provision_signer_actor_cell(ledger: &mut dregg_cell::Ledger, signer: &[u8; 32]) {
+    let default_token_id = *blake3::hash(b"default").as_bytes();
+    let actor_id = dregg_cell::CellId::derive_raw(signer, &default_token_id);
+    if ledger.get(&actor_id).is_none() {
+        let cell = dregg_cell::Cell::with_balance(*signer, default_token_id, 0);
+        let _ = ledger.insert_cell(cell);
+    }
+}
+
 pub(crate) fn provision_transfer_destinations(
     ledger: &mut dregg_cell::Ledger,
     call_forest: &dregg_turn::CallForest,
