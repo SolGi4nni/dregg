@@ -196,3 +196,13 @@ Two sequential gates on one pipeline:
   same n=3-class perf, KNOWN fix direction. Then gate-ON also finalizes → fully-verified payoff.
 - EMBER-GATED next: (a) complete the verified-gate perf (fully-verified payoff), (b) deploy the
   payoff (gate-off) to the LIVE mesh, (c) both.
+
+## Payoff REPRODUCIBLE + plan (ember chose BOTH: complete verified-gate → deploy fully-verified)
+- Confirming gate-off re-run PASSED again (turn 997dab21, dest 1000 on all 4, [2,2,2,2], 21.8s).
+  Payoff reliably reproducible under gate-off / Rust-tau. ✓
+- PLAN (ember-approved): (1) complete the verified-gate perf so gate-ON (Lean tauOrderFast) also
+  finalizes round-2's client turn → fully-verified payoff, proven locally; (2) deploy the
+  fully-verified payoff to the LIVE mesh (192.168.50.39). Tree is RED (concurrent garbled.rs WIP) →
+  builds wait for green; diagnosis/design proceeds now.
+- fix-1 wired VerifiedFinality::compute_order (finality_gate.rs:148) → dregg_tau_order FFI = memoized
+  tauOrderFast; covers round-1 but round-2's deeper DAG still stalls gate-ON. Completing the perf.
