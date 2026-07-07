@@ -38,8 +38,6 @@
 //! powerbox's own `mint_needs_held_factory` gate (you cannot grant what the
 //! source does not hold) — *duping is structurally inexpressible, not policed.*
 
-use std::collections::BTreeMap;
-
 use dregg_captp::data_plane::{Bus, ChannelName, DataPlaneError, Delivery, SendCap, TopicName};
 use dregg_captp::FederationId;
 use dregg_cell::{AuthRequired, CapabilitySet, CellId};
@@ -374,23 +372,37 @@ pub fn move_through(
 //   * **say = a cap-gated enqueue on the Bus** — a room's chat rides the REAL
 //     [`dregg_captp::data_plane::Bus`]: the speaker presents a [`SendCap`] into
 //     the room's channel and [`Bus::enqueue`] admits or refuses at
-//     [`SendCap::admits`] — a speaker who is not present presents a revoked (or
-//     never-granted floor) cap and is refused BY THE CAP GATE
+//     [`SendCap::admits`] — a speaker who is not present presents a cap that
+//     DERIVES revoked and is refused BY THE CAP GATE
 //     ([`DataPlaneError::Unauthorized`]), never by an if-statement here. Hearers
 //     are the present inhabitants' inboxes (topic fan-out), drained in FIFO
 //     order, each delivery a signed, verifying custody receipt.
+//   * **the speak cap is DERIVED from the on-ledger presence token** — issuance
+//     is NOT a host table: [`RoomVoice::speak_cap_for`] projects the room's
+//     channel authority through the presence fact ([`Room::hosts`], a pure c-list
+//     read), minting a LIVE cap iff the room currently holds the inhabitant's
+//     token cap and a REVOKED one otherwise. Holding presence ⟹ the speak cap is
+//     derivable; losing it (the token cap moves out on [`leave`]) ⟹ the SAME
+//     derivation yields a dead cap — silence from the ledger, not from a table.
 //
 // The room's own inbox doubles as its chat log — the same "room = a cell whose
 // history is its messages" shape as `deos_matrix::cell::RoomCell`, without any
 // deos-matrix dependency (the Bus inbox IS the history here).
 //
-// NAMED SEAM (cap-lifecycle weld): the speak-cap mint/revoke ([`RoomVoice::admit`]
-// / [`RoomVoice::expel`]) is host-side issuance KEYED to the receipted,
-// executor-gated enter/leave — the refusal itself is the Bus's cap gate, but the
-// issuance is not yet itself a turn. The fuller weld (derive the speak cap as an
-// attenuation of the on-ledger presence token, so issuance is also a receipted
-// grant) is the next rung, and is what a 3-box net needs anyway (see the module
-// report / HORIZONLOG).
+// WELD CLOSED (issuance is now a property of the ledger): the speak cap is no
+// longer minted/revoked by a host table on enter/leave. [`RoomVoice::speak_cap_for`]
+// DERIVES it fresh from the on-ledger presence token every `say` — the room
+// hosting your token cap (a receipted [`move_cap`] put it there) is the SOLE
+// source of speak authority, and its ABSENCE (the token cap moved back out) is
+// the SOLE source of silence. [`RoomVoice::admit`]/[`expel`] now weld only the
+// HEARING side (topic subscribe/unsubscribe); speaking rides the derivation.
+// Because the verdict is a function of the ledger, ANY box holding a copy of the
+// ledger derives the identical cap — which is exactly what a 3-box net needs.
+//
+// REMAINING SEAM (multi-node): `speak_cap_for` reads the EMBEDDED [`World`]
+// ledger; the NodeWorldSink integration will point that read at the node-backed
+// ledger view (`with_ledger`), and the hearing subscription (still Bus-side, per
+// process) must likewise be derived from ledger presence on each box.
 
 /// **A presence token — presence as a conserved object.** One per inhabitant; a
 /// cell whose cap MOVES with them. The room holding the cap IS "they are here".
@@ -479,13 +491,13 @@ impl SayOutcome {
 /// **A room's voice — its channel on the data-plane [`Bus`].**
 ///
 /// One per room. The room has an inbox identity (its chat log), a channel name +
-/// topic (both derived from the room cell id), a relay cap (the room fanning an
-/// admitted utterance out to its occupants), and per-inhabitant SPEAK caps whose
-/// lifecycle is welded to presence: minted fresh on a committed [`enter`],
-/// revoked on a committed [`leave`]/[`move_rooms`]. An absent speaker therefore
-/// presents a revoked cap (or the pre-revoked floor cap, if they never entered)
-/// and [`Bus::enqueue`] refuses at [`SendCap::admits`] — presence gates speech
-/// through the cap algebra, not through a presence check in this file.
+/// topic (both derived from the room cell id), and a relay cap (the room fanning
+/// an admitted utterance out to its occupants). It holds NO per-inhabitant speak
+/// table: each speaker's SPEAK cap is DERIVED fresh from the on-ledger presence
+/// token by [`RoomVoice::speak_cap_for`]. An absent speaker's derived cap is
+/// revoked (their token is not in the room) and [`Bus::enqueue`] refuses at
+/// [`SendCap::admits`] — presence gates speech through the cap algebra over the
+/// ledger, not through a host table or a presence check in this file.
 pub struct RoomVoice {
     room: Room,
     /// The room's own inbox identity on the Bus — its chat log.
@@ -496,16 +508,12 @@ pub struct RoomVoice {
     topic: TopicName,
     /// The room's own broadcast cap: fans an ADMITTED utterance to its occupants.
     relay: SendCap,
-    /// The floor cap a never-admitted speaker presents: minted REVOKED, so the
-    /// gate (not this module) refuses them uniformly with a departed speaker.
-    floor: SendCap,
-    /// Per-inhabitant speak caps — minted on enter, revoked (in place) on leave.
-    speak: BTreeMap<CellId, SendCap>,
 }
 
 impl RoomVoice {
-    /// Open a room's voice on the Bus: register its topic, mint its relay cap and
-    /// the pre-revoked floor cap.
+    /// Open a room's voice on the Bus: register its topic and mint its relay cap.
+    /// No speak table is created — speak authority is derived per-say from the
+    /// ledger presence token ([`RoomVoice::speak_cap_for`]).
     pub fn new(room: Room, bus: &mut Bus) -> Self {
         let fed = FederationId(room.cell.0);
         let mut bytes = b"mud/say/".to_vec();
@@ -514,16 +522,12 @@ impl RoomVoice {
         let topic = TopicName::new(bytes);
         bus.register_topic(topic.clone());
         let relay = SendCap::grant(fed, name.clone(), AuthRequired::Signature);
-        let mut floor = SendCap::grant(fed, name.clone(), AuthRequired::Signature);
-        floor.revoke();
         RoomVoice {
             room,
             fed,
             name,
             topic,
             relay,
-            floor,
-            speak: BTreeMap::new(),
         }
     }
 
@@ -542,35 +546,61 @@ impl RoomVoice {
         &self.name
     }
 
-    /// Weld a committed ENTER to the channel: mint a fresh speak cap for `who`
-    /// and subscribe their inbox to the room topic. Private on purpose — only
-    /// the receipted, executor-gated [`enter`]/[`move_rooms`] reach it.
+    /// **DERIVE THE SPEAK CAP FROM THE LEDGER.** Issuance is a property of the
+    /// on-ledger presence token, not a host table: the speak cap is the room's
+    /// channel authority projected through the presence fact.
+    ///
+    /// The derived cap is scoped to this room's channel and is LIVE iff the room
+    /// currently HOSTS `token` — i.e. the room cell's c-list holds the cap to
+    /// the inhabitant's presence token ([`Room::hosts`], a pure ledger read). A
+    /// committed [`enter`] moved that token cap into the room, so the derivation
+    /// lights up; a committed [`leave`]/[`move_rooms`] moved it back out, so the
+    /// SAME derivation yields a REVOKED cap. There is no stored bit to drift from
+    /// the ledger — hold presence ⟹ the cap admits; lose it ⟹ it does not. Any
+    /// box with a copy of the ledger derives the identical verdict.
+    ///
+    /// The type systems differ (a presence token is a [`dregg_cell`] c-list cap,
+    /// a speak cap is a [`SendCap`]), so the "attenuation of the presence token"
+    /// is realized as this ledger-gated projection rather than one cap-algebra
+    /// call — see the module's REMAINING SEAM note.
+    pub fn speak_cap_for(&self, world: &World, token: PresenceToken) -> SendCap {
+        let mut cap = SendCap::grant(self.fed, self.name.clone(), AuthRequired::Signature);
+        // The projection is GATED by the ledger presence fact: no token cap in
+        // the room's c-list ⇒ the derived cap carries no live authority.
+        if !self.room.hosts(world, token) {
+            cap.revoke();
+        }
+        cap
+    }
+
+    /// Weld a committed ENTER to the channel's HEARING: subscribe `who`'s inbox
+    /// to the room topic (they now hear). Speak authority is NOT minted here —
+    /// it is derived fresh from the ledger by [`RoomVoice::speak_cap_for`], and
+    /// entering is exactly what put the presence token in the room, so the
+    /// derivation lights up on its own. Private on purpose — only the receipted,
+    /// executor-gated [`enter`]/[`move_rooms`] reach it.
     fn admit(&mut self, bus: &mut Bus, who: Inhabitant) {
-        self.speak.insert(
-            who.cell,
-            SendCap::grant(self.fed, self.name.clone(), AuthRequired::Signature),
-        );
         bus.subscribe(self.topic.clone(), hearer_id(who));
         bus.wait(&self.name, hearer_id(who));
     }
 
-    /// Weld a committed LEAVE to the channel: REVOKE `who`'s speak cap in place
-    /// (the channel-level revocation switch — their next say is refused by
-    /// [`SendCap::admits`]) and unsubscribe their inbox (they no longer hear).
+    /// Weld a committed LEAVE to the channel's HEARING: unsubscribe `who`'s inbox
+    /// (they no longer hear). Their SPEAK authority needs no revoke here — the
+    /// leave already moved the presence token off the ledger, so
+    /// [`RoomVoice::speak_cap_for`] now derives a revoked cap for them (silence
+    /// from the ledger, not from a table).
     fn expel(&mut self, bus: &mut Bus, who: Inhabitant) {
-        if let Some(cap) = self.speak.get_mut(&who.cell) {
-            cap.revoke();
-        }
         bus.unsubscribe(&self.topic, &hearer_id(who));
     }
 
     /// **SAY — a cap-gated enqueue over the data plane.**
     ///
-    /// The speaker presents their speak cap (or, having never been admitted, the
-    /// pre-revoked floor cap) and the utterance is:
+    /// The speaker's speak cap is DERIVED from the ledger presence `token`
+    /// ([`RoomVoice::speak_cap_for`]) — no host table — and the utterance is:
     ///
     ///   1. **gated**: [`Bus::enqueue`] into the room's own inbox admits or
-    ///      refuses at [`SendCap::admits`]. An absent speaker's cap is revoked ⇒
+    ///      refuses at [`SendCap::admits`]. An absent speaker's DERIVED cap is
+    ///      revoked (their token is not in the room) ⇒
     ///      [`DataPlaneError::Unauthorized`] — the refusal is the data plane's,
     ///      and it leaves NO phantom work (nothing queued, no cursor tick, no
     ///      receipt).
@@ -579,14 +609,23 @@ impl RoomVoice {
     ///   3. **heard**: the room relays the admitted utterance to its topic —
     ///      one real enqueue + signed receipt per PRESENT hearer, delivered in
     ///      FIFO order (drain to hear).
-    pub fn say(&self, bus: &mut Bus, speaker: Inhabitant, text: &[u8], now: u64) -> SayOutcome {
-        let cap = self.speak.get(&speaker.cell).unwrap_or(&self.floor);
+    pub fn say(
+        &self,
+        world: &World,
+        bus: &mut Bus,
+        token: PresenceToken,
+        text: &[u8],
+        now: u64,
+    ) -> SayOutcome {
+        // DERIVE the speak cap from the on-ledger presence token — present ⇒ live,
+        // absent ⇒ revoked, entirely a function of the ledger.
+        let cap = self.speak_cap_for(world, token);
 
         // THE GATE — the Bus's own `SendCap::admits` seam decides. Present ⇒ the
-        // fresh cap admits; departed ⇒ revoked cap refuses; never-entered ⇒ the
-        // pre-revoked floor refuses. Same gate, all three polarities.
+        // derived cap admits; absent/departed ⇒ the derived cap is revoked and is
+        // refused. Same gate, both polarities; the polarity comes from the ledger.
         let archived = match bus.enqueue(
-            cap,
+            &cap,
             self.fed,
             &self.name,
             AuthRequired::Signature,
@@ -1353,15 +1392,16 @@ mod tests {
             33,
         );
 
-        // Three utterances, interleaved speakers.
-        let script: [(&Inhabitant, &[u8]); 3] = [
-            (&s.alice, b"hello"),
-            (&s.bob, b"well met"),
-            (&s.alice, b"onward"),
+        // Three utterances, interleaved speakers — each speaks with their own
+        // presence token, which the say derives its speak cap from.
+        let script: [(PresenceToken, &[u8]); 3] = [
+            (s.tok_a, b"hello"),
+            (s.tok_b, b"well met"),
+            (s.tok_a, b"onward"),
         ];
         let mut archives = Vec::new();
-        for (i, (speaker, text)) in script.iter().enumerate() {
-            let out = s.tavern.say(&mut s.bus, **speaker, text, i as u64);
+        for (i, (token, text)) in script.iter().enumerate() {
+            let out = s.tavern.say(&s.world, &mut s.bus, *token, text, i as u64);
             match out {
                 SayOutcome::Heard { archived, heard } => {
                     assert!(
@@ -1420,9 +1460,10 @@ mod tests {
     fn an_absent_speaker_is_refused_by_the_cap_gate_and_leave_silences() {
         let mut s = speech_world();
 
-        // MALLORY (never entered — she can't: no door cap) tries to speak. The
-        // refusal is the Bus's own cap gate on the pre-revoked floor cap.
-        let ghost = s.tavern.say(&mut s.bus, s.mallory, b"boo", 0);
+        // MALLORY (never entered — she can't: no door cap) tries to speak. Her
+        // token is not in the room, so the DERIVED cap is revoked and the Bus's
+        // own cap gate refuses.
+        let ghost = s.tavern.say(&s.world, &mut s.bus, s.tok_m, b"boo", 0);
         match ghost {
             SayOutcome::Refused { error } => assert!(
                 matches!(error, DataPlaneError::Unauthorized { .. }),
@@ -1461,9 +1502,12 @@ mod tests {
             "…carrying his token"
         );
 
-        // THE DEPARTED SPEAKER: bob's speak cap is REVOKED — his say is refused
-        // by the SAME cap gate (revocation, not an if-statement).
-        let after = s.tavern.say(&mut s.bus, s.bob, b"one more thing", 1);
+        // THE DEPARTED SPEAKER: bob's token left the room on leave, so the SAME
+        // derivation now yields a REVOKED cap — his say is refused by the SAME
+        // cap gate (the ledger changed, not an if-statement, not a table).
+        let after = s
+            .tavern
+            .say(&s.world, &mut s.bus, s.tok_b, b"one more thing", 1);
         match after {
             SayOutcome::Refused { error } => assert!(
                 matches!(error, DataPlaneError::Unauthorized { .. }),
@@ -1473,7 +1517,7 @@ mod tests {
         }
 
         // LEAVE SILENCES the other direction too: alice speaks; only SHE hears.
-        let solo = s.tavern.say(&mut s.bus, s.alice, b"anyone?", 2);
+        let solo = s.tavern.say(&s.world, &mut s.bus, s.tok_a, b"anyone?", 2);
         match solo {
             SayOutcome::Heard { heard, .. } => {
                 assert_eq!(heard.len(), 1, "only the one present hearer");
@@ -1499,10 +1543,149 @@ mod tests {
             34,
         );
         assert!(back.is_done(), "bob re-enters: {back:?}");
-        let again = s.tavern.say(&mut s.bus, s.bob, b"i return", 3);
+        let again = s.tavern.say(&s.world, &mut s.bus, s.tok_b, b"i return", 3);
         assert!(
             again.is_heard(),
             "a re-admitted speaker is heard: {again:?}"
+        );
+    }
+
+    /// THE SPEAK CAP IS DERIVED FROM THE LEDGER, both poles — and the derivation,
+    /// not a table, is what flips. We assert directly on
+    /// [`RoomVoice::speak_cap_for`]'s `admits` verdict as the ledger changes under
+    /// it: absent → does not admit; enter → the SAME derivation now admits; leave
+    /// → the SAME derivation no longer admits (because the token cap moved OFF the
+    /// ledger, not because any table was updated); a never-present inhabitant can
+    /// never derive an admitting cap.
+    #[test]
+    fn the_speak_cap_is_derived_from_the_ledger_presence_token() {
+        let mut s = speech_world();
+        let recipient = s.tavern.inbox();
+        let channel = s.tavern.channel().clone();
+        let admits = |cap: &SendCap| cap.admits(&recipient, &channel, &AuthRequired::Signature);
+
+        // BEFORE ENTERING: alice's token is in her own hands, not the room. The
+        // derived cap does NOT admit — no presence on the ledger, no voice.
+        assert!(
+            !admits(&s.tavern.speak_cap_for(&s.world, s.tok_a)),
+            "no presence token in the room ⇒ the derived cap does not admit"
+        );
+        // A NEVER-PRESENT inhabitant (mallory, no door) cannot derive an admitting
+        // cap either — same derivation, same absent-from-ledger verdict.
+        assert!(
+            !admits(&s.tavern.speak_cap_for(&s.world, s.tok_m)),
+            "a never-present inhabitant cannot derive an admitting cap"
+        );
+
+        // ENTER: a receipted move_cap puts alice's token cap into the room cell's
+        // c-list. Nothing in RoomVoice was touched — yet the SAME derivation now
+        // admits, because it reads the (now-changed) ledger.
+        let e = enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.alice,
+            s.tok_a,
+            s.alice.cell,
+            32,
+        );
+        assert!(e.is_done(), "alice enters: {e:?}");
+        assert!(
+            admits(&s.tavern.speak_cap_for(&s.world, s.tok_a)),
+            "presence token now on the ledger ⇒ the SAME derivation admits"
+        );
+
+        // LEAVE: the token cap moves back to alice's hands (off the room's c-list).
+        // The SAME derivation now yields a revoked cap — silence from the ledger.
+        let l = leave(&mut s.world, &mut s.bus, &mut s.tavern, s.alice, s.tok_a);
+        assert!(l.is_done(), "alice leaves: {l:?}");
+        assert!(
+            !admits(&s.tavern.speak_cap_for(&s.world, s.tok_a)),
+            "presence gone from the ledger ⇒ the SAME derivation no longer admits"
+        );
+        assert!(
+            s.tok_a.carried_by(&s.world, s.alice.cell),
+            "…and the token is back in alice's own hands (conserved, not destroyed)"
+        );
+    }
+
+    /// THE DERIVATION IS LEDGER-GROUNDED, demonstrably: two present speakers both
+    /// heard; ONE leaves; ONLY that one's speech stops (its token left the room's
+    /// c-list) while the other's continues unchanged (its token never moved). The
+    /// admissibility tracks the on-ledger presence token per speaker, and presence
+    /// stays conserved (never two rooms, no ghost).
+    #[test]
+    fn the_derivation_tracks_the_ledger_only_the_leavers_speech_stops() {
+        let mut s = speech_world();
+        enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.alice,
+            s.tok_a,
+            s.alice.cell,
+            32,
+        );
+        enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.bob,
+            s.tok_b,
+            s.bob.cell,
+            33,
+        );
+
+        // Both present ⇒ both are heard (the derivation admits for each token).
+        assert!(
+            s.tavern
+                .say(&s.world, &mut s.bus, s.tok_a, b"alice one", 0)
+                .is_heard(),
+            "alice present ⇒ heard"
+        );
+        assert!(
+            s.tavern
+                .say(&s.world, &mut s.bus, s.tok_b, b"bob one", 1)
+                .is_heard(),
+            "bob present ⇒ heard"
+        );
+
+        // BOB LEAVES — his token cap moves off the room's c-list (a receipted move).
+        let out = leave(&mut s.world, &mut s.bus, &mut s.tavern, s.bob, s.tok_b);
+        assert!(out.is_done(), "bob leaves: {out:?}");
+
+        // ONLY BOB'S SPEECH STOPS: his derived cap no longer admits (his token is
+        // gone from the ledger). Nothing about the room's voice object changed for
+        // alice — her token is still in the room, so her speech is unaffected.
+        match s.tavern.say(&s.world, &mut s.bus, s.tok_b, b"bob two", 2) {
+            SayOutcome::Refused { error } => assert!(
+                matches!(error, DataPlaneError::Unauthorized { .. }),
+                "the leaver is refused by the derived cap's gate, got: {error}"
+            ),
+            SayOutcome::Heard { .. } => {
+                panic!("the leaver was heard — the derivation did not track the ledger")
+            }
+        }
+        assert!(
+            s.tavern
+                .say(&s.world, &mut s.bus, s.tok_a, b"alice two", 3)
+                .is_heard(),
+            "the one who stayed keeps her voice — only the leaver's speech stopped"
+        );
+
+        // PRESENCE STILL CONSERVED: the room hosts alice's token and NOT bob's;
+        // bob carries his token again (never in two rooms, no ghost left behind).
+        assert!(
+            s.tavern.room().hosts(&s.world, s.tok_a),
+            "alice still present"
+        );
+        assert!(
+            !s.tavern.room().hosts(&s.world, s.tok_b),
+            "bob no longer present"
+        );
+        assert!(
+            s.tok_b.carried_by(&s.world, s.bob.cell),
+            "bob carries his token — presence conserved across the leave"
         );
     }
 }
