@@ -281,3 +281,12 @@ Two sequential gates on one pipeline:
 - REMAINING: the LIVE persistent-mesh demonstration + push. Deploy friction to scope: the fixed seed
   is Darwin-arm64 (nextop); the live mesh's hbox is Linux-x86_64 and needs its OWN Linux seed (cold
   Lean build). Checking the live mesh topology/safety before the deploy approach.
+
+## LIVE CROSS-MACHINE DEPLOY — underway (07-07, ember back + pushed on hbox)
+- hbox (fast 24-core Linux, full elan toolchain) BUILDING the fixed verified node + Linux Lean seed:
+  pushed fed-verified-deploy branch (HEAD 04113bb4, Lean-fix present), checked out, cargo build
+  -p dregg-node --release + DREGG_REQUIRE_LEAN=1 running (dregg-lean-ffi build-script = the Linux seed
+  compile). Log: hbox:~/hbox-seed-build.log.
+- Plan: cross-machine verified n=4 (hbox + nextop), gate-ON, submit a real attested client turn →
+  verify cross-node finality on the LIVING verified federation = THE FULL GOAL. nextop has the fixed
+  Darwin seed (payoff-target); build/confirm its fixed node. Reuse the depth-crown's ~/n4fed launch scripts.
