@@ -57,7 +57,7 @@ Every theorem is `#assert_axioms`-clean (only `{propext, Classical.choice, Quot.
 |---|---|---|---|
 | 0 | `calls_made` | `Monotonic` + `FieldLte rate_limit` | the rate counter; advances `c → c+1`, never rolls back, never exceeds N |
 | 1 | `rate_limit` | `Immutable` | the granted ceiling N, fixed at grant |
-| 2 | `deadline`   | `WriteOnce` + `FieldLteHeight` gate | the expiry, set once at grant; invocations past it are refused |
+| 2 | `deadline`   | `WriteOnce` + `FieldGteHeight` gate | the expiry, set once at grant; invocations past it are refused |
 | 3 | `tool_id`    | `Immutable` | the single allowlisted tool / MCP id (the scope) |
 
 `tad_cell_program()` / `tad_factory_descriptor()` install these; `build_grant_action` /

@@ -35,6 +35,11 @@ serde_json = { workspace = true }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
+# The deadline two-pole in `tests/deos_seam.rs` needs an executor running at a real block
+# height (`AgentRuntime::set_block_height` + `EmbeddedExecutor::from_runtime`) so the EXPIRED
+# pole (`block_height > DEADLINE` refused) is exercised for real — same shape as
+# `starbridge-apps/polis/src/deos.rs::embedded_executor_at`.
+dregg-sdk = { path = "../../sdk" }
 
 [lints]
 workspace = true

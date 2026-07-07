@@ -90,6 +90,12 @@ pub const DEADLINE_SLOT: u8 = 2;
 /// Slot 3 — `tool_id`. The single allowlisted tool / MCP id (`Immutable` — the SCOPE).
 pub const TOOL_ID_SLOT: u8 = 3;
 
+/// The open-ended (no-expiry) `DEADLINE` sentinel: `FieldGteHeight(DEADLINE)` enforces
+/// `deadline >= block_height`, so `u64::MAX` clears the deadline tooth at every height —
+/// a mandate seeded with it never expires. (A deadline of `0` means "expires after height
+/// 0" — instantly expired once the chain advances.)
+pub const NO_DEADLINE: u64 = u64::MAX;
+
 // =============================================================================
 // The grant + folded admission predicate (the Lean `Grant` / `delegAdmit` mirror).
 // =============================================================================
@@ -180,8 +186,9 @@ pub fn tool_id_field(tool: &str) -> FieldElement {
 ///     birth-compatible form of "fixed at grant" (`Immutable` would freeze the born-empty slots AT
 ///     ZERO and refuse the grant turn itself — mirror privacy-voting/bounty-board);
 ///   * `deadline` is `WriteOnce` (set once at grant; thereafter frozen);
-///   * `calls_made` mutation is gated by `FieldLteHeight deadline` (the executor refuses an invocation
-///     presented after the granted deadline — the time bound).
+///   * `calls_made` mutation is gated by `FieldGteHeight deadline` (`deadline >= block_height`, i.e.
+///     `now <= deadline` — the executor refuses an invocation presented after the granted deadline,
+///     the time bound, matching the Lean `delegAdmit`'s `now <= g.deadline` conjunct).
 pub fn tad_cell_program() -> CellProgram {
     CellProgram::Cases(vec![
         TransitionCase {
@@ -216,8 +223,11 @@ pub fn tad_cell_program() -> CellProgram {
                 StateConstraint::Monotonic {
                     index: CALLS_MADE_SLOT,
                 },
-                // DEADLINE: the invocation must be presented within the granted window.
-                StateConstraint::FieldLteHeight {
+                // DEADLINE: the invocation must be presented within the granted window —
+                // `FieldGteHeight` enforces `DEADLINE >= block_height` (`now <= deadline`,
+                // the Lean `delegAdmit` conjunct): a live mandate is admitted, an expired
+                // one (height past the deadline) is refused.
+                StateConstraint::FieldGteHeight {
                     index: DEADLINE_SLOT,
                     offset: 0,
                 },
@@ -244,7 +254,7 @@ pub fn tad_child_program_vk() -> [u8; 32] {
 ///
 /// These bite method-agnostically (an `Always` case), so a born mandate re-enforces them on
 /// `grant`, `exercise`, `delegate`, and `revoke` turns alike. (The deos AX2 surface's
-/// [`tad_cell_program`] adds the height-aware `FieldLteHeight(DEADLINE)` deadline tooth on a
+/// [`tad_cell_program`] adds the height-aware `FieldGteHeight(DEADLINE)` deadline tooth on a
 /// dedicated `invoke_tool` dispatch case; the flat program is the method-agnostic floor the
 /// factory + the AX3 service share.)
 pub fn tad_state_constraints() -> Vec<StateConstraint> {
@@ -438,7 +448,7 @@ pub fn build_revoke_action(
 //      `Cases` program on the produced transition — so the RATE bound
 //      `FieldLteField(CALLS_MADE <= RATE_LIMIT)` (an over-budget invocation), the
 //      `Monotonic(CALLS_MADE)` (a counter rewind to forge head-room), and the
-//      `FieldLteHeight(DEADLINE)` (a past-deadline invocation — height-aware, so it
+//      `FieldGteHeight(DEADLINE)` (a past-deadline invocation — height-aware, so it
 //      CANNOT be read by the deos precondition) are all REAL executor refusals in the
 //      SUBMISSION path — the half the floor's `evaluate`-only tests never exercised
 //      through a real signed turn (see `tests/deos_seam.rs`).
@@ -496,7 +506,7 @@ pub fn grant_invoke_effect(mandate: CellId, worker: CellId) -> Effect {
 /// is the installed [`tad_cell_program`] the executor re-enforces on the produced
 /// transition.
 ///
-/// Note: this CANNOT read the DEADLINE — `FieldLteHeight(DEADLINE)` is height-aware (it
+/// Note: this CANNOT read the DEADLINE — `FieldGteHeight(DEADLINE)` is height-aware (it
 /// depends on the block height the turn is presented at, which a `(state, state)`
 /// precondition read does not see). The deadline tooth bites in the EXECUTOR on the
 /// submitted turn (see [`fire_invoke`] / `tests/deos_seam.rs`), not in this precondition.
@@ -523,7 +533,7 @@ pub fn budget_remaining_precondition() -> CellProgram {
 ///     live-state PRECONDITION (budget remains, `calls < rate`); the real fire
 ///     ([`fire_invoke`]) submits the FULL counter-advancing turn (reading the live
 ///     `calls_made`), re-enforced by the executor's installed `Cases` program (the
-///     `FieldLteField` rate ceiling + `Monotonic` counter + `FieldLteHeight` deadline
+///     `FieldLteField` rate ceiling + `Monotonic` counter + `FieldGteHeight` deadline
 ///     caveats BITE on the produced transition).
 ///
 /// The mandate cell is published into the web-of-cells at the worker tier (a delegated
@@ -622,15 +632,16 @@ pub fn invoke_effects(mandate: CellId, new_calls: u64) -> Vec<Effect> {
 /// into the embedded ledger — `RATE_LIMIT` / `TOOL_ID` / `DEADLINE` (`WriteOnce`, frozen
 /// after) and `CALLS_MADE = 0`.
 ///
-/// The `invoke_tool` case carries `FieldLteHeight(DEADLINE, offset: 0)` — the executor admits
-/// an invocation only while `DEADLINE <= block_height`. The embedded executor runs at
-/// `block_height == 0` (it advances only when a host sets it to model block progression), so
-/// an honest invoke clears the deadline tooth iff `DEADLINE == 0`; [`register_deos`] seeds
-/// `DEADLINE = 0` (no-expiry at the embedded height). A mandate seeded with `DEADLINE >
-/// block_height` has its invoke REFUSED by the executor's `FieldLteHeight(DEADLINE)` — the
-/// height-aware tooth the deos precondition cannot read (see [`fire_invoke`] /
-/// `tests/deos_seam.rs`). After seeding, the mandate is granted with the counter at 0 — a real
-/// `(old, new)` baseline against which `invoke` advances the counter (up to `rate_limit`).
+/// The `invoke_tool` case carries `FieldGteHeight(DEADLINE, offset: 0)` — the executor admits
+/// an invocation only while `block_height <= DEADLINE` (the mandate is LIVE). The embedded
+/// executor starts at `block_height == 0` (it advances only when a host sets it to model block
+/// progression), so any `DEADLINE >= 0` is live at the embedded genesis height; [`register_deos`]
+/// seeds [`NO_DEADLINE`] (`u64::MAX` — an open-ended mandate that never expires). A mandate whose
+/// deadline has PASSED (`block_height > DEADLINE`) has its invoke REFUSED by the executor's
+/// `FieldGteHeight(DEADLINE)` — the height-aware tooth the deos precondition cannot read (see
+/// [`fire_invoke`] / `tests/deos_seam.rs`). After seeding, the mandate is granted with the counter
+/// at 0 — a real `(old, new)` baseline against which `invoke` advances the counter (up to
+/// `rate_limit`).
 pub fn seed_mandate(executor: &EmbeddedExecutor, tool: &str, rate_limit: u64, deadline: u64) {
     let mandate = executor.cell_id();
     executor.install_program(mandate, tad_cell_program());
@@ -656,7 +667,7 @@ pub fn seed_mandate(executor: &EmbeddedExecutor, tool: &str, rate_limit: u64, de
 /// the executor, and the executor's re-enforcement of
 /// the installed `Cases` program ([`tad_cell_program`]) is the SECOND, verified gate — the
 /// `FieldLteField(CALLS_MADE <= RATE_LIMIT)` rate ceiling, the `Monotonic(CALLS_MADE)`
-/// no-rewind, and the height-aware `FieldLteHeight(DEADLINE)` all bite on the produced
+/// no-rewind, and the height-aware `FieldGteHeight(DEADLINE)` all bite on the produced
 /// transition. Anti-ghost both ways: a precondition miss never submits; a program violation
 /// is a real executor refusal.
 ///
@@ -665,7 +676,7 @@ pub fn seed_mandate(executor: &EmbeddedExecutor, tool: &str, rate_limit: u64, de
 ///
 /// The submitted turn carries the `invoke_tool` METHOD SYMBOL (not the `invoke` surface
 /// name): the installed `Cases` program's `invoke_tool` dispatch case must match the turn's
-/// method for the operation-scoped `Monotonic(CALLS_MADE)` + `FieldLteHeight(DEADLINE)`
+/// method for the operation-scoped `Monotonic(CALLS_MADE)` + `FieldGteHeight(DEADLINE)`
 /// caveats to fire (and to satisfy the Cav-Codex Block 4 default-deny: a `Cases` program with
 /// dispatch cases REJECTS a turn whose method matches none of them). So the gate is the
 /// `invoke` affordance (the published cap∧state button) while the wire turn is the
@@ -790,9 +801,9 @@ pub fn register_deos(ctx: &StarbridgeAppContext) -> DeosApp {
     let app = tad_app(ctx.cipherclerk(), ctx.executor());
     // Seed the mandate cell so the gated `invoke` fire has a live `(old, new)` and the full
     // mandate program (installed here) is re-enforced by the executor on every touching turn.
-    // `DEADLINE = 0` clears `FieldLteHeight(DEADLINE)` at the embedded executor's
-    // `block_height == 0` (no-expiry at this height; see [`seed_mandate`]).
-    seed_mandate(ctx.executor(), "search-mcp", 8, 0);
+    // `NO_DEADLINE` (`u64::MAX`) clears `FieldGteHeight(DEADLINE)` at every height — the
+    // representative seed is an open-ended, never-expiring mandate (see [`seed_mandate`]).
+    seed_mandate(ctx.executor(), "search-mcp", 8, NO_DEADLINE);
     app.register(ctx);
     app
 }
@@ -985,7 +996,7 @@ mod tests {
     fn seed_mandate_installs_the_cases_program_and_zero_counter() {
         let cipherclerk = test_cipherclerk();
         let executor = EmbeddedExecutor::new(&cipherclerk, "default");
-        seed_mandate(&executor, "search-mcp", 8, 0);
+        seed_mandate(&executor, "search-mcp", 8, NO_DEADLINE);
 
         // The seeded mandate cell carries the FULL `Cases` floor program (the seam's
         // enforcement layer the executor re-enforces on every touching turn).

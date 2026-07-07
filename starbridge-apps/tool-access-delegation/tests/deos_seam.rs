@@ -7,7 +7,7 @@
 //! proves that seam CLOSED. `src::register_deos` / `src::seed_mandate` install
 //! [`tad_cell_program`] (the `Cases` floor: the `Always` invariants `WriteOnce(rate/tool/
 //! deadline)` + `FieldLteField(calls <= rate)`, and the `invoke_tool`-scoped `Monotonic(calls)`
-//! + `FieldLteHeight(deadline)`) on the seeded mandate cell, and the deos fire is a TWO-TEMPO
+//! + `FieldGteHeight(deadline)`) on the seeded mandate cell, and the deos fire is a TWO-TEMPO
 //! bridge:
 //!
 //!   1. the deos PRECONDITION gate ([`DeosCell::gated_fireable_names`] — the cap-gate
@@ -30,14 +30,27 @@ use dregg_app_framework::{
 };
 
 use starbridge_tool_access_delegation::{
-    CALLS_MADE_SLOT, RATE_LIMIT_SLOT, fire_invoke, invoke_effects, register_deos, seed_mandate,
-    tad_app, tad_cell_program,
+    CALLS_MADE_SLOT, NO_DEADLINE, RATE_LIMIT_SLOT, fire_invoke, invoke_effects, register_deos,
+    seed_mandate, tad_app, tad_cell_program,
 };
 
 fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
     let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0x5b; 32]);
     let executor = EmbeddedExecutor::new(&cclerk, "default");
     (cclerk, executor)
+}
+
+/// An agent whose embedded executor runs at block `height` — `EmbeddedExecutor::new` always
+/// starts at height 0, so the EXPIRED deadline pole (`block_height > DEADLINE`) needs the
+/// underlying `AgentRuntime` stamped before wrapping (the same shape
+/// `starbridge-apps/polis/src/deos.rs::embedded_executor_at` uses).
+fn agent_at_height(height: u64) -> (AppCipherclerk, EmbeddedExecutor) {
+    let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0x5b; 32]);
+    let shared = cclerk.shared_cipherclerk();
+    let mut runtime = dregg_sdk::AgentRuntime::new(shared, "default");
+    runtime.set_local_federation_id(*cclerk.federation_id());
+    runtime.set_block_height(height);
+    (cclerk, EmbeddedExecutor::from_runtime(runtime))
 }
 
 // Read a u64 from the last 8 big-endian bytes of a field element.
@@ -54,7 +67,7 @@ fn field_to_u64(f: &[u8; 32]) -> u64 {
 #[test]
 fn seeding_installs_the_cases_program_and_zero_counter() {
     let (cclerk, executor) = agent();
-    seed_mandate(&executor, "search-mcp", 8, 0);
+    seed_mandate(&executor, "search-mcp", 8, NO_DEADLINE);
 
     // The seeded mandate cell carries the FULL `Cases` program (the seam's enforcement layer
     // the executor re-enforces on every touching turn).
@@ -81,13 +94,14 @@ fn seeding_installs_the_cases_program_and_zero_counter() {
 fn a_worker_invokes_through_the_gated_fire_a_real_verified_turn() {
     let (cclerk, executor) = agent();
     let app = tad_app(&cclerk, &executor);
-    seed_mandate(&executor, "search-mcp", 8, 0);
+    seed_mandate(&executor, "search-mcp", 8, NO_DEADLINE);
 
     // A WORKER (Either) fires `invoke`: the cap-gate passes (Either ⊇ Either), the live-state
     // precondition passes (calls 0 < rate 8, budget remains), and the FULL invocation turn
     // advances calls 0 -> 1. The executor RE-ENFORCES the `Cases` program: `Monotonic(calls)`
-    // (0 -> 1), `FieldLteField(calls <= rate)` (1 <= 8), `FieldLteHeight(deadline)` (deadline 0
-    // <= block_height 0) all hold. A real verified turn.
+    // (0 -> 1), `FieldLteField(calls <= rate)` (1 <= 8), `FieldGteHeight(deadline)` (deadline
+    // NO_DEADLINE >= block_height 0 — the open-ended mandate is live) all hold. A real
+    // verified turn.
     let receipt = fire_invoke(&app, &AuthRequired::Either, &cclerk, &executor)
         .expect("a worker meters one call (caps ∧ state ∧ rate ∧ deadline all pass)");
     assert_ne!(
@@ -121,7 +135,7 @@ fn a_worker_invokes_through_the_gated_fire_a_real_verified_turn() {
 fn a_viewer_below_the_worker_tier_cannot_invoke_the_cap_tooth_bites_in_band() {
     let (cclerk, executor) = agent();
     let app = tad_app(&cclerk, &executor);
-    seed_mandate(&executor, "search-mcp", 8, 0);
+    seed_mandate(&executor, "search-mcp", 8, NO_DEADLINE);
 
     // A bearer holding NO comparable authority (`AuthRequired::Custom`, incomparable to Either)
     // firing `invoke` (requires Either): the CAP tooth refuses IN-BAND. Nothing is submitted
@@ -164,7 +178,7 @@ fn the_executor_re_enforces_an_over_budget_invocation_is_refused() {
     // path.
     let (cclerk, executor) = agent();
     let app = tad_app(&cclerk, &executor);
-    seed_mandate(&executor, "search-mcp", 2, 0); // rate ceiling == 2
+    seed_mandate(&executor, "search-mcp", 2, NO_DEADLINE); // rate ceiling == 2
     let mandate = cclerk.cell_id();
 
     // Spend the budget honestly: 0 -> 1 -> 2 (both pass; `calls <= rate` holds at each step).
@@ -227,7 +241,7 @@ fn the_executor_re_enforces_a_counter_rewind_is_refused() {
     // executor's `Monotonic(CALLS_MADE)` refuses the rewind.
     let (cclerk, executor) = agent();
     let app = tad_app(&cclerk, &executor);
-    seed_mandate(&executor, "search-mcp", 8, 0);
+    seed_mandate(&executor, "search-mcp", 8, NO_DEADLINE);
     let mandate = cclerk.cell_id();
 
     fire_invoke(&app, &AuthRequired::Either, &cclerk, &executor).expect("call 1 (0 -> 1)");
@@ -262,34 +276,57 @@ fn the_executor_re_enforces_a_counter_rewind_is_refused() {
 }
 
 // =============================================================================
-// (f) NOTE on FieldLteHeight(DEADLINE) — the height-aware deadline tooth.
+// (f) FieldGteHeight(DEADLINE) — the height-aware deadline tooth, TWO-POLE.
 // =============================================================================
 //
-// The `invoke_tool` case ALSO carries `FieldLteHeight(DEADLINE, offset: 0)` (the time bound):
-// the executor admits the invocation only while `DEADLINE <= block_height`. This caveat is
-// HEIGHT-AWARE — it depends on the block height the turn is presented at, which a
-// `(state, state)` precondition read does NOT see. So it CANNOT be gated by the deos
+// The `invoke_tool` case ALSO carries `FieldGteHeight(DEADLINE, offset: 0)` (the time bound):
+// the executor admits the invocation only while `block_height <= DEADLINE` — the mandate is
+// LIVE (the Lean `delegAdmit`'s `now <= g.deadline` conjunct). This caveat is HEIGHT-AWARE —
+// it depends on the block height the turn is presented at, which a `(state, state)`
+// precondition read does NOT see. So it CANNOT be gated by the deos
 // `budget_remaining_precondition` (which reads only `calls < rate`); instead it bites in the
 // EXECUTOR on the submitted turn — exactly as the over-budget (d) and rewind (e) teeth do, on
-// the produced transition. The honest invokes above clear it because `seed_mandate` sets
-// `DEADLINE = 0` and the embedded executor runs at `block_height == 0`, so `0 <= 0` holds
-// (no-expiry at the embedded height). A mandate seeded with `DEADLINE > block_height` has its
-// invoke REFUSED by the executor's `FieldLteHeight(DEADLINE)` EVEN THOUGH the deos precondition
-// (`calls < rate`) passes — this is the gate the recipe flags: the deadline tooth lives in the
-// executor's program re-enforcement, NOT in the deos precondition. The
-// `the_deadline_tooth_bites_in_the_executor` test below witnesses exactly that refusal.
+// the produced transition. The two poles, both through the same gated fire:
+//
+//   LIVE:    `block_height <= DEADLINE` (deadline in the future) — the invocation is ADMITTED;
+//   EXPIRED: `block_height >  DEADLINE` (the deadline has passed) — the invocation is REFUSED
+//            by the executor EVEN THOUGH the deos precondition (`calls < rate`) passes,
+//            because the deadline tooth lives in the executor's program re-enforcement, NOT
+//            in the deos precondition.
 
 #[test]
-fn the_deadline_tooth_bites_in_the_executor() {
-    // A mandate seeded with `DEADLINE > block_height` (deadline 100, embedded height 0). The
-    // deos `budget_remaining` precondition (calls 0 < rate 8) PASSES — it cannot read the
-    // height — so the deos gate lets the fire through; but the EXECUTOR's
-    // `FieldLteHeight(DEADLINE)` (100 <= 0 is false) REFUSES the submitted invocation. The
-    // height-aware deadline tooth lives in the executor's program re-enforcement, not the
-    // precondition (the recipe's subtlety, witnessed).
+fn a_live_mandate_deadline_in_the_future_is_admitted() {
+    // THE LIVE POLE: a mandate with its deadline IN THE FUTURE (deadline 100, embedded height
+    // 0). `FieldGteHeight(DEADLINE)` holds (100 >= 0 — the granted window is open), so the
+    // worker's invocation is ADMITTED: a real verified turn, the counter advances 0 -> 1.
     let (cclerk, executor) = agent();
     let app = tad_app(&cclerk, &executor);
-    seed_mandate(&executor, "search-mcp", 8, 100); // DEADLINE 100 > block_height 0
+    seed_mandate(&executor, "search-mcp", 8, 100); // DEADLINE 100, block_height 0: LIVE
+
+    let receipt = fire_invoke(&app, &AuthRequired::Either, &cclerk, &executor)
+        .expect("a mandate whose deadline is in the future is LIVE — the invocation is admitted");
+    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn");
+
+    // The counter advanced (the live invocation committed).
+    let state = executor.cell_state(cclerk.cell_id()).unwrap();
+    assert_eq!(
+        state.fields[CALLS_MADE_SLOT as usize],
+        field_from_u64(1),
+        "the live mandate metered one call (0 -> 1)"
+    );
+}
+
+#[test]
+fn an_expired_mandate_is_refused_by_the_executor() {
+    // THE EXPIRED POLE: the executor runs at `block_height == 101`, PAST the granted deadline
+    // (100). The deos `budget_remaining` precondition (calls 0 < rate 8) PASSES — it cannot
+    // read the height — so the deos gate lets the fire through; but the EXECUTOR's
+    // `FieldGteHeight(DEADLINE)` (100 >= 101 is false) REFUSES the submitted invocation. The
+    // height-aware deadline tooth lives in the executor's program re-enforcement, not the
+    // precondition (the recipe's subtlety, witnessed).
+    let (cclerk, executor) = agent_at_height(101);
+    let app = tad_app(&cclerk, &executor);
+    seed_mandate(&executor, "search-mcp", 8, 100); // DEADLINE 100 < block_height 101: EXPIRED
 
     let refused = fire_invoke(&app, &AuthRequired::Either, &cclerk, &executor);
     assert!(
@@ -299,12 +336,29 @@ fn the_deadline_tooth_bites_in_the_executor() {
     let msg = format!("{refused:?}").to_lowercase();
     assert!(
         msg.contains("height") || msg.contains("field[2]") || msg.contains("program"),
-        "the executor refuses on the FieldLteHeight(DEADLINE) caveat, got: {msg}"
+        "the executor refuses on the FieldGteHeight(DEADLINE) caveat, got: {msg}"
     );
 
     // The counter did NOT move (anti-ghost) — the refused invocation committed nothing.
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
     assert_eq!(state.fields[CALLS_MADE_SLOT as usize], field_from_u64(0));
+}
+
+#[test]
+fn at_the_deadline_exactly_the_mandate_still_admits() {
+    // THE BOUNDARY: the Lean `delegAdmit` deadline conjunct is INCLUSIVE (`now <= g.deadline`
+    // — `tests/lean_differential.rs` pins `deleg_admit(&DEMO, 100, 77, 0, 1)` at exactly the
+    // deadline). The executor caveat matches: at `block_height == DEADLINE == 100`,
+    // `FieldGteHeight(DEADLINE)` holds (100 >= 100) and the invocation is ADMITTED; one height
+    // later it is refused (the expired pole above).
+    let (cclerk, executor) = agent_at_height(100);
+    let app = tad_app(&cclerk, &executor);
+    seed_mandate(&executor, "search-mcp", 8, 100); // DEADLINE 100 == block_height 100: LIVE
+
+    fire_invoke(&app, &AuthRequired::Either, &cclerk, &executor)
+        .expect("exactly at the deadline still admits (the inclusive `now <= deadline` bound)");
+    let state = executor.cell_state(cclerk.cell_id()).unwrap();
+    assert_eq!(state.fields[CALLS_MADE_SLOT as usize], field_from_u64(1));
 }
 
 // =============================================================================

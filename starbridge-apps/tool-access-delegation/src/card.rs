@@ -65,7 +65,7 @@ const RATE_GAUGE_MAX: u64 = 8;
 const DEADLINE_WINDOW: u64 = 100;
 
 /// The representative time-remaining (`value`) of the deadline `progress` — heights left in the
-/// granted window before the mandate EXPIRES (the `FieldLteHeight(deadline)` tooth bites).
+/// granted window before the mandate EXPIRES (the `FieldGteHeight(deadline)` tooth bites).
 const DEADLINE_REMAINING: u64 = 64;
 
 /// A `deos.ui.text` node.
@@ -156,7 +156,7 @@ fn action(glyph: &str, label: &str, turn: &str) -> Value {
 ///   - `ACTIVE` (`good`) — budget remains AND the deadline is in the future (the worker may
 ///     meter a call);
 ///   - `RATE-LIMITED` (`warn`) — `calls_made == rate_limit` (the granted budget is spent);
-///   - `EXPIRED` (`bad`) — the granted deadline has passed (`FieldLteHeight(deadline)` refuses).
+///   - `EXPIRED` (`bad`) — the granted deadline has passed (`FieldGteHeight(deadline)` refuses).
 ///
 /// The seeded mandate is granted with budget remaining and an in-window deadline, so the card
 /// surfaces the representative `ACTIVE` state; the live `gauge` + the deadline `progress` show

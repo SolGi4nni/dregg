@@ -39,7 +39,7 @@
     "WriteOnce(DEADLINE_SLOT)",
     "FieldLteField(CALLS_MADE_SLOT, RATE_LIMIT_SLOT)",
     "MethodIs(invoke_tool) => Monotonic(CALLS_MADE_SLOT)",
-    "MethodIs(invoke_tool) => FieldLteHeight(DEADLINE_SLOT)"
+    "MethodIs(invoke_tool) => FieldGteHeight(DEADLINE_SLOT)"
   ],
   "deos": {
     "surface": "DeosApp",
@@ -51,9 +51,9 @@
     "affordances": {
       "view_grant": "cap-only, Either (a WORKER reads the mandate's terms)",
       "grant": "cap-only, None/root, carries the REAL Effect::GrantCapability (the GRANTOR hands the mandate's invoke cap forward NARROWED — the cap-graph half of attenuated delegation)",
-      "invoke": "GATED (cap∧state), Either — budget-remaining precondition (calls < rate); the fire submits the FULL counter-advancing turn (reading the live calls_made), the executor re-enforcing the installed Cases program (FieldLteField(calls<=rate) + Monotonic(calls) + FieldLteHeight(deadline))"
+      "invoke": "GATED (cap∧state), Either — budget-remaining precondition (calls < rate); the fire submits the FULL counter-advancing turn (reading the live calls_made), the executor re-enforcing the installed Cases program (FieldLteField(calls<=rate) + Monotonic(calls) + FieldGteHeight(deadline))"
     },
-    "seam": "CLOSED — the fire runs against the seeded mandate cell carrying the FULL Cases program (WriteOnce rate/tool/deadline + FieldLteField(calls<=rate) + the invoke_tool-scoped Monotonic(calls) + FieldLteHeight(deadline)), so an OVER-BUDGET invocation (calls past rate), a COUNTER REWIND (Monotonic), and a PAST-DEADLINE invocation (height-aware, unreadable by the deos precondition) all BITE in the deos fire / executor-submission path (tests/deos_seam.rs)"
+    "seam": "CLOSED — the fire runs against the seeded mandate cell carrying the FULL Cases program (WriteOnce rate/tool/deadline + FieldLteField(calls<=rate) + the invoke_tool-scoped Monotonic(calls) + FieldGteHeight(deadline)), so an OVER-BUDGET invocation (calls past rate), a COUNTER REWIND (Monotonic), and a PAST-DEADLINE invocation (height-aware, unreadable by the deos precondition) all BITE in the deos fire / executor-submission path (tests/deos_seam.rs)"
   },
   "manifest_health": {
     "status": "ready",
