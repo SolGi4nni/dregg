@@ -46,8 +46,9 @@
 //!
 //! - `dregg_storage::operator::RelayOperator` operator-process state.
 //! - `dregg_storage::relay::MeteredRelay` quota accounting.
-//! - `dregg_storage::metering` cost-table (folds into the
-//!   `RateLimitBySum` constraint).
+//! - the per-op cost model (folds into the `RateLimitBySum` constraint; the old
+//!   `dregg_storage::metering` module was purged as dead — cost lives inline / in
+//!   `dregg_storage::quota`).
 //!
 //! ## Boundary contract
 //!

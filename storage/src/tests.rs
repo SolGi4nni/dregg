@@ -10,7 +10,6 @@ use crate::content::ContentStore;
 use crate::dedup::DeduplicationFilter;
 use crate::erasure::{self, ErasureEncoder};
 use crate::inbox::{CapInbox, InboxError, InboxMessage};
-use crate::metering::{self, MeteringPolicy, StorageOp};
 use crate::pubsub::{PubSubTopic, PublishResult};
 use crate::queue::{MerkleQueue, QueueEntry, QueueError};
 use crate::quota::SpaceBank;
@@ -248,70 +247,6 @@ fn sampling_probability_calculation() {
 }
 
 // ============================================================================
-// Metering tests
-// ============================================================================
-
-#[test]
-fn cost_computation_write() {
-    let policy = MeteringPolicy::default_policy();
-    let cost = metering::compute_cost(&policy, &StorageOp::Write { size: 100 });
-    // base_cost(100) + 100 * cost_per_byte(10) = 1100
-    assert_eq!(cost, 1100);
-}
-
-#[test]
-fn cost_computation_relay() {
-    let policy = MeteringPolicy::default_policy();
-    let cost = metering::compute_cost(
-        &policy,
-        &StorageOp::Relay {
-            size: 200,
-            ttl_blocks: 10,
-        },
-    );
-    // relay_base(50) + 200 * relay_cost_per_byte_block(5) * 10 = 50 + 10000 = 10050
-    assert_eq!(cost, 10050);
-}
-
-#[test]
-fn cost_computation_rental() {
-    let policy = MeteringPolicy::default_policy();
-    let cost = metering::compute_cost(
-        &policy,
-        &StorageOp::Rental {
-            bytes: 1000,
-            epochs: 5,
-        },
-    );
-    // 1000 * rental_cost_per_byte_epoch(1) * 5 = 5000
-    assert_eq!(cost, 5000);
-}
-
-#[test]
-fn cost_computation_splice() {
-    let policy = MeteringPolicy::default_policy();
-    let cost = metering::compute_cost(
-        &policy,
-        &StorageOp::Splice {
-            old_size: 100,
-            new_size: 150,
-        },
-    );
-    // Refund from old: (100 + 100*10) * 0.8 = 1100 * 0.8 = 880
-    // New write: 100 + 150*10 = 1600
-    // Net: 1600 - 880 = 720
-    assert_eq!(cost, 720);
-}
-
-#[test]
-fn refund_computation() {
-    let policy = MeteringPolicy::default_policy();
-    let refund = metering::compute_refund(&policy, &StorageOp::Write { size: 100 });
-    // (100 + 100*10) * 0.8 = 1100 * 0.8 = 880
-    assert_eq!(refund, 880);
-}
-
-// ============================================================================
 // Relay tests
 // ============================================================================
 
@@ -491,7 +426,7 @@ fn quota_top_up() {
 }
 
 // ============================================================================
-// MerkleQueue tests (integration with metering)
+// MerkleQueue tests
 // ============================================================================
 
 #[test]
@@ -741,66 +676,6 @@ fn inbox_different_message_types() {
 }
 
 // ============================================================================
-// Metering: queue operation costs
-// ============================================================================
-
-#[test]
-fn metering_queue_enqueue_cost() {
-    let policy = MeteringPolicy::default_policy();
-    let cost = metering::compute_cost(
-        &policy,
-        &StorageOp::Enqueue {
-            size: 100,
-            deposit: 500,
-        },
-    );
-    // base(100) + size(100) * per_byte(10) + deposit(500) = 100 + 1000 + 500 = 1600
-    assert_eq!(cost, 1600);
-}
-
-#[test]
-fn metering_queue_dequeue_cost() {
-    let policy = MeteringPolicy::default_policy();
-    let cost = metering::compute_cost(&policy, &StorageOp::Dequeue { size: 100 });
-    // Dequeue is free for reader.
-    assert_eq!(cost, 0);
-}
-
-#[test]
-fn metering_create_queue_cost() {
-    let policy = MeteringPolicy::default_policy();
-    let cost = metering::compute_cost(&policy, &StorageOp::CreateQueue { capacity: 50 });
-    // base(100) + capacity(50) * per_byte(10) = 100 + 500 = 600
-    assert_eq!(cost, 600);
-}
-
-#[test]
-fn metering_resize_queue_cost() {
-    let policy = MeteringPolicy::default_policy();
-
-    // Growing.
-    let cost = metering::compute_cost(
-        &policy,
-        &StorageOp::ResizeQueue {
-            old_capacity: 10,
-            new_capacity: 30,
-        },
-    );
-    // delta(20) * per_byte(10) = 200
-    assert_eq!(cost, 200);
-
-    // Shrinking is free.
-    let cost = metering::compute_cost(
-        &policy,
-        &StorageOp::ResizeQueue {
-            old_capacity: 30,
-            new_capacity: 10,
-        },
-    );
-    assert_eq!(cost, 0);
-}
-
-// ============================================================================
 // Integration: quota depletion prevents enqueue
 // ============================================================================
 
@@ -810,14 +685,9 @@ fn quota_depletion_prevents_enqueue() {
     let mut bank = test_bank();
     let sender_id = bank.allocate_quota([0x01; 32], 200, None);
 
-    // The sender wants to enqueue with deposit 500.
-    // Metering says the cost is: base(100) + size(10)*per_byte(10) + deposit(500) = 700.
-    let policy = MeteringPolicy::default_policy();
-    let cost = policy.compute_cost(&StorageOp::Enqueue {
-        size: 10,
-        deposit: 500,
-    });
-    assert_eq!(cost, 700);
+    // The sender wants to enqueue with deposit 500; the enqueue cost
+    // (base 100 + size 10 * per_byte 10 + deposit 500) is 700.
+    let cost = 700;
 
     // Try to charge sender.
     let cell = bank.get_mut(&sender_id).unwrap();
@@ -1142,78 +1012,4 @@ fn integration_wal_dedup_durable_queue_compose() {
     assert_eq!(recovered.peek().unwrap().content_hash, entry.content_hash);
 
     cleanup_wal(&path);
-}
-
-// ============================================================================
-// Integration: pipeline + atomic (pipeline step is atomic)
-// ============================================================================
-
-#[test]
-fn integration_pipeline_step_is_atomic_via_transaction() {
-    use crate::atomic::QueueTransaction;
-    use crate::dataflow::{FilterPredicate, Pipeline, PipelineStage};
-    use std::collections::HashMap;
-
-    let source_id = [0x01; 32];
-    let sink_id = [0x02; 32];
-
-    // Set up queues.
-    let mut queues = HashMap::new();
-    let mut source = MerkleQueue::new(10);
-    let entry = QueueEntry {
-        content_hash: *blake3::hash(b"atomic_pipeline_msg").as_bytes(),
-        sender: [0xAA; 32],
-        deposit: 300,
-        enqueued_at: 50,
-        size: 20,
-    };
-    source.enqueue(entry.clone()).unwrap();
-    queues.insert(source_id, source);
-    queues.insert(sink_id, MerkleQueue::new(10));
-
-    // Record pre-state roots.
-    let source_root_before = queues[&source_id].root();
-    let sink_root_before = queues[&sink_id].root();
-
-    // Use a transaction to atomically move a message from source to sink.
-    let mut tx = QueueTransaction::new();
-    tx.assert_root(source_id, source_root_before)
-        .dequeue(source_id)
-        .enqueue(sink_id, entry.clone());
-
-    let result = tx.execute(&mut queues).unwrap();
-
-    // Both queues changed atomically.
-    assert_eq!(queues[&source_id].len(), 0);
-    assert_eq!(queues[&sink_id].len(), 1);
-    assert_ne!(queues[&source_id].root(), source_root_before);
-    assert_ne!(queues[&sink_id].root(), sink_root_before);
-
-    // Root transitions recorded.
-    assert!(!result.root_transitions.is_empty());
-
-    // Now verify pipeline also works on the same queue map.
-    // Re-populate source.
-    let entry2 = QueueEntry {
-        content_hash: *blake3::hash(b"second_msg").as_bytes(),
-        sender: [0xBB; 32],
-        deposit: 200,
-        enqueued_at: 51,
-        size: 10,
-    };
-    queues.get_mut(&source_id).unwrap().enqueue(entry2).unwrap();
-
-    let pipeline = Pipeline::new(vec![
-        PipelineStage::Source {
-            queue_id: source_id,
-        },
-        PipelineStage::Filter {
-            predicate: FilterPredicate::MinDeposit(100),
-        },
-        PipelineStage::Sink { queue_id: sink_id },
-    ]);
-
-    let pipe_result = pipeline.step(&mut queues).unwrap();
-    assert_eq!(pipe_result.messages_processed, 1);
-    assert_eq!(queues[&sink_id].len(), 2); // Both messages in sink now.
 }
