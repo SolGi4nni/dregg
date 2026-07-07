@@ -64,6 +64,8 @@ tolerate. See that module's header for the node-side implication.
 Verified with `lake build Dregg2.Distributed.BlocklaceFinality`.
 -/
 import Dregg2.Exec.ConsensusExec
+import Std.Data.HashMap
+import Std.Data.HashSet
 
 namespace Dregg2.Distributed.BlocklaceFinality
 
@@ -541,6 +543,196 @@ theorem tauOrderFast_eq (B : Lace) (participants : List AuthorId) (wavelength : 
     tauOrderFast B participants wavelength = tauOrder B participants wavelength := by
   simp only [tauOrderFast, tauOrder, findAllFinalLeadersC_eq, tauStepC_eq]
 
+/-! ## 6c. THE RUNTIME FAST PATH — `@[implemented_by]` over `Std.HashMap`/`Std.HashSet`.
+
+**Why this exists, and why it is SOUND.** The §6b `…C` fast twins killed the *within-call*
+exponential re-traversal by memoizing into `List`-backed caches (`PastCache`/`RoundCache`), but the
+DATA STRUCTURES are still `List`s: `cachedPast`'s `cache.find?` (:319) is an O(n) scan per lookup,
+`causalPastAux`'s `acc.dedup`/`acc.contains` (:135,:138) are O(n)/elem, and `mkPastCache` (:311)
+rebuilds ALL of them per FFI call — so the exported `dregg_tau_order` is O(n³)-to-build and pays it
+every finality poll (docs/VERIFIED-GATE-PERF.md: 9.2 s @ 35 blocks). This section adds a runtime
+twin backed by `Std.HashMap`/`Std.HashSet` (O(1) dedup/contains/lookup) and attaches it to
+`tauOrderFast` via `@[implemented_by]`.
+
+`@[implemented_by]` is TRUSTED — the kernel does NOT check the twin equals the pure def; a wrong
+twin silently corrupts finality with no theorem catching it (every theorem/`#guard` is about the
+PURE def). Two disciplines make it safe:
+  1. The twin below is a LINE-FOR-LINE mirror of the §6b `…C` functions with the sole change of
+     `List.find?`/`.contains`/`.dedup` → `Std.HashMap`/`Std.HashSet` operations.
+  2. The `@[implemented_by]` is attached ONLY to `tauOrderFast`; the pure `tauOrder`,
+     `causalPastIncl`, and every `…C`/`…R` def keep their normal compilation. So the §9 differential
+     `#guard tauOrderFast … == tauOrder …` and `#guard fastCausalPastIncl … == causalPastIncl …`
+     compare the FAST-compiled twin against the PURE-compiled def (NOT fast-vs-fast) — a genuine,
+     non-vacuous check on the golden 3-node trace, the equivocation trace, AND a fresh round-2-shaped
+     multi-wave n=4 DAG (`traceMW4`). -/
+
+/-- BFS layer expansion with a `Std.HashSet` frontier-dedup — the runtime twin of `causalPastAux`.
+Produces the IDENTICAL id list as `causalPastAux B B.length [h] [h]`: BFS order preserved (frontier
+processed left-to-right, each block's `preds` in order), first-occurrence dedup (a pred already
+`seen` is skipped, exactly as `acc.dedup` keeps the first). O(1) `HashSet` membership replaces the
+pure def's O(n) `List.contains`/`.dedup`. Terminates because `seen` grows and is bounded by `|B|`. -/
+partial def fastCausalPastAux (B : Lace) (seen : Std.HashSet BlockId) (acc : Array BlockId)
+    (frontier : List BlockId) : Array BlockId :=
+  match frontier with
+  | [] => acc
+  | _ =>
+    let (seen, acc, nxt) := frontier.foldl (init := (seen, acc, ([] : List BlockId)))
+      (fun st hid =>
+        match B.lookup hid with
+        | some b =>
+          b.preds.foldl (init := st) (fun st p =>
+            let (s, a, n) := st
+            if B.has p && !s.contains p then (s.insert p, a.push p, n ++ [p]) else (s, a, n))
+        | none => st)
+    fastCausalPastAux B seen acc nxt
+
+/-- Runtime twin of `causalPastIncl` (HashSet-backed BFS). Value-identical; §9 differential-guarded. -/
+def fastCausalPastIncl (B : Lace) (h : BlockId) : List BlockId :=
+  (fastCausalPastAux B ((∅ : Std.HashSet BlockId).insert h) #[h] [h]).toList
+
+/-- The past cache as a `Std.HashMap` (O(1) lookup) — the runtime twin of `mkPastCache`. Built ONCE
+per finalization; first-occurrence-keyed (skip if already present), matching `cachedPast`'s
+`find?`-first-hit on `mkPastCache`. -/
+def fastPastMap (B : Lace) : Std.HashMap BlockId (List BlockId) :=
+  B.foldl (init := (∅ : Std.HashMap BlockId (List BlockId)))
+    (fun m b => if m.contains b.id then m else m.insert b.id (fastCausalPastIncl B b.id))
+
+/-- The round map as a `Std.HashMap` (O(1) lookup) — the runtime twin of `mkRoundCache`
+(`computeRounds`), built ONCE with `Std.HashMap.get?` replacing the pure fold's `roundLookup`
+`List.find?`. Same topological fold over the `(seq, creator)`-sorted lace. -/
+def fastRoundMap (B : Lace) : Std.HashMap BlockId Nat :=
+  let sorted := B.toArray.qsort (fun a b => a.seq < b.seq || (a.seq == b.seq && a.creator < b.creator))
+  sorted.foldl (init := (∅ : Std.HashMap BlockId Nat))
+    (fun rm b => rm.insert b.id (1 + (b.preds.filterMap (fun p => rm.get? p)).foldl Nat.max 0))
+
+/-- O(1) past lookup with a LAZY pure fallback (the `match`, not `getD`, keeps the fallback from
+being computed on a hit) — the runtime twin of `cachedPast`. -/
+@[inline] def fastPast (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (h : BlockId) : List BlockId :=
+  match pm.get? h with
+  | some v => v
+  | none   => fastCausalPastIncl B h
+
+/-- O(1) round lookup — the runtime twin of `roundOfR`. -/
+@[inline] def fastROf (rm : Std.HashMap BlockId Nat) (h : BlockId) : Nat := rm.getD h 0
+
+/-- Runtime twin of `hasEquivInPastC`. -/
+def fastHasEquivInPast (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (observer : BlockId) (creator : AuthorId) : Bool :=
+  let past := fastPast B pm observer
+  let creatorBlocks : List Block :=
+    past.filterMap (fun bid => match B.lookup bid with
+                                | some b => if b.creator = creator then some b else none
+                                | none   => none)
+  creatorBlocks.any (fun a =>
+    creatorBlocks.any (fun b => a.id ≠ b.id && fastROf rm a.id == fastROf rm b.id))
+
+/-- Runtime twin of `approvesC`. -/
+def fastApproves (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (o l : Block) : Bool :=
+  (fastPast B pm o.id).contains l.id && ¬ fastHasEquivInPast B pm rm o.id l.creator
+
+/-- Runtime twin of `ratifiesC`. -/
+def fastRatifies (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (participants : List AuthorId) (o l : Block) : Bool :=
+  let past := fastPast B pm o.id
+  let approvingParticipants : Nat :=
+    (participants.filter (fun p =>
+      past.any (fun bid => match B.lookup bid with
+                            | some b => b.creator == p && fastApproves B pm rm b l
+                            | none   => false))).length
+  approvingParticipants ≥ superMajority participants.length
+
+/-- Runtime twin of `blocksAtRoundR`. -/
+def fastBlocksAtRound (B : Lace) (rm : Std.HashMap BlockId Nat) (r : Nat) : List BlockId :=
+  (B.filter (fun b => fastROf rm b.id == r)).map (·.id)
+
+/-- Runtime twin of `isSuperRatifiedC`. -/
+def fastIsSuperRatified (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (participants : List AuthorId) (l : Block) (waveEndRound : Nat) : Bool :=
+  let endBlocks := fastBlocksAtRound B rm waveEndRound
+  let ratifyingCreators : List AuthorId :=
+    (endBlocks.filterMap (fun bid => match B.lookup bid with
+       | some b => if fastRatifies B pm rm participants b l then some b.creator else none
+       | none   => none)).dedup
+  ratifyingCreators.length ≥ superMajority participants.length
+
+/-- Runtime twin of `leaderCandidatesR`. -/
+def fastLeaderCandidates (B : Lace) (rm : Std.HashMap BlockId Nat) (participants : List AuthorId)
+    (wave wavelength : Nat) : List Block :=
+  match waveLeader wave participants with
+  | none => []
+  | some lk =>
+      let ws := waveFirstRound wave wavelength
+      B.filter (fun b => b.creator == lk && fastROf rm b.id == ws)
+
+/-- Runtime twin of `finalLeaderAtC`. -/
+def fastFinalLeaderAt (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (participants : List AuthorId) (wave wavelength : Nat) : Option Block :=
+  match fastLeaderCandidates B rm participants wave wavelength with
+  | [l] => if fastIsSuperRatified B pm rm participants l (waveLastRound wave wavelength) then some l else none
+  | _   => none
+
+/-- Runtime twin of `maxRoundR`. -/
+def fastMaxRound (B : Lace) (rm : Std.HashMap BlockId Nat) : Nat :=
+  (B.map (fun b => fastROf rm b.id)).foldl Nat.max 0
+
+/-- Runtime twin of `findAllFinalLeadersC`. -/
+def fastFindAllFinalLeaders (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (participants : List AuthorId) (wavelength : Nat) : List Block :=
+  let mr := fastMaxRound B rm
+  let waveCount := if wavelength == 0 then 0 else mr / wavelength + 1
+  (List.range waveCount).filterMap (fun w => fastFinalLeaderAt B pm rm participants w wavelength)
+
+/-- Runtime twin of `leaderCoverageC`. -/
+def fastLeaderCoverage (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (participants : List AuthorId) (l : Block) (wavelength : Nat) : List BlockId :=
+  let lr := fastROf rm l.id
+  let lwave := roundToWave lr wavelength
+  let waveEnd := waveLastRound lwave wavelength
+  let endBlocks := fastBlocksAtRound B rm waveEnd
+  (endBlocks.flatMap (fun bid => match B.lookup bid with
+     | some b => if fastRatifies B pm rm participants b l then fastPast B pm bid else []
+     | none   => [])).dedup
+
+/-- Runtime twin of `xsortByR`. -/
+def fastXsortBy (rm : Std.HashMap BlockId Nat) (ids : List BlockId) : List BlockId :=
+  (ids.toArray.qsort (fun a b =>
+    fastROf rm a < fastROf rm b || (fastROf rm a == fastROf rm b && a < b))).toList
+
+/-- Runtime twin of `leaderSegmentC`. -/
+def fastLeaderSegment (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (participants : List AuthorId) (wavelength : Nat) (prevCovered : List BlockId) (l : Block) : List BlockId :=
+  let coverage := fastLeaderCoverage B pm rm participants l wavelength
+  let newBlocks := (coverage.filter (fun bid => ¬ prevCovered.contains bid)).filter
+    (fun bid => match B.lookup bid with
+      | some b => ¬ fastHasEquivInPast B pm rm l.id b.creator
+      | none   => false)
+  fastXsortBy rm newBlocks
+
+/-- Runtime twin of `tauStepC`. -/
+def fastTauStep (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (participants : List AuthorId) (wavelength : Nat)
+    (acc : List BlockId × List BlockId) (l : Block) : List BlockId × List BlockId :=
+  (acc.1 ++ fastLeaderSegment B pm rm participants wavelength acc.2 l,
+   fastLeaderCoverage B pm rm participants l wavelength)
+
+/-- **`tauOrderFastImpl`** — the runtime twin of `tauOrderFast`: builds the past + round maps as
+`Std.HashMap`s ONCE (O(|B|) HashSet-BFS calls + one topological fold), then runs the SAME fold with
+O(1) lookups. This is the `@[implemented_by]` target for `tauOrderFast` (below) — the function the
+exported `dregg_tau_order` / `dregg_blocklace_finalize` actually execute. TRUSTED; §9-guarded. -/
+def tauOrderFastImpl (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
+  let pm := fastPastMap B
+  let rm := fastRoundMap B
+  ((fastFindAllFinalLeaders B pm rm participants wavelength).foldl
+    (fastTauStep B pm rm participants wavelength) ([], [])).1
+
+/-! Route the exported `tauOrderFast` (hence both `dregg_tau_order` and `dregg_blocklace_finalize`)
+through the `Std.HashMap`/`Std.HashSet` runtime twin. Proofs are unaffected (`@[implemented_by]` is
+runtime-only, introduces no axioms — `#assert_axioms tauOrderFast_eq` below stays clean); the §9
+differential `#guard`s witness value-identity of the twin against the pure `tauOrder` on concrete
+laces (golden 3-node, equivocation, and the round-2-shaped multi-wave n=4 `traceMW4`). -/
+attribute [implemented_by tauOrderFastImpl] tauOrderFast
+
 /-! ## 7. THE SAFETY PROPERTY — no two conflicting final leaders per wave + determinism.
 
 The property the node RELIES on: a wave anchors AT MOST ONE final leader, and the finalized order
@@ -705,6 +897,26 @@ def traceEquivR2 : Lace :=
 def traceEquivR3 : Lace := [⟨12,1,3,[11,21,31],true⟩, ⟨22,2,2,[11,21,31],true⟩, ⟨32,3,2,[11,21,31],true⟩]
 def traceEquiv : Lace := traceEquivR1 ++ traceEquivR2 ++ traceEquivR3
 
+/-- **A ROUND-2-SHAPED MULTI-WAVE n=4 DAG** — 4 participants, 4 rounds fully connected (each block
+acks all 4 blocks of the previous round), wavelength 3. This is the lace shape the LIVE gate hits at
+round 2 (multiple waves accrued, n=4): wave 0 (rounds 1-3) FINALIZES its round-robin leader (creator
+1's genesis, super-ratified by the round-3 blocks), wave 1 (round 4 onward) is partial — so the wave
+LOOP, the round map, AND the causal-past cache are all exercised across >1 wave with n=4. Used by the
+§9 differential `#guard` that pins the `Std.HashMap` runtime twin to the pure `tauOrder`. -/
+def traceMW4R1 : Lace :=
+  [⟨11,1,0,[],true⟩, ⟨12,2,0,[],true⟩, ⟨13,3,0,[],true⟩, ⟨14,4,0,[],true⟩]
+def traceMW4R2 : Lace :=
+  [⟨21,1,1,[11,12,13,14],true⟩, ⟨22,2,1,[11,12,13,14],true⟩,
+   ⟨23,3,1,[11,12,13,14],true⟩, ⟨24,4,1,[11,12,13,14],true⟩]
+def traceMW4R3 : Lace :=
+  [⟨31,1,2,[21,22,23,24],true⟩, ⟨32,2,2,[21,22,23,24],true⟩,
+   ⟨33,3,2,[21,22,23,24],true⟩, ⟨34,4,2,[21,22,23,24],true⟩]
+def traceMW4R4 : Lace :=
+  [⟨41,1,3,[31,32,33,34],true⟩, ⟨42,2,3,[31,32,33,34],true⟩,
+   ⟨43,3,3,[31,32,33,34],true⟩, ⟨44,4,3,[31,32,33,34],true⟩]
+def traceMW4 : Lace := traceMW4R1 ++ traceMW4R2 ++ traceMW4R3 ++ traceMW4R4
+def traceMW4Participants : List AuthorId := [1, 2, 3, 4]
+
 /-- **THE DIFFERENTIAL GOLDEN VECTOR** — the finalized order projected to `(creator, seq)` pairs.
 This is the level at which the Lean model and the Rust `ordering.rs::tau` are compared: the abstract
 `BlockId` is a `Nat` here vs. a blake3 hash in Rust, but the `(creator, seq)` coordinate of each
@@ -748,6 +960,30 @@ theorem tauGoldenFast_eq (B : Lace) (participants : List AuthorId) (wavelength :
         == [(1,0),(2,0),(3,0),(1,1),(2,1),(3,1),(1,2),(2,2),(3,2)]
 #guard (tauOrderFast traceEquiv trace3Participants 3).all
         (fun id => match traceEquiv.lookup id with | some b => b.creator != 1 | none => true)
+
+/-! ### THE `@[implemented_by]` DIFFERENTIAL — the `Std.HashMap`/`Std.HashSet` runtime twin (§6c)
+computes EXACTLY the pure def, on multiple laces INCLUDING a round-2-shaped multi-wave n=4 DAG.
+
+Since `@[implemented_by]` is attached ONLY to `tauOrderFast` (§6c) and the pure `tauOrder` /
+`causalPastIncl` keep normal compilation, each `#guard` below runs the FAST-compiled twin on the LHS
+against the PURE-compiled def on the RHS — a genuine fast-vs-pure differential (NOT fast-vs-fast). A
+false `#guard` is a build error, so a divergent twin fails the build. This is the load-bearing check
+that the TRUSTED fast path (which no theorem constrains) equals the verified rule. -/
+
+-- (i) the HashSet-backed causal-past twin returns the IDENTICAL id list as the pure `causalPastIncl`,
+--     for EVERY block, on all three concrete laces (the memoization primitive is exact).
+#guard trace3.all (fun b => fastCausalPastIncl trace3 b.id == causalPastIncl trace3 b.id)
+#guard traceEquiv.all (fun b => fastCausalPastIncl traceEquiv b.id == causalPastIncl traceEquiv b.id)
+#guard traceMW4.all (fun b => fastCausalPastIncl traceMW4 b.id == causalPastIncl traceMW4 b.id)
+
+-- (ii) the full `tauOrderFast` runtime twin == the pure `tauOrder`, on the golden 3-node trace, the
+--      equivocation trace, AND the round-2-shaped multi-wave n=4 DAG.
+#guard tauOrderFast traceMW4 traceMW4Participants 3 == tauOrder traceMW4 traceMW4Participants 3
+#guard tauGoldenFast traceMW4 traceMW4Participants 3 == tauGolden traceMW4 traceMW4Participants 3
+-- non-vacuity: the multi-wave lace actually FINALIZES a non-empty prefix (wave 0's leader anchors),
+--      so the differential is over a real order, not the empty list.
+#guard (tauOrderFast traceMW4 traceMW4Participants 3).length > 0
+#guard (findAllFinalLeaders traceMW4 traceMW4Participants 3).length ≥ 1
 
 /-! The `#guard`s above are the project's machine-checked non-vacuity teeth (the sanctioned
 mechanism for executable, `qsort`-laden defs — a false `#guard` is a BUILD ERROR, exactly like a
