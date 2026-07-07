@@ -182,6 +182,11 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
 
 ## Done-log
 *(append one line per landing: commit · pillar · the two-pole proof · a-bar or b-bar)*
+- Pillar 4a (a-bar, wiring) — `node_hands.rs` (deos-hermes, `node-brain` feat): a confined brain's
+  run_js gets a `NodeWorldSink` reaching its node ONLY through the granted egress door;
+  `check_endpoint` gates the endpoint before booting anything; fail-closed on node refusal. 94 green,
+  both poles (Pole B admits-layer per provider_egress). Round-trip THROUGH node execution deferred to
+  the `test-support` TestNode export (next unit — shared infra for the 4a full proof + 2b).
 - Pillar 2 (a-bar) — `mud.rs` `speak_cap_for(world, token)`: the speak cap is derived from the
   on-ledger presence token (revoked unless the room c-list hosts it), the host-side speak table
   fully retired. 14/14 mud green (2 new, both poles: enter→admits, leave→same derivation refuses;

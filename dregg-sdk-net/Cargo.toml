@@ -62,6 +62,12 @@ zeroize = { workspace = true }
 # The client-side NodeWorldSink (a deos_js::WorldSink over a remote node's HTTP
 # API). Off by default: the base net layer stays mozjs-free.
 world-sink = ["dep:deos-js"]
+# A REAL-executor in-process test node (a hand-rolled HTTP/1.1 server over a live
+# dregg_turn::TurnExecutor serving the four routes the client speaks). Exported so
+# OTHER crates' tests (deos-hermes Pillar-4 round-trip, the MUD-over-node Pillar-2b)
+# drive a genuine node, not a stub. Deps (tokio/serde_json/postcard) are already
+# base deps, so the module compiles under this feature with no new dependency.
+test-support = []
 
 [dev-dependencies]
 dregg-intent = { path = "../intent" }
