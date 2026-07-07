@@ -1093,6 +1093,13 @@ impl BlocklaceHandle {
                     None => {
                         let lace_ffi = lace.clone();
                         let participants_ffi = participants.clone();
+                        // Timing observability for the O(history) verified-order FFI: a cache MISS
+                        // pays the full recompute. Under continuous round/heartbeat production the
+                        // lace changes every poll, so the fingerprint differs and this branch runs
+                        // every poll — the per-poll wall + lace size here is the honest measure of
+                        // the residual O(n²) cost (docs/VERIFIED-GATE-PERF.md).
+                        let lace_size = lace.iter().count();
+                        let ffi_started = std::time::Instant::now();
                         let computed = match tokio::task::spawn_blocking(move || {
                             crate::finality_gate::VerifiedFinality::compute_order(
                                 &lace_ffi,
@@ -1111,6 +1118,13 @@ impl BlocklaceHandle {
                                 None
                             }
                         };
+                        debug!(
+                            fingerprint = order_fingerprint,
+                            lace_size,
+                            ffi_ms = ffi_started.elapsed().as_millis() as u64,
+                            finalized = computed.as_ref().map(|o| o.len()).unwrap_or(0),
+                            "verified-order cache MISS, recomputed FFI"
+                        );
                         // Cache only a SUCCESSFUL verified order (a None fallback is not authoritative).
                         if let Some(ref order) = computed {
                             *self.last_order_fingerprint.write().await = Some(order_fingerprint);
