@@ -74,3 +74,29 @@ cross-node (solve submit-auth: passphrase+bearer). Marshal now; verified next.
   as transfer-dest provisioning); (3) keep /turn/submit operator-only.
 - THE PAYOFF NEEDS BOTH: submit-path (turn INTO the DAG) + n=3 finality-gate (DAG turns actually
   super-ratify+execute cross-node). Sequential gates on one pipeline.
+
+## n=3 finality-gate VERDICT (N3-ROOTCAUSE.md) — decisive, instrumented
+- Consensus is HEALTHY at n=3 (produce/deliver/cite all COMPLETE — instrumented: perfect-lockstep
+  DAG, full-cohort citation, no equivocation; plan_round_block IS supermajority-gated). NOT a race,
+  NOT fundamental degeneracy.
+- Rust `ordering::tau` on the live DAG finalizes ALL 3 turns (45/49 blocks).
+- THE BUG = a 5th step the framing missed: (e) the authoritative verified-LEAN tau-order finality
+  GATE (DREGG_FINALITY_GATE, default ON) finalizes a strict SUBSET of what Rust tau finalizes on
+  the SAME DAG. Flipping gate Lean→Rust (DREGG_FINALITY_GATE=0) → the SAME n=3 committee streams 3/3.
+- ⚑ "n=4 fixes it" was a CONFOUND — the n4 mesh ran gate-OFF (Rust tau, streams); the n3 harness ran
+  gate-ON (Lean, stalls). NODE COUNT IS SECONDARY; the finality-gate MODE is the real variable.
+  (ember's "is there an algorithmic issue at n=3?" skepticism was RIGHT — n4 masked, not fixed.)
+- This is a DIFFERENTIAL DIVERGENCE: the verified-Lean finality gate finalizes fewer turns than the
+  Rust sibling — the exact class the rust↔lean differential exists to catch. Connects to the
+  tau-FFI memoization (tauOrderFast_eq) / A1 work.
+
+## SYNTHESIS — why the payoff (a real flagship turn cross-node) doesn't land, and the fix
+Two sequential gates on one pipeline:
+- GATE 1 (submit-path, design gap): external client turns don't reach the DAG. Fix: route clients
+  through /turns/submit + provision the actor cell at finalization from SignedTurn.signer.
+- GATE 2 (finality-gate, Lean divergence): the verified-Lean gate stalls where Rust tau finalizes.
+  IMMEDIATE unblock = gate-OFF (DREGG_FINALITY_GATE=0, Rust tau, CORRECT — a config, not a code
+  change). REAL fix = reconcile the Lean finality gate with Rust tau (Lean/circuit — Alif/consensus).
+- IMMEDIATE PATH TO THE PAYOFF: submit-path fix + gate-off (Rust tau) → a real flagship turn should
+  finalize cross-node on the live mesh. NO verified executor needed for finality (gate-off Rust tau
+  is correct); the attestation is separate/real regardless. → SURFACE TO EMBER (decision).
