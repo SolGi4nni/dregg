@@ -12,9 +12,11 @@ verifiable) where there's a consumer, and beyond (cross-circuit composition + as
 apex). Done = engine + AIRs deleted, every survivor Lean-emitted + Rung-1&2-proven.
 
 ## Current thrust
-**Rung 0 + Rung 1 COMPLETE; Rung 2 TEMPLATE landed** (`DfaRoutingRung2.lean` `87b5e8ec4`:
-hterm DISCHARGED via the CollisionFree route-commitment binding → unconditional
-`Satisfied2 ⟹ final=classify`, adversarially CONFIRMED non-vacuous). Fanning Rung 2 out.
+**Rung 0 + Rung 1 COMPLETE; Rung 2 essentially COMPLETE** (`464c34b8d`): 10 DONE_AT_RUNG1
+(Rung 1 already = no-forgery) + 4 full Rung-2 (note_spending/quantified_absence/temporal/
+garbled) + 4 honest PARTIAL (membership/ivc/predicates-relational/revocation) + DFA template.
+Pending: predicates-arithmetic (StructuredOutput cap — re-run). Next real milestone = Phase 2b
+CUTOVER (⚠ ember-steer: high-risk shared-file change; the perf win lands here).
 
 ## Next 3 moves
 1. Await DFA Rung-2 conclusion → verify + commit the `DfaRoutingRung2` template (builds
