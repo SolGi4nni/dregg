@@ -12,8 +12,9 @@ verifiable) where there's a consumer, and beyond (cross-circuit composition + as
 apex). Done = engine + AIRs deleted, every survivor Lean-emitted + Rung-1&2-proven.
 
 ## Current thrust
-**Rung 1 COMPLETE — every family has a committed, verified whole-descriptor bridge.**
-DFA Rung-2 pathfinder running (`wf_4fd47e89-a55`). Next: fan Rung-2 out; open Phase 2b.
+**Rung 0 + Rung 1 COMPLETE; Rung 2 TEMPLATE landed** (`DfaRoutingRung2.lean` `87b5e8ec4`:
+hterm DISCHARGED via the CollisionFree route-commitment binding → unconditional
+`Satisfied2 ⟹ final=classify`, adversarially CONFIRMED non-vacuous). Fanning Rung 2 out.
 
 ## Next 3 moves
 1. Await DFA Rung-2 conclusion → verify + commit the `DfaRoutingRung2` template (builds
