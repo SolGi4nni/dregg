@@ -31,12 +31,18 @@ first (it deletes deployed code, irreversible-ish). Same hold on the membership 
 (additive proof only). Preference when it goes: INCREMENTAL, one consumer family at a time,
 whole-tree-build-gated, with a before/after perf benchmark wired into the first cutover.
 
-## Next 3 moves
-1. Await DFA Rung-2 conclusion → verify + commit the `DfaRoutingRung2` template (builds
-   green; real `CollisionFree` carrier + `cheatTrace` non-vacuity witness).
-2. Fan out Rung-2 across all families (additive `*Rung2.lean`, adversarial vacuity-hunt),
-   prioritizing the honest Rung-1 PARTIALs (membership, note_spending).
-3. Phase 2b: theorem-backed hand-AIR deletion for done families; then `git rm stark.rs`.
+## Next moves (both Rung-2 templates now committed; the rest is gated/polish)
+- DONE: `DfaRoutingRung2` (hterm discharged via `route_commitment_binds_trace` + `CollisionFree`,
+  cheatTrace necessity witness) — committed `87b5e8ec4`. `BilateralAggregationRung2`
+  (no-double-spend, structural/carrier-free, cheat_double_spend necessity witness) —
+  hand-verified + committed 2026-07-07 (workflows were killed by a process restart before
+  recording verdicts; I'm the integration gate, verified on my own tree).
+- SAFE / additive (do when worth it): push the honest Rung-2 PARTIALs → full — ivc,
+  predicates-relational-compound, revocation are crypto-dischargeable additive proof.
+- HELD (ember-gated, confirm first): Phase 2b cutover (16 prod files still call hand
+  `stark::prove`; rewire → `prove_vm_descriptor2` + delete hand AIRs + `git rm stark.rs`) and
+  the membership emit-fix (byte-golden). Wait for the free tree + ember confirm; go INCREMENTAL,
+  whole-tree-build-gated, perf-benchmarked.
 
 ## ⚑ Model-found finding (worth a fix, not a Rung-2 item)
 The membership Rung-1 PARTIAL surfaced a REAL DSL→IR-v2 drift: `AdjacencyMembershipEmit`
