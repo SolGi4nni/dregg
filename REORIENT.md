@@ -63,7 +63,38 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
-## ⚑⚑⚑ CURRENT STATE (2026-07-05 — grounded re-orient of a ~2-day drive; HEAD = `origin/main` a squashed "initial commit" @ 07-04, freshest tree)
+## ⚑⚑⚑ ADDENDUM (2026-07-06 late — THE WIDE PATH IS THE DEPLOYED DEFAULT; the block below is stale on its "STAGED" sober-part)
+
+Grounded review at HEAD (a Fable ground-truth pass, sdk/circuit read directly): the 07-05 block's
+"STAGED, NOT the deployed default / `umem_witness_enabled` stays false" is **no longer true**:
+
+- **The composed prover routes WIDE by default.** `sdk/src/full_turn_proof.rs::prove_cohort_run_chain`:
+  every normal cohort run proves through `prove_effect_vm_rotated_wide` (the 8-felt
+  `WIDE_REGISTRY_STAGED_TSV` family); the leg publishes the full 8-felt BEFORE/AFTER commits and
+  `verify_full_turn_bound` binds them — the routing comment says it plainly: "The 1-felt waist is
+  GONE for every normal effect on the composed full-turn / light-client surface." Named residual:
+  the **cap-open path's wide migration** (still on its own cap-open descriptor route; `go_wide`
+  fires per-key when the wide descriptor exists). `umem_witness_enabled` defaults **true**
+  (`turn/src/executor/mod.rs`, all three constructor sites); the umem weld rides when the witness
+  is threaded, fail-closed.
+- **The gentian-wide campaign (07-06, CP1→CP6b) hardened the WIDE path as the deployed surface** —
+  capacity-floor refuse lifted to the wide bare cohort, wide+welded TSVs regenerated, the
+  deployed forge flips to REJECTED, sovereign+membership deployed tooths green, audit CLOSED.
+  (Earlier same day the gentian flag-day completeness red — honest legs failing LC verify — was
+  fixed at `f51a75f0f`, independently re-verified: flip 15/15, coverage 4/4, lifecycle 3/3.)
+- **What has NOT happened: the operational cut.** `178ed5ab0` is "docs/scripts only — NOT the live
+  cut": the coordinated-cut **T0 checklist** (David homelab, lassie+snoopy) is written; the
+  lean-seed pin's `TAG` is still **empty** ("no seed published yet — the gating action"); no
+  wipe+genesis+restart has run. Meanwhile a separate terminal drives a **non-homelab local net
+  across hbox-persvati-nextop** while David is inactive.
+- Fossil warning: staging-era comments in `circuit/src/effect_vm_descriptors.rs` ("the live 1-felt
+  `V3_STAGED_REGISTRY_TSV` is UNTOUCHED", ~:1182-1229) describe the ADDITIVE era and predate the
+  routing cutover — read the sdk routing, not those comments, for what is deployed.
+- ⚠ Git archaeology: the AGPL relicense rewrote ALL history (again after the 07-04 squash) —
+  `git log -S` dates everything to the new `initial commit`; verify claims against code at HEAD,
+  never against commit-sha provenance.
+
+## ⚑⚑⚑ (partially SUPERSEDED ↑ 2026-07-06) CURRENT STATE (2026-07-05 — grounded re-orient of a ~2-day drive; HEAD = `origin/main` a squashed "initial commit" @ 07-04, freshest tree)
 
 > ⚑ GIT TOPOLOGY: the working tree = `origin/main` = a single squashed `initial commit` dated 07-04 14:09
 > (a cleaned public-facing snapshot — it strip-deleted `orb/`, `sandstorm-bridge/` slop). The REAL
