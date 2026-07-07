@@ -31,6 +31,15 @@ pub use distributed_ffi::{
 };
 pub use marshal::{AdmissionReason, TurnStatus, WireState};
 
+// STORAGE-IN-LEAN EXTRACTION — force-link circuit's `dregg_poseidon2_2to1` into the binary. The
+// leanc-compiled storage content-root logic (`Dregg2.Storage.Deployed.poseidon2Hash`) calls it via
+// `@[extern "dregg_poseidon2_2to1"]`, but NO Rust code references circuit, so without this `#[used]`
+// pointer the linker dead-strips the whole `dregg_circuit` rlib and the symbol goes undefined.
+#[cfg(dregg_storage_content_root_present)]
+#[used]
+static _FORCE_LINK_POSEIDON2: unsafe extern "C" fn(u64, u64) -> u64 =
+    dregg_circuit::storage_ffi::dregg_poseidon2_2to1;
+
 /// Decoded Lean gated-forest verdict (T9 output envelope).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShadowVerdict {
@@ -269,6 +278,12 @@ mod ffi {
             out: *mut c_char,
             out_cap: usize,
         ) -> usize;
+        #[cfg(dregg_storage_content_root_present)]
+        fn dregg_storage_content_root_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
     }
 
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
@@ -403,6 +418,44 @@ mod ffi {
     #[cfg(not(dregg_decide_refines_present))]
     pub fn lean_decide_refines(_wire: &str) -> Result<String, String> {
         Err("dregg_decide_refines not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    /// STORAGE-IN-LEAN EXTRACTION — run the VERIFIED Lean content-root over the deployed Poseidon2.
+    /// Input: space-separated object int-triples; output: the content root as a decimal string.
+    #[cfg(dregg_storage_content_root_present)]
+    pub fn lean_storage_content_root(wire: &str) -> Result<String, String> {
+        lean_string_bridge(
+            wire,
+            dregg_storage_content_root_str,
+            "dregg_storage_content_root_str",
+        )
+    }
+
+    #[cfg(all(test, dregg_storage_content_root_present))]
+    mod storage_extraction {
+        use super::*;
+        /// THE ROUND-TRIP: the verified Lean content-root logic runs (leanc-compiled native),
+        /// calling the fast Rust Poseidon2 through `@[extern "dregg_poseidon2_2to1"]` — the real
+        /// "Lean is the runtime" for storage, end to end.
+        #[test]
+        fn verified_content_root_runs_in_lean_calling_rust_poseidon2() {
+            lean_init_once().expect("init the Lean runtime");
+            let r1 = lean_storage_content_root("1 2 3").expect("round-trip");
+            assert!(
+                !r1.is_empty() && r1 != "0",
+                "a real content root felt: {r1}"
+            );
+            assert_eq!(
+                r1,
+                lean_storage_content_root("1 2 3").unwrap(),
+                "deterministic"
+            );
+            assert_ne!(
+                r1,
+                lean_storage_content_root("1 2 4").unwrap(),
+                "the root binds the object set"
+            );
+        }
     }
 }
 

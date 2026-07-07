@@ -244,6 +244,10 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         // into the IR closure — but list it explicitly so a fresh lane with a cold `.lake` emits its
         // `.c` and the splice picks up the `dregg_exec_full_forest_auth_direct` + `dregg_d_*` symbols.
         "Dregg2.Exec.FFIDirect",
+        // STORAGE-IN-LEAN extraction: the verified content root over the deployed Poseidon2
+        // (`@[export] dregg_storage_content_root`), OUTSIDE the FFI closure — build it so its `.c` IR
+        // is emitted and the splice picks up the export.
+        "Dregg2.Storage.Deployed",
     ];
     let lake_status = Command::new("lake")
         .arg("build")
@@ -1319,6 +1323,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_distributed_exports_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_decide_refines_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_direct_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_storage_content_root_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -1664,6 +1669,12 @@ fn main() {
     // (an archive-member-ordering hazard). Forcing the whole archive in guarantees the
     // bridge symbols are present regardless of link order — the empirical fix for the
     // `marshal_roundtrip` / `full_turn_differential` link failures.
+    let storage_content_root_present =
+        archive_exports(&build_archive, "dregg_storage_content_root");
+    if storage_content_root_present {
+        println!("cargo:rustc-cfg=dregg_storage_content_root_present");
+    }
+
     let mut shim = cc::Build::new();
     shim.file("src/lean_init.c").include(&lean_include);
     // The SINGLE-THREADED / libuv-thread-free init (docs/EMBEDDABLE-LEAN-RUNTIME.md).
@@ -1708,6 +1719,9 @@ fn main() {
     }
     if decide_refines_present {
         shim.define("DREGG_DECIDE_REFINES", None);
+    }
+    if storage_content_root_present {
+        shim.define("DREGG_STORAGE_CONTENT_ROOT", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

@@ -94,6 +94,9 @@ path = "src/marshal_conformance.rs"
 # Reproduces circuit::air_descriptor::fingerprint (BLAKE3-derive-key) so the
 # decoded-Lean AIR can be fingerprint-bound to the Rust-native AIR.
 blake3 = "1"
+# STORAGE-IN-LEAN extraction: provides the dregg_poseidon2_2to1 @[extern] symbol the Lean-compiled
+# storage content-root logic calls back into (circuit::storage_ffi). Resolved at final link.
+dregg-circuit = { path = "../circuit" }
 # The REAL adversarial fuzzer (E6): proptest drives generated adversarial full-turns
 # (overflow/underflow amounts, unauthorized delegates, double-mints, empty/huge lists,
 # malformed orderings) through BOTH the Lean FFI oracle and the Rust reference, asserting
