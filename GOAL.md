@@ -338,3 +338,13 @@ REMAINING (2):
 2. vat verified-turn wire — vat has ZERO executor integration (no cipherclerk/executor imports). A
    from-scratch feature: transition->effects builder + fire_vat_transition + install + a two-pole
    executor test. A genuine feature build (not a residual-bug), buildable next.
+
+### RESIDUAL GRIND — round 4 (2026-07-07): vat wire CLOSED. Only canonical VK remains (genuinely ember-gated).
+- vat verified-turn wire CLOSED (8852203ae): seed_vat installs vat_cell_program; vat_transition_effects
+  writes the two lifecycle slots; fire_vat_transition submits a transition through the executor, which
+  RE-ENFORCES the invariants. Two-pole test: Created->Running admitted; Running->Created (phase-rank
+  regression) REFUSED in the fire path. Docs corrected. [Campaign total: 13 fixes.]
+ONLY REMAINING: canonical_32_to_felts VK regen — a 9-felt AIR-width change + a DEPLOYED-VK regeneration
+that RE-KEYS the live federation. This is not a code fix I can land; it re-keys ember's running mesh.
+Dual-BLAKE3 binds fully meanwhile, and the masking is non-exploitable for the CR-digest inputs these
+fingerprints actually take. -> genuine ember decision (regen the VK, or accept the dual-form binding).
