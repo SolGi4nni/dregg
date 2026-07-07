@@ -29,13 +29,22 @@ inhabited world.
 + GREEN + committed: Pillars 0, 1, 2, 2b, 3, 4a + the shared `test-support` TestNode. The wire is
 dumb, the proof is smart — proven in-process / loopback / over a local Conduit, each with two poles.
 
-**NEW THREAD (buildable-now, NOT iron-gated): homeserver-as-a-grain** (`docs/deos/GRAIN-HOMESERVER.md`).
-Makes Pillar 3 self-hosted — the membrane's Matrix homeserver becomes a confined, metered, R2 grain
-instead of an external Conduit. Body DECIDED = real Conduit (`~/src/conduit`, building now to de-risk).
-Sequence: (1) build Conduit + prove it drives the real card-carry loop unconfined [APP, now]; (2) the
-three firmament doors — `exec_allow` / `grant_read_write` / listen-door [KERNEL, design-first, NOT a
-thin-context swarm — the doc IS the design pass]; (3) the confined spawn welds them; (4) agent-platform
-lease + R2. Steps 1 and 2 are independent. Current: step 1, Conduit `cargo check` in flight.
+**"DREGG HOSTS THE COMMUNITY" — two buildable-now sibling threads (NOT iron-gated):**
+
+- **homeserver-as-a-grain** (`docs/deos/GRAIN-HOMESERVER.md`) — makes Pillar 3 self-hosted; the Matrix
+  homeserver becomes a confined, metered, R2 grain. Body: a Rust conduit-lineage homeserver embedded
+  as a **lib** in the grain body (NOT execve — the census found conduit-family is `[lib]`+thin`[[bin]]`,
+  so the execve door DISSOLVES; and `Confinement::with_fds` already hands a pre-bound listener fd, so
+  the listen door mostly dissolves too → the "three doors" collapse to ONE: `grant_read_write` for the
+  DB dir). `~/src/conduit` is dormant; a LIVE SCOUT (continuwuity/tuwunel/grapevine: alive? lib clean?
+  matrix-sdk-compat?) is running to pick the real fork. Non-Rust homeservers (Synapse/Dendrite) ride
+  the **sandstorm rail** (execve-in-chroot .spk grain) — both worlds covered.
+- **dregg-native forge** (`docs/deos/DREGG-FORGE.md`) — no git; dregg's Pijul patch theory IS the VCS
+  (`dregg-doc/depend.rs` = operational Pijul, `cell_git.rs` git-face, branch-and-stitch = PRs,
+  `COLL_HISTORY` = owned history). First slice BUILDING: the `PullRequest` object + review-as-stitcher
+  (clean→pushout merge; conflict→ConflictRegion refused-until-resolved; non-cap-holder merge refused),
+  welded over the existing patch core via executor_drive's cap gate. The forge-grain is the
+  homeserver-grain's sibling — a town with a square and a workshop.
 
 **What remains is IRON-GATED (ember): the b-bars + the capstone need real boxes.** Nothing more is
 buildable-now without the `hbox-persvati-nextop` localnet. Do NOT invent busywork. When the localnet
