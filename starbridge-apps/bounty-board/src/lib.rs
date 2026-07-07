@@ -796,8 +796,9 @@ impl BountyTreasury {
     /// interface** — the cross-app value flow. `dest` is the receiving cell
     /// (typically an escrow-market escrow cell); `reward` is the conserved credit
     /// amount. Desugars to a single conserving kernel `Effect::Transfer`
-    /// (`treasury → dest`) routed through the shared interface. The returned
-    /// [`Turn`] is submitted through the embedded executor on the shared `World`.
+    /// (`treasury → dest`) routed through the shared interface. This helper BUILDS
+    /// the signed [`Turn`]; the caller submits it through the embedded executor on
+    /// the shared `World` to commit.
     pub fn payout(
         &self,
         cipherclerk: &AppCipherclerk,

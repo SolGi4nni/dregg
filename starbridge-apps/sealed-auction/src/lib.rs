@@ -26,8 +26,10 @@
 //! pays its bid to the seller; leg 2: the seller's slot cell delivers the task-token to the winner —
 //! and folds it through [`dregg_intent::verified_settle::settle_ring_verified`], the Rust mirror of
 //! the Lean `Ring.settleRing`/`SealedAuction.settle`. That fold runs the verified per-asset
-//! transition `recKExecAsset` for every leg (and, under the intent crate's `verified-settle`
-//! feature, cross-checks each leg against the REAL Lean FFI export). A leg that fails its gate aborts
+//! transition `recKExecAsset` for every leg (and, when the host has registered the Lean intent gate
+//! — `dregg-exec-lean::register_distributed_gates()`, as a native node does at startup — cross-checks
+//! each leg against the REAL Lean FFI export; unregistered, no FFI cross-check runs). A leg that
+//! fails its gate aborts
 //! the whole award (atomicity); a committed award provably conserves every asset (conservation). The
 //! coordination is therefore settled by the verified executor, not by a Rust-only shadow.
 //!

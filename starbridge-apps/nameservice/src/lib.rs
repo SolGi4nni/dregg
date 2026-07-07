@@ -19,8 +19,8 @@
 //!
 //! 1. [`name_factory_descriptor`] — the `FactoryDescriptor` for
 //!    per-name sovereign cells (rent + ownership state machine). Bakes
-//!    in the rent-extension field constraint, the
-//!    monotone-increasing name-hash slot, and a per-epoch creation
+//!    in the write-once name-hash slot, the monotone-increasing expiry
+//!    slot, the owner-authorization caveats, and a per-epoch creation
 //!    budget to rate-limit Sybil registration.
 //!
 //! 2. [`FACTORY_DESCRIPTORS`] — a slice of all factory descriptors this
@@ -39,9 +39,9 @@
 //!
 //! 4. [`build_renew_action`] — increments the registry cell's
 //!    `EXPIRY_SLOT` by the configured rent-extension epoch length and
-//!    emits a `name-renewed` event. The on-cell `FieldDelta` constraint
-//!    baked into the factory descriptor enforces the increment is
-//!    exact.
+//!    emits a `name-renewed` event. The baked-in `Monotonic(EXPIRY_SLOT)`
+//!    caveat enforces the expiry only moves forward; the exact-increment
+//!    `FieldDelta` caveat (Tier-1 #1) is not yet baked in.
 //!
 //! 5. [`build_transfer_action`] — the CURRENT owner re-points the
 //!    owner-hash slot and stages the incoming owner's raw key; the

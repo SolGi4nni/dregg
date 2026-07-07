@@ -5,17 +5,19 @@
 //! mutable log line; with dregg a signed, cap-checked, budget-metered, proof-carrying turn.* For an
 //! LLM agent the tool call IS that seam: the MCP `tools/call` JSON-RPC request the model emits. This
 //! module binds it — an MCP tool call by a worker is run AS a verified [`crate::WorkStep`] through the
-//! real executor, so the on-ledger receipt cryptographically binds the EXACT tool name + arguments the
-//! loop invoked, and a call to a tool OUTSIDE the worker's mandate is REFUSED in the fire path.
+//! real executor, so the on-ledger receipt binds the tool name + a 64-bit truncation of the call's
+//! content-address ([`McpToolCall::digest_hex`] — full-32-byte-digest binding is the named next
+//! slice), and a call to a tool OUTSIDE the worker's mandate is REFUSED in the fire path.
 //!
 //! ## What this closes
 //!
 //! Before: the orchestration's [`crate::Tool`] was an enum the engine gated, but nothing tied a worker's
 //! REAL tool invocation (the MCP request) to the gated step — the binding was by convention. Now an MCP
-//! `tools/call` is mapped to a `(Tool, cost)`, run through [`crate::OrchestrationEngine::step`], and the
-//! call's content-address (`blake3(name ‖ arguments)`) is bound into the step's sub-task — so the
-//! receipt PROVES which tool, with which arguments, the worker ran, and the mandate gate (scope ∧
-//! budget) decided it. A worker that emits an MCP call for a tool its mandate does not grant is refused
+//! `tools/call` is mapped to a `(Tool, cost)`, run through [`crate::OrchestrationEngine::step`], and a
+//! 64-bit truncation of the call's content-address (`blake3(name ‖ arguments)`) is bound into the
+//! step's sub-task — so the receipt pins which tool the worker ran and commits to its arguments at
+//! 64-bit strength (collision-findable by the argument-chooser at ~2³²; the full digest is the named
+//! next slice), and the mandate gate (scope ∧ budget) decided it. A worker that emits an MCP call for a tool its mandate does not grant is refused
 //! ([`crate::OrchestrationError::OutOfMandate`]) BEFORE the call has any effect — the enforcement the
 //! four integrators all punted on, at the exact seam.
 //!
@@ -32,15 +34,16 @@ use crate::{
     OrchestrationEngine, OrchestrationError, OrchestrationLog, Tool, WorkStep, WorkerSlot,
 };
 
-/// One MCP `tools/call` request — the JSON-RPC params an LLM agent emits to invoke a tool. The
-/// content-address of `(name, arguments)` is what the verified step binds, so the receipt proves the
-/// exact call. (The transport/JSON-RPC framing is the host's; this is the decoded call.)
+/// One MCP `tools/call` request — the JSON-RPC params an LLM agent emits to invoke a tool. A 64-bit
+/// truncation of the content-address of `(name, arguments)` is what the verified step binds
+/// ([`Self::digest_hex`]), so the receipt pins the call at that strength. (The transport/JSON-RPC
+/// framing is the host's; this is the decoded call.)
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct McpToolCall {
     /// The MCP tool name the model invoked (e.g. `"search"`, `"write_file"`).
     pub name: String,
-    /// The tool arguments, as the model passed them (the MCP `arguments` object). Bound into the
-    /// step's content-address so the receipt pins WHICH arguments ran.
+    /// The tool arguments, as the model passed them (the MCP `arguments` object). Hashed into the
+    /// call's content-address; the step binds its 64-bit truncation ([`Self::digest_hex`]).
     pub arguments: serde_json::Value,
 }
 
@@ -53,9 +56,10 @@ impl McpToolCall {
         }
     }
 
-    /// The **content-address** of this call — `blake3(name ‖ canonical-json(arguments))`, the digest the
-    /// verified step binds so the receipt proves the exact tool + arguments the worker ran. Deterministic
-    /// (a third party recomputes it from the published call).
+    /// The **content-address** of this call — `blake3(name ‖ canonical-json(arguments))`. The verified
+    /// step binds the [`Self::digest_hex`] truncation of this digest (64 bits), so the receipt commits
+    /// to the call at that strength. Deterministic (a third party recomputes it from the published
+    /// call).
     pub fn digest(&self) -> [u8; 32] {
         let mut h = blake3::Hasher::new();
         h.update(b"dregg-mcp-tool-call\x01");
@@ -136,8 +140,9 @@ impl std::error::Error for McpStepError {}
 
 /// **Run an MCP tool call AS a verified worker step.** This is the live-MCP binding: the `call` a
 /// worker loop emits is classified ([`tool_for_mcp_name`]), then run through the verified executor as a
-/// [`crate::WorkStep`] whose sub-task is the call's content-address (`mcp/<name>/<digest>`), so the
-/// committed receipt cryptographically binds WHICH tool, with WHICH arguments, the worker ran. The
+/// [`crate::WorkStep`] whose sub-task is the tool name + the call's truncated content-address
+/// (`mcp/<name>/<digest_hex>`, 64 bits — the full digest is the named next slice), so the committed
+/// receipt pins WHICH tool the worker ran and commits to its arguments at that strength. The
 /// mandate gate decides it in the fire path:
 ///   * an UNKNOWN tool ⇒ [`McpStepError::UnknownTool`] (fail-closed, nothing submitted);
 ///   * a tool outside the worker's granted scope, or over its sub-budget ⇒
@@ -145,7 +150,8 @@ impl std::error::Error for McpStepError {}
 ///   * an over-swarm-budget call ⇒ [`McpStepError::Refused`] (the executor's `AffineLe` gate).
 ///
 /// On commit the receipt is appended to `log` (the durable, auditable chain) — so an auditor later
-/// proves the worker invoked ONLY tools its mandate granted, at the arguments the chain records.
+/// proves the worker invoked ONLY tools its mandate granted (arguments pinned via the 64-bit
+/// truncation the chain records).
 pub fn step_from_mcp_call(
     engine: &mut OrchestrationEngine,
     worker: WorkerSlot,
@@ -154,7 +160,8 @@ pub fn step_from_mcp_call(
 ) -> Result<dregg_turn::TurnReceipt, McpStepError> {
     let binding = tool_for_mcp_name(&call.name)
         .ok_or_else(|| McpStepError::UnknownTool(call.name.clone()))?;
-    // The step's sub-task is the call's content-address — so the receipt binds the exact MCP call.
+    // The step's sub-task carries the tool name + the 64-bit truncated content-address — the
+    // receipt's argument commitment is at that strength (full digest = the named next slice).
     let sub_task = format!("mcp/{}/{}", call.name, call.digest_hex());
     let step = WorkStep::new(worker, binding.tool, binding.cost, &sub_task);
     engine.step(&step, log).map_err(McpStepError::Refused)

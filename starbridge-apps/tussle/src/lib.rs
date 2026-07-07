@@ -43,9 +43,11 @@
 //!    per-asset executor ([`dregg_intent::verified_settle::settle_ring_verified`], the Rust mirror
 //!    of the Lean `Ring.settleRing`). The figures' score cells are the ledger accounts; the contact
 //!    resolution is a deterministic function over the two revealed joint vectors, emitted as ring
-//!    legs. On every native build (Lean unconditional) each leg is ALSO cross-checked against the
-//!    REAL Lean executor export, leg by leg — so an advanced frame's score move IS a verified,
-//!    conserving executor turn, not a Rust-only shadow.
+//!    legs. When the host has installed the Lean intent gate (as a native node does at startup via
+//!    `dregg-exec-lean::register_distributed_gates()`) each leg is ALSO cross-checked against the
+//!    REAL Lean executor export, leg by leg; with no gate registered (this crate's own process,
+//!    tests included) the fold is the in-process Rust mirror of the proven transition — no FFI
+//!    cross-check runs.
 //!
 //! ## Cap ∧ state gating
 //!

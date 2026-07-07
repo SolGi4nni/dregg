@@ -984,8 +984,11 @@ pub struct AuditOk {
 ///   3. **per-step mandate re-check** — for each logged step, the auditor RE-DERIVES the worker's
 ///      running spend and re-checks [`Mandate::authorizes`]: a step whose tool is outside the worker's
 ///      granted scope, or whose running spend exceeds the sub-budget, is caught
-///      ([`AuditError::OverMandate`]); the logged meter post-image must equal the re-derived value (the
-///      meter cannot be forged);
+///      ([`AuditError::OverMandate`]); the logged meter post-image must equal the value re-derived
+///      from the log's OWN step records — arithmetic consistency, NOT receipt-binding: the audit does
+///      not yet cross-check a step record's tool/cost against its receipt's emitted event, so a log
+///      that pairs genuine receipts with an understated `cost` audits clean (the receipt already
+///      carries the data; that cross-check is the named next slice);
 ///   4. **swarm-budget conservation** — `spent_a + spent_b <= coordinator.budget`, the affine bound the
 ///      executor's `AffineLe` gate enforced, re-checked over the audited totals.
 ///
@@ -1047,7 +1050,8 @@ pub fn audit_run(
                 ),
             });
         }
-        // The logged post-image must equal the re-derived running spend (the meter cannot be forged).
+        // The logged post-image must equal the re-derived running spend (arithmetic consistency over
+        // the log's own step records; the step↔receipt content cross-check is the named next slice).
         let derived = running.saturating_add(e.step.cost);
         if derived != e.spent_after {
             return Err(AuditError::OverMandate {

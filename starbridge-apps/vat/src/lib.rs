@@ -29,9 +29,11 @@
 //! *computer*: a **lifecycle state machine** ([`VatState`]) and a **placement
 //! binding** (which backend machine currently holds the running World). The
 //! economics + durable cursor are the lease's; the vat layers its state machine
-//! ON TOP, re-enforced by the same executor teeth.
+//! ON TOP. The vat's teeth are CARRIED by [`vat_cell_program`] — nothing in this
+//! crate installs it or submits a turn yet (that wire is the named next slice);
+//! today the pure apply layer ([`lifecycle`]) is the enforcing gate.
 //!
-//! ## The lifecycle — a verified state machine
+//! ## The lifecycle — the state machine (executor-enforceable, not yet wired)
 //!
 //! ```text
 //! Created ──launch──▶ Running ──sleep──▶ Sleeping ──wake──▶ Running
@@ -40,9 +42,11 @@
 //! (reap) ────────────────────────────────▶ Reaped
 //! ```
 //!
-//! Every transition — `launch` / `sleep` / `wake` / `lapse` / `reap` — is a
-//! verified turn. The machine is encoded on TWO executor-enforced axes (because it
-//! is not linear — sleep/wake move up and down *within* being alive):
+//! Every transition — `launch` / `sleep` / `wake` / `lapse` / `reap` — is shaped
+//! to land as a verified turn (none is submitted as one yet — see the honest
+//! boundary below). The machine is encoded on TWO axes (because it is not linear —
+//! sleep/wake move up and down *within* being alive); only the first carries an
+//! executor constraint:
 //!
 //! * the **phase** slot ([`VAT_PHASE_SLOT`], `Monotonic`): the one-way terminality
 //! axis `Provisioned < Live < Lapsed < Reaped` — Reaped is terminal, Lapsed
@@ -59,8 +63,11 @@
 //!
 //! ## The honest boundary
 //!
-//! The verified core is the lifecycle + economics + durable cursor — all cells,
-//! all re-enforced. What is NOT in the verified core (and never should be): the
+//! The verifiable core is the lifecycle + economics + durable cursor — all cells.
+//! The economics/cursor teeth are the lease crate's; the vat's own program
+//! ([`vat_cell_program`]) is offered but NOT yet installed by any path here, and
+//! no vat transition is yet submitted through an executor — the apply layer is a
+//! host-side write. What is NOT in the verifiable core (and never should be): the
 //! operational provisioning glue (spinning an actual VM, the mesh overlay, the
 //! backend placement decision). That stays an imperative adapter the vat *drives*
 //! — it reads the vat cell's state and makes the box match. So a light client
@@ -243,7 +250,8 @@ impl VatState {
     }
 }
 
-/// The vat lifecycle TRANSITIONS, each a verified turn. Modeling the transition as
+/// The vat lifecycle TRANSITIONS, each shaped to land as a verified turn (today
+/// applied host-side by [`lifecycle::apply_transition`]). Modeling the transition as
 /// data (rather than only imperative code) lets the executor + a light client
 /// agree on the machine: a transition is legal iff it raises-or-holds the state
 /// rank AND its precondition holds.
@@ -301,9 +309,10 @@ impl VatTransition {
 // The verified core — the vat cell program, LAYERED over the lease invariants
 // =============================================================================
 
-/// The **life-of-vat invariants** the executor re-enforces on every touching turn,
-/// ON TOP of [`lease::lease_invariants`] (the economics + durable-cursor teeth the
-/// vat inherits by being a lease cell):
+/// The **life-of-vat invariants** the executor re-enforces on every touching turn
+/// once a host installs them (see the crate header — nothing here installs them
+/// yet), ON TOP of [`lease::lease_invariants`] (the economics + durable-cursor
+/// teeth the vat inherits by being a lease cell):
 ///
 /// * `Monotonic` on `VAT_STATE` — the lifecycle rank only advances (the state
 /// machine, enforced as an order — see [`VatState`]);
@@ -324,8 +333,9 @@ pub fn vat_invariants() -> Vec<StateConstraint> {
 }
 
 /// The vat cell program: an `Always` case carrying [`vat_invariants`] — the vat's
-/// lifecycle machine + the inherited lease economics/cursor teeth, re-enforced on
-/// EVERY turn that touches a vat cell. A vat cell is thereby a strict extension of
+/// lifecycle monotonicity + the inherited lease economics/cursor teeth, re-enforced
+/// on EVERY touching turn once installed (the install wire is the named next
+/// slice). A vat cell is thereby a strict extension of
 /// a lease cell: everything the lease admits (`open`/`pay`/`advance`/`lapse`) still
 /// holds, plus the vat's lifecycle monotonicity.
 pub fn vat_cell_program() -> CellProgram {
@@ -335,8 +345,9 @@ pub fn vat_cell_program() -> CellProgram {
     }])
 }
 
-/// The vat invariants as a flat `Predicate` program — installed on a seeded vat
-/// cell so the deos fires re-enforce them.
+/// The vat invariants as a flat `Predicate` program — for a host to install on a
+/// seeded vat cell so its fires re-enforce them (no path in this crate installs
+/// it yet).
 pub fn vat_invariants_program() -> CellProgram {
     CellProgram::Predicate(vat_invariants())
 }

@@ -381,7 +381,9 @@ pub fn bind_effects(cell: CellId, site: &str, nonce: &str) -> Vec<Effect> {
 /// `VERIFIED_SEQ` to `verified_seq`, then emit `domain-verified`. The executor
 /// re-enforces `Monotonic(VERIFICATION_STATE)` + `Monotonic(VERIFIED_SEQ)` on the
 /// produced transition — so the flip is one-way and a rewound sequence is a real
-/// refusal. Built only after [`dns::challenge_satisfied`] holds.
+/// refusal. The DNS-control gate is upstream and the CALLER's: compose with
+/// [`dns::challenge_satisfied`] (as `DomainRegistry::verify` does) before building —
+/// this effect builder itself checks no DNS.
 pub fn verify_effects(cell: CellId, verified_seq: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
@@ -425,8 +427,9 @@ pub fn build_bind_action(cipherclerk: &AppCipherclerk, site: &str, nonce: &str) 
 }
 
 /// Build the on-ledger [`Action`] that records a verification (flip
-/// `VERIFICATION_STATE` + advance `VERIFIED_SEQ`). Built only after the DNS challenge
-/// is satisfied; the executor re-enforces the `Monotonic` teeth.
+/// `VERIFICATION_STATE` + advance `VERIFIED_SEQ`). The caller checks the DNS challenge
+/// ([`dns::challenge_satisfied`], as `DomainRegistry::verify` does) before building —
+/// this builder does not; the executor re-enforces only the `Monotonic` teeth.
 pub fn build_verify_action(cipherclerk: &AppCipherclerk, verified_seq: u64) -> Action {
     let cell = cipherclerk.cell_id();
     cipherclerk.make_action(cell, "verify_domain", verify_effects(cell, verified_seq))
@@ -456,8 +459,9 @@ pub const METHOD_REGISTER: &str = "register";
 /// The OWNER points the domain at a site + issues the DNS challenge — the
 /// DomainCap-gated, `WriteOnce(CHALLENGE_NONCE)` op. See [`METHOD_REGISTER`].
 pub const METHOD_BIND: &str = "bind";
-/// The OWNER flips the domain to verified once DNS proves control — the one-way
-/// `Monotonic` op. See [`METHOD_REGISTER`].
+/// The OWNER flips the domain to verified — the one-way `Monotonic` op (the
+/// DNS-control check is the registry's, upstream of this turn; this op does not
+/// re-check it). See [`METHOD_REGISTER`].
 pub const METHOD_VERIFY: &str = "verify";
 /// A RESOLVER reads the verified `site` a domain points at. See [`METHOD_REGISTER`].
 pub const METHOD_RESOLVE: &str = "resolve";
@@ -482,7 +486,8 @@ pub fn pending_precondition() -> CellProgram {
 ///   a `SetField` sealing `OWNER` (the genesis representative);
 /// * `bind` — cap-only (the OWNER points at a site + seals the nonce): `None`/root, a
 ///   `SetField` sealing `CHALLENGE_NONCE` (the DomainCap-gated write);
-/// * `verify` — a [`GatedAffordance`] (the OWNER proves DNS control): `None`/root, the
+/// * `verify` — a [`GatedAffordance`] (the OWNER asserts verification; the DNS-control
+///   proof lives in `DomainRegistry::verify`, not in this gate): `None`/root, the
 ///   not-yet-verified PRECONDITION; the real fire ([`fire_verify`]) submits a turn that
 ///   flips `VERIFICATION_STATE` + advances `VERIFIED_SEQ` off the LIVE height,
 ///   re-enforced by the executor's `Monotonic` teeth (a re-verify goes DARK, a rewind

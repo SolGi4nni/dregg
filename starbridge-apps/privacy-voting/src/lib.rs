@@ -48,8 +48,9 @@
 //!   `state_constraints` so every born cell inherits the gating.
 //! - [`factory_descriptors`] — both descriptors for host registration.
 //! - [`build_open_poll_action`] — writes `QUESTION_HASH`, emits `poll-opened`.
-//! - [`build_cast_vote_action`] — writes the ballot `VOTE` slot + bumps the
-//!   matching poll tally slot in one signed turn, emits `vote-cast`.
+//! - [`build_cast_vote_action`] — writes the ballot `VOTE` slot, emits
+//!   `vote-cast` (the tally bump is the separate [`build_record_tally_action`],
+//!   composable into one turn at the call-site).
 //! - [`build_close_poll_action`] — sets the poll `CLOSED` slot (one-way),
 //!   emits `poll-closed`.
 //! - [`register`] — mounts the app's factories + inspectors on a

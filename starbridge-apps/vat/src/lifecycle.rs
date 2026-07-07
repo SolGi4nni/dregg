@@ -7,10 +7,11 @@
 //! [`VatState::Created`]. Every lifecycle move — launch / sleep / wake / lapse /
 //! reap — is [`apply_transition`]: it reads the current two-axis state, refuses an
 //! illegal move ([`VatTransition::is_legal_from`]), and writes the new
-//! `(phase, up)` slots. Because the phase slot is `Monotonic` and up is free, the
-//! executor re-enforces exactly this machine on the committed turn — a caller that
-//! hand-writes an illegal state (e.g. un-lapsing) is bitten by the tooth, and this
-//! pure layer refuses it up front so the two agree.
+//! `(phase, up)` slots. Once a host installs [`crate::vat_cell_program`] and commits
+//! turns through an executor, the `Monotonic` phase tooth bites there too — a caller
+//! that hand-writes an un-lapse is refused. That tooth is COARSER than this machine
+//! (it admits rank-holding moves this layer refuses), and today no path installs it:
+//! this pure layer is the enforcing gate.
 
 use dregg_cell::Cell;
 use dregg_cell::prepaid_lease;

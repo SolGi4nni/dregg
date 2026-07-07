@@ -802,7 +802,7 @@ pub fn gateway_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
 /// seed `VOLUME_SPENT = 0` (a fresh, fully-funded budget) so a real `(old, new)` baseline
 /// exists against which `put` debits the meter.
 ///
-/// After seeding, the gateway is configured with a `ceiling`-byte budget, all spent. A
+/// After seeding, the gateway is configured with a `ceiling`-byte budget, nothing spent. A
 /// caller passes a small `ceiling` to exercise the over-budget tooth quickly.
 pub fn seed_gateway(
     executor: &EmbeddedExecutor,

@@ -62,7 +62,7 @@ pub fn interface_descriptor() -> InterfaceDescriptor {
         mutator(METHOD_REGISTER, 2),
         // bind(site, nonce): point at a site + seal the DNS challenge.
         mutator(METHOD_BIND, 2),
-        // verify(verified_seq): flip to verified once DNS proves control.
+        // verify(verified_seq): flip to verified (caller checks DNS control via the registry first).
         mutator(METHOD_VERIFY, 1),
         // resolve(): a pure read — the named OFE seam, never desugared.
         MethodSig {
