@@ -681,6 +681,41 @@ impl TurnExecutor {
                 "rotated verify: effect {lead:?} is not in the R=24 rotated cohort"
             ))
         })?;
+
+        // ── GATE B: the verifier-side declared-capacity discriminator (defense-in-depth, geometry-free).
+        // Re-derive, from the acting cell's COMMITTED declaration (folded into the `B_AUTHORITY_DIGEST`
+        // limb of the ~124-bit wide commit — NEVER from the prover-supplied caveat manifest, which
+        // `transfer_caveat_manifest()` reconstructs WITHOUT the capacity tag), the capacity obligations the
+        // cell requires. If the cell DECLARES a capacity (escrow 17 / discharge 18 / vault 19), the turn
+        // MUST be proven through its satisfaction member (settleEscrowSat / dischargeSat / vaultSat); the
+        // bare cohort descriptor `name` resolved above carries NO satisfaction gate, so a declared-capacity
+        // turn routed through it is REJECTED HERE. This is the SECOND, INDEPENDENT gate: it reads only the
+        // committed declaration + the resolved name, NEVER the gate-A refuse geometry baked into the bare
+        // VK — so a declared turn cannot dodge onto the bare member even if the refuse ever regressed off a
+        // member (a geometry mole). A NON-declaring cell yields empty tags ⇒ inert ⇒ deployed-identical (no
+        // deployed cell declares a capacity, so the live fleet is unaffected). FAIL-CLOSED: the deployed
+        // executor does not yet reconstruct the satisfaction descriptors, so a declared-capacity turn is
+        // rejected rather than accepted half-open — the sound posture (liveness for declared turns rides the
+        // direct-descriptor path, `gentian_deployed_capacity_liveness`).
+        {
+            use dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_declared_capacity;
+            let declared_tags = crate::executor::required_capacity_caveat_tags(
+                &crate::executor::cell_declared_constraints(record_pin_cell),
+            );
+            if !declared_tags.is_empty() {
+                let required = rotated_descriptor_name_for_declared_capacity(lead, &declared_tags);
+                if Some(name) != required {
+                    return Err(TurnError::InvalidExecutionProof(format!(
+                        "GATE B (declared-capacity discriminator): the acting cell's COMMITTED \
+                         declaration requires capacity tags {declared_tags:?}, so the turn MUST be \
+                         proven under the satisfaction member {required:?}; it routed through the bare \
+                         cohort member {name} (no satisfaction gate). Rejecting the bare-cohort dodge \
+                         geometry-free (independent of the refuse weld)."
+                    )));
+                }
+            }
+        }
+
         let json = WIDE_REGISTRY_STAGED_TSV
             .lines()
             .find_map(|line| {

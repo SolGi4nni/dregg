@@ -305,3 +305,114 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
         }
     }
 }
+
+/// ====================================================================================================
+/// GATE B — the INDEPENDENT arm: the verifier-side declared-capacity DISCRIMINATOR rejects a
+/// declaring-but-bare route ALONE, with the refuse weld INERT.
+///
+/// Gate A (the refuse weld) rejects the dodge by making the declared-capacity bare leg UNSAT under the
+/// refuse-welded member — a GEOMETRY property of the committed VK bytes. Gate B is a SECOND, orthogonal
+/// gate: given the acting cell's COMMITTED declaration (re-derived required tags), a declared-capacity
+/// turn MUST bind its satisfaction member; a bare cohort member is rejected regardless of geometry.
+///
+/// This arm ISOLATES gate B. We prove a NON-declaring bare burn — which passes gate A cleanly (the
+/// refuse decodes `floor = 0`, is inert, the STARK proves + verifies through the deployed refuse-welded
+/// member). The SAME proof, SAME PIs:
+///   * through `verify_effect_vm_rotated_with_cutover` (no declaration) → ACCEPTED (gate A inert, so the
+///     ONLY gate that could reject is off);
+///   * through `verify_effect_vm_rotated_declaring(.., &[escrow tag])` → REJECTED by gate B alone.
+/// So with gate A demonstrably NOT the rejector (it accepts the same bytes), gate B is the load-bearing
+/// discriminator: a cell that declares the escrow capacity cannot settle via a bare cohort member.
+#[test]
+fn gate_b_discriminator_alone_rejects_declared_bare_route() {
+    // Pure discriminator (no proof): the declared-escrow route MUST name the satisfaction member; the
+    // bare cohort member is refused, geometry-free.
+    assert_eq!(
+        dregg_sdk::full_turn_proof::required_satisfaction_member(&[SLOT_CAVEAT_TAG_SETTLE_ESCROW]),
+        Some("settleEscrowSatVmDescriptor2R24"),
+        "gate B: a declared-escrow cell requires the settleEscrow satisfaction member"
+    );
+    assert_eq!(
+        dregg_sdk::full_turn_proof::required_satisfaction_member(&[]),
+        None,
+        "gate B is inert for a non-declaring cell"
+    );
+
+    // Build a genuine NON-declaring wide bare burn (gate A inert: refuse floor = 0).
+    let wide_json = registry_json(WIDE_REGISTRY_STAGED_TSV, WIDE_BARE_MEMBER).unwrap();
+    let wide_bare = wide_desc(WIDE_BARE_MEMBER);
+    let vk_hash = *blake3::hash(wide_json.as_bytes()).as_bytes();
+
+    let before_balance: i64 = 80_000;
+    let amount: u64 = 30;
+    let st = CellState::new(before_balance as u64, 0);
+    let effects = vec![Effect::Burn {
+        target_hash: BabyBear::new(0),
+        amount_lo: BabyBear::new(amount as u32),
+        amount_full: amount,
+    }];
+    let mut ledger = Ledger::new();
+    let before_cell = producer_cell(before_balance);
+    let after_cell = producer_cell(before_balance - amount as i64);
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
+    let before_w = rw::produce(
+        &before_cell,
+        &ledger,
+        &nullifier_root,
+        &commitments_root,
+        &receipt_log,
+        &Default::default(),
+    );
+    let after_w = rw::produce(
+        &after_cell,
+        &ledger,
+        &nullifier_root,
+        &commitments_root,
+        &receipt_log,
+        &Default::default(),
+    );
+    let mem = MemBoundaryWitness::default();
+    let heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+
+    let (trace, dpis) = generate_rotated_transfer_shape_wide(
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &non_declaring_manifest(),
+    )
+    .expect("wide bare producer (non-declaring)");
+    let proof = prove_vm_descriptor2(&wide_bare, &trace, &dpis, &mem, &heaps)
+        .expect("a NON-declaring wide bare burn proves under the refuse-welded member (floor=0)");
+    let bytes = postcard::to_allocvec(&proof).expect("serialize");
+
+    // ---- Gate A is INERT on these bytes: the pure LC entry ACCEPTS them. ----
+    dregg_sdk::full_turn_proof::verify_effect_vm_rotated_with_cutover(&bytes, &dpis, &vk_hash).expect(
+        "gate A inert: a non-declaring bare burn verifies through the deployed LC (the refuse is off)",
+    );
+
+    // ---- Gate B ALONE rejects the SAME bytes when the acting cell DECLARES the escrow capacity: a
+    // declared-capacity turn cannot ride a bare cohort member. This is independent of the refuse weld —
+    // the same STARK that gate A accepted is refused purely by the declaration/route mismatch. ----
+    let verdict = dregg_sdk::full_turn_proof::verify_effect_vm_rotated_declaring(
+        &bytes,
+        &dpis,
+        &vk_hash,
+        &[SLOT_CAVEAT_TAG_SETTLE_ESCROW],
+    );
+    match verdict {
+        Err(e) => eprintln!(
+            "GATE B (declared-capacity discriminator) — LOAD-BEARING: a cell declaring the escrow \
+             capacity that settled via a plain bare-cohort burn was REJECTED by the discriminator \
+             ALONE (the refuse weld was inert — the identical bytes verified through the pure LC \
+             entry). Reject: {e}"
+        ),
+        Ok(()) => panic!(
+            "GATE B FAILED: the declaring verify ACCEPTED a declared-escrow cell settled via a bare \
+             cohort burn — the verifier-side discriminator is NOT load-bearing."
+        ),
+    }
+}

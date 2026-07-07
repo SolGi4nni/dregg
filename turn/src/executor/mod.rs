@@ -610,6 +610,22 @@ pub fn required_capacity_caveat_tags(constraints: &[dregg_cell::StateConstraint]
     tags
 }
 
+/// Flatten a cell's COMMITTED program to the full list of declared `StateConstraint`s (the input
+/// `required_capacity_caveat_tags` re-derives the capacity obligations from). A `Predicate` program
+/// is its constraint list directly; a `Cases` program is the union of every case's constraints (a
+/// capacity declared under ANY guard still binds the cell); `None` / `Circuit` declare no relational
+/// constraints. Because `cell.program` is folded into the `B_AUTHORITY_DIGEST` limb of the ~124-bit
+/// wide commit, a verifier reading THIS list reads the committed declaration — a forger cannot drop a
+/// declared capacity without moving the committed authority digest (the Lean `DeclCommitBinds` floor).
+pub fn cell_declared_constraints(cell: &dregg_cell::Cell) -> Vec<dregg_cell::StateConstraint> {
+    use dregg_cell::program::CellProgram;
+    match &cell.program {
+        CellProgram::Predicate(cs) => cs.clone(),
+        CellProgram::Cases(cases) => cases.iter().flat_map(|c| c.constraints.clone()).collect(),
+        CellProgram::None | CellProgram::Circuit { .. } => Vec::new(),
+    }
+}
+
 /// Whether note effects in a turn use Pedersen value commitments or cleartext values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NoteCommitmentMode {
