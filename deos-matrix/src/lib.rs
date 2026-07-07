@@ -24,6 +24,12 @@
 //! confined comms-PD will use.
 
 pub mod cell;
+// THE CARD-FORK CARRY VEHICLE — a co-driven card's portable fork-envelope (sealed
+// on the deos side as opaque bytes + a claimed root) rides the EXISTING membrane
+// wire path over a real homeserver, so two cockpit processes co-drive ONE card and
+// the stitch lands on both. Byte-only (deos-matrix never links the card type); the
+// anti-substitution tooth fires on the executor side (`open_envelope`).
+pub mod card_carry;
 // CHAT AS A HYPERDREGGMEDIA CARD — room = a cell, message = a turn, send = an
 // affordance; the timeline is the cell's history. Over the gpui-free ChatSource.
 pub mod chat_card;
@@ -53,6 +59,10 @@ pub mod chat;
 #[cfg(feature = "cockpit-surface")]
 pub mod cockpit_surface;
 
+pub use card_carry::{
+    as_card_fork_carry, card_fork_membrane, is_card_fork_carry, send_card_fork,
+    CARD_FORK_STURDYREF_PREFIX,
+};
 pub use cell::{CellId, IdentityCell, PersonTrust, RoomCell, SendReceipt};
 pub use client::{
     EventState, MatrixClient, MessageKind, PublicRoom, Reaction, ReplyTo, RoomPower, RoomSummary,

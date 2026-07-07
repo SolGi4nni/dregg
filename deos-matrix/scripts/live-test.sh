@@ -124,3 +124,17 @@ if [[ "${FULL_LOOP:-0}" == "1" ]]; then
       full_loop_one_process_real_executor_over_real_matrix -- --nocapture --test-threads=1 )
   echo "==> single-process full loop passed"
 fi
+
+# THE CO-DRIVEN CARD LOOP IN ONE PROCESS — Pillar 3: two live Matrix sessions in one
+# starbridge-v2 process co-drive ONE hyperdreggmedia card. A's and B's card-fork
+# envelopes CROSS this homeserver both ways; each side re-fires the anti-substitution
+# root tooth on the RECEIVED bytes (a forged carry is refused), rehydrates + drives its
+# own fork, and the `dregg_doc` stitch keeps BOTH edits on BOTH sides. Pulls deos-js
+# (mozjs), so it is gated on CARD_LOOP=1. The env quintet above is already exported.
+if [[ "${CARD_LOOP:-0}" == "1" ]]; then
+  echo "==> running the single-process CARD-FORK loop (co-driven card over real Matrix)"
+  ( cd "$HERE/../starbridge-v2" && cargo test --no-default-features \
+      --features "agent-js dev-surfaces" --lib \
+      full_loop_card_fork_over_real_matrix -- --nocapture --test-threads=1 )
+  echo "==> single-process card-fork loop passed"
+fi

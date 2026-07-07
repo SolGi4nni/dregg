@@ -648,6 +648,181 @@ async fn live_two_user_real_executor_membrane_roundtrip() {
     );
 }
 
+/// **THE CARD-FORK CARRY A→B OVER A REAL HOMESERVER** — Pillar 3 of distributed
+/// deos: a co-driven card's portable fork-envelope crosses a LIVE Conduit between two
+/// distinct users, byte-intact, so the two-cockpit stitch can land on both.
+///
+/// The card-fork envelope is sealed on the deos side as opaque `postcard` bytes plus
+/// a claimed `fork_root` (the anti-substitution tooth's two inputs); this crate is
+/// dependency-light and never links the card type, so the test carries a synthetic
+/// sealed pair — the WIRE leg is identical regardless of who sealed the bytes. Proven:
+///   1. A wraps the sealed pair into a card-carry `MembraneEnvelope`
+///      ([`deos_matrix::card_fork_membrane`]) and ships it A→B over the real server
+///      (the SAME `send_membrane` wire path the world-fork membrane uses);
+///   2. B receives it through the server, extracts the typed envelope, routes it via
+///      [`deos_matrix::as_card_fork_carry`], and recovers the sealed bytes + claimed
+///      root EXACTLY (byte-intact) — the two inputs B's executor feeds the real
+///      `open_envelope` tooth;
+///   3. a FORGED carry (payload substituted, claimed root left unchanged) also crosses
+///      byte-intact — so B's tooth sees bytes↔root disagree and REFUSES it (the wire
+///      never heals the tampering, which would blind the tooth).
+///
+/// The executor-side open→rehydrate→stitch of these bytes (the tooth firing, both
+/// edits surviving, an over-authorized fork contributing no patch) is proven where
+/// the card type lives — `starbridge_v2::card_carry_bridge` (offline) and, in one
+/// process over this same wire, its FULL_LOOP live test.
+///
+/// Creds-gated on the two-user config; absent → no-op (CI stays green).
+#[tokio::test]
+async fn live_two_user_card_fork_carry_roundtrip() {
+    let Some((hs, user_a, pass_a, user_b, pass_b)) = live_two_user_config() else {
+        eprintln!(
+            "two-user creds not set — skipping the card-fork carry A→B round-trip \
+             (see scripts/live-test.sh)."
+        );
+        return;
+    };
+
+    // Two clients, two SQLite stores — genuinely separate users/devices.
+    let (client_a, _sa) = MatrixClient::login_password(
+        &hs,
+        &tmp_store(),
+        "live-cardA-pass",
+        &user_a,
+        &pass_a,
+        "deos-matrix-cardA",
+    )
+    .await
+    .expect("user A login");
+    let (client_b, _sb) = MatrixClient::login_password(
+        &hs,
+        &tmp_store(),
+        "live-cardB-pass",
+        &user_b,
+        &pass_b,
+        "deos-matrix-cardB",
+    )
+    .await
+    .expect("user B login");
+    let uid_b = client_b.user_id().expect("B user id").to_string();
+
+    // A creates a room and invites B; B accepts (real join over the wire).
+    let room_id = client_a
+        .create_room(
+            Some("deos-card-lab"),
+            Some("co-driven card room"),
+            &[uid_b.as_str()],
+        )
+        .await
+        .expect("A creates room + invites B");
+    let mut joined = false;
+    for _ in 0..15 {
+        client_b.sync_once().await.expect("B sync for invite");
+        if client_b
+            .invited_rooms()
+            .await
+            .expect("B invites")
+            .iter()
+            .any(|r| r.room_id.as_str() == room_id)
+        {
+            client_b
+                .accept_invite(&room_id)
+                .await
+                .expect("B accepts invite");
+            joined = true;
+            break;
+        }
+        if client_b
+            .joined_rooms()
+            .await
+            .expect("B joined")
+            .iter()
+            .any(|r| r.room_id.as_str() == room_id)
+        {
+            joined = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+    assert!(joined, "B never saw/accepted the invite");
+    client_b.sync_once().await.expect("B sync after join");
+
+    // ---- The honest card-fork carry A→B -------------------------------------
+    // A synthetic sealed pair (bytes + claimed fork_root). The wire leg is what the
+    // real `distributed_card::seal_fork` output would traverse; byte-for-byte the same.
+    let sealed_bytes = b"co-driven card-fork envelope :: postcard :: A's driven view".to_vec();
+    let mut fork_root = [0u8; 32];
+    for (i, r) in fork_root.iter_mut().enumerate() {
+        *r = (i as u8).wrapping_mul(11).wrapping_add(5);
+    }
+
+    let carry_id = deos_matrix::send_card_fork(&client_a, &room_id, "", &sealed_bytes, fork_root)
+        .await
+        .expect("A ships the card-fork carry");
+    let got = sync_until(&client_b, &room_id, 20, "card-fork carry A→B", |m| {
+        m.event_id == carry_id
+    })
+    .await;
+    assert_eq!(
+        got.kind,
+        MessageKind::Membrane,
+        "B sees a Membrane-kind message (the card carry rides the membrane key)"
+    );
+    let back = got
+        .membrane
+        .as_ref()
+        .expect("B extracts the card-carry envelope from the wire");
+    let (got_bytes, got_root) = deos_matrix::as_card_fork_carry(back)
+        .expect("B routes it to the card-fork path via the sturdyref scheme");
+    assert_eq!(
+        got_bytes, sealed_bytes,
+        "the sealed card bytes crossed A→B byte-intact through the real server"
+    );
+    assert_eq!(
+        got_root, fork_root,
+        "the claimed fork_root crossed A→B byte-intact (the tooth's commitment input)"
+    );
+    eprintln!("LIVE two-user: ✓ card-fork carry A→B received + tooth inputs recovered byte-intact");
+
+    // ---- A FORGED carry A→B: the wire preserves the tampering for refusal ----
+    // Substitute the payload but keep the claimed root — this is exactly the input
+    // that makes B's real `open_envelope` tooth fire (bytes↔root disagree). The point
+    // here: the live server does NOT heal the substitution; both inputs arrive as sent,
+    // so the tooth's refusal is decidable on B's side (never trust the wire).
+    let mut forged_bytes = sealed_bytes.clone();
+    forged_bytes.extend_from_slice(b"<<bob's sneaky injected node>>");
+    let forged_id = deos_matrix::send_card_fork(&client_a, &room_id, "", &forged_bytes, fork_root) // SAME root
+        .await
+        .expect("A ships a forged carry (root left stale)");
+    let got_forged = sync_until(&client_b, &room_id, 20, "forged carry A→B", |m| {
+        m.event_id == forged_id
+    })
+    .await;
+    let back_forged = got_forged
+        .membrane
+        .as_ref()
+        .expect("B extracts the forged carry");
+    let (fbytes, froot) =
+        deos_matrix::as_card_fork_carry(back_forged).expect("still a card carry on the wire");
+    assert_eq!(
+        fbytes, forged_bytes,
+        "the forged payload crossed as-is (the wire did not heal it)"
+    );
+    assert_eq!(
+        froot, fork_root,
+        "the claimed root is UNCHANGED — B's tooth sees bytes↔root disagree and REFUSES"
+    );
+    assert_ne!(
+        fbytes, sealed_bytes,
+        "the forged payload is distinguishable from the honest one"
+    );
+    eprintln!(
+        "LIVE OK (card-fork carry): A→B shipped the sealed fork-envelope byte-intact through {hs}; \
+         B recovered both tooth inputs, and a forged carry arrived with a stale root (refusable). \
+         The executor-side open→rehydrate→stitch is proven in starbridge_v2::card_carry_bridge."
+    );
+}
+
 /// **Server-name `.well-known` discovery** — the bare-server-name login path a real
 /// user types ("deos.local", not "https://…"). Creds-gated by a separate env triple
 /// so it can target a server whose `.well-known` is set up (a full homeserver URL
