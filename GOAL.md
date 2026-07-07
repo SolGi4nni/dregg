@@ -269,3 +269,20 @@ COMMITMENT — cannot recompute f(x) without the set or a pairing) -> rename to
 the sound path (needs the trusted set/accumulator; if it genuinely lacks it, that's the honest floor:
 O(1) setless non-membership needs a pairing). AFTER: commit-crate typed.rs has its OWN
 encode_bytes_to_felts with the same 4-byte mask (separate residual, same 3-byte fix).
+
+### RESIDUAL GRIND — CLOSED (2026-07-07): all tractable storage/commit residuals ground out
+- accumulator FORGERY closed (ec0bd9ef5): verify_non_membership_bound(&self) recomputes+binds f(x);
+  the setless static #[deprecated] as forgeable; the forgery is a PROVEN-caught test, not a doc caveat.
+- storage + commit encode_bytes_to_felts made INJECTIVE (8cc597a9d, 588cd454c): 3-byte packing, the
+  Poseidon2 form of arbitrary-byte commitments binds every bit. Storage 232 / commit 126 green.
+- leaf-count corrected (8cc597a9d): from_leaves is a count-agnostic Merkle PRIMITIVE by design (a
+  wrap breaks membership paths — a first attempt broke blinded consume); the count is bound + PROVEN at
+  the Accumulator. canonical_32_to_felts_4 "bijection" overclaim -> one-way fingerprint (this commit).
+- DealCell (f097763e1): ALL SIX legs refine DealLifecycle.
+TWO remaining are GENUINE CROSS-LANE boundaries (recorded, not laundered, cannot close in this lane):
+  (a) sdk::verify_accumulator_non_membership verifies PROVER-SUPPLIED alpha/Acc -> architecturally must
+  fetch the federation-committed (trusted) accumulator to call verify_non_membership_bound; blocked on
+  sdk/privacy.rs being clean (another lane's live note-spending WIP). The sound primitive EXISTS.
+  (b) canonical_32_to_felts_4/8 fingerprint a 32-byte BLAKE3 DIGEST (CR input -> masking non-exploitable)
+  AND are mirrored BIT-IDENTICALLY by the circuit AIR; injectivity needs 9 felts = an AIR-width +
+  deployed-VK regen = the deployed-faithful lane (ember-gated). Dual BLAKE3 form binds fully.
