@@ -249,3 +249,23 @@ collapses the audit states). Clean close = upgrade ProviderMarket to carry the f
 states so the cell-program refines the abstract protocol; needs the RecordKernelState field mechanics.
 NEXT after that: the deployment (Rust I/O daemon/client/market-on-ledger) — orb transport deferred.
 - `8304d0fbc` — 14/N: MarketRefinement — the executor cell-program refines the abstract protocol (claim leg, via cell field mechanics). PROTOCOL-IN-LEAN COMPLETE. Only slash-leg refinement remains (needs ProviderMarket upgraded to carry the audit states — a LEGACY-alignment follow-on, not a protocol-logic gap).
+
+### RESIDUAL GRIND (2026-07-07, /goal: no residuals/all-legs/all-alignments) — state @ quiesce
+DONE: 15/N DealCell (ALL SIX legs refine DealLifecycle, f097763e1) · commitment felt-encoding made
+INJECTIVE (8cc597a9d — 3-byte packing, Poseidon2 form now binds every preimage bit; poseidon2_form_
+binds_all_bits) · leaf-count mis-framing corrected (from_leaves is a count-agnostic Merkle PRIMITIVE
+by design — membership proofs are paths; count-binding lives + is PROVEN at the Accumulator,
+prop_accumulator_binds_item_sequence; a first attempt to bind it in from_leaves BROKE blinded consume
+— reverted). Full storage suite 232 passed.
+NEXT (in flight, censused, NOT yet coded — resume here): the ACCUMULATOR FORGERY in
+commit/src/accumulator.rs. `verify_non_membership` (static) is FORGEABLE — any remainder'!=0 with
+quotient'=(Acc-remainder')/(alpha-x) passes the bare identity; it never binds remainder=f(x). The
+struct STORES `elements: Vec<BabyBear>`, so the SOUND fix is a `&self verify_non_membership` that
+recomputes f(element)=product(element-h_i) and requires witness.remainder==that (+ the identity, +
+!=0). The setless static verify is fundamentally forgeable (verifier holds only alpha/Acc from a set
+COMMITMENT — cannot recompute f(x) without the set or a pairing) -> rename to
+`verify_non_membership_identity`, #[deprecated], consistency-check-only doc. Caller
+`sdk/src/privacy.rs:767 verify_accumulator_non_membership` uses prover-supplied alpha/Acc -> route to
+the sound path (needs the trusted set/accumulator; if it genuinely lacks it, that's the honest floor:
+O(1) setless non-membership needs a pairing). AFTER: commit-crate typed.rs has its OWN
+encode_bytes_to_felts with the same 4-byte mask (separate residual, same 3-byte fix).
