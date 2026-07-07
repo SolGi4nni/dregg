@@ -18,10 +18,6 @@ mod soundness;
 #[cfg(feature = "__legacy_tests")]
 mod trace_attacks;
 
-// End-to-end integration tests: token -> proof -> turn execution
-#[cfg(feature = "__legacy_tests")]
-mod integration;
-
 // Full pipeline integration tests: all layers with real crypto
 #[cfg(feature = "__legacy_tests")]
 mod full_pipeline;
@@ -51,10 +47,6 @@ mod dsl_pipeline;
 // through the Effect VM STARK. All four variants were dissolved from the circuit
 // Effect enum by the dregg3 reduction, so the module is deleted (no live effect
 // to drive the pipeline).
-
-// DFA routing proven in circuit: transition table commitment + STARK proof of classification
-#[cfg(test)]
-pub mod dfa_circuit;
 
 // End-to-end protocol soundness: exhaustively round-trip every Effect variant
 // through executor + projection + AIR. See dev-philosophy/02-testing.md section 3.

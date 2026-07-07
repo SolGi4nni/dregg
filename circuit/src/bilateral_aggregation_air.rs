@@ -1408,101 +1408,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cross_side_balanced_pair_sums_to_zero_and_proves() {
-        // One edge, both endpoints present: +fp and -fp cancel.
-        let half_edges = vec![he(1000, true), he(1000, false)];
-        let trace = build_cross_side_trace(&half_edges);
-        assert_eq!(trace.last().unwrap()[CSE_BALANCE_COL], BabyBear::ZERO);
-
-        let proof = crate::stark::try_prove(&CrossSideExistenceAir, &trace, &[])
-            .expect("balanced cross-side trace must prove");
-        crate::stark::verify(&CrossSideExistenceAir, &proof, &[])
-            .expect("balanced cross-side proof must verify");
-    }
-
-    #[test]
-    fn cross_side_two_edges_both_balanced_proves() {
-        let half_edges = vec![
-            he(1000, true),
-            he(2000, true),
-            he(1000, false),
-            he(2000, false),
-        ];
-        let trace = build_cross_side_trace(&half_edges);
-        assert_eq!(trace.last().unwrap()[CSE_BALANCE_COL], BabyBear::ZERO);
-        let proof = crate::stark::try_prove(&CrossSideExistenceAir, &trace, &[]).expect("prove");
-        crate::stark::verify(&CrossSideExistenceAir, &proof, &[]).expect("verify");
-    }
-
-    #[test]
-    fn cross_side_missing_peer_does_not_balance() {
-        // Edge 1000 has only its outgoing half present (peer missing). The
-        // balance is the uncancelled fingerprint, which is nonzero with
-        // overwhelming probability — so the boundary balance[last]==0 fails
-        // and the trace is UNPROVABLE.
-        let half_edges = vec![he(1000, true), he(2000, true), he(2000, false)];
-        let trace = build_cross_side_trace(&half_edges);
-        assert_ne!(
-            trace.last().unwrap()[CSE_BALANCE_COL],
-            BabyBear::ZERO,
-            "missing-peer edge must leave a nonzero balance"
-        );
-        // The trace's transition constraints are internally consistent (the
-        // prefix sum is honestly computed), so proving may succeed — but the
-        // boundary constraint balance[last]==0 is violated, so VERIFY rejects.
-        match crate::stark::try_prove(&CrossSideExistenceAir, &trace, &[]) {
-            Err(_) => { /* prover rejected up front — also fine */ }
-            Ok(proof) => {
-                let res = crate::stark::verify(&CrossSideExistenceAir, &proof, &[]);
-                assert!(
-                    res.is_err(),
-                    "missing-peer proof violates balance boundary and must not verify"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn cross_side_adversary_cannot_forge_zero_balance_boundary() {
-        // Adversary builds a missing-peer trace, then hand-patches the last
-        // balance cell to ZERO to try to satisfy the boundary. The internal
-        // prefix-sum transition constraint then no longer holds, so the proof
-        // still fails.
-        let half_edges = vec![he(1000, true), he(2000, true), he(2000, false)];
-        let mut trace = build_cross_side_trace(&half_edges);
-        let last = trace.len() - 1;
-        trace[last][CSE_BALANCE_COL] = BabyBear::ZERO;
-        let res = crate::stark::try_prove(&CrossSideExistenceAir, &trace, &[]);
-        assert!(
-            res.is_err(),
-            "patched balance breaks the prefix-sum transition; must not prove"
-        );
-    }
+    // The hand-STARK `CrossSideExistenceAir` / `BundleTreeFoldAir` prove/verify tests
+    // (`cross_side_balanced_pair_sums_to_zero_and_proves`, `..._two_edges_both_balanced_proves`,
+    // `cross_side_missing_peer_does_not_balance`, `..._adversary_cannot_forge_zero_balance_boundary`,
+    // `tree_fold_two_children_proves_and_verifies`, `tree_fold_rejects_tampered_final_acc`) are
+    // retired. Their statements are covered — and strengthened (a real compress chip lookup) — by the
+    // descriptor tests `cross_side_descriptor_proves_balanced_rejects_missing_peer` and
+    // `tree_fold_descriptor_proves_rejects_tampered_final` above (through `prove_*_v2` /
+    // `verify_*_v2`), plus `circuit-prove/tests/bilateral_aggregation_{emit_gate,adversarial_audit}.rs`.
 
     // ---- Tree-fold AIR ----
-
-    #[test]
-    fn tree_fold_two_children_proves_and_verifies() {
-        let digests = vec![BabyBear::new(111), BabyBear::new(222)];
-        let (trace, pi) = build_tree_fold_trace(&digests);
-        assert_eq!(pi.len(), FOLD_PI_COUNT);
-        let proof =
-            crate::stark::try_prove(&BundleTreeFoldAir, &trace, &pi).expect("tree fold must prove");
-        crate::stark::verify(&BundleTreeFoldAir, &proof, &pi).expect("tree fold must verify");
-    }
-
-    #[test]
-    fn tree_fold_rejects_tampered_final_acc() {
-        let digests = vec![BabyBear::new(111), BabyBear::new(222), BabyBear::new(333)];
-        let (trace, pi) = build_tree_fold_trace(&digests);
-        let proof = crate::stark::try_prove(&BundleTreeFoldAir, &trace, &pi).expect("prove");
-        // Tamper the final-acc public input: boundary opening now mismatches.
-        let mut bad_pi = pi.clone();
-        bad_pi[FOLD_PI_FINAL] = bad_pi[FOLD_PI_FINAL] + BabyBear::ONE;
-        let res = crate::stark::verify(&BundleTreeFoldAir, &proof, &bad_pi);
-        assert!(res.is_err(), "tampered final accumulator must reject");
-    }
 
     #[test]
     fn tree_fold_distinct_child_sets_give_distinct_accumulators() {

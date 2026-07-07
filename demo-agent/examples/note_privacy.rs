@@ -16,7 +16,6 @@ use dregg_circuit::{
     dsl::note_spending::{
         create_test_witness, key_to_field_elements, prove_note_spend, verify_note_spend,
     },
-    stark,
 };
 
 /// Asset type constant for GOLD.
@@ -101,12 +100,7 @@ fn main() {
         4,                                // Merkle depth
     );
     let alice_proof = prove_note_spend(&alice_witness);
-    let proof_bytes = stark::proof_to_bytes(&alice_proof);
-    println!(
-        "  STARK proof generated: {} bytes ({:.1} KiB)",
-        proof_bytes.len(),
-        proof_bytes.len() as f64 / 1024.0
-    );
+    println!("  STARK proof generated");
     println!();
 
     // Verify the STARK proof (anyone can do this with only public inputs).
@@ -206,8 +200,7 @@ fn main() {
         4,
     );
     let bob_proof = prove_note_spend(&bob_witness);
-    let bob_proof_bytes = stark::proof_to_bytes(&bob_proof);
-    println!("  Bob's STARK proof: {} bytes", bob_proof_bytes.len());
+    println!("  Bob's STARK proof generated");
 
     let bob_verify = verify_note_spend(
         bob_witness.nullifier(),

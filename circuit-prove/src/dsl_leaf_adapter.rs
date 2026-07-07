@@ -7,8 +7,8 @@
 //! `CellProgram` predicate) is verified OFF-AIR by
 //! `turn::executor::membership_verifier::DslCircuitDfaVerifier::verify`, which resolves the
 //! program by its `vk_hash` and calls
-//! [`dregg_circuit::dsl::circuit::CellProgram::verify_transition`] →
-//! [`dregg_circuit::stark::verify`] (the bespoke `circuit/src/stark.rs` STARK). That gate runs in
+//! [`dregg_circuit::dsl::circuit::CellProgram::verify_transition`] (the bespoke off-AIR
+//! `CellProgram` transition gate). That gate runs in
 //! the executor's witnessed-predicate registry, NOT inside the deployed effect-vm AIR. So a
 //! re-executing validator witnesses the predicate, but a PURE LIGHT CLIENT (one that folds only the
 //! per-turn recursion tree) never does: a validator with vs without `DslCircuitDfaVerifier`
@@ -22,7 +22,7 @@
 //! ## The fix is REUSE — a DSL/Dfa transition IS a `CellProgram` STARK
 //!
 //! The carrier is, byte for byte, the SAME object the custom carrier re-proves: a `CellProgram`
-//! transition proven through `dregg_circuit::stark` and verified by `CellProgram::verify_transition`.
+//! transition proven and verified by the bespoke off-AIR `CellProgram` transition gate.
 //! So the leaf machinery is DIRECT REUSE of [`crate::custom_leaf_adapter`]:
 //!
 //! * [`crate::custom_leaf_adapter::cellprogram_to_descriptor2`] adapts the program's
@@ -118,7 +118,7 @@ pub fn prove_dsl_leaf_with_commitment(
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     // A `Witnessed { Dfa }` predicate program is a `CellProgram`, structurally identical to a
-    // custom-effect sub-proof (both are `dregg_circuit::stark` STARKs over a `CircuitDescriptor`).
+    // custom-effect sub-proof (both are bespoke `CellProgram` STARKs over a `CircuitDescriptor`).
     // Route it through the SAME leaf machinery so the DSL predicate transition gains an in-circuit
     // PI-commitment a pure light client witnesses.
     prove_custom_leaf_with_commitment(program, witness_values, num_rows, public_inputs, config)

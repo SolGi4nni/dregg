@@ -28,7 +28,6 @@ use dregg_circuit::{
     },
     poseidon2,
     predicate_types::compute_fact_commitment,
-    stark::proof_to_bytes,
 };
 
 /// Simulates the on-chain credential verification flow.
@@ -209,18 +208,12 @@ fn main() {
     let threshold_proof =
         prove_committed_threshold(witness).expect("proof generation must succeed (25 >= 18)");
 
-    let stark_proof_bytes = proof_to_bytes(&threshold_proof.stark_proof);
     let proof_time = proof_start.elapsed();
 
     println!("  Step 1: Committed-threshold STARK proof generated");
     println!(
         "    Proves: Alice's age ({}) >= threshold ({}) [HIDDEN VALUES]",
         25, 18
-    );
-    println!(
-        "    Proof size: {} bytes ({:.1} KiB)",
-        stark_proof_bytes.len(),
-        stark_proof_bytes.len() as f64 / 1024.0
     );
     println!("    Time: {:.2}ms", proof_time.as_secs_f64() * 1000.0);
     println!();
@@ -255,17 +248,22 @@ fn main() {
     // In production: call wrap_credential_for_chain() which runs SP1 prover.
     // In this demo: we simulate the wrapped proof.
     println!("  Step 4: SP1 wrapping (STARK -> Groth16)");
-    println!(
-        "    Input: {} bytes of STARK proof",
-        stark_proof_bytes.len()
-    );
+    println!("    Input: committed-threshold STARK proof");
     println!("    Output: ~260 bytes Groth16 proof (constant size!)");
     println!("    EVM verification cost: ~200k gas");
     println!("    [MOCK MODE: simulating SP1 wrapping]");
     println!();
 
-    // Simulate the final proof bytes that would go on-chain.
-    let mock_groth16_proof = blake3::hash(&stark_proof_bytes).as_bytes().to_vec();
+    // Simulate the final proof bytes that would go on-chain. The wrapped proof
+    // commits to the STARK's public statement: the two commitments + nullifier.
+    let mock_groth16_proof = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dregg-sp1-wrapped-credential-v1");
+        h.update(&threshold_commitment.as_u32().to_le_bytes());
+        h.update(&fact_commitment.as_u32().to_le_bytes());
+        h.update(&nullifier);
+        h.finalize().as_bytes().to_vec()
+    };
 
     // =========================================================================
     // PHASE 5: ON-CHAIN VERIFICATION (Base smart contract)
@@ -478,7 +476,6 @@ fn main() {
         "    STARK proof generation: {:.2}ms",
         proof_time.as_secs_f64() * 1000.0
     );
-    println!("    STARK proof size: {} bytes", stark_proof_bytes.len());
     println!("    Groth16 proof size: ~260 bytes (constant, EVM-friendly)");
     println!("    On-chain verification: ~200k gas (~$0.01 on Base)");
     println!(

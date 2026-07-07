@@ -1,9 +1,9 @@
-//! Dregg End-to-End Demo: Token -> ZK Proof -> Turn Execution
+//! Dregg End-to-End Demo: Token -> Signed Authorization -> Turn Execution
 //!
 //! Demonstrates the full integration between the two halves of the dregg system:
 //!
 //! **System A (execution):** cell -> turn -> coord (Mina-style call forests with capabilities)
-//! **System B (presentation):** macaroon -> token -> commit -> trace -> circuit -> bridge (ZK token proof pipeline)
+//! **System B (presentation):** macaroon -> token -> commit (attenuable capability tokens)
 //!
 //! This demo shows the complete flow:
 //! 1. A federation of 3 members is created (in-memory)
@@ -11,18 +11,16 @@
 //! 3. The token is attenuated (restricted to a specific service + time window)
 //! 4. Cells are created in a Ledger (issuer, agent, target)
 //! 5. Capabilities are granted from issuer to agent
-//! 6. The attenuated token is converted to a ZK presentation proof via the bridge
-//! 7. A Turn is submitted that uses the proof as authorization
-//! 8. The executor verifies the STARK proof and executes the turn
-//! 9. Results are printed showing the full flow worked
+//! 6. The agent signs the action authorizing the mutation (Ed25519)
+//! 7. A Turn is submitted that carries the signature as authorization
+//! 8. The executor verifies the signature and executes the turn
+//! 9. A tampered signature is rejected (fail-closed)
 
-use dregg_bridge::StarkProofVerifier;
-use dregg_bridge::present::{bytes_to_babybear, hash_index};
-use dregg_cell::{AuthRequired, CellId, Ledger, Permissions, VerificationKey, cell::Cell};
-use dregg_circuit::BabyBear;
+use dregg_cell::{AuthRequired, CellId, Ledger, Permissions, cell::Cell};
 use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 use dregg_turn::builder::ActionBuilder;
-use dregg_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_turn::{ComputronCosts, Effect, TurnBuilder, TurnExecutor, TurnResult};
+use ed25519_dalek::{Signer, SigningKey};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -49,26 +47,6 @@ fn demo_token_id() -> [u8; 32] {
     *blake3::hash(b"dregg-e2e-demo:token-domain").as_bytes()
 }
 
-/// Compute the BabyBear federation root that the synthetic Poseidon2 Merkle path
-/// produces for a given issuer key. This matches what `BridgePresentationBuilder::build_issuer_membership_poseidon2`
-/// computes internally.
-fn compute_federation_root_bb(issuer_key: &[u8; 32]) -> BabyBear {
-    use dregg_circuit::merkle_air::compute_parent_poseidon2;
-    let issuer_hash = bytes_to_babybear(issuer_key);
-    let depth = 8;
-    let mut current = issuer_hash;
-    for i in 0..depth {
-        let position = (i % 4) as u8;
-        let siblings = [
-            BabyBear::new(hash_index(i, 0, issuer_key)),
-            BabyBear::new(hash_index(i, 1, issuer_key)),
-            BabyBear::new(hash_index(i, 2, issuer_key)),
-        ];
-        current = compute_parent_poseidon2(current, position, &siblings);
-    }
-    current
-}
-
 fn section(step: usize, total: usize, title: &str) {
     println!();
     println!("  [{step}/{total}] {title}");
@@ -85,7 +63,7 @@ fn main() {
     println!();
     println!("  {}", "=".repeat(60));
     println!("  DREGG END-TO-END DEMO");
-    println!("  Token -> ZK Proof -> Turn Execution");
+    println!("  Token -> Signed Authorization -> Turn Execution");
     println!("  {}", "=".repeat(60));
 
     let total_steps = 9;
@@ -99,47 +77,17 @@ fn main() {
     let member2_key = agent_key("member-2");
     let member3_key = agent_key("member-3");
 
-    // Compute the federation root for the STARK path (algebraic binding).
-    // This uses MerkleStarkAir: parent = current + sib0 + sib1 + sib2 + position.
-    // DEMO ONLY: MerkleStarkAir is deprecated (linear hash binding, not collision-
-    // resistant); the shippable path is dsl::descriptors::merkle_poseidon2_circuit().
-    // Retained here as the simplest illustrative STARK leg for the agent walkthrough.
-    #[allow(deprecated)]
-    use dregg_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
-
-    let leaf_hash_bb = bytes_to_babybear(&issuer_key);
-    let stark_siblings: Vec<[u32; 3]> = (0..4u32)
-        .map(|i| {
-            [
-                hash_index(i as usize, 0, &issuer_key),
-                hash_index(i as usize, 1, &issuer_key),
-                hash_index(i as usize, 2, &issuer_key),
-            ]
-        })
-        .collect();
-    let stark_positions: Vec<u32> = vec![0, 1, 2, 3];
-
-    let (stark_trace, stark_public_inputs) =
-        generate_merkle_trace(leaf_hash_bb.0, &stark_siblings, &stark_positions);
-    let stark_federation_root = stark_public_inputs[1];
-
-    // Store the BabyBear root as a 32-byte verification key (first 4 bytes = u32 LE).
-    let mut federation_root_bytes = [0u8; 32];
-    federation_root_bytes[..4].copy_from_slice(&stark_federation_root.0.to_le_bytes());
-
-    // Also compute the Poseidon2-based federation root for the bridge builder
-    let federation_root_bb = compute_federation_root_bb(&issuer_key);
+    // The agent's Ed25519 authorization keypair. The target cell will hold the
+    // agent's verifying key, so a signature by the agent authorizes mutations.
+    let agent_sk = SigningKey::from_bytes(&agent_key("agent-signing-key"));
+    let agent_vk: [u8; 32] = agent_sk.verifying_key().to_bytes();
 
     item(&format!("Issuer key: {}", short_hex(&issuer_key)));
     item(&format!("Member 2 key: {}", short_hex(&member2_key)));
     item(&format!("Member 3 key: {}", short_hex(&member3_key)));
     item(&format!(
-        "Federation root (STARK algebraic): {}",
-        stark_federation_root.0
-    ));
-    item(&format!(
-        "Federation root (Poseidon2 bridge): {}",
-        federation_root_bb.0
+        "Agent authorization key (Ed25519): {}",
+        short_hex(&agent_vk)
     ));
 
     // ─── Step 2: Mint a root macaroon token ─────────────────────────────────
@@ -192,7 +140,7 @@ fn main() {
 
     let mut ledger = Ledger::new();
 
-    // Issuer cell: has the federation root as verification key
+    // Issuer cell: fully open (no auth required).
     let issuer_cell_key = agent_key("issuer-cell");
     let mut issuer_cell = Cell::with_balance(issuer_cell_key, token_id, 1_000_000);
     issuer_cell.permissions = Permissions {
@@ -208,7 +156,7 @@ fn main() {
     let issuer_id = issuer_cell.id();
     ledger.insert_cell(issuer_cell).unwrap();
 
-    // Agent cell: needs proof authorization to access the target
+    // Agent cell: the actor that submits the turn.
     let agent_cell_key = agent_key("agent-cell");
     let mut agent_cell = Cell::with_balance(agent_cell_key, token_id, 100_000);
     agent_cell.permissions = Permissions {
@@ -224,25 +172,10 @@ fn main() {
     let agent_id = agent_cell.id();
     ledger.insert_cell(agent_cell).unwrap();
 
-    // Target cell: requires PROOF authorization for state mutations
-    let target_cell_key = agent_key("target-cell");
-    let mut target_cell = Cell::with_balance(target_cell_key, token_id, 50_000);
-    target_cell.permissions = Permissions {
-        send: AuthRequired::Proof,
-        receive: AuthRequired::None,
-        set_state: AuthRequired::Proof,
-        set_permissions: AuthRequired::Impossible,
-        set_verification_key: AuthRequired::Impossible,
-        increment_nonce: AuthRequired::Proof,
-        delegate: AuthRequired::Proof,
-        access: AuthRequired::Proof,
-    };
-    // The verification key is the federation root -- the proof must demonstrate
-    // membership in this federation to be accepted.
-    target_cell.verification_key = Some(VerificationKey::from_parts(
-        *blake3::hash(&federation_root_bytes).as_bytes(),
-        federation_root_bytes.to_vec(),
-    ));
+    // Target cell: keyed to the agent's Ed25519 verifying key. With the default
+    // user permissions, mutating its state requires a valid signature from that
+    // key — so only the agent can authorize the mutation.
+    let target_cell = Cell::with_balance(agent_vk, token_id, 50_000);
     let target_id = target_cell.id();
     ledger.insert_cell(target_cell).unwrap();
 
@@ -255,7 +188,7 @@ fn main() {
         short_id(&agent_id)
     ));
     item(&format!(
-        "Target cell: {} (balance: 50,000, requires PROOF auth)",
+        "Target cell: {} (balance: 50,000, requires SIGNATURE auth)",
         short_id(&target_id)
     ));
 
@@ -274,76 +207,60 @@ fn main() {
         short_id(&target_id)
     ));
 
-    // ─── Step 6: Convert token to ZK presentation proof ─────────────────────
+    // ─── Step 6: Prepare the authorization ──────────────────────────────────
 
-    section(6, total_steps, "Generating ZK proofs via bridge + STARK");
+    section(6, total_steps, "Agent signs the action (Ed25519)");
 
-    // The token chain has been verified in step 3 (plaintext verification).
-    // Now we generate the cryptographic STARK proof of federation membership.
-    item("  Token chain authorization: verified in step 3 (plaintext path)");
+    // The federation binds the signature; the executor's default federation id
+    // is the all-zero id, so the signer commits to that.
+    let federation_id = [0u8; 32];
+    let result_hash = *blake3::hash(b"computation_result:success:42").as_bytes();
 
-    // Step B: Generate the REAL STARK proof for issuer membership
-    // This proves cryptographically that the issuer's key is in the federation tree
-    #[allow(deprecated)] // DEMO ONLY — see the MerkleStarkAir note at its import above.
-    let stark_air = MerkleStarkAir;
-    let stark_proof = stark::prove(&stark_air, &stark_trace, &stark_public_inputs);
-    let proof_bytes = proof_to_bytes(&stark_proof);
+    // Build the action once (unsigned placeholder) to derive its canonical
+    // signing message, then sign that message with the agent's key.
+    let unsigned_action = ActionBuilder::new(target_id, "execute_computation", agent_id)
+        .signed_by([0u8; 64])
+        .effect(Effect::SetField {
+            cell: target_id,
+            index: 0,
+            value: result_hash,
+        })
+        .build();
+    let signing_message = TurnExecutor::compute_signing_message(&unsigned_action, &federation_id);
+    let signature: [u8; 64] = agent_sk.sign(&signing_message).to_bytes();
 
-    // Verify our own proof
-    let verify_result = stark::verify(&stark_air, &stark_proof, &stark_public_inputs);
-    assert!(
-        verify_result.is_ok(),
-        "STARK self-verification failed: {:?}",
-        verify_result.err()
-    );
-
+    item("  Action: SetField(target, slot=0, computation_result)");
     item(&format!(
-        "  STARK proof generated: {} bytes ({:.1} KiB)",
-        proof_bytes.len(),
-        proof_bytes.len() as f64 / 1024.0
+        "  Signing message: {}",
+        short_hex(&signing_message)
     ));
     item(&format!(
-        "  Public inputs: leaf={}, root={}",
-        stark_public_inputs[0].0, stark_public_inputs[1].0
+        "  Ed25519 signature: {} (64 bytes)",
+        short_hex(&signature)
     ));
-    item("  STARK self-verification: PASS (80 FRI queries, ~124-bit security)");
-    item(&format!(
-        "  Federation root bound to proof: {}",
-        stark_federation_root.0
-    ));
+    item("  The signature binds: target, method, effects, delegation, preconditions");
 
-    // ─── Step 7: Submit a Turn with proof authorization ─────────────────────
+    // ─── Step 7: Submit a Turn with signed authorization ────────────────────
 
-    section(
-        7,
-        total_steps,
-        "Submitting Turn with STARK proof authorization",
-    );
+    section(7, total_steps, "Submitting Turn with signed authorization");
 
-    // Configure the executor with the StarkProofVerifier
-    let verifier = StarkProofVerifier::new();
     let costs = ComputronCosts {
         action_base: 100,
         effect_base: 50,
         transfer: 75,
         create_cell: 500,
-        proof_verify: 2000, // STARK verification is expensive
+        proof_verify: 2000,
         signature_verify: 200,
         per_byte: 1,
     };
-    let executor = TurnExecutor::with_proof_verifier(costs, Box::new(verifier));
+    let executor = TurnExecutor::new(costs);
 
-    // Build the turn: agent acts on target cell using proof authorization
     let mut turn_builder = TurnBuilder::new(agent_id, 0);
     turn_builder.set_fee(50000); // generous budget
 
     {
-        let result_hash = *blake3::hash(b"computation_result:success:42").as_bytes();
         let action = ActionBuilder::new(target_id, "execute_computation", agent_id)
-            // The proof bytes become the authorization
-            .with_proof(proof_bytes.clone(), "execute_computation", "")
-            .delegation(DelegationMode::None)
-            // The effect: write a result to the target cell's state
+            .signed_by(signature)
             .effect(Effect::SetField {
                 cell: target_id,
                 index: 0,
@@ -359,10 +276,7 @@ fn main() {
         short_id(&agent_id),
         short_id(&target_id)
     ));
-    item(&format!(
-        "  Authorization: STARK proof ({} bytes)",
-        proof_bytes.len()
-    ));
+    item("  Authorization: Ed25519 signature");
     item("  Effect: SetField(target, slot=0, computation_result)");
 
     // ─── Step 8: Execute and verify ─────────────────────────────────────────
@@ -370,7 +284,7 @@ fn main() {
     section(
         8,
         total_steps,
-        "Executor verifies STARK proof and executes turn",
+        "Executor verifies signature and executes turn",
     );
 
     let result = executor.execute(&turn, &mut ledger);
@@ -412,20 +326,29 @@ fn main() {
         other => panic!("Unexpected turn result: {other:?}"),
     }
 
-    // ─── Step 9: Demonstrate rejection with invalid proof ───────────────────
+    // ─── Step 9: Demonstrate rejection with a tampered signature ─────────────
 
-    section(9, total_steps, "Demonstrating rejection of invalid proof");
+    section(
+        9,
+        total_steps,
+        "Demonstrating rejection of a tampered signature",
+    );
 
-    // Tamper with the proof bytes
-    let mut bad_proof = proof_bytes.clone();
-    bad_proof[20] ^= 0xFF; // flip a byte
+    // Flip a byte in the signature — it no longer verifies against the agent key.
+    let mut bad_signature = signature;
+    bad_signature[10] ^= 0xFF;
 
     let mut bad_turn_builder = TurnBuilder::new(agent_id, 1); // nonce=1 after first turn
     bad_turn_builder.set_fee(50000);
+    // Chain from the first turn's receipt so the turn passes the receipt-chain
+    // check and reaches authorization — the rejection is then genuinely due to
+    // the tampered signature, not an incidental chain mismatch.
+    if let Some(prev) = executor.get_last_receipt_hash(&agent_id) {
+        bad_turn_builder.set_previous_receipt_hash(prev);
+    }
     {
         let action = ActionBuilder::new(target_id, "evil_computation", agent_id)
-            .with_proof(bad_proof, "evil_computation", "")
-            .delegation(DelegationMode::None)
+            .signed_by(bad_signature)
             .effect(Effect::SetField {
                 cell: target_id,
                 index: 1,
@@ -450,7 +373,7 @@ fn main() {
             item("  Target cell state unchanged: atomic rollback confirmed");
         }
         TurnResult::Committed { .. } => {
-            panic!("Tampered proof should NOT have been accepted!");
+            panic!("Tampered signature should NOT have been accepted!");
         }
         other => panic!("Unexpected turn result: {other:?}"),
     }
@@ -464,17 +387,16 @@ fn main() {
     println!();
     println!("  The full pipeline works:");
     println!("    1. Macaroon token minted and attenuated");
-    println!("    2. Token chain converted to ZK presentation proof (real STARK)");
-    println!("    3. Proof used as Turn authorization");
-    println!("    4. Executor verified STARK proof against federation root");
+    println!("    2. Cells created and capabilities granted");
+    println!("    3. Agent signed the action authorizing the mutation");
+    println!("    4. Executor verified the Ed25519 signature against the cell key");
     println!("    5. Turn committed atomically (state updated)");
-    println!("    6. Tampered proof correctly rejected (fail-closed)");
+    println!("    6. Tampered signature correctly rejected (fail-closed)");
     println!();
     println!("  Security properties demonstrated:");
-    println!("    [x] Zero-knowledge: verifier never sees token chain or capabilities");
-    println!("    [x] Soundness: tampered proofs are cryptographically rejected");
-    println!("    [x] Federation binding: proof tied to specific federation root");
-    println!("    [x] Fail-closed: no verifier configured = always reject");
+    println!("    [x] Authorization binding: signature covers the exact action + effects");
+    println!("    [x] Soundness: tampered signatures are cryptographically rejected");
+    println!("    [x] Fail-closed: no valid signature = always reject");
     println!("    [x] Atomic execution: rejected turns leave zero state changes");
     println!();
 }

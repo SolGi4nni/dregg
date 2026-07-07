@@ -1804,36 +1804,6 @@ mod tests {
     }
 
     #[test]
-    fn presentation_poseidon2_stark_has_real_proof_bytes() {
-        let mut witness = create_test_presentation();
-        let poseidon2_issuer = create_poseidon2_compatible_witness(BabyBear::new(42424242), 8);
-        witness.issuer_membership = poseidon2_issuer;
-        witness.federation_root = witness.issuer_membership.expected_root;
-
-        let air = PresentationAir::new(witness);
-        let proof = air.prove_stark_poseidon2().unwrap();
-
-        // The STARK proof should be real bytes (not simulated)
-        let stark_bytes = crate::stark::proof_to_bytes(&proof.issuer_membership_stark_proof);
-        assert!(
-            stark_bytes.len() > 1000,
-            "Real STARK proof should be > 1KB, got {} bytes",
-            stark_bytes.len()
-        );
-
-        // Verify it can roundtrip against the DSL circuit
-        let deserialized = crate::stark::proof_from_bytes(&stark_bytes).unwrap();
-        let pi: Vec<BabyBear> = deserialized
-            .public_inputs
-            .iter()
-            .map(|&v| BabyBear::new_canonical(v))
-            .collect();
-        let circuit = crate::dsl::descriptors::merkle_poseidon2_circuit();
-        let result = crate::stark::verify(&circuit, &deserialized, &pi);
-        assert!(result.is_ok(), "Deserialized STARK should verify");
-    }
-
-    #[test]
     fn presentation_builder() {
         let federation_root = BabyBear::new(1000);
         let request = {
@@ -1902,62 +1872,11 @@ mod tests {
         assert_eq!(w.federation_root, federation_root);
     }
 
-    #[test]
-    fn presentation_real_poseidon2_stark_prove_and_verify() {
-        // Test the Poseidon2 STARK Merkle proof directly (independent of fold/derivation)
-        let p2_issuer = create_poseidon2_compatible_witness(BabyBear::new(42424242), 8);
-
-        // Generate the Poseidon2 STARK proof
-        let stark_proof = generate_merkle_poseidon2_stark_proof(&p2_issuer);
-        assert!(
-            stark_proof.is_some(),
-            "Poseidon2 STARK proof generation should succeed"
-        );
-
-        let proof = stark_proof.unwrap();
-        let proof_bytes = crate::stark::proof_to_bytes(&proof);
-        assert!(
-            proof_bytes.len() > 1000,
-            "Poseidon2 STARK proof should be > 1KB"
-        );
-        println!(
-            "Poseidon2 STARK Merkle proof: {} bytes ({:.1} KiB)",
-            proof_bytes.len(),
-            proof_bytes.len() as f64 / 1024.0
-        );
-
-        // Verify with real STARK verifier using DSL merkle_poseidon2_circuit
-        let circuit = crate::dsl::descriptors::merkle_poseidon2_circuit();
-        let pi: Vec<BabyBear> = proof
-            .public_inputs
-            .iter()
-            .map(|&v| BabyBear::new_canonical(v))
-            .collect();
-        let result = crate::stark::verify(&circuit, &proof, &pi);
-        assert!(
-            result.is_ok(),
-            "Poseidon2 STARK proof should verify: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn poseidon2_stark_wrong_federation_root_fails() {
-        let p2_issuer = create_poseidon2_compatible_witness(BabyBear::new(42424242), 8);
-        let proof = generate_merkle_poseidon2_stark_proof(&p2_issuer).unwrap();
-
-        // Verify with wrong root
-        let circuit = crate::dsl::descriptors::merkle_poseidon2_circuit();
-        let mut pi: Vec<BabyBear> = proof
-            .public_inputs
-            .iter()
-            .map(|&v| BabyBear::new_canonical(v))
-            .collect();
-        // Tamper: change the root
-        pi[1] = BabyBear::new(999999);
-        let result = crate::stark::verify(&circuit, &proof, &pi);
-        assert!(result.is_err(), "Should reject wrong federation root");
-    }
+    // `presentation_real_poseidon2_stark_prove_and_verify` and
+    // `poseidon2_stark_wrong_federation_root_fails` are retired with the hand-STARK path. The
+    // Poseidon2 Merkle-membership prove/verify/tamper coverage is the descriptor emit gates
+    // `circuit-prove/tests/{merkle_membership,poseidon2_hash,presentation}_emit_gate.rs`
+    // (`prove_vm_descriptor2`).
 
     #[test]
     fn presentation_zero_composition_commitment_rejected() {

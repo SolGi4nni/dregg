@@ -108,76 +108,10 @@ fn bench_throughput(c: &mut Criterion) {
     group.finish();
 }
 
-// =============================================================================
-// STARK proof verification over wire (end-to-end simulation)
-// =============================================================================
+// NOTE: the end-to-end "STARK proof verification over wire" benchmark that used
+// to live here was retired with the legacy `dregg_circuit` STARK engine. The
+// wire codec is still exercised against a realistic ~24 KiB proof payload above
+// (`encode_present_24k` / `decode_present_24k`).
 
-fn bench_stark_over_wire(c: &mut Criterion) {
-    use dregg_circuit::dsl::descriptors::merkle_poseidon2_circuit;
-    use dregg_circuit::dsl::membership::prove_membership_dsl;
-    use dregg_circuit::field::BabyBear;
-    use dregg_circuit::stark::{self, proof_to_bytes};
-
-    // Generate a real STARK proof using the Poseidon2-based membership circuit
-    // (replaces the deprecated MerkleStarkAir which uses a linear hash binding).
-    let leaf = BabyBear::new(12345);
-    let siblings: Vec<[BabyBear; 3]> = vec![
-        [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
-        [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
-        [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-        [
-            BabyBear::new(1000),
-            BabyBear::new(1100),
-            BabyBear::new(1200),
-        ],
-    ];
-    let positions: Vec<u8> = vec![0, 1, 2, 3];
-    let proof = prove_membership_dsl(leaf, &siblings, &positions)
-        .expect("bench proof generation must succeed");
-    let proof_bytes = proof_to_bytes(&proof);
-
-    // Capture the circuit and public inputs for the verify step.
-    let circuit = merkle_poseidon2_circuit();
-    let root = proof.public_inputs[1];
-    let public_inputs = vec![leaf, BabyBear::new(root)];
-
-    // Wrap in a WireMessage
-    let msg = WireMessage::PresentToken {
-        proof: proof_bytes.clone(),
-        request: AuthorizationRequest::new("api/v1/data", "read", "bob@partner.com"),
-        federation_root: [0x22; 32],
-    };
-
-    c.bench_function("wire_stark_encode_decode_verify", |b| {
-        b.iter(|| {
-            // Encode
-            let frame = codec::encode(&msg).unwrap();
-
-            // Decode
-            let decoded = codec::decode(&frame[4..]).unwrap();
-
-            // Extract proof and verify STARK
-            if let WireMessage::PresentToken { .. } = &decoded {
-                stark::verify(&circuit, &proof, &public_inputs).unwrap();
-                black_box(());
-            }
-        });
-    });
-
-    // Just the wire overhead (no STARK verify)
-    c.bench_function("wire_encode_decode_roundtrip_24k", |b| {
-        b.iter(|| {
-            let frame = codec::encode(&msg).unwrap();
-            let decoded = codec::decode(&frame[4..]).unwrap();
-            black_box(decoded);
-        });
-    });
-}
-
-criterion_group!(
-    benches,
-    bench_encode_decode,
-    bench_throughput,
-    bench_stark_over_wire,
-);
+criterion_group!(benches, bench_encode_decode, bench_throughput,);
 criterion_main!(benches);

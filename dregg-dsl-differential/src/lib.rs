@@ -17,7 +17,7 @@
 //!   external toolchain (a Midnight proof server / the SP1 RISC-V toolchain).
 //!   The harness lint-checks their output and records `Skip` — they cast no
 //!   Accept/Reject vote and contribute nothing to agreement.
-//! - `emit_stark` emits a `dregg_circuit::stark::StarkAir` impl. It is exercised
+//! - `emit_stark` emits a compile-time-baked hand-AIR impl. It is exercised
 //!   by the prove/verify tests in `dregg-dsl-tests`, not by this differential
 //!   harness, so it is not in the agreement matrix either.
 //!
@@ -32,7 +32,7 @@
 //! | `gen_air`      | `{name}_air_constraints() -> AirConstraintSet` topology descriptor | YES — re-derive accept/reject via the IR-aligned `dregg_dsl_runtime::diff_witness` primitives, sanity-checked against the descriptor's column accounting. |
 //! | `gen_kimchi`   | `{name}_kimchi() -> KimchiCircuitDescriptor` gate descriptor | YES — Generic-gate simulator that fills the canonical witness per IR shape and asserts every gate's `c_i * w_i` polynomial evaluates to zero. Poseidon gates (membership-only) are checked structurally. |
 //! | `gen_plonky3`  | `{Name}P3Air` native Plonky3 AIR struct | YES (subset) — for the predicate shapes we can build a generic `CircuitDescriptor` over (arithmetic comparisons, equalities), we round-trip through `prove_dsl_plonky3` + `verify_dsl_plonky3`. Membership shapes require Poseidon2 gadgets and are marked SKIP. |
-//! | `emit_stark`   | `{Name}Circuit` `impl StarkAir` (compile-time-baked AIR) | NO — exercised by the prove/verify tests in `dregg-dsl-tests`, not by this harness. Inequality/`in_range` range checks use a genuine bit-decomposition (see `emit_stark_impl::emit_range_check_constraints`); inequality OPERANDS are additionally range-checked to `< 2^OPERAND_RANGE_BITS` (=29), closing the field wrap-around (a large operand could otherwise wrap the diff to a small value). Sound for operands in `[0, 2^29)`; equalities and `!=` are sound. |
+//! | `emit_stark`   | `{Name}Circuit` compile-time-baked hand-AIR impl | NO — exercised by the prove/verify tests in `dregg-dsl-tests`, not by this harness. Inequality/`in_range` range checks use a genuine bit-decomposition (see `emit_stark_impl::emit_range_check_constraints`); inequality OPERANDS are additionally range-checked to `< 2^OPERAND_RANGE_BITS` (=29), closing the field wrap-around (a large operand could otherwise wrap the diff to a small value). Sound for operands in `[0, 2^29)`; equalities and `!=` are sound. |
 //! | `gen_midnight` | `{name}_midnight_zkir() -> &'static str` ZKIR v3 JSON | NO — emit-only/lint-only. Midnight ZKIR is consumed by an off-chain proof server; we lint the emitted JSON (parses, mentions every param, terminates with an `output` instruction) and record `Skip`. Casts no agreement vote. |
 //! | `gen_sp1`      | `{name}_sp1_guest() -> &'static str` SP1 guest source | NO — emit-only/lint-only. Running the guest requires the SP1 RISC-V toolchain (`sp1-prove`/`cargo prove build`); we lint the source (has `main`, declares each input via `sp1_zkvm::io::read`) and record `Skip`. Casts no agreement vote. |
 //!

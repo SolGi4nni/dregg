@@ -53,9 +53,6 @@ name = "multi_silo_budget"
 name = "causal_ordering"
 
 [[example]]
-name = "offline_verification"
-
-[[example]]
 name = "cipherclerk_lifecycle"
 
 [[example]]
@@ -117,9 +114,12 @@ name = "cross_fed_atomic"
 
 # RETIRED (dregg3): proof_obligation example removed — built on the dissolved
 # dregg_turn::obligation verb family (ProofObligation/create_obligation/...).
-
-[[example]]
-name = "bench_summary"
+#
+# RETIRED (stark-kill): bench_summary + offline_verification examples removed —
+# they benchmarked/demoed the legacy hand-STARK (FRI) engine (circuit/src/stark.rs)
+# which has been retired in favour of the plonky3 descriptor prover
+# (dregg_circuit::descriptor_ir2). Perf/offline-verify coverage now lives in the
+# circuit-prove emit-gate audit tests.
 
 [[example]]
 name = "anonymous_credit_check"

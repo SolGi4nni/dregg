@@ -35,14 +35,6 @@ dregg-dfa = { path = "../dfa" }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
-[[bin]]
-name = "dregg-network-demo"
-path = "src/bin/demo.rs"
-
-[[bin]]
-name = "cross_node_auth"
-path = "src/bin/cross_node_auth.rs"
-
 [[bench]]
 name = "wire_bench"
 harness = false

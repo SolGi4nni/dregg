@@ -32,7 +32,7 @@
 //! the relay-operator template's `Witnessed { Dfa }` caveat carries (the relay's
 //! `route_table_root`). [`prove_dfa_routing_wire`] produces bytes that verify
 //! under `turn::executor::membership_verifier::DslCircuitDfaVerifier` (which calls
-//! `CellProgram::verify_transition` → `crate::stark::verify`), so the relay's
+//! `CellProgram::verify_transition` → the bespoke STARK verifier), so the relay's
 //! routing decision is gated by a STARK that binds the route commitment.
 //!
 //! # Trace layout (5 substantive columns + selector + zero lane)

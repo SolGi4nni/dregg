@@ -1548,50 +1548,11 @@ mod tests {
         );
     }
 
-    /// Adversarial test: a receipt with a forged Effect-VM proof bytes
-    /// must still parse out of the tool response, but the standalone
-    /// verifier would reject it. We cannot drive `dregg-verifier
-    /// replay-chain` from in-process tests (no cargo / no spawning
-    /// the verifier binary in this lane), so we test the in-process
-    /// `dregg_circuit::stark::proof_from_bytes` gate: forged bytes
-    /// fail to deserialize as a valid proof.
-    // V1-FLOOR (prover-gated): this test requires `dregg_circuit::stark::proof_from_bytes` to
-    // SUCCEED on the tool's `effect_vm_proof_hex` — i.e. it pins the DREG-magic v1 `StarkProof` wire
-    // format. Under `prover` the standalone effect-vm proof is a postcard `Ir2BatchProof` (no DREG
-    // magic — it correctly FAILS `proof_from_bytes`, the two halves move together; see
-    // `turn/src/executor/proof_verify.rs`), and the tool surface produces no v1 proof at all. Runs
-    // under `--no-default-features`.
-    #[cfg(not(feature = "prover"))]
-    #[tokio::test]
-    async fn forged_proof_bytes_fail_to_deserialize() {
-        let (state, _tmp) = fresh_unlocked_state().await;
-        let params = serde_json::json!({
-            "name": "carol.dev",
-            "expiry_height": 2_000_000_000u64,
-        });
-        let result = dispatch_tool("dregg_register_name", params, &state).await;
-        let j = extract_json(&result);
-        assert_proof_populated("forged_proof_honest_setup", &j);
-        let proof_hex = j
-            .get("effect_vm_proof_hex")
-            .and_then(|v| v.as_str())
-            .expect("proof_hex");
-        // Sanity check: the real bytes deserialize.
-        let proof_bytes = hex_decode_var(proof_hex).expect("hex decode");
-        assert!(
-            dregg_circuit::stark::proof_from_bytes(&proof_bytes).is_ok(),
-            "real proof must deserialize"
-        );
-        // Forge: flip every byte. The DREG magic header check rejects.
-        let mut forged = proof_bytes.clone();
-        for b in &mut forged {
-            *b ^= 0xFF;
-        }
-        assert!(
-            dregg_circuit::stark::proof_from_bytes(&forged).is_err(),
-            "forged proof bytes must NOT deserialize as a valid proof"
-        );
-    }
+    // (Deleted) `forged_proof_bytes_fail_to_deserialize`: a `not(feature = "prover")`
+    // V1-FLOOR test whose sole purpose was pinning the DREG-magic v1 `StarkProof` wire
+    // format via the legacy hand-STARK `proof_from_bytes` gate. That hand-STARK engine and
+    // its wire format are retired; forged-proof rejection is now covered by the
+    // descriptor-IR2 verify path (`verify_vm_descriptor2`) and the `*_emit_gate` tests.
 
     // =====================================================================
     // MCP best-practices surface tests: annotations, structured content,

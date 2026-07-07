@@ -3,9 +3,9 @@
 //! This crate re-exports DSL infrastructure from `dregg_circuit::dsl`. The actual
 //! implementation lives in `dregg-circuit` to avoid circular dependencies.
 //!
-//! The [`circuit`] module provides a runtime-interpreted `StarkAir` implementation
-//! driven by a [`circuit::CircuitDescriptor`], enabling DSL macros to emit data
-//! rather than 2000 lines of codegen.
+//! The [`circuit`] module provides a runtime-interpreted circuit driven by a
+//! [`circuit::CircuitDescriptor`], enabling DSL macros to emit data rather than
+//! 2000 lines of codegen.
 //!
 //! # Smart Contract Runtime
 //!
@@ -37,12 +37,10 @@ pub mod composition;
 pub mod diff_witness;
 
 // Re-export composition primitives.
-#[allow(deprecated)]
 pub use composition::{
-    AttachedSubProof, ComposedCircuitDescriptor, ComposedDslCircuit, ComposedProof,
-    ComposedVerification, IvcBinding, SubProofBinding, compose_aggregate, compose_and,
-    compose_chain, compose_or, compute_descriptor_vk_elements, generate_and_trace,
-    generate_chain_trace, verify_composed, verify_composed_full,
+    AttachedSubProof, ComposedCircuitDescriptor, ComposedDslCircuit, ComposedProof, IvcBinding,
+    SubProofBinding, compose_aggregate, compose_and, compose_chain, compose_or,
+    compute_descriptor_vk_elements, generate_and_trace, generate_chain_trace,
 };
 
 #[cfg(feature = "plonky3")]

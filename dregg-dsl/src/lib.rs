@@ -1,36 +1,37 @@
 //! Dregg Constraint DSL — proc macro crate.
 //!
 //! Provides `#[dregg_caveat]` and `#[dregg_effect]` which compile one constraint
-//! function into EIGHT backends:
+//! function into SEVEN backends:
 //! - `gen_rust`     — a Rust evaluator (`{name}_check`)              [agreement set]
 //! - `gen_air`      — an AIR constraint descriptor (`{name}_air_constraints`) [agreement set]
 //! - `gen_datalog`  — a Datalog rule fragment (`{name}_datalog`)    [agreement set]
 //! - `gen_kimchi`   — a Kimchi circuit descriptor (`{name}_kimchi`) [agreement set]
 //! - `gen_plonky3`  — a native Plonky3 Air impl (`{Name}P3Air`)     [agreement set, subset]
-//! - `emit_stark`   — a compile-time STARK AIR impl (`{Name}Circuit`)
 //! - `gen_midnight` — a Midnight ZKIR v3 program (`{name}_midnight_zkir`) [emit-only/lint-only]
 //! - `gen_sp1`      — an SP1 guest program (`{name}_sp1_guest`)      [emit-only/lint-only]
+//!
+//! The former `emit_stark` backend (a compile-time impl of the hand-rolled
+//! `dregg_circuit` STARK) has been removed along with that engine; native Plonky3
+//! (`gen_plonky3`) is the proving backend.
 //!
 //! ## Cross-validation status
 //!
 //! Five backends (`gen_rust`, `gen_air`, `gen_datalog`, `gen_kimchi`,
 //! `gen_plonky3`) form the **agreement set** cross-checked by
-//! `dregg-dsl-differential` (gen_rust is the oracle). `emit_stark` is exercised
-//! separately by the prove/verify tests in `dregg-dsl-tests`. `gen_midnight` and
+//! `dregg-dsl-differential` (gen_rust is the oracle). `gen_midnight` and
 //! `gen_sp1` are STRING emitters validated by lint only (their proof systems need
 //! external toolchains); they cast no agreement vote.
 //!
 //! ## Range-check soundness
 //!
 //! `<=`, `>=` and `in_range!` compile to a genuine bit-decomposition range check
-//! in both `emit_stark` and `gen_plonky3`: the difference (or value) is bound to
+//! in `gen_plonky3`: the difference (or value) is bound to
 //! `RANGE_CHECK_BITS` binary witness columns, the reconstruction is enforced, and
 //! the top bits are forced to zero — so a field-wrapped negative difference is
 //! UNSATISFIABLE. Each sub-constraint is asserted independently (no cancellation).
 
 extern crate proc_macro;
 
-mod emit_stark_impl;
 mod gen_air;
 mod gen_datalog;
 mod gen_kimchi;
@@ -40,11 +41,10 @@ mod gen_rust;
 mod gen_sp1;
 mod ir;
 mod parse;
-mod parse_circuit;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ItemFn, ItemMod, parse_macro_input};
+use syn::{ItemFn, parse_macro_input};
 
 /// Marks a function as a dregg caveat constraint.
 ///
@@ -78,7 +78,6 @@ pub fn dregg_caveat(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let air_desc = gen_air::generate_air_descriptor(&ir);
     let datalog = gen_datalog::generate_datalog(&ir);
     let kimchi = gen_kimchi::generate_kimchi(&ir);
-    let stark_impl = emit_stark_impl::emit_stark_impl(&ir);
     let midnight = gen_midnight::generate_midnight(&ir);
     let plonky3 = gen_plonky3::generate_plonky3(&ir);
     let sp1 = gen_sp1::generate_sp1(&ir);
@@ -88,7 +87,6 @@ pub fn dregg_caveat(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #air_desc
         #datalog
         #kimchi
-        #stark_impl
         #midnight
         #plonky3
         #sp1
@@ -141,7 +139,6 @@ pub fn dregg_effect(attr: TokenStream, item: TokenStream) -> TokenStream {
     let datalog = gen_datalog::generate_datalog(&ir);
     let kimchi = gen_kimchi::generate_kimchi(&ir);
     let effect_desc = gen_rust::generate_effect_descriptor(&ir);
-    let stark_impl = emit_stark_impl::emit_stark_impl(&ir);
     let midnight = gen_midnight::generate_midnight(&ir);
     let plonky3 = gen_plonky3::generate_plonky3(&ir);
     let sp1 = gen_sp1::generate_sp1(&ir);
@@ -152,59 +149,11 @@ pub fn dregg_effect(attr: TokenStream, item: TokenStream) -> TokenStream {
         #datalog
         #kimchi
         #effect_desc
-        #stark_impl
         #midnight
         #plonky3
         #sp1
     };
 
-    output.into()
-}
-
-/// Marks a module as a dregg circuit definition (Level 2 DSL).
-///
-/// The module must contain:
-/// - `const WIDTH: usize = N;` — trace width (number of columns)
-/// - `const DEGREE: usize = N;` — maximum constraint degree
-/// - `const PI_COUNT: usize = N;` — number of public inputs
-/// - `mod col { ... }` — column index definitions (passed through)
-/// - `fn constraints(local, next, pi) -> Vec<BabyBear>` — per-row constraints
-/// - `fn transitions(local, next) -> Vec<BabyBear>` — row-to-row constraints (optional)
-/// - `fn boundaries(pi, trace_len) -> Vec<(usize, usize, BabyBear)>` — boundary constraints (optional)
-///
-/// Generates:
-/// - A struct with the PascalCase name of the module
-/// - `impl StarkAir` for that struct
-///
-/// # Example
-///
-/// ```ignore
-/// #[dregg_circuit]
-/// mod my_circuit {
-///     const WIDTH: usize = 4;
-///     const DEGREE: usize = 2;
-///     const PI_COUNT: usize = 1;
-///
-///     mod col {
-///         pub const A: usize = 0;
-///         pub const B: usize = 1;
-///     }
-///
-///     fn constraints(local: &[BabyBear], _next: &[BabyBear], pi: &[BabyBear]) -> Vec<BabyBear> {
-///         vec![local[col::A] - local[col::B]]
-///     }
-/// }
-/// ```
-#[proc_macro_attribute]
-pub fn dregg_circuit(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let module = parse_macro_input!(item as ItemMod);
-
-    let parsed = match parse_circuit::parse_circuit_module(&module) {
-        Ok(m) => m,
-        Err(e) => return e.to_compile_error().into(),
-    };
-
-    let output = parse_circuit::emit_circuit(&parsed);
     output.into()
 }
 

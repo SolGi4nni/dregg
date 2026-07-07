@@ -227,27 +227,24 @@ pub(super) async fn tool_verify_sovereign_proof(
     }
     drop(s);
 
-    // Deserialize the STARK proof.
-    let proof: dregg_circuit::stark::StarkProof = match postcard::from_bytes(&proof_bytes) {
-        Ok(p) => p,
-        Err(e) => return McpToolResult::error(format!("failed to deserialize proof: {e}")),
-    };
-
     // Parse public inputs as BabyBear field elements.
     let public_inputs: Vec<dregg_circuit::BabyBear> = public_inputs_val
         .iter()
         .filter_map(|v| v.as_u64().map(|n| dregg_circuit::BabyBear::new(n as u32)))
         .collect();
 
-    // The v1 hand-AIR (`EffectVmAir`) standalone effect-VM `StarkProof` verify is RETIRED;
-    // this demo tool reports v1 verification is unavailable (rotated proofs verify through
-    // `verify_vm_descriptor2`).
-    let _ = &proof;
+    // The v1 hand-AIR (`EffectVmAir`) standalone effect-VM `StarkProof` verify is RETIRED and
+    // the v1 wire format is gone. Descriptor-IR2 proofs verify through
+    // `dregg_circuit::descriptor_ir2::verify_vm_descriptor2`, which must anchor against the
+    // emitted descriptor — not available from this raw-bytes demo surface (no descriptor is
+    // supplied) — so this tool reports v1 verification is unavailable and rejects (fail-closed).
+    let _ = &proof_bytes;
     McpToolResult::json(&serde_json::json!({
         "valid": false,
-        "error": "v1 effect-vm STARK verification is retired (rotated proofs verify through \
-                  verify_vm_descriptor2)",
+        "error": "v1 effect-vm STARK verification is retired; descriptor-IR2 proofs verify \
+                  through verify_vm_descriptor2 (which needs the descriptor to anchor against)",
         "public_inputs_count": public_inputs.len(),
+        "proof_bytes_len": proof_bytes.len(),
     }))
 }
 

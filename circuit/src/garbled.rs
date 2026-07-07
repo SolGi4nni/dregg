@@ -104,17 +104,6 @@ pub struct GateEvalRecord {
     pub output_label: WireLabel,
 }
 
-/// A complete garbled evaluation proof.
-#[derive(Clone, Debug)]
-pub struct GarbledEvaluationProof {
-    /// The circuit commitment (public, 124-bit WideHash).
-    pub circuit_commitment: crate::binding::WideHash,
-    /// Hash of the output label (public, 124-bit WideHash).
-    pub output_label_hash: crate::binding::WideHash,
-    /// The STARK proof of correct evaluation.
-    pub stark_proof: crate::stark::StarkProof,
-}
-
 // ============================================================================
 // Garbling: Poseidon2-based encryption
 // ============================================================================
@@ -460,97 +449,11 @@ pub fn prepare_private_threshold_check(threshold: u32) -> (GarbledCircuit, Garbl
     garble_comparison_circuit(threshold, COMPARISON_BITS)
 }
 
-/// Prover side: evaluate the garbled circuit and produce a STARK proof.
-///
-/// `my_labels` are obtained via OT (one per bit of the prover's value).
-///
-/// Returns `Some(proof)` if the evaluation produces the "true" output,
-/// or `None` if the value doesn't meet the threshold.
-///
-/// # Deprecation
-///
-/// Use `dregg_dsl_runtime::garbled::prove_private_threshold_dsl()` for new code.
-/// This function remains for backward compatibility with existing proofs.
-#[allow(deprecated)]
-pub fn prove_private_threshold(
-    circuit: &GarbledCircuit,
-    my_labels: &[WireLabel],
-) -> Option<GarbledEvaluationProof> {
-    let eval = evaluate_garbled_circuit(circuit, my_labels);
-
-    if !eval.output_bit {
-        return None; // Value doesn't meet threshold.
-    }
-
-    // Generate STARK proof of correct evaluation.
-    let air = super::garbled_air::GarbledEvaluationAir::new(
-        eval.gate_trace.clone(),
-        circuit.circuit_commitment,
-        hash_label(&eval.output_label),
-    );
-
-    let (mut trace, public_inputs) =
-        <super::garbled_air::GarbledEvaluationAir as crate::constraint_prover::Air>::generate_trace(
-            &air,
-        );
-
-    // STARK requires power-of-two trace length >= 2.
-    while trace.len() < 2 || !trace.len().is_power_of_two() {
-        trace.push(trace.last().unwrap().clone());
-    }
-
-    let stark_proof = crate::stark::prove(&air, &trace, &public_inputs);
-
-    Some(GarbledEvaluationProof {
-        circuit_commitment: circuit.circuit_commitment,
-        output_label_hash: hash_label(&eval.output_label),
-        stark_proof,
-    })
-}
-
-/// Verifier side: verify a garbled evaluation proof.
-///
-/// # Deprecation
-///
-/// Use `dregg_dsl_runtime::garbled::verify_garbled_evaluation_dsl()` for new code.
-///
-/// Checks that:
-/// 1. The circuit commitment matches the garbled circuit the verifier sent.
-/// 2. The output label hash matches the "true" output label.
-/// 3. The STARK proof verifies.
-#[allow(deprecated)]
-pub fn verify_private_threshold(
-    proof: &GarbledEvaluationProof,
-    expected_circuit_commitment: &crate::binding::WideHash,
-    true_output_label_hash: &crate::binding::WideHash,
-) -> bool {
-    // Check commitments match.
-    if proof.circuit_commitment != *expected_circuit_commitment {
-        return false;
-    }
-    if proof.output_label_hash != *true_output_label_hash {
-        return false;
-    }
-
-    // Verify the STARK proof.
-    // The deprecated GarbledEvaluationAir reserves 4-felt columns for each
-    // commitment, so bind only the first 4 felts of each WideHash (matching
-    // `GarbledEvaluationAir::generate_trace`). The struct-level WideHash equality
-    // checks above already enforce the full 8-felt binding.
-    let mut public_inputs = Vec::with_capacity(8);
-    for i in 0..4 {
-        public_inputs.push(expected_circuit_commitment[i]);
-    }
-    for i in 0..4 {
-        public_inputs.push(true_output_label_hash[i]);
-    }
-    let dummy_air = super::garbled_air::GarbledEvaluationAir::new(
-        vec![], // dummy trace for verification shape
-        *expected_circuit_commitment,
-        *true_output_label_hash,
-    );
-    crate::stark::verify(&dummy_air, &proof.stark_proof, &public_inputs).is_ok()
-}
+// The deprecated hand-STARK `prove_private_threshold` / `verify_private_threshold` wrappers (over
+// `garbled_air::GarbledEvaluationAir`) are retired. The production path is
+// `crate::dsl::garbled::{prove,verify}_private_threshold_dsl` (the 56-column DSL descriptor); the
+// Lean-emitted descriptor twin and its correctness/mutation gate live in
+// `circuit-prove/tests/garbled_eval_emit_gate.rs` (`prove_vm_descriptor2`).
 
 // ============================================================================
 // Tests
@@ -750,115 +653,10 @@ mod tests {
         assert!(!result.output_bit);
     }
 
-    #[test]
-    fn test_prove_and_verify_private_threshold() {
-        let threshold = 500u32;
-        let prover_value = 750u32;
-
-        let (circuit, secrets) = prepare_private_threshold_check(threshold);
-
-        // Simulate OT: prover obtains labels for their value.
-        let prover_labels: Vec<WireLabel> = (0..COMPARISON_BITS)
-            .map(|bit_idx| {
-                let bit = (prover_value >> bit_idx) & 1;
-                if bit == 0 {
-                    secrets.prover_label_pairs[bit_idx].0
-                } else {
-                    secrets.prover_label_pairs[bit_idx].1
-                }
-            })
-            .collect();
-
-        let proof = prove_private_threshold(&circuit, &prover_labels)
-            .expect("750 >= 500 should produce a proof");
-
-        // Verifier checks the proof.
-        assert!(verify_private_threshold(
-            &proof,
-            &circuit.circuit_commitment,
-            &secrets.true_output_hash,
-        ));
-    }
-
-    #[test]
-    fn test_prove_returns_none_when_below_threshold() {
-        let threshold = 500u32;
-        let prover_value = 200u32;
-
-        let (circuit, secrets) = prepare_private_threshold_check(threshold);
-
-        let prover_labels: Vec<WireLabel> = (0..COMPARISON_BITS)
-            .map(|bit_idx| {
-                let bit = (prover_value >> bit_idx) & 1;
-                if bit == 0 {
-                    secrets.prover_label_pairs[bit_idx].0
-                } else {
-                    secrets.prover_label_pairs[bit_idx].1
-                }
-            })
-            .collect();
-
-        let proof = prove_private_threshold(&circuit, &prover_labels);
-        assert!(proof.is_none(), "200 < 500 should not produce a proof");
-    }
-
-    #[test]
-    fn test_verify_fails_with_wrong_commitment() {
-        let threshold = 500u32;
-        let prover_value = 750u32;
-
-        let (circuit, secrets) = prepare_private_threshold_check(threshold);
-
-        let prover_labels: Vec<WireLabel> = (0..COMPARISON_BITS)
-            .map(|bit_idx| {
-                let bit = (prover_value >> bit_idx) & 1;
-                if bit == 0 {
-                    secrets.prover_label_pairs[bit_idx].0
-                } else {
-                    secrets.prover_label_pairs[bit_idx].1
-                }
-            })
-            .collect();
-
-        let proof = prove_private_threshold(&circuit, &prover_labels).unwrap();
-
-        // Verify with wrong circuit commitment.
-        let wrong_commitment =
-            crate::binding::WideHash::from_poseidon2("wrong", &[BabyBear::new(99999)]);
-        assert!(!verify_private_threshold(
-            &proof,
-            &wrong_commitment, // wrong commitment
-            &secrets.true_output_hash,
-        ));
-    }
-
-    #[test]
-    fn test_verify_fails_with_wrong_output_hash() {
-        let threshold = 500u32;
-        let prover_value = 750u32;
-
-        let (circuit, secrets) = prepare_private_threshold_check(threshold);
-
-        let prover_labels: Vec<WireLabel> = (0..COMPARISON_BITS)
-            .map(|bit_idx| {
-                let bit = (prover_value >> bit_idx) & 1;
-                if bit == 0 {
-                    secrets.prover_label_pairs[bit_idx].0
-                } else {
-                    secrets.prover_label_pairs[bit_idx].1
-                }
-            })
-            .collect();
-
-        let proof = prove_private_threshold(&circuit, &prover_labels).unwrap();
-
-        // Verify with wrong output label hash (e.g., the false output hash).
-        assert!(!verify_private_threshold(
-            &proof,
-            &circuit.circuit_commitment,
-            &secrets.false_output_hash, // wrong: this is the "false" label
-        ));
-    }
+    // The `prove_private_threshold` / `verify_private_threshold` unit tests are retired with the
+    // deprecated hand-STARK wrappers. The descriptor twin's prove + verify + 6 mutation canaries are
+    // in `circuit-prove/tests/garbled_eval_emit_gate.rs`; the DSL production path is exercised by
+    // `circuit/tests/garbled_private_joint_settlement.rs` and `garbled_ot_auction.rs`.
 
     #[test]
     fn test_multiple_thresholds() {

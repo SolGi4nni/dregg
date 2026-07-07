@@ -29,7 +29,7 @@
 //!      Required to produce at least one non-NoOp VM effect. Variants that
 //!      collapse to `vec![VmEffect::NoOp]` surface as test failures.
 //!
-//!   3. AIR / proof: build the trace, run `stark::prove`, run `stark::verify`.
+//!   3. AIR / proof: build the trace, prove and verify the descriptor.
 //!      Required to round-trip. Variants with no AIR coverage surface here.
 //!
 //! Outcome expectations:

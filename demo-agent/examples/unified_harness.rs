@@ -21,7 +21,6 @@ use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use dregg_cell_crypto::seal::test_seal_pair;
 use dregg_circuit::BabyBear;
 use dregg_circuit::poseidon2;
-use dregg_circuit::stark::{MerkleStarkAir, generate_merkle_trace, proof_to_bytes, prove, verify};
 use dregg_federation::types::{AttestedRoot, PublicKey};
 use dregg_federation::{SigningKey, generate_keypair, sign};
 use dregg_token::{Attenuation, AuthRequest, AuthToken, BudgetSpec, MacaroonToken};
@@ -1054,13 +1053,8 @@ fn run_seal_unseal_transfer() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_offline_verification(federation: &SharedFederation) -> Result<(), Box<dyn Error>> {
-    let siblings = [[1u32, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]];
-    let positions = [0u32, 1, 2, 3];
-    let (trace, public_inputs) = generate_merkle_trace(42, &siblings, &positions);
-    let air = MerkleStarkAir;
-    let proof = prove(&air, &trace, &public_inputs);
-    let _ = proof_to_bytes(&proof);
-    verify(&air, &proof, &public_inputs)?;
+    // Offline verification of the federation's attested genesis root using only
+    // locally-cached data (the member public keys) — no network round-trip.
     assert!(federation.genesis_root.is_valid(&federation.members));
     Ok(())
 }

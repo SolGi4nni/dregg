@@ -10,13 +10,9 @@
 //! 6. Attack resistance: frontrunning, probing, authority-exceed all fail
 //!
 //! This uses the real `dregg-intent` crate (matcher, fulfillment, gossip pool
-//! with commit-reveal). The STARK proof uses the mock path for speed but would
-//! be a real proof in production.
+//! with commit-reveal). Capability is established by the local matcher; the
+//! service then checks the revealed fulfillment structurally.
 
-use dregg_circuit::BabyBear;
-use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use dregg_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
-use dregg_circuit::poseidon2::hash_fact;
 use dregg_commit::{Poseidon2MerkleTree, commitment_to_field};
 use dregg_intent::fulfillment::{self, FulfillOptions, Fulfillment};
 use dregg_intent::gossip::{
@@ -209,59 +205,18 @@ fn main() {
     println!("  Before revealing HOW it will fulfill the intent, the agent posts a");
     println!("  BLINDED commitment. This prevents other agents from copying the solution.\n");
 
-    // First, create the actual fulfillment with a real STARK proof.
-    // Build a STARK witness proving authorization (simulates what the matcher produces)
-    let stark_state_root = BabyBear::new(99999);
-    let stark_alice = BabyBear::new(1000);
-    let stark_app = BabyBear::new(2000);
-    let allow_pred = BabyBear::new(ALLOW_PREDICATE);
-    let has_role_pred = BabyBear::new(600);
-    let body_hash = hash_fact(has_role_pred, &[stark_alice, stark_app, BabyBear::ZERO]);
-    let stark_witness = build_multi_step_witness(
-        stark_state_root,
-        BabyBear::new(42),
-        vec![DerivationWitness {
-            rule: CircuitRule {
-                id: 1,
-                num_body_atoms: 1,
-                num_variables: 2,
-                head_predicate: allow_pred,
-                head_terms: [
-                    (true, BabyBear::new(0)),
-                    (true, BabyBear::new(1)),
-                    (false, BabyBear::ZERO),
-                    (false, BabyBear::ZERO),
-                ],
-                body_atoms: vec![BodyAtomPattern {
-                    predicate: has_role_pred,
-                    terms: [
-                        (true, BabyBear::new(0)),
-                        (true, BabyBear::new(1)),
-                        (false, BabyBear::ZERO),
-                    ],
-                }],
-                equal_checks: vec![],
-                memberof_checks: vec![],
-                gte_check: None,
-                lt_check: None,
-            },
-            state_root: stark_state_root,
-            body_fact_hashes: vec![body_hash],
-            substitution: vec![stark_alice, stark_app],
-            derived_predicate: allow_pred,
-            derived_terms: [stark_alice, stark_app, BabyBear::ZERO, BabyBear::ZERO],
-            not_after_height: BabyBear::ZERO,
-            org_id_hash: BabyBear::ZERO,
-            budget_remaining: BabyBear::ZERO,
-        }],
-    );
-
+    // Prepare the fulfillment: Trusted mode (direct token presentation), scope
+    // narrowed to ONLY sign_treasury on treasury/* and capped at the intent's
+    // lifetime. (Private/Selective modes carry a STARK proof; that leg rides the
+    // descriptor prover in production and is out of scope for this walkthrough.)
     let fulfill_options = FulfillOptions {
-        mode: VerificationMode::Private,
+        mode: VerificationMode::Trusted,
         max_expiry: Some(now + 3600), // cap at 1 hour (same as intent)
         restrict_actions: Some(vec!["sign_treasury".into()]), // ONLY sign, not view
         restrict_resource: Some("treasury/*".into()),
-        stark_witness: Some(stark_witness),
+        // Trusted mode builds a real HMAC-chained attenuated macaroon from the
+        // source token's root key.
+        root_key: Some(*blake3::hash(b"agent-cclerk-treasury-root-key").as_bytes()),
         ..Default::default()
     };
 
@@ -282,7 +237,7 @@ fn main() {
         fulfillment.expiry
     );
     println!(
-        "    Token data: {} (Private mode reveals nothing)",
+        "    Token data: {} (Trusted mode presents the attenuated token)",
         if fulfillment.token_data.is_none() {
             "NONE"
         } else {
@@ -352,16 +307,12 @@ fn main() {
     println!("    Granted actions: {:?}", fulfillment.granted_actions);
     println!("    Granted resource: \"{}\"", fulfillment.granted_resource);
     println!("    Expiry: {:?}", fulfillment.expiry);
-    println!(
-        "    STARK proof: {} bytes (proves capability without revealing token)",
-        fulfillment.proof.as_ref().map_or(0, |p| p.len())
-    );
     println!("    Fulfiller: [anonymous commitment]\n");
     println!("  Key attenuation properties:");
     println!("    - ONLY sign_treasury granted (view_treasury stripped)");
-    println!("    - Budget implicitly capped (fulfillment proves >= 10k only)");
+    println!("    - Budget requirement established by the matcher (>= 10k)");
     println!("    - Expiry capped at intent lifetime (not full token lifetime)");
-    println!("    - No token data revealed (Private mode)\n");
+    println!("    - Attenuated token presented directly (Trusted mode)\n");
 
     // =========================================================================
     // STEP 5: Service verifies the fulfillment
@@ -369,62 +320,38 @@ fn main() {
     println!("=========================================================================");
     println!("  STEP 5: Service Verifies Fulfillment");
     println!("=========================================================================\n");
-    println!("  The service checks three things:\n");
+    println!("  The service checks the revealed fulfillment structurally:\n");
 
-    // Check 1: Verify the real STARK proof cryptographically
-    let proof_valid = if let Some(proof_bytes) = fulfillment.proof.as_ref() {
-        match dregg_circuit::stark::proof_from_bytes(proof_bytes) {
-            Ok(proof) => {
-                let conclusion = BabyBear(proof.public_inputs[2]);
-                let acc_hash = BabyBear(proof.public_inputs[4]);
-                dregg_circuit::dsl::verify_authorization_dsl(conclusion, acc_hash, &proof).is_ok()
-            }
-            Err(_) => false,
-        }
-    } else {
-        false
-    };
-    println!(
-        "  [{}] 1. STARK proof is valid (proves agent CAN satisfy the intent)",
-        if proof_valid { "PASS" } else { "FAIL" }
-    );
-    println!(
-        "       Proof bytes: {} (real FRI-based STARK proof)",
-        fulfillment.proof.as_ref().map_or(0, |p| p.len())
-    );
-
-    // Check 2: Attenuated token grants sign_treasury
+    // Check 1: Attenuated token grants sign_treasury
     let grants_sign = fulfillment
         .granted_actions
         .contains(&"sign_treasury".to_string());
     println!(
-        "  [{}] 2. Fulfillment grants sign_treasury action",
+        "  [{}] 1. Fulfillment grants sign_treasury action",
         if grants_sign { "PASS" } else { "FAIL" }
     );
     println!("       Granted: {:?}", fulfillment.granted_actions);
 
-    // Check 3: Budget satisfies >= 10k (proven by the STARK, not by revealing the number)
-    // In Private mode, the proof itself demonstrates budget sufficiency
-    let budget_sufficient = true; // proven by STARK proof
-    println!(
-        "  [{}] 3. Budget >= 10,000 (proven cryptographically by STARK)",
-        if budget_sufficient { "PASS" } else { "FAIL" }
-    );
-    println!("       (The actual budget of 50,000 is NEVER revealed to the service)");
-
-    // Check 4: Resource scope matches
+    // Check 2: Resource scope matches
     let resource_ok = fulfillment.granted_resource == "treasury/*";
     println!(
-        "  [{}] 4. Resource scope covers treasury/*",
+        "  [{}] 2. Resource scope covers treasury/*",
         if resource_ok { "PASS" } else { "FAIL" }
     );
 
+    // Check 3: Expiry is capped at the intent's lifetime (not the full token lifetime)
+    let expiry_ok = fulfillment.expiry == Some(now + 3600);
+    println!(
+        "  [{}] 3. Expiry capped at intent lifetime",
+        if expiry_ok { "PASS" } else { "FAIL" }
+    );
+
     println!();
-    if proof_valid && grants_sign && budget_sufficient && resource_ok {
+    if grants_sign && resource_ok && expiry_ok {
         println!("  === FULFILLMENT ACCEPTED ===");
-        println!("  The service now holds a cryptographic guarantee that:");
+        println!("  Backed by the earlier local match + commit-reveal, the service knows:");
         println!("    - An agent exists who can sign treasury transactions");
-        println!("    - That agent has budget >= 10,000");
+        println!("    - The grant is narrowed to sign_treasury on treasury/*");
         println!("    - The authorization is valid for the next hour");
         println!("    - All without learning the agent's identity or full capabilities");
     } else {

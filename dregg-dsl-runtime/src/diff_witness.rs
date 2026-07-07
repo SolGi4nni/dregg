@@ -8,7 +8,7 @@
 //!
 //! This module centralizes the per-constraint-shape witness construction and
 //! the "constraint evaluates to zero on the trace" check. Today, every
-//! backend (gen_plonky3, gen_kimchi, emit_stark_impl, ...) reproduces this
+//! backend (gen_plonky3, gen_kimchi, ...) reproduces this
 //! algebra independently. The differential test uses *only* this module, so
 //! drift between hand-written backends is detectable.
 //!
