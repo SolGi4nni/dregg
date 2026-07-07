@@ -257,3 +257,17 @@ Two sequential gates on one pipeline:
   DAG (implemented_by is TRUSTED → the guard is the soundness net; flag the small TCB add to ember).
   Then rebuild the Lean seed + node + PROVE gate-ON round-2 finalizes = the FULLY-VERIFIED payoff.
 - Then deploy fully-verified to the live mesh = THE FULL GOAL.
+
+## ★★★ FULLY-VERIFIED PAYOFF ACHIEVED (07-07) — gate-ON, the verified Lean finality gate ★★★
+- The @[implemented_by] fix (02c4e1709) WORKS: gate-on-fixed.log shows a CLEAN gate-ON pass —
+  fresh client's attested Transfer stream-finalized cross-node on the VERIFIED n=4 (verified Lean
+  tauOrderFast gate, NOT gate-off): turn fd3b912e, dest funded 1000 on ALL 4 nodes, heights→[2,2,2,2],
+  test result ok, 29.10s (vs the 90s-timeout FAIL pre-fix). The O(n³)→O(1)-HashMap Lean fix closed it.
+  Differential #guards (fastCausalPastIncl==causalPastIncl, tauOrderFast==tauOrder) green (build-checked);
+  implemented_by TCB add flagged for ember.
+- FLAKY at the margin (an earlier run: [2,2,1,1], 2 nodes lag — loopback QUIC mesh variance). Verifying
+  reliability myself (3 gate-ON runs, bs6x1jfew). The fix is REAL; margin is tight on this loopback box.
+- The seed with the fix is at payoff-target/.../out/libdregg_lean.a (07:33); the INSTALLED
+  dregg-lean-ffi/libdregg_lean.a is still the OLD 03:59 seed → must install the fixed seed for the live deploy.
+- NEXT (ember: BOTH): confirm reliability → install fixed seed → deploy fully-verified to LIVE mesh
+  (check it's safe to restart) → real attested client turn finalizes on the LIVING verified federation = THE GOAL.
