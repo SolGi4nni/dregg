@@ -11,6 +11,22 @@ refinement) AND Rung 2 (semantic no-forgery) for EVERY family, Rung 3 (fold → 
 verifiable) where there's a consumer, and beyond (cross-circuit composition + assurance-case
 apex). Done = engine + AIRs deleted, every survivor Lean-emitted + Rung-1&2-proven.
 
+## ⚑ WIRE-MIGRATION MAP (2026-07-07, "Grind it down" — ember lifted the hold + gave the phrase)
+CUTOVER SURFACE LANDED (84 files, workspace-green, committed) → 35→**20** prod stark refs remain.
+The 20 are the coupled wire-migration. WIRE SHAPE (grounded): predicate blobs (`cell/src/predicate.rs`
+`WitnessedPredicate`, a small descriptor + `proof_idx` into a proof-witness table) carry a serialized
+**`StarkProof`** (hand engine); TARGET = **`Ir2BatchProof`** (= `p3_batch_stark::BatchProof`, the return
+of `prove_vm_descriptor2` at `descriptor_ir2.rs:4904`). Migrate producer→table→consumer in LOCKSTEP.
+The 20, by cluster:
+- **bridge** (present.rs producer + verifier.rs consumer) — SELF-CONTAINED, the PATHFINDER (build-gate just bridge).
+- **turn** (action, aggregate_bilateral_prover, binding_proof, conditional, executor/apply, executor/membership_verifier) — the deep-prover core.
+- **sdk** (cipherclerk, privacy, verify) · **chain** (main, lib, prove) · **cell/predicate.rs** (the blob table).
+- **wasm** (lib, privacy) — SOFT wall (wasm already pulls p3 in its dep graph; a rewire, not a new prover).
+- misc: wire/server.rs, storage/blinded.rs, circuit/examples/fri_from_scratch.rs (example — delete/migrate).
+TWO descriptor-generalizations needed first: variable-depth membership (emit is depth-2), delegation-scope (no emit).
+ORDER: bridge pathfinder → generalize membership → turn cluster → sdk/chain → cell blob table → wasm → delete hand AIRs → `git rm stark.rs` when grep==0.
+NOTE: breaking old serialized StarkProof blobs is ACCEPTABLE (VK-epoch flip is a fresh-genesis act anyway).
+
 ## Current thrust — PARKED at a clean milestone (ember hold, 2026-07-07)
 **Rung 0 + Rung 1 + Rung 2 ALL COMPLETE and committed.** Every one of the ~20 emitted
 circuits is Lean-emitted, byte-pinned, functionally refined (Rung 1), AND no-forgery proven
