@@ -21,7 +21,7 @@
 ///
 /// ## Trace Layout
 ///
-/// Same layout as `emit_stark_impl.rs`:
+/// Trace column layout:
 /// - Immutable params: 1 column each (u64) or 8 (ByteArray32)
 /// - Mutable params: 2 columns each (old + new)
 /// - Auxiliary: diff columns for range checks, inverse columns for neq
@@ -45,12 +45,11 @@ use quote::{format_ident, quote};
 use crate::ir::{ConstraintIr, MutateOp, ParamType, RequirementKind, Statement};
 
 /// Number of bits used for range-check decomposition on BabyBear (p ≈ 2^30.9).
-/// Mirrors `emit_stark_impl::RANGE_CHECK_BITS`; the top bit is forced to zero so
-/// decomposed values stay in the small non-negative half of the field.
+/// The top bit is forced to zero so decomposed values stay in the small
+/// non-negative half of the field.
 const RANGE_CHECK_BITS: usize = 30;
 
-/// Number of bits each inequality OPERAND is range-checked to. Mirrors
-/// `emit_stark_impl::OPERAND_RANGE_BITS`. The operand bound closes the field
+/// Number of bits each inequality OPERAND is range-checked to. The operand bound closes the field
 /// wrap-around: without it a malicious prover sets `left = p - 1`, `right = 0`
 /// (a genuine `left > right` violation) so `diff = right - left ≡ 1`, a tiny
 /// value the diff range-check would accept. Constraining each operand to
@@ -144,7 +143,7 @@ pub fn generate_plonky3(ir: &ConstraintIr) -> TokenStream {
 }
 
 // ============================================================================
-// Layout computation (mirrors emit_stark_impl.rs logic)
+// Layout computation
 // ============================================================================
 
 struct P3Layout {
@@ -588,8 +587,7 @@ fn emit_p3_requirement(
 
 /// Emit the independent range-check sub-constraints for the native Plonky3
 /// backend: bind `diff_col == value_def`, the bit reconstruction, each bit's
-/// binary constraint, and the forced-zero high bits. Mirrors
-/// `emit_stark_impl::emit_range_check_constraints`.
+/// binary constraint, and the forced-zero high bits.
 fn emit_p3_range_check(
     diff_col: usize,
     bits_start: usize,

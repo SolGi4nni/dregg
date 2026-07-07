@@ -91,17 +91,5 @@ rmp-serde = { workspace = true }
 # serialized proofs to count commitment-path digests for the pickles-bridge estimate.
 serde_json = { workspace = true }
 
-[[bench]]
-name = "stark_bench"
-harness = false
-
-[[bench]]
-name = "proof_benchmarks"
-harness = false
-
-[[bench]]
-name = "practical_benchmarks"
-harness = false
-
 [lints]
 workspace = true

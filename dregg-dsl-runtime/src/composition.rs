@@ -37,12 +37,10 @@
 //! - valid column (1 if sub-proof verified, 0 otherwise; must be 1)
 
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 use serde::{Deserialize, Serialize};
 
 use crate::circuit::{
-    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
-    PolyTerm,
+    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
 };
 
 // ============================================================================
@@ -112,10 +110,10 @@ pub struct IvcBinding {
 }
 
 // ============================================================================
-// ComposedDslCircuit: StarkAir implementation
+// ComposedDslCircuit: composed constraint semantics
 // ============================================================================
 
-/// A composed circuit that implements `StarkAir`.
+/// A composed circuit carrying the composition constraint semantics.
 ///
 /// The composed circuit's trace has three regions:
 /// 1. Main circuit columns (business logic)
@@ -168,26 +166,17 @@ impl ComposedDslCircuit {
     }
 }
 
-impl StarkAir for ComposedDslCircuit {
-    fn width(&self) -> usize {
-        self.total_width()
-    }
-
-    fn constraint_degree(&self) -> usize {
-        self.descriptor.circuit.max_degree.max(2)
-    }
-
-    fn air_name(&self) -> &'static str {
-        // Intern a composed name
-        let name = format!("dregg-composed-{}-v1", self.descriptor.circuit.name);
-        crate::circuit::intern_air_name(&name)
-    }
-
-    fn has_chain_continuity(&self) -> bool {
-        self.descriptor.transition.is_some()
-    }
-
-    fn eval_constraints(
+impl ComposedDslCircuit {
+    /// Evaluate the composed circuit's constraint polynomial at a row pair.
+    ///
+    /// This is the executable reference semantics of composition: the main
+    /// circuit's constraints, plus each sub-proof's `valid_flag == 1` (and binary)
+    /// checks, plus the optional IVC accumulated-hash recurrence, folded with
+    /// `alpha` powers. The live production prover/verifier enforces exactly these
+    /// relations in the audited Plonky3 binding circuit
+    /// (`dregg_sdk::full_turn_proof`); this method is the spec the composition
+    /// tests check generated traces against.
+    pub fn eval_constraints(
         &self,
         local: &[BabyBear],
         next: &[BabyBear],
@@ -240,46 +229,23 @@ impl StarkAir for ComposedDslCircuit {
 
         result
     }
-
-    fn boundary_constraints(
-        &self,
-        public_inputs: &[BabyBear],
-        trace_len: usize,
-    ) -> Vec<BoundaryConstraint> {
-        // Delegate main circuit boundaries
-        let inner = DslCircuit::new(self.descriptor.circuit.clone());
-        let mut boundaries = inner.boundary_constraints(public_inputs, trace_len);
-
-        // Add sub-proof valid flag boundaries: first row, valid_flag == 1
-        for i in 0..self.descriptor.sub_proofs.len() {
-            boundaries.push(BoundaryConstraint {
-                row: 0,
-                col: self.valid_flag_col(i),
-                value: BabyBear::ONE,
-            });
-        }
-
-        boundaries
-    }
 }
 
 // ============================================================================
 // Composition Combinators
 // ============================================================================
 
-/// Result of a composed proof: the main STARK proof plus sub-proof attachments.
+/// Result of a composed proof: the main proof plus sub-proof attachments.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ComposedProof {
-    /// The main STARK proof over the composed trace.
-    ///
-    /// NOTE: when [`Self::main_proof_p3`] is present, the main proof was
-    /// generated and is verified through the AUDITED `p3-batch-stark` verifier;
-    /// this bespoke-`stark` `main_proof` is then absent (`None`) and the p3
-    /// proof is the one on the verification path. See
-    /// `dregg_sdk::full_turn_proof`. Legacy (non-full-turn) composition paths
-    /// still populate `Some(..)`.
+    /// Retired slot for the legacy bespoke-`stark` main proof over the composed
+    /// trace. The hand STARK engine has been removed; the live main proof is the
+    /// audited `p3-batch-stark` proof carried in [`Self::main_proof_p3`], and this
+    /// field is always `None` on every path. It is kept (as opaque bytes) purely
+    /// so the postcard wire form of existing `main_proof: None` proofs is
+    /// unchanged. See `dregg_sdk::full_turn_proof`.
     #[serde(default)]
-    pub main_proof: Option<StarkProof>,
+    pub main_proof: Option<Vec<u8>>,
     /// The sub-proofs that were verified during composition.
     pub sub_proofs: Vec<AttachedSubProof>,
     /// Public inputs for the composed circuit.
@@ -301,7 +267,7 @@ pub struct ComposedProof {
 pub struct AttachedSubProof {
     /// Label identifying which binding this satisfies.
     pub label: String,
-    /// The sub-proof's STARK proof bytes.
+    /// The sub-proof's serialized proof bytes (postcard p3 proof on the live path).
     pub proof_bytes: Vec<u8>,
     /// The sub-proof's public inputs.
     pub sub_public_inputs: Vec<BabyBear>,
@@ -759,160 +725,14 @@ pub fn compose_aggregate(circuits: &[&CircuitDescriptor]) -> ComposedCircuitDesc
 // ============================================================================
 // Verification
 // ============================================================================
-
-/// Result of verifying a composed proof.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ComposedVerification {
-    /// All sub-proofs verified and the main circuit is satisfied.
-    Valid,
-    /// The main circuit's STARK proof failed verification.
-    MainProofInvalid(String),
-    /// A sub-proof failed verification.
-    SubProofInvalid { index: usize, reason: String },
-    /// A sub-proof's VK hash does not match the binding.
-    VkMismatch { index: usize },
-    /// A sub-proof's public input does not match the bound column.
-    PiMismatch { index: usize, pi_index: usize },
-    /// The IVC chain is broken.
-    ChainBreak(String),
-}
-
-/// Verify a composed proof against its descriptor.
-///
-/// **DEPRECATED**: Use [`verify_composed_full`] instead. This function does NOT
-/// cryptographically verify sub-proofs, making composition trivially forgeable.
-/// It is retained only for backward compatibility with tests that do not provide
-/// a registry.
-///
-/// Checks:
-/// 1. The main STARK proof verifies.
-/// 2. Each attached sub-proof's VK hash matches the binding.
-/// 3. Sub-proof bytes are non-empty (structural check only — NOT cryptographic).
-/// 4. PI bindings are consistent between sub-proofs and the main trace.
-#[deprecated(
-    since = "0.2.0",
-    note = "does not verify sub-proofs cryptographically; use verify_composed_full instead"
-)]
-pub fn verify_composed(
-    descriptor: &ComposedCircuitDescriptor,
-    proof: &ComposedProof,
-) -> ComposedVerification {
-    verify_composed_full(descriptor, proof, &|_| None)
-}
-
-/// Verify a composed proof against its descriptor with full cryptographic sub-proof verification.
-///
-/// The `registry` callback resolves a VK hash (32 bytes) to the corresponding
-/// `CircuitDescriptor`. For each sub-proof, the descriptor is looked up, the proof
-/// is deserialized and verified against the sub-circuit's AIR. If ANY sub-proof
-/// fails verification, the composed proof is invalid.
-///
-/// Checks:
-/// 1. The main STARK proof verifies.
-/// 2. Each attached sub-proof's VK hash matches the binding.
-/// 3. Each sub-proof is cryptographically verified against its circuit descriptor.
-/// 4. PI bindings are consistent between sub-proofs and the main trace.
-pub fn verify_composed_full(
-    descriptor: &ComposedCircuitDescriptor,
-    proof: &ComposedProof,
-    registry: &dyn Fn(&[u8; 32]) -> Option<CircuitDescriptor>,
-) -> ComposedVerification {
-    // 1. Verify main proof. A `None` bespoke main proof means the proof carries
-    //    an AUDITED p3 main proof instead (`main_proof_p3`); such proofs are
-    //    verified by the p3 path (`dregg_sdk::verify_full_turn`), not here, so
-    //    we skip the bespoke check rather than reject. Legacy composed proofs
-    //    still carry `Some(..)` and are checked here.
-    let circuit = ComposedDslCircuit::new(descriptor.clone());
-    match &proof.main_proof {
-        Some(mp) => {
-            if let Err(e) = stark::verify(&circuit, mp, &proof.public_inputs) {
-                return ComposedVerification::MainProofInvalid(e);
-            }
-        }
-        None => {
-            if proof.main_proof_p3.is_none() {
-                return ComposedVerification::MainProofInvalid(
-                    "composed proof has neither a bespoke main_proof nor an audited \
-                     main_proof_p3"
-                        .to_string(),
-                );
-            }
-            // p3 main proof is verified by the p3 full-turn verifier.
-        }
-    }
-
-    // 2. Verify each sub-proof
-    for (i, (binding, attached)) in descriptor
-        .sub_proofs
-        .iter()
-        .zip(proof.sub_proofs.iter())
-        .enumerate()
-    {
-        // Check VK hash match
-        let expected_vk_bytes = vk_elements_to_bytes(&binding.sub_circuit_vk_hash);
-        if attached.vk_hash != expected_vk_bytes {
-            return ComposedVerification::VkMismatch { index: i };
-        }
-
-        // Sub-proof bytes must be non-empty
-        if attached.proof_bytes.is_empty() {
-            return ComposedVerification::SubProofInvalid {
-                index: i,
-                reason: "empty proof bytes".to_string(),
-            };
-        }
-
-        // Look up the sub-circuit descriptor by VK hash
-        let sub_descriptor = match registry(&attached.vk_hash) {
-            Some(desc) => desc,
-            None => {
-                return ComposedVerification::SubProofInvalid {
-                    index: i,
-                    reason: format!(
-                        "sub-circuit descriptor not found in registry for VK hash {:?}",
-                        &attached.vk_hash[..8]
-                    ),
-                };
-            }
-        };
-
-        // Deserialize the sub-proof
-        let sub_proof = match stark::proof_from_bytes(&attached.proof_bytes) {
-            Ok(p) => p,
-            Err(e) => {
-                return ComposedVerification::SubProofInvalid {
-                    index: i,
-                    reason: format!("failed to deserialize sub-proof: {}", e),
-                };
-            }
-        };
-
-        // Cryptographically verify the sub-proof against its circuit
-        let sub_circuit = DslCircuit::new(sub_descriptor);
-        if let Err(e) = stark::verify(&sub_circuit, &sub_proof, &attached.sub_public_inputs) {
-            return ComposedVerification::SubProofInvalid {
-                index: i,
-                reason: format!("sub-proof STARK verification failed: {}", e),
-            };
-        }
-
-        // Check PI bindings: sub-proof PIs must match the corresponding main trace values
-        // (bound via public inputs of the composed circuit)
-        for (pi_idx, &col) in binding.pi_binding_cols.iter().enumerate() {
-            if pi_idx < attached.sub_public_inputs.len()
-                && col < proof.public_inputs.len()
-                && attached.sub_public_inputs[pi_idx] != proof.public_inputs[col]
-            {
-                return ComposedVerification::PiMismatch {
-                    index: i,
-                    pi_index: pi_idx,
-                };
-            }
-        }
-    }
-
-    ComposedVerification::Valid
-}
+//
+// The composed proof is proven + verified on the live path by the audited
+// Plonky3 binding circuit in `dregg_sdk::full_turn_proof` (main proof in
+// `ComposedProof::main_proof_p3`, sub-proofs re-verified by the p3 verifier).
+// The former in-module `verify_composed{,_full}` / `ComposedVerification` verified
+// bespoke sub-proofs against the removed hand engine and had no remaining callers,
+// so they are gone. `ComposedDslCircuit::eval_constraints` remains as the
+// executable spec of the composition constraints.
 
 // ============================================================================
 // Helpers
@@ -942,16 +762,6 @@ pub fn compute_descriptor_vk_elements(descriptor: &CircuitDescriptor) -> [BabyBe
     elements
 }
 
-/// Convert VK elements back to a 32-byte hash for comparison.
-fn vk_elements_to_bytes(elements: &[BabyBear; VK_HASH_WIDTH]) -> [u8; 32] {
-    let mut bytes = [0u8; 32];
-    for i in 0..VK_HASH_WIDTH {
-        let val = elements[i].0;
-        bytes[i * 4..i * 4 + 4].copy_from_slice(&val.to_le_bytes());
-    }
-    bytes
-}
-
 /// Compute the proof hash (BLAKE3) for anti-substitution binding.
 pub fn compute_proof_hash(proof_bytes: &[u8]) -> BabyBear {
     let hash = blake3::hash(proof_bytes);
@@ -962,7 +772,7 @@ pub fn compute_proof_hash(proof_bytes: &[u8]) -> BabyBear {
 
 /// Generate a composed trace for `compose_and` given two sub-proof public inputs.
 ///
-/// Returns (trace, public_inputs) suitable for STARK prove/verify.
+/// Returns (trace, public_inputs) suitable for the composition prover.
 pub fn generate_and_trace(
     composed: &ComposedCircuitDescriptor,
     shared_values: &[BabyBear],
@@ -1071,7 +881,6 @@ pub fn generate_chain_trace(
 mod tests {
     use super::*;
     use dregg_circuit::field::BabyBear;
-    use dregg_circuit::stark::{self, StarkAir};
 
     /// Helper: create a simple membership circuit descriptor.
     fn membership_descriptor() -> CircuitDescriptor {
@@ -1161,26 +970,6 @@ mod tests {
     }
 
     #[test]
-    fn compose_and_stark_prove_verify() {
-        let mem = membership_descriptor();
-        let pred = predicate_descriptor();
-        let composed = compose_and(&mem, &pred, &[(0, 0)]);
-
-        let shared = vec![BabyBear::new(42)];
-        let proof_hashes = vec![BabyBear::new(111), BabyBear::new(222)];
-        let (trace, pi) = generate_and_trace(&composed, &shared, &proof_hashes);
-
-        let circuit = ComposedDslCircuit::new(composed);
-        let proof = stark::prove(&circuit, &trace, &pi);
-        let result = stark::verify(&circuit, &proof, &pi);
-        assert!(
-            result.is_ok(),
-            "Composed AND STARK prove/verify should succeed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
     fn compose_or_creates_valid_descriptor() {
         let mem = membership_descriptor();
         let pred = predicate_descriptor();
@@ -1260,28 +1049,6 @@ mod tests {
     }
 
     #[test]
-    fn compose_chain_stark_prove_verify() {
-        let step = membership_descriptor();
-        let composed = compose_chain(&[&step]);
-
-        let initial = BabyBear::new(100);
-        let final_s = BabyBear::new(200);
-        let prev_hash = dregg_circuit::ivc::initial_accumulated_hash(initial);
-        let acc_hash = dregg_circuit::ivc::extend_accumulated_hash(prev_hash, final_s, 1);
-
-        let (trace, pi) = generate_chain_trace(&composed, 1, initial, final_s, prev_hash, acc_hash);
-
-        let circuit = ComposedDslCircuit::new(composed);
-        let proof = stark::prove(&circuit, &trace, &pi);
-        let result = stark::verify(&circuit, &proof, &pi);
-        assert!(
-            result.is_ok(),
-            "Chain IVC STARK prove/verify should succeed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
     fn compose_aggregate_creates_valid_descriptor() {
         let mem = membership_descriptor();
         let pred = predicate_descriptor();
@@ -1343,55 +1110,6 @@ mod tests {
             result,
             BabyBear::ZERO,
             "Aggregate trace should evaluate to zero"
-        );
-    }
-
-    #[test]
-    fn compose_aggregate_stark_prove_verify() {
-        let mem = membership_descriptor();
-        let pred = predicate_descriptor();
-        let composed = compose_aggregate(&[&mem, &pred]);
-
-        let circuit = ComposedDslCircuit::new(composed.clone());
-        let width = circuit.total_width();
-
-        let pi = vec![
-            BabyBear::new(10),
-            BabyBear::new(20),
-            BabyBear::new(30),
-            BabyBear::new(40),
-        ];
-
-        let mut row = vec![BabyBear::ZERO; width];
-        for (i, &val) in pi.iter().enumerate() {
-            if i < composed.circuit.trace_width {
-                row[i] = val;
-            }
-        }
-        for i in 0..composed.sub_proofs.len() {
-            let offset = circuit.sub_proof_offset(i);
-            for (j, &elem) in composed.sub_proofs[i]
-                .sub_circuit_vk_hash
-                .iter()
-                .enumerate()
-            {
-                if offset + j < width {
-                    row[offset + j] = elem;
-                }
-            }
-            let vf_col = circuit.valid_flag_col(i);
-            if vf_col < width {
-                row[vf_col] = BabyBear::ONE;
-            }
-        }
-
-        let trace = vec![row.clone(), row];
-        let proof = stark::prove(&circuit, &trace, &pi);
-        let result = stark::verify(&circuit, &proof, &pi);
-        assert!(
-            result.is_ok(),
-            "Aggregate STARK prove/verify should succeed: {:?}",
-            result.err()
         );
     }
 

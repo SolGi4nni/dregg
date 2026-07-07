@@ -15,7 +15,6 @@ mod authority;
 mod commit_state;
 mod federation;
 mod revocation;
-mod stark_proof;
 mod token;
 mod trace;
 mod verifier;
@@ -338,25 +337,6 @@ impl DemoState {
             "  {} Checking issuer membership in federation: {}",
             arrow(),
             if issuer_ok { checkmark() } else { cross() }
-        );
-
-        // Generate a REAL STARK proof of issuer membership using dregg-circuit.
-        let member_keys: Vec<[u8; 32]> = vec![
-            *self.acme_authority.public_key.as_bytes(),
-            *self.partner_authority.public_key.as_bytes(),
-        ];
-        let stark_result =
-            stark_proof::prove_issuer_membership(attenuated_token.issuer.as_bytes(), &member_keys);
-        println!(
-            "  {} STARK proof of issuer membership: {} (proof: {} bytes, {} trace rows)",
-            arrow(),
-            if stark_result.verified {
-                checkmark()
-            } else {
-                cross()
-            },
-            stark_result.proof_size_bytes,
-            stark_result.trace_rows,
         );
 
         let trace_result = verifier.verify_trace_only(attenuated_token);

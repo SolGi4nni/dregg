@@ -31,7 +31,6 @@ use dregg_circuit::{
     },
     poseidon2,
     predicate_types::compute_fact_commitment,
-    stark::proof_to_bytes,
 };
 
 fn main() {
@@ -150,17 +149,11 @@ fn main() {
     let proof = prove_committed_threshold(witness)
         .expect("Proof generation must succeed for a satisfiable witness");
 
-    let proof_bytes = proof_to_bytes(&proof.stark_proof);
     let proof_time = proof_start.elapsed();
 
     println!("  Generating STARK proof (FRI + Poseidon2 + bit decomposition)...");
     println!();
     println!("  Proof generated:");
-    println!(
-        "    Size: {} bytes ({:.1} KiB)",
-        proof_bytes.len(),
-        proof_bytes.len() as f64 / 1024.0
-    );
     println!("    Time: {:.2}ms", proof_time.as_secs_f64() * 1000.0);
     println!("    AIR: dregg-committed-threshold-v1");
     println!(
@@ -360,7 +353,6 @@ fn main() {
     println!("  Alice's score:         785 (private, never revealed)");
     println!("  Bank's threshold:      720 (private, hidden behind commitment)");
     println!("  Result:                PASS (Alice qualifies for the loan)");
-    println!("  Proof size:            {} bytes", proof_bytes.len());
     println!(
         "  Proof generation:      {:.2}ms",
         proof_time.as_secs_f64() * 1000.0

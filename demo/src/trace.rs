@@ -18,10 +18,9 @@
 //! trust root.
 //!
 //! NOTE: The trace verification here uses Ed25519 signature checks (real crypto).
-//! The STARK proof of issuer membership in `stark_proof.rs` uses `dregg_circuit::stark`
-//! to generate a real zero-knowledge proof. A full integration would prove the
-//! entire derivation trace in zero-knowledge using the circuit's `fold_air` and
-//! `derivation_air` components.
+//! A full integration would prove the entire derivation trace in zero-knowledge
+//! using the Lean-emitted EffectVM descriptors (the `MerkleMembership` / `Derivation`
+//! families) via `prove_vm_descriptor2` / `verify_vm_descriptor2`.
 //!
 //! // TODO: integrate with real dregg_circuit::fold_air to prove each attenuation
 //! // step in zero-knowledge (currently trace verification is done via direct

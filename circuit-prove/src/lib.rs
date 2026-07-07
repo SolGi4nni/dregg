@@ -38,3 +38,4 @@ pub mod plonky3_recursion_impl;
 pub mod recursive_witness_bundle;
 pub mod shielded;
 pub mod sovereign_leaf_adapter;
+pub mod zkoracle_leaf_adapter;

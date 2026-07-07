@@ -14,7 +14,6 @@ use dregg_bridge::present::{UnsafeLocalOnlyMarker, bytes_to_babybear, hash_index
 use dregg_bridge::{BridgePresentationBuilder, BridgePresentationProof};
 use dregg_circuit::BabyBear;
 
-use dregg_circuit::stark;
 use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -77,7 +76,7 @@ fn main() {
     println!("  Browser Extension Cipherclerk <-> Page <-> Server");
     println!("  {}", "=".repeat(60));
 
-    let total_steps = 6;
+    let total_steps = 5;
     let total_start = Instant::now();
 
     // =========================================================================
@@ -220,76 +219,15 @@ fn main() {
     item(&format!("Time: {:?}", step3_time));
 
     // =========================================================================
-    // STEP 4: Also generate issuer membership STARK (the expensive part)
+    // STEP 4: Server verifies the proof
     // =========================================================================
 
-    section(4, total_steps, "WALLET: Generates issuer membership STARK");
+    section(4, total_steps, "SERVER: Verifies presentation proof");
     let step4_start = Instant::now();
-
-    // Generate the STARK proof for issuer membership.
-    // This proves the issuer key is in the federation Merkle tree.
-    let leaf_hash_bb = bytes_to_babybear(&issuer_key);
-    let stark_siblings: Vec<[u32; 3]> = (0..4u32)
-        .map(|i| {
-            [
-                hash_index(i as usize, 0, &issuer_key),
-                hash_index(i as usize, 1, &issuer_key),
-                hash_index(i as usize, 2, &issuer_key),
-            ]
-        })
-        .collect();
-    let stark_positions: Vec<u32> = vec![0, 1, 2, 3];
-
-    let (stark_trace, stark_public_inputs) =
-        stark::generate_merkle_trace(leaf_hash_bb.0, &stark_siblings, &stark_positions);
-
-    let stark_air = stark::MerkleStarkAir;
-    let membership_proof = stark::prove(&stark_air, &stark_trace, &stark_public_inputs);
-    let proof_bytes = stark::proof_to_bytes(&membership_proof);
-
-    let step4_time = step4_start.elapsed();
-
-    party(
-        "WALLET",
-        &format!(
-            "STARK proof size: {} bytes ({:.1} KiB)",
-            proof_bytes.len(),
-            proof_bytes.len() as f64 / 1024.0
-        ),
-    );
-    party(
-        "WALLET",
-        &format!(
-            "Public inputs: leaf={}, root={}",
-            stark_public_inputs[0].0, stark_public_inputs[1].0
-        ),
-    );
-    party(
-        "WALLET",
-        "This proves: issuer is a member of the federation",
-    );
-    party(
-        "WALLET",
-        "Without revealing: which issuer, the tree structure, sibling hashes",
-    );
-
-    item(&format!("Time: {:?}", step4_time));
-
-    // =========================================================================
-    // STEP 5: Server verifies the proof
-    // =========================================================================
-
-    section(
-        5,
-        total_steps,
-        "SERVER: Verifies proof against attested root",
-    );
-    let step5_start = Instant::now();
 
     // The server only has:
     // - The federation root (configured at deploy time)
-    // - The proof bytes
-    // - The public inputs (leaf hash, root)
+    // - The presentation proof
     // It does NOT have: the token, the caveats, the user's identity, the chain
 
     party(
@@ -301,31 +239,24 @@ fn main() {
     );
     party(
         "SERVER",
-        &format!("Received proof: {} bytes", proof_bytes.len()),
+        &format!("Received proof: {}", proof.proof_size_display()),
     );
-    party("SERVER", "Verifying STARK proof...");
+    party("SERVER", "Verifying presentation proof...");
 
-    let verify_result = stark::verify(&stark_air, &membership_proof, &stark_public_inputs);
-
-    let step5_time = step5_start.elapsed();
-
-    match verify_result {
-        Ok(()) => {
-            party("SERVER", "Verification: PASS");
-            party(
-                "SERVER",
-                "Conclusion: Request is authorized by a federation member",
-            );
-        }
-        Err(e) => {
-            party("SERVER", &format!("Verification: FAILED ({e})"));
-            panic!("Proof should verify");
-        }
-    }
-
-    // Also verify the circuit-level proof
     let circuit_valid = proof.is_valid();
-    party("SERVER", &format!("Circuit proof valid: {}", circuit_valid));
+
+    let step4_time = step4_start.elapsed();
+
+    if circuit_valid {
+        party("SERVER", "Verification: PASS");
+        party(
+            "SERVER",
+            "Conclusion: Request is authorized by a federation member",
+        );
+    } else {
+        party("SERVER", "Verification: FAILED");
+        panic!("Proof should verify");
+    }
     assert!(circuit_valid, "Circuit proof should be valid");
 
     println!();
@@ -343,14 +274,14 @@ fn main() {
     );
     party("SERVER", "  - Whether the token was attenuated");
 
-    item(&format!("Time: {:?}", step5_time));
+    item(&format!("Time: {:?}", step4_time));
 
     // =========================================================================
-    // STEP 6: Response flows back to page
+    // STEP 5: Response flows back to page
     // =========================================================================
 
-    section(6, total_steps, "PAGE: Receives result");
-    let step6_start = Instant::now();
+    section(5, total_steps, "PAGE: Receives result");
+    let step5_start = Instant::now();
 
     party("PAGE", "Promise resolved:");
     party(
@@ -364,8 +295,8 @@ fn main() {
         "The page can now: make the API call with confidence.",
     );
 
-    let step6_time = step6_start.elapsed();
-    item(&format!("Time: {:?}", step6_time));
+    let step5_time = step5_start.elapsed();
+    item(&format!("Time: {:?}", step5_time));
 
     // ─── Timing Summary ─────────────────────────────────────────────────────
 
@@ -379,9 +310,8 @@ fn main() {
     println!("    Step 1 (Page request):           {:>12?}", step1_time);
     println!("    Step 2 (Datalog evaluation):     {:>12?}", step2_time);
     println!("    Step 3 (Bridge proof):           {:>12?}", step3_time);
-    println!("    Step 4 (STARK membership proof): {:>12?}", step4_time);
-    println!("    Step 5 (Server verification):    {:>12?}", step5_time);
-    println!("    Step 6 (Response to page):       {:>12?}", step6_time);
+    println!("    Step 4 (Server verification):    {:>12?}", step4_time);
+    println!("    Step 5 (Response to page):       {:>12?}", step5_time);
     println!("    ────────────────────────────────────────────");
     println!("    Total round-trip:                {:>12?}", total_time);
     println!();

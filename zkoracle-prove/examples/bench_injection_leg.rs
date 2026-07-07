@@ -9,7 +9,9 @@
 use std::time::Instant;
 
 use dregg_circuit::dsl::dfa_routing::prove_dfa_routing;
-use dregg_zkoracle_prove::zk_leg::{injection_dfa_table, prove_injection_leg, verify_injection_leg};
+use dregg_zkoracle_prove::zk_leg::{
+    injection_dfa_table, prove_injection_leg, verify_injection_leg,
+};
 
 /// A benign (injection-free) field of exactly `n` bytes: a repeated sentence, no `{{`.
 fn benign_field(n: usize) -> Vec<u8> {
@@ -31,7 +33,9 @@ fn symbols_of(field: &[u8]) -> Vec<u32> {
 }
 
 fn main() {
-    println!("== injection-leg prover benchmark (BEFORE hand-STARK vs AFTER descriptor prover) ==\n");
+    println!(
+        "== injection-leg prover benchmark (BEFORE hand-STARK vs AFTER descriptor prover) ==\n"
+    );
 
     for &kb in &[1usize, 8usize] {
         let n = kb * 1024;

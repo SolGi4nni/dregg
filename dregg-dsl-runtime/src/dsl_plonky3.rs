@@ -765,30 +765,6 @@ mod tests {
     }
 
     #[test]
-    fn dsl_p3_cross_verify_with_custom_stark() {
-        use crate::circuit::DslCircuit;
-        use dregg_circuit::stark;
-        let d = sovereign_transfer_descriptor();
-        let row = vec![
-            BabyBear::from_u64(1000),
-            BabyBear::from_u64(100),
-            BabyBear::from_u64(900),
-            BabyBear::ONE,
-            BabyBear::ZERO,
-            BabyBear::ZERO,
-        ];
-        let trace = vec![row.clone(), row];
-        let pi = vec![BabyBear::ZERO; 32];
-        // Custom STARK
-        let dsl = DslCircuit::new(d.clone());
-        let sp = stark::prove(&dsl, &trace, &pi);
-        assert!(stark::verify(&dsl, &sp, &pi).is_ok());
-        // Plonky3
-        let p3p = prove_dsl_plonky3(&d, &trace, &pi).expect("p3 prove");
-        assert!(matches!(verify_dsl_plonky3(&d, &p3p, &pi), Ok(true)));
-    }
-
-    #[test]
     fn dsl_p3_gated_constraint() {
         let d = CircuitDescriptor {
             name: "gated".to_string(),

@@ -7,16 +7,7 @@
 //! 4. Mint tokens with role facts, attenuate to specific resources
 //! 5. Show Datalog evaluation deciding allow/deny for various request combinations
 //! 6. Use `dregg-trace` (the Datalog evaluator) directly, showing derivation traces
-//! 7. Prove one of the decisions in a STARK (using prove_authorization_stark)
 
-use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use dregg_circuit::dsl::verify_authorization_dsl;
-use dregg_circuit::field::BabyBear;
-use dregg_circuit::multi_step_air::{
-    ALLOW_PREDICATE, build_multi_step_witness, prove_authorization_stark,
-};
-use dregg_circuit::poseidon2::hash_fact;
-use dregg_circuit::stark::proof_to_bytes;
 use dregg_trace::{
     Atom, AuthorizationRequest, AuthorizationTrace, Check, Conclusion, Evaluator, Fact, Rule, Term,
     symbol_from_str, verify_trace,
@@ -506,108 +497,15 @@ fn main() {
         &attenuated_facts,
         &rules,
     );
-
-    // =========================================================================
-    // STEP 4: Prove the ALLOW decision in a STARK
-    // =========================================================================
-    println!("--- Step 4: STARK PROOF OF AUTHORIZATION ---\n");
-    println!("  Proving: Bob (editor) is allowed to write /docs");
-    println!("  The verifier learns only: ALLOW/DENY + public inputs");
-    println!("  The verifier does NOT learn: which role Bob has, what other resources exist\n");
-
-    // Build a circuit witness from the Datalog trace
-    // The Datalog trace has 1 derivation step (Rule 102 fires directly)
     assert!(
         matches!(allow_trace.conclusion, Conclusion::Allow { .. }),
-        "Expected ALLOW for the STARK proof source"
+        "Bob should still be allowed to read /docs after attenuation"
     );
 
-    let state_root = BabyBear::new(88888); // committed fact set root
-    let request_hash = BabyBear::new(42424); // hash of the request
-
-    // The derivation: has_role(bob, editor) + role_permission(editor, /docs, "read,write")
-    //   + request_user(bob) + request_action(write) => allow()
-    // We encode this as a single circuit derivation step.
-    let has_role_pred = BabyBear::new(1001);
-    let bob_val = BabyBear::new(2001);
-    let editor_val = BabyBear::new(2002);
-    let allow_pred = BabyBear::new(ALLOW_PREDICATE);
-
-    let body_hash = hash_fact(has_role_pred, &[bob_val, editor_val, BabyBear::ZERO]);
-
-    let step = DerivationWitness {
-        rule: CircuitRule {
-            id: 102,
-            num_body_atoms: 1,
-            num_variables: 2,
-            head_predicate: allow_pred,
-            head_terms: [
-                (true, BabyBear::new(0)), // $user -> bob
-                (true, BabyBear::new(1)), // $role -> editor
-                (false, BabyBear::ZERO),
-                (false, BabyBear::ZERO),
-            ],
-            body_atoms: vec![BodyAtomPattern {
-                predicate: has_role_pred,
-                terms: [
-                    (true, BabyBear::new(0)),
-                    (true, BabyBear::new(1)),
-                    (false, BabyBear::ZERO),
-                ],
-            }],
-            equal_checks: vec![],
-            memberof_checks: vec![],
-            gte_check: None,
-            lt_check: None,
-        },
-        state_root,
-        body_fact_hashes: vec![body_hash],
-        substitution: vec![bob_val, editor_val],
-        derived_predicate: allow_pred,
-        derived_terms: [bob_val, editor_val, BabyBear::ZERO, BabyBear::ZERO],
-        not_after_height: BabyBear::ZERO,
-        org_id_hash: BabyBear::ZERO,
-        budget_remaining: BabyBear::ZERO,
-    };
-
-    let witness = build_multi_step_witness(state_root, request_hash, vec![step]);
-    let conclusion = witness.conclusion();
-    let acc_hash = witness.final_accumulated_hash();
-
-    assert_eq!(conclusion, BabyBear::ONE, "Witness should conclude ALLOW");
-
-    println!("  Generating STARK proof...");
-    let proof = prove_authorization_stark(&witness);
-    let proof_bytes = proof_to_bytes(&proof);
-    println!(
-        "  Proof generated: {} bytes ({:.1} KiB), {} trace rows",
-        proof_bytes.len(),
-        proof_bytes.len() as f64 / 1024.0,
-        proof.trace_len
-    );
-
-    // Verify the proof
-    let verify_result = verify_authorization_dsl(conclusion, acc_hash, &proof);
-    match &verify_result {
-        Ok(()) => println!("  Verification: PASS"),
-        Err(e) => println!("  Verification: FAIL ({})", e),
-    }
-    assert!(verify_result.is_ok());
-    println!();
-
-    // Show that tampering fails
-    println!("  Tampering test: flip one bit in proof...");
-    let mut tampered_proof = proof.clone();
-    tampered_proof.trace_commitment[0] ^= 0xFF;
-    let tamper_result = verify_authorization_dsl(conclusion, acc_hash, &tampered_proof);
-    assert!(tamper_result.is_err());
-    println!("  Tampered proof rejected: {}", tamper_result.unwrap_err());
-    println!();
-
     // =========================================================================
-    // STEP 5: Summary
+    // STEP 4: Summary
     // =========================================================================
-    println!("--- Step 5: SUMMARY ---\n");
+    println!("--- Step 4: SUMMARY ---\n");
     println!("  RBAC Policy:");
     println!("    - 3 roles (admin, editor, viewer) with hierarchical permissions");
     println!("    - Admin: unrestricted access (any resource, any action)");
@@ -618,8 +516,6 @@ fn main() {
     println!("    1. Datalog evaluation is deterministic and auditable (full trace)");
     println!("    2. Traces can be verified independently (verify_trace)");
     println!("    3. Attenuation only removes capabilities (can't escalate)");
-    println!("    4. STARK proof hides the token contents from the verifier");
-    println!("    5. Proof is non-interactive: can be verified offline");
     println!();
     println!("=== RBAC Datalog Demo Complete ===");
 }

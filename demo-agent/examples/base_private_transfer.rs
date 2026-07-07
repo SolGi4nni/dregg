@@ -25,7 +25,6 @@ use dregg_circuit::{
     dsl::note_spending::{
         create_test_witness, key_to_field_elements, prove_note_spend, verify_note_spend,
     },
-    stark,
 };
 
 /// Mock USDC token identifier (in production, this would be the ERC-20 address hash).
@@ -175,7 +174,6 @@ fn main() {
         4,
     );
     let alice_proof = prove_note_spend(&alice_witness);
-    let proof_bytes = stark::proof_to_bytes(&alice_proof);
 
     // Verify the STARK proof (now includes value + asset_type to prevent inflation).
     let verify = verify_note_spend(
@@ -190,7 +188,6 @@ fn main() {
     println!("  STARK proof of note ownership: [GENERATED]");
     println!("    Proves: Alice knows the spending key for this note");
     println!("    Proves: The note is in the federation's note tree");
-    println!("    Size: {} bytes", proof_bytes.len());
     println!("    Hides: Alice's identity, the note's value, the recipient");
     println!();
 
@@ -266,7 +263,6 @@ fn main() {
         4,
     );
     let bob_proof = prove_note_spend(&bob_witness);
-    let bob_proof_bytes = stark::proof_to_bytes(&bob_proof);
 
     let bob_verify = verify_note_spend(
         bob_witness.nullifier(),
@@ -281,12 +277,11 @@ fn main() {
     println!("    Proves: Bob owns the note being spent");
     println!("    Proves: The note is in the attested note tree");
     println!("    Proves: Value = 30 USDC (matches withdrawal amount)");
-    println!("    Size: {} bytes", bob_proof_bytes.len());
     println!();
 
     // SP1 wrapping (STARK -> Groth16 for Base).
     println!("  SP1 wrapping (STARK -> Groth16):");
-    println!("    Input: {} bytes STARK proof", bob_proof_bytes.len());
+    println!("    Input: STARK proof of note ownership");
     println!("    Output: ~260 bytes Groth16 proof");
     println!("    [MOCK MODE: simulating SP1 prover]");
     println!();

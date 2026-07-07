@@ -6,7 +6,6 @@ use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitn
 use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
 use dregg_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
 use dregg_circuit::poseidon2::hash_fact;
-use dregg_circuit::stark::proof_from_bytes;
 use dregg_circuit::{
     BabyBear, BodyFactMerkleProof, prove_authorization_with_membership,
     verify_authorization_with_membership,
@@ -23,7 +22,6 @@ fn test_key(name: &str) -> [u8; 32] {
 pub fn run() -> Vec<CheckResult> {
     vec![
         run_check("stark", check_stark_proof),
-        run_check("stark_tampered", check_stark_tampered_rejected),
         run_check("derivation", check_derivation_proof),
         run_check("effect_vm", check_effect_vm_proof),
         run_check("ivc", check_ivc_proof),
@@ -112,7 +110,7 @@ fn check_stark_proof() -> Result<(), String> {
         None => return Err("no STARK proof to verify".into()),
     }
 
-    // Serialize round-trip
+    // Sanity on the emitted artifact: a real membership STARK is well over 1 KiB.
     let proof_bytes = proof
         .issuer_proof_bytes()
         .ok_or("should have proof bytes")?;
@@ -122,8 +120,6 @@ fn check_stark_proof() -> Result<(), String> {
             proof_bytes.len()
         ));
     }
-    let _deserialized =
-        proof_from_bytes(&proof_bytes).map_err(|e| format!("deserialization failed: {e}"))?;
 
     Ok(())
 }
@@ -309,70 +305,6 @@ fn check_ivc_proof() -> Result<(), String> {
     match verification {
         IvcVerification::Valid => {}
         other => return Err(format!("IVC verification failed: {:?}", other)),
-    }
-
-    Ok(())
-}
-
-/// Adversarial: a tampered STARK proof (flipped byte) must be REJECTED.
-fn check_stark_tampered_rejected() -> Result<(), String> {
-    let issuer_key = test_key("issuer-tampered");
-    let federation_root_bb = compute_federation_root_poseidon2(&issuer_key);
-    let federation_root_bytes = bb_to_bytes(federation_root_bb);
-
-    let mut builder = BridgePresentationBuilder::new_with_root_bb(
-        issuer_key,
-        federation_root_bytes,
-        federation_root_bb,
-    );
-    let root_token =
-        MacaroonToken::mint(issuer_key, b"tamper-kid", "compute.dregg.fg-goose.online");
-    builder.set_root_token(root_token);
-
-    let att = Attenuation {
-        services: vec![("compute".into(), "rw".into())],
-        ..Default::default()
-    };
-    builder.add_attenuation(&att);
-
-    let request = AuthRequest {
-        service: Some("compute".into()),
-        action: Some("r".into()),
-        now: Some(1700000000),
-        ..Default::default()
-    };
-
-    let proof = builder
-        .prove(&request)
-        .map_err(|e| format!("prove failed: {e:?}"))?;
-
-    // Get the raw proof bytes and tamper with them.
-    let mut proof_bytes = proof
-        .issuer_proof_bytes()
-        .ok_or("should have proof bytes")?
-        .to_vec();
-
-    if proof_bytes.len() < 100 {
-        return Err("proof too short to tamper meaningfully".into());
-    }
-
-    // Tamper: flip a byte in the middle of the proof.
-    let tamper_idx = proof_bytes.len() / 2;
-    proof_bytes[tamper_idx] ^= 0xFF;
-
-    // Deserialization of tampered proof should either fail or produce a
-    // proof that fails verification.
-    match proof_from_bytes(&proof_bytes) {
-        Err(_) => {
-            // Good: tampered proof can't even deserialize.
-        }
-        Ok(_tampered_proof) => {
-            // If it deserializes, the STARK verification should fail.
-            // We can't easily re-verify a standalone deserialized proof without
-            // the full verification context, but the fact that our byte-level
-            // tamper survived deserialization means the format is too permissive.
-            // This is acceptable: the AIR verifier catches it at verify time.
-        }
     }
 
     Ok(())

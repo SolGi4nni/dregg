@@ -18,12 +18,23 @@
 
 use dregg_cell::note::{Note, NoteCommitment, Nullifier};
 use dregg_circuit::BabyBear;
+use dregg_circuit::descriptor_ir2::{
+    DreggStarkConfig, Ir2BatchProof, MemBoundaryWitness, prove_vm_descriptor2,
+    verify_vm_descriptor2,
+};
 use dregg_circuit::field::BABYBEAR_P;
-use dregg_circuit::note_spending_air::{NoteSpendingWitness, key_to_field_elements};
+use dregg_circuit::note_spending_air::{
+    NOTE_SPENDING_WIDTH, NoteSpendingWitness, key_to_field_elements, pi as note_spend_pi,
+};
 use dregg_circuit::poseidon2;
+// The non-revocation prove/verify path still rides the hand STARK engine (`stark::`);
+// it is BLOCKED on a published `non_revocation_to_descriptor2()` + trace adapter.
 use dregg_circuit::stark::{self, StarkProof};
+use dregg_circuit_prove::note_spend_leaf_adapter::{
+    note_spend_leaf_public_inputs, note_spend_mint_hash_felt, note_spend_to_descriptor2,
+};
 use dregg_commit::accumulator::{AccumulatorWitness, BabyBear4, PolynomialAccumulator};
-use dregg_dsl_runtime::note_spending::{generate_note_spending_trace, note_spending_dsl_circuit};
+use dregg_dsl_runtime::note_spending::generate_note_spending_trace;
 use dregg_dsl_runtime::revocation::{
     DslRevocationTree, generate_non_revocation_trace, non_revocation_dsl_circuit,
     revocation_hash_to_field,
@@ -75,8 +86,12 @@ pub struct NoteTransferProof {
     pub nullifier: Nullifier,
     /// The commitment of the newly created output note (published to the note tree).
     pub output_commitment: NoteCommitment,
-    /// The STARK proof of valid spending (proves knowledge of spending key + Merkle membership).
-    pub spending_proof: StarkProof,
+    /// The descriptor batch proof of valid spending (postcard-serialized
+    /// `Ir2BatchProof`), produced against the Lean-emitted `note-spend-leaf`
+    /// descriptor: it proves spending-key knowledge, full-width (28-limb)
+    /// commitment binding, Merkle membership, the two-step nullifier, and the
+    /// in-AIR mint identity.
+    pub spending_proof: Vec<u8>,
     /// The secret for the new output note (given to the recipient out-of-band).
     pub recipient_secret: NoteSecret,
 }
@@ -278,7 +293,8 @@ impl AgentCipherclerk {
     ///
     /// 1. Computes the nullifier from the note secret + spending key (proves ownership).
     /// 2. Creates a new note for the recipient with the same value/asset (conservation).
-    /// 3. Generates a STARK proof (NoteSpendingAir) proving:
+    /// 3. Generates a descriptor batch proof (the Lean-emitted `note-spend-leaf`
+    ///    descriptor, via `prove_vm_descriptor2`) proving:
     ///    - Knowledge of the spending key.
     ///    - The commitment is in the Merkle tree.
     ///    - The nullifier is correctly derived.
@@ -350,16 +366,59 @@ impl AgentCipherclerk {
             merkle_positions,
         );
 
-        // Generate the STARK proof. Keep this fallible: placeholder or stale
-        // witness data should be reported to SDK callers instead of panicking
-        // inside the prover.
-        let circuit = note_spending_dsl_circuit();
-        let (trace, public_inputs) = generate_note_spending_trace(&witness);
-        let spending_proof = stark::try_prove(&circuit, &trace, &public_inputs).map_err(|e| {
-            SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
-                "note spending proof generation failed: {e}"
-            )))
-        })?;
+        // Prove the spend through the Lean-emitted `note-spend-leaf` descriptor
+        // (`prove_vm_descriptor2`), the plonky3 batch prover. This carries the SAME
+        // statement the hand `NoteSpendingAir` did — spending-key knowledge, the
+        // full-width commitment chain, the two-step nullifier, and Merkle membership —
+        // plus the in-AIR mint identity (pinned to the 7th claim slot). Keep this
+        // fallible: placeholder or stale witness data is reported to SDK callers
+        // rather than panicking inside the prover.
+        let inv = |e: String| SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(e));
+        let desc = note_spend_to_descriptor2()
+            .map_err(|e| inv(format!("note-spend descriptor build failed: {e}")))?;
+        // The base trace is the source note-spend trace extended with the three mint
+        // columns on row 0 (the byte-pinned `note_spend_leaf_adapter` layout; the
+        // per-site chip lanes are filled by the prover's `trace_with_chip_lanes`).
+        let (mut trace, base_pis) = generate_note_spending_trace(&witness);
+        for row in &mut trace {
+            row.resize(NOTE_SPENDING_WIDTH + 3, BabyBear::ZERO);
+        }
+        let m1 = poseidon2::hash_fact(
+            base_pis[note_spend_pi::NULLIFIER],
+            &[
+                base_pis[note_spend_pi::MERKLE_ROOT],
+                base_pis[note_spend_pi::DESTINATION_FEDERATION],
+                base_pis[note_spend_pi::ASSET_TYPE],
+            ],
+        );
+        let mint = poseidon2::hash_fact(
+            m1,
+            &[
+                base_pis[note_spend_pi::VALUE],
+                base_pis[note_spend_pi::VALUE_HI],
+            ],
+        );
+        trace[0][NOTE_SPENDING_WIDTH] = base_pis[note_spend_pi::MERKLE_ROOT];
+        trace[0][NOTE_SPENDING_WIDTH + 1] = m1;
+        trace[0][NOTE_SPENDING_WIDTH + 2] = mint;
+        // The 7-slot claim tuple `[nullifier, merkle_root, value_lo, asset_type,
+        // destination_federation, value_hi, mint_hash]`.
+        let public_inputs = note_spend_leaf_public_inputs(&witness);
+        debug_assert_eq!(
+            mint,
+            public_inputs[note_spend_pi::VALUE_HI + 1],
+            "the row-0 mint column must equal the exposed 7th claim slot"
+        );
+        let batch_proof = prove_vm_descriptor2(
+            &desc,
+            &trace,
+            &public_inputs,
+            &MemBoundaryWitness::default(),
+            &[],
+        )
+        .map_err(|e| inv(format!("note spending proof generation failed: {e}")))?;
+        let spending_proof = postcard::to_allocvec(&batch_proof)
+            .map_err(|e| inv(format!("note spending proof serialize failed: {e}")))?;
 
         let recipient_secret = NoteSecret {
             note: output_note,
@@ -738,7 +797,14 @@ pub fn verify_accumulator_non_membership(
 /// - The Merkle root (the committed note tree root).
 /// - The value (prevents value inflation attacks).
 /// - The asset type (prevents asset type substitution attacks).
-/// - The STARK proof.
+/// - The serialized descriptor batch proof (from [`NoteTransferProof::spending_proof`]).
+///
+/// Verification reconstructs the 7-slot claim EXACTLY as the DSL verifier did — a
+/// local (non-bridge) spend pins `destination_federation = 0`, and a BabyBear-typed
+/// caller binds a felt-sized value so `value_hi = 0` — plus the felt-domain mint
+/// identity ([`note_spend_mint_hash_felt`]), then checks the proof against it via
+/// `verify_vm_descriptor2`. The descriptor's `PiBinding`s pin every slot into the
+/// trace, so a proof for a different `(nullifier, root, value, asset)` is rejected.
 ///
 /// Returns `Ok(())` if valid.
 pub fn verify_note_spending(
@@ -746,15 +812,24 @@ pub fn verify_note_spending(
     merkle_root: BabyBear,
     value: BabyBear,
     asset_type: BabyBear,
-    proof: &StarkProof,
+    proof_bytes: &[u8],
 ) -> Result<(), String> {
-    dregg_dsl_runtime::note_spending::verify_note_spend(
+    let proof: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(proof_bytes)
+        .map_err(|e| format!("note-spend proof bytes could not be deserialized: {e}"))?;
+    let dest = BabyBear::ZERO;
+    let value_hi = BabyBear::ZERO;
+    let mint = note_spend_mint_hash_felt(nullifier, merkle_root, value, asset_type, dest, value_hi);
+    let claim = vec![
         nullifier,
         merkle_root,
         value,
         asset_type,
-        proof,
-    )
+        dest,
+        value_hi,
+        mint,
+    ];
+    let desc = note_spend_to_descriptor2()?;
+    verify_vm_descriptor2(&desc, &proof, &claim)
 }
 
 // =============================================================================
@@ -957,8 +1032,103 @@ mod tests {
             transfer.recipient_secret.note.asset_type(),
             secret.note.asset_type()
         );
-        // A non-empty STARK proof was produced (the FULL-WIDTH commitment-binding
-        // trace proved successfully).
-        assert!(transfer.spending_proof.trace_len >= 4);
+        // A descriptor batch proof was produced. `transfer_note_privately` only
+        // returns Ok when `prove_vm_descriptor2` succeeded (and self-verified under
+        // debug_assertions), so this exercises the FULL-WIDTH commitment-binding
+        // trace end-to-end; the bytes must round-trip back into an `Ir2BatchProof`
+        // that commits at least one table instance.
+        let decoded: Ir2BatchProof<DreggStarkConfig> =
+            postcard::from_bytes(&transfer.spending_proof)
+                .expect("descriptor batch proof bytes round-trip");
+        assert!(
+            !decoded.degree_bits.is_empty(),
+            "the note-spend descriptor proof commits at least one table instance"
+        );
+    }
+
+    /// The rewired note-spend path proves the SAME statement it verifies against:
+    /// an honest witness proves through the `note-spend-leaf` descriptor and
+    /// `verify_note_spending` ACCEPTS the reconstructed claim, while a forged
+    /// `value` claim is REFUSED (the descriptor's `PiBinding` value tooth). This
+    /// witnesses at the SDK level that the descriptor prover did not replace the
+    /// hand AIR with a trivially-accepting proof.
+    #[test]
+    fn test_verify_note_spending_accepts_honest_rejects_forged() {
+        // Build a real full-width witness (value < 2^30 so value_hi = 0, dest = 0 —
+        // the exact local-spend shape `verify_note_spending` reconstructs).
+        let spending_key = key_to_field_elements(&[0x7Au8; 32]);
+        let merkle_siblings = vec![
+            [BabyBear::new(11), BabyBear::new(22), BabyBear::new(33)],
+            [BabyBear::new(44), BabyBear::new(55), BabyBear::new(66)],
+        ];
+        let merkle_positions = vec![0u8, 1u8];
+        let witness = NoteSpendingWitness::from_note_limbs(
+            &[0x11u8; 32],
+            1000,
+            1,
+            &[0x22u8; 32],
+            &[0x33u8; 32],
+            spending_key,
+            merkle_siblings,
+            merkle_positions,
+        );
+
+        // Prove exactly as `transfer_note_privately` does.
+        let desc = note_spend_to_descriptor2().expect("descriptor builds");
+        let (mut trace, base_pis) = generate_note_spending_trace(&witness);
+        for row in &mut trace {
+            row.resize(NOTE_SPENDING_WIDTH + 3, BabyBear::ZERO);
+        }
+        let m1 = poseidon2::hash_fact(
+            base_pis[note_spend_pi::NULLIFIER],
+            &[
+                base_pis[note_spend_pi::MERKLE_ROOT],
+                base_pis[note_spend_pi::DESTINATION_FEDERATION],
+                base_pis[note_spend_pi::ASSET_TYPE],
+            ],
+        );
+        let mint = poseidon2::hash_fact(
+            m1,
+            &[
+                base_pis[note_spend_pi::VALUE],
+                base_pis[note_spend_pi::VALUE_HI],
+            ],
+        );
+        trace[0][NOTE_SPENDING_WIDTH] = base_pis[note_spend_pi::MERKLE_ROOT];
+        trace[0][NOTE_SPENDING_WIDTH + 1] = m1;
+        trace[0][NOTE_SPENDING_WIDTH + 2] = mint;
+        let claim = note_spend_leaf_public_inputs(&witness);
+        let proof =
+            prove_vm_descriptor2(&desc, &trace, &claim, &MemBoundaryWitness::default(), &[])
+                .expect("honest witness proves");
+        let bytes = postcard::to_allocvec(&proof).unwrap();
+
+        let nullifier = claim[note_spend_pi::NULLIFIER];
+        let merkle_root = claim[note_spend_pi::MERKLE_ROOT];
+        let value = claim[note_spend_pi::VALUE];
+        let asset = claim[note_spend_pi::ASSET_TYPE];
+        assert_eq!(value, BabyBear::new(1000));
+        assert_eq!(
+            claim[note_spend_pi::VALUE_HI],
+            BabyBear::ZERO,
+            "value < 2^30"
+        );
+        assert_eq!(
+            claim[note_spend_pi::DESTINATION_FEDERATION],
+            BabyBear::ZERO,
+            "local spend"
+        );
+
+        // POSITIVE: the reconstructed claim verifies.
+        verify_note_spending(nullifier, merkle_root, value, asset, &bytes)
+            .expect("honest proof verifies against the reconstructed claim");
+
+        // NEGATIVE: a forged value is refused (the PiBinding value tooth) — a
+        // trivially-accepting proof would pass this too.
+        assert!(
+            verify_note_spending(nullifier, merkle_root, value + BabyBear::ONE, asset, &bytes)
+                .is_err(),
+            "a forged value claim must be REJECTED"
+        );
     }
 }

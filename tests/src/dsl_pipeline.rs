@@ -6,7 +6,7 @@
 //!   3. Create a TurnExecutor with that registry
 //!   4. Register a sovereign cell with the program's VK hash
 //!   5. Generate a valid trace (3 steps, value=100, threshold=50)
-//!   6. Prove using DslCircuit + stark::prove
+//!   6. Prove using prove_dsl_plonky3
 //!   7. Build a Turn with execution_proof
 //!   8. Execute — executor verifies via registry and updates commitment
 //!   9. Assert: commitment updated, no error
@@ -15,7 +15,6 @@
 
 use dregg_cell::{Cell, CellId, Ledger};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
-use dregg_circuit::stark::StarkAir;
 use dregg_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
 };
@@ -353,19 +352,14 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
     // --- Step 5: Generate a valid trace (3 steps, value=100, threshold=50) ---
     let values = vec![100u32, 100, 100];
     let threshold = 50u32;
-    let (trace, circuit_public_inputs) = generate_temporal_trace(&values, threshold);
+    let (trace, _circuit_public_inputs) = generate_temporal_trace(&values, threshold);
     assert_eq!(trace.len(), 4); // padded to next power of 2
 
-    // Verify constraints evaluate to zero on the trace (sanity check).
-    let circuit = DslCircuit::new(descriptor.clone());
-    let alpha = BabyBear::new(7);
-    for i in 0..trace.len() - 1 {
-        let result =
-            circuit.eval_constraints(&trace[i], &trace[i + 1], &circuit_public_inputs, alpha);
-        assert_eq!(result, BabyBear::ZERO, "Constraint nonzero at row {i}");
-    }
+    // (The per-row constraint-eval sanity check that used the legacy
+    // `StarkAir::eval_constraints` was retired with the hand-STARK engine;
+    // the plonky3 prove/verify below is the real constraint check.)
 
-    // --- Step 6: Prove using DslCircuit + stark::prove ---
+    // --- Step 6: Prove using prove_dsl_plonky3 ---
     // The executor expects 32 public inputs (8 BabyBear per: old_commitment,
     // new_commitment, effects_hash, cell_id_hash). The temporal predicate circuit
     // only uses 1 public input (num_steps). For the executor's verification to pass,
@@ -388,7 +382,7 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
     // Actually, let's step back: the executor's verify_and_commit_proof calls
     // program.verify_transition(public_inputs, proof_bytes) where public_inputs
     // is the 32-element vector. The CellProgram.verify_transition deserializes the
-    // proof and calls stark::verify(&circuit, &proof, public_inputs). The circuit's
+    // proof and calls verify_dsl_plonky3(&circuit.descriptor, &proof, public_inputs). The circuit's
     // boundary constraints only reference pi[0], but the STARK commitment includes
     // ALL public inputs in its Fiat-Shamir transcript. So the proof must be generated
     // with the EXACT same public inputs vector.

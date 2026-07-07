@@ -238,12 +238,7 @@ fn build_injection_trace(field: &[u8]) -> Option<(Vec<Vec<BabyBear>>, Vec<BabyBe
 
     let final_state = *rows.last()?.get(NEXT)?;
     let route = *rows.last()?.get(RUNNING_HASH)?;
-    let public_inputs = vec![
-        BabyBear::new(S_CLEAN),
-        final_state,
-        table_commitment,
-        route,
-    ];
+    let public_inputs = vec![BabyBear::new(S_CLEAN), final_state, table_commitment, route];
     Some((rows, public_inputs))
 }
 

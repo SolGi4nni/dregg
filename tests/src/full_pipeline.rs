@@ -24,7 +24,6 @@ use dregg_circuit::body_membership::BodyFactMerkleProof;
 use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
 use dregg_circuit::multi_step_air::{self, ALLOW_PREDICATE, build_multi_step_witness};
 use dregg_circuit::poseidon2::{self, hash_fact};
-use dregg_circuit::stark::{self, proof_from_bytes, proof_to_bytes};
 use dregg_circuit::{
     BabyBear, BodyMembershipProof, MultiStepWitness, NoteSpendingAir, NoteSpendingWitness,
     collect_body_fact_hashes, prove_authorization_stark, prove_authorization_with_membership,
@@ -179,23 +178,10 @@ fn test_full_private_authorization_pipeline() {
         proof_bytes.len()
     );
 
-    // --- Step 7: Deserialize from bytes ---
-    let deserialized = proof_from_bytes(&proof_bytes).expect("deserialization should succeed");
-    assert!(
-        deserialized.public_inputs.len() >= 2,
-        "deserialized proof should have at least 2 public inputs (leaf_hash, root), got {}",
-        deserialized.public_inputs.len()
-    );
-    assert_eq!(
-        deserialized.public_inputs,
-        proof
-            .real_stark_proof
-            .as_ref()
-            .unwrap()
-            .issuer_membership_stark_proof
-            .public_inputs,
-        "round-trip should preserve public inputs"
-    );
+    // --- Step 7: (retired) low-level StarkProof byte round-trip ---
+    // The legacy hand-STARK proof_to_bytes/proof_from_bytes round-trip check was
+    // removed with that engine; serialization coverage now lives in the
+    // descriptor-prover emit-gate tests.
 
     // --- Step 8: Verify (verify_presentation_bb with real federation root) ---
     // Note: verify_presentation expects a 32-byte value that when passed through

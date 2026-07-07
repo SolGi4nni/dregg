@@ -2487,58 +2487,6 @@ impl TurnExecutor {
         Ok(())
     }
 
-    /// Convenience: verify a bundle of per-cell `(StarkProof, public_inputs)`
-    /// pairs from the same turn.
-    ///
-    /// Runs the per-proof STARK verifier on each pair (against the standard
-    /// `EffectVmAir`) and then calls
-    /// [`verify_proof_carrying_turn_bundle`] to enforce that the shared
-    /// γ.0a PI slots agree across proofs and (when `turn` is supplied)
-    /// against the canonical Turn projection.
-    ///
-    /// Note: this convenience handles the default-AIR path only; the
-    /// custom-program-VK path is the caller's responsibility because the
-    /// per-cell AIR identity is cell-dependent in that case. The single-cell
-    /// `verify_and_commit_proof` remains the path of record for production
-    /// today; this helper exists to back tests and to give future
-    /// multi-cell aggregation callers (Stage 7-γ.1+) a stable entry point.
-    ///
-    /// v1 floor only (takes a v1 `EffectVmAir` `StarkProof` bundle).
-    pub fn verify_bundle_with_stark(
-        bundle: &[(
-            dregg_circuit::stark::StarkProof,
-            Vec<dregg_circuit::field::BabyBear>,
-        )],
-        turn: Option<&Turn>,
-    ) -> Result<(), TurnError> {
-        Self::verify_bundle_with_stark_and_ledger(bundle, turn, None)
-    }
-
-    /// Snapshot-aware variant of `verify_bundle_with_stark` that threads a
-    /// `&Ledger` into the binding-proof sweep. Closes AIR #75 for callers
-    /// who carry a Burn binding proof in `turn.effect_binding_proofs`.
-    ///
-    /// v1 floor only (takes a v1 `EffectVmAir` `StarkProof` bundle).
-    pub fn verify_bundle_with_stark_and_ledger(
-        bundle: &[(
-            dregg_circuit::stark::StarkProof,
-            Vec<dregg_circuit::field::BabyBear>,
-        )],
-        turn: Option<&Turn>,
-        ledger: Option<&Ledger>,
-    ) -> Result<(), TurnError> {
-        // The v1 hand-AIR (`EffectVmAir`) per-proof STARK verify is RETIRED; a v1
-        // `StarkProof` bundle fails closed (rotated bundles verify through the rotated
-        // proof-carrying path).
-        if !bundle.is_empty() {
-            return Err(TurnError::ProofVerificationFailed(
-                "v1 hand-AIR StarkProof bundle verify is retired".to_string(),
-            ));
-        }
-        let pi_vecs: Vec<Vec<_>> = bundle.iter().map(|(_, pis)| pis.clone()).collect();
-        Self::verify_proof_carrying_turn_bundle_with_ledger(&pi_vecs, turn, ledger)
-    }
-
     /// Read the per-cell `max_custom_effects` from the cell's program manifest.
     ///
     /// Per `DESIGN-max-custom-effects.md` §4. Falls back to
