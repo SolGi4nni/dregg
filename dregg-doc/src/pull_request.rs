@@ -69,6 +69,8 @@ use crate::check::{CheckId, CheckRefusal, CheckWitness, RequiredCheck};
 #[cfg(feature = "substrate")]
 use crate::executor_drive::ExecutorDrivenDoc;
 #[cfg(feature = "substrate")]
+use crate::review::ReviewThread;
+#[cfg(feature = "substrate")]
 use dregg_turn::{TurnError, TurnReceipt};
 
 /// Why a pull request could not merge / land.
@@ -150,6 +152,13 @@ pub struct PullRequest {
     /// time — a bad witness refuses the landing, it is not laundered here.
     #[cfg(feature = "substrate")]
     witnesses: Vec<(CheckId, CheckWitness)>,
+    /// THE REVIEW THREAD: comments + approvals as cryptographically-OWNED,
+    /// receipted document atoms ([`crate::review`]). Its content is committed in
+    /// a backing document (a region cell distinct from this PR's code) — the
+    /// commenting cap is independent of the land cap; this holds the thread's
+    /// linearization tip + the receipted-turn evidence of every post.
+    #[cfg(feature = "substrate")]
+    review: ReviewThread,
 }
 
 impl PullRequest {
@@ -163,6 +172,8 @@ impl PullRequest {
             required: Vec::new(),
             #[cfg(feature = "substrate")]
             witnesses: Vec::new(),
+            #[cfg(feature = "substrate")]
+            review: ReviewThread::new(),
         }
     }
 
@@ -386,6 +397,49 @@ impl PullRequest {
             }
         }
         Ok(receipts)
+    }
+
+    /// The PR's REVIEW THREAD (comments + approvals as owned, receipted atoms).
+    #[cfg(feature = "substrate")]
+    pub fn review(&self) -> &ReviewThread {
+        &self.review
+    }
+
+    /// The PR's review thread, mutably.
+    #[cfg(feature = "substrate")]
+    pub fn review_mut(&mut self) -> &mut ReviewThread {
+        &mut self.review
+    }
+
+    /// POST A REVIEW COMMENT on this PR — an [`crate::Op::Add`] patch authored
+    /// by `author`, driven as a cap-gated finalized turn through `thread_doc`
+    /// (the review thread's backing region cell, distinct from the PR's code
+    /// document). A reviewer without the thread's review cap is refused in-band
+    /// ([`TurnError::CapabilityNotHeld`]) with the thread byte-untouched. See
+    /// [`crate::ReviewThread::comment`].
+    #[cfg(feature = "substrate")]
+    pub fn comment(
+        &mut self,
+        thread_doc: &mut ExecutorDrivenDoc,
+        author: Author,
+        text: &str,
+    ) -> Result<TurnReceipt, TurnError> {
+        self.review.comment(thread_doc, author, text)
+    }
+
+    /// POST AN APPROVAL on this PR — a distinguished marker atom authored by
+    /// `author`, on the same receipted-turn path as [`PullRequest::comment`].
+    /// The committed, executor-signed approval receipt can satisfy a
+    /// [`crate::check::RequiredCheck`] (approval-as-required-check — see
+    /// [`crate::ReviewThread::planned_approval_check`]). See
+    /// [`crate::ReviewThread::approve`].
+    #[cfg(feature = "substrate")]
+    pub fn approve(
+        &mut self,
+        thread_doc: &mut ExecutorDrivenDoc,
+        author: Author,
+    ) -> Result<TurnReceipt, TurnError> {
+        self.review.approve(thread_doc, author)
     }
 }
 
