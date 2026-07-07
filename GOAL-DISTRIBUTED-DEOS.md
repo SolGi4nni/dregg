@@ -25,15 +25,19 @@ inhabited world.
 
 ## STATUS (this IS the goal file — GOAL.md is storage-in-lean's, off-limits; refresh here each landing)
 
-**Current thrust:** Pillar 0 (foundation) + Pillar 3 (card-over-Conduit) building in parallel —
-the two lanes disjoint from each other and from the flip/storage/localnet sessions.
+**Current thrust:** Pillars 0 + 3 LANDED (done-log below). Pillar 2 (speak-cap = attenuation of the
+on-ledger presence token, `mud.rs`) building now. Serialized on the starbridge-v2 build so as not to
+double-cold-build the crate after the disk clean.
 
 **Next 3 moves:**
-1. Land + commit Pillar 0 (`NodeWorldSink` in dregg-sdk-net, `world-sink` feature) — the
-   dependency root for 1/2/4. Verify both poles + the no-feature mozjs-free check.
-2. Land + commit Pillar 3 (`CardForkEnvelope` over a live Conduit, offline + Docker-gated live).
-3. Launch Pillar 2 (speak-cap = attenuation of the on-ledger presence token, `mud.rs`) over the
-   landed `NodeWorldSink`; then Pillar 1 (`Target::Distributed` migration).
+1. Land + commit Pillar 2 (`mud.rs`) — presence-held is the SOLE source of speak authority.
+2. Fire Pillar 1 (SCOUTED + ready): add `MigrationTarget::Distributed { cell, rights }` (today only
+   `HostPd`) → map to the EXISTING firmament `Target::Distributed { cell }`; carry the re-homed
+   `SurfaceCapability` over a captp handoff (`sturdy::export` + one-shot `register_handoff_nonce`,
+   `handoff::{TargetMismatch,Amplifies}` guards), re-mint preserving `SurfaceId` + attenuated rights;
+   two-process a-bar (input routed, present painted, forged/replayed/amplifying refused).
+3. Pillar 4 (transport decision, then confined brain cross-process) + Pillar 2b (wire the MUD onto
+   `NodeWorldSink` — three inhabitants, three sinks, one node: presence provable from each view).
 
 ## THE DISCIPLINE (carry it into every pillar)
 
