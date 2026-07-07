@@ -762,7 +762,12 @@ pub fn verify_non_revocation_proof(proof: &NonRevocationProof) -> Result<(), Str
     dregg_circuit::stark::verify(&circuit, &proof.proof, &public_inputs)
 }
 
-/// Verify an accumulator-based non-membership proof.
+/// Verify an accumulator-based non-membership proof against the TRUSTED (federation-committed)
+/// accumulator. Sound: it checks the proof's `alpha`/`accumulator_value` match the trusted ones (no
+/// forged challenge) and binds the witness remainder to `f(element)` via the trusted set
+/// ([`PolynomialAccumulator::verify_non_membership_bound`]). A bare check on prover-supplied values is
+/// forgeable (any `remainder'` with a matching quotient), which is why the trusted accumulator is
+/// required — the caller must obtain it from the federation, not the prover.
 ///
 /// The verifier needs:
 /// - The current accumulator value (committed by the federation).
@@ -773,19 +778,24 @@ pub fn verify_non_revocation_proof(proof: &NonRevocationProof) -> Result<(), Str
 ///
 /// Returns `Ok(())` if valid, `Err` with reason otherwise.
 pub fn verify_accumulator_non_membership(
+    trusted: &PolynomialAccumulator,
     proof: &AccumulatorNonMembershipProof,
 ) -> Result<(), String> {
-    if PolynomialAccumulator::verify_non_membership(
-        &proof.witness,
-        proof.revocation_hash,
-        proof.alpha,
-        proof.accumulator_value,
-    ) {
+    // The prover-supplied challenge + accumulator MUST match the TRUSTED (federation-committed) ones —
+    // otherwise the prover forges the whole instance. `derive_alpha` binds alpha to the set commitment.
+    if proof.alpha != trusted.alpha() {
+        return Err("alpha does not match the trusted accumulator (forged challenge)".to_string());
+    }
+    if proof.accumulator_value != trusted.accumulator_value() {
+        return Err("accumulator value does not match the trusted accumulator".to_string());
+    }
+    // SOUND: bind the witness remainder to f(x) via the trusted set. This closes the forgery the bare
+    // division-identity check admitted (any remainder' with a matching quotient — even for a member).
+    if trusted.verify_non_membership_bound(&proof.witness, proof.revocation_hash) {
         Ok(())
     } else {
-        Err("accumulator non-membership verification failed: \
-             witness * (alpha - element) + remainder != accumulator value, \
-             or remainder is zero"
+        Err("accumulator non-membership verification failed: the witness remainder is not f(element) \
+             against the trusted set, or the element is a member"
             .to_string())
     }
 }
