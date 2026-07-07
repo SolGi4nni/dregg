@@ -228,3 +228,18 @@ Two sequential gates on one pipeline:
 - If PASS → fully-verified payoff → deploy to live mesh. If round-2 still stalls gate-ON → the
   residual is the Lean per-call O(n²) itself → DEEPER (Alif's Lean stateful export). Anti-thrash:
   run the test to a durable log, don't offload to a waiter (I take over the run if it thrashes).
+
+## Verified-gate perf: RUST LEVERS EXHAUSTED — the wall is Alif's Lean (measured)
+- The cross-poll cache (ba411561c) is implemented, SOUND, built green, working (6-10 hits/node) — but
+  CANNOT close gate-ON. Instrumented (7cf197230): the Lean tauOrderFast per-call cost is SUPER-LINEAR
+  in lace size: 28 blocks→54ms, 31→663ms, 32→870ms, 34→6770ms, 35→9169ms (~170x for +7 blocks). Once a
+  poll takes seconds, the serial executor can't keep 1-block/s pace → runaway → round-2 client block
+  never reached on lagging nodes. No reject/divergence — pure perf. Rust-side levers EXHAUSTED
+  (incremental build_wire won't help; the dominant cost is the Lean recompute).
+- FULLY-VERIFIED gate-ON needs ALIF'S LEAN: a stateful/resumable dregg_tau_order export persisting
+  mkPastCache/mkRoundCache across FFI calls (each poll pays only the block-delta → O(Δ)/poll). Well
+  characterized in docs/VERIFIED-GATE-PERF.md. NOT a Rust change; do NOT edit Lean source (Alif's).
+- ★ The GATE-OFF payoff (real client attested turn cross-node, Rust-tau finality, proven+reproducible)
+  is DEPLOYABLE to the live mesh NOW. Fully-verified live deploy waits on Alif's Lean.
+- EMBER DECISION PENDING: deploy gate-off milestone to live now / hold for Alif's fully-verified /
+  ember-only fail-open (gate-ON timeout→Rust tau, weakens the guarantee).
