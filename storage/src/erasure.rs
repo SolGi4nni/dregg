@@ -361,10 +361,19 @@ pub fn root_commitment_dual(chunks: &[ErasureChunk]) -> crate::commitment::Erasu
 /// Verify a chunk against a root commitment using its Merkle proof.
 ///
 /// This is the real availability check: it confirms (a) the chunk's data
-/// hashes to its committed leaf, and (b) that leaf is genuinely a member of the
-/// tree committed to by `root` at the chunk's claimed position. A tampered
-/// chunk fails (a); a chunk swapped in from a different blob/position fails (b).
+/// hashes to its committed leaf, (b) that leaf is genuinely a member of the
+/// tree committed to by `root` at the position the proof authenticates, and
+/// (c) that the position the proof authenticates IS the chunk's claimed
+/// `index`. A tampered chunk fails (a); a chunk swapped in from a different
+/// blob/position fails (b); a genuine chunk carrying a lying `index` field
+/// fails (c) — without (c) a DAS sampler would count one held chunk as
+/// present at ANY sampled index (availability-confidence inflation).
 pub fn verify_chunk_against_root(chunk: &ErasureChunk, root: &ContentHash) -> bool {
+    // (c) position binding: the claimed index must be the one the proof
+    // authenticates; the Merkle path only ever speaks for `proof.leaf_index`.
+    if chunk.index != chunk.proof.leaf_index {
+        return false;
+    }
     // (a) integrity: data → leaf.
     if chunk_commitment_dual(&chunk.data).blake3 != chunk.commitment {
         return false;
@@ -621,6 +630,32 @@ mod tests {
             !verify_chunk_against_root(&misplaced, &root),
             "leaf-0 under leaf-2's path must fail"
         );
+    }
+
+    #[test]
+    fn lying_index_with_genuine_proof_is_rejected() {
+        // DAS confidence-inflation gap: a chunk whose data/commitment/proof are
+        // all GENUINE for position i, but whose `index` field claims j != i.
+        // The proof still verifies (it speaks for leaf_index = i) and integrity
+        // still passes, so without the index==leaf_index binding this chunk
+        // would be accepted as evidence that position j is held.
+        let data = b"a proof for position i must not vouch for position j".to_vec();
+        let encoder = ErasureEncoder::new(8, 2);
+        let chunks = encoder.encode(&data);
+        let root = root_commitment(&chunks);
+        assert!(chunks.len() > 3, "need enough chunks for distinct i, j");
+
+        let mut liar = chunks[1].clone(); // genuine everything for i = 1...
+        liar.index = 3; // ...but claims to be chunk 3.
+        assert!(verify_chunk(&liar)); // integrity leg alone still passes
+        assert!(liar.proof.verify(&liar.commitment, &root.0)); // raw path still verifies
+        assert!(
+            !verify_chunk_against_root(&liar, &root),
+            "a chunk claiming index j with a proof for i != j must be rejected"
+        );
+
+        // And the honest original still verifies end-to-end.
+        assert!(verify_chunk_against_root(&chunks[1], &root));
     }
 
     #[test]
