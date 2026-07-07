@@ -348,3 +348,19 @@ ONLY REMAINING: canonical_32_to_felts VK regen — a 9-felt AIR-width change + a
 that RE-KEYS the live federation. This is not a code fix I can land; it re-keys ember's running mesh.
 Dual-BLAKE3 binds fully meanwhile, and the masking is non-exploitable for the CR-digest inputs these
 fingerprints actually take. -> genuine ember decision (regen the VK, or accept the dual-form binding).
+
+### RESIDUAL GRIND — canonical determination (2026-07-07): exploitability is CASE-DEPENDENT, needs a per-caller circuit audit.
+Analyzed how the masked 8-felt fingerprint (canonical_32_to_felts_8, mirrored in-circuit) is USED. Two
+inputs collide in the fingerprint IFF they agree on all ~240 unmasked bits (differ only in the 16 masked).
+So exploitability depends on the INPUT per caller:
+- PUBLIC KEYS (rotation_witness pk8) + HASHES: NON-EXPLOITABLE. A colliding VALID input must agree on 240
+  specific bits; for a key that is a discrete-log-hard search (you must hold the private key for one of the
+  2^16 masked-variants), for a hash a 240-bit partial collision. Both infeasible. Sound as-is.
+- ATTACKER-CONTROLLED ARBITRARY 32-byte inputs (e.g. some attestation_data) where the fingerprint is the
+  SOLE authoritative identity: POTENTIALLY exploitable (craft two data blobs differing only in masked bits).
+  Needs per-caller check: is the input free-form + is the fingerprint authoritative (vs backed by a full
+  BLAKE3/signature check)?
+=> The honest close is a per-caller exploitability audit across the ~10 canonical_32_to_felts_* call sites
+(bilateral_schedule ×N, rotation_witness, effect_vm/pi). If all are key/hash/backed -> document sound (no
+VK change). If any is free-form-authoritative -> harden that caller OR go 9-felt injective (AIR-width +
+deployed-VK regen = ember's key). NOT a rush-able code fix; a careful circuit-security pass.
