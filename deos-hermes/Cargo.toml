@@ -106,6 +106,12 @@ reqwest = { version = "0.12", optional = true, default-features = false, feature
 # `--features js-agent`. deos-js is its OWN workspace (in the repo-root
 # `exclude`); cargo resolves it under THIS workspace's `[patch]` tables.
 deos-js = { path = "../deos-js", optional = true }
+# ── THE DISTRIBUTED HANDS (node-backed WorldSink), gated behind `node-brain` ──
+# The client-side `NodeWorldSink` (Pillar 0) so a CONFINED brain's `run_js`
+# commits verified turns to a REMOTE node over HTTP — reached ONLY through the
+# jail's granted provider-egress door. Optional (pulls dregg-sdk-net's
+# `world-sink`, which pulls deos-js); OFF by default.
+dregg-sdk-net = { path = "../dregg-sdk-net", optional = true, default-features = false }
 # The card-authoring tool (`create_card`/`edit_card`) attributes each authored
 # view-line to the agent's `dregg_doc::Author` (the blame identity). Direct dep so
 # the tool names the author type without reaching through deos-js's re-exports.
@@ -153,6 +159,10 @@ zk-live = ["dregg-zkoracle-prove/tlsn-live"]
 # operator's co-pilot, every fire a cap-gated verified turn under the agent's
 # `held`. OFF by default (the mozjs elephant stays out of the default build).
 js-agent = ["dep:deos-js", "dep:dregg-doc"]
+# THE DISTRIBUTED HANDS — a confined brain drives a REMOTE node's World over a
+# NodeWorldSink reached only through its granted egress door (Pillar 4,
+# node-backed transport). Implies the run_js hands + the client sink.
+node-brain = ["js-agent", "dep:dregg-sdk-net", "dregg-sdk-net/world-sink"]
 # THE AGENT DOCK COCKPIT SURFACE — the gpui `CockpitSurface` that mounts the
 # confined Hermes agent into starbridge-v2's moldable-inspector dock: a chat
 # pane (streamed agent text), the tool-call ledger (each receipt / refusal), and

@@ -136,10 +136,13 @@ Built: the world-bridge cockpit binding (`DEOS_WORLD_BRIDGE_SOCKET`, `ef749253d`
 (`host.rs::brain_body_serving`, real ACP brain in the confined PD; live-LLM behind `live-brain`).
 Today the bridge is a Unix socket (same box).
 
-- **TRANSPORT DECISION — DEFERRED to this pillar** (ember): decide between (i) a network
-  world-bridge (Unix→TCP/TLS, smallest step, keeps the fail-closed socket semantics) and (ii)
-  node-backed (the brain commits to its local node, gossips to the remote cockpit's node which
-  repaints) — the right answer depends on what Pillar 0's `NodeWorldSink` actually looks like.
+- **TRANSPORT DECISION — RESOLVED (node-backed, 2026-07-07):** now that Pillar 0's `NodeWorldSink`
+  exists, (ii) wins decisively — it composes out of already-built pieces and honours discipline #3
+  (ride the ledger). The confined brain gets a `NodeWorldSink` (`run_attached_on` already takes any
+  `Box<dyn WorldSink>`) reaching its node ONLY through the jail's granted `grant_provider`
+  egress door; run_js commits verified turns to the node; the remote cockpit repaints from the
+  gossiped ledger. No new trusted transport — the egress door + the node's executor are the gates.
+  (i) the network world-bridge is retired as redundant. Manifest: deos-hermes `node-brain` feature.
 - **Build (a):** the chosen transport, so a confined brain in one process drives a live cockpit
   World in another — every run_js a cap-gated verified turn under the agent's `held`, fail-closed.
 - **Proof-bar (a, now):** a confined LocalBrain in process A crawls process B's cockpit cells and
