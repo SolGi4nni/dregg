@@ -139,3 +139,41 @@ inventories, emit plans, consumer lists) in workflow `wf_edf51f70-602`.
 - **My zkOracle STARK work + review docs are still uncommitted and held** behind that same
   red tree. (Note: the zkOracle injection leg I just built is itself a T2-shaped hand-AIR
   on `dfa_routing` — it should be *born* Lean-emitted in this campaign, not ported twice.)
+
+## ⚑ What we PROVE about the emitted circuits — the refinement ladder (2026-07-06)
+
+The Phase-2a emits (committed `9c440d208`) establish **Rung 0**. The kill is not just
+relocation — emit-from-Lean is what makes Rungs 1–3 *stateable at all* (the theorems
+quantify over the Lean descriptor; you cannot say any of this about a hand-authored Rust
+AIR). Where each family sits today and the climb:
+
+- **Rung 0 — emit-faithfulness. ✅ DONE (all 20 families).** (i) byte-identity: the
+  deployed bytes ARE the Lean descriptor (`#guard emitVmJson2 == "…"`); (ii) per-GATE
+  faithfulness: each emitted constraint polynomial is 0 iff its intended local algebraic
+  relation (the `*_body_zero_iff` theorems — e.g. DFA `transition_body_zero_iff`, balance
+  `cLo_zero_iff`, adjacency `consecutive_body_zero_iff`), `#assert_axioms`-clean; (iii)
+  empirical accept-honest/reject-tampered via the real-prover gate tests.
+
+- **Rung 1 — functional-correctness refinement. IN PROGRESS (DFA pathfinder `wf_b5bab0da-bd5`).**
+  The WHOLE-descriptor bridge: `Satisfied2 desc assignment ⟺ SemanticRelation(pi, witness)`.
+  DFA: *accepts ⟺ the trace is the unique run of the pinned automaton ∧ final = classify(input)* —
+  composes the per-gate lemmas + `chip_lookup_sound` (exists) + `DfaAcceptanceAir.lean`'s
+  already-proven `air_final_state_is_classification`. Pathfinder proves it for DFA
+  non-vacuously (guarded against the P→P scar), then fan out per family (each has its model:
+  `DecideSatisfied2` for predicates, `SortedTreeNonMembership` for non-revocation, …). This
+  bridge is also the STRONGEST possible equality-gate — a theorem, not a test — so it should
+  land WITH the security-critical families' hand-AIR deletion, making the kill unimpeachable.
+
+- **Rung 2 — semantic security properties.** Off Rung 1 + CR carriers: membership accept ⟹
+  leaf genuinely in the committed tree; non-revocation accept ⟹ item strictly between
+  committed neighbors ⟹ genuinely absent (no-forgery); predicate accept ⟹ the private
+  predicate genuinely holds on the committed witness.
+
+- **Rung 3 — compositions (the fold).** These are p3 IR2 descriptors, so each is a recursion
+  LEAF that folds into the per-turn chain: prove "the folded proof's exposed claim ⟺
+  conjunction of the leaves' Rung-2 properties" — the `BindingFromFold` pattern the deployed
+  carriers already use. Payoff: predicate/membership proofs become light-client-verifiable,
+  inheriting the turn layer's unfoolability instead of standing as islands.
+
+Phase 2b (consumer rewire + hand-AIR delete + `git rm stark.rs`) proceeds in parallel; for
+the security-critical families, sequence the Rung-1 bridge before the deletion.
