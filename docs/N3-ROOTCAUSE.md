@@ -9,9 +9,12 @@ or does n=4 *mask* a real bug?
 fundamental n=3 degeneracy.** Consensus is healthy at n=3 — it builds a clean,
 round-synchronous DAG and the ordering rule (`ordering::tau`) finalizes every turn.
 The plateau is the **authoritative *verified-Lean* tau-order finality gate**
-(`DREGG_FINALITY_GATE`, default ON) finalizing a strict *subset* of what Rust `tau`
-finalizes on this DAG. Flipping the authoritative order Lean→Rust
-(`DREGG_FINALITY_GATE=0`) makes the same n=3 committee stream **3/3** turns. The
+(`DREGG_FINALITY_GATE`, default ON): its O(history) `compute_order` FFI is too slow
+to finish a poll on the grown DAG, and the single serial finality-executor blocks
+awaiting it — so the committed prefix freezes at wave 2 even though the Lean and Rust
+orders AGREE (no divergence) whenever a poll does complete. Flipping the authoritative
+order Lean→Rust (`DREGG_FINALITY_GATE=0`) makes the same n=3 committee stream **3/3**
+turns. The
 "n=4 fixes it" story is a **confound**: the n=4 home-lab mesh ran gate-OFF, so it
 streamed via Rust `tau`; the n=3 harness runs gate-ON by default. Node count is
 secondary; the finality-gate *mode* is the real variable.
@@ -97,32 +100,46 @@ differs:
 The live node treats the **verified-Lean** `dregg_tau_order` FFI as *authoritative*
 and Rust `tau` as a differential sibling (`poll_finalized_blocks`,
 `blocklace_sync.rs:1004-1119`; `ordered_from_lean = true`, the Lean order is what is
-finalized over, `:1104-1105`). Because §2 proves Rust `tau` finalizes turn 3 and §3
-shows the Rust-authoritative node streams, the Lean order is finalizing **fewer**
-blocks than Rust `tau` on this multi-wave DAG — it does not surface turn 3's wave
-for execution, so `execute_finalized_turn` is never reached for turn 3 (no
-`"finalized turn executed"` and no `"finalized turn rejected"` log line for it;
-turns 1,2 log both times at rounds 4,7).
+finalized over, `:1104-1105`). Because §2 proves Rust `tau` finalizes turn 3 and the
+Rust-authoritative node streams, the verified-Lean gate is what withholds turn 3: the
+live committed prefix freezes at wave 2, so `execute_finalized_turn` is never reached
+for turn 3 (no `"finalized turn executed"` and no `"finalized turn rejected"` log
+line for it; turns 1,2 log both, at rounds 4,7). The next section pins *why* the gate
+withholds it.
 
-**Which internal mechanism (divergence vs slowness).** The evidence favours
-*slowness*, not an order divergence. Across the gate-ON runs, node-0's log carries
-**no `"consensus DIFFERENTIAL DIVERGENCE"` warn** — only the two
-`"finalized turn executed"` lines for turns 1,2. If the Lean order that a poll
-*completed on* disagreed with Rust `tau`, that warn would fire
-(`blocklace_sync.rs:1078-1095`). Its absence, together with "gate-OFF streams" (so
-`compute_order` is not simply returning `None` and falling back — that path also
-streams), points at the Lean `compute_order` FFI being **too slow to complete a poll
-on the grown, cross-linked DAG**: the verified order is O(history) over the Lean
-causal-past, and each `poll_finalized_blocks` runs it on a fresh snapshot
-(`blocklace_sync.rs:1038-1061`, on `spawn_blocking`). Every completed Lean poll was
-computed on a snapshot from *before* turn 3 was finalizable (so it correctly, and
-without divergence, excluded turn 3); by the time the lace is tall enough to
-super-ratify turn 3's wave, the Lean walk no longer finishes inside the window — so
-turn 3 is never surfaced and executed. This is the same O(history) Lean causal-past
-cost the prior-session `tauOrderFast` memoization (`tauOrderFast_eq`) targets, and it
-is why the Rust `tau` path (µs, memoized `PastCache`) keeps up where the Lean gate
-does not. (Timing the FFI directly is the one confirmation not yet captured; the
-classification step in the fix below pins it.)
+**Which internal mechanism — confirmed: the slow Lean FFI stalls the serial
+finality-executor (NOT an order divergence, NOT leader-assignment).** The gate-ON
+run's node logs pin it:
+
+- **No divergence, ever.** Every completed poll logs `"verified Lean dregg_tau_order
+  is authoritative; Rust ordering::tau differential AGREES"` — never the
+  `"DIFFERENTIAL DIVERGENCE"` warn (`blocklace_sync.rs:1078-1102`). The Lean and Rust
+  orders agree on every poll that *finished*.
+- **The finalized count sticks at 27.** The `AGREES finalized=N` lines climb 18→27
+  and then stay at **27** for the rest of the run, while the DAG grows to 49 blocks
+  (round 16). 27 = the whole DAG through wave 2 (round 9).
+- **That pins it to a stalled poll, not a Lean shortfall.** `build_ordering_blocklace`
+  (`blocklace_sync.rs:1523-1575`) is byte-identical to the faithful post-mortem
+  projection, and post-mortem `tau` on the 49-block lace = 45. Inside
+  `poll_finalized_blocks`, Rust `tau` is computed FIRST (fast, `:1025`) and the Lean
+  `compute_order` FFI is awaited AFTER (`spawn_blocking`, `:1038-1061`); the
+  AGREES/DIVERGENCE line is logged only once the Lean FFI returns (`:1078+`). So *if*
+  a poll had completed on the grown lace, Rust would be 45 and — since Lean did not
+  return 45 (it never logged >27) — it would have logged **DIVERGENCE**. It never
+  did. Therefore the poll on the grown lace **never completed**: the single serial
+  finality-executor task is blocked awaiting the O(history) Lean causal-past walk on
+  the larger, cross-linked lace, so no poll after ~27 blocks ever finishes to surface
+  turn 3. Removing the Lean FFI (`DREGG_FINALITY_GATE=0`) makes every poll complete in
+  µs (memoized Rust `PastCache`) → turn 3 executes → 3/3 stream.
+- **Order-insensitive** (rules out any leader-assignment interaction): running `tau`
+  on the dumped DAG under all six participant permutations finalizes **45 blocks / 3
+  turns every time** — the round-robin `participants[w % n]` leader choice does not
+  affect the outcome.
+
+This is exactly the O(history) Lean causal-past cost the prior-session `tauOrderFast`
+memoization (`tauOrderFast_eq`) targets, and it compounds with the serial-executor
+shape (one task awaits each poll before the next) — the same neighbourhood as the A1
+execution-FFI-under-write-lock fix.
 
 ---
 
@@ -134,7 +151,7 @@ classification step in the fix below pins it.)
 | (b) DELIVER | healthy | every round cohort=3 on all nodes; full-cohort predecessor citation (npreds=3) |
 | (c) CITE | healthy | zero-slack rule honoured; no partial-cohort blocks; no equivocation/duplicate |
 | (d) POLL | healthy | DAG grows in lockstep; O(history) Rust `tau` finalizes 45/49 in µs post-mortem |
-| **(e) GATE** | **STALLS** | Lean-authoritative order finalizes a subset; gate-OFF streams 3/3 |
+| **(e) GATE** | **STALLS** | slow Lean `compute_order` FFI blocks the serial executor; commit prefix freezes at wave 2; gate-OFF streams 3/3 |
 
 ---
 
@@ -159,34 +176,34 @@ trigger.**
 
 ## Fix design (do NOT fire — Lean/verification-owner's call)
 
-The defect is in the **verified-Lean tau-order path**
-(`dregg_tau_order` / `VerifiedFinality::compute_order`,
-`node/src/finality_gate.rs`), not in consensus or in Rust `ordering::tau`. The
-verified order must be brought into agreement with Rust `tau`, which is ground-truth
-correct here (it finalizes the whole clean multi-wave DAG).
+The defect is **performance**, not correctness: the verified-Lean tau-order FFI
+(`dregg_tau_order` / `VerifiedFinality::compute_order`, `node/src/finality_gate.rs`)
+is too slow (O(history) Lean causal-past) to finish a poll on the grown
+cross-linked DAG, and the single serial finality-executor blocks awaiting it. Rust
+`ordering::tau` is already correct here (it finalizes the whole clean multi-wave DAG
+in µs). Two independent levers, either of which restores gate-ON liveness:
 
-1. **Classify the shortfall.** Re-run the gate-ON committee and read node-0's log
-   for the differential path (`blocklace_sync.rs:1078-1095`): either
-   (i) `compute_order` returns a **shorter order** → a genuine Lean/Rust *order
-   divergence* (the `"consensus DIFFERENTIAL DIVERGENCE"` warn should fire — and,
-   contrary to its text, this is a **Lean-side** shortfall, since Rust `tau` is
-   correct), or (ii) it returns `None`/times out on the O(history) causal-past walk
-   → the `tauOrderFast` memoization (`tauOrderFast_eq`) is not covering this shape,
-   and the poll silently falls back / stalls. The probe's log scan distinguishes
-   these.
-2. **Land a multi-wave golden.** The existing Lean `tauGolden` `#guard`s evidently
-   do not cover **3+ sustained waves at n=3** (else this would have been caught).
-   Add a golden that pins `dregg_tau_order` == `ordering::tau` on the exact
-   round-synchronous 3-node / ≥4-wave DAG this investigation dumped.
-3. **Fix `tauOrder`/`compute_order`** so the verified order equals `tau` on clean
-   multi-wave DAGs (this is where it connects to the prior `tauOrderFast_eq`
-   memoization and the A1 execution-FFI-under-write-lock work), then re-arm the gate
-   by default.
+1. **Make the verified order fast.** Route `compute_order` through the memoized Lean
+   causal-past (`BlocklaceFinality.tauOrderFast` / `tauOrderFast_eq`, the parallel of
+   the Rust `PastCache`) so the O(history) walk is not re-done from scratch each
+   poll. This is the direct fix and connects to the prior-session memoization work.
+2. **Un-stall the executor from the slow FFI.** The `poll_finalized_blocks` loop
+   awaits each Lean `spawn_blocking` before the next poll, so one slow FFI freezes
+   *all* finalization progress. Bounding it (timeout → fail-open to the already-
+   computed Rust `tau` for that poll, or running the verified order off the critical
+   path as a cross-check rather than as the awaited authority) keeps liveness while
+   the Lean order remains verified-when-timely. This is the same neighbourhood as the
+   A1 execution-FFI-under-write-lock fix (don't let an O(history) FFI gate the hot
+   loop).
+
+Add a **multi-wave n=3 perf/liveness guard** so a regression is caught: the existing
+Lean `tauGolden` `#guard`s clearly do not exercise 3+ sustained waves under the live
+poll cadence.
 
 **Interim operational note (NOT a code change):** `DREGG_FINALITY_GATE=0` makes n=3
 stream today — but it runs the *un-verified* Rust finality on the commit path, which
 defeats the point of the verified gate. It is a diagnostic lever, not the fix; the
-fix is to make the verified order agree with `tau`.
+fix is to make the verified order keep up (levers 1–2 above).
 
 ---
 

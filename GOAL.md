@@ -171,3 +171,28 @@ FFI binds both ways. Working precedent: `@[extern "dregg_ed25519_verify"]` (Port
   5. (step 3 / the real purge) DIFFERENTIAL: make Lean contentRootDeployed byte-match the Rust
      content_root (same leaf/fold/domain-sep) → retire the Rust content_root logic.
 - `2ae48bf1b` — storage-in-lean (7d): THE EXTRACTION ROUND-TRIPS. verified_content_root_runs_in_lean_calling_rust_poseidon2 PASSES — the @[export] Lean content-root runs as leanc-native code IN the Rust binary, calling the fast Rust Poseidon2 via @[extern]. "Lean IS the runtime" for storage, proven AND running. (Battled: harness restarts + a 100%-full disk + a #[used] force-link fix for DCE.) NEXT: the DIFFERENTIAL (make Lean contentRootDeployed byte-match Rust content_root -> retire the Rust logic).
+
+### Phase 2 — the RECON MAP (2026-07-07, read-only agent; supersedes the rough map above)
+KEY: `queue.rs` is NOT deprecated (0 markers) — it's the BASE primitive (DequeueProof/QueueEntry/
+verify_dequeue_proof = live wire format); it STAYS, never migrates. Only 5 REAL behavior-changing
+consumers; the rest are tests(9)/harness(2). GOTCHA: multi-line brace imports
+(`use dregg_storage::{…, inbox::{…}}`) EVADE `dregg_storage::inbox` greps — sweep by TYPE NAME.
+Per-module (template-covers? / gaps / consumers):
+- pubsub→pubsub_topic: covers pub/sub/grant; gaps read_next/subscriber_lag/gc. Consumers: TEST-ONLY
+  (teasting ×2 + preflight). ← EASIEST, do first.
+- programmable→programmable_queue: covers program/factory; gaps the programs::{acl,rate_limited,…}
+  presets + QueueLookupTable + compute_vk_dual. Consumer: app-framework/queue_endpoint.rs (REAL HEAVY).
+- blinded→blinded_queue: covers commit/consume; gaps FairDistribution lifecycle + client helpers; the
+  spend AIR STAYS in blinded.rs (registered in WitnessedPredicateRegistry — file shrinks, never fully
+  deletes). Consumer: app-framework/blinded_endpoint.rs (REAL HEAVY).
+- inbox→cap_inbox: covers send/dequeue/grant; gap InboxMessage enum (LIVE WIRE TYPE for relay_service —
+  re-home before deleting). Consumers: inbox_endpoint.rs (REAL HEAVY — auth-gap DONE e16dfe17e),
+  node/relay_service.rs (LIGHT, InboxMessage only), teasting ×4. Deletion BLOCKED by operator.
+- relay→relay_operator (partial): gaps MeteredRelay in-process API. Consumers: preflight/relay.rs
+  (harness), relay_service (LIGHT RelayError mapping), teasting ×2. Deletion BLOCKED by operator.
+- operator→relay_operator: covers register/slash; drain/gc→signed turns. Consumer: relay_service
+  (REAL HEAVY — holds `pub operator: RelayOperator`; ALREADY dual-imports the template @ line 38).
+  operator uses inbox+relay+queue = the mid-layer capstone.
+ORDER: 1 pubsub (test-only) → 2 programmable (close preset gaps, then queue_endpoint) → 3 blinded
+(keep AIR residual) → 4 inbox-consumers → 5 relay-consumers → 6 operator (relay_service, the one real
+model change) → then delete inbox+relay. queue KEEPS. Full detail: agent a242d9d357a4b3532 output.
