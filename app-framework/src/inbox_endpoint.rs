@@ -81,8 +81,15 @@ use crate::server::api_error;
 /// - `ciphertext_hex` → `InboxMessage::Encrypted`
 #[derive(Debug, Deserialize)]
 pub struct SendRequest {
-    /// Sender identity (hex-encoded 32 bytes).
+    /// Sender identity (hex-encoded 32-byte ed25519 verifying key). The sender must PROVE it holds
+    /// the matching key via `signature_hex` — the identity is no longer merely asserted.
     pub sender_hex: String,
+    /// The sender's ed25519 signature (hex, 64 bytes) over the canonical send message
+    /// (`"dregg-inbox-send-v1" || sender || deposit_le || type_tag || payload`). REQUIRED — a
+    /// missing or invalid signature is refused (fail-closed). Closes the client-asserted-sender
+    /// fail-open: an impostor cannot forge a signature for a `sender_hex` whose key it does not hold.
+    #[serde(default)]
+    pub signature_hex: Option<String>,
     /// Deposit paid by sender (must meet `min_deposit`).
     pub deposit: u64,
     /// Capability certificate bytes (hex-encoded). Mutually exclusive with the others.
@@ -231,6 +238,47 @@ fn parse_hex_bytes(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// The canonical bytes the sender signs for a `POST /send`: a domain tag, the sender key, the
+/// deposit, a message-type tag, and the payload. Binding all of these makes a valid signature
+/// unforgeable for a different sender, deposit, type, or content.
+fn send_signing_message(sender: &[u8; 32], deposit: u64, type_tag: u8, payload: &[u8]) -> Vec<u8> {
+    let mut m = Vec::with_capacity(19 + 32 + 8 + 1 + payload.len());
+    m.extend_from_slice(b"dregg-inbox-send-v1");
+    m.extend_from_slice(sender);
+    m.extend_from_slice(&deposit.to_le_bytes());
+    m.push(type_tag);
+    m.extend_from_slice(payload);
+    m
+}
+
+/// FAIL-CLOSED sender authentication — verify the ed25519 signature over the canonical send message
+/// against `sender` (as a verifying key). Returns `false` on a missing/malformed/invalid signature
+/// or a non-curve-point sender, so the send is refused: the sender identity is PROVEN, not asserted.
+fn verify_send_auth(
+    sender: &[u8; 32],
+    deposit: u64,
+    type_tag: u8,
+    payload: &[u8],
+    sig_hex: Option<&str>,
+) -> bool {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    let Some(sig_hex) = sig_hex else {
+        return false;
+    };
+    let Ok(vk) = VerifyingKey::from_bytes(sender) else {
+        return false;
+    };
+    let Some(sig_bytes) = parse_hex_bytes(sig_hex) else {
+        return false;
+    };
+    let Ok(sig_arr): Result<[u8; 64], _> = sig_bytes.try_into() else {
+        return false;
+    };
+    let msg = send_signing_message(sender, deposit, type_tag, payload);
+    vk.verify_strict(&msg, &Signature::from_bytes(&sig_arr))
+        .is_ok()
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -242,26 +290,60 @@ async fn handle_send(
     let sender = parse_hex32(&req.sender_hex)
         .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid sender_hex"))?;
 
-    // Determine message type from request.
-    let msg = if let Some(cert_hex) = &req.cert_bytes_hex {
-        let cert_bytes = parse_hex_bytes(cert_hex)
-            .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid cert_bytes_hex"))?;
-        InboxMessage::Capability { cert_bytes, sender }
-    } else if let Some(uri) = &req.uri {
-        InboxMessage::SturdyRef {
-            uri: uri.clone(),
-            sender,
-        }
-    } else if let Some(ct_hex) = &req.ciphertext_hex {
-        let ciphertext = parse_hex_bytes(ct_hex)
-            .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid ciphertext_hex"))?;
-        InboxMessage::Encrypted { ciphertext, sender }
-    } else {
+    // Determine message type + the signed payload/type-tag from the request.
+    let (msg, type_tag, payload): (InboxMessage, u8, Vec<u8>) =
+        if let Some(cert_hex) = &req.cert_bytes_hex {
+            let cert_bytes = parse_hex_bytes(cert_hex)
+                .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid cert_bytes_hex"))?;
+            (
+                InboxMessage::Capability {
+                    cert_bytes: cert_bytes.clone(),
+                    sender,
+                },
+                0,
+                cert_bytes,
+            )
+        } else if let Some(uri) = &req.uri {
+            (
+                InboxMessage::SturdyRef {
+                    uri: uri.clone(),
+                    sender,
+                },
+                1,
+                uri.as_bytes().to_vec(),
+            )
+        } else if let Some(ct_hex) = &req.ciphertext_hex {
+            let ciphertext = parse_hex_bytes(ct_hex)
+                .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid ciphertext_hex"))?;
+            (
+                InboxMessage::Encrypted {
+                    ciphertext: ciphertext.clone(),
+                    sender,
+                },
+                2,
+                ciphertext,
+            )
+        } else {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "one of cert_bytes_hex, uri, or ciphertext_hex must be provided",
+            ));
+        };
+
+    // FAIL-CLOSED: the sender must PROVE it holds the key it claims — a missing or forged signature
+    // is refused (was a client-asserted-sender fail-open: anyone could send as anyone).
+    if !verify_send_auth(
+        &sender,
+        req.deposit,
+        type_tag,
+        &payload,
+        req.signature_hex.as_deref(),
+    ) {
         return Err(api_error(
-            StatusCode::BAD_REQUEST,
-            "one of cert_bytes_hex, uri, or ciphertext_hex must be provided",
+            StatusCode::UNAUTHORIZED,
+            "send not authenticated: missing or invalid signature for sender_hex",
         ));
-    };
+    }
 
     let mut inbox = state.inbox.lock().await;
     match inbox.receive(msg, req.deposit) {
@@ -319,8 +401,38 @@ mod tests {
     use axum::http::{Method, Request};
     use tower::ServiceExt;
 
-    fn make_sender_hex() -> String {
-        format!("{:064x}", 1u64)
+    fn test_keypair() -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[7u8; 32])
+    }
+
+    fn hex_all(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    fn post_send(body: &serde_json::Value) -> Request<Body> {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/send")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(body).unwrap()))
+            .unwrap()
+    }
+
+    /// A `/send` JSON body with a VALID ed25519 signature over the canonical send message.
+    fn signed_sturdyref_body(
+        sk: &ed25519_dalek::SigningKey,
+        deposit: u64,
+        uri: &str,
+    ) -> serde_json::Value {
+        use ed25519_dalek::Signer;
+        let sender = sk.verifying_key().to_bytes();
+        let sig = sk.sign(&send_signing_message(&sender, deposit, 1, uri.as_bytes()));
+        serde_json::json!({
+            "sender_hex": hex_encode(&sender),
+            "signature_hex": hex_all(&sig.to_bytes()),
+            "deposit": deposit,
+            "uri": uri,
+        })
     }
 
     #[tokio::test]
@@ -328,19 +440,16 @@ mod tests {
         let endpoint = InboxEndpoint::new(16, 0);
         let app = endpoint.router();
 
-        // Send a sturdy-ref message.
-        let body = serde_json::json!({
-            "sender_hex": make_sender_hex(),
-            "deposit": 0u64,
-            "uri": "dregg://test/ref"
-        });
-        let req = Request::builder()
-            .method(Method::POST)
-            .uri("/send")
-            .header("content-type", "application/json")
-            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        // Send a SIGNED sturdy-ref message (the sender proves it holds the key).
+        let resp = app
+            .clone()
+            .oneshot(post_send(&signed_sturdyref_body(
+                &test_keypair(),
+                0,
+                "dregg://test/ref",
+            )))
+            .await
             .unwrap();
-        let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
         // Read next.
@@ -356,6 +465,59 @@ mod tests {
             .unwrap();
         let entry: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(entry["deposit"], 0);
+    }
+
+    /// THE FAIL-OPEN IS CLOSED: an unsigned send AND an IMPOSTOR send (a valid signature by the
+    /// WRONG key while claiming another `sender_hex`) are both REFUSED (401) — while the genuine
+    /// signer is still admitted. Before the fix both attacks would have been accepted: anyone could
+    /// send as anyone.
+    #[tokio::test]
+    async fn unsigned_or_impostor_send_is_refused() {
+        use ed25519_dalek::Signer;
+        let endpoint = InboxEndpoint::new(16, 0);
+        let app = endpoint.router();
+        let victim = test_keypair();
+        let sender = victim.verifying_key().to_bytes();
+
+        // (a) NO signature → 401.
+        let unsigned = serde_json::json!({
+            "sender_hex": hex_encode(&sender), "deposit": 0u64, "uri": "dregg://x"
+        });
+        assert_eq!(
+            app.clone()
+                .oneshot(post_send(&unsigned))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+
+        // (b) IMPOSTOR: a valid signature by a DIFFERENT key, claiming the victim's sender_hex → 401.
+        let impostor = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        let forged = impostor.sign(&send_signing_message(&sender, 0, 1, b"dregg://x"));
+        let forged_body = serde_json::json!({
+            "sender_hex": hex_encode(&sender),
+            "signature_hex": hex_all(&forged.to_bytes()),
+            "deposit": 0u64, "uri": "dregg://x"
+        });
+        assert_eq!(
+            app.clone()
+                .oneshot(post_send(&forged_body))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+
+        // (c) COMPLETENESS: the genuine signer IS admitted — we closed the hole, not the endpoint.
+        assert_eq!(
+            app.clone()
+                .oneshot(post_send(&signed_sturdyref_body(&victim, 0, "dregg://x")))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
     }
 
     #[tokio::test]
