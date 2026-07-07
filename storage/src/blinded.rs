@@ -493,8 +493,8 @@ pub mod crypto {
         canonical.extend_from_slice(secret);
         canonical.extend_from_slice(&(position as u64).to_le_bytes());
 
-        // Schema encoding: 4 commitment felts + secret felts (8) + position felt.
-        let mut felts = Vec::with_capacity(13);
+        // Schema encoding: 4 commitment felts + secret felts (11, injective 3-byte packing) + position felt.
+        let mut felts = Vec::with_capacity(16);
         felts.extend_from_slice(&commitment.poseidon2);
         felts.extend(encode_bytes_to_felts(secret));
         felts.push(BabyBear::new((position as u32) & 0x7FFF_FFFF));

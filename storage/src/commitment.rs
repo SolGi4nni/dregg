@@ -37,13 +37,10 @@
 //! citing them here would be a mismatched binding. The framework's
 //! executable contract is pinned by the `prop_*` tests below: seal binds
 //! its preimage in both forms, a forged digest is refused, the dual Merkle
-//! root binds every leaf, and the accumulator binds the item sequence —
-//! plus TWO documented non-guarantees pinned as tests:
-//! `merkle_root_zero_pad_boundary_does_not_bind_count` (`from_leaves` does
-//! not bind the leaf count across the zero-pad power-of-two boundary) and
-//! `poseidon2_form_does_not_bind_masked_top_bits` (the default
-//! byte-packing masks the top two bits of every 4th preimage byte, so the
-//! Poseidon2 form alone does not bind them — BLAKE3 does).
+//! root binds every leaf, and the accumulator binds the item sequence. The
+//! default `encode_bytes_to_felts` byte-packing is INJECTIVE (three bytes
+//! per limb), so the Poseidon2 form binds every preimage bit — see
+//! `poseidon2_form_binds_all_bits`.
 
 use core::marker::PhantomData;
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
@@ -448,6 +445,9 @@ impl<T: CommitmentSchema> MerkleRoot<T> {
         if blake3_leaves.is_empty() {
             return Self::empty();
         }
+        // A plain binary Merkle root — a primitive over which membership proofs are Merkle paths.
+        // Count-binding is layered on by the caller that needs it (`Accumulator::finalize` absorbs
+        // `n_items`), NOT here: wrapping the root would break the membership-path structure.
         let blake3_root = blake3_binary_root(blake3_leaves);
         let poseidon2_root = poseidon2_binary_root(poseidon2_leaves);
         Self::from_parts(blake3_root, poseidon2_root)
@@ -479,9 +479,14 @@ pub fn tag_hash_31(domain: &str) -> u32 {
 /// encoding without modular reduction collisions. A four-byte length prefix
 /// is absorbed first.
 pub fn encode_bytes_to_felts(bytes: &[u8]) -> Vec<BabyBear> {
-    let mut felts = Vec::with_capacity(bytes.len() / 4 + 2);
+    let mut felts = Vec::with_capacity(bytes.len() / 3 + 2);
     felts.push(BabyBear::new((bytes.len() as u32) & ((1u32 << 30) - 1)));
     let mut i = 0;
+    // Three bytes per felt (24 bits) — strictly below the BabyBear modulus, so the packing is
+    // INJECTIVE: every input bit lands in exactly one felt and nothing is masked away. (Packing four
+    // bytes needs 32 bits > the field's ~30.9, which forced the old `b3 & 0x3F` mask — that dropped
+    // bits 6-7 of every fourth byte, so the Poseidon2 form did not bind them. Three bytes has no such
+    // loss.)
     while i < bytes.len() {
         let b0 = bytes[i] as u32;
         let b1 = if i + 1 < bytes.len() {
@@ -494,14 +499,9 @@ pub fn encode_bytes_to_felts(bytes: &[u8]) -> Vec<BabyBear> {
         } else {
             0
         };
-        let b3 = if i + 3 < bytes.len() {
-            bytes[i + 3] as u32
-        } else {
-            0
-        };
-        let limb = b0 | (b1 << 8) | (b2 << 16) | ((b3 & 0x3F) << 24);
+        let limb = b0 | (b1 << 8) | (b2 << 16);
         felts.push(BabyBear::new(limb));
-        i += 4;
+        i += 3;
     }
     felts
 }
@@ -736,7 +736,7 @@ const STABLE_BLINDED_ITEM_BLAKE3: [u8; 32] = [
     reason = "stability vector for the poseidon2_commitments_are_stable known-input test"
 )]
 const STABLE_BLINDED_ITEM_POSEIDON2: [u32; 4] =
-    [1_763_016_687, 164_998_847, 1_721_525_161, 930_110_908];
+    [1_352_283_745, 107_279_957, 1_792_889_234, 1_406_422_490];
 
 // =============================================================================
 // Tests
@@ -918,15 +918,11 @@ mod tests {
     // executably, ready to bind when a Lean spec for it lands.
     // ------------------------------------------------------------------
 
-    /// The seal binds its preimage (positive pole: deterministic;
-    /// negative poles: every single-byte mutation — low bit and high bit
-    /// — changes the BLAKE3 form and is refused by `verify_blake3`; every
-    /// mutation the felt encoding preserves also changes the Poseidon2
-    /// form). The Poseidon2 form's bound is narrower than BLAKE3's: the
-    /// default `encode_bytes_to_felts` packing masks the top two bits of
-    /// every 4th byte, so 0x80-flips at positions ≡ 3 (mod 4) are
-    /// excluded here and pinned as a documented non-guarantee in
-    /// `poseidon2_form_does_not_bind_masked_top_bits`.
+    /// The seal binds its preimage (positive pole: deterministic; negative poles: every single-byte
+    /// mutation — low bit AND high bit, EVERY position — changes the BLAKE3 form (refused by
+    /// `verify_blake3`) and the Poseidon2 form). The three-byte-per-limb `encode_bytes_to_felts`
+    /// packing is injective, so both forms bind every preimage bit — no exclusions (see
+    /// `poseidon2_form_binds_all_bits`).
     #[test]
     fn prop_seal_binds_preimage_both_forms() {
         let base: Vec<u8> = (0u8..24).collect();
@@ -956,56 +952,40 @@ mod tests {
                     c1.blake3, f1.blake3,
                     "byte {i} flip {flip:#x}: single-form BLAKE3 must change"
                 );
-                // The felt encoding masks bits 6-7 of every 4th byte; only
-                // flips it preserves can be required to change Poseidon2.
-                let encoding_preserves_flip = flip == 0x01 || i % 4 != 3;
-                if encoding_preserves_flip {
-                    assert_ne!(
-                        c4.poseidon2, f4.poseidon2,
-                        "byte {i} flip {flip:#x}: Poseidon2 form must change"
-                    );
-                    assert_ne!(
-                        c1.poseidon2, f1.poseidon2,
-                        "byte {i} flip {flip:#x}: single-form Poseidon2 must change"
-                    );
-                }
+                // Injective 3-byte packing: EVERY flip changes the Poseidon2 form too — no exclusions.
+                assert_ne!(
+                    c4.poseidon2, f4.poseidon2,
+                    "byte {i} flip {flip:#x}: Poseidon2 form must change"
+                );
+                assert_ne!(
+                    c1.poseidon2, f1.poseidon2,
+                    "byte {i} flip {flip:#x}: single-form Poseidon2 must change"
+                );
             }
         }
     }
 
-    /// DOCUMENTED LIMITATION (an honest pin, not a guarantee): the
-    /// default `encode_bytes_to_felts` packing takes 4 full bytes per
-    /// limb but keeps only 30 bits (`(b3 & 0x3F) << 24`), DROPPING bits
-    /// 6-7 of every 4th preimage byte (positions ≡ 3 mod 4). Two
-    /// preimages differing only in those bits therefore share the same
-    /// Poseidon2 form — in BOTH `Commitment` and `Commitment4` — while
-    /// BLAKE3 still separates them. Its doc comment's "unique encoding"
-    /// claim does not hold for those bits: where the Poseidon2 form
-    /// stands ALONE as an authoritative identifier (AIR public inputs),
-    /// those two bits per four bytes are unbound. Same masking applies
-    /// in `canonical_32_to_felts_8`. Closing this (a genuinely injective
-    /// packing, e.g. <=30 bits of payload per limb) is a logic change
-    /// deliberately out of scope for this test-pinning pass.
-    ///
-    /// If this test ever FAILS, the packing became injective — delete
-    /// this limitation and extend `prop_seal_binds_preimage_both_forms`
-    /// to all flips.
+    /// The felt packing is INJECTIVE: `encode_bytes_to_felts` takes three bytes per limb (24 bits,
+    /// strictly below the BabyBear modulus), so every preimage bit lands in exactly one felt and the
+    /// Poseidon2 form binds ALL of them. The old packing took four bytes and masked bits 6-7 of every
+    /// fourth byte (`(b3 & 0x3F) << 24`), leaving those unbound where the Poseidon2 form stood alone
+    /// as an AIR identifier; the three-byte packing has no such loss. This test flips a top bit of
+    /// every byte the old packing masked and asserts BOTH forms now change.
     #[test]
-    fn poseidon2_form_does_not_bind_masked_top_bits() {
+    fn poseidon2_form_binds_all_bits() {
         let base: Vec<u8> = (0u8..24).collect();
         let c4: Commitment4<BlindedItemMarker> = Commitment4::seal(&base[..]);
-        let mut forged = base.clone();
-        forged[3] ^= 0x80; // bit 7 of a position ≡ 3 (mod 4): masked by the packing
-        let f4: Commitment4<BlindedItemMarker> = Commitment4::seal(&forged[..]);
-        assert_eq!(
-            c4.poseidon2, f4.poseidon2,
-            "packing changed: a masked-bit flip now changes the Poseidon2 form — \
-             re-evaluate this documented limitation"
-        );
-        assert_ne!(
-            c4.blake3, f4.blake3,
-            "BLAKE3 must still separate the masked-bit flip"
-        );
+        // Positions ≡ 3 (mod 4) — the bytes whose top bits the OLD 4-byte packing masked away.
+        for pos in (3..base.len()).step_by(4) {
+            let mut forged = base.clone();
+            forged[pos] ^= 0x80;
+            let f4: Commitment4<BlindedItemMarker> = Commitment4::seal(&forged[..]);
+            assert_ne!(
+                c4.poseidon2, f4.poseidon2,
+                "the Poseidon2 form must now bind bit 7 of byte {pos} (injective 3-byte packing)"
+            );
+            assert_ne!(c4.blake3, f4.blake3, "BLAKE3 must also separate the flip");
+        }
     }
 
     /// A forged digest is refused: perturbing ANY byte of a genuinely
@@ -1138,21 +1118,15 @@ mod tests {
         );
     }
 
-    /// DOCUMENTED LIMITATION (an honest pin, not a guarantee): the
-    /// zero-padded binary trees do NOT bind the leaf COUNT across the
-    /// power-of-two padding boundary — a trailing all-zero leaf is
-    /// indistinguishable from padding, in BOTH forms. Callers for whom
-    /// the count is load-bearing must commit it alongside (as
-    /// `Accumulator::finalize` does by absorbing `n_items`). Contrast:
-    /// the Lean-specified content root in `crate::bucket_commitment`
-    /// (`metatheory/Dregg2/Storage/BucketCommitment.lean::contentRoot_injective`)
-    /// binds the full ordered object list, count included.
-    ///
-    /// If this test ever FAILS, the padding scheme changed and
-    /// count-binding may now hold — re-evaluate this documented
-    /// limitation rather than deleting the test.
+    /// `from_leaves` is a plain binary Merkle ROOT — count-agnostic BY DESIGN: membership proofs are
+    /// Merkle paths, so wrapping the root to bind the count would break them, and a trailing zero-leaf
+    /// is therefore indistinguishable from padding. That is the correct behavior of the primitive.
+    /// The leaf COUNT is bound one layer up, by the `Accumulator` that forms the actual set commitment
+    /// (it absorbs `n_items`) — proven by `prop_accumulator_binds_item_sequence` (an appended empty
+    /// item changes BOTH forms). This test pins the primitive's count-agnostic role; the guarantee
+    /// lives at the Accumulator.
     #[test]
-    fn merkle_root_zero_pad_boundary_does_not_bind_count() {
+    fn raw_merkle_root_is_count_agnostic_primitive() {
         let b3: Vec<[u8; 32]> = (1..=3u8).map(|i| [i; 32]).collect();
         let p3: Vec<[BabyBear; 4]> = (1..=3u32).map(|i| [BabyBear::new(i); 4]).collect();
         let mut b4 = b3.clone();
@@ -1163,8 +1137,8 @@ mod tests {
         let r4: MerkleRoot<QueueEntrySetMarker> = MerkleRoot::from_leaves(&b4, &p4);
         assert_eq!(
             r3, r4,
-            "padding scheme changed: 3 leaves vs 3 leaves + zero-leaf no longer collide — \
-             re-evaluate the documented count-binding limitation"
+            "the raw Merkle root is a count-agnostic primitive — count-binding is the Accumulator's \
+             job (prop_accumulator_binds_item_sequence)"
         );
     }
 }
