@@ -40,7 +40,7 @@
 
 use dregg_captp::data_plane::{Bus, ChannelName, DataPlaneError, Delivery, SendCap, TopicName};
 use dregg_captp::FederationId;
-use dregg_cell::{AuthRequired, CapabilitySet, CellId};
+use dregg_cell::{AuthRequired, CapabilitySet, CellId, Ledger};
 use dregg_turn::action::Effect;
 use dregg_turn::turn::TurnReceipt;
 
@@ -433,9 +433,16 @@ impl PresenceToken {
 impl Room {
     /// **"Is this inhabitant here?"** — a read of the room cell's live c-list:
     /// the room hosts a presence token iff it holds the cap to it. No Rust set.
-    pub fn hosts(&self, world: &World, token: PresenceToken) -> bool {
-        self.clist(world)
-            .map(|cl| cl.has_access(&token.cell))
+    ///
+    /// This is a PURE FUNCTION OF THE LEDGER STATE — it takes a `&Ledger`, not a
+    /// `&World`, so it derives the identical answer whether the ledger is the
+    /// embedded [`World`]'s (`world.ledger()`) or a crawled snapshot handed back
+    /// by any [`deos_js::WorldSink`] (`with_ledger`), including a remote box's
+    /// `NodeWorldSink`. Ledger-source-agnostic presence.
+    pub fn hosts(&self, ledger: &Ledger, token: PresenceToken) -> bool {
+        ledger
+            .get(&self.cell)
+            .map(|c| c.capabilities.has_access(&token.cell))
             .unwrap_or(false)
     }
 
@@ -444,12 +451,12 @@ impl Room {
     /// is read entirely off the ledger.
     pub fn who_is_here(
         &self,
-        world: &World,
+        ledger: &Ledger,
         roster: &[(Inhabitant, PresenceToken)],
     ) -> Vec<Inhabitant> {
         roster
             .iter()
-            .filter(|(_, t)| self.hosts(world, *t))
+            .filter(|(_, t)| self.hosts(ledger, *t))
             .map(|(i, _)| *i)
             .collect()
     }
@@ -563,11 +570,15 @@ impl RoomVoice {
     /// a speak cap is a [`SendCap`]), so the "attenuation of the presence token"
     /// is realized as this ledger-gated projection rather than one cap-algebra
     /// call — see the module's REMAINING SEAM note.
-    pub fn speak_cap_for(&self, world: &World, token: PresenceToken) -> SendCap {
+    pub fn speak_cap_for(&self, ledger: &Ledger, token: PresenceToken) -> SendCap {
         let mut cap = SendCap::grant(self.fed, self.name.clone(), AuthRequired::Signature);
         // The projection is GATED by the ledger presence fact: no token cap in
-        // the room's c-list ⇒ the derived cap carries no live authority.
-        if !self.room.hosts(world, token) {
+        // the room's c-list ⇒ the derived cap carries no live authority. The gate
+        // reads a `&Ledger`, not a `&World`, so the derivation is a PURE FUNCTION
+        // of the ledger state: point it at the embedded `world.ledger()` or at a
+        // `deos_js::WorldSink`'s crawled ledger (a remote box's `NodeWorldSink`)
+        // and it mints the IDENTICAL cap. This is what a 3-box net rides on.
+        if !self.room.hosts(ledger, token) {
             cap.revoke();
         }
         cap
@@ -619,7 +630,7 @@ impl RoomVoice {
     ) -> SayOutcome {
         // DERIVE the speak cap from the on-ledger presence token — present ⇒ live,
         // absent ⇒ revoked, entirely a function of the ledger.
-        let cap = self.speak_cap_for(world, token);
+        let cap = self.speak_cap_for(world.ledger(), token);
 
         // THE GATE — the Bus's own `SendCap::admits` seam decides. Present ⇒ the
         // derived cap admits; absent/departed ⇒ the derived cap is revoked and is
@@ -1261,7 +1272,11 @@ mod tests {
 
         // Pre: everyone carries their own token; the rooms host nobody.
         assert!(s.tok_a.carried_by(&s.world, s.alice.cell));
-        assert!(s.tavern.room().who_is_here(&s.world, &roster).is_empty());
+        assert!(s
+            .tavern
+            .room()
+            .who_is_here(s.world.ledger(), &roster)
+            .is_empty());
 
         // ALICE and BOB enter the tavern — door-gated, then the token MOVES in.
         let a = enter(
@@ -1292,7 +1307,7 @@ mod tests {
         );
 
         // WHO IS HERE — read off the room cell's live c-list: BOTH show.
-        let here = s.tavern.room().who_is_here(&s.world, &roster);
+        let here = s.tavern.room().who_is_here(s.world.ledger(), &roster);
         assert_eq!(
             here.len(),
             2,
@@ -1325,7 +1340,7 @@ mod tests {
                 "the refusal cites the missing door cap, got: {reason}"
             );
         }
-        assert!(!s.tavern.room().hosts(&s.world, s.tok_m));
+        assert!(!s.tavern.room().hosts(s.world.ledger(), s.tok_m));
         assert!(s.tok_m.carried_by(&s.world, s.mallory.cell));
 
         // CONSERVATION ACROSS A MOVE: alice moves tavern → cellar. ONE cap moves;
@@ -1344,11 +1359,11 @@ mod tests {
             "alice holds the cellar door → move commits: {mv:?}"
         );
         assert!(
-            s.cellar.room().hosts(&s.world, s.tok_a),
+            s.cellar.room().hosts(s.world.ledger(), s.tok_a),
             "alice is in the cellar"
         );
         assert!(
-            !s.tavern.room().hosts(&s.world, s.tok_a),
+            !s.tavern.room().hosts(s.world.ledger(), s.tok_a),
             "…and NOT in the tavern — the token MOVED (never present in two rooms)"
         );
 
@@ -1361,7 +1376,7 @@ mod tests {
             "leaving a room you are not in is refused by the gate: {ghost_leave:?}"
         );
         assert!(
-            s.tavern.room().hosts(&s.world, s.tok_b),
+            s.tavern.room().hosts(s.world.ledger(), s.tok_b),
             "bob is still exactly where he was"
         );
     }
@@ -1496,7 +1511,10 @@ mod tests {
         );
         let out = leave(&mut s.world, &mut s.bus, &mut s.tavern, s.bob, s.tok_b);
         assert!(out.is_done(), "bob's leave commits: {out:?}");
-        assert!(!s.tavern.room().hosts(&s.world, s.tok_b), "bob is gone");
+        assert!(
+            !s.tavern.room().hosts(s.world.ledger(), s.tok_b),
+            "bob is gone"
+        );
         assert!(
             s.tok_b.carried_by(&s.world, s.bob.cell),
             "…carrying his token"
@@ -1567,13 +1585,13 @@ mod tests {
         // BEFORE ENTERING: alice's token is in her own hands, not the room. The
         // derived cap does NOT admit — no presence on the ledger, no voice.
         assert!(
-            !admits(&s.tavern.speak_cap_for(&s.world, s.tok_a)),
+            !admits(&s.tavern.speak_cap_for(s.world.ledger(), s.tok_a)),
             "no presence token in the room ⇒ the derived cap does not admit"
         );
         // A NEVER-PRESENT inhabitant (mallory, no door) cannot derive an admitting
         // cap either — same derivation, same absent-from-ledger verdict.
         assert!(
-            !admits(&s.tavern.speak_cap_for(&s.world, s.tok_m)),
+            !admits(&s.tavern.speak_cap_for(s.world.ledger(), s.tok_m)),
             "a never-present inhabitant cannot derive an admitting cap"
         );
 
@@ -1591,7 +1609,7 @@ mod tests {
         );
         assert!(e.is_done(), "alice enters: {e:?}");
         assert!(
-            admits(&s.tavern.speak_cap_for(&s.world, s.tok_a)),
+            admits(&s.tavern.speak_cap_for(s.world.ledger(), s.tok_a)),
             "presence token now on the ledger ⇒ the SAME derivation admits"
         );
 
@@ -1600,7 +1618,7 @@ mod tests {
         let l = leave(&mut s.world, &mut s.bus, &mut s.tavern, s.alice, s.tok_a);
         assert!(l.is_done(), "alice leaves: {l:?}");
         assert!(
-            !admits(&s.tavern.speak_cap_for(&s.world, s.tok_a)),
+            !admits(&s.tavern.speak_cap_for(s.world.ledger(), s.tok_a)),
             "presence gone from the ledger ⇒ the SAME derivation no longer admits"
         );
         assert!(
@@ -1676,16 +1694,111 @@ mod tests {
         // PRESENCE STILL CONSERVED: the room hosts alice's token and NOT bob's;
         // bob carries his token again (never in two rooms, no ghost left behind).
         assert!(
-            s.tavern.room().hosts(&s.world, s.tok_a),
+            s.tavern.room().hosts(s.world.ledger(), s.tok_a),
             "alice still present"
         );
         assert!(
-            !s.tavern.room().hosts(&s.world, s.tok_b),
+            !s.tavern.room().hosts(s.world.ledger(), s.tok_b),
             "bob no longer present"
         );
         assert!(
             s.tok_b.carried_by(&s.world, s.bob.cell),
             "bob carries his token — presence conserved across the leave"
+        );
+    }
+
+    /// **THE SPEAK-CAP DERIVATION IS LEDGER-SOURCE-AGNOSTIC — ACROSS THE
+    /// `WorldSink` TRAIT BOUNDARY.** (Pillar 2b.)
+    ///
+    /// Pillar 2 made the speak cap a pure derivation of the on-ledger presence
+    /// token; this proves the derivation does not care WHERE the `&Ledger` comes
+    /// from. We derive the SAME room's speak cap for the SAME inhabitant TWO ways
+    /// over the SAME world state:
+    ///
+    ///   (a) DIRECTLY from the embedded `World`'s own ledger (`world.ledger()`);
+    ///   (b) from inside a [`deos_js::WorldSink`]'s `with_ledger` — here the
+    ///       cockpit's [`WorldSinkAdapter`], which hands back a `&Ledger` snapshot
+    ///       exactly the way a remote box's `dregg_sdk_net::NodeWorldSink` does
+    ///       (Pillar 0 proved that snapshot faithful; the two compose).
+    ///
+    /// Both poles must AGREE at `SendCap::admits`: with the inhabitant PRESENT,
+    /// both derived caps admit; after a receipted `leave` moves the presence
+    /// token cap back off the room's c-list, the SAME derivation over BOTH ledger
+    /// sources refuses. Because the verdict is a pure function of the ledger
+    /// STATE — not of which side of the `WorldSink` boundary produced the
+    /// `&Ledger` — any box that owns a copy of the ledger derives the identical
+    /// speak cap. That is precisely the portability a 3-box net rides on.
+    #[cfg(feature = "agent-js")]
+    #[test]
+    fn the_speak_cap_derivation_is_ledger_source_agnostic_across_the_worldsink_boundary() {
+        use crate::agent_attach::WorldSinkAdapter;
+        use deos_js::WorldSink;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let mut s = speech_world();
+        let recipient = s.tavern.inbox();
+        let channel = s.tavern.channel().clone();
+        let admits = |cap: &SendCap| cap.admits(&recipient, &channel, &AuthRequired::Signature);
+
+        // Alice enters the tavern — a receipted move_cap puts her presence token
+        // cap into the room cell's c-list (she is now present on the ledger).
+        let e = enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.alice,
+            s.tok_a,
+            s.alice.cell,
+            32,
+        );
+        assert!(e.is_done(), "alice enters: {e:?}");
+
+        // Share the SAME World behind a `deos_js::WorldSink` — the exact trait a
+        // remote NodeWorldSink also implements. `sink.with_ledger` hands back the
+        // ledger of this same World; `live.borrow().ledger()` is the direct read.
+        let live = Rc::new(RefCell::new(s.world));
+        let sink = WorldSinkAdapter::live(live.clone());
+
+        // ── POLE 1: PRESENT ⇒ both ledger sources derive an ADMITTING cap ────────
+        let present_direct = s.tavern.speak_cap_for(live.borrow().ledger(), s.tok_a);
+        let mut present_via_sink = None;
+        sink.with_ledger(&mut |ledger| {
+            present_via_sink = Some(s.tavern.speak_cap_for(ledger, s.tok_a));
+        });
+        let present_via_sink = present_via_sink.expect("with_ledger invoked the closure");
+        assert!(
+            admits(&present_direct),
+            "present: the cap derived from world.ledger() admits"
+        );
+        assert!(
+            admits(&present_via_sink),
+            "present: the cap derived from the WorldSink's with_ledger admits IDENTICALLY \
+             (same ledger STATE, other side of the trait boundary)"
+        );
+
+        // ── LEAVE: move the presence token cap back off the room's c-list ────────
+        {
+            let mut w = live.borrow_mut();
+            let l = leave(&mut w, &mut s.bus, &mut s.tavern, s.alice, s.tok_a);
+            assert!(l.is_done(), "alice leaves: {l:?}");
+        }
+
+        // ── POLE 2: ABSENT ⇒ both ledger sources derive a REFUSING cap ───────────
+        let absent_direct = s.tavern.speak_cap_for(live.borrow().ledger(), s.tok_a);
+        let mut absent_via_sink = None;
+        sink.with_ledger(&mut |ledger| {
+            absent_via_sink = Some(s.tavern.speak_cap_for(ledger, s.tok_a));
+        });
+        let absent_via_sink = absent_via_sink.expect("with_ledger invoked the closure");
+        assert!(
+            !admits(&absent_direct),
+            "after leave: the cap derived from world.ledger() refuses"
+        );
+        assert!(
+            !admits(&absent_via_sink),
+            "after leave: the cap derived from the WorldSink's with_ledger refuses IDENTICALLY \
+             — the derivation is a pure function of the ledger, not of its source"
         );
     }
 }
