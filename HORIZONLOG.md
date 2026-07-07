@@ -6719,3 +6719,16 @@ leave a receipt — all on the verified substrate.
 - Dead-devnet fallback endpoints (`devnet.dregg.fg-goose.online`) still hardcoded in site/dregg-works/{verify-badge.js,transclude.js,index.html}, site/light-client/index.html, site/transclusion/{index.html,README.md}.
 - site/quickstart/ and site/src/_includes/studio/ are empty scaffolding; pages.yml sanity step doesn't cover dist/transclusion or dist/deos-viewer (build-script teeth do).
 - dregg-site (~/dev/dregg-site) is now zola multipage; first deploy must confirm CloudFront serves `/egg/` subdirectory indexes (S3 website endpoint or a viewer-request rewrite fn) — noted in its DEPLOY.md.
+
+### Wave-2 purge swarm — more named residuals (recorded, not laundered; 2026-07-07)
+- ⚑ **commit::PolynomialAccumulator::verify_non_membership is FORGEABLE.** For public (Acc, α, x) any
+  v'≠0 with q'=(Acc−v')/(α−x) passes — even for a MEMBER. Sound use needs binding remainder=f(x)
+  (verifier recompute or in-circuit). Node-side it's init/insert-only (NOT verification-load-bearing),
+  BUT `sdk/src/privacy.rs::verify_accumulator_non_membership` verifies against PROVER-SUPPLIED
+  alpha/accumulator_value — worth its own fix lane.
+- **storage::commitment encode_bytes_to_felts masks bits 6–7 of every 4th byte** (`(b3 & 0x3F)<<24`)
+  — the Poseidon2 commitment form alone provably does NOT bind those bits (its "unique encoding" doc
+  claim is false where Poseidon2 stands alone as an AIR identifier). Closure lane.
+- **storage::commitment from_leaves doesn't bind leaf COUNT across the zero-pad pow2 boundary.**
+Wave-2 DONE: DAS index-fix (a6b0dcccf), inverted-deadline fix (2b986558d, kernel-verified two-pole),
+honesty-2 (0a7842ba8), commitment/content/wal bound. 2 real BUGS fixed + 3 residuals named.
