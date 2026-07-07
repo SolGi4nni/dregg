@@ -52,6 +52,16 @@ is up, the iron pass runs the b-bars box-by-box (each named in its pillar's done
 three-box co-inhabited-room CAPSTONE — a human on one cockpit + a confined agent on another, presence
 + speech + a co-authored card, all ledger-proven. Tag AFTER it runs on iron.
 
+**ADJACENT VISION (recorded, not scheduled — ember via deepfates, 2026-07-07): dregg = the VERIFIED
+Semantic Web.** PROV-O (Entity/Agent/Activity · wasDerivedFrom/wasAttributedTo/wasGeneratedBy/used)
+is exactly dregg's provenance graph — but ASSERTED triples are why the Semantic Web failed, and
+dregg's edges are PROVEN: a receipt chain IS wasDerivedFrom, a turn IS an Activity (wasGeneratedBy),
+the signer IS wasAttributedTo. `provenance_navigator.rs` already WALKS this graph (a turn that touched
+a cell = its lineage). No PROV-O / RDF face exists yet. The artifact = a PROV projection over the
+EXISTING receipt/turn/agent graph (another glass — renderer-independence), giving Semantic-Web-tooling
+interop for free; the Org Ontology maps onto dregg governance (org cell · membership = cap-holding ·
+roles = attenuated caps · Polis). A future thread, not a swarm.
+
 **The b-bar checklist (for the iron pass):**
 1. Pillar 1 — surface migrates hbox→persvati; revoke darkens the far glass one round-trip.
 2. Pillar 2b — 3 inhabitants on 3 boxes, one room; each derives its speak cap from its own node's
@@ -216,6 +226,10 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
   `check_endpoint` gates the endpoint before booting anything; fail-closed on node refusal. 94 green,
   both poles (Pole B admits-layer per provider_egress). Round-trip THROUGH node execution deferred to
   the `test-support` TestNode export (next unit — shared infra for the 4a full proof + 2b).
+- dregg-forge review-threads (community thread) — `dregg-doc/review.rs`: comments + approvals as
+  owned receipted atoms (Op::Add through the cap gate, attributed by blame, immutable; a non-holder
+  comment refused in-band); approval-as-required-check wired into the CI gate. Both poles, substrate
+  164 green. Forge core now = PR + pushout merge + review-as-stitcher + CI-gate + review threads.
 - dregg-forge CI-gate (community thread) — `dregg-doc/check.rs`: a merge gated on a real committed
   check-turn receipt (Ed25519 executor-signed, verified) or a real ProofCondition witness — no bool;
   gate order conflict→base→check→cap, unsatisfied check refuses byte-untouched. 4 poles green
