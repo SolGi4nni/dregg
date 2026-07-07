@@ -211,3 +211,23 @@ NAMED RESIDUALS (HORIZONLOG, not laundered): accumulator verify_non_membership F
 privacy.rs prover-supplied gap); commitment encode_bytes_to_felts bit-6/7 masking non-binding;
 from_leaves leaf-count non-binding. WAVE-3 TODO (Fable credits): accumulator soundness fix; honesty-3
 (turn/intent/deos); pubsub→pubsub_topic migration (test-only, the easy Phase-2 first step).
+
+### PROTOCOL LOGIC IN LEAN (ember's direction: implement the protocol in Lean, proofs alongside; deploy)
+The deployable-storage engine's RULES live in Lean (proven), the I/O in Rust. Verified core DONE
+(commitment/RS/fountain/PoR/availability/market/deal-lifecycle). Now the protocol + deployment:
+- `8/N` DONE (`271949459`): DealLifecycle.lean — the deal as a proven state machine (Open→Claimed→
+  Active→Audited{Pass|Fail}→{Settled|Slashed}); illegal step unrepresentable; terminal_is_final,
+  settle_requires_passed_audit, slash_requires_failed_audit, bond_nonincreasing_after_claim.
+- NEXT (Lean, proofs alongside): (a) MarketAudit — connect Retrievability.por_sound to
+  DealLifecycle.auditPass/Fail → the end-to-end theorem "honest provider NEVER slashed ∧ withholding
+  IS slashable". (b) Provider registration (cap-first, bond posting) as a proven cell-program. (c) the
+  client/renter protocol (upload→erasure-code→distribute→retrieve→audit→settle-or-slash) as a proven
+  interaction.
+- DEPLOYMENT (Rust I/O + the verified core): provider daemon (stores/serves/answers-PoR); client
+  lib/CLI; market-on-the-live-ledger (deals as real dregg turns); TRANSPORT via `./orb` (drorb — the
+  VERIFIED network engine: HTTP/QUIC/TLS proven) so it's verified-storage-over-a-verified-wire;
+  EXTRACTION endgame via `./orb-compiler` (Lean spec→CakeML/Pancake→machine code with a preservation
+  PROOF — stronger than our trusted leanc/@[extern]). Deploy+test persvati→hbox→david's homelab.
+- CRYPTO NOTE (ember): ed25519 stays for now (the hard PQ parts — STARK/FRI + Poseidon2 — are ALREADY
+  hash-based/PQ-plausible; identity is the migratable part). PQ SIGNATURES later = Dilithium/Falcon/
+  SPHINCS+, NOT Kyber (Kyber is a KEM/encryption). Migrate via crypto-agility + cross-attestation. 2027.
