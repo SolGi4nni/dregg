@@ -50,7 +50,7 @@ default-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit
 # still builds standalone (`cd dregg-tui && cargo build`); its path-deps
 # (dregg-sdk/turn/circuit/verifier) are root-workspace members so THEIR
 # `workspace = true` deps resolve against the root.
-exclude = ["chain", "chain/program", "wasm", "sdk-py", "pg-dregg", "sel4/dregg-firmament", "deos-zed-full", "dregg-doc", "discord-bot", "dregg-tui"]
+exclude = ["wasm", "sdk-py", "pg-dregg", "sel4/dregg-firmament", "deos-zed-full", "dregg-doc", "discord-bot", "dregg-tui"]
 
 [workspace.package]
 version = "0.1.0"
