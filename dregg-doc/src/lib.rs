@@ -136,6 +136,13 @@ mod pull_request;
 mod regime;
 mod resolution;
 mod resolve;
+// REVIEW THREADS — comments + approvals as cryptographically-OWNED, receipted
+// document atoms (the review half of docs/deos/DREGG-FORGE.md): a comment is an
+// Op::Add authored by its reviewer, posted as a cap-gated finalized turn through
+// executor_drive, attributable by blame, immutable once said. The reading side
+// (comments_of/approvals_of over a plain graph) is standalone; posting needs the
+// executor (`substrate`).
+mod review;
 // The rope<->patch bridge (`ropey::Rope` text <-> the patch graph) — the editor
 // keystone of APPS-AS-CELLS.md §1. Behind the OFF-by-default `rope` feature so
 // the standalone core stays dependency-free. See src/rope.rs.
@@ -199,6 +206,9 @@ pub use resolve::{
     resolve_connect, resolve_connect_by, resolve_field, resolve_keep, resolve_keep_by,
     resolve_keep_in,
 };
+#[cfg(feature = "substrate")]
+pub use review::ReviewThread;
+pub use review::{Approval, ReviewComment, approvals_of, comments_of};
 #[cfg(feature = "rope")]
 pub use rope::{RopeDoc, graph_to_rope, rope_diff};
 #[cfg(feature = "cell-heap")]
