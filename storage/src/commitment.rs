@@ -280,7 +280,8 @@ impl<T: CommitmentSchema> Commitment4<T> {
 /// Trust-boundary conversion: when a producer hands us a 32-byte
 /// commitment (e.g., via an HTTP/wire decoder that only sees BLAKE3 hex),
 /// derive the Poseidon2 form from the same canonical bytes via the
-/// fixed `canonical_32_to_felts_4` bijection.
+/// fixed one-way `canonical_32_to_felts_4` fingerprint (a Poseidon2 hash
+/// of the 32 bytes — NOT a bijection; see the one-way-map note below).
 ///
 /// Per DESIGN-commitment-framework.md §4.1, this is the legitimate way to
 /// reconstruct the dual form from a wire-side BLAKE3 hash: the receiver
