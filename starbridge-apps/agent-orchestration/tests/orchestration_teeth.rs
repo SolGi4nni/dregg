@@ -244,6 +244,19 @@ fn audit_catches_a_tampered_receipt() {
         matches!(err, AuditError::ChainBroken(_)),
         "expected ChainBroken, got {err:?}"
     );
+
+    // STEP↔RECEIPT CONTENT: tamper the STEP RECORD (not the receipt) — the chain still links and the
+    // tool stays in scope, but the recorded step no longer matches the authentic turn the receipt
+    // commits (`turn.hash() == turn_hash` holds, but the turn's effects don't bind this sub_task). The
+    // mandate + chain checks would trust it on faith; the content cross-check catches it.
+    let mut forged = log.clone();
+    forged.entries[0].step.sub_task = "FORGED".to_string();
+    let err = audit_run(&open_receipt, &forged, &coord, &a, &b)
+        .expect_err("a step record disagreeing with its receipt's turn must be caught");
+    assert!(
+        matches!(err, AuditError::StepNotFaithful { ordinal: 0 }),
+        "expected StepNotFaithful, got {err:?}"
+    );
 }
 
 #[test]

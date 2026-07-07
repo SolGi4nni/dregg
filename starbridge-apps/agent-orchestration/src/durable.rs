@@ -62,12 +62,14 @@ use crate::{
 /// commits, and can load them back on recovery. The default [`MemLog`] keeps them in memory (the
 /// in-process stand-in for the durable table); a host backs this with the real durable store.
 pub trait DurableLog {
-    /// Append a committed step's verified receipt (one logical durable commit).
+    /// Append a committed step's verified receipt + its authentic turn (one logical durable commit).
+    /// The turn is retained so `audit_run` can cross-check that `step` faithfully records what ran.
     fn append(
         &mut self,
         step: &WorkStep,
         spent_after: u64,
         receipt: &TurnReceipt,
+        turn: &crate::Turn,
     ) -> Result<(), String>;
     /// Load the durable log back as an [`OrchestrationLog`] (the receipt chain + per-step records).
     fn load(&self) -> Result<OrchestrationLog, String>;
@@ -106,11 +108,13 @@ impl DurableLog for MemLog {
         step: &WorkStep,
         spent_after: u64,
         receipt: &TurnReceipt,
+        turn: &crate::Turn,
     ) -> Result<(), String> {
         self.log.entries.push(crate::LoggedStep {
             step: step.clone(),
             spent_after,
             receipt: receipt.clone(),
+            turn: turn.clone(),
         });
         Ok(())
     }
@@ -174,8 +178,14 @@ impl<'a> DurableOrchestration<'a> {
         for step in plan {
             let receipt = self.engine.step(step, &mut mirror)?;
             let spent_after = self.engine.spent(step.worker);
+            let turn = mirror
+                .entries
+                .last()
+                .expect("engine.step just pushed a logged entry")
+                .turn
+                .clone();
             durable
-                .append(step, spent_after, &receipt)
+                .append(step, spent_after, &receipt, &turn)
                 .map_err(OrchestrationError::Refused)?;
             committed += 1;
         }
@@ -224,8 +234,14 @@ impl<'a> DurableOrchestration<'a> {
         for step in tail {
             let receipt = self.engine.step(step, &mut mirror)?;
             let spent_after = self.engine.spent(step.worker);
+            let turn = mirror
+                .entries
+                .last()
+                .expect("engine.step just pushed a logged entry")
+                .turn
+                .clone();
             durable
-                .append(step, spent_after, &receipt)
+                .append(step, spent_after, &receipt, &turn)
                 .map_err(OrchestrationError::Refused)?;
             committed += 1;
         }
@@ -561,8 +577,9 @@ mod tests {
         }
         // Tamper: append the over-budget step record (with the first step's receipt as a stand-in).
         let stolen = durable.orchestration_log().entries[0].receipt.clone();
+        let stolen_turn = durable.orchestration_log().entries[0].turn.clone();
         durable
-            .append(&plan[1], 700, &stolen)
+            .append(&plan[1], 700, &stolen, &stolen_turn)
             .expect("append the tampered record");
 
         // COLD rebuild MUST refuse: re-executing the over-budget step is rejected by the AffineLe gate.

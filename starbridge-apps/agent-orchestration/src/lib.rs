@@ -97,8 +97,8 @@ use crate::deos::orchestration_app;
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
     ChildVkStrategy, ConstantsModule, DeosApp, Effect, EmbeddedExecutor, Event, FactoryDescriptor,
-    FieldElement, InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk,
-    field_from_u64, hex_encode_32, symbol,
+    FieldElement, InspectorDescriptor, StarbridgeAppContext, StateConstraint, Turn,
+    canonical_program_vk, field_from_u64, hex_encode_32, symbol,
 };
 use dregg_turn::{TurnReceipt, VerifyError, verify_receipt_extends};
 use std::collections::BTreeSet;
@@ -551,6 +551,10 @@ pub struct LoggedStep {
     /// turn is ordinal-0's predecessor), so the pairwise window check over `[open] ++ receipts` audits
     /// the whole run and a tampered receipt breaks the chain.
     pub receipt: TurnReceipt,
+    /// The submitted turn (self-contained: agent, nonce, call-forest). `turn.hash() == receipt.turn_hash`
+    /// binds this — the AUTHENTIC turn behind the receipt — so `audit_run` can cross-check that `step`
+    /// faithfully records what actually ran (closing the step↔receipt content gap).
+    pub turn: Turn,
 }
 
 impl OrchestrationLog {
@@ -784,9 +788,12 @@ impl<'a> OrchestrationEngine<'a> {
             epoch,
             &step.sub_task,
         );
-        let receipt = self
+        // Build the turn explicitly and submit it, capturing the turn AS EXECUTED (fee/nonce
+        // normalized) so `turn.hash() == receipt.turn_hash` for the audit's cross-check.
+        let submitted = self.cipherclerk.make_turn(action);
+        let (receipt, turn) = self
             .exec
-            .submit_action(self.cipherclerk, action)
+            .submit_turn_executed(&submitted)
             .map_err(|e| OrchestrationError::Refused(e.to_string()))?;
 
         // Commit-side state advance (only on success — a refused step moves nothing).
@@ -797,6 +804,7 @@ impl<'a> OrchestrationEngine<'a> {
             step: step.clone(),
             spent_after: new_spent,
             receipt: receipt.clone(),
+            turn,
         });
         Ok(receipt)
     }
@@ -936,6 +944,17 @@ pub enum AuditError {
         /// The worker whose mandate amplifies.
         worker: WorkerSlot,
     },
+    /// The stored turn does NOT hash to its receipt's `turn_hash` — a forged/substituted turn record.
+    TurnReceiptMismatch {
+        /// The log ordinal whose turn does not match its receipt.
+        ordinal: usize,
+    },
+    /// The recorded `step` is not FAITHFUL to the authentic turn behind its receipt — the turn's effects
+    /// do not bind this step's worker/tool/cost/sub_task (a tampered log line masking what really ran).
+    StepNotFaithful {
+        /// The log ordinal whose step disagrees with its receipt's turn.
+        ordinal: usize,
+    },
 }
 
 impl std::fmt::Display for AuditError {
@@ -949,6 +968,14 @@ impl std::fmt::Display for AuditError {
                 f,
                 "worker {} holds a mandate NOT ⊑ the coordinator's (amplification)",
                 worker.label()
+            ),
+            AuditError::TurnReceiptMismatch { ordinal } => write!(
+                f,
+                "step #{ordinal}: stored turn does not hash to its receipt (forged turn record)"
+            ),
+            AuditError::StepNotFaithful { ordinal } => write!(
+                f,
+                "step #{ordinal}: recorded step is not faithful to its receipt's turn (tampered log)"
             ),
         }
     }
@@ -1026,6 +1053,41 @@ pub fn audit_run(
             WorkerSlot::A => (spent_a, worker_a_mandate),
             WorkerSlot::B => (spent_b, worker_b_mandate),
         };
+        // (3a) STEP↔RECEIPT CONTENT CROSS-CHECK. The stored turn IS the receipt's turn — `turn.hash()`
+        // is the collision-resistant anchor already verified in the chain above. And the recorded
+        // `step` is FAITHFUL to that authentic turn: the turn carries e.step's exact spend post-image
+        // and an event binding its tool, cost, and sub_task. So a tampered log line (a benign tool
+        // masking a real over-mandate one, or an understated cost) fails HERE — the receipt's turn
+        // cannot be re-labeled, closing the gap the mandate checks below would otherwise trust on faith.
+        if e.turn.hash() != e.receipt.turn_hash {
+            return Err(AuditError::TurnReceiptMismatch { ordinal });
+        }
+        let effects: Vec<&Effect> = e
+            .turn
+            .call_forest
+            .roots
+            .iter()
+            .flat_map(|r| r.all_effects())
+            .collect();
+        let expect_topic = symbol(&format!(
+            "step/{}/{}",
+            e.step.worker.label(),
+            e.step.tool.label()
+        ));
+        let binds_spend = effects.iter().any(|&f| {
+            matches!(f, Effect::SetField { index, value, .. }
+                if *index == e.step.worker.spend_slot() as usize
+                    && *value == field_from_u64(e.spent_after))
+        });
+        let binds_call = effects.iter().any(|&f| {
+            matches!(f, Effect::EmitEvent { event, .. }
+                if event.topic == expect_topic
+                    && event.data.contains(&field_from_u64(e.step.cost))
+                    && event.data.contains(&field_from_bytes(e.step.sub_task.as_bytes())))
+        });
+        if !binds_spend || !binds_call {
+            return Err(AuditError::StepNotFaithful { ordinal });
+        }
         // The tool must be in the granted scope.
         if !mandate.tools.contains(&e.step.tool) {
             return Err(AuditError::OverMandate {
@@ -1050,8 +1112,8 @@ pub fn audit_run(
                 ),
             });
         }
-        // The logged post-image must equal the re-derived running spend (arithmetic consistency over
-        // the log's own step records; the step↔receipt content cross-check is the named next slice).
+        // The logged post-image must equal the re-derived running spend (arithmetic consistency over the log's own step records; the step↔receipt content cross-check is
+        // (3a) above).
         let derived = running.saturating_add(e.step.cost);
         if derived != e.spent_after {
             return Err(AuditError::OverMandate {

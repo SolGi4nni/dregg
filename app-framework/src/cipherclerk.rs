@@ -497,14 +497,27 @@ impl EmbeddedExecutor {
     /// observe a receipt instead of building an action and dropping it.
     #[must_use = "dropping the receipt silently discards proof that the turn was committed"]
     pub fn submit_turn(&self, turn: &Turn) -> Result<TurnReceipt, ExecutorSubmitError> {
+        self.submit_turn_executed(turn).map(|(receipt, _)| receipt)
+    }
+
+    /// Like [`Self::submit_turn`] but ALSO returns the turn exactly as executed — with `fee`/`nonce`
+    /// normalized to what the executor ran, so the returned turn's `hash()` equals the receipt's
+    /// `turn_hash`. A caller retains this to cross-check later (e.g. an orchestration audit binding a
+    /// logged step to its receipt's authentic turn). Behaviour-identical to `submit_turn`.
+    pub fn submit_turn_executed(
+        &self,
+        turn: &Turn,
+    ) -> Result<(TurnReceipt, Turn), ExecutorSubmitError> {
         let mut turn = turn.clone();
         let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         if turn.fee == 0 {
             turn.fee = 10_000;
         }
         turn.nonce = rt.nonce();
-        rt.execute_turn(&turn)
-            .map_err(|e| ExecutorSubmitError(e.to_string()))
+        let receipt = rt
+            .execute_turn(&turn)
+            .map_err(|e| ExecutorSubmitError(e.to_string()))?;
+        Ok((receipt, turn))
     }
 
     /// Convenience: submit a single signed [`Action`] by wrapping it in
