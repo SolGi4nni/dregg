@@ -193,6 +193,11 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
   `check_endpoint` gates the endpoint before booting anything; fail-closed on node refusal. 94 green,
   both poles (Pole B admits-layer per provider_egress). Round-trip THROUGH node execution deferred to
   the `test-support` TestNode export (next unit — shared infra for the 4a full proof + 2b).
+- Pillar 1 (a-bar) — `MigrationTarget::Distributed` (migrate.rs + shell.rs): a surface re-homes onto a
+  federation cell over a real captp handoff, SurfaceId preserved + attenuated (zero change to the
+  generic migrate() body); handoff refuses Amplification/TargetMismatch/Replay; present/route resolve
+  as real granted⊆held turns via DistributedBacking. 11 green both poles; cockpit gate green. b-bar =
+  the cert over a real netlayer + the swiss-table/backing on a second box.
 - Pillar 2 (a-bar) — `mud.rs` `speak_cap_for(world, token)`: the speak cap is derived from the
   on-ledger presence token (revoked unless the room c-list hosts it), the host-side speak table
   fully retired. 14/14 mud green (2 new, both poles: enter→admits, leave→same derivation refuses;
