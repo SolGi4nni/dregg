@@ -261,6 +261,19 @@ pub struct BlocklaceHandle {
     /// round-synchronous so waves finalize cross-node. FIFO; drained one payload
     /// per round. (Solo n=1 bypasses this and produces the turn block directly.)
     pub pending_payloads: Arc<RwLock<std::collections::VecDeque<Payload>>>,
+    /// CROSS-POLL VERIFIED-ORDER CACHE (fingerprint half). A cheap `u64` hashed
+    /// over the SORTED block-id set of the lace at the last poll whose verified
+    /// Lean tau-order FFI succeeded. Block ids are blake3 content hashes, so an
+    /// identical sorted id-set ⇒ an identical lace ⇒ an identical deterministic
+    /// `tauOrder`; a fingerprint MATCH lets `poll_finalized_blocks` reuse
+    /// `last_lean_order` and SKIP the O(history) FFI, a MISMATCH forces a
+    /// recompute (never a stale order for a changed lace). See
+    /// `docs/VERIFIED-GATE-PERF.md`.
+    pub last_order_fingerprint: Arc<RwLock<Option<u64>>>,
+    /// CROSS-POLL VERIFIED-ORDER CACHE (order half). The verified Lean tau-order
+    /// computed at the poll recorded by `last_order_fingerprint`. Reused verbatim
+    /// on a fingerprint hit; overwritten on every successful recompute.
+    pub last_lean_order: Arc<RwLock<Option<Vec<BlockId>>>>,
 }
 
 /// A read-only view of one blocklace block, shaped to mirror the wasm
@@ -1035,25 +1048,75 @@ impl BlocklaceHandle {
             // STARVED the runtime (gossip/QUIC/`/status` froze) on a cross-linked DAG (the finality
             // wedge). On a blocking thread the async runtime stays responsive regardless of how long the
             // ordering takes. The lace snapshot + participants are moved into the closure (owned).
+            // ── CROSS-POLL VERIFIED-ORDER CACHE ──────────────────────────────────────────────
+            // The verified-Lean tau-order FFI below is O(history) and, absent a cache, is
+            // recomputed FROM SCRATCH on every finality poll — the Lean `tauOrderFast` memo
+            // (PastCache/RoundCache) is rebuilt inside each FFI call and thrown away. As a round-2
+            // DAG grows the per-poll cost outpaces block production and the finalized prefix never
+            // reaches the frontier turn in-window (docs/VERIFIED-GATE-PERF.md).
+            //
+            // A cheap SOUND fingerprint short-circuits the FFI when the lace is UNCHANGED across
+            // polls: block ids are blake3 content hashes, so an identical SORTED id-set ⇒ an
+            // identical lace ⇒ an identical deterministic `tauOrder` (a pure function of the lace).
+            // A fingerprint MISMATCH always recomputes, so the cache never returns a stale order
+            // for a changed lace. Cheap relative to the O(n²) FFI (a single DefaultHasher pass).
+            let order_fingerprint: u64 = {
+                use std::hash::{Hash, Hasher};
+                let mut ids: Vec<&BlockId> = lace.iter().map(|(id, _)| id).collect();
+                ids.sort_unstable();
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                ids.len().hash(&mut hasher);
+                for id in ids {
+                    id.hash(&mut hasher);
+                }
+                hasher.finish()
+            };
             let lean_order_opt = if order_gate_armed {
-                let lace_ffi = lace.clone();
-                let participants_ffi = participants.clone();
-                match tokio::task::spawn_blocking(move || {
-                    crate::finality_gate::VerifiedFinality::compute_order(
-                        &lace_ffi,
-                        &participants_ffi,
-                    )
-                })
-                .await
-                {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            "verified tau-order FFI blocking task panicked/cancelled — falling back \
-                             to the Rust `ordering::tau` order for this poll"
-                        );
+                // Cache HIT: an unchanged lace ⇒ an identical verified order — skip the FFI.
+                let cached = {
+                    let fp_guard = self.last_order_fingerprint.read().await;
+                    if *fp_guard == Some(order_fingerprint) {
+                        self.last_lean_order.read().await.clone()
+                    } else {
                         None
+                    }
+                };
+                match cached {
+                    Some(order) => {
+                        debug!(
+                            fingerprint = order_fingerprint,
+                            finalized = order.len(),
+                            "verified-order cache HIT, skipped FFI"
+                        );
+                        Some(order)
+                    }
+                    None => {
+                        let lace_ffi = lace.clone();
+                        let participants_ffi = participants.clone();
+                        let computed = match tokio::task::spawn_blocking(move || {
+                            crate::finality_gate::VerifiedFinality::compute_order(
+                                &lace_ffi,
+                                &participants_ffi,
+                            )
+                        })
+                        .await
+                        {
+                            Ok(v) => v,
+                            Err(e) => {
+                                warn!(
+                                    error = %e,
+                                    "verified tau-order FFI blocking task panicked/cancelled — \
+                                     falling back to the Rust `ordering::tau` order for this poll"
+                                );
+                                None
+                            }
+                        };
+                        // Cache only a SUCCESSFUL verified order (a None fallback is not authoritative).
+                        if let Some(ref order) = computed {
+                            *self.last_order_fingerprint.write().await = Some(order_fingerprint);
+                            *self.last_lean_order.write().await = Some(order.clone());
+                        }
+                        computed
                     }
                 }
             } else {
@@ -2007,6 +2070,8 @@ pub async fn run_blocklace_sync(
         last_produced: Arc::new(RwLock::new(std::time::Instant::now())),
         ack_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         pending_payloads: Arc::new(RwLock::new(std::collections::VecDeque::new())),
+        last_order_fingerprint: Arc::new(RwLock::new(None)),
+        last_lean_order: Arc::new(RwLock::new(None)),
     };
 
     info!("blocklace gossip layer initialized, processing messages");
@@ -6423,6 +6488,8 @@ mod tests {
             last_produced: Arc::new(RwLock::new(std::time::Instant::now())),
             ack_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pending_payloads: Arc::new(RwLock::new(std::collections::VecDeque::new())),
+            last_order_fingerprint: Arc::new(RwLock::new(None)),
+            last_lean_order: Arc::new(RwLock::new(None)),
         }
     }
 
