@@ -12,6 +12,21 @@ corresponding wide member — the single-domain cohort `umemOp` over 7 fresh col
 `umemory` / `umem_boundary` tables appended PAST the wide carriers, `piCount` UNCHANGED (the 16
 wide-commit PIs / the 8-felt anchors ride through, NO narrowing).
 
+## The gentian refuse rides REFUSE-FIRST (welded onto the host, THEN the umem leg)
+
+The gentian deployed-default flip welds the capacity-floor refuse onto the 36 bare cohort routes.
+On the WELDED twin the refuse is applied to the wide HOST **before** the umem leg — i.e.
+`weldUMemIntoWide (gentianWideBareRefuse host) dom` — so the refuse aux blocks ride PAST the wide
+carriers (at `host.traceWidth`) and the umem leg rides PAST the refuse (at `host.traceWidth + 48`).
+This is the EXACT composition the runtime producer takes: `prove_wide_umem_welded_staged` welds umem
+onto the ALREADY-refuse-welded wide member it reads from `WIDE_REGISTRY_STAGED_TSV`
+(`weld_umem_into_wide_descriptor(wide+refuse)`), and the Rust weld-parity tooth
+(`wide_umem_weld_registry_parity_and_no_narrowing`) asserts each welded member equals exactly that.
+Welding refuse AFTER umem (the earlier order) placed the refuse aux past the umem columns, so the
+runtime producer's descriptor (refuse-first) and this verifier twin (refuse-last) diverged — an
+honest umem-welded turn proved against one layout and verified against the other
+(`OodEvaluationMismatch`). Refuse-first makes them coincide.
+
 This is the byte source of the ADDITIVE Rust artifact
 `circuit/descriptors/rotation-wide-umem-welded-registry-staged.tsv` (pinned by
 `WIDE_UMEM_WELD_REGISTRY_FP`). NOTHING on the live wire changes — the deployed bare wide registry /
@@ -23,22 +38,30 @@ import Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
 import Dregg2.Deos.BareCohortFloorRefuseWide
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
-open Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide (weldedWideRegistry)
+open Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
+  (crownWideHosts weldedWriteTail weldedLiveOnlyTail weldUMemIntoWide wideKeyUMemDomain)
 
 -- THE GENTIAN DEPLOYED-DEFAULT FLIP (welded twin): the capacity-floor refuse rides the WELDED bare
--- cohort too (aux blocks PAST the welded member width — past the wide carriers AND the umem columns),
--- welded onto exactly the 36 bare cohort keys, mirroring the wide registry. The executor `require_welded`
--- path binds the welded twin for a single-cohort sovereign turn, so the refuse must ride it as well.
+-- cohort too, welded onto the wide HOST BEFORE the umem leg (refuse aux at `host.traceWidth`, umem
+-- PAST it) — exactly the runtime producer's `weld_umem_into_wide_descriptor(wide+refuse)` composition.
 open Dregg2.Deos.BareCohortFloorRefuseWide (gentianWideBareRefuse)
 
 /-- The 36 bare cohort keys — the settle-as-transfer/burn dodge routes the refuse is welded onto. -/
 def bareCohortKeys : List String :=
   Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3RegistryBare.map (·.1)
 
-/-- Weld the WIDE capacity-floor refuse onto a welded member IFF its key is a bare cohort route. -/
-def weldWide (key : String) (d : EffectVmDescriptor2) : EffectVmDescriptor2 :=
-  if bareCohortKeys.contains key then gentianWideBareRefuse d else d
+/-- Weld the WIDE capacity-floor refuse onto a wide host IFF its key is a bare cohort route, then weld
+the umem leg PAST it. A non-cohort key (cap-open / write / supplyMint / satisfaction) rides the umem
+leg alone. Mirrors `EmitWideRegistryProbe.weldWide` (same refuse) composed with `weldUMemIntoWide`. -/
+def weldRefusedFirst (e : String × EffectVmDescriptor2) : String × EffectVmDescriptor2 :=
+  let refused := if bareCohortKeys.contains e.1 then gentianWideBareRefuse e.2 else e.2
+  (e.1, weldUMemIntoWide refused (wideKeyUMemDomain e.1))
+
+/-- The refuse-first welded registry: the 45 crown members refuse-then-umem, the 9 §10 write-tail +
+3 live-only members umem-only (never bare cohort routes, so untouched by the refuse). -/
+def weldedWideRegistryRefusedFirst : List (String × EffectVmDescriptor2) :=
+  crownWideHosts.map weldRefusedFirst ++ weldedWriteTail ++ weldedLiveOnlyTail
 
 def main : IO Unit := do
-  for (key, d) in weldedWideRegistry do
-    IO.println s!"{key}\t{(weldWide key d).name}\t{emitVmJson2 (weldWide key d)}"
+  for (key, d) in weldedWideRegistryRefusedFirst do
+    IO.println s!"{key}\t{d.name}\t{emitVmJson2 d}"

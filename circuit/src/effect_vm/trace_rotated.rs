@@ -45,6 +45,7 @@
 //! the IR-v2 route in `sdk::full_turn_proof` (gated). The flag-day descriptor regen + VK
 //! bump is a SEPARATE deliberate act (G2/G5).
 
+use super::bare_floor_refuse_weld;
 use super::columns::rotation::caveat as cav;
 use super::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
 use super::{EFFECT_VM_WIDTH, EffectVmContext, generate_effect_vm_trace_ext};
@@ -5211,10 +5212,34 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
                 desc.name, desc.public_input_count, emitted_pis
             )
         })?;
-    let col_tail = desc.trace_width.checked_sub(row_width).ok_or_else(|| {
+    let raw_col_tail = desc.trace_width.checked_sub(row_width).ok_or_else(|| {
         format!(
             "wide rotated prover: descriptor '{}' trace width {} < the wide producer's {}",
             desc.name, desc.trace_width, row_width
+        )
+    })?;
+    // THE GENTIAN REFUSE-WELD EXCLUSION. The flag-day welds `3·REFUSE_STRIDE` gate-internal aux
+    // columns (the per-tag floor-refuse decode witnesses: bit/inv/OR/floor) onto every deployed BARE
+    // cohort member's `trace_width`. Those columns are NOT producer-emitted exposure teeth — they
+    // carry no claim PI, they are the floor-refuse GATE, filled from the zero-resized headroom by
+    // `bare_floor_refuse_weld::fill_refuse_aux` at prove time (`descriptor_ir2` build, after
+    // `fill_chip_lanes`). So they must NOT enter the exposure 1:1 pairing: subtract them from the
+    // teeth-column tail before matching it against the claim-PI tail. (Without this the honest wide
+    // full-turn fails to prove — 2 claim PIs vs 50 teeth cols — while the narrow decode still bites.)
+    let refuse_aux_cols = if desc
+        .name
+        .contains(bare_floor_refuse_weld::REFUSE_WELD_SUFFIX)
+    {
+        bare_floor_refuse_weld::CAPACITY_TAGS.len() * bare_floor_refuse_weld::REFUSE_STRIDE
+    } else {
+        0
+    };
+    let col_tail = raw_col_tail.checked_sub(refuse_aux_cols).ok_or_else(|| {
+        format!(
+            "wide rotated prover: refuse-welded descriptor '{}' teeth-column tail {raw_col_tail} < \
+             the {refuse_aux_cols} gate-internal refuse-aux columns — the weld geometry is \
+             inconsistent with the producer shape",
+            desc.name
         )
     })?;
     if pi_tail != col_tail {

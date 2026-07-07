@@ -217,21 +217,58 @@ pub const REFUSE_WELD_SUFFIX: &str = "-gentian-deployed-bare-refuse";
 /// - a DECLARING cell has the matching slot decode `bit = 1`, folding `floor = 1`, so the
 ///   `floor == 0` gate is UNSAT — the cell cannot route through the bare descriptor and is forced
 ///   onto its satisfaction descriptor (SOUNDNESS preserved: the bare-descriptor dodge stays closed).
-pub fn fill_refuse_aux(desc: &crate::descriptor_ir2::EffectVmDescriptor2, row: &mut [BabyBear]) {
-    if !desc.name.ends_with(REFUSE_WELD_SUFFIX) {
-        return;
+/// Recover the refuse-block aux base column for a refuse-welded descriptor DIRECTLY from its own
+/// committed floor-refuse gates, so the fill lands on the exact columns the gates read — robust to
+/// where the weld placed the block (V3 narrow rides `GRAD_ROT_WIDTH`; a wide member rides
+/// `trace_width − 3·REFUSE_STRIDE`; a WIDE+umem member rides the WIDE base with the umem leg appended
+/// PAST the refuse block, so `trace_width − …` no longer locates it).
+///
+/// The three `floor_col(b) == 0` refuse gates are the only bare-`Var` gates the weld emits, at
+/// `aux_base + b·REFUSE_STRIDE + 3·MAX_CAVEATS` — a triple `{c, c+REFUSE_STRIDE, c+2·REFUSE_STRIDE}`.
+/// We take the HIGHEST such triple (the refuse block sits in the aux headroom, above any base-AIR
+/// bare-`Var` gate) and back out `aux_base = c − 3·MAX_CAVEATS`.
+fn refuse_aux_base(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> usize {
+    let mut bare_var_gates: Vec<usize> = desc
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            VmConstraint2::Base(VmConstraint::Gate(LeanExpr::Var(col))) => Some(*col),
+            _ => None,
+        })
+        .collect();
+    bare_var_gates.sort_unstable();
+    bare_var_gates.dedup();
+    let has = |c: usize| bare_var_gates.binary_search(&c).is_ok();
+    // Descending scan → the first (highest) `floor_col(0)` of a full refuse triple.
+    if let Some(floor0) = bare_var_gates
+        .iter()
+        .rev()
+        .copied()
+        .find(|&c| has(c + REFUSE_STRIDE) && has(c + 2 * REFUSE_STRIDE))
+    {
+        return floor0 - 3 * cav::MAX_CAVEATS;
     }
-    // The aux base: the V3 1-felt cohort rides the FIXED `GRAD_ROT_WIDTH` headroom (widened to
-    // `floor_col(2)+1 = 1626`). A WIDE / WELDED member's `GRAD_ROT_WIDTH` band is OCCUPIED by the two
-    // 13×8 wide carriers, so its refuse aux rides PAST the member's own width — the wide emit
-    // (`gentianWideBareRefuse`) widens by exactly `3·REFUSE_STRIDE`, so the pre-refuse (aux) base is
-    // `trace_width − 3·REFUSE_STRIDE`. The V3 width `1626` (< any wide/welded width) cleanly selects.
+    // Fallback (should be unreachable for a genuinely refuse-welded descriptor): the V3-narrow
+    // fixed base, else the trailing-block assumption. Preserves the pre-umem behaviour.
     let v3_refuse_width = floor_col(CAPACITY_TAGS.len() - 1) + 1;
-    let aux_base = if desc.trace_width == v3_refuse_width {
+    if desc.trace_width == v3_refuse_width {
         GRAD_ROT_WIDTH
     } else {
         desc.trace_width - 3 * REFUSE_STRIDE
-    };
+    }
+}
+
+pub fn fill_refuse_aux(desc: &crate::descriptor_ir2::EffectVmDescriptor2, row: &mut [BabyBear]) {
+    // Detect the refuse weld by SUBSTRING, not `ends_with`: an additive downstream weld (the WIDE+umem
+    // leg, `weld_umem_into_descriptor_with_suffix`) appends its own `-umem-wide-welded-staged` suffix
+    // AFTER the `-gentian-deployed-bare-refuse` mark — leaving the refuse suffix in the MIDDLE of the
+    // name. The refuse gates are still present (the umem weld preserves every existing constraint), so
+    // the decode witnesses still need filling; keying on `ends_with` here silently skipped them and
+    // left the `inv` columns zero → the is-zero decode gate is UNSAT on every honest umem-welded turn.
+    if !desc.name.contains(REFUSE_WELD_SUFFIX) {
+        return;
+    }
+    let aux_base = refuse_aux_base(desc);
     let bit_at = |b: usize, k: usize| aux_base + b * REFUSE_STRIDE + k;
     let inv_at = |b: usize, k: usize| aux_base + b * REFUSE_STRIDE + cav::MAX_CAVEATS + k;
     let or_at = |b: usize, j: usize| aux_base + b * REFUSE_STRIDE + 2 * cav::MAX_CAVEATS + j;
