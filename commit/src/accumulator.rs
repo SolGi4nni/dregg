@@ -476,6 +476,16 @@ impl PolynomialAccumulator {
     /// ensure the witness's remainder is bound to `f(element)` (e.g. the
     /// witness was produced by [`Self::non_membership_witness`] on the
     /// authoritative set).
+    /// **The division-identity check ONLY — FORGEABLE, not a soundness proof.** It verifies
+    /// `quotient*(alpha-x)+remainder == Acc` and `remainder != 0`, but does NOT bind `remainder` to
+    /// `f(x)`: given public `(Acc, alpha, x)`, an attacker picks ANY `remainder' != 0` and the
+    /// matching `quotient' = (Acc-remainder')/(alpha-x)` — a forged non-membership proof, even for a
+    /// MEMBER. Use [`Self::verify_non_membership_bound`] (recomputes `f(x)` from the set). A verifier
+    /// holding only `(Acc, alpha)` cannot soundly check non-membership without the set or a pairing.
+    #[deprecated(
+        note = "forgeable: remainder is unbound. Use verify_non_membership_bound (set-holding \
+                         verifier) — see the doc for why setless verification is unsound."
+    )]
     pub fn verify_non_membership(
         witness: &AccumulatorWitness,
         element: BabyBear,
@@ -493,6 +503,34 @@ impl PolynomialAccumulator {
         let lhs = product.add(witness.remainder); // + remainder
 
         lhs == accumulator
+    }
+
+    /// **Sound non-membership verification.** Recomputes `f(element) = product(element - h_i)` from
+    /// this accumulator's own set and REQUIRES `witness.remainder == f(element)`, then checks the
+    /// division identity — closing the forgery the setless [`Self::verify_non_membership`] admits (any
+    /// `remainder'` with a matching quotient). Returns `true` iff `element` is genuinely NOT in the
+    /// set and the witness is honest. Requires a set-holding verifier (the sound floor: setless O(1)
+    /// non-membership needs a pairing-based commitment, not this field accumulator).
+    pub fn verify_non_membership_bound(
+        &self,
+        witness: &AccumulatorWitness,
+        element: BabyBear,
+    ) -> bool {
+        // A member is never a non-member.
+        if self.elements.contains(&element) {
+            return false;
+        }
+        // BIND the remainder: it must be the true set-polynomial evaluation f(element).
+        let mut expected = BabyBear::ONE;
+        for &h_i in &self.elements {
+            expected *= element - h_i;
+        }
+        if expected == BabyBear::ZERO || witness.remainder != BabyBear4::from_base(expected) {
+            return false;
+        }
+        // The division identity, now over a remainder bound to f(element).
+        let diff = self.alpha.sub(BabyBear4::from_base(element));
+        witness.quotient.mul(diff).add(witness.remainder) == self.value
     }
 
     /// Verify a membership witness.
@@ -589,6 +627,9 @@ impl PolynomialAccumulator {
 
 #[cfg(test)]
 mod tests {
+    // Several tests exercise the deprecated setless `verify_non_membership` precisely to demonstrate
+    // its forgeability (and that `verify_non_membership_bound` closes it).
+    #![allow(deprecated)]
     use super::*;
 
     /// Derive a test alpha from a simple seed.
@@ -800,6 +841,50 @@ mod tests {
             alpha,
             acc.accumulator_value(),
         ));
+    }
+
+    /// THE FORGERY, and its closure: the setless identity check accepts an attacker-chosen remainder
+    /// (with the matching quotient) — a forged non-membership proof — while the sound bound verify
+    /// rejects it because it recomputes and binds `f(x)`. The genuine witness still passes the bound
+    /// verify (non-vacuity).
+    #[test]
+    fn non_membership_forgery_is_caught_only_by_the_bound_verify() {
+        let alpha = test_alpha();
+        let elems: Vec<BabyBear> = (1..=5).map(|i| BabyBear::new(i * 100)).collect();
+        let acc = PolynomialAccumulator::from_set(&elems, alpha);
+        let non_member = BabyBear::new(999);
+
+        // A GENUINE witness passes the sound (bound) verify — non-vacuity.
+        let genuine = acc.non_membership_witness(non_member).unwrap();
+        assert!(acc.verify_non_membership_bound(&genuine, non_member));
+
+        // Forge: a DIFFERENT nonzero remainder + the matching quotient.
+        let forged_remainder = genuine.remainder.add(BabyBear4::from_base(BabyBear::ONE));
+        let divisor = alpha.sub(BabyBear4::from_base(non_member));
+        let forged_quotient = acc
+            .accumulator_value()
+            .sub(forged_remainder)
+            .mul(divisor.inverse().unwrap());
+        let forged = AccumulatorWitness {
+            quotient: forged_quotient,
+            remainder: forged_remainder,
+        };
+
+        // The setless identity check ACCEPTS the forgery — this IS the forgeability.
+        assert!(
+            PolynomialAccumulator::verify_non_membership(
+                &forged,
+                non_member,
+                alpha,
+                acc.accumulator_value(),
+            ),
+            "the setless identity check is forgeable (any remainder' with a matching quotient)"
+        );
+        // The SOUND bound verify REJECTS it: remainder != f(non_member).
+        assert!(
+            !acc.verify_non_membership_bound(&forged, non_member),
+            "the bound verify recomputes f(x) and rejects the forged remainder"
+        );
     }
 
     #[test]
