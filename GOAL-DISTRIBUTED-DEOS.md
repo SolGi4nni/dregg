@@ -23,6 +23,18 @@ shared ledger; the network is never trusted, only the proof is.* This is the fir
 across distance" thesis (proven for seL4, `project-firmament-sel4-boots`) generalized to the
 inhabited world.
 
+## STATUS (this IS the goal file — GOAL.md is storage-in-lean's, off-limits; refresh here each landing)
+
+**Current thrust:** Pillar 0 (foundation) + Pillar 3 (card-over-Conduit) building in parallel —
+the two lanes disjoint from each other and from the flip/storage/localnet sessions.
+
+**Next 3 moves:**
+1. Land + commit Pillar 0 (`NodeWorldSink` in dregg-sdk-net, `world-sink` feature) — the
+   dependency root for 1/2/4. Verify both poles + the no-feature mozjs-free check.
+2. Land + commit Pillar 3 (`CardForkEnvelope` over a live Conduit, offline + Docker-gated live).
+3. Launch Pillar 2 (speak-cap = attenuation of the on-ledger presence token, `mud.rs`) over the
+   landed `NodeWorldSink`; then Pillar 1 (`Target::Distributed` migration).
+
 ## THE DISCIPLINE (carry it into every pillar)
 
 - **Mechanism now, iron later.** Each pillar splits into (a) the mechanism, built + tested THIS
