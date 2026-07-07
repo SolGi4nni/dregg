@@ -216,6 +216,10 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
   `check_endpoint` gates the endpoint before booting anything; fail-closed on node refusal. 94 green,
   both poles (Pole B admits-layer per provider_egress). Round-trip THROUGH node execution deferred to
   the `test-support` TestNode export (next unit — shared infra for the 4a full proof + 2b).
+- dregg-forge CI-gate (community thread) — `dregg-doc/check.rs`: a merge gated on a real committed
+  check-turn receipt (Ed25519 executor-signed, verified) or a real ProofCondition witness — no bool;
+  gate order conflict→base→check→cap, unsatisfied check refuses byte-untouched. 4 poles green
+  (substrate 141 lib). Surfaced a real `turn/conditional.rs` TurnExecuted signing-message bug (HORIZONLOG).
 - dregg-forge keystone (community thread) — `dregg-doc/pull_request.rs`: the `PullRequest` +
   review-as-stitcher, welded over the existing Pijul core (three_way/pushout/ConflictRegion/resolve_*)
   with the merge routed through executor_drive's REAL cap gate (`check_cross_cell_permission`). Three

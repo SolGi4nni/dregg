@@ -8,6 +8,20 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-07, Fable — forge CI-gate lane surfaced a real dregg-turn bug)
+
+**`ProofCondition::TurnExecuted` verifies over the WRONG signing message.** `turn/src/conditional.rs:478`
+verifies the executor signature over `receipt.receipt_hash()`, but the executor
+(`turn/src/executor/mod.rs::maybe_sign_receipt`) signs
+`TurnReceipt::canonical_executor_signed_message()` (the Stage 9 R-4 message). So a genuinely
+executor-signed receipt can NEVER satisfy `TurnExecuted` through `resolve_condition` today — the
+condition is effectively unsatisfiable on honest input. Found by the forge CI-gate lane (which routed
+around it: `RequiredCheck::CommittedReceipt` verifies through `verify_receipt_chain_with_keys`, the
+path that checks the message the executor actually signs). CLOSURE = reconcile `conditional.rs`'s
+`TurnExecuted` arm to the R-4 canonical message (a dregg-turn fix; add a two-pole test: a real signed
+receipt satisfies, a wrong/unsigned one refuses). NOT force-fixed from thin context — it is core
+conditional-turn machinery + soundness-adjacent (ConditionalTurn gating), deserves thought.
+
 ## NOW-STATE addition (2026-07-07, Fable — wide purge swarm: named residuals from the honesty + bind sweeps)
 
 The 5-lane purge swarm (bindings + dead-sweep + honesty + Phase-2 recon) surfaced LOGIC residuals the
