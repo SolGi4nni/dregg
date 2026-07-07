@@ -133,3 +133,9 @@ Two sequential gates on one pipeline:
    spawn_blocking. Needed for a VERIFIED (not gate-off) live mesh.
 - IMMEDIATE PATH: submit-path fix + gate-off → a real attested turn finalizes cross-node (marshal
   finality). + fixes 2&3 → VERIFIED. "know WHY" = DONE; "run for real" = gated on these 3 (ember).
+
+## THRUST (07-07, ember-approved "draft + locally prove all 3")
+- ONE coherent lane (ac2c145fb) implements the 3 fixes + LOCALLY PROVES a real attested turn
+  stream-finalized cross-node on a local VERIFIED n=4 (isolated target dir, swarm-safe, no live
+  deploy — ember gates the live mesh). Single owner of the consensus path (hot tree: distributed-deos
+  on api.rs). NEXT: integrate its diffs + local proof → surface to ember for the LIVE-mesh deploy.
