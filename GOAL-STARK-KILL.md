@@ -61,3 +61,18 @@ Surfaced by the refinement proof itself — exactly what Rung 1 is for.
   13 GREEN + 3 honest PARTIAL (membership/note_spending/non_revocation residuals = Rung-2
   targets). Total Rung 1 = 17/20 (incl DFA). HELD unverified: multi_step + presentation
   (refute died on limit); temporal + garbled (refine died) — resume when limit resets.
+
+## Phase 2b — THE CUTOVER (ember approved 2026-07-07, "stark.rs dead ASAP")
+Reality (grounded): ~35 real consumers + ~46 test/bench. TWO WALLS: (1) emitted descriptors
+are MINIMAL INSTANCES (dfaRoutingDesc hardcodes the toggle transition; membership is depth-2)
+→ each consumer needs its descriptor GENERALIZED to production shape (table-committed / var-depth)
+before rewire; (2) WASM proves in-browser on `stark::MerkleStarkAir` (wasm/src/lib.rs:268) →
+gates the final `rm` on a wasm-fittable prover (ember Option-A decision, pending). The seL4
+`stark_core/stark.rs` ×2 are VENDORED copies, decoupled — NOT blockers.
+PLAN: generalize-then-rewire, per consumer-family, whole-tree-build-gated + benchmarked.
+- PATHFINDER (running, agent): zk_leg.rs — emit a GENERAL table-committed DFA descriptor,
+  rewire off stark::try_prove onto prove_vm_descriptor2, measure before/after. Proves the
+  pattern + the perf number. Then swarm the rest by family.
+- kill order: (a) test/bench surface (delete/migrate to emit gate tests) · (b) rewire prod
+  consumers per family (generalize descriptor + producer) · (c) delete hand AIRs · (d) wasm
+  decision · (e) git rm stark.rs when grep circuit::stark (non-vendored prod) == 0.
