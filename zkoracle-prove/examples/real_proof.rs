@@ -49,14 +49,8 @@ fn main() {
     let leg = att.zk_injection.as_ref().unwrap();
     let proof_bytes = leg.proof_bytes.len();
     println!("attestation over a real messages response, field \"France\":");
-    println!(
-        "  PROVE  (attestation + descriptor proof)  {}",
-        fmt_d(t_prove)
-    );
-    println!(
-        "  VERIFY (all legs + descriptor proof)     {}",
-        fmt_d(t_verify)
-    );
+    println!("  PROVE  (attestation + descriptor proof)  {}", fmt_d(t_prove));
+    println!("  VERIFY (all legs + descriptor proof)     {}", fmt_d(t_verify));
     println!("  descriptor proof size                    {proof_bytes} bytes");
     println!(
         "  public inputs                 [initial, final, table_commit, route_commit] = {:?}",

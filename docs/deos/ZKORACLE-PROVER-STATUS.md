@@ -223,6 +223,13 @@ on `dregg-zkoracle-prove` and attests each turn.
   no plaintext; a real `presentation.verify()`) and attests over the body that roundtrip
   AUTHENTICATED — so the certified bytes came from a real 2PC session, not a fixture
   literal. Heavy `mpz`/tokio/rustls backend behind the feature; the default stays light.
+  An end-to-end runner exercises this on iron: `deos-hermes/examples/zk_live_carrier.rs`
+  (`cd deos-hermes && DREGG_REQUIRE_LEAN=0 cargo run --release --example zk_live_carrier
+  --features zk-live`) — the 2PC roundtrip completes, `presentation.verify()` accepts, the
+  x-api-key is redacted, `verify_zkoracle` accepts all three legs over the authenticated
+  body, and the real-crypto / tamper / injection canaries all REFUSE. The named remainder:
+  fusing the tlsn `PresentationOutput` INTO the attestation's authentic *leg* (today the
+  modeled ed25519 carrier over the genuinely-authenticated body), and a live session.
 
 - **The crown test (`deos-hermes/tests/crown_attested_turn.rs`, 2 tests green):**
   `jailed_turn_is_also_attested` — a jailed brain run over the granted provider door
