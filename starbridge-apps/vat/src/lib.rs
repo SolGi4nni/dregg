@@ -29,11 +29,11 @@
 //! *computer*: a **lifecycle state machine** ([`VatState`]) and a **placement
 //! binding** (which backend machine currently holds the running World). The
 //! economics + durable cursor are the lease's; the vat layers its state machine
-//! ON TOP. The vat's teeth are CARRIED by [`vat_cell_program`] — nothing in this
-//! crate installs it or submits a turn yet (that wire is the named next slice);
-//! today the pure apply layer ([`lifecycle`]) is the enforcing gate.
+//! ON TOP. The vat's teeth are ENFORCED by [`vat_cell_program`] — installed by
+//! [`seed_vat`] and submitted through the executor by [`fire_vat_transition`], so
+//! the invariants bite in the fire path; the pure apply layer ([`lifecycle`]) mirrors it.
 //!
-//! ## The lifecycle — the state machine (executor-enforceable, not yet wired)
+//! ## The lifecycle — the state machine (executor-enforced via [`fire_vat_transition`])
 //!
 //! ```text
 //! Created ──launch──▶ Running ──sleep──▶ Sleeping ──wake──▶ Running
@@ -42,9 +42,9 @@
 //! (reap) ────────────────────────────────▶ Reaped
 //! ```
 //!
-//! Every transition — `launch` / `sleep` / `wake` / `lapse` / `reap` — is shaped
-//! to land as a verified turn (none is submitted as one yet — see the honest
-//! boundary below). The machine is encoded on TWO axes (because it is not linear —
+//! Every transition — `launch` / `sleep` / `wake` / `lapse` / `reap` — lands as a
+//! verified turn, submitted through the executor by [`fire_vat_transition`]. The
+//! machine is encoded on TWO axes (because it is not linear —
 //! sleep/wake move up and down *within* being alive); only the first carries an
 //! executor constraint:
 //!
