@@ -286,3 +286,23 @@ TWO remaining are GENUINE CROSS-LANE boundaries (recorded, not laundered, cannot
   (b) canonical_32_to_felts_4/8 fingerprint a 32-byte BLAKE3 DIGEST (CR input -> masking non-exploitable)
   AND are mirrored BIT-IDENTICALLY by the circuit AIR; injectivity needs 9 felts = an AIR-width +
   deployed-VK regen = the deployed-faithful lane (ember-gated). Dual BLAKE3 form binds fully.
+
+### RESIDUAL GRIND — final state (2026-07-07). All CLEANLY-BOUNDED residuals CLOSED.
+CLOSED this campaign: DealCell all 6 legs (f097763e1) · storage+commit encode_bytes_to_felts INJECTIVE
+(8cc597a9d, 588cd454c) · accumulator FORGERY bound+proven-caught (ec0bd9ef5) · leaf-count reframed to
+the Accumulator where it's proven (8cc597a9d) · canonical bijection->fingerprint doc (d2de3b53a) · mcp
+tool-call FULL-digest binding, was 64-bit (e97ccbfba). [+ earlier: DAS index-fix a6b0dcccf, inverted
+deadline 2b986558d, auth-gap e16dfe17e.]
+REMAINING — each needs an ember-decision OR deeper cross-crate work; NONE is a launder:
+- sdk::verify_accumulator_non_membership: verifies PROVER-SUPPLIED alpha/Acc. The sound primitive
+  (verify_non_membership_bound) EXISTS; the fix is architectural — the SDK must obtain the trusted
+  federation-committed accumulator (with the set) to bind f(x). This is the crypto FLOOR: setless O(1)
+  non-membership is impossible over a field accumulator (needs a pairing/KZG). EMBER DECISION: hold the
+  set (O(n) sound) vs adopt a KZG accumulator. Also blocked on sdk/privacy.rs (another lane's live WIP).
+- canonical_32_to_felts_4/8: fingerprint a 32-byte BLAKE3 DIGEST (CR input -> masking non-exploitable)
+  AND the circuit AIR mirrors them BIT-IDENTICALLY. Full-injective needs 9 felts = an AIR-width +
+  deployed-VK regen = the deployed-faithful lane (EMBER-GATED). Dual BLAKE3 binds fully.
+- audit_run step<->receipt cross-check: needs an auditor-RE-DERIVABLE action commitment on TurnReceipt
+  (turn_hash includes signing). A turn-crate change, not a local fix.
+- nameservice FieldDelta: bake the exact-increment caveat into the name FACTORY DESCRIPTOR (real
+  cell-program wiring). vat verified-turn wire: unbuilt (a FEATURE, not a bug).
