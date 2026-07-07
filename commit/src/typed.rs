@@ -529,10 +529,14 @@ pub fn tag_hash_31(domain: &str) -> u32 {
 /// encoding without modular reduction collisions. A four-byte length prefix
 /// is absorbed first.
 pub fn encode_bytes_to_felts(bytes: &[u8]) -> Vec<BabyBear> {
-    let mut felts = Vec::with_capacity(bytes.len() / 4 + 2);
+    let mut felts = Vec::with_capacity(bytes.len() / 3 + 2);
     // Length prefix (low 30 bits of u32).
     felts.push(BabyBear::new((bytes.len() as u32) & ((1u32 << 30) - 1)));
     let mut i = 0;
+    // Three bytes per limb (24 bits) — strictly below the BabyBear modulus, so the packing is
+    // INJECTIVE: every input bit lands in exactly one felt, nothing masked. (Four bytes need 32 bits
+    // > the field's ~30.9, which forced the old `b3 & 0x3F` mask, dropping bits 6-7 of every fourth
+    // byte so the Poseidon2 form did not bind them.)
     while i < bytes.len() {
         let b0 = bytes[i] as u32;
         let b1 = if i + 1 < bytes.len() {
@@ -545,15 +549,9 @@ pub fn encode_bytes_to_felts(bytes: &[u8]) -> Vec<BabyBear> {
         } else {
             0
         };
-        let b3 = if i + 3 < bytes.len() {
-            bytes[i + 3] as u32
-        } else {
-            0
-        };
-        // Pack 30 bits: 8+8+8+6.
-        let limb = b0 | (b1 << 8) | (b2 << 16) | ((b3 & 0x3F) << 24);
+        let limb = b0 | (b1 << 8) | (b2 << 16);
         felts.push(BabyBear::new(limb));
-        i += 4;
+        i += 3;
     }
     felts
 }
