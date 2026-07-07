@@ -15,8 +15,17 @@ apex). Done = engine + AIRs deleted, every survivor Lean-emitted + Rung-1&2-prov
 **Rung 0 + Rung 1 COMPLETE; Rung 2 essentially COMPLETE** (`464c34b8d`): 10 DONE_AT_RUNG1
 (Rung 1 already = no-forgery) + 4 full Rung-2 (note_spending/quantified_absence/temporal/
 garbled) + 4 honest PARTIAL (membership/ivc/predicates-relational/revocation) + DFA template.
-Pending: predicates-arithmetic (StructuredOutput cap — re-run). Next real milestone = Phase 2b
-CUTOVER (⚠ ember-steer: high-risk shared-file change; the perf win lands here).
+Pending: predicates-arithmetic (StructuredOutput cap — re-run).
+
+## ⚑ EMBER DECISION (2026-07-07): Phase 2b is HELD
+The CUTOVER (rewire 55 live `stark::prove` consumers onto `prove_vm_descriptor2` + delete the
+hand AIRs + `git rm stark.rs`) — where the perf win lands + the unverified Rust dies — is
+HELD until the tree is free of the other concurrent `/goal` lanes ("it won't be long before
+the tree is free and ours"). Do NOT auto-fire it when the tree clears — CONFIRM with ember
+first (it deletes deployed code, irreversible-ish). Same hold on the membership emit-fix
+(byte-golden change). SAFE meanwhile: finish Rung 2 (pred-arith), push honest partials → full
+(additive proof only). Preference when it goes: INCREMENTAL, one consumer family at a time,
+whole-tree-build-gated, with a before/after perf benchmark wired into the first cutover.
 
 ## Next 3 moves
 1. Await DFA Rung-2 conclusion → verify + commit the `DfaRoutingRung2` template (builds
