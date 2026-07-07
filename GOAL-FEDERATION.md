@@ -53,3 +53,24 @@ cross-node (solve submit-auth: passphrase+bearer). Marshal now; verified next.
 - NEXT: synthesize n=3 + depth-crown findings → the coherent "why don't submitted turns finalize
   on the live mesh" root cause + fix design → surface to ember/consensus-owners (do NOT fire a
   consensus change). The two make-it-real units (#2,#3) are consensus-blocked pending this.
+
+## Submit-path diagnosis (4a0623cdd) — the payoff blocker, precisely
+- VERDICT: DESIGN GAP (not a broken wire). blocklace.submit_turn injection IS present+correct
+  (api.rs:3147/3407/6938; cadence drains staged→round blocks blocklace_sync.rs:3439). Client
+  turns are stopped UPSTREAM by how the handlers author+gate them:
+  * POST /turn/submit — confused-deputy hardening (api.rs:2891) discards the body `agent`,
+    rewrites to the node's OWN operator cell (exists only on clean-boot genesis; absent on
+    joiners → `cell not found`). = the depth-crown's 4fc1e09c wall.
+  * POST /turns/submit (caller-signed) — DOES inject to blocklace, but requires the client cell
+    to pre-exist (no actor-provisioning) + gates on the node operator's cclerk chain (serializes
+    all clients through one node-owned chain). = the node0 local-receipt observation.
+  * /api/faucet works cross-node only because its actor is the genesis-provisioned faucet cell.
+  * Root: execute_finalized_turn provisions only Transfer DESTINATIONS, never the turn's ACTOR.
+- FIX DESIGN (grounded, NOT fired — ember/consensus-owner's call): (1) make /turns/submit THE
+  external client path, decouple its receipt gate from the operator cclerk (optimistic ack;
+  finalization authoritative, faucet scratch-clone pattern); (2) provision the actor cell at
+  finalization deterministically from SignedTurn.signer (derive_raw(signer,"default"), zero-stub
+  if absent — safe: signer in-block + sig-verified → identical stub every node, same uniformity
+  as transfer-dest provisioning); (3) keep /turn/submit operator-only.
+- THE PAYOFF NEEDS BOTH: submit-path (turn INTO the DAG) + n=3 finality-gate (DAG turns actually
+  super-ratify+execute cross-node). Sequential gates on one pipeline.
