@@ -3,6 +3,23 @@
 //! A `ShardedQueue` splits a single logical queue across N physical shards.
 //! Messages are routed to shards by content hash (deterministic).
 //! Readers can query any shard independently.
+//!
+//! ## Lean-spec status
+//!
+//! This module is QUEUE sharding — deterministic content-hash *placement*
+//! over [`MerkleQueue`]s plus a combined-root commitment. It is NOT the
+//! Reed–Solomon k-of-n erasure layer: that codec is [`crate::erasure`],
+//! whose k-of-n reconstruction is proven in
+//! `metatheory/Dregg2/Storage/Erasure.lean` (`rs_decode_correct`,
+//! `no_wrong_reconstruction`) and bound to its impl there.
+//!
+//! No Lean theorem specifies `ShardedQueue` itself yet. The contract it
+//! actually makes — pinned executably by the `prop_*` tests below, ready to
+//! bind when a `Dregg2/Storage/Sharding.lean` spec lands — is:
+//! deterministic placement (routing is a pure function of content hash and
+//! shard count), drain conservation (draining returns exactly the enqueued
+//! multiset, then errs rather than fabricating entries), rebalance
+//! conservation, and combined-root tamper evidence.
 
 use crate::queue::{DequeueProof, MerkleQueue, QueueEntry, QueueError};
 
@@ -343,5 +360,148 @@ mod tests {
 
         let result = sq.dequeue_shard(0);
         assert_eq!(result, Err(QueueError::Empty));
+    }
+
+    // ------------------------------------------------------------------
+    // Property tests: the guarantees ShardedQueue actually makes.
+    //
+    // Census note: the RS k-of-n theorems in
+    // `metatheory/Dregg2/Storage/Erasure.lean` (`rs_decode_correct`,
+    // `no_wrong_reconstruction`) bind to `crate::erasure`, not to this
+    // module. No Lean spec covers ShardedQueue yet; these tests pin its
+    // placement/conservation contract so a future
+    // `Dregg2/Storage/Sharding.lean` has an executable counterpart.
+    // ------------------------------------------------------------------
+
+    /// Deterministic placement: routing is a pure function of the content
+    /// hash and the shard count — stable across calls, agreeing across
+    /// instances, and always in range. Property-style over several
+    /// shard-count configs.
+    #[test]
+    fn prop_placement_deterministic_and_in_range() {
+        for &shard_count in &[1usize, 2, 3, 4, 7, 16] {
+            let a = ShardedQueue::new(shard_count, 8);
+            let b = ShardedQueue::new(shard_count, 8);
+            for i in 0u64..64 {
+                let h = *blake3::hash(&i.to_le_bytes()).as_bytes();
+                let s = a.shard_for(&h);
+                assert!(s < shard_count, "shard index out of range");
+                assert_eq!(s, a.shard_for(&h), "routing must be stable");
+                assert_eq!(s, b.shard_for(&h), "routing must agree across instances");
+            }
+        }
+    }
+
+    /// Conservation (positive pole): draining the sharded queue returns
+    /// EXACTLY the enqueued multiset — no entry lost, duplicated, or
+    /// altered — over several (shard_count, message_count) configs.
+    ///
+    /// Negative pole (non-vacuity): once drained, every dequeue path
+    /// REFUSES with `QueueError::Empty` — the queue errs rather than
+    /// fabricating entries. A router that dropped, duplicated, or
+    /// corrupted a message turns the multiset equality red.
+    #[test]
+    fn prop_drain_conserves_the_enqueued_multiset_then_refuses() {
+        for &shard_count in &[1usize, 2, 4, 7, 16] {
+            for &n in &[1usize, 5, 32, 100] {
+                let mut sq = ShardedQueue::new(shard_count, n);
+                let mut enqueued = Vec::with_capacity(n);
+                for i in 0..n {
+                    let content = format!("msg-{shard_count}-{n}-{i}");
+                    let entry = make_entry(content.as_bytes(), [i as u8; 32], i as u64);
+                    enqueued.push(entry.clone());
+                    sq.enqueue(entry).unwrap();
+                }
+                assert_eq!(sq.total_len(), n);
+
+                let mut drained = Vec::with_capacity(n);
+                while let Ok((entry, _proof, _shard)) = sq.dequeue_any() {
+                    drained.push(entry);
+                }
+
+                enqueued.sort_by_key(|e| e.content_hash);
+                drained.sort_by_key(|e| e.content_hash);
+                assert_eq!(
+                    drained, enqueued,
+                    "drain must return exactly the enqueued multiset \
+                     (shard_count={shard_count}, n={n})"
+                );
+
+                // Negative pole: refuses, never fabricates.
+                assert_eq!(sq.dequeue_any(), Err(QueueError::Empty));
+                for s in 0..shard_count {
+                    assert_eq!(sq.dequeue_shard(s), Err(QueueError::Empty));
+                }
+            }
+        }
+    }
+
+    /// Rebalance moves entries between shards but conserves the multiset:
+    /// nothing lost, duplicated, or altered by the move.
+    #[test]
+    fn prop_rebalance_conserves_the_multiset() {
+        for &shard_count in &[2usize, 4, 7] {
+            let n = 60usize;
+            let mut sq = ShardedQueue::new(shard_count, 2 * n);
+            let mut enqueued = Vec::with_capacity(n);
+            for i in 0..n {
+                let content = format!("rb-{shard_count}-{i}");
+                let entry = make_entry(content.as_bytes(), [i as u8; 32], i as u64);
+                enqueued.push(entry.clone());
+                sq.enqueue(entry).unwrap();
+            }
+
+            sq.rebalance();
+            assert_eq!(sq.total_len(), n, "rebalance must not change the total");
+
+            let mut drained = Vec::with_capacity(n);
+            while let Ok((entry, _proof, _shard)) = sq.dequeue_any() {
+                drained.push(entry);
+            }
+            enqueued.sort_by_key(|e| e.content_hash);
+            drained.sort_by_key(|e| e.content_hash);
+            assert_eq!(
+                drained, enqueued,
+                "rebalance must conserve the multiset (shard_count={shard_count})"
+            );
+        }
+    }
+
+    /// Combined-root binding: equal shard contents give equal roots
+    /// (determinism across instances); a single differing entry gives a
+    /// different root (tamper evidence — the negative pole).
+    #[test]
+    fn prop_combined_root_binds_shard_contents() {
+        for &shard_count in &[1usize, 3, 8] {
+            let mut a = ShardedQueue::new(shard_count, 16);
+            let mut b = ShardedQueue::new(shard_count, 16);
+            for i in 0u64..10 {
+                let e = make_entry(&i.to_le_bytes(), [0xCC; 32], i);
+                a.enqueue(e.clone()).unwrap();
+                b.enqueue(e).unwrap();
+            }
+            assert_eq!(
+                a.combined_root(),
+                b.combined_root(),
+                "same contents must give the same combined root"
+            );
+
+            // Tamper one entry: the root must diverge.
+            let mut c = ShardedQueue::new(shard_count, 16);
+            for i in 0u64..10 {
+                let content: Vec<u8> = if i == 7 {
+                    b"tampered".to_vec()
+                } else {
+                    i.to_le_bytes().to_vec()
+                };
+                let e = make_entry(&content, [0xCC; 32], i);
+                c.enqueue(e).unwrap();
+            }
+            assert_ne!(
+                a.combined_root(),
+                c.combined_root(),
+                "a tampered entry must change the combined root"
+            );
+        }
     }
 }
