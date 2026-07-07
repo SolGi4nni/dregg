@@ -60,6 +60,7 @@
 
 use std::collections::BTreeSet;
 
+use dregg_node_target::{NodeTarget, SubmittedTurn};
 use dregg_zkoracle_prove::{
     build_anthropic_fixture, prove_zkoracle, verify_zkoracle, AnthropicConfig, FixtureNotary,
     ProveError, VerifiedZkOracle, ZkOracleAttestation, ZkOracleError,
@@ -565,6 +566,10 @@ pub struct Arbiter<B: RulingBrain = RecordedArbiter> {
     carrier: ArbiterAttestationCarrier,
     caps: ArbiterCaps,
     brain: B,
+    /// Where a landed ruling routes. [`NodeTarget::Local`] (default) keeps it on the
+    /// in-process [`CaseLedger`]; [`NodeTarget::Federation`] additionally submits the
+    /// ruling's receipt commitment to a real `DREGG_NODE_URL` node + confirms it landed.
+    node_target: NodeTarget,
 }
 
 impl<B: RulingBrain> Arbiter<B> {
@@ -574,7 +579,18 @@ impl<B: RulingBrain> Arbiter<B> {
             carrier,
             caps,
             brain,
+            node_target: NodeTarget::Local,
         }
+    }
+
+    /// **Make this Arbiter federation-capable.** By default it runs `Local` (rulings land
+    /// only on the in-process [`CaseLedger`]). Pass a [`NodeTarget::Federation`] (e.g. from
+    /// [`NodeTarget::from_env`], reading `DREGG_NODE_URL`) to additionally submit each
+    /// landed ruling's receipt commitment to a real independent-operator federation node
+    /// and confirm it landed — one flip from the live federation deploy.
+    pub fn with_node_target(mut self, target: NodeTarget) -> Arbiter<B> {
+        self.node_target = target;
+        self
     }
 
     /// The pinned config a verifier checks this Arbiter's rulings against.
@@ -620,6 +636,13 @@ impl<B: RulingBrain> Arbiter<B> {
         // (4) LAND the turn: append the receipted attested ruling.
         let seq = ledger.ledger.len() as u64;
         let receipt = attestation_commitment(&attestation);
+        // FEDERATION SEAM: in `Local` mode a no-op; in `Federation` mode the ruling's
+        // receipt commitment is submitted to the real node + confirmed landed FIRST — a
+        // rejected / unreachable / non-landing submit refuses the ruling fail-closed, so
+        // the ledger never records a ruling that did not replicate to the federation.
+        self.node_target
+            .route(&SubmittedTurn::new(rubric.id.clone(), receipt))
+            .map_err(|e| ArbiterError::Federation(e.to_string()))?;
         ledger.ledger.push(LedgerEntry {
             seq,
             rubric_id: rubric.id.clone(),
@@ -668,6 +691,10 @@ pub enum ArbiterError {
     /// The ruling could not be shaped into a well-formed attestable body (a modeling fault —
     /// should not arise from an ordinary ruling).
     NotAttestable(String),
+    /// The ruling attested cleanly but a configured [`NodeTarget::Federation`] node refused
+    /// it or could not confirm it landed (a rejected / unreachable / non-landing submit).
+    /// Refused fail-closed: the ledger records no ruling that did not replicate.
+    Federation(String),
 }
 
 impl ArbiterError {
@@ -688,6 +715,7 @@ impl std::fmt::Display for ArbiterError {
             ),
             ArbiterError::OutOfJurisdiction(o) => write!(f, "REFUSED (out of jurisdiction): {o}"),
             ArbiterError::NotAttestable(m) => write!(f, "ruling not attestable: {m}"),
+            ArbiterError::Federation(m) => write!(f, "REFUSED (federation routing failed): {m}"),
         }
     }
 }

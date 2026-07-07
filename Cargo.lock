@@ -1432,6 +1432,7 @@ name = "attested-dm"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "dregg-node-target",
  "dregg-zkoracle-prove",
 ]
 
@@ -1473,6 +1474,7 @@ dependencies = [
  "blake3",
  "deos-hermes",
  "dregg-agent",
+ "dregg-node-target",
  "dregg-zkoracle-prove",
 ]
 
@@ -2872,6 +2874,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "commons-arbiter"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-node-target",
+ "dregg-zkoracle-prove",
+]
+
+[[package]]
 name = "compression-codecs"
 version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2921,6 +2932,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "dregg-cell",
+ "dregg-node-target",
  "dregg-zkoracle-prove",
  "grain-fork",
  "hosted-lease",
@@ -5270,6 +5282,16 @@ dependencies = [
  "uuid",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "dregg-node-target"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -11525,6 +11547,7 @@ name = "mud-dregg"
 version = "0.1.0"
 dependencies = [
  "dregg-cell",
+ "dregg-node-target",
  "dregg-turn",
  "starbridge-v2",
 ]
@@ -18413,6 +18436,7 @@ dependencies = [
  "collective-choice",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-node-target",
  "spween",
  "zeroize",
 ]

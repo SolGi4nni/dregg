@@ -401,3 +401,63 @@ fn a_five_worker_swarm_holds() {
     assert!(v.accepted(), "a 5-worker swarm is accepted");
     assert_eq!(v.total_worker_budget, 500_000);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The federation seam: report receipts optionally route to a real node.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// With a `Federation` target, every worker's report receipt is submitted to the node and
+/// confirmed landed — each report card's `receipt` shows up on the node's finalized log.
+#[test]
+fn federation_target_lands_every_report_card() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let carrier = SwarmAttestationCarrier::default();
+    let node = StubNode::new();
+    let swarm = assemble_three().with_node_target(NodeTarget::federation(node.clone()));
+
+    let cards = swarm.report_cards(&carrier);
+    let landed = swarm
+        .land_reports(&carrier)
+        .expect("federation lands every attested report");
+
+    assert_eq!(landed.len(), cards.len(), "one landed receipt per worker");
+    assert_eq!(node.len(), cards.len(), "the node finalized every report");
+    for card in &cards {
+        assert!(
+            node.contains(&card.receipt),
+            "report {}'s receipt landed on the node",
+            card.worker
+        );
+    }
+}
+
+/// A federation node that refuses the submit makes landing fail-closed: the swarm learns
+/// its reports did not replicate (`SwarmFederationError::Rejected`), nothing landed.
+#[test]
+fn federation_reject_refuses_landing() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let carrier = SwarmAttestationCarrier::default();
+    let node = StubNode::rejecting();
+    let swarm = assemble_three().with_node_target(NodeTarget::federation(node.clone()));
+
+    let refused = swarm.land_reports(&carrier);
+    assert!(
+        matches!(refused, Err(SwarmFederationError::Rejected { .. })),
+        "a rejecting node fails landing, got {refused:?}"
+    );
+    assert_eq!(node.len(), 0, "nothing landed — fail-closed");
+}
+
+/// The default is `Local`: `land_reports` succeeds and lands nothing (the in-process swarm
+/// is the sole record) — proving the federation seam is off by default, no regression.
+#[test]
+fn local_default_lands_nothing() {
+    let carrier = SwarmAttestationCarrier::default();
+    let swarm = assemble_three();
+    let landed = swarm
+        .land_reports(&carrier)
+        .expect("Local land_reports is a no-op that succeeds");
+    assert!(landed.is_empty(), "Local mode federates nothing");
+}

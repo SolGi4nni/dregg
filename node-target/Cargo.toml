@@ -1,0 +1,44 @@
+# dregg-node-target — the shared federation-routing seam for the flagship + spween fleet.
+#
+# Every flagship runs on an in-process ledger today (its own `EmbeddedExecutor` /
+# `LocalNode` / commitment-chain). This crate is the ONE small config each of them
+# takes so a minted turn can OPTIONALLY be routed through a REAL federation node
+# (a `DREGG_NODE_URL`) instead of staying process-local:
+#
+#   * `NodeTarget::Local`      — the default. No network; the crate keeps its own
+#                                in-process ledger. Keeps every test green + fast.
+#   * `NodeTarget::Federation` — submit each minted turn's commitment to a real
+#                                node's `POST /turn/submit`, then confirm it landed
+#                                via the node's `GET /api/receipts`. A rejected /
+#                                unreachable / non-landing submit is REFUSED (Err).
+#
+# The `DREGG_NODE_URL` env + Local-default pattern is the one `agent-platform`
+# established (commit b655a9357); this generalizes it into a seam the whole fleet
+# shares. The core (Local + the in-memory `StubNode`) has NO network deps, so the
+# default build + the green stub tests never touch HTTP. The real HTTP transport is
+# behind the `http` feature.
+[package]
+name = "dregg-node-target"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "The shared federation-routing seam for the dregg flagship fleet: NodeTarget::Local (in-process, default) or NodeTarget::Federation (submit each minted turn to a real DREGG_NODE_URL node + confirm it landed), with an in-memory StubNode for green wiring tests."
+
+[lib]
+name = "dregg_node_target"
+path = "src/lib.rs"
+
+[dependencies]
+# Only pulled in under the `http` feature — the real federation transport (the blocking
+# reqwest client that POSTs to `/turn/submit` and reads `/api/receipts`). The default
+# build (Local + StubNode) needs none of these, so it stays network-free + fast.
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["json", "rustls-tls", "blocking"] }
+serde = { version = "1", optional = true, features = ["derive"] }
+serde_json = { version = "1", optional = true }
+hex = { version = "0.4", optional = true }
+
+[features]
+default = []
+# The REAL federation transport over HTTP. OFF by default so the standard build + the
+# green wiring tests stay HTTP-free (they exercise the seam against the in-memory stub).
+http = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:hex"]

@@ -24,6 +24,7 @@
 use agent_platform::{LocalNode, NodeMinter};
 use deos_hermes::{AnthropicConfig, AttestationCarrier, ProveError, attestation_commitment};
 use dregg_agent::agent::GrainTurnMinter;
+use dregg_node_target::{NodeTarget, SubmittedTurn};
 
 use crate::brain::{Brain, Decision, MarketView, Side};
 use crate::mandate::{Mandate, MandateViolation};
@@ -138,6 +139,10 @@ pub struct Fund {
     acc: [u8; 32],
     seq: u64,
     records: Vec<TradeRecord>,
+    /// Where each landed trade turn ALSO routes. [`NodeTarget::Local`] (default) keeps the
+    /// track record on this in-process [`LocalNode`]; [`NodeTarget::Federation`] additionally
+    /// submits each landed trade turn to a real `DREGG_NODE_URL` node and confirms it landed.
+    node_target: NodeTarget,
 }
 
 impl Fund {
@@ -168,7 +173,18 @@ impl Fund {
             acc: [0u8; 32],
             seq: 0,
             records: Vec::new(),
+            node_target: NodeTarget::Local,
         })
+    }
+
+    /// **Make this fund federation-capable.** By default the fund runs `Local` (the track
+    /// record lives on the in-process [`LocalNode`] only). Pass a [`NodeTarget::Federation`]
+    /// (e.g. from [`NodeTarget::from_env`], reading `DREGG_NODE_URL`) to ALSO submit each
+    /// landed trade turn to a real federation node and confirm it landed — one flip from
+    /// replicating the record onto a live federation.
+    pub fn with_node_target(mut self, target: NodeTarget) -> Self {
+        self.node_target = target;
+        self
     }
 
     /// The pinned anchor of THIS fund's decision attestations — a verifier checks each
@@ -250,6 +266,18 @@ impl Fund {
             .minter
             .mint_turn(&decision.label(), 1, (self.seq as i64) + 1, new_acc)
             .map_err(FundError::Ledger)?;
+
+        // 5b. FEDERATION SEAM: in `Local` mode this is a no-op; in `Federation` mode the
+        //     landed trade turn is ALSO submitted to the real node + confirmed landed. A
+        //     rejected / unreachable / non-landing submit fails the step fail-closed (the
+        //     book is NOT committed below), so a trade that did not replicate is not
+        //     recorded as if it had.
+        self.node_target
+            .route(&SubmittedTurn::new(
+                self.node.domain().to_string(),
+                turn_hash,
+            ))
+            .map_err(|e| FundError::Federation(e.to_string()))?;
 
         // 6. COMMIT the simulated book (only after the turn landed).
         self.cash = new_cash;
@@ -405,6 +433,10 @@ pub enum FundError {
     },
     /// The executor refused the on-ledger turn host-side (over the rate budget / insolvent).
     Ledger(String),
+    /// A configured [`NodeTarget::Federation`] node refused the landed trade turn or could
+    /// not confirm it landed (a rejected / unreachable / non-landing submit). Fail-closed:
+    /// the book is NOT committed, so a trade that did not replicate is not recorded.
+    Federation(String),
     /// An arithmetic overflow computing a fill (defensive).
     Overflow,
 }
@@ -421,6 +453,7 @@ impl core::fmt::Display for FundError {
                 write!(f, "over budget: buy needs {need}, only {have} available")
             }
             FundError::Ledger(e) => write!(f, "on-ledger turn refused: {e}"),
+            FundError::Federation(e) => write!(f, "federation routing failed: {e}"),
             FundError::Overflow => write!(f, "fill arithmetic overflow"),
         }
     }

@@ -323,3 +323,49 @@ fn the_crown_property_holds_over_a_mixed_session() {
         .verify_ledger(dm.config())
         .expect("every landed turn is authentic ∧ well-formed ∧ injection-free");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The federation seam: a landed narration turn optionally routes to a real node.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn federation_target_lands_narration_receipt_commitments() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let dm = dm();
+    let node = StubNode::new();
+    let mut world = WorldCell::new(SCENE).with_node_target(NodeTarget::federation(node.clone()));
+    let player = PlayerMessage::new("mara", "I ask the innkeeper about the sealed cellar");
+
+    let receipt = dm
+        .narrate_turn(&mut world, &player)
+        .expect("a benign narration attests AND lands on the federation node");
+
+    // On-ledger locally exactly as in Local mode (no regression), AND the receipt
+    // commitment landed on the node's finalized log — cross-node-verifiable.
+    assert_eq!(world.ledger.len(), 1);
+    assert!(node.contains(&receipt.id));
+    assert_eq!(node.len(), 1);
+    world
+        .verify_ledger(dm.config())
+        .expect("the landed turn is authentic");
+}
+
+#[test]
+fn federation_reject_refuses_the_narration_and_leaves_no_receipt() {
+    use dregg_node_target::{NodeTarget, StubNode};
+
+    let dm = dm();
+    let node = StubNode::rejecting();
+    let mut world = WorldCell::new(SCENE).with_node_target(NodeTarget::federation(node.clone()));
+    let player = PlayerMessage::new("mara", "I ask the innkeeper about the sealed cellar");
+
+    let refused = dm.narrate_turn(&mut world, &player);
+    assert!(
+        matches!(refused, Err(DmError::Federation(_))),
+        "a node that refuses the submit refuses the narration, got {refused:?}"
+    );
+    // Anti-ghost across the seam: the world advanced not at all, no receipt landed.
+    assert!(world.ledger.is_empty());
+    assert_eq!(node.len(), 0);
+}

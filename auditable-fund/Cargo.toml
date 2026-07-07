@@ -37,4 +37,8 @@ deos-hermes = { path = "../deos-hermes" }
 # price lane directly.)
 dregg-zkoracle-prove = { path = "../zkoracle-prove" }
 dregg-agent = { path = "../dregg-agent" }
+# THE FEDERATION SEAM — `NodeTarget::Local` (default, the in-process `LocalNode`) or
+# `Federation` (ALSO submit each landed trade turn to a real `DREGG_NODE_URL` node +
+# confirm it landed). One flip from replicating the track record onto a live federation.
+dregg-node-target = { path = "../node-target" }
 blake3 = "1"

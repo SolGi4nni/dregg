@@ -54,6 +54,37 @@ use dregg_zkoracle_prove::{
     ProveError, ZkOracleAttestation,
 };
 
+use dregg_node_target::{Landed, NodeError, NodeTarget, SubmittedTurn};
+
+/// Domain separator for [`attestation_commitment`] — the swarm report receipt-id domain.
+const RECEIPT_COMMIT_DOMAIN: &[u8] = b"confined-swarm-report-receipt-v1";
+
+/// **The 32-byte receipt commitment over a worker's report attestation** — the on-ledger
+/// fingerprint a light client recomputes. BLAKE3 over the attestation's load-bearing,
+/// verifier-visible fields (the pinned session identity + signed transcripts, the
+/// cross-leg content commitment, and the injection-checked field span): a tampered
+/// session, a spliced body, or a re-aimed field span all change it. The SAME shape the
+/// sibling attestation crates (`attested-dm`, `commons-arbiter`) and
+/// `deos_hermes::attest::attestation_commitment` use — kept per-crate with its own domain
+/// separator so a swarm receipt is not confusable with a DM narration or arbiter ruling.
+pub fn attestation_commitment(att: &ZkOracleAttestation) -> [u8; 32] {
+    let pres = &att.presentation;
+    let mut h = blake3::Hasher::new();
+    h.update(RECEIPT_COMMIT_DOMAIN);
+    h.update(&(pres.server_name.len() as u64).to_le_bytes());
+    h.update(pres.server_name.as_bytes());
+    h.update(&pres.connection_time.to_le_bytes());
+    h.update(&(pres.sent.len() as u64).to_le_bytes());
+    h.update(&pres.sent);
+    h.update(&(pres.recv.len() as u64).to_le_bytes());
+    h.update(&pres.recv);
+    h.update(&pres.notary_sig);
+    h.update(&att.content_commit.as_u32().to_le_bytes());
+    h.update(&(att.field_span.offset as u64).to_le_bytes());
+    h.update(&(att.field_span.len as u64).to_le_bytes());
+    *h.finalize().as_bytes()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The attestation carrier — the real zkoracle-prove primitives, composed.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,6 +334,45 @@ impl std::fmt::Display for SwarmError {
 
 impl std::error::Error for SwarmError {}
 
+/// Why routing a swarm's report receipts to a federation node was refused — fail-closed.
+#[derive(Debug)]
+pub enum SwarmFederationError {
+    /// Worker `i` carries no attestation, so it has no receipt to federate.
+    Unattested(usize),
+    /// Worker `i`'s attestation fails `verify_zkoracle` — a forged / tampered report is
+    /// not federated.
+    Unverifiable(usize),
+    /// The federation node rejected worker `i`'s report submit or could not confirm it
+    /// landed (a rejected / unreachable / non-landing node).
+    Rejected {
+        /// The worker whose report the node refused.
+        worker: usize,
+        /// The underlying federation error.
+        error: NodeError,
+    },
+}
+
+impl std::fmt::Display for SwarmFederationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SwarmFederationError::Unattested(i) => {
+                write!(f, "worker {i} has no attestation to federate")
+            }
+            SwarmFederationError::Unverifiable(i) => {
+                write!(
+                    f,
+                    "worker {i}'s attestation does not verify — not federated"
+                )
+            }
+            SwarmFederationError::Rejected { worker, error } => {
+                write!(f, "federation refused worker {worker}'s report: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SwarmFederationError {}
+
 impl From<ConfinedForkError> for SwarmError {
     fn from(e: ConfinedForkError) -> Self {
         SwarmError::Fork(e)
@@ -357,6 +427,11 @@ pub struct Swarm {
     sources: Vec<Source>,
     /// The forked, jailed, attested workers.
     workers: Vec<Worker>,
+    /// Where each worker's report receipt routes. [`NodeTarget::Local`] (the default)
+    /// keeps reports on this in-process swarm; [`NodeTarget::Federation`] additionally
+    /// submits each report's receipt commitment to a real `DREGG_NODE_URL` node and
+    /// confirms it landed ([`Swarm::land_reports`]).
+    node_target: NodeTarget,
 }
 
 impl Swarm {
@@ -443,7 +518,60 @@ impl Swarm {
             root_budget,
             sources,
             workers,
+            node_target: NodeTarget::Local,
         })
+    }
+
+    /// **Make this swarm federation-capable.** By default a swarm runs `Local` (every
+    /// report stays on this in-process swarm). Pass a [`NodeTarget::Federation`] (e.g.
+    /// from [`NodeTarget::from_env`], reading `DREGG_NODE_URL`) so [`Swarm::land_reports`]
+    /// additionally submits each worker's report receipt to a real federation node and
+    /// confirms it landed — one flip from a live federation.
+    pub fn with_node_target(mut self, target: NodeTarget) -> Self {
+        self.node_target = target;
+        self
+    }
+
+    /// **Route every worker's report receipt through the configured [`NodeTarget`].**
+    ///
+    /// For each attested worker: verify its attestation (`verify_zkoracle`), compute the
+    /// receipt commitment ([`attestation_commitment`]), and [`route`](NodeTarget::route)
+    /// it. In [`NodeTarget::Local`] mode routing is a no-op — this succeeds and lands
+    /// nothing (returns an empty `Vec`, the in-process swarm being the sole record). In
+    /// [`NodeTarget::Federation`] mode each receipt is submitted to the node and confirmed
+    /// landed; the returned `Vec` holds one [`Landed`] per worker.
+    ///
+    /// Fail-closed: an unattested / unverifiable worker, or a node that rejects / cannot
+    /// confirm a submit, returns [`SwarmFederationError`] and lands no further reports.
+    pub fn land_reports(
+        &self,
+        carrier: &SwarmAttestationCarrier,
+    ) -> Result<Vec<Landed>, SwarmFederationError> {
+        let mut landed = Vec::new();
+        for w in &self.workers {
+            let att = w
+                .attestation
+                .as_ref()
+                .ok_or(SwarmFederationError::Unattested(w.index))?;
+            if verify_zkoracle(att, carrier.config()).is_err() {
+                return Err(SwarmFederationError::Unverifiable(w.index));
+            }
+            let commitment = attestation_commitment(att);
+            match self
+                .node_target
+                .route(&SubmittedTurn::new(w.source.name.clone(), commitment))
+            {
+                Ok(Some(l)) => landed.push(l),
+                Ok(None) => {} // Local mode: no-op, nothing federated.
+                Err(error) => {
+                    return Err(SwarmFederationError::Rejected {
+                        worker: w.index,
+                        error,
+                    })
+                }
+            }
+        }
+        Ok(landed)
     }
 
     /// **The n-ary swarm fork — chain [`ConfinedSession::fork_two`] into N sovereign
@@ -636,6 +764,11 @@ impl Swarm {
                     .next()
                     .unwrap_or("")
                     .to_string();
+                let receipt = w
+                    .attestation
+                    .as_ref()
+                    .map(attestation_commitment)
+                    .unwrap_or([0u8; 32]);
                 ReportCard {
                     worker: w.index,
                     source_name: w.source.name.clone(),
@@ -645,6 +778,7 @@ impl Swarm {
                     attested,
                     budget_remaining: w.budget(),
                     report: w.report.clone(),
+                    receipt,
                 }
             })
             .collect()
@@ -690,6 +824,11 @@ pub struct ReportCard {
     pub budget_remaining: i64,
     /// The report text the worker's brain produced from its one source.
     pub report: String,
+    /// The 32-byte receipt commitment over this report's attestation
+    /// ([`attestation_commitment`]) — the id under which [`Swarm::land_reports`] lands it
+    /// on a federation node, and which a light client recomputes to confirm the landing.
+    /// All-zero for an unattested worker.
+    pub receipt: [u8; 32],
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

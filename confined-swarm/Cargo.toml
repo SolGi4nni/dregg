@@ -61,6 +61,11 @@ dregg-cell = { path = "../cell" }
 # that is provably absent from every other worker's mind — the isolation witness).
 blake3 = "1"
 
+# THE FEDERATION SEAM — `NodeTarget::Local` (default, in-process) or `Federation` (route
+# each worker's report receipt commitment to a real `DREGG_NODE_URL` node + confirm it
+# landed). One flip from the live independent-operator federation.
+dregg-node-target = { path = "../node-target" }
+
 [features]
 # THE CROWN, run REAL-LOCALLY. Attest each worker's turn over a GENUINE local
 # MPC-TLS 2PC roundtrip (zkoracle-prove's vendored TLSNotary) instead of the modeled

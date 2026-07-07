@@ -30,6 +30,9 @@ dregg-cell = { path = "../cell" }
 # Mandate delegation). The collective-CYOA branch loop drives THIS, so the crowd-vote
 # that picks a story branch is the SAME engine that governs a federation — no stub.
 collective-choice = { path = "../collective-choice" }
+# THE FEDERATION SEAM — `NodeTarget::Local` (default, in-process) or `Federation`
+# (route each committed choice-turn to a real `DREGG_NODE_URL` node + confirm it landed).
+dregg-node-target = { path = "../node-target" }
 blake3 = "1"
 # Deterministic world identity (`AgentCipherclerk::from_key_bytes`) so a
 # playthrough re-verifies against a freshly re-deployed world-cell.

@@ -24,6 +24,7 @@ use dregg_app_framework::{
     ExecutorSubmitError, FieldElement, TurnReceipt, field_from_u64, symbol,
 };
 use dregg_cell::Cell;
+use dregg_node_target::{NodeTarget, SubmittedTurn};
 use spween::{Choice, EffectHandler, Runtime, RuntimeState, Scene, Value};
 use zeroize::Zeroizing;
 
@@ -48,6 +49,10 @@ pub enum WorldError {
     UnknownTarget(String),
     /// The scene could not be compiled to a world-cell.
     Compile(CompileError),
+    /// The choice-turn committed locally but a configured [`NodeTarget::Federation`]
+    /// node refused it or could not confirm it landed (a rejected / unreachable /
+    /// non-landing submit). Fail-closed: the caller learns the turn did not replicate.
+    Federation(String),
 }
 
 impl std::fmt::Display for WorldError {
@@ -56,6 +61,7 @@ impl std::fmt::Display for WorldError {
             WorldError::Refused(r) => write!(f, "world-cell turn refused: {r}"),
             WorldError::UnknownTarget(t) => write!(f, "unknown navigation target `{t}`"),
             WorldError::Compile(c) => write!(f, "compile error: {c}"),
+            WorldError::Federation(m) => write!(f, "federation routing failed: {m}"),
         }
     }
 }
@@ -83,6 +89,10 @@ pub struct WorldCell {
     seed_vars: BTreeMap<String, Value>,
     /// Explicitly-seeded membership atoms.
     seed_has: BTreeSet<(String, String)>,
+    /// Where committed choice-turns route. [`NodeTarget::Local`] (default) keeps them on
+    /// this in-process executor; [`NodeTarget::Federation`] additionally submits each to
+    /// a real `DREGG_NODE_URL` node + confirms it landed.
+    node_target: NodeTarget,
 }
 
 impl WorldCell {
@@ -128,7 +138,18 @@ impl WorldCell {
             story,
             seed_vars: BTreeMap::new(),
             seed_has: BTreeSet::new(),
+            node_target: NodeTarget::Local,
         })
+    }
+
+    /// **Make this world federation-capable.** By default a world runs `Local` (every
+    /// committed choice-turn stays on this in-process executor). Pass a
+    /// [`NodeTarget::Federation`] (e.g. from [`NodeTarget::from_env`], reading
+    /// `DREGG_NODE_URL`) to additionally submit each committed choice-turn to a real
+    /// federation node and confirm it landed — one flip from a live federation.
+    pub fn with_node_target(mut self, target: NodeTarget) -> Self {
+        self.node_target = target;
+        self
     }
 
     /// The world-cell id.
@@ -289,7 +310,17 @@ impl WorldCell {
     /// Build, sign, and submit a turn on the world-cell under `method`.
     fn commit(&self, method: &str, effects: Vec<Effect>) -> Result<TurnReceipt, WorldError> {
         let action = self.cclerk.make_action(self.cell, method, effects);
-        Ok(self.exec.submit_action(&self.cclerk, action)?)
+        let receipt = self.exec.submit_action(&self.cclerk, action)?;
+        // FEDERATION SEAM: in `Local` mode this is a no-op; in `Federation` mode the
+        // committed choice-turn is submitted to the real node + confirmed landed, and a
+        // rejected / unreachable / non-landing submit fails the choice (fail-closed).
+        self.node_target
+            .route(&SubmittedTurn::new(
+                self.story.scene_id.clone(),
+                receipt.turn_hash,
+            ))
+            .map_err(|e| WorldError::Federation(e.to_string()))?;
+        Ok(receipt)
     }
 }
 

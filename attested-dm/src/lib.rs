@@ -52,6 +52,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use dregg_node_target::{NodeTarget, SubmittedTurn};
 use dregg_zkoracle_prove::{
     build_anthropic_fixture, prove_zkoracle, verify_zkoracle, AnthropicConfig, FixtureNotary,
     ProveError, VerifiedZkOracle, ZkOracleAttestation, ZkOracleError,
@@ -236,7 +237,7 @@ pub enum WorldEffect {
 /// receipt (the anti-ghost tooth). Defined locally from the spween-on-dregg design
 /// (`docs/deos/SPWEEN-ON-DREGG.md`); reconciled against the real `WorldCell` at
 /// registration.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct WorldCell {
     /// The current scene / passage name.
     pub scene: String,
@@ -247,6 +248,30 @@ pub struct WorldCell {
     /// The receipt ledger — every landed narration turn, in order. Un-rewritable: a past
     /// turn cannot be secretly changed ([`WorldCell::verify_ledger`] catches it).
     pub ledger: Vec<LedgerEntry>,
+    /// Where landed narration turns route. [`NodeTarget::Local`] (default) keeps them on
+    /// this in-process ledger; [`NodeTarget::Federation`] additionally submits each
+    /// landed turn's receipt commitment to a real `DREGG_NODE_URL` node + confirms it
+    /// landed (a rejected submit refuses the turn, fail-closed).
+    pub node_target: NodeTarget,
+}
+
+impl std::fmt::Debug for WorldCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorldCell")
+            .field("scene", &self.scene)
+            .field("flags", &self.flags)
+            .field("inventory", &self.inventory)
+            .field("ledger", &self.ledger)
+            .field(
+                "node_target",
+                &if self.node_target.is_local() {
+                    "local"
+                } else {
+                    "federation"
+                },
+            )
+            .finish()
+    }
 }
 
 /// One landed, attested, receipted DM turn on the ledger.
@@ -274,6 +299,16 @@ impl WorldCell {
             scene: scene.into(),
             ..Default::default()
         }
+    }
+
+    /// **Make this world federation-capable.** By default a world runs `Local` (every
+    /// landed narration turn stays on this in-process ledger). Pass a
+    /// [`NodeTarget::Federation`] (e.g. from [`NodeTarget::from_env`], reading
+    /// `DREGG_NODE_URL`) to additionally submit each landed turn's receipt commitment to
+    /// a real federation node and confirm it landed — one flip from a live federation.
+    pub fn with_node_target(mut self, target: NodeTarget) -> WorldCell {
+        self.node_target = target;
+        self
     }
 
     /// Apply a cap-authorized world-effect to the world state. (Called only after
@@ -624,6 +659,14 @@ impl<B: DmBrain> DungeonMaster<B> {
         // (3) LAND the turn: apply the effect, append the receipted attested turn.
         let seq = world.ledger.len() as u64;
         let receipt = attestation_commitment(&attestation);
+        // FEDERATION SEAM: route the receipt commitment to a real node BEFORE touching
+        // the world. In `Local` mode this is a no-op; in `Federation` mode a rejected /
+        // unreachable / non-landing submit refuses the turn here — the world advances not
+        // at all and NO receipt lands (the anti-ghost tooth is preserved across the seam).
+        world
+            .node_target
+            .route(&SubmittedTurn::new(world.scene.clone(), receipt))
+            .map_err(|e| DmError::Federation(e.to_string()))?;
         if let Some(effect) = &mv.effect {
             world.apply(effect);
         }
@@ -669,6 +712,10 @@ pub enum DmError {
     /// The narration could not be shaped into a well-formed attestable body (a modeling
     /// fault — should not arise from ordinary narration).
     NotAttestable(String),
+    /// The narration attested, but a configured [`NodeTarget::Federation`] node refused
+    /// it or could not confirm it landed (a rejected / unreachable / non-landing submit).
+    /// Fail-closed: the turn is refused and no receipt lands (anti-ghost preserved).
+    Federation(String),
 }
 
 impl DmError {
@@ -689,6 +736,7 @@ impl std::fmt::Display for DmError {
             ),
             DmError::OverCap(o) => write!(f, "REFUSED (over-cap): {o}"),
             DmError::NotAttestable(m) => write!(f, "narration not attestable: {m}"),
+            DmError::Federation(m) => write!(f, "REFUSED (federation): {m}"),
         }
     }
 }

@@ -33,15 +33,12 @@
 # OPERATE step (docs/deos/UNCENSORABLE-UTILITY.md §4), not a missing capability. The quorum
 # here is a `VoteEngine`-shaped stub of the real `collective-choice` / blocklace finality.
 #
-# STANDALONE WORKSPACE (declares its own `[workspace]`): it is NOT yet a member of the
-# breadstuffs root — build it directly with
-#   cargo build --manifest-path commons-arbiter/Cargo.toml
-#   cargo test  --manifest-path commons-arbiter/Cargo.toml
-# Its `[patch]` tables mirror the root's (the plonky3-recursion sibling checkout + the
-# ark-serialize serde fork) so zkoracle-prove's proof dep-tree resolves identically. The
-# path deps stay members of the breadstuffs root workspace, so their `workspace = true`
-# inheritance resolves against that root unchanged. Root registration is coordinated
-# separately (another lane owns the root workspace manifest).
+# A WORKSPACE MEMBER of the breadstuffs root (registered in `members`) — build/test with
+#   cargo build -p commons-arbiter
+#   cargo test  -p commons-arbiter
+# The root `[workspace]` + its `[patch]` tables (the plonky3-recursion sibling checkout +
+# the ark-serialize serde fork) apply, so zkoracle-prove's proof dep-tree resolves
+# identically — no standalone `[workspace]`/`[patch]` here.
 
 [package]
 name = "commons-arbiter"
@@ -64,23 +61,18 @@ dregg-zkoracle-prove = { path = "../zkoracle-prove" }
 # recomputes) — the SAME BLAKE3 shape `deos_hermes::attest` uses.
 blake3 = "1"
 
+# THE FEDERATION SEAM — `NodeTarget::Local` (default, in-process ledger) or `Federation`
+# (route each landed ruling's receipt commitment to a real `DREGG_NODE_URL` node + confirm
+# it landed). One flip from the live independent-operator federation.
+dregg-node-target = { path = "../node-target" }
+
 [features]
 # THE CROWN, run REAL-LOCALLY. Attest the ruling over a GENUINE local MPC-TLS 2PC roundtrip
 # (zkoracle-prove's vendored TLSNotary) instead of the modeled ed25519 carrier. OFF by
 # default so the standard build stays HTTP/TLS-free.
 tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STANDALONE workspace — mirror the root's [patch] so the proof dep-tree resolves
-# identically (see the header note).
-[workspace]
-
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
-
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+# A workspace MEMBER of the breadstuffs root (registered in `members`). The root
+# `[workspace]` + its `[patch]` tables (the plonky3-recursion sibling checkout + the
+# ark-serialize serde fork) apply, so zkoracle-prove's proof dep-tree resolves
+# identically — no standalone `[workspace]`/`[patch]` here.
