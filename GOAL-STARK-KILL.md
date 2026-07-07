@@ -12,17 +12,24 @@ verifiable) where there's a consumer, and beyond (cross-circuit composition + as
 apex). Done = engine + AIRs deleted, every survivor Lean-emitted + Rung-1&2-proven.
 
 ## Current thrust
-Rung 1 nearly complete (17/20 families landed + committed). BLOCKED on the API session
-limit (resets ~02:40 ET 07-07) for the last stragglers + Rung 2. Verify-before-commit.
+**Rung 1 COMPLETE — every family has a committed, verified whole-descriptor bridge.**
+DFA Rung-2 pathfinder running (`wf_4fd47e89-a55`). Next: fan Rung-2 out; open Phase 2b.
 
-## Next 3 moves (fire when the limit resets)
-1. Resume `wf_1ee0382f-94a` for the 4 Rung-1 stragglers: refine temporal + garbled (died
-   mid-emit), refute multi_step + presentation (emit green, verify died). Harvest + commit
-   CONFIRMED.
-2. Re-fire the DFA Rung-2 pathfinder (`wf_9717841d-cf1`, BLOCKED = its lone agent hit the
-   limit, not a real block) — close `hterm` via `route_commitment_binds_trace`.
-3. Fan out Rung-2 across all families using DFA Rung-2 as template; then Phase 2b
-   (theorem-backed hand-AIR deletion) for the done families.
+## Next 3 moves
+1. Await DFA Rung-2 conclusion → verify + commit the `DfaRoutingRung2` template (builds
+   green; real `CollisionFree` carrier + `cheatTrace` non-vacuity witness).
+2. Fan out Rung-2 across all families (additive `*Rung2.lean`, adversarial vacuity-hunt),
+   prioritizing the honest Rung-1 PARTIALs (membership, note_spending).
+3. Phase 2b: theorem-backed hand-AIR deletion for done families; then `git rm stark.rs`.
+
+## ⚑ Model-found finding (worth a fix, not a Rung-2 item)
+The membership Rung-1 PARTIAL surfaced a REAL DSL→IR-v2 drift: `AdjacencyMembershipEmit`
+maps the child-ordering gates to `.base (.gate …)`, which `holdsVm` makes VACUOUS on the
+LAST row (when_transition). The deployed DSL (`dsl_plonky3.rs:225/240`) lowers them as
+every-row `assert_zero` — so the emit UNDER-constrains the last Merkle level vs the hand AIR.
+Fix = re-emit those ordering gates as an every-row IR-v2 form (moves the byte-golden + gate
+test). Upgrades membership PARTIAL → full; same class may touch note_spending's Merkle fold.
+Surfaced by the refinement proof itself — exactly what Rung 1 is for.
 
 ## Done-log
 - Rung 0 (emit + real-prover gate) landed for all 20 families — `9c440d208` (+ merkle
