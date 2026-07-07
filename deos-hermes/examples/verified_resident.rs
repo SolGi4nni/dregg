@@ -28,9 +28,11 @@
 //!
 //! ## Honest seams (each named where it bites)
 //!
-//!   1. The authentic leg is a MODELED ed25519 carrier over the response bytes, not a
-//!      live `api.anthropic.com` MPC-TLS session (`--features zk-live` runs the real
-//!      local 2PC roundtrip; the deployed-notary session is the operational remainder).
+//!   1. By DEFAULT the authentic leg is a MODELED ed25519 carrier over the response bytes.
+//!      Under `--features zk-live` it is FUSED to a REAL local MPC-TLS 2PC presentation:
+//!      `verify_zkoracle_live` authenticates leg 1 by a genuine `presentation.verify()` (a
+//!      trustless notary that saw no plaintext), not the model. The live `api.anthropic.com`
+//!      deployed-notary session is then the one operational remainder.
 //!   2. The Lean authentic floor `decoAuthenticated` is Stripe-payment-shaped; the
 //!      Anthropic generalization is realized in Rust (this run).
 //!   3. The cross-leg content-commitment weld is Rust-only (Lean states 3 legs over
@@ -50,11 +52,19 @@ use agent_platform::{LocalNode, NodeMinter};
 use deos_hermes::{
     AcpClient, AgentCipherclerk, AgentRuntime, AttestationCarrier, GrantRegistry, HeldToken,
     HermesAgentPeer, HermesGateway, PermissionOutcome, attestation_commitment,
-    resident_brain_from_env, verify_zkoracle,
+    resident_brain_from_env,
 };
+// The default (modeled-carrier) verifier — under `zk-live` the trustless verifier replaces it.
+#[cfg(not(feature = "zk-live"))]
+use deos_hermes::verify_zkoracle;
 use dregg_agent::agent::GrainTurnMinter;
 use dregg_agent::session_store::ConsumedStore;
 use grain_turn::ATTESTATION_SLOT;
+// Under `zk-live` the attestation's authentic leg is the REAL local MPC-TLS 2PC presentation.
+#[cfg(feature = "zk-live")]
+use deos_hermes::attest::attest_turn_live;
+#[cfg(feature = "zk-live")]
+use dregg_zkoracle_prove::verify_zkoracle_live;
 
 fn line() {
     println!("───────────────────────────────────────────────────────────────");
@@ -148,15 +158,33 @@ fn main() {
     // the model's words still fires the guard). The modeled ed25519 carrier signs the
     // presentation; the CFG + injection legs are the REAL verified matchers.
     let carrier = AttestationCarrier::default();
-    let (att, field) = carrier
-        .attest_turn(&run.agent_text)
-        .expect("the confined turn is attestable (benign, well-formed)");
-    verify_zkoracle(&att, carrier.config())
-        .expect("the attestation verifies — all three legs (authentic ∧ well-formed ∧ inj-free)");
+    // DEFAULT: the modeled ed25519 carrier signs the presentation; the CFG + injection legs
+    // are the REAL verified matchers.
+    #[cfg(not(feature = "zk-live"))]
+    let (att, bound_len, leg) = {
+        let (att, field) = carrier
+            .attest_turn(&run.agent_text)
+            .expect("the confined turn is attestable (benign, well-formed)");
+        verify_zkoracle(&att, carrier.config())
+            .expect("the attestation verifies — all three legs (authentic ∧ well-formed ∧ inj-free)");
+        (att, field.len(), "modeled ed25519 carrier")
+    };
+    // Under `zk-live`: a GENUINE local MPC-TLS 2PC roundtrip authenticates the turn body, and
+    // `verify_zkoracle_live` authenticates leg 1 by the REAL `presentation.verify()` — a
+    // trustless 2PC notary — over the presentation the attestation now carries.
+    #[cfg(feature = "zk-live")]
+    let (att, bound_len, leg) = {
+        let att = attest_turn_live(&carrier, "verified-resident confined turn", &run.agent_text)
+            .expect("the confined turn attests over a real local MPC-TLS 2PC roundtrip");
+        verify_zkoracle_live(&att, "test-server.io").expect(
+            "the attestation verifies — authentic leg by REAL presentation.verify() ∧ well-formed ∧ inj-free",
+        );
+        (att, run.agent_text.len(), "REAL MPC-TLS 2PC presentation (trustless)")
+    };
     let commitment = attestation_commitment(&att);
     println!(
-        "\n④ TURN ATTESTED — zkOracle over {} bound bytes verifies; commitment {}…",
-        field.len(),
+        "\n④ TURN ATTESTED — zkOracle over {bound_len} bound bytes verifies (authentic leg = {leg}); \
+         commitment {}…",
         hex::encode(&commitment[..8])
     );
 
