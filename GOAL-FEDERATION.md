@@ -167,3 +167,14 @@ Two sequential gates on one pipeline:
 - SO: the payoff (a real attested CLIENT turn finalized cross-node) is NOT achieved. What IS proven:
   verified finality streams on n=4 (fixes 1+3), faucet turn finalizes cross-node, client cell
   provisions cross-node. The remaining wall = external-client-turn finalization in verified mode.
+
+## Round-2 diagnosis — NARROWED to consensus ordering (not proving, not execution)
+- Gate-ON reproduced: client turn accepted, height [1,1,1,1], 0/4, 60s. Node stderr (RUST_LOG=warn):
+  NO finalized-turn reject, NO verified-order fallback → the Lean tau-order was LIVE and the client
+  block simply NEVER ENTERED TAU'S FINALIZED PREFIX (never reached execute_finalized_turn).
+- ELIMINATES: proof-gap (my wrong guess — proof_pending doesn't gate finality) AND re-execution-reject.
+  The wall is CONSENSUS ORDERING/FINALIZATION: the client block isn't tau-finalized, though the
+  faucet turn (byte-identical submit) is. Submit path is byte-identical to faucet (api.rs:3344 vs 6863).
+- OPEN (gate-OFF experiment running): block-in-DAG-but-unratified vs never-disseminated; gate-sensitive
+  (Lean tau) vs deeper. NOTE the n=3 finding was Lean-gate SLOWNESS — is round-2 the same (client block
+  not reached by the slow poll) or genuinely unratifiable? The experiment settles it.
