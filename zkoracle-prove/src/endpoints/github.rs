@@ -254,6 +254,7 @@ mod tests {
                 github_commit_body(SHA, AUTHOR, DATE, MESSAGE).as_bytes(),
             ),
             zk_injection: None,
+            tlsn_presentation: None,
         };
         assert!(matches!(
             verify_github_commit(&att, &config),

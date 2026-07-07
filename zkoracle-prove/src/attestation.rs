@@ -92,6 +92,14 @@ pub struct ZkOracleAttestation {
     /// verifier checks it FAIL-CLOSED (a wrong-run/forged/injecting proof refuses the
     /// whole attestation); when absent leg 3 is the cleartext matcher as before.
     pub zk_injection: Option<ZkInjectionProof>,
+    /// **The REAL tlsn presentation** (optional) — the bincode-serialized genuine `tlsn`
+    /// `Presentation` from a live MPC-TLS 2PC roundtrip. When present, [`verify_zkoracle_live`]
+    /// (feature `tlsn-live`) authenticates leg 1 by the REAL `presentation.verify()` — a
+    /// trustless 2PC notary — instead of the modeled ed25519 [`Self::presentation`] carrier.
+    /// The default [`verify_zkoracle`] path ignores this and uses the modeled carrier, so a
+    /// light default attestation sets it `None`. Always present (not feature-gated) so the
+    /// struct shape is uniform; only the live *verifier* links the heavy `tlsn` backend.
+    pub tlsn_presentation: Option<Vec<u8>>,
 }
 
 /// The verified output: the authenticated session (server + response body) once all three
@@ -119,6 +127,10 @@ pub enum ZkOracleError {
     /// The STARK-carried injection leg refused (wrong run / forged proof). An
     /// `Injecting` verdict from the leg surfaces as [`ZkOracleError::Injection`].
     BadZkLeg(ZkLegError),
+    /// **The LIVE authentic leg refused** — the real `tlsn` `presentation.verify()` failed
+    /// (a tampered/forged presentation, a wrong server pin, or a missing presentation), as
+    /// surfaced by [`verify_zkoracle_live`]. Carries the real presentation-verifier message.
+    NotAuthenticLive(String),
 }
 
 impl core::fmt::Display for ZkOracleError {
@@ -141,6 +153,9 @@ impl core::fmt::Display for ZkOracleError {
             ZkOracleError::BadZkLeg(e) => {
                 write!(f, "STARK injection leg refused: {e:?}")
             }
+            ZkOracleError::NotAuthenticLive(msg) => {
+                write!(f, "live authentic leg refused (real tlsn presentation): {msg}")
+            }
         }
     }
 }
@@ -162,10 +177,53 @@ pub fn verify_zkoracle(
     att: &ZkOracleAttestation,
     config: &EndpointConfig,
 ) -> Result<VerifiedZkOracle, ZkOracleError> {
-    // Leg 1 — authentic → the authenticated response body.
+    // Leg 1 — authentic (modeled ed25519 carrier) → the authenticated response body.
     let session = verify_endpoint_presentation(&att.presentation, config)
         .map_err(ZkOracleError::NotAuthentic)?;
+    verify_legs_over_session(att, session)
+}
 
+/// **VERIFY a zkOracle attestation with the LIVE authentic leg** (feature `tlsn-live`).
+///
+/// Identical to [`verify_zkoracle`] EXCEPT leg 1 is authenticated by the REAL `tlsn`
+/// `presentation.verify()` over the attestation's [`ZkOracleAttestation::tlsn_presentation`]
+/// — a trustless MPC-TLS 2PC notary (the notary co-derived session keys and saw no
+/// plaintext), NOT the modeled ed25519 carrier. The authenticated body it yields drives the
+/// SAME cross-leg weld + well-formed + injection legs. A tampered/forged presentation is
+/// refused by the real crypto ([`ZkOracleError::NotAuthenticLive`]); an un-redacted api-key
+/// still fails the killer property ([`AuthenticError::ApiKeyDisclosed`]).
+#[cfg(feature = "tlsn-live")]
+pub fn verify_zkoracle_live(
+    att: &ZkOracleAttestation,
+    expected_server: &str,
+) -> Result<VerifiedZkOracle, ZkOracleError> {
+    let bytes = att.tlsn_presentation.as_ref().ok_or_else(|| {
+        ZkOracleError::NotAuthenticLive("attestation carries no tlsn presentation".to_string())
+    })?;
+    // Leg 1 — authentic by the REAL presentation.verify() (a tampered presentation fails
+    // here in the genuine tlsn crypto, not a modeled signature).
+    let vr = crate::tlsn_live::verify_messages_presentation(bytes, expected_server)
+        .map_err(|e| ZkOracleError::NotAuthenticLive(e.to_string()))?;
+    // The killer property survives the real session: the x-api-key was redacted.
+    if !vr.api_key_hidden() {
+        return Err(ZkOracleError::NotAuthentic(AuthenticError::ApiKeyDisclosed));
+    }
+    let session = AuthenticSession {
+        server_name: vr.server_name,
+        connection_time: vr.connection_time,
+        response_body: vr.response_body,
+    };
+    verify_legs_over_session(att, session)
+}
+
+/// The shared legs 2–4 over an already-authenticated session: the cross-leg weld, the
+/// well-formed (CFG) leg, the injection-free leg, and the optional STARK injection leg.
+/// Both [`verify_zkoracle`] (modeled leg 1) and [`verify_zkoracle_live`] (real tlsn leg 1)
+/// bind their downstream evidence to the SAME authenticated body through this.
+fn verify_legs_over_session(
+    att: &ZkOracleAttestation,
+    session: AuthenticSession,
+) -> Result<VerifiedZkOracle, ZkOracleError> {
     // ── THE CROSS-LEG WELD ──
     // Recompute the shared content commitment over the AUTHENTICATED body and require the
     // attestation's committed value to equal it. This binds every downstream leg's object
@@ -242,6 +300,7 @@ pub fn prove_zkoracle(
         field_span,
         content_commit,
         zk_injection: None,
+        tlsn_presentation: None,
     })
 }
 
@@ -395,6 +454,7 @@ mod tests {
         let att = ZkOracleAttestation {
             presentation: inj.clone(),
             zk_injection: None,
+            tlsn_presentation: None,
             cfg_cert: prove_cfg_compact(BODY_INJECT.as_bytes()).unwrap(),
             field_span: span_in(&inj, b"{{system}}"),
             content_commit: content_commitment(BODY_INJECT.as_bytes()),
@@ -414,6 +474,7 @@ mod tests {
         let att = ZkOracleAttestation {
             presentation: pres,
             zk_injection: None,
+            tlsn_presentation: None,
             cfg_cert: prove_cfg_compact(BODY.as_bytes()).unwrap(),
             field_span: FieldSpan { offset: 0, len: 2 },
             content_commit: content_commitment(BODY.as_bytes()),
@@ -443,6 +504,7 @@ mod tests {
         let att = ZkOracleAttestation {
             presentation: pres.clone(),
             zk_injection: None,
+            tlsn_presentation: None,
             cfg_cert: prove_cfg_compact(BODY.as_bytes()).unwrap(),
             field_span: span_in(&pres, b"msg"),
             content_commit: content_commitment(malformed.as_bytes()),
@@ -466,6 +528,7 @@ mod tests {
         let att_a = ZkOracleAttestation {
             presentation: bad_auth,
             zk_injection: None,
+            tlsn_presentation: None,
             cfg_cert: prove_cfg_compact(BODY.as_bytes()).unwrap(),
             field_span: span_in(&pres, b"hello"),
             content_commit: content_commitment(BODY.as_bytes()),
@@ -480,6 +543,7 @@ mod tests {
         let att_b = ZkOracleAttestation {
             presentation: pres.clone(),
             zk_injection: None,
+            tlsn_presentation: None,
             cfg_cert: prove_cfg_compact(br#"{"other":true}"#).unwrap(),
             field_span: span_in(&pres, b"hello"),
             content_commit: content_commitment(BODY.as_bytes()),
@@ -495,6 +559,7 @@ mod tests {
         let att_c = ZkOracleAttestation {
             presentation: inj.clone(),
             zk_injection: None,
+            tlsn_presentation: None,
             cfg_cert: prove_cfg_compact(BODY_INJECT.as_bytes()).unwrap(),
             field_span: span_in(&inj, b"{{system}}"),
             content_commit: content_commitment(BODY_INJECT.as_bytes()),
@@ -575,6 +640,7 @@ mod tests {
         let att = ZkOracleAttestation {
             presentation: inj.clone(),
             zk_injection: None,
+            tlsn_presentation: None,
             cfg_cert: prove_cfg_compact(&body).unwrap(),
             field_span: span_in(&inj, b"{{system}}"),
             content_commit: content_commitment(&body),
@@ -590,6 +656,7 @@ mod tests {
         let att = ZkOracleAttestation {
             presentation: pres,
             zk_injection: None,
+            tlsn_presentation: None,
             cfg_cert: prove_cfg_compact(&body).unwrap(),
             field_span: FieldSpan {
                 offset: body.len(),

@@ -72,6 +72,7 @@ fn full_zkoracle_attestation_accepts_and_hostiles_are_refused() {
         cfg_cert: prove_cfg_compact(ANTHROPIC_BODY.as_bytes()).unwrap(),
         field_span: FieldSpan { offset: 0, len: 2 },
         content_commit: content_commitment(ANTHROPIC_BODY.as_bytes()),
+        tlsn_presentation: None,
     };
     assert!(
         matches!(
@@ -99,6 +100,7 @@ fn full_zkoracle_attestation_accepts_and_hostiles_are_refused() {
         cfg_cert: prove_cfg_compact(ANTHROPIC_BODY.as_bytes()).unwrap(),
         field_span: span_in(&malformed_pres, b"msg"),
         content_commit: content_commitment(malformed_body.as_bytes()),
+        tlsn_presentation: None,
     };
     assert!(
         matches!(
@@ -129,6 +131,7 @@ fn full_zkoracle_attestation_accepts_and_hostiles_are_refused() {
         cfg_cert: prove_cfg_compact(inject_body.as_bytes()).unwrap(),
         field_span: span_in(&inject_pres, b"{{x"),
         content_commit: content_commitment(inject_body.as_bytes()),
+        tlsn_presentation: None,
     };
     assert_eq!(
         verify_zkoracle(&injecting, &config),

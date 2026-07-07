@@ -21,34 +21,36 @@
 //!      ([`run_local_roundtrip_blocking`] / [`verify_messages_presentation`]). The Notary
 //!      co-derives session keys and sees NO plaintext.
 //!   3. [`attest_turn_live`] drives that same real 2PC and PRODUCES a
-//!      [`ZkOracleAttestation`] over the body the 2PC AUTHENTICATED (not a fixture literal).
-//!   4. [`verify_zkoracle`] ACCEPTS it — all three legs (authentic ∧ well-formed ∧
-//!      injection-free) over that authenticated response.
+//!      [`ZkOracleAttestation`] over the body the 2PC AUTHENTICATED (not a fixture literal),
+//!      CARRYING the real tlsn `Presentation` on it ([`ZkOracleAttestation::tlsn_presentation`]).
+//!   4. [`verify_zkoracle_live`] ACCEPTS it — leg 1 is authenticated by the REAL
+//!      `presentation.verify()` (a trustless 2PC notary, NOT the modeled ed25519 carrier),
+//!      then well-formed ∧ injection-free over that authenticated response.
 //!
 //! Every claim is ASSERTED — a green here can go red:
 //!   * REAL-CRYPTO CANARY: a tampered real `Presentation` (one flipped byte) is REFUSED
 //!     by `presentation.verify()`.
-//!   * TAMPER CANARY: a flipped `recv` transcript on the attestation → `verify_zkoracle`
-//!     refuses `NotAuthentic`.
+//!   * LIVE-LEG CANARY: a flipped real tlsn presentation ON the attestation →
+//!     `verify_zkoracle_live` refuses `NotAuthenticLive` (the genuine crypto, not a model).
 //!   * INJECTION CANARY: a `{{`-bearing reply carried through the live 2PC path → refused.
 //!
 //! ## What is REAL vs the NAMED remainder
 //!
 //! REAL: the vendored tlsn stack, the MPC-TLS 2PC session (Notary sees no plaintext), the
 //! signed `Attestation`, selective disclosure (x-api-key hidden), the `Presentation`, a
-//! real `presentation.verify()`, and the authenticated body driving the CFG + injection
-//! legs. Fully local — NO external `api.anthropic.com` call.
+//! real `presentation.verify()`, and — NOW FUSED — the attestation's authentic *leg* itself
+//! verified by that real `presentation.verify()` (`verify_zkoracle_live`), not the modeled
+//! carrier. Fully local — NO external `api.anthropic.com` call.
 //!
-//! NAMED remainder (NOT closed here): (a) fusing the real tlsn `PresentationOutput` INTO
-//! the zkoracle attestation's authentic *leg* — today that leg is the modeled ed25519
-//! carrier over the (now really-authenticated) body; (b) a live `api.anthropic.com`
-//! session (a real key + a deployed/pinned notary). See `docs/deos/ZKORACLE-PROVER-STATUS.md`.
+//! NAMED remainder (the ONE step not closed here): a live `api.anthropic.com` session (a
+//! real key + a deployed/pinned notary) — pointing this same real 2PC path at the live
+//! endpoint. See `docs/deos/ZKORACLE-PROVER-STATUS.md`.
 
 use deos_hermes::attest::{AttestationCarrier, attest_turn_live};
 use dregg_zkoracle_prove::tlsn_live::{
     LiveExchange, run_local_roundtrip_blocking, verify_messages_presentation,
 };
-use dregg_zkoracle_prove::{ZkOracleError, verify_zkoracle};
+use dregg_zkoracle_prove::{ZkOracleError, verify_zkoracle_live};
 
 fn main() {
     println!("== zk_live_carrier — the crown over a REAL local MPC-TLS 2PC presentation ==\n");
@@ -105,18 +107,27 @@ fn main() {
     }
     println!();
 
-    // ── PART B — the crown: attest over the 2PC-authenticated body, then verify ──────
-    // attest_turn_live drives the SAME real 2PC and produces a ZkOracleAttestation over
-    // the body that roundtrip AUTHENTICATED (not a fixture literal).
+    // ── PART B — the crown, FUSED: attest over the 2PC-authenticated body, then verify
+    // its authentic leg by the REAL presentation.verify() (not the modeled carrier) ──────
+    // attest_turn_live drives the SAME real 2PC, produces a ZkOracleAttestation over the
+    // AUTHENTICATED body, AND carries the real tlsn Presentation on it. verify_zkoracle_live
+    // authenticates leg 1 by that genuine presentation.verify() — a trustless 2PC notary.
     println!(
-        "[B] attest_turn_live: producing a ZkOracleAttestation over the 2PC-authenticated body..."
+        "[B] attest_turn_live + verify_zkoracle_live: the authentic leg IS the real 2PC presentation..."
     );
     let att = attest_turn_live(&carrier, prompt, reply)
         .expect("attest over the live 2PC-authenticated body succeeds (benign, well-formed reply)");
-    let out = verify_zkoracle(&att, carrier.config()).expect(
-        "verify_zkoracle ACCEPTS — all three legs (authentic ∧ well-formed ∧ injection-free)",
+    assert!(
+        att.tlsn_presentation.is_some(),
+        "the fused attestation carries the real tlsn presentation for the trustless leg"
     );
-    println!("    verify_zkoracle ACCEPTED — authentic ∧ well-formed ∧ injection-free.");
+    let out = verify_zkoracle_live(&att, &roundtrip.pinned_server).expect(
+        "verify_zkoracle_live ACCEPTS — leg 1 by the REAL presentation.verify(), then well-formed ∧ injection-free",
+    );
+    println!(
+        "    verify_zkoracle_live ACCEPTED — authentic leg = REAL presentation.verify() (trustless 2PC), \n\
+        \x20   ∧ well-formed ∧ injection-free."
+    );
     // The bound reply is a committed substring of the AUTHENTICATED body.
     assert!(
         find(&out.session.response_body, reply.as_bytes()).is_some(),
@@ -127,17 +138,21 @@ fn main() {
         out.session.response_body.len()
     );
 
-    // TAMPER CANARY: flip a byte of the attestation's recv transcript → NotAuthentic.
+    // LIVE-LEG CANARY (the fusion is load-bearing): flip a byte of the REAL tlsn
+    // presentation the attestation carries → verify_zkoracle_live refuses at the genuine
+    // presentation.verify() (NotAuthenticLive), NOT at a modeled signature.
     let mut tampered_att = att.clone();
-    let n = tampered_att.presentation.recv.len();
-    tampered_att.presentation.recv[n - 3] ^= 0xFF;
-    match verify_zkoracle(&tampered_att, carrier.config()) {
-        Err(ZkOracleError::NotAuthentic(e)) => {
-            println!("    tamper CANARY: a flipped recv transcript is REFUSED -> NotAuthentic({e})")
-        }
-        other => {
-            panic!("CANARY FAILED: a tampered attestation did not refuse NotAuthentic: {other:?}")
-        }
+    if let Some(bytes) = tampered_att.tlsn_presentation.as_mut() {
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xFF;
+    }
+    match verify_zkoracle_live(&tampered_att, &roundtrip.pinned_server) {
+        Err(ZkOracleError::NotAuthenticLive(msg)) => println!(
+            "    live-leg CANARY: a flipped real tlsn presentation is REFUSED -> NotAuthenticLive({msg})"
+        ),
+        other => panic!(
+            "CANARY FAILED: a tampered real presentation did not refuse NotAuthenticLive: {other:?}"
+        ),
     }
 
     // INJECTION CANARY: a `{{`-bearing reply carried through the live 2PC path → refused
@@ -152,21 +167,23 @@ fn main() {
     // ── What is REAL, and the NAMED remainder ────────────────────────────────────────
     println!("== WHAT IS REAL ==");
     println!(
-        "  The response body was AUTHENTICATED by a genuine local MPC-TLS 2PC roundtrip:\n\
+        "  The attestation's AUTHENTIC LEG is now the real 2PC presentation itself:\n\
         \x20   in-process HTTPS server + a real tlsn Notary + a real tlsn Prover, an MPC-TLS 2PC\n\
         \x20   handshake, selective disclosure (x-api-key redacted), a notary-signed Attestation,\n\
-        \x20   and a real presentation.verify(). The notary co-derived session keys and saw NO\n\
-        \x20   plaintext. The attested bytes came from that real 2PC session, NOT a fixture literal."
+        \x20   and verify_zkoracle_live authenticating leg 1 by a real presentation.verify() over\n\
+        \x20   the presentation the attestation CARRIES — a trustless 2PC notary, not the modeled\n\
+        \x20   ed25519 carrier. The notary co-derived session keys and saw NO plaintext."
     );
-    println!("== NAMED REMAINDER (not closed here) ==");
+    println!("== NAMED REMAINDER (the one step not closed here) ==");
     println!(
-        "  (a) fuse the real tlsn PresentationOutput INTO the attestation's authentic *leg* —\n\
-        \x20     today that leg is the modeled ed25519 carrier over the (really-authenticated) body;\n\
-        \x20 (b) a live api.anthropic.com session (a real key + a deployed/pinned notary).\n\
-        \x20     This run is FULLY LOCAL — no external api.anthropic.com call.\n\
-        \x20     See docs/deos/ZKORACLE-PROVER-STATUS.md."
+        "  A live api.anthropic.com session (a real key + a deployed/pinned notary) — point this\n\
+        \x20 same real 2PC path at the live endpoint. This run is FULLY LOCAL, no external call.\n\
+        \x20 See docs/deos/ZKORACLE-PROVER-STATUS.md."
     );
-    println!("\n== zk_live_carrier: OK — real 2PC ran, verify accepted, all canaries refused. ==");
+    println!(
+        "\n== zk_live_carrier: OK — real 2PC ran, verify_zkoracle_live accepted (trustless leg), \
+        all canaries refused. =="
+    );
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {

@@ -308,6 +308,7 @@ mod tests {
             field_span: crate::attestation::FieldSpan { offset: 0, len: 0 },
             content_commit: crate::attestation::content_commitment(body.as_bytes()),
             zk_injection: None,
+            tlsn_presentation: None,
         };
         assert!(matches!(
             verify_coinbase_spot(&att, &config),

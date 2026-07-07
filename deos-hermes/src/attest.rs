@@ -219,9 +219,15 @@ pub fn attest_turn_live(
     let body = String::from_utf8(roundtrip.verified.response_body.clone())
         .map_err(|e| format!("authenticated response body is not utf-8: {e}"))?;
     // `reply` is the assistant text → a committed substring of the AUTHENTICATED body.
-    carrier
+    let mut att = carrier
         .attest_body(&body, reply.as_bytes())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // FUSE the real tlsn presentation into the attestation's authentic leg. The modeled
+    // ed25519 `presentation` carrier stays populated (the default `verify_zkoracle` path),
+    // but `verify_zkoracle_live` will now authenticate leg 1 by the GENUINE
+    // `presentation.verify()` over these bytes — a trustless 2PC notary, not the model.
+    att.tlsn_presentation = Some(roundtrip.presentation_bytes);
+    Ok(att)
 }
 
 #[cfg(test)]
