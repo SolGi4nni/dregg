@@ -163,7 +163,10 @@ pub use depend::{
 };
 pub use doc::{Doc, Granularity};
 #[cfg(feature = "cell-heap")]
-pub use doc_heap::{COLL_EMBED, COLL_TEXT, DocHeapCell, text_from_heap, text_into_heap};
+pub use doc_heap::{
+    COLL_EMBED, COLL_HISTORY, COLL_TEXT, DocHeapCell, history_from_heap, history_into_heap,
+    text_from_heap, text_into_heap,
+};
 #[cfg(feature = "substrate")]
 pub use executor_drive::{ExecutorDrivenDoc, field_key};
 pub use graph::{DocGraph, FieldAssign};
