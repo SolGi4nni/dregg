@@ -1230,7 +1230,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "fa5f49463664613a310085e4b1928da0d716e184aaedcba6d435c07750f612e2";
+    "9159e8168b59bdc2be12b7b1df4df4b09b47ae90bfa9474428ed2bd00cb346fa";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -2665,13 +2665,20 @@ mod tests {
             // the membership-teeth transfer (2493 + 2 teeth columns past the carriers → 2495,
             // `CarrierComposed.transferV3MembershipWide`) and the KEY_COMMIT-gated sovereign (2493 +
             // the 32-column chip-digest appendix → 2525, `CarrierComposed.makeSovereignV3DeployedWide`).
-            // Any member off this exact set (a carrier block that grew/shrank) fails this drift tooth.
+            // THE GENTIAN FLAG-DAY: every BARE-COHORT member carries the `3·REFUSE_STRIDE = 48`-column
+            // floor-refuse weld PAST its width, so each refused base rides `base + 48`: custom/setFieldDyn
+            // 2465→2513, the rotated cohort 2493→2541, the membership-teeth transfer 2495→2543, the
+            // KEY_COMMIT sovereign 2525→2573, the §J′ insert / cap-open bare-cohort hosts 2822→2870, and
+            // the refusal fields-write / cap-WRITE bare-cohort members 2965→3013. The NON-cohort members
+            // keep their base (cap-open 2822, transferCapOpenTB 2824, heapWrite 2951, refusal/write 2965,
+            // plus the 2 rotated-cohort-width non-cohort rows at 2493). Any member off this exact set (a
+            // carrier block that grew/shrank, or a refuse weld mis-sized) fails this drift tooth.
             assert!(
                 matches!(
                     d.trace_width,
-                    2465 | 2493 | 2495 | 2525 | 2822 | 2824 | 2951 | 2965
+                    2493 | 2513 | 2541 | 2543 | 2573 | 2822 | 2824 | 2870 | 2951 | 2965 | 3013
                 ),
-                "{key}: wide width {} is a known wide geometry (2465 / 2493 / 2495 / 2525 / 2822 / 2824 / 2951 / 2965)",
+                "{key}: wide width {} is a known wide geometry (2493 / 2513 / 2541 / 2543 / 2573 / 2822 / 2824 / 2870 / 2951 / 2965 / 3013)",
                 d.trace_width
             );
             // Every wide member carries the 16 wide-commit PIs (the 8-felt ~124-bit before/after
@@ -2706,10 +2713,17 @@ mod tests {
                     plain.public_input_count + 2,
                     "wide registry row 0 (transfer) = the plain wide transfer + 2 membership claim PIs"
                 );
+                // The plain single-line `WIDE_TRANSFER_STAGED_TSV` is neither teeth-advanced NOR
+                // refuse-welded; the registry row 0 is the membership-teeth transfer AND (being a bare
+                // cohort route) carries the `3·REFUSE_STRIDE = 48`-column gentian floor-refuse weld. So
+                // the width relation is `plain + 2 teeth + 48 refuse`; the PI relation stays `plain + 2`
+                // (the refuse weld adds constraints + columns but NO public inputs).
+                let refuse_cols = 3 * crate::effect_vm::bare_floor_refuse_weld::REFUSE_STRIDE;
                 assert_eq!(
                     d.trace_width,
-                    plain.trace_width + 2,
-                    "wide registry row 0 (transfer) = the plain wide transfer + 2 teeth columns"
+                    plain.trace_width + 2 + refuse_cols,
+                    "wide registry row 0 (transfer) = the plain wide transfer + 2 teeth columns + the \
+                     48-column gentian floor-refuse weld"
                 );
             }
         }
