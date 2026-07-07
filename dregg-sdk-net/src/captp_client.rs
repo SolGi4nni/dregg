@@ -10,7 +10,7 @@
 //!
 //! ```no_run
 //! use dregg_sdk::AgentCipherclerk;
-//! use dregg_sdk::captp_client::{CapTpConfig, EventualRef};
+//! use dregg_sdk_net::captp_client::{CapTpConfig, EventualRef};
 //!
 //! let cipherclerk = AgentCipherclerk::new();
 //! // ... share a cell as a sturdy reference:

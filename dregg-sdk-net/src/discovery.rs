@@ -144,11 +144,11 @@ impl PirTransport for ReqwestTransport {
 /// # Example
 ///
 /// ```no_run
-/// use dregg_sdk::discovery::PrivateDiscoveryClient;
+/// use dregg_sdk_net::discovery::PrivateDiscoveryClient;
 ///
 /// # async fn example() -> Result<(), dregg_sdk::SdkError> {
 /// // In production, use ReqwestTransport (with `reqwest` feature)
-/// // let transport = dregg_sdk::discovery::ReqwestTransport::new();
+/// // let transport = dregg_sdk_net::discovery::ReqwestTransport::new();
 /// // let client = PrivateDiscoveryClient::new("http://node-a:8080", "http://node-b:8080", transport);
 /// // let ids = client.discover_intents("action:read").await?;
 /// # Ok(())

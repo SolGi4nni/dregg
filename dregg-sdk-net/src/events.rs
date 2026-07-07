@@ -15,7 +15,7 @@
 //!
 //! ```no_run
 //! # async fn demo() -> Result<(), dregg_sdk::SdkError> {
-//! use dregg_sdk::events::{NodeEvents, ReceiptFilter};
+//! use dregg_sdk_net::events::{NodeEvents, ReceiptFilter};
 //!
 //! let node = NodeEvents::new("http://localhost:8421");
 //! let mut receipts = node.subscribe(ReceiptFilter::default());

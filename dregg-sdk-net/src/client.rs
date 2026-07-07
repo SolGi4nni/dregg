@@ -58,7 +58,8 @@ pub struct PresentationResult {
 /// # Example
 ///
 /// ```no_run
-/// use dregg_sdk::{AgentCipherclerk, SiloClient};
+/// use dregg_sdk::AgentCipherclerk;
+/// use dregg_sdk_net::SiloClient;
 /// use std::sync::Arc;
 ///
 /// # async fn example() -> Result<(), dregg_sdk::SdkError> {
