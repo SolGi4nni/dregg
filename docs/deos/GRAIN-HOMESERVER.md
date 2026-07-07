@@ -111,6 +111,32 @@ lib, but `sandstorm-bridge` already models a grain as an `.spk`-packaged execve-
 `/var` = a cell umem heap. So a heavy homeserver ships as a sandstorm grain (its own confinement
 story) while the Rust pick gets the tight native lib-grain — both worlds covered by the two rails.
 
+## Recon (2026-07-07, continuwuity cloned + inspected — `~/src/continuwuity-recon`, HEAD `4454e540`)
+
+Grounded, embed-ready:
+- **Workspace `src/*`:** `core · api · service · database · router · admin · web · macros · main ·
+  build_metadata · ruminuwuity`. The `main` crate (pkg `conduwuit` 26.6.0-alpha.1, edition **2024**)
+  has `[lib] path="mod.rs" crate-type=["rlib"]` **and** a `[[bin]]` — so we depend on the LIB.
+- **The boot seam (`src/main/mod.rs`):** `pub fn run_with_args(args: &Args)` — builds a tokio
+  `runtime::new(args)`, `Server::new(args, Some(handle))?` (`Arc<Server>`), spawns `signal::signal`,
+  `block_on(async_main)` → `router::run(...)` (the axum HTTP server that binds the listener), then
+  `runtime::shutdown`. An embedder calls `run_with_args` on a thread; the `Arc<Server>` is the
+  graceful-shutdown handle. `Args { config: Option<Vec<PathBuf>>, option: Vec<String> (TOML k=v
+  overrides), maintenance, console, .. }` (`src/main/clap.rs`).
+- **Deps:** `ruma` is pinned to **mainline** `github.com/ruma/ruma` (NOT a fork — good); the real
+  forks are `rust-rocksdb` (`forgejo.ellis.link/continuwuation/rust-rocksdb-zaidoon1`) + jemalloc /
+  rustyline-async / event-listener on their forgejo. RocksDB (C++) is the build tax.
+- **Minimal boot config** (`conduwuit-example.toml`): `server_name`, `address=["127.0.0.1"]`, a test
+  `port`, `database_path` (a temp dir), `allow_registration=true`, `allow_federation=false`,
+  `listening=true`.
+
+**Vendoring decision: an ISOLATED excluded workspace** (like `discord-bot`/`dregg-tui`) — a new
+`deos-homeserver` crate that git-deps `conduwuit` at a pinned rev with its own `rust-toolchain.toml`
+(continuwuity is edition-2024 / toolchain-pinned; isolating it keeps its heavy pinned-fork dep graph
+OUT of the breadstuffs root resolution). True source-vendoring (copy-in for offline/reproducibility)
+is a later step once the embed is proven. **GATE: a `cargo check -p conduwuit` in the recon clone is
+running to confirm it builds in this env (edition 2024 + the rocksdb fork's C++) BEFORE any wiring.**
+
 ## The sequence (app layer now; ONE firmament door, design-first)
 
 1. **Body de-risk + embed seam (app, now):** vendor/pin continuwuity (exact revs of it + its ruma /
