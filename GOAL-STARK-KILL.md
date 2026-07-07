@@ -76,6 +76,14 @@ Surfaced by the refinement proof itself — exactly what Rung 1 is for.
   plonky3 replaces O(n²) hand engine. New DfaRoutingGeneralEmit.lean, grep stark==0, 42 tests green.
   Committed. This is the first consumer dead + proof the whole campaign's premise pays off.
 
+- CUTOVER SWARM mapped the kill: 7 crates went stark-CLEAN (dsl-tests, demo-agent, tests, node,
+  dsl-runtime, circuit, circuit-prove) — core crates BUILD GREEN together (1m54s). The deep provers
+  (turn/sdk/bridge/misc, ~27 refs) are BLOCKED on a coordinated StarkProof→BatchProof WIRE MIGRATION:
+  each carries hand-StarkProof in a serialized blob (cell predicate blobs, proof_bytes) that producer+
+  consumer must switch in lockstep; + variable-depth membership descriptor + a NEW delegation-scope
+  descriptor + wasm carve-out. That wire migration is the real remaining CAMPAIGN (not one swarm).
+  Cutover working-tree changes build green; commit deferred to the wire-migration pass.
+
 ## Phase 2b — THE CUTOVER (ember approved 2026-07-07, "stark.rs dead ASAP")
 Reality (grounded): ~35 real consumers + ~46 test/bench. TWO WALLS: (1) emitted descriptors
 are MINIMAL INSTANCES (dfaRoutingDesc hardcodes the toggle transition; membership is depth-2)
