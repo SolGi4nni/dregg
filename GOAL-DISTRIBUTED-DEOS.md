@@ -25,16 +25,18 @@ inhabited world.
 
 ## STATUS (this IS the goal file — GOAL.md is storage-in-lean's, off-limits; refresh here each landing)
 
-**Current thrust:** Pillars 0 + 2 + 3 LANDED (done-log below). Building in parallel (disjoint crates):
-Pillar 1 (`Distributed` surface migration, starbridge-v2) + Pillar 4a (node-backed confined brain,
-deos-hermes). Pillar 4 transport RESOLVED node-backed.
+**Current thrust:** Pillars 0, 2, 3, 4a LANDED + the `test-support` TestNode export (4a round-trip
+THROUGH node execution closed) + dregg-sdk-net doctest debt cleared (crate fully green). Building:
+Pillar 1 (`Distributed` surface migration, starbridge-v2). Pillar 2b is BLOCKED on Pillar 1 (same
+crate).
 
 **Next 3 moves:**
-1. Land + commit Pillar 1 + Pillar 4a as each reports green.
-2. Pillar 2b — wire the MUD speak-cap read onto `NodeWorldSink::with_ledger` + derive the hearing
-   subscriber set from on-ledger presence per box (three inhabitants, three sinks, one node).
-3. The iron pass (the b-bars, box by box on hbox-persvati-nextop) → the three-box co-inhabited-room
-   CAPSTONE. All a-bar mechanisms will be green; the iron pass is validation, tag after it runs.
+1. Land + commit Pillar 1 (the last surface-mechanism a-bar).
+2. Pillar 2b — wire `mud.rs` `speak_cap_for`'s read onto `NodeWorldSink::with_ledger` (+ hearing
+   subscriber set from on-ledger presence per box), proven over the new `test_support::TestNode`:
+   3 inhabitants, 3 sinks, 1 node, presence provable from each view.
+3. The iron pass (b-bars on hbox-persvati-nextop) → the three-box co-inhabited-room CAPSTONE. All
+   a-bar mechanisms green; the iron pass is validation on real boxes, tag after it runs.
 
 ## THE DISCIPLINE (carry it into every pillar)
 
@@ -182,6 +184,10 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
 
 ## Done-log
 *(append one line per landing: commit · pillar · the two-pole proof · a-bar or b-bar)*
+- test-support (infra) — `dregg_sdk_net::test_support::TestNode` exported (real TurnExecutor, private
+  duplicate deleted → one node); closes Pillar 4a's round-trip: `node_backed_round_trip.rs` proves a
+  confined brain's run_js commits THROUGH node execution + reads the receipt back. dregg-sdk-net
+  70 unit + 4 doc green (stale crate-split doctests fixed). Shared infra for Pillar 2b + the capstone.
 - Pillar 4a (a-bar, wiring) — `node_hands.rs` (deos-hermes, `node-brain` feat): a confined brain's
   run_js gets a `NodeWorldSink` reaching its node ONLY through the granted egress door;
   `check_endpoint` gates the endpoint before booting anything; fail-closed on node refusal. 94 green,
