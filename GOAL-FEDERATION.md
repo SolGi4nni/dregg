@@ -219,3 +219,12 @@ Two sequential gates on one pipeline:
   closes the BOUNDED payoff window. DEEPER (Alif's Lean) = stateful/resumable export persisting the
   memo O(Δ)/poll for durable sustained op. FALLBACK (ember-only, FAIL-OPEN-LAW-sensitive) = timeout→Rust tau.
 - BLOCKED on: tree RED (concurrent garbled.rs WIP) → implement PRIMARY + prove gate-ON when GREEN.
+
+## Verified-gate perf: IMPLEMENTING (tree green)
+- Tree GREEN (dregg-circuit compiles again; the garbled.rs terminal finished). Lane a72e54fd
+  implementing the PRIMARY cross-poll cache: BlocklaceHandle.last_order_fingerprint +
+  last_lean_order; skip the O(history) Lean compute_order FFI when the lace (sorted block-id
+  fingerprint) is unchanged since last poll. Then PROVE gate-ON round-2 finalizes.
+- If PASS → fully-verified payoff → deploy to live mesh. If round-2 still stalls gate-ON → the
+  residual is the Lean per-call O(n²) itself → DEEPER (Alif's Lean stateful export). Anti-thrash:
+  run the test to a durable log, don't offload to a waiter (I take over the run if it thrashes).
