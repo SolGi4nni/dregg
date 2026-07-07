@@ -62,6 +62,10 @@ Surfaced by the refinement proof itself — exactly what Rung 1 is for.
   targets). Total Rung 1 = 17/20 (incl DFA). HELD unverified: multi_step + presentation
   (refute died on limit); temporal + garbled (refine died) — resume when limit resets.
 
+- MEMBERSHIP SOUNDNESS GAP CLOSED (coordinated 4-file fix): the top-level ordering under-constraint
+  the refinement proof caught is fixed (adjLastOrderFix, every-row enforcement); membership Rung-2 now
+  FULL/unconditional. Verified my tree (3 Lean + 9 gate tests incl forged_top_level_ordering_refuses).
+
 ## Phase 2b — THE CUTOVER (ember approved 2026-07-07, "stark.rs dead ASAP")
 Reality (grounded): ~35 real consumers + ~46 test/bench. TWO WALLS: (1) emitted descriptors
 are MINIMAL INSTANCES (dfaRoutingDesc hardcodes the toggle transition; membership is depth-2)
