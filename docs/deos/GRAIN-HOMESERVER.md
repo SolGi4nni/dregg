@@ -43,30 +43,55 @@ cap-metered, its lifecycle reaped, and — the interesting part — room members
 be surfaced as verifiable turns (a room is a cell, a message an event; the homeserver-grain's accept
 of a message is a receipted turn, so the relay itself is auditable, not a trusted black box).
 
-## THE OPEN FORK (needs ember)
+## THE BODY — DECIDED: real Conduit via `execve`-grant (ember, 2026-07-07)
 
-- **Minimal purpose-built homeserver as the grain body.** A Rust homeserver serving only the CS-API
-  subset above, compiled INTO the grain body (no `execve` — the maximally-confined PD denies it, so
-  this keeps the jail tight). Fully confined, R2-able, small. Cost: it must satisfy matrix-sdk's real
-  expectations over the slice (version negotiation, login/sync response shapes, room-event ordering)
-  — a real but bounded implementation effort; it is NOT a general homeserver (no federation, no E2EE
-  device management beyond what the card-carry needs).
-- **Real Conduit (conduwuit) as the grain body via an `execve`-grant.** A complete, spec-correct
-  homeserver (federation, E2EE, any client) — but running it means granting `execve` of exactly the
-  conduit image (the "grant execve of exactly the agent image" seam), a bigger jail hole, plus a
-  storage door for its DB. Heavier jail, full interop.
+Full interop wins: a complete, spec-correct homeserver (federation, E2EE, any Matrix client), which
+earns its heavier confinement. The body is **already available: `~/src/conduit`** (a full Conduit
+Rust checkout — its own workspace + `rust-toolchain.toml` + `flake.nix`). We build it and run its
+binary as the jailed grain body.
 
-The on-thesis default is **minimal purpose-built** (tightest jail, no execve, fully R2) unless full
-federation/interop is the point — in which case **real Conduit** earns its heavier confinement.
+Cost, made precise — real Conduit needs **three firmament doors**, of which the grant surface today
+(`deos-hermes/src/egress.rs`) has NONE: it grants only `grant_read(path)` (read-only) and
+`grant_provider(host,port)` (outbound). The three new doors:
 
-## The first buildable slice (no kernel change — app layer in parallel)
+1. **`execve`-grant of exactly the conduit image.** The maximally-confined PD denies `execve`
+   (`process-exec*`/`execve` denied — the reason the confined-agent body must BE a Rust peer today).
+   Grant `execve` of ONE absolute image path (the built conduit binary) and nothing else — a named
+   door, not lifting the exec wall. (`sandbox::Confinement` gains an `exec_allow: Option<PathBuf>`;
+   macOS SBPL `(allow process-exec (literal "<path>"))`, Linux a seccomp `execve` arg-match on the
+   image path.)
+2. **A storage WRITE door.** `grant_read` opens a read-only subpath; Conduit's DB (rocksdb/sqlite)
+   needs read+write to one dir. Add `grant_read_write(path)` — the write dual, one canonicalized
+   subpath, sibling-denied, revocable (macOS `(allow file-write* (subpath …))`, Linux Landlock
+   `LANDLOCK_ACCESS_FS_WRITE_FILE|MAKE_REG|…` on the dir).
+3. **The inbound LISTEN door** (part (b) above) — bind+accept on exactly one `host:port`, the dual of
+   the provider door. Preferred realization: the parent pre-binds the listener and passes the bound
+   socket fd into the child's keep-list, so the child `accept()`s an fd it was handed and never holds
+   raw `bind` authority (mirrors the Endpoint fd).
 
-The body can be prototyped and proven BEFORE the listen door exists: run the minimal homeserver over
-a plain in-process `TcpListener` on loopback (no jail), point two `deos-matrix` `MatrixClient`s at it,
-and drive the real card-carry loop (`card_carry` / `card_carry_bridge`) end-to-end — proving the body
-satisfies matrix-sdk over the membrane slice. THEN jail it once the listen-door primitive is designed
-and sound. This is the "app layer in parallel while the kernel bit gets thought" pattern: the
-homeserver-body lane and the firmament listen-door lane are independent until they weld.
+All three are firmament/kernel-adjacent. Per the be-thoughtful discipline they get a **design pass +
+sound primitives**, NOT a swarm from thin context (this doc IS that pass). They are concrete
+extensions of existing mechanisms (read→read_write, egress-out→listen-in, deny-exec→exec-one-image),
+each a named door with deny-default and revocation — not a loosening of the jail's shape.
+
+## The sequence (app layer in parallel; the three doors are the design-first kernel lane)
+
+1. **Body de-risk (app, now):** build `~/src/conduit`; run its binary as a plain subprocess
+   (unconfined), point two `deos-matrix` `MatrixClient`s at it, and drive the real card-carry loop
+   (`card_carry` / `card_carry_bridge`) end-to-end — proving Conduit satisfies matrix-sdk over the
+   membrane slice, and that this replaces the external Docker Conduit the Pillar-3 live test uses.
+2. **The three firmament doors (kernel, design-first — THOUGHT before code):** `exec_allow`
+   (one-image execve), `grant_read_write` (storage door), the listen door (pre-bound-fd). Each a
+   named door, deny-default, revocable; each with a two-pole test (granted works / sibling denied).
+   These land in `sel4/dregg-firmament/src/sandbox.rs` + `process_kernel.rs` + `deos-hermes` egress.
+3. **The confined spawn (weld):** `spawn_pd_confined` a body that `execve`s the conduit binary with
+   exactly {exec_allow=conduit, read_write=db-dir, listen=host:port, net_out=federation-peers if
+   federating}. The card-carry clients dial the listen door.
+4. **The lifecycle (reuse):** wrap it in `agent-platform` (rent/host/meter/reap) + `grain-turn` R2 so
+   the homeserver-grain's lease is metered and its message-accepts are receipted turns.
+
+Steps 1 and 2 are independent (app vs kernel) and can run in parallel; step 3 welds them. Step 2 is
+NOT a thin-context swarm — it is the sound-primitive design lane, taken fresh.
 
 ## Payoff
 
