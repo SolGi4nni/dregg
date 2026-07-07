@@ -336,10 +336,20 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
     //    faucet Transfer finalizes cross-node and materialises the client's cell as a
     //    funded remote stub on every node. This is itself a fix-2b / cross-node commit
     //    step, but the PAYOFF is the CLIENT's OWN turn below. ──
-    let faucet_amount = 1_000_000u64;
+    let faucet_amount = 10_000u64;
+    let faucet_body = format!("{{\"recipient\":\"{actor_hex}\",\"amount\":{faucet_amount}}}");
+    let faucet_resp = http_post(
+        http_ports[0],
+        "/api/faucet",
+        "application/json",
+        None,
+        faucet_body.as_bytes(),
+    )
+    .expect("POST /api/faucet reached node-0");
+    eprintln!("[payoff] faucet response: {faucet_resp}");
     assert!(
-        post_faucet(http_ports[0], &actor_hex, faucet_amount),
-        "faucet grant to the fresh client cell must be accepted on node-0"
+        faucet_resp.contains("\"success\":true"),
+        "faucet grant to the fresh client cell must be accepted on node-0; got: {faucet_resp}"
     );
     eprintln!("[payoff] faucet-funded the client cell with {faucet_amount}; awaiting cross-node…");
     let fund_deadline = Instant::now() + Duration::from_secs(wait_s);
@@ -379,7 +389,7 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
         dregg_cell::CellId::derive_raw(&pk, &token)
     };
     let dest_hex = hex_encode(&dest_cell.0);
-    let transfer_amount = 12_345u64;
+    let transfer_amount = 1_000u64;
     let action = client.make_action(
         actor_cell,
         "attested_client_transfer",
@@ -391,7 +401,7 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
         &federation_id,
     );
     let mut turn = client.make_turn(action);
-    turn.fee = 1_000; // >= action_base (100); paid from the funded balance.
+    turn.fee = 5_000; // >= a Transfer's computron cost (~300); paid from the 10_000 funded balance.
     // Attestation-shaped payload riding consensus in the turn hash. (The cryptographic
     // ZkOracleAttestation verify is proven by crown_attested_turn.rs; here it is the
     // uniform-cross-node attested-turn carrier.)
