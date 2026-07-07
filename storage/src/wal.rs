@@ -2,6 +2,18 @@
 //!
 //! Every mutation is logged BEFORE being applied in-memory.
 //! On crash recovery: replay the log to reconstruct state.
+//!
+//! # Lean-spec status
+//!
+//! No Lean theorem specifies the WAL yet — nothing under
+//! `metatheory/Dregg2/Storage/` covers durability logging (the theorems
+//! there specify the bucket content commitment, erasure coding, PoR, and
+//! availability). The contract pinned executably by the `prop_*` tests
+//! below — replay conserves the appended record sequence across a crash;
+//! a truncated tail replays as exactly the intact prefix; a corrupted
+//! record is detected by its checksum and dropped without disturbing its
+//! neighbors, never hallucinated — is the statement a future
+//! `Dregg2/Storage/Wal.lean` should prove.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -532,5 +544,209 @@ mod tests {
         assert_eq!(entries[0], entry);
 
         wal.destroy().unwrap();
+    }
+
+    // ------------------------------------------------------------------
+    // Property tests: the guarantees the WAL actually makes.
+    //
+    // Census note: no Lean theorem specifies the WAL (see the module
+    // doc); these tests pin its conservation/detection contract
+    // executably, ready to bind when a `Dregg2/Storage/Wal.lean` lands.
+    // ------------------------------------------------------------------
+
+    /// Build a mixed log of all four entry kinds. Returns the appended
+    /// sequence for comparison against replay.
+    fn append_mixed_entries(wal: &mut WriteAheadLog, n: u64) -> Vec<WalEntry> {
+        let mut appended = Vec::new();
+        for i in 0..n {
+            let seq = wal.next_sequence();
+            let entry = match i % 4 {
+                0 => WalEntry::CreateQueue {
+                    queue_id: [i as u8; 32],
+                    capacity: i as usize + 1,
+                    sequence: seq,
+                },
+                1 => WalEntry::Enqueue {
+                    queue_id: [i as u8; 32],
+                    entry_hash: [i as u8 + 1; 32],
+                    data: (0..=i as u8).collect(),
+                    sequence: seq,
+                },
+                2 => WalEntry::Dequeue {
+                    queue_id: [i as u8; 32],
+                    position: i as usize,
+                    sequence: seq,
+                },
+                _ => WalEntry::Checkpoint {
+                    queue_id: [i as u8; 32],
+                    root: [i as u8 * 3; 32],
+                    sequence: seq,
+                },
+            };
+            wal.append(&entry).unwrap();
+            appended.push(entry);
+        }
+        appended
+    }
+
+    /// Append/replay conserves the record sequence: a mixed log of all
+    /// four entry kinds replays as EXACTLY the appended sequence (order
+    /// and content), across a crash (writer dropped without `close`),
+    /// and the reopened WAL continues numbering after the last record.
+    /// The negative poles of this conservation — a truncated or
+    /// corrupted log — are the two tests below.
+    #[test]
+    fn prop_append_replay_conserves_the_record_sequence() {
+        let path = temp_wal_path("conserve_sequence");
+        cleanup(&path);
+
+        let appended = {
+            let mut wal = WriteAheadLog::open(path.clone()).unwrap();
+            let appended = append_mixed_entries(&mut wal, 20);
+            wal.sync().unwrap();
+            appended
+        }; // Writer dropped without close() — simulated crash.
+
+        let wal = WriteAheadLog::open(path.clone()).unwrap();
+        assert_eq!(
+            wal.replay().unwrap(),
+            appended,
+            "replay must return exactly the appended sequence"
+        );
+        assert_eq!(
+            wal.next_sequence(),
+            20,
+            "the reopened WAL must continue numbering after the last record"
+        );
+        wal.destroy().unwrap();
+    }
+
+    /// A truncated log is detected: cutting into the final record's
+    /// bytes (several cut depths) replays as EXACTLY the intact prefix —
+    /// the torn record is never hallucinated and no earlier record is
+    /// disturbed. Detection is CHECKSUM-based, not newline-based: a
+    /// cut of exactly 1 byte removes only the trailing `\n`, leaves the
+    /// payload+checksum intact, and the record correctly still replays
+    /// (pinned below). Non-vacuity: the same log replays all 5 records
+    /// before the cut.
+    #[test]
+    fn prop_truncated_tail_yields_exactly_the_intact_prefix() {
+        // cut=1: only the line terminator is lost — the record survives.
+        {
+            let path = temp_wal_path("truncated_tail_newline_only");
+            cleanup(&path);
+            let appended = {
+                let mut wal = WriteAheadLog::open(path.clone()).unwrap();
+                let appended = append_mixed_entries(&mut wal, 5);
+                wal.sync().unwrap();
+                wal.close().unwrap();
+                appended
+            };
+            let bytes = fs::read(&path).unwrap();
+            assert_eq!(bytes.last(), Some(&b'\n'));
+            fs::write(&path, &bytes[..bytes.len() - 1]).unwrap();
+            let wal = WriteAheadLog::open(path.clone()).unwrap();
+            assert_eq!(
+                wal.replay().unwrap(),
+                appended,
+                "a lost trailing newline must not lose the (checksum-intact) record"
+            );
+            wal.destroy().unwrap();
+        }
+
+        // Cuts that tear into the final record's checksum/payload bytes.
+        for &cut in &[2usize, 25, 150] {
+            let path = temp_wal_path(&format!("truncated_tail_{cut}"));
+            cleanup(&path);
+
+            let appended = {
+                let mut wal = WriteAheadLog::open(path.clone()).unwrap();
+                let mut appended = append_mixed_entries(&mut wal, 4);
+                // Final record: a wide Enqueue so every cut depth stays
+                // within its line.
+                let entry = WalEntry::Enqueue {
+                    queue_id: [0xF0; 32],
+                    entry_hash: [0xF1; 32],
+                    data: vec![0x5A; 40],
+                    sequence: wal.next_sequence(),
+                };
+                wal.append(&entry).unwrap();
+                appended.push(entry);
+                wal.sync().unwrap();
+                wal.close().unwrap();
+                appended
+            };
+
+            // Non-vacuity: intact log replays all 5 records.
+            {
+                let wal = WriteAheadLog::open(path.clone()).unwrap();
+                assert_eq!(wal.replay().unwrap(), appended);
+            }
+
+            // Tear the tail: drop the last `cut` bytes mid-line.
+            let bytes = fs::read(&path).unwrap();
+            fs::write(&path, &bytes[..bytes.len() - cut]).unwrap();
+
+            let wal = WriteAheadLog::open(path.clone()).unwrap();
+            assert_eq!(
+                wal.replay().unwrap(),
+                appended[..4],
+                "cut={cut}: replay must be exactly the intact prefix — the torn \
+                 record must not be hallucinated"
+            );
+            wal.destroy().unwrap();
+        }
+    }
+
+    /// A corrupted record is detected by its checksum: flipping one hex
+    /// character in a MIDDLE record — in its payload or in its checksum
+    /// field — drops EXACTLY that record on replay, while every other
+    /// record survives intact. (A payload flip still parses as a
+    /// well-formed record for a different queue_id; only the checksum
+    /// refuses it — that is the tooth being tested.)
+    #[test]
+    fn prop_corrupted_record_dropped_others_survive() {
+        for target in ["payload", "checksum"] {
+            let path = temp_wal_path(&format!("corrupt_{target}"));
+            cleanup(&path);
+
+            let appended = {
+                let mut wal = WriteAheadLog::open(path.clone()).unwrap();
+                let appended = append_mixed_entries(&mut wal, 5);
+                wal.sync().unwrap();
+                wal.close().unwrap();
+                appended
+            };
+
+            // Flip one hex char in line index 2.
+            let text = fs::read_to_string(&path).unwrap();
+            let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+            assert_eq!(lines.len(), 5);
+            let line = &lines[2];
+            let pos = match target {
+                // Char 4 sits inside the queue_id hex field.
+                "payload" => 4,
+                // The last char sits inside the checksum field.
+                _ => line.len() - 1,
+            };
+            let old = line.as_bytes()[pos];
+            let new = if old == b'0' { b'1' } else { b'0' };
+            let mut mutated = line.clone().into_bytes();
+            mutated[pos] = new;
+            lines[2] = String::from_utf8(mutated).unwrap();
+            fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+
+            let mut expected = appended.clone();
+            expected.remove(2);
+
+            let wal = WriteAheadLog::open(path.clone()).unwrap();
+            assert_eq!(
+                wal.replay().unwrap(),
+                expected,
+                "{target} corruption: exactly the corrupted record must be \
+                 dropped; its neighbors must survive"
+            );
+            wal.destroy().unwrap();
+        }
     }
 }
