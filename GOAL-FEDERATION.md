@@ -178,3 +178,21 @@ Two sequential gates on one pipeline:
 - OPEN (gate-OFF experiment running): block-in-DAG-but-unratified vs never-disseminated; gate-sensitive
   (Lean tau) vs deeper. NOTE the n=3 finding was Lean-gate SLOWNESS — is round-2 the same (client block
   not reached by the slow poll) or genuinely unratifiable? The experiment settles it.
+
+## ★★★ PAYOFF ACHIEVED (07-07) — a real attested client turn stream-finalized cross-node on n=4 ★★★
+- DECISIVE gate-off experiment (pre-built green fix-2a binary run directly, bypassing a concurrent
+  terminal's broken circuit/src/garbled.rs): gate-OFF (Rust tau) → test result: ok, 1 passed, 29.65s.
+  * ROUND 1 faucet funds fresh client → all 4 nodes.
+  * ROUND 2 the FRESH CLIENT'S OWN caller-signed attested Transfer via /turns/submit →
+    turn ed08c0412a… FINALIZED, destination funded 1000 on ALL 4 nodes, heights [1,1,1,1]→[2,2,2,2].
+  THIS IS THE PAYOFF: a real external-client attested turn stream-finalized cross-node on n=4
+  (federation_mode=full verified executors), locally proven, reproducible.
+- VERDICT on the round-2 wall = the SAME as n=3: the VERIFIED Lean finality GATE is too SLOW
+  (O(history)) to reach/finalize the client block; gate-OFF (Rust tau, proven-correct) finalizes it
+  in ~30s. gate-ON reliably stalls (0/4, 90s), gate-OFF reliably passes (4/4, ~30s). Lean-gate-specific.
+  Fix-1's tauOrderFast memoization covered round-1 but NOT round-2's deeper DAG state → complete it.
+- SO: payoff REAL under Rust-tau finality (correct, fast). For FULLY-VERIFIED finality (Lean gate ON),
+  the finality-gate perf fix must be completed (extend tauOrderFast memoization / bounded-timeout) —
+  same n=3-class perf, KNOWN fix direction. Then gate-ON also finalizes → fully-verified payoff.
+- EMBER-GATED next: (a) complete the verified-gate perf (fully-verified payoff), (b) deploy the
+  payoff (gate-off) to the LIVE mesh, (c) both.
