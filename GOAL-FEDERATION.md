@@ -139,3 +139,15 @@ Two sequential gates on one pipeline:
   stream-finalized cross-node on a local VERIFIED n=4 (isolated target dir, swarm-safe, no live
   deploy — ember gates the live mesh). Single owner of the consensus path (hot tree: distributed-deos
   on api.rs). NEXT: integrate its diffs + local proof → surface to ember for the LIVE-mesh deploy.
+
+## PAYOFF PROOF — in progress (07-07, live-observed)
+- LIVE-OBSERVED on a LOCAL VERIFIED n=4 (all 4 federation_mode=full, gate-ON Lean, consensus_live):
+  latest_height CLIMBED 0→1→2 (round-1 faucet turn finalized cross-node) — finality STREAMS, NOT
+  frozen-at-0 like every pre-fix mesh. Fixes 1 (memoized tauOrderFast) + 3 (spawn_blocking) CONFIRMED
+  working live. This is the first verified-gate n=4 that advances height at all.
+- Round-2 (the fresh client's OWN signed Transfer) surfaced a real subtlety → fix 2a (74f83d472:
+  provision Transfer DESTINATIONS on the ingress scratch too). model-finds-the-bug. Confirming run
+  pending (lane ac2c145fb, → /Users/ember/.claude/jobs/5d12f365/tmp/payoff-final.log).
+- NEXT: read the confirming-run verdict → if PASS (uniform height + receipt on all 4 + attestation),
+  the payoff is locally proven on a verified n=4 → surface the 3 diffs + evidence to ember for the
+  LIVE-mesh deploy call. Fixes committed: c976f76ab, 8e7497958, d25e5bddc, 74f83d472, db9b02d6b(harness).
