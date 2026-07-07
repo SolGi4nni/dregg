@@ -28,6 +28,27 @@
 //! commitment, so possession of a manifest is enough to (a) sample
 //! availability against an untrusted operator and (b) verify a reconstruction
 //! is the *right* blob, not merely *a* blob.
+//!
+//! # Lean-proven spec
+//!
+//! The opening relation underneath both the sampler and [`reconstruct`] —
+//! "this chunk opens against the manifest root at its committed position"
+//! ([`erasure::verify_chunk_against_root`]) — is the Rust realization of the
+//! PoR audit relation proven in
+//! `metatheory/Dregg2/Storage/Retrievability.lean`:
+//!
+//! * `por_sound` — every response that opens at a position IS the genuine
+//!   committed object there (reduces to
+//!   `Dregg2/Storage/BucketCommitment.lean::read_sound`), so a sampling pass
+//!   that counts only verified openings counts only genuinely-committed
+//!   chunks — the per-point soundness [`AvailabilityManifest::confidence`]'s
+//!   found-count presumes;
+//! * `por_refuses_substitution` — an object *different* from the committed
+//!   one at a position cannot produce a verifying opening; a substituted /
+//!   tampered / wrong-position chunk is refused before it can influence
+//!   reconstruction.
+//!
+//! The `lean_*` property tests below bind this file to those theorems.
 
 use crate::content::ContentStore;
 use crate::erasure::{self, ErasureChunk, ErasureEncoder, ReconstructError};
@@ -355,6 +376,112 @@ mod tests {
         // Majority present, decent sample => high confidence.
         let found = manifest.n_total * 3 / 4;
         assert!(manifest.confidence(found, 12) > 0.9);
+    }
+
+    // ── Lean-spec bindings: metatheory/Dregg2/Storage/Retrievability.lean ────
+    //
+    // The property tests below assert, over a sweep of blob shapes, exactly
+    // what the Lean theorems prove about the opening relation this module's
+    // sampler and reconstructor stand on. A `verify_chunk_against_root` that
+    // accepted a substituted opening makes these tests RED.
+
+    /// POSITIVE pole — `Dregg2/Storage/Retrievability.lean::por_sound` (via
+    /// `Dregg2/Storage/BucketCommitment.lean::read_sound`): every genuinely
+    /// committed chunk OPENS against the manifest root at its committed
+    /// position. This is the per-point soundness the availability sampler
+    /// presumes: a found-count fed by verified openings counts only committed
+    /// chunks, so a full genuine set yields full confidence.
+    #[test]
+    fn lean_por_sound_every_committed_chunk_opens_at_its_position() {
+        for (blob_len, chunk_size, expansion) in [
+            (1usize, 8usize, 2usize),
+            (57, 8, 2),
+            (200, 16, 2),
+            (333, 16, 3),
+            (1024, 32, 2),
+        ] {
+            let data: Vec<u8> = (0..blob_len)
+                .map(|i| (i.wrapping_mul(31) % 251) as u8)
+                .collect();
+            let (manifest, chunks) = encode_bytes_for_availability(&data, chunk_size, expansion);
+            for chunk in &chunks {
+                // The committed position and the claimed position coincide for
+                // a genuine chunk (the `r.pos` of the Lean `Response`).
+                assert_eq!(chunk.proof.leaf_index, chunk.index);
+                assert!(
+                    erasure::verify_chunk_against_root(chunk, &manifest.root),
+                    "por_sound binding broken: genuine chunk {} of blob_len={blob_len} \
+                     failed to open against its own manifest root",
+                    chunk.index
+                );
+            }
+            // Every committed chunk opens ⇒ a full sampling pass finds n_total
+            // ⇒ the sampler reports certainty (the `confidence` relation).
+            assert_eq!(manifest.confidence(manifest.n_total, 8), 1.0);
+        }
+    }
+
+    /// NEGATIVE pole — `Dregg2/Storage/Retrievability.lean::por_refuses_substitution`:
+    /// at EVERY position, an internally-consistent object *different* from the
+    /// committed one (tampered data with a recomputed leaf, so an
+    /// integrity-only check passes) cannot open against the root, and
+    /// [`reconstruct`] refuses it. If the verify accepted the forgery, the
+    /// `!verify_chunk_against_root` assert goes RED.
+    #[test]
+    fn lean_por_refuses_substitution_forged_object_cannot_open_anywhere() {
+        let data: Vec<u8> = (0..400usize)
+            .map(|i| (i.wrapping_mul(7) % 251) as u8)
+            .collect();
+        let (manifest, chunks) = encode_bytes_for_availability(&data, 16, 2);
+        for i in 0..chunks.len() {
+            let mut forged = chunks[i].clone();
+            forged.data[0] ^= 0x5A;
+            forged.commitment = erasure::chunk_commitment_dual(&forged.data).blake3;
+            // The forgery is a coherent *different object* (hne in the Lean
+            // theorem), not mere noise: its own integrity check passes.
+            assert!(erasure::verify_chunk(&forged));
+            assert!(
+                !erasure::verify_chunk_against_root(&forged, &manifest.root),
+                "por_refuses_substitution violated: substituted object OPENED at position {i}"
+            );
+            // And the reconstruction path refuses the substitution too.
+            let mut set = chunks.clone();
+            set[i] = forged;
+            assert_eq!(
+                reconstruct(&manifest, &set),
+                Err(AvailabilityError::ChunkProofInvalid { index: i })
+            );
+        }
+    }
+
+    /// NEGATIVE pole, wrong-position — `por_refuses_substitution` with the
+    /// substituted object being the *genuine committed object of a different
+    /// position*: the committed leaf of position `j` presented as an opening
+    /// at position `i ≠ j` does not authenticate. (Pairs whose committed
+    /// objects coincide are skipped — matching the theorem's hypothesis
+    /// `objs[r.pos]? ≠ some r.obj`.)
+    #[test]
+    fn lean_por_refuses_substitution_wrong_position_cannot_open() {
+        let data: Vec<u8> = (0..300usize)
+            .map(|i| (i.wrapping_mul(13) % 251) as u8)
+            .collect();
+        let (manifest, chunks) = encode_bytes_for_availability(&data, 16, 2);
+        for i in 0..chunks.len() {
+            for j in 0..chunks.len() {
+                if chunks[j].commitment == chunks[i].commitment {
+                    continue; // identical committed object: not a substitution
+                }
+                // Position-j's genuine object, claiming to open at position i.
+                let mut moved = chunks[j].clone();
+                moved.index = i;
+                moved.proof = chunks[i].proof.clone();
+                assert!(
+                    !erasure::verify_chunk_against_root(&moved, &manifest.root),
+                    "por_refuses_substitution violated: committed object of position {j} \
+                     opened at position {i}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -34,6 +34,24 @@
 //!   the threshold;
 //! * the final reconstruction is content-hash bound (`availability::reconstruct`),
 //!   so the recovered blob is provably the one named by the manifest.
+//!
+//! # Lean-proven spec
+//!
+//! The per-chunk acceptance predicate this loop gates on —
+//! [`erasure::verify_chunk_against_root`], "the chunk opens against the
+//! manifest root at its committed position" — is the client-side realization
+//! of the PoR audit proven in `metatheory/Dregg2/Storage/Retrievability.lean`:
+//!
+//! * `por_sound` — an opening that verifies IS the genuine committed object at
+//!   that position (reduces to `Dregg2/Storage/BucketCommitment.lean::read_sound`),
+//!   and `por_holds_committed` — the whole passing set is genuine, which is why
+//!   a gathered `n_data`-set reconstructs the committed blob and nothing else;
+//! * `por_refuses_substitution` — an object *different* from the committed one
+//!   at a position cannot produce a verifying opening, so a forged / tampered /
+//!   wrong-position chunk NEVER counts toward the k-of-n threshold in
+//!   [`retrieve`] nor toward the found-count in [`sample_das`].
+//!
+//! The `lean_*` tests below bind this loop to those theorems.
 
 use crate::availability::{self, AvailabilityError, AvailabilityManifest};
 use crate::erasure::{self, ErasureChunk};
@@ -492,6 +510,145 @@ mod tests {
             }
             other => panic!("impostor chunks must yield Unavailable, got {other:?}"),
         }
+    }
+
+    // ── Lean-spec bindings: metatheory/Dregg2/Storage/Retrievability.lean ────
+    //
+    // These tests assert, at the retrieval/DAS loop, exactly what the Lean
+    // theorems prove about the opening relation the loop gates on. A verify
+    // that accepted a substituted opening makes the `gathered == 0` /
+    // `found == 0` asserts RED.
+
+    /// POSITIVE pole — `Dregg2/Storage/Retrievability.lean::por_sound` +
+    /// `por_holds_committed`: every chunk the loop gathers is a verified
+    /// opening, hence IS the committed chunk at its position — so across blob
+    /// shapes and peer layouts, the reconstruction is the committed blob.
+    #[test]
+    fn lean_por_sound_retrieval_over_committed_openings_yields_the_blob() {
+        for (len, n_peers) in [(37usize, 1usize), (200, 3), (513, 4), (1024, 5)] {
+            let data: Vec<u8> = (0..len).map(|i| (i.wrapping_mul(97) % 251) as u8).collect();
+            let (manifest, peers) = shard_across_peers(&data, n_peers);
+            let recovered = retrieve(&manifest, &peers)
+                .expect("committed openings must reconstruct (por_sound binding)");
+            assert_eq!(recovered, data, "len={len} n_peers={n_peers}");
+        }
+    }
+
+    /// NEGATIVE pole — `Dregg2/Storage/Retrievability.lean::por_refuses_substitution`:
+    /// a provider serving an internally-consistent *different* object at EVERY
+    /// position (each with a recomputed leaf, so an integrity-only check would
+    /// pass) produces ZERO verifying openings — no substituted chunk ever
+    /// counts toward the k-of-n threshold. `gathered > 0` here would mean the
+    /// verify accepted a forgery: RED.
+    #[test]
+    fn lean_por_refuses_substitution_substituting_provider_gathers_nothing() {
+        let data: Vec<u8> = (0..400usize)
+            .map(|i| (i.wrapping_mul(11) % 251) as u8)
+            .collect();
+        let (manifest, chunks) = encode_bytes_for_availability(&data, 16, 2);
+        let forged_all: Vec<ErasureChunk> = chunks
+            .iter()
+            .map(|c| {
+                let mut f = c.clone();
+                f.data[0] ^= 0xA5;
+                f.commitment = erasure::chunk_commitment_dual(&f.data).blake3;
+                assert!(erasure::verify_chunk(&f)); // a coherent different object
+                f
+            })
+            .collect();
+        let forger = InMemorySource::from_chunks(forged_all);
+        match retrieve(&manifest, &[forger]) {
+            Err(RetrievalError::Unavailable { gathered, need }) => {
+                assert_eq!(
+                    gathered, 0,
+                    "por_refuses_substitution violated: a substituted chunk counted"
+                );
+                assert_eq!(need, manifest.n_data);
+            }
+            other => panic!("all-substituted provider must be Unavailable, got {other:?}"),
+        }
+    }
+
+    /// NEGATIVE pole, wrong-position — `por_refuses_substitution` where the
+    /// substituted object is the genuine committed object of a *different*
+    /// position: a provider answering every challenge `i` with the committed
+    /// object of position `i+1` (claiming position `i`) passes nothing.
+    #[test]
+    fn lean_por_refuses_substitution_wrong_position_openings_never_count() {
+        let data: Vec<u8> = (0..300usize)
+            .map(|i| (i.wrapping_mul(13) % 251) as u8)
+            .collect();
+        let (manifest, chunks) = encode_bytes_for_availability(&data, 16, 2);
+        let rotated: Vec<ErasureChunk> = (0..chunks.len())
+            .map(|i| {
+                let j = (i + 1) % chunks.len();
+                let mut c = chunks[j].clone();
+                c.index = i;
+                c.proof = chunks[i].proof.clone(); // claim position i
+                // Genuine substitution: the committed objects differ.
+                assert_ne!(c.commitment, chunks[i].commitment);
+                c
+            })
+            .collect();
+        let forger = InMemorySource::from_chunks(rotated);
+        match retrieve(&manifest, &[forger]) {
+            Err(RetrievalError::Unavailable { gathered, .. }) => {
+                assert_eq!(
+                    gathered, 0,
+                    "por_refuses_substitution violated: a wrong-position opening counted"
+                );
+            }
+            other => panic!("wrong-position provider must be Unavailable, got {other:?}"),
+        }
+    }
+
+    /// The sampler counts EXACTLY the committed openings — both poles at once.
+    /// Sampling every index against a peer holding a strict genuine subset:
+    /// `found == |subset|` — every committed chunk served opens (`por_sound`)
+    /// and nothing else counts (`por_refuses_substitution`).
+    #[test]
+    fn lean_por_sound_das_found_count_is_exactly_the_committed_openings() {
+        let data: Vec<u8> = (0..400usize)
+            .map(|i| (i.wrapping_mul(29) % 251) as u8)
+            .collect();
+        let (manifest, chunks) = encode_bytes_for_availability(&data, 16, 2);
+        let keep = manifest.n_total / 3;
+        let kept: Vec<ErasureChunk> = chunks.into_iter().take(keep).collect();
+        let source = InMemorySource::from_chunks(kept);
+        let verdict = sample_das(&manifest, &[source], manifest.n_total, 0x1EAF);
+        assert_eq!(verdict.sampled, manifest.n_total);
+        assert_eq!(
+            verdict.found, keep,
+            "found-count must equal the committed openings served: {verdict:?}"
+        );
+    }
+
+    /// NEGATIVE pole at the DAS loop — `por_refuses_substitution`: a peer
+    /// serving substituted versions of ALL chunks contributes NOTHING to the
+    /// found-count; confidence collapses to zero. `found > 0` here would mean
+    /// a substituted opening verified: RED.
+    #[test]
+    fn lean_por_refuses_substitution_das_counts_no_substituted_chunk() {
+        let data: Vec<u8> = (0..400usize)
+            .map(|i| (i.wrapping_mul(17) % 251) as u8)
+            .collect();
+        let (manifest, chunks) = encode_bytes_for_availability(&data, 16, 2);
+        let forged_all: Vec<ErasureChunk> = chunks
+            .iter()
+            .map(|c| {
+                let mut f = c.clone();
+                f.data[0] ^= 0x3C;
+                f.commitment = erasure::chunk_commitment_dual(&f.data).blake3;
+                f
+            })
+            .collect();
+        let forger = InMemorySource::from_chunks(forged_all);
+        let verdict = sample_das(&manifest, &[forger], manifest.n_total, 0xF0E5);
+        assert_eq!(
+            verdict.found, 0,
+            "por_refuses_substitution violated at the DAS loop: {verdict:?}"
+        );
+        assert_eq!(verdict.confidence, 0.0);
     }
 
     // ── Stage 3: the live DAS sampling loop ──────────────────────────────────
