@@ -206,3 +206,16 @@ Two sequential gates on one pipeline:
   builds wait for green; diagnosis/design proceeds now.
 - fix-1 wired VerifiedFinality::compute_order (finality_gate.rs:148) → dregg_tau_order FFI = memoized
   tauOrderFast; covers round-1 but round-2's deeper DAG still stalls gate-ON. Completing the perf.
+
+## Verified-gate perf: root cause + design (0cc225a7e, docs/VERIFIED-GATE-PERF.md)
+- ROOT CAUSE (confirmed): the serial finality executor (blocklace_sync.rs:3660) recomputes the ENTIRE
+  O(n²) verified-Lean order FROM SCRATCH every poll — build_wire formats the whole lace, CStrings it,
+  Lean rebuilds PastCache/RoundCache over the full lace then discards them; BlocklaceHandle has NO
+  cross-poll cache. As round-2's DAG grows, per-poll cost outpaces block production → finalized prefix
+  never reaches the client block in-window. fix-1 killed the within-call blowup (enough for round-1's
+  small DAG), NOT the cross-poll recompute. Same N3 class.
+- DESIGN (layered): PRIMARY (Rust-only, ship first) = cross-poll order cache keyed on a lace
+  fingerprint (skip both FFIs when frontier unchanged) + incremental build_wire + in-flight guard —
+  closes the BOUNDED payoff window. DEEPER (Alif's Lean) = stateful/resumable export persisting the
+  memo O(Δ)/poll for durable sustained op. FALLBACK (ember-only, FAIL-OPEN-LAW-sensitive) = timeout→Rust tau.
+- BLOCKED on: tree RED (concurrent garbled.rs WIP) → implement PRIMARY + prove gate-ON when GREEN.
