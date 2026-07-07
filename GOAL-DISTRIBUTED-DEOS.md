@@ -29,6 +29,14 @@ inhabited world.
 + GREEN + committed: Pillars 0, 1, 2, 2b, 3, 4a + the shared `test-support` TestNode. The wire is
 dumb, the proof is smart — proven in-process / loopback / over a local Conduit, each with two poles.
 
+**NEW THREAD (buildable-now, NOT iron-gated): homeserver-as-a-grain** (`docs/deos/GRAIN-HOMESERVER.md`).
+Makes Pillar 3 self-hosted — the membrane's Matrix homeserver becomes a confined, metered, R2 grain
+instead of an external Conduit. Body DECIDED = real Conduit (`~/src/conduit`, building now to de-risk).
+Sequence: (1) build Conduit + prove it drives the real card-carry loop unconfined [APP, now]; (2) the
+three firmament doors — `exec_allow` / `grant_read_write` / listen-door [KERNEL, design-first, NOT a
+thin-context swarm — the doc IS the design pass]; (3) the confined spawn welds them; (4) agent-platform
+lease + R2. Steps 1 and 2 are independent. Current: step 1, Conduit `cargo check` in flight.
+
 **What remains is IRON-GATED (ember): the b-bars + the capstone need real boxes.** Nothing more is
 buildable-now without the `hbox-persvati-nextop` localnet. Do NOT invent busywork. When the localnet
 is up, the iron pass runs the b-bars box-by-box (each named in its pillar's done-log entry), then the
