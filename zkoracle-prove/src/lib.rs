@@ -47,6 +47,9 @@ pub use attestation::{
     ProveError, VerifiedZkOracle, ZkOracleAttestation, ZkOracleError, prove_zkoracle,
     prove_zkoracle_with_stark, verify_zkoracle,
 };
+/// The live authentic-leg verifier (real `presentation.verify()`), gated with its backend.
+#[cfg(feature = "tlsn-live")]
+pub use attestation::verify_zkoracle_live;
 pub use authentic::{
     AnthropicConfig, AnthropicPresentation, AuthenticError, AuthenticSession, EndpointConfig,
     EndpointPresentation, EndpointSpec, FixtureNotary, SecretHeader, TlsnVerifyingKey,
