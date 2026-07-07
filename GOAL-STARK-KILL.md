@@ -27,6 +27,37 @@ TWO descriptor-generalizations needed first: variable-depth membership (emit is 
 ORDER: bridge pathfinder → generalize membership → turn cluster → sdk/chain → cell blob table → wasm → delete hand AIRs → `git rm stark.rs` when grep==0.
 NOTE: breaking old serialized StarkProof blobs is ACCEPTABLE (VK-epoch flip is a fresh-genesis act anyway).
 
+### ⚑ REFINED PLAN (scout-mapped 2026-07-07, agent a9f1579a — supersedes the rough order above)
+**PREMISE CORRECTED: the seam is OPAQUE `Vec<u8>` (witness_blobs table + `proof_bytes: &[u8]`), NOT a
+typed StarkProof.** So `cargo build` catches only the ~9 TYPED sites; the byte-format flips + the
+runtime AIR-name string dispatch are COMPILER-INVISIBLE. A big-bang builds green and fails at
+RUNTIME. → runtime validation is mandatory, not optional.
+FALSE POSITIVES (already done): `turn/aggregate_bilateral_prover.rs` (already Ir2BatchProof),
+`turn/binding_proof.rs` (only hashes bytes) → **18 real files, not 20**.
+- **PedersenEquality** predicate is genuinely off-STARK (Schnorr) — NO migration, NO descriptor.
+- **Delegation descriptor ALREADY EMITTED** (EffectVmEmitDelegate/Atten/Refresh/Revoke) — the gap is
+  only the Rust leg (`turn/action.rs:650 verify_stark_delegation_binding` does PI-binding + a
+  cfg-gated v1 AIR being deleted; make it a full `verify_vm_descriptor2`).
+- **Variable-depth membership = the ONE real descriptor-gen.** Emit is depth-2; production
+  `prove_membership_dsl` is var-depth; executor PADS to depth-2 today (`membership_verifier.rs:865`).
+  Plan: Rust runtime-parameterize depth for the cutover (viable, `check_descriptor2` gates
+  well-formedness); Rung-2 proof stays depth-2 → OPEN a Lean lane to lift it (honest gap, don't block).
+- **THE #1 DANGER: `circuit_for_air_name`** (runtime string→circuit dispatch, `descriptors.rs:686`) has
+  NO descriptor-world equivalent (only a TEST-only registry). Must BUILD a production `descriptor_by_name`.
+- **3 serialization dialects**: postcard (executor seam), serde_json (wasm), bincode (SP1 guest) — format
+  mismatch = silent decode-fail→false.
+- **SP1 chain leg** (`chain/program` RISC-V binary, hand-mirrored `GuestStarkProof` via bincode) — FENCE
+  OFF, migrate as its own later gate; a Gate-2 format flip silently breaks the EVM-wrap. (Its guest struct
+  is a SEPARATE copy, so fencing does NOT block `git rm circuit/src/stark.rs`.)
+**GATES (2 build + 1 runtime, foundation-first):**
+- GATE 1 (circuit + circuit-prove, fast per-crate): build `descriptor_by_name` production dispatch +
+  variable-depth membership descriptor. These change signatures everything downstream needs.
+- GATE 2 (one coordinated edit, `cargo check --workspace` iterate → one `cargo build --workspace`):
+  migrate all 18 sites against Gate-1 foundations. Compiler catches ~9; MANUALLY handle the byte-opaque
+  encoders + air_name call-sites. wasm rides along (deferrable sub-lane). SP1 FENCED.
+- GATE 3 (runtime, mandatory): integration run — executor membership/adjacency discharge, bridge
+  present→verify round-trip, wasm serde_json, SP1 decode (or confirm fenced).
+
 ## Current thrust — PARKED at a clean milestone (ember hold, 2026-07-07)
 **Rung 0 + Rung 1 + Rung 2 ALL COMPLETE and committed.** Every one of the ~20 emitted
 circuits is Lean-emitted, byte-pinned, functionally refined (Rung 1), AND no-forgery proven
