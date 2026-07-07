@@ -329,3 +329,23 @@ Two sequential gates on one pipeline:
   finalizing wrong. Worth investigating whether the Rust sibling should be computed on the same snapshot.
 - REMAINING: a CLIENT's OWN attested turn on the live mesh (proven robust LOCALLY 3/3; faucet is operator);
   then PUSH.
+
+## ⚠★ CROSS-MACHINE CAPSTONE — REAL CONSENSUS FINDING (07-07), honestly not a success
+- The live cross-machine mesh FINALIZED ONE real turn (faucet, h→1) but SUSTAINED finality STALLS at
+  h=1 (dag climbs 243+, blocks 967, but latest_height frozen). The capstone client-turn submitter
+  funded a fresh client but its faucet-cell never finalized (found:false both machines) — because
+  finality is stuck.
+- ROOT (from the node's OWN differential, verify-never-fake): the cross-machine catch-up causes
+  CONSTANT REORGS — "tau finalized order PREFIX SHIFTED (reorg-by-catchup)" ×27 — which destabilize
+  the finalized prefix so execute_finalized_turn can't make stable progress past h=1. On the reorging
+  DAG the Lean and Rust executors DIVERGE: "THE SWAP authority inversion — verified Lean executor
+  (AUTHORITATIVE) and the demoted Rust reference DISAGREE on a covered turn — the Rust path is BUGGY
+  (REAL finding); lean_root≠rust_root" + 291 DIFFERENTIAL DIVERGENCE (lean_len=180 rust_len=0). Both
+  machines (node2 debug: 308). The DAGs CONVERGE (identical dag/blocks) — nodes agree on the DAG; it's
+  the reorg-induced finality-execution instability + a real Rust-executor divergence that stalls it.
+- This is a GENUINE finding the differential CAUGHT — exactly its purpose. The single-machine local
+  proof (4 IDENTICAL binaries, same seed, no cross-machine reorgs) is robust (3/3); the cross-machine
+  LIVE mesh (2 builds: Linux release + Darwin debug; catch-up reorgs) exposes it. NOT to be papered
+  over or fixed unsupervised — be-thoughtful-on-consensus → EMBER.
+- STATUS vs goal: fully-verified payoff PROVEN ROBUST single-machine (the core); real turn finalized
+  cross-machine ONCE; SUSTAINED cross-machine finality hit this real wall. Mesh left running for inspection.
