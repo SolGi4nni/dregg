@@ -220,12 +220,14 @@ Four name-collisions that confuse orientation; the docs use all of them:
   thread its launched cells + session into the guest surface.
 - **Frontier (the genuine roadmap):** cross-**machine** migrate (the rails exist — tear-off,
   HostPd endpoint round-trip, CapTP handoff nonces; missing: `Target`-level Distributed re-home
-  + a network transport for the surface cap) · patch-history living *in* the cell (the heap
-  carries the text; the blame/patch chain is not yet first-class heap state) · the MUD's
-  multi-inhabitant phase (presence + "say" over the data-plane Bus / RoomCell) ·
-  `Target::Mirror` (cap-secure reflection depth) · the two MCP surfaces unified (confined AND
-  live-World — the world-bridge socket now makes this reachable) · co-driven cards
-  crossing between two *running* cockpits over Matrix.
+  + a network transport for the surface cap) · `Target::Mirror` (cap-secure reflection depth) ·
+  the two MCP surfaces unified (confined AND live-World — the world-bridge socket now makes
+  this reachable) · co-driven cards crossing between two *running* cockpits over Matrix ·
+  multi-node MUD presence (presence + "say" are BUILT in-process — a conserved presence token
+  gates speech through the Bus's own cap verdict; the wire is deriving the speak cap as an
+  attenuation of the on-ledger token, which makes presence provable from any box's ledger) ·
+  doc-history compaction (the patch chain now lives IN the cell — reopen reconstructs history,
+  tamper-refused; the chain grows per edit, and starbridge's desktop still re-seeds text-only).
 
 ## The north star (the self-hosting cure)
 

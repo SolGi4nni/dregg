@@ -8,6 +8,27 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-06 night, Fable — MUD phase 2 + doc-history-in-cell LANDED; two charter frontier clauses moved)
+
+Two hyperdreggmedia frontier lanes closed (charter/DEOS-RUNS updated same breath):
+**MUD phase 2** (`30e65cd63`) — presence = a conserved `PresenceToken` cap-move (same machinery
+as items; ghost-leave refused; never in two rooms), "say" = Bus enqueue where EVERY absence
+polarity is refused by `SendCap::admits` itself; 12/12 with receipts. **Doc history**
+(`3f754287e`) — `COLL_HISTORY` heap leaves carry the patch chain; `reopen` reconstructs history,
+blame identical across close/reopen, EXHAUSTIVE tamper tooth (every byte), edit ORDER committed.
+Also: REORIENT 07-06 addendum (`126406801`) — the wide path IS the deployed default at HEAD; the
+operational cut (T0, lean seed TAG empty) is the remaining act. NAMED follow-ups:
+- **speak-cap FROM the presence token** — derive `RoomVoice`'s speak cap as an attenuation of the
+  on-ledger token (issuance becomes a receipted grant; makes MULTI-NODE presence free — any box
+  proves the cap from the shared ledger). Hearer identity should become the session pubkey on a
+  real net; a composite enter turn would close the door-then-token marker gap.
+- **doc-history compaction** — the committed payload grows linearly with edit count;
+  checkpoint-fold-prefix changes what the boundary binds — own design pass.
+- **executor-journal ↔ patch-id cross-check** — `executor_drive` receipts and heap history are two
+  witnesses of the same edits; not yet cross-checked.
+- **starbridge-v2 adopts `DocHeapCell::reopen`** — the desktop path still re-seeds text-only
+  (`from_graph_with_text`).
+
 ## NOW-STATE addition (2026-07-06 eve, Fable — STORAGE-IN-LEAN cluster COMPLETE: 6 proven constructions)
 
 The "rebuild the Rust storage layer IN LEAN, proven" half of [[project-storage-in-lean]] is DONE —
@@ -197,9 +218,8 @@ NAMED-NOT-BUILT (census-surfaced, each with its seam):
   verb tying the built pieces.
 - **`Target::Mirror{over,depth}`** — the lone open arm of FIRMAMENT-REFLEXIVE (Tasks B/C done);
   `MirrorDepth` lattice rides `attenuate` verbatim.
-- **MUD phase 2** — presence + "say" over the data-plane `Bus`/`RoomCell` (the DEOS-RUNS-named seam).
-- **dregg-doc patch-history IN the heap** — serialize the blame/patch chain into umem-heap leaves
-  (`doc_heap.rs`); retire the `atom.rs` stand-in markers.
+- ✅ MUD phase 2 — CLOSED 07-06 (`30e65cd63`; residue = speak-cap-from-token, see the 07-06 night entry).
+- ✅ dregg-doc patch-history IN the heap — CLOSED 07-06 (`3f754287e`; residue = compaction + reopen adoption).
 - **gpui-web per-surface mounts** — terminal `WsTransport` grid first (backend e2e-proven, pane off
   the gpui-web feature); then editor/chat.
 - **Objects card-as-default flip** — `objects_card` as the only Objects render, delete its gpui twin

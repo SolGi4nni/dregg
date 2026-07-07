@@ -304,8 +304,11 @@ Real multi-node `dregg-node` federations over QUIC gossip + blocklace consensus.
   you lack"); an item conserved across a multi-hop trade, exactly one contender
   wins (no dupe); authority-amplification on a `give` refused; value Σδ=0
   (overdraft refused).
-- **Seam:** presence is the door-cap-gated write (entry cap-gating proven; a
-  fuller presence-token move/grant is future).
+- **Seam:** presence-token move + Bus-gated "say" are now BUILT (12 tests: a
+  conserved `PresenceToken` moves on enter/leave via the same cap machinery as
+  items; an absent speaker is refused by `SendCap::admits` itself). Remaining:
+  derive the speak cap as an attenuation of the on-ledger token (issuance
+  becomes a receipted grant; multi-node presence follows).
 
 ---
 
@@ -347,9 +350,11 @@ Real multi-node `dregg-node` federations over QUIC gossip + blocklace consensus.
 - **Proof:** 8 substrate tests incl. anti-forge-provenance,
   construction-order-independence, stability-under-remerge; executor-drive makes
   per-region edit caps enforceable (editor cell vs region cell).
-- **Seam:** the heap carries the current text + per-leaf provenance; the
-  blame/patch CHAIN as first-class heap state (reopen reconstructs history, not
-  just text) is the named next slice.
+- **Seam:** CLOSED — `COLL_HISTORY` carries the patch chain in the heap;
+  `DocHeapCell::reopen` reconstructs history (blame identical across
+  close/reopen; every tampered history byte refused; edit ORDER is committed
+  state). Remaining: history compaction (linear growth) + starbridge-v2
+  adopting `reopen` (still text-only re-seed).
 
 ---
 
