@@ -482,16 +482,35 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
     let mut all_have_dest = false;
     let mut last_dest = vec![(false, 0u64); FED_SIZE];
     let mut last_heights = baseline_heights.clone();
+    let mut ticks = 0u32;
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_secs(2));
         for (i, &p) in http_ports.iter().enumerate() {
             last_dest[i] = cell_balance(p, &dest_hex);
             last_heights[i] = latest_height(p);
         }
+        ticks += 1;
+        if ticks % 10 == 0 {
+            eprintln!(
+                "[payoff] …awaiting client-turn finality: heights = {last_heights:?}, dest = {last_dest:?}"
+            );
+        }
         if last_dest.iter().all(|&(f, b)| f && b == transfer_amount) {
             all_have_dest = true;
             break;
         }
+    }
+
+    // Copy each node's stderr log out of the tempdir (which is deleted on Drop) so a
+    // partial-finality result can be diagnosed (round production vs finalized-turn
+    // rejection). Best-effort.
+    if let Ok(diag_dir) = std::env::var("DREGG_PAYOFF_LOG_DIR") {
+        let _ = std::fs::create_dir_all(&diag_dir);
+        for n in &nodes {
+            let dst = std::path::Path::new(&diag_dir).join(format!("{}.stderr.log", n.name));
+            let _ = std::fs::copy(&n.log, &dst);
+        }
+        eprintln!("[payoff] node stderr logs copied to {diag_dir}");
     }
 
     eprintln!(
