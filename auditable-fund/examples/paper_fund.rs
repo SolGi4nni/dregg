@@ -52,6 +52,18 @@ fn main() {
         mandate.allowed_assets, mandate.max_position, mandate.budget, mandate.max_turns
     );
 
+    // FEDERATION SEAM: unset `DREGG_NODE_URL` ⇒ `NodeTarget::Local` (the in-process ledger,
+    // default). Set it ⇒ each landed trade turn is ALSO submitted to that live node and
+    // confirmed on its finalized receipt log; a rejected / non-landing submit fails the step
+    // fail-closed. (`--features dregg-node-target/http` compiles the real HTTP transport.)
+    let node_target = dregg_node_target::NodeTarget::from_env().expect("node target from env");
+    if node_target.is_federation() {
+        println!(
+            "federation: routing every landed trade to {}\n",
+            std::env::var(dregg_node_target::NODE_URL_ENV).unwrap_or_default()
+        );
+    }
+
     let oracle_config = oracle_config();
     let mut fund = Fund::open(
         "demo.fund.dregg",
@@ -59,7 +71,8 @@ fn main() {
         &[0x2au8; 32],
         oracle_config.clone(),
     )
-    .expect("open");
+    .expect("open")
+    .with_node_target(node_target);
     let decision_config = fund.decision_config().clone();
 
     // A modeled momentum brain: buy under 950.00, sell over 1050.00 (thresholds in cents).

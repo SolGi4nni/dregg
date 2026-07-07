@@ -39,6 +39,14 @@ use std::sync::{Arc, Mutex};
 /// leave it unset for the in-process [`NodeTarget::Local`] default.
 pub const NODE_URL_ENV: &str = "DREGG_NODE_URL";
 
+/// The environment variable a crate reads for the node's **API bearer token**. The real
+/// node gates `POST /turn/submit` behind `require_auth`: once an operator sets a passphrase
+/// the protected routes demand `Authorization: Bearer <token>` (the token the node returns
+/// from `set-passphrase` / `unlock`, derived `blake3::derive_key("dregg-api-bearer-v1", …)`).
+/// Set this to that token to submit through a secured node; leave it unset to submit
+/// unauthenticated (only accepted by a node with no passphrase set, i.e. loopback-only).
+pub const NODE_BEARER_ENV: &str = "DREGG_NODE_BEARER";
+
 /// Why a federation submit did not land.
 #[derive(Debug, Clone)]
 pub enum NodeError {
@@ -361,6 +369,7 @@ impl FederationSink for StubNode {
 pub struct HttpNode {
     base_url: String,
     agent: String,
+    bearer: Option<String>,
     client: reqwest::blocking::Client,
 }
 
@@ -369,13 +378,24 @@ impl HttpNode {
     /// A client for the node at `url` (its base URL, e.g. `https://hbox.local:8443`).
     /// The `agent` cell defaults to all-zero (the node derives + signs as its own
     /// operator cell — the body value is advisory, per `SubmitTurnRequest`).
+    ///
+    /// The API bearer token is read from [`NODE_BEARER_ENV`] (`DREGG_NODE_BEARER`) if set —
+    /// the real node's `/turn/submit` is behind `require_auth`, which demands
+    /// `Authorization: Bearer <token>` once the operator has set a passphrase. Unset ⇒ no
+    /// auth header (accepted only by a node with no passphrase, whose protected routes are
+    /// loopback-only).
     pub fn new(url: impl Into<String>) -> Result<HttpNode, NodeError> {
         let client = reqwest::blocking::Client::builder()
             .build()
             .map_err(|e| NodeError::Config(e.to_string()))?;
+        let bearer = std::env::var(NODE_BEARER_ENV)
+            .ok()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
         Ok(HttpNode {
             base_url: url.into().trim_end_matches('/').to_string(),
             agent: "0".repeat(64),
+            bearer,
             client,
         })
     }
@@ -384,6 +404,26 @@ impl HttpNode {
     pub fn with_agent(mut self, agent_hex: impl Into<String>) -> HttpNode {
         self.agent = agent_hex.into();
         self
+    }
+
+    /// Set the API bearer token explicitly (overrides [`NODE_BEARER_ENV`]).
+    pub fn with_bearer(mut self, token: impl Into<String>) -> HttpNode {
+        let t = token.into();
+        self.bearer = if t.trim().is_empty() {
+            None
+        } else {
+            Some(t.trim().to_string())
+        };
+        self
+    }
+
+    /// Attach the configured bearer token to a request, if any. `/turn/submit` and the
+    /// read endpoints are on the node's protected router once a passphrase is set.
+    fn authed(&self, rb: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+        match &self.bearer {
+            Some(token) => rb.bearer_auth(token),
+            None => rb,
+        }
     }
 }
 
@@ -404,9 +444,11 @@ impl FederationSink for HttpNode {
             }],
         });
         let resp = self
-            .client
-            .post(format!("{}/turn/submit", self.base_url))
-            .json(&body)
+            .authed(
+                self.client
+                    .post(format!("{}/turn/submit", self.base_url))
+                    .json(&body),
+            )
             .send()
             .map_err(|e| NodeError::Transport(e.to_string()))?;
         if !resp.status().is_success() {
@@ -552,6 +594,17 @@ mod tests {
         if std::env::var(NODE_URL_ENV).is_err() {
             assert!(NodeTarget::from_env().unwrap().is_local());
         }
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn bearer_is_configurable_and_blank_is_none() {
+        let n = HttpNode::new("http://example.invalid:8420")
+            .unwrap()
+            .with_bearer("tok-abc123");
+        assert_eq!(n.bearer.as_deref(), Some("tok-abc123"));
+        // A blank token clears it (no stray empty Authorization header).
+        assert!(n.with_bearer("   ").bearer.is_none());
     }
 
     #[cfg(not(feature = "http"))]
