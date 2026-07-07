@@ -306,3 +306,8 @@ Two sequential gates on one pipeline:
   real proc bash scripts/bootstrap.sh, in the "lake exe cache get" mathlib phase (fast path; 3057
   mathlib oleans already present) → then Dregg2 closure → leanc → the Linux seed. Watching the SEED
   FILE (dregg-lean-ffi/libdregg_lean.a), not pgrep.
+
+## ★ hbox Linux seed BUILT + verified (07-07, 18:46): 536MB, 14 exports (dregg_tau_order,
+## dregg_exec_full_forest_auth,...), round-trips the verified Lean kernel. Reflects the Lean-fix
+## (02c4e1709 implemented_by). Node build (cargo -p dregg-node --release) launched setsid-detached,
+## links the seed → the fixed VERIFIED Linux node. Then cross-machine deploy.
