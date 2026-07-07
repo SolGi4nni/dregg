@@ -38,6 +38,10 @@
 //! powerbox's own `mint_needs_held_factory` gate (you cannot grant what the
 //! source does not hold) — *duping is structurally inexpressible, not policed.*
 
+use std::collections::BTreeMap;
+
+use dregg_captp::data_plane::{Bus, ChannelName, DataPlaneError, Delivery, SendCap, TopicName};
+use dregg_captp::FederationId;
 use dregg_cell::{AuthRequired, CapabilitySet, CellId};
 use dregg_turn::action::Effect;
 use dregg_turn::turn::TurnReceipt;
@@ -196,28 +200,42 @@ pub fn pick_up(
     item: Item,
     confer: AuthRequired,
 ) -> ActionOutcome {
-    // (1) GRANT: a real attenuated Effect::GrantCapability source → taker. The
-    //     powerbox refuses if `source` does not hold the item (mint_needs_held_
+    move_cap(world, source, taker.cell, item.cell, confer)
+}
+
+/// **THE CONSERVED CAP-MOVE** — the one primitive under [`pick_up`], [`give`],
+/// and the presence-token move ([`enter`]/[`leave`]): a cap to `target` MOVES
+/// `source` → `dest` (grant + revoke), and cannot be duped or amplified. Both
+/// gates are the powerbox's/executor's own, never Rust bookkeeping.
+pub fn move_cap(
+    world: &mut World,
+    source: CellId,
+    dest: CellId,
+    target: CellId,
+    confer: AuthRequired,
+) -> ActionOutcome {
+    // (1) GRANT: a real attenuated Effect::GrantCapability source → dest. The
+    //     powerbox refuses if `source` does not hold the target (mint_needs_held_
     //     factory) or if `confer` would amplify (gen_conferral_is_attenuation).
-    let grant_receipt = match Powerbox::grant(world, source, taker.cell, item.cell, confer) {
+    let grant_receipt = match Powerbox::grant(world, source, dest, target, confer) {
         PowerboxOutcome::Granted { receipt, .. } => receipt,
         PowerboxOutcome::Denied { reason } => {
             return ActionOutcome::Refused { reason };
         }
     };
 
-    // (2) REVOKE: the source loses the item cap (the item leaves the floor). We
-    //     find the source's slot reaching the item and revoke it via a real turn.
+    // (2) REVOKE: the source loses the cap (the object leaves its hands). We
+    //     find the source's slot reaching the target and revoke it via a real turn.
     let slot = match world
         .ledger()
         .get(&source)
-        .and_then(|c| c.capabilities.iter().find(|cap| cap.target == item.cell))
+        .and_then(|c| c.capabilities.iter().find(|cap| cap.target == target))
         .map(|cap| cap.slot)
     {
         Some(s) => s,
         None => {
             // The grant landed but the source somehow holds no revocable slot —
-            // leave the grant (the taker has it) and report the unusual state.
+            // leave the grant (the dest has it) and report the unusual state.
             return ActionOutcome::Done {
                 receipt: grant_receipt,
             };
@@ -229,10 +247,10 @@ pub fn pick_up(
     );
     match world.commit_turn(revoke) {
         CommitOutcome::Committed { receipt, .. } => ActionOutcome::Done { receipt },
-        // The revoke failed — the taker still has the cap; report fail-open of the
+        // The revoke failed — the dest still has the cap; report fail-open of the
         // removal honestly (the source still holds it; not a dupe — the SAME cap).
         other => ActionOutcome::Refused {
-            reason: format!("pickup grant landed but removal from source was refused: {other:?}"),
+            reason: format!("cap-move grant landed but removal from source was refused: {other:?}"),
         },
     }
 }
@@ -332,6 +350,370 @@ pub fn move_through(
             reason: "world suspended: move turn queued, not committed".to_string(),
         },
     }
+}
+
+// =============================================================================
+// PHASE 2 — PRESENCE (a conserved cap artifact) + SAY (over the captp data plane)
+// =============================================================================
+//
+// This is the seam DEOS-RUNS.md names: *"presence is the door-cap-gated write
+// (entry cap-gating proven; a fuller presence-token move/grant is future)"* —
+// here the fuller move lands. Presence is NOT a Rust set:
+//
+//   * **presence = a conserved token** — a [`PresenceToken`] is a cell; *being in
+//     a room* is *the room's c-list holding the cap to your token*. Entering
+//     MOVES the token into the room ([`move_cap`] — the same grant+revoke pair as
+//     [`pick_up`], gated by `mint_needs_held_factory`), leaving moves it back out.
+//     Single custody of the cap ⇒ an inhabitant is never present in two rooms —
+//     conservation, not bookkeeping.
+//   * **"who is here" = a read of the room cell** — [`Room::hosts`] /
+//     [`Room::who_is_here`] read the live ledger's c-list, nothing else.
+//   * **entry is still the door tooth** — [`enter`] runs [`move_through`] FIRST:
+//     the executor refuses (`CapabilityNotHeld`) unless the mover holds the door
+//     cap, before the token moves. The phase-1 gate keeps passing.
+//   * **say = a cap-gated enqueue on the Bus** — a room's chat rides the REAL
+//     [`dregg_captp::data_plane::Bus`]: the speaker presents a [`SendCap`] into
+//     the room's channel and [`Bus::enqueue`] admits or refuses at
+//     [`SendCap::admits`] — a speaker who is not present presents a revoked (or
+//     never-granted floor) cap and is refused BY THE CAP GATE
+//     ([`DataPlaneError::Unauthorized`]), never by an if-statement here. Hearers
+//     are the present inhabitants' inboxes (topic fan-out), drained in FIFO
+//     order, each delivery a signed, verifying custody receipt.
+//
+// The room's own inbox doubles as its chat log — the same "room = a cell whose
+// history is its messages" shape as `deos_matrix::cell::RoomCell`, without any
+// deos-matrix dependency (the Bus inbox IS the history here).
+//
+// NAMED SEAM (cap-lifecycle weld): the speak-cap mint/revoke ([`RoomVoice::admit`]
+// / [`RoomVoice::expel`]) is host-side issuance KEYED to the receipted,
+// executor-gated enter/leave — the refusal itself is the Bus's cap gate, but the
+// issuance is not yet itself a turn. The fuller weld (derive the speak cap as an
+// attenuation of the on-ledger presence token, so issuance is also a receipted
+// grant) is the next rung, and is what a 3-box net needs anyway (see the module
+// report / HORIZONLOG).
+
+/// **A presence token — presence as a conserved object.** One per inhabitant; a
+/// cell whose cap MOVES with them. The room holding the cap IS "they are here".
+/// When in no room, the inhabitant carries their own token (the cap sits in
+/// their own c-list).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PresenceToken {
+    /// The cell this token IS.
+    pub cell: CellId,
+}
+
+impl PresenceToken {
+    pub fn new(cell: CellId) -> Self {
+        PresenceToken { cell }
+    }
+
+    /// Does `holder` currently carry this token in its own c-list (i.e. the
+    /// inhabitant is in no room — presence is *at hand*, not placed)?
+    pub fn carried_by(&self, world: &World, holder: CellId) -> bool {
+        world
+            .ledger()
+            .get(&holder)
+            .map(|c| c.capabilities.has_access(&self.cell))
+            .unwrap_or(false)
+    }
+}
+
+impl Room {
+    /// **"Is this inhabitant here?"** — a read of the room cell's live c-list:
+    /// the room hosts a presence token iff it holds the cap to it. No Rust set.
+    pub fn hosts(&self, world: &World, token: PresenceToken) -> bool {
+        self.clist(world)
+            .map(|cl| cl.has_access(&token.cell))
+            .unwrap_or(false)
+    }
+
+    /// **"Who is here?"** — the roster filtered by the room cell's own state.
+    /// `roster` is the world's directory of (inhabitant, their token); the answer
+    /// is read entirely off the ledger.
+    pub fn who_is_here(
+        &self,
+        world: &World,
+        roster: &[(Inhabitant, PresenceToken)],
+    ) -> Vec<Inhabitant> {
+        roster
+            .iter()
+            .filter(|(_, t)| self.hosts(world, *t))
+            .map(|(i, _)| *i)
+            .collect()
+    }
+}
+
+/// The hearer identity an inhabitant drains its room-chat from — its inbox
+/// address on the [`Bus`] (the cell id bytes, verbatim).
+pub fn hearer_id(who: Inhabitant) -> FederationId {
+    FederationId(who.cell.0)
+}
+
+/// The outcome of a [`RoomVoice::say`] — heard (with the real deliveries) or
+/// refused by the data plane's own cap gate.
+#[derive(Debug)]
+pub enum SayOutcome {
+    /// The utterance was admitted: archived into the room's own inbox (the chat
+    /// log) and fanned out to every present hearer, each with a signed receipt.
+    Heard {
+        /// The delivery into the room's own inbox (the room's history entry).
+        archived: Delivery,
+        /// One delivery per present hearer (the fan-out), in subscription order.
+        heard: Vec<(FederationId, Delivery)>,
+    },
+    /// The say was refused — by [`SendCap::admits`] inside the Bus
+    /// ([`DataPlaneError::Unauthorized`]) for an absent speaker; nothing was
+    /// queued, no cursor ticked, no receipt minted (no phantom speech).
+    Refused {
+        /// The data plane's own error (the gate's verdict, verbatim).
+        error: DataPlaneError,
+    },
+}
+
+impl SayOutcome {
+    pub fn is_heard(&self) -> bool {
+        matches!(self, SayOutcome::Heard { .. })
+    }
+}
+
+/// **A room's voice — its channel on the data-plane [`Bus`].**
+///
+/// One per room. The room has an inbox identity (its chat log), a channel name +
+/// topic (both derived from the room cell id), a relay cap (the room fanning an
+/// admitted utterance out to its occupants), and per-inhabitant SPEAK caps whose
+/// lifecycle is welded to presence: minted fresh on a committed [`enter`],
+/// revoked on a committed [`leave`]/[`move_rooms`]. An absent speaker therefore
+/// presents a revoked cap (or the pre-revoked floor cap, if they never entered)
+/// and [`Bus::enqueue`] refuses at [`SendCap::admits`] — presence gates speech
+/// through the cap algebra, not through a presence check in this file.
+pub struct RoomVoice {
+    room: Room,
+    /// The room's own inbox identity on the Bus — its chat log.
+    fed: FederationId,
+    /// The room-scoped channel name (`mud/say/<room cell id>`).
+    name: ChannelName,
+    /// The room-scoped topic the present hearers subscribe to (same bytes).
+    topic: TopicName,
+    /// The room's own broadcast cap: fans an ADMITTED utterance to its occupants.
+    relay: SendCap,
+    /// The floor cap a never-admitted speaker presents: minted REVOKED, so the
+    /// gate (not this module) refuses them uniformly with a departed speaker.
+    floor: SendCap,
+    /// Per-inhabitant speak caps — minted on enter, revoked (in place) on leave.
+    speak: BTreeMap<CellId, SendCap>,
+}
+
+impl RoomVoice {
+    /// Open a room's voice on the Bus: register its topic, mint its relay cap and
+    /// the pre-revoked floor cap.
+    pub fn new(room: Room, bus: &mut Bus) -> Self {
+        let fed = FederationId(room.cell.0);
+        let mut bytes = b"mud/say/".to_vec();
+        bytes.extend_from_slice(&room.cell.0);
+        let name = ChannelName::new(bytes.clone());
+        let topic = TopicName::new(bytes);
+        bus.register_topic(topic.clone());
+        let relay = SendCap::grant(fed, name.clone(), AuthRequired::Signature);
+        let mut floor = SendCap::grant(fed, name.clone(), AuthRequired::Signature);
+        floor.revoke();
+        RoomVoice {
+            room,
+            fed,
+            name,
+            topic,
+            relay,
+            floor,
+            speak: BTreeMap::new(),
+        }
+    }
+
+    /// The room this voice speaks for.
+    pub fn room(&self) -> Room {
+        self.room
+    }
+
+    /// The room's own inbox identity (drain it to read the chat log).
+    pub fn inbox(&self) -> FederationId {
+        self.fed
+    }
+
+    /// The room-scoped channel name (for wake-by-name).
+    pub fn channel(&self) -> &ChannelName {
+        &self.name
+    }
+
+    /// Weld a committed ENTER to the channel: mint a fresh speak cap for `who`
+    /// and subscribe their inbox to the room topic. Private on purpose — only
+    /// the receipted, executor-gated [`enter`]/[`move_rooms`] reach it.
+    fn admit(&mut self, bus: &mut Bus, who: Inhabitant) {
+        self.speak.insert(
+            who.cell,
+            SendCap::grant(self.fed, self.name.clone(), AuthRequired::Signature),
+        );
+        bus.subscribe(self.topic.clone(), hearer_id(who));
+        bus.wait(&self.name, hearer_id(who));
+    }
+
+    /// Weld a committed LEAVE to the channel: REVOKE `who`'s speak cap in place
+    /// (the channel-level revocation switch — their next say is refused by
+    /// [`SendCap::admits`]) and unsubscribe their inbox (they no longer hear).
+    fn expel(&mut self, bus: &mut Bus, who: Inhabitant) {
+        if let Some(cap) = self.speak.get_mut(&who.cell) {
+            cap.revoke();
+        }
+        bus.unsubscribe(&self.topic, &hearer_id(who));
+    }
+
+    /// **SAY — a cap-gated enqueue over the data plane.**
+    ///
+    /// The speaker presents their speak cap (or, having never been admitted, the
+    /// pre-revoked floor cap) and the utterance is:
+    ///
+    ///   1. **gated**: [`Bus::enqueue`] into the room's own inbox admits or
+    ///      refuses at [`SendCap::admits`]. An absent speaker's cap is revoked ⇒
+    ///      [`DataPlaneError::Unauthorized`] — the refusal is the data plane's,
+    ///      and it leaves NO phantom work (nothing queued, no cursor tick, no
+    ///      receipt).
+    ///   2. **archived**: the admitted box lands in the room's inbox — the room's
+    ///      chat history (the `RoomCell`-shaped log, as a Bus inbox).
+    ///   3. **heard**: the room relays the admitted utterance to its topic —
+    ///      one real enqueue + signed receipt per PRESENT hearer, delivered in
+    ///      FIFO order (drain to hear).
+    pub fn say(&self, bus: &mut Bus, speaker: Inhabitant, text: &[u8], now: u64) -> SayOutcome {
+        let cap = self.speak.get(&speaker.cell).unwrap_or(&self.floor);
+
+        // THE GATE — the Bus's own `SendCap::admits` seam decides. Present ⇒ the
+        // fresh cap admits; departed ⇒ revoked cap refuses; never-entered ⇒ the
+        // pre-revoked floor refuses. Same gate, all three polarities.
+        let archived = match bus.enqueue(
+            cap,
+            self.fed,
+            &self.name,
+            AuthRequired::Signature,
+            text.to_vec(),
+            now,
+        ) {
+            Ok(d) => d,
+            Err(error) => return SayOutcome::Refused { error },
+        };
+
+        // FAN-OUT — the room relays the ADMITTED utterance to its occupants (the
+        // topic's subscribers are exactly the present inhabitants).
+        match bus.publish(
+            &self.topic,
+            &self.relay,
+            AuthRequired::Signature,
+            text.to_vec(),
+            now,
+        ) {
+            Ok(heard) => SayOutcome::Heard { archived, heard },
+            Err(error) => SayOutcome::Refused { error },
+        }
+    }
+}
+
+/// **ENTER A ROOM — the door tooth, then the conserved presence move.**
+///
+/// Two real gates in sequence, both the machinery's own:
+///
+///   1. **the door** — [`move_through`]: the executor REFUSES
+///      (`CapabilityNotHeld`) unless `mover` holds a cap reaching the room. A
+///      locked door still locks; the token does not move; no speak cap is minted.
+///   2. **the presence move** — [`move_cap`]: the mover's presence token MOVES
+///      `from` (their own hands, or wherever it truly sits) into the room cell's
+///      c-list. `mint_needs_held_factory` refuses a `from` that does not actually
+///      hold the token — a lie about where you are cannot move your presence.
+///
+/// On commit, the room's voice ADMITS the mover: a fresh speak cap + a topic
+/// subscription (they can now say and hear).
+pub fn enter(
+    world: &mut World,
+    bus: &mut Bus,
+    voice: &mut RoomVoice,
+    mover: Inhabitant,
+    token: PresenceToken,
+    from: CellId,
+    presence_slot: usize,
+) -> ActionOutcome {
+    // (1) THE DOOR — the phase-1 executor gate, unchanged and still load-bearing.
+    let door = move_through(world, mover, voice.room(), presence_slot);
+    if !door.is_done() {
+        return door;
+    }
+    // (2) THE PRESENCE MOVE — the token's cap moves `from` → room (conserved).
+    let moved = move_cap(
+        world,
+        from,
+        voice.room().cell,
+        token.cell,
+        AuthRequired::None,
+    );
+    if !moved.is_done() {
+        return moved;
+    }
+    // (3) THE VOICE WELD — presence now on-ledger; mint the speak cap.
+    voice.admit(bus, mover);
+    moved
+}
+
+/// **LEAVE A ROOM — the presence token moves back to the leaver's own hands.**
+///
+/// The same conserved [`move_cap`]: room → leaver. Leaving a room you are NOT in
+/// is refused by `mint_needs_held_factory` (the room does not hold your token) —
+/// the gate, not a check here. On commit the voice EXPELS the leaver: speak cap
+/// REVOKED (their next say refused by the cap gate) and unsubscribed (silence,
+/// both directions).
+pub fn leave(
+    world: &mut World,
+    bus: &mut Bus,
+    voice: &mut RoomVoice,
+    leaver: Inhabitant,
+    token: PresenceToken,
+) -> ActionOutcome {
+    let moved = move_cap(
+        world,
+        voice.room().cell,
+        leaver.cell,
+        token.cell,
+        AuthRequired::None,
+    );
+    if !moved.is_done() {
+        return moved;
+    }
+    voice.expel(bus, leaver);
+    moved
+}
+
+/// **MOVE ROOM → ROOM — one conserved hop.** The door tooth on the destination,
+/// then the token moves old room → new room directly (never duplicated, never in
+/// two rooms: it is ONE cap, moving). The old room's voice expels; the new
+/// room's admits.
+pub fn move_rooms(
+    world: &mut World,
+    bus: &mut Bus,
+    from_voice: &mut RoomVoice,
+    to_voice: &mut RoomVoice,
+    mover: Inhabitant,
+    token: PresenceToken,
+    presence_slot: usize,
+) -> ActionOutcome {
+    let door = move_through(world, mover, to_voice.room(), presence_slot);
+    if !door.is_done() {
+        return door;
+    }
+    let moved = move_cap(
+        world,
+        from_voice.room().cell,
+        to_voice.room().cell,
+        token.cell,
+        AuthRequired::None,
+    );
+    if !moved.is_done() {
+        return moved;
+    }
+    from_voice.expel(bus, mover);
+    to_voice.admit(bus, mover);
+    moved
 }
 
 #[cfg(test)]
@@ -742,5 +1124,385 @@ mod tests {
             "carol's balance unchanged after the refused overdraft"
         );
         assert_eq!(alice.cell_balance(&world), 300, "alice's balance unchanged");
+    }
+
+    // ── PHASE 2: PRESENCE (conserved token) + SAY (over the data-plane Bus) ────
+    //
+    // TWO rooms (tavern + cellar) with a data-plane Bus carrying each room's
+    // chat. ALICE holds door caps to both rooms; BOB holds the tavern door only;
+    // MALLORY holds NO door caps (the locked-out would-be speaker). Each carries
+    // their own presence token at genesis (present nowhere).
+    struct SpeechWorld {
+        world: World,
+        bus: Bus,
+        tavern: RoomVoice,
+        cellar: RoomVoice,
+        alice: Inhabitant,
+        tok_a: PresenceToken,
+        bob: Inhabitant,
+        tok_b: PresenceToken,
+        mallory: Inhabitant,
+        tok_m: PresenceToken,
+    }
+
+    fn speech_world() -> SpeechWorld {
+        let mut w = World::new();
+
+        // Two rooms — plain open cells; entry is gated by the DOOR CAP the
+        // executor checks, not by anything on the room itself.
+        let tavern = Room::new(w.genesis_cell(0x40, 0));
+        let cellar = Room::new(w.genesis_cell(0x41, 0));
+
+        // Presence tokens — one cell each, minted before their owners so the
+        // owners can be born carrying the cap to their own token.
+        let tok_a = PresenceToken::new(w.genesis_cell(0x51, 0));
+        let tok_b = PresenceToken::new(w.genesis_cell(0x52, 0));
+        let tok_m = PresenceToken::new(w.genesis_cell(0x53, 0));
+
+        // ALICE: doors to BOTH rooms + her own token at hand.
+        let mut ac = make_open_cell(0xA1, 0);
+        ac.capabilities
+            .grant(tavern.cell, AuthRequired::None)
+            .unwrap();
+        ac.capabilities
+            .grant(cellar.cell, AuthRequired::None)
+            .unwrap();
+        ac.capabilities
+            .grant(tok_a.cell, AuthRequired::None)
+            .unwrap();
+        let alice = Inhabitant::new(w.genesis_install(ac));
+
+        // BOB: the tavern door only + his token.
+        let mut bc = make_open_cell(0xB0, 0);
+        bc.capabilities
+            .grant(tavern.cell, AuthRequired::None)
+            .unwrap();
+        bc.capabilities
+            .grant(tok_b.cell, AuthRequired::None)
+            .unwrap();
+        let bob = Inhabitant::new(w.genesis_install(bc));
+
+        // MALLORY: her token, NO doors — every entry is a locked door to her.
+        let mut mc = make_open_cell(0xC0, 0);
+        mc.capabilities
+            .grant(tok_m.cell, AuthRequired::None)
+            .unwrap();
+        let mallory = Inhabitant::new(w.genesis_install(mc));
+
+        // The data-plane Bus: a real relay identity whose FederationId IS its
+        // Ed25519 pubkey, so every custody receipt verifies.
+        let (sk, pk) = dregg_types::generate_keypair();
+        let mut bus = Bus::new(FederationId(pk.0), sk, 1024, 65536);
+        let tavern_voice = RoomVoice::new(tavern, &mut bus);
+        let cellar_voice = RoomVoice::new(cellar, &mut bus);
+
+        SpeechWorld {
+            world: w,
+            bus,
+            tavern: tavern_voice,
+            cellar: cellar_voice,
+            alice,
+            tok_a,
+            bob,
+            tok_b,
+            mallory,
+            tok_m,
+        }
+    }
+
+    /// PRESENCE IS A CONSERVED TOKEN: two inhabitants in one room BOTH show in
+    /// "who is here" (a ledger read); a door cap you lack still refuses entry
+    /// (the phase-1 executor tooth, unchanged); and the token is NEVER in two
+    /// rooms — moving rooms MOVES it (single custody), and you cannot leave a
+    /// room you are not in (`mint_needs_held_factory` refuses).
+    #[test]
+    fn presence_is_a_conserved_token_and_the_door_still_refuses() {
+        let mut s = speech_world();
+        let roster = [(s.alice, s.tok_a), (s.bob, s.tok_b), (s.mallory, s.tok_m)];
+
+        // Pre: everyone carries their own token; the rooms host nobody.
+        assert!(s.tok_a.carried_by(&s.world, s.alice.cell));
+        assert!(s.tavern.room().who_is_here(&s.world, &roster).is_empty());
+
+        // ALICE and BOB enter the tavern — door-gated, then the token MOVES in.
+        let a = enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.alice,
+            s.tok_a,
+            s.alice.cell,
+            32,
+        );
+        assert!(
+            a.is_done(),
+            "alice holds the tavern door → enter commits: {a:?}"
+        );
+        let b = enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.bob,
+            s.tok_b,
+            s.bob.cell,
+            33,
+        );
+        assert!(
+            b.is_done(),
+            "bob holds the tavern door → enter commits: {b:?}"
+        );
+
+        // WHO IS HERE — read off the room cell's live c-list: BOTH show.
+        let here = s.tavern.room().who_is_here(&s.world, &roster);
+        assert_eq!(
+            here.len(),
+            2,
+            "two inhabitants present, both show: {here:?}"
+        );
+        assert!(here.contains(&s.alice) && here.contains(&s.bob));
+        // …and their tokens LEFT their hands (the move conserved them).
+        assert!(!s.tok_a.carried_by(&s.world, s.alice.cell));
+        assert!(!s.tok_b.carried_by(&s.world, s.bob.cell));
+
+        // THE DOOR STILL REFUSES: mallory holds no door cap. Her enter is refused
+        // by the EXECUTOR (CapabilityNotHeld) — the phase-1 tooth — and her token
+        // never moves: she is not present, and still carries it.
+        let m = enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.mallory,
+            s.tok_m,
+            s.mallory.cell,
+            34,
+        );
+        assert!(!m.is_done(), "no door cap → entry refused: {m:?}");
+        if let ActionOutcome::Refused { reason } = &m {
+            assert!(
+                reason.contains("CapabilityNotHeld")
+                    || reason.to_lowercase().contains("cap")
+                    || reason.to_lowercase().contains("held")
+                    || reason.to_lowercase().contains("permission"),
+                "the refusal cites the missing door cap, got: {reason}"
+            );
+        }
+        assert!(!s.tavern.room().hosts(&s.world, s.tok_m));
+        assert!(s.tok_m.carried_by(&s.world, s.mallory.cell));
+
+        // CONSERVATION ACROSS A MOVE: alice moves tavern → cellar. ONE cap moves;
+        // she is present in exactly one room at every step, never two.
+        let mv = move_rooms(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            &mut s.cellar,
+            s.alice,
+            s.tok_a,
+            35,
+        );
+        assert!(
+            mv.is_done(),
+            "alice holds the cellar door → move commits: {mv:?}"
+        );
+        assert!(
+            s.cellar.room().hosts(&s.world, s.tok_a),
+            "alice is in the cellar"
+        );
+        assert!(
+            !s.tavern.room().hosts(&s.world, s.tok_a),
+            "…and NOT in the tavern — the token MOVED (never present in two rooms)"
+        );
+
+        // YOU CANNOT LEAVE WHERE YOU ARE NOT: bob "leaves" the cellar he never
+        // entered — refused by mint_needs_held_factory (the cellar does not hold
+        // his token), not by a presence check in this module.
+        let ghost_leave = leave(&mut s.world, &mut s.bus, &mut s.cellar, s.bob, s.tok_b);
+        assert!(
+            !ghost_leave.is_done(),
+            "leaving a room you are not in is refused by the gate: {ghost_leave:?}"
+        );
+        assert!(
+            s.tavern.room().hosts(&s.world, s.tok_b),
+            "bob is still exactly where he was"
+        );
+    }
+
+    /// SAY RIDES THE BUS: a present speaker's utterance is a cap-gated enqueue
+    /// (archived in the room's own inbox — its chat log) fanned to every present
+    /// hearer, heard IN ORDER by both, each delivery a signed, verifying custody
+    /// receipt witnessed on drain.
+    #[test]
+    fn say_over_the_bus_present_speakers_heard_in_order_by_both_hearers() {
+        let mut s = speech_world();
+        enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.alice,
+            s.tok_a,
+            s.alice.cell,
+            32,
+        );
+        enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.bob,
+            s.tok_b,
+            s.bob.cell,
+            33,
+        );
+
+        // Three utterances, interleaved speakers.
+        let script: [(&Inhabitant, &[u8]); 3] = [
+            (&s.alice, b"hello"),
+            (&s.bob, b"well met"),
+            (&s.alice, b"onward"),
+        ];
+        let mut archives = Vec::new();
+        for (i, (speaker, text)) in script.iter().enumerate() {
+            let out = s.tavern.say(&mut s.bus, **speaker, text, i as u64);
+            match out {
+                SayOutcome::Heard { archived, heard } => {
+                    assert!(
+                        archived.receipt.sig_verifies(),
+                        "the archival receipt is a real signature"
+                    );
+                    assert_eq!(
+                        heard.len(),
+                        2,
+                        "the utterance fanned to BOTH present hearers"
+                    );
+                    for (_, d) in &heard {
+                        assert!(d.receipt.sig_verifies(), "each hearer's receipt verifies");
+                    }
+                    archives.push(archived);
+                }
+                SayOutcome::Refused { error } => {
+                    panic!("a present speaker's say was refused: {error}")
+                }
+            }
+        }
+
+        // BOTH hearers drain their inboxes: every utterance, in say order (FIFO).
+        let expected: Vec<Vec<u8>> = script.iter().map(|(_, t)| t.to_vec()).collect();
+        for who in [s.alice, s.bob] {
+            let boxes = s.bus.drain(&hearer_id(who));
+            let got: Vec<Vec<u8>> = boxes.into_iter().map(|m| m.encrypted_payload).collect();
+            assert_eq!(
+                got, expected,
+                "hearer {who:?} heard every utterance in order"
+            );
+        }
+
+        // The ROOM'S OWN INBOX is its chat log — the same three, in order, and
+        // draining it WITNESSES the archival deliveries (receipt-identity).
+        let log = s.bus.drain(&s.tavern.inbox());
+        let logged: Vec<Vec<u8>> = log.into_iter().map(|m| m.encrypted_payload).collect();
+        assert_eq!(
+            logged, expected,
+            "the room's inbox is the ordered chat history"
+        );
+        for a in &archives {
+            assert!(
+                a.is_handled(s.bus.delivered_hashes(&s.tavern.inbox())),
+                "each archived utterance is drain-witnessed (handled, not just promised)"
+            );
+        }
+    }
+
+    /// PRESENCE GATES SPEECH — through the CAP GATE, both polarities:
+    /// a never-present speaker and a departed speaker are each refused by
+    /// `SendCap::admits` inside the Bus (`DataPlaneError::Unauthorized`), leaving
+    /// NO phantom work; leaving also SILENCES (the leaver hears nothing more);
+    /// and re-entering restores the voice (the gate is not vacuously closed).
+    #[test]
+    fn an_absent_speaker_is_refused_by_the_cap_gate_and_leave_silences() {
+        let mut s = speech_world();
+
+        // MALLORY (never entered — she can't: no door cap) tries to speak. The
+        // refusal is the Bus's own cap gate on the pre-revoked floor cap.
+        let ghost = s.tavern.say(&mut s.bus, s.mallory, b"boo", 0);
+        match ghost {
+            SayOutcome::Refused { error } => assert!(
+                matches!(error, DataPlaneError::Unauthorized { .. }),
+                "the refusal is SendCap::admits' verdict, got: {error}"
+            ),
+            SayOutcome::Heard { .. } => panic!("an absent speaker was heard"),
+        }
+        // NO PHANTOM SPEECH: nothing queued anywhere, no cursor tick, no receipt.
+        assert_eq!(s.bus.pending_count(&s.tavern.inbox()), 0);
+        assert_eq!(s.bus.cursor(s.tavern.channel()), 0);
+
+        // Alice and bob enter; bob then LEAVES (a receipted token move out).
+        enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.alice,
+            s.tok_a,
+            s.alice.cell,
+            32,
+        );
+        enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.bob,
+            s.tok_b,
+            s.bob.cell,
+            33,
+        );
+        let out = leave(&mut s.world, &mut s.bus, &mut s.tavern, s.bob, s.tok_b);
+        assert!(out.is_done(), "bob's leave commits: {out:?}");
+        assert!(!s.tavern.room().hosts(&s.world, s.tok_b), "bob is gone");
+        assert!(
+            s.tok_b.carried_by(&s.world, s.bob.cell),
+            "…carrying his token"
+        );
+
+        // THE DEPARTED SPEAKER: bob's speak cap is REVOKED — his say is refused
+        // by the SAME cap gate (revocation, not an if-statement).
+        let after = s.tavern.say(&mut s.bus, s.bob, b"one more thing", 1);
+        match after {
+            SayOutcome::Refused { error } => assert!(
+                matches!(error, DataPlaneError::Unauthorized { .. }),
+                "a departed speaker is refused by the cap gate, got: {error}"
+            ),
+            SayOutcome::Heard { .. } => panic!("a departed speaker was heard"),
+        }
+
+        // LEAVE SILENCES the other direction too: alice speaks; only SHE hears.
+        let solo = s.tavern.say(&mut s.bus, s.alice, b"anyone?", 2);
+        match solo {
+            SayOutcome::Heard { heard, .. } => {
+                assert_eq!(heard.len(), 1, "only the one present hearer");
+                assert_eq!(heard[0].0, hearer_id(s.alice));
+            }
+            SayOutcome::Refused { error } => panic!("alice is present: {error}"),
+        }
+        assert_eq!(
+            s.bus.pending_count(&hearer_id(s.bob)),
+            0,
+            "nothing lands in the departed hearer's inbox"
+        );
+
+        // RE-ENTRY RESTORES THE VOICE (non-vacuous): bob comes back through the
+        // door he still holds, presence moves back in, a FRESH speak cap admits.
+        let back = enter(
+            &mut s.world,
+            &mut s.bus,
+            &mut s.tavern,
+            s.bob,
+            s.tok_b,
+            s.bob.cell,
+            34,
+        );
+        assert!(back.is_done(), "bob re-enters: {back:?}");
+        let again = s.tavern.say(&mut s.bus, s.bob, b"i return", 3);
+        assert!(
+            again.is_heard(),
+            "a re-admitted speaker is heard: {again:?}"
+        );
     }
 }
