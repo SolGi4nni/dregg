@@ -3266,8 +3266,23 @@ async fn post_submit_signed_turn(
         return Err(StatusCode::FORBIDDEN);
     }
 
+    let is_solo = s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo);
+    // Is the acting cell the node OPERATOR's own default cell? Only then does the
+    // node operator's cipherclerk chain (`s.cclerk`) authoritatively own the turn's
+    // receipt chain. A FOREIGN client's turn is decoupled: its receipt chain is its
+    // OWN, and its authoritative application is the finalized pass on every node
+    // (`execute_finalized_turn`, which provisions the actor + destinations
+    // deterministically). This is the external-client path (SUBMIT-PATH-DIAGNOSIS).
+    let is_operator_agent = signed.turn.agent == crate::executor_setup::local_agent_cell(&s);
+
+    // NODE-CHAIN prev gate — applies ONLY to the operator's own agent. Gating a
+    // foreign client's `previous_receipt_hash` against `s.cclerk` (the NODE head)
+    // serialized every client through one node-owned chain and rejected fresh
+    // clients whose chain is their own. For a client turn the finalized pass is
+    // authoritative, so we do not gate it on the node head here.
     let expected_prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
-    if let Some(claimed_prev) = signed.turn.previous_receipt_hash
+    if is_operator_agent
+        && let Some(claimed_prev) = signed.turn.previous_receipt_hash
         && Some(claimed_prev) != expected_prev
     {
         return Ok(Json(SubmitSignedTurnResponse {
@@ -3289,14 +3304,49 @@ async fn post_submit_signed_turn(
     // like a local one (its SDK stamps `valid_until`, so it does not fall off
     // the wire marshal).
     let executor = crate::executor_setup::new_submit_executor(&s);
-    seed_executor_receipt_head(&executor, signed.turn.agent, expected_prev);
+    // ChainHead seed: the operator's own agent binds to the NODE head; a FOREIGN
+    // client binds to ITS OWN claimed `previous_receipt_hash` (None for a first
+    // turn). `execute_finalized_turn` only seeds the LOCAL agent's head, so a
+    // foreign client's turn is finalized against its own claimed prev on every node
+    // — seeding the node head here would make the ingress receipt diverge from the
+    // uniform finalized outcome.
+    let seed_prev = if is_operator_agent {
+        expected_prev
+    } else {
+        signed.turn.previous_receipt_hash
+    };
+    seed_executor_receipt_head(&executor, signed.turn.agent, seed_prev);
     let lean_producer_enabled = s.lean_producer_enabled;
-    let exec_result = crate::executor_setup::execute_via_producer(
-        &executor,
-        &signed.turn,
-        &mut s.ledger,
-        lean_producer_enabled,
-    );
+    // MULTI-PARTY: consensus FINALIZATION is the SOLE authoritative application of a
+    // client turn — `execute_finalized_turn` runs identically on every node and
+    // provisions the actor (`provision_signer_actor_cell`) + destinations
+    // deterministically from the finalized turn's own data. Mutating the local
+    // authoritative ledger HERE would advance the actor nonce / create cells
+    // LOCAL-ONLY, so peers reject the finalized re-execution as nonce-replay /
+    // destination-not-found — wedging cross-node commit (the exact faucet full-mode
+    // hazard). So in full mode we execute against a SCRATCH CLONE (with the actor
+    // cell provisioned, the IDENTICAL provisioning the finalized path applies)
+    // purely to build the HTTP receipt; the authoritative ledger is untouched until
+    // finalization. Solo (n=1) has no finalization pass, so it provisions the actor
+    // + commits authoritatively here.
+    let exec_result = if is_solo {
+        crate::blocklace_sync::provision_signer_actor_cell(&mut s.ledger, &signed.signer.0);
+        crate::executor_setup::execute_via_producer(
+            &executor,
+            &signed.turn,
+            &mut s.ledger,
+            lean_producer_enabled,
+        )
+    } else {
+        let mut scratch = s.ledger.clone();
+        crate::blocklace_sync::provision_signer_actor_cell(&mut scratch, &signed.signer.0);
+        crate::executor_setup::execute_via_producer(
+            &executor,
+            &signed.turn,
+            &mut scratch,
+            lean_producer_enabled,
+        )
+    };
 
     match exec_result {
         dregg_turn::TurnResult::Committed { mut receipt, .. } => {
@@ -3319,22 +3369,31 @@ async fn post_submit_signed_turn(
             // committed this turn (the soundness boundary); no inline proving / no
             // inline re-check. The composed proof (rotated effect-vm leg) is built +
             // self-verified asynchronously off the lock by the prove pool below.
-            if let Err(err) = s.cclerk.append_receipt(receipt.clone()) {
-                s.ledger = pre_ledger;
-                crate::metrics::inc_turns_executed("rejected");
-                drop(s);
-                return Ok(Json(SubmitSignedTurnResponse {
-                    accepted: false,
-                    turn_hash: Some(turn_hash),
-                    signer: Some(signer),
-                    action_count,
-                    proof_status: ActivityProofStatus::NotCommitted,
-                    has_witness: false,
-                    witness_count: 0,
-                    error: Some(format!("receipt chain mismatch: {err}")),
-                }));
+            // Receipt-chain append: ONLY the operator's own agent (or solo, which is
+            // authoritative at submission) advances the node cipherclerk chain. A
+            // FOREIGN client's turn is decoupled — its authoritative receipt is the
+            // finalized pass on every node, mirroring the faucet's full-mode
+            // scratch-clone posture. Skipping the append avoids serializing clients
+            // through the node chain (and the node-head prev mismatch that would
+            // otherwise reject a client whose own chain differs from the node head).
+            if is_operator_agent || is_solo {
+                if let Err(err) = s.cclerk.append_receipt(receipt.clone()) {
+                    s.ledger = pre_ledger;
+                    crate::metrics::inc_turns_executed("rejected");
+                    drop(s);
+                    return Ok(Json(SubmitSignedTurnResponse {
+                        accepted: false,
+                        turn_hash: Some(turn_hash),
+                        signer: Some(signer),
+                        action_count,
+                        proof_status: ActivityProofStatus::NotCommitted,
+                        has_witness: false,
+                        witness_count: 0,
+                        error: Some(format!("receipt chain mismatch: {err}")),
+                    }));
+                }
+                crate::metrics::set_receipt_chain_length(s.cclerk.receipt_chain_length() as f64);
             }
-            crate::metrics::set_receipt_chain_length(s.cclerk.receipt_chain_length() as f64);
             let receipt_hash = receipt.receipt_hash();
             let witness_outcome = match prepare_rotatable_turn(
                 &signed.turn,
