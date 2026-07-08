@@ -137,6 +137,30 @@ OUT of the breadstuffs root resolution). True source-vendoring (copy-in for offl
 is a later step once the embed is proven. **GATE: a `cargo check -p conduwuit` in the recon clone is
 running to confirm it builds in this env (edition 2024 + the rocksdb fork's C++) BEFORE any wiring.**
 
+## The RocksDB question (ember hates the build time — verdict: keep it, link the system lib)
+
+RocksDB is continuwuity's only backend (conduwuit deleted sqlite to lean on it), and it is NOT behind
+a swappable backend trait — `conduwuit_database`'s `Engine` + the whole `map`/`stream` layer use
+RocksDB's column-families / prefix-iterators / pinnable-slices / write-batches / async read-pool
+DIRECTLY. So swapping to a pure-Rust KV (redb/fjall/sled) is INVASIVE: a full engine-layer rewrite,
+forever-maintained against a weekly-churning calendar-alpha upstream. Not worth it for the membrane.
+Three real options, ranked:
+1. **Keep RocksDB, link the SYSTEM lib (recommended, non-invasive).** brew rocksdb is installed
+   (`/opt/homebrew/lib/librocksdb.a`); `librocksdb-sys` honors `ROCKSDB_LIB_DIR` → skip the vendored
+   C++ build, turn the 6-min cold build into a link. Caveat: version alignment (brew 11.1.2 vs the
+   fork's vendored version) — try it after the embed proves out; if ABI-mismatched, fall back to the
+   vendored build (which is a CACHED cold-start cost, not per-iteration). No fork.
+2. **dregg storage AS the backend (on-thesis, but a research epoch — NOT a slice).** The homeserver's
+   state IS a dregg cell / umem heap — verifiable + checkpointable (sandstorm-bridge already models
+   grain `/var` = a cell umem heap). This is the endgame "verifiable homeserver state," but it means
+   rewriting the RocksDB engine over dregg storage (which is not a hot KV) + a forever-fork. Record as
+   research-tier; do not fire.
+3. **A different homeserver** — no healthy embeddable Rust one avoids RocksDB (scout: grapevine
+   sqlite=dormant, palpo=PostgreSQL). Dead end for "embed + not RocksDB."
+
+VERDICT: keep RocksDB, try the system-link to kill the cold-build pain, note dregg-storage-backend as
+a someday. Do NOT fork the engine.
+
 ## The sequence (app layer now; ONE firmament door, design-first)
 
 1. **Body de-risk + embed seam (app, now):** vendor/pin continuwuity (exact revs of it + its ruma /
