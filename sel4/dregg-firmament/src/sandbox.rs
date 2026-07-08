@@ -92,6 +92,68 @@ pub struct Confinement {
     /// notify RUNTIME is validated on a Linux host / CI; the policy+cBPF config
     /// layer is unit-tested and the backend cross-builds for Linux.)
     pub net_out: Vec<String>,
+
+    // ─────────────────── the HEAVY-BODY tier (additive) ───────────────────────
+    //
+    // The Endpoint-only + read/egress fields above are the LIGHT jail (a compute
+    // PD over the control socket). The fields below open the doors a HEAVY body —
+    // the confined homeserver grain (`docs/deos/GRAIN-HOMESERVER.md`) — needs to
+    // BOOT + SERVE under the SAME deny-default profile: a writable db subpath, a
+    // loopback listen, a NAMED mach allow-list, the system read/machinery bundle,
+    // and the one execve door for the grain image. Every one is emitted ONLY when
+    // its field is set, so a `Confinement::default()` (all empty) still emits the
+    // EXACT light-jail profile — the heavy tier is strictly additive. The precise
+    // allow-set mirrors the de-risked reference profile
+    // `deos-homeserver/sandbox/homeserver.sb` (which boots continuwuity + serves
+    // `GET /_matrix/client/versions → 200` under macOS Seatbelt).
+    /// Writable filesystem subpaths a WRITE-cap granted the child — the db-dir
+    /// door. macOS: each becomes BOTH `(allow file-read* (subpath "<p>"))` AND
+    /// `(allow file-write* (subpath "<p>"))` (RocksDB reads back what it writes),
+    /// mirroring `homeserver.sb`'s `DB_DIR` grant. Callers pass a CANONICAL
+    /// `/private/var/…` path (`with_write_path` canonicalizes best-effort — on
+    /// macOS `/tmp`,`/var` are symlinks into `/private`, and the sandbox kernel
+    /// checks writes against the resolved path). Empty ⇒ NO writable path.
+    pub write_paths: Vec<String>,
+
+    /// Loopback listen addresses (`"127.0.0.1:PORT"`, or `"127.0.0.1:*"` for an
+    /// ephemeral self-selected port) a LISTEN-cap granted the child. macOS: each
+    /// becomes `(allow network-bind (local ip "localhost:PORT"))` +
+    /// `(allow network-inbound (local ip "localhost:PORT"))` — loopback ONLY (a
+    /// non-loopback host is dropped). Empty ⇒ NO inbound. This is the firmament
+    /// listen door; `homeserver.sb` uses `localhost:*` because the step-1 bin
+    /// self-selects an ephemeral port (the tighter per-port door pins ONE port).
+    pub listen_addrs: Vec<String>,
+
+    /// The NAMED mach-service allow-list — the CoreFoundation/Security/etc.
+    /// global-names a loopback tokio+rocksdb+rustls process resolves. macOS: each
+    /// becomes `(allow mach-lookup (global-name "<name>"))` — a NAMED allow-list,
+    /// NEVER a blanket `(allow mach-lookup)`. Empty ⇒ NO mach-lookup (a bare Rust
+    /// closure body needs none). `with_homeserver_mach_defaults` loads the
+    /// de-risked 10.
+    pub mach_services: Vec<String>,
+
+    /// Whether to emit the system READ bundle + process/thread MACHINERY the
+    /// de-risk profile lists (dyld firmlink `/`, `/usr/lib`, `/System`, the
+    /// `/dev/*` char devices, `/etc`+`/private/etc`, timezone db, `$HOMEBREW`,
+    /// plus `process-fork`/`sysctl-read`/`system-socket`/signal-self/process-info).
+    /// A heavy body (rocksdb bg threads + tokio worker pool) needs it to KEEP
+    /// RUNNING; the light jail does not. `false` ⇒ none of it emitted (the light
+    /// jail is unchanged). Set by [`Confinement::with_system_reads`].
+    pub system_reads: bool,
+
+    /// The `$HOMEBREW` prefix whose subpath the system-read bundle grants (rocksdb
+    /// + its compression dylibs live there). Only consulted when `system_reads`.
+    /// `None` ⇒ `with_system_reads` fills a detected default (`$HOMEBREW_PREFIX`
+    /// or `/opt/homebrew`).
+    pub homebrew_prefix: Option<String>,
+
+    /// The ONE binary the child is granted `execve` of — the grain-image door.
+    /// macOS: emits BOTH `(allow process-exec (literal "<path>"))` AND
+    /// `(allow file-read* (literal "<path>"))` (the image must be readable to be
+    /// exec'd), mirroring `homeserver.sb`'s `SELF`. `None` ⇒ NO exec (the light
+    /// jail denies all `process-exec`). Set by [`Confinement::with_exec_image`];
+    /// consumed by [`super::process_kernel::ProcessKernel::spawn_pd_confined_exec`].
+    pub exec_image: Option<String>,
 }
 
 impl Confinement {
@@ -100,8 +162,7 @@ impl Confinement {
     pub fn endpoint_only(control_fd: RawFd) -> Self {
         Confinement {
             endpoint_fds: vec![control_fd],
-            read_paths: Vec::new(),
-            net_out: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -126,7 +187,94 @@ impl Confinement {
         self.net_out.push(endpoint.into());
         self
     }
+
+    // ─────────────────── the HEAVY-BODY tier builders ─────────────────────────
+
+    /// Grant a WRITABLE subpath (a write-cap → the db-dir door). Canonicalizes
+    /// best-effort (on macOS `/tmp`,`/var` are symlinks into `/private`; RocksDB
+    /// opens the resolved path, so the sandbox rule must be the canonical one). If
+    /// the path does not yet exist, the input is used verbatim (the caller passed
+    /// an already-canonical `/private/var/…`). Emits BOTH a read AND a write allow.
+    pub fn with_write_path(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        let p = std::fs::canonicalize(path.as_ref())
+            .map(|c| c.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.as_ref().to_string_lossy().into_owned());
+        self.write_paths.push(p);
+        self
+    }
+
+    /// Grant a LOOPBACK listen (a listen-cap → the firmament listen door). `addr`
+    /// is `"127.0.0.1:PORT"` for a pinned port, or `"127.0.0.1:*"` for the
+    /// ephemeral self-selected port a step-1 bin picks. Loopback ONLY — a
+    /// non-loopback host opens no inbound. Emits the `network-bind` +
+    /// `network-inbound` pair on `localhost:PORT`.
+    pub fn with_listen(mut self, addr: impl Into<String>) -> Self {
+        self.listen_addrs.push(addr.into());
+        self
+    }
+
+    /// Grant ONE mach service by global-name (an entry in the NAMED allow-list,
+    /// never a blanket). Emits `(allow mach-lookup (global-name "<name>"))`.
+    pub fn with_mach_service(mut self, name: impl Into<String>) -> Self {
+        self.mach_services.push(name.into());
+        self
+    }
+
+    /// Load the de-risked 10 mach services a loopback tokio+rocksdb+rustls
+    /// homeserver resolves (`deos-homeserver/sandbox/homeserver.sb`). A NAMED
+    /// allow-list — every entry is one it actually looks up; nothing else opens.
+    pub fn with_homeserver_mach_defaults(mut self) -> Self {
+        for name in HOMESERVER_MACH_SERVICES {
+            self.mach_services.push((*name).to_string());
+        }
+        self
+    }
+
+    /// Emit the system READ bundle + process/thread MACHINERY a heavy body needs
+    /// to keep running (see the [`Confinement::system_reads`] field). Fills
+    /// `homebrew_prefix` with a detected default (`$HOMEBREW_PREFIX` or
+    /// `/opt/homebrew`) if not already set via [`Self::with_homebrew_prefix`].
+    pub fn with_system_reads(mut self) -> Self {
+        self.system_reads = true;
+        if self.homebrew_prefix.is_none() {
+            let hb =
+                std::env::var("HOMEBREW_PREFIX").unwrap_or_else(|_| "/opt/homebrew".to_string());
+            self.homebrew_prefix = Some(hb);
+        }
+        self
+    }
+
+    /// Set the `$HOMEBREW` prefix the system-read bundle grants (rocksdb + its
+    /// compression dylibs). Call before/after [`Self::with_system_reads`].
+    pub fn with_homebrew_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.homebrew_prefix = Some(prefix.into());
+        self
+    }
+
+    /// Grant `execve` of EXACTLY this one binary — the grain-image door. Emits the
+    /// `process-exec` literal AND a `file-read*` literal (the image must be
+    /// readable to be exec'd). Consumed by
+    /// [`super::process_kernel::ProcessKernel::spawn_pd_confined_exec`].
+    pub fn with_exec_image(mut self, path: impl Into<String>) -> Self {
+        self.exec_image = Some(path.into());
+        self
+    }
 }
+
+/// The de-risked 10 mach global-names a loopback continuwuity homeserver resolves
+/// (from `deos-homeserver/sandbox/homeserver.sb`) — a NAMED allow-list.
+pub const HOMESERVER_MACH_SERVICES: &[&str] = &[
+    "com.apple.system.notification_center",
+    "com.apple.system.logger",
+    "com.apple.system.opendirectoryd.libinfo",
+    "com.apple.system.opendirectoryd.membership",
+    "com.apple.trustd",
+    "com.apple.trustd.agent",
+    "com.apple.SecurityServer",
+    "com.apple.SystemConfiguration.configd",
+    "com.apple.CoreServices.coreservicesd",
+    "com.apple.diagnosticd",
+];
 
 /// The outcome of a [`confine_child`] attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -554,8 +702,105 @@ mod macos {
             }
             p.push_str("\"))\n");
         }
+        // ── the HEAVY-BODY tier — each block emitted ONLY when its field is set,
+        //    so an all-empty Confinement appends NOTHING here (byte-identical to
+        //    the light jail). The allow-set mirrors homeserver.sb exactly. ──
+        //
+        // Writable subpaths (the db-dir door): read + write on each.
+        for path in &c.write_paths {
+            p.push_str("(allow file-read* (subpath \"");
+            push_escaped(&mut p, path);
+            p.push_str("\"))\n(allow file-write* (subpath \"");
+            push_escaped(&mut p, path);
+            p.push_str("\"))\n");
+        }
+        // Loopback listen (the firmament listen door): bind + inbound, LOOPBACK
+        // ONLY. A non-loopback host is dropped (opens no inbound).
+        for addr in &c.listen_addrs {
+            let (host, port) = addr.rsplit_once(':').unwrap_or((addr.as_str(), ""));
+            if !is_loopback(host) {
+                continue;
+            }
+            for verb in ["network-bind", "network-inbound"] {
+                p.push_str("(allow ");
+                p.push_str(verb);
+                p.push_str(" (local ip \"localhost:");
+                push_escaped(&mut p, port);
+                p.push_str("\"))\n");
+            }
+        }
+        // The NAMED mach allow-list — one global-name per grant, NEVER a blanket.
+        for svc in &c.mach_services {
+            p.push_str("(allow mach-lookup (global-name \"");
+            push_escaped(&mut p, svc);
+            p.push_str("\"))\n");
+        }
+        // The system read/machinery bundle a heavy body needs to keep running.
+        if c.system_reads {
+            p.push_str(SYSTEM_MACHINERY);
+            p.push_str(SYSTEM_READS_HEAD);
+            if let Some(hb) = &c.homebrew_prefix {
+                p.push_str("  (subpath \"");
+                push_escaped(&mut p, hb);
+                p.push_str("\")");
+            }
+            p.push_str(")\n");
+        }
+        // The one grain-image execve door: process-exec + file-read of the image.
+        if let Some(img) = &c.exec_image {
+            p.push_str("(allow process-exec (literal \"");
+            push_escaped(&mut p, img);
+            p.push_str("\"))\n(allow file-read* (literal \"");
+            push_escaped(&mut p, img);
+            p.push_str("\"))\n");
+        }
         p
     }
+
+    /// Push `s` into the SBPL profile, escaping the TinyScheme string-literal
+    /// metacharacters (`"` and `\`). The shared escaper for every emitted literal.
+    fn push_escaped(p: &mut String, s: &str) {
+        for ch in s.chars() {
+            if ch == '"' || ch == '\\' {
+                p.push('\\');
+            }
+            p.push(ch);
+        }
+    }
+
+    /// Process/thread MACHINERY a heavy body (rocksdb bg threads + tokio worker
+    /// pool) needs — the `homeserver.sb` process block MINUS `process-exec`
+    /// (which is the per-image `exec_image` door) and MINUS the `SELF`/db reads
+    /// (their own grants). `sysctl-read`/`signal (target self)` overlap the base
+    /// allow-set (duplicate SBPL allows are harmless).
+    const SYSTEM_MACHINERY: &str = "\
+(allow process-fork)\n\
+(allow process-info-pidinfo)\n\
+(allow process-info-setcontrol)\n\
+(allow signal (target self))\n\
+(allow sysctl-read)\n\
+(allow system-socket)\n";
+
+    /// The system READ bundle head — the dyld/libSystem/framework/char-device/etc
+    /// reads a heavy body maps, mirroring `homeserver.sb`'s `file-read*` list
+    /// (the `$HOMEBREW` subpath is appended from `homebrew_prefix`, then `)\n`).
+    /// The leading `(literal "/")` is the dyld firmlink gotcha: without it the
+    /// process SIGABRTs pre-main (firmlink resolution `opendir`s the root).
+    const SYSTEM_READS_HEAD: &str = "\
+(allow file-read-metadata)\n\
+(allow file-read*\n\
+  (literal \"/\")\n\
+  (subpath \"/usr/lib\")\n\
+  (subpath \"/System\")\n\
+  (subpath \"/Library/Preferences/Logging\")\n\
+  (literal \"/dev/null\")\n\
+  (literal \"/dev/random\")\n\
+  (literal \"/dev/urandom\")\n\
+  (literal \"/dev/dtracehelper\")\n\
+  (literal \"/etc\")\n\
+  (literal \"/private/etc\")\n\
+  (subpath \"/private/etc\")\n\
+  (subpath \"/private/var/db/timezone\")";
 
     /// Whether `host` is a loopback the SBPL `localhost` token covers.
     fn is_loopback(host: &str) -> bool {
@@ -1276,6 +1521,110 @@ mod tests {
             p2.contains("(allow network-outbound (remote ip \"*:443\"))"),
             "remote grant → port-scoped allow (SBPL host limitation):\n{p2}"
         );
+    }
+
+    // ── ADDITIVITY: an all-empty Confinement emits the EXACT light-jail profile.
+    //    This pins byte-identity so the heavy-body tier can NEVER regress the
+    //    light jail — if any heavy block leaks into the empty profile this fails.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn all_empty_confinement_is_byte_identical_to_the_light_jail() {
+        // The exact profile the LIGHT jail emitted before the heavy-body tier:
+        // the deny-default prologue + the base keep-running allow-set, nothing
+        // more. Reconstructed here so a drift in EITHER direction is caught.
+        let baseline = "\
+(version 1)\n\
+(deny default)\n\
+(allow file-read* (subpath \"/usr/lib\"))\n\
+(allow file-read* (subpath \"/System/Library\"))\n\
+(allow file-read* (subpath \"/Library/Apple\"))\n\
+(allow file-read-metadata)\n\
+(allow sysctl-read)\n\
+(allow file-ioctl)\n\
+(allow signal (target self))\n";
+        // Default (all fields empty/false/None) — the additive floor.
+        assert_eq!(
+            macos::build_profile(&Confinement::default()),
+            baseline,
+            "an all-empty Confinement must emit the byte-identical light-jail profile"
+        );
+        // And endpoint_only(fd) (fds don't affect the profile text) matches too.
+        assert_eq!(
+            macos::build_profile(&Confinement::endpoint_only(9)),
+            baseline
+        );
+    }
+
+    // ── the HEAVY-BODY tier: the confined-homeserver profile mirrors the
+    //    de-risked homeserver.sb — writable db subpath, loopback listen, the
+    //    NAMED 10-service mach allow-list, the system read/machinery bundle, the
+    //    ONE execve door — while staying default-deny and NEVER a blanket mach.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_heavy_body_profile_mirrors_homeserver_sb() {
+        let c = Confinement::default()
+            .with_system_reads()
+            .with_homebrew_prefix("/opt/homebrew")
+            .with_write_path("/private/var/folders/xx/db")
+            .with_listen("127.0.0.1:*")
+            .with_net_out("127.0.0.1:*")
+            .with_homeserver_mach_defaults()
+            .with_exec_image("/abs/deos-homeserver");
+        let p = macos::build_profile(&c);
+
+        // Still the deny-default floor.
+        assert!(p.contains("(deny default)"));
+        // The db-dir door: read AND write on the (canonical) subpath.
+        assert!(p.contains("(allow file-read* (subpath \"/private/var/folders/xx/db\"))"));
+        assert!(p.contains("(allow file-write* (subpath \"/private/var/folders/xx/db\"))"));
+        // The loopback listen door: bind + inbound on localhost, loopback only.
+        assert!(p.contains("(allow network-bind (local ip \"localhost:*\"))"));
+        assert!(p.contains("(allow network-inbound (local ip \"localhost:*\"))"));
+        // The self-probe outbound (reuses the existing net_out door).
+        assert!(p.contains("(allow network-outbound (remote ip \"localhost:*\"))"));
+        // The NAMED mach allow-list — all 10, and NEVER a blanket `(allow
+        // mach-lookup)` with no global-name (the door is named, not broad).
+        for svc in super::HOMESERVER_MACH_SERVICES {
+            assert!(
+                p.contains(&format!("(allow mach-lookup (global-name \"{svc}\"))")),
+                "named mach service {svc} must appear"
+            );
+        }
+        assert!(
+            !p.contains("(allow mach-lookup)\n")
+                && !p.contains("(allow mach-lookup (global-name \"*\"))"),
+            "the mach allow-list must be NAMED, never a blanket"
+        );
+        // The system read bundle: the dyld firmlink root, the char devices, the
+        // homebrew subpath.
+        assert!(p.contains("(literal \"/\")"), "dyld firmlink root read");
+        assert!(p.contains("(literal \"/dev/urandom\")"));
+        assert!(p.contains("(subpath \"/opt/homebrew\")"), "homebrew reads");
+        // The system machinery.
+        assert!(p.contains("(allow process-fork)"));
+        assert!(p.contains("(allow system-socket)"));
+        // The ONE execve door: process-exec + file-read of EXACTLY the image.
+        assert!(p.contains("(allow process-exec (literal \"/abs/deos-homeserver\"))"));
+        assert!(p.contains("(allow file-read* (literal \"/abs/deos-homeserver\"))"));
+        // No OTHER binary is exec-granted (exactly one process-exec literal).
+        assert_eq!(
+            p.matches("(allow process-exec (literal").count(),
+            1,
+            "exactly ONE image is exec-granted"
+        );
+    }
+
+    // A listen grant for a NON-loopback host opens NO inbound (loopback-only door).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_non_loopback_listen_opens_no_inbound() {
+        let c = Confinement::default().with_listen("0.0.0.0:8080");
+        let p = macos::build_profile(&c);
+        assert!(
+            !p.contains("network-inbound"),
+            "non-loopback listen = no inbound"
+        );
+        assert!(!p.contains("network-bind"), "non-loopback listen = no bind");
     }
 
     // ── the Linux provider-door PURE policy layer (unit-testable on any host) ──

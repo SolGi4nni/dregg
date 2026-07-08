@@ -1301,6 +1301,126 @@ impl ProcessKernel {
         self.spawn_pd_inner(granted, body, true, Some(confinement))
     }
 
+    /// SPAWN a CONFINED HEAVY BODY by `execve` — the grain-image door.
+    ///
+    /// The confined-spawn variants above run a Rust CLOSURE as the PD body (they
+    /// share the parent's image). A HEAVY grain body (the confined homeserver of
+    /// `docs/deos/GRAIN-HOMESERVER.md` — a rocksdb+tokio Matrix server) is its OWN
+    /// prebuilt binary, so this variant, in the forked child, self-applies the
+    /// [`Confinement`](crate::sandbox::Confinement) profile (which MUST carry an
+    /// `exec_image` — the SBPL grants `process-exec` of EXACTLY that path) and then
+    /// `execve`s the grain image with `argv`/`env`. This is the firmament analogue
+    /// of the de-risked `sandbox-exec -f homeserver.sb … deos-homeserver`: the
+    /// SAME deny-default confinement, but firmament's own `fork` + `sandbox_init` +
+    /// `execve` hosts the grain (no `sandbox-exec`).
+    ///
+    /// The child's stdout+stderr are wired to a pipe whose read end the returned
+    /// [`ConfinedProcess`] holds — the grain prints its `READY <base_url>` line
+    /// there. The db-dir/server-name/port reach the grain via `env`/`argv` (the
+    /// grain self-selects its loopback port); the confinement's `write_paths`
+    /// grant the db subpath, `listen_addrs` the loopback bind, `mach_services` the
+    /// named lookups, `system_reads` the keep-running bundle.
+    ///
+    /// Fail-closed exactly like the closure variants: if confinement cannot be
+    /// applied — or `execve` is denied / the image is missing — the child `_exit`s
+    /// [`CONFINE_FAILED_EXIT`] and NEVER runs an un-confined grain.
+    ///
+    /// # Safety / fork discipline
+    /// All allocation (the C `argv`/`env`) happens BEFORE the fork; the child does
+    /// only `dup2` + `close` + `sandbox_init` + `execve` (the classic pre-exec
+    /// stub), then `execve` replaces the image entirely.
+    #[cfg(all(feature = "process-pd-sandbox", unix))]
+    pub fn spawn_pd_confined_exec(
+        &self,
+        confinement: crate::sandbox::Confinement,
+        argv: &[String],
+        env: &[(String, String)],
+    ) -> Result<ConfinedProcess, SpawnError> {
+        use std::ffi::CString;
+        let nul = |e: std::ffi::NulError| {
+            SpawnError::Fork(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("nul byte: {e}"),
+            ))
+        };
+        // The grain image (the exec door) MUST be set — it is the `process-exec`
+        // literal the profile grants; without it there is no door to exec through.
+        let image = confinement.exec_image.clone().ok_or_else(|| {
+            SpawnError::Fork(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "spawn_pd_confined_exec: confinement.exec_image must be set (the grain-image door)",
+            ))
+        })?;
+
+        // Build the C image / argv / env BEFORE the fork (allocation is not
+        // fork-safe once the child is running its bounded pre-exec stub).
+        let c_image = CString::new(image).map_err(nul)?;
+        let c_argv: Vec<CString> = argv
+            .iter()
+            .map(|a| CString::new(a.as_str()))
+            .collect::<Result<_, _>>()
+            .map_err(nul)?;
+        let c_env: Vec<CString> = env
+            .iter()
+            .map(|(k, v)| CString::new(format!("{k}={v}")))
+            .collect::<Result<_, _>>()
+            .map_err(nul)?;
+        let mut argv_ptrs: Vec<*const libc::c_char> = c_argv.iter().map(|s| s.as_ptr()).collect();
+        argv_ptrs.push(std::ptr::null());
+        let mut env_ptrs: Vec<*const libc::c_char> = c_env.iter().map(|s| s.as_ptr()).collect();
+        env_ptrs.push(std::ptr::null());
+
+        // A pipe: the grain's stdout+stderr → the parent (which reads `READY …`).
+        let mut pfd = [0 as RawFd; 2];
+        if unsafe { libc::pipe(pfd.as_mut_ptr()) } != 0 {
+            return Err(SpawnError::SocketPair(io::Error::last_os_error()));
+        }
+        let (read_fd, write_fd) = (pfd[0], pfd[1]);
+
+        let pid = unsafe { libc::fork() };
+        if pid < 0 {
+            let e = io::Error::last_os_error();
+            unsafe {
+                libc::close(read_fd);
+                libc::close(write_fd);
+            }
+            return Err(SpawnError::Fork(e));
+        }
+
+        if pid == 0 {
+            // ── CHILD: the pre-exec stub. ──
+            unsafe {
+                libc::close(read_fd);
+                // stdout + stderr → the pipe (READY on stdout, diagnostics stderr).
+                libc::dup2(write_fd, 1);
+                libc::dup2(write_fd, 2);
+            }
+            // Confine: `close_all_but` keeps ONLY 0/1/2 (the pipe) — the grain
+            // speaks no kernel protocol, so no control socket is kept — and
+            // `sandbox_init` self-applies the profile, which grants `process-exec`
+            // of EXACTLY `image` (+ its file-read). The raw `write_fd` (>=3) is
+            // closed; fds 1/2 (the pipe dups) survive.
+            if let Err(e) = crate::sandbox::confine_child(&confinement) {
+                eprintln!("[pd-exec] CONFINEMENT FAILED — refusing to exec grain: {e}");
+                use std::io::Write as _;
+                let _ = std::io::stderr().flush();
+                unsafe { libc::_exit(CONFINE_FAILED_EXIT) };
+            }
+            // execve the grain through the granted door. On success this never
+            // returns; if it returns, the exec was denied / the image is missing —
+            // fail-closed (the grain never ran un-confined; nothing else ran).
+            unsafe {
+                libc::execve(c_image.as_ptr(), argv_ptrs.as_ptr(), env_ptrs.as_ptr());
+                libc::_exit(CONFINE_FAILED_EXIT);
+            }
+        }
+
+        // ── PARENT ──
+        unsafe { libc::close(write_fd) };
+        let stdout = unsafe { std::fs::File::from_raw_fd(read_fd) };
+        Ok(ConfinedProcess { pid, stdout })
+    }
+
     /// SPAWN a CONFINED PD that ALSO holds a dedicated SURFACE Endpoint — the
     /// live-transport re-home of `docs/deos/SURFACE-MIGRATION.md` §2(b). It is
     /// [`Self::spawn_pd_confined`] plus a SECOND `socketpair`: the child keeps
@@ -1592,6 +1712,51 @@ impl ProcessKernel {
 /// could NOT apply the OS confinement — fail-closed, the body never ran.
 #[cfg(all(feature = "process-pd-sandbox", unix))]
 pub const CONFINE_FAILED_EXIT: i32 = 99;
+
+/// A confined HEAVY GRAIN spawned by [`ProcessKernel::spawn_pd_confined_exec`] —
+/// the exec'd grain-image process (e.g. the confined homeserver) plus its
+/// stdout/stderr pipe, on which it prints its `READY <base_url>` line.
+///
+/// Unlike [`PdProcess`] there is no control socket: the exec'd grain speaks no
+/// firmament kernel protocol; the host reaches it through the doors the
+/// [`Confinement`](crate::sandbox::Confinement) opened (a loopback listen curl'd
+/// from the host, a granted egress) and observes readiness on `stdout`.
+#[cfg(all(feature = "process-pd-sandbox", unix))]
+pub struct ConfinedProcess {
+    /// The grain's pid (for `terminate`/`reap`/`is_alive`).
+    pub pid: libc::pid_t,
+    /// The read end of the grain's stdout+stderr pipe — the `READY <url>` line
+    /// lands here.
+    pub stdout: std::fs::File,
+}
+
+#[cfg(all(feature = "process-pd-sandbox", unix))]
+impl ConfinedProcess {
+    /// Send `SIGTERM` — the grain drops its db (best-effort cleanup) and exits.
+    pub fn terminate(&self) {
+        unsafe { libc::kill(self.pid, libc::SIGTERM) };
+    }
+
+    /// Whether the grain is still alive (`kill(pid, 0)`).
+    pub fn is_alive(&self) -> bool {
+        unsafe { libc::kill(self.pid, 0) == 0 }
+    }
+
+    /// Reap the grain and return its exit code (a negative value = died by
+    /// signal, e.g. `-15` for the `SIGTERM` from [`Self::terminate`]).
+    pub fn reap(&self) -> io::Result<i32> {
+        let mut status: libc::c_int = 0;
+        let rc = unsafe { libc::waitpid(self.pid, &mut status, 0) };
+        if rc < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(if status & 0x7f == 0 {
+            (status >> 8) & 0xff
+        } else {
+            -(status & 0x7f)
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
