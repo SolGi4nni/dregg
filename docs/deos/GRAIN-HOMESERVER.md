@@ -145,11 +145,15 @@ RocksDB's column-families / prefix-iterators / pinnable-slices / write-batches /
 DIRECTLY. So swapping to a pure-Rust KV (redb/fjall/sled) is INVASIVE: a full engine-layer rewrite,
 forever-maintained against a weekly-churning calendar-alpha upstream. Not worth it for the membrane.
 Three real options, ranked:
-1. **Keep RocksDB, link the SYSTEM lib (recommended, non-invasive).** brew rocksdb is installed
-   (`/opt/homebrew/lib/librocksdb.a`); `librocksdb-sys` honors `ROCKSDB_LIB_DIR` → skip the vendored
-   C++ build, turn the 6-min cold build into a link. Caveat: version alignment (brew 11.1.2 vs the
-   fork's vendored version) — try it after the embed proves out; if ABI-mismatched, fall back to the
-   vendored build (which is a CACHED cold-start cost, not per-iteration). No fork.
+1. **Keep RocksDB, link the SYSTEM lib — VERIFIED WORKING (2026-07-07).** The fork's
+   `rust-librocksdb-sys 0.45.1+11.1.1` honors `ROCKSDB_LIB_DIR`/`ROCKSDB_INCLUDE_DIR`; pointing them
+   at brew (`/opt/homebrew/{lib,include}`, rocksdb **11.1.2** — a PATCH bump over the vendored 11.1.1,
+   so ABI-compatible) **skips the vendored C++ build entirely and the CS-API round-trip test still
+   passes green.** The ~6-min C++ compile becomes a link. Use on macOS via the env:
+   `export ROCKSDB_LIB_DIR="$(brew --prefix rocksdb)/lib" ROCKSDB_INCLUDE_DIR="$(brew --prefix rocksdb)/include"`
+   (or `deos-homeserver/scripts/*` can set it). NOT hardcoded in `.cargo/config.toml` because
+   `/opt/homebrew` is macOS-only — a committed static path would break a Linux/CI build (which has no
+   brew rocksdb and would fall back to the vendored build, the correct default there). No fork.
 2. **dregg storage AS the backend (on-thesis, but a research epoch — NOT a slice).** The homeserver's
    state IS a dregg cell / umem heap — verifiable + checkpointable (sandstorm-bridge already models
    grain `/var` = a cell umem heap). This is the endgame "verifiable homeserver state," but it means
