@@ -28,7 +28,19 @@ hash0 [0,0]`. The trace `Satisfied2`s (`cheatTrace_satisfied2`), both open `pi[0
 carrier — exactly what `CollisionFree.compress_pair_inj` supplies. So the anchor is a real filter, not
 `True`.
 
-## The RESIDUAL that RUNG 2 does NOT close (named precisely — RUNG2_PARTIAL)
+## ⚑ UPDATE — the RUNG2_PARTIAL residual is now CLOSED by the emit weld C2b
+
+The residual described below ("the COMMITTED VALUES satisfy the claimed relation") was closed by adding
+the emit gate `(R) : diff = value_a − value_b` (C2b) to `relationalPredicateDesc`. On an ACTIVE
+(height-≥2) trace the weld gate now REJECTS the decoupling forge — see
+`PredicatesRelationalCompoundRung2Full.decoupled_forge_rejected` and the unconditional closure
+`eq_relation_over_committed`, and the value-level relations
+`PredicatesRelationalCompoundRefine.{relational_eq_forces_values_equal, relational_neq_forces_values_distinct,
+relational_range_forces_ge}`. The §5b measurement below survives ONLY on a DEGENERATE 1-row trace
+where every transition gate (including the weld) is vacuous (row 0 is the last row); it is retained as
+the historical motivation for C2b, not a live gap.
+
+## The (historical) RESIDUAL that RUNG 2 alone does NOT close (named precisely — RUNG2_PARTIAL)
 
 The relational descriptor certifies the comparison on `diff` (col 4), but NOTHING ties `diff` to
 `value_a - value_b`: the value columns `0`/`2` enter the AIR ONLY through the two commitment lookups,
@@ -51,7 +63,8 @@ by `relational_commit_binds` to `value_a = 5`, `value_b = 7` — yet `5 ≠ 7`, 
 committed values VIOLATE the claimed EQ relation. The residual therefore SURVIVES the CR carrier; it is
 NOT crypto-closable, and any "discharge" that transports the relation from a relation-carrying reference
 would ignore every in-circuit comparison gate — a vacuous strengthening, not a Rung-2 carrier
-consumption. Closing it is the EMIT/AIR fix `diff - (value_a - value_b) = 0` (STILL_PARTIAL, precisely).
+consumption. ⚑ Closing it is the EMIT/AIR fix `diff - (value_a - value_b) = 0` — NOW EMITTED as C2b in
+`relationalPredicateDesc` (see the §UPDATE note above); the residual is CLOSED, not partial.
 
 ## The named carrier
 
@@ -353,7 +366,14 @@ theorem bwTrace_binds_value (hinj : Function.Injective hash) :
 
 end TrueWitness
 
-/-! ## §5b — The RUNG2_PARTIAL residual SURVIVES the CR carrier (the AIR-gap measurement).
+/-! ## §5b — [HISTORICAL] the RUNG2_PARTIAL residual on a DEGENERATE 1-row trace (now closed by C2b).
+
+⚑ The `fgTrace` below is 1-ROW, so every transition gate — including the emit weld C2b `diff =
+value_a − value_b` — is VACUOUS (row 0 is the last row). That is the ONLY reason this decoupled forge
+still `Satisfied2`s. On an ACTIVE height-≥2 trace the weld REJECTS exactly this forge
+(`PredicatesRelationalCompoundRung2Full.decoupled_forge_rejected`), and the committed-value relation is
+now certified UNCONDITIONALLY (`...Rung2Full.eq_relation_over_committed`). This section is retained as
+the historical measurement that MOTIVATED the C2b weld; it is not a live soundness gap.
 
 The §4 cheat rides a COLLIDING `hash0` to break the commitment BINDING; that gap
 `relational_commit_binds` CLOSES against `CollisionFree`. But the NAMED `RUNG2_PARTIAL` residual — "the
@@ -364,9 +384,11 @@ and sets the FREE difference witness `diff = 0`, so the ONLY comparison tooth on
 INJECTIVE `hash`, its committed columns are FULLY CR-bound to the reference `(5, 0, 7, 1)` — yet
 `5 ≠ 7`: the accepting EQ proof's committed values VIOLATE the claimed relation. So NO named crypto
 carrier discharges this residual (an injective hash is the strongest CR carrier there is, and the
-forgery survives it); closing it is the EMIT/AIR fix `diff − (value_a − value_b) = 0`, not a Rung-2
-carrier consumption. This is the FALSE half that proves the residual is genuinely an in-circuit
-constraint gap, the mirror of §4's colliding-hash FALSE half for the binding. -/
+forgery survives it); ⚑ closing it is the EMIT/AIR fix `diff − (value_a − value_b) = 0` — NOW EMITTED as
+the C2b weld. NOTE this 1-row `fgTrace` accepts ONLY because its single row is the last row (all
+transition gates, including C2b, vacuous); on an active height-≥2 trace C2b REJECTS this exact forge
+(`...Rung2Full.decoupled_forge_rejected`). This section is retained as the historical FALSE-half
+measurement that motivated C2b, not a live gap. -/
 
 section ResidualMeasurement
 variable (hash : List ℤ → ℤ)
