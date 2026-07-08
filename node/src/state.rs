@@ -203,6 +203,14 @@ pub struct NodeStateInner {
     /// ~30 call sites that read this Vec it stays as a real field, kept in
     /// sync by [`Self::set_federation_keys`] / [`Self::register_federation`].
     pub known_federation_keys: Vec<dregg_types::PublicKey>,
+    /// HYBRID-PQ: the committee's ML-DSA-65 public keys, INDEX-ALIGNED with
+    /// [`Self::known_federation_keys`] — element `i` is the ML-DSA key of the
+    /// member whose ed25519 key is `known_federation_keys[i]` (both derived
+    /// from the same 32-byte seed; genesis publishes them side by side).
+    /// EMPTY means "hybrid not configured": the finalization-vote collector
+    /// then holds no PQ keys and counts NO votes toward quorum (fail-closed —
+    /// never a silent ed25519-only downgrade).
+    pub known_federation_ml_dsa_keys: Vec<dregg_federation::frost::MlDsaPublicKey>,
     /// Registry of federations the local node knows about (both the local
     /// federation and any peer federations registered out-of-band).
     /// Replaces the disjoint pair of (known_federation_keys, federation_id)
@@ -886,6 +894,7 @@ impl NodeState {
                 pending_turns: dregg_turn::PendingTurnRegistry::new(),
                 used_proof_hashes,
                 known_federation_keys: Vec::new(),
+                known_federation_ml_dsa_keys: Vec::new(),
                 known_federations: dregg_federation::KnownFederations::new(),
                 federation_configured: false,
                 federation_id: [0u8; 32],
@@ -1051,6 +1060,7 @@ impl NodeState {
                 pending_turns: dregg_turn::PendingTurnRegistry::new(),
                 used_proof_hashes: HashSet::new(),
                 known_federation_keys: Vec::new(),
+                known_federation_ml_dsa_keys: Vec::new(),
                 known_federations: dregg_federation::KnownFederations::new(),
                 federation_configured: false,
                 federation_id: [0u8; 32],
@@ -1967,12 +1977,45 @@ impl NodeStateInner {
     /// Also recomputes [`Self::federation_id`] as
     /// `derive_federation_id(keys, committee_epoch)` — closes audit F1.
     pub fn set_federation_keys(&mut self, keys: Vec<dregg_types::PublicKey>) {
+        // No ML-DSA committee supplied on this legacy path: hybrid stays
+        // unconfigured (fail-closed — the vote collector then counts no votes),
+        // and any PREVIOUS ML-DSA vec is dropped so it can never be read
+        // misaligned against the new committee.
+        self.set_federation_keys_hybrid(keys, Vec::new());
+    }
+
+    /// HYBRID-PQ variant of [`Self::set_federation_keys`]: load the committee's
+    /// ed25519 keys AND the INDEX-ALIGNED ML-DSA-65 keys genesis published next
+    /// to them (element `i` of each vec is the same member).
+    ///
+    /// `ml_dsa_keys` may be empty ("hybrid not configured" — fail-closed: the
+    /// finalization-vote collector will hold no PQ keys and form no quorum). A
+    /// NON-empty vec whose length differs from `keys` is a corrupt/misaligned
+    /// genesis: it is REJECTED (treated as empty, loudly) rather than risking
+    /// attributing member i's ML-DSA key to member j.
+    pub fn set_federation_keys_hybrid(
+        &mut self,
+        keys: Vec<dregg_types::PublicKey>,
+        ml_dsa_keys: Vec<dregg_federation::frost::MlDsaPublicKey>,
+    ) {
         if keys.is_empty() {
             tracing::warn!(
                 "set_federation_keys called with empty key set — remaining in discovery mode"
             );
             return;
         }
+        let ml_dsa_keys = if !ml_dsa_keys.is_empty() && ml_dsa_keys.len() != keys.len() {
+            tracing::error!(
+                ed25519_keys = keys.len(),
+                ml_dsa_keys = ml_dsa_keys.len(),
+                "ML-DSA committee key count does not match the ed25519 committee — \
+                 REJECTING the ML-DSA set (hybrid votes will not verify; fail-closed) \
+                 rather than misaligning member identities"
+            );
+            Vec::new()
+        } else {
+            ml_dsa_keys
+        };
         let id = dregg_federation::derive_federation_id_with_epoch(&keys, self.committee_epoch);
         tracing::info!(
             key_count = keys.len(),
@@ -2005,8 +2048,25 @@ impl NodeStateInner {
         );
         self.known_federations.register(std::sync::Arc::new(fed));
         self.known_federation_keys = keys;
+        self.known_federation_ml_dsa_keys = ml_dsa_keys;
         self.federation_id = id;
         self.federation_configured = true;
+    }
+
+    /// HYBRID-PQ lookup: the ML-DSA-65 key of the committee member whose
+    /// ed25519 key is `ed25519`, via the index alignment of
+    /// [`Self::known_federation_keys`] / [`Self::known_federation_ml_dsa_keys`].
+    /// `None` when the member is unknown OR hybrid is not configured — the
+    /// caller must treat that as "this member's votes cannot count" (fail-closed).
+    pub fn ml_dsa_key_for(
+        &self,
+        ed25519: &[u8; 32],
+    ) -> Option<&dregg_federation::frost::MlDsaPublicKey> {
+        let idx = self
+            .known_federation_keys
+            .iter()
+            .position(|k| k.0 == *ed25519)?;
+        self.known_federation_ml_dsa_keys.get(idx)
     }
 
     /// Register a peer federation in [`Self::known_federations`].

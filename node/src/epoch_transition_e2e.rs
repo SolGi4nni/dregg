@@ -26,6 +26,11 @@
 //! advances on every node when (and only when) a quorum of the CURRENT committee
 //! ratifies the change.
 //!
+//! HYBRID-PQ: every finalization vote here is signed with BOTH halves (ed25519 +
+//! ML-DSA-65, same seed — the production derivation), and each node's collector
+//! carries the ML-DSA committee map alongside the ed25519 set, exactly as
+//! `blocklace_sync` builds it from state's genesis-published keys.
+//!
 //! THE BAR (hard assertions):
 //!   [A] ADD — a validator added live: before ratification its finalization vote
 //!       is rejected by every node; after a CURRENT-committee quorum ratifies the
@@ -40,9 +45,12 @@
 
 #![cfg(test)]
 
+use std::collections::HashMap;
+
 use dregg_blocklace::constitution::{ConstitutionManager, MembershipProposal, MembershipVote};
 use dregg_blocklace::finality::{BlockId, FinalityLevel};
 use dregg_blocklace::ordering::supermajority_threshold;
+use dregg_federation::frost::{MlDsaPublicKey, MlDsaSigningKey};
 use ed25519_dalek::SigningKey;
 
 use crate::finalization_votes::{FinalizationVote, RecordOutcome, VoteCollector};
@@ -57,28 +65,75 @@ fn pk(sk: &SigningKey) -> [u8; 32] {
     sk.verifying_key().to_bytes()
 }
 
+/// The seed's ML-DSA-65 keypair — derived from the SAME `[seed; 32]` as the
+/// ed25519 key (the production derivation: genesis publishes the public half,
+/// the node re-derives the secret from `node.key`).
+fn pq_keypair(seed: u8) -> (MlDsaPublicKey, MlDsaSigningKey) {
+    MlDsaSigningKey::from_seed(&[seed; 32])
+}
+
+/// Sign a HYBRID (ed25519 + ML-DSA-65) `Ordered` finalization vote as the
+/// member with key seed `seed`, over the fixed test root.
+fn signed_vote(seed: u8, blk: BlockId) -> FinalizationVote {
+    FinalizationVote::sign(
+        &keypair(seed),
+        &pq_keypair(seed).1,
+        blk,
+        FinalityLevel::Ordered,
+        [0x5A; 32],
+    )
+    .expect("hedged ML-DSA signing fails only on an OS-entropy failure")
+}
+
 /// One node's live consensus state: its own constitution + its own finalization
-/// vote collector — exactly the two pieces `BlocklaceHandle` advances.
+/// vote collector — exactly the two pieces `BlocklaceHandle` advances. The
+/// `pq_published` map plays the role of state's genesis-published
+/// `known_federation_ml_dsa_keys`: the universe of ML-DSA keys this node can
+/// look a member up in when the committee reconfigures.
 struct Node {
     cm: ConstitutionManager,
     votes: VoteCollector,
+    pq_published: HashMap<[u8; 32], MlDsaPublicKey>,
+}
+
+/// The ML-DSA committee map for `participants`, filtered from the published
+/// universe — mirrors `blocklace_sync::pq_committee_for_participants`.
+fn pq_for(
+    published: &HashMap<[u8; 32], MlDsaPublicKey>,
+    participants: &[[u8; 32]],
+) -> HashMap<[u8; 32], MlDsaPublicKey> {
+    participants
+        .iter()
+        .filter_map(|p| published.get(p).map(|k| (*p, k.clone())))
+        .collect()
 }
 
 impl Node {
-    fn new(committee: &[[u8; 32]]) -> Self {
-        let participants = committee.to_vec();
+    /// `committee` = the genesis ed25519 committee (from `seeds`);
+    /// `published_seeds` = every validator whose ML-DSA key this node has seen
+    /// published (genesis members + any validator that may join later).
+    fn new(committee_seeds: &[u8], published_seeds: &[u8]) -> Self {
+        let participants: Vec<[u8; 32]> =
+            committee_seeds.iter().map(|&s| pk(&keypair(s))).collect();
+        let pq_published: HashMap<[u8; 32], MlDsaPublicKey> = published_seeds
+            .iter()
+            .map(|&s| (pk(&keypair(s)), pq_keypair(s).0))
+            .collect();
         let q = supermajority_threshold(participants.len());
+        let pq = pq_for(&pq_published, &participants);
         Node {
             cm: ConstitutionManager::from_participants(participants.clone(), TIMEOUT_WAVES),
-            votes: VoteCollector::new(participants, q),
+            votes: VoteCollector::new(participants, pq, q),
+            pq_published,
         }
     }
 
     /// Drive ONE membership amendment through this node exactly as the live path
     /// does: register the proposal, record each approving voter, and — if it
     /// passes — `apply_if_passed` then advance the live committee
-    /// (`votes.reconfigure`, the same call `apply_committee_change` makes).
-    /// Returns whether the committee actually advanced on this node.
+    /// (`votes.reconfigure` with the new participants' ML-DSA keys, the same
+    /// call `apply_committee_change` makes). Returns whether the committee
+    /// actually advanced on this node.
     fn drive_amendment(
         &mut self,
         proposal_block: BlockId,
@@ -100,8 +155,9 @@ impl Node {
             // THE LIVE COMMITTEE ADVANCE (mirrors blocklace_sync::apply_committee_change).
             let participants: Vec<[u8; 32]> = self.cm.current.participants.clone();
             let threshold = self.cm.threshold();
+            let pq = pq_for(&self.pq_published, &participants);
             self.votes
-                .reconfigure(participants.iter().copied(), threshold);
+                .reconfigure(participants.iter().copied(), pq, threshold);
             true
         } else {
             false
@@ -112,12 +168,9 @@ impl Node {
 /// Record a node's OWN vote plus every peer's vote for `blk`, returning whether
 /// the block became consensus-attested on this node (a quorum of distinct
 /// committee signers). Models the gossip exchange of finalization votes.
-fn finalize_across(nodes: &mut [Node], signers: &[&SigningKey], blk: BlockId) -> Vec<bool> {
-    // Every signer signs the block; every node records every vote (gossip).
-    let votes: Vec<FinalizationVote> = signers
-        .iter()
-        .map(|sk| FinalizationVote::sign(sk, blk, FinalityLevel::Ordered, [0x5A; 32]))
-        .collect();
+fn finalize_across(nodes: &mut [Node], signer_seeds: &[u8], blk: BlockId) -> Vec<bool> {
+    // Every signer signs the block (hybrid); every node records every vote (gossip).
+    let votes: Vec<FinalizationVote> = signer_seeds.iter().map(|&s| signed_vote(s, blk)).collect();
     let mut attested = Vec::new();
     for node in nodes.iter_mut() {
         for v in &votes {
@@ -136,14 +189,16 @@ fn validator_added_and_removed_live_chain_continues() {
     let c = keypair(3);
     let d = keypair(4); // the validator added live (not in genesis)
 
-    let genesis = [pk(&a), pk(&b), pk(&c)];
     // Three nodes, each with its own constitution + collector over the genesis
-    // committee (quorum = supermajority(3) = 3).
-    let mut nodes: Vec<Node> = (0..3).map(|_| Node::new(&genesis)).collect();
+    // committee {1,2,3} (quorum = supermajority(3) = 3). All four validators'
+    // ML-DSA keys are published (d publishes its key when it asks to join).
+    let mut nodes: Vec<Node> = (0..3)
+        .map(|_| Node::new(&[1, 2, 3], &[1, 2, 3, 4]))
+        .collect();
 
     // ── The chain is already running: a block finalizes under the 3-committee. ──
     let blk_pre = BlockId([100; 32]);
-    let attested_pre = finalize_across(&mut nodes, &[&a, &b, &c], blk_pre);
+    let attested_pre = finalize_across(&mut nodes, &[1, 2, 3], blk_pre);
     assert!(
         attested_pre.iter().all(|x| *x),
         "the pre-transition block must finalize under the genesis committee"
@@ -152,7 +207,7 @@ fn validator_added_and_removed_live_chain_continues() {
     // ── Before ratification, the new validator d cannot influence finality. ──
     for node in &mut nodes {
         assert!(!node.votes.is_committee_member(&pk(&d)));
-        let v = FinalizationVote::sign(&d, BlockId([101; 32]), FinalityLevel::Ordered, [0x5A; 32]);
+        let v = signed_vote(4, BlockId([101; 32]));
         assert_eq!(
             node.votes.record(&v),
             RecordOutcome::Rejected,
@@ -163,6 +218,7 @@ fn validator_added_and_removed_live_chain_continues() {
     // ── ADD d live: every node ratifies the Join with a quorum of the CURRENT ──
     //    committee {a,b,c} (all three approve — supermajority(3) = 3), then
     //    advances its live committee.
+    let genesis = [pk(&a), pk(&b), pk(&c)];
     let join_block = BlockId([0xAA; 32]);
     let join = MembershipProposal::Join {
         node_key: pk(&d),
@@ -195,7 +251,7 @@ fn validator_added_and_removed_live_chain_continues() {
         );
     }
     let blk_post = BlockId([102; 32]);
-    let attested_post = finalize_across(&mut nodes, &[&a, &b, &d], blk_post);
+    let attested_post = finalize_across(&mut nodes, &[1, 2, 4], blk_post);
     assert!(
         attested_post.iter().all(|x| *x),
         "a new block must finalize under the post-transition committee (chain continues), \
@@ -222,7 +278,7 @@ fn validator_added_and_removed_live_chain_continues() {
         assert!(!node.cm.current.is_participant(&pk(&d)));
         assert!(!node.votes.is_committee_member(&pk(&d)));
         // d (removed) can no longer contribute to a quorum.
-        let v = FinalizationVote::sign(&d, BlockId([103; 32]), FinalityLevel::Ordered, [0x5A; 32]);
+        let v = signed_vote(4, BlockId([103; 32]));
         assert_eq!(node.votes.record(&v), RecordOutcome::Rejected);
     }
 }
@@ -238,11 +294,11 @@ fn validator_added_and_removed_live_chain_continues() {
 fn under_quorum_transition_is_rejected() {
     let a = keypair(1);
     let b = keypair(2);
-    let c = keypair(3);
     let evil = keypair(9); // wants in without the committee's blessing
 
-    let genesis = [pk(&a), pk(&b), pk(&c)];
-    let mut nodes: Vec<Node> = (0..3).map(|_| Node::new(&genesis)).collect();
+    let mut nodes: Vec<Node> = (0..3)
+        .map(|_| Node::new(&[1, 2, 3], &[1, 2, 3, 9]))
+        .collect();
 
     let join_block = BlockId([0xE0; 32]);
     let join = MembershipProposal::Join {
@@ -266,12 +322,7 @@ fn under_quorum_transition_is_rejected() {
         assert!(!node.cm.current.is_participant(&pk(&evil)));
         assert_eq!(node.votes.committee_size(), 3);
         assert!(!node.votes.is_committee_member(&pk(&evil)));
-        let v = FinalizationVote::sign(
-            &evil,
-            BlockId([0xE1; 32]),
-            FinalityLevel::Ordered,
-            [0x5A; 32],
-        );
+        let v = signed_vote(9, BlockId([0xE1; 32]));
         assert_eq!(
             node.votes.record(&v),
             RecordOutcome::Rejected,

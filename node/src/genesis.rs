@@ -147,14 +147,23 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         let xmss_root = blake3::derive_key("dregg-devnet-xmss-root-v1", &key_bytes);
         let xmss_root_hex = hex_encode(&xmss_root);
 
+        // HYBRID-PQ: derive this validator's ML-DSA-65 keypair DETERMINISTICALLY
+        // from the same 32-byte ed25519 seed (`MlDsaSigningKey::from_seed`), and
+        // publish the public key. Deterministic derivation means the running node
+        // re-derives its own secret from `node.key` at boot (no separate key file),
+        // and every peer reads this published pubkey to verify the PQ half of the
+        // member's finalization votes.
+        let (ml_dsa_pk, _ml_dsa_sk) =
+            dregg_federation::frost::MlDsaSigningKey::from_seed(&key_bytes);
+        let ml_dsa_pk_hex = hex_encode(&ml_dsa_pk.0);
+
         committee_pubkeys.push(dregg_types::PublicKey(public_key.to_bytes()));
         genesis_validators.push(GenesisValidator {
             name: format!("node-{i}"),
             public_key: pk_hex,
             xmss_root: xmss_root_hex,
-            // HybridPq is OFF: no ML-DSA keys are generated at genesis today.
-            // Flipping the hybrid on (a human decision) populates this.
-            ml_dsa_public_key: None,
+            // HybridPq: the published ML-DSA-65 public key (quantum-safe finality).
+            ml_dsa_public_key: Some(ml_dsa_pk_hex),
         });
 
         // Write the key file as raw 32 bytes (matching what the runtime expects).

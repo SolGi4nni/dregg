@@ -26,6 +26,7 @@
 use std::collections::{HashMap, HashSet};
 
 use dregg_blocklace::finality::{BlockId, FinalityLevel};
+use dregg_federation::frost::{MlDsaPublicKey, MlDsaSigningKey};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
 /// A signed assertion by one committee member that it has locally finalized a
@@ -65,6 +66,13 @@ pub struct FinalizationVote {
     /// [`dregg_types::Signature`] for length-checked serde of the 64 bytes
     /// (serde derives only auto-cover arrays up to length 32).
     pub signature: dregg_types::Signature,
+    /// ML-DSA-65 (FIPS 204) signature over the SAME [`Self::signing_message`] —
+    /// the POST-QUANTUM half of the hybrid finalization vote. A quorum is
+    /// counted only when BOTH this and `signature` verify (classical ∧ pq), so a
+    /// quantum adversary that breaks ed25519 entirely still cannot forge
+    /// finality. Bound to `frost::HYBRID_PQ_CTX`. ~3.3 KB; not part of the ed25519
+    /// signed message (it signs the same canonical bytes independently).
+    pub pq_signature: Vec<u8>,
     /// A per-EMISSION liveness counter that makes every (re-)emitted vote
     /// BYTE-UNIQUE — the same defence `BlocklaceGossipMessage::Frontier` uses.
     /// It is NOT part of the signed message: a re-emit of the same vote carries
@@ -96,25 +104,31 @@ impl FinalizationVote {
     /// the nonce is outside the signed message.
     pub fn sign(
         signing_key: &SigningKey,
+        pq_key: &MlDsaSigningKey,
         block_id: BlockId,
         level: FinalityLevel,
         merkle_root: [u8; 32],
-    ) -> Self {
+    ) -> Option<Self> {
         let msg = Self::signing_message(&block_id, &merkle_root);
         let sig: Signature = signing_key.sign(&msg);
-        FinalizationVote {
+        // ML-DSA-65 over the SAME canonical bytes (the post-quantum half). Fails
+        // only on an OS-entropy failure during hedged signing — treat as a
+        // transient inability to vote (the caller skips this emission).
+        let pq_signature = pq_key.sign(&msg)?;
+        Some(FinalizationVote {
             block_id,
             level,
             merkle_root,
             voter: signing_key.verifying_key().to_bytes(),
             signature: dregg_types::Signature(sig.to_bytes()),
+            pq_signature,
             nonce: fresh_nonce(),
-        }
+        })
     }
 
-    /// Verify the vote's signature against its declared `voter` key. Returns
-    /// `false` on a malformed key or a bad signature — a vote that does not
-    /// verify is never counted.
+    /// Verify the ed25519 (CLASSICAL) half only, against the declared `voter`
+    /// key. Retained for the restart-anchor path; consensus quorum counting uses
+    /// [`Self::verify_hybrid`], which additionally checks the post-quantum half.
     pub fn verify(&self) -> bool {
         let Ok(vk) = VerifyingKey::from_bytes(&self.voter) else {
             return false;
@@ -122,6 +136,20 @@ impl FinalizationVote {
         let sig = Signature::from_bytes(&self.signature.0);
         let msg = Self::signing_message(&self.block_id, &self.merkle_root);
         vk.verify_strict(&msg, &sig).is_ok()
+    }
+
+    /// Verify the ML-DSA-65 (POST-QUANTUM) half against the voter's committee PQ
+    /// key `pq_pubkey`, over the same canonical bytes.
+    pub fn verify_pq(&self, pq_pubkey: &MlDsaPublicKey) -> bool {
+        let msg = Self::signing_message(&self.block_id, &self.merkle_root);
+        pq_pubkey.verify(&msg, &self.pq_signature)
+    }
+
+    /// Full HYBRID verification: `classical ∧ pq`. A vote counts toward quorum
+    /// only when BOTH halves verify, so breaking ed25519 alone cannot forge
+    /// finality. `pq_pubkey` is the voter's ML-DSA-65 committee key.
+    pub fn verify_hybrid(&self, pq_pubkey: &MlDsaPublicKey) -> bool {
+        self.verify() && self.verify_pq(pq_pubkey)
     }
 }
 
@@ -149,6 +177,11 @@ pub fn fresh_nonce() -> u64 {
 pub struct VoteCollector {
     /// Admissible signers (committee members). Votes from non-members are dropped.
     committee: HashSet<[u8; 32]>,
+    /// The committee's ML-DSA-65 keys, indexed by the member's ed25519 key — the
+    /// POST-QUANTUM half of the hybrid quorum. `record` counts a vote only when
+    /// its `pq_signature` verifies under the voter's key here (classical ∧ pq),
+    /// so a quantum adversary who breaks ed25519 still cannot assemble a quorum.
+    pq_committee: HashMap<[u8; 32], MlDsaPublicKey>,
     /// Quorum threshold (2f+1).
     quorum_threshold: usize,
     /// Per-block map of distinct member signer → the FIRST verified vote we
@@ -182,10 +215,16 @@ pub enum RecordOutcome {
 }
 
 impl VoteCollector {
-    /// Build a collector for the given committee and quorum threshold.
-    pub fn new(committee: impl IntoIterator<Item = [u8; 32]>, quorum_threshold: usize) -> Self {
+    /// Build a collector for the given committee (ed25519 signer set + aligned
+    /// ML-DSA-65 key map) and quorum threshold.
+    pub fn new(
+        committee: impl IntoIterator<Item = [u8; 32]>,
+        pq_committee: HashMap<[u8; 32], MlDsaPublicKey>,
+        quorum_threshold: usize,
+    ) -> Self {
         VoteCollector {
             committee: committee.into_iter().collect(),
+            pq_committee,
             quorum_threshold,
             votes: HashMap::new(),
             attested: HashSet::new(),
@@ -196,8 +235,13 @@ impl VoteCollector {
     /// already-accumulated votes; re-counting against the new membership happens
     /// implicitly on the next vote.
     #[allow(dead_code)] // collector query/maintenance API; exercised by tests
-    pub fn set_committee(&mut self, committee: impl IntoIterator<Item = [u8; 32]>) {
+    pub fn set_committee(
+        &mut self,
+        committee: impl IntoIterator<Item = [u8; 32]>,
+        pq_committee: HashMap<[u8; 32], MlDsaPublicKey>,
+    ) {
         self.committee = committee.into_iter().collect();
+        self.pq_committee = pq_committee;
     }
 
     /// LIVE EPOCH TRANSITION: atomically replace BOTH the admissible signer set
@@ -219,9 +263,11 @@ impl VoteCollector {
     pub fn reconfigure(
         &mut self,
         committee: impl IntoIterator<Item = [u8; 32]>,
+        pq_committee: HashMap<[u8; 32], MlDsaPublicKey>,
         quorum_threshold: usize,
     ) {
         self.committee = committee.into_iter().collect();
+        self.pq_committee = pq_committee;
         self.quorum_threshold = quorum_threshold;
     }
 
@@ -235,6 +281,14 @@ impl VoteCollector {
     #[allow(dead_code)] // collector query/maintenance API; exercised by tests
     pub fn is_committee_member(&self, key: &[u8; 32]) -> bool {
         self.committee.contains(key)
+    }
+
+    /// The ML-DSA-65 key this collector holds for `member`, if any. Used by the
+    /// live epoch transition to CARRY a continuing member's PQ key across a
+    /// reconfigure (e.g. our own locally-derived key on a bootstrap node that
+    /// no genesis committee lists). `None` = this member's votes cannot count.
+    pub fn pq_key(&self, member: &[u8; 32]) -> Option<&MlDsaPublicKey> {
+        self.pq_committee.get(member)
     }
 
     /// The quorum threshold this collector enforces.
@@ -326,7 +380,13 @@ impl VoteCollector {
         if !self.committee.contains(&vote.voter) {
             return RecordOutcome::Rejected;
         }
-        if !vote.verify() {
+        // HYBRID: the voter must carry an ML-DSA committee key, and BOTH the
+        // ed25519 and the ML-DSA halves must verify (classical ∧ pq). A vote
+        // missing its PQ key or failing either half never counts toward quorum.
+        let Some(pq_pubkey) = self.pq_committee.get(&vote.voter) else {
+            return RecordOutcome::Rejected;
+        };
+        if !vote.verify_hybrid(pq_pubkey) {
             return RecordOutcome::Rejected;
         }
 
@@ -363,6 +423,39 @@ mod tests {
         sk.verifying_key().to_bytes()
     }
 
+    /// The seed's ML-DSA-65 keypair — derived from the SAME `[seed; 32]` bytes
+    /// as the ed25519 key, exactly the production derivation (`genesis.rs`
+    /// publishes the public half; `blocklace_sync` re-derives from `node.key`).
+    fn pq_keypair(seed: u8) -> (MlDsaPublicKey, MlDsaSigningKey) {
+        MlDsaSigningKey::from_seed(&[seed; 32])
+    }
+
+    /// Sign a HYBRID vote as the member with key seed `seed` (both halves).
+    fn signed_vote(
+        seed: u8,
+        blk: BlockId,
+        level: FinalityLevel,
+        root: [u8; 32],
+    ) -> FinalizationVote {
+        let sk = keypair(seed);
+        let pq = pq_keypair(seed);
+        FinalizationVote::sign(&sk, &pq.1, blk, level, root)
+            .expect("hedged ML-DSA signing fails only on an OS-entropy failure")
+    }
+
+    /// The (ed25519 committee, ML-DSA committee map) for a set of member
+    /// seeds — index-aligned by construction, as genesis publishes them.
+    fn committee_of(seeds: &[u8]) -> (Vec<[u8; 32]>, HashMap<[u8; 32], MlDsaPublicKey>) {
+        let mut eds = Vec::with_capacity(seeds.len());
+        let mut pq = HashMap::new();
+        for &s in seeds {
+            let ed = pk(&keypair(s));
+            eds.push(ed);
+            pq.insert(ed, pq_keypair(s).0);
+        }
+        (eds, pq)
+    }
+
     /// A fixed finalized state root the votes in a test attest — all votes for
     /// the same block must agree on it to form a quorum (the real finalizer
     /// binds `canonical_ledger_root`).
@@ -371,48 +464,108 @@ mod tests {
     #[test]
     fn vote_roundtrip_signs_and_verifies() {
         let sk = keypair(7);
-        let v = FinalizationVote::sign(&sk, BlockId([9; 32]), FinalityLevel::Ordered, TEST_ROOT);
+        let (pq_pk, _) = pq_keypair(7);
+        let v = signed_vote(7, BlockId([9; 32]), FinalityLevel::Ordered, TEST_ROOT);
         assert!(v.verify());
+        assert!(v.verify_pq(&pq_pk));
+        assert!(v.verify_hybrid(&pq_pk));
         assert_eq!(v.voter, pk(&sk));
     }
 
     #[test]
     fn tampered_vote_fails_verification() {
-        let sk = keypair(7);
-        let mut v =
-            FinalizationVote::sign(&sk, BlockId([9; 32]), FinalityLevel::Ordered, TEST_ROOT);
-        // Flip the block id: the signature no longer matches the message.
+        let (pq_pk, _) = pq_keypair(7);
+        let mut v = signed_vote(7, BlockId([9; 32]), FinalityLevel::Ordered, TEST_ROOT);
+        // Flip the block id: NEITHER half matches the message any more.
         v.block_id = BlockId([10; 32]);
         assert!(!v.verify());
+        assert!(!v.verify_pq(&pq_pk));
+        assert!(!v.verify_hybrid(&pq_pk));
     }
 
     #[test]
     fn merkle_root_is_bound_into_the_signature() {
         // N3 fix: the finalized state root is in the signed message. A vote
         // whose `merkle_root` is rewritten no longer verifies — so a persisted
-        // quorum signature is verifiably about a SPECIFIC finalized root.
-        let sk = keypair(7);
-        let mut v =
-            FinalizationVote::sign(&sk, BlockId([9; 32]), FinalityLevel::Ordered, TEST_ROOT);
-        assert!(v.verify());
+        // quorum signature is verifiably about a SPECIFIC finalized root. Both
+        // hybrid halves sign the same canonical bytes, so BOTH break.
+        let (pq_pk, _) = pq_keypair(7);
+        let mut v = signed_vote(7, BlockId([9; 32]), FinalityLevel::Ordered, TEST_ROOT);
+        assert!(v.verify_hybrid(&pq_pk));
         v.merkle_root = [0xFF; 32];
         assert!(
             !v.verify(),
-            "rewriting the attested merkle_root breaks the signature"
+            "rewriting the attested merkle_root breaks the ed25519 signature"
+        );
+        assert!(
+            !v.verify_pq(&pq_pk),
+            "rewriting the attested merkle_root breaks the ML-DSA signature"
         );
     }
 
     #[test]
     fn level_is_not_bound_and_downgrade_is_harmless() {
         // The level is NOT in the signed message (only >= Attested gates the
-        // collector). Rewriting Ordered→Attested leaves the signature valid and
-        // the vote still counts — deliberate: both levels finalize identically,
-        // and the security-bearing binding is the merkle_root, not the level.
-        let sk = keypair(7);
-        let mut v =
-            FinalizationVote::sign(&sk, BlockId([9; 32]), FinalityLevel::Ordered, TEST_ROOT);
+        // collector). Rewriting Ordered→Attested leaves both signatures valid
+        // and the vote still counts — deliberate: both levels finalize
+        // identically, and the security-bearing binding is the merkle_root,
+        // not the level.
+        let (pq_pk, _) = pq_keypair(7);
+        let mut v = signed_vote(7, BlockId([9; 32]), FinalityLevel::Ordered, TEST_ROOT);
         v.level = FinalityLevel::Attested;
-        assert!(v.verify());
+        assert!(v.verify_hybrid(&pq_pk));
+    }
+
+    /// THE HYBRID TEETH: a vote whose ML-DSA half is WRONG is rejected even
+    /// though its ed25519 half is perfectly valid — the collector never counts
+    /// a classical-only vote toward quorum (the quantum adversary who breaks
+    /// ed25519 gains nothing).
+    #[test]
+    fn valid_ed25519_with_forged_pq_half_is_rejected() {
+        let (eds, pq) = committee_of(&[1, 2]);
+        let mut col = VoteCollector::new(eds, pq, 2);
+        let blk = BlockId([7; 32]);
+
+        let mut v = signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT);
+        // Corrupt the PQ half only: the ed25519 half REMAINS valid.
+        v.pq_signature[0] ^= 0xFF;
+        assert!(
+            v.verify(),
+            "precondition: the classical half alone still verifies"
+        );
+        assert_eq!(
+            col.record(&v),
+            RecordOutcome::Rejected,
+            "a vote with a forged ML-DSA half must NEVER count, even with a valid ed25519 half"
+        );
+        assert_eq!(col.vote_count(&blk), 0);
+
+        // An empty PQ signature is equally rejected.
+        let mut v2 = signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT);
+        v2.pq_signature = Vec::new();
+        assert!(v2.verify());
+        assert_eq!(col.record(&v2), RecordOutcome::Rejected);
+        assert_eq!(col.vote_count(&blk), 0);
+    }
+
+    /// FAIL-CLOSED: a committee with NO configured ML-DSA keys (hybrid
+    /// unconfigured — the empty `known_federation_ml_dsa_keys` default) counts
+    /// NO votes and forms NO quorum. There is no silent ed25519-only downgrade.
+    #[test]
+    fn missing_pq_committee_key_fail_closed() {
+        let (eds, _) = committee_of(&[1, 2]);
+        let mut col = VoteCollector::new(eds, HashMap::new(), 2);
+        let blk = BlockId([7; 32]);
+
+        let v = signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT);
+        assert!(v.verify_hybrid(&pq_keypair(1).0), "the vote itself is good");
+        assert_eq!(
+            col.record(&v),
+            RecordOutcome::Rejected,
+            "a member with no known ML-DSA key must not count toward quorum"
+        );
+        assert_eq!(col.vote_count(&blk), 0);
+        assert!(!col.is_consensus_attested(&blk));
     }
 
     #[test]
@@ -421,36 +574,18 @@ mod tests {
         // root, the collector hands back exactly the (voter, signature) pairs the
         // persistence layer stores as `finalization_quorum` — and those sigs
         // verify against the shared preimage, so they re-anchor a restart.
-        let a = keypair(1);
-        let b = keypair(2);
-        let c = keypair(3);
-        let committee = [pk(&a), pk(&b), pk(&c)];
+        let (committee, pq) = committee_of(&[1, 2, 3]);
         let quorum = dregg_blocklace::ordering::supermajority_threshold(3); // = 3
-        let mut col = VoteCollector::new(committee, quorum);
+        let mut col = VoteCollector::new(committee, pq, quorum);
         let blk = BlockId([42; 32]);
 
         // Below quorum: nothing to persist yet.
-        col.record(&FinalizationVote::sign(
-            &a,
-            blk,
-            FinalityLevel::Ordered,
-            TEST_ROOT,
-        ));
-        col.record(&FinalizationVote::sign(
-            &b,
-            blk,
-            FinalityLevel::Ordered,
-            TEST_ROOT,
-        ));
+        col.record(&signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT));
+        col.record(&signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT));
         assert!(col.assembled_quorum(&blk).is_none());
 
         // The third distinct signer completes the quorum.
-        col.record(&FinalizationVote::sign(
-            &c,
-            blk,
-            FinalityLevel::Ordered,
-            TEST_ROOT,
-        ));
+        col.record(&signed_vote(3, blk, FinalityLevel::Ordered, TEST_ROOT));
         let (root, sigs) = col.assembled_quorum(&blk).expect("quorum assembled");
         assert_eq!(root, TEST_ROOT);
         assert_eq!(sigs.len(), 3);
@@ -471,34 +606,16 @@ mod tests {
         // Distinct signers split across two different roots (a fork) — no single
         // root reaches the threshold, so NO quorum is assembled: the collector
         // never fabricates an anchor the restart would reject.
-        let a = keypair(1);
-        let b = keypair(2);
-        let c = keypair(3);
-        let committee = [pk(&a), pk(&b), pk(&c)];
+        let (committee, pq) = committee_of(&[1, 2, 3]);
         let quorum = dregg_blocklace::ordering::supermajority_threshold(3); // = 3
-        let mut col = VoteCollector::new(committee, quorum);
+        let mut col = VoteCollector::new(committee, pq, quorum);
         let blk = BlockId([42; 32]);
         let root_x = [0x11; 32];
         let root_y = [0x22; 32];
 
-        col.record(&FinalizationVote::sign(
-            &a,
-            blk,
-            FinalityLevel::Ordered,
-            root_x,
-        ));
-        col.record(&FinalizationVote::sign(
-            &b,
-            blk,
-            FinalityLevel::Ordered,
-            root_x,
-        ));
-        col.record(&FinalizationVote::sign(
-            &c,
-            blk,
-            FinalityLevel::Ordered,
-            root_y,
-        ));
+        col.record(&signed_vote(1, blk, FinalityLevel::Ordered, root_x));
+        col.record(&signed_vote(2, blk, FinalityLevel::Ordered, root_x));
+        col.record(&signed_vote(3, blk, FinalityLevel::Ordered, root_y));
         // 2 for root_x, 1 for root_y — neither reaches 3.
         assert!(col.assembled_quorum(&blk).is_none());
     }
@@ -510,109 +627,64 @@ mod tests {
     /// shortcut it.
     #[test]
     fn quorum_of_distinct_signers_drives_consensus_attested() {
-        let a = keypair(1);
-        let b = keypair(2);
-        let c = keypair(3);
-        let committee = [pk(&a), pk(&b), pk(&c)];
+        let (committee, pq) = committee_of(&[1, 2, 3]);
         let quorum = dregg_blocklace::ordering::supermajority_threshold(3); // = 3
-        let mut col = VoteCollector::new(committee, quorum);
+        let mut col = VoteCollector::new(committee, pq, quorum);
 
         let blk = BlockId([42; 32]);
 
         // First vote: counted, not yet quorum.
-        let o1 = col.record(&FinalizationVote::sign(
-            &a,
-            blk,
-            FinalityLevel::Ordered,
-            TEST_ROOT,
-        ));
+        let o1 = col.record(&signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT));
         assert_eq!(o1, RecordOutcome::Counted { distinct_votes: 1 });
         assert!(!col.is_consensus_attested(&blk));
 
         // The SAME signer voting again does not advance the count.
-        let dup = col.record(&FinalizationVote::sign(
-            &a,
-            blk,
-            FinalityLevel::Attested,
-            TEST_ROOT,
-        ));
+        let dup = col.record(&signed_vote(1, blk, FinalityLevel::Attested, TEST_ROOT));
         assert_eq!(dup, RecordOutcome::Counted { distinct_votes: 1 });
 
         // Second distinct signer: still short of quorum (3).
-        let o2 = col.record(&FinalizationVote::sign(
-            &b,
-            blk,
-            FinalityLevel::Ordered,
-            TEST_ROOT,
-        ));
+        let o2 = col.record(&signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT));
         assert_eq!(o2, RecordOutcome::Counted { distinct_votes: 2 });
         assert!(!col.is_consensus_attested(&blk));
 
         // Third distinct signer: crosses the quorum exactly here.
-        let o3 = col.record(&FinalizationVote::sign(
-            &c,
-            blk,
-            FinalityLevel::Ordered,
-            TEST_ROOT,
-        ));
+        let o3 = col.record(&signed_vote(3, blk, FinalityLevel::Ordered, TEST_ROOT));
         assert_eq!(o3, RecordOutcome::ReachedQuorum { distinct_votes: 3 });
         assert!(col.is_consensus_attested(&blk));
     }
 
     #[test]
     fn non_member_and_forged_votes_are_rejected() {
-        let a = keypair(1);
-        let b = keypair(2);
-        let outsider = keypair(99); // NOT in the committee
-        let committee = [pk(&a), pk(&b)];
+        let (committee, pq) = committee_of(&[1, 2]);
         let quorum = dregg_blocklace::ordering::supermajority_threshold(2); // = 2
-        let mut col = VoteCollector::new(committee, quorum);
+        let mut col = VoteCollector::new(committee, pq, quorum);
         let blk = BlockId([7; 32]);
 
-        // A non-member's well-formed vote is rejected and does not count.
-        let outc = col.record(&FinalizationVote::sign(
-            &outsider,
-            blk,
-            FinalityLevel::Ordered,
-            TEST_ROOT,
-        ));
+        // A non-member's well-formed hybrid vote is rejected and does not count.
+        let outc = col.record(&signed_vote(99, blk, FinalityLevel::Ordered, TEST_ROOT));
         assert_eq!(outc, RecordOutcome::Rejected);
         assert_eq!(col.vote_count(&blk), 0);
 
-        // A forged signature from a member key is rejected.
-        let mut forged = FinalizationVote::sign(&a, blk, FinalityLevel::Ordered, TEST_ROOT);
+        // A forged ed25519 signature from a member key is rejected (even though
+        // the ML-DSA half is genuine — hybrid means BOTH halves must verify).
+        let mut forged = signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT);
         forged.signature = dregg_types::Signature([0u8; 64]);
         assert_eq!(col.record(&forged), RecordOutcome::Rejected);
         assert_eq!(col.vote_count(&blk), 0);
 
         // Two honest member votes reach quorum.
         assert!(matches!(
-            col.record(&FinalizationVote::sign(
-                &a,
-                blk,
-                FinalityLevel::Ordered,
-                TEST_ROOT
-            )),
+            col.record(&signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::Counted { distinct_votes: 1 }
         ));
         assert!(matches!(
-            col.record(&FinalizationVote::sign(
-                &b,
-                blk,
-                FinalityLevel::Ordered,
-                TEST_ROOT
-            )),
+            col.record(&signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::ReachedQuorum { distinct_votes: 2 }
         ));
         assert!(col.is_consensus_attested(&blk));
 
         // A further confirming vote after quorum is idempotent.
-        let again = col.record(&FinalizationVote::sign(
-            &a,
-            blk,
-            FinalityLevel::Attested,
-            TEST_ROOT,
-        ));
+        let again = col.record(&signed_vote(1, blk, FinalityLevel::Attested, TEST_ROOT));
         assert!(matches!(again, RecordOutcome::AlreadyQuorum { .. }));
     }
 
@@ -626,19 +698,17 @@ mod tests {
     /// genuine quorum of distinct signers — independent of the gossip transport.
     #[test]
     fn two_nodes_reach_consensus_attested_by_exchanging_votes() {
-        let a = keypair(11);
-        let b = keypair(22);
-        let committee = [pk(&a), pk(&b)];
+        let (committee, pq) = committee_of(&[11, 22]);
         let quorum = dregg_blocklace::ordering::supermajority_threshold(2); // = 2
         let blk = BlockId([77; 32]);
 
         // Each node has its own collector over the same committee.
-        let mut node_a = VoteCollector::new(committee, quorum);
-        let mut node_b = VoteCollector::new(committee, quorum);
+        let mut node_a = VoteCollector::new(committee.clone(), pq.clone(), quorum);
+        let mut node_b = VoteCollector::new(committee, pq, quorum);
 
-        // Both finalize `blk` locally and sign their own vote (the emit step).
-        let vote_a = FinalizationVote::sign(&a, blk, FinalityLevel::Ordered, TEST_ROOT);
-        let vote_b = FinalizationVote::sign(&b, blk, FinalityLevel::Ordered, TEST_ROOT);
+        // Both finalize `blk` locally and sign their own HYBRID vote (the emit step).
+        let vote_a = signed_vote(11, blk, FinalityLevel::Ordered, TEST_ROOT);
+        let vote_b = signed_vote(22, blk, FinalityLevel::Ordered, TEST_ROOT);
 
         // Each records its OWN vote first.
         assert_eq!(
@@ -679,17 +749,15 @@ mod tests {
     /// on whichever vote is second, so BOTH funnel call-sites can act on it.
     #[test]
     fn quorum_crossing_is_reported_on_whichever_vote_is_second() {
-        let a = keypair(11);
-        let b = keypair(22);
-        let committee = [pk(&a), pk(&b)];
+        let (committee, pq) = committee_of(&[11, 22]);
         let quorum = dregg_blocklace::ordering::supermajority_threshold(2); // = 2
         let blk = BlockId([77; 32]);
-        let vote_a = FinalizationVote::sign(&a, blk, FinalityLevel::Ordered, TEST_ROOT);
-        let vote_b = FinalizationVote::sign(&b, blk, FinalityLevel::Ordered, TEST_ROOT);
+        let vote_a = signed_vote(11, blk, FinalityLevel::Ordered, TEST_ROOT);
+        let vote_b = signed_vote(22, blk, FinalityLevel::Ordered, TEST_ROOT);
 
         // Case 1: PEER vote first, then SELF vote crosses (the race that broke the
         // live node — the self-record was the threshold-crosser).
-        let mut col = VoteCollector::new(committee, quorum);
+        let mut col = VoteCollector::new(committee.clone(), pq.clone(), quorum);
         assert_eq!(
             col.record(&vote_b),
             RecordOutcome::Counted { distinct_votes: 1 }
@@ -707,7 +775,7 @@ mod tests {
 
         // Case 2: SELF vote first, then PEER vote crosses (the orientation that
         // already worked). The crossing is reported symmetrically.
-        let mut col2 = VoteCollector::new([pk(&a), pk(&b)], quorum);
+        let mut col2 = VoteCollector::new(committee, pq, quorum);
         assert_eq!(
             col2.record(&vote_a),
             RecordOutcome::Counted { distinct_votes: 1 }
@@ -720,12 +788,11 @@ mod tests {
 
     #[test]
     fn bilateral_level_votes_do_not_count() {
-        let a = keypair(1);
-        let committee = [pk(&a)];
-        let mut col = VoteCollector::new(committee, 1);
+        let (committee, pq) = committee_of(&[1]);
+        let mut col = VoteCollector::new(committee, pq, 1);
         let blk = BlockId([5; 32]);
         // A "vote" below Attested is not a finality assertion.
-        let v = FinalizationVote::sign(&a, blk, FinalityLevel::Bilateral, TEST_ROOT);
+        let v = signed_vote(1, blk, FinalityLevel::Bilateral, TEST_ROOT);
         assert_eq!(col.record(&v), RecordOutcome::Rejected);
         assert_eq!(col.vote_count(&blk), 0);
     }
@@ -738,46 +805,35 @@ mod tests {
     /// "the new validator's votes count from epoch N+1" property.
     #[test]
     fn reconfigure_admits_new_validator_and_advances_threshold() {
-        let a = keypair(1);
-        let b = keypair(2);
-        let c = keypair(3);
         let d = keypair(4); // the validator added live
         let blk = BlockId([42; 32]);
 
         // Epoch N: a 3-member committee, quorum = supermajority(3) = 3.
+        let (c3, pq3) = committee_of(&[1, 2, 3]);
         let q3 = dregg_blocklace::ordering::supermajority_threshold(3);
-        let mut col = VoteCollector::new([pk(&a), pk(&b), pk(&c)], q3);
+        let mut col = VoteCollector::new(c3, pq3, q3);
         assert_eq!(col.quorum_threshold(), 3);
         assert!(!col.is_committee_member(&pk(&d)));
 
         // D is not yet a member: its vote is rejected and never counts.
         assert_eq!(
-            col.record(&FinalizationVote::sign(
-                &d,
-                blk,
-                FinalityLevel::Ordered,
-                TEST_ROOT
-            )),
+            col.record(&signed_vote(4, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::Rejected
         );
         assert_eq!(col.vote_count(&blk), 0);
 
         // Epoch N+1: the membership change finalized — reconfigure to the new
-        // 4-member committee, quorum = supermajority(4) = 3.
+        // 4-member committee (ed25519 + ML-DSA keys), quorum = supermajority(4) = 3.
+        let (c4, pq4) = committee_of(&[1, 2, 3, 4]);
         let q4 = dregg_blocklace::ordering::supermajority_threshold(4);
-        col.reconfigure([pk(&a), pk(&b), pk(&c), pk(&d)], q4);
+        col.reconfigure(c4, pq4, q4);
         assert_eq!(col.committee_size(), 4);
         assert_eq!(col.quorum_threshold(), 3);
         assert!(col.is_committee_member(&pk(&d)));
 
         // D's vote now counts toward consensus-wide finality.
         assert_eq!(
-            col.record(&FinalizationVote::sign(
-                &d,
-                blk,
-                FinalityLevel::Ordered,
-                TEST_ROOT
-            )),
+            col.record(&signed_vote(4, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::Counted { distinct_votes: 1 }
         );
     }
@@ -788,58 +844,37 @@ mod tests {
     /// threshold shrinks to the supermajority of the smaller set.
     #[test]
     fn reconfigure_drops_removed_validator() {
-        let a = keypair(1);
-        let b = keypair(2);
-        let c = keypair(3);
         let d = keypair(4);
         let blk = BlockId([7; 32]);
 
+        let (c4, pq4) = committee_of(&[1, 2, 3, 4]);
         let q4 = dregg_blocklace::ordering::supermajority_threshold(4);
-        let mut col = VoteCollector::new([pk(&a), pk(&b), pk(&c), pk(&d)], q4);
+        let mut col = VoteCollector::new(c4, pq4, q4);
 
         // Remove D: epoch N+1 committee is {a,b,c}, quorum = supermajority(3) = 3.
+        let (c3, pq3) = committee_of(&[1, 2, 3]);
         let q3 = dregg_blocklace::ordering::supermajority_threshold(3);
-        col.reconfigure([pk(&a), pk(&b), pk(&c)], q3);
+        col.reconfigure(c3, pq3, q3);
         assert_eq!(col.committee_size(), 3);
         assert_eq!(col.quorum_threshold(), 3);
         assert!(!col.is_committee_member(&pk(&d)));
 
         // D (removed) can no longer contribute to quorum.
         assert_eq!(
-            col.record(&FinalizationVote::sign(
-                &d,
-                blk,
-                FinalityLevel::Ordered,
-                TEST_ROOT
-            )),
+            col.record(&signed_vote(4, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::Rejected
         );
         // The three continuing members still finalize.
         assert!(matches!(
-            col.record(&FinalizationVote::sign(
-                &a,
-                blk,
-                FinalityLevel::Ordered,
-                TEST_ROOT
-            )),
+            col.record(&signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::Counted { distinct_votes: 1 }
         ));
         assert!(matches!(
-            col.record(&FinalizationVote::sign(
-                &b,
-                blk,
-                FinalityLevel::Ordered,
-                TEST_ROOT
-            )),
+            col.record(&signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::Counted { distinct_votes: 2 }
         ));
         assert!(matches!(
-            col.record(&FinalizationVote::sign(
-                &c,
-                blk,
-                FinalityLevel::Ordered,
-                TEST_ROOT
-            )),
+            col.record(&signed_vote(3, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::ReachedQuorum { distinct_votes: 3 }
         ));
     }
@@ -850,34 +885,22 @@ mod tests {
     /// handoff).
     #[test]
     fn reconfigure_preserves_prior_attestation() {
-        let a = keypair(1);
-        let b = keypair(2);
         let blk = BlockId([9; 32]);
 
+        let (c2, pq2) = committee_of(&[1, 2]);
         let q2 = dregg_blocklace::ordering::supermajority_threshold(2);
-        let mut col = VoteCollector::new([pk(&a), pk(&b)], q2);
-        col.record(&FinalizationVote::sign(
-            &a,
-            blk,
-            FinalityLevel::Ordered,
-            TEST_ROOT,
-        ));
+        let mut col = VoteCollector::new(c2, pq2, q2);
+        col.record(&signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT));
         assert!(matches!(
-            col.record(&FinalizationVote::sign(
-                &b,
-                blk,
-                FinalityLevel::Ordered,
-                TEST_ROOT
-            )),
+            col.record(&signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::ReachedQuorum { .. }
         ));
         assert!(col.is_consensus_attested(&blk));
 
         // A later membership change (add c, d) must not un-attest the block.
-        let c = keypair(3);
-        let d = keypair(4);
+        let (c4, pq4) = committee_of(&[1, 2, 3, 4]);
         let q4 = dregg_blocklace::ordering::supermajority_threshold(4);
-        col.reconfigure([pk(&a), pk(&b), pk(&c), pk(&d)], q4);
+        col.reconfigure(c4, pq4, q4);
         assert!(
             col.is_consensus_attested(&blk),
             "a block finalized in the old epoch stays finalized across the boundary"

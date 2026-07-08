@@ -233,6 +233,10 @@ pub struct BlocklaceHandle {
     ///
     /// [`FinalizationVote`]: crate::finalization_votes::FinalizationVote
     pub signing_key: ed25519_dalek::SigningKey,
+    /// HYBRID-PQ: this node's ML-DSA-65 signing key, derived deterministically
+    /// from the same `node.key` seed as `signing_key` (so it needs no separate
+    /// key file). Signs the post-quantum half of every finalization vote.
+    pub pq_signing_key: dregg_federation::frost::MlDsaSigningKey,
     /// Collector that gates CONSENSUS-WIDE Attested finality on a quorum (2f+1)
     /// of distinct, verified committee signers. The DAG-derived `tau` order is
     /// computed per-node; this is the explicit cross-node AGREEMENT layer: a
@@ -720,7 +724,23 @@ impl BlocklaceHandle {
         merkle_root: [u8; 32],
     ) {
         use crate::finalization_votes::FinalizationVote;
-        let vote = FinalizationVote::sign(&self.signing_key, block_id, level, merkle_root);
+        // HYBRID-PQ: sign BOTH the ed25519 and the ML-DSA-65 halves. `sign`
+        // returns `None` only on a transient OS-entropy failure during hedged
+        // ML-DSA signing — treat as "cannot vote this instant" and skip the
+        // emission (a later finalized block re-triggers a vote; liveness is
+        // unaffected, and no half-signed vote is ever gossiped).
+        let Some(vote) = FinalizationVote::sign(
+            &self.signing_key,
+            &self.pq_signing_key,
+            block_id,
+            level,
+            merkle_root,
+        ) else {
+            tracing::warn!(
+                "ML-DSA finalization-vote signing failed (transient); skipping emission"
+            );
+            return;
+        };
 
         // Record our own vote (a member's local finality is one signature toward
         // its own quorum) through the SAME funnel as a received vote, so that if
@@ -1569,11 +1589,18 @@ impl BlocklaceHandle {
     /// longer a `tau` participant and its finalization votes are now rejected by
     /// the reconfigured collector). HORIZONLOG: optional deregistration on
     /// removal.
-    pub async fn apply_committee_change(&self, participants: &[[u8; 32]], threshold: usize) {
-        // 1. Advance the finalization-vote committee + quorum threshold.
+    pub async fn apply_committee_change(
+        &self,
+        participants: &[[u8; 32]],
+        pq_committee: HashMap<[u8; 32], dregg_federation::frost::MlDsaPublicKey>,
+        threshold: usize,
+    ) {
+        // 1. Advance the finalization-vote committee + quorum threshold — and
+        //    the HYBRID-PQ key map alongside them (a participant absent from
+        //    `pq_committee` cannot contribute to quorum; fail-closed).
         {
             let mut votes = self.votes.write().await;
-            votes.reconfigure(participants.iter().copied(), threshold);
+            votes.reconfigure(participants.iter().copied(), pq_committee, threshold);
         }
         // 2. Admit every current participant to the authenticated gossip mesh.
         for pk in participants {
@@ -1833,6 +1860,27 @@ async fn resolve_peer_addrs(peers: &[String]) -> Vec<SocketAddr> {
 
 /// Activity only when a turn is submitted or blocks arrive from peers.
 #[allow(clippy::too_many_arguments)]
+/// HYBRID-PQ: assemble the ML-DSA-65 committee key map for `participants` from
+/// state's genesis-published, INDEX-ALIGNED
+/// `known_federation_keys` / `known_federation_ml_dsa_keys` pair.
+///
+/// A participant with no published ML-DSA key gets NO entry — fail-closed: the
+/// [`crate::finalization_votes::VoteCollector`] will never count that member's
+/// votes toward quorum (a missing PQ key is never an ed25519-only downgrade).
+async fn pq_committee_for_participants(
+    state: &NodeState,
+    participants: &[[u8; 32]],
+) -> HashMap<[u8; 32], dregg_federation::frost::MlDsaPublicKey> {
+    let s = state.read().await;
+    let mut map = HashMap::new();
+    for pk in participants {
+        if let Some(pq) = s.ml_dsa_key_for(pk) {
+            map.insert(*pk, pq.clone());
+        }
+    }
+    map
+}
+
 pub async fn run_blocklace_sync(
     state: NodeState,
     gossip_port: u16,
@@ -1868,6 +1916,14 @@ pub async fn run_blocklace_sync(
     // The finality::Blocklace uses ed25519_dalek::SigningKey directly.
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&signing_key_bytes);
     let self_key: [u8; 32] = signing_key.verifying_key().to_bytes();
+    // HYBRID-PQ: re-derive this node's ML-DSA-65 keypair from the SAME seed
+    // (matching what `genesis.rs` published as its ML-DSA public key). No separate
+    // key file — the ed25519 seed IS the PQ seed. The public half seeds our own
+    // entry in the vote collector's PQ committee (authoritative for OURSELVES —
+    // it is the key our own votes verify under — so a solo/bootstrap node counts
+    // its own hybrid vote even before any genesis publishes a committee).
+    let (pq_public_key, pq_signing_key) =
+        dregg_federation::frost::MlDsaSigningKey::from_seed(&signing_key_bytes);
 
     // The constitution seed: prefer the REPLAYED manager main derived from the
     // persisted chain (`committee_replay` — carries every finalized membership
@@ -2174,9 +2230,17 @@ pub async fn run_blocklace_sync(
     // Quorum finalization-vote collector: the committee = the consensus
     // participants, the threshold = the same 2f+1 supermajority that gates
     // block production. A turn-bearing block is consensus-attested only once a
-    // supermajority of distinct members have SIGNED a vote for it.
+    // supermajority of distinct members have SIGNED a vote for it — with BOTH
+    // halves (ed25519 ∧ ML-DSA-65) verifying. The PQ committee is read from
+    // state's genesis-published, index-aligned ML-DSA keys; our OWN entry is
+    // the locally re-derived key (same seed), so solo/bootstrap still votes. A
+    // participant with no known ML-DSA key simply cannot contribute to quorum
+    // (fail-closed; never an ed25519-only downgrade).
+    let mut pq_committee = pq_committee_for_participants(&state, &participants).await;
+    pq_committee.insert(self_key, pq_public_key.clone());
     let votes = Arc::new(RwLock::new(crate::finalization_votes::VoteCollector::new(
         participants.iter().copied(),
+        pq_committee,
         quorum_threshold,
     )));
 
@@ -2187,6 +2251,7 @@ pub async fn run_blocklace_sync(
         topic: topic.clone(),
         self_key,
         signing_key: signing_key.clone(),
+        pq_signing_key: pq_signing_key.clone(),
         votes: votes.clone(),
         my_pending_votes: Arc::new(RwLock::new(HashMap::new())),
         cursor,
@@ -6599,14 +6664,24 @@ mod tests {
         let blocklace = dregg_blocklace::finality::Blocklace::new(signing_key.clone(), quorum);
         let constitution =
             ConstitutionManager::new(Constitution::new(participants.clone(), 60_000));
-        let votes =
-            crate::finalization_votes::VoteCollector::new(participants.iter().copied(), quorum);
+        // No ML-DSA committee in this fixture (it exercises peer-address
+        // learning, not vote quorum): an EMPTY pq map is the fail-closed
+        // "hybrid unconfigured" state — the collector counts no votes.
+        let votes = crate::finalization_votes::VoteCollector::new(
+            participants.iter().copied(),
+            HashMap::new(),
+            quorum,
+        );
         BlocklaceHandle {
             lace: Arc::new(RwLock::new(blocklace)),
             constitution: Arc::new(RwLock::new(constitution)),
             gossip,
             topic,
             self_key,
+            pq_signing_key: dregg_federation::frost::MlDsaSigningKey::from_seed(
+                &signing_key.to_bytes(),
+            )
+            .1,
             signing_key,
             votes: Arc::new(RwLock::new(votes)),
             my_pending_votes: Arc::new(RwLock::new(HashMap::new())),
@@ -7609,7 +7684,7 @@ async fn execute_finalized_membership(
 
             // Check if the proposal already passed (e.g., n=1 solo mode).
             if let Some(proposal_block) = passed {
-                apply_passed_proposal(handle, &proposal_block).await;
+                apply_passed_proposal(state, handle, &proposal_block).await;
             }
         }
 
@@ -7639,7 +7714,7 @@ async fn execute_finalized_membership(
             );
 
             if let Some(proposal_block) = passed {
-                apply_passed_proposal(handle, &proposal_block).await;
+                apply_passed_proposal(state, handle, &proposal_block).await;
             }
         }
 
@@ -7663,7 +7738,7 @@ async fn execute_finalized_membership(
             );
 
             if let Some(proposal_block) = passed {
-                apply_passed_proposal(handle, &proposal_block).await;
+                apply_passed_proposal(state, handle, &proposal_block).await;
             }
         }
 
@@ -7696,7 +7771,11 @@ async fn execute_finalized_membership(
 /// rather than a disruptive genesis re-roll. The new participant list takes
 /// effect at the NEXT wave boundary (the current wave's ordering uses the old
 /// set); the finalization-vote committee and the gossip mesh are advanced here.
-async fn apply_passed_proposal(handle: &BlocklaceHandle, proposal_block: &BlockId) {
+async fn apply_passed_proposal(
+    state: &NodeState,
+    handle: &BlocklaceHandle,
+    proposal_block: &BlockId,
+) {
     let mut constitution = handle.constitution.write().await;
     if constitution.apply_if_passed(proposal_block) {
         let new_participants: Vec<[u8; 32]> = constitution.current.participants.clone();
@@ -7704,6 +7783,24 @@ async fn apply_passed_proposal(handle: &BlocklaceHandle, proposal_block: &BlockI
         let new_version = constitution.version();
         let new_threshold = constitution.threshold();
         drop(constitution);
+        // HYBRID-PQ committee for the NEW participant set: genesis-published
+        // keys from state, plus any continuing member's key the collector
+        // already holds (e.g. our OWN locally-derived key on a bootstrap node
+        // not present in a genesis committee). A live-JOINED validator whose
+        // ML-DSA key was never published gets NO entry — its votes cannot
+        // count toward quorum until the committee learns its PQ key
+        // (fail-closed; the continuing members still finalize).
+        let mut pq_committee = pq_committee_for_participants(state, &new_participants).await;
+        {
+            let votes = handle.votes.read().await;
+            for pk in &new_participants {
+                if !pq_committee.contains_key(pk)
+                    && let Some(k) = votes.pq_key(pk)
+                {
+                    pq_committee.insert(*pk, k.clone());
+                }
+            }
+        }
         info!(
             proposal_block = %proposal_block,
             new_participant_count = new_count,
@@ -7720,7 +7817,7 @@ async fn apply_passed_proposal(handle: &BlocklaceHandle, proposal_block: &BlockI
         // bridge / light client pin, so a committee change never forces a
         // re-point (inflexibility #3). See `apply_committee_change`.
         handle
-            .apply_committee_change(&new_participants, new_threshold)
+            .apply_committee_change(&new_participants, pq_committee, new_threshold)
             .await;
     }
 }
@@ -7789,7 +7886,7 @@ async fn advance_constitution_wave(state: &NodeState, handle: &BlocklaceHandle) 
 
             // If we're the only participant (solo mode), it passes immediately.
             if let Some(proposal_block) = passed {
-                apply_passed_proposal(handle, &proposal_block).await;
+                apply_passed_proposal(state, handle, &proposal_block).await;
             }
         }
     }

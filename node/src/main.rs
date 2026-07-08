@@ -924,22 +924,49 @@ async fn run_node(
                         if let Some(ce) = genesis["committee_epoch"].as_u64() {
                             s.committee_epoch = ce;
                         }
-                        // Extract validator public keys from genesis.
+                        // Extract validator public keys from genesis — the
+                        // ed25519 committee AND (HYBRID-PQ) each member's
+                        // published ML-DSA-65 key, INDEX-ALIGNED. If ANY
+                        // validator lacks a decodable `ml_dsa_public_key`, the
+                        // whole ML-DSA vec is left empty: hybrid is then
+                        // unconfigured and the vote collector counts no votes
+                        // (fail-closed — never a partial/misaligned committee).
                         if let Some(validators) = genesis["validators"].as_array() {
                             let mut fed_keys = Vec::new();
+                            let mut ml_dsa_keys = Vec::new();
+                            let mut ml_dsa_complete = true;
                             for v in validators {
                                 if let Some(pk_hex) = v["public_key"].as_str()
                                     && let Some(pk_bytes) = hex_decode_32(pk_hex)
                                 {
                                     fed_keys.push(dregg_types::PublicKey(pk_bytes));
+                                    match v["ml_dsa_public_key"]
+                                        .as_str()
+                                        .and_then(parse_ml_dsa_public_key)
+                                    {
+                                        Some(k) => ml_dsa_keys.push(k),
+                                        None => ml_dsa_complete = false,
+                                    }
                                 }
                             }
                             if !fed_keys.is_empty() {
+                                let ml_dsa_keys = if ml_dsa_complete {
+                                    ml_dsa_keys
+                                } else {
+                                    tracing::warn!(
+                                        "genesis.json is missing (or has undecodable) \
+                                         ml_dsa_public_key entries — HYBRID-PQ finality is \
+                                         UNCONFIGURED and finalization votes will not count \
+                                         (fail-closed); re-mint genesis to enable it"
+                                    );
+                                    Vec::new()
+                                };
                                 info!(
                                     key_count = fed_keys.len(),
+                                    ml_dsa_keys = ml_dsa_keys.len(),
                                     "loaded federation keys from genesis.json"
                                 );
-                                s.set_federation_keys(fed_keys);
+                                s.set_federation_keys_hybrid(fed_keys, ml_dsa_keys);
                             }
                         }
                         // Verify the genesis-declared federation_id matches the
@@ -1673,6 +1700,24 @@ async fn run_relay(
     };
 
     relay_service::run_relay_service(config).await;
+}
+
+/// Decode a genesis-published ML-DSA-65 public key: 3904 hex chars → the
+/// 1952-byte FIPS 204 serialized key (the array length is inferred from the
+/// `MlDsaPublicKey` constructor, so this stays in lockstep with the type).
+/// `None` on any length/character violation.
+fn parse_ml_dsa_public_key(s: &str) -> Option<dregg_federation::frost::MlDsaPublicKey> {
+    if !s.is_ascii() || s.len() % 2 != 0 {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(s.len() / 2);
+    for i in 0..s.len() / 2 {
+        bytes.push(u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?);
+    }
+    bytes
+        .try_into()
+        .ok()
+        .map(dregg_federation::frost::MlDsaPublicKey)
 }
 
 /// Decode a 64-char hex string into a [u8; 32].
