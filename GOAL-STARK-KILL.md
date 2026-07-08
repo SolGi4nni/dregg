@@ -272,3 +272,26 @@ the deletion does not foreclose — it CLARIFIES (one impl to harden, not two).
 CORRECTED THRUST: (a) CONTINUE the purge — finish the consumer flips (builders now exist), delete the
 hand AIRs, git rm circuit/src/stark.rs. (b) The assurance audit (wf_1b09d713-b46) runs IN PARALLEL as
 forward correctness on the KEPT Lean (Rung-2 completion + argus-case tie-in) — NOT a gate on deletion.
+
+## ⚑⚑⚑ THE AUDIT PAID OFF (2026-07-08): 7 CONFIRMED forgery bugs in the emitted descriptors — 1 a REGRESSION
+The assurance audit (wf_1b09d713-b46, 15 families) found the found-bug class is SYSTEMIC:
+CONFIRMED_BUG (7): MerkleMembership, AdjacencyMembership, NonRevocation, NoteSpendingLeaf,
+  PredicatesRelationalCompound, Derivation, Fold. SUSPECTED (3): GarbledEval, Presentation,
+  CommittedThreshold. LOOKS_SOUND (4): DfaRouting, QuantifiedAbsence, TemporalPredicate, BridgeAction.
+  (PredicatesArithmetic: suspected→REFUTED, sound.)
+THE CLASS (nearly all of them): a semantic-binding constraint emitted as `.base (.gate body)` =
+when_transition, VACUOUS on the last row (holdsVm .gate isLast=true = True) → a witness column FREE on
+the last row (or a height-1 trace) → forgery. ⚑ AdjacencyMembership is a REGRESSION: the deployed RUST
+AIR binds idx-step every row (assert_zero, is_transition=false) but the Lean EMIT dropped it — so
+byte-identity was FAITHFULLY PORTING A HOLE THE RUST DIDN'T HAVE. This REFUTES "new is always better"
+for these families and vindicates ember's audit-first instinct: byte-identity ≠ correctness; only
+adversarial no-forgery proofs catch this.
+FIX SWARM RUNNING (wf_be002563-213, ember "swarm fixes, improve the code + proof strategy"): per family
+— add the every-row/last-row binding (the adjLastOrderFix precedent, match/exceed the deployed Rust),
+regen the golden, PROVE the exact found-bug witness now UNSAT (regression), + PROOF-STRATEGY UPGRADE:
+sweep the whole descriptor for sibling vacuous-.gate constraints.
+⚑ META-LESSON (proof strategy): the `.gate` (transition-only) lowering of a semantic-binding constraint
+is a SYSTEMATIC TRAP. Standing fix: every Rung-2 proof must construct the height-1/last-row cheat
+witness and prove it UNSAT; consider a Lean lint flagging any semantic `.gate` without a last-row
+counterpart. The consumer flips REMAIN GATED on their family's descriptor being FIXED (not just the
+earlier audit — a fixed descriptor).
