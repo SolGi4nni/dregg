@@ -33,7 +33,13 @@ pub const COMMITMENT_A: usize = THRESHOLD_COL + 1; // 41
 pub const COMMITMENT_B: usize = COMMITMENT_A + 1; // 42
 pub const COMMIT_VERIFY_FLAG: usize = COMMITMENT_B + 1; // 43
 pub const ZERO_PAD: usize = COMMIT_VERIFY_FLAG + 1; // 44
-pub const TRACE_WIDTH: usize = ZERO_PAD + 1; // 45
+/// 30-bit range decomposition of `value_a` (gated by `range_flag`, high bit forced 0 => value_a < 2^29).
+pub const VALUE_A_BITS_START: usize = ZERO_PAD + 1; // 45
+/// 30-bit range decomposition of `value_b` (bounds value_b < 2^29 — closes the field-wrap `>=` forgery:
+/// without it a large `value_b` (e.g. p-95) yields an in-range `diff = value_a - value_b` mod p, forging
+/// `value_a >= value_b` while `value_a < value_b` canonically).
+pub const VALUE_B_BITS_START: usize = VALUE_A_BITS_START + NUM_DIFF_BITS; // 75
+pub const TRACE_WIDTH: usize = VALUE_B_BITS_START + NUM_DIFF_BITS; // 105
 
 /// Public input indices.
 pub const PI_COMMITMENT_A: usize = 0;
@@ -176,6 +182,20 @@ pub fn relational_predicate_descriptor() -> CircuitDescriptor {
         index: ZERO_PAD,
         kind: ColumnKind::Value,
     });
+    for i in 0..NUM_DIFF_BITS {
+        columns.push(ColumnDef {
+            name: format!("value_a_bit_{i}"),
+            index: VALUE_A_BITS_START + i,
+            kind: ColumnKind::Binary,
+        });
+    }
+    for i in 0..NUM_DIFF_BITS {
+        columns.push(ColumnDef {
+            name: format!("value_b_bit_{i}"),
+            index: VALUE_B_BITS_START + i,
+            kind: ColumnKind::Binary,
+        });
+    }
 
     let mut constraints = vec![
         // C1: result_bit matches public input
@@ -340,6 +360,58 @@ pub fn relational_predicate_descriptor() -> CircuitDescriptor {
         }],
     });
 
+    // C6a-C8a / C6b-C8b: 30-bit range decomposition of value_a and value_b (gated by range_flag),
+    // each with the high bit (bit 29) forced 0 => value < 2^29. WITHOUT these bounds a large
+    // `value_b` (e.g. p-95) gives an in-range `diff = value_a - value_b` mod p, forging `value_a >=
+    // value_b` while `value_a < value_b` canonically. With value_a, value_b, diff all in [0, 2^29)
+    // the `>=` comparison is wrap-sound (|a-b| < 2^29 < p/2).
+    for bits_start in [VALUE_A_BITS_START, VALUE_B_BITS_START] {
+        let value_col = if bits_start == VALUE_A_BITS_START {
+            VALUE_A
+        } else {
+            VALUE_B
+        };
+        // binary constraints on each value bit (gated by range_flag)
+        for i in 0..NUM_DIFF_BITS {
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: RANGE_FLAG,
+                inner: Box::new(ConstraintExpr::Binary {
+                    col: bits_start + i,
+                }),
+            });
+        }
+        // bit reconstruction Sum 2^i * bit_i == value (gated by range_flag)
+        {
+            let mut terms = Vec::with_capacity(NUM_DIFF_BITS + 1);
+            let mut power_of_two = 1u32;
+            for i in 0..NUM_DIFF_BITS {
+                terms.push(PolyTerm {
+                    coeff: BabyBear::new(power_of_two),
+                    col_indices: vec![bits_start + i],
+                });
+                power_of_two = power_of_two.wrapping_mul(2);
+            }
+            terms.push(PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![value_col],
+            });
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: RANGE_FLAG,
+                inner: Box::new(ConstraintExpr::Polynomial { terms }),
+            });
+        }
+        // high bit (bit 29) is zero (gated by range_flag) => value < 2^29
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: RANGE_FLAG,
+            inner: Box::new(ConstraintExpr::Polynomial {
+                terms: vec![PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![bits_start + NUM_DIFF_BITS - 1],
+                }],
+            }),
+        });
+    }
+
     // Boundaries
     let boundaries = vec![
         BoundaryDef::PiBinding {
@@ -471,6 +543,11 @@ pub fn generate_relational_trace_full(
             row[RANGE_FLAG] = BabyBear::ONE;
             for i in 0..NUM_DIFF_BITS {
                 row[DIFF_BITS_START + i] = BabyBear::new((diff >> i) & 1);
+            }
+            // value_a / value_b 30-bit range decompositions (bound each < 2^29, wrap-soundness).
+            for i in 0..NUM_DIFF_BITS {
+                row[VALUE_A_BITS_START + i] = BabyBear::new((witness.value_a >> i) & 1);
+                row[VALUE_B_BITS_START + i] = BabyBear::new((witness.value_b >> i) & 1);
             }
         }
     }

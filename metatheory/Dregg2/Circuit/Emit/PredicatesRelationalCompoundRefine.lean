@@ -129,132 +129,139 @@ structure CompoundClassified (env : VmRowEnv) : Prop where
 /-! ## §2 — The constraints of `compoundPredicateDesc` are genuinely present (membership nav). -/
 
 theorem cmem_sub (j : Nat) (hj : j < 8) : gate (binBody j) ∈ compoundPredicateDesc.constraints := by
-  show gate (binBody j) ∈ compoundConstraints
+  apply List.mem_append_left
+  have hseg : gate (binBody j) ∈ (List.range 8).map (fun i => gate (binBody i)) :=
+    List.mem_map_of_mem (List.mem_range.mpr hj)
   unfold compoundConstraints
-  iterate 12 apply List.mem_append_left
-  exact List.mem_map_of_mem (List.mem_range.mpr hj)
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_opAnd : gate (binBody OP_AND) ∈ compoundPredicateDesc.constraints := by
-  show gate (binBody OP_AND) ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 11 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_opOr : gate (binBody OP_OR) ∈ compoundPredicateDesc.constraints := by
-  show gate (binBody OP_OR) ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 11 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_opNot : gate (binBody OP_NOT) ∈ compoundPredicateDesc.constraints := by
-  show gate (binBody OP_NOT) ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 11 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_opThr : gate (binBody OP_THRESHOLD) ∈ compoundPredicateDesc.constraints := by
-  show gate (binBody OP_THRESHOLD) ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 11 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_opCust : gate (binBody OP_CUSTOM) ∈ compoundPredicateDesc.constraints := by
-  show gate (binBody OP_CUSTOM) ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 11 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_atLeast :
     gate (atLeastOne [OP_AND, OP_OR, OP_NOT, OP_THRESHOLD, OP_CUSTOM])
       ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 10 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_composedBin : gate (binBody COMPOSED) ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 9 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_and :
     gate (.mul (.var OP_AND) (subV (.var COMPOSED) AND_INT)) ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 8 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_or :
     gate (.mul (.var OP_OR) (sumE [.var COMPOSED, .var AND_INT, .const (-1)]))
       ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 7 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_not :
     gate (.mul (.var OP_NOT) (sumE [.var COMPOSED, .var 0, .const (-1)]))
       ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 6 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_thr :
     gate (.mul (.var OP_THRESHOLD) (subV (.var COMPOSED) AND_INT))
       ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 5 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_cust :
     gate (.mul (.var OP_CUSTOM) (subV (.var COMPOSED) GATE_OUT))
       ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 4 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_gateOutBin : gate (binBody GATE_OUT) ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
   unfold compoundConstraints
-  iterate 3 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_commit (j : Nat) (hj : j < 8) :
     gate (subV (.var (SUBCOMMIT0 + j)) (EXPCOMMIT0 + j)) ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
+  have hseg : gate (subV (.var (SUBCOMMIT0 + j)) (EXPCOMMIT0 + j))
+      ∈ (List.range 8).map (fun i => gate (subV (.var (SUBCOMMIT0 + i)) (EXPCOMMIT0 + i))) :=
+    List.mem_map_of_mem (List.mem_range.mpr hj)
   unfold compoundConstraints
-  iterate 2 apply List.mem_append_left
-  apply List.mem_append_right
-  exact List.mem_map_of_mem (List.mem_range.mpr hj)
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_piComposed : piFirst COMPOSED 0 ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
-  unfold compoundConstraints
   apply List.mem_append_left
-  apply List.mem_append_right; simp
+  unfold compoundConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_piTree : piFirst TREE_HASH 1 ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
-  unfold compoundConstraints
   apply List.mem_append_left
-  apply List.mem_append_right; simp
+  unfold compoundConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_piThr : piFirst THRESHOLD_K 2 ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
-  unfold compoundConstraints
   apply List.mem_append_left
-  apply List.mem_append_right; simp
+  unfold compoundConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem cmem_piExp (j : Nat) (hj : j < 8) :
     piFirst (EXPCOMMIT0 + j) (3 + j) ∈ compoundPredicateDesc.constraints := by
-  show _ ∈ compoundConstraints
+  apply List.mem_append_left
+  have hseg : piFirst (EXPCOMMIT0 + j) (3 + j)
+      ∈ (List.range 8).map (fun i => piFirst (EXPCOMMIT0 + i) (3 + i)) :=
+    List.mem_map_of_mem (List.mem_range.mpr hj)
   unfold compoundConstraints
-  apply List.mem_append_right
-  exact List.mem_map_of_mem (List.mem_range.mpr hj)
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 /-! ## §3 — empty mem/map logs (the compound descriptor is pure gates + PI pins). -/
 
@@ -464,119 +471,190 @@ structure RelClassified (hash : List ℤ → ℤ) (env : VmRowEnv) : Prop where
   rangeHigh   : env.loc RANGE_FLAG = 1 → env.loc (DIFF_BITS_START + NUM_DIFF_BITS - 1) = 0
   /-- RANGE ⇒ the diff bits recompose `diff`. -/
   rangeRecomp : env.loc RANGE_FLAG = 1 → recomposeExpr.eval env.loc = env.loc DIFF
+  /-- ⚑ RANGE ⇒ value_a's 30 range bits are boolean (bounds `value_a`). -/
+  valueABits  : env.loc RANGE_FLAG = 1 →
+                  ∀ i, i < NUM_DIFF_BITS → env.loc (VALUE_A_BITS_START + i) = 0
+                    ∨ env.loc (VALUE_A_BITS_START + i) = 1
+  /-- ⚑ RANGE ⇒ value_a's range bits recompose `value_a` (so `value_a = Σ 2^i·bit_i ≥ 0`). -/
+  valueARecomp : env.loc RANGE_FLAG = 1 → recomposeAExpr.eval env.loc = env.loc VALUE_A
+  /-- ⚑ RANGE ⇒ value_b's 30 range bits are boolean (bounds `value_b` — the direct forge fix). -/
+  valueBBits  : env.loc RANGE_FLAG = 1 →
+                  ∀ i, i < NUM_DIFF_BITS → env.loc (VALUE_B_BITS_START + i) = 0
+                    ∨ env.loc (VALUE_B_BITS_START + i) = 1
+  /-- ⚑ RANGE ⇒ value_b's range bits recompose `value_b`. -/
+  valueBRecomp : env.loc RANGE_FLAG = 1 → recomposeBExpr.eval env.loc = env.loc VALUE_B
 
 /-! ## §8 — the constraints of `relationalPredicateDesc` are genuinely present (membership nav). -/
 
 theorem rmem_resultPin : piFirst RESULT_BIT 2 ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 14 apply List.mem_append_left
-  simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c2 : gate (subC (.var RESULT_BIT) 1) ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 13 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 /-- ⚑ THE VERDICT-WELD constraint `diff == value_a − value_b` (C2b) is genuinely present. -/
 theorem rmem_c2b :
     gate (.add (subV (.var DIFF) VALUE_A) (.var VALUE_B)) ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 12 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c3range : gate (binBody RANGE_FLAG) ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 11 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c3eq : gate (binBody EQ_FLAG) ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 11 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c3neq : gate (binBody NEQ_FLAG) ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 11 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c4 :
     gate (sumE [.var RANGE_FLAG, .var EQ_FLAG, .var NEQ_FLAG, .const (-1)])
       ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 10 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c6 (i : Nat) (hi : i < NUM_DIFF_BITS) :
     gate (.mul (.var RANGE_FLAG) (binBody (DIFF_BITS_START + i)))
       ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
+  have hseg : gate (.mul (.var RANGE_FLAG) (binBody (DIFF_BITS_START + i)))
+      ∈ (List.range NUM_DIFF_BITS).map
+          (fun j => gate (.mul (.var RANGE_FLAG) (binBody (DIFF_BITS_START + j)))) :=
+    List.mem_map_of_mem (List.mem_range.mpr hi)
   unfold relationalConstraints
-  iterate 8 apply List.mem_append_left
-  apply List.mem_append_right
-  exact List.mem_map_of_mem (List.mem_range.mpr hi)
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c7 :
     gate (.mul (.var RANGE_FLAG) (subV recomposeExpr DIFF)) ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 7 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c8 :
     gate (.mul (.var RANGE_FLAG) (.var (DIFF_BITS_START + NUM_DIFF_BITS - 1)))
       ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 6 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c9 :
     gate (.mul (.var EQ_FLAG) (.var DIFF)) ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 5 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_c10 :
     gate (.mul (.var NEQ_FLAG) (subC (.mul (.var DIFF) (.var NEQ_INV)) 1))
       ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 4 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_commitAPin : piFirst COMMIT_A 0 ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 2 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_commitBPin : piFirst COMMIT_B 1 ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
+  apply List.mem_append_left
   unfold relationalConstraints
-  iterate 2 apply List.mem_append_left
-  apply List.mem_append_right; simp
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_lookupA :
     commitLookup VALUE_A BLINDING_A COMMIT_A LANES_A ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
-  unfold relationalConstraints
   apply List.mem_append_left
-  apply List.mem_append_right; simp
+  unfold relationalConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 theorem rmem_lookupB :
     commitLookup VALUE_B BLINDING_B COMMIT_B LANES_B ∈ relationalPredicateDesc.constraints := by
-  show _ ∈ relationalConstraints
-  unfold relationalConstraints
   apply List.mem_append_left
-  apply List.mem_append_right; simp
+  unfold relationalConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
+
+/-! ### The value-bound range constraints (C6a-C8a / C6b-C8b) are genuinely present. -/
+
+theorem rmem_c6a (i : Nat) (hi : i < NUM_DIFF_BITS) :
+    gate (.mul (.var RANGE_FLAG) (binBody (VALUE_A_BITS_START + i)))
+      ∈ relationalPredicateDesc.constraints := by
+  apply List.mem_append_left
+  have hseg : gate (.mul (.var RANGE_FLAG) (binBody (VALUE_A_BITS_START + i)))
+      ∈ (List.range NUM_DIFF_BITS).map
+          (fun j => gate (.mul (.var RANGE_FLAG) (binBody (VALUE_A_BITS_START + j)))) :=
+    List.mem_map_of_mem (List.mem_range.mpr hi)
+  unfold relationalConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
+
+theorem rmem_c7a :
+    gate (.mul (.var RANGE_FLAG) (subV recomposeAExpr VALUE_A)) ∈ relationalPredicateDesc.constraints := by
+  apply List.mem_append_left
+  unfold relationalConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
+
+theorem rmem_c8a :
+    gate (.mul (.var RANGE_FLAG) (.var (VALUE_A_BITS_START + NUM_DIFF_BITS - 1)))
+      ∈ relationalPredicateDesc.constraints := by
+  apply List.mem_append_left
+  unfold relationalConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
+
+theorem rmem_c6b (i : Nat) (hi : i < NUM_DIFF_BITS) :
+    gate (.mul (.var RANGE_FLAG) (binBody (VALUE_B_BITS_START + i)))
+      ∈ relationalPredicateDesc.constraints := by
+  apply List.mem_append_left
+  have hseg : gate (.mul (.var RANGE_FLAG) (binBody (VALUE_B_BITS_START + i)))
+      ∈ (List.range NUM_DIFF_BITS).map
+          (fun j => gate (.mul (.var RANGE_FLAG) (binBody (VALUE_B_BITS_START + j)))) :=
+    List.mem_map_of_mem (List.mem_range.mpr hi)
+  unfold relationalConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
+
+theorem rmem_c7b :
+    gate (.mul (.var RANGE_FLAG) (subV recomposeBExpr VALUE_B)) ∈ relationalPredicateDesc.constraints := by
+  apply List.mem_append_left
+  unfold relationalConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
+
+theorem rmem_c8b :
+    gate (.mul (.var RANGE_FLAG) (.var (VALUE_B_BITS_START + NUM_DIFF_BITS - 1)))
+      ∈ relationalPredicateDesc.constraints := by
+  apply List.mem_append_left
+  unfold relationalConstraints
+  simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
+  tauto
 
 /-! ## §9 — THE RELATIONAL WHOLE-DESCRIPTOR BRIDGE (SAT_IMPLIES_SEM, against the named carrier). -/
 
@@ -615,7 +693,8 @@ theorem relational_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
     { commitAOpen := ?_, commitBOpen := ?_, commitAPin := ?_, commitBPin := ?_,
       resultTrue := ?_, resultPin := ?_, rangeBool := ?_, eqBool := ?_, neqBool := ?_,
       exactlyOne := ?_, diffWeld := ?_, eqRel := ?_, rangeBits := ?_, neqRel := ?_,
-      rangeHigh := ?_, rangeRecomp := ?_ }
+      rangeHigh := ?_, rangeRecomp := ?_, valueABits := ?_, valueARecomp := ?_,
+      valueBBits := ?_, valueBRecomp := ?_ }
   · -- commitment A opens (via the named chip-lookup soundness carrier).
     have h := hsat.rowConstraints 0 h0 (commitLookup VALUE_A BLINDING_A COMMIT_A LANES_A) rmem_lookupA
     simp only [commitLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
@@ -651,6 +730,24 @@ theorem relational_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
   · intro hr; have h := gforce _ rmem_c8
     simp only [EmittedExpr.eval] at h; rw [hr, one_mul] at h; exact h
   · intro hr; have h := gforce _ rmem_c7
+    simp only [subV, EmittedExpr.eval] at h; rw [hr, one_mul] at h; omega
+  · -- ⚑ valueABits: each value_a range bit is boolean when range mode is selected.
+    intro hr i hi
+    have h2 : (envAt t 0).loc RANGE_FLAG * (binBody (VALUE_A_BITS_START + i)).eval (envAt t 0).loc = 0 :=
+      gforce _ (rmem_c6a i hi)
+    rw [hr, one_mul] at h2
+    exact (binBody_zero_iff _ (VALUE_A_BITS_START + i)).mp h2
+  · -- ⚑ valueARecomp: value_a's range bits recompose value_a.
+    intro hr; have h := gforce _ rmem_c7a
+    simp only [subV, EmittedExpr.eval] at h; rw [hr, one_mul] at h; omega
+  · -- ⚑ valueBBits: each value_b range bit is boolean when range mode is selected.
+    intro hr i hi
+    have h2 : (envAt t 0).loc RANGE_FLAG * (binBody (VALUE_B_BITS_START + i)).eval (envAt t 0).loc = 0 :=
+      gforce _ (rmem_c6b i hi)
+    rw [hr, one_mul] at h2
+    exact (binBody_zero_iff _ (VALUE_B_BITS_START + i)).mp h2
+  · -- ⚑ valueBRecomp: value_b's range bits recompose value_b (the direct forge-fix bound).
+    intro hr; have h := gforce _ rmem_c7b
     simp only [subV, EmittedExpr.eval] at h; rw [hr, one_mul] at h; omega
 
 /-- The EQ-mode corollary: an accepting relational trace configured as an EQ comparison forces the
@@ -699,6 +796,34 @@ theorem recompose_nonneg {a : Assignment}
   have hpow : 0 ≤ ((2 ^ i : Nat) : Int) := by positivity
   exact mul_nonneg hpow hbit
 
+/-- **`recomposeA_nonneg`** — value_a's bit recomposition is a nonnegative bit-sum (`0 ≤ value_a`). -/
+theorem recomposeA_nonneg {a : Assignment}
+    (hb : ∀ i, i < NUM_DIFF_BITS → a (VALUE_A_BITS_START + i) = 0 ∨ a (VALUE_A_BITS_START + i) = 1) :
+    0 ≤ recomposeAExpr.eval a := by
+  unfold recomposeAExpr
+  apply sumE_eval_nonneg
+  intro e he
+  simp only [List.mem_map, List.mem_range] at he
+  obtain ⟨i, hi, rfl⟩ := he
+  simp only [EmittedExpr.eval]
+  have hbit : 0 ≤ a (VALUE_A_BITS_START + i) := by rcases hb i hi with h | h <;> omega
+  have hpow : 0 ≤ ((2 ^ i : Nat) : Int) := by positivity
+  exact mul_nonneg hpow hbit
+
+/-- **`recomposeB_nonneg`** — value_b's bit recomposition is a nonnegative bit-sum (`0 ≤ value_b`). -/
+theorem recomposeB_nonneg {a : Assignment}
+    (hb : ∀ i, i < NUM_DIFF_BITS → a (VALUE_B_BITS_START + i) = 0 ∨ a (VALUE_B_BITS_START + i) = 1) :
+    0 ≤ recomposeBExpr.eval a := by
+  unfold recomposeBExpr
+  apply sumE_eval_nonneg
+  intro e he
+  simp only [List.mem_map, List.mem_range] at he
+  obtain ⟨i, hi, rfl⟩ := he
+  simp only [EmittedExpr.eval]
+  have hbit : 0 ≤ a (VALUE_B_BITS_START + i) := by rcases hb i hi with h | h <;> omega
+  have hpow : 0 ≤ ((2 ^ i : Nat) : Int) := by positivity
+  exact mul_nonneg hpow hbit
+
 /-- **EQ ⇒ the committed values are EQUAL.** An accepting EQ-mode relational trace forces
 `value_a = value_b` — the genuine "equality over committed values", via `diffWeld` + `eqRel`. -/
 theorem relational_eq_forces_values_equal {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
@@ -743,6 +868,26 @@ theorem relational_range_forces_ge {hash : List ℤ → ℤ} {minit : ℤ → �
   have hw := sem.diffWeld
   rw [hrec] at hnn
   omega
+
+/-- **⚑ RANGE ⇒ the committed values are BOUNDED `0 ≤ value_a` and `0 ≤ value_b`** — the value bounds
+that close the field-wrap `≥` forgery. WITHOUT them a large `value_b` (e.g. `p − 95`) yields an in-range
+`diff = value_a − value_b` mod p that forges `value_a ≥ value_b` while `value_a < value_b` canonically;
+the emit gates C6a-C8a / C6b-C8b now force `value_a`, `value_b` into `[0, 2^29)` (here the nonnegativity
+half, via `recomposeA_nonneg` / `recomposeB_nonneg` + `valueARecomp` / `valueBRecomp`), so together with
+`diff ∈ [0, 2^29)` the `≥` is wrap-sound (`|value_a − value_b| < 2^29 < p/2`). -/
+theorem relational_range_value_bounds {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
+    {maddrs : List ℤ} {t : VmTrace}
+    (hlen : 2 ≤ t.rows.length)
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hsat : Satisfied2 hash relationalPredicateDesc minit mfin maddrs t)
+    (hr : (envAt t 0).loc RANGE_FLAG = 1) :
+    0 ≤ (envAt t 0).loc VALUE_A ∧ 0 ≤ (envAt t 0).loc VALUE_B := by
+  have sem := relational_sat_imp_sem hlen hChip hsat
+  have hnnA := recomposeA_nonneg (sem.valueABits hr)
+  have hnnB := recomposeB_nonneg (sem.valueBBits hr)
+  rw [sem.valueARecomp hr] at hnnA
+  rw [sem.valueBRecomp hr] at hnnB
+  exact ⟨hnnA, hnnB⟩
 
 /-! ## §10 — RELATIONAL non-vacuity: a committed EQ witness, and a bad `diff = 1` run. -/
 
@@ -863,9 +1008,12 @@ theorem relWitness_values_equal :
 #assert_axioms relational_eq_forces_diff_zero
 #assert_axioms sumE_eval_nonneg
 #assert_axioms recompose_nonneg
+#assert_axioms recomposeA_nonneg
+#assert_axioms recomposeB_nonneg
 #assert_axioms relational_eq_forces_values_equal
 #assert_axioms relational_neq_forces_values_distinct
 #assert_axioms relational_range_forces_ge
+#assert_axioms relational_range_value_bounds
 #assert_axioms relWitness_satisfies
 #assert_axioms relTf_chip_sound
 #assert_axioms relWitness_sem_concrete
