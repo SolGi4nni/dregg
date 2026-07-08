@@ -161,7 +161,38 @@ Three real options, ranked:
 VERDICT: keep RocksDB, try the system-link to kill the cold-build pain, note dregg-storage-backend as
 a someday. Do NOT fork the engine.
 
-## The sequence (app layer now; ONE firmament door, design-first)
+## Confined-spawn design (step 3, recon-corrected 2026-07-07 — TWO doors, not one)
+
+The earlier "one door" rested on `with_fds` fully dissolving the listen door (parent pre-binds the
+listener, hands the fd to the child). But continuwuity's `src/router/serve/plain.rs` does `bind(*addr)`
+— it **binds its OWN TCP listener** from the config `address`/`port`; it does not accept a passed fd.
+So `with_fds` does not apply without forking continuwuity. Honest door count for the confined
+continuwuity grain (TCP, the membrane's transport):
+1. **`grant_read_write(db_dir)`** — the RocksDB dir (`EmbeddedHomeserver::data_dir()`). RocksDB keeps
+   everything under this dir (WAL · SST · LOCK · CURRENT · MANIFEST · OPTIONS · LOG), so one
+   canonicalized read+write subpath covers it. The write dual of `grant_read` (`deos-hermes/src/
+   egress.rs` `grant_read` → `(allow file-read* (subpath …))` macOS / Landlock read): add
+   `grant_read_write` → `(allow file-write* (subpath …))` + read, Landlock `WRITE_FILE|MAKE_REG|
+   MAKE_DIR|…`. ⚠ verify at wiring time RocksDB needs nothing outside the db dir (a `/tmp` probe on
+   some platforms — the harmless `DEVNAME not found` sysinfo probe already seen is read-only).
+2. **`grant_listen(host, port)`** — allow bind+listen on exactly ONE loopback `host:port` (continuwuity
+   binds it itself). A real (small) inbound firmament primitive: macOS SBPL `(allow network-inbound
+   (local ip "host:port"))`, Linux allow `bind`/`listen` on that one addr (the child's net namespace
+   otherwise empty ⇒ deny-default holds). This is the "listen door" the first draft hoped to dissolve;
+   it does not dissolve for a body that binds its own listener.
+   - *Alternative (avoids the listen door, needs a continuwuity fork):* patch `plain::serve` to accept
+     a `with_fds` pre-bound listener fd (socket-activation shape) → back to `with_fds` + one door. A
+     fork against weekly-churning alpha; NOT preferred unless the listen primitive proves hard.
+   - *Alternative (Unix socket):* `serve/unix.rs` lets continuwuity serve on a Unix socket in a granted
+     dir (covered by door #1) — but matrix-sdk clients dial HTTP/TCP, so this suits a same-host bridge,
+     not the membrane's remote clients.
+
+Both doors are named, deny-default, revocable — concrete extensions of the existing egress grant
+surface. DESIGN-FIRST (kernel-adjacent); the confined spawn = `spawn_pd_confined_with_surface_and_egress`
+a body that calls `EmbeddedHomeserver::start` with {read_write=db_dir, listen=host:port}. `execve`
+stays denied (lib-embed). NOT a thin-context swarm.
+
+## The sequence (app layer now; the firmament doors design-first)
 
 1. **Body de-risk + embed seam (app, now):** vendor/pin continuwuity (exact revs of it + its ruma /
    rust-rocksdb forks), stand its homeserver up **in-process as a library** (the rlib workspace entry
