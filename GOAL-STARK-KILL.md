@@ -90,6 +90,12 @@ FALSE POSITIVES (already done): `turn/aggregate_bilateral_prover.rs` (already Ir
   identity) → **Gate 2** (now-mechanical site flips against complete foundations, per-CLUSTER runtime-gated:
   bridge, turn-executor+8-apps, sdk, wire/storage, wasm). The membership cluster is the fail-open risk —
   do it its own cluster with the app suites run.
+- ⚑ ARITY DECISION (ember "brave, 4-ary to match production"): production membership is 4-ARY
+  (hash_4_to_1, siblings:&[[BabyBear;3]] = 3 sibs + node). Gate-1's depth-general was BINARY. →
+  build a 4-ary variant whose root is BYTE-EQUAL to the production hash_4_to_1 root (apps don't move).
+- GATE 1.5 RUNNING (wf_47cf9430-923): 2 lanes — (circuit) 4-ary depth-general membership +
+  adjacency witness builder + IR-v2 delegate descriptor; (trait) thread predicate identity through
+  ProofVerifier so descriptor_by_name is callable. Root-equality-gated + adversarially verified.
 
 ## Current thrust — PARKED at a clean milestone (ember hold, 2026-07-07)
 **Rung 0 + Rung 1 + Rung 2 ALL COMPLETE and committed.** Every one of the ~20 emitted
