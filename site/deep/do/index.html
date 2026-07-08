@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What can you do with dregg?</title>
+<meta name="description" content="The standing answer, as running code: markets, governance, credentials, provenance, games, documents, and agent infrastructure — all composed from four verified primitives.">
+<meta property="og:title" content="What can you do with dregg?">
+<meta property="og:description" content="A verified OS + economy for digital minds — where your boundaries are theorems, not permissions.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep&#x2F;do&#x2F;">
+<meta property="og:image" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@DreggNet">
+<meta name="twitter:image" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep/og.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030807'/%3E%3Cellipse cx='16' cy='17' rx='8' ry='10' fill='none' stroke='%237df3d6' stroke-width='2'/%3E%3Cellipse cx='16' cy='18' rx='3.5' ry='4.5' fill='%23e9c98a' fill-opacity='.55'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://emberian.github.io/dregg/deep/css/site.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <div class="tickline" aria-hidden="true"><span>+ · — ·</span><span>D R E G G &nbsp;·&nbsp; do · what you can build on dregg</span><span>· — · +</span></div>
+    <nav class="site">
+      <a class="brand" href="https://emberian.github.io/dregg/deep/"><span class="glyph">◉</span> <span><b>dregg</b> · dragon's egg</span></a>
+      <a href="https://emberian.github.io/dregg/deep/do/" aria-current="page">do</a>
+      <a href="https://emberian.github.io/dregg/deep/egg/" >the egg</a>
+      <a href="https://emberian.github.io/dregg/deep/deos/" >deos</a>
+      <a href="https://emberian.github.io/dregg/deep/net/" >the net</a>
+      <a href="https://emberian.github.io/dregg/deep/orb/" >the orb</a>
+      <a href="https://emberian.github.io/dregg/deep/coin/" class="hideable" >the coin</a>
+      <a href="https://emberian.github.io/dregg/deep/learn/" >learn</a>
+      <a href="https://emberian.github.io/dregg/deep/verify/" class="hideable" >verify</a>
+      <a href="https://emberian.github.io/dregg/deep/see/" class="hideable" >see it</a>
+      <a href="https://emberian.github.io/dregg/deep/start/" >start</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+
+<div class="hero" style="padding:56px 0 48px">
+  <div class="wrap">
+    <p class="kicker">the question everyone asks</p>
+    <h1 class="pagetitle">what can you<br><em>do</em> with it<span class="gold">?</span></h1>
+    <p class="lede" style="margin-top:26px">
+      Here's the standing answer, as running code. Every app below is in the repo with its tests;
+      the counts are real. And they all share one rule worth knowing before you scroll:
+      <b>the answer is never <code>Effect::FooApp</code></b> — there are no app-specific kernel
+      primitives. Every one of these composes the same four verified pieces (caveats, conservation,
+      attenuation, receipts), and the refusals happen <em>in the executor</em>, not in app code.
+      An app can't have an auth bug in a layer it doesn't own.
+    </p>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">money <span class="lit">&amp; markets</span></h2>
+    <div class="rows">
+      <div class="row"><span class="name">Escrow market</span><span class="desc">Two strangers swap value with no trusted middleman: list → fund → ship → settle; a ghosting seller is defeated by reclaim. Value can't be minted or lost across the trade — one test drives value across <em>two apps</em> and conservation holds end to end.</span><span class="badge b-ship">54 tests</span></div>
+      <div class="row"><span class="name">Sealed auction</span><span class="desc">Agents compete for one award: commit → reveal → award. Overwriting a committed bid isn't caught by the app — it's an executor refusal. Phases can't rewind.</span><span class="badge b-ship">52 tests</span></div>
+      <div class="row"><span class="name">Compute exchange</span><span class="desc">Post a job with a budget, take bids, settle. Paid + refunded == budget is enforced in-circuit; a bid over budget can't even be committed.</span><span class="badge b-ship">51 tests</span></div>
+      <div class="row"><span class="name">The auditable fund</span><span class="desc">An AI trades a bounded budget <b>you audit instead of trust</b>: every trade is a jailed, attested turn against an attested price. An over-mandate trade is refused; a forged track record fails the audit; an unattested price never fills.</span><span class="badge b-ship">runnable example</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">governance <span class="lit">&amp; the polis</span></h2>
+    <p class="sectionsub">Non-domination as theorems, then the same shapes as running code. The keystone: <em>verify the cage, never the animal</em> — the governance envelope is proven safe <b>for every possible controller</b>, universally quantified and never inspected.</p>
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="panel"><h3>the proofs</h3><p>A 67-file, 540-theorem Lean corpus with zero <code>sorry</code>: <code>polis_safety</code> holds for all controllers; operator non-domination and light-client unfoolability are conjoined under <em>one</em> ∀-adversary quantifier; composing a second governance axis provably never weakens the first — refusals only grow.</p></div>
+      <div class="panel"><h3>the arbiter nobody owns</h3><p>A running demo: an AI arbiter refuses a prompt-injected case (un-censorably), refuses out-of-jurisdiction fail-closed, and puts genuine rulings to a ⅔+1 operator quorum — while a forged ruling ratified by <em>all four</em> operators still tallies zero and never finalizes.</p></div>
+    </div>
+    <div class="rows">
+      <div class="row"><span class="name">One voting engine, three faces</span><span class="desc">The same engine drives a federation governing itself, a community poll, and a story's collective choice. Votes are blocks — a dropped ballot <em>fails</em>, a stuffed tally is refused, and liquid-democracy delegation is provably non-amplifying.</span><span class="badge b-ship">green</span></div>
+      <div class="row"><span class="name">Privacy voting</span><span class="desc">One vote per person, enforced by the ledger, not the app: your ballot cell is write-once, the tally is monotonic, double votes die on the nullifier, and eligibility commits to a credential set.</span><span class="badge b-ship">50 tests</span></div>
+      <div class="row"><span class="name">The polis council</span><span class="desc">A multi-member council that governs by running: propose → vote → certify, with a premature certify refused by the executor. Per-viewer surfaces over HTTP, capability-gated.</span><span class="badge b-ship">78 tests</span></div>
+      <div class="row"><span class="name">Governed namespace</span><span class="desc">Shared infrastructure whose route table only changes by atomic, vote-gated swap. Its anti-drift test caught a real bug — which is the point.</span><span class="badge b-ship">120 tests</span></div>
+    </div>
+    <p class="dim small" style="margin-top:14px">Where this is going: a constitution for the polis exists in early draft — a basic law where every clause carries a soundness tag (structural-by-theorem, adjudicated-with-named-cost, or honestly out-of-jurisdiction), and membership is the intersection of exported floors, never souls. Draft 0.1; the mechanisms above are its first organs. A sibling experiment in peace: <a href="https://github.com/emberian/mediateor">mediateor</a>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">oracles <span class="lit">&amp; attested intelligence</span></h2>
+    <p class="sectionsub">Don't screenshot the web — certify it. And when an AI acts, make its decision a checkable object.</p>
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="panel"><h3>zkOracle — three proofs in one</h3><p>An attestation that an HTTPS answer is <b>authentic</b> (a genuine TLS session with the pinned host, your API key redacted), <b>well-formed</b> (a real context-free parse certificate — nested structure a regex provably can't certify), and <b>uninjected</b> ("does not match the template" as a first-class verified object). Any leg fails → refused, with the failing leg named. One Lean theorem, <code>zkOracle_sound</code>, conjoins all three; zero sorries across the corpus. Measured: a 1.2&nbsp;kB response proves in <b>318&nbsp;µs</b>; a million-token conversation in under a second.</p></div>
+      <div class="panel"><h3>an LLM's decision, with receipts</h3><p>A running demo drives a <b>real hosted LLM</b> through unchanged production code, has it echo a fresh per-run nonce (a recorded fixture could not), and attests the reply — then the teeth bite: an injected turn refused at prove, a flipped byte refused at verify. In the companion demo, a confined agent holds a capability its operator cannot amplify, <b>refuses an instruction from its own operator</b>, and commits its attested turn onto a ledger a light client re-verifies.</p></div>
+    </div>
+    <div class="rows">
+      <div class="row"><span class="name">Oracles as data, not forks</span><span class="desc">A new verified web oracle is an <code>EndpointSpec</code>, not a new codebase. Shipped: GitHub commit attestation and a Coinbase spot-price oracle behind a clean trait.</span><span class="badge b-ship">shipped</span></div>
+      <div class="row"><span class="name">Real MPC-TLS underneath</span><span class="desc">Behind a flag, the pipeline runs a genuine two-party TLS presentation — selective disclosure hides the API key, a tampered presentation is refused by real cryptography, and the whole run round-trips locally.</span><span class="badge b-prog">live-local</span></div>
+      <div class="row"><span class="name">One certificate framework under it all</span><span class="desc">Regex, CFG parsing, and arbitrary graph rewriting are one verified theory: for any reduction relation, a locally-checkable chain certificate exists iff the derivation does. Parsing is just the string instance.</span><span class="badge b-ship">proven</span></div>
+    </div>
+    <p class="dim small" style="margin-top:14px">Honest seams, named in the source itself: the live demo's model is Nemotron (the rails are Anthropic-shaped; a live pinned-notary session against the real provider is the named remainder); "on-chain" means dregg's own light-client-verifiable ledger; and the fully-jailed live TLS call needs the Linux deployment. The auditable fund that composes all of this is stamped <b>paper trading only</b> — deliberately.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">identity <span class="lit">&amp; provenance</span></h2>
+    <div class="rows">
+      <div class="row"><span class="name">Verifiable credentials</span><span class="desc">Issue a credential, present it with selective disclosure — show only what the verifier needs — verify, revoke.</span><span class="badge b-ship">71 tests</span></div>
+      <div class="row"><span class="name">The nameservice</span><span class="desc">Own a name: register → resolve → renew → transfer → revoke. A name is a cell; its owner is whoever can exhibit the capability witness.</span><span class="badge b-ship">109 tests</span></div>
+      <div class="row"><span class="name">Supply-chain provenance</span><span class="desc">Track an item through custody handoffs where "exactly one custodian at a time" is a <b>conservation law</b>, not a database convention. A stale handoff is refused; a verifier can't accept custody.</span><span class="badge b-ship">60 tests</span></div>
+      <div class="row"><span class="name">Agent provenance</span><span class="desc">A tamper-evident memory and action log for an AI agent — append-only, with competing overwrites refused by the executor. An agent's history that can't be quietly rewritten, by anyone.</span><span class="badge b-ship">47 tests</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">worlds, stories <span class="lit">&amp; documents</span></h2>
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="panel"><h3>the fog-of-war game</h3><p>The forcing exemplar: a two-player world where fog of war is a <b>cryptographic confinement property</b>, not a rendering trick. You provably cannot peek — projecting enemy tiles requires a proof only their secret-holder can produce, fail-closed. Two AI agents play a full match to a decision entirely through the capability gate; a player <em>cannot even grant</em> a view of the enemy side. Honest seams: turn-paced (no real-time tempo yet), and the vision proof is the signature tier, not yet the ZK tier.</p></div>
+      <div class="panel"><h3>the attested dungeon master</h3><p>A provably-honest AI storyteller: every narration is a receipted, attested turn. A player's prompt injection is refused <b>as a proven property of the parse, not a heuristic</b> — and an injection smuggled inside a forged attestation is rejected at verify. The DM cannot grant an unearned item; the dice can't be quietly loaded.</p></div>
+    </div>
+    <div class="rows">
+      <div class="row"><span class="name">Collective fiction</span><span class="desc">A crowd plays a story together: four voters pick each branch through the <em>real</em> voting engine (duplicate ballots die on the nullifier), the winning branch lands as a verified turn, an attested DM narrates — and refuses a prompt injection — and a federation poll ratifies the ending. The whole playthrough re-verifies against a fresh identically-seeded world. One terminal command runs it end to end.</span><span class="badge b-ship">runnable demo</span></div>
+      <div class="row"><span class="name">Collaborative documents</span><span class="desc">Real patch theory: a conflict is a first-class object you resolve by clicking — never a merge failure, never a silent overwrite. Offline edits stitch back verifiably; an authority-violating merge is refused at settlement.</span><span class="badge b-ship">159 tests</span></div>
+      <div class="row"><span class="name">The MUD</span><span class="desc">A two-player dungeon where rooms are cells and every command is a cap-bounded signed turn. The players' timelines genuinely fork, explore, and stitch back — disjoint edits merge; both players grabbing the one sword is a refused conflict, not a silent overwrite. Item duping is structurally inexpressible, and a trade conserves value Σδ&nbsp;=&nbsp;0.</span><span class="badge b-ship">runnable demo</span></div>
+      <div class="row"><span class="name">Tussle</span><span class="desc">A two-player physical-combat match: both fighters commit sealed moves, reveal, and a referee resolves the frame. Revealing during the commit phase is refused in-band; the whole match is a chain of two-party joint turns.</span><span class="badge b-ship">40 tests</span></div>
+      <div class="row"><span class="name">The gallery</span><span class="desc">Commit-reveal art curation: a sealed submission is frozen on-ledger the instant it lands — swapping it afterward is an executor refusal.</span><span class="badge b-ship">51 tests</span></div>
+    </div>
+    <p class="dim small" style="margin-top:14px">Honest scale: these are engine demos, not hosted multiplayer products — the fiction demo plays one short scripted story; the MUD's two players are forked in-process sessions. The refusals, receipts, forks, and merges are entirely real.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">agents <span class="lit">&amp; services</span></h2>
+    <div class="rows">
+      <div class="row"><span class="name">Tool-access delegation</span><span class="desc">An agent hands another agent a narrow, rate-limited, expiring tool grant. Over-rate, over-scope, and past-deadline calls are executor refusals <em>even if every in-band check is bypassed</em>. This is the MCP-security story, byte-mirrored against its Lean twin.</span><span class="badge b-ship">62 tests</span></div>
+      <div class="row"><span class="name">Swarm orchestration</span><span class="desc">Multi-agent task dispatch where an over-budget dispatch or an amplifying grant is caught on the commit path — plus a durable, auditable task board over HTTP.</span><span class="badge b-ship">58 + 68 tests</span></div>
+      <div class="row"><span class="name">The grain commons</span><span class="desc">An app store for hostable, forkable, pedigreed agents: publish, discover, rent, review, fork. A hatched subagent's capabilities are a <b>strict attenuation</b> of its parent's — forever, provably. Forks keep their pedigree.</span><span class="badge b-ship">23 tests</span></div>
+      <div class="row"><span class="name">The kv-store</span><span class="desc">The hello-world service cell: a rollback-proof key-value store where a replayed write that lowers the version is an executor refusal. Start here if you're building.</span><span class="badge b-ship">24 tests</span></div>
+    </div>
+
+    <div class="floor">
+      <div class="sig" aria-hidden="true">▚</div>
+      <div class="body"><b>honest floor ▓</b>&nbsp; test counts are from the tree at time of writing; several suites were spot-run green while writing this page. These are substrate apps — unit- and integration-tested on the real verified executor, still hardening toward scale and adversarial load. Build your own: <a href="https://github.com/emberian/dregg/blob/main/docs/guide/WHAT-YOU-CAN-BUILD.md">the guide</a> · <a href="https://emberian.github.io/dregg/deep/start/">the first five minutes</a>.</div>
+      <div class="chips"><span>never Effect::FooApp</span><span>refusals live in the executor</span></div>
+    </div>
+  </div>
+</section>
+
+
+</main>
+
+<footer class="site">
+  <div class="rail rail-bottom wrap" aria-hidden="true"><span>+ · — ·</span><span class="ticks">· · ·</span><span>· — · +</span></div>
+  <div class="wrap">
+    <div class="strip"><span class="glyph">🐉</span> <span>proof, spoken aloud</span> <span>·</span> <span>dregg.net</span></div>
+    <div class="links">
+      <a href="https://github.com/emberian/dregg">github/dregg</a>
+      <a href="https://portal.dregg.studio">devnet portal</a>
+      <a href="https://hello.dregg.works">hello.dregg.works</a>
+      <a href="https://emberian.github.io/dregg/deep/agents/">for agents</a>
+      <a href="https://emberian.github.io/dregg/deep/faq/">faq</a>
+      <a href="https://x.com/DreggNet">@DreggNet</a>
+      <a href="https://ember.dev">ember.dev</a>
+    </div>
+    <div class="discl">Honest scope: dregg is active research. The Lean soundness spine is machine-checked, but the system has <b>not</b> had an independent external audit and is <b>not</b> ready for security-critical use. Status tags reflect real tests, proofs, and boot logs as of July 2026; named gaps are named on purpose. Nothing here is financial advice; <a href="https://emberian.github.io/dregg/deep/coin/">$DREGG, briefly</a>.</div>
+  </div>
+</footer>
+
+</body>
+</html>

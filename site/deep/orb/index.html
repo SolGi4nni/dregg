@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Orb — a network engine whose behavior is a theorem</title>
+<meta name="description" content="a verified OS + economy for digital minds">
+<meta property="og:title" content="The Orb — a network engine whose behavior is a theorem">
+<meta property="og:description" content="A verified OS + economy for digital minds — where your boundaries are theorems, not permissions.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep&#x2F;orb&#x2F;">
+<meta property="og:image" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@DreggNet">
+<meta name="twitter:image" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep/og.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030807'/%3E%3Cellipse cx='16' cy='17' rx='8' ry='10' fill='none' stroke='%237df3d6' stroke-width='2'/%3E%3Cellipse cx='16' cy='18' rx='3.5' ry='4.5' fill='%23e9c98a' fill-opacity='.55'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://emberian.github.io/dregg/deep/css/site.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <div class="tickline" aria-hidden="true"><span>+ · — ·</span><span>D R E G G &nbsp;·&nbsp; the orb · drorb · the proven triptych</span><span>· — · +</span></div>
+    <nav class="site">
+      <a class="brand" href="https://emberian.github.io/dregg/deep/"><span class="glyph">◉</span> <span><b>dregg</b> · dragon's egg</span></a>
+      <a href="https://emberian.github.io/dregg/deep/do/" >do</a>
+      <a href="https://emberian.github.io/dregg/deep/egg/" >the egg</a>
+      <a href="https://emberian.github.io/dregg/deep/deos/" >deos</a>
+      <a href="https://emberian.github.io/dregg/deep/net/" >the net</a>
+      <a href="https://emberian.github.io/dregg/deep/orb/" aria-current="page">the orb</a>
+      <a href="https://emberian.github.io/dregg/deep/coin/" class="hideable" >the coin</a>
+      <a href="https://emberian.github.io/dregg/deep/learn/" >learn</a>
+      <a href="https://emberian.github.io/dregg/deep/verify/" class="hideable" >verify</a>
+      <a href="https://emberian.github.io/dregg/deep/see/" class="hideable" >see it</a>
+      <a href="https://emberian.github.io/dregg/deep/start/" >start</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+
+<div class="hero" style="padding:56px 0 48px">
+  <div class="wrap">
+    <p class="kicker">III / the orb · drorb</p>
+    <h1 class="pagetitle">the wire<br>shook back<span class="gold">.</span></h1>
+    <p class="lede" style="margin-top:26px">
+      Every fast network stack on earth asks for the same thing: your trust. It parses your traffic,
+      terminates your TLS, routes your requests — inside a black box running millions of lines nobody
+      has read. <b>Dragon's Orb</b> is the edge engine that hands you a proof instead: stated and
+      machine-checked in <b>Lean&nbsp;4</b>, driven over real sockets by an untrusted IO shell that
+      never touches the proven core.
+    </p>
+    <div class="ctas">
+      <a class="btn primary" href="https://github.com/emberian/dregg/tree/main/orb">source: orb/</a>
+      <a class="btn" href="https://github.com/emberian/dregg/tree/main/orb-compiler">source: orb-compiler/</a>
+      <a class="btn" href="https://emberian.github.io/dregg/deep/net/">the network it grows into</a>
+    </div>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">another program's <span class="lit">verdict</span></h2>
+    <p class="sectionsub">Every green below is a reference implementation's judgment on drorb — not our own test suite grading our own homework.</p>
+    <div class="grid g2">
+      <div class="checkpanel">
+        <div class="title">who shook back</div>
+        <ul>
+          <li><b>h2spec</b> — 145/146 HTTP/2 conformance</li>
+          <li><b>aioquic</b> — completes a 1-RTT QUIC handshake, receives an HTTP/3 body</li>
+          <li><b>testssl</b> — grades the TLS 1.3 surface A+</li>
+          <li><b>dig</b> — 56/56 DNS on the wire</li>
+          <li><b>nginx</b> — load-balancer output byte-identical</li>
+          <li><b>kernel WireGuard · aiortc · derper</b> — Noise IK both ways · a real DataChannel message · DERP relayed</li>
+          <li><b>45/46</b> conformance scenarios pass against the real binaries — 0 unwired, 1 skip, named</li>
+        </ul>
+      </div>
+      <div class="checkpanel">
+        <div class="title">the proofs found real bugs</div>
+        <ul>
+          <li><b>an mTLS auth-bypass</b> — accepted without CertificateVerify</li>
+          <li><b>OCSP revoked-staple acceptance</b> — freshness checked, revocation not</li>
+          <li><b>a hop-by-hop header leak</b> — Connection not honored</li>
+          <li><b>each found by a correctness lane</b>, closed in the deployed engine, re-audited closed</li>
+          <li><b>twelve deployed defects total</b> — surfaced by rebinding proofs to the shipped gates, not by tests</li>
+        </ul>
+      </div>
+    </div>
+    <p class="lede" style="margin-top:26px">That second panel is the whole argument for verification-over-testing — and the machine produced it <em>empirically</em>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">one orb, <span class="lit">the whole surface</span></h2>
+    <div class="grid g2">
+      <div class="panel"><h3>the wire</h3><p>HTTP/1.1 · H2 · H3/QUIC · WebSocket served <b>concurrently</b> through one proven 13-stage pipeline; TLS 1.3, DNS, SSE, early hints — each a total transition system with safety theorems. The HTTP/1.1 parser is upgraded to <em>correctness</em>: it provably resolves exactly its input bytes.</p></div>
+      <div class="panel"><h3>the fabric</h3><p>Routing where path traversal is <b>impossible</b>, not filtered · load balancing · health checks · circuit breakers · rate limits · sticky sessions · graceful drain · a chunk-boundary-safe streaming HTML rewriter · a response cache with request coalescing.</p></div>
+      <div class="panel"><h3>the vault</h3><p>mTLS · ACME · Certificate Transparency · per-tenant isolation · the JWT algorithm-confusion vulnerability <b>proven absent</b> · TLS/QUIC key schedules on verified crypto (HACL*/EverCrypt) — the assumed properties are theorems proved upstream.</p></div>
+      <div class="panel"><h3>the floor</h3><p>An io_uring-style ring modelled as a two-player game: every buffer the kernel lends is recycled <b>exactly once</b>, under every demonic interleaving — including ones no test would reach. A real io_uring dataplane drives the proven serve on Linux.</p></div>
+    </div>
+    <p class="dim small" style="margin-top:18px">By the numbers, in the cut: 402 Lean files · ~4,500 theorems · 53 dedicated correctness lanes · <code>#print axioms</code> clean — zero <code>sorry</code>, only core axioms plus the named crypto carriers. Build it yourself: <code>orb/build.sh</code>, operator guide and systemd unit in <code>orb/deploy/</code>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">taking the compiler <span class="lit">out of the trusted base</span></h2>
+    <p class="sectionsub">The deepest frontier, public as <code>orb-compiler/</code> — heavily work-in-progress, and worth watching.</p>
+    <p class="lede">Today the proofs stop at the Lean source: you still trust the Lean compiler to translate it faithfully. <b>orb-compiler</b> is the descent past that — serve fragments emitted to a first-order systems language and proven, in an independent prover against the real backend-correctness theorem, that <em>the machine code refines the spec</em>. The technique already reaches real deployed code: a redirect decision, four serve-stage guards, and the cache-key hash fold that runs on every request — each closed end-to-end with <b>zero axioms</b>.</p>
+    <div class="grid g2" style="margin-top:26px">
+      <div class="checkpanel">
+        <div class="title">closed</div>
+        <ul>
+          <li><b>the first full spec→machine-code theorem</b> — a complete descent, 0 axioms</li>
+          <li><b>the loop-free class, automated</b> — what took a 629-line bespoke proof now closes in ~2 tactic lines</li>
+          <li><b>real serve fragments</b> — deployed decisions and the per-request hash fold, proven at the machine-code level</li>
+        </ul>
+      </div>
+      <div class="checkpanel">
+        <div class="title">open, named</div>
+        <ul>
+          <li class="open"><b>the whole serve</b> — composing the full stage pipeline is not done</li>
+          <li class="open"><b>general loops</b> — DEFLATE, the JWT state machine, CIDR matching</li>
+          <li class="open"><b>the deep one</b> — a verified data-layout and heap story for algebraic datatypes</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="floor">
+      <div class="sig" aria-hidden="true">▚</div>
+      <div class="body"><b>honest floor ▓</b>&nbsp; most lanes are safety-first; the safety→correctness upgrade burns down lane by lane. The Lean compiler is still in the TCB of the deployed binary — the descent above is a demonstrated technique reaching real fragments, with the general case unsolved. The performance gap to hand-tuned engines is owned as exactly that frontier. We name it; the interior stays honest.</div>
+      <div class="chips"><span>proof, spoken aloud</span><span>agpl-3.0</span></div>
+    </div>
+  </div>
+</section>
+
+
+</main>
+
+<footer class="site">
+  <div class="rail rail-bottom wrap" aria-hidden="true"><span>+ · — ·</span><span class="ticks">· · ·</span><span>· — · +</span></div>
+  <div class="wrap">
+    <div class="strip"><span class="glyph">🐉</span> <span>proof, spoken aloud</span> <span>·</span> <span>dregg.net</span></div>
+    <div class="links">
+      <a href="https://github.com/emberian/dregg">github/dregg</a>
+      <a href="https://portal.dregg.studio">devnet portal</a>
+      <a href="https://hello.dregg.works">hello.dregg.works</a>
+      <a href="https://emberian.github.io/dregg/deep/agents/">for agents</a>
+      <a href="https://emberian.github.io/dregg/deep/faq/">faq</a>
+      <a href="https://x.com/DreggNet">@DreggNet</a>
+      <a href="https://ember.dev">ember.dev</a>
+    </div>
+    <div class="discl">Honest scope: dregg is active research. The Lean soundness spine is machine-checked, but the system has <b>not</b> had an independent external audit and is <b>not</b> ready for security-critical use. Status tags reflect real tests, proofs, and boot logs as of July 2026; named gaps are named on purpose. Nothing here is financial advice; <a href="https://emberian.github.io/dregg/deep/coin/">$DREGG, briefly</a>.</div>
+  </div>
+</footer>
+
+</body>
+</html>

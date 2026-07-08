@@ -1,0 +1,58 @@
+<svg viewBox="-300 -260 600 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="a dark egg, whole and luminous">
+  <defs>
+    <radialGradient id="shell" cx="38%" cy="30%" r="85%">
+      <stop offset="0%" stop-color="#12433a"/>
+      <stop offset="45%" stop-color="#0a231e"/>
+      <stop offset="100%" stop-color="#041009"/>
+    </radialGradient>
+    <radialGradient id="ground" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1da583" stop-opacity=".28"/>
+      <stop offset="60%" stop-color="#0f5b48" stop-opacity=".10"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="heart" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffdf9e" stop-opacity=".55"/>
+      <stop offset="45%" stop-color="#e9c98a" stop-opacity=".18"/>
+      <stop offset="100%" stop-color="#e9c98a" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glowG" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowT" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- ground pool -->
+  <ellipse cx="0" cy="218" rx="250" ry="46" fill="url(#ground)"/>
+
+  <!-- the shell — whole, unbroken -->
+  <path d="M 0,-150 C 78,-150 122,-52 122,34 C 122,124 66,172 0,172 C -66,172 -122,124 -122,34 C -122,-52 -78,-150 0,-150 Z"
+        fill="url(#shell)" stroke="#2fbf9f" stroke-opacity=".8" stroke-width="1.4" filter="url(#glowT)"/>
+
+  <!-- the heart: a warm life-glow within, seen through the shell -->
+  <ellipse cx="0" cy="26" rx="62" ry="78" fill="url(#heart)"/>
+
+  <!-- teal rim light -->
+  <path d="M 58,-128 C 96,-96 118,-30 118,34 C 118,86 100,126 72,150"
+        fill="none" stroke="#7df3d6" stroke-opacity=".65" stroke-width="2" filter="url(#glowT)"/>
+  <path d="M -58,-128 C -80,-102 -96,-64 -104,-18"
+        fill="none" stroke="#7df3d6" stroke-opacity=".28" stroke-width="1.4" filter="url(#glowT)"/>
+
+  <!-- the apex star: light kept, shell intact -->
+  <circle cx="0" cy="-150" r="2.8" fill="#fff3d6" filter="url(#glowG)"/>
+  <path d="M 0,-168 L 0,-132 M -14,-150 L 14,-150" stroke="#ffdf9e" stroke-width="1" stroke-opacity=".7" filter="url(#glowG)"/>
+
+  <!-- faint lattice over the shell -->
+  <g stroke="#7df3d6" stroke-opacity=".2" fill="none">
+    <path d="M -96,-40 C -40,-72 40,-72 96,-40"/>
+    <path d="M -112,10 C -44,-20 44,-20 112,10"/>
+    <path d="M -116,62 C -46,34 46,34 116,62"/>
+    <path d="M -92,116 C -38,92 38,92 92,116"/>
+    <path d="M -58,-128 C -76,-70 -80,30 -52,144"/>
+    <path d="M 58,-128 C 76,-70 80,30 52,144"/>
+    <path d="M 0,-150 C -4,-52 -4,72 0,172"/>
+  </g>
+</svg>

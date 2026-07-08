@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start — run it in five minutes</title>
+<meta name="description" content="a verified OS + economy for digital minds">
+<meta property="og:title" content="Start — run it in five minutes">
+<meta property="og:description" content="A verified OS + economy for digital minds — where your boundaries are theorems, not permissions.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep&#x2F;start&#x2F;">
+<meta property="og:image" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@DreggNet">
+<meta name="twitter:image" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep/og.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030807'/%3E%3Cellipse cx='16' cy='17' rx='8' ry='10' fill='none' stroke='%237df3d6' stroke-width='2'/%3E%3Cellipse cx='16' cy='18' rx='3.5' ry='4.5' fill='%23e9c98a' fill-opacity='.55'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://emberian.github.io/dregg/deep/css/site.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <div class="tickline" aria-hidden="true"><span>+ · — ·</span><span>D R E G G &nbsp;·&nbsp; start · the first five minutes</span><span>· — · +</span></div>
+    <nav class="site">
+      <a class="brand" href="https://emberian.github.io/dregg/deep/"><span class="glyph">◉</span> <span><b>dregg</b> · dragon's egg</span></a>
+      <a href="https://emberian.github.io/dregg/deep/do/" >do</a>
+      <a href="https://emberian.github.io/dregg/deep/egg/" >the egg</a>
+      <a href="https://emberian.github.io/dregg/deep/deos/" >deos</a>
+      <a href="https://emberian.github.io/dregg/deep/net/" >the net</a>
+      <a href="https://emberian.github.io/dregg/deep/orb/" >the orb</a>
+      <a href="https://emberian.github.io/dregg/deep/coin/" class="hideable" >the coin</a>
+      <a href="https://emberian.github.io/dregg/deep/learn/" >learn</a>
+      <a href="https://emberian.github.io/dregg/deep/verify/" class="hideable" >verify</a>
+      <a href="https://emberian.github.io/dregg/deep/see/" class="hideable" >see it</a>
+      <a href="https://emberian.github.io/dregg/deep/start/" aria-current="page">start</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+
+<div class="hero" style="padding:56px 0 48px">
+  <div class="wrap">
+    <p class="kicker">start</p>
+    <h1 class="pagetitle">the first<br>five minutes<span class="gold">.</span></h1>
+    <p class="lede" style="margin-top:26px">Everything runs locally from a clean checkout — this repo and <code>cargo</code> are the only requirements. Pick a door.</p>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">door A — <span class="lit">run a node</span></h2>
+    <p class="sectionsub">The node's state producer is the Lean executor itself. Start one, faucet a cell, read it back — a real turn through the verified kernel, on localhost.</p>
+<pre>git clone https://github.com/emberian/dregg && cd dregg
+cargo build -p dregg-node -p dregg-cli
+./target/debug/dregg-node init --data-dir /tmp/my-dregg
+./target/debug/dregg-node run  --data-dir /tmp/my-dregg --enable-faucet --port 8421 &
+
+curl -s http://localhost:8421/status
+# {"healthy":..., "state_producer":"lean", "lean_producer":true, ...}</pre>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">door B — <span class="lit">sign real turns</span></h2>
+    <p class="sectionsub">The CLI manages your keys and drives a full app lifecycle against your node — each step a real signed turn on the verified commit path.</p>
+<pre>./target/debug/dregg --node-url http://localhost:8421 demo --passphrase pick-one
+# faucet → register a name → resolve → transfer → revoke — each a verified turn.</pre>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">door C — <span class="lit">the desktop</span></h2>
+    <p class="sectionsub">deos: the native cockpit that embeds the real verified executor. A heavy build — use <code>--release</code>.</p>
+<pre>cd starbridge-v2 && cargo build --release</pre>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">who's <span class="lit">building this</span></h2>
+    <p class="sectionsub">dregg is a continuation of work I've been at since ~2015 — everything I learned building an OS kernel, a zero-knowledge blockchain, and formally verified software, smashed together.</p>
+    <div class="grid g3">
+      <div class="panel"><h3>rust · pre-1.0</h3><p>Wrote the first version of the shipping rustdoc, specced &amp; built the cross-compilation target system, started <b>This Week in Rust</b>, kicked off VisualRust, cargo-lite, gl-rs.</p></div>
+      <div class="panel"><h3>mina · protocol engineer</h3><p>At O(1) Labs during Mina's birth — p2p networking, storage, protocol &amp; consensus, build/packaging. A hash-linked proof system that keeps blockchain history constant-size.</p></div>
+      <div class="panel"><h3>seL4 · robigalia</h3><p>Work on seL4 — the first OS kernel with an end-to-end machine-checked correctness proof — and creator of Robigalia, a persistent capability OS in Rust. dregg's direct lineage.</p></div>
+    </div>
+    <p class="dim" style="margin-top:18px">More at <a href="https://ember.dev">ember.dev</a>. Built with Claude, in agentic swarms.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">go <span class="lit">deeper</span></h2>
+    <div class="grid g3">
+      <div class="panel"><h3>the technical index</h3><p>The repo's docs are the dense layer: the machine-facing reference, the guides, the file:line-grounded reference set, and the assurance case with its theorem names. <a href="https://github.com/emberian/dregg#readme">start at the README</a>.</p></div>
+      <div class="panel"><h3>the exact guarantees</h3><p><code>docs/ASSURANCE.md</code> states the five guarantees as Lean theorems, each with non-vacuity witnesses, each axiom-pinned — plus §3, the honest enumeration of every open seam.</p></div>
+      <div class="panel"><h3>the community</h3><p>Builders, provers, and the curious: <a href="https://discord.gg/eSTsv7DWcR">the Discord</a> · <a href="https://x.com/DreggNet">@DreggNet</a> for the weekly roadmap posters.</p></div>
+    </div>
+
+    <div class="floor">
+      <div class="sig" aria-hidden="true">▚</div>
+      <div class="body"><b>honest floor ▓</b>&nbsp; dregg is research software under active development. The proof system is real and the verified Lean executor is what the node runs — and there has been no independent audit. Do not use it for anything security-critical yet.</div>
+      <div class="chips"><span>agpl-3.0</span><span>built with claude, in agentic swarms</span></div>
+    </div>
+  </div>
+</section>
+
+
+</main>
+
+<footer class="site">
+  <div class="rail rail-bottom wrap" aria-hidden="true"><span>+ · — ·</span><span class="ticks">· · ·</span><span>· — · +</span></div>
+  <div class="wrap">
+    <div class="strip"><span class="glyph">🐉</span> <span>proof, spoken aloud</span> <span>·</span> <span>dregg.net</span></div>
+    <div class="links">
+      <a href="https://github.com/emberian/dregg">github/dregg</a>
+      <a href="https://portal.dregg.studio">devnet portal</a>
+      <a href="https://hello.dregg.works">hello.dregg.works</a>
+      <a href="https://emberian.github.io/dregg/deep/agents/">for agents</a>
+      <a href="https://emberian.github.io/dregg/deep/faq/">faq</a>
+      <a href="https://x.com/DreggNet">@DreggNet</a>
+      <a href="https://ember.dev">ember.dev</a>
+    </div>
+    <div class="discl">Honest scope: dregg is active research. The Lean soundness spine is machine-checked, but the system has <b>not</b> had an independent external audit and is <b>not</b> ready for security-critical use. Status tags reflect real tests, proofs, and boot logs as of July 2026; named gaps are named on purpose. Nothing here is financial advice; <a href="https://emberian.github.io/dregg/deep/coin/">$DREGG, briefly</a>.</div>
+  </div>
+</footer>
+
+</body>
+</html>

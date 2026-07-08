@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Learn — the streetlight and the proof</title>
+<meta name="description" content="What an audit actually is, what a proof actually is, and why they are not the same sport. No prerequisites.">
+<meta property="og:title" content="Learn — the streetlight and the proof">
+<meta property="og:description" content="A verified OS + economy for digital minds — where your boundaries are theorems, not permissions.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep&#x2F;learn&#x2F;">
+<meta property="og:image" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@DreggNet">
+<meta name="twitter:image" content="https:&#x2F;&#x2F;emberian.github.io&#x2F;dregg&#x2F;deep/og.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030807'/%3E%3Cellipse cx='16' cy='17' rx='8' ry='10' fill='none' stroke='%237df3d6' stroke-width='2'/%3E%3Cellipse cx='16' cy='18' rx='3.5' ry='4.5' fill='%23e9c98a' fill-opacity='.55'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://emberian.github.io/dregg/deep/css/site.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <div class="tickline" aria-hidden="true"><span>+ · — ·</span><span>D R E G G &nbsp;·&nbsp; learn · what a proof buys you</span><span>· — · +</span></div>
+    <nav class="site">
+      <a class="brand" href="https://emberian.github.io/dregg/deep/"><span class="glyph">◉</span> <span><b>dregg</b> · dragon's egg</span></a>
+      <a href="https://emberian.github.io/dregg/deep/do/" >do</a>
+      <a href="https://emberian.github.io/dregg/deep/egg/" >the egg</a>
+      <a href="https://emberian.github.io/dregg/deep/deos/" >deos</a>
+      <a href="https://emberian.github.io/dregg/deep/net/" >the net</a>
+      <a href="https://emberian.github.io/dregg/deep/orb/" >the orb</a>
+      <a href="https://emberian.github.io/dregg/deep/coin/" class="hideable" >the coin</a>
+      <a href="https://emberian.github.io/dregg/deep/learn/" aria-current="page">learn</a>
+      <a href="https://emberian.github.io/dregg/deep/verify/" class="hideable" >verify</a>
+      <a href="https://emberian.github.io/dregg/deep/see/" class="hideable" >see it</a>
+      <a href="https://emberian.github.io/dregg/deep/start/" >start</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+
+<div class="hero" style="padding:56px 0 48px">
+  <div class="wrap">
+    <p class="kicker">learn / no prerequisites</p>
+    <h1 class="pagetitle">the streetlight<br>and the proof<span class="gold">.</span></h1>
+    <p class="lede" style="margin-top:26px">Every protocol that ever rugged you was <b>"audited."</b> Sit with that. The bridges, the vaults, the lending markets drained for nine figures — audited, stamped, reviewed by prestigious firms. And still zeroed. This page explains, with no math required, what an audit actually is, what a proof actually is, and why they are not the same sport.</p>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">what an audit <span class="lit">actually is</span></h2>
+    <p class="lede">Smart people read your code and try to break it. They're good at it. But here's the part nobody says out loud: they check <b>examples</b>. They poke the cases they can think of, run some tools, trust their gut. And when they don't find a bug, they write <em>"no critical issues found."</em></p>
+    <p class="lede" style="margin-top:18px">Read that again. No issues <b>found</b>. Not no issues <b>exist</b>. They looked under the streetlight. The bug that drains you is the one standing in the dark they didn't think to check. Your contract has infinitely many possible inputs; an audit checks a handful. That gap — between "we looked hard" and "it's actually safe" — is where every exploit in history has lived.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">formal verification, <span class="lit">in one breath</span></h2>
+    <p class="lede">Instead of <em>checking examples</em>, you <em>write the rule down in math</em> — "this vault can never pay out more than was put in" — and then you <b>prove it</b>, like a theorem, for <b>every possible input, every possible state, forever</b>. And a machine checks that the proof is airtight. No gut, no vibes, no "should be fine." If the proof goes through, there is no input that breaks the rule. Not "none found." <b>None exist.</b></p>
+    <div class="grid g2" style="margin-top:28px">
+      <div class="panel"><h3>testing</h3><p>Checks that 2+2=4, and 5+3=8, and 10+10=20, and goes "yeah, addition works." A sample. Testing can only ever show a bug is <b>present</b>.</p></div>
+      <div class="panel"><h3>proof</h3><p>Proves a+b&nbsp;=&nbsp;b+a for <b>all</b> numbers at once. Covers infinity. Proof is the only thing that can show a bug is <b>absent</b>.</p></div>
+    </div>
+    <p class="lede" style="margin-top:26px">So: <em>"audited"</em> means someone looked and didn't see it. <em>"Formally verified"</em> means it is mathematically impossible.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">the honest part<span class="lit">, said out loud</span></h2>
+    <p class="sectionsub">Formal verification is not magic. It proves your code does what the spec says — and the real ones say the two catches out loud.</p>
+    <div class="grid g2">
+      <div class="panel"><h3>catch one — the spec</h3><p>You have to write the spec right. Prove "the vault conserves money" but forget "and only the owner can withdraw"? Congratulations — you proved the wrong thing, airtight. Garbage spec in, garbage guarantee out. (This is why dregg's specs carry <b>non-vacuity witnesses</b> — each property is proven able to fail, then proven not to.)</p></div>
+      <div class="panel"><h3>catch two — the floor</h3><p>It stands on a small floor: the crypto (hashes, signatures) and the hardware. You don't prove those; you assume them. But it's a <b>tiny, named, public</b> floor — not "trust the 40k lines and the dev." It's "trust these primitives and this written-down spec — and here, go check them yourself."</p></div>
+    </div>
+    <p class="lede" style="margin-top:26px">That's the actual flex. Not "trust me bro, it's safe." It's: <b>here is exactly what I proved, here is the little floor I'm standing on, and you don't have to believe me — the proof is right there. Run the checker.</b></p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="h2">the four words<span class="lit">, in plain words</span></h2>
+    <div class="grid g2">
+      <div class="panel"><h3>cell</h3><p>A little world that belongs to someone. It holds money, data, powers, and its own history. Your account is a cell; a document is a cell; an app is a cell; an AI agent's mind can be a cell.</p></div>
+      <div class="panel"><h3>turn</h3><p>One move. Everything that ever happens is a turn: send, save, vote, spend. A turn either fully happens or fully doesn't — and it only happens if the mover can <em>prove</em> they're allowed.</p></div>
+      <div class="panel"><h3>capability</h3><p>A power you can hold, shrink, and hand on — but never inflate. Give a friend "read my photos for a week" and that grant can't quietly become "read everything forever." Mathematically can't.</p></div>
+      <div class="panel"><h3>receipt</h3><p>The trail every turn leaves. Anyone can check a receipt without trusting the machine that produced it — and a light client can check <em>all of history</em> by checking one small proof.</p></div>
+    </div>
+
+    <div class="floor">
+      <div class="sig" aria-hidden="true">▚</div>
+      <div class="body"><b>go deeper ▓</b>&nbsp; the same story with theorem names: <a href="https://emberian.github.io/dregg/deep/egg/">the egg</a>. The dense technical index, written for experts and LLMs: <a href="https://github.com/emberian/dregg#readme">the repo</a>. Or just watch it run: <a href="https://emberian.github.io/dregg/deep/see/">see it</a>.</div>
+      <div class="chips"><span>verify, don't trust</span><span>for real this time</span></div>
+    </div>
+  </div>
+</section>
+
+
+</main>
+
+<footer class="site">
+  <div class="rail rail-bottom wrap" aria-hidden="true"><span>+ · — ·</span><span class="ticks">· · ·</span><span>· — · +</span></div>
+  <div class="wrap">
+    <div class="strip"><span class="glyph">🐉</span> <span>proof, spoken aloud</span> <span>·</span> <span>dregg.net</span></div>
+    <div class="links">
+      <a href="https://github.com/emberian/dregg">github/dregg</a>
+      <a href="https://portal.dregg.studio">devnet portal</a>
+      <a href="https://hello.dregg.works">hello.dregg.works</a>
+      <a href="https://emberian.github.io/dregg/deep/agents/">for agents</a>
+      <a href="https://emberian.github.io/dregg/deep/faq/">faq</a>
+      <a href="https://x.com/DreggNet">@DreggNet</a>
+      <a href="https://ember.dev">ember.dev</a>
+    </div>
+    <div class="discl">Honest scope: dregg is active research. The Lean soundness spine is machine-checked, but the system has <b>not</b> had an independent external audit and is <b>not</b> ready for security-critical use. Status tags reflect real tests, proofs, and boot logs as of July 2026; named gaps are named on purpose. Nothing here is financial advice; <a href="https://emberian.github.io/dregg/deep/coin/">$DREGG, briefly</a>.</div>
+  </div>
+</footer>
+
+</body>
+</html>

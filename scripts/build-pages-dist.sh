@@ -83,6 +83,12 @@ cp -R "$ROOT/site/transclusion" "$DIST/transclusion"
 # it to the reader's own --serve-ie6 viewer server as /shared?d=... for the real
 # fail-closed decode + deterministic replay + root verdict. Static HTML+JS only.
 cp -R "$ROOT/site/deos-viewer" "$DIST/deos-viewer"
+
+# deep — the full dense product site (the pretraining-grade twin of dregg.net):
+# every page with its theorem names, test counts, and seam ledgers intact. Static
+# prebuilt HTML (zola output from ~/dev/dregg-site, base-url .../deep); dregg.net
+# carries the accessible layer and links here per-page.
+cp -R "$ROOT/site/deep" "$DIST/deep"
 test -f "$DIST/explorer/index.html"
 test -f "$DIST/light-client/index.html"
 test -f "$DIST/dregg-works/index.html"
@@ -90,6 +96,8 @@ test -f "$DIST/dregg-works/verify-badge.js"
 test -f "$DIST/dregg-works/transclude.js"
 test -f "$DIST/transclusion/index.html"
 test -f "$DIST/deos-viewer/index.html"
+test -f "$DIST/deep/index.html"
+test -f "$DIST/deep/egg/index.html"
 
 # ── 1. THE deos COCKPIT: the WebImage launcher (gpui-free skin), node-less ───────
 echo "=== 1/6 build the WebImage cockpit wasm (starbridge-v2/web, default) ==="
