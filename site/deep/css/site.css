@@ -375,3 +375,23 @@ a:hover{color:var(--acid)}
     radial-gradient(2px 2px at 92% 74%, rgba(255,180,90,.55), transparent 60%),
     radial-gradient(3px 3px at 35% 78%, rgba(255,122,47,.5), transparent 60%);
 }
+
+/* ── deep-only: the corner banner to the simplified site ── */
+.simple-banner{
+  position:fixed;top:0;right:0;z-index:60;overflow:hidden;
+  width:190px;height:190px;pointer-events:none;
+}
+.simple-banner a{
+  position:absolute;display:block;width:280px;text-align:center;
+  transform:rotate(45deg);top:52px;right:-72px;
+  background:
+    repeating-linear-gradient(135deg, rgba(0,0,0,.06) 0 2px, transparent 2px 4px),
+    linear-gradient(180deg,#83ff70,#3fe22e);
+  color:#04230a;font-weight:700;font-size:12px;letter-spacing:.12em;
+  text-transform:lowercase;text-decoration:none;padding:8px 0;
+  border-top:1px solid #b8ffab;border-bottom:1px solid #0a3a06;
+  box-shadow:0 2px 14px rgba(89,255,74,.35);
+  pointer-events:auto;
+}
+.simple-banner a:hover{filter:brightness(1.08)}
+@media(max-width:760px){.simple-banner{width:150px;height:150px}.simple-banner a{top:36px;right:-84px;font-size:11px}}
