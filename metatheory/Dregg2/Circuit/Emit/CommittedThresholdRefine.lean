@@ -116,21 +116,33 @@ theorem mem_lookup : hash2Lookup ∈ committedThresholdDesc.constraints := by
   apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
   apply List.mem_cons_self
 
-theorem mem_c3 : VmConstraint2.base (.gate c3Body) ∈ committedThresholdDesc.constraints := by
+theorem mem_factHash : factHashLookup ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
   apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
   apply List.mem_cons_of_mem; apply List.mem_cons_self
 
-theorem mem_c4 : VmConstraint2.base (.gate c4Body) ∈ committedThresholdDesc.constraints := by
+theorem mem_factCommit : factCommitLookup ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
   apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
   apply List.mem_cons_of_mem; apply List.mem_cons_of_mem; apply List.mem_cons_self
+
+theorem mem_c3 : VmConstraint2.base (.gate c3Body) ∈ committedThresholdDesc.constraints := by
+  simp only [committedThresholdDesc]
+  apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
+  apply List.mem_cons_of_mem; apply List.mem_cons_of_mem; apply List.mem_cons_of_mem
+  apply List.mem_cons_self
+
+theorem mem_c4 : VmConstraint2.base (.gate c4Body) ∈ committedThresholdDesc.constraints := by
+  simp only [committedThresholdDesc]
+  apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
+  apply List.mem_cons_of_mem; apply List.mem_cons_of_mem; apply List.mem_cons_of_mem
+  apply List.mem_cons_of_mem; apply List.mem_cons_self
 
 theorem mem_recomp : VmConstraint2.base (.gate recompBody) ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
   apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
   apply List.mem_cons_of_mem; apply List.mem_cons_of_mem; apply List.mem_cons_of_mem
-  apply List.mem_cons_self
+  apply List.mem_cons_of_mem; apply List.mem_cons_of_mem; apply List.mem_cons_self
 
 theorem mem_bin (j : Nat) (hj : j < COMMITTED_DIFF_BITS) :
     VmConstraint2.base (.gate (binBody j)) ∈ committedThresholdDesc.constraints := by
@@ -190,6 +202,14 @@ def MeetsCommittedThreshold (hash : List ℤ → ℤ) (e : VmRowEnv) : Prop :=
   ∧ e.loc THRESHOLD_COMMITMENT = hash [e.loc THRESHOLD, e.loc BLINDING]
   ∧ e.loc THRESHOLD_COMMITMENT = e.pub 0
   ∧ e.loc FACT_COMMITMENT = e.pub 1
+  -- THE VALUE↔FACT WELD (held forgery #2): the committed fact commitment opens, in-circuit, to a
+  -- `hash_fact` of a fact whose VALUE slot is the SAME `PRIVATE_VALUE` column the ORDER leg bounds —
+  -- bound with `state_root`. So the value proven `≥ threshold` IS the value inside the committed fact
+  -- (Poseidon2 collision resistance, the named chip carrier). `FACT_MARK`, `0`, `1` are `hash_fact`'s
+  -- domain constants (`state[4]=0, state[5]=0xFACF, state[6]=1`).
+  ∧ e.loc FACT_HASH = hash [e.loc PREDICATE_SYM, e.loc PRIVATE_VALUE, e.loc TERM1, e.loc TERM2,
+                            0, FACT_MARK, 1]
+  ∧ e.loc FACT_COMMITMENT = hash [e.loc FACT_HASH, e.loc STATE_ROOT]
 
 /-- **THE WHOLE-DESCRIPTOR BRIDGE (SAT_IMPLIES_SEM).** A multi-table witness that `Satisfied2` the
 committed-threshold descriptor, against a SOUND Poseidon2 chip table (the NAMED `ChipTableSound`
@@ -271,10 +291,70 @@ theorem committedThreshold_satisfied2_sound
     omega
   have hbind : (envAt t 0).loc THRESHOLD_COMMITMENT
       = hash [(envAt t 0).loc THRESHOLD, (envAt t 0).loc BLINDING] := hpr.symm.trans hdig
+  -- === THE WELD leg 1: fact_hash = hash_fact(pred, [private_value, term1, term2]) ===
+  have hlookF := hsat.rowConstraints 0 hi0 factHashLookup mem_factHash
+  simp only [VmConstraint2.holdsAt, factHashLookup, Lookup.holdsAt] at hlookF
+  have hfh := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t 0).loc
+    [.var PREDICATE_SYM, .var PRIVATE_VALUE, .var TERM1, .var TERM2,
+     .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES (by decide) hlookF
+  simp only [List.map_cons, List.map_nil, EmittedExpr.eval] at hfh
+  -- === THE WELD leg 2: fact_commitment = hash_2_to_1(fact_hash, state_root) ===
+  have hlookC := hsat.rowConstraints 0 hi0 factCommitLookup mem_factCommit
+  simp only [VmConstraint2.holdsAt, factCommitLookup, Lookup.holdsAt] at hlookC
+  have hfc := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t 0).loc
+    [.var FACT_HASH, .var STATE_ROOT] FACT_COMMITMENT FACTCOMMIT_LANES (by decide) hlookC
+  simp only [List.map_cons, List.map_nil, EmittedExpr.eval] at hfc
   -- === PI: commitments are the public inputs ===
-  exact ⟨horder, hbind, pi_forces THRESHOLD_COMMITMENT 0 mem_pi0, pi_forces FACT_COMMITMENT 1 mem_pi1⟩
+  exact ⟨horder, hbind, pi_forces THRESHOLD_COMMITMENT 0 mem_pi0,
+    pi_forces FACT_COMMITMENT 1 mem_pi1, hfh, hfc⟩
 
 #assert_axioms committedThreshold_satisfied2_sound
+
+/-- **THE WELD, packaged (SAT ⟹ the committed fact carries the PROVEN value).** From the whole-
+descriptor soundness, the public fact commitment `pub 1` — the value a verifier binds to a trusted
+credential — equals, in the genuine Poseidon2 `hash`, the DOUBLE hash of a fact whose value slot is
+the SAME `PRIVATE_VALUE` the ORDER leg proved `≥ threshold`. So a satisfying proof cannot name a fact
+commitment whose value differs from the value it proves about. This is the exact statement the held
+forgery #2 violated (value proven-about decoupled from the committed fact's value). -/
+theorem committedFact_opens_to_proven_value
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hsat : Satisfied2 hash committedThresholdDesc minit mfin maddrs t)
+    (hlen : 0 < t.rows.length) :
+    (envAt t 0).pub 1
+      = hash [hash [(envAt t 0).loc PREDICATE_SYM, (envAt t 0).loc PRIVATE_VALUE,
+                    (envAt t 0).loc TERM1, (envAt t 0).loc TERM2, 0, FACT_MARK, 1],
+              (envAt t 0).loc STATE_ROOT] := by
+  obtain ⟨_, _, _, hpi1, hfh, hfc⟩ :=
+    committedThreshold_satisfied2_sound hash minit mfin maddrs t hChip hsat hlen
+  rw [← hpi1, hfc, hfh]
+
+/-- **THE WELD BITES (value ≠ committed value ⟹ REJECT).** Under Poseidon2 collision resistance —
+the named chip carrier, here as injectivity of the fact double-hash in its value slot — a proof whose
+fact witnesses (predicate / terms / state_root) match a trusted credential of value `v0`, but whose
+proven `private_value ≠ v0`, CANNOT satisfy the descriptor. The honest Lean face of the emit-gate
+forge probe: the range gadget alone let a 700-value proof carry a 300-value fact commitment; the weld
+forecloses it. `v0 ≠ private_value` is freely satisfiable, so this rejection is non-vacuous. -/
+theorem committedValue_forge_rejected
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hlen : 0 < t.rows.length) (v0 : ℤ)
+    (hcred : (envAt t 0).pub 1
+      = hash [hash [(envAt t 0).loc PREDICATE_SYM, v0, (envAt t 0).loc TERM1,
+                    (envAt t 0).loc TERM2, 0, FACT_MARK, 1], (envAt t 0).loc STATE_ROOT])
+    (hinj : ∀ a b : ℤ,
+      hash [hash [(envAt t 0).loc PREDICATE_SYM, a, (envAt t 0).loc TERM1,
+                  (envAt t 0).loc TERM2, 0, FACT_MARK, 1], (envAt t 0).loc STATE_ROOT]
+        = hash [hash [(envAt t 0).loc PREDICATE_SYM, b, (envAt t 0).loc TERM1,
+                  (envAt t 0).loc TERM2, 0, FACT_MARK, 1], (envAt t 0).loc STATE_ROOT] → a = b)
+    (hforge : (envAt t 0).loc PRIVATE_VALUE ≠ v0) :
+    ¬ Satisfied2 hash committedThresholdDesc minit mfin maddrs t := by
+  intro hsat
+  have hopen := committedFact_opens_to_proven_value hash minit mfin maddrs t hChip hsat hlen
+  exact hforge (hinj _ _ (hopen.symm.trans hcred))
+
+#assert_axioms committedFact_opens_to_proven_value
+#assert_axioms committedValue_forge_rejected
 
 /-! ## §4 — NON-VACUITY: a concrete SATISFYING assignment, and constraints that BITE.
 
@@ -289,19 +369,33 @@ so it is not a vacuous/unusable hypothesis. -/
 
 /-! ### §4a — the ACCEPT side. -/
 
+/-- A concrete Poseidon2 model for the accept witness: the threshold commitment `hash[3,0] = 0`, the
+fact hash `hash_fact(7,[5,0,0]) = hash[7,5,0,0,0,FACT_MARK,1] = 77`, and the fact commitment
+`hash[77,11] = 88`. Distinct nonzero fact digests exhibit the value↔fact weld with REAL numbers: the
+committed fact 88 opens to a fact hash 77 whose VALUE slot is exactly the proven value 5. -/
+def acceptHash : List ℤ → ℤ := fun l =>
+  if l = [3, 0] then 0
+  else if l = [7, 5, 0, 0, 0, FACT_MARK, 1] then 77
+  else if l = [77, 11] then 88
+  else 0
+
 /-- A concrete satisfying local row: private value `5`, threshold `3`, blinding `0`, diff `2`
-(bit 1 set), commitments pinned, everything else `0`. -/
+(bit 1 set); the fact witnesses `predicate_sym 7`, `state_root 11`, `fact_hash 77`, `fact_commitment
+88` — so the weld's two chip lookups open genuinely; everything else `0`. -/
 def acceptLoc : Assignment := fun c =>
   if c = PRIVATE_VALUE then 5
   else if c = THRESHOLD then 3
   else if c = DIFF then 2
   else if c = diffBit 1 then 1
-  else if c = FACT_COMMITMENT then 99
+  else if c = PREDICATE_SYM then 7
+  else if c = STATE_ROOT then 11
+  else if c = FACT_HASH then 77
+  else if c = FACT_COMMITMENT then 88
   else 0
 
-/-- The matching public inputs: `pi[0] = 0` (the threshold commitment), `pi[1] = 99` (the fact
-commitment). -/
-def acceptPub : Assignment := fun k => if k = 1 then 99 else 0
+/-- The matching public inputs: `pi[0] = 0` (the threshold commitment), `pi[1] = 88` (the fact
+commitment, the genuine double-hash of the value-5 fact). -/
+def acceptPub : Assignment := fun k => if k = 1 then 88 else 0
 
 /-- The satisfying row environment. -/
 def acceptEnv : VmRowEnv := { loc := acceptLoc, nxt := acceptLoc, pub := acceptPub }
@@ -324,13 +418,14 @@ def acceptEnv : VmRowEnv := { loc := acceptLoc, nxt := acceptLoc, pub := acceptP
 #guard decide (acceptLoc FACT_COMMITMENT = acceptPub 1)
 
 /-- **The CONCLUSION is non-trivially inhabited.** The semantic relation `MeetsCommittedThreshold`
-holds on the satisfying environment with REAL, distinct numbers (`3 ≤ 5`, commitment `= 0`, fact
-`= 99`) — so the bridge's conclusion is genuine, not a `True`/`P → P` shell. -/
-theorem acceptEnv_meets : MeetsCommittedThreshold (fun _ => (0 : ℤ)) acceptEnv := by
-  refine ⟨?_, ?_, ?_, ?_⟩ <;>
-    simp only [acceptEnv, acceptLoc, acceptPub, PRIVATE_VALUE, THRESHOLD,
+holds on the satisfying environment with REAL, distinct numbers (`3 ≤ 5`, threshold commitment `= 0`,
+and — the WELD — the committed fact commitment `88` opens to a fact hash `77` whose value slot is the
+proven value `5`) — so the bridge's conclusion is genuine, not a `True`/`P → P` shell. -/
+theorem acceptEnv_meets : MeetsCommittedThreshold acceptHash acceptEnv := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
+    simp only [acceptEnv, acceptLoc, acceptPub, acceptHash, PRIVATE_VALUE, THRESHOLD, BLINDING,
       DIFF, DIFF_BITS_START, diffBit, THRESHOLD_COMMITMENT, FACT_COMMITMENT,
-      COMMITTED_DIFF_BITS] <;> decide
+      PREDICATE_SYM, TERM1, TERM2, STATE_ROOT, FACT_HASH, FACT_MARK, COMMITTED_DIFF_BITS] <;> decide
 
 /-- **The `ChipTableSound` carrier is genuinely inhabitable** — a singleton chip table carrying the
 accept row is sound, so the bridge's Poseidon2 hypothesis is usable, not vacuous. -/

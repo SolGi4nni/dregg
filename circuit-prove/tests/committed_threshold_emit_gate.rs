@@ -36,12 +36,17 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
-use dregg_circuit::poseidon2::hash_2_to_1;
+use dregg_circuit::poseidon2::{hash_2_to_1, hash_fact};
+
+/// The fixed fact context the honest witness commits (the credential's predicate symbol + trailing
+/// terms + token state root). The honest fact's VALUE is the proven `value`.
+const FIXED_PRED: u32 = 42;
+const FIXED_STATE_ROOT: u32 = 99_999;
 
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 committedThresholdDesc` emits (pinned by the
 /// `#guard` in `CommittedThresholdEmit.lean`). If Lean's emitter drifts, that `#guard` fails; if
 /// this literal drifts, the `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"dregg-committed-threshold::poseidon2-v2","ir":2,"trace_width":44,"public_input_count":2,"tables":[],"constraints":[{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":1},{"t":"var","v":2},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":36},{"t":"var","v":37},{"t":"var","v":38},{"t":"var","v":39},{"t":"var","v":40},{"t":"var","v":41},{"t":"var","v":42},{"t":"var","v":43}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":36},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":34}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"var","v":1}}}},{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":4}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2},"r":{"t":"var","v":5}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4},"r":{"t":"var","v":6}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8},"r":{"t":"var","v":7}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":32},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":64},"r":{"t":"var","v":10}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":128},"r":{"t":"var","v":11}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":256},"r":{"t":"var","v":12}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":512},"r":{"t":"var","v":13}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1024},"r":{"t":"var","v":14}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2048},"r":{"t":"var","v":15}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4096},"r":{"t":"var","v":16}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8192},"r":{"t":"var","v":17}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16384},"r":{"t":"var","v":18}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":32768},"r":{"t":"var","v":19}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":65536},"r":{"t":"var","v":20}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":131072},"r":{"t":"var","v":21}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":262144},"r":{"t":"var","v":22}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":524288},"r":{"t":"var","v":23}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1048576},"r":{"t":"var","v":24}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2097152},"r":{"t":"var","v":25}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4194304},"r":{"t":"var","v":26}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8388608},"r":{"t":"var","v":27}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16777216},"r":{"t":"var","v":28}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":33554432},"r":{"t":"var","v":29}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":67108864},"r":{"t":"var","v":30}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":134217728},"r":{"t":"var","v":31}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":268435456},"r":{"t":"var","v":32}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":536870912},"r":{"t":"var","v":33}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":3}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"var","v":4},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":5},"r":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":6},"r":{"t":"add","l":{"t":"var","v":6},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"var","v":7},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":8},"r":{"t":"add","l":{"t":"var","v":8},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":9},"r":{"t":"add","l":{"t":"var","v":9},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"add","l":{"t":"var","v":10},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"var","v":11},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"var","v":12},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":13},"r":{"t":"add","l":{"t":"var","v":13},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":14},"r":{"t":"add","l":{"t":"var","v":14},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"var","v":15},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":16},"r":{"t":"add","l":{"t":"var","v":16},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":17},"r":{"t":"add","l":{"t":"var","v":17},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":18},"r":{"t":"add","l":{"t":"var","v":18},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":19},"r":{"t":"add","l":{"t":"var","v":19},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":20},"r":{"t":"add","l":{"t":"var","v":20},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":21},"r":{"t":"add","l":{"t":"var","v":21},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":22},"r":{"t":"add","l":{"t":"var","v":22},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":23},"r":{"t":"add","l":{"t":"var","v":23},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":24},"r":{"t":"add","l":{"t":"var","v":24},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":25},"r":{"t":"add","l":{"t":"var","v":25},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":26},"r":{"t":"add","l":{"t":"var","v":26},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":27},"r":{"t":"add","l":{"t":"var","v":27},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":28},"r":{"t":"add","l":{"t":"var","v":28},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":29},"r":{"t":"add","l":{"t":"var","v":29},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":30},"r":{"t":"add","l":{"t":"var","v":30},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":31},"r":{"t":"add","l":{"t":"var","v":31},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":32},"r":{"t":"add","l":{"t":"var","v":32},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":33},"r":{"t":"add","l":{"t":"var","v":33},"r":{"t":"const","v":-1}}}},{"t":"pi_binding","row":"first","col":34,"pi_index":0},{"t":"pi_binding","row":"first","col":35,"pi_index":1},{"t":"gate","body":{"t":"var","v":33}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":36},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":34}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"var","v":1}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":4}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2},"r":{"t":"var","v":5}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4},"r":{"t":"var","v":6}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8},"r":{"t":"var","v":7}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":32},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":64},"r":{"t":"var","v":10}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":128},"r":{"t":"var","v":11}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":256},"r":{"t":"var","v":12}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":512},"r":{"t":"var","v":13}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1024},"r":{"t":"var","v":14}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2048},"r":{"t":"var","v":15}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4096},"r":{"t":"var","v":16}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8192},"r":{"t":"var","v":17}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16384},"r":{"t":"var","v":18}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":32768},"r":{"t":"var","v":19}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":65536},"r":{"t":"var","v":20}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":131072},"r":{"t":"var","v":21}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":262144},"r":{"t":"var","v":22}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":524288},"r":{"t":"var","v":23}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1048576},"r":{"t":"var","v":24}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2097152},"r":{"t":"var","v":25}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4194304},"r":{"t":"var","v":26}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8388608},"r":{"t":"var","v":27}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16777216},"r":{"t":"var","v":28}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":33554432},"r":{"t":"var","v":29}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":67108864},"r":{"t":"var","v":30}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":134217728},"r":{"t":"var","v":31}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":268435456},"r":{"t":"var","v":32}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":536870912},"r":{"t":"var","v":33}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":3}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"var","v":4},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":5},"r":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":6},"r":{"t":"add","l":{"t":"var","v":6},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"var","v":7},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":8},"r":{"t":"add","l":{"t":"var","v":8},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":9},"r":{"t":"add","l":{"t":"var","v":9},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"add","l":{"t":"var","v":10},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"var","v":11},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"var","v":12},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":13},"r":{"t":"add","l":{"t":"var","v":13},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":14},"r":{"t":"add","l":{"t":"var","v":14},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"var","v":15},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":16},"r":{"t":"add","l":{"t":"var","v":16},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":17},"r":{"t":"add","l":{"t":"var","v":17},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":18},"r":{"t":"add","l":{"t":"var","v":18},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":19},"r":{"t":"add","l":{"t":"var","v":19},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":20},"r":{"t":"add","l":{"t":"var","v":20},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":21},"r":{"t":"add","l":{"t":"var","v":21},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":22},"r":{"t":"add","l":{"t":"var","v":22},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":23},"r":{"t":"add","l":{"t":"var","v":23},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":24},"r":{"t":"add","l":{"t":"var","v":24},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":25},"r":{"t":"add","l":{"t":"var","v":25},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":26},"r":{"t":"add","l":{"t":"var","v":26},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":27},"r":{"t":"add","l":{"t":"var","v":27},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":28},"r":{"t":"add","l":{"t":"var","v":28},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":29},"r":{"t":"add","l":{"t":"var","v":29},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":30},"r":{"t":"add","l":{"t":"var","v":30},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":31},"r":{"t":"add","l":{"t":"var","v":31},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":32},"r":{"t":"add","l":{"t":"var","v":32},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":33},"r":{"t":"add","l":{"t":"var","v":33},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"var","v":33}}],"hash_sites":[],"ranges":[]}"#;
+const GOLDEN_JSON: &str = r#"{"name":"dregg-committed-threshold::poseidon2-v2","ir":2,"trace_width":63,"public_input_count":2,"tables":[],"constraints":[{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":1},{"t":"var","v":2},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":36},{"t":"var","v":37},{"t":"var","v":38},{"t":"var","v":39},{"t":"var","v":40},{"t":"var","v":41},{"t":"var","v":42},{"t":"var","v":43}]},{"t":"lookup","table":1,"tuple":[{"t":"const","v":7},{"t":"var","v":44},{"t":"var","v":0},{"t":"var","v":45},{"t":"var","v":46},{"t":"const","v":0},{"t":"const","v":64207},{"t":"const","v":1},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":48},{"t":"var","v":49},{"t":"var","v":50},{"t":"var","v":51},{"t":"var","v":52},{"t":"var","v":53},{"t":"var","v":54},{"t":"var","v":55}]},{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":48},{"t":"var","v":47},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":35},{"t":"var","v":56},{"t":"var","v":57},{"t":"var","v":58},{"t":"var","v":59},{"t":"var","v":60},{"t":"var","v":61},{"t":"var","v":62}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":36},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":34}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"var","v":1}}}},{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":4}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2},"r":{"t":"var","v":5}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4},"r":{"t":"var","v":6}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8},"r":{"t":"var","v":7}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":32},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":64},"r":{"t":"var","v":10}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":128},"r":{"t":"var","v":11}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":256},"r":{"t":"var","v":12}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":512},"r":{"t":"var","v":13}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1024},"r":{"t":"var","v":14}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2048},"r":{"t":"var","v":15}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4096},"r":{"t":"var","v":16}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8192},"r":{"t":"var","v":17}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16384},"r":{"t":"var","v":18}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":32768},"r":{"t":"var","v":19}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":65536},"r":{"t":"var","v":20}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":131072},"r":{"t":"var","v":21}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":262144},"r":{"t":"var","v":22}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":524288},"r":{"t":"var","v":23}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1048576},"r":{"t":"var","v":24}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2097152},"r":{"t":"var","v":25}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4194304},"r":{"t":"var","v":26}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8388608},"r":{"t":"var","v":27}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16777216},"r":{"t":"var","v":28}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":33554432},"r":{"t":"var","v":29}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":67108864},"r":{"t":"var","v":30}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":134217728},"r":{"t":"var","v":31}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":268435456},"r":{"t":"var","v":32}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":536870912},"r":{"t":"var","v":33}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":3}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"var","v":4},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":5},"r":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":6},"r":{"t":"add","l":{"t":"var","v":6},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"var","v":7},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":8},"r":{"t":"add","l":{"t":"var","v":8},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":9},"r":{"t":"add","l":{"t":"var","v":9},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"add","l":{"t":"var","v":10},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"var","v":11},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"var","v":12},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":13},"r":{"t":"add","l":{"t":"var","v":13},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":14},"r":{"t":"add","l":{"t":"var","v":14},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"var","v":15},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":16},"r":{"t":"add","l":{"t":"var","v":16},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":17},"r":{"t":"add","l":{"t":"var","v":17},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":18},"r":{"t":"add","l":{"t":"var","v":18},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":19},"r":{"t":"add","l":{"t":"var","v":19},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":20},"r":{"t":"add","l":{"t":"var","v":20},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":21},"r":{"t":"add","l":{"t":"var","v":21},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":22},"r":{"t":"add","l":{"t":"var","v":22},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":23},"r":{"t":"add","l":{"t":"var","v":23},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":24},"r":{"t":"add","l":{"t":"var","v":24},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":25},"r":{"t":"add","l":{"t":"var","v":25},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":26},"r":{"t":"add","l":{"t":"var","v":26},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":27},"r":{"t":"add","l":{"t":"var","v":27},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":28},"r":{"t":"add","l":{"t":"var","v":28},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":29},"r":{"t":"add","l":{"t":"var","v":29},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":30},"r":{"t":"add","l":{"t":"var","v":30},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":31},"r":{"t":"add","l":{"t":"var","v":31},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":32},"r":{"t":"add","l":{"t":"var","v":32},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":33},"r":{"t":"add","l":{"t":"var","v":33},"r":{"t":"const","v":-1}}}},{"t":"pi_binding","row":"first","col":34,"pi_index":0},{"t":"pi_binding","row":"first","col":35,"pi_index":1},{"t":"gate","body":{"t":"var","v":33}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":36},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":34}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"var","v":1}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":4}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2},"r":{"t":"var","v":5}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4},"r":{"t":"var","v":6}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8},"r":{"t":"var","v":7}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":32},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":64},"r":{"t":"var","v":10}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":128},"r":{"t":"var","v":11}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":256},"r":{"t":"var","v":12}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":512},"r":{"t":"var","v":13}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1024},"r":{"t":"var","v":14}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2048},"r":{"t":"var","v":15}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4096},"r":{"t":"var","v":16}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8192},"r":{"t":"var","v":17}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16384},"r":{"t":"var","v":18}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":32768},"r":{"t":"var","v":19}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":65536},"r":{"t":"var","v":20}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":131072},"r":{"t":"var","v":21}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":262144},"r":{"t":"var","v":22}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":524288},"r":{"t":"var","v":23}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1048576},"r":{"t":"var","v":24}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":2097152},"r":{"t":"var","v":25}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":4194304},"r":{"t":"var","v":26}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":8388608},"r":{"t":"var","v":27}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":16777216},"r":{"t":"var","v":28}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":33554432},"r":{"t":"var","v":29}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":67108864},"r":{"t":"var","v":30}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":134217728},"r":{"t":"var","v":31}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":268435456},"r":{"t":"var","v":32}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":536870912},"r":{"t":"var","v":33}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":3}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"var","v":4},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":5},"r":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":6},"r":{"t":"add","l":{"t":"var","v":6},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"var","v":7},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":8},"r":{"t":"add","l":{"t":"var","v":8},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":9},"r":{"t":"add","l":{"t":"var","v":9},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"add","l":{"t":"var","v":10},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"var","v":11},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"var","v":12},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":13},"r":{"t":"add","l":{"t":"var","v":13},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":14},"r":{"t":"add","l":{"t":"var","v":14},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"var","v":15},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":16},"r":{"t":"add","l":{"t":"var","v":16},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":17},"r":{"t":"add","l":{"t":"var","v":17},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":18},"r":{"t":"add","l":{"t":"var","v":18},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":19},"r":{"t":"add","l":{"t":"var","v":19},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":20},"r":{"t":"add","l":{"t":"var","v":20},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":21},"r":{"t":"add","l":{"t":"var","v":21},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":22},"r":{"t":"add","l":{"t":"var","v":22},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":23},"r":{"t":"add","l":{"t":"var","v":23},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":24},"r":{"t":"add","l":{"t":"var","v":24},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":25},"r":{"t":"add","l":{"t":"var","v":25},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":26},"r":{"t":"add","l":{"t":"var","v":26},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":27},"r":{"t":"add","l":{"t":"var","v":27},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":28},"r":{"t":"add","l":{"t":"var","v":28},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":29},"r":{"t":"add","l":{"t":"var","v":29},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":30},"r":{"t":"add","l":{"t":"var","v":30},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":31},"r":{"t":"add","l":{"t":"var","v":31},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":32},"r":{"t":"add","l":{"t":"var","v":32},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"mul","l":{"t":"var","v":33},"r":{"t":"add","l":{"t":"var","v":33},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"var","v":33}}],"hash_sites":[],"ranges":[]}"#;
 
 // --- Trace column layout (must match `CommittedThresholdEmit.lean` §1). ---
 const PRIVATE_VALUE: usize = 0;
@@ -53,8 +58,17 @@ const COMMITTED_DIFF_BITS: usize = 30;
 const THRESHOLD_COMMITMENT: usize = DIFF_BITS_START + COMMITTED_DIFF_BITS; // 34
 const FACT_COMMITMENT: usize = THRESHOLD_COMMITMENT + 1; // 35
 const POSEIDON2_RESULT: usize = FACT_COMMITMENT + 1; // 36
-const CHIP_LANE_BASE: usize = 37; // out-lanes 1..7 at 37..43
-const CT_WIDTH: usize = 44;
+const CHIP_LANE_BASE: usize = 37; // threshold-commitment out-lanes 1..7 at 37..43
+// value<->fact weld columns
+const PREDICATE_SYM: usize = 44;
+const TERM1: usize = 45;
+const TERM2: usize = 46;
+const STATE_ROOT: usize = 47;
+const FACT_HASH: usize = 48;
+const FH_LANE_BASE: usize = 49; // fact-hash out-lanes 1..7 at 49..55
+const FC_LANE_BASE: usize = 56; // fact-commitment out-lanes 1..7 at 56..62
+const FACT_MARK: u32 = 0xFACF;
+const CT_WIDTH: usize = 63;
 
 #[inline]
 fn diff_bit(i: usize) -> usize {
@@ -84,6 +98,54 @@ fn chip2_lookup(input_cols: [usize; 2], out_col: usize) -> VmConstraint2 {
     })
 }
 
+/// A generic `TID_P2` chip lookup with arity `inputs.len()` — built EXACTLY as Lean's
+/// `chipLookupTuple ins out_col lanes` (arity tag = ins.len(), `CHIP_RATE` zero-padded input exprs,
+/// out0 :: 7 lane vars). Used for the value↔fact weld's arity-7 fact-hash and arity-2
+/// fact-commitment lookups.
+fn chip_lookup(inputs: &[LeanExpr], out_col: usize, lane_base: usize) -> VmConstraint2 {
+    let mut tuple: Vec<LeanExpr> = Vec::with_capacity(CHIP_TUPLE_LEN);
+    tuple.push(LeanExpr::Const(inputs.len() as i64));
+    for i in 0..CHIP_RATE {
+        tuple.push(inputs.get(i).cloned().unwrap_or(LeanExpr::Const(0)));
+    }
+    tuple.push(LeanExpr::Var(out_col));
+    for j in 0..(CHIP_OUT_LANES - 1) {
+        tuple.push(LeanExpr::Var(lane_base + j));
+    }
+    assert_eq!(tuple.len(), CHIP_TUPLE_LEN);
+    VmConstraint2::Lookup(LookupSpec {
+        table: TID_P2,
+        tuple,
+    })
+}
+
+/// The value↔fact weld's two lookups, in descriptor order (right after the threshold-commitment
+/// lookup): the arity-7 fact-hash absorb of `[pred, private_value, term1, term2, 0, FACT_MARK, 1]`
+/// binding out0 to `FACT_HASH`, then the arity-2 fact-commitment absorb of `[fact_hash, state_root]`
+/// binding out0 to `FACT_COMMITMENT`.
+fn fact_hash_lookup() -> VmConstraint2 {
+    chip_lookup(
+        &[
+            LeanExpr::Var(PREDICATE_SYM),
+            LeanExpr::Var(PRIVATE_VALUE),
+            LeanExpr::Var(TERM1),
+            LeanExpr::Var(TERM2),
+            LeanExpr::Const(0),
+            LeanExpr::Const(FACT_MARK as i64),
+            LeanExpr::Const(1),
+        ],
+        FACT_HASH,
+        FH_LANE_BASE,
+    )
+}
+fn fact_commit_lookup() -> VmConstraint2 {
+    chip_lookup(
+        &[LeanExpr::Var(FACT_HASH), LeanExpr::Var(STATE_ROOT)],
+        FACT_COMMITMENT,
+        FC_LANE_BASE,
+    )
+}
+
 /// The independently-hand-built twin of the Lean `committedThresholdDesc`: the hash-binding chip
 /// lookup, the equality/diff/recomposition gates, the 30 per-bit binary gates, the two commitment
 /// PI pins, and the high-bit-zero gate — in the SAME order the Lean descriptor lists them.
@@ -92,6 +154,11 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
 
     // 1. hash binding: poseidon2_result = hash_2_to_1(threshold, blinding).
     constraints.push(chip2_lookup([THRESHOLD, BLINDING], POSEIDON2_RESULT));
+
+    // 1b/1c. THE VALUE<->FACT WELD: fact_hash = hash_fact(pred, [private_value, term1, term2]) and
+    // fact_commitment = hash_2_to_1(fact_hash, state_root) — feeding the SAME private_value column.
+    constraints.push(fact_hash_lookup());
+    constraints.push(fact_commit_lookup());
 
     // 2. c3: poseidon2_result - threshold_commitment.
     constraints.push(VmConstraint2::Base(VmConstraint::Gate(LeanExpr::add(
@@ -200,17 +267,42 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
 }
 
 /// One honest committed-threshold row: `value >= threshold`, the genuine `hash_2_to_1(threshold,
-/// blinding)` in the commitment + poseidon2_result columns, the bit decomposition of `diff` filled.
-/// The chip LANE columns (37..43) are left zero — the prover's `trace_with_chip_lanes` fills them
-/// from the genuine permutation. Returns `(row, [threshold_commitment, fact_commitment])`.
+/// blinding)` in the commitment + poseidon2_result columns, the bit decomposition of `diff` filled,
+/// AND the value↔fact weld columns filled for a fact whose VALUE is exactly `value` — so
+/// `fact_hash = hash_fact(pred, [value, 0, 0])` (out0 of the arity-7 lookup, over the SAME
+/// `private_value` column) and `fact_commitment = hash_2_to_1(fact_hash, state_root)` (out0 of the
+/// arity-2 lookup). The chip LANE columns are left zero — the prover fills them from the genuine
+/// permutation. The 4th arg is IGNORED (the honest fact commitment is derived); it is retained so the
+/// existing canaries' call sites stay unchanged. Returns `(row, [threshold_commitment,
+/// fact_commitment])`.
 fn honest_row(
     value: BabyBear,
     threshold: BabyBear,
     blinding: BabyBear,
-    fact_commitment: BabyBear,
+    _ignored_fact_commitment: BabyBear,
 ) -> (Vec<BabyBear>, [BabyBear; 2]) {
     let diff = value - threshold;
     let commitment = hash_2_to_1(threshold, blinding);
+    let pred = BabyBear::new(FIXED_PRED);
+    let sr = BabyBear::new(FIXED_STATE_ROOT);
+    // The fact hash the arity-7 lookup recomputes from the `private_value` COLUMN (== `value` here).
+    let fact_hash = chip_absorb_all_lanes(
+        7,
+        &[
+            pred,
+            value,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::new(FACT_MARK),
+            BabyBear::ONE,
+        ],
+    )[0];
+    debug_assert_eq!(
+        fact_hash,
+        hash_fact(pred, &[value, BabyBear::ZERO, BabyBear::ZERO])
+    );
+    let fact_commitment = hash_2_to_1(fact_hash, sr);
     let mut row = vec![BabyBear::ZERO; CT_WIDTH];
     row[PRIVATE_VALUE] = value;
     row[THRESHOLD] = threshold;
@@ -222,7 +314,13 @@ fn honest_row(
     }
     row[THRESHOLD_COMMITMENT] = commitment;
     row[FACT_COMMITMENT] = fact_commitment;
-    row[POSEIDON2_RESULT] = commitment; // out0 of the arity-2 chip absorb
+    row[POSEIDON2_RESULT] = commitment; // out0 of the arity-2 threshold-commitment absorb
+    // weld columns
+    row[PREDICATE_SYM] = pred;
+    row[TERM1] = BabyBear::ZERO;
+    row[TERM2] = BabyBear::ZERO;
+    row[STATE_ROOT] = sr;
+    row[FACT_HASH] = fact_hash; // out0 of the arity-7 fact-hash absorb
     (row, [commitment, fact_commitment])
 }
 
@@ -275,13 +373,17 @@ fn committed_threshold_emit_decodes_to_hand_built() {
     );
     assert_eq!(decoded.trace_width, CT_WIDTH);
     assert_eq!(decoded.public_input_count, 2);
-    // one arity-2 chip lookup (the hash binding).
+    // three arity chip lookups: threshold-commitment (arity 2), fact-hash (arity 7), fact-commitment
+    // (arity 2) — the last two are THE VALUE<->FACT WELD.
     let chip_lookups = decoded
         .constraints
         .iter()
         .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
         .count();
-    assert_eq!(chip_lookups, 1, "one hash-binding chip lookup");
+    assert_eq!(
+        chip_lookups, 3,
+        "threshold-commitment + fact-hash + fact-commitment chip lookups"
+    );
     // two PI pins (the two commitments).
     let pins = decoded
         .constraints
@@ -289,12 +391,12 @@ fn committed_threshold_emit_decodes_to_hand_built() {
         .filter(|c| matches!(c, VmConstraint2::Base(VmConstraint::PiBinding { .. })))
         .count();
     assert_eq!(pins, 2, "the two commitment PI pins");
-    // 4 (lookup + 3 gates) + 30 binary + 3 (2 pins + high-bit) = 37 transition-domain constraints,
+    // 6 (3 lookups + 3 gates) + 30 binary + 3 (2 pins + high-bit) = 39 transition-domain constraints,
     // PLUS the last-row fix `ctLastGateFix` = 3 (c3/c4/recomp) + 30 binary + 1 high-bit = 34 boundary
     // constraints, so every semantic tooth fires on the last row too.
     assert_eq!(
         decoded.constraints.len(),
-        (4 + COMMITTED_DIFF_BITS + 3) + (3 + COMMITTED_DIFF_BITS + 1)
+        (6 + COMMITTED_DIFF_BITS + 3) + (3 + COMMITTED_DIFF_BITS + 1)
     );
     // the 34 last-row boundary constraints the fix adds.
     let last_boundaries = decoded
@@ -438,9 +540,10 @@ fn forged_poseidon2_result_refuses() {
     );
 }
 
-/// STEP 4e — CANARY (c4): honest trace, but `private_value` is bumped by one. `private_value` feeds
-/// ONLY `c4` (`diff == value - threshold`), so `c4` is the sole broken gate → UNSAT. The
-/// difference-consistency tooth, isolated.
+/// STEP 4e — CANARY (c4 + weld): honest trace, but `private_value` is bumped by one (DIFF left as
+/// the old value). `private_value` now feeds `c4` (`diff == value - threshold`) AND the arity-7
+/// fact-hash lookup; both break → UNSAT. (Pre-weld this isolated `c4`; the weld makes `private_value`
+/// additionally load-bearing for the fact opening — which is the whole point.)
 #[test]
 fn tampered_private_value_refuses() {
     let desc = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");
@@ -473,5 +576,49 @@ fn nonbinary_bit_refuses() {
     assert!(
         rejects(&desc, &trace, &pis),
         "a non-binary diff bit must be REJECTED (binary gate)"
+    );
+}
+
+/// STEP 4g — CANARY (THE VALUE↔FACT WELD / held forgery #2): the prover proves `value 750 >=
+/// threshold 700` but the `fact_commitment` public input names a DIFFERENT real fact whose value is
+/// `300` (a fact they hold that FAILS the threshold). Before the weld, `fact_commitment` was a free
+/// PI, so this passed. Now the two in-circuit chip lookups force `fact_commitment =
+/// hash_2_to_1(hash_fact(pred, [private_value, 0, 0]), state_root)` over the SAME `private_value`
+/// column: with `private_value = 750`, `fact_commitment` MUST open to the value-750 fact, so pinning
+/// it to the value-300 fact's commitment names a chip row (`hash_2_to_1(fact_hash_750, sr) = fc_300`)
+/// no genuine permutation serves → LogUp UNSAT. Honest (value == committed value) ACCEPTS.
+#[test]
+fn forge_committed_value_neq_fact_rejects() {
+    let desc = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");
+    let threshold = BabyBear::new(700);
+    let blinding = BabyBear::new(12345);
+    let pred = BabyBear::new(FIXED_PRED);
+    let sr = BabyBear::new(FIXED_STATE_ROOT);
+    let tc = hash_2_to_1(threshold, blinding);
+
+    // Non-vacuity: the honest witness (value 750 == committed fact value 750) ACCEPTS.
+    let (ok_trace, ok_pis) = honest_trace(BabyBear::new(750), threshold, blinding, BabyBear::ZERO);
+    assert!(
+        !rejects(&desc, &ok_trace, &ok_pis),
+        "honest value==fact must ACCEPT"
+    );
+
+    // Forge: prove value 750 >= 700, but commit to the value-300 fact the prover actually holds.
+    let fc_300 = hash_2_to_1(
+        hash_fact(pred, &[BabyBear::new(300), BabyBear::ZERO, BabyBear::ZERO]),
+        sr,
+    );
+    // Fill the row honestly for private_value=750 (so c4/range/fact-hash lookup are internally
+    // consistent), then override FACT_COMMITMENT + pi[1] to the value-300 fact to keep the c2 pin
+    // satisfied — the strongest forgery. Only the arity-2 fact-commitment lookup can then break.
+    let (mut trace, _) = honest_trace(BabyBear::new(750), threshold, blinding, BabyBear::ZERO);
+    for row in &mut trace {
+        row[FACT_COMMITMENT] = fc_300;
+    }
+    let forged_pis = [tc, fc_300];
+    assert!(
+        rejects(&desc, &trace, &forged_pis),
+        "proving a value (750) different from the committed fact's value (300) must be REJECTED — \
+         the value↔fact weld (held forgery #2)"
     );
 }

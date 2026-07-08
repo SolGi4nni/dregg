@@ -9,8 +9,8 @@
 use std::panic::AssertUnwindSafe;
 
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
-    verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, chip_absorb_all_lanes, parse_vm_descriptor2,
+    prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_2_to_1;
@@ -24,7 +24,12 @@ const COMMITTED_DIFF_BITS: usize = 30;
 const THRESHOLD_COMMITMENT: usize = DIFF_BITS_START + COMMITTED_DIFF_BITS; // 34
 const FACT_COMMITMENT: usize = THRESHOLD_COMMITMENT + 1; // 35
 const POSEIDON2_RESULT: usize = FACT_COMMITMENT + 1; // 36
-const CT_WIDTH: usize = 44;
+// value<->fact weld columns (see committed_threshold_emit_gate.rs / CommittedThresholdEmit.lean).
+const PREDICATE_SYM: usize = 44;
+const STATE_ROOT: usize = 47;
+const FACT_HASH: usize = 48;
+const FACT_MARK: u32 = 0xFACF;
+const CT_WIDTH: usize = 63;
 
 const GOLDEN_JSON: &str = include_str!("committed_threshold_golden.json");
 
@@ -32,10 +37,25 @@ fn honest_row(
     value: BabyBear,
     threshold: BabyBear,
     blinding: BabyBear,
-    fact_commitment: BabyBear,
+    _ignored_fact_commitment: BabyBear,
 ) -> (Vec<BabyBear>, [BabyBear; 2]) {
     let diff = value - threshold;
     let commitment = hash_2_to_1(threshold, blinding);
+    let pred = BabyBear::new(42);
+    let sr = BabyBear::new(99_999);
+    let fact_hash = chip_absorb_all_lanes(
+        7,
+        &[
+            pred,
+            value,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::new(FACT_MARK),
+            BabyBear::ONE,
+        ],
+    )[0];
+    let fact_commitment = hash_2_to_1(fact_hash, sr);
     let mut row = vec![BabyBear::ZERO; CT_WIDTH];
     row[PRIVATE_VALUE] = value;
     row[THRESHOLD] = threshold;
@@ -48,6 +68,9 @@ fn honest_row(
     row[THRESHOLD_COMMITMENT] = commitment;
     row[FACT_COMMITMENT] = fact_commitment;
     row[POSEIDON2_RESULT] = commitment;
+    row[PREDICATE_SYM] = pred;
+    row[STATE_ROOT] = sr;
+    row[FACT_HASH] = fact_hash;
     (row, [commitment, fact_commitment])
 }
 
