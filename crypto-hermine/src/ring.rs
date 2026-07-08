@@ -2,12 +2,14 @@
 //! spec's abstract `CommRing R` is instantiated at for this reference.
 //!
 //! Realistic-ward parameters (`N = 64`, `Q = 8380417`, the Dilithium prime
-//! `2²³ − 2¹³ + 1`; `2N | Q − 1`, so the ring is NTT-friendly) but still
-//! schoolbook negacyclic convolution: this is a REFERENCE, not a performant
-//! or constant-time implementation. Production dimension is `n ≥ 256`; the
-//! step to `N = 64` keeps the whole test suite (including the empirical
-//! key-hiding TV measurements) fast under schoolbook `O(n²)` multiplication
-//! while exercising real-modulus arithmetic.
+//! `2²³ − 2¹³ + 1`; `2N | Q − 1`, so the ring is NTT-friendly). Multiplication
+//! ([`Poly::mul`]) is the **NTT** path — `O(n log n)`, the production-shaped
+//! algorithm — with the schoolbook `O(n²)` convolution ([`Poly::mul_schoolbook`])
+//! retained as the reference it is verified against. It is still a REFERENCE in
+//! the other senses (trusted dealer, toy dimension `N = 64` vs the production
+//! `n ≥ 256`, pre-audit); the NTT makes bumping to `n ≥ 256` cheap.
+
+use std::sync::OnceLock;
 
 /// Ring dimension `n` in `Xⁿ + 1`. Production target is `n ≥ 256`; this
 /// reference runs at 64 (see the module doc).
@@ -58,9 +60,17 @@ impl Poly {
         Poly::ZERO.sub(self)
     }
 
-    /// Ring multiplication: schoolbook NEGACYCLIC convolution — the index
-    /// wraparound `X^N = -1` is the quotient by `Xⁿ + 1`.
+    /// Ring multiplication (the default): the fast `O(n log n)` NTT path
+    /// ([`Poly::mul_ntt`]), verified bit-for-bit against the schoolbook reference
+    /// ([`Poly::mul_schoolbook`]) by `ntt_mul_agrees_with_schoolbook`.
     pub fn mul(&self, other: &Self) -> Self {
+        self.mul_ntt(other)
+    }
+
+    /// Reference NEGACYCLIC convolution, `O(n²)` schoolbook — the index
+    /// wraparound `X^N = -1` is the quotient by `Xⁿ + 1`. Kept as the obviously-
+    /// correct reference the NTT path is checked against.
+    pub fn mul_schoolbook(&self, other: &Self) -> Self {
         // |acc| ≤ N · (Q-1)² = 64 · (8380416)² ≈ 4.5e15 — inside i64 (≈ 9.2e18).
         let mut acc = [0i64; N];
         for i in 0..N {
@@ -146,9 +156,179 @@ pub fn inv_mod_q(a: u64) -> Option<u64> {
     Some(result)
 }
 
+// ============================================================================
+// NTT-based negacyclic multiplication — O(n log n), the production-shaped mul
+// ============================================================================
+//
+// `R_q = ℤ_q[X]/(Xⁿ+1)` is NTT-friendly (`2N | Q-1`), so multiplication is a
+// weighted length-N number-theoretic transform: pre-scale each `aᵢ` by `ψⁱ` (ψ
+// a primitive 2N-th root, `ψᴺ ≡ -1`), transform with `ω = ψ²` (a primitive
+// N-th root), multiply pointwise, inverse-transform, and un-scale by `ψ⁻ⁱ`. This
+// is `O(n log n)` vs the schoolbook `O(n²)` `mul`; `mul_ntt` is verified to agree
+// with `mul` bit-for-bit (test `ntt_mul_agrees_with_schoolbook`).
+
+/// `base^exp mod Q` by square-and-multiply.
+fn pow_mod(mut base: u64, mut exp: u64) -> u64 {
+    let mut r = 1u64;
+    base %= Q;
+    while exp > 0 {
+        if exp & 1 == 1 {
+            r = r * base % Q;
+        }
+        base = base * base % Q;
+        exp >>= 1;
+    }
+    r
+}
+
+/// Precomputed negacyclic-NTT twiddle tables (built once via `OnceLock`).
+struct NttTables {
+    psi: [u64; N],       // ψⁱ (pre-scale weights)
+    psi_inv: [u64; N],   // ψ⁻ⁱ (un-scale weights)
+    omega: [u64; N],     // ωⁱ, ω = ψ² (forward twiddles)
+    omega_inv: [u64; N], // ω⁻ⁱ (inverse twiddles)
+    n_inv: u64,          // N⁻¹ mod Q (inverse-transform scale)
+}
+
+fn ntt_tables() -> &'static NttTables {
+    static T: OnceLock<NttTables> = OnceLock::new();
+    T.get_or_init(|| {
+        // Primitive 2N-th root: ψᴺ ≡ -1 (mod Q) forces order exactly 2N (N a power of 2).
+        let mut psi_root = 0u64;
+        for c in 2..Q {
+            if pow_mod(c, N as u64) == Q - 1 {
+                psi_root = c;
+                break;
+            }
+        }
+        assert!(psi_root != 0, "no primitive 2N-th root of unity mod Q");
+        let psi_inv_root = inv_mod_q(psi_root).unwrap();
+        let omega_root = psi_root * psi_root % Q;
+        let omega_inv_root = inv_mod_q(omega_root).unwrap();
+        let mut psi = [0u64; N];
+        let mut psi_inv = [0u64; N];
+        let mut omega = [0u64; N];
+        let mut omega_inv = [0u64; N];
+        let (mut p, mut pi, mut w, mut wi) = (1u64, 1u64, 1u64, 1u64);
+        for i in 0..N {
+            psi[i] = p;
+            psi_inv[i] = pi;
+            omega[i] = w;
+            omega_inv[i] = wi;
+            p = p * psi_root % Q;
+            pi = pi * psi_inv_root % Q;
+            w = w * omega_root % Q;
+            wi = wi * omega_inv_root % Q;
+        }
+        NttTables {
+            psi,
+            psi_inv,
+            omega,
+            omega_inv,
+            n_inv: inv_mod_q(N as u64).unwrap(),
+        }
+    })
+}
+
+/// In-place iterative Cooley–Tukey NTT (decimation-in-time, bit-reversal first)
+/// with the supplied `ωⁱ` power table.
+fn ntt_inplace(a: &mut [u64; N], omega_pow: &[u64; N]) {
+    // bit-reversal permutation
+    let mut j = 0usize;
+    for i in 1..N {
+        let mut bit = N >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j ^= bit;
+        if i < j {
+            a.swap(i, j);
+        }
+    }
+    // butterflies
+    let mut len = 2usize;
+    while len <= N {
+        let step = N / len;
+        let half = len / 2;
+        let mut start = 0usize;
+        while start < N {
+            let mut w_idx = 0usize;
+            for k in 0..half {
+                let u = a[start + k];
+                let v = a[start + k + half] * omega_pow[w_idx] % Q;
+                a[start + k] = (u + v) % Q;
+                a[start + k + half] = (u + Q - v) % Q;
+                w_idx += step;
+            }
+            start += len;
+        }
+        len <<= 1;
+    }
+}
+
+impl Poly {
+    /// NTT-based negacyclic multiplication — `O(n log n)`, the production-shaped
+    /// counterpart of the schoolbook [`Poly::mul`]. Verified to agree with `mul`
+    /// bit-for-bit. All intermediate products stay `< Q² < u64::MAX`.
+    pub fn mul_ntt(&self, other: &Self) -> Self {
+        let t = ntt_tables();
+        let mut a = [0u64; N];
+        let mut b = [0u64; N];
+        for i in 0..N {
+            a[i] = (self.coeffs[i] % Q) * t.psi[i] % Q;
+            b[i] = (other.coeffs[i] % Q) * t.psi[i] % Q;
+        }
+        ntt_inplace(&mut a, &t.omega);
+        ntt_inplace(&mut b, &t.omega);
+        let mut c = [0u64; N];
+        for i in 0..N {
+            c[i] = a[i] * b[i] % Q;
+        }
+        ntt_inplace(&mut c, &t.omega_inv);
+        let mut coeffs = [0u64; N];
+        for i in 0..N {
+            coeffs[i] = c[i] * t.n_inv % Q * t.psi_inv[i] % Q;
+        }
+        Poly { coeffs }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The O(n log n) NTT multiplication agrees with the O(n²) schoolbook `mul`
+    /// bit-for-bit over random inputs — the NTT is verified against the reference.
+    #[test]
+    fn ntt_mul_agrees_with_schoolbook() {
+        let mut s = 0x243F_6A88_85A3_08D3u64;
+        let mut rnd = || {
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (s >> 33) % Q
+        };
+        for _ in 0..200 {
+            let mut a = Poly { coeffs: [0u64; N] };
+            let mut b = Poly { coeffs: [0u64; N] };
+            for i in 0..N {
+                a.coeffs[i] = rnd();
+                b.coeffs[i] = rnd();
+            }
+            assert_eq!(
+                a.mul_schoolbook(&b).coeffs,
+                a.mul_ntt(&b).coeffs,
+                "NTT disagrees with schoolbook"
+            );
+        }
+        // edge cases: one, X (the ring generator)
+        let one = Poly::constant(1);
+        let mut x = Poly { coeffs: [0u64; N] };
+        x.coeffs[1] = 1;
+        assert_eq!(x.mul_schoolbook(&one).coeffs, x.mul_ntt(&one).coeffs);
+        assert_eq!(x.mul_schoolbook(&x).coeffs, x.mul_ntt(&x).coeffs);
+    }
 
     fn x_to(k: usize) -> Poly {
         let mut coeffs = [0u64; N];
