@@ -147,6 +147,21 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
     });
 
     // ========================================================================
+    // C6b: body_fact_hash_public — body atom 0's fact hash == public_inputs[5]
+    //
+    // Exports the consumed body fact's hash (BODY_HASH_START, C2-adjacent slot 0)
+    // as a PUBLIC INPUT so the full-turn verifier can bind it to the c-list
+    // membership proof's authenticated leaf. Without this the derivation's
+    // body_fact_hash is a FREE witness — a forger could present a genuine
+    // membership proof for a leaf they hold while deriving Allow(effect) from a
+    // body fact they do NOT hold (held forgery #3, the body↔membership-leaf gap).
+    // ========================================================================
+    constraints.push(ConstraintExpr::PiBinding {
+        col: col::BODY_HASH_START,
+        pi_index: 5,
+    });
+
+    // ========================================================================
     // C7: head_is_var_binary — flag * (flag - 1) == 0
     // ========================================================================
     for i in 0..MAX_HEAD_TERMS {
@@ -651,6 +666,11 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
             col: col::BODY_ROOT_START,
             pi_index: 0,
         },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::First,
+            col: col::BODY_HASH_START,
+            pi_index: 5,
+        },
     ];
 
     // ========================================================================
@@ -681,7 +701,7 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
         columns,
         constraints,
         boundaries,
-        public_input_count: 5, // state_root, derived_hash, not_after, org_id, budget
+        public_input_count: 6, // state_root, derived_hash, not_after, org_id, budget, body_fact_hash
         lookup_tables: vec![],
     }
 }
@@ -876,13 +896,23 @@ pub fn generate_derivation_trace_dsl(
         }
     }
 
-    // Public inputs: [state_root, derived_hash, not_after, org_id, budget]
+    // Public inputs: [state_root, derived_hash, not_after, org_id, budget, body_fact_hash]
+    // PI[5] exports body atom 0's fact hash (BODY_HASH_START) so the full-turn
+    // verifier can bind it to the c-list membership proof's authenticated leaf
+    // (closes the body↔membership-leaf gap, held forgery #3). Row 0 carries
+    // body_fact_hashes[0] at BODY_HASH_START; the empty case pins the zero the
+    // trace row itself holds.
     let public_inputs = vec![
         witness.state_root,
         derived_hash,
         witness.not_after_height,
         witness.org_id_hash,
         witness.budget_remaining,
+        witness
+            .body_fact_hashes
+            .first()
+            .copied()
+            .unwrap_or(BabyBear::ZERO),
     ];
 
     // Pad to power-of-two >= 2 (STARK requires at least 2 rows)
@@ -1242,6 +1272,7 @@ mod tests {
             witness.not_after_height,
             witness.org_id_hash,
             witness.budget_remaining,
+            witness.body_fact_hashes[0],
         ];
         wrong_pi[0] = BabyBear::new(11111); // tamper state_root
 
@@ -1294,6 +1325,31 @@ mod tests {
         assert!(
             res.is_err(),
             "SOUNDNESS: a forged state_root MUST be rejected by the audited p3 verifier"
+        );
+    }
+
+    /// ANTI-GHOST (held forgery #3): a forged `body_fact_hash` public input
+    /// (PI[5]) MUST be rejected. C6b + the boundary pin `BODY_HASH_START == pi[5]`
+    /// bind the exported body-fact PI to the derivation's actual consumed body
+    /// fact, so a prover cannot publish a body PI matching a membership leaf they
+    /// hold while deriving from a body fact they do NOT hold.
+    #[test]
+    fn p3_rejects_forged_body_fact_hash() {
+        let witness = create_test_derivation();
+        let (_, pi) = generate_derivation_trace_dsl(&witness);
+        let proof = prove_derivation_p3(&witness).expect("honest p3 proof");
+
+        // Honest PI[5] is the genuine body fact hash and must accept.
+        assert_eq!(pi[5], witness.body_fact_hashes[0]);
+        verify_derivation_p3(&proof, &pi).expect("honest body_fact PI accepts");
+
+        let mut forged = pi.clone();
+        forged[5] = forged[5] + BabyBear::new(1); // forge body_fact_hash
+        let res = verify_derivation_p3(&proof, &forged);
+        assert!(
+            res.is_err(),
+            "SOUNDNESS: a forged body_fact_hash (PI[5]) MUST be rejected — the \
+             membership-leaf binding cannot be spoofed"
         );
     }
 

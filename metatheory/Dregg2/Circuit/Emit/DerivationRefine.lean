@@ -13,13 +13,14 @@ a trace SATISFYING the whole emitted `derivationDesc` (via the deployed acceptan
 
 No prior Lean model states what this circuit computes, so §1 authors the semantic RELATION
 `DerivationStepValid`, the derivation-step IO contract (over the ℤ field model). It is a composite of
-the load-bearing teeth, spanning THIRTEEN of the descriptor's twenty-eight constraint families plus the
+the load-bearing teeth, spanning FOURTEEN of the descriptor's twenty-eight constraint families plus the
 two boundary PI pins and the C4 chip carrier — NOT a restatement of a single gate:
 
 | field                        | forced by                | meaning                                              |
 |------------------------------|--------------------------|------------------------------------------------------|
 | `publishedConclusionIsHeadFact` | C4 (chip) ∘ C6 (pin)  | the published fact `pi[1]` IS `hash_fact(head)`      |
 | `derivedHashPublished`       | C6                       | the derived hash column is the published `pi[1]`     |
+| `bodyFactHashPublished`      | C6b ∘ boundary           | body atom 0's fact hash IS the exported leaf PI `pi[5]` |
 | `stateRootCommitted`         | boundary                 | the body-root column is the committed pre-state `pi[0]` |
 | `bodyFlagsBoolean`           | C1                       | each body-membership flag is a boolean selector      |
 | `activeBodyRootsCommitted`   | C5 ∘ boundary            | every ACTIVE body atom is keyed to the committed root|
@@ -85,7 +86,7 @@ set_option maxRecDepth 8000
 
 /-- **`DerivationStepValid hash env`** — the semantic relation the Datalog derivation circuit is meant
 to compute, over the ℤ field model (`hash` is the abstract Poseidon2 permutation). A row environment
-`env` witnesses it iff the thirteen load-bearing teeth of the descriptor hold; see the file header for
+`env` witnesses it iff the fourteen load-bearing teeth of the descriptor hold; see the file header for
 the field↔constraint map. The crown is `publishedConclusionIsHeadFact`: the published conclusion IS the
 genuine hash-fact of the head predicate applied to the head terms. -/
 structure DerivationStepValid (hash : List ℤ → ℤ) (env : VmRowEnv) : Prop where
@@ -96,6 +97,10 @@ structure DerivationStepValid (hash : List ℤ → ℤ) (env : VmRowEnv) : Prop 
                       env.loc (headTerm 2), env.loc (headTerm 3), 64207, 1]
   /-- C6: the derived-hash column is the published conclusion `pi[1]`. -/
   derivedHashPublished : env.loc DERIVED_HASH = env.pub 1
+  /-- C6b: the body atom 0's fact hash is the exported membership-leaf binding `pi[5]` — the
+  consumed body fact is pinned to a PUBLIC INPUT so the full-turn verifier can bind it to the c-list
+  membership proof's authenticated leaf (closes the body↔membership-leaf gap, held forgery #3). -/
+  bodyFactHashPublished : env.loc (bodyHash 0) = env.pub 5
   /-- boundary: the body-root column is the committed pre-state root `pi[0]`. -/
   stateRootCommitted : env.loc BODY_ROOT_START = env.pub 0
   /-- C1: each body-membership flag is a boolean selector. -/
@@ -185,6 +190,9 @@ theorem lift_c5 {x} (hx : x ∈ c5) : x ∈ derivationDesc.constraints := by
 theorem lift_c6 {x} (hx : x ∈ c6) : x ∈ derivationDesc.constraints := by
   show x ∈ derivationConstraints
   simp only [derivationConstraints, List.append_assoc, List.mem_append]; tauto
+theorem lift_c6b {x} (hx : x ∈ c6b) : x ∈ derivationDesc.constraints := by
+  show x ∈ derivationConstraints
+  simp only [derivationConstraints, List.append_assoc, List.mem_append]; tauto
 theorem lift_c7 {x} (hx : x ∈ c7) : x ∈ derivationDesc.constraints := by
   show x ∈ derivationConstraints
   simp only [derivationConstraints, List.append_assoc, List.mem_append]; tauto
@@ -229,7 +237,7 @@ A trace `t` that SATISFIES the emitted `derivationDesc` (via the deployed accept
 `Satisfied2`), against a SOUND Poseidon2 chip table (the NAMED carrier
 `ChipTableSound hash (t.tf .poseidon2)`), and padded to height `≥ 2` (so row `0` is an active transition
 row), witnesses the GENUINE Datalog derivation-step relation `DerivationStepValid` on its boundary row
-`0`. Composed from the thirteen per-gate teeth + the chip carrier (`chip_lookup_sound`); no crypto axiom
+`0`. Composed from the fourteen per-gate teeth + the chip carrier (`chip_lookup_sound`); no crypto axiom
 is consumed. -/
 theorem derivation_sat_imp_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} {t : VmTrace}
@@ -242,6 +250,9 @@ theorem derivation_sat_imp_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ}
   -- C6 : derived-hash column is published pi[1].
   have hpin1 : e.loc DERIVED_HASH = t.pub 1 :=
     der_pi0 hlen hsat (lift_c6 (by simp [c6, pin]))
+  -- C6b : body atom 0's fact hash column is the exported membership-leaf PI pi[5].
+  have hpin5 : e.loc (bodyHash 0) = t.pub 5 :=
+    der_pi0 hlen hsat (lift_c6b (by simp [c6b, pin]))
   -- boundary : body-root column is committed pi[0].
   have hpin0 : e.loc BODY_ROOT_START = t.pub 0 :=
     der_pi0 hlen hsat (lift_bd (by simp [boundaries, pin]))
@@ -261,6 +272,7 @@ theorem derivation_sat_imp_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ}
   refine
     { publishedConclusionIsHeadFact := ?_
       derivedHashPublished := ?_
+      bodyFactHashPublished := ?_
       stateRootCommitted := ?_
       bodyFlagsBoolean := ?_
       activeBodyRootsCommitted := ?_
@@ -278,6 +290,7 @@ theorem derivation_sat_imp_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ}
     have : e.pub 1 = t.pub 1 := rfl
     rw [this, ← hpin1, hdig, hmapins]
   · exact hpin1
+  · exact hpin5
   · exact hpin0
   · -- C1 : flags boolean
     intro i hi
@@ -387,8 +400,10 @@ def witTf : TraceFamily := fun tid =>
   if tid = TableId.poseidon2 then [c4FactSiteTuple.map (·.eval wa)] else []
 
 /-- The witness: a 2-row trace (so row 0 is an ACTIVE transition row — the gate teeth bind) whose
-both rows carry `wa`. -/
-def witTrace : VmTrace := { rows := [wa, wa], pub := fun _ => 0, tf := witTf }
+both rows carry `wa`. `pub 5 = 1` matches the active body atom 0's fact hash (`wa (bodyHash 0) = 1`),
+so the C6b membership-leaf pin holds; every other pin reads `pub _ = 0`. -/
+def witTrace : VmTrace :=
+  { rows := [wa, wa], pub := fun i => if i = 5 then 1 else 0, tf := witTf }
 
 theorem witMemOps : memOpsOf derivationDesc = [] := by rfl
 theorem witMapOps : mapOpsOf derivationDesc = [] := by rfl
@@ -467,10 +482,12 @@ degenerate `hash [..] = 0`, every comparator/check inactive) witnesses it. -/
 theorem sem_holds :
     DerivationStepValid (fun _ => (0 : ℤ)) ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩ := by
   refine
-    { publishedConclusionIsHeadFact := ?_, derivedHashPublished := ?_, stateRootCommitted := ?_,
+    { publishedConclusionIsHeadFact := ?_, derivedHashPublished := ?_, bodyFactHashPublished := ?_,
+      stateRootCommitted := ?_,
       bodyFlagsBoolean := ?_, activeBodyRootsCommitted := ?_, headIsVarBoolean := ?_,
       headSelectorsBoolean := ?_, eqSideConditions := ?_, memberofSideConditions := ?_,
       gteHonestDiff := ?_, gteSignBitZero := ?_, ltHonestDiff := ?_, ltSignBitZero := ?_ }
+  · rfl
   · rfl
   · rfl
   · rfl

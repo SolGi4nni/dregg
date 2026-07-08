@@ -73,6 +73,10 @@ pub struct SourceDerivation {
     pub proof: StarkProof,
     /// The derived fact hash (output of this derivation).
     pub derived_fact_hash: BabyBear,
+    /// Body atom 0's fact hash — the derivation descriptor exports it as `pi[5]`
+    /// (the C6b membership-leaf binding), so the verifier must supply it. Carried
+    /// here at the same trust level as `derived_fact_hash`.
+    pub body_fact_hash: BabyBear,
     /// Optional: Merkle membership proofs for body facts used in this derivation.
     pub membership_proofs: Vec<MembershipEntry>,
 }
@@ -197,6 +201,12 @@ pub fn prove_cross_state_derivation_with_depth(
             source_root: source.source_root,
             proof,
             derived_fact_hash: derived_hash,
+            body_fact_hash: source
+                .witness
+                .body_fact_hashes
+                .first()
+                .copied()
+                .unwrap_or(BabyBear::ZERO),
             membership_proofs: source.membership_proofs.clone(),
         });
     }
@@ -362,13 +372,15 @@ pub fn verify_cross_state_derivation_with_depth(
             ));
         }
 
-        // Verify the STARK proof. Public inputs are [state_root, derived_fact_hash, 0, 0, 0].
+        // Verify the STARK proof. Public inputs are
+        // [state_root, derived_fact_hash, 0, 0, 0, body_fact_hash].
         let public_inputs = vec![
             source.source_root,
             source.derived_fact_hash,
             BabyBear::ZERO,
             BabyBear::ZERO,
             BabyBear::ZERO,
+            source.body_fact_hash,
         ];
         crate::derivation_air::verify_derivation_stark(&source.proof, &public_inputs)
             .map_err(|e| format!("Source derivation {} STARK verification failed: {}", i, e))?;
@@ -385,13 +397,19 @@ pub fn verify_cross_state_derivation_with_depth(
         ));
     }
 
-    // Check 4: Verify the final derivation STARK under the composition root.
+    // Check 4: Verify the final derivation STARK under the composition root. The final
+    // derivation's body facts are the intermediate derived-fact hashes, so its exported
+    // body-fact PI (pi[5], C6b) is the first intermediate fact (body atom 0).
     let final_public_inputs = vec![
         proof.composition_root,
         proof.final_derived_hash,
         BabyBear::ZERO,
         BabyBear::ZERO,
         BabyBear::ZERO,
+        intermediate_facts
+            .first()
+            .copied()
+            .unwrap_or(BabyBear::ZERO),
     ];
     crate::derivation_air::verify_derivation_stark(&proof.final_derivation, &final_public_inputs)
         .map_err(|e| format!("Final derivation STARK verification failed: {}", e))?;
