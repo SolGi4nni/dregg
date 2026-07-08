@@ -67,6 +67,11 @@ FALSE POSITIVES (already done): `turn/aggregate_bilateral_prover.rs` (already Ir
   air-name→descriptor analog) + depth-general membership descriptor builder. Round-trip-gated
   (name→desc→prove→verify per kind; depth-{2,4,8}), adversarially verified. On CONFIRMED: verify on my
   tree + commit, then Gate 2 (the coordinated ~15-site consumer swap).
+- ✅ GATE 1 LANDED (commit pending-hash): `descriptor_by_name` (fail-closed dispatch, 9 goldens) +
+  `membership_descriptor_of_depth` (genuinely var-depth, depth-8-load-bearing proven). 19 tests green
+  on my tree, adversarially CONFIRMED. Residual: Rung-2 depth-general Lean lift (named follow-on).
+- GATE 2 NEXT: coordinated swap of the 15 consumer sites (scout §2/§3 map) onto descriptor_by_name +
+  the foundations. cargo check --workspace iterate → one build → Gate 3 runtime validation.
 
 ## Current thrust — PARKED at a clean milestone (ember hold, 2026-07-07)
 **Rung 0 + Rung 1 + Rung 2 ALL COMPLETE and committed.** Every one of the ~20 emitted
