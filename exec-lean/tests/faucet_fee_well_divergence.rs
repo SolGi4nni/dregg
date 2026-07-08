@@ -147,6 +147,83 @@ fn ledgers_agree(
     Ok(())
 }
 
+/// Run a faucet-shaped `Transfer` at `block_height` (amount + `fee`, with a fee well configured)
+/// through both producers and return `Ok(())` on full agreement (state + `.root()`), else the first
+/// divergence. Mirrors `lean_state_producer_widen::diff`, threading the fee well + a non-zero fee +
+/// the host chain height. At `block_height > 0` this also exercises the PI-v3 committed-height stamp.
+fn run_faucet_at(amount: u64, fee: u64, block_height: u64) -> Result<(), String> {
+    let faucet = make_open_cell(1, 1_000_000);
+    let recipient = make_open_cell(2, 0);
+    let fee_well = make_open_cell(9, 0);
+    let faucet_id = faucet.id();
+    let recipient_id = recipient.id();
+    let fee_well_id = fee_well.id();
+
+    let mut pre = Ledger::new();
+    pre.insert_cell(faucet).unwrap();
+    pre.insert_cell(recipient).unwrap();
+    pre.insert_cell(fee_well).unwrap();
+
+    let turn = transfer_turn(faucet_id, faucet_id, recipient_id, amount, fee);
+
+    // RUST reference: zero computron costs + a fee well + the chain height set to `block_height`
+    // (the executor stamps `committed_height = self.block_height` onto every forest-touched cell).
+    let mut executor = TurnExecutor::new(ComputronCosts::zero());
+    executor.set_fee_well_cell(fee_well_id);
+    executor.set_block_height(block_height);
+    let mut rust_ledger = pre.clone();
+    let rust_result = executor.execute(&turn, &mut rust_ledger);
+    if !rust_result.is_committed() {
+        return Err(format!("Rust executor did not commit: {rust_result:?}"));
+    }
+
+    // LEAN producer: the host ctx carries the SAME fee well AND the SAME block height, so the
+    // reconstitution replays the identical host fee move + committed-height stamp.
+    let host = ShadowHostCtx {
+        block_height,
+        fee_well_cell: Some(fee_well_id),
+        ..ShadowHostCtx::diag()
+    };
+    let (mut lean_ledger, lean_committed) =
+        execute_via_lean(&turn, &pre, &host).map_err(|e| format!("Lean producer errored: {e}"))?;
+    if !lean_committed {
+        return Err("commit-bit divergence: Rust committed, Lean did not".to_string());
+    }
+
+    let ids = [
+        ("faucet", faucet_id),
+        ("recipient", recipient_id),
+        ("fee_well", fee_well_id),
+    ];
+    ledgers_agree(&mut rust_ledger, &mut lean_ledger, &ids)?;
+
+    // Pin the committed-height stamp on both forest-touched cells (source + dest), matching Rust.
+    if block_height != 0 {
+        for (name, id) in [("faucet", faucet_id), ("recipient", recipient_id)] {
+            let h = lean_ledger.get(&id).unwrap().state.committed_height();
+            if h != block_height {
+                return Err(format!(
+                    "committed_height not stamped on {name}: got {h}, want {block_height}"
+                ));
+            }
+        }
+        // The fee well is a Phase-3 recipient (credited AFTER the committed-height loop), so it is
+        // NOT stamped — its height stays at the pre-state 0 in BOTH producers.
+        let wh = lean_ledger
+            .get(&fee_well_id)
+            .unwrap()
+            .state
+            .committed_height();
+        if wh != 0 {
+            return Err(format!(
+                "fee well was stamped with committed_height {wh} (should stay 0 — it is a \
+                 Phase-3 fee recipient, not a forest-touched cell)"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Run a faucet-shaped `Transfer` (amount + `fee`, with a fee well configured) through both
 /// producers and return `Ok(())` on full agreement (state + `.root()`), else the first divergence.
 /// Mirrors `lean_state_producer_widen::diff`, threading the fee well + a non-zero fee.
@@ -238,5 +315,45 @@ fn fee_family_agrees() {
     }
     for fee in [1u64, 10, 100, 1000, 9999] {
         run_faucet(100, fee).unwrap_or_else(|e| panic!("fee={fee} must agree: {e}"));
+    }
+}
+
+/// THE SWAP AUTHORITY-INVERSION GOLDEN (agents `4a8882bb` / `12d4e7e6`, live cross-machine mesh):
+/// a fee-bearing `Transfer` at a NON-ZERO chain height. The Rust executor stamps
+/// `committed_height = block_height` onto every forest-touched cell (source + dest) and folds it into
+/// the canonical commitment; the verified-Lean producer's `WireState → Ledger` extractor DROPPED that
+/// host-stamped limb (the kernel models no committed-height column), so `lean_root != rust_root` for
+/// EVERY committing covered turn at height > 0 — surfacing as "THE SWAP authority inversion" under
+/// cross-machine reorg (covered turns re-executed at real heights). Mirrors the funded-client payoff
+/// shape (`node/tests/payoff_client_turn.rs`): amount 1000, fee 5000, off a funded balance.
+///
+/// FAILS BEFORE the fix with `ROOT divergence` (the committed-height stamp missing on the Lean side);
+/// PASSES AFTER — the `apply_committed_height` replay stamps the identical host height on the same
+/// forest-touched cells. The `fee_transfer_with_fee_well_agrees` zero-height sibling proves the fix is
+/// a no-op at height 0 (so this is the NON-VACUOUS delta: same turn, only the height differs).
+#[test]
+fn swap_inversion_committed_height_transfer_agrees() {
+    if skip_no_lean() {
+        return;
+    }
+    // The exact payoff shape (funded client Transfer: amount 1000, fee 5000) at a live chain height.
+    run_faucet_at(1_000, 5_000, 4_812).expect(
+        "THE SWAP authority-inversion golden: a fee-bearing Transfer at block_height > 0 must agree \
+         on state + .root() (the committed-height stamp must be replayed on the Lean side)",
+    );
+}
+
+/// The committed-height replay is the SAME deterministic host stamp across a range of heights and
+/// fees — pins that the fix is not height-0-specific and never re-introduces the divergence.
+#[test]
+fn committed_height_family_agrees() {
+    if skip_no_lean() {
+        return;
+    }
+    for height in [1u64, 2, 100, 65_536, 1_000_000] {
+        for fee in [0u64, 297, 5_000] {
+            run_faucet_at(1_000, fee, height)
+                .unwrap_or_else(|e| panic!("height={height} fee={fee} must agree: {e}"));
+        }
     }
 }

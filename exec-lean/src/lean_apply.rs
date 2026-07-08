@@ -1258,6 +1258,133 @@ pub(crate) fn apply_fee_distribution(
     }
 }
 
+/// PI-v3 COMMITTED-HEIGHT REPLAY (the host-height root-gap close — the SAME lever as
+/// [`apply_fee_distribution`]).
+///
+/// After a committing turn the Rust executor advances every FOREST-TOUCHED cell's `committed_height`
+/// to the current chain height (`turn/src/executor/execute.rs`, "PI v3 committed-height column"):
+/// for each cell a journal entry touched, `if old_height != block_height { set_committed_height(
+/// block_height) }`. `committed_height` FOLDS INTO `compute_canonical_state_commitment` (the last
+/// commitment limb), so a non-zero chain height MOVES the cell leaf.
+///
+/// The value is HOST data (the block height) the wire grammar does not carry — the verified kernel
+/// models no committed-height column — so the `WireState → Ledger` extractor leaves each
+/// reconstituted cell at its PRE-state height, and a covered turn at `block_height > 0` diverged on
+/// `.root()` (the touched cells carried height 0 in the Lean-produced ledger, the real chain height
+/// in the Rust one). Every prior differential ran at height 0, where the stamp is a no-op
+/// (`old == 0 == block_height`), so the gap stayed latent until the live cross-machine mesh ran at
+/// real heights — exactly the reported "THE SWAP authority inversion" on the faucet/payoff `Transfer`
+/// turns (agents `4a8882bb` / `12d4e7e6`): `lean_committed == rust_committed == true` but
+/// `lean_root != rust_root`, the covered set's residual Rust↔Lean root disagreement.
+///
+/// We close it the SAME way [`apply_fee_distribution`] closes the host fee MOVE: replay the EXACT
+/// Rust stamp — the forest write-set (mirroring apply.rs's journal-touched loop), gated on the
+/// verified commit bit, only where `old != block_height`. Both producers then bind the identical host
+/// height and agree on `.root()`, WITHOUT changing the verified spec (whose state carries no
+/// committed-height column — it is the host's temporal-binding seam, exactly like the fee policy).
+///
+/// The stamp set MIRRORS `execute.rs`'s journal-touched loop: the forest EFFECT write-set ONLY, never
+/// the turn-level prologue (the fee debit + nonce bump are UNjournaled) nor the Phase-3 fee recipients
+/// (credited AFTER the committed-height loop). A `Transfer` stamps `{from, to}`; a pure fee/nonce
+/// bump of the agent does NOT stamp it — the agent is stamped only when a forest effect writes it
+/// (e.g. it is the transfer source), which is why stamping `execute.rs`'s journal set (not the
+/// kernel's full re-emitted cell set, which carries the prologue-nonce-bumped agent) is faithful.
+pub(crate) fn apply_committed_height(
+    ledger: &mut Ledger,
+    turn: &Turn,
+    block_height: u64,
+    committed: bool,
+) {
+    if !committed {
+        return;
+    }
+    for cell_id in committed_height_touched_cells(turn) {
+        if let Some(c) = ledger.get_mut(&cell_id) {
+            // Mirror apply.rs EXACTLY: only stamp when the height actually advances (a no-op at
+            // `block_height == 0`, and idempotent on re-execution at the same height). The
+            // `get_mut` handoff also invalidates the leaf cache so `root()` recomputes the leaf.
+            if c.state.committed_height() != block_height {
+                c.state.set_committed_height(block_height);
+            }
+        }
+    }
+}
+
+/// The FOREST WRITE-SET whose cells `execute.rs` stamps with `committed_height` — the cells the
+/// executor's journal records a mutation for, per committed forest effect. Mirrors apply.rs's
+/// per-effect `journal.record_*` targets byte-for-byte (verified against the journal-touched loop):
+/// e.g. `Transfer` journals `SetBalance{from}` + `SetBalance{to}`, `GrantCapability` journals the
+/// `to` holder, `RevokeDelegation` journals both the parent (action target) epoch bump and the child
+/// snapshot. Effects that touch NO cell commitment (`NoteSpend`/`NoteCreate` edit the off-root note
+/// set; `MakeSovereign` removes the cell) contribute nothing, matching the journal.
+///
+/// CHARACTERIZED RESIDUAL: `Burn` also journals its per-asset ISSUER WELL (a host-derived cell id
+/// `apply_burn` resolves/creates), which the turn does not name, so this write-set stamps only the
+/// `target` and the well's committed-height is left to the (separate) issuer-well reconstitution.
+/// The live SWAP-inversion is a fee-bearing `Transfer` (both endpoints named), which is exact here.
+fn committed_height_touched_cells(turn: &Turn) -> std::collections::BTreeSet<CellId> {
+    fn walk(tree: &CallTree, out: &mut std::collections::BTreeSet<CellId>) {
+        let action_target = tree.action.target;
+        for eff in &tree.action.effects {
+            match eff {
+                Effect::Transfer { from, to, .. } => {
+                    out.insert(*from);
+                    out.insert(*to);
+                }
+                Effect::SetField { cell, .. }
+                | Effect::EmitEvent { cell, .. }
+                | Effect::IncrementNonce { cell }
+                | Effect::RevokeCapability { cell, .. }
+                | Effect::SetPermissions { cell, .. }
+                | Effect::SetVerificationKey { cell, .. }
+                | Effect::AttenuateCapability { cell, .. }
+                | Effect::Refusal { cell, .. } => {
+                    out.insert(*cell);
+                }
+                // Grant/Introduce journal the RECIPIENT holder (`record_grant_capability(*to)` /
+                // `record_grant_capability(*recipient)`) — the cell whose c-list gains the edge.
+                Effect::GrantCapability { to, .. } => {
+                    out.insert(*to);
+                }
+                Effect::Introduce { recipient, .. } => {
+                    out.insert(*recipient);
+                }
+                Effect::CellSeal { target, .. }
+                | Effect::CellUnseal { target }
+                | Effect::CellDestroy { target, .. }
+                | Effect::Burn { target, .. } => {
+                    out.insert(*target);
+                }
+                // Revoke journals BOTH the parent epoch bump (action target) and the child snapshot.
+                Effect::RevokeDelegation { child } => {
+                    out.insert(action_target);
+                    out.insert(*child);
+                }
+                // Self-refresh journals `SetDelegation{action_target}` (child == action target).
+                Effect::RefreshDelegation { child, .. } => {
+                    out.insert(*child);
+                }
+                // ReceiptArchive journals `SetLifecycle{action_target}` (its cell IS the target).
+                Effect::ReceiptArchive { .. } => {
+                    out.insert(action_target);
+                }
+                // MakeSovereign REMOVES the cell (no surviving leaf); NoteSpend/NoteCreate edit the
+                // off-root note set, not a cell commitment. Effects outside the root-agreeing set
+                // fence the whole turn onto the Rust path, so they never reach this replay.
+                _ => {}
+            }
+        }
+        for child in &tree.children {
+            walk(child, out);
+        }
+    }
+    let mut out = std::collections::BTreeSet::new();
+    for root in &turn.call_forest.roots {
+        walk(root, &mut out);
+    }
+    out
+}
+
 /// Drive a turn through the VERIFIED Lean executor and reconstitute the authoritative `Ledger` from
 /// the post-state it produces — the full state-producer path (install the verified executor's
 /// output). Returns the reconstituted ledger AND the commit bit.
@@ -1318,6 +1445,10 @@ pub fn execute_via_lean(
     // the touched cells so a fee-bearing turn agrees with the Rust executor's `.root()`. Gated on the
     // verified commit bit; no-op when `fee == 0`.
     apply_fee_distribution(&mut ledger, host, turn.agent, turn.fee, committed);
+    // PI-v3 committed-height replay: stamp each forest-touched cell's `committed_height` to the host
+    // block height (the extractor drops this host-stamped commitment limb, exactly as it dropped the
+    // fee move). Gated on the commit bit; a no-op at height 0. Closes the covered-set root divergence.
+    apply_committed_height(&mut ledger, turn, host.block_height, committed);
     if prof {
         let t3 = std::time::Instant::now();
         prof_outer_accum(
@@ -1420,6 +1551,10 @@ pub(crate) fn lean_post_state_root(
     // reconstituted root must reflect the host's real fee move (agent debit + distribution), since
     // the verified kernel debits the record + distributes to placeholder cells the extractor drops.
     apply_fee_distribution(&mut ledger, host, turn.agent, turn.fee, committed);
+    // PI-v3 committed-height replay (same lever as the fee replay): the denotational differential's
+    // reconstituted root must reflect the host height stamp the Rust executor folds into every
+    // forest-touched cell's commitment, else the shadow root diverges at `block_height > 0`.
+    apply_committed_height(&mut ledger, turn, host.block_height, committed);
     Ok(ledger.root())
 }
 
