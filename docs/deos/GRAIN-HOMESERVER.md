@@ -191,10 +191,43 @@ continuwuity grain (TCP, the membrane's transport):
      dir (covered by door #1) — but matrix-sdk clients dial HTTP/TCP, so this suits a same-host bridge,
      not the membrane's remote clients.
 
-Both doors are named, deny-default, revocable — concrete extensions of the existing egress grant
-surface. DESIGN-FIRST (kernel-adjacent); the confined spawn = `spawn_pd_confined_with_surface_and_egress`
-a body that calls `EmbeddedHomeserver::start` with {read_write=db_dir, listen=host:port}. `execve`
-stays denied (lib-embed). NOT a thin-context swarm.
+## Firmament confined-spawn architecture (de-risked spec → the kernel build, 2026-07-07)
+
+The de-risk (`deos-homeserver/sandbox/homeserver.sb`) PROVED viability + handed the exact SBPL. But
+grounding `sel4/dregg-firmament/src/sandbox.rs` shows the real shape: today's `Confinement` is the
+maximally-tight AGENT jail — `read_paths` + `net_out` only, and by design **NO `mach-lookup*`, NO
+`process-exec*`**. A heavy rocksdb+tokio homeserver needs MORE. So this is not one method — it is a
+second **heavy-body confinement TIER** beside the lightweight agent tier (additive: an all-empty
+`Confinement` is exactly today's behavior). The tier `Confinement` gains, each emitting the de-risk's
+proven SBPL:
+- `write_paths: Vec<String>` (`with_write_path`) → `(allow file-write* (subpath …))` — the ONE db-dir
+  write door (canonical `/private/var/…` path; proven exclusive).
+- `listen_addrs: Vec<String>` (`with_listen`) → `(allow network-inbound (local ip …))` + `network-bind`
+  — loopback-only, inbound-only (federation off ⇒ no outbound).
+- `mach_services: Vec<String>` (`with_mach_service`) → a NAMED allow-list (`(allow mach-lookup
+  (global-name …))` × the de-risk's 10: notifyd/logger/opendirectoryd/trustd/SecurityServer/configd/
+  coreservicesd/diagnosticd/…), NOT blanket `mach-lookup`.
+- a **system-read bundle** (`with_system_reads()`): `/`(!), `/usr/lib`, `/System`, `/dev/{null,random,
+  urandom}`, `/etc`+`/private/etc`, `/private/var/db/timezone`, the brew rocksdb keg stack — the
+  `/`-read is the SIGABRT-pre-main gotcha (dyld firmlink resolution).
+- **exec-one-image** (`with_exec_image(path)`) → `(allow process-exec (literal <deos-homeserver bin>))`
+  + `process-fork`. THE ARCHITECTURE CHOICE: firmament EXECs the `deos-homeserver` BINARY as the PD
+  body (not a linked closure — linking continuwuity into firmament hits the isolated-ws/1.96.1
+  toolchain wall). So `execve` is granted for EXACTLY the one bin image, then continuwuity runs
+  lib-embedded inside it (no further exec). This revises the earlier "execve stays denied" — it is
+  denied for everything EXCEPT the one named grain image, the "grant execve of exactly the image" door.
+
+**The confined spawn** = `spawn_pd_confined_with_surface_and_egress` execs `<deos-homeserver bin>`
+under a `Confinement` carrying {write=db_dir, listen=127.0.0.1:port, mach=the 10, system-reads,
+exec-image=the bin}. Integration test (mirrors the de-risk, but through firmament's own spawner):
+assert it serves `GET /versions → 200` confined, and that a sibling-path write / a second port / an
+unlisted mach service are each denied. Expect the benign `DEVNAME not found` in the log (no grant).
+
+⚑ THIS IS A FOUNDATIONAL CONFINEMENT-MODEL EXPANSION (a new tier + exec-one-image) in shared firmament
+— DESIGN-DONE + DE-RISKED, but the BUILD is ember-aware kernel work, a deliberate lane, not a swarm.
+
+The confined spawn (summary): `spawn_pd_confined_with_surface_and_egress` execs the grain bin under the
+heavy-body `Confinement` above. NOT a thin-context swarm.
 
 ## The sequence (app layer now; the firmament doors design-first)
 
