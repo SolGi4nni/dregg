@@ -64,7 +64,7 @@
 //! * **combined-signature flooding only** — per-signer partials ride
 //!   full-range Lagrange coefficients; the real threshold scheme's
 //!   per-party masking/shortness story is out of scope;
-//! * **realistic-ward, not production, parameters** — `n = 64` with the
+//! * **realistic-ward, not production, parameters** — `n = 256` (the production dimension) with the
 //!   Dilithium prime `q = 8380417` (NTT-friendly, real-modulus arithmetic;
 //!   the hiding/shortness gap is now real headroom, not a demonstration
 //!   sliver), but production Hermine needs `n ≥ 256` and vetted `k×ℓ`/σ

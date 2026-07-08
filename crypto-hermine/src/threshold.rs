@@ -105,13 +105,13 @@ fn sample_short_vec(state: &mut u64, len: usize, eta: u64) -> PolyVec {
 
 /// The default flooding width `M` used by [`hermine_sign`].
 ///
-/// Chosen for the current parameters (`N = 64`, `q = 8380417`) so that BOTH
+/// Chosen for the current parameters (`N = 256`, `q = 8380417`) so that BOTH
 /// sides of the trade hold at threshold `t = 3`:
 /// * **hiding** — the smudging leakage `‖c·s‖∞ / M ≤ 128/2²¹ ≈ 0.006%` per
 ///   coefficient (ternary `c`, secret `‖s‖∞ ≤` [`SECRET_ETA`], so the shift
-///   is `≤ N·1·η = 128`);
+///   is `≤ N·1·η = 512`);
 /// * **shortness** — the combined honest signature stays wrap-free and
-///   genuinely short: `t·(M/2) + 128 = 3145856 < ⌊q/2⌋ = 4190208`, so the
+///   genuinely short: `t·(M/2) + 512 = 3146240 < ⌊q/2⌋ = 4190208`, so the
 ///   [`acceptance_bound`] has teeth.
 ///
 /// Production parameter sets widen this gap further still (larger `n`,
@@ -1033,7 +1033,7 @@ mod tests {
     /// component — the observable whose distribution the Smudging spec
     /// bounds. Pooling coefficients (each carries its own independent mask
     /// noise) gives `count·N` samples per run, which is what keeps the
-    /// empirical TV cheap at `N = 64`.
+    /// empirical TV cheap (NTT keeps it fast at `N = 256`).
     fn z_coeff_samples(
         d: &HermineTestDealer,
         count: usize,

@@ -1,19 +1,19 @@
 //! `R_q = ℤ_q[X]/(Xⁿ+1)` — the negacyclic polynomial quotient ring the Lean
 //! spec's abstract `CommRing R` is instantiated at for this reference.
 //!
-//! Realistic-ward parameters (`N = 64`, `Q = 8380417`, the Dilithium prime
+//! Production parameters (`N = 256`, `Q = 8380417`, the Dilithium prime
 //! `2²³ − 2¹³ + 1`; `2N | Q − 1`, so the ring is NTT-friendly). Multiplication
 //! ([`Poly::mul`]) is the **NTT** path — `O(n log n)`, the production-shaped
 //! algorithm — with the schoolbook `O(n²)` convolution ([`Poly::mul_schoolbook`])
 //! retained as the reference it is verified against. It is still a REFERENCE in
-//! the other senses (trusted dealer, toy dimension `N = 64` vs the production
-//! `n ≥ 256`, pre-audit); the NTT makes bumping to `n ≥ 256` cheap.
+//! the other senses (trusted dealer, pre-audit) — but with NTT it now runs at
+//! the REAL production dimension `N = 256`, not a toy one.
 
 use std::sync::OnceLock;
 
 /// Ring dimension `n` in `Xⁿ + 1`. Production target is `n ≥ 256`; this
-/// reference runs at 64 (see the module doc).
-pub const N: usize = 64;
+/// this reference runs at the production dimension 256 (see the module doc).
+pub const N: usize = 256;
 
 /// The coefficient modulus `q` (prime; `8380417 = 2²³ − 2¹³ + 1`, the
 /// Dilithium prime — `2¹³ | q − 1`, so negacyclic NTTs exist up to `n = 2¹²`).
