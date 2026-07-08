@@ -180,6 +180,23 @@ fn out_dir() -> PathBuf {
     dir
 }
 
+/// A bind-span matcher that pins slot/fmt/label/value but not the tree-walk
+/// `data-bind-index` (a cursor that shifts when a card gains binds).
+fn bind_span(frag: &str, slot: u32, fmt: &str, label: &str, shown: &str) -> bool {
+    let head = format!("data-slot=\"{slot}\" data-bind-index=\"");
+    let tail = format!("\" data-fmt=\"{fmt}\" data-label=\"{label}\">{shown}</span>");
+    let mut rest = frag;
+    while let Some(i) = rest.find(&head) {
+        let after = &rest[i + head.len()..];
+        let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && after[digits..].starts_with(&tail) {
+            return true;
+        }
+        rest = &rest[i + head.len()..];
+    }
+    false
+}
+
 fn main() {
     let out = out_dir();
 
@@ -376,9 +393,9 @@ fn main() {
         "each Row paints its named tally's label"
     );
     assert!(
-        frag_tally.contains("data-slot=\"0\" data-fmt=\"raw\" data-label=\"\">3</span>")
-            && frag_tally.contains("data-slot=\"1\" data-fmt=\"raw\" data-label=\"\">1</span>")
-            && frag_tally.contains("data-slot=\"2\" data-fmt=\"raw\" data-label=\"\">4</span>"),
+        bind_span(&frag_tally, 0, "raw", "", "3")
+            && bind_span(&frag_tally, 1, "raw", "", "1")
+            && bind_span(&frag_tally, 2, "raw", "", "4"),
         "each Row's Bind paints its slot's seeded value (3 / 1 / 4)"
     );
     assert!(
@@ -429,9 +446,9 @@ fn main() {
         "the store renders a version Row + a Table of four register Rows"
     );
     assert!(
-        frag_kv.contains("data-slot=\"0\" data-fmt=\"raw\" data-label=\"\">4</span>")
-            && frag_kv.contains("data-slot=\"1\" data-fmt=\"raw\" data-label=\"\">10</span>")
-            && frag_kv.contains("data-slot=\"4\" data-fmt=\"raw\" data-label=\"\">40</span>"),
+        bind_span(&frag_kv, 0, "raw", "", "4")
+            && bind_span(&frag_kv, 1, "raw", "", "10")
+            && bind_span(&frag_kv, 4, "raw", "", "40"),
         "the version + register Binds paint their seeded values (version 4; regs 10/40)"
     );
     assert!(
