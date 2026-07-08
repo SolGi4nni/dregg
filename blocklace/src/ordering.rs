@@ -155,29 +155,57 @@ fn causal_past_inclusive(
     cache.past(blocklace, block_id)
 }
 
-/// Check if a creator has equivocated (produced multiple blocks at the same round)
-/// as visible from a given block's causal past.
-fn has_equivocation_in_past(
-    cache: &PastCache,
-    blocklace: &Blocklace,
-    rounds: &HashMap<BlockId, u64>,
-    observer: &BlockId,
-    creator: &[u8; 32],
-) -> bool {
-    let past = causal_past_inclusive(cache, blocklace, observer);
+/// Precomputed once per ordering call: every creator that equivocates *somewhere*
+/// in the (rounded) blocklace, mapped to its conflicting-block groups.
+///
+/// A creator equivocates at a round when it has ≥2 distinct blocks assigned that
+/// round; the group holds those block ids. A creator absent from the index never
+/// equivocates anywhere, so any observer-visibility query for it is trivially
+/// `false` — the common case, now one `HashMap` miss instead of re-scanning the
+/// observer's whole causal past. The old `has_equivocation_in_past` rebuilt an
+/// O(|past|) `round → Vec` map on *every* `approves` call, and `ratifies` /
+/// `is_super_ratified` call `approves` O(waves·P·N²) times per `tau`, so this was
+/// the dominant term in Rust `tau` finality.
+///
+/// `equivocates_in_past` is byte-identical to the previous per-observer scan: a
+/// creator is a visible equivocator from an observer iff the observer's inclusive
+/// causal past contains ≥2 of that creator's blocks at one round — i.e. ≥2 members
+/// of one precomputed group.
+struct EquivocationIndex {
+    by_creator: HashMap<[u8; 32], Vec<Vec<BlockId>>>,
+}
 
-    // Group blocks in the past by (creator, round).
-    let mut by_round: HashMap<u64, Vec<BlockId>> = HashMap::new();
-    for &bid in past.iter() {
-        if let Some(block) = blocklace.get(&bid)
-            && &block.creator == creator
-            && let Some(&round) = rounds.get(&bid)
-        {
-            by_round.entry(round).or_default().push(bid);
+impl EquivocationIndex {
+    /// Build the index from the round assignment used for this ordering call.
+    /// Only blocks that received a round participate — matching the old scan,
+    /// which skipped past blocks with no round (e.g. non-participant blocks under
+    /// `compute_rounds_filtered`).
+    fn build(blocklace: &Blocklace, rounds: &HashMap<BlockId, u64>) -> Self {
+        let mut groups: HashMap<([u8; 32], u64), Vec<BlockId>> = HashMap::new();
+        for (id, block) in &blocklace.blocks {
+            if let Some(&round) = rounds.get(id) {
+                groups.entry((block.creator, round)).or_default().push(*id);
+            }
         }
+        let mut by_creator: HashMap<[u8; 32], Vec<Vec<BlockId>>> = HashMap::new();
+        for ((creator, _round), ids) in groups {
+            if ids.len() > 1 {
+                by_creator.entry(creator).or_default().push(ids);
+            }
+        }
+        Self { by_creator }
     }
 
-    by_round.values().any(|blocks| blocks.len() > 1)
+    /// Whether `creator` has an equivocation visible from `past` (an inclusive
+    /// causal past): ≥2 blocks of some conflicting-block group lie in `past`.
+    fn equivocates_in_past(&self, creator: &[u8; 32], past: &HashSet<BlockId>) -> bool {
+        match self.by_creator.get(creator) {
+            None => false,
+            Some(groups) => groups
+                .iter()
+                .any(|group| group.iter().filter(|b| past.contains(*b)).count() > 1),
+        }
+    }
 }
 
 // ─── Wave / Leader helpers ───────────────────────────────────────────────────
@@ -247,7 +275,7 @@ pub fn supermajority_threshold(n: usize) -> usize {
 fn approves(
     cache: &PastCache,
     blocklace: &Blocklace,
-    rounds: &HashMap<BlockId, u64>,
+    equiv: &EquivocationIndex,
     observer: &BlockId,
     leader_id: &BlockId,
     leader_creator: &[u8; 32],
@@ -260,7 +288,7 @@ fn approves(
     }
 
     // No equivocation by the leader's creator visible from the observer.
-    !has_equivocation_in_past(cache, blocklace, rounds, observer, leader_creator)
+    !equiv.equivocates_in_past(leader_creator, &past)
 }
 
 /// Check if block `observer` ratifies leader block `leader_id`.
@@ -270,7 +298,7 @@ fn approves(
 fn ratifies(
     cache: &PastCache,
     blocklace: &Blocklace,
-    rounds: &HashMap<BlockId, u64>,
+    equiv: &EquivocationIndex,
     observer: &BlockId,
     leader_id: &BlockId,
     leader_creator: &[u8; 32],
@@ -287,7 +315,7 @@ fn ratifies(
             past.iter().any(|&bid| {
                 if let Some(block) = blocklace.get(&bid) {
                     block.creator == participant
-                        && approves(cache, blocklace, rounds, &bid, leader_id, leader_creator)
+                        && approves(cache, blocklace, equiv, &bid, leader_id, leader_creator)
                 } else {
                     false
                 }
@@ -306,6 +334,7 @@ fn is_super_ratified(
     cache: &PastCache,
     blocklace: &Blocklace,
     rounds: &HashMap<BlockId, u64>,
+    equiv: &EquivocationIndex,
     leader_id: &BlockId,
     leader_creator: &[u8; 32],
     wave_end_round: u64,
@@ -328,7 +357,7 @@ fn is_super_ratified(
             if ratifies(
                 cache,
                 blocklace,
-                rounds,
+                equiv,
                 block_id,
                 leader_id,
                 leader_creator,
@@ -351,6 +380,7 @@ fn find_all_final_leaders(
     cache: &PastCache,
     blocklace: &Blocklace,
     rounds: &HashMap<BlockId, u64>,
+    equiv: &EquivocationIndex,
     max_round: u64,
     participants: &[[u8; 32]],
     config: &OrderingConfig,
@@ -389,6 +419,7 @@ fn find_all_final_leaders(
                 cache,
                 blocklace,
                 rounds,
+                equiv,
                 &leader_id,
                 &leader_key,
                 wave_end,
@@ -499,8 +530,16 @@ pub fn tau_with_config(
 
     let cache = PastCache::new();
     let (rounds, max_round) = compute_rounds(blocklace);
-    let final_leaders =
-        find_all_final_leaders(&cache, blocklace, &rounds, max_round, participants, config);
+    let equiv = EquivocationIndex::build(blocklace, &rounds);
+    let final_leaders = find_all_final_leaders(
+        &cache,
+        blocklace,
+        &rounds,
+        &equiv,
+        max_round,
+        participants,
+        config,
+    );
 
     let mut ordered = Vec::new();
     let mut prev_covered: HashSet<BlockId> = HashSet::new();
@@ -524,7 +563,7 @@ pub fn tau_with_config(
                 && ratifies(
                     &cache,
                     blocklace,
-                    &rounds,
+                    &equiv,
                     id,
                     leader_id,
                     &leader_creator,
@@ -538,13 +577,14 @@ pub fn tau_with_config(
 
         // Blocks new to this leader's segment: in coverage but not in
         // any previous leader's coverage.
+        let leader_past = causal_past_inclusive(&cache, blocklace, leader_id);
         let new_blocks: HashSet<BlockId> = coverage
             .difference(&prev_covered)
             .copied()
             .filter(|bid| {
                 // Exclude blocks from creators that equivocated (as visible from leader).
                 if let Some(block) = blocklace.get(bid) {
-                    !has_equivocation_in_past(&cache, blocklace, &rounds, leader_id, &block.creator)
+                    !equiv.equivocates_in_past(&block.creator, &leader_past)
                 } else {
                     false
                 }
@@ -806,10 +846,18 @@ pub fn tau_unified(
     // Use filtered rounds (only participant blocks contribute to wave structure).
     let cache = PastCache::new();
     let (rounds, max_round) = compute_rounds_filtered(blocklace, reference_group);
+    let equiv = EquivocationIndex::build(blocklace, &rounds);
 
     // Find finalized leaders using filtered rounds (only considers participant blocks).
-    let final_leaders =
-        find_all_final_leaders(&cache, blocklace, &rounds, max_round, participants, config);
+    let final_leaders = find_all_final_leaders(
+        &cache,
+        blocklace,
+        &rounds,
+        &equiv,
+        max_round,
+        participants,
+        config,
+    );
 
     let mut ordered = Vec::new();
     let mut prev_covered: HashSet<BlockId> = HashSet::new();
@@ -831,7 +879,7 @@ pub fn tau_unified(
                 && ratifies(
                     &cache,
                     blocklace,
-                    &rounds,
+                    &equiv,
                     id,
                     leader_id,
                     &leader_creator,
@@ -845,6 +893,7 @@ pub fn tau_unified(
 
         // Blocks new to this leader's segment: in coverage but not previously covered.
         // FILTER: only include blocks from reference group participants.
+        let leader_past = causal_past_inclusive(&cache, blocklace, leader_id);
         let new_blocks: HashSet<BlockId> = coverage
             .difference(&prev_covered)
             .copied()
@@ -852,13 +901,7 @@ pub fn tau_unified(
                 if let Some(block) = blocklace.get(bid) {
                     // Only include blocks from participants (not external strands).
                     participant_set.contains(&block.creator)
-                        && !has_equivocation_in_past(
-                            &cache,
-                            blocklace,
-                            &rounds,
-                            leader_id,
-                            &block.creator,
-                        )
+                        && !equiv.equivocates_in_past(&block.creator, &leader_past)
                 } else {
                     false
                 }
