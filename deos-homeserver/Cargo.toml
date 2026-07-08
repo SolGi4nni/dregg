@@ -1,0 +1,27 @@
+# deos-homeserver — continuwuity (a Matrix homeserver) embedded as a LIBRARY, the
+# grain body for the self-hosted membrane (docs/deos/GRAIN-HOMESERVER.md).
+#
+# ITS OWN WORKSPACE (excluded from the breadstuffs root): continuwuity is
+# edition-2024 + toolchain-pinned (1.96.1) with a heavy git-pinned-fork dep graph
+# (rust-rocksdb fork, jemalloc forks). Isolating it here keeps that graph OUT of
+# the breadstuffs root resolution. Pinned to the recon rev (built green in-env).
+[workspace]
+
+[package]
+name = "deos-homeserver"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# The homeserver, as a LIBRARY: the `conduwuit` main crate's `[lib]` (path mod.rs)
+# exposes `run_with_args(&Args)` — build runtime, Server::new, run the axum server.
+# Default features = standard + ring (NO jemalloc/io_uring/sentry/systemd), which
+# built clean in-env. Pinned rev 4454e540 (continuwuity 26.6.0-alpha.1).
+conduwuit = { git = "https://forgejo.ellis.link/continuwuation/continuwuity", rev = "4454e54092db1dce576cd62083618800a65a6e79" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1"
