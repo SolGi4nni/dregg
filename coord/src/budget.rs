@@ -44,7 +44,7 @@
 //! - On abort with locked resources, fast unlock reclaims immediately.
 //! - Periodically, rebalance reconciles all silo spending with the true balance.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use dregg_cell::CellId;
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -77,6 +77,7 @@ pub type ComputronBudget = StingrayCounter;
 /// Each silo gets a "slice" of an agent's total resource balance. The silo can
 /// debit locally up to this slice without coordinating with other silos.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "BudgetSliceRepr", into = "BudgetSliceRepr")]
 pub struct BudgetSlice {
     /// The agent whose budget this slice belongs to.
     pub agent: CellId,
@@ -86,8 +87,51 @@ pub struct BudgetSlice {
     pub ceiling: u64,
     /// Amount already spent from this slice.
     pub spent: u64,
-    /// Transaction digests that consumed from this slice.
+    /// Transaction digests that consumed from this slice, in debit order (the
+    /// replay/certificate record).
     pub debits: Vec<DebitDigest>,
+    /// O(1) anti-replay membership twin of `debits` (holds exactly the same
+    /// digests). Not serialized — rebuilt from `debits` on deserialize (see
+    /// `BudgetSliceRepr`) so the on-wire form is byte-identical to before.
+    debit_set: HashSet<DebitDigest>,
+}
+
+/// On-wire representation of [`BudgetSlice`]: exactly the persisted fields, so
+/// serialization is unchanged. The in-memory `debit_set` is derived from
+/// `debits` on the `From` conversion.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct BudgetSliceRepr {
+    agent: CellId,
+    version: BudgetVersion,
+    ceiling: u64,
+    spent: u64,
+    debits: Vec<DebitDigest>,
+}
+
+impl From<BudgetSliceRepr> for BudgetSlice {
+    fn from(r: BudgetSliceRepr) -> Self {
+        let debit_set = r.debits.iter().copied().collect();
+        BudgetSlice {
+            agent: r.agent,
+            version: r.version,
+            ceiling: r.ceiling,
+            spent: r.spent,
+            debits: r.debits,
+            debit_set,
+        }
+    }
+}
+
+impl From<BudgetSlice> for BudgetSliceRepr {
+    fn from(s: BudgetSlice) -> Self {
+        BudgetSliceRepr {
+            agent: s.agent,
+            version: s.version,
+            ceiling: s.ceiling,
+            spent: s.spent,
+            debits: s.debits,
+        }
+    }
 }
 
 impl BudgetSlice {
@@ -99,6 +143,7 @@ impl BudgetSlice {
             ceiling,
             spent: 0,
             debits: Vec::new(),
+            debit_set: HashSet::new(),
         }
     }
 
@@ -126,6 +171,7 @@ impl BudgetSlice {
         }
         self.spent = self.spent.saturating_add(amount);
         self.debits.push(digest);
+        self.debit_set.insert(digest);
         Ok(())
     }
 
@@ -137,7 +183,7 @@ impl BudgetSlice {
     /// `Dregg2.Apps.Trustline.draw_fires_iff_tryDebit`): for a fresh digest
     /// it is exactly `tryDebit`; the freshness check is the one extra leg.
     pub fn try_debit_fresh(&mut self, amount: u64, digest: DebitDigest) -> Result<(), BudgetError> {
-        if self.debits.contains(&digest) {
+        if self.debit_set.contains(&digest) {
             return Err(BudgetError::DuplicateDebit { digest });
         }
         self.try_debit(amount, digest)
@@ -161,6 +207,7 @@ impl BudgetSlice {
     pub fn unwind_debit(&mut self, amount: u64, digest: &DebitDigest) -> bool {
         if let Some(pos) = self.debits.iter().position(|d| d == digest) {
             self.debits.swap_remove(pos);
+            self.debit_set.remove(digest);
             self.spent = self.spent.saturating_sub(amount);
             true
         } else {
@@ -457,7 +504,7 @@ impl StingrayCounter {
                 .silo_states
                 .get(&silo)
                 .ok_or(BudgetError::UnknownSilo { silo })?;
-            if slice.debits.contains(&digest) {
+            if slice.debit_set.contains(&digest) {
                 return Err(BudgetError::DuplicateDebit { digest });
             }
             if slice.spent.saturating_add(amount) > ceiling {
